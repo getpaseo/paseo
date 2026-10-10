@@ -27,8 +27,40 @@ interface TerminalRunBase {
   foregroundColor: string;
 }
 
+export type TerminalWideGlyphClass = "hangul" | "han" | "kana";
+
+interface TerminalWideGlyphClassSpec {
+  name: TerminalWideGlyphClass;
+  sample: string;
+  ranges: ReadonlyArray<readonly [number, number]>;
+}
+
+// Wide scripts whose glyphs share one advance within a font. The renderer measures each sample
+// once and letter-spaces the script so every glyph advances exactly two cells.
+export const TERMINAL_WIDE_GLYPH_CLASSES: ReadonlyArray<TerminalWideGlyphClassSpec> = [
+  { name: "hangul", sample: "가", ranges: [[0xac00, 0xd7a3]] },
+  {
+    name: "han",
+    sample: "中",
+    ranges: [
+      [0x3400, 0x4dbf],
+      [0x4e00, 0x9fff],
+    ],
+  },
+  { name: "kana", sample: "あ", ranges: [[0x3041, 0x30ff]] },
+];
+
+export interface TerminalTextSegment {
+  text: string;
+  /** Null for terminal-font text, which advances one cell per glyph. */
+  wideGlyphClass: TerminalWideGlyphClass | null;
+}
+
 export interface TerminalTextRun extends TerminalRunBase {
   renderKind: "text";
+  /** Holds one glyph whose fallback-font advance is unknown, drawn in its own box. */
+  isolated: boolean;
+  segments: TerminalTextSegment[];
 }
 
 export interface TerminalCustomGlyphRun extends TerminalRunBase {
@@ -78,6 +110,43 @@ function terminalCharWidth(char: string): number {
   return isWide ? 2 : 1;
 }
 
+// Text runs render with the font's natural advances. Printable ASCII comes from the terminal font
+// and the spaced wide scripts get a measured letter spacing, so both stay on the cell grid. Any
+// other glyph (symbols, emoji, jamo) falls back to a font with an unknown advance; inside a run it
+// would shift every glyph after it and pull the text away from the cursor.
+function resolveGlyphSpacing(
+  char: string,
+  cellCount: number,
+): TerminalWideGlyphClass | null | "isolated" {
+  if (char.length !== 1) {
+    return "isolated";
+  }
+  const code = char.charCodeAt(0);
+  if (cellCount === 1 && code >= 0x20 && code <= 0x7e) {
+    return null;
+  }
+  if (cellCount !== 2) {
+    return "isolated";
+  }
+  const glyphClass = TERMINAL_WIDE_GLYPH_CLASSES.find((spec) =>
+    spec.ranges.some(([start, end]) => code >= start && code <= end),
+  );
+  return glyphClass?.name ?? "isolated";
+}
+
+function appendSegment(
+  segments: TerminalTextSegment[],
+  text: string,
+  wideGlyphClass: TerminalWideGlyphClass | null,
+): void {
+  const last = segments[segments.length - 1];
+  if (last && last.wideGlyphClass === wideGlyphClass) {
+    last.text += text;
+    return;
+  }
+  segments.push({ text, wideGlyphClass });
+}
+
 function shouldSkipSpacerCell(cells: TerminalRenderableCell[], col: number, char: string): boolean {
   if (terminalCharWidth(char) < 2) {
     return false;
@@ -107,15 +176,23 @@ function appendRun(input: {
   col: number;
 }): void {
   const renderKind = input.customGlyph ? "custom-glyph" : "text";
+  const spacing = input.customGlyph ? null : resolveGlyphSpacing(input.text, input.cellCount);
+  const isolated = spacing === "isolated";
+  const wideGlyphClass = spacing === "isolated" ? null : spacing;
   const previousRun = input.runs[input.runs.length - 1];
   if (
+    !isolated &&
     previousRun &&
     previousRun.styleKey === input.styleKey &&
-    previousRun.renderKind === renderKind
+    previousRun.renderKind === renderKind &&
+    !(previousRun.renderKind === "text" && previousRun.isolated)
   ) {
     const offset = previousRun.cellCount;
     previousRun.text += input.text;
     previousRun.cellCount += input.cellCount;
+    if (previousRun.renderKind === "text") {
+      appendSegment(previousRun.segments, input.text, wideGlyphClass);
+    }
     if (previousRun.renderKind === "custom-glyph" && input.customGlyph) {
       previousRun.glyphs.push({
         key: `${input.col}:${input.text}`,
@@ -142,7 +219,12 @@ function appendRun(input: {
     });
     return;
   }
-  input.runs.push({ ...baseRun, renderKind: "text" });
+  input.runs.push({
+    ...baseRun,
+    renderKind: "text",
+    isolated,
+    segments: [{ text: input.text, wideGlyphClass }],
+  });
 }
 
 function cellIntersectsSelection(input: {
