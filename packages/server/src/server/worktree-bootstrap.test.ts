@@ -837,6 +837,54 @@ describe("runAsyncWorktreeBootstrap", () => {
     });
   });
 
+  it("starts a service added to paseo.json without restarting the daemon", async () => {
+    const backend = {
+      type: "service" as const,
+      command: "uv run uvicorn app.main:app --reload --port $PASEO_PORT",
+    };
+    commitPaseoScripts({ "backend-dev": backend });
+
+    const serviceProxy = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const terminalRecords: StubTerminalRecord[] = [];
+    const options = {
+      repoRoot: repoDir,
+      workspaceId: repoDir,
+      projectSlug: "repo",
+      branchName: "feature-added-service",
+      daemonPort: 6767,
+      serviceProxy,
+      runtimeStore,
+      terminalManager: createStubTerminalManager(createTerminalCalls, terminalRecords),
+    };
+    const backendResult = await spawnWorkspaceScript({ ...options, scriptName: "backend-dev" });
+
+    writeFileSync(
+      join(repoDir, "paseo.json"),
+      JSON.stringify({
+        scripts: {
+          "backend-dev": backend,
+          web: { type: "service", command: "pnpm run dev -- --port $PASEO_PORT" },
+        },
+      }),
+    );
+    const webResult = await spawnWorkspaceScript({ ...options, scriptName: "web" });
+
+    expect(webResult.port).toEqual(expect.any(Number));
+    expect(webResult.port).not.toBe(backendResult.port);
+    expect(terminalRecords[1]?.sentInputs).toEqual(["pnpm run dev -- --port $PASEO_PORT\r"]);
+    expect(createTerminalCalls[1]?.env?.PASEO_PORT).toBe(String(webResult.port));
+    expect(createTerminalCalls[1]?.env?.PASEO_SERVICE_BACKEND_DEV_PORT).toBe(
+      String(backendResult.port),
+    );
+    expect(serviceProxy.listRoutes()).toHaveLength(2);
+    expect(runtimeStore.get({ workspaceId: repoDir, scriptName: "backend-dev" })).toMatchObject({
+      lifecycle: "running",
+      terminalId: backendResult.terminalId,
+    });
+  });
+
   it("spawns services with public aliases and public service URLs", async () => {
     commitPaseoScripts(
       {
