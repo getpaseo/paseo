@@ -1,0 +1,12 @@
+Final reviewed APK device smoke
+Device: Pixel 9 Pro, Android 17
+Workspace: spiky-goose (Android video streaming), Ryan-Laptop
+Browser viewport: Pixel 7, 412 x 839, 1x
+APK SHA256: 4d8fcffac74acf90fbc36655a6cf3cfffeecce413f5e8c26a73d285db82aa8fc
+
+PASS: Existing browser renders on Video after opening this workspace.
+PASS: Back navigation and a Domains link tap update the source page and stay on Video.
+PASS: Touch scroll advances the page and stays on Video.
+PASS: Backgrounding and reopening the app recovers Video.
+Control was released after the test. PrintStream browser contents were not interacted with.
+Screenshot: pixel-7-reviewed.png (after background recovery).

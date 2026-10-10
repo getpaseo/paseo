@@ -48,7 +48,8 @@ function LaunchItemIcon({ item }: { item: WorkspaceTabLaunchItem }): ReactElemen
   return null;
 }
 
-function WorkspaceNewTabMenuItem({
+/** Render a catalog action consistently in tab-strip and compact workspace menus. */
+export function WorkspaceNewTabMenuItem({
   item,
   paneId,
 }: {

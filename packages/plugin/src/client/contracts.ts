@@ -107,11 +107,15 @@ interface PluginWorkspacePanelBase {
 }
 
 export interface PluginWorkspacePanelProps extends PluginNavigableHostProps {
+  /** False while a retained panel is off-screen. Pause media and polling, preserving local state. */
+  active?: boolean;
   context: "workspace";
   workspaceId: string;
 }
 
 export interface PluginAgentPanelProps extends PluginNavigableHostProps {
+  /** False while a retained panel is off-screen. Pause media and polling, preserving local state. */
+  active?: boolean;
   context: "agent";
   workspaceId: string;
   agentId: string;

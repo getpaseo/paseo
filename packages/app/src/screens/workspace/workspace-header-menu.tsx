@@ -27,6 +27,8 @@ import {
 } from "@getpaseo/protocol/terminal-profiles";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 import type { Theme } from "@/styles/theme";
+import { useWorkspaceTabLaunchCatalog } from "@/workspace-tabs/launcher";
+import { WorkspaceNewTabMenuItem } from "./workspace-new-tab-menu";
 
 const ThemedEllipsis = withUnistyles(Ellipsis);
 const ThemedCopy = withUnistyles(Copy);
@@ -214,6 +216,13 @@ export function WorkspaceHeaderMenuMobile({
   const router = useRouter();
   const triggerStyle = useIconButtonChromeStyle({ size: "large" });
   const { config } = useDaemonConfig(normalizedServerId);
+  const launchGroups = useWorkspaceTabLaunchCatalog({
+    serverId: normalizedServerId,
+    purpose: "primary",
+    host: "main",
+    surface: "menu",
+  });
+  const pluginPanels = launchGroups.find((group) => group.id === "plugin-panels");
   const profiles = useMemo(
     () => resolveTerminalProfiles(config?.terminalProfiles),
     [config?.terminalProfiles],
@@ -249,6 +258,9 @@ export function WorkspaceHeaderMenuMobile({
             {t("workspace.header.actions.newBrowser")}
           </DropdownMenuItem>
         ) : null}
+        {pluginPanels?.items.map((item) => (
+          <WorkspaceNewTabMenuItem key={item.id} item={item} />
+        ))}
         <WorkspaceHeaderWorkspaceActionItems {...workspaceActions} />
         <DropdownMenuSeparator />
         <DropdownMenuLabel>{t("workspace.tabs.actions.terminalProfilesMenu")}</DropdownMenuLabel>

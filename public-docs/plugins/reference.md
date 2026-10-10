@@ -1221,6 +1221,24 @@ API is needed for OS Paste. Avoid DOM clipboard code in native plugins and the d
 The runnable [modal UI example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/modal-ui)
 contains a padded form, full-width rows, a virtualized list, horizontal tabs, and a copy/paste input.
 
+### Encoded video on Android
+
+`EncodedVideo` from `@getpaseo/plugin/client/react-native` provides a host-owned Android canvas
+for raw WebCodecs chunks. Use the SDK containing this API and rebuild the Android app before
+adopting it. The renderer receives encoded bytes through the existing plugin RPC transport;
+it does not open a media URL or require another port. Other platforms report unsupported.
+
+Wait for `onReady` before configuring the decoder. Keep at most four submitted chunks awaiting
+`onDequeue`, and release every `onFrame` result after presenting or discarding it. `present(id)`
+resolves after that frame is drawn. Reset and unmount reject pending presentations and release
+retained frames. Surface `onError` to the user; older Android System WebView versions may lack
+WebCodecs or the source codec.
+
+Keep remote input outside the canvas. Revoke the previous frame's input authority before calling
+`present`, then recheck source identity and mutation epoch after it resolves. Receiving or decoding
+a packet does not establish that its pixels are displayed. Suspend reads and reset the decoder when
+the app or retained panel becomes inactive; resume with a fresh keyframe.
+
 ### Toasts
 
 `useToast()` returns two methods:
@@ -1630,7 +1648,7 @@ export default function contribute(client: PluginClientContext) {
 | `locations` | No       | `workspace` and/or `explorer`. Defaults to `workspace`.       |
 | `Component` | Yes      | React Native component matching the selected context's props. |
 
-A workspace panel receives `PluginWorkspacePanelProps`: `context: "workspace"`, `theme`, `host`, `layout`, and `workspaceId`. An agent panel receives `PluginAgentPanelProps`: `context: "agent"`, the same common fields and `workspaceId`, plus `agentId`.
+A workspace panel receives `PluginWorkspacePanelProps`: `context: "workspace"`, `theme`, `host`, `layout`, and `workspaceId`. An agent panel receives `PluginAgentPanelProps`: `context: "agent"`, the same common fields and `workspaceId`, plus `agentId`. Both receive `active`, which is false while the retained panel is off-screen. Pause media and polling when inactive; retain local drafts and panel state. Older hosts omit this field.
 
 Read cached state with `useWorkspace(workspaceId, selector)` and `useAgent(agentId, selector)`. A selector is required. Paseo compares its result shallowly, so selecting `{ name, status }` does not re-render when unrelated fields change. Select every field the component renders in one call; do not select the whole snapshot.
 

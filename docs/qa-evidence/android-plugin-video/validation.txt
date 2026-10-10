@@ -1,0 +1,137 @@
+Local review checks, 2026-10-05. Raw runner timestamps below are America/Toronto. No full test suite was run.
+
+$ npm run typecheck
+
+> paseo@0.11.0-beta.3 typecheck
+> npm run typecheck --workspaces --if-present
+
+
+> @getpaseo/builtin-plugins@0.11.0-beta.3 typecheck
+> tsgo -p tsconfig.json --noEmit
+
+
+> @getpaseo/expo-two-way-audio@0.11.0-beta.3 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/highlight@0.11.0-beta.3 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/plugin@0.11.0-beta.3 typecheck
+> tsgo --noEmit && tsgo -p tsconfig.examples.json --noEmit
+
+
+> @getpaseo/protocol@0.11.0-beta.3 pretypecheck
+> npm run generate:validators
+
+
+> @getpaseo/protocol@0.11.0-beta.3 generate:validators
+> node scripts/generate-validation-aot.mjs
+
+generated src/generated/validation/ws-outbound.aot.ts from codegen/ws-outbound.compile.ts (WSOutboundMessageSchema)
+
+> @getpaseo/protocol@0.11.0-beta.3 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/client@0.11.0-beta.3 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/server@0.11.0-beta.3 typecheck
+> tsgo -p tsconfig.server.typecheck.json --noEmit
+
+
+> @getpaseo/app@0.11.0-beta.3 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/relay@0.11.0-beta.3 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/website@0.11.0-beta.3 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/desktop@0.11.0-beta.3 typecheck
+> tsgo --noEmit -p tsconfig.json
+
+
+> @getpaseo/cli@0.11.0-beta.3 typecheck
+> tsgo --noEmit
+
+
+$ npm run lint
+
+> paseo@0.11.0-beta.3 lint
+> oxlint
+
+Found 0 warnings and 0 errors.
+Finished in 17.3s on 4559 files with 177 rules using 10 threads.
+
+$ npm run format:check
+
+> paseo@0.11.0-beta.3 format:check
+> oxfmt --check .
+
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 3838ms on 4890 files using 10 threads.
+
+$ PASEO_TEST_CHROMIUM_EXECUTABLE=/usr/bin/chromium npx vitest run src/plugins/react-native/encoded-video/runtime.test.ts --bail=1 (packages/app)
+
+ RUN  v4.1.7 /home/rewen/.paseo/worktrees/3m44i0ag/spiky-goose/packages/app
+
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  10:02:36
+   Duration  13.41s (transform 726ms, setup 527ms, import 3.28s, tests 8.45s, environment 7ms)
+
+
+$ npx vitest run src/plugins/evaluate.test.ts --bail=1 (packages/app)
+
+ RUN  v4.1.7 /home/rewen/.paseo/worktrees/3m44i0ag/spiky-goose/packages/app
+
+
+ Test Files  1 passed (1)
+      Tests  42 passed (42)
+   Start at  09:55:14
+   Duration  61.90s (transform 52.45s, setup 73ms, import 60.98s, tests 594ms, environment 1ms)
+
+
+$ npx vitest run src/boundaries.test.ts --bail=1 (packages/plugin)
+
+ RUN  v4.1.7 /home/rewen/.paseo/worktrees/3m44i0ag/spiky-goose/packages/plugin
+
+
+ Test Files  1 passed (1)
+      Tests  49 passed (49)
+   Start at  09:55:15
+   Duration  758ms (transform 216ms, setup 0ms, import 505ms, tests 56ms, environment 0ms)
+
+
+$ npx vitest run src/server/plugins/plugin-process.test.ts --bail=1 (packages/server)
+
+ RUN  v4.1.6 /home/rewen/.paseo/worktrees/3m44i0ag/spiky-goose/packages/server
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  09:56:30
+   Duration  2.96s (transform 524ms, setup 482ms, import 176ms, tests 1.85s, environment 0ms)
+
+
+$ PASEO_HOME=<isolated> npx vitest run src/server/plugins/runtime.posix.test.ts -t "runs the direct example through the existing AgentClient path" --bail=1 (packages/server)
+
+ RUN  v4.1.6 /home/rewen/.paseo/worktrees/3m44i0ag/spiky-goose/packages/server
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 40 skipped (41)
+   Start at  09:57:51
+   Duration  13.14s (transform 8.32s, setup 73ms, import 10.13s, tests 2.77s, environment 0ms)
+
