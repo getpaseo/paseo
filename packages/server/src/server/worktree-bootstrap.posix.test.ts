@@ -422,12 +422,12 @@ describe.skipIf(isPlatform("win32"))("worktree-bootstrap POSIX-only", () => {
             api: {
               type: "service",
               command:
-                "node -e \"const fs=require('fs'); fs.writeFileSync('api-env.json', JSON.stringify(process.env)); setTimeout(()=>{}, 30000)\"",
+                "node -e \"const fs=require('fs'); fs.writeFileSync('api-env.json.tmp', JSON.stringify(process.env)); fs.renameSync('api-env.json.tmp', 'api-env.json'); setTimeout(()=>{}, 30000)\"",
             },
             web: {
               type: "service",
               command:
-                "node -e \"const fs=require('fs'); fs.writeFileSync('web-env.json', JSON.stringify(process.env)); setTimeout(()=>{}, 30000)\"",
+                "node -e \"const fs=require('fs'); fs.writeFileSync('web-env.json.tmp', JSON.stringify(process.env)); fs.renameSync('web-env.json.tmp', 'web-env.json'); setTimeout(()=>{}, 30000)\"",
             },
           },
         }),
