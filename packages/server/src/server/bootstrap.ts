@@ -141,6 +141,7 @@ import {
 } from "./agent/tools/paseo-tools.js";
 import type { PaseoToolRuntimeContext } from "./agent/tools/types.js";
 import { createAgentProviderRuntime } from "./agent/provider-runtime.js";
+import { ProviderIntrospectionQueue } from "./agent/provider-introspection-queue.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
 import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
 import {
@@ -916,11 +917,13 @@ export async function createPaseoDaemon(
     isDirectory: async (target) => (await stat(target).catch(() => null))?.isDirectory() ?? false,
     logger,
   });
+  const providerIntrospectionQueue = new ProviderIntrospectionQueue();
   const agentProviderRuntime = await createAgentProviderRuntime({
     paseoHome: config.paseoHome,
     logger,
     snapshotManager: {
       refreshTimeoutMs: config.providerCatalogRefreshTimeoutMs,
+      providerIntrospectionQueue,
       runtimeSettings: config.agentProviderSettings,
       providerOverrides: config.providerOverrides,
       workspaceGitService,
@@ -946,6 +949,7 @@ export async function createPaseoDaemon(
     pluginLifecycle: pluginRuntime,
     clients: initialAgentManagerState.clients,
     providerDefinitions: initialAgentManagerState.providerDefinitions,
+    providerIntrospectionQueue,
     registry: agentStorage,
     appendSystemPrompt: config.appendSystemPrompt,
     onWorkspaceStateMayHaveChanged: ({ cwd }) => {

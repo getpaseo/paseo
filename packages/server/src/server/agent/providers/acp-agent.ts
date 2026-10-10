@@ -1112,6 +1112,7 @@ export class ACPAgentClient implements AgentClient {
       return closePromise;
     };
     const handleAbort = () => void closeProbe().catch(() => undefined);
+    const unregisterAbortCleanup = context?.registerAbortCleanup(closeProbe);
     context?.signal.addEventListener("abort", handleAbort, { once: true });
 
     try {
@@ -1175,7 +1176,11 @@ export class ACPAgentClient implements AgentClient {
       };
     } finally {
       context?.signal.removeEventListener("abort", handleAbort);
-      await closeProbe();
+      try {
+        await closeProbe();
+      } finally {
+        unregisterAbortCleanup?.();
+      }
     }
   }
 
