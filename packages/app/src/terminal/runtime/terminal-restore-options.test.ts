@@ -22,7 +22,7 @@ describe("terminal restore options", () => {
       }),
     ).toEqual({
       mode: "visible-snapshot",
-      scrollbackLines: 200,
+      scrollbackLines: 500,
       size: { rows: 24, cols: 80 },
     });
   });
@@ -36,7 +36,7 @@ describe("terminal restore options", () => {
       }),
     ).toEqual({
       mode: "visible-snapshot",
-      scrollbackLines: 200,
+      scrollbackLines: 500,
     });
   });
 
@@ -49,7 +49,7 @@ describe("terminal restore options", () => {
       }),
     ).toEqual({
       mode: "visible-snapshot",
-      scrollbackLines: 200,
+      scrollbackLines: 500,
     });
   });
 });

@@ -1,6 +1,9 @@
 import type { SubscribeTerminalRequest } from "@getpaseo/protocol/messages";
 
-export const TERMINAL_VISIBLE_RESTORE_SCROLLBACK_LINES = 200;
+// Match the server cap in terminal-restore.ts: the daemon keeps 1000 lines of scrollback
+// but clamps the restore request to MAX_VISIBLE_RESTORE_SCROLLBACK_LINES (500), so asking
+// for more is pointless while asking for 200 silently dropped 300 lines on every reconnect.
+export const TERMINAL_VISIBLE_RESTORE_SCROLLBACK_LINES = 500;
 
 export interface ResolveTerminalRestoreOptionsInput {
   supportsTerminalRestoreModes: boolean;
