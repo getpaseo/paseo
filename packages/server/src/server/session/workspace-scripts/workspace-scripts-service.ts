@@ -169,7 +169,12 @@ export function createWorkspaceScriptsService(deps: {
     requireAvailable();
     const workspace = await getWorkspace(workspaceId);
     const project = await projectRegistry.get(workspace.projectId);
-    return buildSnapshot(workspace, project);
+    const scripts = buildSnapshot(workspace, project);
+    publishStatusUpdate({
+      type: "script_status_update",
+      payload: { workspaceId, scripts },
+    });
+    return scripts;
   }
 
   async function launchProcess(input: { workspaceId: string; scriptName: string }) {

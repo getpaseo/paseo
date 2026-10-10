@@ -1,9 +1,10 @@
 import { resolveDaemonVersion } from "../daemon-version.js";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { createPaseoClient, type PaseoClient } from "@getpaseo/client";
+import type { ScriptStatusUpdateMessage } from "../messages.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 
@@ -244,3 +245,55 @@ async function observeScriptLifecycles(
   await subscription.ready;
   return lifecycles;
 }
+
+test("listing scripts refreshes every subscribed client for each workspace sharing a directory", async () => {
+  const first = await createWorkspace("First workspace");
+  const second = await createWorkspace("Second workspace");
+  const registry = path.join(daemon.paseoHome, "projects", "workspaces.json");
+  const originalRegistry = await readFile(registry, "utf8");
+  const observer = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  await observer.connect();
+  try {
+    const seen = await Promise.all(
+      [client, observer].map(async (connection) => {
+        const snapshots: ScriptStatusUpdateMessage["payload"][] = [];
+        const subscription = connection.observeEvents(["script_status_update"]);
+        subscription.subscribe({
+          snapshot: () => {},
+          update: (message) => {
+            if (message.type === "script_status_update") {
+              const { workspaceId, scripts } = message.payload;
+              snapshots.push({ workspaceId, scripts });
+            }
+          },
+        });
+        await subscription.ready;
+        return snapshots;
+      }),
+    );
+    await writeFile(
+      path.join(cwd, "paseo.json"),
+      JSON.stringify({ scripts: { build: { command: "npm run build" } } }),
+    );
+    const expected: ScriptStatusUpdateMessage["payload"][] = [];
+    for (const workspaceId of [first, second]) {
+      const result = await client.listWorkspaceScripts(workspaceId);
+      expect(result.error).toBeNull();
+      expect(result.scripts.map((script) => script.scriptName)).toEqual(["build"]);
+      expected.push({ workspaceId, scripts: result.scripts });
+    }
+    await expect.poll(() => seen).toEqual([expected, expected]);
+    await rm(path.join(cwd, "paseo.json"));
+    for (const workspaceId of [first, second]) {
+      const result = await client.listWorkspaceScripts(workspaceId);
+      expect(result.error).toBeNull();
+      expect(result.scripts).toEqual([]);
+      expected.push({ workspaceId, scripts: [] });
+    }
+    await expect.poll(() => seen).toEqual([expected, expected]);
+    expect(await readFile(registry, "utf8")).toBe(originalRegistry);
+    expect((await client.listTerminals()).terminals).toEqual([]);
+  } finally {
+    await observer.close();
+  }
+});
