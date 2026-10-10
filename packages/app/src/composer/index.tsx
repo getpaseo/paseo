@@ -63,6 +63,7 @@ import type { ImageAttachment, MessagePayload, TextReplacement } from "./types";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { DraftCommandTarget } from "@/hooks/use-agent-commands-query";
 import { encodeImages } from "@/utils/encode-images";
+import { toErrorMessage } from "@/utils/error-messages";
 import { focusWithRetries } from "@/utils/web-focus";
 import {
   cancelComposerAgent,
@@ -1390,7 +1391,7 @@ function ComposerContentImpl({
       void onClientSlashCommand(command)
         .catch((error) => {
           console.error("[Composer] Failed to run client slash command:", error);
-          setSendError(error instanceof Error ? error.message : String(error));
+          setSendError(toErrorMessage(error));
         })
         .finally(() => {
           setIsProcessing(false);
@@ -1420,7 +1421,7 @@ function ComposerContentImpl({
         args: resolved.args,
         onError(error) {
           console.error("[Composer] Failed to run plugin client slash command:", error);
-          toastErrorRef.current(error instanceof Error ? error.message : String(error));
+          toastErrorRef.current(toErrorMessage(error));
         },
       });
       return true;
