@@ -7,9 +7,9 @@ export interface ProviderListItem {
   provider: ProviderSnapshotEntry["provider"];
   label: string;
   status: string;
-  enabled: "Enabled" | "Disabled";
+  enabled: boolean;
   defaultMode: string;
-  modes: string;
+  modes: Array<{ id: string; label: string }>;
 }
 
 /** Schema for provider ls output */
@@ -28,9 +28,13 @@ export const providerLsSchema: OutputSchema<ProviderListItem> = {
         return undefined;
       },
     },
-    { header: "ENABLED", field: "enabled", width: 10 },
+    { header: "ENABLED", field: (item) => (item.enabled ? "Enabled" : "Disabled"), width: 10 },
     { header: "DEFAULT MODE", field: "defaultMode", width: 14 },
-    { header: "MODES", field: "modes", width: 30 },
+    {
+      header: "MODES",
+      field: (item) => item.modes.map((mode) => mode.label).join(", "),
+      width: 30,
+    },
   ],
 };
 
@@ -54,9 +58,9 @@ export async function runLsCommand(
         provider: entry.provider,
         label: entry.label ?? entry.provider,
         status: entry.status === "ready" ? "available" : entry.status,
-        enabled: !entry.enabled ? "Disabled" : "Enabled",
+        enabled: entry.enabled,
         defaultMode: entry.defaultModeId ?? "default",
-        modes: (entry.modes ?? []).map((mode) => mode.label).join(", "),
+        modes: (entry.modes ?? []).map(({ id, label }) => ({ id, label })),
       })),
       schema: providerLsSchema,
     };
