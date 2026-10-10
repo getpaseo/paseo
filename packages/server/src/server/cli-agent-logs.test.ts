@@ -253,12 +253,18 @@ test("logs --since filters history and live output through the CLI and daemon", 
       try {
         await waitForCliOutput(pastFollow, "--- Following logs");
         await Promise.all([
-          waitForCliOutput(pastFollow, "LIVE_REPLY"),
+          // Wait for a later visible item to close the streamed reply.
+          // Windows SIGINT forcibly exits without running shutdown handlers.
+          waitForCliOutput(pastFollow, "[User] LIVE_AFTER_REPLY\n"),
           (async () => {
             await manager.appendTimelineItem(agent.id, { type: "user_message", text: "LIVE_USER" });
             await manager.appendTimelineItem(agent.id, {
               type: "assistant_message",
               text: "LIVE_REPLY",
+            });
+            await manager.appendTimelineItem(agent.id, {
+              type: "user_message",
+              text: "LIVE_AFTER_REPLY",
             });
           })(),
         ]);
