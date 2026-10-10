@@ -1,4 +1,4 @@
-import type { Dirent, Stats } from "node:fs";
+import type { Stats } from "node:fs";
 import * as fs from "node:fs/promises";
 import path from "node:path";
 import pLimit from "p-limit";
@@ -31,12 +31,26 @@ export interface SearchDirectoryEntriesOptions {
   limit?: number;
   maxDepth?: number;
   maxEntriesScanned?: number;
+  // Counts every entry read from one directory, including files that are not suggested.
+  maxEntriesPerDirectory?: number;
+  // Replaces fs.opendir, so a test can fix the order entries are listed in.
+  openDirectory?: OpenDirectory;
   confidentResultScanThreshold?: number;
   respectGitIgnore?: boolean;
   // Absolute paths that discovery never walks into. A path the caller types explicitly still
   // resolves, and browsing inside one lists a single level at a time.
   excludedDiscoveryPaths?: readonly string[];
 }
+
+// What the search needs from each entry of a directory listing. fs.Dirent satisfies it.
+export interface DirectoryListingEntry {
+  name: string;
+  isDirectory(): boolean;
+  isFile(): boolean;
+  isSymbolicLink(): boolean;
+}
+
+export type OpenDirectory = (directory: string) => Promise<AsyncIterable<DirectoryListingEntry>>;
 
 interface QueryPlan {
   isPathQuery: boolean;
@@ -90,6 +104,11 @@ interface DirectoryListCacheEntry {
   entries: RawChildEntry[];
 }
 
+interface DirectoryRead {
+  entries: RawChildEntry[];
+  complete: boolean;
+}
+
 interface GitIgnoredPathsCacheEntry {
   expiresAt: number;
   paths: Promise<Set<string>>;
@@ -99,8 +118,10 @@ const DEFAULT_LIMIT = 30;
 const MAX_LIMIT = 100;
 const DEFAULT_MAX_DEPTH = 12;
 const DEFAULT_MAX_ENTRIES_SCANNED = 20_000;
+const DEFAULT_MAX_ENTRIES_PER_DIRECTORY = 10_000;
 const DIRECTORY_LIST_CACHE_TTL_MS = 8_000;
 const DIRECTORY_LIST_CACHE_MAX_ENTRIES = 4_000;
+const DIRECTORY_LIST_CACHE_MAX_CHILDREN = 100_000;
 const GIT_IGNORED_PATHS_CACHE_TTL_MS = 8_000;
 const GIT_IGNORED_PATHS_CACHE_MAX_ENTRIES = 256;
 // Windows does not reliably update directory mtime/ctime when children change,
@@ -128,10 +149,21 @@ function sharedFilesystemCall<T>(key: string, call: () => Promise<T>): Promise<T
   return started;
 }
 
-function readdir(directory: string): Promise<Dirent[]> {
-  return sharedFilesystemCall(`readdir:${directory}`, () =>
-    fs.readdir(directory, { withFileTypes: true }),
-  );
+// Reads at most input.maxEntriesPerDirectory entries. fs.readdir loads the whole directory at once,
+// and a directory with millions of entries exhausts the heap.
+function readDirectory(directory: string, input: SearchInput): Promise<DirectoryRead> {
+  const limit = input.maxEntriesPerDirectory;
+  return sharedFilesystemCall(`opendir:${directory}:${limit}`, async () => {
+    const entries: RawChildEntry[] = [];
+    let read = 0;
+    for await (const dirent of await input.openDirectory(directory)) {
+      if (read >= limit) return { entries, complete: false };
+      read += 1;
+      const entry = toRawChildEntry(dirent);
+      if (entry) entries.push(entry);
+    }
+    return { entries, complete: true };
+  });
 }
 
 function realpath(target: string): Promise<string> {
@@ -166,6 +198,8 @@ const IGNORED_DIRECTORY_NAMES = new Set([
   ".git",
 ]);
 const directoryListCache = new Map<string, DirectoryListCacheEntry>();
+// Listings vary in size, so the cache also caps the children it holds.
+let cachedDirectoryChildren = 0;
 const gitIgnoredPathsCache = new Map<string, GitIgnoredPathsCacheEntry>();
 
 // Discovery and retrieval filter differently, on purpose. Discovery — anything that ranks or
@@ -267,6 +301,8 @@ function buildSearchInput(
     limit: normalizeLimit(options.limit),
     maxDepth: options.maxDepth ?? DEFAULT_MAX_DEPTH,
     maxEntriesScanned: options.maxEntriesScanned ?? DEFAULT_MAX_ENTRIES_SCANNED,
+    maxEntriesPerDirectory: options.maxEntriesPerDirectory ?? DEFAULT_MAX_ENTRIES_PER_DIRECTORY,
+    openDirectory: options.openDirectory ?? fs.opendir,
     confidentResultScanThreshold: options.confidentResultScanThreshold,
     gitIgnoredPaths,
     excludedDiscoveryPaths,
@@ -303,6 +339,8 @@ interface SearchInput {
   limit: number;
   maxDepth: number;
   maxEntriesScanned: number;
+  maxEntriesPerDirectory: number;
+  openDirectory: OpenDirectory;
   confidentResultScanThreshold: number | undefined;
   gitIgnoredPaths: Set<string>;
   excludedDiscoveryPaths: Set<string>;
@@ -317,7 +355,7 @@ async function searchChildren(input: SearchInput): Promise<RankedEntry[]> {
   const discoveryInput = isInsideExcludedPath(parent, input)
     ? { ...input, excludedDiscoveryPaths: new Set<string>() }
     : input;
-  const entries = await readChildren(parent);
+  const entries = await readChildren(parent, input);
   return entries.flatMap((entry) => {
     if (!isPathInsideRoot(input.root, entry.resolvedPath) || !shouldDiscover(entry, discoveryInput))
       return [];
@@ -335,7 +373,7 @@ async function searchTree(
   start: WalkStart = { visiblePath: input.root, resolvedPath: input.root },
 ): Promise<RankedEntry[]> {
   if (!(input.maxEntriesScanned > 0)) return [];
-  const roots = (await readChildren(start.resolvedPath)).filter((entry) =>
+  const roots = (await readChildren(start.resolvedPath, input)).filter((entry) =>
     staysInsideRoot(entry, input.root),
   );
   const visited = new Set<string>([start.resolvedPath]);
@@ -380,7 +418,7 @@ async function* walkBranch(
   )
     return;
   visited.add(entry.resolvedPath);
-  const children = (await readChildren(entry.resolvedPath)).filter((child) =>
+  const children = (await readChildren(entry.resolvedPath, input)).filter((child) =>
     staysInsideRoot(child, input.root),
   );
   const branches = children.flatMap((child) =>
@@ -741,7 +779,7 @@ async function resolveDirectory(inputPath: string): Promise<string | null> {
   return info?.isDirectory() ? resolved : null;
 }
 
-async function readChildren(directory: string): Promise<ChildEntry[]> {
+async function readChildren(directory: string, input: SearchInput): Promise<ChildEntry[]> {
   const directoryInfo = await stat(directory).catch(() => null);
   if (!directoryInfo?.isDirectory()) return [];
 
@@ -757,23 +795,24 @@ async function readChildren(directory: string): Promise<ChildEntry[]> {
   ) {
     rawEntries = cached.entries;
   } else {
-    const dirents = await readdir(directory).catch(() => [] as Dirent[]);
-    rawEntries = dirents
-      .map(toRawChildEntry)
-      .filter((entry): entry is RawChildEntry => entry !== null)
-      .sort((left, right) => left.name.localeCompare(right.name));
-    if (CAN_VALIDATE_DIRECTORY_CACHE_FROM_METADATA) {
-      directoryListCache.set(directory, {
+    const listing = await readDirectory(directory, input).catch(() => null);
+    if (!listing) return [];
+    rawEntries = listing.entries.sort((left, right) => left.name.localeCompare(right.name));
+    // Never cache a truncated listing as the whole directory.
+    if (CAN_VALIDATE_DIRECTORY_CACHE_FROM_METADATA && listing.complete) {
+      cacheListing(directory, {
         expiresAt: Date.now() + DIRECTORY_LIST_CACHE_TTL_MS,
         modifiedAtMs: directoryInfo.mtimeMs,
         changedAtMs: directoryInfo.ctimeMs,
         entries: rawEntries,
       });
-      pruneCache();
     }
   }
 
-  return (await Promise.all(rawEntries.map((entry) => resolveChild(directory, entry))))
+  const relevantEntries = input.includeFiles
+    ? rawEntries
+    : rawEntries.filter((entry) => entry.kind !== "file");
+  return (await Promise.all(relevantEntries.map((entry) => resolveChild(directory, entry))))
     .filter((entry): entry is ChildEntry => entry !== null)
     .sort((left, right) => left.name.localeCompare(right.name));
 }
@@ -819,7 +858,7 @@ function pruneGitIgnoredPathsCache(now: number): void {
   }
 }
 
-function toRawChildEntry(dirent: Dirent): RawChildEntry | null {
+function toRawChildEntry(dirent: DirectoryListingEntry): RawChildEntry | null {
   if (dirent.isDirectory()) return { name: dirent.name, kind: "directory" };
   if (dirent.isFile()) return { name: dirent.name, kind: "file" };
   if (dirent.isSymbolicLink()) return { name: dirent.name, kind: "symlink" };
@@ -845,13 +884,30 @@ function getEntryKind(info: Stats | null): DirectorySuggestionKind | null {
   return null;
 }
 
+function cacheListing(directory: string, listing: DirectoryListCacheEntry): void {
+  evictListing(directory);
+  directoryListCache.set(directory, listing);
+  cachedDirectoryChildren += listing.entries.length;
+  pruneCache();
+}
+
+function evictListing(directory: string): void {
+  const listing = directoryListCache.get(directory);
+  if (!listing) return;
+  cachedDirectoryChildren -= listing.entries.length;
+  directoryListCache.delete(directory);
+}
+
 // Reads already reject stale entries by expiry and by directory metadata, so this only has to
 // bound the map. Sweeping it for expired keys would cost a full pass on every cache miss.
 function pruneCache(): void {
-  while (directoryListCache.size > DIRECTORY_LIST_CACHE_MAX_ENTRIES) {
+  while (
+    directoryListCache.size > DIRECTORY_LIST_CACHE_MAX_ENTRIES ||
+    cachedDirectoryChildren > DIRECTORY_LIST_CACHE_MAX_CHILDREN
+  ) {
     const key = directoryListCache.keys().next().value;
     if (!key) return;
-    directoryListCache.delete(key);
+    evictListing(key);
   }
 }
 
