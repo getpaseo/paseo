@@ -113,6 +113,84 @@ function findUntranslatedPullRequestPanelLabels(): string[] {
   });
 }
 
+const scheduleSources = [
+  "screens/schedules-screen.tsx",
+  "components/schedules/schedule-form-sheet.tsx",
+  "components/schedules/schedule-row.tsx",
+  "components/schedules/schedules-table.tsx",
+  "components/schedules/cadence-editor.tsx",
+  "schedules/schedule-cadence-options.ts",
+  "schedules/schedule-derivation.ts",
+  "schedules/schedule-form-model.ts",
+  "utils/schedule-format.ts",
+] as const;
+const untranslatedScheduleLabels = [
+  "No active schedules",
+  "No ended schedules",
+  "New schedule",
+  "Unable to load schedules",
+  "Could not load schedules",
+  "Edit schedule",
+  "Edit heartbeat",
+  "Save changes",
+  "Create schedule",
+  "Schedule name",
+  "What should the agent do each run?",
+  "Max runs",
+  "Select host",
+  "Select project",
+  "Choose a host first.",
+  "Select thinking",
+  "Default mode",
+  "No modes are available for this model.",
+  "Archive on finish",
+  "Select isolation",
+  "Select cadence",
+  "Cron expression",
+  "Custom cron",
+  "Every minute",
+  "Every hour",
+  "Weekdays",
+  "Mondays",
+  "Target gone",
+  "Never run",
+  "Last run ",
+  "Next run ",
+  "Resume schedule",
+  "Pause schedule",
+  "Run now",
+  "This cannot be undone.",
+  "Agent unavailable",
+  "Untitled agent",
+  "Enter a cron expression",
+] as const;
+
+// Words some languages share with English: the Git term "Worktree", and cognates such as
+// "Prompt", "Host", "Local", "Mode", "Isolation", and "Active" in Spanish, Portuguese, or French.
+const sharedScheduleKeys = new Set([
+  "form.isolation.worktree",
+  "form.prompt.label",
+  "form.host.label",
+  "form.isolation.local",
+  "form.mode.label",
+  "form.isolation.label",
+  "states.active",
+]);
+
+function findUntranslatedScheduleLabels(): string[] {
+  return scheduleSources.flatMap((source) => {
+    // Whole-line comments may quote the English they describe.
+    const contents = readFileSync(join(appSourceRoot, source), "utf8").replace(
+      /^\s*(\/\/|\/\*|\*).*$/gm,
+      "",
+    );
+    const matches = untranslatedScheduleLabels.filter((text) =>
+      new RegExp(`["'\`>]\\s*${text.replace(/[.?]/g, "\\$&")}`).test(contents),
+    );
+    return matches.length === 0 ? [] : [`${source}: ${matches.join(", ")}`];
+  });
+}
+
 function collectSourceFiles(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = join(directory, entry.name);
@@ -266,6 +344,18 @@ describe("translation resources", () => {
       expect(resource.sidebar.statusGroupAccessibility).not.toBe(
         en.sidebar.statusGroupAccessibility,
       );
+    }
+  });
+
+  it("keeps the Schedules screen, rows, and form translated", () => {
+    expect(findUntranslatedScheduleLabels()).toEqual([]);
+    const english = flattenStrings(en.schedules);
+    for (const resource of [ar, es, fr, ja, ko, ptBR, ru, zhCN]) {
+      const translated = flattenStrings(resource.schedules);
+      const untranslated = Object.keys(english).filter(
+        (key) => !sharedScheduleKeys.has(key) && translated[key] === english[key],
+      );
+      expect(untranslated).toEqual([]);
     }
   });
 

@@ -1,14 +1,15 @@
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { i18n } from "@/i18n/i18next";
 import {
   describeCron,
   everyMsToParts,
   formatCadence,
   formatNextRun,
   isNewAgentSchedule,
-  scheduleProductName,
   partsToEveryMs,
   resolveScheduleTitle,
+  scheduleKind,
   validateCron,
 } from "./schedule-format";
 
@@ -56,8 +57,8 @@ describe("schedule title helpers", () => {
   });
 
   it("labels engine records by product meaning", () => {
-    expect(scheduleProductName(createSchedule({ targetType: "new-agent" }))).toBe("Schedule");
-    expect(scheduleProductName(createSchedule({ targetType: "agent" }))).toBe("Heartbeat");
+    expect(scheduleKind(createSchedule({ targetType: "new-agent" }))).toBe("schedule");
+    expect(scheduleKind(createSchedule({ targetType: "agent" }))).toBe("heartbeat");
   });
 
   it("resolves display titles by name, config title, prompt, then fallback", () => {
@@ -159,5 +160,34 @@ describe("formatNextRun", () => {
     expect(formatNextRun("2026-01-01T00:30:00.000Z")).toBe("in 30m");
     expect(formatNextRun("2026-01-01T03:00:00.000Z")).toBe("in 3h");
     expect(formatNextRun("2026-01-03T00:00:00.000Z")).toBe("in 2d");
+  });
+});
+
+describe("schedule labels in the app language", () => {
+  afterEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+
+  it("formats cadences, titles, and next runs in Simplified Chinese", async () => {
+    await i18n.changeLanguage("zh-CN");
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+    expect(formatCadence({ type: "every", everyMs: 2 * 60 * 60_000 })).toBe("每 2 小时");
+    expect(formatCadence({ type: "every", everyMs: 60_000 })).toBe("每分钟");
+    expect(describeCron({ type: "cron", expression: "15 * * * *" })).toBe("每小时的第 15 分");
+    expect(describeCron({ type: "cron", expression: "0 9 * * 1-5" })).toBe("工作日 09:00 UTC");
+    expect(describeCron({ type: "cron", expression: "0 9 * * 1" })).toBe("每周一 09:00 UTC");
+    expect(resolveScheduleTitle(createSchedule({ name: " ", title: " ", prompt: "\n  " }))).toBe(
+      "未命名计划",
+    );
+    expect(
+      resolveScheduleTitle(
+        createSchedule({ name: " ", title: " ", prompt: "\n  ", targetType: "agent" }),
+      ),
+    ).toBe("未命名心跳");
+    expect(validateCron("")).toBe("请输入 cron 表达式");
+    expect(formatNextRun("2026-01-01T00:00:15.000Z")).toBe("即将");
+    expect(formatNextRun("2026-01-01T00:30:00.000Z")).toBe("30 分钟后");
   });
 });
