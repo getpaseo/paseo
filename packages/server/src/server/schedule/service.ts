@@ -633,6 +633,9 @@ export class ScheduleService {
           error: "Daemon restarted before the scheduled run completed",
         };
         updated = { ...updated, runs };
+        if (shouldCompleteSchedule(updated, now)) {
+          updated = completeSchedule(updated, now);
+        }
         dirty = true;
       }
 
@@ -702,6 +705,7 @@ export class ScheduleService {
     options?: { manual?: boolean },
   ): Promise<void> {
     const manual = options?.manual === true;
+    // Reserve before store I/O; persisted history cannot prove a run is still alive.
     this.runningScheduleIds.add(schedule.id);
     try {
       let runId: string;
@@ -766,18 +770,21 @@ export class ScheduleService {
         schedule.status !== "active" ||
         !schedule.nextRunAt ||
         shouldCompleteSchedule(schedule, now) ||
-        new Date(schedule.nextRunAt).getTime() > now.getTime() ||
-        schedule.runs.some((run) => run.status === "running")
+        new Date(schedule.nextRunAt).getTime() > now.getTime()
       ) {
         return schedule;
       }
 
       const scheduledFor = schedule.nextRunAt;
-      const nextRunAt = advanceNextRunAtPast(
-        schedule.cadence,
-        computeNextRunAt(schedule.cadence, new Date(scheduledFor)),
-        now,
-      );
+      const isFinalRun =
+        schedule.maxRuns !== null && countCompletedRuns(schedule) + 1 >= schedule.maxRuns;
+      const nextRunAt = isFinalRun
+        ? null
+        : advanceNextRunAtPast(
+            schedule.cadence,
+            computeNextRunAt(schedule.cadence, new Date(scheduledFor)),
+            now,
+          ).toISOString();
 
       // Claim the due slot and advance its cursor in the same serialized update.
       // A tick can hold a stale list while another tick finishes this schedule.
@@ -794,7 +801,7 @@ export class ScheduleService {
       };
       const updated: StoredSchedule = {
         ...schedule,
-        nextRunAt: nextRunAt.toISOString(),
+        nextRunAt,
         updatedAt: now.toISOString(),
         runs: [...schedule.runs, runningRun],
       };
@@ -864,16 +871,17 @@ export class ScheduleService {
           ...updated,
           nextRunAt: null,
         };
-      } else if (updated.nextRunAt) {
+      } else {
+        // A final slot has no successor until its run limit is raised or cleared.
+        // Every runner invocation has a recorded run with this id.
+        const finishedRun = completedRuns.find((run) => run.id === params.runId)!;
+        const nextRunAt = updated.nextRunAt
+          ? new Date(updated.nextRunAt)
+          : computeNextRunAt(updated.cadence, new Date(finishedRun.scheduledFor));
+        // Move an overdue cursor past a long run without advancing a future one twice.
         updated = {
           ...updated,
-          // A long run can cross one or more cadence boundaries. Persist a
-          // future cursor so the next tick cannot immediately launch a catch-up run.
-          nextRunAt: advanceNextRunAtPast(
-            updated.cadence,
-            new Date(updated.nextRunAt),
-            now,
-          ).toISOString(),
+          nextRunAt: advanceNextRunAtPast(updated.cadence, nextRunAt, now).toISOString(),
         };
       }
 
