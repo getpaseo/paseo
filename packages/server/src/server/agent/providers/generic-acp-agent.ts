@@ -56,6 +56,7 @@ export class GenericACPAgentClient extends ACPAgentClient {
       extensionCommandsParser: options.extensionCommandsParser,
       catalogModelResolver: options.catalogModelResolver,
       now: options.now,
+      ...(options.providerId ? { catalogProviderId: options.providerId } : {}),
     });
 
     this.command = options.command;
