@@ -26,6 +26,7 @@ import {
   ScrollView,
   Text,
   View,
+  type LayoutChangeEvent,
   type PressableStateCallbackType,
 } from "react-native";
 import {
@@ -71,6 +72,7 @@ import {
   type ProjectPickerOption,
 } from "@/components/project-picker-options";
 import { Shortcut } from "@/components/ui/shortcut";
+import { useRevealActiveItem } from "@/components/ui/scroll-reveal";
 import { useKeyboardShortcutsAvailable } from "@/keyboard/availability";
 import { getIsElectronRuntime } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
@@ -252,7 +254,17 @@ function pathTestId(path: string): string {
   return `add-project-flow-path-${encodeURIComponent(path)}`;
 }
 
-function FlowRow({ option, active }: { option: FlowRowOption; active: boolean }) {
+function FlowRow({
+  option,
+  index,
+  active,
+  onRowLayout,
+}: {
+  option: FlowRowOption;
+  index: number;
+  active: boolean;
+  onRowLayout: (index: number, event: LayoutChangeEvent) => void;
+}) {
   const accessibilityState = useMemo(
     () => ({ disabled: option.disabled === true, selected: active }),
     [active, option.disabled],
@@ -265,11 +277,16 @@ function FlowRow({ option, active }: { option: FlowRowOption; active: boolean })
     ],
     [active, option.disabled],
   );
+  const handleLayout = useCallback(
+    (event: LayoutChangeEvent) => onRowLayout(index, event),
+    [index, onRowLayout],
+  );
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityState={accessibilityState}
       disabled={option.disabled}
+      onLayout={handleLayout}
       onPress={option.select}
       style={rowStyle}
       testID={option.testID}
@@ -384,6 +401,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   );
   const setHasHydratedWorkspaces = useSessionStore((store) => store.setHasHydratedWorkspaces);
   const inputRef = useRef<EditingTextInputHandle>(null);
+  const resultsRef = useRef<ScrollView>(null);
   const submissionInFlightRef = useRef(false);
   const browseInFlightRef = useRef(false);
   const query = page.kind === "new-directory-name" || page.kind === "method" ? "" : page.query;
@@ -715,6 +733,12 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   ]);
 
   const activeIndex = rows.length === 0 ? 0 : Math.min(page.activeIndex, rows.length - 1);
+  const rowListKey = useMemo(() => rows.map((row) => row.id).join("\u0000"), [rows]);
+  const { onItemLayout, onViewportLayout, onScroll } = useRevealActiveItem({
+    activeIndex,
+    listKey: rowListKey,
+    scrollRef: resultsRef,
+  });
   const createDirectory = useCallback(async () => {
     if (page.kind !== "new-directory-name" || !client) return;
     const name = page.name.trim();
@@ -905,9 +929,13 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
             ) : null}
           </View>
           <ScrollView
+            ref={resultsRef}
             style={styles.results}
             contentContainerStyle={styles.resultsContent}
             keyboardShouldPersistTaps="always"
+            onLayout={onViewportLayout}
+            onScroll={onScroll}
+            scrollEventThrottle={16}
             showsVerticalScrollIndicator={false}
             testID="add-project-flow-results"
           >
@@ -940,7 +968,13 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
             (!loading || page.kind === "github-search") &&
             (!queryError || page.kind === "github-search")
               ? rows.map((option, index) => (
-                  <FlowRow key={option.id} option={option} active={index === activeIndex} />
+                  <FlowRow
+                    key={option.id}
+                    option={option}
+                    index={index}
+                    active={index === activeIndex}
+                    onRowLayout={onItemLayout}
+                  />
                 ))
               : null}
             {!isSubmitting &&

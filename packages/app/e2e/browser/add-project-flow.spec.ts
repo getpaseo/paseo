@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { test, expect } from "../support/fixtures";
 import {
@@ -238,6 +238,59 @@ test.describe("Add Project command-center flow", () => {
       projectPath: projectPickerFixture.projectPath,
     });
     await expectProjectHasNoWorkspaces(projectId);
+  });
+
+  test("keyboard navigation keeps the selected row inside the visible results", async ({
+    page,
+  }) => {
+    const parentDirectory = await mkdtemp(path.join(homedir(), "paseo-e2e-scroll-"));
+    const parentQuery = path.basename(parentDirectory);
+    const rowCount = 16;
+    const rowPath = (index: number): string =>
+      path.join(parentDirectory, `scroll-probe-${String(index).padStart(2, "0")}`);
+    const rowTestId = (index: number): string =>
+      `add-project-flow-path-${encodeURIComponent(rowPath(index))}`;
+
+    try {
+      await Promise.all(
+        Array.from({ length: rowCount }, (_, index) => mkdir(rowPath(index), { recursive: true })),
+      );
+
+      await gotoAppShell(page);
+      await openAddProjectFlow(page);
+
+      await page.keyboard.press("Enter");
+      await expectAddProjectPage(page, "directory-search");
+      await page.keyboard.type(parentQuery);
+
+      const results = page.getByTestId("add-project-flow-results");
+      await expect(page.getByTestId(rowTestId(0))).toBeVisible({ timeout: 30_000 });
+
+      const viewportBox = await results.boundingBox();
+      const lastRowBox = await page.getByTestId(rowTestId(rowCount - 1)).boundingBox();
+      if (!viewportBox || !lastRowBox) {
+        throw new Error("Could not measure the Add Project results viewport");
+      }
+      // Guard: the list actually overflows, so this test can fail without the fix.
+      expect(lastRowBox.y + lastRowBox.height).toBeGreaterThan(viewportBox.y + viewportBox.height);
+
+      for (let count = 0; count < 12; count += 1) {
+        await page.keyboard.press("ArrowDown");
+      }
+
+      const selected = results.locator('[aria-selected="true"]');
+      await expect(selected).toHaveCount(1);
+      await expect
+        .poll(async () => {
+          const viewport = await results.boundingBox();
+          const box = await selected.boundingBox();
+          if (!viewport || !box) return false;
+          return box.y >= viewport.y - 1 && box.y + box.height <= viewport.y + viewport.height + 1;
+        })
+        .toBe(true);
+    } finally {
+      await rm(parentDirectory, { recursive: true, force: true });
+    }
   });
 
   test("a complete repository URL remains selectable without a GitHub search result", async ({
