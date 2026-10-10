@@ -90,9 +90,11 @@ interface StubTerminal {
   resize?: (cols: number, rows: number) => void;
   focus: () => void;
   refresh?: (start: number, end: number) => void;
+  clearTextureAtlas?: () => void;
   options?: { theme?: unknown; scrollback?: number; fontFamily?: string; fontSize?: number };
   rows?: number;
   cols?: number;
+  _core?: unknown;
 }
 
 interface RuntimeFitProbe {
@@ -679,6 +681,98 @@ describe("terminal-emulator-runtime", () => {
       forceRefresh: true,
       shouldClaim: false,
     });
+  });
+
+  it("repairs the renderer when the page becomes visible again", () => {
+    const runtime = new TerminalEmulatorRuntime();
+    const fitAndEmitResize = vi.fn();
+    const refresh = vi.fn();
+    const clearTextureAtlas = vi.fn();
+    const handleDevicePixelRatioChange = vi.fn();
+    const handleResize = vi.fn();
+    const terminal: StubTerminal = {
+      write: () => {},
+      reset: () => {},
+      focus: () => {},
+      refresh,
+      clearTextureAtlas,
+      rows: 12,
+      cols: 40,
+      _core: {
+        _renderService: {
+          _renderer: {
+            value: {
+              _canvas: { width: 200, height: 100 },
+              _devicePixelRatio: window.devicePixelRatio,
+              dimensions: { device: { canvas: { width: 400, height: 200 } } },
+              handleDevicePixelRatioChange,
+              handleResize,
+            },
+          },
+        },
+      },
+    };
+    (runtime as unknown as { terminal: StubTerminal }).terminal = terminal;
+    (runtime as unknown as RuntimeFitProbe).fitAndEmitResize = fitAndEmitResize;
+    (globalThis as { document?: { visibilityState?: string } }).document = {
+      visibilityState: "visible",
+    };
+
+    (
+      runtime as unknown as {
+        handleVisibilityRestore: () => void;
+      }
+    ).handleVisibilityRestore();
+
+    expect(handleDevicePixelRatioChange).toHaveBeenCalled();
+    expect(handleResize).toHaveBeenCalledWith(40, 12);
+    expect(clearTextureAtlas).toHaveBeenCalled();
+    expect(refresh).toHaveBeenCalledWith(0, 11);
+  });
+
+  it("skips the backing-store repair when the canvas is already current", () => {
+    const runtime = new TerminalEmulatorRuntime();
+    const handleDevicePixelRatioChange = vi.fn();
+    const handleResize = vi.fn();
+    const dpr = window.devicePixelRatio;
+    const width = 400 * dpr;
+    const height = 200 * dpr;
+    const terminal: StubTerminal = {
+      write: () => {},
+      reset: () => {},
+      focus: () => {},
+      refresh: () => {},
+      clearTextureAtlas: () => {},
+      rows: 12,
+      cols: 40,
+      _core: {
+        _renderService: {
+          _renderer: {
+            value: {
+              _canvas: { width, height },
+              _devicePixelRatio: dpr,
+              dimensions: { device: { canvas: { width, height } } },
+              handleDevicePixelRatioChange,
+              handleResize,
+            },
+          },
+        },
+      },
+    };
+    (runtime as unknown as { terminal: StubTerminal }).terminal = terminal;
+    (runtime as unknown as RuntimeFitProbe).fitAndEmitResize = vi.fn();
+    (globalThis as { document?: { visibilityState?: string } }).document = {
+      visibilityState: "visible",
+    };
+
+    (
+      runtime as unknown as {
+        handleVisibilityRestore: () => void;
+      }
+    ).handleVisibilityRestore();
+
+    expect(handleDevicePixelRatioChange).not.toHaveBeenCalled();
+    expect(handleResize).not.toHaveBeenCalled();
   });
 
   it("does not refit while the page is still hidden", () => {

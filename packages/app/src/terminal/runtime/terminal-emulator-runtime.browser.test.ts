@@ -679,4 +679,112 @@ describe("terminal emulator runtime in a real browser", () => {
     expect(mounted.openedUrls).toEqual(["https://example.com/plain", "https://example.com/osc8"]);
     expect(confirm).not.toHaveBeenCalled();
   });
+
+  it("repairs the renderer on the first fit after a hidden container is revealed", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    await settleMountRefits();
+
+    const terminal = window.__paseoTerminal as unknown as {
+      clearTextureAtlas: () => void;
+    };
+    const clearTextureAtlas = vi.spyOn(terminal, "clearTextureAtlas");
+
+    // RetainedPanel hides inactive workspaces with display:none, which zeroes
+    // the box; the zero-size fit records that and returns.
+    mounted.root.style.display = "none";
+    mounted.runtime.resize({ forceRefresh: true });
+    mounted.root.style.display = "";
+    const sizesBefore = mounted.sizes.length;
+    mounted.runtime.resize({});
+
+    expect(clearTextureAtlas).toHaveBeenCalled();
+    // The reveal fit must emit even though the measured size is unchanged —
+    // the daemon-side PTY may have drifted while the pane was hidden.
+    expect(mounted.sizes.length).toBeGreaterThan(sizesBefore);
+  });
+
+  it("does not repair the renderer on ordinary resizes", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    await settleMountRefits();
+
+    const terminal = window.__paseoTerminal as unknown as {
+      clearTextureAtlas: () => void;
+    };
+    const clearTextureAtlas = vi.spyOn(terminal, "clearTextureAtlas");
+
+    mounted.root.style.width = "360px";
+    mounted.runtime.resize({ forceRefresh: true });
+    mounted.runtime.resize();
+
+    expect(clearTextureAtlas).not.toHaveBeenCalled();
+  });
+
+  it("re-fits the grid to the container after a snapshot restores a stale width", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    await settleMountRefits();
+
+    const terminal = getBrowserTerminal();
+    const fitted = { rows: terminal.rows, cols: terminal.cols };
+    expect(fitted.cols).toBeGreaterThan(40);
+
+    // A remount replays the cached snapshot, which resizes the grid to the
+    // width recorded when the snapshot was produced — possibly a stale daemon
+    // width. After the write commits the grid must return to the container's
+    // fitted size, otherwise the pane stays desynced until a manual resize.
+    let committed = false;
+    mounted.runtime.renderSnapshot({
+      state: {
+        rows: 10,
+        cols: 40,
+        scrollback: [],
+        grid: [[{ char: "x" }]],
+        cursor: { row: 0, col: 1 },
+      },
+      onCommitted: () => {
+        committed = true;
+      },
+    });
+
+    await waitFor({ predicate: () => committed });
+    // The scrollbar appearing for the deep snapshot can cost one column; the
+    // contract is that the grid returns to the container's fitted size instead
+    // of staying pinned at the snapshot's recorded width.
+    expect(terminal.cols).toBeGreaterThanOrEqual(fitted.cols - 1);
+    expect(terminal.rows).toBe(fitted.rows);
+  });
+
+  it("repairs and re-emits when a detached offscreen pane re-enters the viewport", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    await settleMountRefits();
+
+    const terminal = window.__paseoTerminal as unknown as {
+      clearTextureAtlas: () => void;
+    };
+    const clearTextureAtlas = vi.spyOn(terminal, "clearTextureAtlas");
+
+    // Detached hiding parks the panel offscreen while keeping its box — so
+    // ResizeObserver and the zero-size path see nothing. Only the viewport
+    // intersection flips, which must drive the visibility-restore path.
+    mounted.root.style.position = "fixed";
+    mounted.root.style.top = "-50000px";
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    mounted.root.style.position = "";
+    mounted.root.style.top = "";
+
+    const sizesBefore = mounted.sizes.length;
+    await waitFor({ predicate: () => clearTextureAtlas.mock.calls.length > 0 });
+    await waitFor({ predicate: () => mounted.sizes.length > sizesBefore });
+  });
 });
