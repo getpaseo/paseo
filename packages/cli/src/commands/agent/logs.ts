@@ -107,6 +107,7 @@ function lastNonWhitespaceIndex(text: string): number {
  */
 export function createFollowTranscriptWriter(
   write: (chunk: string) => void = (chunk) => void process.stdout.write(chunk),
+  filter?: string,
 ): FollowTranscriptWriter {
   let pending: PendingStreamingText | null = null;
 
@@ -175,6 +176,10 @@ export function createFollowTranscriptWriter(
 
   return {
     push(item, turnId) {
+      if (!matchesFilter(item, filter)) {
+        closePending();
+        return;
+      }
       if (item.type === "assistant_message" || item.type === "reasoning") {
         const chain = continuesChain(item, turnId) && pending ? pending : startChain(item, turnId);
         chain.buffer += item.text;
@@ -272,12 +277,19 @@ export async function runLogsCommand(
         await client.close().catch(() => {});
         process.exit(1);
       }
-      await runFollowMode({ client, agentId: resolvedId, options, sinceTimestampMs });
+      await runFollowMode({
+        client,
+        agentId: resolvedId,
+        options,
+        sinceTimestampMs,
+      });
       return;
     }
 
     // Fetch timeline directly via cursor RPC.
-    let timelineItems = await fetchAgentTimelineItems(client, resolvedId, { sinceTimestampMs });
+    let timelineItems = await fetchAgentTimelineItems(client, resolvedId, {
+      sinceTimestampMs,
+    });
 
     // Apply filter
     if (options.filter) {
@@ -350,7 +362,7 @@ async function runFollowMode({
   const tailLabel =
     tailCount === 0 ? "no history" : `last ${tailCount} entr${tailCount === 1 ? "y" : "ies"}`;
 
-  const writer = createFollowTranscriptWriter();
+  const writer = createFollowTranscriptWriter(undefined, options.filter);
 
   const unsubscribe = client.subscribeAgentTimeline(agentId, (message) => {
     if (message.type === "agent.timeline.replacement") {
@@ -376,10 +388,6 @@ async function runFollowMode({
         return;
       }
       const item = message.payload.event.item;
-      // Apply filter
-      if (options.filter && !matchesFilter(item, options.filter)) {
-        return;
-      }
       writer.push(item, message.payload.event.turnId);
     } else if (
       message.payload.event.type === "turn_completed" ||

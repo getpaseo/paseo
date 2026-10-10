@@ -30,13 +30,25 @@ describe("createFollowTranscriptWriter", () => {
       chunks.push(chunk);
     });
 
-    writer.push({ type: "assistant_message", text: "first line", messageId: "msg_1" });
+    writer.push({
+      type: "assistant_message",
+      text: "first line",
+      messageId: "msg_1",
+    });
     expect(chunks.join("")).toBe("first line");
 
-    writer.push({ type: "assistant_message", text: "\nsecond", messageId: "msg_1" });
+    writer.push({
+      type: "assistant_message",
+      text: "\nsecond",
+      messageId: "msg_1",
+    });
     expect(chunks.join("")).toBe("first line\nsecond");
 
-    writer.push({ type: "assistant_message", text: " line\n", messageId: "msg_1" });
+    writer.push({
+      type: "assistant_message",
+      text: " line\n",
+      messageId: "msg_1",
+    });
     expect(chunks.join("")).toBe("first line\nsecond line");
 
     writer.end();
@@ -45,8 +57,16 @@ describe("createFollowTranscriptWriter", () => {
 
   it("emits the same transcript the one-shot command prints for the same items", () => {
     const items: AgentTimelineItem[] = [
-      { type: "assistant_message", text: "Plan for paseo-pr", messageId: "msg_1" },
-      { type: "assistant_message", text: "-cycle:\n- build\n- test\n", messageId: "msg_1" },
+      {
+        type: "assistant_message",
+        text: "Plan for paseo-pr",
+        messageId: "msg_1",
+      },
+      {
+        type: "assistant_message",
+        text: "-cycle:\n- build\n- test\n",
+        messageId: "msg_1",
+      },
       { type: "error", message: "boom" },
       { type: "assistant_message", text: "done", messageId: "msg_2" },
     ];
@@ -85,9 +105,33 @@ describe("createFollowTranscriptWriter", () => {
     expect(output).toBe("[Thought] checking the lockfile\nthen the build\n");
   });
 
+  it("keeps reasoning blocks separate across hidden timeline items", () => {
+    let output = "";
+    const writer = createFollowTranscriptWriter((chunk) => {
+      output += chunk;
+    }, "reasoning");
+    writer.push({ type: "reasoning", text: "checking files" });
+    writer.push({
+      type: "tool_call",
+      callId: "tool_1",
+      name: "Bash",
+      status: "completed",
+      error: null,
+      detail: { type: "unknown", input: "ls", output: "files" },
+    });
+    writer.push({ type: "reasoning", text: "running tests" });
+    writer.end();
+
+    expect(output).toBe("[Thought] checking files\n[Thought] running tests\n");
+  });
+
   it("keeps interior blank lines and drops trailing whitespace", () => {
     const output = collect([
-      { type: "assistant_message", text: "  # Title\n\nBody\n\n  ", messageId: "msg_1" },
+      {
+        type: "assistant_message",
+        text: "  # Title\n\nBody\n\n  ",
+        messageId: "msg_1",
+      },
     ]);
 
     expect(output).toBe("# Title\n\nBody\n");

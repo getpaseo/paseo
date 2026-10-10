@@ -25,7 +25,9 @@ test("logs --follow preserves the same assistant text as one-shot logs", async (
     follow = spawn(
       process.execPath,
       [
-        fileURLToPath(import.meta.resolve("tsx/cli")),
+        "--conditions=source",
+        "--import",
+        "tsx",
         fileURLToPath(new URL("../../../../cli/src/index.ts", import.meta.url)),
         "--host",
         `127.0.0.1:${daemon.port}`,
@@ -37,7 +39,10 @@ test("logs --follow preserves the same assistant text as one-shot logs", async (
         "--filter",
         "assistant_message",
       ],
-      { env: { ...process.env, PASEO_HOME: daemon.paseoHome }, stdio: ["ignore", "pipe", "pipe"] },
+      {
+        env: { ...process.env, PASEO_HOME: daemon.paseoHome },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
     );
     const exited = once(follow, "exit");
     follow.stdout?.on("data", (chunk: Buffer) => {
@@ -46,7 +51,17 @@ test("logs --follow preserves the same assistant text as one-shot logs", async (
     follow.stderr?.on("data", (chunk: Buffer) => {
       stderr += chunk.toString();
     });
-    await expect.poll(() => stdout, { timeout: 20_000 }).toContain("Following logs");
+    await expect
+      .poll(
+        () => {
+          if (follow?.exitCode !== null) {
+            throw new Error(`CLI exited before following logs: ${stderr}`);
+          }
+          return stdout;
+        },
+        { timeout: 20_000 },
+      )
+      .toContain("Following logs");
     await client.sendMessage(agent.id, "respond with exactly: paseo-pr-cycle 한국어 보고서");
     await client.waitForAgentUpsert(agent.id, (snapshot) => snapshot.status === "idle", 20_000);
     const transcript = await client.fetchAgentTimeline(agent.id, {
