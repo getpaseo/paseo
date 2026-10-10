@@ -13,6 +13,7 @@ import {
   type ProviderRuntimeSettings,
 } from "../../../provider-launch-config.js";
 import type { ManagedProcessRegistry } from "../../../../managed-processes/managed-processes.js";
+import { resolveOpenCodeBinary } from "../binary.js";
 import { resolveOpenCodeHomeDir } from "../paths.js";
 import { OpenCodeHttpError } from "../http-error.js";
 import { raceProviderRefreshAbort } from "../../../provider-refresh-deadline.js";
@@ -149,7 +150,8 @@ export class V2Runtime {
     const { settings, managedProcesses, logger } = this.options;
     const launch = await resolveProviderLaunch({
       commandConfig: settings?.command,
-      defaultBinary: "opencode",
+      defaultBinary:
+        settings?.command?.mode === "replace" ? "opencode" : await resolveOpenCodeBinary(),
     });
     const cwd = resolveOpenCodeHomeDir();
     await mkdir(cwd, { recursive: true });
