@@ -32,6 +32,7 @@ import type {
 import {
   createProviderEnv,
   type ProviderRuntimeSettings,
+  type ResolvedProviderLaunch,
 } from "../../../provider-launch-config.js";
 import type { ManagedProcessRegistry } from "../../../../managed-processes/managed-processes.js";
 
@@ -45,6 +46,7 @@ import { modelRef, modesFromV2, modelsFromV2 } from "./mapping.js";
 interface V2AgentOptions {
   logger: Logger;
   settings?: ProviderRuntimeSettings;
+  resolvedLaunch?: ResolvedProviderLaunch;
   managedProcesses?: ManagedProcessRegistry;
   bridge?: OpenCodeBridge;
   runtime?: Pick<V2Runtime, "acquire" | "shutdown">;
@@ -61,6 +63,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
       options.runtime ??
       new V2Runtime({
         ...options,
+        resolvedLaunch: options.resolvedLaunch,
         decorateEnv: options.bridge ? (env) => options.bridge!.decorateV2ServerEnv(env) : undefined,
       });
   }
