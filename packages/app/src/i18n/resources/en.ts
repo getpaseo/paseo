@@ -1931,6 +1931,8 @@ export const en = {
       noPreview: "No preview available",
       binaryPreviewUnavailable: "Binary preview unavailable",
       tooLargeToDisplay: "This file is too large to display",
+      markdownPreviewTooLarge:
+        "This document is too large for Markdown preview. Switch to {{source}} to read it.",
       failedToLoad: "Failed to load file",
       failedToLoadPreview: "Failed to load file preview",
       editor: {

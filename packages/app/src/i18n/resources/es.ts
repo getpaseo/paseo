@@ -1954,6 +1954,8 @@ export const es: TranslationResources = {
       noPreview: "No hay vista previa disponible",
       binaryPreviewUnavailable: "Vista previa binaria no disponible",
       tooLargeToDisplay: "Este archivo es demasiado grande para mostrarlo",
+      markdownPreviewTooLarge:
+        "Este documento es demasiado grande para la vista previa de Markdown. Cambia a {{source}} para leerlo.",
       failedToLoad: "No se pudo cargar el archivo",
       failedToLoadPreview: "No se pudo cargar la vista previa del archivo",
       editor: {

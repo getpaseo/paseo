@@ -1884,6 +1884,7 @@ export const zhCN: TranslationResources = {
       noPreview: "没有可用预览",
       binaryPreviewUnavailable: "二进制预览不可用",
       tooLargeToDisplay: "此文件过大，无法显示",
+      markdownPreviewTooLarge: "此文档过长，无法预览 Markdown。请切换到 {{source}} 阅读。",
       failedToLoad: "加载文件失败",
       failedToLoadPreview: "加载文件预览失败",
       editor: {

@@ -640,6 +640,35 @@ test.describe("CodeMirror workspace file editing", () => {
     await expect(page.getByTestId("workspace-tab-modified-file_draft.ts")).toBeVisible();
   });
 
+  test("blocks a restored long Markdown preview and lets the user switch to Source", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const workspace = await withWorkspace({ prefix: "long-markdown-preview-" });
+    const source = Array.from(
+      { length: 3320 },
+      (_, index) => `Paragraph ${index}: ${"Long document content. ".repeat(3)}`,
+    ).join("\n");
+    await writeFile(path.join(workspace.repoPath, "large.md"), source, "utf8");
+    await workspace.navigateTo();
+    await openWorkspaceFile(page, "large.md");
+    const warning = page.getByTestId("file-markdown-preview-too-large");
+    await expect(warning).toBeVisible();
+    await page.reload();
+    await expect(warning).toBeVisible();
+    await selectFileView(page, "Source");
+    await expect(editor(page)).toContainText("Paragraph 0:");
+    await selectFileView(page, "Preview");
+    await expect(warning).toBeVisible();
+    await page
+      .getByTestId("workspace-tab-file_large.md")
+      .filter({ visible: true })
+      .first()
+      .click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Close", exact: true }).click();
+    await expect(warning).toHaveCount(0);
+  });
+
   test("refreshes Markdown and images while preserving Preview and Source behavior", async ({
     page,
     withWorkspace,

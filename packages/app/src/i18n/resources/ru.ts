@@ -1938,6 +1938,8 @@ export const ru: TranslationResources = {
       noPreview: "Предварительный просмотр недоступен",
       binaryPreviewUnavailable: "Предварительный просмотр двоичного файла недоступен.",
       tooLargeToDisplay: "Этот файл слишком велик для отображения",
+      markdownPreviewTooLarge:
+        "Этот документ слишком большой для предпросмотра Markdown. Переключитесь на {{source}}, чтобы прочитать его.",
       failedToLoad: "Не удалось загрузить файл",
       failedToLoadPreview: "Не удалось загрузить предварительный просмотр файла.",
       editor: {

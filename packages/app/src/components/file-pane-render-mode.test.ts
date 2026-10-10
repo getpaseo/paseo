@@ -32,6 +32,33 @@ describe("filePreviewRenderKind", () => {
     expect(filePreviewRenderKind("plan.htm")).toBe("html");
   });
 
+  it("classifies the reported long-document shape as too large for preview", () => {
+    const source = Array.from({ length: 3320 }, (_, i) => `Paragraph ${i}: ${"x".repeat(40)}`).join(
+      "\n",
+    );
+    expect(filePreviewRenderKind("notes.md", source)).toBe("markdown-too-large");
+  });
+
+  it("bounds characters independently of line count", () => {
+    expect(filePreviewRenderKind("notes.md", "x".repeat(64 * 1024))).toBe("markdown");
+    expect(filePreviewRenderKind("notes.md", "x".repeat(64 * 1024 + 1))).toBe("markdown-too-large");
+  });
+
+  it("bounds many short lines independently of character count", () => {
+    expect(filePreviewRenderKind("notes.md", "x\n".repeat(999))).toBe("markdown");
+    expect(filePreviewRenderKind("notes.md", "x\n".repeat(1000))).toBe("markdown-too-large");
+    expect(filePreviewRenderKind("notes.MARKDOWN", "x\r\n".repeat(1000))).toBe(
+      "markdown-too-large",
+    );
+    expect(filePreviewRenderKind("notes.md", "x\r".repeat(1000))).toBe("markdown-too-large");
+  });
+
+  it("preserves empty Markdown, HTML, and source-file behavior", () => {
+    expect(filePreviewRenderKind("notes.md", "")).toBe("markdown");
+    expect(filePreviewRenderKind("notes.html", "x".repeat(100_000))).toBe("html");
+    expect(filePreviewRenderKind("notes.txt", "x".repeat(100_000))).toBe(null);
+  });
+
   it("returns null for files without a rendered preview", () => {
     expect(filePreviewRenderKind("src/index.ts")).toBe(null);
     expect(filePreviewRenderKind("page.mdx")).toBe(null);

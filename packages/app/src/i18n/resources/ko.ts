@@ -1916,6 +1916,8 @@ export const ko: TranslationResources = {
       noPreview: "사용 가능한 미리보기가 없습니다",
       binaryPreviewUnavailable: "바이너리 미리보기를 사용할 수 없습니다",
       tooLargeToDisplay: "이 파일은 너무 커서 표시할 수 없습니다",
+      markdownPreviewTooLarge:
+        "이 문서는 Markdown 미리 보기에 너무 큽니다. {{source}}로 전환하여 읽으세요.",
       failedToLoad: "파일을 불러오지 못했습니다",
       failedToLoadPreview: "파일 미리보기를 불러오지 못했습니다",
       editor: {

@@ -1925,6 +1925,8 @@ export const ja: TranslationResources = {
       noPreview: "プレビューが利用できません",
       binaryPreviewUnavailable: "バイナリプレビューが利用できません",
       tooLargeToDisplay: "このファイルは大きすぎて表示できません",
+      markdownPreviewTooLarge:
+        "この文書は Markdown プレビューには大きすぎます。{{source}} に切り替えて読んでください。",
       failedToLoad: "ファイルの読み込みに失敗しました",
       failedToLoadPreview: "ファイルプレビューの読み込みに失敗しました",
       editor: {

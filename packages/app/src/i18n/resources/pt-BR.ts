@@ -1939,6 +1939,8 @@ export const ptBR: TranslationResources = {
       noPreview: "Nenhuma prévia disponível",
       binaryPreviewUnavailable: "Prévia binária indisponível",
       tooLargeToDisplay: "Este arquivo é grande demais para exibir",
+      markdownPreviewTooLarge:
+        "Este documento é grande demais para a prévia de Markdown. Mude para {{source}} para lê-lo.",
       failedToLoad: "Falha ao carregar arquivo",
       failedToLoadPreview: "Falha ao carregar prévia do arquivo",
       editor: {

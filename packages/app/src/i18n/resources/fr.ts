@@ -1950,6 +1950,8 @@ export const fr: TranslationResources = {
       noPreview: "Aucun aperçu disponible",
       binaryPreviewUnavailable: "Aperçu indisponible pour un fichier binaire",
       tooLargeToDisplay: "Ce fichier est trop volumineux pour être affiché",
+      markdownPreviewTooLarge:
+        "Ce document est trop volumineux pour un aperçu Markdown. Passez à {{source}} pour le lire.",
       failedToLoad: "Impossible de charger le fichier",
       failedToLoadPreview: "Impossible de charger l’aperçu du fichier",
       editor: {

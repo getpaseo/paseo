@@ -142,7 +142,7 @@ function FilePreviewBody({
   // the highlighted source view even for renderable files.
   const renderKind =
     preview?.kind === "text" && !location.lineStart && mode !== "source"
-      ? filePreviewRenderKind(filePath)
+      ? filePreviewRenderKind(filePath, preview.content ?? "")
       : null;
 
   const previewScrollRef = useRef<RNScrollView>(null);
@@ -170,6 +170,16 @@ function FilePreviewBody({
       return (
         <View style={styles.previewScrollContainer}>
           <FileHtmlPreview html={preview.content ?? ""} testID="file-html-preview" />
+        </View>
+      );
+    }
+
+    if (renderKind === "markdown-too-large") {
+      return (
+        <View style={styles.centerState} testID="file-markdown-preview-too-large">
+          <Text style={styles.emptyText}>
+            {t("panels.file.markdownPreviewTooLarge", { source: t("panels.file.editor.source") })}
+          </Text>
         </View>
       );
     }
