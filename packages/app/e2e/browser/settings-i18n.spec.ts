@@ -15,6 +15,13 @@ test("Settings language selector switches General labels", async ({ page }) => {
   await page.getByRole("menuitem", { name: "简体中文 - Simplified Chinese", exact: true }).click();
 
   await expect(page.getByText("默认发送", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(/智能体运行时，Enter/).first()).toBeVisible();
+  const screenshotPath = test.info().outputPath("simplified-chinese-settings.png");
+  await page.screenshot({ path: screenshotPath, fullPage: true });
+  await test.info().attach("simplified-chinese-settings", {
+    path: screenshotPath,
+    contentType: "image/png",
+  });
 
   await page.getByRole("button", { name: "简体中文", exact: true }).click();
   await page.getByRole("menuitem", { name: "English - 英语", exact: true }).click();
