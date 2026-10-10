@@ -1978,7 +1978,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         <RenderProfile id="ComposerTextSurface">
           <ComposerTextSurface
             readOnly={readOnly}
-            value={valueRef.current}
+            value={readOnly ? value : valueRef.current}
             textInputRef={assignTextInput}
             textInputStyle={textInputStyle}
             readOnlyTextStyle={readOnlyTextStyle}
