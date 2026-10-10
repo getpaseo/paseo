@@ -114,6 +114,7 @@ export interface StreamStrategy {
     relation: NeighborRelation,
   ) => StreamItem | undefined;
   collectAssistantResponseContent: (items: StreamItem[], startIndex: number) => string;
+  concatStreamSegments: (history: StreamItem[], liveHead: StreamItem[]) => StreamItem[];
   isNearBottom: (input: StreamNearBottomInput) => boolean;
   getBottomOffset: (metrics: StreamViewportMetrics) => number;
   getEdgeSlotProps: (
@@ -197,6 +198,8 @@ export function createStreamStrategy(config: StreamStrategyConfig): StreamStrate
       }
       return messages.toReversed().join("\n\n");
     },
+    concatStreamSegments: (history, liveHead) =>
+      config.orderTailReverse ? [...liveHead, ...history] : [...history, ...liveHead],
     isNearBottom: (input) => config.isNearBottom(input),
     getBottomOffset: (metrics) => config.getBottomOffset(metrics),
     getEdgeSlotProps: (component, gapSize) => {
@@ -296,6 +299,14 @@ export function collectAssistantResponseContentForStreamRenderStrategy(params: {
   startIndex: number;
 }): string {
   return params.strategy.collectAssistantResponseContent(params.items, params.startIndex);
+}
+
+export function concatStreamSegmentsForStreamRenderStrategy(params: {
+  strategy: StreamStrategy;
+  history: StreamItem[];
+  liveHead: StreamItem[];
+}): StreamItem[] {
+  return params.strategy.concatStreamSegments(params.history, params.liveHead);
 }
 
 export function isNearBottomForStreamRenderStrategy(

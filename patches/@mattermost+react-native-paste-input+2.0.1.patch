@@ -28,22 +28,51 @@ index 73466dd..8440ac9 100644
  
    auto textSize = textLayoutManager_
 diff --git a/node_modules/@mattermost/react-native-paste-input/android/src/main/java/com/mattermost/pasteinputtext/PasteInputEditText.kt b/node_modules/@mattermost/react-native-paste-input/android/src/main/java/com/mattermost/pasteinputtext/PasteInputEditText.kt
-index 9e429b8..1d10014 100644
+index 1794b53..eca5e57 100644
 --- a/node_modules/@mattermost/react-native-paste-input/android/src/main/java/com/mattermost/pasteinputtext/PasteInputEditText.kt
 +++ b/node_modules/@mattermost/react-native-paste-input/android/src/main/java/com/mattermost/pasteinputtext/PasteInputEditText.kt
-@@ -36,2 +36,2 @@ class PasteInputEditText(context: ThemedReactContext) : ReactEditText(context) {
+@@ -33,8 +33,8 @@ class PasteInputEditText(context: ThemedReactContext) : ReactEditText(context) {
+     return mOnPasteListener
+   }
+ 
 -  override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
 -    val ic = super.onCreateInputConnection(outAttrs)
 +  override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
 +    val ic = super.onCreateInputConnection(outAttrs) ?: return null
-@@ -58 +58 @@ class PasteInputEditText(context: ThemedReactContext) : ReactEditText(context) {
+ 
+     EditorInfoCompat.setContentMimeTypes(outAttrs, arrayOf("*/*"))
+ 
+@@ -55,6 +55,6 @@ class PasteInputEditText(context: ThemedReactContext) : ReactEditText(context) {
+       true
+     }
+ 
 -    return InputConnectionCompat.createWrapper(ic!!, outAttrs, callback)
 +    return InputConnectionCompat.createWrapper(ic, outAttrs, callback)
+   }
+ }
+diff --git a/node_modules/@mattermost/react-native-paste-input/ios/PasteInputModule.mm b/node_modules/@mattermost/react-native-paste-input/ios/PasteInputModule.mm
+index 59ff531..2aa42cf 100644
+--- a/node_modules/@mattermost/react-native-paste-input/ios/PasteInputModule.mm
++++ b/node_modules/@mattermost/react-native-paste-input/ios/PasteInputModule.mm
+@@ -453,6 +453,13 @@ static void pasteInputInterceptedPasteIMP(id self, SEL _cmd, id sender)
+     NSArray<NSDictionary *> *files = [pasteboard getCopiedFiles];
+ 
+     if (files.count == 0) {
++        if (pasteboard.hasImages) {
++            [module sendEventWithName:@"onPaste" body:@{
++                @"nativeID": nativeID,
++                @"data": @[],
++            }];
++            return;
++        }
+         struct objc_super superData = {
+             .receiver = self,
+             .super_class = originalClass
 diff --git a/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteInput.js b/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteInput.js
-index 51b9dfa..501badf 100644
+index 51b9dfa..4f355e0 100644
 --- a/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteInput.js
 +++ b/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteInput.js
-@@ -54,17 +54,25 @@ function PasteInputIOSComponent(props, forwardedRef) {
+@@ -54,52 +54,72 @@ function PasteInputIOSComponent(props, forwardedRef) {
  
    // Expose the TextInput ref to parent components (same as Android)
    // TextInput already has all methods from PasteTextInputInstance (clear, isFocused, setSelection)
@@ -80,7 +109,83 @@ index 51b9dfa..501badf 100644
  
    // Register/unregister with native module on mount/unmount
    (0, _react.useEffect)(() => {
-@@ -125,17 +133,15 @@ function PasteInputAndroidComponent(props, forwardedRef) {
+-    // Get the native tag from the ref's internal __nativeTag property
+-    // @ts-ignore - __nativeTag is an internal property
+-    const nativeTag = textInputRef.current?.__nativeTag;
+-    if (!nativeTag) {
+-      if (__DEV__) {
+-        console.warn('[PasteInput] Could not get native tag from ref');
++    let cancelled = false;
++    let attempts = 0;
++    let nativeID = null;
++    let subscription = null;
++    let retryTimer = null;
++    const register = () => {
++      if (cancelled) {
++        return;
+       }
+-      return;
+-    }
+-
+-    // Use the actual React native tag as the identifier
+-    const nativeID = `PasteInput_${nativeTag}`;
+-    nativeIDRef.current = nativeID;
+-
+-    // Register this TextInput instance by passing the nativeID
+-    _NativePasteInputModule.default.registerTextInput(nativeID, {
+-      disableCopyPaste,
+-      smartPunctuation
+-    });
+-
+-    // Listen for paste events
+-    const subscription = PasteInputEventEmitter.addListener('onPaste', event => {
+-      // Only handle events for this instance
+-      if (event.nativeID === nativeID) {
+-        onPasteRef.current?.(event.error || null, event.data);
++      const nativeTag = textInputRef.current?.__nativeTag;
++      if (!nativeTag) {
++        if (attempts < 10) {
++          attempts += 1;
++          retryTimer = setTimeout(register, 50);
++          return;
++        }
++        if (__DEV__) {
++          console.warn('[PasteInput] Could not get native tag from ref');
++        }
++        return;
+       }
+-    });
+-
+-    // Cleanup on unmount
++      nativeID = `PasteInput_${nativeTag}`;
++      nativeIDRef.current = nativeID;
++      _NativePasteInputModule.default.registerTextInput(nativeID, {
++        disableCopyPaste,
++        smartPunctuation
++      });
++      const registeredID = nativeID;
++      subscription = PasteInputEventEmitter.addListener('onPaste', event => {
++        if (event.nativeID === registeredID) {
++          onPasteRef.current?.(event.error || null, event.data);
++        }
++      });
++    };
++    register();
+     return () => {
+-      subscription.remove();
+-      _NativePasteInputModule.default.unregisterTextInput(nativeID);
++      cancelled = true;
++      if (retryTimer) {
++        clearTimeout(retryTimer);
++      }
++      subscription?.remove();
++      if (nativeID) {
++        _NativePasteInputModule.default.unregisterTextInput(nativeID);
++      }
+     };
+   }, []); // Empty deps - only run on mount/unmount
+ 
+@@ -125,17 +145,15 @@ function PasteInputAndroidComponent(props, forwardedRef) {
    const pasteTextInputRef = (0, _react.useRef)(null);
  
    // Expose the PasteTextInput ref to parent components (same as iOS)
@@ -157,10 +262,10 @@ index 5119e65..287216a 100644
      setMostRecentEventCount(event.nativeEvent.eventCount);
    };
 diff --git a/node_modules/@mattermost/react-native-paste-input/lib/module/PasteInput.js b/node_modules/@mattermost/react-native-paste-input/lib/module/PasteInput.js
-index 75fe015..1d3cd64 100644
+index 75fe015..ac9d146 100644
 --- a/node_modules/@mattermost/react-native-paste-input/lib/module/PasteInput.js
 +++ b/node_modules/@mattermost/react-native-paste-input/lib/module/PasteInput.js
-@@ -49,17 +49,25 @@ function PasteInputIOSComponent(props, forwardedRef) {
+@@ -49,52 +49,72 @@ function PasteInputIOSComponent(props, forwardedRef) {
  
    // Expose the TextInput ref to parent components (same as Android)
    // TextInput already has all methods from PasteTextInputInstance (clear, isFocused, setSelection)
@@ -197,7 +302,83 @@ index 75fe015..1d3cd64 100644
  
    // Register/unregister with native module on mount/unmount
    useEffect(() => {
-@@ -120,17 +128,15 @@ function PasteInputAndroidComponent(props, forwardedRef) {
+-    // Get the native tag from the ref's internal __nativeTag property
+-    // @ts-ignore - __nativeTag is an internal property
+-    const nativeTag = textInputRef.current?.__nativeTag;
+-    if (!nativeTag) {
+-      if (__DEV__) {
+-        console.warn('[PasteInput] Could not get native tag from ref');
++    let cancelled = false;
++    let attempts = 0;
++    let nativeID = null;
++    let subscription = null;
++    let retryTimer = null;
++    const register = () => {
++      if (cancelled) {
++        return;
+       }
+-      return;
+-    }
+-
+-    // Use the actual React native tag as the identifier
+-    const nativeID = `PasteInput_${nativeTag}`;
+-    nativeIDRef.current = nativeID;
+-
+-    // Register this TextInput instance by passing the nativeID
+-    NativePasteInputModule.registerTextInput(nativeID, {
+-      disableCopyPaste,
+-      smartPunctuation
+-    });
+-
+-    // Listen for paste events
+-    const subscription = PasteInputEventEmitter.addListener('onPaste', event => {
+-      // Only handle events for this instance
+-      if (event.nativeID === nativeID) {
+-        onPasteRef.current?.(event.error || null, event.data);
++      const nativeTag = textInputRef.current?.__nativeTag;
++      if (!nativeTag) {
++        if (attempts < 10) {
++          attempts += 1;
++          retryTimer = setTimeout(register, 50);
++          return;
++        }
++        if (__DEV__) {
++          console.warn('[PasteInput] Could not get native tag from ref');
++        }
++        return;
+       }
+-    });
+-
+-    // Cleanup on unmount
++      nativeID = `PasteInput_${nativeTag}`;
++      nativeIDRef.current = nativeID;
++      NativePasteInputModule.registerTextInput(nativeID, {
++        disableCopyPaste,
++        smartPunctuation
++      });
++      const registeredID = nativeID;
++      subscription = PasteInputEventEmitter.addListener('onPaste', event => {
++        if (event.nativeID === registeredID) {
++          onPasteRef.current?.(event.error || null, event.data);
++        }
++      });
++    };
++    register();
+     return () => {
+-      subscription.remove();
+-      NativePasteInputModule.unregisterTextInput(nativeID);
++      cancelled = true;
++      if (retryTimer) {
++        clearTimeout(retryTimer);
++      }
++      subscription?.remove();
++      if (nativeID) {
++        NativePasteInputModule.unregisterTextInput(nativeID);
++      }
+     };
+   }, []); // Empty deps - only run on mount/unmount
+ 
+@@ -120,17 +140,15 @@ function PasteInputAndroidComponent(props, forwardedRef) {
    const pasteTextInputRef = useRef(null);
  
    // Expose the PasteTextInput ref to parent components (same as iOS)
@@ -274,10 +455,10 @@ index 39bd607..f2b1d2f 100644
      setMostRecentEventCount(event.nativeEvent.eventCount);
    };
 diff --git a/node_modules/@mattermost/react-native-paste-input/src/PasteInput.tsx b/node_modules/@mattermost/react-native-paste-input/src/PasteInput.tsx
-index 12befab..0d23ca5 100644
+index 12befab..e2a6c16 100644
 --- a/node_modules/@mattermost/react-native-paste-input/src/PasteInput.tsx
 +++ b/node_modules/@mattermost/react-native-paste-input/src/PasteInput.tsx
-@@ -64,17 +64,25 @@ function PasteInputIOSComponent(
+@@ -64,60 +64,88 @@ function PasteInputIOSComponent(
  
      // Expose the TextInput ref to parent components (same as Android)
      // TextInput already has all methods from PasteTextInputInstance (clear, isFocused, setSelection)
@@ -314,7 +495,105 @@ index 12befab..0d23ca5 100644
  
      // Register/unregister with native module on mount/unmount
      useEffect(() => {
-@@ -143,17 +151,15 @@ function PasteInputAndroidComponent(
+-        // Get the native tag from the ref's internal __nativeTag property
+-        // @ts-ignore - __nativeTag is an internal property
+-        const nativeTag = textInputRef.current?.__nativeTag;
+-
+-        if (!nativeTag) {
+-            if (__DEV__) {
+-                console.warn('[PasteInput] Could not get native tag from ref');
++        let cancelled = false;
++        let attempts = 0;
++        let nativeID: string | null = null;
++        let subscription: {remove: () => void} | null = null;
++        let retryTimer: ReturnType<typeof setTimeout> | null = null;
++
++        const register = () => {
++            if (cancelled) {
++                return;
+             }
+-            return;
+-        }
+-
+-        // Use the actual React native tag as the identifier
+-        const nativeID = `PasteInput_${nativeTag}`;
+-        nativeIDRef.current = nativeID;
+-
+-        // Register this TextInput instance by passing the nativeID
+-        NativePasteInputModule.registerTextInput(nativeID, {
+-            disableCopyPaste,
+-            smartPunctuation,
+-        });
+-
+-        // Listen for paste events
+-        const subscription = PasteInputEventEmitter!.addListener(
+-            'onPaste',
+-            (event: {
+-                nativeID: string;
+-                data: PastedFile[];
+-                error?: string;
+-            }) => {
+-                // Only handle events for this instance
+-                if (event.nativeID === nativeID) {
+-                    onPasteRef.current?.(event.error || null, event.data);
++            // Get the native tag from the ref's internal __nativeTag property
++            // @ts-ignore - __nativeTag is an internal property
++            const nativeTag = textInputRef.current?.__nativeTag;
++
++            if (!nativeTag) {
++                if (attempts < 10) {
++                    attempts += 1;
++                    retryTimer = setTimeout(register, 50);
++                    return;
++                }
++                if (__DEV__) {
++                    console.warn('[PasteInput] Could not get native tag from ref');
+                 }
++                return;
+             }
+-        );
+ 
+-        // Cleanup on unmount
++            nativeID = `PasteInput_${nativeTag}`;
++            nativeIDRef.current = nativeID;
++
++            NativePasteInputModule.registerTextInput(nativeID, {
++                disableCopyPaste,
++                smartPunctuation,
++            });
++
++            const registeredID = nativeID;
++            subscription = PasteInputEventEmitter!.addListener(
++                'onPaste',
++                (event: {
++                    nativeID: string;
++                    data: PastedFile[];
++                    error?: string;
++                }) => {
++                    if (event.nativeID === registeredID) {
++                        onPasteRef.current?.(event.error || null, event.data);
++                    }
++                }
++            );
++        };
++
++        register();
++
+         return () => {
+-            subscription.remove();
+-            NativePasteInputModule.unregisterTextInput(nativeID);
++            cancelled = true;
++            if (retryTimer) {
++                clearTimeout(retryTimer);
++            }
++            subscription?.remove();
++            if (nativeID) {
++                NativePasteInputModule.unregisterTextInput(nativeID);
++            }
+         };
+     }, []); // Empty deps - only run on mount/unmount
+ 
+@@ -143,17 +171,15 @@ function PasteInputAndroidComponent(
      const pasteTextInputRef = useRef<PasteTextInputInstance>(null);
  
      // Expose the PasteTextInput ref to parent components (same as iOS)
