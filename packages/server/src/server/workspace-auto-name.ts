@@ -39,6 +39,15 @@ interface ScheduleContext {
   currentSelection?: CurrentSelection;
 }
 
+interface AgentTitleInput {
+  explicitTitle?: string | null;
+  agentId: string;
+  cwd: string;
+  firstAgentContext: FirstAgentContext;
+  provisionalTitle: string | null;
+  currentSelection?: CurrentSelection;
+}
+
 export class WorkspaceAutoName {
   private readonly agentManager: AgentManager;
   private readonly workspaceRegistry: Pick<WorkspaceRegistry, "update">;
@@ -50,6 +59,7 @@ export class WorkspaceAutoName {
   private readonly emitWorkspaceUpdateForWorkspaceId: (workspaceId: string) => Promise<void>;
   private readonly logger: pino.Logger;
   private readonly generateWorkspaceName: WorkspaceNameGenerator;
+  private readonly pendingAgentTitles = new Set<string>();
 
   constructor(options: WorkspaceAutoNameOptions) {
     this.agentManager = options.agentManager;
@@ -63,6 +73,52 @@ export class WorkspaceAutoName {
     this.logger = options.logger;
     this.generateWorkspaceName =
       options.generateWorkspaceName ?? generateBranchNameFromFirstAgentContext;
+  }
+
+  // Conversation titles are independent of the workspace's creation and name.
+  // Keep the provisional title visible while the model works in the background.
+  scheduleForAgent(input: AgentTitleInput): void {
+    if (input.explicitTitle) return;
+    if (!(input.firstAgentContext.prompt || input.firstAgentContext.attachments?.length)) return;
+    if (this.pendingAgentTitles.has(input.agentId)) return;
+    this.pendingAgentTitles.add(input.agentId);
+    const attempt = async (retry: number): Promise<void> => {
+      let retryScheduled = false;
+      try {
+        const agent = this.agentManager.getAgent(input.agentId);
+        if (!agent || agent.internal) return;
+        if ((await this.agentManager.getTitle(input.agentId)) !== input.provisionalTitle) return;
+        const generated = await this.generateFromContext({
+          cwd: input.cwd,
+          firstAgentContext: input.firstAgentContext,
+          currentSelection: input.currentSelection ?? {
+            provider: agent.provider,
+            model: agent.runtimeInfo?.model ?? agent.config.model,
+            thinkingOptionId: agent.runtimeInfo?.thinkingOptionId ?? agent.config.thinkingOptionId,
+          },
+        });
+        if (generated?.title) {
+          await this.agentManager.setGeneratedTitle(
+            input.agentId,
+            generated.title,
+            input.provisionalTitle,
+          );
+          return;
+        }
+        if (retry < 2) {
+          retryScheduled = true;
+          setTimeout(() => void attempt(retry + 1), retry === 0 ? 10_000 : 30_000).unref();
+        }
+      } catch (error) {
+        this.logger.warn(
+          { err: error, agentId: input.agentId },
+          "Failed to auto-name conversation",
+        );
+      } finally {
+        if (!retryScheduled) this.pendingAgentTitles.delete(input.agentId);
+      }
+    };
+    setTimeout(() => void attempt(0), 0).unref();
   }
 
   scheduleForWorktree(
