@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import overviewCorpus from "../../../protocol/tests/fixtures/plugin-overview.json";
 import { pluginRequirements } from "../support/helpers/plugin-fixture";
 import { execFileSync } from "node:child_process";
@@ -314,6 +315,47 @@ export default function contribute(plugin) {
 }`,
   );
   return directory;
+}
+
+/** Build command that holds the plugin lifecycle queue until the test writes the release file. */
+const gatedBuildCommand = [
+  'const fs = require("node:fs");',
+  'fs.writeFileSync(process.argv[1], "started");',
+  "const wait = () => {",
+  "  if (fs.existsSync(process.argv[2])) return;",
+  "  setTimeout(wait, 50);",
+  "};",
+  "wait();",
+].join("\n");
+
+async function createGatedBuildRepository(
+  root: string,
+  gate: { started: string; release: string },
+): Promise<string> {
+  const repository = path.join(root, "gated-repository");
+  await mkdir(repository);
+  await writeFile(
+    path.join(repository, "paseo-plugin.json"),
+    JSON.stringify({
+      id: "gated-build-plugin",
+      description: "Holds the plugin lifecycle queue while its build waits",
+      requirements: pluginRequirements,
+      build: [[process.execPath, "-e", gatedBuildCommand, gate.started, gate.release]],
+    }),
+  );
+  await writeFile(path.join(repository, "index.client.tsx"), pluginSource("Gated build plugin"));
+  execFileSync("git", ["init", "-b", "main"], { cwd: repository, stdio: "ignore" });
+  execFileSync("git", ["config", "user.name", "Paseo Tests"], {
+    cwd: repository,
+    stdio: "ignore",
+  });
+  execFileSync("git", ["config", "user.email", "paseo@example.test"], {
+    cwd: repository,
+    stdio: "ignore",
+  });
+  execFileSync("git", ["add", "-A"], { cwd: repository, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", "initial"], { cwd: repository, stdio: "ignore" });
+  return repository;
 }
 
 async function installFailedPlugin(
@@ -680,3 +722,155 @@ async function installPluginWithUntrustedDescription(
   );
   await environment.client.installPluginSource({ source: directory });
 }
+
+/** Waits for the reload request and the daemon's answer on the wire, so a scenario can measure it. */
+function observePluginReload(page: Page) {
+  const requests: number[] = [];
+  const responses: number[] = [];
+  const isSessionMessage = (payload: unknown, type: string): boolean => {
+    if (typeof payload !== "string") return false;
+    try {
+      const envelope = JSON.parse(payload) as { type?: unknown; message?: { type?: unknown } };
+      const message = envelope.type === "session" ? envelope.message : envelope;
+      return message?.type === type;
+    } catch {
+      return false;
+    }
+  };
+  page.on("websocket", (socket) => {
+    // The reload request travels client -> daemon (outbound); the answer comes back inbound.
+    socket.on("framesent", ({ payload }) => {
+      if (isSessionMessage(payload, "plugin.reload.request")) requests.push(Date.now());
+    });
+    socket.on("framereceived", ({ payload }) => {
+      if (isSessionMessage(payload, "plugin.reload.response")) responses.push(Date.now());
+    });
+  });
+  return {
+    waitForRequest: () => expect.poll(() => requests.length, { timeout: 30_000 }).toBe(1),
+    waitForResponse: () => expect.poll(() => responses.length, { timeout: 120_000 }).toBe(1),
+    requestedAt: () => requests[0]!,
+    requestCount: () => requests.length,
+  };
+}
+
+/** Starts a gated git install that holds the daemon's plugin lifecycle queue until it is released. */
+async function holdPluginLifecycleQueue(
+  client: PluginEnvironment["client"],
+  root: string,
+): Promise<{ release: () => Promise<void>; settle: () => Promise<void> }> {
+  const gate = {
+    started: path.join(root, "build-started"),
+    release: path.join(root, "build-release"),
+  };
+  const repository = await createGatedBuildRepository(root, gate);
+  const install = client.installPluginSource({ source: `git:${pathToFileURL(repository).href}` });
+  // The marker wait below can outlive an early failure: a refused preparation, a dropped
+  // connection, or a build command that exits before writing its marker. Handle that rejection now
+  // so it never surfaces as an unhandled one, and drain the same promise in finish().
+  const installDrained = install.catch(() => undefined);
+  // Every path releases the gate and drains the install: a build still polling for its gate holds
+  // the daemon's plugin lifecycle queue open, and the fixture's own plugin removal would stall.
+  const finish = async () => {
+    await writeFile(gate.release, "go").catch(() => undefined);
+    await installDrained;
+  };
+  try {
+    // Whichever comes first decides the scenario: the build reports that it started, or the setup
+    // fails with the daemon's own error instead of a bare marker timeout.
+    await Promise.race([
+      expect.poll(() => existsSync(gate.started), { timeout: 30_000 }).toBe(true),
+      install,
+    ]);
+  } catch (error) {
+    // Setup that never reached the build must not hand the caller a queue it cannot settle.
+    await finish();
+    throw error;
+  }
+  return {
+    release: () => writeFile(gate.release, "go"),
+    settle: finish,
+  };
+}
+
+function pluginRowActions(page: Page, pluginId: string) {
+  return page.getByRole("button", { name: `Actions for ${pluginId}`, exact: true });
+}
+
+async function expectPluginRowPending(page: Page, pluginId: string): Promise<void> {
+  await expect(pluginRowActions(page, pluginId)).toBeDisabled();
+}
+
+async function expectPluginRowSettled(page: Page, pluginId: string): Promise<void> {
+  await expect(pluginRowActions(page, pluginId)).toBeEnabled();
+  await expect(page.getByLabel(`${pluginId} running`)).toBeVisible();
+}
+
+async function capturePluginSurface(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+  await page.screenshot({
+    path: testInfo.outputPath(name),
+    fullPage: true,
+    animations: "disabled",
+  });
+}
+
+/** The wait under test is the daemon's lifecycle queue, so the scenario has to spend real time. */
+async function waitPastFormerReloadDeadline(page: Page, requestedAt: number): Promise<void> {
+  const remaining = 66_000 - (Date.now() - requestedAt);
+  if (remaining > 0) await page.waitForTimeout(remaining);
+}
+
+test("keeps Reload pending past a minute while the plugin queue is busy", async ({
+  page,
+  pluginEnvironment,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const { client, directory } = pluginEnvironment;
+  const pluginDirectory = await createDirectoryPlugin(
+    directory,
+    "e2e-plugin",
+    "Exercises the complete local plugin lifecycle",
+    "Plugin v1",
+  );
+
+  // Observe before the app loads: its daemon socket comes up with the page.
+  const reload = observePluginReload(page);
+  await gotoAppShell(page);
+  await openPluginSettings(page);
+  // Plugins on is a precondition here, not the subject: set it through the daemon instead of the
+  // switch, whose transient "Plugins enabled" confirmation this scenario must not depend on.
+  await client.patchDaemonConfig({ pluginsEnabled: true });
+  await client.installPluginSource({ source: pluginDirectory });
+  await expectPluginRowSettled(page, "e2e-plugin");
+
+  const queue = await holdPluginLifecycleQueue(client, directory);
+  try {
+    await selectPluginAction(page, "e2e-plugin", "Reload");
+    await reload.waitForRequest();
+    // Pending: the row's actions stay disabled, so a second reload cannot be submitted.
+    await expectPluginRowPending(page, "e2e-plugin");
+    await capturePluginSurface(page, testInfo, "plugin-reload-pending.png");
+
+    await waitPastFormerReloadDeadline(page, reload.requestedAt());
+
+    // Past the former deadline the reload is still pending, the row shows its previous state, and
+    // no timeout error reached the surface.
+    await expectPluginRowPending(page, "e2e-plugin");
+    await expect(page.getByLabel("e2e-plugin running")).toBeVisible();
+    await expect(page.getByTestId("plugin-management-feedback")).toHaveCount(0);
+    await capturePluginSurface(page, testInfo, "plugin-reload-past-deadline.png");
+
+    await queue.release();
+    // The daemon's answer only arrives once the plugin really started again; a request timeout
+    // would have shown up as feedback during the wait above.
+    await reload.waitForResponse();
+    expect(reload.requestCount()).toBe(1);
+    await expect(page.getByTestId("plugin-management-feedback")).toContainText(
+      "Reloaded e2e-plugin",
+    );
+    await expectPluginRowSettled(page, "e2e-plugin");
+    await capturePluginSurface(page, testInfo, "plugin-reload-completed.png");
+  } finally {
+    await queue.settle();
+  }
+});
