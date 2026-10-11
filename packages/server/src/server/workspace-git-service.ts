@@ -241,7 +241,7 @@ export interface WorkspaceGitService {
     cwdOrRepoRoot: string,
     options?: WorkspaceGitReadOptions,
   ): Promise<WorkspaceGitWorktreeInfo[]>;
-  invalidateWorktrees(repoRoot: string): void;
+  invalidateWorktrees(): void;
   getProjectSlug(cwd: string, options?: WorkspaceGitReadOptions): Promise<string>;
   resolveRepoRoot(cwd: string, options?: WorkspaceGitReadOptions): Promise<string>;
   resolveDefaultBranch(cwdOrRepoRoot: string, options?: WorkspaceGitReadOptions): Promise<string>;
@@ -919,10 +919,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       : (snapshot.git.repoRoot ?? resolve(cwd));
   }
 
-  invalidateWorktrees(repoRoot: string): void {
+  invalidateWorktrees(): void {
     this.assertNotDisposed();
+    // Checkout paths can cache the same list under different roots, including bare repos.
     // Detach in-flight reads too, so a pre-mutation result cannot refill the cache.
-    this.worktreeListCache.delete(JSON.stringify(["worktrees", resolve(repoRoot)]));
+    this.worktreeListCache.clear();
   }
 
   async resolveDefaultBranch(

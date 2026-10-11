@@ -618,28 +618,37 @@ describe("archiveByScope", () => {
     expect(deps.emitWorkspaceUpdatesForWorkspaceIds).not.toHaveBeenCalled();
   });
 
-  test("worktree scope removes an owned directory with zero matching records", async () => {
-    const { tempDir, repoDir } = createGitRepo();
-    const paseoHome = path.join(tempDir, ".paseo");
-    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "zero-records");
+  test.each(["intact", "missing"] as const)(
+    "worktree scope removes an owned directory with zero matching records and %s Git administration",
+    async (gitAdministration) => {
+      const { tempDir, repoDir } = createGitRepo();
+      const paseoHome = path.join(tempDir, ".paseo");
+      const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "zero-records");
+      if (gitAdministration === "missing") {
+        const gitDir = execFileSync("git", ["rev-parse", "--absolute-git-dir"], {
+          cwd: worktree.worktreePath,
+        })
+          .toString()
+          .trim();
+        rmSync(gitDir, { recursive: true, force: true });
+      }
+      const dependencies = createArchiveDeps({ paseoHome, activeWorkspaces: [] });
+      const invalidateWorktrees = vi.fn();
+      dependencies.workspaceGitService.invalidateWorktrees = invalidateWorktrees;
 
-    const result = await archiveByScope(
-      createArchiveDeps({
-        paseoHome,
-        activeWorkspaces: [],
-      }),
-      {
+      const result = await archiveByScope(dependencies, {
         scope: { kind: "worktree", targetPath: worktree.worktreePath },
         requestId: "req-zero-records",
-      },
-    );
+      });
 
-    assertArchiveResult(result, {
-      archivedWorkspaceIds: [],
-      removedDirectory: true,
-    });
-    expect(existsSync(worktree.worktreePath)).toBe(false);
-  });
+      assertArchiveResult(result, {
+        archivedWorkspaceIds: [],
+        removedDirectory: true,
+      });
+      expect(existsSync(worktree.worktreePath)).toBe(false);
+      expect(invalidateWorktrees).toHaveBeenCalledTimes(1);
+    },
+  );
 
   test("marks archiving, emits an upsert carrying the archiving state, then clears it and emits a remove", async () => {
     const { tempDir, repoDir } = createGitRepo();

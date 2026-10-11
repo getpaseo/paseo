@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { afterEach, beforeEach, expect, test } from "vitest";
 
 import { getFullAccessConfig } from "./daemon-e2e/agent-configs.js";
+import { createWorktree } from "../utils/worktree.js";
 import {
   createDaemonTestContext,
   DaemonClient,
@@ -313,6 +314,40 @@ test.each(["worktree", "workspace"] as const)(
   },
   60000,
 );
+
+test("archiving an unregistered worktree in a bare repo clears the main checkout listing", async () => {
+  const sourceRepo = createGitRepo();
+  const repoRoot = makeTempDir("workspace-archive-bare-");
+  const bareRepo = path.join(repoRoot, "repo.git");
+  const mainCheckout = path.join(repoRoot, "main");
+  execFileSync("git", ["clone", "--bare", sourceRepo, bareRepo], { stdio: "pipe" });
+  execFileSync("git", ["worktree", "add", mainCheckout, "main"], {
+    cwd: bareRepo,
+    stdio: "pipe",
+  });
+  const { worktreePath } = await createWorktree({
+    cwd: mainCheckout,
+    source: { kind: "branch-off", baseBranch: "main", branchName: "cached-bare-worktree" },
+    worktreeSlug: "cached-bare-worktree",
+    runSetup: false,
+    paseoHome: ctx.daemon.paseoHome,
+  });
+  expect(await activeWorkspaceIds()).toEqual(new Set());
+  const name = path.basename(worktreePath);
+  const before = JSON.parse(await runCli(["worktree", "ls", "--json"], mainCheckout));
+  expect(before).toEqual([expect.objectContaining({ name, cwd: worktreePath })]);
+
+  await runCli(["worktree", "archive", name, "--json"], mainCheckout);
+  expect(existsSync(worktreePath)).toBe(false);
+  expect(
+    execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: mainCheckout }).toString(),
+  ).not.toContain(worktreePath);
+  const after = JSON.parse(await runCli(["worktree", "ls", "--json"], mainCheckout));
+  console.log(
+    `bare repo archive: warm listing=${JSON.stringify(before)}\nimmediate listing=${JSON.stringify(after)}`,
+  );
+  expect(after).toEqual([]);
+}, 60000);
 
 test("archiving the last reference to a worktree removes it from disk regardless of the disk flag", async () => {
   const repoDir = createGitRepo();
