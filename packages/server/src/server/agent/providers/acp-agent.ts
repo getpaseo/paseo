@@ -131,6 +131,14 @@ import {
 import { withTimeout } from "../../../utils/promise-timeout.js";
 
 const ACP_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
+const ACP_HISTORY_REPLAY_IDLE_MS = 50;
+const ACP_HISTORY_REPLAY_MAX_MS = 15_000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
 
 function assertChildWithPipes(
   child: ChildProcess,
@@ -518,6 +526,9 @@ interface ACPAgentSessionOptions {
   launchEnv?: Record<string, string>;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
+  historyReplayIdleMs?: number;
+  now?: () => number;
+  delay?: (ms: number) => Promise<void>;
   terminateProcess?: ProcessTerminator;
 }
 
@@ -1015,6 +1026,7 @@ export class ACPAgentClient implements AgentClient {
         extensionCommandsParser: this.extensionCommandsParser,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
+        now: this.now,
       },
     );
     await session.initializeNewSession();
@@ -1074,6 +1086,7 @@ export class ACPAgentClient implements AgentClient {
       extensionCommandsParser: this.extensionCommandsParser,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
+      now: this.now,
     });
     await session.initializeResumedSession();
     return session;
@@ -1751,6 +1764,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private closed = false;
   private historyPending = false;
   private replayingHistory = false;
+  private historyReplaySettled = false;
+  private lastHistoryReplayAt = 0;
+  private readonly historyReplayIdleMs: number;
+  private readonly now: () => number;
+  private readonly delay: (ms: number) => Promise<void>;
   private bootstrapThreadEventPending = false;
   private readonly terminateProcess: ProcessTerminator;
 
@@ -1786,6 +1804,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.currentTitle = config.title ?? null;
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
+    this.historyReplayIdleMs = options.historyReplayIdleMs ?? ACP_HISTORY_REPLAY_IDLE_MS;
+    this.now = options.now ?? Date.now;
+    this.delay = options.delay ?? delay;
     this.extensionCommandsParser = options.extensionCommandsParser;
   }
 
@@ -1841,7 +1862,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
       const sessionCapabilities = this.agentCapabilities?.sessionCapabilities;
       if (this.agentCapabilities?.loadSession) {
-        this.replayingHistory = true;
+        this.beginHistoryReplay();
         const response = await this.runACPRequest(() =>
           this.connection!.loadSession({
             sessionId: handle.sessionId,
@@ -1849,9 +1870,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
             mcpServers: this.acpMcpServers(),
           }),
         );
-        this.deliverTranslatedEvents(this.flushPendingUserMessage());
-        this.replayingHistory = false;
-        this.historyPending = this.persistedHistory.length > 0;
+        this.markHistoryReplayActivity();
         this.applySessionState(response);
       } else if (sessionCapabilities?.resume) {
         const response = await this.runACPRequest(() =>
@@ -1905,6 +1924,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
+    await this.settleHistoryReplay();
     if (this.closed) {
       throw new Error(`${this.provider} session is closed`);
     }
@@ -1965,6 +1985,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+    await this.settleHistoryReplay();
     if (!this.historyPending || this.persistedHistory.length === 0) {
       return;
     }
@@ -1974,6 +1995,45 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     for (const item of history) {
       yield { type: "timeline", provider: this.provider, item };
     }
+  }
+
+  private beginHistoryReplay(): void {
+    this.replayingHistory = true;
+    this.historyReplaySettled = false;
+    this.markHistoryReplayActivity();
+  }
+
+  private markHistoryReplayActivity(): void {
+    this.lastHistoryReplayAt = this.now();
+  }
+
+  private finishHistoryReplay(): void {
+    if (this.historyReplaySettled) {
+      return;
+    }
+    this.deliverTranslatedEvents(this.flushPendingUserMessage());
+    this.replayingHistory = false;
+    this.historyPending = this.persistedHistory.length > 0;
+    this.historyReplaySettled = true;
+  }
+
+  private async settleHistoryReplay(): Promise<void> {
+    if (!this.replayingHistory || this.historyReplaySettled) {
+      return;
+    }
+    const idleMs = this.historyReplayIdleMs;
+    if (idleMs > 0) {
+      const deadline = this.now() + ACP_HISTORY_REPLAY_MAX_MS;
+      for (;;) {
+        const remainingIdle = idleMs - (this.now() - this.lastHistoryReplayAt);
+        const remainingMax = deadline - this.now();
+        if (remainingIdle <= 0 || remainingMax <= 0) {
+          break;
+        }
+        await this.delay(Math.min(remainingIdle, remainingMax));
+      }
+    }
+    this.finishHistoryReplay();
   }
 
   async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
@@ -2629,6 +2689,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       "provider.acp.parsed_event",
     );
     this.deliverTranslatedEvents(events);
+    if (this.replayingHistory) {
+      this.markHistoryReplayActivity();
+    }
   }
 
   private deliverTranslatedEvents(events: AgentStreamEvent[]): void {
