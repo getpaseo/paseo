@@ -719,6 +719,52 @@ test.describe("CodeMirror workspace file editing", () => {
     await expect(preview.host).toBeVisible();
   });
 
+  // A user aims at the preview itself to split the pane in half, so the path and
+  // the release land on the preview iframe. The fast drag's first move already lands
+  // in the frame, before the pointer sensor has seen enough distance to activate.
+  for (const drag of ["along the tab row first", "straight into the preview"] as const) {
+    test(`splits an HTML preview tab dragged ${drag}`, async ({ page, withWorkspace }) => {
+      test.setTimeout(90_000);
+      const workspace = await withWorkspace({ prefix: "file-editing-html-split-" });
+      await writeFile(
+        path.join(workspace.repoPath, "plan.html"),
+        "<!doctype html><html><body><h1>Visual plan</h1></body></html>",
+        "utf8",
+      );
+      await workspace.navigateTo();
+      await openWorkspaceFile(page, "plan.html");
+
+      const preview = htmlPreview(page);
+      await expect(preview.document.getByRole("heading", { name: "Visual plan" })).toBeVisible();
+      const previewBox = await preview.host.boundingBox();
+      expect(previewBox).not.toBeNull();
+      const chip = page.getByTestId("workspace-tab-file_plan.html").filter({ visible: true });
+      const chipBox = await chip.boundingBox();
+      expect(chipBox).not.toBeNull();
+
+      const start = { x: chipBox!.x + chipBox!.width / 2, y: chipBox!.y + chipBox!.height / 2 };
+      const target = {
+        x: previewBox!.x + previewBox!.width * 0.95,
+        y: previewBox!.y + previewBox!.height / 2,
+      };
+      await page.mouse.move(start.x, start.y);
+      await page.mouse.down();
+      if (drag === "along the tab row first") {
+        await page.mouse.move(start.x + 12, start.y);
+        await page.mouse.move(target.x, target.y, { steps: 20 });
+      } else {
+        await page.mouse.move(target.x, target.y);
+        await page.mouse.move(target.x - 4, target.y, { steps: 4 });
+      }
+      await page.mouse.up();
+
+      await expect(page.getByTestId("workspace-tabs-row").filter({ visible: true })).toHaveCount(2);
+      await expect(preview.document.getByRole("heading", { name: "Visual plan" })).toBeVisible();
+      // Frames only stop taking the pointer for the length of the drag.
+      await expect(preview.host).toHaveCSS("pointer-events", "auto");
+    });
+  }
+
   test("runs inline scripts without allowing fetch egress", async ({ page, withWorkspace }) => {
     test.setTimeout(90_000);
     const workspace = await withWorkspace({ prefix: "file-editing-html-csp-" });
