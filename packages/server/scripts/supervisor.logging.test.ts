@@ -84,7 +84,9 @@ async function runSupervisorFixture(options: {
         ];
   const child = spawn(command, args, {
     cwd: repoRoot,
-    env: { ...process.env },
+    // A Node color-conflict warning can hit closed stderr before runSupervisor installs
+    // its pipe-error handlers. This fixture exercises the supervisor's own output.
+    env: { ...process.env, NO_COLOR: undefined, FORCE_COLOR: undefined },
     stdio: ["ignore", "pipe", "pipe"],
   });
 

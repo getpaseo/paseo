@@ -130,6 +130,9 @@ async function runFixture(params: {
   const child = spawnProcess(params.command, params.args, {
     env: {
       ...process.env,
+      // Terminal color settings must not add Node warnings to the argv fixture's stderr.
+      NO_COLOR: undefined,
+      FORCE_COLOR: undefined,
       PASEO_EXPECTED_ARGV_JSON: JSON.stringify(["--config", JSON_ARG]),
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -216,6 +219,8 @@ async function findAndLaunch(fixture: LaunchFixture): Promise<{
     const child = spawnProcess(found, fixture.args, {
       env: {
         ...process.env,
+        NO_COLOR: undefined,
+        FORCE_COLOR: undefined,
         PASEO_EXPECTED_ARGV_JSON: fixture.expectedArgvJson,
         PASEO_ARGV_SLICE_FROM: String(fixture.sliceFrom),
       },
