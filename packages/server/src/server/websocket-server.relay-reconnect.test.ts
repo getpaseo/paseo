@@ -84,6 +84,7 @@ const sessionMock = vi.hoisted(() => {
       this.args.sourceId = sourceId;
     };
     getHostSourceId = () => this.args.sourceId as string;
+    permissionsForSource = vi.fn((_source?: object) => this.args.permissions as string[]);
     allowsInbound = vi.fn(() => true);
     allowsPermission = vi.fn(() => true);
     publish = vi.fn((message: unknown) => {
