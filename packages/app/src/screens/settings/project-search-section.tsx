@@ -85,7 +85,7 @@ function ProjectSearchEditor({
   const disabled = mutation.isPending || !isConnected;
   let status = "";
   if (!isConnected) status = t("workspace.terminal.hostDisconnected");
-  else if (mutation.error) status = mutation.error.message;
+  else if (mutation.error) status = t("settings.projectSearch.saveFailed");
   else if (mutation.isSuccess && !state.isDirty) status = t("settings.projectSearch.saved");
 
   return (

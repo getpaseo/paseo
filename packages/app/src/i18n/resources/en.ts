@@ -2086,6 +2086,7 @@ export const en = {
       save: "Save",
       saving: "Saving...",
       saved: "Saved",
+      saveFailed: "Couldn't save search directories. Your changes are kept. Try again.",
       loading: "Loading search directories...",
       updateHost: "Update this host to configure project search directories",
       invalidPath: "Enter an absolute path or a ~/ path",

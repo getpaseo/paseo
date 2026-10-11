@@ -2039,6 +2039,7 @@ export const zhCN: TranslationResources = {
       save: "保存",
       saving: "保存中...",
       saved: "已保存",
+      saveFailed: "无法保存搜索目录。你的修改已保留，请重试。",
       loading: "正在加载搜索目录...",
       updateHost: "请更新此主机以配置项目搜索目录",
       invalidPath: "请输入绝对路径或 ~/ 路径",
