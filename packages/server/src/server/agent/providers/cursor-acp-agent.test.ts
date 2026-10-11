@@ -99,6 +99,7 @@ describe("CursorACPAgentClient model discovery", () => {
         },
       ],
       modes: [],
+      advertisesModelSelection: true,
     });
   });
 
@@ -114,6 +115,7 @@ describe("CursorACPAgentClient model discovery", () => {
     ).resolves.toEqual({
       models: [],
       modes: [],
+      advertisesModelSelection: false,
     });
   });
 
@@ -148,6 +150,7 @@ describe("CursorACPAgentClient model discovery", () => {
         },
       ],
       modes: [],
+      advertisesModelSelection: true,
     });
   });
 

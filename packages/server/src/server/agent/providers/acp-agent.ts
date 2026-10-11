@@ -800,6 +800,22 @@ export function deriveModesFromACP(
   };
 }
 
+/**
+ * True when the session response exposes a model selector — either the
+ * `models` field or a `model` config option — regardless of how many options
+ * it currently carries. A selector that advertises but lists nothing is a
+ * degraded provider signal, not a provider without models.
+ */
+function advertisesACPModelSelection({
+  models,
+  configOptions,
+}: {
+  models: SessionModelState | null | undefined;
+  configOptions: SessionConfigOption[] | null | undefined;
+}): boolean {
+  return models != null || findSelectConfigOption({ configOptions, category: "model" }) !== null;
+}
+
 export function deriveModelDefinitionsFromACP(
   provider: string,
   models: SessionModelState | null | undefined,
@@ -1172,6 +1188,16 @@ export class ACPAgentClient implements AgentClient {
       return {
         models: this.modelTransformer ? this.modelTransformer(models) : models,
         modes: modeInfo.modes,
+        // The provider may advertise a model selector while enumerating
+        // nothing (e.g. Devin CLI answers session/new with an empty `model`
+        // config option while signed out). Report the signal so the registry
+        // can raise an error only when configured models don't cover the gap —
+        // failing here would also abort mode discovery for providers that
+        // replace runtime models with a configured list.
+        advertisesModelSelection: advertisesACPModelSelection({
+          models: transformed.models,
+          configOptions: transformed.configOptions,
+        }),
       };
     } finally {
       context?.signal.removeEventListener("abort", handleAbort);

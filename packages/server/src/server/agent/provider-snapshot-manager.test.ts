@@ -19,6 +19,7 @@ import type {
   ResolveAgentCreateConfigInput,
 } from "./agent-sdk-types.js";
 import type { ManagedAgent } from "./agent-manager.js";
+import { EmptyModelCatalogError } from "./empty-model-catalog-error.js";
 import {
   GLOBAL_PROVIDER_SNAPSHOT_KEY,
   ProviderSnapshotManager,
@@ -550,6 +551,128 @@ describe("ProviderSnapshotManager public surface", () => {
       expect(fetchCodexCatalog).toHaveBeenCalledTimes(2);
       expect(isAvailableClaude).toHaveBeenCalledTimes(1);
       expect(fetchClaudeCatalog).toHaveBeenCalledTimes(1);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("an advertised-but-empty model catalog stays stale and re-probes on the next read", async () => {
+    // Regression: a provider that enumerates zero models while still
+    // advertising model selection (e.g. a signed-out ACP agent) used to publish
+    // "ready" with an empty list and cache it forever, so the model selector
+    // showed only "default" even after the provider recovered.
+    const cwd = "/tmp/project";
+    let empty = true;
+    const fetchCatalog = vi.fn(async () => {
+      if (empty) throw new EmptyModelCatalogError("codex");
+      return {
+        models: [
+          {
+            provider: "codex",
+            id: "gpt-5.4-mini",
+            label: "GPT 5.4 Mini",
+          },
+        ] as AgentModelDefinition[],
+        modes: [] as AgentMode[],
+      };
+    });
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: async () => true,
+          fetchCatalog,
+        }),
+      },
+    });
+    try {
+      const [first] = await manager.listProviders({ cwd, providers: ["codex"], wait: true });
+      expect(first).toMatchObject({ provider: "codex", status: "error" });
+      expect(fetchCatalog).toHaveBeenCalledTimes(1);
+
+      empty = false;
+      const [second] = await manager.listProviders({ cwd, providers: ["codex"], wait: true });
+
+      expect(second).toMatchObject({ provider: "codex", status: "ready" });
+      expect(second.models).toHaveLength(1);
+      expect(fetchCatalog).toHaveBeenCalledTimes(2);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("a superseded probe's empty-catalog failure does not stale the recovered catalog", async () => {
+    // A forced refresh can overlap an older probe on the same catalog. When
+    // the newer probe succeeds and the older one later fails with
+    // EmptyModelCatalogError, the stale mark must not clobber the fresh
+    // result — otherwise every recovered catalog would immediately re-probe.
+    const cwd = "/tmp/project";
+    let rejectFirstProbe: ((error: Error) => void) | undefined;
+    const fetchCatalog = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<never>((_resolve, reject) => {
+            rejectFirstProbe = reject;
+          }),
+      )
+      .mockImplementation(async () => ({
+        models: [
+          {
+            provider: "codex",
+            id: "gpt-5.4-mini",
+            label: "GPT 5.4 Mini",
+          },
+        ] as AgentModelDefinition[],
+        modes: [] as AgentMode[],
+      }));
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: async () => true,
+          fetchCatalog,
+        }),
+      },
+    });
+    try {
+      const firstRefresh = manager.refreshSnapshotForCwd({ cwd, providers: ["codex"] });
+      await vi.waitFor(() => expect(fetchCatalog).toHaveBeenCalledTimes(1));
+
+      await manager.refreshSnapshotForCwd({ cwd, providers: ["codex"] });
+      rejectFirstProbe!(new EmptyModelCatalogError("codex"));
+      await firstRefresh;
+
+      const [entry] = await manager.listProviders({ cwd, providers: ["codex"], wait: true });
+      expect(entry).toMatchObject({ provider: "codex", status: "ready" });
+      expect(entry.models).toHaveLength(1);
+      expect(fetchCatalog).toHaveBeenCalledTimes(2);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("other catalog failures stay cached until an explicit refresh", async () => {
+    const cwd = "/tmp/project";
+    const fetchCatalog = vi.fn(async () => {
+      throw new Error("probe exploded");
+    });
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: async () => true,
+          fetchCatalog,
+        }),
+      },
+    });
+    try {
+      const [first] = await manager.listProviders({ cwd, providers: ["codex"], wait: true });
+      expect(first).toMatchObject({ provider: "codex", status: "error" });
+
+      const [second] = await manager.listProviders({ cwd, providers: ["codex"], wait: true });
+      expect(second).toMatchObject({ status: "error" });
+      expect(fetchCatalog).toHaveBeenCalledTimes(1);
     } finally {
       manager.destroy();
     }

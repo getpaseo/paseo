@@ -1951,6 +1951,7 @@ describe("ACPAgentClient modelTransformer", () => {
         },
       ],
       modes: [],
+      advertisesModelSelection: true,
     });
   });
 });
@@ -2018,6 +2019,90 @@ describe("ACPAgentClient catalog discovery without a model resolver", () => {
 
     expect(setSessionConfigOption).not.toHaveBeenCalled();
     expect(catalog.models.map((model) => model.id)).toEqual(["model-a", "model-b"]);
+  });
+});
+
+describe("ACPAgentClient empty advertised model catalog", () => {
+  function createCatalogClient(newSessionResult: unknown): ACPAgentClient {
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {
+            newSession: vi.fn().mockResolvedValue(newSessionResult),
+          },
+          initialize: { agentCapabilities: {} },
+        } as unknown as SpawnedACPProcess;
+      }
+
+      protected override async closeProbe(): Promise<void> {}
+    }
+
+    return new TestACPAgentClient({
+      provider: "acp",
+      logger: createTestLogger(),
+      defaultCommand: ["acp-agent"],
+      defaultModes: [],
+    });
+  }
+
+  test("flags the catalog when a model selector advertises zero options", async () => {
+    // Signed-out Devin CLI responds to session/new with a `model` config option
+    // whose options list is empty. The flag — not a throw — lets the registry
+    // decide whether configured models cover the gap and keeps mode discovery
+    // intact for providers that replace runtime models.
+    const client = createCatalogClient({
+      sessionId: "session-1",
+      configOptions: [
+        { id: "model", name: "Model", category: "model", type: "select", options: [] },
+      ],
+    });
+
+    await expect(
+      client.fetchCatalog({ scope: "workspace", cwd: "/tmp/acp-empty", force: false }),
+    ).resolves.toMatchObject({
+      models: [],
+      advertisesModelSelection: true,
+    });
+  });
+
+  test("flags the catalog when the models field advertises an empty list", async () => {
+    const client = createCatalogClient({
+      sessionId: "session-1",
+      models: { availableModels: [], currentModelId: null },
+      configOptions: [],
+    });
+
+    await expect(
+      client.fetchCatalog({ scope: "workspace", cwd: "/tmp/acp-empty", force: false }),
+    ).resolves.toMatchObject({
+      models: [],
+      advertisesModelSelection: true,
+    });
+  });
+
+  test("reports no model selection when the provider advertises none", async () => {
+    const client = createCatalogClient({
+      sessionId: "session-1",
+      configOptions: [
+        {
+          id: "mode",
+          name: "Mode",
+          category: "mode",
+          type: "select",
+          currentValue: "default",
+          options: [{ value: "default", name: "Default" }],
+        },
+      ],
+    });
+
+    await expect(
+      client.fetchCatalog({ scope: "workspace", cwd: "/tmp/acp-empty", force: false }),
+    ).resolves.toEqual({
+      models: [],
+      modes: [{ id: "default", label: "Default", description: undefined }],
+      advertisesModelSelection: false,
+    });
   });
 });
 
@@ -2229,6 +2314,7 @@ describe("ACPAgentClient sessionResponseTransformer", () => {
           description: "After transform",
         },
       ],
+      advertisesModelSelection: false,
     });
   });
 });
@@ -2307,6 +2393,7 @@ describe("ACPAgentClient fetchCatalog", () => {
     ).resolves.toEqual({
       models: [],
       modes: [],
+      advertisesModelSelection: false,
     });
   });
 });

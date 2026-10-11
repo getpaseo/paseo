@@ -24,6 +24,7 @@ import {
   resolveDefaultAgentCreateConfig,
 } from "./create-agent-mode.js";
 import { normalizeAgentModelDefinition } from "./agent-sdk-types.js";
+import { EmptyModelCatalogError } from "./empty-model-catalog-error.js";
 import { runProviderRefreshActivity } from "./provider-refresh-deadline.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type { ManagedProcessRegistry } from "../managed-processes/managed-processes.js";
@@ -699,11 +700,19 @@ function createRegistryEntry(
       }
 
       const catalog = await catalogClient.fetchCatalog(options, context);
+      const models = mergeModels(provider, profileModels, additionalModels, catalog.models, {
+        profileModelsAreAdditive: resolved.profileModelsAreAdditive,
+      });
+      if (models.length === 0 && catalog.advertisesModelSelection) {
+        // The provider advertises a model selector but enumerated nothing —
+        // e.g. Devin CLI answers session/new with an empty `model` config
+        // option while signed out — and no configured models cover the gap.
+        // Surface a refreshable error instead of caching a "ready" empty list.
+        throw new EmptyModelCatalogError(provider);
+      }
       return {
         ...catalog,
-        models: mergeModels(provider, profileModels, additionalModels, catalog.models, {
-          profileModelsAreAdditive: resolved.profileModelsAreAdditive,
-        }),
+        models,
         modes: decorateModes(catalog.modes),
       };
     },
