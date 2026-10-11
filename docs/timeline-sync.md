@@ -5,7 +5,9 @@ Agent chat delivery has two paths:
 1. **Live stream** — `agent_stream` WebSocket messages for immediacy. These may be delta-shaped lifecycle updates.
 2. **Authoritative history** — `fetch_agent_timeline_request` for correctness. This always returns full projected timeline items, never lifecycle deltas.
 
-The daemon retains projected items in memory. Each source event advances the stream sequence,
+The daemon retains each agent's timeline in a bounded in-memory window over a durable append-only
+row log (`$PASEO_HOME/timeline-rows/{agentId}.jsonl`;
+[data model](data-model.md#durable-timeline-rows)). Each source event advances the stream sequence,
 then replaces the previous tool state or merges into the current text item. Intermediate payloads
 are never retained for history or catch-up. Provider history is the durable transcript authority
 and rebuilds the projection when an agent resumes.
@@ -20,6 +22,105 @@ Tool output is bounded before it enters either delivery path. Canonical shell to
 to 64 KiB, and the same bounded item is used for runtime timeline rows and live stream events.
 Provider history hydration applies the same rule so reopening an agent cannot restore an oversized
 tool payload.
+
+## Bounded retention
+
+The in-memory window is bounded by bytes and row count
+(`PASEO_TIMELINE_WINDOW_MAX_BYTES`, `PASEO_TIMELINE_WINDOW_MAX_ROWS`; defaults 16 MiB and 50,000
+rows). An unbounded window is what let a single long session grow past the daemon worker's heap
+and crash-loop it ([incident](bug-20261011-timeline-retention-oom.md)).
+
+Every committed row is also appended to the durable row log. The durable watermark tracks the end
+of the contiguous prefix of confirmed writes, and eviction only removes rows at or below it, so a
+row whose durable write has not confirmed is never dropped from the window. A write that fails is
+retried, and a row that still fails is replayed whenever a later write for the same agent
+succeeds; the replay writes the row as the window currently holds it, not the pre-failure
+snapshot — an echo that enriched the row while its write was queued commits the enrichment
+separately, and re-writing the stale snapshot would clobber it. A failure that outlasts the
+retries stalls the watermark at the failed `seq`: the window
+keeps every row from there on, so retention degrades the way it did before this fix, but only
+while the disk keeps failing, and the failures are logged as errors. Eviction runs in a 1.25×
+hysteresis band: the window grows past the limit, then is trimmed back to it, so a busy stream does
+not pay for a projection rebuild on every append. A projected row that spans the eviction cutoff —
+a merged assistant message, a tool call completed after a neighbor — is kept whole.
+
+The durable log repairs a crash between writes: a torn, unterminated trailing line — the remnant of
+an append that died mid-write — is isolated onto its own line before the next append lands, so the
+new row cannot concatenate onto it and both fail to parse. The `seq` for an append is minted inside
+the per-agent write chain, so concurrent appends cannot read the same latest seq and overwrite each
+other at read time. A retry or enrichment write can re-append old rows after the newest mints, so
+the physical end of the file no longer reflects seq order. A tail read with a seq bound certifies
+its answer instead of trusting that order: it stops growing its tail buffer only when the buffer
+holds the row for the bound and every seq down to the requested cutoff — then the requested rows
+are exactly the buffer's, each on its newest line. A read with no bound cannot know the file's
+newest seq from a suffix alone, so it covers the file; the manager's backfill always passes a
+bound, and only the store's direct `fetchCommitted` tail takes the full-cover read.
+
+Reads the window cannot answer are rerun against the durable store, merged with the window (the
+window wins per `seq`, since it carries the newest enrichment): full-history reads when the window
+floor sits above `seq` 1 — this lifetime evicted, or a restart seeded the window over the durable
+log — `before` pages that reach the window boundary, reads of an empty window (such as right after
+a daemon restart), and fork context, which always merges the durable store so a fork of old history
+cannot miss evicted rows. A `tail` page with a limit does not materialize the history: it scans the
+log from the end in bounded batches below the window, extending the scan while the boundary
+between the collected suffix and the unread prefix can still merge into the page (an adjacent
+assistant or reasoning chunk, or a shared item identity), and stopping at a stable cut only once
+the collected rows project to the requested page size — chunk-heavy history packs many rows per
+projected item, so the first stable cut can sit far below the limit. The scan is bounded by the row
+below the
+window floor, or by the log's newest row when the window is empty, and a batch that cannot reach
+that row falls back to the full read. The scan cap falls back to the full read, and rows above a
+stability cut that did not reach the log start stay reachable through ordinary `before` pagination.
+A tail page reports `hasOlder` whenever the window floor sits above `seq` 1, whether or not
+anything was evicted this lifetime, so a page larger than the retained window cannot certify full
+history and strand the rows below it. The page's backward cursor is anchored at the rows the
+window actually holds, not at a projected entry's anchor: a tool call completed after its anchor
+was evicted keeps its entry whole but anchors below the window floor, and pointing the cursor
+there would make the rows between the anchor and the floor unreachable. Timeline search and prompt
+listing read the same merge unconditionally, so a row whose durable write has not committed yet is
+visible there too.
+
+The last-assistant-message read walks the trailing assistant run of the window. When that run
+reaches the top of the window it may continue into older history, so the read splices in the
+trailing run of the durable rows strictly below the window. The window's own rows are in the
+durable store too; an unbounded durable read would count them twice.
+
+Resuming an agent whose rows are on disk marks the timeline primed, so hydration does not re-prime
+it from provider history. The resume seed continues `nextSeq` from the max committed seq and seeds
+the watermark from the contiguous committed prefix, not the max. A gap below the max — a write that
+failed before the restart — does not mark the timeline primed: the rows on disk are not a complete
+history, so the first hydration re-primed through the force path, which rebuilds the window from
+seq 1 under a new epoch and re-commits the provider's full history. If the provider no longer holds
+the session history, the gapped rows are the only copy and the hydration keeps them instead of
+wiping them. That guard applies to implicit rebuilds only: an explicit force (a successful rewind)
+is authoritative, and its empty history is a legitimate clear, not a lost session, so it wipes the
+timeline. Rebuilding also bumps the agent's durable write generation: a durable write still in the
+retry loop or queue belongs to the deleted log and aborts at its next attempt instead of
+overwriting a same-seq row of the rebuilt one. A contiguous log never re-primes. The provider
+subagent store is not durable, so the first hydration after such a resume replays the session
+history once for its `provider_subagent` events, and a failed replay retries on the next
+hydration and never blocks the timeline load. The same replay verifies the seeded log against the
+provider's copy: the disk cannot distinguish a row that was never written from one that was lost,
+and a crash between a timeline append and its durable write leaves the provider holding a tail the
+disk never got. Row counts cannot find that tail — the daemon records one row per stream event (a
+streamed reply is many chunk rows) plus daemon-only rows the provider never re-emits, while the
+provider replays one item per message — so the hydration aligns the projected seeded items with
+the replay items, by identity where one exists (message ids, tool call ids) and by text otherwise,
+and replays the replay suffix past the last aligned item onto the seeded `seq`s; an alignment that
+cannot consume the whole seeded log falls back to the row-count rule. The check only trusts an
+empty window: a non-empty window already holds the live rows above the seed, and a provider history
+that re-includes them would miscount.
+
+Reconnect and refresh do not replay the window. `agent.timeline.replacement` tells modern clients
+to refetch their own pages; only pre-`timelineReplacementInvalidation` clients receive the
+reconstructed full replay, and that replay reads through the durable-store merge. Replay reads are
+serialized per agent: each durable read starts only after the previous replay has been delivered,
+because a read that starts earlier can finish earlier, and an out-of-order burst would make a
+rewound client reset to the older timeline. The read is
+asynchronous, so live timeline rows for those clients wait for the in-flight replay instead of
+overtaking it: an old client's seq gate drops seqs at or below its cursor as stale, and an
+overtaken replay would vanish from its history. Non-timeline events carry no seq cursor and are
+never held.
 
 ## Presence is not delivery
 
@@ -267,8 +368,10 @@ liveness, never from submission records or whichever timeline rows happen to be 
 For human prompts, the daemon records one canonical submitted user row at acceptance. Its wire `messageId` is the
 submission's `clientMessageId`, so the row is born with its final identity and remains immutable on
 the wire. A correlated provider echo records the provider's native identity internally without
-dispatching another timeline event. Rewind resolves the wire identity to that provider identity at
-the provider boundary. Daemon-handled prompts follow the same identity rule.
+dispatching another timeline event; when the submitted row is no longer in the window — evicted, or
+gone after a restart — the echo's lookup extends into the durable log and enriches that row instead
+of recording a second copy of the prompt. Rewind resolves the wire identity to that provider
+identity at the provider boundary. Daemon-handled prompts follow the same identity rule.
 
 Content matching is limited to the dated compatibility path for daemon timelines created before
 that field existed. Canonical ingestion may match only an explicit unreconciled local candidate;
@@ -293,6 +396,8 @@ canonical assistant prefix, it stays in the head lane. No row may be returned in
 ## Relevant code
 
 - Server live stream forwarding: `packages/server/src/server/session.ts`
+- Server in-memory timeline window: `packages/server/src/server/agent/agent-timeline-store.ts`
+- Server durable timeline rows: `packages/server/src/server/agent/file-agent-timeline-store.ts`
 - App sync planning: `packages/app/src/timeline/timeline-sync-plan.ts`
 - App viewed-agent synchronization: `packages/app/src/timeline/viewed-timeline-sync.ts`
 - App stream/timeline reducer: `packages/app/src/timeline/session-stream-reducers.ts`
