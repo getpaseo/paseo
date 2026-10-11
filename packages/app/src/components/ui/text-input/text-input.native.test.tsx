@@ -7,6 +7,21 @@ import { EditingTextInput } from "./text-input.native";
 import type { EditingTextInputHandle } from "./types";
 
 const bottomSheetTextInputRender = vi.hoisted(() => vi.fn());
+const pasteInputRender = vi.hoisted(() => vi.fn());
+const platform = vi.hoisted(() => ({ OS: "ios" }));
+
+vi.mock("react-native", async () => {
+  const actual = await vi.importActual<typeof import("react-native")>("react-native");
+  return {
+    ...actual,
+    Platform: {
+      ...actual.Platform,
+      get OS() {
+        return platform.OS;
+      },
+    },
+  };
+});
 
 vi.mock("@gorhom/bottom-sheet", async () => {
   const ReactModule = await import("react");
@@ -27,9 +42,10 @@ vi.mock("@gorhom/bottom-sheet", async () => {
 vi.mock("@mattermost/react-native-paste-input", async () => {
   const ReactModule = await import("react");
   return {
-    default: ReactModule.forwardRef<HTMLInputElement, Record<string, unknown>>((props, ref) =>
-      ReactModule.createElement("input", { ...props, ref }),
-    ),
+    default: ReactModule.forwardRef<HTMLInputElement, Record<string, unknown>>((props, ref) => {
+      pasteInputRender(props);
+      return ReactModule.createElement("input", { ...props, ref });
+    }),
   };
 });
 
@@ -38,6 +54,8 @@ let root: Root | null = null;
 
 beforeEach(() => {
   bottomSheetTextInputRender.mockClear();
+  pasteInputRender.mockClear();
+  platform.OS = "ios";
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -185,5 +203,49 @@ describe("EditingTextInputNative", () => {
     });
 
     expect(handleRef.current?.getText()).toBe("world");
+  });
+
+  function typeIntoPasteInput(text: string) {
+    const latestProps = pasteInputRender.mock.calls.at(-1)?.[0] as
+      | { onChangeText?: (text: string) => void }
+      | undefined;
+    act(() => {
+      latestProps?.onChangeText?.(text);
+    });
+  }
+
+  it("does not send typed text back to the iOS input while the user types", () => {
+    const handleRef = createRef<EditingTextInputHandle>();
+    const onChangeText = vi.fn();
+    act(() => {
+      root?.render(
+        <EditingTextInput
+          ref={handleRef}
+          initialValue="あいう"
+          onChangeText={onChangeText}
+          onPasteImages={noop}
+        />,
+      );
+    });
+
+    typeIntoPasteInput("あかいう");
+
+    expect(onChangeText).toHaveBeenCalledWith("あかいう");
+    expect(handleRef.current?.getText()).toBe("あかいう");
+    // A new `text` prop makes iOS reassign the native string, cancelling IME composition.
+    expect(pasteInputRender.mock.calls.at(-1)?.[0]).toMatchObject({ defaultValue: "あいう" });
+  });
+
+  it("re-renders the Android input with the typed text so Fabric re-measures it", () => {
+    platform.OS = "android";
+    act(() => {
+      root?.render(
+        <EditingTextInput initialValue="hello" onChangeText={noop} onPasteImages={noop} />,
+      );
+    });
+
+    typeIntoPasteInput("hell");
+
+    expect(pasteInputRender.mock.calls.at(-1)?.[0]).toMatchObject({ defaultValue: "hell" });
   });
 });
