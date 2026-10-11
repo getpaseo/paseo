@@ -91,9 +91,12 @@ import {
   AssistantFileLinkResolverProvider,
   normalizeInlinePathTarget,
 } from "@/assistant-file-links";
+import { openDesktopTarget, useFileManagerOpenTarget } from "@/workspace/desktop-open-targets";
+import { openInlinePathPlan, planInlinePathOpen } from "@/workspace/inline-path-open";
 import {
   createWorkspaceFileTabTarget,
   normalizeWorkspaceFileLocation,
+  toNativeAbsolutePath,
   type OpenFileDisposition,
   type WorkspaceFileOpenRequest,
 } from "@/workspace/file-open";
@@ -377,6 +380,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const transformTimelineItem = useInstalledTimelineTransform(resolvedServerId);
 
     const client = useSessionStore((state) => state.sessions[resolvedServerId]?.client ?? null);
+    // Opening external folders from chat hands them to the OS file manager, which only
+    // makes sense for the local machine's own daemon.
+    const fileManagerTarget = useFileManagerOpenTarget(resolvedServerId);
     const sessionStreamHead = useSessionStore((state) =>
       state.sessions[resolvedServerId]?.agentStreamHead?.get(agentId),
     );
@@ -448,7 +454,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           return;
         }
 
-        if (normalized.file) {
+        const openFileLocation = () => {
+          if (!normalized.file) {
+            return;
+          }
           const location = normalizeWorkspaceFileLocation({
             path: normalized.file,
             lineStart: target.lineStart,
@@ -473,26 +482,49 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               target: createWorkspaceFileTabTarget(location),
             });
           }
-          return;
-        }
+        };
 
-        void requestDirectoryListing(normalized.directory, {
-          recordHistory: false,
-          setCurrentPath: false,
+        const openFilesExplorerAt = (directoryPath: string) => {
+          void requestDirectoryListing(directoryPath);
+
+          openExplorerSidebarView({
+            isCompact: isMobile,
+            workspaceKey: buildWorkspaceTabPersistenceKey({
+              serverId: resolvedServerId,
+              workspaceId: context.workspaceId ?? "",
+            }),
+            checkout: {
+              serverId: resolvedServerId,
+              cwd: context.cwd,
+              isGit: context.projectPlacement?.checkout?.isGit ?? true,
+            },
+            view: "files",
+          });
+        };
+
+        const revealInFileManager = (absolutePath: string) => {
+          if (!fileManagerTarget) {
+            openFileLocation();
+            return;
+          }
+          void openDesktopTarget({
+            editorId: fileManagerTarget.id,
+            workspacePath: workspaceRoot,
+            filePath: toNativeAbsolutePath(absolutePath),
+          }).catch(() => openFileLocation());
+        };
+
+        const plan = planInlinePathOpen({
+          file: normalized.file,
+          lineStart: target.lineStart,
+          workspaceRoot,
         });
 
-        openExplorerSidebarView({
-          isCompact: isMobile,
-          workspaceKey: buildWorkspaceTabPersistenceKey({
-            serverId: resolvedServerId,
-            workspaceId: context.workspaceId ?? "",
-          }),
-          checkout: {
-            serverId: resolvedServerId,
-            cwd: context.cwd,
-            isGit: context.projectPlacement?.checkout?.isGit ?? true,
-          },
-          view: "files",
+        void openInlinePathPlan(plan, workspaceRoot, {
+          client,
+          openFile: openFileLocation,
+          openExplorerAt: openFilesExplorerAt,
+          revealInFileManager,
         });
       },
     );

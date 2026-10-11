@@ -79,21 +79,33 @@ export async function fetchDaemonResolution({
     throw new UnresolvedFileLinkError(token);
   }
 
-  let suggestions: DirectorySuggestionResult;
-  try {
-    suggestions = await getDirectorySuggestions({
-      query: ambiguousQuery,
-      cwd: trimmedRoot,
-      includeFiles: true,
-      includeDirectories: false,
-      matchMode: "suffix",
-      limit: 1,
-    });
-  } catch {
-    throw new UnresolvedFileLinkError(token);
+  const searchSuggestions = async (query: string): Promise<DirectorySuggestionResult> => {
+    try {
+      return await getDirectorySuggestions({
+        query,
+        cwd: trimmedRoot,
+        includeFiles: true,
+        includeDirectories: false,
+        matchMode: "suffix",
+        limit: 1,
+      });
+    } catch {
+      throw new UnresolvedFileLinkError(token);
+    }
+  };
+
+  let suggestions = await searchSuggestions(ambiguousQuery);
+  let match = suggestions.entries.find((entry) => entry.kind === "file");
+  if (!match && !suggestions.error) {
+    // Agents often prefix workspace-relative paths with the workspace folder's own name.
+    // The strict suffix search misses those, so retry once without that prefix.
+    const strippedQuery = stripWorkspaceFolderNamePrefix(ambiguousQuery, trimmedRoot);
+    if (strippedQuery !== ambiguousQuery) {
+      suggestions = await searchSuggestions(strippedQuery);
+      match = suggestions.entries.find((entry) => entry.kind === "file");
+    }
   }
 
-  const match = suggestions.entries.find((entry) => entry.kind === "file");
   if (!match || suggestions.error) {
     throw new UnresolvedFileLinkError(token);
   }
@@ -102,6 +114,20 @@ export async function fetchDaemonResolution({
     ...target,
     path: joinWorkspacePath(trimmedRoot, match.path),
   };
+}
+
+function stripWorkspaceFolderNamePrefix(query: string, workspaceRoot: string): string {
+  const trimmedRoot = workspaceRoot.replace(/\/+$/, "");
+  const rootFolderName = trimmedRoot === "/" ? null : (trimmedRoot.split("/").pop() ?? null);
+  if (!rootFolderName) {
+    return query;
+  }
+  const segments = query.split("/");
+  const firstSegment = segments[0];
+  if (segments.length > 1 && firstSegment?.toLowerCase() === rootFolderName.toLowerCase()) {
+    return segments.slice(1).join("/");
+  }
+  return query;
 }
 
 export function classifyForResolution(

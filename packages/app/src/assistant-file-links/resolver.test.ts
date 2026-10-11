@@ -149,6 +149,22 @@ describe("classifyForResolution", () => {
     });
   });
 
+  it("flags workspace-folder-name-prefixed relative paths as daemon lookups", () => {
+    const result = classifyForResolution({ href: "project/src/components/message.tsx" }, CONTEXT);
+
+    expect(result).toEqual({
+      kind: "needsLookup",
+      ambiguousQuery: "project/src/components/message.tsx",
+      token: "project/src/components/message.tsx",
+      target: {
+        raw: "project/src/components/message.tsx",
+        path: "/Users/test/project/project/src/components/message.tsx",
+        lineStart: undefined,
+        lineEnd: undefined,
+      },
+    });
+  });
+
   it("keeps explicit external URLs external", () => {
     const result = classifyForResolution({ href: "http://dumm.md", text: "dumm.md" }, CONTEXT);
 
@@ -303,6 +319,58 @@ describe("fetchDaemonResolution", () => {
         getDirectorySuggestions,
       }),
     ).rejects.toEqual(new UnresolvedFileLinkError("src/file.ts"));
+  });
+
+  it("retries without the workspace folder name prefix when the strict search misses", async () => {
+    const { getDirectorySuggestions, searches } = suggestionsFromMap({
+      "docs/report.html": [{ path: "docs/report.html", kind: "file" }],
+    });
+
+    const result = await fetchDaemonResolution({
+      ambiguousQuery: "project/docs/report.html",
+      token: "project/docs/report.html",
+      target: {
+        raw: "project/docs/report.html",
+        path: "/Users/test/project/project/docs/report.html",
+        lineStart: undefined,
+        lineEnd: undefined,
+      },
+      workspaceRoot: "/Users/test/project",
+      getDirectorySuggestions,
+    });
+
+    expect(searches.map((search) => search.query)).toEqual([
+      "project/docs/report.html",
+      "docs/report.html",
+    ]);
+    expect(result).toEqual({
+      raw: "project/docs/report.html",
+      path: "/Users/test/project/docs/report.html",
+      lineStart: undefined,
+      lineEnd: undefined,
+    });
+  });
+
+  it("does not retry the stripped query when the strict search already matched", async () => {
+    const { getDirectorySuggestions, searches } = suggestionsFromMap({
+      "project/docs/report.html": [{ path: "project/docs/report.html", kind: "file" }],
+    });
+
+    const result = await fetchDaemonResolution({
+      ambiguousQuery: "project/docs/report.html",
+      token: "project/docs/report.html",
+      target: {
+        raw: "project/docs/report.html",
+        path: "/Users/test/project/project/docs/report.html",
+        lineStart: undefined,
+        lineEnd: undefined,
+      },
+      workspaceRoot: "/Users/test/project",
+      getDirectorySuggestions,
+    });
+
+    expect(searches).toHaveLength(1);
+    expect(result.path).toBe("/Users/test/project/project/docs/report.html");
   });
 
   it("throws a typed unresolved error when the daemon throws", async () => {

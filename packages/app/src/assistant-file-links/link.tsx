@@ -5,9 +5,11 @@ import { isNative, isWeb } from "@/constants/platform";
 import { MarkdownTextSpan } from "@/components/markdown-text";
 import { MarkdownLinkText } from "@/components/markdown/link-text";
 import { AssistantLinkPressProvider, type AssistantLinkPress } from "./link-press-context";
+import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { markdownCopyDataSet } from "@/assistant-selection-copy/markup";
+import { AssistantFileLinkContextMenuContent } from "./file-context-menu";
 import { useAssistantFileLinkResolverContext } from "./provider";
 import type { AssistantFileLinkSource } from "./resolver";
 import { formatFileLinkTooltipPath } from "./tooltip-path";
@@ -31,7 +33,7 @@ export function AssistantMarkdownLink({
   monoSurface,
   children,
 }: AssistantMarkdownLinkProps) {
-  const { target, onHoverIn, onPress } = useFileLink(source);
+  const { target, onHoverIn, onPress, open } = useFileLink(source);
   const { configRef } = useAssistantFileLinkResolverContext();
   const workspaceRoot = configRef.current.workspaceRoot;
   const tooltipPath = useMemo(
@@ -99,7 +101,28 @@ export function AssistantMarkdownLink({
     </a>
   );
 
-  return <FileLinkHoverTooltip filePath={tooltipPath}>{anchor}</FileLinkHoverTooltip>;
+  const anchorWithContextMenu =
+    target && isWeb ? (
+      <ContextMenu>
+        <ContextMenuTrigger contextOnly style={LINK_CONTEXT_TRIGGER_STYLE}>
+          {anchor}
+        </ContextMenuTrigger>
+        <AssistantFileLinkContextMenuContent
+          source={source}
+          target={target}
+          serverId={configRef.current.serverId ?? ""}
+          workspaceRoot={workspaceRoot}
+          onOpen={open}
+          testIDPrefix="assistant-file-link"
+        />
+      </ContextMenu>
+    ) : (
+      anchor
+    );
+
+  return (
+    <FileLinkHoverTooltip filePath={tooltipPath}>{anchorWithContextMenu}</FileLinkHoverTooltip>
+  );
 }
 
 interface AssistantMarkdownCodeLinkProps {
@@ -167,6 +190,8 @@ const FILE_LINK_TOOLTIP_TRIGGER_STYLE: ViewStyle = {
   // the tooltip wrapper from breaking inline link flow.
   display: "inline-flex" as ViewStyle["display"],
 };
+
+const LINK_CONTEXT_TRIGGER_STYLE: ViewStyle = FILE_LINK_TOOLTIP_TRIGGER_STYLE;
 
 function FileLinkHoverTooltip({
   filePath,
