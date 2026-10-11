@@ -273,8 +273,16 @@ function injectConnectionHint(
 ): string {
   const host = typeof req.headers.host === "string" ? req.headers.host : "";
   const useTls = req.protocol === "https";
+  let listen = host;
+  if (host && !hasExplicitPort(host)) {
+    let defaultPort = 80;
+    if (useTls) {
+      defaultPort = 443;
+    }
+    listen = `${host}:${defaultPort}`;
+  }
   const hint = {
-    listen: host && !hasExplicitPort(host) ? `${host}:${useTls ? 443 : 80}` : host,
+    listen,
     useTls,
     label,
   };
