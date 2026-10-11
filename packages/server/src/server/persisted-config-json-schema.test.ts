@@ -29,7 +29,9 @@ test("editors accept the daemon's browser, profile, plugin and metadata configur
   };
   expect(PersistedConfigSchema.parse(config)).toEqual(config);
   const validate = new Ajv({ allErrors: true, strict: false }).compile(publishedSchema);
-  expect(validate(config), JSON.stringify(validate.errors)).toBe(true);
+  const valid = validate(config);
+  expect(validate.errors).toBeNull();
+  expect(valid).toBe(true);
 });
 
 test("the published schema stays current with the daemon's configuration schema", () => {
