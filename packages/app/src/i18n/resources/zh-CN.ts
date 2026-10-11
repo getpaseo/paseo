@@ -1,7 +1,9 @@
+import { fileAccessChinese } from "@/file-access/strings";
 import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
+  fileAccess: fileAccessChinese,
   paneFind: {
     connectionFailure: "无法搜索此聊天。请检查主机连接后重试。",
     historyChangedFailure: "搜索期间聊天已更改。请重新搜索。",

@@ -1,4 +1,6 @@
+import { fileAccessEnglish } from "@/file-access/strings";
 export const en = {
+  fileAccess: fileAccessEnglish,
   paneFind: {
     connectionFailure: "Could not search this chat. Check the host connection and retry.",
     historyChangedFailure: "The chat changed while searching. Search again.",

@@ -94,6 +94,16 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
   opener: {
     openUrl: (url: string) => ipcRenderer.invoke("paseo:opener:openUrl", url),
   },
+  files: {
+    materialize: (input: { name: string; bytes: Uint8Array }) =>
+      ipcRenderer.invoke("paseo:files:materialize", input),
+    chooseApplication: () => ipcRenderer.invoke("paseo:files:chooseApplication"),
+    open: (input: { path: string; application?: string }) =>
+      ipcRenderer.invoke("paseo:files:open", input),
+    reveal: (path: string) => ipcRenderer.invoke("paseo:files:reveal", path),
+    save: (input: { name: string; bytes: Uint8Array }) =>
+      ipcRenderer.invoke("paseo:files:save", input),
+  },
   editor: {
     listTargets: () => ipcRenderer.invoke("paseo:editor:listTargets"),
     openTarget: (input: {

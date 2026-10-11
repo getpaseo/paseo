@@ -2,6 +2,7 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
+  fileAccess: en.fileAccess,
   paneFind: {
     connectionFailure:
       "Impossible de rechercher dans cette conversation. Vérifiez la connexion à l’hôte et réessayez.",
