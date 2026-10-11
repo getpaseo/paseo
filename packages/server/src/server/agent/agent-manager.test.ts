@@ -13470,6 +13470,109 @@ describe("durable timeline gap recovery", () => {
     },
   );
 
+  test.each([
+    ["before replay", "saved copy"],
+    ["during disk verification", "saved copy"],
+    ["before replay", "provider copy"],
+    ["during disk verification", "provider copy"],
+  ])(
+    "parent recovery preserves live child text arriving %s with parent history '%s'",
+    async (arrival, parentText) => {
+      const session = new (class extends TestAgentSession {
+        override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+          yield {
+            type: "timeline",
+            provider: "codex",
+            item: { type: "user_message", text: parentText },
+          };
+          yield {
+            type: "provider_subagent",
+            provider: "codex",
+            event: { type: "upsert", id: "child", status: "running" },
+          };
+          yield {
+            type: "provider_subagent",
+            provider: "codex",
+            event: {
+              type: "timeline",
+              id: "child",
+              item: { type: "assistant_message", text: "historical ", messageId: "reply" },
+            },
+          };
+        }
+      })({ provider: "codex", cwd: "" });
+      const client = new (class extends TestAgentClient {
+        override async resumeSession(): Promise<AgentSession> {
+          return session;
+        }
+      })();
+      const store = new PausedTimelineReadStore();
+      const { manager, agentId, workdir } = await resumeWithDurableRows(client, store, [
+        gapRow(1, "saved copy"),
+      ]);
+      const live = async () => {
+        session.pushEvent({
+          type: "provider_subagent",
+          provider: "codex",
+          event: { type: "upsert", id: "child", status: "completed" },
+        });
+        session.pushEvent({
+          type: "provider_subagent",
+          provider: "codex",
+          event: {
+            type: "timeline",
+            id: "child",
+            item: { type: "assistant_message", text: "live ", messageId: "reply" },
+          },
+        });
+        await manager.flush();
+        expect(
+          manager
+            .fetchProviderSubagentTimeline(agentId, "child", { limit: 0 })
+            .rows.map((row) => row.item),
+        ).toEqual([{ type: "assistant_message", text: "live ", messageId: "reply" }]);
+      };
+      try {
+        if (arrival === "before replay") await live();
+        store.pauseNextRead();
+        const pending = manager.hydrateTimelineFromProvider(agentId, { broadcast: true });
+        await store.readStarted.promise;
+        if (arrival === "during disk verification") await live();
+        store.readAllowed.resolve();
+        await pending;
+        expect(
+          manager
+            .fetchProviderSubagentTimeline(agentId, "child", { limit: 0 })
+            .rows.map((row) => row.item),
+        ).toEqual([{ type: "assistant_message", text: "historical live ", messageId: "reply" }]);
+        session.pushEvent({
+          type: "provider_subagent",
+          provider: "codex",
+          event: {
+            type: "timeline",
+            id: "child",
+            item: { type: "assistant_message", text: "suffix", messageId: "reply" },
+          },
+        });
+        await manager.flush();
+        expect(
+          manager
+            .fetchProviderSubagentTimeline(agentId, "child", { limit: 0 })
+            .rows.map((row) => row.item),
+        ).toEqual([
+          { type: "assistant_message", text: "historical live suffix", messageId: "reply" },
+        ]);
+        expect(manager.listProviderSubagents(agentId)).toEqual([
+          expect.objectContaining({ id: "child", status: "completed" }),
+        ]);
+      } finally {
+        store.readAllowed.resolve();
+        await manager.closeAgent(agentId);
+        rmSync(workdir, { recursive: true, force: true });
+      }
+    },
+  );
+
   test("seeded child replay retries preserve live fields and removals", async () => {
     let failReplay = true;
     const session = new (class extends TestAgentSession {
@@ -13760,6 +13863,49 @@ describe("durable timeline gap recovery", () => {
     })();
     return resumeWithDurableRows(client, new RecordingTimelineStore(), durableRows);
   }
+
+  test.each([
+    `<paseo-system>\nexample system envelope\n</paseo-system>`,
+    formatAgentMessage({ id: "example-client-id", source: null, text: "example human envelope" }),
+    formatAgentMessage({
+      id: "example-agent-id",
+      source: { kind: "agent-message", agentId: "example-sender" },
+      text: "example agent envelope",
+    }),
+  ])("seeded recovery preserves pasted envelope text: %s", async (text) => {
+    const prepared = prepareAgentMessage(text, undefined, "real-client-id");
+    if (typeof prepared.prompt !== "string") throw new Error("Expected string prompt");
+    const timestamp = "2026-01-01T00:00:00.000Z";
+    const expected: AgentTimelineItem[] = [
+      {
+        type: "user_message",
+        text,
+        messageId: "provider-message-id",
+        clientMessageId: "real-client-id",
+      },
+      { type: "reasoning", text: "final reasoning" },
+      { type: "assistant_message", text: "reply", messageId: "reply-id" },
+    ];
+    const { manager, agentId, workdir } = await resumeWithCrashTailMismatch(
+      [
+        { seq: 1, timestamp, item: expected[0] },
+        { seq: 2, timestamp, item: { type: "reasoning", text: "partial reasoning" } },
+      ],
+      [
+        { type: "user_message", text: prepared.prompt, messageId: "provider-message-id" },
+        expected[1],
+        expected[2],
+      ],
+    );
+    try {
+      await manager.hydrateTimelineFromProvider(agentId);
+      await manager.flush();
+      expect((await manager.getTimelineRows(agentId)).map((row) => row.item)).toEqual(expected);
+    } finally {
+      await manager.closeAgent(agentId);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
 
   test("rebuilds from provider history when reasoning cannot establish a saved item boundary", async () => {
     const timestamp = "2026-01-01T00:00:00.000Z";

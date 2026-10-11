@@ -563,6 +563,7 @@ type ManagedAgentWithSession = ManagedAgentBase & {
   session: AgentSession;
   /** Live descriptor fields received before history restoration take precedence over replay. */
   liveSubagentUpdates: Map<string, Exclude<ProviderSubagentInputEvent, { type: "timeline" }>>;
+  liveSubagentTimelineIds: Set<string>;
 };
 
 type ManagedAgentInitializing = ManagedAgentWithSession & {
@@ -4413,6 +4414,7 @@ export class AgentManager {
       historyPrimed,
       subagentHistoryRestored,
       liveSubagentUpdates: new Map(),
+      liveSubagentTimelineIds: new Set(),
       lastUserMessageAt: options?.lastUserMessageAt ?? null,
       lastUsage: options?.lastUsage,
       lastError: options?.lastError,
@@ -4591,6 +4593,10 @@ export class AgentManager {
   ): Promise<void> {
     if (event.type === "provider_subagent") {
       const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+      if (!agent.subagentHistoryRestored && event.event.type === "timeline") {
+        agent.liveSubagentTimelineIds.add(event.event.id);
+      }
+      if (event.event.type === "remove") agent.liveSubagentTimelineIds.delete(event.event.id);
       if (!agent.subagentHistoryRestored && event.event.type !== "timeline") {
         const previous = agent.liveSubagentUpdates.get(event.event.id);
         agent.liveSubagentUpdates.set(
@@ -4855,12 +4861,10 @@ export class AgentManager {
       if (missed === null) {
         // Stream rows and replay items have different granularity. Without a
         // checked item boundary, rebuild from the provider's complete copy.
-        await this.forceHydrateTimelineFromLegacyProviderHistory(
+        await this.rebuildTimelineFromProjectedProviderHistory(
           agent,
-          false,
-          broadcast,
-          broadcastTimeline,
-          [...historyEvents, ...subagentEvents],
+          { timelineEvents: historyEvents, subagentEvents },
+          { explicit: false, broadcast, broadcastTimeline },
         );
         this.dispatch({
           type: "timeline_replacement",
@@ -4891,9 +4895,19 @@ export class AgentManager {
     options: { replace?: boolean; broadcast: boolean },
   ): AgentManagerEvent[] {
     const events: AgentManagerEvent[] = [];
+    // Live child chunks may arrive before replay starts or during awaited
+    // parent verification. Rebuild the child's older prefix before these
+    // canonical rows, including on the non-replacing recovery path.
+    const liveTimelines = new Map<string, AgentTimelineRow[]>();
+    for (const id of agent.liveSubagentTimelineIds) {
+      liveTimelines.set(id, this.providerSubagents.takeTimelineRows(agent.id, id));
+    }
     if (options.replace) {
       for (const event of this.providerSubagents.deleteParent(agent.id)) {
-        if (!agent.liveSubagentUpdates.has(event.subagentId)) {
+        if (
+          !agent.liveSubagentUpdates.has(event.subagentId) &&
+          !liveTimelines.has(event.subagentId)
+        ) {
           events.push({ type: "provider_subagent", event });
         }
       }
@@ -4905,8 +4919,20 @@ export class AgentManager {
       const update = this.applyReplayedSubagentEvent(agent, event);
       if (update) events.push({ type: "provider_subagent", event: update });
     }
+    for (const [id, rows] of liveTimelines) {
+      for (const row of rows) {
+        const update = this.providerSubagents.apply(agent.id, agent.provider, {
+          type: "timeline",
+          id,
+          item: row.item,
+          timestamp: row.timestamp,
+        });
+        events.push({ type: "provider_subagent", event: update });
+      }
+    }
     agent.subagentHistoryRestored = true;
     agent.liveSubagentUpdates.clear();
+    agent.liveSubagentTimelineIds.clear();
     if (options.broadcast) {
       for (const event of events) this.dispatch(event);
     }
@@ -4920,7 +4946,12 @@ export class AgentManager {
     const live = agent.liveSubagentUpdates.get(event.event.id);
     // A live removal must not be undone by replay. A historical removal
     // likewise cannot delete a child announced by the live subscription.
-    if (live?.type === "remove" || (live && event.event.type === "remove")) return null;
+    if (live?.type === "remove") return null;
+    if (
+      event.event.type === "remove" &&
+      (live || agent.liveSubagentTimelineIds.has(event.event.id))
+    )
+      return null;
     const input =
       event.event.type === "upsert" && live?.type === "upsert"
         ? { ...event.event, ...live }
@@ -4981,13 +5012,10 @@ export class AgentManager {
     explicit: boolean,
     broadcast: boolean,
     broadcastTimeline: boolean,
-    history:
-      | AsyncIterable<AgentStreamEvent>
-      | Iterable<AgentStreamEvent> = agent.session.streamHistory(),
   ): Promise<void> {
     const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
     const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
-    for await (const rawEvent of history) {
+    for await (const rawEvent of agent.session.streamHistory()) {
       const event = limitAgentStreamEventContent(rawEvent);
       if (event.type === "timeline") {
         const item = projectAgentMessage(event.item);
@@ -4998,6 +5026,24 @@ export class AgentManager {
       }
     }
 
+    await this.rebuildTimelineFromProjectedProviderHistory(
+      agent,
+      { timelineEvents: historyEvents, subagentEvents: providerSubagentEvents },
+      { explicit, broadcast, broadcastTimeline },
+    );
+  }
+
+  /** Rebuild already-projected items; human envelope examples must never be decoded twice. */
+  private async rebuildTimelineFromProjectedProviderHistory(
+    agent: ActiveManagedAgent,
+    history: {
+      timelineEvents: readonly Extract<AgentStreamEvent, { type: "timeline" }>[];
+      subagentEvents: readonly Extract<AgentStreamEvent, { type: "provider_subagent" }>[];
+    },
+    options: { explicit: boolean; broadcast: boolean; broadcastTimeline: boolean },
+  ): Promise<void> {
+    const { timelineEvents: historyEvents, subagentEvents: providerSubagentEvents } = history;
+    const { explicit, broadcast, broadcastTimeline } = options;
     if (!explicit && historyEvents.length === 0 && (await this.hasAgentTimelineState(agent.id))) {
       // An implicit rebuild (resume, reload) that comes back with no history
       // means the provider no longer holds the session timeline. The committed
