@@ -174,7 +174,13 @@ export async function materializeWorktreeIncludePlan(
         worktreeRoot,
         relativePath: resolved.materialization.relativePath,
       });
-      if (!(await preflightDestination({ worktreeRoot, resolved }))) {
+      if (
+        !(await preflightDestination({
+          isDestinationTracked: options.isDestinationTracked,
+          worktreeRoot,
+          resolved,
+        }))
+      ) {
         materialized++;
         continue;
       }
@@ -188,7 +194,13 @@ export async function materializeWorktreeIncludePlan(
         worktreeRoot,
         relativePath: resolved.materialization.relativePath,
       });
-      if (!(await preflightDestination({ worktreeRoot, resolved }))) {
+      if (
+        !(await preflightDestination({
+          isDestinationTracked: options.isDestinationTracked,
+          worktreeRoot,
+          resolved,
+        }))
+      ) {
         await cleanupStagingDirectory(staged.directoryPath);
         staged = null;
         await cleanupCreatedDestinationParents(createdDestinationParents);

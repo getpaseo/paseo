@@ -1229,6 +1229,20 @@ async function removeDirectoryWithRetries(path: string): Promise<void> {
   }
 }
 
+async function isWorktreeIncludeDestinationTracked(options: {
+  relativePath: string;
+  worktreeRoot: string;
+}): Promise<boolean> {
+  const result = await runGitCommand(
+    ["ls-files", "--error-unmatch", "-z", "--", options.relativePath],
+    {
+      acceptExitCodes: [0, 1],
+      cwd: options.worktreeRoot,
+    },
+  );
+  return result.exitCode === 0 && result.stdout.length > 0;
+}
+
 /**
  * Create a git worktree with proper naming conventions
  */
@@ -1306,6 +1320,8 @@ export const createWorktree = async ({
 
     await seedPaseoConfigFile({ sourceCwd: cwd, targetCwd: worktreePath });
     const materialization = await materializeWorktreeIncludePlan({
+      isDestinationTracked: (relativePath) =>
+        isWorktreeIncludeDestinationTracked({ relativePath, worktreeRoot: worktreePath }),
       plan: worktreeIncludePlan,
       worktreeRoot: worktreePath,
     });

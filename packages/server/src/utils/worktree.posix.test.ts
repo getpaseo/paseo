@@ -464,7 +464,7 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(metadata).toMatchObject({ baseRefName: "main" });
     });
 
-    it("removes fetched branches when include planning fails", async () => {
+    it("skips an unreadable include file while creating a fetched worktree", async () => {
       const remoteDir = join(tempDir, "remote.git");
       const remoteCloneDir = join(tempDir, "remote-clone");
       execFileSync("git", ["clone", "--bare", repoDir, remoteDir]);
@@ -486,44 +486,32 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       execFileSync("git", [`--git-dir=${remoteDir}`, "update-ref", "refs/pull/44/head", prHead]);
       mkdirSync(join(repoDir, ".worktreeinclude"));
 
-      await expect(
-        createLegacyWorktreeForTest({
-          cwd: repoDir,
-          worktreeSlug: "pr-44-cleanup",
-          source: {
-            kind: "checkout-github-pr",
-            githubPrNumber: 44,
-            headRef: "contributor/cleanup",
-            baseRefName: "main",
-          },
-          runSetup: false,
-          paseoHome,
-        }),
-      ).rejects.toMatchObject({ code: "EISDIR" });
+      const result = await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "pr-44-cleanup",
+        source: {
+          kind: "checkout-github-pr",
+          githubPrNumber: 44,
+          headRef: "contributor/cleanup",
+          baseRefName: "main",
+        },
+        runSetup: false,
+        paseoHome,
+      });
 
+      expect(existsSync(result.worktreePath)).toBe(true);
+      expect(result.worktreeIncludeSummary?.skipped).toEqual([
+        expect.objectContaining({
+          raw: ".worktreeinclude",
+          reason: "materialization",
+        }),
+      ]);
       expect(() =>
         execFileSync("git", ["show-ref", "--verify", "--quiet", "refs/heads/contributor/cleanup"], {
           cwd: repoDir,
           stdio: "pipe",
         }),
-      ).toThrow();
-
-      await expect(
-        createLegacyWorktreeForTest({
-          cwd: repoDir,
-          worktreeSlug: "branch-cleanup",
-          source: { kind: "checkout-branch", branchName: "contributor/cleanup" },
-          runSetup: false,
-          paseoHome,
-        }),
-      ).rejects.toMatchObject({ code: "EISDIR" });
-
-      expect(() =>
-        execFileSync("git", ["show-ref", "--verify", "--quiet", "refs/heads/contributor/cleanup"], {
-          cwd: repoDir,
-          stdio: "pipe",
-        }),
-      ).toThrow();
+      ).not.toThrow();
     });
 
     it("fetches a GitHub PR branch when the head ref contains uppercase letters and dots", async () => {
@@ -1527,6 +1515,45 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(readFileSync(join(repoDir, "linked-state", "state.txt"), "utf8")).toBe(
         "linked-state-v2\n",
       );
+    });
+
+    it("treats tracked include destinations as conflicts", async () => {
+      mkdirSync(join(repoDir, "tracked-dir"));
+      writeFileSync(join(repoDir, "tracked-dir", "branch-only.txt"), "branch\n");
+      execFileSync("git", ["add", "tracked-dir"], { cwd: repoDir });
+      execFileSync(
+        "git",
+        ["-c", "commit.gpgsign=false", "commit", "-m", "add tracked include directory"],
+        {
+          cwd: repoDir,
+        },
+      );
+
+      writeFileSync(join(repoDir, "file.txt"), "source\n");
+      writeFileSync(join(repoDir, "tracked-dir", "source-only.txt"), "source\n");
+      writeFileSync(join(repoDir, ".worktreeinclude"), ["file.txt", "tracked-dir", ""].join("\n"));
+
+      const result = await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "tracked-include-conflicts",
+        source: {
+          kind: "branch-off",
+          baseBranch: "main",
+          branchName: "feature/tracked-include-conflicts",
+        },
+        runSetup: false,
+        paseoHome,
+      });
+
+      expect(readFileSync(join(result.worktreePath, "file.txt"), "utf8")).toBe("hello\n");
+      expect(
+        readFileSync(join(result.worktreePath, "tracked-dir", "branch-only.txt"), "utf8"),
+      ).toBe("branch\n");
+      expect(existsSync(join(result.worktreePath, "tracked-dir", "source-only.txt"))).toBe(false);
+      expect(result.worktreeIncludeSummary?.skipped).toEqual([
+        expect.objectContaining({ raw: "file.txt", reason: "conflict" }),
+        expect.objectContaining({ raw: "tracked-dir", reason: "conflict" }),
+      ]);
     });
 
     it("skips missing includes and materializes paths that exist", async () => {

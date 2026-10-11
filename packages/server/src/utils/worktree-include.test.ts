@@ -122,6 +122,22 @@ describe("worktree include planning", () => {
     );
   });
 
+  it("skips an unreadable include file instead of aborting the plan", async () => {
+    mkdirSync(join(sourceRoot, ".worktreeinclude"));
+
+    const plan = await readWorktreeIncludePlan({ sourceRoot });
+
+    expect(plan.materializations).toEqual([]);
+    expect(plan.skipped).toEqual([
+      expect.objectContaining({
+        lineNumber: 0,
+        message: expect.stringContaining("Unable to read .worktreeinclude"),
+        raw: ".worktreeinclude",
+        reason: "materialization",
+      }),
+    ]);
+  });
+
   it("requires the optimized trailing recursive form to resolve to a directory", async () => {
     writeFileSync(join(sourceRoot, "cache"), "not-a-directory\n");
     writeFileSync(join(sourceRoot, ".worktreeinclude"), "cache/**\n");
@@ -384,6 +400,25 @@ describe.skipIf(isPlatform("win32"))("worktree include materialization", () => {
     expect(result).toMatchObject({ materialized: 1, skipped: [] });
     expect(readFileSync(join(worktreeRoot, "cache", "current.txt"), "utf8")).toBe("current\n");
     expect(existsSync(join(worktreeRoot, "cache", "stale.txt"))).toBe(false);
+  });
+
+  it("skips tracked destinations without changing their contents", async () => {
+    writeFileSync(join(sourceRoot, "config.json"), "source\n");
+    writeFileSync(join(sourceRoot, ".worktreeinclude"), "config.json\n");
+    writeFileSync(join(worktreeRoot, "config.json"), "target\n");
+
+    const plan = await readWorktreeIncludePlan({ sourceRoot });
+    const result = await materializeWorktreeIncludePlan({
+      isDestinationTracked: async () => true,
+      plan,
+      worktreeRoot,
+    });
+
+    expect(result).toEqual({
+      materialized: 0,
+      skipped: [expect.objectContaining({ raw: "config.json", reason: "conflict" })],
+    });
+    expect(readFileSync(join(worktreeRoot, "config.json"), "utf8")).toBe("target\n");
   });
 
   it("retains an explicit descendant when an overlapping directory copy is skipped", async () => {

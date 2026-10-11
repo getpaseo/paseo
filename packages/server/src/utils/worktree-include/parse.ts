@@ -19,7 +19,16 @@ export async function readWorktreeIncludeEntries(
     if (getErrorCode(error) === "ENOENT") {
       return { entries: [], skipped: [] };
     }
-    throw error;
+    const detail = error instanceof Error ? error.message : String(error);
+    return {
+      entries: [],
+      skipped: [
+        toSkippedEntry(
+          { lineNumber: 0, raw: WORKTREE_INCLUDE_FILE_NAME },
+          new Error(`Unable to read ${WORKTREE_INCLUDE_FILE_NAME}: ${detail}`),
+        ),
+      ],
+    };
   }
 
   const entries: WorktreeIncludeEntry[] = [];

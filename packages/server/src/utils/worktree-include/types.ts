@@ -56,6 +56,7 @@ export interface ReadWorktreeIncludePlanOptions {
 }
 
 export interface MaterializeWorktreeIncludePlanOptions {
+  isDestinationTracked?: (relativePath: string) => Promise<boolean>;
   plan: WorktreeIncludePlan;
   worktreeRoot: string;
 }

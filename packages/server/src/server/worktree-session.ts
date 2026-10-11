@@ -259,6 +259,7 @@ export async function buildAgentSessionConfig(
               ),
       },
     );
+    logWorktreeIncludeSkips(dependencies.sessionLogger, createdWorktree);
     cwd = createdWorktree.workspace.cwd;
     setupContinuation = createdWorktree.setupContinuation;
     createdWorkspaceId = createdWorktree.workspace.workspaceId;
@@ -640,6 +641,27 @@ export async function handleCreatePaseoWorktreeRequest(
   }
 }
 
+function logWorktreeIncludeSkips(
+  logger: Logger,
+  createdWorktree: Pick<
+    CreatePaseoWorktreeResult,
+    "created" | "worktree" | "worktreeIncludeSummary"
+  >,
+): void {
+  if (!createdWorktree.created || !createdWorktree.worktreeIncludeSummary?.skipped.length) {
+    return;
+  }
+
+  logger.warn(
+    {
+      materialized: createdWorktree.worktreeIncludeSummary.materialized,
+      skipped: createdWorktree.worktreeIncludeSummary.skipped,
+      worktreePath: createdWorktree.worktree.worktreePath,
+    },
+    "Worktree include completed with skipped entries",
+  );
+}
+
 export async function createPaseoWorktreeWorkflow(
   dependencies: CreatePaseoWorktreeWorkflowDependencies,
   input: CreatePaseoWorktreeInput,
@@ -663,16 +685,7 @@ export async function createPaseoWorktreeWorkflow(
   const workspace = createdWorktree.workspace;
   const setupContinuation = options?.setupContinuation ?? { kind: "workspace" };
 
-  if (createdWorktree.created && createdWorktree.worktreeIncludeSummary?.skipped.length) {
-    dependencies.sessionLogger.warn(
-      {
-        materialized: createdWorktree.worktreeIncludeSummary.materialized,
-        skipped: createdWorktree.worktreeIncludeSummary.skipped,
-        worktreePath: createdWorktree.worktree.worktreePath,
-      },
-      "Worktree include completed with skipped entries",
-    );
-  }
+  logWorktreeIncludeSkips(dependencies.sessionLogger, createdWorktree);
 
   try {
     await dependencies.assertWorkspaceAutomationAllowed?.(workspace.workspaceId);

@@ -1557,6 +1557,66 @@ describe("handleCreatePaseoWorktreeRequest", () => {
     expect(branch).toBe("feature/review-pr");
   });
 
+  test("buildAgentSessionConfig reports skipped worktree includes", async () => {
+    const logger = createLogger();
+    const skipped = {
+      lineNumber: 0,
+      message: "Unable to read .worktreeinclude: EISDIR",
+      raw: ".worktreeinclude",
+      reason: "materialization" as const,
+    };
+    const worktreePath = "/tmp/worktrees/agent-include-warning";
+    const createPaseoWorktree = vi.fn(async () => ({
+      worktree: {
+        branchName: "agent-include-warning",
+        worktreePath,
+      },
+      worktreeIncludeSummary: { materialized: 0, skipped: [skipped] },
+      intent: {
+        kind: "branch-off" as const,
+        baseBranch: "main",
+        branchName: "agent-include-warning",
+      },
+      workspace: {
+        workspaceId: "ws-agent-include-warning",
+        projectId: "/tmp/repo",
+        cwd: worktreePath,
+        kind: "worktree" as const,
+        displayName: "agent-include-warning",
+        createdAt: "2026-04-30T00:00:00.000Z",
+        updatedAt: "2026-04-30T00:00:00.000Z",
+        title: null,
+        archivedAt: null,
+      },
+      repoRoot: "/tmp/repo",
+      created: true,
+    }));
+
+    await buildAgentSessionConfig(
+      {
+        sessionLogger: logger,
+        createPaseoWorktree,
+        checkoutExistingBranch: async () => {
+          throw new Error("should not checkout an existing branch");
+        },
+        createBranchFromBase: async () => {
+          throw new Error("should not create a branch outside the worktree service");
+        },
+      },
+      { provider: "codex", cwd: "/tmp/repo" },
+      { createWorktree: true, action: "branch-off" },
+    );
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      {
+        materialized: 0,
+        skipped: [skipped],
+        worktreePath,
+      },
+      "Worktree include completed with skipped entries",
+    );
+  });
+
   test("buildAgentSessionConfig uses the normalized new branch name as the worktree slug fallback", async () => {
     const { tempDir, repoDir } = createGitRepo();
     cleanupPaths.push(tempDir);

@@ -130,8 +130,9 @@ and whole-line comments are ignored. A single star matches within a path segment
 star matches recursively; a directory ending in /\*\* materializes that directory as one
 recursive entry. Absolute paths, parent-directory paths, and .git paths are rejected.
 
-Copy entries are independent snapshots: a copied file or directory replaces an existing path on
-a later materialization. Symlink entries point directly at
+Copy entries are independent snapshots: a copied file or directory can refresh an existing
+untracked path on a later materialization. Paseo never replaces a path tracked by the target
+branch; a tracked file or directory is reported as a destination conflict instead. Symlink entries point directly at
 the live source file or directory, so changes through either path affect the same data. Paseo
 does not replace an existing file, directory, or different link with a symlink.
 

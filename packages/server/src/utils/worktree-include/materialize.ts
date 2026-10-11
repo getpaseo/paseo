@@ -154,10 +154,17 @@ export async function cleanupCreatedDestinationParents(createdPaths: string[]): 
 }
 
 export async function preflightDestination(options: {
+  isDestinationTracked?: (relativePath: string) => Promise<boolean>;
   resolved: ResolvedWorktreeIncludeMaterialization;
   worktreeRoot: string;
 }): Promise<boolean> {
   const { materialization } = options.resolved;
+  if (
+    options.isDestinationTracked &&
+    (await options.isDestinationTracked(materialization.relativePath))
+  ) {
+    throw destinationConflict(materialization);
+  }
   const destinationPath = getDestinationPath({
     worktreeRoot: options.worktreeRoot,
     relativePath: materialization.relativePath,
