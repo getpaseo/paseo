@@ -1605,6 +1605,8 @@ test("a retired query's missing-conversation recovery leaves the replacement tur
     await session.setThinkingOption?.(null);
     withdrawal.resolve(false);
     await settleMicrotasks();
+    expect(queries).toHaveLength(1);
+    heldReturn.resolve();
     const second = await secondStart;
     await settleMicrotasks();
     const replacement = queries[1];
@@ -1613,7 +1615,6 @@ test("a retired query's missing-conversation recovery leaves the replacement tur
     expect(replacement.prompts.map((prompt) => prompt.text)).toEqual(["B"]);
     replacement.emit(buildCommandLifecycle(replacement.prompts[0]?.uuid, "started"));
 
-    heldReturn.resolve();
     await settleMicrotasks();
     await vi.advanceTimersByTimeAsync(0);
     await settleMicrotasks();
@@ -1664,3 +1665,116 @@ test("close during binary lookup never creates a query after the session closes"
   await expect(session.listCommands()).rejects.toThrow("Claude session is closed");
   expect(queries).toHaveLength(0);
 });
+
+test("a replacement waits for missing-conversation retirement without a settings change", async () => {
+  const withdrawal = deferred<boolean>();
+  const retirement = deferred<void>();
+  const { session, queries } = await createControlledSession({
+    withdrawal: () => withdrawal.promise,
+  });
+  const events: TurnEventRecord[] = [];
+  session.subscribe((event) => {
+    if (event.type.startsWith("turn_")) {
+      events.push({ type: event.type, turnId: (event as { turnId?: string }).turnId });
+    }
+  });
+  const first = await session.startTurn("A");
+  await settleMicrotasks();
+  const old = queries[0]!;
+  await session.interrupt();
+  let startReturned = false;
+  const secondStart = session.startTurn("B").then((turn) => {
+    startReturned = true;
+    return turn;
+  });
+  old.return.mockImplementationOnce(async () => {
+    await retirement.promise;
+    old.end();
+  });
+  old.emit({
+    type: "result",
+    subtype: "error_during_execution",
+    errors: ["No conversation found with session ID: controlled-session"],
+  });
+  await settleMicrotasks();
+  expect(old.return).toHaveBeenCalledTimes(1);
+  withdrawal.resolve(false);
+  await settleMicrotasks();
+  const returnedBeforeRetirement = startReturned;
+  const promptsBeforeRetirement = queries.flatMap(promptTexts);
+  retirement.resolve();
+  const second = await secondStart;
+  await settleMicrotasks();
+  try {
+    expect(returnedBeforeRetirement).toBe(false);
+    expect(promptsBeforeRetirement).toEqual(["A"]);
+    expect(queries).toHaveLength(2);
+    const replacement = queries[1]!;
+    expect(promptTexts(replacement)).toEqual(["B"]);
+    replacement.emit(buildCommandLifecycle(replacement.prompts[0]?.uuid, "started"));
+    replacement.emit(buildSuccessResult("controlled-session"));
+    await settleMicrotasks();
+    expect(
+      events.filter((event) => event.turnId === first.turnId).map((event) => event.type),
+    ).toEqual(["turn_started", "turn_canceled"]);
+    expect(
+      events.filter((event) => event.turnId === second.turnId).map((event) => event.type),
+    ).toEqual(["turn_started", "turn_completed"]);
+    expect(old.interrupt).toHaveBeenCalledTimes(1);
+    expect(replacement.interrupt).not.toHaveBeenCalled();
+  } finally {
+    await session.close();
+  }
+});
+
+for (const action of ["stop", "close"] as const) {
+  test(`${action} cancels a replacement waiting for missing-conversation retirement`, async () => {
+    const withdrawal = deferred<boolean>();
+    const retirement = deferred<void>();
+    const { session, queries } = await createControlledSession({
+      withdrawal: () => withdrawal.promise,
+    });
+    const events: TurnEventRecord[] = [];
+    session.subscribe((event) => {
+      if (event.type.startsWith("turn_")) {
+        events.push({ type: event.type, turnId: (event as { turnId?: string }).turnId });
+      }
+    });
+    await session.startTurn("A");
+    await settleMicrotasks();
+    const old = queries[0]!;
+    await session.interrupt();
+    const secondStart = session.startTurn("B");
+    old.return.mockImplementationOnce(async () => {
+      await retirement.promise;
+      old.end();
+    });
+    old.emit({
+      type: "result",
+      subtype: "error_during_execution",
+      errors: ["No conversation found with session ID: controlled-session"],
+    });
+    await settleMicrotasks();
+    withdrawal.resolve(false);
+    await settleMicrotasks();
+    const stopping = action === "stop" ? session.interrupt() : session.close();
+    retirement.resolve();
+    const second = await secondStart;
+    await stopping;
+    await settleMicrotasks();
+    try {
+      expect(queries).toHaveLength(1);
+      expect(queries.flatMap(promptTexts)).toEqual(["A"]);
+      expect(
+        events.filter((event) => event.turnId === second.turnId).map((event) => event.type),
+      ).toEqual(["turn_started", "turn_canceled"]);
+      expect(old.close).toHaveBeenCalledTimes(1);
+      expect(old.return).toHaveBeenCalledTimes(2);
+      expect(await session.steerActiveTurn?.("more", { expectedTurnId: second.turnId })).toEqual({
+        status: "unavailable",
+      });
+    } finally {
+      await session.close();
+    }
+  });
+}

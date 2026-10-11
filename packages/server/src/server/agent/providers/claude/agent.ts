@@ -2197,6 +2197,7 @@ class ClaudeAgentSession implements AgentSession {
   /** An admitting attempt has no prompt on a query; old query frames cannot finish it. */
   private foregroundAttempt: ClaudeTurnAttempt | null = null;
   private cancellationInFlight: Promise<void> | null = null;
+  private queryRetirement: Promise<void> | null = null;
 
   constructor(config: ClaudeAgentConfig, options: ClaudeAgentSessionOptions) {
     this.config = config;
@@ -2383,8 +2384,8 @@ class ClaudeAgentSession implements AgentSession {
       // Stop releases the foreground before its withdrawal and interrupt have answered; pushing
       // a replacement earlier would let the old turn's native interrupt land on the new one.
       // The replacement is already cancellable here, so a Stop during the wait reaches it.
-      while (this.cancellationInFlight) {
-        await this.cancellationInFlight;
+      while (this.cancellationInFlight || this.queryRetirement) {
+        await (this.cancellationInFlight ?? this.queryRetirement);
       }
       if (!this.ownsAdmission(attempt)) {
         return { turnId };
@@ -2852,6 +2853,7 @@ class ClaudeAgentSession implements AgentSession {
     this.query?.close?.();
     await this.awaitWithTimeout(this.query?.interrupt?.(), "close query interrupt");
     await this.awaitWithTimeout(this.query?.return?.(), "close query return");
+    await this.queryRetirement;
     this.query = null;
     this.input = null;
     // Terminate the entire process tree (claude + MCP children) to prevent
@@ -3263,6 +3265,9 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private async ensureQuery(launchMode: PermissionMode = this.currentMode): Promise<Query> {
+    while (this.queryRetirement) {
+      await this.queryRetirement;
+    }
     if (this.closed) {
       throw new Error("Claude session is closed");
     }
@@ -3308,6 +3313,7 @@ class ClaudeAgentSession implements AgentSession {
     // resume: sessionId and the new query continues the existing conversation.
     this.persistence = null;
 
+    this.queryRestartNeeded = false;
     const input = createAsyncMessageInput<SDKUserMessage>();
     const options = await this.buildOptions(launchMode);
     if (this.closed) {
@@ -4206,8 +4212,7 @@ class ClaudeAgentSession implements AgentSession {
       "Claude resumed session no longer exists; invalidating persisted session",
     );
 
-    // Retire only the failed query's state before awaiting cleanup: a replacement can start
-    // while return() is pending and must keep its foreground, persistence and restart state.
+    // Detach the failed query before awaiting cleanup so a replacement cannot reuse its closed input.
     if (this.query !== activeQuery) {
       await this.awaitWithTimeout(
         activeQuery.return?.(),
@@ -4215,6 +4220,32 @@ class ClaudeAgentSession implements AgentSession {
       );
       return true;
     }
+    const retiredInput = this.input;
+    const retiredChild = this.childProcess;
+    this.query = null;
+    this.input = null;
+    this.childProcess = null;
+    this.queryPumpPromise = null;
+    this.queryRestartNeeded = false;
+    // Publish the fence before cleanup or terminal notifications can admit another prompt.
+    const retirement = Promise.resolve().then(async () => {
+      retiredInput?.end();
+      activeQuery.close?.();
+      await this.awaitWithTimeout(
+        activeQuery.return?.(),
+        "query pump return on missing resumed conversation",
+      );
+      if (retiredChild) {
+        await terminateWithTreeKill(retiredChild, {
+          gracefulTimeoutMs: 2_000,
+          forceTimeoutMs: 2_000,
+        }).catch(() => {
+          /* process may already be dead */
+        });
+      }
+      return undefined;
+    });
+    this.queryRetirement = retirement;
     this.failActiveTurns(staleResumeError);
     this.autonomousTurn = null;
     if (!this.foregroundIsAdmitting()) this.clearForegroundTurn();
@@ -4224,29 +4255,10 @@ class ClaudeAgentSession implements AgentSession {
     this.historyPending = false;
     this.cachedRuntimeInfo = null;
     this.syncTurnState("missing resumed conversation");
-    // Ending the input retires the process on purpose. Detach first so its exit
-    // is not reported as a crash.
-    const retiredChild = this.childProcess;
-    this.childProcess = null;
-    this.input?.end();
-    await this.awaitWithTimeout(
-      activeQuery.return?.(),
-      "query pump return on missing resumed conversation",
-    );
-    // Tree-kill for the same reason the restart path does: MCP children of the
-    // retired claude process outlive it otherwise.
-    if (retiredChild) {
-      await terminateWithTreeKill(retiredChild, {
-        gracefulTimeoutMs: 2_000,
-        forceTimeoutMs: 2_000,
-      }).catch(() => {
-        /* process may already be dead */
-      });
-    }
-    if (this.query === activeQuery) {
-      this.query = null;
-      this.input = null;
-      this.queryRestartNeeded = false;
+    try {
+      await retirement;
+    } finally {
+      if (this.queryRetirement === retirement) this.queryRetirement = null;
     }
     return true;
   }
