@@ -232,7 +232,13 @@ interface StartTurnResult {
 
 interface PiPendingSteerSubmission {
   text: string;
+  label: string;
   clientMessageId: string | null;
+  consumed: boolean;
+}
+
+interface PiPendingForegroundSubmission {
+  text: string;
   consumed: boolean;
 }
 
@@ -1211,6 +1217,7 @@ export class PiRpcAgentSession implements AgentSession {
   private activePromptRequestId: string | null = null;
   private readonly pendingPromptResults = new Map<string, boolean>();
   private readonly pendingSteerSubmissions: PiPendingSteerSubmission[] = [];
+  private pendingForegroundSubmission: PiPendingForegroundSubmission | null = null;
   currentLeafOverrideId: string | null | undefined;
   private readonly treeUserEntriesById = new Map<string, PiCapturedEntry>();
   private readonly pendingExtensionResults = new Map<string, PendingExtensionResult>();
@@ -1320,6 +1327,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.pendingSettledMessages = null;
     this.activePromptRequestId = null;
     this.pendingSteerSubmissions.length = 0;
+    this.pendingForegroundSubmission = { text: payload.text, consumed: false };
     this.clearNoTurnBuffers();
     const payload = await convertPromptInput(prompt, { model: this.state.model });
     if (this.closed) throw new Error("Pi session is closed");
@@ -1366,6 +1374,7 @@ export class PiRpcAgentSession implements AgentSession {
         this.pendingSettledMessages = null;
         this.activeAssistantMessageId = null;
         this.pendingSteerSubmissions.length = 0;
+        this.pendingForegroundSubmission = null;
         this.clearNoTurnBuffers();
         if (isPiRequestAbortError(error)) {
           this.emit({
@@ -1404,8 +1413,14 @@ export class PiRpcAgentSession implements AgentSession {
       return { status: "unavailable" };
     }
 
+    const imageCount = payload.images?.length ?? 0;
+    const label =
+      payload.text.trim().length === 0 && imageCount > 0
+        ? `${imageCount} ${imageCount === 1 ? "image" : "images"}`
+        : payload.text;
     const submission: PiPendingSteerSubmission = {
       text: payload.text,
+      label,
       clientMessageId: options.clientMessageId ?? null,
       consumed: false,
     };
@@ -1444,6 +1459,11 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   private takePendingSteerSubmission(text: string): PiPendingSteerSubmission | undefined {
+    // The original prompt is also echoed, possibly after a matching steer is queued.
+    if (this.pendingForegroundSubmission?.text === text) {
+      this.pendingForegroundSubmission = null;
+      return undefined;
+    }
     const index = this.pendingSteerSubmissions.findIndex((submission) => submission.text === text);
     if (index < 0) {
       return undefined;
@@ -1561,7 +1581,7 @@ export class PiRpcAgentSession implements AgentSession {
             item: {
               type: "notification",
               level: "warning",
-              message: `Not delivered (stopped): ${submission.text}`,
+              message: `Not delivered (stopped): ${submission.label}`,
             },
           });
         }
@@ -1587,6 +1607,7 @@ export class PiRpcAgentSession implements AgentSession {
         this.pendingSettledMessages = null;
         this.activeAssistantMessageId = null;
         this.pendingSteerSubmissions.length = 0;
+        this.pendingForegroundSubmission = null;
         this.clearNoTurnBuffers();
         this.emit({
           type: "turn_failed",
@@ -1611,6 +1632,7 @@ export class PiRpcAgentSession implements AgentSession {
       this.pendingSettledMessages = null;
       this.activeAssistantMessageId = null;
       this.pendingSteerSubmissions.length = 0;
+      this.pendingForegroundSubmission = null;
       this.clearNoTurnBuffers();
       this.emit({
         type: "turn_canceled",
@@ -2226,6 +2248,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.activeTurnStartedEmitted = false;
     this.pendingSettledMessages = null;
     this.pendingSteerSubmissions.length = 0;
+    this.pendingForegroundSubmission = null;
     this.clearNoTurnBuffers();
     this.emit({
       type: "turn_failed",
@@ -2507,6 +2530,12 @@ export class PiRpcAgentSession implements AgentSession {
     if (event.message.role === "user") {
       // Entry IDs arrive through the extension later; consumption is already known.
       const text = getUserMessageText(event.message.content);
+      const foreground = this.pendingForegroundSubmission;
+      // prompt() runs asynchronously, so its first user event may follow steer().
+      if (foreground && !foreground.consumed && foreground.text === text) {
+        foreground.consumed = true;
+        return;
+      }
       const submission = this.pendingSteerSubmissions.find(
         (pending) => !pending.consumed && pending.text === text,
       );
@@ -2595,6 +2624,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.activeTurnStartedEmitted = false;
     this.pendingSettledMessages = null;
     this.pendingSteerSubmissions.length = 0;
+    this.pendingForegroundSubmission = null;
     this.clearNoTurnBuffers();
     if (typeof errorMessage === "string" && errorMessage.length > 0) {
       this.usagePoller.stopTurn();

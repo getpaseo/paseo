@@ -2490,6 +2490,107 @@ describe("PiRpcAgentSession", () => {
 });
 
 describe("PiRpcAgentSession steering", () => {
+  test("does not consume a queued steer when the outstanding foreground prompt has the same text", async () => {
+    const { pi, session, events } = await createSession();
+    const { turnId } = await session.startTurn("continue", {
+      clientMessageId: "client-prompt-1",
+    });
+    await session.steerActiveTurn("continue", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-1",
+    });
+    pi.latestSession().emit({ type: "agent_start" });
+    pi.latestSession().emit({ type: "turn_start" });
+    pi.latestSession().finishSubmittedUserMessage({
+      id: "native-prompt-1",
+      parentId: null,
+      text: "continue",
+    });
+
+    await session.interrupt();
+
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "user_message",
+        text: "continue",
+        messageId: "native-prompt-1",
+        clientMessageId: "client-prompt-1",
+      },
+      {
+        type: "notification",
+        level: "warning",
+        message: "Not delivered (stopped): continue",
+      },
+    ]);
+  });
+
+  test("keeps a consumed steer distinct from an identical foreground prompt", async () => {
+    const { pi, session, events } = await createSession();
+    const { turnId } = await session.startTurn("continue", { clientMessageId: "client-prompt-1" });
+    await session.steerActiveTurn("continue", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-1",
+    });
+    const native = pi.latestSession();
+    native.finishSubmittedUserMessage({ id: "native-prompt-1", parentId: null, text: "continue" });
+    native.finishSubmittedUserMessage({
+      id: "native-steer-1",
+      parentId: "native-prompt-1",
+      text: "continue",
+    });
+    await session.interrupt();
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "user_message",
+        text: "continue",
+        messageId: "native-prompt-1",
+        clientMessageId: "client-prompt-1",
+      },
+      {
+        type: "user_message",
+        text: "continue",
+        messageId: "native-steer-1",
+        clientMessageId: "client-steer-1",
+      },
+    ]);
+  });
+
+  test.each([1, 2])(
+    "labels a stopped image-only steer containing %i image(s)",
+    async (imageCount) => {
+      const { pi, session, events } = await createSession();
+      const native = pi.latestSession();
+      native.setModelResult = {
+        provider: "openai",
+        id: "gpt-4o",
+        name: "GPT-4o",
+        input: ["text", "image"],
+      };
+      await session.setModel("openai/gpt-4o");
+      const { turnId } = await session.startTurn([
+        { type: "image", data: ONE_BY_ONE_PNG_BASE64, mimeType: "image/png" },
+      ]);
+      await session.steerActiveTurn(
+        Array.from({ length: imageCount }, () => ({
+          type: "image" as const,
+          data: ONE_BY_ONE_PNG_BASE64,
+          mimeType: "image/png",
+        })),
+        { expectedTurnId: turnId, clientMessageId: "client-steer-1" },
+      );
+      native.emit({ type: "message_end", message: { role: "user", content: [] } });
+      await session.interrupt();
+      expect(native.steerCalls).toEqual([{ message: "", imageCount }]);
+      expect(events.timelineItems()).toEqual([
+        {
+          type: "notification",
+          level: "warning",
+          message: `Not delivered (stopped): ${imageCount} ${imageCount === 1 ? "image" : "images"}`,
+        },
+      ]);
+    },
+  );
+
   test("reports an unconsumed steer as not delivered when Stop clears the queue", async () => {
     const { session, events } = await createSession();
     const { turnId } = await session.startTurn("work");
