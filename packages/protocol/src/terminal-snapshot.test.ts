@@ -47,3 +47,33 @@ describe("renderTerminalSnapshotToAnsi", () => {
     expect(ansi).toContain("ABCDEFGHIJ\r\nKLMNOP");
   });
 });
+
+describe("renderTerminalSnapshotToAnsi wide chars", () => {
+  it("skips wide-char continuation cells so the glyph keeps its two columns", () => {
+    // The daemon captures "통" as the glyph followed by an empty continuation
+    // cell. Emitting anything for that cell pushes the rest of the row right.
+    const state: TerminalState = {
+      rows: 1,
+      cols: 10,
+      scrollback: [],
+      grid: [[{ char: "통" }, { char: "" }, { char: "합" }, { char: "" }, { char: "!" }]],
+      cursor: { row: 0, col: 5 },
+    };
+
+    expect(renderTerminalSnapshotToAnsi(state)).toContain("통합!");
+  });
+
+  it("replays snapshots from an old daemon verbatim, including its continuation spaces", () => {
+    // Old daemons already collapsed the continuation to " ". The serializer
+    // cannot tell that apart from a real space, so it must not guess.
+    const state: TerminalState = {
+      rows: 1,
+      cols: 10,
+      scrollback: [],
+      grid: [cells("통 합 !")],
+      cursor: { row: 0, col: 6 },
+    };
+
+    expect(renderTerminalSnapshotToAnsi(state)).toContain("통 합 !");
+  });
+});
