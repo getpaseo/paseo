@@ -1,4 +1,10 @@
-import { projectTimelineRows } from "./timeline-projection.js";
+import {
+  projectTimelineRows,
+  selectProjectedEntriesTail,
+  selectProjectedTimelinePage,
+  tailBoundaryRowCrosses,
+  type ProjectedTimelineRow,
+} from "./timeline-projection.js";
 import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
 import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/index.js";
 import type { PluginSessionOpenRequest } from "@getpaseo/plugin/server";
@@ -18,6 +24,7 @@ import {
 } from "@getpaseo/protocol/agent-labels";
 import type { Logger } from "pino";
 import type { ToolPolicy } from "@getpaseo/protocol/agent-types";
+import { timelineItemIdentity } from "@getpaseo/protocol/timeline-identity";
 import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
 import { z } from "zod";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
@@ -59,7 +66,12 @@ import { toStoredAgentRecord } from "./agent-projections.js";
 import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
 import type { AgentOwner } from "./agent-owner.js";
 import {
+  contiguousCommittedPrefix,
+  DEFAULT_TIMELINE_FETCH_LIMIT,
   InMemoryAgentTimelineStore,
+  TIMELINE_TAIL_BACKFILL_BATCH_ROWS,
+  TIMELINE_TAIL_BACKFILL_MAX_SCAN_ROWS,
+  type InMemoryAgentTimelineStoreOptions,
   type SeedAgentTimelineOptions,
 } from "./agent-timeline-store.js";
 import type {
@@ -67,6 +79,7 @@ import type {
   AgentTimelineFetchResult,
   AgentTimelineRow,
   AgentTimelineStore,
+  AgentTimelineWindow,
 } from "./agent-timeline-store-types.js";
 import {
   AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS,
@@ -96,6 +109,26 @@ import { extractAttention } from "../persistence-hooks.js";
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
 const IMPORTABLE_SESSION_LIST_TIMEOUT_MS = 90_000;
+const DURABLE_TIMELINE_WRITE_DEFAULT_ATTEMPTS = 3;
+const DURABLE_TIMELINE_WRITE_DEFAULT_RETRY_DELAY_MS = 500;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((done) => {
+    setTimeout(done, ms);
+  });
+}
+
+function resolveDurableTimelineWrite(
+  options?: DurableTimelineWriteOptions,
+): Required<DurableTimelineWriteOptions> {
+  return {
+    maxAttempts: Math.max(1, options?.maxAttempts ?? DURABLE_TIMELINE_WRITE_DEFAULT_ATTEMPTS),
+    retryDelayMs: Math.max(
+      0,
+      options?.retryDelayMs ?? DURABLE_TIMELINE_WRITE_DEFAULT_RETRY_DELAY_MS,
+    ),
+  };
+}
 const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: false,
   supportsSessionPersistence: true,
@@ -250,8 +283,15 @@ export interface SubscribeOptions {
 
 interface HydrateTimelineOptions {
   force?: boolean;
+  /** Whether replayed provider_subagent events are dispatched to subscribers. */
   broadcast?: boolean | (() => boolean);
-  broadcastTimeline?: boolean;
+  /**
+   * Whether replayed timeline rows are re-broadcast as live stream events.
+   * Defaults to `broadcast`. When a bounded window is configured, callers that
+   * can signal an `agent.timeline.replacement` set this to false so reconnects
+   * and refreshes do not replay the full history over the wire.
+   */
+  broadcastTimeline?: boolean | (() => boolean);
 }
 
 export type ImportablePersistedAgentQueryOptions = ListImportableSessionsOptions & {
@@ -317,6 +357,13 @@ export interface CreateAgentOptions {
   owner?: AgentOwner;
 }
 
+export interface DurableTimelineWriteOptions {
+  /** Total attempts per write, including the first (default 3). */
+  maxAttempts?: number;
+  /** Delay between attempts in milliseconds (default 500). */
+  retryDelayMs?: number;
+}
+
 export interface AgentManagerOptions {
   pluginLifecycle?: PluginLifecycle;
   /** An internal workspace makes every agent created inside it internal. */
@@ -327,6 +374,18 @@ export interface AgentManagerOptions {
   onAgentAttention?: AgentAttentionCallback;
   onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
   durableTimelineStore?: AgentTimelineStore;
+  /**
+   * Retry policy for background durable timeline writes. A row that still
+   * fails after the final attempt stays in the in-memory window and is
+   * replayed whenever a later write for the same agent succeeds.
+   */
+  durableTimelineWrite?: DurableTimelineWriteOptions;
+  /**
+   * Bounds the in-memory timeline window. Eviction only ever removes rows at
+   * or below the durable watermark, so this is only meaningful alongside
+   * `durableTimelineStore`; without one the caps are inert.
+   */
+  timelineWindow?: InMemoryAgentTimelineStoreOptions;
   terminalManager?: TerminalManager | null;
   mcpBaseUrl?: string;
   mcpAuthToken?: string;
@@ -387,6 +446,36 @@ function resolveInitialAttention(input: AttentionState | undefined): AttentionSt
   };
 }
 
+interface RegisterHistoryFlags {
+  historyPrimed: boolean;
+  subagentHistoryRestored: boolean;
+}
+
+function resolveRegisterHistoryFlags(
+  options: { historyPrimed?: boolean; subagentHistoryRestored?: boolean } | undefined,
+  durableTimelineHasRows: boolean,
+): RegisterHistoryFlags {
+  const historyPrimed = options?.historyPrimed ?? durableTimelineHasRows;
+  // A caller that declares the history primed (fresh create, import) has
+  // already accounted for subagent state. A resume leaves it to the first
+  // hydration: the prime path or the subagent-only restore.
+  const subagentHistoryRestored =
+    options?.subagentHistoryRestored ?? options?.historyPrimed ?? false;
+  return { historyPrimed, subagentHistoryRestored };
+}
+
+function reloadedHistoryFlags(
+  rehydrateFromDisk: boolean,
+  existing: Pick<ManagedAgentBase, "historyPrimed" | "subagentHistoryRestored">,
+): RegisterHistoryFlags {
+  return rehydrateFromDisk
+    ? { historyPrimed: false, subagentHistoryRestored: false }
+    : {
+        historyPrimed: existing.historyPrimed,
+        subagentHistoryRestored: existing.subagentHistoryRestored,
+      };
+}
+
 interface StreamEventFlags {
   shouldDispatchEvent: boolean;
   shouldNotifyWaiters: boolean;
@@ -426,6 +515,14 @@ interface ManagedAgentBase {
   pendingReplacement: boolean;
   persistence: AgentPersistenceHandle | null;
   historyPrimed: boolean;
+  /**
+   * Provider subagent state has been replayed from the session history.
+   * Tracked separately from `historyPrimed`: a timeline restored from the
+   * durable store is primed, but a restarted process still has an empty
+   * in-memory subagent store until the provider history is replayed for its
+   * provider_subagent events.
+   */
+  subagentHistoryRestored: boolean;
   lastUserMessageAt: Date | null;
   activeTurnId: string | null;
   activeTurnStartedAt: Date | null;
@@ -552,6 +649,70 @@ interface AgentMetadataPatch {
 }
 
 const SYSTEM_ERROR_PREFIX = "[System Error]";
+
+/**
+ * Stable identity keys for a timeline item, for aligning the daemon's seeded
+ * log with a provider's replayed history. User items match on either the
+ * provider message id or the daemon-assigned client id; the structural
+ * identity (tool calls, plugins) applies to every type.
+ */
+function timelineReplayIdentityKeys(item: AgentTimelineItem): string[] {
+  const keys: string[] = [];
+  if (item.type === "assistant_message" && item.messageId !== undefined) {
+    keys.push(`assistant:${item.messageId}`);
+  }
+  if (item.type === "user_message") {
+    if (item.messageId !== undefined) keys.push(`user:${item.messageId}`);
+    if (item.clientMessageId !== undefined) keys.push(`user:${item.clientMessageId}`);
+  }
+  const structural = timelineItemIdentity(item);
+  if (structural !== null) keys.push(`structural:${structural}`);
+  return keys;
+}
+
+/** The item's plain text, for the item types that carry one. */
+function timelineItemPlainText(item: AgentTimelineItem): string | null {
+  if (
+    item.type === "user_message" ||
+    item.type === "assistant_message" ||
+    item.type === "reasoning"
+  ) {
+    return item.text;
+  }
+  return null;
+}
+
+/**
+ * Whether two timeline items are the same conversation item in the daemon's
+ * log and the provider's replay. An identity on either side settles it;
+ * identity-less items (reasoning, id-less messages) fall back to exact text.
+ */
+function timelineItemsCorrespond(seeded: AgentTimelineItem, replay: AgentTimelineItem): boolean {
+  const seededKeys = timelineReplayIdentityKeys(seeded);
+  if (seededKeys.length > 0) {
+    const replayKeys = timelineReplayIdentityKeys(replay);
+    if (replayKeys.some((key) => seededKeys.includes(key))) {
+      return true;
+    }
+  }
+  if (seeded.type !== replay.type) return false;
+  const seededText = timelineItemPlainText(seeded);
+  const replayText = timelineItemPlainText(replay);
+  return seededText !== null && replayText !== null && seededText === replayText;
+}
+
+/**
+ * Rows the daemon records but the provider's replay never re-emits: system
+ * error notes and compaction markers.
+ */
+function isDaemonOnlyTimelineItem(item: AgentTimelineItem): boolean {
+  if (item.type === "compaction") return true;
+  return (
+    item.type === "assistant_message" &&
+    item.messageId === undefined &&
+    item.text.startsWith(SYSTEM_ERROR_PREFIX)
+  );
+}
 
 function attachPersistenceCwd(
   handle: AgentPersistenceHandle | null,
@@ -741,7 +902,25 @@ export class AgentManager {
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
   private readonly providerDefinitions = new Map<AgentProvider, ProviderEnabledFlag>();
   private readonly agents = new Map<string, LiveManagedAgent>();
-  private readonly timelineStore = new InMemoryAgentTimelineStore();
+  private readonly timelineStore: InMemoryAgentTimelineStore;
+  private readonly durableTimelineWatermarks = new Map<string, number>();
+  // Rows seeded from the durable store at register: first hydration compares
+  // the provider's copy of the seeded log against this count.
+  private readonly durableTimelineSeededRowCounts = new Map<string, number>();
+  /** Seqs with a durable write in flight or still failing (retried later). */
+  private readonly durableTimelinePendingSeqs = new Map<string, Set<number>>();
+  /** Rows whose direct write attempts are exhausted, awaiting a healthy disk. */
+  private readonly durableTimelineFailedWrites = new Map<string, AgentTimelineRow[]>();
+  private readonly durableTimelineMaxSeen = new Map<string, number>();
+  private readonly durableTimelineRetriesInFlight = new Set<string>();
+  /**
+   * Per-agent history generation. Rebuilding the committed timeline (delete +
+   * re-prime) bumps it; in-flight or queued durable writes from the previous
+   * generation abort instead of landing in the rebuilt log, where their seqs
+   * would collide with re-primed rows.
+   */
+  private readonly durableTimelineGenerations = new Map<string, number>();
+  private readonly durableTimelineWrite: Required<DurableTimelineWriteOptions>;
   private readonly providerSubagents = new ProviderSubagentStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
@@ -781,6 +960,8 @@ export class AgentManager {
     this.idFactory = options?.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
     this.durableTimelineStore = options?.durableTimelineStore;
+    this.durableTimelineWrite = resolveDurableTimelineWrite(options.durableTimelineWrite);
+    this.timelineStore = new InMemoryAgentTimelineStore(options.timelineWindow);
     this.onAgentAttention = options?.onAgentAttention;
     this.onWorkspaceStateMayHaveChanged = options?.onWorkspaceStateMayHaveChanged;
     this.mcpBaseUrl = options?.mcpBaseUrl ?? null;
@@ -1217,20 +1398,283 @@ export class AgentManager {
     return this.timelineStore.getItems(id);
   }
 
+  /**
+   * All timeline rows for an agent: committed durable rows merged with the
+   * in-memory window, in-memory winning per seq. Durable writes are background
+   * tasks, so the window always carries rows that are not on disk yet.
+   */
+  private async getMergedTimelineRows(id: string): Promise<AgentTimelineRow[]> {
+    const bySeq = new Map<number, AgentTimelineRow>();
+    if (this.durableTimelineStore) {
+      for (const row of await this.durableTimelineStore.getCommittedRows(id)) {
+        bySeq.set(row.seq, row);
+      }
+    }
+    // In-memory rows win: they carry the latest enrichment (provider ids,
+    // merged state) for the same seq.
+    for (const row of this.timelineStore.getCanonicalRows(id)) {
+      bySeq.set(row.seq, row);
+    }
+    return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
+  }
+
   async getTimelineRows(id: string): Promise<AgentTimelineRow[]> {
     this.requireAgent(id);
-    if (this.durableTimelineStore) {
-      return projectTimelineRows({
-        rows: await this.durableTimelineStore.getCommittedRows(id),
-        mode: "projected",
-      }).map((entry) => Object.assign({ seq: entry.seqEnd }, entry));
+    if (!this.durableTimelineStore) {
+      return this.timelineStore.getRows(id);
     }
-    return this.timelineStore.getRows(id);
+    // Full-history reads (timeline search, prompt listing) must also see rows
+    // the background durable write has not committed yet, so the window is
+    // merged in on top of the disk rows.
+    return projectTimelineRows({
+      rows: await this.getMergedTimelineRows(id),
+      mode: "projected",
+    }).map((entry) => Object.assign({ seq: entry.seqEnd }, entry));
   }
 
   fetchTimeline(id: string, options?: AgentTimelineFetchOptions): AgentTimelineFetchResult {
     this.requireAgent(id);
     return this.timelineStore.fetch(id, options);
+  }
+
+  /**
+   * Fetch a timeline page from the durable store merged with the in-memory
+   * window. Without a durable store this is exactly `fetchTimeline`. With one,
+   * rows evicted from the bounded window (or an empty window after a restart)
+   * are served from disk, so full-history reads never lose data to eviction.
+   */
+  async fetchTimelineWithBackfill(
+    id: string,
+    options?: AgentTimelineFetchOptions,
+  ): Promise<AgentTimelineFetchResult> {
+    this.requireAgent(id);
+    if (!this.durableTimelineStore) {
+      return this.fetchTimeline(id, options);
+    }
+    const epoch = this.timelineStore.getEpoch(id);
+    const nextSeq = this.timelineStore.getNextSeq(id);
+    const direction = options?.direction ?? "tail";
+    const limit = options?.limit ?? DEFAULT_TIMELINE_FETCH_LIMIT;
+    const cursor = options?.cursor;
+    const staleCursor = cursor !== undefined && cursor.epoch !== epoch;
+    // A bounded tail scans the durable log from the end instead of
+    // materializing the full history; above the scan cap the full read below
+    // takes over.
+    if (direction === "tail" && limit > 0) {
+      const bounded = await this.fetchTailPageWithBoundedBackfill(id, limit, nextSeq);
+      if (bounded !== null) {
+        return {
+          epoch,
+          direction,
+          reset: staleCursor,
+          staleCursor,
+          gap: false,
+          window: bounded.window,
+          hasOlder: bounded.hasOlder,
+          hasNewer: false,
+          startSeq: bounded.startSeq,
+          endSeq: bounded.endSeq,
+          rows: bounded.rows,
+        };
+      }
+    }
+    const rows = await this.getMergedTimelineRows(id);
+    const minSeq = rows.length > 0 ? rows[0].seq : 0;
+    const maxSeq = nextSeq - 1;
+    const gap =
+      !staleCursor &&
+      direction === "after" &&
+      cursor !== undefined &&
+      rows.length > 0 &&
+      cursor.seq < minSeq - 1;
+    const reset = staleCursor || gap;
+    const page = selectProjectedTimelinePage({
+      rows,
+      bounds: { minSeq, maxSeq },
+      direction: reset ? "tail" : direction,
+      cursorSeq: cursor?.seq,
+      limit,
+    });
+    return {
+      epoch,
+      direction,
+      reset,
+      staleCursor,
+      gap,
+      window: { minSeq, maxSeq, nextSeq },
+      hasOlder: page.hasOlder,
+      hasNewer: page.hasNewer,
+      startSeq: page.startSeq,
+      endSeq: page.endSeq,
+      rows: page.entries.map((entry) => Object.assign({ seq: entry.seqEnd }, entry)),
+    };
+  }
+
+  /**
+   * Serve a tail page from the durable log without materializing the full
+   * history: window rows (the newest, in memory) plus a bounded backward scan
+   * of the durable rows below the window. Each batch is followed by a
+   * single-row probe of the row directly above the collected suffix; the scan
+   * extends while that row can still merge into the suffix (chunk rules or
+   * identity), and stops at a stable cut once the collected rows project to
+   * the requested page size (chunk-heavy logs pack many rows per item, so a
+   * stable cut can sit well below `limit` projected items). Returns null
+   * when the scan exceeds the cap; the caller falls back to the full-history
+   * read.
+   */
+  private async fetchTailPageWithBoundedBackfill(
+    id: string,
+    limit: number,
+    nextSeq: number,
+  ): Promise<{
+    window: AgentTimelineWindow;
+    hasOlder: boolean;
+    startSeq: number | null;
+    endSeq: number | null;
+    rows: ProjectedTimelineRow[];
+  } | null> {
+    const durableStore = this.durableTimelineStore;
+    if (!durableStore) return null;
+    const windowRows = this.timelineStore.getCanonicalRows(id);
+    const floor = windowRows[0]?.seq;
+    // The newest durable row the scan may serve: the row below the window
+    // floor, or the log's newest row when the window is empty. Nothing is
+    // appended while the window is empty (an append lands in the window), so
+    // the seeded last row is still the file's newest row.
+    const maxSeq = floor === undefined ? nextSeq - 1 : floor - 1;
+    const durable: AgentTimelineRow[] = [];
+    const collectedIdentities = new Set<string>();
+    for (const row of windowRows) {
+      const identity = timelineItemIdentity(row.item);
+      if (identity !== null) collectedIdentities.add(identity);
+    }
+    let offset = 0;
+    let reachedStart = false;
+    for (;;) {
+      const batch = await durableStore.readTailRows(id, {
+        maxSeq,
+        offset,
+        count: TIMELINE_TAIL_BACKFILL_BATCH_ROWS,
+      });
+      if (batch.rows.length === 0) {
+        reachedStart = true;
+        break;
+      }
+      // A bounded scan that cannot reach the newest eligible row is not
+      // answering the request; the full read below takes over.
+      if (offset === 0 && batch.rows[batch.rows.length - 1].seq !== maxSeq) return null;
+      if (durable.length + batch.rows.length > TIMELINE_TAIL_BACKFILL_MAX_SCAN_ROWS) return null;
+      offset += batch.rows.length;
+      durable.unshift(...batch.rows);
+      for (const row of batch.rows) {
+        const identity = timelineItemIdentity(row.item);
+        if (identity !== null) collectedIdentities.add(identity);
+      }
+      if (batch.atStart) {
+        reachedStart = true;
+        break;
+      }
+      const collectionOldest = durable[0];
+      const probe = await durableStore.readTailRows(id, {
+        maxSeq: collectionOldest.seq - 1,
+        offset: 0,
+        count: 1,
+      });
+      if (probe.rows.length === 0) {
+        reachedStart = true;
+        break;
+      }
+      if (
+        tailBoundaryRowCrosses({
+          probe: probe.rows[0],
+          collectionOldest,
+          collectedIdentities,
+        })
+      ) {
+        continue;
+      }
+      // A stable cut keeps the collected entries final, but the page is only
+      // complete once the collected rows project to at least `limit` items:
+      // chunk-heavy history packs many rows per item, and stopping at the
+      // first cut would serve a short page while older items remain.
+      if (
+        projectTimelineRows({ rows: [...durable, ...windowRows], mode: "projected" }).length >=
+        limit
+      ) {
+        break;
+      }
+    }
+
+    const merged = [...durable, ...windowRows];
+    const projected = projectTimelineRows({ rows: merged, mode: "projected" });
+    const minSeq = merged.length > 0 ? merged[0].seq : 0;
+    if (projected.length === 0) {
+      return {
+        window: { minSeq: 0, maxSeq: nextSeq - 1, nextSeq },
+        hasOlder: false,
+        startSeq: null,
+        endSeq: null,
+        rows: [],
+      };
+    }
+    const selection = selectProjectedEntriesTail(projected, limit, {
+      minSeq,
+      maxSeq: nextSeq - 1,
+    });
+    return {
+      window: { minSeq, maxSeq: nextSeq - 1, nextSeq },
+      // Rows may exist above a stability cut that did not reach the log start.
+      hasOlder: selection.hasOlder || !reachedStart,
+      startSeq: selection.startSeq,
+      endSeq: selection.endSeq,
+      rows: selection.entries.map((entry) => Object.assign({ seq: entry.seqEnd }, entry)),
+    };
+  }
+
+  /**
+   * Whether a sync (in-memory) fetch result is incomplete and must be rerun
+   * through the durable store: a full-history read when the window floor
+   * sits above seq 1 (this lifetime evicted, or a restart seeded the window
+   * over the durable log) or the window is empty, a `before` page that
+   * reached the window boundary, or any read of an empty window
+   * (post-restart, pre-hydration).
+   */
+  needsTimelineBackfill(
+    id: string,
+    input: {
+      direction: AgentTimelineFetchOptions["direction"];
+      limit: number;
+      sync: AgentTimelineFetchResult;
+    },
+  ): boolean {
+    if (!this.durableTimelineStore) return false;
+    const direction = input.direction ?? "tail";
+    const limit = input.limit ?? DEFAULT_TIMELINE_FETCH_LIMIT;
+    if (this.timelineStore.isWindowEmpty(id)) return true;
+    // A floor above seq 1 means rows sit below the window, whether this
+    // lifetime evicted them or a restart seeded over them.
+    if (limit === 0) return this.timelineStore.getWindowFloorSeq(id) > 1;
+    if (direction === "before") {
+      return (
+        !input.sync.hasOlder &&
+        (input.sync.startSeq === null || input.sync.startSeq <= input.sync.window.minSeq)
+      );
+    }
+    return false;
+  }
+
+  hasDurableTimeline(): boolean {
+    return this.durableTimelineStore !== undefined;
+  }
+
+  isTimelineWindowEmpty(id: string): boolean {
+    this.requireAgent(id);
+    return this.timelineStore.isWindowEmpty(id);
+  }
+
+  getTimelineEpoch(id: string): string {
+    this.requireAgent(id);
+    return this.timelineStore.getEpoch(id);
   }
 
   listProviderSubagents(parentAgentId: string): ProviderSubagentDescriptor[] {
@@ -1318,6 +1762,7 @@ export class AgentManager {
       workspaceId: options.workspaceId,
       owner: options.owner,
       historyPrimed: true,
+      subagentHistoryRestored: true,
     });
     if (!agent.internal) {
       this.pluginLifecycle?.emit("agent.created", {
@@ -1511,6 +1956,9 @@ export class AgentManager {
         timelineNextSeq: timelineRows.length + 1,
         persistence: imported.persistence,
         historyPrimed: true,
+        // The imported subagent events are applied right after registration,
+        // below; nothing is left for history replay to restore.
+        subagentHistoryRestored: true,
         initialTitle,
         publishWhenReady: true,
       });
@@ -1556,7 +2004,7 @@ export class AgentManager {
       existing = this.requireSessionAgent(agentId);
     }
     const rehydrateFromDisk = options?.rehydrateFromDisk ?? false;
-    const preservedHistoryPrimed = existing.historyPrimed;
+    const historyFlags = reloadedHistoryFlags(rehydrateFromDisk, existing);
     const preservedLastUsage = existing.lastUsage;
     const preservedLastError = existing.lastError;
     const preservedAttention = existing.attention;
@@ -1627,7 +2075,8 @@ export class AgentManager {
         createdAt: existing.createdAt,
         updatedAt: existing.updatedAt,
         lastUserMessageAt: existing.lastUserMessageAt,
-        historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
+        historyPrimed: historyFlags.historyPrimed,
+        subagentHistoryRestored: historyFlags.subagentHistoryRestored,
         lastUsage: preservedLastUsage,
         lastError: preservedLastError,
         attention: preservedAttention,
@@ -2009,6 +2458,7 @@ export class AgentManager {
         unsubscribeSession: null,
         persistence: record.persistence ?? null,
         historyPrimed: true,
+        subagentHistoryRestored: true,
         lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
         lastUsage: undefined,
         lastError: record.lastError ?? undefined,
@@ -3311,7 +3761,104 @@ export class AgentManager {
   }
 
   async deleteCommittedTimeline(agentId: string): Promise<void> {
+    // A new generation before the delete lands: a durable write still in the
+    // manager's retry loop (or queued behind the delete) belongs to the old
+    // log. Aborting it here keeps it from overwriting a re-primed row whose
+    // seq it collides with; a write already queued ahead of the delete is
+    // wiped with the file.
+    this.durableTimelineGenerations.set(agentId, this.durableTimelineGeneration(agentId) + 1);
     await this.durableTimelineStore?.deleteAgent(agentId);
+    // In-flight or failed writes belonged to the history that was just
+    // deleted; clearing them also unblocks the watermark for re-primed rows.
+    this.durableTimelinePendingSeqs.delete(agentId);
+    this.durableTimelineFailedWrites.delete(agentId);
+    this.durableTimelineMaxSeen.delete(agentId);
+    this.durableTimelineRetriesInFlight.delete(agentId);
+    // The on-disk history is gone, so nothing in the window is backed up.
+    this.setDurableWatermarkForAgent(agentId, 0);
+  }
+
+  private durableTimelineGeneration(agentId: string): number {
+    return this.durableTimelineGenerations.get(agentId) ?? 0;
+  }
+
+  private setDurableWatermarkForAgent(agentId: string, seq: number): void {
+    const current = this.durableTimelineWatermarks.get(agentId) ?? 0;
+    if (seq === 0) {
+      this.durableTimelineWatermarks.set(agentId, 0);
+    } else if (seq > current) {
+      this.durableTimelineWatermarks.set(agentId, seq);
+    }
+    if (this.timelineStore.has(agentId)) {
+      this.timelineStore.setDurableWatermark(agentId, seq);
+    }
+  }
+
+  private markDurableWritePending(agentId: string, rows: readonly AgentTimelineRow[]): void {
+    const pending = this.durableTimelinePendingSeqs.get(agentId) ?? new Set<number>();
+    let maxSeen = this.durableTimelineMaxSeen.get(agentId) ?? 0;
+    for (const row of rows) {
+      pending.add(row.seq);
+      if (row.seq > maxSeen) maxSeen = row.seq;
+    }
+    this.durableTimelinePendingSeqs.set(agentId, pending);
+    this.durableTimelineMaxSeen.set(agentId, maxSeen);
+  }
+
+  /**
+   * The watermark only advances over a contiguous prefix of confirmed
+   * writes: a row whose durable write is still pending must not be treated
+   * as persisted, because eviction would drop it and disk could no longer
+   * serve it.
+   */
+  private advanceDurableWatermark(agentId: string): void {
+    const current = this.durableTimelineWatermarks.get(agentId) ?? 0;
+    const maxSeen = this.durableTimelineMaxSeen.get(agentId) ?? current;
+    const pending = this.durableTimelinePendingSeqs.get(agentId);
+    let next = current;
+    while (next < maxSeen && !pending?.has(next + 1)) {
+      next += 1;
+    }
+    if (next > current) {
+      this.setDurableWatermarkForAgent(agentId, next);
+    }
+  }
+
+  private settleDurableWrite(
+    agentId: string,
+    rows: readonly AgentTimelineRow[],
+    confirmed: boolean,
+  ): void {
+    if (confirmed) {
+      const pending = this.durableTimelinePendingSeqs.get(agentId);
+      if (pending) {
+        for (const row of rows) {
+          pending.delete(row.seq);
+        }
+      }
+      const failed = this.durableTimelineFailedWrites.get(agentId);
+      if (failed) {
+        const confirmedSeqs = new Set(rows.map((row) => row.seq));
+        const remaining = failed.filter((row) => !confirmedSeqs.has(row.seq));
+        if (remaining.length === 0) {
+          this.durableTimelineFailedWrites.delete(agentId);
+        } else {
+          this.durableTimelineFailedWrites.set(agentId, remaining);
+        }
+      }
+    } else {
+      // A failed row stays pending so the watermark stalls below it: the
+      // window retains it (memory grows) rather than history being dropped.
+      // The row is replayed whenever a later write for the agent succeeds.
+      const failed = this.durableTimelineFailedWrites.get(agentId) ?? [];
+      for (const row of rows) {
+        if (!failed.some((candidate) => candidate.seq === row.seq)) {
+          failed.push({ ...row });
+        }
+      }
+      this.durableTimelineFailedWrites.set(agentId, failed);
+    }
+    this.advanceDurableWatermark(agentId);
   }
 
   async getLastAssistantMessage(agentId: string): Promise<string | null> {
@@ -3369,11 +3916,20 @@ export class AgentManager {
     if (!liveSegment.startsAtBeginning) {
       return liveSegment.text;
     }
-    const lastDurableItem = await this.durableTimelineStore.getLastItem(agentId);
+    // The window is a suffix of history and its rows also live in the
+    // durable store, so only rows strictly below the window can extend the
+    // segment. Reading the whole durable tail would count the window's own
+    // rows twice.
+    const windowMinSeq = this.timelineStore.fetch(agentId).window.minSeq;
+    const belowWindow = { maxSeq: windowMinSeq - 1 };
+    const lastDurableItem = await this.durableTimelineStore.getLastItem(agentId, belowWindow);
     if (lastDurableItem?.type !== "assistant_message") {
       return liveSegment.text;
     }
-    const durableMessage = await this.durableTimelineStore.getLastAssistantMessage(agentId);
+    const durableMessage = await this.durableTimelineStore.getLastAssistantMessage(
+      agentId,
+      belowWindow,
+    );
     return durableMessage ? `${durableMessage}${liveSegment.text}` : liveSegment.text;
   }
 
@@ -3557,6 +4113,7 @@ export class AgentManager {
       timelineNextSeq?: number;
       persistence?: AgentPersistenceHandle;
       historyPrimed?: boolean;
+      subagentHistoryRestored?: boolean;
       lastUsage?: AgentUsage;
       lastError?: string;
       attention?: AttentionState;
@@ -3586,11 +4143,12 @@ export class AgentManager {
       );
 
       const now = new Date();
-      const { durableTimelineHasRows } = await this.initializeAgentTimelineForRegister({
-        agentId: resolvedAgentId,
-        now,
-        options,
-      });
+      const { durableTimelineHasRows, durableTimelineGapPresent } =
+        await this.initializeAgentTimelineForRegister({
+          agentId: resolvedAgentId,
+          now,
+          options,
+        });
 
       const managed = this.buildManagedAgentForRegister({
         resolvedAgentId,
@@ -3598,6 +4156,7 @@ export class AgentManager {
         config,
         now,
         durableTimelineHasRows,
+        durableTimelineGapPresent,
         options,
       });
 
@@ -3618,7 +4177,7 @@ export class AgentManager {
       if (session.initialTimeline?.length) {
         if (!managed.historyPrimed) {
           // Legacy/imported chats need their existing history before startup rows.
-          await this.primeTimelineFromLegacyProviderHistory(managed, false, startupHistory);
+          await this.primeTimelineFromLegacyProviderHistory(managed, false, false, startupHistory);
         } else {
           for (const entry of buildImportedTimelineRows(session.initialTimeline)) {
             this.recordTimeline(managed.id, entry.item, { timestamp: entry.timestamp });
@@ -3705,7 +4264,7 @@ export class AgentManager {
           updatedAt?: Date;
         }
       | undefined;
-  }): Promise<{ durableTimelineHasRows: boolean }> {
+  }): Promise<{ durableTimelineHasRows: boolean; durableTimelineGapPresent: boolean }> {
     const { agentId, now, options } = params;
     const timelineAlreadyPrimed = this.timelineStore.has(agentId);
     const explicitTimelineSeed = buildExplicitTimelineSeedForRegister(now, options);
@@ -3716,15 +4275,29 @@ export class AgentManager {
       : null;
     const durableTimelineHasRows =
       timelineAlreadyPrimed ||
-      (durableTimelineSeed != null && (durableTimelineSeed.nextSeq ?? 1) > 1);
-    const timelineSeed = explicitTimelineSeed ?? durableTimelineSeed;
+      (durableTimelineSeed != null && (durableTimelineSeed.seed.nextSeq ?? 1) > 1);
+    // A watermark below the top of the log is a seq the previous lifetime
+    // never persisted (a write that failed before the restart). The rows on
+    // disk do not count as primed until provider history re-primes the gap.
+    const durableTimelineGapPresent =
+      durableTimelineSeed != null &&
+      durableTimelineSeed.watermark < (durableTimelineSeed.seed.nextSeq ?? 1) - 1;
+    const timelineSeed = explicitTimelineSeed ?? durableTimelineSeed?.seed ?? null;
     if (timelineSeed || !this.timelineStore.has(agentId)) {
       this.timelineStore.initialize(agentId, timelineSeed ?? { timestamp: now.toISOString() });
+    }
+    if (durableTimelineSeed) {
+      // The watermark is the end of the contiguous committed prefix, so the
+      // window may evict down to it as soon as inserts confirm. A gap below
+      // the max seq (a write that failed before the restart) stays
+      // un-persisted; provider history re-prime is its recovery path.
+      this.setDurableWatermarkForAgent(agentId, durableTimelineSeed.watermark);
+      this.durableTimelineSeededRowCounts.set(agentId, durableTimelineSeed.rowCount);
     }
     if (options?.timelineRows?.length) {
       this.enqueueDurableTimelineBulkInsert(agentId, options.timelineRows);
     }
-    return { durableTimelineHasRows };
+    return { durableTimelineHasRows, durableTimelineGapPresent };
   }
 
   private buildManagedAgentForRegister(params: {
@@ -3733,6 +4306,7 @@ export class AgentManager {
     config: AgentSessionConfig;
     now: Date;
     durableTimelineHasRows: boolean;
+    durableTimelineGapPresent: boolean;
     options:
       | {
           createdAt?: Date;
@@ -3740,6 +4314,7 @@ export class AgentManager {
           lastUserMessageAt?: Date | null;
           labels?: Record<string, string>;
           historyPrimed?: boolean;
+          subagentHistoryRestored?: boolean;
           lastUsage?: AgentUsage;
           lastError?: string;
           attention?: AttentionState;
@@ -3749,7 +4324,21 @@ export class AgentManager {
         }
       | undefined;
   }): ActiveManagedAgent {
-    const { resolvedAgentId, session, config, now, durableTimelineHasRows, options } = params;
+    const {
+      resolvedAgentId,
+      session,
+      config,
+      now,
+      durableTimelineHasRows,
+      durableTimelineGapPresent,
+      options,
+    } = params;
+    // A gapped durable log must re-prime from provider history, so its rows
+    // do not count as primed; a contiguous log keeps the fast path.
+    const { historyPrimed, subagentHistoryRestored } = resolveRegisterHistoryFlags(
+      options,
+      durableTimelineHasRows && !durableTimelineGapPresent,
+    );
     return {
       id: resolvedAgentId,
       provider: config.provider,
@@ -3779,7 +4368,8 @@ export class AgentManager {
         options?.persistence ?? session.describePersistence(),
         config.cwd,
       ),
-      historyPrimed: options?.historyPrimed ?? durableTimelineHasRows,
+      historyPrimed,
+      subagentHistoryRestored,
       lastUserMessageAt: options?.lastUserMessageAt ?? null,
       lastUsage: options?.lastUsage,
       lastError: options?.lastError,
@@ -3792,13 +4382,19 @@ export class AgentManager {
   private async loadCommittedTimelineSeed(
     agentId: string,
     now: Date,
-  ): Promise<SeedAgentTimelineOptions> {
-    if (!this.durableTimelineStore) {
-      return { timestamp: now.toISOString() };
+  ): Promise<{ seed: SeedAgentTimelineOptions; watermark: number; rowCount: number } | null> {
+    if (!this.durableTimelineStore) return null;
+    const rows = await this.durableTimelineStore.getCommittedRows(agentId);
+    let maxSeq = 0;
+    for (const row of rows) {
+      if (row.seq > maxSeq) maxSeq = row.seq;
     }
     return {
-      nextSeq: (await this.durableTimelineStore.getLatestCommittedSeq(agentId)) + 1,
-      timestamp: now.toISOString(),
+      seed: { nextSeq: maxSeq + 1, timestamp: now.toISOString() },
+      // A gap below the max seq means a write failed before the restart; the
+      // seeded watermark must stop at the contiguous prefix, not the max.
+      watermark: contiguousCommittedPrefix(rows.map((row) => row.seq)),
+      rowCount: rows.length,
     };
   }
 
@@ -3839,6 +4435,11 @@ export class AgentManager {
 
   private discardRetainedAgentState(agentId: string): void {
     this.timelineStore.delete(agentId);
+    this.durableTimelineWatermarks.delete(agentId);
+    this.durableTimelineSeededRowCounts.delete(agentId);
+    this.durableTimelinePendingSeqs.delete(agentId);
+    this.durableTimelineFailedWrites.delete(agentId);
+    this.durableTimelineMaxSeen.delete(agentId);
     this.paseoToolPolicies.delete(agentId);
     for (const event of this.providerSubagents.deleteParent(agentId)) {
       this.dispatch({ type: "provider_subagent", event });
@@ -4099,26 +4700,174 @@ export class AgentManager {
     options?: HydrateTimelineOptions,
   ): Promise<void> {
     if (agent.historyPrimed && !options?.force) {
+      // The timeline is already primed — a fresh create, or a restore from the
+      // durable store — but a restarted process still holds no in-memory
+      // subagent state. Replay the session history once for its
+      // provider_subagent events, and verify the seeded log against the
+      // provider's copy so a crash-lost tail is replayed instead of dropped.
+      if (!agent.subagentHistoryRestored) {
+        const broadcast =
+          typeof options?.broadcast === "function"
+            ? options.broadcast()
+            : (options?.broadcast ?? false);
+        await this.verifySeededTimelineAndRestoreSubagents(agent, broadcast);
+      }
       return;
     }
 
     const broadcast = options?.broadcast ?? false;
     const broadcastTimeline = options?.broadcastTimeline ?? broadcast;
+    const resolveBroadcast = (flag: boolean | (() => boolean)): boolean =>
+      typeof flag === "function" ? flag() : flag;
 
-    if (options?.force) {
+    if (options?.force || (await this.hasAgentTimelineState(agent.id))) {
+      // A re-prime must rebuild the window from seq 1: the prime path appends
+      // to the seeded window (which restarts seqs above the durable log), and
+      // a log that does not start at seq 1 would stall the contiguous
+      // watermark — and the bounded window with it. With no state at all, the
+      // prime path is exactly right.
       await this.forceHydrateTimelineFromLegacyProviderHistory(
         agent,
-        typeof broadcast === "function" ? broadcast() : broadcast,
-        typeof broadcastTimeline === "function" ? broadcastTimeline() : broadcastTimeline,
+        options?.force === true,
+        resolveBroadcast(broadcast),
+        resolveBroadcast(broadcastTimeline),
       );
       return;
     }
 
-    await this.primeTimelineFromLegacyProviderHistory(agent, broadcast);
+    await this.primeTimelineFromLegacyProviderHistory(agent, broadcast, broadcastTimeline);
+  }
+
+  /**
+   * Whether the agent holds timeline state anywhere: rows in the in-memory
+   * window or committed rows on disk. A restart leaves the window empty but
+   * the durable log behind, so both sides must be checked.
+   */
+  private async hasAgentTimelineState(agentId: string): Promise<boolean> {
+    if (this.timelineStore.getCanonicalRows(agentId).length > 0) return true;
+    if (!this.durableTimelineStore) return false;
+    return (await this.durableTimelineStore.getCommittedRows(agentId)).length > 0;
+  }
+
+  /**
+   * First hydration of a timeline already primed from the durable store.
+   * Replay the session history once for its provider_subagent events — a
+   * restarted process holds no in-memory subagent state — and verify the
+   * seeded log against the provider's copy. A crash between a timeline
+   * append and its durable write leaves a prefix on disk with the lost tail
+   * above it; the provider's copy of that tail is replayed onto the seeded
+   * seqs instead of being silently dropped. The check only trusts an empty
+   * window: a non-empty window already holds the live rows above the seed,
+   * and a provider history that re-includes them would miscount. A failed
+   * replay leaves the flag unset so the next hydration retries, and it never
+   * blocks the timeline load.
+   */
+  private async verifySeededTimelineAndRestoreSubagents(
+    agent: ActiveManagedAgent,
+    broadcast: boolean,
+  ): Promise<void> {
+    const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
+    const subagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
+    try {
+      for await (const rawEvent of agent.session.streamHistory()) {
+        const event = limitAgentStreamEventContent(rawEvent);
+        if (event.type === "timeline") {
+          const item = projectAgentMessage(event.item);
+          if (!item) continue;
+          historyEvents.push({ ...event, item });
+        } else if (event.type === "provider_subagent") {
+          subagentEvents.push(event);
+        }
+      }
+    } catch (error) {
+      this.logger.warn({ err: error, agentId: agent.id }, "Failed to restore provider subagents");
+      return;
+    }
+
+    const seededRowCount = this.durableTimelineSeededRowCounts.get(agent.id) ?? 0;
+    if (this.timelineStore.getCanonicalRows(agent.id).length === 0) {
+      const missed = await this.findMissedTailEvents(agent.id, historyEvents, seededRowCount);
+      // The provider holds timeline items that never reached disk: a crash
+      // between an append and its durable write. Replay the missing tail
+      // onto the seeded seqs; the rows keep the log's numbering and their
+      // durable writes enqueue normally.
+      for (const event of missed) {
+        this.recordTimeline(
+          agent.id,
+          event.item,
+          event.timestamp ? { timestamp: event.timestamp } : undefined,
+        );
+      }
+    }
+
+    for (const event of subagentEvents) {
+      const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+      if (broadcast) {
+        this.dispatch({ type: "provider_subagent", event: update });
+      }
+    }
+    agent.subagentHistoryRestored = true;
+  }
+
+  /**
+   * The provider history items missing from the seeded durable log.
+   *
+   * A crash between a timeline append and its durable write leaves the
+   * provider holding a tail the disk never got. The two copies are separate
+   * projections of the same conversation: the daemon records one row per
+   * stream event (a streamed reply is many chunk rows) plus daemon-only rows
+   * the provider never re-emits, while the provider replays one item per
+   * message part — so a raw row-count comparison miscounts in both
+   * directions (chunk rows under-count, daemon-only rows over-count). Align
+   * the projected seeded items with the replay items instead: by identity
+   * where one exists (message ids, tool call ids), by text otherwise. The
+   * missed tail is the replay suffix past the last aligned item, and it
+   * always ends at the provider's newest item. When the alignment cannot
+   * consume the whole seeded log (a middle divergence neither copy can
+   * explain), fall back to the row-count rule rather than guess.
+   */
+  private async findMissedTailEvents(
+    agentId: string,
+    historyEvents: readonly Extract<AgentStreamEvent, { type: "timeline" }>[],
+    seededRowCount: number,
+  ): Promise<Extract<AgentStreamEvent, { type: "timeline" }>[]> {
+    const byCount =
+      historyEvents.length > seededRowCount ? historyEvents.slice(seededRowCount) : [];
+    const durableStore = this.durableTimelineStore;
+    if (!durableStore) return byCount;
+    let seededRows: AgentTimelineRow[];
+    try {
+      seededRows = await durableStore.getCommittedRows(agentId);
+    } catch {
+      return byCount;
+    }
+    const seededItems = projectTimelineRows({ rows: seededRows, mode: "projected" }).map(
+      (entry) => entry.item,
+    );
+    let seededIndex = 0;
+    let replayIndex = 0;
+    while (seededIndex < seededItems.length) {
+      const candidate =
+        replayIndex < historyEvents.length ? historyEvents[replayIndex]?.item : undefined;
+      if (candidate !== undefined && timelineItemsCorrespond(seededItems[seededIndex], candidate)) {
+        seededIndex += 1;
+        replayIndex += 1;
+        continue;
+      }
+      // Daemon-only rows (system errors, compaction) never appear in the
+      // provider's replay; skip them so the alignment stays anchored.
+      if (candidate !== undefined && isDaemonOnlyTimelineItem(seededItems[seededIndex])) {
+        seededIndex += 1;
+        continue;
+      }
+      break;
+    }
+    return seededIndex === seededItems.length ? historyEvents.slice(replayIndex) : byCount;
   }
 
   private async forceHydrateTimelineFromLegacyProviderHistory(
     agent: ActiveManagedAgent,
+    explicit: boolean,
     broadcast: boolean,
     broadcastTimeline: boolean,
   ): Promise<void> {
@@ -4133,6 +4882,29 @@ export class AgentManager {
       } else if (event.type === "provider_subagent") {
         providerSubagentEvents.push(event);
       }
+    }
+
+    if (!explicit && historyEvents.length === 0 && (await this.hasAgentTimelineState(agent.id))) {
+      // An implicit rebuild (resume, reload) that comes back with no history
+      // means the provider no longer holds the session timeline. The committed
+      // rows are the only copy; wiping them to replay an empty history would
+      // destroy them. An explicit rebuild (a successful rewind) is
+      // authoritative: an empty history is a legitimate clear. Subagent
+      // state is synced from the history either way.
+      for (const event of this.providerSubagents.deleteParent(agent.id)) {
+        if (broadcast) {
+          this.dispatch({ type: "provider_subagent", event });
+        }
+      }
+      for (const event of providerSubagentEvents) {
+        const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+        if (broadcast) {
+          this.dispatch({ type: "provider_subagent", event: update });
+        }
+      }
+      agent.historyPrimed = true;
+      agent.subagentHistoryRestored = true;
+      return;
     }
 
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
@@ -4152,6 +4924,7 @@ export class AgentManager {
         this.dispatch({ type: "provider_subagent", event: update });
       }
     }
+    agent.subagentHistoryRestored = true;
     for (const event of historyEvents) {
       const row = this.recordTimeline(
         agent.id,
@@ -4173,11 +4946,15 @@ export class AgentManager {
   private async primeTimelineFromLegacyProviderHistory(
     agent: ActiveManagedAgent,
     broadcast: boolean | (() => boolean),
+    broadcastTimeline: boolean | (() => boolean),
     history:
       | AsyncIterable<AgentStreamEvent>
       | Iterable<AgentStreamEvent> = agent.session.streamHistory(),
   ): Promise<void> {
-    const deferredBroadcast = typeof broadcast === "function";
+    const resolveBroadcast = (flag: boolean | (() => boolean)): boolean =>
+      typeof flag === "function" ? flag() : flag;
+    const deferredBroadcast =
+      typeof broadcast === "function" || typeof broadcastTimeline === "function";
     const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
     const historySubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
     agent.historyPrimed = false;
@@ -4229,7 +5006,7 @@ export class AgentManager {
       );
       if (deferredBroadcast) {
         timelineEvents.push({ event, row });
-      } else if (broadcast) {
+      } else if (broadcastTimeline) {
         this.dispatchStream(agent.id, event, {
           seq: row.seq,
           epoch: this.timelineStore.getEpoch(agent.id),
@@ -4238,19 +5015,24 @@ export class AgentManager {
       }
     }
     agent.historyPrimed = true;
+    agent.subagentHistoryRestored = true;
 
-    if (typeof broadcast !== "function" || !broadcast()) {
-      return;
+    if (!deferredBroadcast) return;
+    const dispatchSubagents = resolveBroadcast(broadcast);
+    const dispatchTimeline = resolveBroadcast(broadcastTimeline);
+    if (dispatchSubagents) {
+      for (const event of providerSubagentEvents) {
+        this.dispatch(event);
+      }
     }
-    for (const event of providerSubagentEvents) {
-      this.dispatch(event);
-    }
-    for (const { event, row } of timelineEvents) {
-      this.dispatchStream(agent.id, event, {
-        seq: row.seq,
-        epoch: this.timelineStore.getEpoch(agent.id),
-        timestamp: row.timestamp,
-      });
+    if (dispatchTimeline) {
+      for (const { event, row } of timelineEvents) {
+        this.dispatchStream(agent.id, event, {
+          seq: row.seq,
+          epoch: this.timelineStore.getEpoch(agent.id),
+          timestamp: row.timestamp,
+        });
+      }
     }
   }
 
@@ -4539,7 +5321,7 @@ export class AgentManager {
     if (
       event.item.type === "user_message" &&
       event.item.clientMessageId &&
-      this.reconcileSubmittedPromptEcho(agent, event.item, event.turnId)
+      (await this.reconcileSubmittedPromptEcho(agent, event.item, event.turnId))
     ) {
       flags.shouldDispatchEvent = false;
       flags.shouldNotifyWaiters = false;
@@ -4837,15 +5619,35 @@ export class AgentManager {
     this.recordAndDispatchTimelineItem(agent.id, item, agent.provider, options?.turnId, options);
   }
 
-  private reconcileSubmittedPromptEcho(
+  private async reconcileSubmittedPromptEcho(
     agent: ActiveManagedAgent,
     item: Extract<AgentTimelineItem, { type: "user_message" }>,
     turnId?: string,
-  ): AgentTimelineRow | null {
+  ): Promise<AgentTimelineRow | null> {
     const { clientMessageId, messageId } = item;
     if (!clientMessageId) return null;
+    // Captured before the durable lookup below: if the history is rebuilt in
+    // the meantime, the enrichment it produces belongs to the deleted log.
+    const generation = this.durableTimelineGeneration(agent.id);
     let existing = this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId);
     if (!existing) {
+      // The submitted row may have been evicted from the window or lost to a
+      // restart; the durable log still has it. Re-recording the echo would
+      // leave the prompt twice in history, so enrich the durable row instead.
+      const durableExisting = await this.findDurableSubmittedUserMessage(agent.id, clientMessageId);
+      if (durableExisting) {
+        if (messageId) {
+          this.enqueueDurableTimelineUpdate(
+            agent.id,
+            {
+              ...durableExisting,
+              providerMessageId: messageId,
+            },
+            generation,
+          );
+        }
+        return durableExisting;
+      }
       this.recordSubmittedPromptItem(
         agent,
         { ...item, messageId: clientMessageId },
@@ -4863,9 +5665,24 @@ export class AgentManager {
         clientMessageId,
         messageId,
       );
-      if (enriched) this.enqueueDurableTimelineUpdate(agent.id, enriched);
+      if (enriched) this.enqueueDurableTimelineUpdate(agent.id, enriched, generation);
     }
     return existing;
+  }
+
+  private async findDurableSubmittedUserMessage(
+    agentId: string,
+    clientMessageId: string,
+  ): Promise<AgentTimelineRow | null> {
+    if (!this.durableTimelineStore) return null;
+    const rows = await this.durableTimelineStore.getCommittedRows(agentId);
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const row = rows[i];
+      if (row?.item.type === "user_message" && row.item.clientMessageId === clientMessageId) {
+        return row;
+      }
+    }
+    return null;
   }
 
   private async appendSystemErrorTimelineMessage(
@@ -5023,12 +5840,27 @@ export class AgentManager {
     if (!this.durableTimelineStore) {
       return;
     }
-    const task = this.durableTimelineStore.bulkInsert(agentId, [row]).catch((err) => {
-      this.logger.error(
-        { err, agentId, seq: row.seq, itemType: row.item.type },
-        "Failed to append timeline row to durable store",
-      );
-    });
+    this.markDurableWritePending(agentId, [row]);
+    const generation = this.durableTimelineGeneration(agentId);
+    const task = this.writeDurableTimelineRows(agentId, [row], generation)
+      .then(() => {
+        // The history may have been rebuilt while this write was in flight;
+        // settling it would move the new generation's watermark over rows it
+        // never wrote.
+        if (this.durableTimelineGeneration(agentId) !== generation) return undefined;
+        this.settleDurableWrite(agentId, [row], true);
+        this.retryFailedDurableWrites(agentId);
+        return undefined;
+      })
+      .catch((err) => {
+        if (this.durableTimelineGeneration(agentId) !== generation) return undefined;
+        this.settleDurableWrite(agentId, [row], false);
+        this.logger.error(
+          { err, agentId, seq: row.seq, itemType: row.item.type },
+          "Failed to append timeline row to durable store; the row stays in the window and is replayed when a later write succeeds",
+        );
+        return undefined;
+      });
     this.trackBackgroundTask(task);
   }
 
@@ -5039,18 +5871,117 @@ export class AgentManager {
     if (!this.durableTimelineStore || rows.length === 0) {
       return;
     }
-    const task = this.durableTimelineStore.bulkInsert(agentId, rows).catch((err) => {
-      this.logger.error(
-        { err, agentId, rowCount: rows.length },
-        "Failed to seed durable timeline store",
-      );
-    });
+    this.markDurableWritePending(agentId, rows);
+    const generation = this.durableTimelineGeneration(agentId);
+    const task = this.writeDurableTimelineRows(agentId, rows, generation)
+      .then(() => {
+        if (this.durableTimelineGeneration(agentId) !== generation) return undefined;
+        this.settleDurableWrite(agentId, rows, true);
+        this.retryFailedDurableWrites(agentId);
+        return undefined;
+      })
+      .catch((err) => {
+        if (this.durableTimelineGeneration(agentId) !== generation) return undefined;
+        this.settleDurableWrite(agentId, rows, false);
+        this.logger.error(
+          { err, agentId, rowCount: rows.length },
+          "Failed to seed durable timeline store; the rows stay in the window and are replayed when a later write succeeds",
+        );
+        return undefined;
+      });
     this.trackBackgroundTask(task);
   }
 
-  private enqueueDurableTimelineUpdate(agentId: string, row: AgentTimelineRow): void {
+  private async writeDurableTimelineRows(
+    agentId: string,
+    rows: readonly AgentTimelineRow[],
+    generation: number,
+  ): Promise<void> {
+    const store = this.durableTimelineStore;
+    if (!store) {
+      return;
+    }
+    const { maxAttempts, retryDelayMs } = this.durableTimelineWrite;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      // The agent's history may have been rebuilt while a previous attempt
+      // failed: these rows belong to the deleted log, and writing them now
+      // would overwrite same-seq rows of the rebuilt one.
+      if (this.durableTimelineGeneration(agentId) !== generation) return;
+      try {
+        await store.bulkInsert(agentId, rows);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt < maxAttempts) {
+          await sleep(retryDelayMs);
+        }
+      }
+    }
+    throw lastError;
+  }
+
+  /**
+   * Replay rows whose direct write attempts were exhausted. One attempt per
+   * row: a success unblocks the stalled watermark, a failure leaves the row
+   * queued for the next successful write of the agent.
+   */
+  private retryFailedDurableWrites(agentId: string): void {
+    const failed = this.durableTimelineFailedWrites.get(agentId);
+    if (!failed || failed.length === 0) {
+      return;
+    }
+    if (this.durableTimelineRetriesInFlight.has(agentId)) {
+      return;
+    }
+    this.durableTimelineRetriesInFlight.add(agentId);
+    const generation = this.durableTimelineGeneration(agentId);
+    const task = (async () => {
+      try {
+        // settleDurableWrite replaces the queued array rather than mutating
+        // it, so iterating the captured reference is safe.
+        for (const row of failed) {
+          // The queue is cleared when the agent's history is deleted or the
+          // agent is discarded; a rebuilt history reuses seqs, so a queue
+          // match alone cannot prove the row still belongs to this log.
+          if (this.durableTimelineGeneration(agentId) !== generation) break;
+          const current = this.durableTimelineFailedWrites.get(agentId);
+          if (!current || !current.some((candidate) => candidate.seq === row.seq)) {
+            continue;
+          }
+          try {
+            // The pending write stalls the durable watermark below this seq,
+            // so the window still holds the row — possibly enriched since
+            // the write was queued (a provider echo stamped the
+            // providerMessageId). Rewrite the row as the window holds it so
+            // the retry cannot clobber an enrichment that already committed.
+            const fresh = this.timelineStore.getLatestRowForSeq(agentId, row.seq) ?? row;
+            await this.durableTimelineStore?.bulkInsert(agentId, [fresh]);
+          } catch {
+            break;
+          }
+          this.settleDurableWrite(agentId, [row], true);
+        }
+      } finally {
+        this.durableTimelineRetriesInFlight.delete(agentId);
+      }
+    })();
+    this.trackBackgroundTask(task);
+  }
+
+  private enqueueDurableTimelineUpdate(
+    agentId: string,
+    row: AgentTimelineRow,
+    generation: number,
+  ): void {
     if (!this.durableTimelineStore) return;
+    // The generation check and the store call happen in the same synchronous
+    // step: a rebuild bumps the generation before its delete lands, so a
+    // stale enrichment either runs ahead of the delete (and is wiped with the
+    // old log) or is dropped here.
+    if (this.durableTimelineGeneration(agentId) !== generation) return;
     const task = this.durableTimelineStore.updateCommittedRow(agentId, row).catch((err) => {
+      if (this.durableTimelineGeneration(agentId) !== generation) return;
       this.logger.error(
         { err, agentId, seq: row.seq, itemType: row.item.type },
         "Failed to enrich durable timeline row",

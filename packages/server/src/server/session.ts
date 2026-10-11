@@ -760,6 +760,10 @@ export class Session {
       pushToken: string | null;
     }
   >();
+  // Per-agent tail of in-flight legacy timeline replays. Pre-invalidation
+  // clients resync only through the replay rows, so their live timeline rows
+  // wait for the tail instead of overtaking the replay mid-read.
+  private readonly legacyTimelineReplayTails = new Map<string, Promise<void>>();
   private unsubscribeTerminalWorkspaceContributionEvents: (() => void) | null = null;
   private readonly agentUpdates: AgentUpdatesService;
   private readonly workspaceUpdatesSubscriptions = new Map<
@@ -1339,7 +1343,9 @@ export class Session {
         !this.supportsTimelineItem(serializedEvent.item, source)
       )
         continue;
-      subscription.owner.emit(message);
+      this.deliverAgentStreamAfterLegacyReplay(event.agentId, serializedEvent, source, () =>
+        subscription.owner.emit(message),
+      );
     }
     // COMPAT(ownedSubscriptions): added in v0.8.0, remove implicit timeline delivery after 2027-03-09.
     for (const [source, { capabilities }] of this.clientSources) {
@@ -1354,14 +1360,54 @@ export class Session {
         (subscription) =>
           subscription.owner.source === source && subscription.agentIds.has(event.agentId),
       );
-      if (!alreadyDelivered) this.onMessageToSource?.(source, message);
+      if (!alreadyDelivered)
+        this.deliverAgentStreamAfterLegacyReplay(event.agentId, serializedEvent, source, () =>
+          this.onMessageToSource?.(source, message),
+        );
     }
     if (
       this.clientSources.size === 0 &&
       !this.supports(CLIENT_CAPS.selectiveAgentTimeline) &&
       this.timelineSubscriptions.size === 0
     )
-      this.emit(message);
+      this.deliverAgentStreamAfterLegacyReplay(event.agentId, serializedEvent, undefined, () =>
+        this.emit(message),
+      );
+  }
+
+  /**
+   * Pre-replacement-invalidation clients resynchronize only through the
+   * reconstructed replay rows, so a live timeline row must not overtake a
+   * replay that is still being read from the durable store: the client's seq
+   * gate drops seqs at or below its cursor as stale and would lose the
+   * replayed history. Non-timeline events carry no seq cursor and are never
+   * held; sources that support replacement invalidation resync by refetch.
+   */
+  private deliverAgentStreamAfterLegacyReplay(
+    agentId: string,
+    serializedEvent: Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"]["event"],
+    source: object | undefined,
+    deliver: () => void,
+  ): void {
+    if (serializedEvent.type !== "timeline") {
+      deliver();
+      return;
+    }
+    const isLegacyReplayRecipient =
+      source === undefined
+        ? !this.supports(CLIENT_CAPS.timelineReplacementInvalidation)
+        : !this.delivery.isModern(source) &&
+          !this.supportsForSource(CLIENT_CAPS.timelineReplacementInvalidation, source);
+    if (!isLegacyReplayRecipient) {
+      deliver();
+      return;
+    }
+    const tail = this.legacyTimelineReplayTails.get(agentId);
+    if (!tail) {
+      deliver();
+      return;
+    }
+    void tail.then(deliver);
   }
 
   supports(capability: ClientCapability): boolean {
@@ -4640,11 +4686,20 @@ export class Session {
         snapshot = await ensureAgentLoaded(agentId, {
           agentManager: this.agentManager,
           agentStorage: this.agentStorage,
-          broadcastTimeline: true,
+          // The replacement signal below tells clients to refetch the timeline;
+          // re-broadcasting every row here is what OOM-scale sessions replayed
+          // on each reconnect. Subagents still replay: clients refetch the
+          // timeline on replacement but not the subagent list.
+          broadcastTimeline: false,
+          broadcastSubagents: true,
           logger: this.sessionLogger,
         });
       }
-      await this.agentManager.hydrateTimelineFromProvider(agentId, { broadcast: true });
+      await this.agentManager.hydrateTimelineFromProvider(agentId, {
+        broadcast: true,
+        broadcastTimeline: false,
+      });
+      this.deliverTimelineReplacement(agentId);
       await this.agentUpdates.forwardLiveAgent(snapshot);
       const timelineSize = this.agentManager.getTimeline(agentId).length;
       if (requestId) {
@@ -4768,12 +4823,11 @@ export class Session {
   private deliverTimelineReplacement(agentId: string, initiatingSource?: object): void {
     const agent = this.agentManager.getAgent(agentId);
     if (!agent) return;
-    const timeline = this.agentManager.fetchTimeline(agentId, { limit: 0 });
-    const epoch = timeline.epoch;
+    const epoch = this.agentManager.getTimelineEpoch(agentId);
 
     if (this.clientSources.size === 0 || !this.onMessageToSource) {
       if (!this.supports(CLIENT_CAPS.timelineReplacementInvalidation)) {
-        this.emitReconstructedTimelineRows(agentId, agent.provider, timeline.rows, epoch);
+        this.emitLegacyTimelineReplay(agentId, agent.provider, epoch);
       }
       return;
     }
@@ -4794,14 +4848,70 @@ export class Session {
       }
     }
     // COMPAT(timelineReplacementInvalidation): added in v0.5.0, remove reconstructed replay after 2027-02-21.
+    // Modern-only sessions never materialize the timeline here: replacement
+    // subscribers refetch their own pages, and with a bounded window the full
+    // history may live on disk.
     for (const [source, { capabilities }] of this.clientSources) {
       if (
         !this.delivery.isModern(source) &&
         !capabilities.has(CLIENT_CAPS.timelineReplacementInvalidation)
       ) {
-        this.emitReconstructedTimelineRows(agentId, agent.provider, timeline.rows, epoch, source);
+        this.emitLegacyTimelineReplay(agentId, agent.provider, epoch);
+        break;
       }
     }
+  }
+
+  private emitLegacyTimelineReplay(
+    agentId: string,
+    provider: ManagedAgent["provider"],
+    epoch: string,
+  ): void {
+    const emit = (rows: AgentTimelineFetchResult["rows"]): void => {
+      if (this.clientSources.size === 0 || !this.onMessageToSource) {
+        this.emitReconstructedTimelineRows(agentId, provider, rows, epoch);
+        return;
+      }
+      for (const [source, { capabilities }] of this.clientSources) {
+        if (
+          !this.delivery.isModern(source) &&
+          !capabilities.has(CLIENT_CAPS.timelineReplacementInvalidation)
+        ) {
+          this.emitReconstructedTimelineRows(agentId, provider, rows, epoch, source);
+        }
+      }
+    };
+    if (!this.agentManager.hasDurableTimeline()) {
+      emit(this.agentManager.fetchTimeline(agentId, { limit: 0 }).rows);
+      return;
+    }
+    // Evicted rows only exist on disk, so the legacy replay must read the
+    // durable store. This runs after the replacement events went out; a brief
+    // delay for legacy replay rows is acceptable for the old clients that need
+    // them. Live timeline rows for legacy sources wait for this read.
+    const startReplay = (): Promise<void> =>
+      this.agentManager
+        .fetchTimelineWithBackfill(agentId, { limit: 0 })
+        .then((timeline) => emit(timeline.rows))
+        .catch((error) => {
+          this.sessionLogger.error(
+            { err: error, agentId },
+            "Failed to fetch timeline for legacy replacement replay",
+          );
+          return undefined;
+        });
+    const previous = this.legacyTimelineReplayTails.get(agentId);
+    // Start the durable read only once the previous replay has delivered: a
+    // read that starts earlier can finish earlier, and an out-of-order burst
+    // would make a rewound client reset to the older timeline.
+    const tail = (previous ?? Promise.resolve()).then(() => startReplay());
+    this.legacyTimelineReplayTails.set(agentId, tail);
+    void tail.then(() => {
+      if (this.legacyTimelineReplayTails.get(agentId) === tail) {
+        this.legacyTimelineReplayTails.delete(agentId);
+      }
+      return undefined;
+    });
   }
 
   private emitReconstructedTimelineRows(
@@ -7752,13 +7862,27 @@ export class Session {
         cursor,
         limit: pageLimit,
       });
+      // Pages that reach the bounded window's boundary (or full-history reads
+      // after eviction, or reads of a post-restart empty window) are rerun
+      // against the durable store so evicted rows come back intact.
+      const controlTimeline = this.agentManager.needsTimelineBackfill(msg.agentId, {
+        direction,
+        limit: pageLimit,
+        sync: fetchedControlTimeline,
+      })
+        ? await this.agentManager.fetchTimelineWithBackfill(msg.agentId, {
+            direction,
+            cursor,
+            limit: pageLimit,
+          })
+        : fetchedControlTimeline;
       const selectedTimeline = {
-        timeline: fetchedControlTimeline,
-        entries: fetchedControlTimeline.rows,
-        startSeq: fetchedControlTimeline.startSeq,
-        endSeq: fetchedControlTimeline.endSeq,
-        hasOlder: fetchedControlTimeline.hasOlder,
-        hasNewer: fetchedControlTimeline.hasNewer,
+        timeline: controlTimeline,
+        entries: controlTimeline.rows,
+        startSeq: controlTimeline.startSeq,
+        endSeq: controlTimeline.endSeq,
+        hasOlder: controlTimeline.hasOlder,
+        hasNewer: controlTimeline.hasNewer,
       };
       const startCursor =
         selectedTimeline.startSeq !== null
@@ -7782,9 +7906,9 @@ export class Session {
             direction,
             projection,
             epoch: selectedTimeline.timeline.epoch,
-            reset: fetchedControlTimeline.reset,
-            staleCursor: fetchedControlTimeline.staleCursor,
-            gap: fetchedControlTimeline.gap,
+            reset: controlTimeline.reset,
+            staleCursor: controlTimeline.staleCursor,
+            gap: controlTimeline.gap,
             window: selectedTimeline.timeline.window,
             startCursor,
             endCursor,
@@ -8108,7 +8232,7 @@ export class Session {
         logger: this.sessionLogger,
       });
       const agentPayload = await this.buildAgentPayload(snapshot);
-      const timeline = this.agentManager.fetchTimeline(msg.agentId, {
+      const timeline = await this.agentManager.fetchTimelineWithBackfill(msg.agentId, {
         direction: "tail",
         limit: 0,
       });
