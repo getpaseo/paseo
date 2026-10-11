@@ -5,7 +5,11 @@ import path from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 
 import type { ForgeService } from "../services/forge-service.js";
-import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
+import {
+  WorkspaceGitServiceImpl,
+  type WorkspaceGitRuntimeSnapshot,
+  type WorkspaceGitService,
+} from "./workspace-git-service.js";
 import type {
   PersistedProjectRecord,
   PersistedWorkspaceRecord,
@@ -85,6 +89,76 @@ test("creates a worktree and registers it in the source workspace project withou
     updatedAt: expect.any(String),
   });
   expect(events).toEqual([`workspace:${result.workspace.workspaceId}`]);
+});
+
+test("lists a newly created worktree immediately after warming an empty listing", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const paseoHome = path.join(tempDir, ".paseo");
+  const workspaceGitService = new WorkspaceGitServiceImpl({
+    logger: createTestLogger(),
+    paseoHome,
+    deps: { now: () => new Date(0) },
+  });
+  try {
+    await expect(workspaceGitService.listWorktrees(repoDir)).resolves.toEqual([]);
+    const created = await createPaseoWorktree(
+      {
+        cwd: repoDir,
+        worktreeSlug: "listed-after-create",
+        runSetup: false,
+        paseoHome,
+      },
+      createDeps({ workspaceGitService }),
+    );
+
+    expect(existsSync(created.worktree.worktreePath)).toBe(true);
+    expect(
+      (await workspaceGitService.listWorktrees(repoDir)).map(
+        ({ path: worktreePath, branchName }) => ({
+          worktreePath,
+          branchName,
+        }),
+      ),
+    ).toEqual([{ worktreePath: created.worktree.worktreePath, branchName: "listed-after-create" }]);
+  } finally {
+    await workspaceGitService.dispose();
+  }
+});
+
+test("discards listings populated before a failed worktree creation rolls back", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const paseoHome = path.join(tempDir, ".paseo");
+  const workspaceGitService = new WorkspaceGitServiceImpl({
+    logger: createTestLogger(),
+    paseoHome,
+    deps: { now: () => new Date(0) },
+  });
+  const deps = createDeps({ workspaceGitService });
+  const createdPaths: string[] = [];
+  deps.workspaceProvisioning.createWorkspaceForWorktree = async ({ worktreeRoot }) => {
+    createdPaths.push(worktreeRoot);
+    expect(
+      (await workspaceGitService.listWorktrees(repoDir)).map(
+        ({ path: worktreePath }) => worktreePath,
+      ),
+    ).toEqual([worktreeRoot]);
+    throw new Error("workspace registration failed");
+  };
+  try {
+    await expect(
+      createPaseoWorktree(
+        { cwd: repoDir, worktreeSlug: "rolled-back-listing", runSetup: false, paseoHome },
+        deps,
+      ),
+    ).rejects.toThrow("workspace registration failed");
+    expect(createdPaths).toHaveLength(1);
+    expect(existsSync(createdPaths[0])).toBe(false);
+    await expect(workspaceGitService.listWorktrees(repoDir)).resolves.toEqual([]);
+  } finally {
+    await workspaceGitService.dispose();
+  }
 });
 
 test("refreshes a source project that became Git while creating a worktree", async () => {
@@ -1056,6 +1130,7 @@ function createDeps(options?: {
   events?: string[];
   projects?: Map<string, PersistedProjectRecord>;
   workspaces?: Map<string, PersistedWorkspaceRecord>;
+  workspaceGitService?: WorkspaceGitService;
 }): TestDeps {
   const events = options?.events ?? [];
   const projects = options?.projects ?? new Map<string, PersistedProjectRecord>();
@@ -1113,7 +1188,7 @@ function createDeps(options?: {
       workspaces.delete(workspaceId);
     },
   };
-  const workspaceGitService = createWorkspaceGitServiceStub();
+  const workspaceGitService = options?.workspaceGitService ?? createWorkspaceGitServiceStub();
   const workspaceProvisioning = createWorkspaceProvisioningService({
     projectRegistry,
     workspaceRegistry,
@@ -1264,6 +1339,7 @@ function createWorkspaceGitServiceStub(): WorkspaceGitService {
     scheduleRefreshForCwd: () => {},
     onWorkspaceStateMayHaveChanged: () => {},
     invalidateForge: () => {},
+    invalidateWorktrees: () => {},
     dispose: () => {},
   };
 }
