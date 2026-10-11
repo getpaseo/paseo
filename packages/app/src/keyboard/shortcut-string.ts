@@ -271,8 +271,9 @@ export function keyboardEventToComboString(event: KeyboardEvent): string | null 
   const eventKey = event.key.toLowerCase();
   const logicalKey = Object.entries(KEY_MAP).find(
     ([, mapping]) =>
-      mapping.key?.toLowerCase() === eventKey ||
-      (event.shiftKey && mapping.shiftedKey === event.key),
+      mapping.key?.length === 1 &&
+      (mapping.key.toLowerCase() === eventKey ||
+        (event.shiftKey && mapping.shiftedKey === event.key)),
   )?.[0];
   const humanKey = logicalKey ?? CODE_TO_KEY[event.code];
   if (humanKey) {

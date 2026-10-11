@@ -53,6 +53,14 @@ describe("keyboardEventToComboString", () => {
     ).toBe("Alt+T");
   });
 
+  it("does not record a named key that dispatch does not support", () => {
+    expect(
+      keyboardEventToComboString(
+        keyboardEvent({ key: "Enter", code: "NumpadEnter", ctrlKey: true }),
+      ),
+    ).toBeNull();
+  });
+
   it("captures the minus key (regression: previously returned null)", () => {
     expect(keyboardEventToComboString(keyboardEvent({ key: "-", code: "Minus" }))).toBe("-");
   });
