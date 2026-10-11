@@ -923,7 +923,7 @@ export default function contribute(client: PluginClientContext) {
 | `params`     | The params the screen was opened with, as string keys and values. `{}` when none.                                                                                                                                                                                                                                                 |
 | `navigation` | Optional client navigation. `openAgent({ agentId, serverId? })` and `openWorkspace({ workspaceId, serverId? })` open targets on `serverId`, or on the selected host when omitted. `openBrowser({ url, workspaceId, serverId? })` is available only on Electron; see [links and browsers](#external-links-and-workspace-browsers). |
 
-Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the screen body.
+Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the screen body, including clearing the navigation bar; see [Safe areas](#safe-areas).
 
 `addScreen({ id, title, Component })` registers a screen. `title` is the screen header's title: a
 string, or a function that takes the screen's params and returns one, so a bot screen can show the
@@ -1238,6 +1238,35 @@ contains a padded form, full-width rows, a virtualized list, horizontal tabs, an
 | `durationMs` | `number`                                                   | `2200`      |
 
 Showing another toast replaces the currently visible toast. An empty message is ignored.
+
+### Safe areas
+
+A screen's header clears the status bar, and `Modal` clears the system bars itself. A screen's body
+runs to the bottom of the window, under Android's navigation bar and the iPhone home indicator.
+`useSafeAreaInsets()` returns the window's `top`, `right`, `bottom`, and `left` insets in
+density-independent pixels and updates when the device rotates. Pad the end of a screen's
+scrolling content by `bottom`, so rows scroll under the bar and the last one stops above it:
+
+```tsx
+import type { PluginScreenProps } from "@getpaseo/plugin/client";
+import { useSafeAreaInsets } from "@getpaseo/plugin/client/react-native";
+import { ScrollView, Text } from "react-native";
+
+export function Main({ theme }: PluginScreenProps) {
+  const insets = useSafeAreaInsets();
+  return (
+    <ScrollView
+      style={{ backgroundColor: theme.colors.surface0 }}
+      contentContainerStyle={{ padding: 16, paddingBottom: 16 + insets.bottom }}
+    >
+      <Text style={{ color: theme.colors.foreground }}>Last row</Text>
+    </ScrollView>
+  );
+}
+```
+
+A view you present over the whole window yourself, such as a fullscreen image viewer in a React
+Native `Modal`, clears every edge. On web and desktop the insets are zero.
 
 ### Icons
 
