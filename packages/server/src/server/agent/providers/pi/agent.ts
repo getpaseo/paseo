@@ -233,6 +233,7 @@ interface StartTurnResult {
 interface PiPendingSteerSubmission {
   text: string;
   clientMessageId: string | null;
+  consumed: boolean;
 }
 
 // COMPAT(piSteerFallback): added in v0.5.0, remove after 2027-03-01 once the pi floor
@@ -1403,9 +1404,18 @@ export class PiRpcAgentSession implements AgentSession {
       return { status: "unavailable" };
     }
 
+    const submission: PiPendingSteerSubmission = {
+      text: payload.text,
+      clientMessageId: options.clientMessageId ?? null,
+      consumed: false,
+    };
+    // Pi can consume the message before acknowledging the steer RPC.
+    this.pendingSteerSubmissions.push(submission);
     try {
       await this.runtimeSession.steer(payload.text, payload.images);
     } catch (error) {
+      const index = this.pendingSteerSubmissions.indexOf(submission);
+      if (index >= 0) this.pendingSteerSubmissions.splice(index, 1);
       if (isPiDefinitiveSteerRejection(error)) {
         return { status: "unavailable" };
       }
@@ -1416,10 +1426,6 @@ export class PiRpcAgentSession implements AgentSession {
     if (this.closed || this.activeTurnId !== options.expectedTurnId) {
       return { status: "unavailable" };
     }
-    this.pendingSteerSubmissions.push({
-      text: payload.text,
-      clientMessageId: options.clientMessageId ?? null,
-    });
     if (options.clearPendingPermissions) {
       await this.clearPendingPermissionsForSteer();
     }
@@ -1542,6 +1548,23 @@ export class PiRpcAgentSession implements AgentSession {
     try {
       try {
         await this.runtimeSession.clearQueue();
+        // Only an acknowledged clear_queue proves queued messages were dropped.
+        for (const submission of this.pendingSteerSubmissions.splice(0)) {
+          if (submission.consumed) {
+            this.pendingSteerSubmissions.push(submission);
+            continue;
+          }
+          this.emit({
+            type: "timeline",
+            provider: this.provider,
+            turnId,
+            item: {
+              type: "notification",
+              level: "warning",
+              message: `Not delivered (stopped): ${submission.text}`,
+            },
+          });
+        }
       } catch (error) {
         // COMPAT(piClearQueueFallback): added in v0.5.0, remove after 2027-03-01 once
         // the pi floor supports clear_queue (added in pi 0.84.4).
@@ -2481,6 +2504,15 @@ export class PiRpcAgentSession implements AgentSession {
     event: Extract<PiAgentSessionEvent, { type: "message_end" }>,
     turnId: string | undefined,
   ): void {
+    if (event.message.role === "user") {
+      // Entry IDs arrive through the extension later; consumption is already known.
+      const text = getUserMessageText(event.message.content);
+      const submission = this.pendingSteerSubmissions.find(
+        (pending) => !pending.consumed && pending.text === text,
+      );
+      if (submission) submission.consumed = true;
+      return;
+    }
     if (event.message.role === "assistant") {
       this.activeAssistantMessageId = null;
       return;
