@@ -168,16 +168,18 @@ function buildApplicationMenuTemplate(
         { role: "togglefullscreen" },
       ],
     },
-    {
-      label: "Window",
-      submenu: [
-        { role: "minimize" },
-        { role: "zoom" },
-        ...(isMac
-          ? [{ type: "separator" as const }, { role: "front" as const }]
-          : [{ role: "close" as const }]),
-      ],
-    },
+    ...(isMac
+      ? [{ role: "windowMenu" as const }]
+      : [
+          {
+            label: "Window",
+            submenu: [
+              { role: "minimize" as const },
+              { role: "zoom" as const },
+              { role: "close" as const },
+            ],
+          },
+        ]),
   ];
 }
 
