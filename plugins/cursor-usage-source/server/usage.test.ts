@@ -145,6 +145,7 @@ describe("cursor usage source", () => {
 
     expect(cursor).toMatchObject({
       status: "available",
+      windows: [],
       balances: [
         expect.objectContaining({
           id: "plan_usage",
@@ -154,6 +155,91 @@ describe("cursor usage source", () => {
           resetsAt: null,
         }),
       ],
+    });
+  });
+
+  it("maps Cursor's two allowance percentages instead of spend/limit", async () => {
+    process.env["CURSOR_ACCESS_TOKEN"] = "cursor_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+          () =>
+            jsonResponse({
+              planUsage: {
+                totalSpend: "23222",
+                includedSpend: "23222",
+                bonusSpend: "0",
+                remaining: "16778",
+                limit: "40000",
+                totalPercentUsed: 15.48,
+                autoPercentUsed: 0,
+                apiPercentUsed: 46.444,
+              },
+              billingCycleStart: "1768399334000",
+              billingCycleEnd: "1771077734000",
+            }),
+        ],
+      ]),
+    );
+
+    const cursor = findProvider(await service().listUsage(), "cursor");
+
+    expect(cursor).toMatchObject({
+      status: "available",
+      windows: [
+        expect.objectContaining({
+          id: "cursor_models",
+          label: "Cursor Models",
+          usedPct: 0,
+          remainingPct: 100,
+          resetsAt: "2026-02-14T14:02:14.000Z",
+          tone: "ok",
+        }),
+        expect.objectContaining({
+          id: "other_models",
+          label: "Other Models",
+          usedPct: 46.444,
+          remainingPct: 53.556,
+          resetsAt: "2026-02-14T14:02:14.000Z",
+          tone: "ok",
+        }),
+      ],
+      balances: [],
+    });
+  });
+
+  it("omits missing Cursor allowance windows and clamps overflow", async () => {
+    process.env["CURSOR_ACCESS_TOKEN"] = "cursor_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+          () =>
+            jsonResponse({
+              planUsage: { autoPercentUsed: 150, apiPercentUsed: null },
+              billingCycleStart: null,
+              billingCycleEnd: null,
+            }),
+        ],
+      ]),
+    );
+
+    const cursor = findProvider(await service().listUsage(), "cursor");
+
+    expect(cursor).toMatchObject({
+      status: "available",
+      windows: [
+        expect.objectContaining({
+          id: "cursor_models",
+          label: "Cursor Models",
+          usedPct: 100,
+          remainingPct: 0,
+          resetsAt: null,
+          tone: "danger",
+        }),
+      ],
+      balances: [],
     });
   });
 
