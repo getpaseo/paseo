@@ -57,7 +57,7 @@ interface DownloadState {
       error: string | null;
     }>;
     /** Reads the whole file over the session socket; used when no direct HTTP endpoint is active. */
-    readFile: (path: string) => Promise<{ bytes: Uint8Array; size: number }>;
+    readFile: (path: string, maxBytes: number) => Promise<{ bytes: Uint8Array; size: number }>;
     saveFile?: typeof saveDownloadedBytes;
   }) => Promise<void>;
 
@@ -121,7 +121,7 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
             i18n.t("composer.errors.fileTooLarge", { fileName: resolvedFileName, size: "64 MB" }),
           );
         }
-        const { bytes, size } = await readFile(path);
+        const { bytes, size } = await readFile(path, MAX_SESSION_DOWNLOAD_BYTES);
         // A daemon without a binary channel answers `encoding: "none"` for a binary file: no
         // content, real size. Never save that as a complete download.
         if (bytes.byteLength !== size) {

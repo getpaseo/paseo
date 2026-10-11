@@ -254,7 +254,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
   );
 
   const requestFileBytes = useCallback(
-    async (path: string) => {
+    async (path: string, maxBytes: number) => {
       if (!normalizedWorkspaceRoot) {
         throw new Error(t("workspace.fileExplorer.states.unavailable"));
       }
@@ -263,7 +263,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       }
       // No request timeout: a large file over a slow relay legitimately takes longer than the
       // 60 s default, and a dead connection still rejects on disconnect.
-      return client.readFile(normalizedWorkspaceRoot, path, undefined, undefined, 0);
+      return client.readFile(normalizedWorkspaceRoot, path, undefined, maxBytes, 0);
     },
     [client, normalizedWorkspaceRoot, t],
   );

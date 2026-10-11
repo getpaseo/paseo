@@ -142,6 +142,29 @@ describe("download store transport selection", () => {
     ]);
   });
 
+  it("bounds the session read even when the token reports a smaller file", async () => {
+    const readRequests: Array<{ path: string; maxBytes: number }> = [];
+    const saver = createFileSaver();
+    await useDownloadStore.getState().startDownload({
+      serverId: "srv_remote",
+      scopeId: "workspace-1",
+      fileName: FILE_NAME,
+      path: FILE_PATH,
+      daemonProfile: profileWith([relayConnection]),
+      activeConnectionId: relayConnection.id,
+      requestFileDownloadToken: createTokenRequest(1).request,
+      readFile: async (path: string, maxBytes: number) => {
+        readRequests.push({ path, maxBytes });
+        return { bytes: FILE_BYTES, size: FILE_BYTES.byteLength };
+      },
+      saveFile: saver.save,
+    });
+    expect(readRequests).toEqual([{ path: FILE_PATH, maxBytes: MAX_SESSION_DOWNLOAD_BYTES }]);
+    expect(saver.savedFiles).toEqual([
+      { bytes: FILE_BYTES, fileName: FILE_NAME, mimeType: MIME_TYPE },
+    ]);
+  });
+
   it("ignores a directTcp entry that is not the active connection", async () => {
     const reader = createFileReader(async () => ({
       bytes: FILE_BYTES,
