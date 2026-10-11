@@ -298,6 +298,35 @@ describe("createGitLabService", () => {
     expect(calls[1]).toEqual(["mr", "view", "14", "-F", "json"]);
   });
 
+  it.each(["list", "view"])(
+    "resolves the current merge request when %s returns legacy null references",
+    async (legacyCommand) => {
+      const legacyMr = {
+        ...OPEN_MR,
+        reference: "!14",
+        references: null,
+        web_url: "https://gitlab.example.com/example-group/example-project/merge_requests/14",
+      };
+      const { service } = makeService((args) => {
+        const mr = args[1] === legacyCommand ? legacyMr : OPEN_MR;
+        if (args[0] === "mr" && args[1] === "list") return ok(JSON.stringify([mr]));
+        if (args[0] === "mr" && args[1] === "view") return ok(JSON.stringify(mr));
+        if (args[0] === "api") return ok("{}");
+        throw new Error(`unexpected call: ${args.join(" ")}`);
+      });
+
+      await expect(
+        service.getCurrentPullRequestStatus({ cwd: "/repo", headRef: "release/v0.4.0" }),
+      ).resolves.toMatchObject({
+        number: 14,
+        title: OPEN_MR.title,
+        state: "open",
+        headRefName: "release/v0.4.0",
+        url: legacyCommand === "view" ? legacyMr.web_url : OPEN_MR.web_url,
+      });
+    },
+  );
+
   it("reports a conflicting merge request as CONFLICTING", async () => {
     const conflicting = {
       ...OPEN_MR,
