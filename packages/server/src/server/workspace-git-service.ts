@@ -241,6 +241,7 @@ export interface WorkspaceGitService {
     cwdOrRepoRoot: string,
     options?: WorkspaceGitReadOptions,
   ): Promise<WorkspaceGitWorktreeInfo[]>;
+  invalidateWorktrees(repoRoot: string): void;
   getProjectSlug(cwd: string, options?: WorkspaceGitReadOptions): Promise<string>;
   resolveRepoRoot(cwd: string, options?: WorkspaceGitReadOptions): Promise<string>;
   resolveDefaultBranch(cwdOrRepoRoot: string, options?: WorkspaceGitReadOptions): Promise<string>;
@@ -916,6 +917,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     return snapshot.git.isPaseoOwnedWorktree
       ? (snapshot.git.mainRepoRoot ?? snapshot.git.repoRoot ?? resolve(cwd))
       : (snapshot.git.repoRoot ?? resolve(cwd));
+  }
+
+  invalidateWorktrees(repoRoot: string): void {
+    this.assertNotDisposed();
+    // Detach in-flight reads too, so a pre-mutation result cannot refill the cache.
+    this.worktreeListCache.delete(JSON.stringify(["worktrees", resolve(repoRoot)]));
   }
 
   async resolveDefaultBranch(
