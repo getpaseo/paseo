@@ -8,6 +8,7 @@ import {
 } from "../support/helpers/usage-sidebar-item";
 import { gotoAppShell } from "../support/helpers/app";
 import { SHOWCASE_PLUGIN_ID, installSidebarPlugins } from "../support/helpers/plugin-sidebar-items";
+import { hostModShortcutLabel } from "../support/helpers/shortcut-label";
 import {
   expectFooterIconRow,
   expectFooterSeparator,
@@ -103,10 +104,12 @@ test.describe("Sidebar items in Appearance settings", () => {
         label: "History",
         visible: true,
       });
-      // Items with a keyboard shortcut badge it next to their name. Chords render
-      // with Ctrl off macOS, which is what the browser project runs on.
+      // Items with a keyboard shortcut badge it next to their name. The expected
+      // label follows the host platform.
       await expect(
-        page.getByTestId("sidebar-nav-item-new-workspace").getByText("Ctrl+N", { exact: true }),
+        page
+          .getByTestId("sidebar-nav-item-new-workspace")
+          .getByText(hostModShortcutLabel("N"), { exact: true }),
       ).toBeVisible();
     });
 
