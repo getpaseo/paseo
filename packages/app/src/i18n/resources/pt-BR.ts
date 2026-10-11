@@ -416,6 +416,8 @@ export const ptBR: TranslationResources = {
       loading: "Carregando sessões recentes...",
       failedProvider: "Não foi possível carregar as sessões de {{provider}}",
       failedImport: "Não foi possível importar a sessão selecionada.",
+      activeWriter:
+        "Esta sessão está em uso por outro processo Codex/Paseo. Libere-a no aplicativo original antes de tentar novamente ou escolha outra sessão.",
     },
     actions: {
       refresh: "Atualizar sessões",

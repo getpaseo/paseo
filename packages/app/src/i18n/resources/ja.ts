@@ -417,6 +417,8 @@ export const ja: TranslationResources = {
       loading: "最近のセッションを読み込み中...",
       failedProvider: "{{provider}} のセッションを読み込めませんでした",
       failedImport: "選択したセッションをインポートできませんでした。",
+      activeWriter:
+        "このセッションは別の Codex/Paseo プロセスが使用中です。元のアプリでセッションを解放してから再試行するか、別のセッションを選択してください。",
     },
     actions: {
       refresh: "セッションを更新",

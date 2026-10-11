@@ -412,6 +412,8 @@ export const zhCN: TranslationResources = {
       loading: "正在加载最近会话...",
       failedProvider: "无法加载 {{provider}} 的会话",
       failedImport: "无法导入所选会话。",
+      activeWriter:
+        "此会话正被另一个 Codex/Paseo 程序使用。请在原程序中释放该会话后重试，或选择其他历史会话。",
     },
     actions: {
       refresh: "刷新会话",
