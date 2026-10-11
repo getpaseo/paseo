@@ -109,11 +109,11 @@ class FakeResidentBrowser {
     url: string;
   }> = [];
 
-  public ensure = (input: {
+  public ensure = async (input: {
     browserId: string;
     workspaceId: string;
     url: string;
-  }): HTMLElement | null => {
+  }): Promise<HTMLElement | null> => {
     this.ensuredWebviews.push(input);
     return null;
   };
@@ -323,6 +323,7 @@ describe("mountBrowserAutomationHandler", () => {
     expect(browser.browser.activeWorkspaceBrowsers).toEqual([]);
     expect(browser.resident.ensuredWebviews).toEqual([
       {
+        serverId: "server-1",
         browserId: result.browserId,
         workspaceId: "wks_workspace_a",
         url: "https://example.com",

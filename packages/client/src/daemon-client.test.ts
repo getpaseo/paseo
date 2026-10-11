@@ -8,14 +8,25 @@ import {
   type CreateAgentRequestOptions,
   type DaemonTransport,
   type Logger,
+  type NetworkTunnel,
 } from "./daemon-client";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import {
+  decodeTunnelFrame,
   decodeFileTransferFrame,
+  encodeTunnelFrame,
   encodeFileTransferFrame,
   FileTransferOpcode,
+  TunnelCloseReason,
+  TunnelOpcode,
 } from "@getpaseo/protocol/binary-frames/index";
+import {
+  TUNNEL_CONNECT_TIMEOUT_MS,
+  TUNNEL_INITIAL_WINDOW_BYTES,
+  TUNNEL_MAX_DATA_BYTES,
+  TUNNEL_MAX_STREAMS,
+} from "@getpaseo/protocol/network-tunnel/rpc-schemas";
 import {
   encodeTerminalSnapshotPayload,
   encodeTerminalStreamFrame,
@@ -65,9 +76,15 @@ function createMockTransport() {
   let onClose: (_event?: unknown) => void = () => {};
   let onError: (_event?: unknown) => void = () => {};
   let serverInfoOrdinal = 1;
+  let nextBinarySendError: Error | null = null;
 
   const transport: DaemonTransport = {
     send: (data) => {
+      if (typeof data !== "string" && nextBinarySendError) {
+        const error = nextBinarySendError;
+        nextBinarySendError = null;
+        throw error;
+      }
       sent.push(data);
       if (typeof data !== "string") {
         return;
@@ -124,6 +141,9 @@ function createMockTransport() {
     triggerClose: (event?: unknown) => onClose(event),
     triggerError: (event?: unknown) => onError(event),
     triggerMessage: (data: unknown) => onMessage(data),
+    failNextBinarySend: (error: Error) => {
+      nextBinarySendError = error;
+    },
   };
 }
 
@@ -259,6 +279,7 @@ test("does not infer browser automation capabilities from Electron runtime", asy
     })
     .parse(JSON.parse(assertStr(mock.sent[0])));
   expect(hello.capabilities[CLIENT_CAPS.browserHost]).toBeUndefined();
+  expect(hello.capabilities[CLIENT_CAPS.networkTunnel]).toBe(true);
   expect(hello.capabilities[CLIENT_CAPS.selectiveAgentTimeline]).toBe(true);
 });
 
@@ -416,6 +437,879 @@ test.each([false, true])(
     await expect(duplicate).resolves.toMatchObject({ error: "Directory unavailable" });
   },
 );
+
+const TUNNEL_SUBSCRIPTION_ID = "00000000-0000-4000-8000-000000000004";
+
+function createTunnelClient(
+  features: Record<string, boolean> = { networkTunnel: true },
+  logger?: Logger,
+) {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "network_tunnel_test",
+    transportFactory: () => transport.transport,
+    reconnect: { enabled: false },
+    ...(logger ? { logger } : {}),
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  transport.triggerOpen({ features });
+  return { client, transport, connecting };
+}
+
+async function openTunnel(
+  client: DaemonClient,
+  transport: ReturnType<typeof createMockTransport>,
+  limits = {
+    initialWindowBytes: 4,
+    maxDataBytes: 3,
+    maxStreams: 4,
+    connectTimeoutMs: 500,
+  },
+): Promise<NetworkTunnel> {
+  const opening = client.openNetworkTunnel();
+  const request = parseSentFrame(transport.sent.at(-1));
+  expect(request.type).toBe("network.tunnel.open.request");
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "network.tunnel.open.response",
+      payload: {
+        requestId: request.requestId,
+        ok: true,
+        subscriptionId: TUNNEL_SUBSCRIPTION_ID,
+        ...limits,
+      },
+    }),
+  );
+  return opening;
+}
+
+function createTunnelHandlers() {
+  return {
+    onConnected: vi.fn(),
+    onData: vi.fn(),
+    onCredit: vi.fn(),
+    onClose: vi.fn(),
+  };
+}
+
+function connectTunnelStream(
+  transport: ReturnType<typeof createMockTransport>,
+  tunnel: NetworkTunnel,
+  streamId: string,
+): void {
+  transport.triggerMessage(
+    encodeTunnelFrame({
+      opcode: TunnelOpcode.Connected,
+      subscriptionId: tunnel.subscriptionId,
+      streamId,
+    }),
+  );
+}
+
+function completeTunnelProtocolViolation(
+  transport: ReturnType<typeof createMockTransport>,
+  tunnel: NetworkTunnel,
+): void {
+  const request = parseSentFrame(transport.sent.at(-1));
+  expect(request).toMatchObject({
+    type: "network.tunnel.close.request",
+    subscriptionId: tunnel.subscriptionId,
+  });
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "network.tunnel.close.response",
+      payload: {
+        requestId: request.requestId,
+        ok: true,
+        subscriptionId: tunnel.subscriptionId,
+      },
+    }),
+  );
+}
+
+test("rolls back stream registration when sending Open fails", async () => {
+  const { client, transport, connecting } = createTunnelClient();
+  await connecting;
+  const tunnel = await openTunnel(client, transport);
+  const handlers = createTunnelHandlers();
+  transport.failNextBinarySend(new Error("binary send failed"));
+
+  expect(() =>
+    tunnel.openStream({ streamId: "retryable", host: "localhost", port: 80 }, handlers),
+  ).toThrow("binary send failed");
+  expect(() =>
+    tunnel.openStream({ streamId: "retryable", host: "localhost", port: 80 }, handlers),
+  ).not.toThrow();
+});
+
+test("finalizes local stream close even when sending Close fails", async () => {
+  const { client, transport, connecting } = createTunnelClient();
+  await connecting;
+  const tunnel = await openTunnel(client, transport);
+  const handlers = createTunnelHandlers();
+  const stream = tunnel.openStream(
+    { streamId: "failed-close", host: "localhost", port: 80 },
+    handlers,
+  );
+  transport.failNextBinarySend(new Error("close send failed"));
+
+  expect(() => stream.close()).toThrow("close send failed");
+  expect(handlers.onClose).toHaveBeenCalledWith(TunnelCloseReason.Ok);
+  expect(() => stream.write(new Uint8Array([1]))).not.toThrow();
+  expect(() => stream.consume(1)).not.toThrow();
+  expect(() =>
+    tunnel.openStream({ streamId: "failed-close", host: "localhost", port: 80 }, handlers),
+  ).toThrow("already used");
+});
+
+test("opens and closes a network tunnel with client-capped limits", async () => {
+  const { client, transport, connecting } = createTunnelClient();
+  await connecting;
+  const tunnel = await openTunnel(client, transport, {
+    initialWindowBytes: TUNNEL_INITIAL_WINDOW_BYTES * 2,
+    maxDataBytes: TUNNEL_MAX_DATA_BYTES * 2,
+    maxStreams: TUNNEL_MAX_STREAMS * 2,
+    connectTimeoutMs: TUNNEL_CONNECT_TIMEOUT_MS * 2,
+  });
+  expect(tunnel.subscriptionId).toBe(TUNNEL_SUBSCRIPTION_ID);
+  expect(tunnel.limits).toEqual({
+    initialWindowBytes: TUNNEL_INITIAL_WINDOW_BYTES,
+    maxDataBytes: TUNNEL_MAX_DATA_BYTES,
+    maxStreams: TUNNEL_MAX_STREAMS,
+    connectTimeoutMs: TUNNEL_CONNECT_TIMEOUT_MS,
+  });
+
+  const closed = vi.fn();
+  tunnel.onClosed(closed);
+  const closing = tunnel.close();
+  expect(closed).toHaveBeenCalledWith("closed");
+  const request = parseSentFrame(transport.sent.at(-1));
+  expect(request).toMatchObject({
+    type: "network.tunnel.close.request",
+    subscriptionId: TUNNEL_SUBSCRIPTION_ID,
+  });
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "network.tunnel.close.response",
+      payload: {
+        requestId: request.requestId,
+        ok: true,
+        subscriptionId: TUNNEL_SUBSCRIPTION_ID,
+      },
+    }),
+  );
+  await closing;
+});
+
+test("reports close failures as NetworkTunnelRpcError operations", async () => {
+  const { client, transport, connecting } = createTunnelClient();
+  await connecting;
+  const tunnel = await openTunnel(client, transport);
+  const closing = tunnel.close();
+  const request = parseSentFrame(transport.sent.at(-1));
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "network.tunnel.close.response",
+      payload: {
+        requestId: request.requestId,
+        ok: false,
+        error: { code: "not_found", message: "Tunnel already closed" },
+      },
+    }),
+  );
+  await expect(closing).rejects.toMatchObject({ operation: "close", code: "not_found" });
+});
+
+test("rejects network tunnel opening without host support", async () => {
+  const { client, transport, connecting } = createTunnelClient({ ownedSubscriptions: true });
+  await connecting;
+  await expect(client.openNetworkTunnel()).rejects.toMatchObject({
+    operation: "open",
+    code: "unsupported_feature",
+  });
+  expect(transport.sent).toEqual([]);
+});
+
+test("rejects network tunnel opening failures and rpc_error", async () => {
+  const { client, transport, connecting } = createTunnelClient();
+  await connecting;
+
+  const refused = client.openNetworkTunnel();
+  const refusedRequest = parseSentFrame(transport.sent.at(-1));
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "network.tunnel.open.response",
+      payload: {
+        requestId: refusedRequest.requestId,
+        ok: false,
+        error: { code: "permission_denied", message: "Network proxy permission is required" },
+      },
+    }),
+  );
+  await expect(refused).rejects.toMatchObject({
+    operation: "open",
+    code: "permission_denied",
+    message: "Network proxy permission is required",
+  });
+
+  const denied = client.openNetworkTunnel();
+  const deniedRequest = parseSentFrame(transport.sent.at(-1));
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "rpc_error",
+      payload: {
+        requestId: deniedRequest.requestId,
+        requestType: "network.tunnel.open.request",
+        code: "access_denied",
+        error: "Access denied",
+      },
+    }),
+  );
+  await expect(denied).rejects.toMatchObject({ operation: "open", code: "access_denied" });
+});
+
+test("writes only connected data within frame and credit limits", async () => {
+  const { client, transport, connecting } = createTunnelClient();
+  await connecting;
+  const tunnel = await openTunnel(client, transport);
+  const handlers = createTunnelHandlers();
+  const stream = tunnel.openStream(
+    { streamId: "write-stream", host: "service.internal", port: 443 },
+    handlers,
+  );
+  expect(() => stream.write(new Uint8Array([1]))).toThrow("before the tunnel stream connects");
+
+  transport.triggerMessage(
+    encodeTunnelFrame({
+      opcode: TunnelOpcode.Connected,
+      subscriptionId: tunnel.subscriptionId,
+      streamId: stream.streamId,
+    }),
+  );
+  expect(handlers.onConnected).toHaveBeenCalledOnce();
+  stream.write(new Uint8Array([1, 2, 3]));
+  expect(decodeTunnelFrame(assertUint8Array(transport.sent.at(-1)))).toMatchObject({
+    opcode: TunnelOpcode.Data,
+    payload: new Uint8Array([1, 2, 3]),
+  });
+  expect(() => stream.write(new Uint8Array([4, 5]))).toThrow("insufficient write credit");
+  expect(() => stream.write(new Uint8Array([1, 2, 3, 4]))).toThrow("1–3 bytes");
+
+  transport.triggerMessage(
+    encodeTunnelFrame({
+      opcode: TunnelOpcode.WindowUpdate,
+      subscriptionId: tunnel.subscriptionId,
+      streamId: stream.streamId,
+      credit: 2,
+    }),
+  );
+  expect(handlers.onCredit).toHaveBeenCalledWith(2);
+  stream.write(new Uint8Array([4, 5]));
+});
+
+test("returns inbound credit only when consume confirms destination progress", async () => {
+  const { client, transport, connecting } = createTunnelClient();
+  await connecting;
+  const tunnel = await openTunnel(client, transport);
+  const handlers = createTunnelHandlers();
+  const stream = tunnel.openStream(
+    { streamId: "consume-stream", host: "localhost", port: 8080 },
+    handlers,
+  );
+  transport.triggerMessage(
+    encodeTunnelFrame({
+      opcode: TunnelOpcode.Connected,
+      subscriptionId: tunnel.subscriptionId,
+      streamId: stream.streamId,
+    }),
+  );
+  const sendsBeforeData = transport.sent.length;
+  const payload = new Uint8Array([9, 8, 7]);
+  transport.triggerMessage(
+    encodeTunnelFrame({
+      opcode: TunnelOpcode.Data,
+      subscriptionId: tunnel.subscriptionId,
+      streamId: stream.streamId,
+      payload,
+    }),
+  );
+  expect(handlers.onData).toHaveBeenCalledWith(payload);
+  expect(transport.sent).toHaveLength(sendsBeforeData);
+
+  stream.consume(2);
+  expect(decodeTunnelFrame(assertUint8Array(transport.sent.at(-1)))).toEqual({
+    opcode: TunnelOpcode.WindowUpdate,
+    subscriptionId: tunnel.subscriptionId,
+    streamId: stream.streamId,
+    credit: 2,
+  });
+  stream.consume(1);
+  expect(decodeTunnelFrame(assertUint8Array(transport.sent.at(-1)))).toEqual({
+    opcode: TunnelOpcode.WindowUpdate,
+    subscriptionId: tunnel.subscriptionId,
+    streamId: stream.streamId,
+    credit: 1,
+  });
+  expect(() => stream.consume(1)).toThrow("match bytes received");
+});
+
+test("ends only the subscription on an out-of-order tunnel frame", async () => {
+  const { client, transport, connecting } = createTunnelClient();
+  await connecting;
+  const tunnel = await openTunnel(client, transport);
+  const handlers = createTunnelHandlers();
+  const closed = vi.fn();
+  tunnel.onClosed(closed);
+  const stream = tunnel.openStream(
+    { streamId: "ordering-stream", host: "localhost", port: 3000 },
+    handlers,
+  );
+  const siblingHandlers = createTunnelHandlers();
+  tunnel.openStream(
+    { streamId: "ordering-sibling", host: "localhost", port: 3001 },
+    siblingHandlers,
+  );
+
+  transport.triggerMessage(
+    encodeTunnelFrame({
+      opcode: TunnelOpcode.Data,
+      subscriptionId: tunnel.subscriptionId,
+      streamId: stream.streamId,
+      payload: new Uint8Array([1]),
+    }),
+  );
+  expect(closed).toHaveBeenCalledWith("protocol_error");
+  expect(handlers.onClose).toHaveBeenCalledWith(TunnelCloseReason.ProtocolError);
+  expect(siblingHandlers.onClose).toHaveBeenCalledWith(TunnelCloseReason.ProtocolError);
+  const binaryFrames = transport.sent.filter((frame) => typeof frame !== "string");
+  expect(decodeTunnelFrame(assertUint8Array(binaryFrames.at(-1)))).toMatchObject({
+    opcode: TunnelOpcode.Close,
+    reason: TunnelCloseReason.ProtocolError,
+  });
+  completeTunnelProtocolViolation(transport, tunnel);
+  expect(client.getConnectionState().status).toBe("connected");
+  const sentAfterClose = transport.sent.length;
+  connectTunnelStream(transport, tunnel, stream.streamId);
+  expect(transport.sent).toHaveLength(sentAfterClose);
+  expect(client.getConnectionState().status).toBe("connected");
+});
+
+test("rejects inbound Data above maxDataBytes", async () => {
+  const { client, transport, connecting } = createTunnelClient();
+  await connecting;
+  const tunnel = await openTunnel(client, transport);
+  const handlers = createTunnelHandlers();
+  const stream = tunnel.openStream(
+    { streamId: "oversized-data", host: "localhost", port: 80 },
+    handlers,
+  );
+  connectTunnelStream(transport, tunnel, stream.streamId);
+
+  transport.triggerMessage(
+    encodeTunnelFrame({
+      opcode: TunnelOpcode.Data,
+      subscriptionId: tunnel.subscriptionId,
+      streamId: stream.streamId,
+      payload: new Uint8Array([1, 2, 3, 4]),
+    }),
+  );
+  expect(handlers.onData).not.toHaveBeenCalled();
+  expect(handlers.onClose).toHaveBeenCalledWith(TunnelCloseReason.ProtocolError);
+  completeTunnelProtocolViolation(transport, tunnel);
+  expect(client.getConnectionState().status).toBe("connected");
+});
+
+test("rejects inbound Data above remaining credit", async () => {
+  const { client, transport, connecting } = createTunnelClient();
+  await connecting;
+  const tunnel = await openTunnel(client, transport);
+  const handlers = createTunnelHandlers();
+  const stream = tunnel.openStream(
+    { streamId: "credit-overrun", host: "localhost", port: 80 },
+    handlers,
+  );
+  connectTunnelStream(transport, tunnel, stream.streamId);
+  transport.triggerMessage(
+    encodeTunnelFrame({
+      opcode: TunnelOpcode.Data,
+      subscriptionId: tunnel.subscriptionId,
+      streamId: stream.streamId,
+      payload: new Uint8Array([1, 2, 3]),
+    }),
+  );
+  transport.triggerMessage(
+    encodeTunnelFrame({
+      opcode: TunnelOpcode.Data,
+      subscriptionId: tunnel.subscriptionId,
+      streamId: stream.streamId,
+      payload: new Uint8Array([4, 5]),
+    }),
+  );
+  expect(handlers.onData).toHaveBeenCalledTimes(1);
+  expect(handlers.onClose).toHaveBeenCalledWith(TunnelCloseReason.ProtocolError);
+  completeTunnelProtocolViolation(transport, tunnel);
+  expect(client.getConnectionState().status).toBe("connected");
+});
+
+test("rejects WindowUpdate before Connected", async () => {
+  const { client, transport, connecting } = createTunnelClient();
+  await connecting;
+  const tunnel = await openTunnel(client, transport);
+  const handlers = createTunnelHandlers();
+  const stream = tunnel.openStream(
+    { streamId: "early-credit", host: "localhost", port: 80 },
+    handlers,
+  );
+
+  transport.triggerMessage(
+    encodeTunnelFrame({
+      opcode: TunnelOpcode.WindowUpdate,
+      subscriptionId: tunnel.subscriptionId,
+      streamId: stream.streamId,
+      credit: 1,
+    }),
+  );
+  expect(handlers.onCredit).not.toHaveBeenCalled();
+  expect(handlers.onClose).toHaveBeenCalledWith(TunnelCloseReason.ProtocolError);
+  completeTunnelProtocolViolation(transport, tunnel);
+  expect(client.getConnectionState().status).toBe("connected");
+});
+
+test("rejects WindowUpdate above bytes sent", async () => {
+  const { client, transport, connecting } = createTunnelClient();
+  await connecting;
+  const tunnel = await openTunnel(client, transport);
+  const handlers = createTunnelHandlers();
+  const stream = tunnel.openStream(
+    { streamId: "excess-credit", host: "localhost", port: 80 },
+    handlers,
+  );
+  connectTunnelStream(transport, tunnel, stream.streamId);
+  stream.write(new Uint8Array([1]));
+
+  transport.triggerMessage(
+    encodeTunnelFrame({
+      opcode: TunnelOpcode.WindowUpdate,
+      subscriptionId: tunnel.subscriptionId,
+      streamId: stream.streamId,
+      credit: 2,
+    }),
+  );
+  expect(handlers.onCredit).not.toHaveBeenCalled();
+  expect(handlers.onClose).toHaveBeenCalledWith(TunnelCloseReason.ProtocolError);
+  completeTunnelProtocolViolation(transport, tunnel);
+  expect(client.getConnectionState().status).toBe("connected");
+});
+
+test("rejects Open frames sent by the daemon", async () => {
+  const { client, transport, connecting } = createTunnelClient();
+  await connecting;
+  const tunnel = await openTunnel(client, transport);
+  const closed = vi.fn();
+  tunnel.onClosed(closed);
+
+  transport.triggerMessage(
+    encodeTunnelFrame({
+      opcode: TunnelOpcode.Open,
+      subscriptionId: tunnel.subscriptionId,
+      streamId: "daemon-open",
+      target: { atyp: 3, address: "localhost", port: 80 },
+    }),
+  );
+  expect(closed).toHaveBeenCalledWith("protocol_error");
+  completeTunnelProtocolViolation(transport, tunnel);
+  expect(client.getConnectionState().status).toBe("connected");
+});
+
+test("rejects frames for a stream that was never opened", async () => {
+  const { client, transport, connecting } = createTunnelClient();
+  await connecting;
+  const tunnel = await openTunnel(client, transport);
+  const closed = vi.fn();
+  tunnel.onClosed(closed);
+
+  connectTunnelStream(transport, tunnel, "never-opened");
+  expect(closed).toHaveBeenCalledWith("protocol_error");
+  completeTunnelProtocolViolation(transport, tunnel);
+  expect(client.getConnectionState().status).toBe("connected");
+});
+
+test("logs close RPC failures after a subscription protocol violation", async () => {
+  const logger = createMockLogger();
+  const { client, transport, connecting } = createTunnelClient({ networkTunnel: true }, logger);
+  await connecting;
+  const tunnel = await openTunnel(client, transport);
+  const handlers = createTunnelHandlers();
+  const stream = tunnel.openStream(
+    { streamId: "failed-protocol-close", host: "localhost", port: 80 },
+    handlers,
+  );
+
+  transport.triggerMessage(
+    encodeTunnelFrame({
+      opcode: TunnelOpcode.Data,
+      subscriptionId: tunnel.subscriptionId,
+      streamId: stream.streamId,
+      payload: new Uint8Array([1]),
+    }),
+  );
+  const request = parseSentFrame(transport.sent.at(-1));
+  expect(request).toMatchObject({
+    type: "network.tunnel.close.request",
+    subscriptionId: tunnel.subscriptionId,
+  });
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "network.tunnel.close.response",
+      payload: {
+        requestId: request.requestId,
+        ok: false,
+        error: { code: "internal_error", message: "Close failed" },
+      },
+    }),
+  );
+
+  await vi.waitFor(() => {
+    expect(logger.warn).toHaveBeenCalledWith(
+      {
+        err: expect.objectContaining({ operation: "close", code: "internal_error" }),
+        subscriptionId: tunnel.subscriptionId,
+      },
+      "Failed to close invalid network tunnel",
+    );
+  });
+  expect(handlers.onClose).toHaveBeenCalledWith(TunnelCloseReason.ProtocolError);
+  expect(client.getConnectionState().status).toBe("connected");
+});
+
+test.each([
+  {
+    name: "malformed tunnel frame",
+    frame: new Uint8Array([TunnelOpcode.Data, 0]),
+  },
+  {
+    name: "unknown subscription",
+    frame: encodeTunnelFrame({
+      opcode: TunnelOpcode.Connected,
+      subscriptionId: "00000000-0000-4000-8000-000000000099",
+      streamId: "unknown",
+    }),
+  },
+])("disconnects on $name without sending close.request", async ({ frame }) => {
+  const { client, transport, connecting } = createTunnelClient();
+  await connecting;
+  const tunnel = await openTunnel(client, transport);
+  const closed = vi.fn();
+  tunnel.onClosed(closed);
+
+  transport.triggerMessage(frame);
+  expect(closed).toHaveBeenCalledWith("disconnected");
+  expect(client.getConnectionState().status).toBe("disconnected");
+  expect(transport.sent.filter((sent) => typeof sent === "string")).toHaveLength(1);
+});
+
+test("disconnects every stream and subscription when the socket drops", async () => {
+  const { client, transport, connecting } = createTunnelClient();
+  await connecting;
+  const tunnel = await openTunnel(client, transport);
+  const first = createTunnelHandlers();
+  const second = createTunnelHandlers();
+  tunnel.openStream({ streamId: "first", host: "localhost", port: 80 }, first);
+  tunnel.openStream({ streamId: "second", host: "localhost", port: 81 }, second);
+  const closed = vi.fn();
+  tunnel.onClosed(closed);
+
+  transport.triggerClose({ code: 1006, reason: "network lost" });
+  expect(closed).toHaveBeenCalledWith("disconnected");
+  expect(first.onClose).toHaveBeenCalledWith(TunnelCloseReason.GeneralError);
+  expect(second.onClose).toHaveBeenCalledWith(TunnelCloseReason.GeneralError);
+});
+
+test("ignores delayed frames after local stream close", async () => {
+  const { client, transport, connecting } = createTunnelClient();
+  await connecting;
+  const tunnel = await openTunnel(client, transport);
+  const handlers = createTunnelHandlers();
+  const stream = tunnel.openStream(
+    { streamId: "closed-stream", host: "localhost", port: 80 },
+    handlers,
+  );
+  connectTunnelStream(transport, tunnel, stream.streamId);
+  stream.close();
+  expect(decodeTunnelFrame(assertUint8Array(transport.sent.at(-1)))).toMatchObject({
+    opcode: TunnelOpcode.Close,
+    reason: TunnelCloseReason.Ok,
+  });
+
+  connectTunnelStream(transport, tunnel, stream.streamId);
+  transport.triggerMessage(
+    encodeTunnelFrame({
+      opcode: TunnelOpcode.Data,
+      subscriptionId: tunnel.subscriptionId,
+      streamId: stream.streamId,
+      payload: new Uint8Array([1]),
+    }),
+  );
+  expect(handlers.onClose).toHaveBeenCalledTimes(1);
+  expect(client.getConnectionState().status).toBe("connected");
+});
+
+test("ignores delayed frames after local tunnel close", async () => {
+  const { client, transport, connecting } = createTunnelClient();
+  await connecting;
+  const tunnel = await openTunnel(client, transport);
+  const closing = tunnel.close();
+  const request = parseSentFrame(transport.sent.at(-1));
+
+  connectTunnelStream(transport, tunnel, "late-stream");
+  expect(client.getConnectionState().status).toBe("connected");
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "network.tunnel.close.response",
+      payload: {
+        requestId: request.requestId,
+        ok: true,
+        subscriptionId: tunnel.subscriptionId,
+      },
+    }),
+  );
+  await closing;
+});
+
+test("delivers remote Close without echoing it", async () => {
+  const { client, transport, connecting } = createTunnelClient();
+  await connecting;
+  const tunnel = await openTunnel(client, transport);
+  const handlers = createTunnelHandlers();
+  const stream = tunnel.openStream(
+    { streamId: "remote-close", host: "localhost", port: 80 },
+    handlers,
+  );
+  connectTunnelStream(transport, tunnel, stream.streamId);
+  const sentBeforeClose = transport.sent.length;
+
+  transport.triggerMessage(
+    encodeTunnelFrame({
+      opcode: TunnelOpcode.Close,
+      subscriptionId: tunnel.subscriptionId,
+      streamId: stream.streamId,
+      reason: TunnelCloseReason.ConnectionRefused,
+    }),
+  );
+  expect(handlers.onClose).toHaveBeenCalledWith(TunnelCloseReason.ConnectionRefused);
+  expect(transport.sent).toHaveLength(sentBeforeClose);
+});
+
+test("preserves caller stream IDs, generates omitted IDs, and never reuses them", async () => {
+  const { client, transport, connecting } = createTunnelClient();
+  await connecting;
+  const tunnel = await openTunnel(client, transport, {
+    initialWindowBytes: 4,
+    maxDataBytes: 3,
+    maxStreams: 1,
+    connectTimeoutMs: 500,
+  });
+  const handlers = createTunnelHandlers();
+  const callerStream = tunnel.openStream(
+    { streamId: "desktop-stream", host: "localhost", port: 80 },
+    handlers,
+  );
+  expect(callerStream.streamId).toBe("desktop-stream");
+  expect(() => tunnel.openStream({ host: "localhost", port: 81 }, handlers)).toThrow(
+    "stream limit",
+  );
+  callerStream.close();
+  expect(() =>
+    tunnel.openStream({ streamId: "desktop-stream", host: "localhost", port: 80 }, handlers),
+  ).toThrow("already used");
+
+  const generated = tunnel.openStream({ host: "localhost", port: 81 }, handlers);
+  expect(generated.streamId).toMatch(/^[0-9a-f-]{36}$/);
+});
+
+test("bounds recently closed stream IDs", async () => {
+  const { client, transport, connecting } = createTunnelClient();
+  await connecting;
+  const tunnel = await openTunnel(client, transport, {
+    initialWindowBytes: 4,
+    maxDataBytes: 3,
+    maxStreams: 1,
+    connectTimeoutMs: 500,
+  });
+  const handlers = createTunnelHandlers();
+  for (let index = 0; index <= 2048; index += 1) {
+    tunnel
+      .openStream({ streamId: `closed-${index}`, host: "localhost", port: 80 }, handlers)
+      .close();
+  }
+
+  expect(() =>
+    tunnel.openStream({ streamId: "closed-2048", host: "localhost", port: 80 }, handlers),
+  ).toThrow("already used");
+  expect(() =>
+    tunnel.openStream({ streamId: "closed-0", host: "localhost", port: 80 }, handlers),
+  ).not.toThrow();
+});
+
+test("notifies late onClosed listeners asynchronously and honors unsubscribe", async () => {
+  const { client, transport, connecting } = createTunnelClient();
+  await connecting;
+  const tunnel = await openTunnel(client, transport);
+  const closing = tunnel.close();
+  const request = parseSentFrame(transport.sent.at(-1));
+  const notified = vi.fn();
+  const canceled = vi.fn();
+  tunnel.onClosed(notified);
+  const unsubscribe = tunnel.onClosed(canceled);
+  unsubscribe();
+  expect(notified).not.toHaveBeenCalled();
+  await Promise.resolve();
+  expect(notified).toHaveBeenCalledWith("closed");
+  expect(canceled).not.toHaveBeenCalled();
+
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "network.tunnel.close.response",
+      payload: {
+        requestId: request.requestId,
+        ok: true,
+        subscriptionId: tunnel.subscriptionId,
+      },
+    }),
+  );
+  await closing;
+});
+
+test("logs handler failures without corrupting stream state", async () => {
+  const logger = createMockLogger();
+  const { client, transport, connecting } = createTunnelClient({ networkTunnel: true }, logger);
+  await connecting;
+  const tunnel = await openTunnel(client, transport);
+  const handlerError = new Error("consumer failed");
+  const handlers = createTunnelHandlers();
+  handlers.onConnected.mockImplementation(() => {
+    throw handlerError;
+  });
+  const stream = tunnel.openStream(
+    { streamId: "handler-error", host: "localhost", port: 80 },
+    handlers,
+  );
+
+  connectTunnelStream(transport, tunnel, stream.streamId);
+  expect(logger.error).toHaveBeenCalledWith(
+    { err: handlerError, handler: "onConnected" },
+    "Network tunnel handler failed",
+  );
+  expect(() => stream.write(new Uint8Array([1]))).not.toThrow();
+});
+
+test.each([
+  {
+    daemonReason: "revoked" as const,
+    tunnelReason: "closed",
+    streamReason: TunnelCloseReason.PolicyDenied,
+  },
+  {
+    daemonReason: "protocol_error" as const,
+    tunnelReason: "protocol_error",
+    streamReason: TunnelCloseReason.ProtocolError,
+  },
+  {
+    daemonReason: "resource_limit" as const,
+    tunnelReason: "closed",
+    streamReason: TunnelCloseReason.StreamLimit,
+  },
+  {
+    daemonReason: "internal_error" as const,
+    tunnelReason: "closed",
+    streamReason: TunnelCloseReason.GeneralError,
+  },
+])(
+  "maps daemon tunnel closure $daemonReason to local lifecycle",
+  async ({ daemonReason, tunnelReason, streamReason }) => {
+    const { client, transport, connecting } = createTunnelClient();
+    await connecting;
+    const tunnel = await openTunnel(client, transport);
+    const first = createTunnelHandlers();
+    const second = createTunnelHandlers();
+    tunnel.openStream({ streamId: "daemon-close-first", host: "localhost", port: 80 }, first);
+    tunnel.openStream({ streamId: "daemon-close-second", host: "localhost", port: 81 }, second);
+    const closed = vi.fn();
+    tunnel.onClosed(closed);
+    const sentBeforeClose = transport.sent.length;
+
+    transport.triggerMessage(
+      wrapSessionMessage({
+        type: "network.tunnel.closed",
+        payload: { subscriptionId: tunnel.subscriptionId, reason: daemonReason },
+      }),
+    );
+    expect(closed).toHaveBeenCalledWith(tunnelReason);
+    expect(first.onClose).toHaveBeenCalledWith(streamReason);
+    expect(second.onClose).toHaveBeenCalledWith(streamReason);
+    expect(transport.sent).toHaveLength(sentBeforeClose);
+  },
+);
+
+test("encodes IP literals and preserves ASCII domains without local DNS", async () => {
+  const { client, transport, connecting } = createTunnelClient();
+  await connecting;
+  const tunnel = await openTunnel(client, transport, {
+    initialWindowBytes: 4,
+    maxDataBytes: 3,
+    maxStreams: 5,
+    connectTimeoutMs: 500,
+  });
+  const handlers = createTunnelHandlers();
+  const cases = [
+    {
+      streamId: "ipv4",
+      host: "192.0.2.7",
+      target: { atyp: 1, address: new Uint8Array([192, 0, 2, 7]), port: 80 },
+    },
+    {
+      streamId: "ipv6",
+      host: "[2001:db8::1]",
+      target: {
+        atyp: 4,
+        address: new Uint8Array([32, 1, 13, 184, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]),
+        port: 80,
+      },
+    },
+    {
+      streamId: "ipv6-unbracketed",
+      host: "::ffff:192.0.2.1",
+      target: {
+        atyp: 4,
+        address: new Uint8Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 192, 0, 2, 1]),
+        port: 80,
+      },
+    },
+    {
+      streamId: "domain",
+      host: "service.internal",
+      target: { atyp: 3, address: "service.internal", port: 80 },
+    },
+  ];
+  for (const entry of cases) {
+    tunnel.openStream(
+      { streamId: entry.streamId, host: entry.host, port: entry.target.port },
+      handlers,
+    );
+    expect(decodeTunnelFrame(assertUint8Array(transport.sent.at(-1)))).toMatchObject({
+      opcode: TunnelOpcode.Open,
+      streamId: entry.streamId,
+      target: entry.target,
+    });
+  }
+  const sendsBeforeInvalidHost = transport.sent.length;
+  expect(() =>
+    tunnel.openStream({ streamId: "unicode", host: "café.internal", port: 80 }, handlers),
+  ).toThrow("ASCII");
+  expect(transport.sent).toHaveLength(sendsBeforeInvalidHost);
+});
 
 test.each(["agent", "workspace"] as const)(
   "a lost legacy %s response is not automatically replayed on reconnect",
@@ -1038,6 +1932,7 @@ test("advertises client capabilities in hello", async () => {
       timeline_notifications: true,
       plugin_timeline_items: true,
       workspace_setup_blocked: true,
+      network_tunnel: true,
       hello_rejection: true,
       browser_host: {
         supportedCommands: ["list_tabs"],

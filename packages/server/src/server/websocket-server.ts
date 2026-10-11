@@ -97,6 +97,7 @@ import {
   normalizeClientRestartRpcReason,
 } from "./lifecycle-reasons.js";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
+import { TunnelProtocolError } from "./network-tunnel/network-tunnel-session.js";
 
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import type { DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
@@ -485,6 +486,7 @@ const HELLO_TIMEOUT_MS = 15_000;
 const WS_CLOSE_HELLO_TIMEOUT = 4001;
 const WS_CLOSE_INVALID_HELLO = 4002;
 const WS_CLOSE_INCOMPATIBLE_PROTOCOL = 4003;
+const WS_CLOSE_UNOWNED_TUNNEL_FRAME = 4004;
 const WS_CLOSE_SERVER_SHUTDOWN = 1001;
 const WS_PROTOCOL_VERSION = 1;
 const WS_RUNTIME_METRICS_FLUSH_MS = 30_000;
@@ -1635,7 +1637,7 @@ export class VoiceAssistantWebSocketServer {
       this.externalSessionsByKey.set(sessionKey, connection);
     }
     pending.identity.sessionId = connection.session.getSessionId();
-    this.sendToClient(ws, this.createServerInfoMessage(connection.session));
+    this.sendToClient(ws, this.createServerInfoMessage(connection.session, ws));
     connection.connectionLogger.info(
       {
         ...toConnectionLogFields(pending.identity),
@@ -1764,7 +1766,7 @@ export class VoiceAssistantWebSocketServer {
     existing.sockets.add(ws);
     this.sessions.set(ws, existing);
     pending.identity.sessionId = existing.session.getSessionId();
-    this.sendToClient(ws, this.createServerInfoMessage(existing.session));
+    this.sendToClient(ws, this.createServerInfoMessage(existing.session, ws));
     pending.connectionLogger.info(
       {
         ...toConnectionLogFields(pending.identity),
@@ -1775,14 +1777,18 @@ export class VoiceAssistantWebSocketServer {
     );
   }
 
-  private buildServerInfoStatusPayload(session: Session): ServerInfoStatusPayload {
+  private buildServerInfoStatusPayload(
+    session: Session,
+    ws?: WebSocketLike,
+  ): ServerInfoStatusPayload {
     return {
       status: "server_info",
       protocolVersion: WS_PROTOCOL_VERSION,
       serverId: this.serverId,
       hostname: getHostName(),
       version: this.daemonVersion,
-      permissions: session.getPermissions(),
+      // Source-less callers publish through the session, which projects permissions per socket.
+      permissions: ws ? session.permissionsForSource(ws) : session.getPermissions(),
       // COMPAT(desktopManaged): added in v0.1.X, remove optional parsing after 2027-01-16.
       desktopManaged: this.daemonRuntimeConfig?.desktopManaged === true,
       ...(this.serverCapabilities ? { capabilities: this.serverCapabilities } : {}),
@@ -1941,16 +1947,18 @@ export class VoiceAssistantWebSocketServer {
         agentProfiles: true,
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: true,
+        // COMPAT(networkTunnel): added in v0.12.0, remove after 2027-10-08 once daemon floor >= v0.12.0.
+        networkTunnel: true,
       },
     };
   }
 
-  private createServerInfoMessage(session: Session): WSOutboundMessage {
+  private createServerInfoMessage(session: Session, ws: WebSocketLike): WSOutboundMessage {
     return {
       type: "session",
       message: {
         type: "status",
-        payload: this.buildServerInfoStatusPayload(session),
+        payload: this.buildServerInfoStatusPayload(session, ws),
       },
     };
   }
@@ -2232,6 +2240,20 @@ export class VoiceAssistantWebSocketServer {
     }
     void Promise.resolve(activeConnection.session.handleBinaryFrame(decodedFrame, ws)).catch(
       (error: unknown) => {
+        if (error instanceof TunnelProtocolError) {
+          // Ownership could not be established, so only this physical socket goes; sibling
+          // sockets of the same session keep their subscriptions.
+          activeConnection.connectionLogger.warn(
+            { errorName: error.name },
+            "Closing socket after tunnel frame without ownership",
+          );
+          try {
+            ws.close(WS_CLOSE_UNOWNED_TUNNEL_FRAME, "Tunnel frame without ownership");
+          } catch {
+            // ignore close errors
+          }
+          return;
+        }
         this.handleRawMessageError({
           ws,
           data: buffer,

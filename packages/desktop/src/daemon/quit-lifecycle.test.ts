@@ -125,6 +125,9 @@ describe("quit-lifecycle", () => {
       closeTransportSessions: () => {
         events.push("close-transports");
       },
+      shutdownBrowserRouting: () => {
+        events.push("shutdown-browser-routing");
+      },
       stopDesktopManagedDaemonIfNeeded: () => stopDecision.promise,
       installAppUpdateOnQuit: () => updateDecision.promise,
       createUpdateDeadlineSignal: () => new AbortController().signal,
@@ -142,13 +145,18 @@ describe("quit-lifecycle", () => {
       },
     });
 
-    expect(events).toEqual(["close-transports", "prevent-default"]);
+    expect(events).toEqual(["close-transports", "shutdown-browser-routing", "prevent-default"]);
 
     events.push("daemon-stopped");
     stopDecision.resolve(false);
     await waitForQuitLifecycle();
 
-    expect(events).toEqual(["close-transports", "prevent-default", "daemon-stopped"]);
+    expect(events).toEqual([
+      "close-transports",
+      "shutdown-browser-routing",
+      "prevent-default",
+      "daemon-stopped",
+    ]);
 
     events.push("update-checked");
     updateDecision.resolve(false);
@@ -156,6 +164,7 @@ describe("quit-lifecycle", () => {
 
     expect(events).toEqual([
       "close-transports",
+      "shutdown-browser-routing",
       "prevent-default",
       "daemon-stopped",
       "update-checked",
@@ -168,7 +177,7 @@ describe("quit-lifecycle", () => {
       },
     });
 
-    expect(events.at(-1)).toBe("close-transports");
+    expect(events.slice(-2)).toEqual(["close-transports", "shutdown-browser-routing"]);
     expect(events).not.toContain("second-prevent-default");
   });
 
@@ -177,6 +186,7 @@ describe("quit-lifecycle", () => {
     const quitLifecycle = createQuitLifecycle({
       app: { exit: (code) => exits.push(code) },
       closeTransportSessions: () => {},
+      shutdownBrowserRouting: () => {},
       stopDesktopManagedDaemonIfNeeded: async () => false,
       installAppUpdateOnQuit: async () => true,
       createUpdateDeadlineSignal: () => new AbortController().signal,
@@ -198,6 +208,7 @@ describe("quit-lifecycle", () => {
     const quitLifecycle = createQuitLifecycle({
       app: { exit: (code) => exits.push(code) },
       closeTransportSessions: () => {},
+      shutdownBrowserRouting: () => {},
       stopDesktopManagedDaemonIfNeeded: async () => false,
       installAppUpdateOnQuit: async () => true,
       createUpdateDeadlineSignal: () => new AbortController().signal,
@@ -222,6 +233,7 @@ describe("quit-lifecycle", () => {
     const quitLifecycle = createQuitLifecycle({
       app: { exit: (code) => exits.push(code) },
       closeTransportSessions: () => {},
+      shutdownBrowserRouting: () => {},
       stopDesktopManagedDaemonIfNeeded: async () => false,
       installAppUpdateOnQuit: async () => true,
       createUpdateDeadlineSignal: () =>
@@ -243,6 +255,7 @@ describe("quit-lifecycle", () => {
     const quitLifecycle = createQuitLifecycle({
       app: { exit: (code) => events.push(`exit:${code}`) },
       closeTransportSessions: () => events.push("close-transports"),
+      shutdownBrowserRouting: () => events.push("shutdown-browser-routing"),
       stopDesktopManagedDaemonIfNeeded: async () => {
         events.push("stop-daemon");
         return false;
@@ -261,7 +274,7 @@ describe("quit-lifecycle", () => {
       preventDefault: () => events.push("prevent-default"),
     });
 
-    expect(events).toEqual(["close-transports"]);
+    expect(events).toEqual(["close-transports", "shutdown-browser-routing"]);
   });
 
   it("exits when update revalidation reaches its deadline", async () => {
@@ -271,6 +284,7 @@ describe("quit-lifecycle", () => {
     const quitLifecycle = createQuitLifecycle({
       app: { exit: (code) => exits.push(code) },
       closeTransportSessions: () => {},
+      shutdownBrowserRouting: () => {},
       stopDesktopManagedDaemonIfNeeded: async () => false,
       installAppUpdateOnQuit: () => updateDecision.promise,
       createUpdateDeadlineSignal: () => deadline.signal,

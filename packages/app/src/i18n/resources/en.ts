@@ -1,4 +1,22 @@
 export const en = {
+  browserRouting: {
+    sectionTitle: "Browser",
+    permissionDenied:
+      "This connection does not have permission to use the host network. Ask the host owner to allow network access.",
+    title: "Use host network for browser tabs",
+    description: "Tabs on this host use its network and a separate profile with their own cookies.",
+    updateHost: "Update this host to use its network for browser tabs.",
+    settingFailed: "Could not save or load this setting. Try again.",
+    viaHost: "via {{host}}",
+    proxyUnavailable:
+      "The browser connection to the network of host {{host}} is unavailable. Reconnect the host and reload.",
+    destinationFailed:
+      "Could not reach this address through the network of host {{host}}. Check the address and the host connection.",
+    connectionClosed:
+      "The connection through the network of host {{host}} closed. Reconnect the host and reload.",
+    notReady:
+      "The browser could not prepare the network of host {{host}}. Try opening the tab again.",
+  },
   paneFind: {
     connectionFailure: "Could not search this chat. Check the host connection and retry.",
     historyChangedFailure: "The chat changed while searching. Search again.",
@@ -2243,11 +2261,13 @@ export const en = {
       browserData: {
         title: "Browser data",
         siteData: "Cookies and site data",
-        description: "Browser tabs share sign-ins and site data across Paseo.",
+        description:
+          "Browser tabs share sign-ins and site data across Paseo. Hosts with “Use host network for browser tabs” on keep a separate profile, and clearing removes both.",
         clear: "Clear browser data",
         clearing: "Clearing...",
         confirmTitle: "Clear browser data?",
-        confirmMessage: "Sites will be signed out and open browser tabs will reload.",
+        confirmMessage:
+          "Sites will be signed out on every profile and open browser tabs will reload.",
         success: "Browser data cleared.",
         error: "Couldn't clear browser data.",
       },

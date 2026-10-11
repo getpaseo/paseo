@@ -2,6 +2,19 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
+  browserRouting: {
+    sectionTitle: "浏览器",
+    permissionDenied: "此连接无权使用主机网络。请联系主机所有者以允许网络访问。",
+    title: "浏览器标签页使用主机网络",
+    description: "此主机的标签页使用其网络和独立配置文件，Cookie 单独保存。",
+    updateHost: "请更新此主机，以便浏览器标签页使用其网络。",
+    settingFailed: "无法保存或加载此设置。请重试。",
+    viaHost: "经由 {{host}}",
+    proxyUnavailable: "浏览器无法连接到主机 {{host}} 的网络。请重新连接主机并刷新。",
+    destinationFailed: "无法通过主机 {{host}} 的网络访问此地址。请检查地址和主机连接。",
+    connectionClosed: "通过主机 {{host}} 网络的连接已关闭。请重新连接主机并刷新。",
+    notReady: "浏览器无法准备主机 {{host}} 的网络。请尝试重新打开标签页。",
+  },
   paneFind: {
     connectionFailure: "无法搜索此聊天。请检查主机连接后重试。",
     historyChangedFailure: "搜索期间聊天已更改。请重新搜索。",
@@ -2095,11 +2108,12 @@ export const zhCN: TranslationResources = {
       browserData: {
         title: "浏览器数据",
         siteData: "Cookie 和网站数据",
-        description: "浏览器标签页在 Paseo 中共享登录状态和网站数据。",
+        description:
+          "浏览器标签页在 Paseo 中共享登录状态和网站数据。开启“浏览器标签页使用主机网络”的主机会保留单独的配置文件，清除时会一并删除。",
         clear: "清除浏览器数据",
         clearing: "正在清除...",
         confirmTitle: "清除浏览器数据？",
-        confirmMessage: "网站帐号将退出登录，打开的浏览器标签页将重新加载。",
+        confirmMessage: "所有配置文件中的网站帐号将退出登录，打开的浏览器标签页将重新加载。",
         success: "浏览器数据已清除。",
         error: "无法清除浏览器数据。",
       },

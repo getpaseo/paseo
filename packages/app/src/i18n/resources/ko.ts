@@ -2,6 +2,23 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
+  browserRouting: {
+    sectionTitle: "브라우저",
+    permissionDenied:
+      "이 연결에는 호스트 네트워크를 사용할 권한이 없습니다. 호스트 소유자에게 네트워크 접근 허용을 요청하세요.",
+    title: "브라우저 탭에 호스트 네트워크 사용",
+    description: "이 호스트의 탭은 호스트 네트워크와 쿠키가 분리된 전용 프로필을 사용합니다.",
+    updateHost: "브라우저 탭에서 호스트 네트워크를 사용하려면 이 호스트를 업데이트하세요.",
+    settingFailed: "이 설정을 저장하거나 불러올 수 없습니다. 다시 시도하세요.",
+    viaHost: "{{host}} 경유",
+    proxyUnavailable:
+      "호스트 {{host}}의 네트워크에 대한 브라우저 연결을 사용할 수 없습니다. 호스트를 다시 연결하고 새로고침하세요.",
+    destinationFailed:
+      "호스트 {{host}}의 네트워크를 통해 이 주소에 연결할 수 없습니다. 주소와 호스트 연결을 확인하세요.",
+    connectionClosed:
+      "호스트 {{host}}의 네트워크를 통한 연결이 종료되었습니다. 호스트를 다시 연결하고 새로고침하세요.",
+    notReady: "호스트 {{host}}의 네트워크를 준비할 수 없습니다. 탭을 다시 열어 보세요.",
+  },
   paneFind: {
     connectionFailure: "이 채팅을 검색할 수 없습니다. 호스트 연결을 확인하고 다시 시도하세요.",
     historyChangedFailure: "검색 중에 채팅이 변경되었습니다. 다시 검색하세요.",
@@ -2128,11 +2145,13 @@ export const ko: TranslationResources = {
       browserData: {
         title: "브라우저 데이터",
         siteData: "쿠키 및 사이트 데이터",
-        description: "브라우저 탭은 Paseo 전체에서 로그인 및 사이트 데이터를 공유합니다.",
+        description:
+          "브라우저 탭은 Paseo 전체에서 로그인 및 사이트 데이터를 공유합니다. “브라우저 탭에 호스트 네트워크 사용”이 켜진 호스트는 별도의 프로필을 유지하며, 지우기는 둘 다 삭제합니다.",
         clear: "브라우저 데이터 지우기",
         clearing: "삭제 중...",
         confirmTitle: "브라우저 데이터를 삭제하시겠습니까?",
-        confirmMessage: "사이트가 로그아웃되고 열려 있는 브라우저 탭이 다시 로드됩니다.",
+        confirmMessage:
+          "모든 프로필에서 사이트가 로그아웃되고 열려 있는 브라우저 탭이 다시 로드됩니다.",
         success: "브라우저 데이터가 삭제되었습니다.",
         error: "브라우저 데이터를 삭제할 수 없습니다.",
       },

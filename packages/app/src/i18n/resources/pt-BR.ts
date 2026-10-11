@@ -2,6 +2,24 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ptBR: TranslationResources = {
+  browserRouting: {
+    sectionTitle: "Navegador",
+    permissionDenied:
+      "Esta conexão não tem permissão para usar a rede do host. Peça ao responsável pelo host para permitir o acesso à rede.",
+    title: "Usar a rede do host nas abas do navegador",
+    description: "As abas deste host usam a rede dele e um perfil próprio, com cookies separados.",
+    updateHost: "Atualize este host para usar a rede dele nas abas do navegador.",
+    settingFailed: "Não foi possível salvar ou carregar esta opção. Tente novamente.",
+    viaHost: "via {{host}}",
+    proxyUnavailable:
+      "A conexão do navegador com a rede do host {{host}} está indisponível. Reconecte o host e recarregue.",
+    destinationFailed:
+      "Não foi possível acessar este endereço pela rede do host {{host}}. Verifique o endereço e a conexão do host.",
+    connectionClosed:
+      "A conexão pela rede do host {{host}} foi encerrada. Reconecte o host e recarregue.",
+    notReady:
+      "O navegador não conseguiu preparar a rede do host {{host}}. Tente abrir a aba novamente.",
+  },
   paneFind: {
     connectionFailure:
       "Não foi possível pesquisar nesta conversa. Verifique a conexão com o host e tente novamente.",
@@ -2151,12 +2169,13 @@ export const ptBR: TranslationResources = {
       browserData: {
         title: "Dados do navegador",
         siteData: "Cookies e dados de sites",
-        description: "As abas do navegador compartilham logins e dados de sites no Paseo.",
+        description:
+          "As abas do navegador compartilham logins e dados de sites no Paseo. Hosts com “Usar a rede do host nas abas do navegador” ativada mantêm um perfil separado, e limpar os dados remove os dois.",
         clear: "Limpar dados do navegador",
         clearing: "Limpando...",
         confirmTitle: "Limpar dados do navegador?",
         confirmMessage:
-          "Você será desconectado dos sites e as abas abertas do navegador serão recarregadas.",
+          "Você será desconectado dos sites em todos os perfis e as abas abertas do navegador serão recarregadas.",
         success: "Dados do navegador limpos.",
         error: "Não foi possível limpar os dados do navegador.",
       },

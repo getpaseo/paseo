@@ -94,6 +94,7 @@ function createDeferredUpdateQuit(): DeferredUpdateQuit {
 export function createQuitLifecycle({
   app,
   closeTransportSessions,
+  shutdownBrowserRouting,
   stopDesktopManagedDaemonIfNeeded,
   installAppUpdateOnQuit,
   createUpdateDeadlineSignal,
@@ -102,6 +103,8 @@ export function createQuitLifecycle({
 }: {
   app: BeforeQuitApp;
   closeTransportSessions: () => void;
+  /** Closes the routed browser proxies and their sockets; safe to call on every quit. */
+  shutdownBrowserRouting: () => void;
   stopDesktopManagedDaemonIfNeeded: () => Promise<boolean>;
   installAppUpdateOnQuit: (signal: AbortSignal) => Promise<boolean>;
   createUpdateDeadlineSignal: () => AbortSignal;
@@ -117,6 +120,7 @@ export function createQuitLifecycle({
 
   function handleBeforeQuit(event: BeforeQuitEvent): void {
     closeTransportSessions();
+    shutdownBrowserRouting();
     if (quittingForUpdate) return;
     if (quitting) {
       // MacUpdater's no-relaunch path calls app.quit() without emitting

@@ -21,6 +21,13 @@ export { TerminalProfileSchema, type TerminalProfile } from "./terminal-profile.
 import { z } from "zod";
 import { TerminalActivitySchema } from "./terminal-activity.js";
 import { CLIENT_CAPS } from "./client-capabilities.js";
+import {
+  NetworkTunnelOpenRequestSchema,
+  NetworkTunnelOpenResponseSchema,
+  NetworkTunnelCloseRequestSchema,
+  NetworkTunnelCloseResponseSchema,
+  NetworkTunnelClosedMessageSchema,
+} from "./network-tunnel/rpc-schemas.js";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "./agent-title-limits.js";
 import { AgentProviderSchema } from "./provider-manifest.js";
@@ -119,6 +126,7 @@ export const DAEMON_PERMISSIONS = [
   "daemon.read",
   "daemon.manage",
   "tunnel.manage",
+  "network.proxy",
   "access.manage",
   "workspace.read",
   "workspace.write",
@@ -3196,6 +3204,8 @@ export const SubscriptionReleaseResponseSchema = z.object({
 });
 
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
+  NetworkTunnelOpenRequestSchema,
+  NetworkTunnelCloseRequestSchema,
   BrowserHostRegisterRequestSchema,
   SubscriptionReleaseRequestSchema,
   SessionEventsSetSubscriptionRequestSchema,
@@ -3574,6 +3584,8 @@ export const ServerInfoStatusPayloadSchema = z
       .object({
         // COMPAT(agentRequestReceipts): added in v0.8.0; remove gate after 2027-03-05.
         agentRequestReceipts: z.boolean().optional(),
+        // COMPAT(networkTunnel): added in v0.12.0, remove after 2027-10-08 once daemon floor >= v0.12.0.
+        networkTunnel: z.boolean().optional(),
         // COMPAT(workspaceRequestReceipts): added in v0.8.0; remove gate after 2027-03-07.
         workspaceRequestReceipts: z.boolean().optional(),
         creationLifecycle: z.boolean().optional(),
@@ -6843,6 +6855,9 @@ export const AgentSkillsImportLegacySelectionResponseSchema = z.object({
 });
 
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
+  NetworkTunnelOpenResponseSchema,
+  NetworkTunnelCloseResponseSchema,
+  NetworkTunnelClosedMessageSchema,
   BrowserHostRegisterResponseSchema,
   SubscriptionReleaseResponseSchema,
   SessionEventsSetSubscriptionResponseSchema,
@@ -7548,6 +7563,7 @@ export const WSHelloMessageSchema = z.object({
     .object({
       voice: z.boolean().optional(),
       [CLIENT_CAPS.helloRejection]: z.boolean().optional(),
+      [CLIENT_CAPS.networkTunnel]: z.boolean().optional(),
       pushNotifications: z.boolean().optional(),
       [CLIENT_CAPS.explicitEventSubscriptions]: z.boolean().optional(),
       [CLIENT_CAPS.allProviders]: z.boolean().optional(),
