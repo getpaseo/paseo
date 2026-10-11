@@ -209,6 +209,46 @@ describe("cursor usage source", () => {
     });
   });
 
+  it("treats non-finite allowance percentages as absent without rejecting the response", async () => {
+    process.env["CURSOR_ACCESS_TOKEN"] = "cursor_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+          () =>
+            jsonResponse({
+              planUsage: {
+                totalSpend: "23222",
+                remaining: "16778",
+                limit: "40000",
+                autoPercentUsed: "Infinity",
+                apiPercentUsed: 46.444,
+              },
+              billingCycleStart: null,
+              billingCycleEnd: null,
+            }),
+        ],
+      ]),
+    );
+
+    const cursor = findProvider(await service().listUsage(), "cursor");
+
+    expect(cursor).toMatchObject({
+      status: "available",
+      windows: [
+        expect.objectContaining({
+          id: "other_models",
+          label: "Other Models",
+          usedPct: 46.444,
+          remainingPct: 53.556,
+          resetsAt: null,
+          tone: "ok",
+        }),
+      ],
+      balances: [],
+    });
+  });
+
   it("omits missing Cursor allowance windows and clamps overflow", async () => {
     process.env["CURSOR_ACCESS_TOKEN"] = "cursor_test_token";
     fetchApi = mockFetch(

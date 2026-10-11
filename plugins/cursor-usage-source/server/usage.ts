@@ -22,6 +22,11 @@ const ApiNullableNumberSchema = z.preprocess(
   (value) => (value == null ? null : value),
   ApiNumberSchema.nullable(),
 );
+const ApiNullablePercentSchema = z.preprocess((value) => {
+  if (value == null) return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}, z.number().nullable());
 function toIsoStringOrNull(timestampMs: number): string | null {
   const date = new Date(timestampMs);
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
@@ -68,8 +73,8 @@ const CursorUsageResponseSchema = z.object({
       bonusSpend: ApiNullableNumberSchema,
       remaining: ApiNullableNumberSchema,
       limit: ApiNullableNumberSchema,
-      autoPercentUsed: ApiNullableNumberSchema,
-      apiPercentUsed: ApiNullableNumberSchema,
+      autoPercentUsed: ApiNullablePercentSchema,
+      apiPercentUsed: ApiNullablePercentSchema,
     })
     .nullish(),
   billingCycleStart: CursorBillingCycleTimestampSchema,
