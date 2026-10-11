@@ -131,7 +131,7 @@ async function createPaseoWorktreeWithPriority(
     if (!createdWorktree.created) {
       throw error;
     }
-    return rollbackCreatedPaseoWorktree(
+    return await rollbackCreatedPaseoWorktree(
       {
         cwd: createdWorktree.repoRoot,
         worktreePath: createdWorktree.worktree.worktreePath,
@@ -141,6 +141,10 @@ async function createPaseoWorktreeWithPriority(
       },
       error,
     );
+  } finally {
+    if (createdWorktree.created) {
+      deps.workspaceGitService.invalidateWorktrees();
+    }
   }
 }
 
