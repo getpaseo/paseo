@@ -64,6 +64,81 @@ function makeRelayOnlyHost(serverId: string): HostProfile {
 }
 
 describe("DaemonStartService", () => {
+  it("keeps startup pending until a slow daemon becomes ready without restarting it", async () => {
+    vi.useFakeTimers();
+    try {
+      const fake = createFakeStore();
+      const starting = makeStatus({ status: "starting", serverId: "", listen: null });
+      const startDesktopDaemon = vi.fn(async () => starting);
+      const getDesktopDaemonStatus = vi
+        .fn()
+        .mockResolvedValueOnce(starting)
+        .mockResolvedValueOnce(makeStatus());
+      const service = new DaemonStartService({
+        store: fake.store,
+        startDesktopDaemon,
+        getDesktopDaemonStatus,
+      });
+      const result = service.start();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(service.isRunning()).toBe(true);
+      expect(service.getLastError()).toBeNull();
+      expect(fake.upserts).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await result).toEqual({ ok: true });
+      expect(startDesktopDaemon).toHaveBeenCalledTimes(1);
+      expect(fake.upserts).toEqual([
+        { listenAddress: "127.0.0.1:6767", serverId: "srv_desktop", hostname: "desktop" },
+      ]);
+      expect(service.isRunning()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows the daemon error if it exits while startup is pending", async () => {
+    vi.useFakeTimers();
+    try {
+      const fake = createFakeStore();
+      const service = new DaemonStartService({
+        store: fake.store,
+        startDesktopDaemon: async () => makeStatus({ status: "starting", serverId: "" }),
+        getDesktopDaemonStatus: async () =>
+          makeStatus({ status: "errored", error: "provider startup failed" }),
+      });
+      const result = service.start();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await result).toEqual({ ok: false, error: "provider startup failed" });
+      expect(fake.upserts).toEqual([]);
+      expect(service.isRunning()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("bounds the readiness wait and leaves a retryable error", async () => {
+    vi.useFakeTimers();
+    try {
+      const fake = createFakeStore();
+      const starting = makeStatus({ status: "starting", serverId: "" });
+      const service = new DaemonStartService({
+        store: fake.store,
+        startDesktopDaemon: async () => starting,
+        getDesktopDaemonStatus: async () => starting,
+      });
+      const result = service.start();
+      await vi.advanceTimersByTimeAsync(120000);
+      expect(await result).toEqual({
+        ok: false,
+        error: "The local daemon is still starting. Wait a moment and retry.",
+      });
+      expect(fake.upserts).toEqual([]);
+      expect(service.isRunning()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("upserts the connection on a successful daemon start", async () => {
     const fake = createFakeStore();
     const service = new DaemonStartService({
