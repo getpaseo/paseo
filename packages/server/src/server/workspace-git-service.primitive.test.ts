@@ -7,6 +7,7 @@ import { createGitHubService } from "../services/github-service.js";
 import type { CurrentPullRequestStatus, ForgeService } from "../services/forge-service.js";
 import { defaultForgeRegistry } from "../services/forge-registry.js";
 import {
+  getCheckoutIdentity,
   getCheckoutDiff as getCheckoutDiffUncached,
   getCheckoutSnapshotFacts as getCheckoutSnapshotFactsUncached,
   getCheckoutStatus as getCheckoutStatusUncached,
@@ -17,6 +18,8 @@ import {
   type CheckoutStatusGit,
   type PullRequestStatusResult,
 } from "../utils/checkout-git.js";
+import { getPaseoWorktreeMetadataPath } from "../utils/worktree-metadata.js";
+import { checkoutLiteFromGitSnapshot } from "./workspace-registry-model.js";
 import {
   runGitCommand as runGitCommandReal,
   snapshotGitCommandRuntimeMetrics,
@@ -318,6 +321,7 @@ interface CreateServiceOptions {
   subscribe?: ReturnType<typeof vi.fn>;
   getCheckoutSnapshotFacts?: ReturnType<typeof vi.fn>;
   getCheckoutStatus?: ReturnType<typeof vi.fn>;
+  getCheckoutIdentity?: ReturnType<typeof vi.fn>;
   getCheckoutShortstat?: ReturnType<typeof vi.fn>;
   getCheckoutWorktreeState?: ReturnType<typeof vi.fn>;
   getPullRequestStatus?: ReturnType<typeof vi.fn>;
@@ -424,7 +428,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
 
   test("getCheckout surfaces an unexpected Git read failure", async () => {
     const service = createService({
-      getCheckoutStatus: vi.fn(async () => {
+      getCheckoutIdentity: vi.fn(async () => {
         throw new Error("Git read failed");
       }),
     });
@@ -2216,5 +2220,144 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
 
     expect(github.invalidate).not.toHaveBeenCalled();
     service.dispose();
+  });
+});
+
+describe("WorkspaceGitServiceImpl checkout identity", () => {
+  test.each([
+    "non-git",
+    "checkout",
+    "project root without snapshot",
+    "external worktree",
+    "Paseo worktree",
+    "Paseo worktree without metadata",
+    "Paseo worktree without default branch",
+    "bare repository worktree",
+  ])("preserves status identity for %s without computing status", async (kind) => {
+    const tempDir = realpathSync(mkdtempSync(join(tmpdir(), "checkout-identity-")));
+    const repoDir = join(tempDir, "repo");
+    const paseoHome = join(tempDir, ".paseo");
+    mkdirSync(repoDir, { recursive: true });
+    const git = (args: string[], cwd = repoDir) =>
+      execFileSync("git", args, { cwd, stdio: "pipe" });
+    let cwd = repoDir;
+    if (kind !== "non-git") {
+      git(["init", "-b", "main"]);
+      git([
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.test",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "init",
+      ]);
+      git(["remote", "add", "origin", "https://github.com/acme/repo.git"]);
+    }
+    if (kind === "external worktree") {
+      cwd = join(tempDir, "external");
+      git(["worktree", "add", "-b", "feature", cwd]);
+    } else if (kind.startsWith("Paseo worktree")) {
+      cwd = join(paseoHome, "worktrees", "project", "feature");
+      git(["worktree", "add", "-b", "feature", cwd]);
+      if (kind === "Paseo worktree") {
+        const metadataPath = getPaseoWorktreeMetadataPath(cwd);
+        mkdirSync(join(metadataPath, ".."), { recursive: true });
+        writeFileSync(metadataPath, JSON.stringify({ version: 1, baseRefName: "main" }));
+      }
+      if (kind === "Paseo worktree without default branch") {
+        git(["branch", "-m", "other"]);
+      }
+    } else if (kind === "bare repository worktree") {
+      const bareDir = join(tempDir, "bare");
+      git(["clone", "--bare", repoDir, bareDir]);
+      cwd = join(tempDir, "main");
+      git(["worktree", "add", cwd, "main"], bareDir);
+    }
+
+    const commands: string[][] = [];
+    let fullStatusReads = 0;
+    const service = new WorkspaceGitServiceImpl({
+      logger: createLogger() as never,
+      paseoHome,
+      deps: {
+        getCheckoutIdentity: (path, context) =>
+          getCheckoutIdentity(path, {
+            ...context,
+            runGitCommand: (args, options) => {
+              commands.push([...args]);
+              return runGitCommandReal(args, options);
+            },
+          }),
+        getCheckoutStatus: async (path, context) => {
+          fullStatusReads += 1;
+          return getCheckoutStatusUncached(path, context);
+        },
+      },
+    });
+    try {
+      expect(service.peekSnapshot(cwd)).toBeNull();
+      const identity = await service.getCheckout(cwd);
+      const status = await getCheckoutStatusUncached(cwd, { paseoHome });
+      const expected = checkoutLiteFromGitSnapshot(
+        cwd,
+        status.isGit
+          ? status
+          : {
+              isGit: false,
+              repoRoot: null,
+              mainRepoRoot: null,
+              currentBranch: null,
+              remoteUrl: null,
+              isPaseoOwnedWorktree: false,
+            },
+      );
+      expect(identity).toEqual(expected);
+      let expectedBranch: string | null = "main";
+      let expectedRemote: string | null = "https://github.com/acme/repo.git";
+      if (kind === "non-git") {
+        expectedBranch = null;
+        expectedRemote = null;
+      } else if (kind === "bare repository worktree") {
+        expectedRemote = repoDir;
+      } else if (cwd !== repoDir) {
+        expectedBranch = "feature";
+      }
+      expect(identity).toEqual({
+        cwd,
+        isGit: kind !== "non-git",
+        currentBranch: expectedBranch,
+        remoteUrl: expectedRemote,
+        worktreeRoot: kind === "non-git" ? null : cwd,
+        mainRepoRoot: cwd !== repoDir && kind !== "bare repository worktree" ? repoDir : null,
+        isPaseoOwnedWorktree: ["Paseo worktree", "Paseo worktree without metadata"].includes(kind),
+      });
+      expect(fullStatusReads).toBe(0);
+      expect(service.peekSnapshot(cwd)).toBeNull();
+      expect(
+        commands.some(([command]) =>
+          ["status", "diff", "rev-list", "merge-base", "for-each-ref"].includes(command),
+        ),
+      ).toBe(false);
+      if (
+        [
+          "checkout",
+          "project root without snapshot",
+          "external worktree",
+          "Paseo worktree",
+        ].includes(kind)
+      ) {
+        expect(commands).toHaveLength(5);
+      }
+      expect(identity.isPaseoOwnedWorktree).toBe(
+        ["Paseo worktree", "Paseo worktree without metadata"].includes(kind),
+      );
+    } finally {
+      service.dispose();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });

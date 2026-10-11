@@ -17,9 +17,11 @@ import type {
 } from "./workspace-registry.js";
 import {
   type ReconciliationChange,
+  type ReconciliationClock,
   WorkspaceReconciliationService,
 } from "./workspace-reconciliation-service.js";
 import { deriveProjectKey } from "./project-key.js";
+import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
 
 function canonicalLocalProjectKey(rootPath: string): string {
   return deriveProjectKey({
@@ -239,6 +241,125 @@ describe("WorkspaceReconciliationService", () => {
       rmSync(dir, { recursive: true, force: true });
     }
     tempDirs.length = 0;
+  });
+
+  test("the first five-minute rescan reads identity and archives missing workspaces", async () => {
+    const root = realpathSync(mkdtempSync(path.join(tmpdir(), "reconcile-identity-tick-")));
+    tempDirs.push(root);
+    const missing = path.join(root, "gone");
+    const { projects, workspaces, projectRegistry, workspaceRegistry } = createTestRegistries();
+    projects.set(
+      "p1",
+      createPersistedProjectRecord({
+        projectId: "p1",
+        rootPath: root,
+        kind: "non_git",
+        displayName: "repo",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    workspaces.set(
+      "w1",
+      createPersistedWorkspaceRecord({
+        workspaceId: "w1",
+        projectId: "p1",
+        cwd: root,
+        kind: "directory",
+        displayName: "repo",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    workspaces.set(
+      "w2",
+      createPersistedWorkspaceRecord({
+        workspaceId: "w2",
+        projectId: "p1",
+        cwd: missing,
+        kind: "directory",
+        displayName: "gone",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    const intervals: Array<() => void | Promise<void>> = [];
+    const timeouts: Array<() => void | Promise<void>> = [];
+    const intervalDelays: number[] = [];
+    const rootEvents: Array<(event: string, filename: string | Buffer | null) => void> = [];
+    const clock: ReconciliationClock = {
+      setInterval: (callback, delay) => {
+        intervals.push(callback);
+        intervalDelays.push(delay);
+        return {};
+      },
+      clearInterval: () => {},
+      setTimeout: (callback) => {
+        timeouts.push(callback);
+        return {};
+      },
+      clearTimeout: () => {},
+    };
+    let fullStatusReads = 0;
+    const gitService = new WorkspaceGitServiceImpl({
+      logger: createTestLogger(),
+      paseoHome: path.join(root, ".paseo"),
+      deps: {
+        getCheckoutStatus: async () => {
+          fullStatusReads += 1;
+          throw new Error("Full status is unnecessary");
+        },
+      },
+    });
+    const service = new WorkspaceReconciliationService({
+      projectRegistry,
+      workspaceRegistry,
+      logger: createTestLogger(),
+      workspaceGitService: gitService,
+      clock,
+      watchProjectRoot: (_root, _options, onChange) => {
+        rootEvents.push(onChange);
+        return { close: () => {} };
+      },
+    });
+    try {
+      await service.start();
+      execFileSync("git", ["init", "-b", "main"], { cwd: root, stdio: "ignore" });
+      execFileSync(
+        "git",
+        [
+          "-c",
+          "user.name=Test",
+          "-c",
+          "user.email=test@example.test",
+          "-c",
+          "commit.gpgsign=false",
+          "commit",
+          "--allow-empty",
+          "-m",
+          "init",
+        ],
+        { cwd: root, stdio: "ignore" },
+      );
+      expect(intervalDelays).toEqual([300_000]);
+      expect(gitService.peekSnapshot(root)).toBeNull();
+      await intervals[0]!();
+      expect(projects.get("p1")?.kind).toBe("git");
+      expect(workspaces.get("w1")?.branch).toBe("main");
+      expect(workspaces.get("w2")?.archivedAt).toEqual(expect.any(String));
+      expect(fullStatusReads).toBe(0);
+      expect(gitService.peekSnapshot(root)).toBeNull();
+
+      execFileSync("git", ["branch", "-m", "updated"], { cwd: root, stdio: "ignore" });
+      rootEvents[0]!("change", ".git");
+      expect(timeouts).toHaveLength(1);
+      await timeouts[0]!();
+      expect(workspaces.get("w1")?.branch).toBe("updated");
+      expect(fullStatusReads).toBe(0);
+    } finally {
+      service.dispose();
+      gitService.dispose();
+    }
   });
 
   test("preserves workspace archival that lands during boot reconciliation", async () => {

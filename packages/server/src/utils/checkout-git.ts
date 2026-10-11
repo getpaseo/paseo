@@ -2036,6 +2036,81 @@ async function resolveFactsPullRequestLookupTarget(input: {
   return target;
 }
 
+type CheckoutIdentityFields =
+  | "isGit"
+  | "repoRoot"
+  | "mainRepoRoot"
+  | "currentBranch"
+  | "remoteUrl"
+  | "isPaseoOwnedWorktree";
+
+type CheckoutIdentityGit =
+  | Pick<CheckoutStatusGitNonPaseo, CheckoutIdentityFields>
+  | Pick<CheckoutStatusGitPaseo, CheckoutIdentityFields>;
+
+export type CheckoutIdentity = CheckoutStatus | CheckoutIdentityGit;
+
+function normalizeCheckoutIdentity(input: {
+  worktreeRoot: string;
+  mainRepoRoot: string | null;
+  currentBranch: string | null;
+  remoteUrl: string | null;
+  isPaseoOwnedWorktree: boolean;
+  baseRef: string | null;
+}): CheckoutIdentityGit {
+  const identity = {
+    isGit: true as const,
+    repoRoot: input.worktreeRoot,
+    currentBranch: input.currentBranch,
+    remoteUrl: input.remoteUrl,
+  };
+  if (input.isPaseoOwnedWorktree && input.baseRef) {
+    return {
+      ...identity,
+      mainRepoRoot: input.mainRepoRoot ?? input.worktreeRoot,
+      isPaseoOwnedWorktree: true,
+    };
+  }
+  return {
+    ...identity,
+    mainRepoRoot:
+      input.mainRepoRoot && resolve(input.mainRepoRoot) !== resolve(input.worktreeRoot)
+        ? input.mainRepoRoot
+        : null,
+    isPaseoOwnedWorktree: false,
+  };
+}
+
+export async function getCheckoutIdentity(
+  cwd: string,
+  context?: CheckoutContext,
+): Promise<CheckoutIdentity> {
+  const inspected = await inspectCheckoutContext(cwd, context);
+  if (!inspected) {
+    return { isGit: false };
+  }
+
+  const mainRepoRoot = await getMainRepoRootFromCommonDir(
+    cwd,
+    inspected.gitCommonDir,
+    context,
+  ).catch(() => null);
+  // Status classifies owned paths as Paseo worktrees only when a base ref is available.
+  // Ordinary checkouts do not need base resolution to establish their identity.
+  const baseRef = inspected.paseoWorktree.isPaseoOwnedWorktree
+    ? (readPaseoWorktreeBaseRef(inspected.paseoWorktree.worktreeRoot) ??
+      (await resolveBaseRef(cwd, context)))
+    : null;
+  return normalizeCheckoutIdentity({
+    worktreeRoot: inspected.worktreeRoot,
+    mainRepoRoot,
+    currentBranch: inspected.currentBranch,
+    remoteUrl: inspected.remoteUrl,
+    isPaseoOwnedWorktree: inspected.paseoWorktree.isPaseoOwnedWorktree,
+    baseRef,
+  });
+}
+
 export async function getCheckoutSnapshotFacts(
   cwd: string,
   context?: CheckoutContext,
@@ -2300,12 +2375,17 @@ export async function getCheckoutStatus(
   const aheadOfOrigin = upstreamStatus?.aheadBehind.ahead ?? null;
   const behindOfOrigin = upstreamStatus?.aheadBehind.behind ?? null;
 
-  if (paseoWorktree.isPaseoOwnedWorktree && baseRef) {
+  const identity = normalizeCheckoutIdentity({
+    worktreeRoot,
+    mainRepoRoot,
+    currentBranch,
+    remoteUrl,
+    isPaseoOwnedWorktree: paseoWorktree.isPaseoOwnedWorktree,
+    baseRef,
+  });
+  if (identity.isPaseoOwnedWorktree && baseRef) {
     return {
-      isGit: true,
-      repoRoot: worktreeRoot,
-      mainRepoRoot: mainRepoRoot ?? worktreeRoot,
-      currentBranch,
+      ...identity,
       isDirty,
       baseRef: displayBaseRef ?? baseRef,
       aheadBehind,
@@ -2313,17 +2393,11 @@ export async function getCheckoutStatus(
       aheadOfOrigin,
       behindOfOrigin,
       hasRemote,
-      remoteUrl,
-      isPaseoOwnedWorktree: true,
     };
   }
 
   return {
-    isGit: true,
-    repoRoot: worktreeRoot,
-    mainRepoRoot:
-      mainRepoRoot && resolve(mainRepoRoot) !== resolve(worktreeRoot) ? mainRepoRoot : null,
-    currentBranch,
+    ...identity,
     isDirty,
     baseRef: displayBaseRef,
     aheadBehind,
@@ -2331,7 +2405,6 @@ export async function getCheckoutStatus(
     aheadOfOrigin,
     behindOfOrigin,
     hasRemote,
-    remoteUrl,
     isPaseoOwnedWorktree: false,
   };
 }
