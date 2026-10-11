@@ -824,8 +824,9 @@ async function resolveScopedPath({
 
 function assertWithinWorkspace(root: string, candidate: string): void {
   const relative = path.relative(root, candidate);
-  if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) return;
-  throw new Error(ACCESS_OUTSIDE_WORKSPACE_MESSAGE);
+  const isOutsideWorkspace =
+    relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+  if (isOutsideWorkspace) throw new Error(ACCESS_OUTSIDE_WORKSPACE_MESSAGE);
 }
 
 async function openFileForRead(filePath: string): Promise<FileHandle> {

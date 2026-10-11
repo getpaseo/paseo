@@ -73,7 +73,8 @@ async function harness(
     predicate: (event: ProviderEvent) => boolean,
     from = 0,
   ): Promise<ProviderEvent> {
-    for (let count = 0; count < 200; count++) {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
       const event = events.slice(from).find(predicate);
       if (event) return event;
       await delay(10);
@@ -1219,6 +1220,18 @@ test("silent active turns page after two minutes and stop polling on recovered t
   await vi.advanceTimersByTimeAsync(240000);
   expect((await h.recorded()).filter((f) => f.method === "view/page")).toHaveLength(1);
 });
+test("session readiness accepts initialization beyond the old event polling window", async () => {
+  const h = await harness("text-reasoning", { MUSE_TEST_INITIALIZE_DELAY_MS: "3500" });
+  expect(await h.open()).toMatchObject({ type: "session.ready" });
+  expect((await h.recorded()).find((frame) => frame.event === "hostStarted").args).toEqual([
+    "serve",
+    "--sandbox-network",
+    "proxy-only",
+    "--disable-sandbox",
+    "--trust-workspace",
+  ]);
+}, 10000);
+
 test("default launch disables sandbox and trusts workspace", async () => {
   const h = await harness();
   await h.open();
