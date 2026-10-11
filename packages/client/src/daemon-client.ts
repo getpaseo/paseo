@@ -6136,6 +6136,14 @@ export class DaemonClient {
     });
   }
 
+  async createDocumentPreview(cwd: string, path: string) {
+    return this.sendCorrelatedSessionRequest({
+      message: { type: "fs.document.preview.request", cwd, path },
+      responseType: "fs.document.preview.response",
+      timeout: 90_000,
+    });
+  }
+
   async scheduleCreate(options: CreateScheduleOptions): Promise<ScheduleCreatePayload> {
     return this.sendCorrelatedSessionRequest({
       requestId: options.requestId,
