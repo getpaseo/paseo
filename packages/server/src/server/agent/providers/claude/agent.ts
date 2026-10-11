@@ -2093,6 +2093,12 @@ class ClaudeContextUsageState {
   }
 }
 
+interface ClaudeTurnAttempt {
+  uuid: string | null;
+  state: "admitting" | "pushed";
+  cancelRequested: boolean;
+}
+
 class ClaudeAgentSession implements AgentSession {
   readonly provider = "claude" as const;
   readonly capabilities = CLAUDE_CAPABILITIES;
@@ -2188,6 +2194,9 @@ class ClaudeAgentSession implements AgentSession {
   private pendingFreshSessionId: string | null = null;
   private recentStderr = "";
   private closed = false;
+  /** An admitting attempt has no prompt on a query; old query frames cannot finish it. */
+  private foregroundAttempt: ClaudeTurnAttempt | null = null;
+  private cancellationInFlight: Promise<void> | null = null;
 
   constructor(config: ClaudeAgentConfig, options: ClaudeAgentSessionOptions) {
     this.config = config;
@@ -2316,7 +2325,6 @@ class ClaudeAgentSession implements AgentSession {
     const sdkMessage = this.toSdkUserMessage(prompt);
     const sdkUserMessageId =
       typeof sdkMessage.uuid === "string" && sdkMessage.uuid.length > 0 ? sdkMessage.uuid : null;
-    this.rememberRewindUserAnchor(sdkUserMessageId);
     const turnId = this.createTurnId("foreground");
     this.activeForegroundTurnId = turnId;
     this.foregroundHasVisibleActivity = false;
@@ -2326,12 +2334,18 @@ class ClaudeAgentSession implements AgentSession {
     this.clearRecentStderr();
     if (sdkUserMessageId) this.unstartedMessageUuids.add(sdkUserMessageId);
 
-    let cancelIssued = false;
+    const attempt: ClaudeTurnAttempt = {
+      uuid: sdkUserMessageId,
+      state: "admitting",
+      cancelRequested: false,
+    };
+    this.foregroundAttempt = attempt;
+
     const requestCancel = () => {
-      if (cancelIssued) {
+      if (attempt.cancelRequested) {
         return;
       }
-      cancelIssued = true;
+      attempt.cancelRequested = true;
       if (this.cancelCurrentTurn === requestCancel) {
         this.cancelCurrentTurn = null;
       }
@@ -2346,41 +2360,93 @@ class ClaudeAgentSession implements AgentSession {
         provider: "claude",
         reason: "Interrupted",
       });
-      void this.interruptActiveTurn(claudeStartedTurn).catch((error) => {
-        this.logger.warn({ err: error }, "Failed to interrupt during cancel");
-      });
+      if (attempt.state === "admitting") {
+        // Stopped while still waiting for Claude: withdrawn by never sending it, nothing to
+        // interrupt. The previous turn's cancellation keeps its own cleanup.
+        this.abandonAdmission(attempt);
+        return;
+      }
+      const cancellation = this.interruptActiveTurn(claudeStartedTurn)
+        .catch((error) => {
+          this.logger.warn({ err: error }, "Failed to interrupt during cancel");
+        })
+        .finally(() => {
+          if (this.cancellationInFlight === cancellation) this.cancellationInFlight = null;
+        });
+      this.cancellationInFlight = cancellation;
     };
     this.cancelCurrentTurn = requestCancel;
 
     this.notifySubscribers({ type: "turn_started", provider: "claude" });
 
     try {
+      // Stop releases the foreground before its withdrawal and interrupt have answered; pushing
+      // a replacement earlier would let the old turn's native interrupt land on the new one.
+      // The replacement is already cancellable here, so a Stop during the wait reaches it.
+      while (this.cancellationInFlight) {
+        await this.cancellationInFlight;
+      }
+      if (!this.ownsAdmission(attempt)) {
+        return { turnId };
+      }
       await this.ensureQuery();
-      if (cancelIssued) {
-        // Stopped while Claude was still starting up: withdrawn by never sending it.
-        if (sdkUserMessageId) this.unstartedMessageUuids.delete(sdkUserMessageId);
+      if (!this.ownsAdmission(attempt)) {
         return { turnId };
       }
       if (!this.input) {
         throw new Error("Claude session input stream not initialized");
       }
+      this.rememberRewindUserAnchor(sdkUserMessageId);
       this.activeForegroundQuery = this.query;
       this.activeForegroundInput = this.input;
       this.startQueryPump();
       this.input.push(sdkMessage);
+      attempt.state = "pushed";
       setTimeout(() => {
         if (this.activeForegroundTurnId === turnId) {
           this.emitSubmittedUserMessage(sdkMessage, turnId, options?.clientMessageId);
         }
       }, 0);
     } catch (error) {
-      if (sdkUserMessageId) this.unstartedMessageUuids.delete(sdkUserMessageId);
+      if (!this.ownsAdmission(attempt)) {
+        return { turnId };
+      }
+      this.abandonAdmission(attempt);
       this.finishForegroundTurn(
         this.buildTurnFailedEvent(error instanceof Error ? error.message : "Claude stream failed"),
       );
     }
 
     return { turnId };
+  }
+
+  private ownsAdmission(attempt: ClaudeTurnAttempt): boolean {
+    if (
+      !this.closed &&
+      this.foregroundAttempt === attempt &&
+      !attempt.cancelRequested &&
+      attempt.state === "admitting"
+    ) {
+      return true;
+    }
+    if (attempt.state === "admitting") this.abandonAdmission(attempt);
+    return false;
+  }
+
+  private abandonAdmission(attempt: ClaudeTurnAttempt): void {
+    if (attempt.uuid) this.unstartedMessageUuids.delete(attempt.uuid);
+  }
+
+  private clearForegroundTurn(): void {
+    this.activeForegroundTurnId = null;
+    this.activeForegroundQuery = null;
+    this.activeForegroundInput = null;
+    this.cancelCurrentTurn = null;
+    this.foregroundAttempt = null;
+  }
+
+  private foregroundIsAdmitting(): boolean {
+    return this.foregroundAttempt?.state === "admitting";
   }
 
   async steerActiveTurn(
@@ -2777,11 +2843,8 @@ class ClaudeAgentSession implements AgentSession {
     this.rejectAllPendingPermissions(new Error("Claude session closed"));
     this.cancelCurrentTurn?.();
     this.subscribers.clear();
-    this.activeForegroundTurnId = null;
-    this.activeForegroundQuery = null;
-    this.activeForegroundInput = null;
+    this.clearForegroundTurn();
     this.autonomousTurn = null;
-    this.cancelCurrentTurn = null;
     this.turnState = "idle";
     this.sidechainTracker.clear();
     this.taskProtocolSource.reset();
@@ -3200,6 +3263,9 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private async ensureQuery(launchMode: PermissionMode = this.currentMode): Promise<Query> {
+    if (this.closed) {
+      throw new Error("Claude session is closed");
+    }
     if (this.query && !this.queryRestartNeeded) {
       return this.query;
     }
@@ -3244,6 +3310,9 @@ class ClaudeAgentSession implements AgentSession {
 
     const input = createAsyncMessageInput<SDKUserMessage>();
     const options = await this.buildOptions(launchMode);
+    if (this.closed) {
+      throw new Error("Claude session is closed");
+    }
     this.logger.debug({ options: summarizeClaudeOptionsForLog(options) }, "claude query");
     this.input = input;
     // A fresh Claude process has no turn of its own in flight.
@@ -3720,10 +3789,7 @@ class ClaudeAgentSession implements AgentSession {
       this.flushPendingToolCalls();
     }
     this.notifySubscribers(event);
-    this.activeForegroundTurnId = null;
-    this.activeForegroundQuery = null;
-    this.activeForegroundInput = null;
-    this.cancelCurrentTurn = null;
+    this.clearForegroundTurn();
     this.activeTurnHasAssistantText = false;
     this.compactionMarkerOpen = false;
     this.syncTurnState("foreground turn terminal");
@@ -3738,11 +3804,8 @@ class ClaudeAgentSession implements AgentSession {
 
     if (terminalSeen) {
       this.compactionMarkerOpen = false;
-      if (this.activeForegroundTurnId) {
-        this.activeForegroundTurnId = null;
-        this.activeForegroundQuery = null;
-        this.activeForegroundInput = null;
-        this.cancelCurrentTurn = null;
+      if (this.activeForegroundTurnId && !this.foregroundIsAdmitting()) {
+        this.clearForegroundTurn();
         this.activeTurnHasAssistantText = false;
         this.syncTurnState("foreground turn terminal");
       } else if (this.autonomousTurn) {
@@ -3786,7 +3849,7 @@ class ClaudeAgentSession implements AgentSession {
   private failActiveTurns(errorMessage: string): void {
     const failure = this.buildTurnFailedEvent(errorMessage);
     this.flushPendingToolCalls();
-    if (this.activeForegroundTurnId) {
+    if (this.activeForegroundTurnId && !this.foregroundIsAdmitting()) {
       this.finishForegroundTurn(failure);
       return;
     }
@@ -4032,7 +4095,8 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
 
-    const isForeground = Boolean(this.activeForegroundTurnId);
+    // Frames during admission still belong to the preceding turn.
+    const isForeground = Boolean(this.activeForegroundTurnId) && !this.foregroundIsAdmitting();
     if (this.opensAutonomousTurn(message)) {
       this.startAutonomousTurn();
     }
@@ -4040,7 +4104,7 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
 
-    const turnId = this.activeForegroundTurnId ?? this.autonomousTurn?.id ?? null;
+    const turnId = this.routedTurnId(isForeground);
     const identifiers = readEventIdentifiers(message);
     this.rememberTranscriptProgress(message, readTranscriptUuid(message));
 
@@ -4078,7 +4142,7 @@ class ClaudeAgentSession implements AgentSession {
       this.activeTurnHasAssistantText = true;
     }
     if (
-      this.activeForegroundTurnId &&
+      isForeground &&
       events.some(
         (event) =>
           event.type === "timeline" ||
@@ -4090,6 +4154,11 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     this.dispatchEvents(events);
+  }
+
+  private routedTurnId(isForeground: boolean): string | null {
+    if (isForeground) return this.activeForegroundTurnId;
+    return this.autonomousTurn?.id ?? null;
   }
 
   private async buildPumpedMessageEvents(
@@ -4137,7 +4206,24 @@ class ClaudeAgentSession implements AgentSession {
       "Claude resumed session no longer exists; invalidating persisted session",
     );
 
+    // Retire only the failed query's state before awaiting cleanup: a replacement can start
+    // while return() is pending and must keep its foreground, persistence and restart state.
+    if (this.query !== activeQuery) {
+      await this.awaitWithTimeout(
+        activeQuery.return?.(),
+        "query pump return on missing resumed conversation",
+      );
+      return true;
+    }
     this.failActiveTurns(staleResumeError);
+    this.autonomousTurn = null;
+    if (!this.foregroundIsAdmitting()) this.clearForegroundTurn();
+    this.persistence = null;
+    this.persistedHistory = [];
+    this.persistedProviderSubagentEvents = [];
+    this.historyPending = false;
+    this.cachedRuntimeInfo = null;
+    this.syncTurnState("missing resumed conversation");
     // Ending the input retires the process on purpose. Detach first so its exit
     // is not reported as a crash.
     const retiredChild = this.childProcess;
@@ -4160,18 +4246,8 @@ class ClaudeAgentSession implements AgentSession {
     if (this.query === activeQuery) {
       this.query = null;
       this.input = null;
+      this.queryRestartNeeded = false;
     }
-    this.persistence = null;
-    this.persistedHistory = [];
-    this.persistedProviderSubagentEvents = [];
-    this.historyPending = false;
-    this.cachedRuntimeInfo = null;
-    this.queryRestartNeeded = false;
-    this.autonomousTurn = null;
-    this.activeForegroundTurnId = null;
-    this.activeForegroundQuery = null;
-    this.activeForegroundInput = null;
-    this.syncTurnState("missing resumed conversation");
     return true;
   }
 
@@ -4236,7 +4312,12 @@ class ClaudeAgentSession implements AgentSession {
     let withdrewAll = true;
     for (const uuid of uuids) {
       try {
-        if (!(await cancelAsyncMessage.call(query, uuid))) withdrewAll = false;
+        const withdrawn = await withTimeout(
+          cancelAsyncMessage.call(query, uuid),
+          3_000,
+          "Claude did not answer the message withdrawal",
+        );
+        if (!withdrawn) withdrewAll = false;
       } catch (error) {
         withdrewAll = false;
         this.logger.warn({ err: error }, "Failed to withdraw a queued Claude message");
