@@ -504,6 +504,14 @@ export type AgentPermissionResponse =
       interrupt?: boolean;
     };
 
+/** A requested turn was canceled before the provider accepted it. */
+export class AgentTurnStartCanceledError extends Error {
+  constructor() {
+    super("Turn was canceled before starting");
+    this.name = "AgentTurnStartCanceledError";
+  }
+}
+
 export interface AgentRunResult {
   sessionId: string;
   finalText: string;
