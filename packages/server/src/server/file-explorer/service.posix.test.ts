@@ -12,6 +12,32 @@ async function createTempDir(prefix: string): Promise<string> {
 }
 
 describe.skipIf(isPlatform("win32"))("service POSIX-only", () => {
+  it("lists and expands the reported relative directory symlink", async () => {
+    const root = await createTempDir("paseo-file-explorer-");
+
+    try {
+      await mkdir(path.join(root, "test"));
+      await writeFile(path.join(root, "test", "x.txt"), "inside\n", "utf-8");
+      await symlink("./test", path.join(root, "test2"));
+
+      const listing = await listDirectoryEntries({ root });
+      expect(listing.entries.find((entry) => entry.name === "test2")).toMatchObject({
+        path: "test2",
+        kind: "directory",
+      });
+
+      const expanded = await listDirectoryEntries({ root, relativePath: "test2" });
+      expect(expanded.path).toBe("test2");
+      expect(expanded.entries.map((entry) => entry.name)).toEqual(["x.txt"]);
+      expect(await readExplorerFile({ root, relativePath: "test2/x.txt" })).toMatchObject({
+        path: "test2/x.txt",
+        content: "inside\n",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("lists directory entries even when a dangling symlink exists", async () => {
     const root = await createTempDir("paseo-file-explorer-");
 
