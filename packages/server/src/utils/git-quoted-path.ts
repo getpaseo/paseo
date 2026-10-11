@@ -20,7 +20,12 @@ export function unquoteGitPath(value: string): string {
   for (const match of encoded.matchAll(/\\([0-7]{1,3}|[abfnrtv"\\])/g)) {
     parts.push(Buffer.from(encoded.slice(offset, match.index)));
     const escape = match[1];
-    const byte = /^[0-7]/.test(escape) ? Number.parseInt(escape, 8) : GIT_PATH_ESCAPE_BYTES[escape];
+    let byte: number;
+    if (/^[0-7]/.test(escape)) {
+      byte = Number.parseInt(escape, 8);
+    } else {
+      byte = GIT_PATH_ESCAPE_BYTES[escape];
+    }
     parts.push(Buffer.from([byte]));
     offset = match.index + match[0].length;
   }

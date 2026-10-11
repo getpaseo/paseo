@@ -70,7 +70,10 @@ function extractPathFromDiffHeader(lines: string[]): string {
   if (quotedPathMatch) {
     const oldPath = unquoteGitPath(quotedPathMatch[1]);
     const newPath = unquoteGitPath(quotedPathMatch[2]);
-    return usesDiffPathPrefixes(oldPath, newPath) ? newPath.slice(2) : newPath;
+    if (usesDiffPathPrefixes(oldPath, newPath)) {
+      return newPath.slice(2);
+    }
+    return newPath;
   }
 
   const metadataPath =
