@@ -407,13 +407,20 @@ export interface SetupFinishNotificationParams {
   logger: Logger;
 }
 
-type FinishNotificationReason = "finished" | "errored" | "needs permission" | "was closed";
+type FinishNotificationReason =
+  | "finished"
+  | "errored"
+  | "needs permission"
+  | "was closed"
+  | "was canceled";
 
 const finishNotificationEvents = {
   finished: "finished",
   errored: "errored",
   "needs permission": "permission-required",
   "was closed": "closed",
+  // Use the existing failure event so older clients still parse agent-message metadata.
+  "was canceled": "errored",
 } as const;
 
 const FINISH_NOTIFICATION_MESSAGE_LIMIT = 4000;
@@ -568,10 +575,8 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
       notifySafely("errored");
       return;
     }
-    if (agent.lifecycle === "idle" && hasSeenRunning) {
-      notifySafely("finished");
-      return;
-    }
+    // Idle is published before the terminal stream event for both completion
+    // and cancellation. Let that event identify the outcome instead.
     if (agent.lifecycle === "closed") {
       notifySafely("was closed");
       return;
@@ -597,6 +602,16 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
       if (event.event.type === "turn_started") {
         hasSeenTurn = true;
         hasSeenRunning = true;
+        return;
+      }
+
+      if (event.event.type === "turn_completed" && hasSeenRunning) {
+        notifySafely("finished");
+        return;
+      }
+
+      if (event.event.type === "turn_canceled" && hasSeenTurn) {
+        notifySafely("was canceled");
         return;
       }
 
