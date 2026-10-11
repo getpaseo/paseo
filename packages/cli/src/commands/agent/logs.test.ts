@@ -15,6 +15,18 @@ function collect(items: readonly AgentTimelineItem[], turnId?: string): string {
 }
 
 describe("createFollowTranscriptWriter", () => {
+  it("matches one-shot logs when reasoning and assistant text alternate", () => {
+    const items: AgentTimelineItem[] = [
+      { type: "reasoning", text: "Check " },
+      { type: "reasoning", text: "the commands." },
+      { type: "assistant_message", text: "I will list the commands.", messageId: "msg_1" },
+      { type: "reasoning", text: "Then summarize." },
+      { type: "assistant_message", text: "Done.", messageId: "msg_2" },
+    ];
+
+    expect(collect(items).trimEnd()).toBe(formatAgentActivityTranscript(items));
+  });
+
   it("keeps a word that arrives split across fragments intact", () => {
     const output = collect([
       { type: "assistant_message", text: "the paseo-pr", messageId: "msg_1" },
