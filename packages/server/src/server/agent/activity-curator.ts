@@ -25,36 +25,20 @@ interface ActivityEntry {
 
 type TextAgentAttachment = Extract<AgentAttachment, { type: "text" }>;
 
-function appendText(buffer: string, text: string): string {
-  const normalized = text.trim();
-  if (!normalized) {
-    return buffer;
-  }
-  if (!buffer) {
-    return normalized;
-  }
-  return `${buffer}\n${normalized}`;
-}
-
 function activityEntry(text: string): ActivityEntry {
   return { text };
 }
 
-function flushBuffers(
+function appendTextEntry(
   entries: ActivityEntry[],
-  buffers: { message: string; thought: string },
+  item: Extract<AgentTimelineItem, { type: "assistant_message" | "reasoning" }>,
   options?: ActivityCuratorOptions,
 ) {
-  if (buffers.message.trim()) {
-    const text = buffers.message.trim();
-    entries.push(activityEntry(options?.labelAssistantMessages ? `[Assistant] ${text}` : text));
-  }
-  if (buffers.thought.trim()) {
-    const text = buffers.thought.trim();
-    entries.push(activityEntry(`[Thought] ${text}`));
-  }
-  buffers.message = "";
-  buffers.thought = "";
+  const text = item.text.trim();
+  if (!text) return;
+  let prefix = options?.labelAssistantMessages ? "[Assistant] " : "";
+  if (item.type === "reasoning") prefix = "[Thought] ";
+  entries.push(activityEntry(`${prefix}${text}`));
 }
 
 function formatToolInputJson(input: unknown): string | null {
@@ -147,7 +131,6 @@ function curateProjectedActivityEntries(
   const recentItems = maxItems > 0 && items.length > maxItems ? items.slice(-maxItems) : items;
 
   const entries: ActivityEntry[] = [];
-  const buffers = { message: "", thought: "" };
 
   for (const item of recentItems) {
     if (!shouldIncludeItem(item, options)) {
@@ -156,17 +139,13 @@ function curateProjectedActivityEntries(
 
     switch (item.type) {
       case "user_message":
-        flushBuffers(entries, buffers, options);
         entries.push(activityEntry(`[User] ${item.text.trim()}`));
         break;
       case "assistant_message":
-        buffers.message = appendText(buffers.message, item.text);
-        break;
       case "reasoning":
-        buffers.thought = appendText(buffers.thought, item.text);
+        appendTextEntry(entries, item, options);
         break;
       case "tool_call": {
-        flushBuffers(entries, buffers, options);
         entries.push(formatToolCallEntry(item, options));
         if (item.detail.type === "sub_agent" && item.detail.log.trim()) {
           entries.push(activityEntry(item.detail.log.trim()));
@@ -174,7 +153,6 @@ function curateProjectedActivityEntries(
         break;
       }
       case "todo":
-        flushBuffers(entries, buffers, options);
         entries.push(activityEntry("[Tasks]"));
         for (const entry of item.items) {
           const checkbox = entry.completed ? "[x]" : "[ ]";
@@ -183,17 +161,13 @@ function curateProjectedActivityEntries(
         }
         break;
       case "error":
-        flushBuffers(entries, buffers, options);
         entries.push(activityEntry(`[Error] ${item.message}`));
         break;
       case "compaction":
-        flushBuffers(entries, buffers, options);
         entries.push(activityEntry("[Compacted]"));
         break;
     }
   }
-
-  flushBuffers(entries, buffers, options);
 
   return entries;
 }
