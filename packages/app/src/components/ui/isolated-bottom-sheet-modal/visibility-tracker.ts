@@ -121,6 +121,9 @@ export function createBottomSheetVisibilityTracker(opts: {
       }
     },
     handleSheetDismiss() {
+      // Portal cleanup reports dismissal after the sheet leaves the tree. It is
+      // presentation teardown, so the owner keeps its desired state.
+      if (!controller) return;
       if (visible) {
         setPhase("dismissing");
         notifyClose();

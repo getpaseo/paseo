@@ -21,7 +21,48 @@ paseo attach <id>                    # Stream agent output
 paseo send <id> "also fix linting"   # Send follow-up task
 paseo logs <id>                      # View agent timeline
 paseo stop <id>                      # Stop an agent
+paseo usage                          # Show account quotas and balances
 ```
+
+## Account usage
+
+Show account quotas and balances from the host's usage sources:
+
+```bash
+paseo usage
+paseo usage ls --refresh
+paseo usage ls --agent <agent-id>
+paseo usage inspect <report-id>
+paseo usage inspect <report-id> --refresh
+```
+
+`paseo usage` is equivalent to `paseo usage ls`. The summary groups windows and balances by account, with report IDs, source and account labels, status, and fetch timestamps. Missing values appear as `-`; unavailable and failed reports include their reasons.
+
+Copy the full report ID from the list into `inspect` to see reset times, balances and units, plan details, supplied forecasts, and login failures with recovery instructions. Report IDs require exact matches.
+
+`--agent` selects the account quota associated with an agent. It does not measure that agent's token consumption or cost. Use the full agent ID, and do not combine `--agent` with `inspect`.
+
+Queries use the host's five-minute cache when available. Add `--refresh` to bypass it. Use `--host` or `--home` to [select a daemon](#select-one-daemon). Hosts without usage-source support return an update message.
+
+### Usage in scripts
+
+```bash
+paseo usage ls --json
+paseo usage inspect <report-id> --json
+paseo usage ls --quiet
+```
+
+List JSON is always an array, including `[]` when no reports are returned. Inspect JSON is one report entry. Each entry includes `id`, `sourceId`, `sourceLabel`, `account`, `fetchedAt`, and a nested `report`. Read `report.status` before accessing its data:
+
+| Status        | Fields                                                                 |
+| ------------- | ---------------------------------------------------------------------- |
+| `available`   | `windows`, with optional `planLabel`, `balances`, and `details`        |
+| `unavailable` | `problem`, describing expired or rejected credentials or missing quota |
+| `error`       | `error`, the failure message                                           |
+
+Entries may also include `loginErrors`. Structured output preserves numeric values and optional fields. Standard `--format yaml`, `--no-headers`, and `--no-color` options are supported; `--quiet` prints full report IDs.
+
+A completed query exits with status `0`, including when individual reports are unavailable or failed. Connection or request failures, unsupported hosts, unknown report IDs, and conflicting selectors exit with status `1` and write the error to stderr. Human output says **No usage reports returned** for an empty result; this does not establish whether account discovery succeeded for every source.
 
 ## Provider diagnostics
 

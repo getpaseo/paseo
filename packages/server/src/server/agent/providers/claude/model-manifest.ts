@@ -9,6 +9,7 @@ interface ClaudeModelManifestEntry {
   description: string;
   defaultPriority?: number;
   minimumClaudeCodeVersion?: string;
+  requiresDiscovery?: boolean;
   contextWindowMaxTokens?: number;
   effortLevels?: readonly ClaudeEffortLevel[];
   defaultThinkingOptionId?: ClaudeEffortLevel;
@@ -56,6 +57,14 @@ export const CLAUDE_MODEL_MANIFEST = [
     effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
     supportsThinkingDisabled: true,
     supportsFastMode: true,
+  },
+  {
+    id: "claude-mythos-5-1",
+    label: "Mythos 5.1",
+    requiresDiscovery: true,
+    description: "Mythos 5.1 · Requires verified access",
+    contextWindowMaxTokens: 1_000_000,
+    effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
   },
   {
     id: "claude-fable-5-1",
@@ -217,9 +226,16 @@ function buildThinkingOptions(
   return options;
 }
 
-export function getClaudeManifestModels(claudeCodeVersion?: string): AgentModelDefinition[] {
+export function getClaudeManifestModels(
+  claudeCodeVersion?: string,
+  discoveredModelIds?: ReadonlySet<string>,
+): AgentModelDefinition[] {
   const availableModels: readonly ClaudeModelManifestEntry[] = CLAUDE_MODEL_MANIFEST.filter(
-    (model) => isModelAvailableInClaudeCode(model, claudeCodeVersion),
+    (model) =>
+      isModelAvailableInClaudeCode(model, claudeCodeVersion) &&
+      (discoveredModelIds === undefined ||
+        !("requiresDiscovery" in model && model.requiresDiscovery) ||
+        discoveredModelIds.has(model.id)),
   );
   const defaultModel = availableModels.reduce<ClaudeModelManifestEntry | undefined>(
     (selected, candidate) =>
@@ -359,7 +375,7 @@ export function normalizeClaudeManifestModelId(value: string | null | undefined)
   }
 
   const singleSegmentMatch = trimmed.match(
-    /^(?:claude[-_ ])?(fable|opus|sonnet|haiku)[-_ ]+(\d+)(?:\[1m\])?(?:[-_ ]+\d{8})?(?:\[1m\])?$/i,
+    /^(?:claude[-_ ])?(mythos|fable|opus|sonnet|haiku)[-_ ]+(\d+)(?:\[1m\])?(?:[-_ ]+\d{8})?(?:\[1m\])?$/i,
   );
   if (singleSegmentMatch) {
     return normalizeSingleSegmentClaudeModelId(
@@ -370,7 +386,7 @@ export function normalizeClaudeManifestModelId(value: string | null | undefined)
   }
 
   const runtimeMatch = trimmed.match(
-    /^(?:claude[-_ ])?(fable|opus|sonnet|haiku)[-_ ]+(\d+)[-.](\d+)(?:\[1m\])?(?:[-_ ]+\d{8})?(?:\[1m\])?$/i,
+    /^(?:claude[-_ ])?(mythos|fable|opus|sonnet|haiku)[-_ ]+(\d+)[-.](\d+)(?:\[1m\])?(?:[-_ ]+\d{8})?(?:\[1m\])?$/i,
   );
   if (!runtimeMatch) {
     return null;
@@ -403,7 +419,7 @@ export function normalizeClaudeRuntimeModelId(value: string | null | undefined):
   }
 
   const runtimeMatch = trimmed.match(
-    /claude[-_ ](fable|opus|sonnet|haiku)[-_ ]+(\d+)[-.](\d+)(\[1m\])?/i,
+    /claude[-_ ](mythos|fable|opus|sonnet|haiku)[-_ ]+(\d+)[-.](\d+)(\[1m\])?/i,
   );
   if (runtimeMatch) {
     const normalizedModelId = normalizeMajorMinorClaudeModelId(
@@ -418,7 +434,7 @@ export function normalizeClaudeRuntimeModelId(value: string | null | undefined):
   }
 
   const singleSegmentMatch = trimmed.match(
-    /claude[-_ ](fable|opus|sonnet|haiku)[-_ ]+(\d+)(\[1m\])?/i,
+    /claude[-_ ](mythos|fable|opus|sonnet|haiku)[-_ ]+(\d+)(\[1m\])?/i,
   );
   if (!singleSegmentMatch) {
     return null;

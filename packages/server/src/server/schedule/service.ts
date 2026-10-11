@@ -38,6 +38,18 @@ export class ScheduleTargetGoneError extends Error {
   }
 }
 
+function advanceNextRunAtPast(
+  cadence: StoredSchedule["cadence"],
+  nextRunAt: Date,
+  now: Date,
+): Date {
+  let next = nextRunAt;
+  while (next.getTime() <= now.getTime()) {
+    next = computeNextRunAt(cadence, next);
+  }
+  return next;
+}
+
 function trimOptionalName(value: string | null | undefined): string | null {
   if (typeof value !== "string") {
     return null;
@@ -621,6 +633,9 @@ export class ScheduleService {
           error: "Daemon restarted before the scheduled run completed",
         };
         updated = { ...updated, runs };
+        if (shouldCompleteSchedule(updated, now)) {
+          updated = completeSchedule(updated, now);
+        }
         dirty = true;
       }
 
@@ -690,20 +705,31 @@ export class ScheduleService {
     options?: { manual?: boolean },
   ): Promise<void> {
     const manual = options?.manual === true;
+    // Reserve before store I/O; persisted history cannot prove a run is still alive.
     this.runningScheduleIds.add(schedule.id);
     try {
-      const runId = randomUUID();
-      const runningRun: ScheduleRun = {
-        id: runId,
-        scheduledFor: manual ? now.toISOString() : (schedule.nextRunAt ?? now.toISOString()),
-        startedAt: now.toISOString(),
-        endedAt: null,
-        status: "running",
-        agentId: null,
-        output: null,
-        error: null,
-      };
-      const scheduleWithRun = await this.appendRunningRun(schedule.id, runningRun);
+      let runId: string;
+      let scheduleWithRun: StoredSchedule;
+      if (manual) {
+        runId = randomUUID();
+        const runningRun: ScheduleRun = {
+          id: runId,
+          scheduledFor: now.toISOString(),
+          startedAt: now.toISOString(),
+          endedAt: null,
+          status: "running",
+          agentId: null,
+          output: null,
+          error: null,
+        };
+        scheduleWithRun = await this.appendRunningRun(schedule.id, runningRun);
+      } else {
+        const claimed = await this.claimDueRun(schedule.id, now);
+        if (!claimed) {
+          return;
+        }
+        ({ schedule: scheduleWithRun, runId } = claimed);
+      }
 
       try {
         const result = await this.runner(scheduleWithRun, runId);
@@ -732,6 +758,58 @@ export class ScheduleService {
     } finally {
       this.runningScheduleIds.delete(schedule.id);
     }
+  }
+
+  private async claimDueRun(
+    scheduleId: string,
+    now: Date,
+  ): Promise<{ schedule: StoredSchedule; runId: string } | null> {
+    let claimed: { schedule: StoredSchedule; runId: string } | null = null;
+    const updatedSchedule = await this.store.update(scheduleId, (schedule) => {
+      if (
+        schedule.status !== "active" ||
+        !schedule.nextRunAt ||
+        shouldCompleteSchedule(schedule, now) ||
+        new Date(schedule.nextRunAt).getTime() > now.getTime()
+      ) {
+        return schedule;
+      }
+
+      const scheduledFor = schedule.nextRunAt;
+      const isFinalRun =
+        schedule.maxRuns !== null && countCompletedRuns(schedule) + 1 >= schedule.maxRuns;
+      const nextRunAt = isFinalRun
+        ? null
+        : advanceNextRunAtPast(
+            schedule.cadence,
+            computeNextRunAt(schedule.cadence, new Date(scheduledFor)),
+            now,
+          ).toISOString();
+
+      // Claim the due slot and advance its cursor in the same serialized update.
+      // A tick can hold a stale list while another tick finishes this schedule.
+      const runId = randomUUID();
+      const runningRun: ScheduleRun = {
+        id: runId,
+        scheduledFor,
+        startedAt: now.toISOString(),
+        endedAt: null,
+        status: "running",
+        agentId: null,
+        output: null,
+        error: null,
+      };
+      const updated: StoredSchedule = {
+        ...schedule,
+        nextRunAt,
+        updatedAt: now.toISOString(),
+        runs: [...schedule.runs, runningRun],
+      };
+      claimed = { schedule: updated, runId };
+      return updated;
+    });
+    requireSchedule(updatedSchedule, scheduleId);
+    return claimed;
   }
 
   private async appendRunningRun(
@@ -794,14 +872,16 @@ export class ScheduleService {
           nextRunAt: null,
         };
       } else {
-        const after = new Date(schedule.nextRunAt ?? now.toISOString());
-        let nextRunAt = computeNextRunAt(updated.cadence, after);
-        while (nextRunAt.getTime() <= now.getTime()) {
-          nextRunAt = computeNextRunAt(updated.cadence, nextRunAt);
-        }
+        // A final slot has no successor until its run limit is raised or cleared.
+        // Every runner invocation has a recorded run with this id.
+        const finishedRun = completedRuns.find((run) => run.id === params.runId)!;
+        const nextRunAt = updated.nextRunAt
+          ? new Date(updated.nextRunAt)
+          : computeNextRunAt(updated.cadence, new Date(finishedRun.scheduledFor));
+        // Move an overdue cursor past a long run without advancing a future one twice.
         updated = {
           ...updated,
-          nextRunAt: nextRunAt.toISOString(),
+          nextRunAt: advanceNextRunAtPast(updated.cadence, nextRunAt, now).toISOString(),
         };
       }
 
