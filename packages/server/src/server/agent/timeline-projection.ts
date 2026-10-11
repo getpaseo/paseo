@@ -595,9 +595,8 @@ export function selectProjectedEntriesTail(
  * rows above it become known: the row directly above the collected suffix
  * (the probe) adjacency-merges into it under the assistant/reasoning chunk
  * rules, or the probe carries an item identity the collected rows already
- * hold (the identity collapse anchors that entry at or above the probe). A
- * probe separated by a seq gap cannot merge; an identity whose occurrences
- * all sit further above the probe is the documented stable-cut residual.
+ * hold. This probe does not rule out an identity further into an unread
+ * prefix: callers must resolve those anchors or fall back to full projection.
  */
 export function tailBoundaryRowCrosses(input: {
   /** Newest eligible row strictly above the collected suffix. */

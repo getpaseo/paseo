@@ -353,6 +353,14 @@ describe("bounded in-memory window", () => {
     expect(tail.rows[0]?.seqStart).toBe(1);
     expect(tail.startSeq).toBe(25);
     expect(tail.hasOlder).toBe(true);
+    const catchup = store.fetch("a", {
+      direction: "after",
+      cursor: { epoch: tail.epoch, seq: 10 },
+      limit: 200,
+    });
+    expect(catchup.gap).toBe(true);
+    expect(catchup.reset).toBe(true);
+    expect(catchup.endSeq).toBe(31);
   });
 
   it("reports older history when a stale after request resets onto an evicted tail", () => {

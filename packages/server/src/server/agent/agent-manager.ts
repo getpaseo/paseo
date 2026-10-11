@@ -1589,11 +1589,8 @@ export class AgentManager {
     // the seeded last row is still the file's newest row.
     const maxSeq = floor === undefined ? nextSeq - 1 : floor - 1;
     const durable: AgentTimelineRow[] = [];
-    const collectedIdentities = new Set<string>();
-    for (const row of windowRows) {
-      const identity = timelineItemIdentity(row.item);
-      if (identity !== null) collectedIdentities.add(identity);
-    }
+    const identities = windowRows.map((row) => timelineItemIdentity(row.item));
+    const collectedIdentities = new Set(identities.filter((identity) => identity !== null));
     let offset = 0;
     let reachedStart = false;
     for (;;) {
@@ -1620,6 +1617,9 @@ export class AgentManager {
         reachedStart = true;
         break;
       }
+      // A matching identity can have an anchor arbitrarily far above this
+      // batch. A one-row probe cannot certify its display order.
+      if (collectedIdentities.size > 0) return null;
       const collectionOldest = durable[0];
       const probe = await durableStore.readTailRows(id, {
         maxSeq: collectionOldest.seq - 1,
@@ -1697,6 +1697,7 @@ export class AgentManager {
     const direction = input.direction ?? "tail";
     const limit = input.limit ?? DEFAULT_TIMELINE_FETCH_LIMIT;
     if (this.timelineStore.isWindowEmpty(id)) return true;
+    if (direction === "after" && input.sync.gap) return true;
     // A floor above seq 1 means rows sit below the window, whether this
     // lifetime evicted them or a restart seeded over them.
     if (limit === 0) return this.timelineStore.getWindowFloorSeq(id) > 1;
@@ -5955,12 +5956,16 @@ export class AgentManager {
       // would overwrite same-seq rows of the rebuilt one.
       if (this.durableTimelineGeneration(agentId) !== generation) return;
       try {
-        // A provider echo can enrich a row while an earlier attempt is
-        // failing. Reusing that attempt's payload would erase the identity.
-        const currentRows = rows.map(
-          (row) => this.timelineStore.getLatestRowForSeq(agentId, row.seq) ?? row,
-        );
-        await store.bulkInsert(agentId, currentRows);
+        // Initial writes precede their echo enrichments in the store's
+        // write chain. Only retries need a fresh payload; looking it up on
+        // every stream event scans and copies the retained timeline.
+        let attemptRows = rows;
+        if (attempt > 1) {
+          attemptRows = rows.map(
+            (row) => this.timelineStore.getLatestRowForSeq(agentId, row.seq) ?? row,
+          );
+        }
+        await store.bulkInsert(agentId, attemptRows);
         return;
       } catch (error) {
         lastError = error;

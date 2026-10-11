@@ -117,6 +117,7 @@ const TEST_CAPABILITIES = {
 
 class RecordingTimelineStore implements AgentTimelineStore {
   readonly writes: AgentTimelineRow[][] = [];
+  fullReadCount = 0;
   /**
    * Committed rows per agent, preserving the seqs the manager mints. The
    * durable store contract is that bulkInsert'd seqs survive a
@@ -190,6 +191,7 @@ class RecordingTimelineStore implements AgentTimelineStore {
   }
 
   async getCommittedRows(agentId: string): Promise<AgentTimelineRow[]> {
+    this.fullReadCount += 1;
     return [...this.committed(agentId)];
   }
 
@@ -12030,6 +12032,67 @@ test.each([false, true])(
 describe("timeline window backfill", () => {
   const windowOptions = { maxWindowBytes: 2048, maxWindowRows: 10_000 };
 
+  test("tail backfill keeps distant tool anchors in projected display order", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-distant-anchor-"));
+    const store = new RecordingTimelineStore();
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      durableTimelineStore: store,
+      timelineWindow: { maxWindowRows: 3 },
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {});
+    try {
+      await manager.appendTimelineItem(agent.id, {
+        type: "tool_call",
+        callId: "long-tool",
+        name: "shell",
+        status: "running",
+        error: null,
+        detail: { type: "shell", command: "work" },
+      });
+      for (let i = 2; i < 300; i++)
+        await manager.appendTimelineItem(agent.id, { type: "error", message: `m${i}` });
+      await manager.appendTimelineItem(agent.id, {
+        type: "tool_call",
+        callId: "long-tool",
+        name: "shell",
+        status: "completed",
+        error: null,
+        detail: { type: "shell", command: "work" },
+      });
+      await manager.flush();
+      const rows = await store.getCommittedRows(agent.id);
+      const expected = selectProjectedTimelinePage({ rows, direction: "tail", limit: 2 });
+      const actual = await manager.fetchTimelineWithBackfill(agent.id, {
+        direction: "tail",
+        limit: 2,
+      });
+      expect(actual.rows.map(({ seqStart, seqEnd, item }) => ({ seqStart, seqEnd, item }))).toEqual(
+        expected.entries.map(({ seqStart, seqEnd, item }) => ({ seqStart, seqEnd, item })),
+      );
+      expect(actual.startSeq).toBe(expected.startSeq);
+      const catchup = manager.fetchTimeline(agent.id, {
+        direction: "after",
+        cursor: { epoch: actual.epoch, seq: 10 },
+        limit: 200,
+      });
+      expect(
+        manager.needsTimelineBackfill(agent.id, { direction: "after", limit: 200, sync: catchup }),
+      ).toBe(true);
+      const completeCatchup = await manager.fetchTimelineWithBackfill(agent.id, {
+        direction: "after",
+        cursor: { epoch: actual.epoch, seq: 10 },
+        limit: 0,
+      });
+      expect(completeCatchup.gap).toBe(false);
+      expect(completeCatchup.endSeq).toBe(300);
+    } finally {
+      await manager.closeAgent(agent.id);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
   test("full backfill pages keep the history snapshot captured before a live append", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-page-append-"));
     const store = new PausedTimelineReadStore();
@@ -12285,27 +12348,27 @@ describe("timeline window backfill", () => {
     try {
       for (let i = 1; i <= 300; i += 1) {
         await manager.appendTimelineItem(agent.id, {
-          type: "user_message",
-          text: `m${i}`,
-          clientMessageId: `c${i}`,
+          type: "error",
+          message: `m${i}`,
         });
       }
       await manager.flush();
 
+      const previousFullReads = store.fullReadCount;
       const result = await manager.fetchTimelineWithBackfill(agent.id, {
         direction: "tail",
         limit: 10,
       });
       expect(result.rows.map((row) => row.item)).toEqual(
         Array.from({ length: 10 }, (_, i) => ({
-          type: "user_message",
-          text: `m${291 + i}`,
-          clientMessageId: `c${291 + i}`,
+          type: "error",
+          message: `m${291 + i}`,
         })),
       );
       // The durable log is scanned from the tail, not materialized whole.
       expect(store.tailReadCounts.length).toBeGreaterThan(0);
       expect(store.tailReadCounts.reduce((sum, count) => sum + count, 0)).toBeLessThan(300);
+      expect(store.fullReadCount).toBe(previousFullReads);
     } finally {
       await manager.closeAgent(agent.id).catch(() => undefined);
       rmSync(workdir, { recursive: true, force: true });
@@ -12457,65 +12520,75 @@ describe("timeline window backfill", () => {
 });
 
 describe("durable timeline store integration", () => {
-  test("an immediate durable retry preserves a provider echo saved before the failure", async () => {
-    class EchoBeforeRetryStore extends RecordingTimelineStore {
-      readonly firstWriteStarted = deferred<void>();
-      readonly enrichmentWritten = deferred<void>();
-      private first = true;
+  test.each([1, 2])(
+    "immediate durable retries preserve provider echo identity after %i failures",
+    async (failedAttempts) => {
+      class EchoBeforeRetryStore extends RecordingTimelineStore {
+        readonly firstWriteStarted = deferred<void>();
+        readonly enrichmentWritten = deferred<void>();
+        private first = true;
+        private failuresLeft = failedAttempts;
 
-      override async bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void> {
-        if (this.first) {
-          this.first = false;
-          this.firstWriteStarted.resolve();
-          await this.enrichmentWritten.promise;
-          throw new Error("transient disk failure");
+        override async bulkInsert(
+          agentId: string,
+          rows: readonly AgentTimelineRow[],
+        ): Promise<void> {
+          if (this.first) {
+            this.first = false;
+            this.firstWriteStarted.resolve();
+            await this.enrichmentWritten.promise;
+          }
+          if (this.failuresLeft > 0) {
+            this.failuresLeft -= 1;
+            throw new Error("transient disk failure");
+          }
+          await super.bulkInsert(agentId, rows);
         }
-        await super.bulkInsert(agentId, rows);
-      }
 
-      override async updateCommittedRow(agentId: string, row: AgentTimelineRow): Promise<void> {
-        await super.updateCommittedRow(agentId, row);
-        this.enrichmentWritten.resolve();
+        override async updateCommittedRow(agentId: string, row: AgentTimelineRow): Promise<void> {
+          await super.updateCommittedRow(agentId, row);
+          this.enrichmentWritten.resolve();
+        }
       }
-    }
-    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-immediate-retry-enrich-"));
-    const store = new EchoBeforeRetryStore();
-    const session = new TestAgentSession({ provider: "codex", cwd: workdir });
-    const client = new (class extends TestAgentClient {
-      override async createSession(): Promise<AgentSession> {
-        return session;
+      const workdir = mkdtempSync(join(tmpdir(), "agent-manager-immediate-retry-enrich-"));
+      const store = new EchoBeforeRetryStore();
+      const session = new TestAgentSession({ provider: "codex", cwd: workdir });
+      const client = new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })();
+      const manager = new AgentManager({
+        clients: { codex: client },
+        durableTimelineStore: store,
+        durableTimelineWrite: { maxAttempts: failedAttempts + 1, retryDelayMs: 1 },
+        logger,
+      });
+      const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {});
+      try {
+        await manager.appendTimelineItem(agent.id, {
+          type: "user_message",
+          text: "hello",
+          clientMessageId: "c1",
+        });
+        await store.firstWriteStarted.promise;
+        session.pushEvent({
+          type: "timeline",
+          provider: "codex",
+          item: { type: "user_message", text: "hello", clientMessageId: "c1", messageId: "pm1" },
+        });
+        await store.enrichmentWritten.promise;
+        await manager.flush();
+        expect(
+          (await store.getCommittedRows(agent.id)).map((row) => row.providerMessageId),
+        ).toEqual(["pm1"]);
+      } finally {
+        store.enrichmentWritten.resolve();
+        await manager.closeAgent(agent.id);
+        rmSync(workdir, { recursive: true, force: true });
       }
-    })();
-    const manager = new AgentManager({
-      clients: { codex: client },
-      durableTimelineStore: store,
-      durableTimelineWrite: { maxAttempts: 2, retryDelayMs: 1 },
-      logger,
-    });
-    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {});
-    try {
-      await manager.appendTimelineItem(agent.id, {
-        type: "user_message",
-        text: "hello",
-        clientMessageId: "c1",
-      });
-      await store.firstWriteStarted.promise;
-      session.pushEvent({
-        type: "timeline",
-        provider: "codex",
-        item: { type: "user_message", text: "hello", clientMessageId: "c1", messageId: "pm1" },
-      });
-      await store.enrichmentWritten.promise;
-      await manager.flush();
-      expect((await store.getCommittedRows(agent.id)).map((row) => row.providerMessageId)).toEqual([
-        "pm1",
-      ]);
-    } finally {
-      store.enrichmentWritten.resolve();
-      await manager.closeAgent(agent.id);
-      rmSync(workdir, { recursive: true, force: true });
-    }
-  });
+    },
+  );
   class DeferredDurableTimelineStore implements AgentTimelineStore {
     private readonly committed = new Map<string, AgentTimelineRow[]>();
     private readonly pending = new Map<string, AgentTimelineRow[]>();

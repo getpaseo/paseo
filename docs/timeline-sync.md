@@ -36,7 +36,9 @@ errors. Retried writes preserve prompt identities learned from provider echoes. 
 and file recovery rules live in [data model](data-model.md#durable-timeline-rows).
 
 Evicted rows remain available to pagination, search, prompt listing, and fork context. Bounded tail
-pages avoid loading complete history. Deep paging and full-history reads can parse the complete
+pages avoid loading complete history when their display anchors are known. A tail read falls back
+to full projection when an unread prefix could contain an older occurrence of an item identity.
+Deep paging and full-history reads can parse the complete
 file on each request; there is no resident history cache. An oversized full-history request can
 therefore allocate substantially more than the retained window.
 

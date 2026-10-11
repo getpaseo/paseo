@@ -672,6 +672,13 @@ interface ClientActivity {
   appVisibilityChangedAt: Date;
 }
 
+type AgentStreamMessage = Extract<SessionOutboundMessage, { type: "agent_stream" }>;
+
+interface AgentStreamDelivery {
+  source: object | undefined;
+  deliver: () => void;
+}
+
 export class Session {
   readonly delivery = new SessionDelivery(
     (source, message) => {
@@ -1325,7 +1332,7 @@ export class Session {
         },
       });
     }
-    const message: SessionOutboundMessage = {
+    const message: AgentStreamMessage = {
       type: "agent_stream",
       payload: this.buildAgentStreamPayload(event, serializedEvent),
     };
@@ -1343,9 +1350,10 @@ export class Session {
         !this.supportsTimelineItem(serializedEvent.item, source)
       )
         continue;
-      this.deliverAgentStreamAfterLegacyReplay(event.agentId, serializedEvent, source, () =>
-        subscription.owner.emit(message),
-      );
+      this.deliverAgentStreamAfterLegacyReplay(message, {
+        source,
+        deliver: () => subscription.owner.emit(message),
+      });
     }
     // COMPAT(ownedSubscriptions): added in v0.8.0, remove implicit timeline delivery after 2027-03-09.
     for (const [source, { capabilities }] of this.clientSources) {
@@ -1361,18 +1369,20 @@ export class Session {
           subscription.owner.source === source && subscription.agentIds.has(event.agentId),
       );
       if (!alreadyDelivered)
-        this.deliverAgentStreamAfterLegacyReplay(event.agentId, serializedEvent, source, () =>
-          this.onMessageToSource?.(source, message),
-        );
+        this.deliverAgentStreamAfterLegacyReplay(message, {
+          source,
+          deliver: () => this.onMessageToSource?.(source, message),
+        });
     }
     if (
       this.clientSources.size === 0 &&
       !this.supports(CLIENT_CAPS.selectiveAgentTimeline) &&
       this.timelineSubscriptions.size === 0
     )
-      this.deliverAgentStreamAfterLegacyReplay(event.agentId, serializedEvent, undefined, () =>
-        this.emit(message),
-      );
+      this.deliverAgentStreamAfterLegacyReplay(message, {
+        source: undefined,
+        deliver: () => this.emit(message),
+      });
   }
 
   /**
@@ -1384,11 +1394,11 @@ export class Session {
    * held; sources that support replacement invalidation resync by refetch.
    */
   private deliverAgentStreamAfterLegacyReplay(
-    agentId: string,
-    serializedEvent: Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"]["event"],
-    source: object | undefined,
-    deliver: () => void,
+    message: AgentStreamMessage,
+    delivery: AgentStreamDelivery,
   ): void {
+    const { agentId, event: serializedEvent, epoch } = message.payload;
+    const { source, deliver } = delivery;
     if (serializedEvent.type !== "timeline") {
       deliver();
       return;
@@ -1407,7 +1417,15 @@ export class Session {
       deliver();
       return;
     }
-    void tail.then(deliver);
+    const queuedEpoch = epoch ?? this.agentManager.getTimelineEpoch(agentId);
+    void tail.then(() => {
+      if (
+        this.agentManager.getAgent(agentId) &&
+        this.agentManager.getTimelineEpoch(agentId) === queuedEpoch
+      )
+        return deliver();
+      return undefined;
+    });
   }
 
   supports(capability: ClientCapability): boolean {
@@ -4827,7 +4845,7 @@ export class Session {
 
     if (this.clientSources.size === 0 || !this.onMessageToSource) {
       if (!this.supports(CLIENT_CAPS.timelineReplacementInvalidation)) {
-        this.emitLegacyTimelineReplay(agentId, agent.provider, epoch);
+        this.emitLegacyTimelineReplay(agentId, agent.provider);
       }
       return;
     }
@@ -4856,18 +4874,20 @@ export class Session {
         !this.delivery.isModern(source) &&
         !capabilities.has(CLIENT_CAPS.timelineReplacementInvalidation)
       ) {
-        this.emitLegacyTimelineReplay(agentId, agent.provider, epoch);
+        this.emitLegacyTimelineReplay(agentId, agent.provider);
         break;
       }
     }
   }
 
-  private emitLegacyTimelineReplay(
-    agentId: string,
-    provider: ManagedAgent["provider"],
-    epoch: string,
-  ): void {
-    const emit = (rows: AgentTimelineFetchResult["rows"]): void => {
+  private emitLegacyTimelineReplay(agentId: string, provider: ManagedAgent["provider"]): void {
+    const emit = (timeline: AgentTimelineFetchResult): void => {
+      if (
+        !this.agentManager.getAgent(agentId) ||
+        this.agentManager.getTimelineEpoch(agentId) !== timeline.epoch
+      )
+        return;
+      const { rows, epoch } = timeline;
       if (this.clientSources.size === 0 || !this.onMessageToSource) {
         this.emitReconstructedTimelineRows(agentId, provider, rows, epoch);
         return;
@@ -4882,7 +4902,7 @@ export class Session {
       }
     };
     if (!this.agentManager.hasDurableTimeline()) {
-      emit(this.agentManager.fetchTimeline(agentId, { limit: 0 }).rows);
+      emit(this.agentManager.fetchTimeline(agentId, { limit: 0 }));
       return;
     }
     // Evicted rows only exist on disk, so the legacy replay must read the
@@ -4892,7 +4912,7 @@ export class Session {
     const startReplay = (): Promise<void> =>
       this.agentManager
         .fetchTimelineWithBackfill(agentId, { limit: 0 })
-        .then((timeline) => emit(timeline.rows))
+        .then(emit)
         .catch((error) => {
           this.sessionLogger.error(
             { err: error, agentId },

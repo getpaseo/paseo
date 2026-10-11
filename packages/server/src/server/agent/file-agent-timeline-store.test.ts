@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { FileAgentTimelineStore } from "./file-agent-timeline-store.js";
+import { selectProjectedTimelinePage } from "./timeline-projection.js";
 import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 
@@ -20,6 +21,47 @@ function row(seq: number, text: string, extra?: Partial<AgentTimelineRow>): Agen
 }
 
 describe("FileAgentTimelineStore", () => {
+  it("keeps distant tool anchors and their covered rows in tail pages", async () => {
+    const rows: AgentTimelineRow[] = [
+      {
+        seq: 1,
+        timestamp: TIMESTAMP,
+        item: {
+          type: "tool_call",
+          callId: "long-tool",
+          name: "shell",
+          status: "running",
+          error: null,
+          detail: { type: "shell", command: "work" },
+        },
+      },
+      ...Array.from({ length: 298 }, (_, i) => ({
+        seq: i + 2,
+        timestamp: TIMESTAMP,
+        item: { type: "error", message: `m${i + 2}` } satisfies AgentTimelineItem,
+      })),
+      {
+        seq: 300,
+        timestamp: TIMESTAMP,
+        item: {
+          type: "tool_call",
+          callId: "long-tool",
+          name: "shell",
+          status: "completed",
+          error: null,
+          detail: { type: "shell", command: "work" },
+        },
+      },
+    ];
+    await store.bulkInsert("a", rows);
+    const expected = selectProjectedTimelinePage({ rows, direction: "tail", limit: 2 });
+    const actual = await store.fetchCommitted("a", { direction: "tail", limit: 2 });
+    expect(actual.rows.map(({ seqStart, seqEnd, item }) => ({ seqStart, seqEnd, item }))).toEqual(
+      expected.entries.map(({ seqStart, seqEnd, item }) => ({ seqStart, seqEnd, item })),
+    );
+    expect(actual.startSeq).toBe(expected.startSeq);
+    expect(actual.hasOlder).toBe(expected.hasOlder);
+  });
   let directory: string;
   let store: FileAgentTimelineStore;
 
@@ -379,7 +421,7 @@ describe("FileAgentTimelineStore", () => {
     expect(read.rows.map((r) => r.seq)).toEqual(Array.from({ length: 200 }, (_, i) => 1795 + i));
   });
 
-  it("keeps scanning past a stable cut until the tail page holds the requested projected count", async () => {
+  it("fills tail pages to the requested projected count across chunked history", async () => {
     const rows: AgentTimelineRow[] = [];
     for (let i = 1; i <= 300; i += 1) {
       for (const suffix of ["a", "b"]) {

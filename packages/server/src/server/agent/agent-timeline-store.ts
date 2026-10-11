@@ -246,12 +246,13 @@ export class InMemoryAgentTimelineStore {
     const rows = state.projection.getRows();
     const window = { minSeq: state.minSeq, maxSeq: state.nextSeq - 1, nextSeq: state.nextSeq };
     const staleCursor = cursor !== undefined && cursor.epoch !== state.epoch;
+    const windowFloor = state.rows[0]?.seq ?? 0;
     const gap =
       !staleCursor &&
       direction === "after" &&
       cursor !== undefined &&
       rows.length > 0 &&
-      cursor.seq < state.minSeq - 1;
+      cursor.seq < windowFloor - 1;
     const reset = staleCursor || gap;
     // A reset serves a tail page no matter which direction was requested;
     // the evicted-hasOlder correction must follow the page, not the request.
@@ -262,7 +263,6 @@ export class InMemoryAgentTimelineStore {
     // window above the durable log it was seeded over. Neither anchor may
     // leak into startSeq or hasOlder, or the rows in between become
     // unreachable from the client's cursor.
-    const windowFloor = state.rows[0]?.seq ?? 0;
     const page = selectProjectedTimelinePage({
       rows,
       bounds: pageDirection === "tail" ? { minSeq: windowFloor, maxSeq: window.maxSeq } : window,

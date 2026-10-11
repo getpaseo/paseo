@@ -158,6 +158,9 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
         reachedStart = true;
         break;
       }
+      // An unread prefix may contain an earlier occurrence of any collected
+      // identity. Full projection is required to preserve its display anchor.
+      if (collectedIdentities.size > 0) return null;
       const collectionOldest = collected[0];
       const probe = await this.readTailRows(agentId, {
         maxSeq: collectionOldest.seq - 1,

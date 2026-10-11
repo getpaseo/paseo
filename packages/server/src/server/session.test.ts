@@ -5871,8 +5871,10 @@ function createLegacyReplayHarness(options: { targeted?: boolean } = {}) {
   const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
   let streamListener: ((event: AgentManagerEvent) => void) | null = null;
   let pendingReplayRows: AgentTimelineRow[] | null = null;
+  let epoch = "epoch-1";
+  let pendingReplayEpoch = epoch;
   const fetchCalls: Array<{
-    resolve: (rows: AgentTimelineRow[]) => void;
+    resolve: (rows: AgentTimelineRow[], fetchedEpoch?: string) => void;
     resolved: boolean;
   }> = [];
   const session = createSessionForTest({
@@ -5880,23 +5882,45 @@ function createLegacyReplayHarness(options: { targeted?: boolean } = {}) {
     ...(options.targeted ? { targetedMessages } : {}),
     agentManager: {
       getAgent: vi.fn(() => ({ id: agentId, provider: "codex", lifecycle: "running" })),
-      getTimelineEpoch: vi.fn(() => "epoch-1"),
+      getTimelineEpoch: () => epoch,
       hasDurableTimeline: vi.fn(() => true),
       fetchTimelineWithBackfill: vi.fn(
         () =>
           new Promise<AgentTimelineFetchResult>((settle) => {
             const call = {
               resolved: false,
-              resolve: (rows: AgentTimelineRow[]): void => {
+              resolve: (rows: AgentTimelineRow[], fetchedEpoch = epoch): void => {
                 if (call.resolved) return;
                 call.resolved = true;
-                settle({ rows } as AgentTimelineFetchResult);
+                settle({
+                  epoch: fetchedEpoch,
+                  direction: "tail",
+                  reset: false,
+                  staleCursor: false,
+                  gap: false,
+                  window: {
+                    minSeq: rows[0]?.seq ?? 0,
+                    maxSeq: rows.at(-1)?.seq ?? 0,
+                    nextSeq: (rows.at(-1)?.seq ?? 0) + 1,
+                  },
+                  hasOlder: false,
+                  hasNewer: false,
+                  startSeq: rows[0]?.seq ?? null,
+                  endSeq: rows.at(-1)?.seq ?? null,
+                  rows: rows.map((row) => ({
+                    ...row,
+                    seqStart: row.seq,
+                    seqEnd: row.seq,
+                    sourceSeqRanges: [{ startSeq: row.seq, endSeq: row.seq }],
+                    collapsed: false,
+                  })),
+                });
               },
             };
             fetchCalls.push(call);
             // Replay reads start on a microtask behind the previous replay;
             // a resolveReplay that lands first must still apply its rows.
-            if (pendingReplayRows !== null) call.resolve(pendingReplayRows);
+            if (pendingReplayRows !== null) call.resolve(pendingReplayRows, pendingReplayEpoch);
           }),
       ),
       subscribe: vi.fn((listener: (event: AgentManagerEvent) => void) => {
@@ -5905,7 +5929,6 @@ function createLegacyReplayHarness(options: { targeted?: boolean } = {}) {
       }),
     },
   });
-  const internals = asSessionInternals<LegacyReplayInternals>(session);
 
   const seqsFor = (source?: object): number[] => {
     const pool = options.targeted
@@ -5929,7 +5952,8 @@ function createLegacyReplayHarness(options: { targeted?: boolean } = {}) {
     targetedMessages,
     fetchCalls,
     deliverReplacement(): void {
-      internals.deliverTimelineReplacement(agentId);
+      if (!streamListener) throw new Error("Agent manager subscription was not captured");
+      streamListener({ type: "timeline_replacement", agentId, epoch });
     },
     registerSource(capabilities: Record<string, unknown> | null): object {
       const source = { legacyReplayHarness: true };
@@ -5940,19 +5964,61 @@ function createLegacyReplayHarness(options: { targeted?: boolean } = {}) {
       if (!streamListener) throw new Error("Agent manager subscription was not captured");
       streamListener(event);
     },
-    resolveCall(index: number, rows: AgentTimelineRow[]): void {
-      const call = fetchCalls[index];
-      if (call) call.resolve(rows);
+    setEpoch(value: string): void {
+      epoch = value;
     },
-    resolveReplay(rows: AgentTimelineRow[]): void {
+    epochsFor(): string[] {
+      return targetedMessages
+        .filter(
+          ({ message }) =>
+            message.type === "agent_stream" && message.payload.event.type === "timeline",
+        )
+        .flatMap(({ message }) =>
+          message.type === "agent_stream" && message.payload.epoch ? [message.payload.epoch] : [],
+        );
+    },
+    resolveCall(index: number, rows: AgentTimelineRow[], fetchedEpoch = epoch): void {
+      const call = fetchCalls[index];
+      if (call) call.resolve(rows, fetchedEpoch);
+    },
+    resolveReplay(rows: AgentTimelineRow[], fetchedEpoch = epoch): void {
       pendingReplayRows = rows;
-      for (const call of fetchCalls) call.resolve(rows);
+      pendingReplayEpoch = fetchedEpoch;
+      for (const call of fetchCalls) call.resolve(rows, fetchedEpoch);
     },
     seqsFor,
   };
 }
 
 describe("legacy timeline replay ordering", () => {
+  test("uses the fetched epoch when rewind finishes during legacy replay", async () => {
+    const harness = createLegacyReplayHarness({ targeted: true });
+    const source = harness.registerSource(null);
+    harness.deliverReplacement();
+    harness.setEpoch("epoch-2");
+    harness.resolveReplay([legacyReplayRow(5, "new branch")], "epoch-2");
+    await flushLegacyReplayChain();
+    expect(harness.seqsFor(source)).toEqual([5]);
+    expect(harness.epochsFor()).toEqual(["epoch-2"]);
+  });
+
+  test.each([true, false])(
+    "drops legacy replay and stale live rows (queued before rewind: %s)",
+    async (beforeRewind) => {
+      const harness = createLegacyReplayHarness({ targeted: true });
+      const source = harness.registerSource(null);
+      harness.deliverReplacement();
+      if (beforeRewind)
+        harness.dispatchStream(legacyReplayTimelineEvent(harness.agentId, 3, "old live row"));
+      harness.setEpoch("epoch-2");
+      if (!beforeRewind)
+        harness.dispatchStream(legacyReplayTimelineEvent(harness.agentId, 3, "old live row"));
+      harness.resolveReplay([legacyReplayRow(1, "old branch")], "epoch-1");
+      await flushLegacyReplayChain();
+      expect(harness.seqsFor(source)).toEqual([]);
+    },
+  );
+
   test("holds live timeline rows for legacy sources until the in-flight legacy replay is delivered", async () => {
     const harness = createLegacyReplayHarness({ targeted: true });
     const legacySource = harness.registerSource(null);
