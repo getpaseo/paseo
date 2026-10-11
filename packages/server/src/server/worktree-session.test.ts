@@ -1557,7 +1557,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
     expect(branch).toBe("feature/review-pr");
   });
 
-  test("buildAgentSessionConfig reports skipped worktree includes", async () => {
+  test("agent worktree creation reports skipped worktree includes once", async () => {
     const logger = createLogger();
     const skipped = {
       lineNumber: 0,
@@ -1592,21 +1592,36 @@ describe("handleCreatePaseoWorktreeRequest", () => {
       created: true,
     }));
 
-    await buildAgentSessionConfig(
+    await createPaseoWorktreeWorkflow(
       {
-        sessionLogger: logger,
+        paseoHome: "/tmp/paseo",
         createPaseoWorktree,
-        checkoutExistingBranch: async () => {
-          throw new Error("should not checkout an existing branch");
-        },
-        createBranchFromBase: async () => {
-          throw new Error("should not create a branch outside the worktree service");
+        warmWorkspaceGitData: async () => {},
+        autoNameWorkspaceBranchForFirstAgent: () => {},
+        emitWorkspaceUpdateForWorkspaceId: async () => {},
+        cacheWorkspaceSetupSnapshot: () => {},
+        emit: () => {},
+        sessionLogger: logger,
+        terminalManager: null,
+        serviceProxy: null,
+        scriptRuntimeStore: null,
+        getDaemonTcpPort: null,
+        getDaemonTcpHost: null,
+        onScriptsChanged: null,
+      },
+      { cwd: "/tmp/repo", worktreeSlug: "agent-include-warning", runSetup: false },
+      {
+        setupContinuation: {
+          kind: "agent",
+          terminalManager: null,
+          appendTimelineItem: async () => true,
+          emitLiveTimelineItem: async () => true,
+          logger,
         },
       },
-      { provider: "codex", cwd: "/tmp/repo" },
-      { createWorktree: true, action: "branch-off" },
     );
 
+    expect(logger.warn).toHaveBeenCalledTimes(1);
     expect(logger.warn).toHaveBeenCalledWith(
       {
         materialized: 0,

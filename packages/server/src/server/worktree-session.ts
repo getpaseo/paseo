@@ -259,7 +259,6 @@ export async function buildAgentSessionConfig(
               ),
       },
     );
-    logWorktreeIncludeSkips(dependencies.sessionLogger, createdWorktree);
     cwd = createdWorktree.workspace.cwd;
     setupContinuation = createdWorktree.setupContinuation;
     createdWorkspaceId = createdWorktree.workspace.workspaceId;

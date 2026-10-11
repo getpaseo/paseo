@@ -1234,7 +1234,7 @@ async function isWorktreeIncludeDestinationTracked(options: {
   worktreeRoot: string;
 }): Promise<boolean> {
   const result = await runGitCommand(
-    ["ls-files", "--error-unmatch", "-z", "--", options.relativePath],
+    ["ls-files", "--error-unmatch", "-z", "--", `:(literal)${options.relativePath}`],
     {
       acceptExitCodes: [0, 1],
       cwd: options.worktreeRoot,

@@ -1520,7 +1520,8 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
     it("treats tracked include destinations as conflicts", async () => {
       mkdirSync(join(repoDir, "tracked-dir"));
       writeFileSync(join(repoDir, "tracked-dir", "branch-only.txt"), "branch\n");
-      execFileSync("git", ["add", "tracked-dir"], { cwd: repoDir });
+      writeFileSync(join(repoDir, "literal[1].txt"), "branch-literal\n");
+      execFileSync("git", ["add", "tracked-dir", "literal[1].txt"], { cwd: repoDir });
       execFileSync(
         "git",
         ["-c", "commit.gpgsign=false", "commit", "-m", "add tracked include directory"],
@@ -1531,7 +1532,11 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
 
       writeFileSync(join(repoDir, "file.txt"), "source\n");
       writeFileSync(join(repoDir, "tracked-dir", "source-only.txt"), "source\n");
-      writeFileSync(join(repoDir, ".worktreeinclude"), ["file.txt", "tracked-dir", ""].join("\n"));
+      writeFileSync(join(repoDir, "literal[1].txt"), "source-literal\n");
+      writeFileSync(
+        join(repoDir, ".worktreeinclude"),
+        ["file.txt", "tracked-dir", "literal[1].txt", ""].join("\n"),
+      );
 
       const result = await createLegacyWorktreeForTest({
         cwd: repoDir,
@@ -1550,10 +1555,16 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
         readFileSync(join(result.worktreePath, "tracked-dir", "branch-only.txt"), "utf8"),
       ).toBe("branch\n");
       expect(existsSync(join(result.worktreePath, "tracked-dir", "source-only.txt"))).toBe(false);
-      expect(result.worktreeIncludeSummary?.skipped).toEqual([
-        expect.objectContaining({ raw: "file.txt", reason: "conflict" }),
-        expect.objectContaining({ raw: "tracked-dir", reason: "conflict" }),
-      ]);
+      expect(readFileSync(join(result.worktreePath, "literal[1].txt"), "utf8")).toBe(
+        "branch-literal\n",
+      );
+      expect(result.worktreeIncludeSummary?.skipped).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ raw: "file.txt", reason: "conflict" }),
+          expect.objectContaining({ raw: "tracked-dir", reason: "conflict" }),
+          expect.objectContaining({ raw: "literal[1].txt", reason: "conflict" }),
+        ]),
+      );
     });
 
     it("skips missing includes and materializes paths that exist", async () => {
