@@ -1,7 +1,7 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { main } from "./node-entrypoint-runner";
 
 declare global {
@@ -16,6 +16,25 @@ declare global {
 }
 
 describe("node-entrypoint-runner", () => {
+  it("initializes enhanced CLI configuration before the first CLI entrypoint runs", async () => {
+    const originalArgv = process.argv;
+    const fixtureDir = mkdtempSync(path.join(tmpdir(), "paseo-enhanced-cli-home-"));
+    const fixturePath = path.join(fixtureDir, "fixture.mjs");
+    writeFileSync(fixturePath, "export {};\n");
+    vi.stubEnv("PASEO_HOME", fixtureDir);
+    vi.stubEnv("PASEO_DEEP_LINK_SCHEME", "paseo-enhanced");
+    process.argv = ["Paseo Enhanced", "runner", "node-script", fixturePath, "daemon", "status"];
+    try {
+      await main();
+      expect(JSON.parse(readFileSync(path.join(fixtureDir, "config.json"), "utf8"))).toEqual({
+        daemon: { listen: "127.0.0.1:6791" },
+      });
+    } finally {
+      process.argv = originalArgv;
+      vi.unstubAllEnvs();
+      rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  });
   it("preserves Electron node-mode env before loading the target entrypoint", async () => {
     const originalArgv = process.argv;
     const originalRunAsNode = process.env.ELECTRON_RUN_AS_NODE;

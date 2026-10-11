@@ -28,6 +28,7 @@ files:
   - "!node_modules/@getpaseo/*/test-results/**"
 asarUnpack:
   - dist/daemon/node-entrypoint-runner.js
+  - dist/daemon/enhanced-home.js
   - node_modules/@getpaseo/server/dist/server/terminal/shell-integration/**/*
 extraResources:
   - from: ../server/dist/assets/document-fonts

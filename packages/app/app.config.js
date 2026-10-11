@@ -67,6 +67,12 @@ function resolveSecretFile(params) {
 }
 
 const variants = {
+  enhanced: {
+    name: "Paseo Enhanced",
+    packageId: "sh.paseo.enhanced",
+    googleServicesFile: process.env.GOOGLE_SERVICES_FILE_ENHANCED,
+    googleServiceInfoPlist: undefined,
+  },
   production: {
     name: "Paseo",
     packageId: "sh.paseo",
@@ -102,8 +108,9 @@ export default {
     slug: "voice-mobile",
     version: nativeReleaseVersion.appVersion,
     orientation: "portrait",
-    icon: "./assets/images/icon.png",
-    scheme: "paseo",
+    icon:
+      appVariant === "enhanced" ? "./assets/images/icon-enhanced.png" : "./assets/images/icon.png",
+    scheme: appVariant === "enhanced" ? "paseo-enhanced" : "paseo",
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
     ios: {
@@ -121,7 +128,10 @@ export default {
     android: {
       adaptiveIcon: {
         backgroundColor: "#000000",
-        foregroundImage: "./assets/images/android-icon-foreground.png",
+        foregroundImage:
+          appVariant === "enhanced"
+            ? "./assets/images/android-icon-foreground-enhanced.png"
+            : "./assets/images/android-icon-foreground.png",
       },
       edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
@@ -135,7 +145,10 @@ export default {
     },
     web: {
       output: "single",
-      favicon: "./assets/images/favicon.png",
+      favicon:
+        appVariant === "enhanced"
+          ? "./assets/images/favicon-enhanced.png"
+          : "./assets/images/favicon.png",
     },
     autolinking: {
       searchPaths: ["../../node_modules", "./node_modules"],
@@ -150,7 +163,10 @@ export default {
       [
         "expo-splash-screen",
         {
-          image: "./assets/images/splash-icon.png",
+          image:
+            appVariant === "enhanced"
+              ? "./assets/images/splash-icon-enhanced.png"
+              : "./assets/images/splash-icon.png",
           imageWidth: 200,
           resizeMode: "contain",
           backgroundColor: "#ffffff",
@@ -188,13 +204,20 @@ export default {
       autolinkingModuleResolution: true,
     },
     extra: {
+      enhancedBranding: appVariant === "enhanced",
       fdroidBuild: isFdroidBuild,
+      enhancedPushConfigured:
+        appVariant === "enhanced" &&
+        Boolean(process.env.PASEO_EXPO_PROJECT_ID && variant.googleServicesFile),
       profileBuild: isProfileBuild,
       router: {},
       eas: {
-        projectId: "0e7f65ce-0367-46c8-a238-2b65963d235a",
+        projectId:
+          appVariant === "enhanced"
+            ? process.env.PASEO_EXPO_PROJECT_ID
+            : "0e7f65ce-0367-46c8-a238-2b65963d235a",
       },
     },
-    owner: "getpaseo",
+    ...(appVariant === "enhanced" ? {} : { owner: "getpaseo" }),
   },
 };

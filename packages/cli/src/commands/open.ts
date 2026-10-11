@@ -5,6 +5,8 @@ import { spawnProcess } from "@getpaseo/server/process";
 import { buildAgentDeepLink, type AgentDeepLinkTarget } from "@getpaseo/protocol/agent-deep-link";
 
 function findDesktopApp(): string | null {
+  const bundled = process.env.PASEO_DESKTOP_APP_PATH;
+  if (bundled) return path.isAbsolute(bundled) && existsSync(bundled) ? bundled : null;
   if (process.platform === "darwin") {
     const candidates = [
       "/Applications/Paseo.app",
@@ -103,5 +105,10 @@ export async function openDesktopWithProject(projectPath: string): Promise<void>
 }
 
 export async function openDesktopWithAgent(target: AgentDeepLinkTarget): Promise<void> {
-  launchDesktop([buildAgentDeepLink(target)]);
+  const link = buildAgentDeepLink(target);
+  launchDesktop([
+    process.env.PASEO_DEEP_LINK_SCHEME === "paseo-enhanced"
+      ? link.replace(/^paseo:/, "paseo-enhanced:")
+      : link,
+  ]);
 }

@@ -80,6 +80,23 @@ describe("paseo daemon bootstrap", () => {
     }
   });
 
+  test("accepts the enhanced desktop renderer origin without allowing unrelated origins", async () => {
+    const daemonHandle = await createTestPaseoDaemon();
+    try {
+      const url = `ws://127.0.0.1:${daemonHandle.port}/ws`;
+      for (const origin of ["paseo://app", "paseo-enhanced://app"]) {
+        await expect(probeWebSocketConnection(url, { origin })).resolves.toEqual({
+          status: "connected",
+        });
+      }
+      await expect(
+        probeWebSocketConnection(url, { origin: "paseo-enhanced://untrusted" }),
+      ).resolves.toEqual({ status: "rejected", statusCode: 403 });
+    } finally {
+      await daemonHandle.close();
+    }
+  });
+
   test("keeps timeline activity in memory and removes obsolete timeline files at startup", async () => {
     const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-timeline-cleanup-"));
     const paseoHome = path.join(paseoHomeRoot, ".paseo");

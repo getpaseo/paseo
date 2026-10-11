@@ -119,7 +119,12 @@
     "release:promote": "npm run release:check && npm run version:all:promote && npm run release:publish && npm run release:push",
     "release:patch": "npm run release:check && npm run version:all:patch && npm run release:publish && npm run release:push",
     "release:minor": "npm run release:check && npm run version:all:minor && npm run release:publish && npm run release:push",
-    "release:major": "npm run release:check && npm run version:all:major && npm run release:publish && npm run release:push"
+    "release:major": "npm run release:check && npm run version:all:major && npm run release:publish && npm run release:push",
+    "build:enhanced-icons": "node scripts/build-enhanced-icons.mjs",
+    "build:desktop:local": "bash scripts/build-enhanced-local.sh",
+    "test:enhanced-files": "bash scripts/test-enhanced-files.sh",
+    "build:android:enhanced": "bash scripts/build-enhanced-android.sh",
+    "verify:android:enhanced": "node scripts/verify-enhanced-android.mjs"
   },
   "devDependencies": {
     "@types/ws": "^8.5.14",

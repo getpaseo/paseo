@@ -103,16 +103,21 @@ import { BrowserKeyboard } from "./features/browser-keyboard/index.js";
 import { installAppUpdateOnQuit } from "./features/auto-updater.js";
 import {
   buildAgentDeepLinkRoute,
-  parseAgentDeepLink,
   type AgentDeepLinkTarget,
 } from "@getpaseo/protocol/agent-deep-link";
-import { AgentNavigationInbox, parseAgentDeepLinkFromArgv } from "./agent-navigation.js";
+import {
+  AgentNavigationInbox,
+  parseAgentDeepLinkFromArgv,
+  parseEnhancedAgentDeepLink as parseAgentDeepLink,
+} from "./agent-navigation.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
-const APP_SCHEME = "paseo";
+const IS_ENHANCED = process.env.APP_VARIANT === "enhanced" || app.getName() === "Paseo Enhanced";
+const APP_SCHEME = IS_ENHANCED ? "paseo-enhanced" : "paseo";
 const PASEO_DEBUG = process.env.PASEO_DEBUG === "1";
 const DISABLE_SINGLE_INSTANCE_LOCK = process.env.PASEO_DISABLE_SINGLE_INSTANCE_LOCK === "1";
-const APP_NAME = process.env.PASEO_TEST_APP_NAME?.trim() || "Paseo";
+const APP_NAME =
+  process.env.PASEO_TEST_APP_NAME?.trim() || (IS_ENHANCED ? "Paseo Enhanced" : "Paseo");
 const DESKTOP_WINDOW_CHROME_MODE = resolveDesktopWindowChromeMode({
   platform: process.platform,
   override: process.env.PASEO_DESKTOP_WINDOW_CONTROLS,
@@ -136,6 +141,10 @@ const bootstrapComplete = new Promise<void>((resolve) => {
 let bootstrapIsComplete = false;
 
 app.setName(APP_NAME);
+if (IS_ENHANCED) {
+  process.env.PASEO_HOME ??= path.join(app.getPath("appData"), "Paseo Enhanced", "daemon");
+  process.env.PASEO_DEEP_LINK_SCHEME = "paseo-enhanced";
+}
 log.info("[desktop] app startup", {
   version: app.getVersion(),
   platform: process.platform,
@@ -597,12 +606,14 @@ function getWindowIconCandidates(): string[] {
   }
   if (process.platform === "win32") {
     return [
+      ...(IS_ENHANCED ? [path.resolve(__dirname, "../assets/enhanced/icon.png")] : []),
       path.resolve(__dirname, "../assets/icon-dev.png"),
       path.resolve(__dirname, "../assets/icon.ico"),
       path.resolve(__dirname, "../assets/icon.png"),
     ];
   }
   return [
+    ...(IS_ENHANCED ? [path.resolve(__dirname, "../assets/enhanced/icon.png")] : []),
     path.resolve(__dirname, "../assets/icon-dev.png"),
     path.resolve(__dirname, "../assets/icon.png"),
   ];

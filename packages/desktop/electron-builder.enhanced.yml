@@ -1,0 +1,22 @@
+extends: ./electron-builder.yml
+appId: sh.paseo.enhanced.desktop
+productName: Paseo Enhanced
+executableName: Paseo Enhanced
+extraMetadata:
+  productName: Paseo Enhanced
+protocols:
+  - name: Paseo Enhanced agent link
+    schemes: [paseo-enhanced]
+publish: null
+mac:
+  icon: assets/enhanced/icon.icns
+  notarize: false
+  extraResources:
+    - from: bin/paseo
+      to: bin/paseo
+    - from: assets/enhanced/icon.png
+      to: icon.png
+linux:
+  icon: assets/enhanced
+win:
+  icon: assets/enhanced/icon.ico

@@ -31,3 +31,13 @@ describe("desktop agent navigation", () => {
     expect(inbox.windowReady(7)).toBeNull();
   });
 });
+
+it("routes the enhanced protocol to the correct task", () => {
+  expect(parseAgentDeepLinkFromArgv(["paseo-enhanced://h/server-1/agent/agent-2"])).toEqual({
+    serverId: "server-1",
+    agentId: "agent-2",
+  });
+  expect(
+    parseAgentDeepLinkFromArgv(["paseo-enhanced://h/server-1/agent/agent-2?unsafe=1"]),
+  ).toBeNull();
+});
