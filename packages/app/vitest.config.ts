@@ -76,8 +76,12 @@ export default defineConfig({
   // Unbundled, the same imports go through the resolver below and land on the web files.
   optimizeDeps: {
     // Bundle the CJS dependencies of the excluded gesture-handler package for the browser.
+    // jsx-dev-runtime: the browser project's automatic JSX transform imports it in dev mode,
+    // and discovering it mid-run makes Vite re-optimize and reload, which kills the import
+    // of whatever test file is in flight.
     include: [
       "react/jsx-runtime",
+      "react/jsx-dev-runtime",
       "react-native-gesture-handler > hoist-non-react-statics",
       "react-native-gesture-handler > invariant",
     ],
