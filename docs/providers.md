@@ -196,6 +196,12 @@ contract, account and window identity, provider-derived period names, login fall
 read-only credential rules. Usage adapters own the interpretation of provider fields; the app
 renders their names and resolves pins without provider-specific duration guesses.
 
+The built-in Synthetic source reads `PASEO_SYNTHETIC_API_KEY` or `SYNTHETIC_API_KEY` from the
+daemon environment, then OpenCode's selected Synthetic credential. It reads OpenCode 2's
+`opencode.db` and falls back to legacy `auth.json` only when no v2 Synthetic credential exists.
+Channel-specific OpenCode installs must set `OPENCODE_DB`; the source does not guess among
+channel database names.
+
 ---
 
 ## ACP Provider Checklist
