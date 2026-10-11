@@ -13471,13 +13471,17 @@ describe("durable timeline gap recovery", () => {
   );
 
   test.each([
-    ["before replay", "saved copy"],
-    ["during disk verification", "saved copy"],
-    ["before replay", "provider copy"],
-    ["during disk verification", "provider copy"],
-  ])(
-    "parent recovery preserves live child text arriving %s with parent history '%s'",
-    async (arrival, parentText) => {
+    ["before replay", "saved copy", true],
+    ["during disk verification", "saved copy", true],
+    ["before replay", "provider copy", true],
+    ["during disk verification", "provider copy", true],
+    ["before replay", "saved copy", false],
+    ["during disk verification", "saved copy", false],
+    ["before replay", "provider copy", false],
+    ["during disk verification", "provider copy", false],
+  ] as const)(
+    "parent recovery preserves live child text arriving %s with parent history '%s' (broadcast %s)",
+    async (arrival, parentText, broadcast) => {
       const session = new (class extends TestAgentSession {
         override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
           yield {
@@ -13510,6 +13514,14 @@ describe("durable timeline gap recovery", () => {
       const { manager, agentId, workdir } = await resumeWithDurableRows(client, store, [
         gapRow(1, "saved copy"),
       ]);
+      const updates: Extract<AgentManagerEvent, { type: "provider_subagent" }>["event"][] = [];
+      const unsubscribe = manager.subscribe(
+        (event) => {
+          if (event.type === "provider_subagent") updates.push(event.event);
+        },
+        { agentId, replayState: false },
+      );
+      let liveEpoch: string | undefined;
       const live = async () => {
         session.pushEvent({
           type: "provider_subagent",
@@ -13526,6 +13538,7 @@ describe("durable timeline gap recovery", () => {
           },
         });
         await manager.flush();
+        liveEpoch = manager.fetchProviderSubagentTimeline(agentId, "child", { limit: 0 }).epoch;
         expect(
           manager
             .fetchProviderSubagentTimeline(agentId, "child", { limit: 0 })
@@ -13535,11 +13548,40 @@ describe("durable timeline gap recovery", () => {
       try {
         if (arrival === "before replay") await live();
         store.pauseNextRead();
-        const pending = manager.hydrateTimelineFromProvider(agentId, { broadcast: true });
+        const pending = manager.hydrateTimelineFromProvider(agentId, { broadcast });
         await store.readStarted.promise;
         if (arrival === "during disk verification") await live();
         store.readAllowed.resolve();
         await pending;
+        const restored = manager.fetchProviderSubagentTimeline(agentId, "child", { limit: 0 });
+        expect(restored.epoch).not.toBe(liveEpoch);
+        // An already-open client must clear its old epoch before replay starts,
+        // including when ordinary historical broadcasts are suppressed.
+        expect(updates.slice(2, 4)).toEqual([
+          { type: "remove", parentAgentId: agentId, subagentId: "child" },
+          { type: "upsert", subagent: manager.getProviderSubagent(agentId, "child") },
+        ]);
+        expect(
+          updates
+            .filter((update) => update.type === "timeline")
+            .map((update) => ({ epoch: update.epoch, seq: update.row.seq, item: update.row.item })),
+        ).toEqual([
+          {
+            epoch: liveEpoch,
+            seq: 1,
+            item: { type: "assistant_message", text: "live ", messageId: "reply" },
+          },
+          {
+            epoch: restored.epoch,
+            seq: 1,
+            item: { type: "assistant_message", text: "historical ", messageId: "reply" },
+          },
+          {
+            epoch: restored.epoch,
+            seq: 2,
+            item: { type: "assistant_message", text: "live ", messageId: "reply" },
+          },
+        ]);
         expect(
           manager
             .fetchProviderSubagentTimeline(agentId, "child", { limit: 0 })
@@ -13566,6 +13608,7 @@ describe("durable timeline gap recovery", () => {
           expect.objectContaining({ id: "child", status: "completed" }),
         ]);
       } finally {
+        unsubscribe();
         store.readAllowed.resolve();
         await manager.closeAgent(agentId);
         rmSync(workdir, { recursive: true, force: true });

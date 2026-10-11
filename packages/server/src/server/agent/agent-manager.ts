@@ -4894,12 +4894,20 @@ export class AgentManager {
     history: readonly Extract<AgentStreamEvent, { type: "provider_subagent" }>[],
     options: { replace?: boolean; broadcast: boolean },
   ): AgentManagerEvent[] {
-    const events: AgentManagerEvent[] = [];
+    const events: Extract<AgentManagerEvent, { type: "provider_subagent" }>[] = [];
     // Live child chunks may arrive before replay starts or during awaited
     // parent verification. Rebuild the child's older prefix before these
     // canonical rows, including on the non-replacing recovery path.
     const liveTimelines = new Map<string, AgentTimelineRow[]>();
     for (const id of agent.liveSubagentTimelineIds) {
+      // Existing clients accept a replacement epoch only after removal clears
+      // their child replica. Re-declare the descriptor before replaying rows.
+      events.push({
+        type: "provider_subagent",
+        event: { type: "remove", parentAgentId: agent.id, subagentId: id },
+      });
+      const subagent = this.providerSubagents.get(agent.id, id);
+      if (subagent) events.push({ type: "provider_subagent", event: { type: "upsert", subagent } });
       liveTimelines.set(id, this.providerSubagents.takeTimelineRows(agent.id, id));
     }
     if (options.replace) {
@@ -4933,10 +4941,16 @@ export class AgentManager {
     agent.subagentHistoryRestored = true;
     agent.liveSubagentUpdates.clear();
     agent.liveSubagentTimelineIds.clear();
-    if (options.broadcast) {
-      for (const event of events) this.dispatch(event);
+    const pending: AgentManagerEvent[] = [];
+    for (const event of events) {
+      const id = event.event.type === "upsert" ? event.event.subagent.id : event.event.subagentId;
+      // A child already delivered live must be reset and replayed even when
+      // the caller suppresses ordinary history broadcasts. Do not queue the
+      // same reset again for a deferred broadcaster.
+      if (options.broadcast || liveTimelines.has(id)) this.dispatch(event);
+      else pending.push(event);
     }
-    return events;
+    return pending;
   }
 
   private applyReplayedSubagentEvent(

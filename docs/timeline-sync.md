@@ -164,6 +164,11 @@ Child transcripts use the same projected-page reconciliation as the main convers
 retains rendered items and sequence cursors, never a second cache of source events. Pagination
 uses the projected display anchor; live updates advance the source cursor without moving tools.
 
+When recovery changes a child's timeline epoch, clear the client's old child replica before replay.
+The existing removal and descriptor upsert provide that reset for older clients too. Children whose
+live rows were already delivered must receive the reset and replay even when ordinary history
+broadcasts are suppressed; a parent replacement does not refresh an open child conversation.
+
 Clients advertising `projected_subagent_timeline` receive child streams and projected fetches.
 Updated clients require `features.projectedSubagentTimeline` for child history; older hosts show
 an update-host notice for that pane.
