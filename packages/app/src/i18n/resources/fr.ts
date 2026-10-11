@@ -2183,11 +2183,24 @@ export const fr: TranslationResources = {
           queue:
             "Quand l’agent est en cours d’exécution, Entrée met en file d’attente. Cmd/Ctrl+Entrée envoie.",
         },
+        commandEnterDescriptions: {
+          interrupt:
+            "Lorsque l'agent est en cours d'exécution, {{modifier}}+Entrée interrompt. Entrée insère une nouvelle ligne.",
+          steer:
+            "Lorsque l'agent est en cours d'exécution, {{modifier}}+Entrée oriente le tour actif. Entrée insère une nouvelle ligne.",
+          queue:
+            "Lorsque l'agent est en cours d'exécution, {{modifier}}+Entrée met en file d'attente. Entrée insère une nouvelle ligne.",
+        },
         options: {
           interrupt: "Interrompre",
           steer: "Réorienter",
           queue: "File d’attente",
         },
+      },
+      commandEnterToSend: {
+        label: "Envoyer avec {{modifier}}+Entrée",
+        description:
+          "Entrée et Maj+Entrée insèrent une nouvelle ligne. {{modifier}}+Entrée envoie le message.",
       },
       serviceUrls: {
         options: {
