@@ -32,6 +32,7 @@ import {
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { runGitCommand, type RunGitCommand } from "./run-git-command.js";
 import { readGitFileContents } from "./git-file-contents.js";
+import { unquoteGitPath } from "./git-quoted-path.js";
 import { isPaseoOwnedWorktreeCwd, resolvePaseoWorktreesBaseRoot } from "./worktree.js";
 import {
   branchNameFromRef,
@@ -515,22 +516,18 @@ async function listCheckoutFileChanges(
   const { stdout: nameStatusOut } = await runGitCommand(
     buildGitDiffArgs({
       ignoreWhitespace,
-      extra: ["--name-status", ...getCheckoutDiffRefArgs(refs)],
+      extra: ["-z", "--name-status", ...getCheckoutDiffRefArgs(refs)],
     }),
     { cwd, envOverlay: READ_ONLY_GIT_ENV },
   );
-  for (const line of nameStatusOut
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)) {
-    // `--name-status` uses TAB separators, which preserves filenames with spaces.
-    const tabParts = line.split("\t");
-    const rawStatus = (tabParts[0] ?? "").trim();
+  const nameStatusFields = nameStatusOut.split("\0");
+  for (let index = 0; index < nameStatusFields.length; ) {
+    const rawStatus = nameStatusFields[index++];
     if (!rawStatus) continue;
 
     if (rawStatus.startsWith("R") || rawStatus.startsWith("C")) {
-      const oldPath = tabParts[1];
-      const newPath = tabParts[2];
+      const oldPath = nameStatusFields[index++];
+      const newPath = nameStatusFields[index++];
       if (newPath) {
         changes.push({
           path: newPath,
@@ -543,7 +540,7 @@ async function listCheckoutFileChanges(
       continue;
     }
 
-    const path = tabParts[1];
+    const path = nameStatusFields[index++];
     if (!path) continue;
     const code = rawStatus[0];
     changes.push({
@@ -556,16 +553,13 @@ async function listCheckoutFileChanges(
 
   if (refs.includeUntracked) {
     const { stdout: untrackedOut } = await runGitCommand(
-      ["ls-files", "--others", "--exclude-standard"],
+      ["ls-files", "-z", "--others", "--exclude-standard"],
       {
         cwd,
         envOverlay: READ_ONLY_GIT_ENV,
       },
     );
-    for (const file of untrackedOut
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean)) {
+    for (const file of untrackedOut.split("\0").filter(Boolean)) {
       changes.push({
         path: file,
         status: "U",
@@ -623,18 +617,22 @@ async function tryResolveMergeBase(cwd: string, baseRef: string): Promise<string
 type FileStat = { additions: number; deletions: number; isBinary: boolean } | null;
 
 function normalizeNumstatPath(pathField: string): string {
+  if (/^"(?:\\.|[^"\\])*"$/.test(pathField)) {
+    return unquoteGitPath(pathField);
+  }
+
   const braceRenameMatch = pathField.match(/^(.*)\{(.*) => (.*)\}(.*)$/);
   if (braceRenameMatch) {
     const [, prefix, , renamed, suffix] = braceRenameMatch;
-    return `${prefix}${renamed}${suffix}`;
+    return unquoteGitPath(`${prefix}${renamed}${suffix}`);
   }
 
   const inlineRenameMatch = pathField.match(/^(.*) => (.*)$/);
   if (inlineRenameMatch) {
-    return inlineRenameMatch[2] ?? pathField;
+    return unquoteGitPath(inlineRenameMatch[2] ?? pathField);
   }
 
-  return pathField;
+  return unquoteGitPath(pathField);
 }
 
 // Parsed patches need a stable wire format regardless of terminal presentation settings.
@@ -669,7 +667,7 @@ async function getTrackedNumstatByPath(
   const result = await runGitCommand(
     buildGitDiffArgs({
       ignoreWhitespace,
-      extra: ["--numstat", ...getCheckoutDiffRefArgs(refs)],
+      extra: ["-z", "--numstat", ...getCheckoutDiffRefArgs(refs)],
     }),
     {
       cwd,
@@ -680,21 +678,21 @@ async function getTrackedNumstatByPath(
   );
 
   const stats = new Map<string, FileStat>();
-  const lines = result.stdout
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  for (const line of lines) {
-    const parts = line.split("\t");
+  const records = result.stdout.split("\0");
+  for (let index = 0; index < records.length; index += 1) {
+    const parts = records[index].split("\t");
     if (parts.length < 3) {
       continue;
     }
 
     const additionsField = parts[0] ?? "";
     const deletionsField = parts[1] ?? "";
-    const rawPath = parts.slice(2).join("\t");
-    const path = normalizeNumstatPath(rawPath);
+    let path = parts.slice(2).join("\t");
+    if (!path) {
+      // A rename has an empty path here, followed by separate old/new NUL fields.
+      path = records[index + 2];
+      index += 2;
+    }
 
     if (!path) {
       continue;
@@ -2424,7 +2422,7 @@ function parseRawStatusLine(line: string, statuses: Map<string, CheckoutCommitFi
   if (!path) {
     return;
   }
-  statuses.set(path, status);
+  statuses.set(unquoteGitPath(path), status);
 }
 
 // A `--numstat` line: `<adds>\t<dels>\t<path>` (renames use `old => new`, binary
@@ -2738,16 +2736,13 @@ async function countUntrackedAdditions(
 ): Promise<number> {
   try {
     const { stdout } = await getRunGitCommand(context)(
-      ["ls-files", "--others", "--exclude-standard"],
+      ["ls-files", "-z", "--others", "--exclude-standard"],
       {
         cwd,
         envOverlay: READ_ONLY_GIT_ENV,
       },
     );
-    const files = stdout
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean);
+    const files = stdout.split("\0").filter(Boolean);
 
     let additions = 0;
     for (const file of files.slice(0, UNTRACKED_SHORTSTAT_MAX_FILES)) {
