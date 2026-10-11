@@ -23,15 +23,29 @@ afterEach(async () => {
 }, 60000);
 
 describe("file explorer", () => {
-  test("workspace suggestions find plan files in hidden agent directories", async () => {
-    const cwd = tmpCwd();
-    try {
-      for (const directory of [".cursor", ".codex", ".claude", ".hidden"]) {
-        mkdirSync(path.join(cwd, directory, "plans"), { recursive: true });
-        writeFileSync(path.join(cwd, directory, "plans", "implementation-plan.md"), "plan\n");
-      }
+  test.each([
+    {
+      query: "implementation",
+      expectedPaths: [
+        ".cursor/plans/implementation-plan.md",
+        ".codex/plans/implementation-plan.md",
+        ".claude/plans/implementation-plan.md",
+      ],
+    },
+    {
+      query: ".cursor/plans/implementation",
+      expectedPaths: [".cursor/plans/implementation-plan.md"],
+    },
+  ])(
+    "workspace suggestions find hidden agent plans for '$query'",
+    async ({ query, expectedPaths }) => {
+      const cwd = tmpCwd();
+      try {
+        for (const directory of [".cursor", ".codex", ".claude", ".hidden"]) {
+          mkdirSync(path.join(cwd, directory, "plans"), { recursive: true });
+          writeFileSync(path.join(cwd, directory, "plans", "implementation-plan.md"), "plan\n");
+        }
 
-      for (const query of ["implementation", ".cursor/plans/implementation"]) {
         const response = await ctx.client.getDirectorySuggestions({
           cwd,
           query,
@@ -40,27 +54,17 @@ describe("file explorer", () => {
           includeDirectories: true,
         });
         expect(response.error).toBeNull();
-        expect(response.entries).toContainEqual({
-          path: ".cursor/plans/implementation-plan.md",
-          kind: "file",
-        });
-        expect(response.entries).not.toContainEqual({
-          path: ".hidden/plans/implementation-plan.md",
-          kind: "file",
-        });
-        if (query === "implementation") {
-          for (const directory of [".codex", ".claude"]) {
-            expect(response.entries).toContainEqual({
-              path: `${directory}/plans/implementation-plan.md`,
-              kind: "file",
-            });
-          }
-        }
+        expect(response.entries).toHaveLength(expectedPaths.length);
+        expect(response.entries).toEqual(
+          expect.arrayContaining(
+            expectedPaths.map((entryPath) => ({ path: entryPath, kind: "file" })),
+          ),
+        );
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
       }
-    } finally {
-      rmSync(cwd, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 
   test.each(["..", "..."])("supports file operations on names starting with %s", async (prefix) => {
     const cwd = tmpCwd();
