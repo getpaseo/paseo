@@ -622,6 +622,26 @@ describe("evaluatePluginClientBundle", () => {
     expect(plugin.surfaces.map((surface) => surface.id)).toEqual(["main"]);
   });
 
+  it("provides the host's react-native-gesture-handler to client code", () => {
+    const plugin = evaluatePluginClientBundle(
+      "example",
+      `(function(require) {
+        const { Gesture, GestureDetector, GestureHandlerRootView } = require("react-native-gesture-handler");
+        const module = { exports: {} };
+        module.exports.default = function(plugin) {
+          if (typeof Gesture.Pinch !== "function" || !GestureDetector || !GestureHandlerRootView) {
+            throw new Error("gesture handler is incomplete");
+          }
+          plugin.addScreen({ id: "viewer", title: "Viewer", Component: function Viewer() { return null; } });
+          return function() {};
+        };
+        return module.exports;
+      })`,
+    );
+
+    expect(plugin.surfaces.map((surface) => surface.id)).toEqual(["viewer"]);
+  });
+
   it("keeps shared and client runtime exports separate", () => {
     expect(() =>
       evaluatePluginClientBundle(
