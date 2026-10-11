@@ -1,5 +1,13 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync, readdirSync, readlinkSync } from "fs";
+import {
+  mkdtempSync,
+  writeFileSync,
+  rmSync,
+  readdirSync,
+  readlinkSync,
+  realpathSync,
+  symlinkSync,
+} from "fs";
 import { once } from "node:events";
 import { get } from "node:http";
 import { tmpdir } from "os";
@@ -12,9 +20,10 @@ function tmpCwd(): string {
 
 // Linux exposes the real open descriptors without replacing file or HTTP methods.
 function openDownloadDescriptors(filePath: string): string[] {
+  const realFilePath = realpathSync(filePath);
   return readdirSync("/proc/self/fd").filter((fd) => {
     try {
-      return readlinkSync(`/proc/self/fd/${fd}`) === filePath;
+      return readlinkSync(`/proc/self/fd/${fd}`) === realFilePath;
     } catch (error) {
       // A descriptor can close between listing it and reading its link.
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
@@ -63,7 +72,9 @@ describe("daemon E2E", () => {
     test.skipIf(process.platform !== "linux")(
       "releases file descriptors after repeated HTTP download cancellations",
       async () => {
-        const cwd = tmpCwd();
+        const directory = tmpCwd();
+        const cwd = path.join(directory, "linked-files");
+        symlinkSync(mkdtempSync(path.join(directory, "files-")), cwd, "dir");
         const filePath = path.join(cwd, "large.bin");
         const fileSize = 64 * 1024 * 1024;
         writeFileSync(filePath, Buffer.alloc(fileSize));
@@ -86,7 +97,7 @@ describe("daemon E2E", () => {
             await expectDownloadClosed(filePath);
           }
         } finally {
-          rmSync(cwd, { recursive: true, force: true });
+          rmSync(directory, { recursive: true, force: true });
         }
       },
     );
