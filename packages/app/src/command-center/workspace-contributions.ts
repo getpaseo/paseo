@@ -1,4 +1,4 @@
-import type { GitAction, GitActions } from "@/git/policy";
+import { actionsWithoutPrimary, type GitAction, type GitActions } from "@/git/policy";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import type {
   WorkspacePanelPlacement,
@@ -581,9 +581,7 @@ export function buildWorkspaceCommandCenterContributions(
     ...(source.capabilities.canSplitPanes ? buildPaneContributions(source) : []),
   ];
 
-  const primary = source.gitActions.primary;
-  for (const [index, action] of source.gitActions.secondary.entries()) {
-    if (action.id === primary?.id) continue;
+  for (const [index, action] of actionsWithoutPrimary(source.gitActions).entries()) {
     contributions.push(buildGitContribution(source, action, 100 + index, "query"));
   }
 

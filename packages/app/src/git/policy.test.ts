@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { CheckoutPrStatusSchema } from "@getpaseo/protocol/messages";
 import { i18n } from "@/i18n/i18next";
 
-import { buildGitActions, type BuildGitActionsInput } from "./policy";
+import { actionsWithoutPrimary, buildGitActions, type BuildGitActionsInput } from "./policy";
 import { deriveMergeCapability, type ForgeSpecificStatusFacts } from "./merge-capability";
 
 type GithubMergeFactsFixture = ForgeSpecificStatusFacts & {
@@ -188,6 +188,59 @@ describe("git-actions-policy", () => {
     );
 
     expect(actions.primary).toMatchObject({ id: "pull", label: "Pull" });
+  });
+
+  it("drops a promoted remote action from the remaining menu actions", () => {
+    const pull = buildGitActions(createInput({ hasRemote: true, behindOfOrigin: 2 }));
+    expect(pull.primary?.id).toBe("pull");
+    expect(actionsWithoutPrimary(pull).map((action) => action.id)).toEqual([
+      "push",
+      "pull-and-push",
+      "archive-workspace",
+    ]);
+
+    const push = buildGitActions(createInput({ hasRemote: true, aheadOfOrigin: 1 }));
+    expect(push.primary?.id).toBe("push");
+    expect(actionsWithoutPrimary(push).map((action) => action.id)).toEqual([
+      "pull",
+      "pull-and-push",
+      "archive-workspace",
+    ]);
+  });
+
+  it("drops a promoted merge action from the remaining menu actions", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        isOnBaseBranch: false,
+        aheadCount: 2,
+        hasPullRequest: true,
+        pullRequestUrl: "https://example.com/pr/456",
+        pullRequestState: "open",
+        pullRequestMergeable: "MERGEABLE",
+        pullRequestGithub: githubStatus({
+          repository: {
+            autoMergeAllowed: true,
+            mergeCommitAllowed: true,
+            squashMergeAllowed: false,
+            rebaseMergeAllowed: false,
+            viewerDefaultMergeMethod: "SQUASH",
+          },
+        }),
+        shipDefault: "pr",
+      }),
+    );
+
+    expect(actions.primary).toMatchObject({ id: "merge-pr-merge", label: "Merge PR (merge)" });
+    expect(actionsWithoutPrimary(actions).map((action) => action.id)).toEqual([
+      "pull",
+      "push",
+      "pull-and-push",
+      "merge-from-base",
+      "merge-branch",
+      "pr",
+      "archive-workspace",
+    ]);
   });
 
   it("keeps push clickable with a clearer message when the branch diverged", () => {
