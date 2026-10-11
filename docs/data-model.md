@@ -176,8 +176,8 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 One append-only JSONL file per agent holds every committed timeline row: `{"seq": N, "timestamp": ..., "item": {...}, "turnId"?: ..., "providerMessageId"?: ...}`. The in-memory timeline window is bounded and evicts old rows ([timeline sync](timeline-sync.md#bounded-retention)); evicted rows and post-restart history are read back from this file.
 
 - Appends are serialized per agent. `updateCommittedRow` appends a new line for the same `seq`; reads apply last-write-wins per `seq`.
-- A crash mid-append leaves a torn trailing line. Readers skip lines that fail to parse, so at most one partially written row is lost.
-- Hydration from provider history deletes the file and re-commits the replayed rows; the in-memory window then continues sequence numbering from the last durable `seq`.
+- Readers validate the row and item shape and skip invalid lines. A crash mid-append can lose the partially written row; valid rows before and after it remain readable.
+- Provider history is the recovery authority. Resume and rewind guarantees live in [timeline sync](timeline-sync.md#bounded-retention).
 - The file is removed with the agent only on explicit state deletion, not on daemon shutdown, so a restart resumes from the durable history.
 
 ---

@@ -364,6 +364,22 @@ export interface DurableTimelineWriteOptions {
   retryDelayMs?: number;
 }
 
+interface TimelinePageSnapshot {
+  epoch: string;
+  nextSeq: number;
+  windowRows: readonly AgentTimelineRow[];
+}
+
+interface TimelineBackfillPageOptions extends TimelinePageSnapshot {
+  fetchOptions?: AgentTimelineFetchOptions;
+}
+
+interface TailBackfillPageOptions {
+  limit: number;
+  nextSeq: number;
+  windowRows: readonly AgentTimelineRow[];
+}
+
 export interface AgentManagerOptions {
   pluginLifecycle?: PluginLifecycle;
   /** An internal workspace makes every agent created inside it internal. */
@@ -1403,7 +1419,10 @@ export class AgentManager {
    * in-memory window, in-memory winning per seq. Durable writes are background
    * tasks, so the window always carries rows that are not on disk yet.
    */
-  private async getMergedTimelineRows(id: string): Promise<AgentTimelineRow[]> {
+  private async getMergedTimelineRows(
+    id: string,
+    windowRows: readonly AgentTimelineRow[] = this.timelineStore.getCanonicalRows(id),
+  ): Promise<AgentTimelineRow[]> {
     const bySeq = new Map<number, AgentTimelineRow>();
     if (this.durableTimelineStore) {
       for (const row of await this.durableTimelineStore.getCommittedRows(id)) {
@@ -1412,7 +1431,7 @@ export class AgentManager {
     }
     // In-memory rows win: they carry the latest enrichment (provider ids,
     // merged state) for the same seq.
-    for (const row of this.timelineStore.getCanonicalRows(id)) {
+    for (const row of windowRows) {
       bySeq.set(row.seq, row);
     }
     return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
@@ -1451,17 +1470,43 @@ export class AgentManager {
     if (!this.durableTimelineStore) {
       return this.fetchTimeline(id, options);
     }
-    const epoch = this.timelineStore.getEpoch(id);
-    const nextSeq = this.timelineStore.getNextSeq(id);
-    const direction = options?.direction ?? "tail";
-    const limit = options?.limit ?? DEFAULT_TIMELINE_FETCH_LIMIT;
-    const cursor = options?.cursor;
+    for (;;) {
+      this.requireAgent(id);
+      const generation = this.durableTimelineGeneration(id);
+      const snapshot: TimelinePageSnapshot = {
+        epoch: this.timelineStore.getEpoch(id),
+        nextSeq: this.timelineStore.getNextSeq(id),
+        windowRows: this.timelineStore.getCanonicalRows(id),
+      };
+      const page = await this.readTimelineBackfillPage(id, { ...snapshot, fetchOptions: options });
+      // Rewind can replace the file during any awaited read. Only publish
+      // the page if its rows still belong to the captured history.
+      if (
+        this.durableTimelineGeneration(id) === generation &&
+        this.timelineStore.getEpoch(id) === snapshot.epoch
+      )
+        return page;
+    }
+  }
+
+  private async readTimelineBackfillPage(
+    id: string,
+    input: TimelineBackfillPageOptions,
+  ): Promise<AgentTimelineFetchResult> {
+    const { epoch, nextSeq, windowRows, fetchOptions } = input;
+    const direction = fetchOptions?.direction ?? "tail";
+    const limit = fetchOptions?.limit ?? DEFAULT_TIMELINE_FETCH_LIMIT;
+    const cursor = fetchOptions?.cursor;
     const staleCursor = cursor !== undefined && cursor.epoch !== epoch;
     // A bounded tail scans the durable log from the end instead of
     // materializing the full history; above the scan cap the full read below
     // takes over.
     if (direction === "tail" && limit > 0) {
-      const bounded = await this.fetchTailPageWithBoundedBackfill(id, limit, nextSeq);
+      const bounded = await this.fetchTailPageWithBoundedBackfill(id, {
+        limit,
+        nextSeq,
+        windowRows,
+      });
       if (bounded !== null) {
         return {
           epoch,
@@ -1478,7 +1523,9 @@ export class AgentManager {
         };
       }
     }
-    const rows = await this.getMergedTimelineRows(id);
+    const mergedRows = await this.getMergedTimelineRows(id, windowRows);
+    // Appends after the snapshot belong to the next page.
+    const rows = mergedRows.filter((row) => row.seq < nextSeq);
     const minSeq = rows.length > 0 ? rows[0].seq : 0;
     const maxSeq = nextSeq - 1;
     const gap =
@@ -1524,8 +1571,7 @@ export class AgentManager {
    */
   private async fetchTailPageWithBoundedBackfill(
     id: string,
-    limit: number,
-    nextSeq: number,
+    options: TailBackfillPageOptions,
   ): Promise<{
     window: AgentTimelineWindow;
     hasOlder: boolean;
@@ -1533,9 +1579,9 @@ export class AgentManager {
     endSeq: number | null;
     rows: ProjectedTimelineRow[];
   } | null> {
+    const { limit, nextSeq, windowRows } = options;
     const durableStore = this.durableTimelineStore;
     if (!durableStore) return null;
-    const windowRows = this.timelineStore.getCanonicalRows(id);
     const floor = windowRows[0]?.seq;
     // The newest durable row the scan may serve: the row below the window
     // floor, or the log's newest row when the window is empty. Nothing is
@@ -5909,7 +5955,12 @@ export class AgentManager {
       // would overwrite same-seq rows of the rebuilt one.
       if (this.durableTimelineGeneration(agentId) !== generation) return;
       try {
-        await store.bulkInsert(agentId, rows);
+        // A provider echo can enrich a row while an earlier attempt is
+        // failing. Reusing that attempt's payload would erase the identity.
+        const currentRows = rows.map(
+          (row) => this.timelineStore.getLatestRowForSeq(agentId, row.seq) ?? row,
+        );
+        await store.bulkInsert(agentId, currentRows);
         return;
       } catch (error) {
         lastError = error;

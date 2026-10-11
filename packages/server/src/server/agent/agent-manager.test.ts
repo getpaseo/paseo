@@ -33,6 +33,7 @@ import type {
   AgentTimelineFetchResult,
   AgentTimelineRow,
   AgentTimelineStore,
+  AgentTimelineTailRead,
 } from "./agent-timeline-store-types.js";
 import type {
   AgentClient,
@@ -256,6 +257,38 @@ class RecordingTimelineStore implements AgentTimelineStore {
       .slice(options.offset, options.offset + options.count)
       .toReversed();
     return { rows: [...slice], atStart: options.offset + options.count >= eligible.length };
+  }
+}
+
+class PausedTimelineReadStore extends RecordingTimelineStore {
+  readonly readStarted = deferred<void>();
+  readonly readAllowed = deferred<void>();
+  private pauseNext = false;
+
+  pauseNextRead(): void {
+    this.pauseNext = true;
+  }
+
+  private async waitForRead(): Promise<void> {
+    if (!this.pauseNext) return;
+    this.pauseNext = false;
+    this.readStarted.resolve();
+    await this.readAllowed.promise;
+  }
+
+  override async getCommittedRows(agentId: string): Promise<AgentTimelineRow[]> {
+    const rows = await super.getCommittedRows(agentId);
+    await this.waitForRead();
+    return rows;
+  }
+
+  override async readTailRows(
+    agentId: string,
+    options: { maxSeq?: number; offset: number; count: number },
+  ): Promise<AgentTimelineTailRead> {
+    const result = await super.readTailRows(agentId, options);
+    await this.waitForRead();
+    return result;
   }
 }
 
@@ -11997,6 +12030,90 @@ test.each([false, true])(
 describe("timeline window backfill", () => {
   const windowOptions = { maxWindowBytes: 2048, maxWindowRows: 10_000 };
 
+  test("full backfill pages keep the history snapshot captured before a live append", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-page-append-"));
+    const store = new PausedTimelineReadStore();
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      durableTimelineStore: store,
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {});
+    try {
+      await manager.appendTimelineItem(agent.id, { type: "user_message", text: "before" });
+      await manager.flush();
+      store.pauseNextRead();
+      const pendingPage = manager.fetchTimelineWithBackfill(agent.id, { limit: 0 });
+      await store.readStarted.promise;
+      await manager.appendTimelineItem(agent.id, { type: "user_message", text: "after" });
+      await manager.flush();
+      store.readAllowed.resolve();
+      const page = await pendingPage;
+      expect(page.rows.map((row) => row.item)).toEqual([{ type: "user_message", text: "before" }]);
+      expect(page.window).toEqual({ minSeq: 1, maxSeq: 1, nextSeq: 2 });
+      expect(page.endSeq).toBe(1);
+      expect(manager.fetchTimeline(agent.id, { limit: 0 }).rows).toHaveLength(2);
+    } finally {
+      store.readAllowed.resolve();
+      await manager.closeAgent(agent.id);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test.each([0, 10])(
+    "backfill pages retry the history snapshot after rewind (limit %i)",
+    async (limit) => {
+      const workdir = mkdtempSync(join(tmpdir(), "agent-manager-page-rewind-"));
+      const store = new PausedTimelineReadStore();
+      const replacement: AgentTimelineItem = { type: "user_message", text: "after rewind" };
+      const session = new (class extends TestAgentSession {
+        override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+          yield { type: "timeline", provider: "codex", item: replacement };
+        }
+      })({ provider: "codex", cwd: workdir });
+      const client = new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })();
+      const manager = new AgentManager({
+        clients: { codex: client },
+        durableTimelineStore: store,
+        timelineWindow: { maxWindowRows: 3 },
+        logger,
+      });
+      const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {});
+      try {
+        for (let i = 0; i < 20; i++) {
+          await manager.appendTimelineItem(agent.id, { type: "user_message", text: `old ${i}` });
+        }
+        await manager.flush();
+        const previousEpoch = manager.getTimelineEpoch(agent.id);
+        store.pauseNextRead();
+        const pendingPage = manager.fetchTimelineWithBackfill(agent.id, {
+          limit,
+          cursor: { epoch: previousEpoch, seq: 20 },
+        });
+        await store.readStarted.promise;
+        await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+        await manager.flush();
+        store.readAllowed.resolve();
+        const page = await pendingPage;
+        expect(page.epoch).not.toBe(previousEpoch);
+        expect(page.epoch).toBe(manager.getTimelineEpoch(agent.id));
+        expect(page.reset).toBe(true);
+        expect(page.staleCursor).toBe(true);
+        expect(page.rows.map((row) => row.item)).toEqual([replacement]);
+        expect(page.window).toEqual({ minSeq: 1, maxSeq: 1, nextSeq: 2 });
+        expect(page.endSeq).toBe(1);
+      } finally {
+        store.readAllowed.resolve();
+        await manager.closeAgent(agent.id);
+        rmSync(workdir, { recursive: true, force: true });
+      }
+    },
+  );
+
   async function createBoundedBackfillManager(workdir: string, store: RecordingTimelineStore) {
     const manager = new AgentManager({
       clients: { codex: new TestAgentClient() },
@@ -12340,6 +12457,65 @@ describe("timeline window backfill", () => {
 });
 
 describe("durable timeline store integration", () => {
+  test("an immediate durable retry preserves a provider echo saved before the failure", async () => {
+    class EchoBeforeRetryStore extends RecordingTimelineStore {
+      readonly firstWriteStarted = deferred<void>();
+      readonly enrichmentWritten = deferred<void>();
+      private first = true;
+
+      override async bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void> {
+        if (this.first) {
+          this.first = false;
+          this.firstWriteStarted.resolve();
+          await this.enrichmentWritten.promise;
+          throw new Error("transient disk failure");
+        }
+        await super.bulkInsert(agentId, rows);
+      }
+
+      override async updateCommittedRow(agentId: string, row: AgentTimelineRow): Promise<void> {
+        await super.updateCommittedRow(agentId, row);
+        this.enrichmentWritten.resolve();
+      }
+    }
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-immediate-retry-enrich-"));
+    const store = new EchoBeforeRetryStore();
+    const session = new TestAgentSession({ provider: "codex", cwd: workdir });
+    const client = new (class extends TestAgentClient {
+      override async createSession(): Promise<AgentSession> {
+        return session;
+      }
+    })();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      durableTimelineStore: store,
+      durableTimelineWrite: { maxAttempts: 2, retryDelayMs: 1 },
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {});
+    try {
+      await manager.appendTimelineItem(agent.id, {
+        type: "user_message",
+        text: "hello",
+        clientMessageId: "c1",
+      });
+      await store.firstWriteStarted.promise;
+      session.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: "hello", clientMessageId: "c1", messageId: "pm1" },
+      });
+      await store.enrichmentWritten.promise;
+      await manager.flush();
+      expect((await store.getCommittedRows(agent.id)).map((row) => row.providerMessageId)).toEqual([
+        "pm1",
+      ]);
+    } finally {
+      store.enrichmentWritten.resolve();
+      await manager.closeAgent(agent.id);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
   class DeferredDurableTimelineStore implements AgentTimelineStore {
     private readonly committed = new Map<string, AgentTimelineRow[]>();
     private readonly pending = new Map<string, AgentTimelineRow[]>();

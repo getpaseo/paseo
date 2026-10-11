@@ -1,5 +1,7 @@
 import { appendFile, mkdir, open, readFile, rm, stat, type FileHandle } from "node:fs/promises";
 import path from "node:path";
+import { z } from "zod";
+import { AgentTimelineItemPayloadSchema } from "@getpaseo/protocol/messages";
 
 import {
   projectTimelineRows,
@@ -26,6 +28,18 @@ export interface FileAgentTimelineStoreOptions {
   /** Directory holding one append-only `{agentId}.jsonl` log per agent. */
   directory: string;
 }
+
+const SavedTimelineRowSchema = z.object({
+  seq: z.number().int().positive(),
+  timestamp: z.string(),
+  // Validate the wire shape while preserving provider extension fields on
+  // tool/compaction items; parsing the wire schema would strip those fields.
+  item: z.custom<AgentTimelineItem>(
+    (item) => AgentTimelineItemPayloadSchema.safeParse(item).success,
+  ),
+  turnId: z.string().optional(),
+  providerMessageId: z.string().optional(),
+});
 
 /**
  * Durable, append-only timeline store: one JSONL file per agent under
@@ -503,19 +517,7 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
     } catch {
       return null;
     }
-    if (typeof parsed !== "object" || parsed === null) return null;
-    const record = parsed as Record<string, unknown>;
-    if (typeof record.seq !== "number" || typeof record.timestamp !== "string") return null;
-    if (typeof record.item !== "object" || record.item === null) return null;
-    if (typeof (record.item as { type?: unknown }).type !== "string") return null;
-    return {
-      seq: record.seq,
-      timestamp: record.timestamp,
-      item: record.item as AgentTimelineItem,
-      ...(typeof record.turnId === "string" ? { turnId: record.turnId } : {}),
-      ...(typeof record.providerMessageId === "string"
-        ? { providerMessageId: record.providerMessageId }
-        : {}),
-    };
+    const result = SavedTimelineRowSchema.safeParse(parsed);
+    return result.success ? result.data : null;
   }
 }

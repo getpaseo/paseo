@@ -23,49 +23,16 @@ Two retention decisions compounded:
 
 ## Fix
 
-- Bounded in-memory window (16 MiB / 50,000 rows by default) over a durable append-only row log at
-  `$PASEO_HOME/timeline-rows/{agentId}.jsonl`. Eviction is gated on the durable watermark, so a
-  row whose disk write has not confirmed is never dropped. Mechanics:
-  [timeline sync](timeline-sync.md#bounded-retention); layout:
-  [data model](data-model.md#durable-timeline-rows).
-- Reconnect and refresh send `agent.timeline.replacement` without materializing the timeline. Only
-  pre-`timelineReplacementInvalidation` clients receive the full replay, now read through the
-  durable-store merge.
-- Reads the window cannot answer — full-history reads after eviction, boundary `before` pages,
-  post-restart reads, fork context — backfill from the durable store. Timeline search and prompt
-  listing merge the window with committed durable rows, so rows awaiting their durable write stay
-  visible.
-- Resuming an agent with a contiguous durable log primes the timeline from disk; the first
-  hydration replays the session history for its provider-subagent events only, since the subagent
-  store is not durable. A log with a gap below its top does not prime: the first hydration
-  re-primes the full timeline from provider history (new epoch, rows re-committed from seq 1), and
-  keeps the gapped rows when the provider no longer holds the history (implicit rebuilds only; an
-  explicit rewind with an empty history is a legitimate clear).
+The daemon now retains a bounded recent window over a durable row log. Reconnect and refresh send
+replacement notifications to modern clients, which fetch their own pages. Older clients keep
+ordered full-history replay.
 
-## Accepted semantic changes
-
-- MCP `get_agent_activity` with no `limit` returns the in-memory window, not the full history.
-- Rewind and prompt enrichment that address an evicted row degrade to the `clientMessageId`
-  identity match instead of matching against evicted row content.
-- Deep `before`/`after` pagination and full-history reads parse the whole durable file. There is
-  deliberately no resident cache; a large history pays that transient read cost on every such
-  read. Bounded `tail` pages are the exception: they scan the log from the end in batches, falling
-  back to the full read when the scan exceeds its cap.
-- A durable write that fails all its retries stalls the watermark at its seq: the window keeps the
-  row and everything after it until a later write for the agent succeeds and replays it. A
-  persistent disk error therefore degrades to pre-fix retention for that agent, with the failures
-  logged as errors.
-- A row that dies with the process before its durable write confirms leaves either a gap in the
-  log (an earlier failed write) or a contiguous log with the tail missing. The gap re-primes from
-  provider history on first hydration; the contiguous case heals through the same hydration's
-  seeded-log verification ([timeline sync](timeline-sync.md#bounded-retention)).
+Retention limits, recovery guarantees, and accepted semantic changes live in
+[timeline sync](timeline-sync.md#bounded-retention). The file layout and persistence contract live
+in [data model](data-model.md#durable-timeline-rows).
 
 ## Follow-ups
 
-- Tuning knobs exist (`PASEO_TIMELINE_WINDOW_MAX_BYTES`, `PASEO_TIMELINE_WINDOW_MAX_ROWS`); no
-  per-host heap knob was added with this fix.
-- Subagent store retention is not bounded by this change.
-- The last-assistant-message read (finish notifications, subagent prompt context) returns the
-  trailing contiguous run of assistant text, which can span several assistant messages. That
-  semantics predates the durable store and is shared by the live and post-restart paths; whether
-  notifications should show only the final message is a product decision.
+No per-host heap knob was added with this fix. The separate provider-subagent store is not bounded.
+The trailing assistant-run semantics of finish notifications predate this fix; changing which
+message a notification shows remains a separate product decision.

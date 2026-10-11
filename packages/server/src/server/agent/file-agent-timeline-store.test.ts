@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { FileAgentTimelineStore } from "./file-agent-timeline-store.js";
 import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
+import type { AgentTimelineItem } from "./agent-sdk-types.js";
 
 const TIMESTAMP = "2026-01-01T00:00:00.000Z";
 
@@ -29,6 +30,62 @@ describe("FileAgentTimelineStore", () => {
 
   afterEach(() => {
     rmSync(directory, { recursive: true, force: true });
+  });
+
+  it.each([
+    { ...row(2, "invalid"), seq: 0 },
+    { ...row(2, "invalid"), seq: -1 },
+    { ...row(2, "invalid"), seq: 1.5 },
+    { ...row(2, "invalid"), seq: Number.MAX_SAFE_INTEGER + 1 },
+    { ...row(2, "invalid"), seq: "2" },
+    { ...row(2, "invalid"), timestamp: 123 },
+    { ...row(2, "invalid"), turnId: 123 },
+    { ...row(2, "invalid"), providerMessageId: 123 },
+    { ...row(2, "invalid"), item: { type: "unknown" } },
+    { ...row(2, "invalid"), item: { type: "user_message" } },
+    { ...row(2, "invalid"), item: { type: "assistant_message", text: null } },
+    { ...row(2, "invalid"), item: { type: "reasoning", text: 123 } },
+    {
+      ...row(2, "invalid"),
+      item: {
+        type: "tool_call",
+        callId: "call",
+        name: "shell",
+        status: "completed",
+        error: null,
+        detail: { type: "shell" },
+      },
+    },
+    { ...row(2, "invalid"), item: { type: "todo", items: [{ text: "task", completed: "yes" }] } },
+    { ...row(2, "invalid"), item: { type: "error" } },
+    { ...row(2, "invalid"), item: { type: "notification", level: "unknown", message: "notice" } },
+    { ...row(2, "invalid"), item: { type: "compaction", status: "unknown" } },
+    { ...row(2, "invalid"), item: { type: "plugin", id: "plugin" } },
+  ])("skips invalid saved rows in full and tail reads (%j)", async (invalid) => {
+    writeFileSync(
+      path.join(directory, "a.jsonl"),
+      [row(1, "one"), invalid, row(3, "three")].map((value) => JSON.stringify(value)).join("\n") +
+        "\n",
+    );
+    expect(await store.getCommittedRows("a")).toEqual([row(1, "one"), row(3, "three")]);
+    expect(await store.getLatestCommittedSeq("a")).toBe(3);
+    expect((await store.readTailRows("a", { maxSeq: 3, offset: 0, count: 10 })).rows).toEqual([
+      row(1, "one"),
+      row(3, "three"),
+    ]);
+  });
+
+  it("keeps a valid row when a malformed update for the same seq follows it", async () => {
+    writeFileSync(
+      path.join(directory, "a.jsonl"),
+      [row(1, "one"), { ...row(1, "one"), item: { type: "user_message" } }]
+        .map((value) => JSON.stringify(value))
+        .join("\n") + "\n",
+    );
+    expect(await store.getCommittedRows("a")).toEqual([row(1, "one")]);
+    expect((await store.fetchCommitted("a", { limit: 1 })).rows[0]?.item).toEqual(
+      row(1, "one").item,
+    );
   });
 
   it("round-trips committed rows with turn and provider message ids", async () => {
@@ -56,6 +113,42 @@ describe("FileAgentTimelineStore", () => {
       },
     ]);
     expect(await store.getLatestCommittedSeq("a")).toBe(2);
+  });
+
+  it("validates every item variant without stripping provider extension fields", async () => {
+    const items: AgentTimelineItem[] = [
+      { type: "user_message", text: "prompt", messageId: "pm1", clientMessageId: "c1" },
+      { type: "assistant_message", text: "answer", messageId: "pm2" },
+      { type: "reasoning", text: "reason" },
+      {
+        type: "tool_call",
+        callId: "call",
+        name: "custom",
+        status: "completed",
+        error: null,
+        detail: { type: "unknown", input: {}, output: {} },
+        providerExtension: { identity: "saved" },
+      },
+      {
+        type: "todo",
+        items: [{ text: "task", completed: false, status: "in_progress", id: "t1" }],
+      },
+      { type: "error", message: "failure" },
+      { type: "notification", level: "info", message: "notice" },
+      { type: "compaction", status: "completed", trigger: "auto", providerExtension: "saved" },
+      {
+        type: "plugin",
+        id: "p1",
+        pluginId: "test-plugin",
+        kind: "custom",
+        version: 1,
+        data: { value: [1, null] },
+      },
+    ];
+    const rows = items.map((item, index) => ({ seq: index + 1, timestamp: TIMESTAMP, item }));
+    await store.bulkInsert("a", rows);
+    expect(await store.getCommittedRows("a")).toEqual(rows);
+    expect((await store.readTailRows("a", { offset: 0, count: rows.length })).rows).toEqual(rows);
   });
 
   it("applies updateCommittedRow last-wins per seq", async () => {
