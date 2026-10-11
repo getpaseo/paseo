@@ -125,9 +125,20 @@ function splitHtmlishTokens(tokens: HtmlToken[]): MarkdownDisplayPart[] {
       continue;
     }
 
-    const nextDetailsIndex = findNextOpenTag(tokens, cursor + 1, "details");
-    const nextInlineImageIndex = findNextInlineImageIndex(tokens, cursor + 1);
-    const end = Math.min(nextDetailsIndex ?? tokens.length, nextInlineImageIndex ?? tokens.length);
+    if (isHeadingTag(token)) {
+      const closeIndex = findMixedHeadingClose(tokens, cursor);
+      if (closeIndex !== null) {
+        // Headings render as their contents. Split those contents together so an
+        // embedded image cannot strand the opening heading tag in a text slice.
+        for (const part of splitHtmlishTokens(tokens.slice(cursor + 1, closeIndex))) {
+          appendDisplayPart(parts, part);
+        }
+        cursor = closeIndex + 1;
+        continue;
+      }
+    }
+
+    const end = findNextDisplayPartIndex(tokens, cursor + 1) ?? tokens.length;
     appendMarkdownPart(parts, renderInlineTokens(tokens.slice(cursor, end)));
     cursor = end;
   }
@@ -259,13 +270,42 @@ function flowsWithFollowingText(tokens: HtmlToken[], start: number, end: number)
   return false;
 }
 
-function findNextInlineImageIndex(tokens: HtmlToken[], start: number): number | null {
+function findNextDisplayPartIndex(tokens: HtmlToken[], start: number): number | null {
   for (let index = start; index < tokens.length; index += 1) {
-    if (parseInlineImageAt(tokens, index)) {
+    if (
+      isOpenTag(tokens[index], "details") ||
+      findMixedHeadingClose(tokens, index) !== null ||
+      parseInlineImageAt(tokens, index)
+    ) {
       return index;
     }
   }
   return null;
+}
+
+function findMixedHeadingClose(tokens: HtmlToken[], start: number): number | null {
+  const token = tokens[start];
+  if (!isHeadingTag(token)) {
+    return null;
+  }
+  const closeIndex = findMatchingClose(tokens, start, token.name);
+  if (closeIndex === null) {
+    return null;
+  }
+  for (let index = start + 1; index < closeIndex; index += 1) {
+    if (parseInlineImageAt(tokens, index)) {
+      return closeIndex;
+    }
+  }
+  return null;
+}
+
+function appendDisplayPart(parts: MarkdownDisplayPart[], part: MarkdownDisplayPart): void {
+  if (part.kind === "markdown") {
+    appendMarkdownPart(parts, part.text);
+  } else {
+    parts.push(part);
+  }
 }
 
 function appendMarkdownPart(parts: MarkdownDisplayPart[], text: string): void {
