@@ -5,7 +5,6 @@ import { fetchUsage, discover } from "./server/usage.js";
 export default function contribute(server: PluginServerContext) {
   server.registerUsageSource({
     id: "grok",
-    provider: "grok",
     label: "Grok",
     icon: "icon.svg",
     input: inputSchema,

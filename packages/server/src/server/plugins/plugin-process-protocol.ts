@@ -26,7 +26,6 @@ export interface PluginProviderMetadata {
 export interface PluginUsageSourceMetadata {
   id: string;
   label: string;
-  provider?: string;
   icon?: string;
 }
 
@@ -122,7 +121,6 @@ const usageSourceMetadataSchema = z
   .object({
     id: z.string().min(1),
     label: z.string().min(1),
-    provider: z.string().min(1).optional(),
     icon: z.string().optional(),
   })
   .strict();

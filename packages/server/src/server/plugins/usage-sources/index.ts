@@ -14,7 +14,6 @@ import {
 export interface UsageSource {
   id: string;
   label: string;
-  provider?: string;
   icon?: string;
   discover(scope: UsageScope): Promise<unknown>;
   fetch(input: unknown): Promise<unknown>;
@@ -52,7 +51,6 @@ interface AgentReports {
   provider: string;
   model?: string;
   sessionKey: string;
-  sources: UsageSource[];
   reports: Map<string, KnownReport>;
 }
 
@@ -71,7 +69,6 @@ export class UsageSourceRegistry {
     private readonly logger: Pick<Logger, "warn"> = { warn: console.warn },
     private readonly agents: AgentUsageLookup = { hasAgent: () => false, usageSession: () => null },
     private readonly deadlineMs = 20_000,
-    private readonly isProviderEnabled: (provider: string) => boolean = () => true,
   ) {}
 
   register(source: UsageSource): void {
@@ -109,24 +106,18 @@ export class UsageSourceRegistry {
       this.mergeKnown();
       ids = [...this.known.keys()];
     }
-    const entries = await Promise.all(
+    return Promise.all(
       [...new Set(ids)].flatMap((id) => {
         const known = reports.get(id);
-        if (!known || !this.isSourceEnabled(known.source)) return [];
+        if (!known) return [];
         return [
           this.fetchId(id, known, options.forceRefresh).then((entry) => {
-            if (!this.isSourceEnabled(known.source)) return null;
             options.onReport?.(entry);
             return entry;
           }),
         ];
       }),
     );
-    return entries.filter((entry) => entry !== null);
-  }
-
-  private isSourceEnabled(source: UsageSource): boolean {
-    return source.provider === undefined || this.isProviderEnabled(source.provider);
   }
 
   private pruneAgents(): void {
@@ -141,15 +132,10 @@ export class UsageSourceRegistry {
     const session = this.agents.usageSession(agentId);
     if (!session) return [];
     const previous = this.byAgent.get(agentId);
-    const sources = [...this.sources.values()].filter((source) => this.isSourceEnabled(source));
-    const sameSources =
-      previous?.sources.length === sources.length &&
-      previous.sources.every((source, index) => source === sources[index]);
     const sameScope =
       previous?.sessionKey === session.sessionKey &&
       previous.provider === session.provider &&
-      previous.model === session.model &&
-      sameSources;
+      previous.model === session.model;
     if (sameScope && !forceRefresh) return [...previous.reports.keys()];
     const reports = await this.discover({
       kind: "session",
@@ -163,7 +149,6 @@ export class UsageSourceRegistry {
       sessionKey: session.sessionKey,
       provider: session.provider,
       model: session.model,
-      sources,
       reports,
     });
     this.rebindLogins(reports);
@@ -207,11 +192,7 @@ export class UsageSourceRegistry {
       ...[...this.byAgent.values()].map((agent) => agent.reports),
     ]) {
       for (const [id, report] of reports) {
-        if (
-          this.sources.get(report.source.id) !== report.source ||
-          !this.isSourceEnabled(report.source)
-        )
-          continue;
+        if (this.sources.get(report.source.id) !== report.source) continue;
         const known = this.known.get(id);
         if (!known) {
           this.known.set(id, { ...report, logins: [...report.logins] });
@@ -226,9 +207,8 @@ export class UsageSourceRegistry {
   }
 
   private async discover(scope: UsageScope): Promise<Map<string, KnownReport>> {
-    const sources = [...this.sources.values()].filter((source) => this.isSourceEnabled(source));
     const discovered = await Promise.all(
-      sources.map(async (source) => {
+      [...this.sources.values()].map(async (source) => {
         const reports = new Map<string, KnownReport>();
         try {
           const accounts = z

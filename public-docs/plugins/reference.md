@@ -365,7 +365,6 @@ type UsageScope =
 interface UsageSourceRegistration {
   id: string;
   label: string;
-  provider?: string;
   icon?: string;
   input: ZodType;
   discover(scope: UsageScope): Promise<UsageAccount[]>;
@@ -503,11 +502,6 @@ use the OAuth profile's account and organization IDs; expired or rejected profil
 hash. Codex prefers Codex CLI, OpenCode, Pi, then OMP and groups by the ChatGPT account ID from stored
 metadata or JWT claims. Pi and OMP logins remain discoverable when expired. OMP requires
 `node:sqlite`.
-
-Set a usage source's `provider` to an agent provider ID to restrict discovery and fetching to
-when that provider is registered and enabled. Omit it for billing sources shared across harnesses.
-Provider availability does not gate usage: a configured login can still report quota when the
-agent executable is unavailable.
 
 `usage.list_reports` discovers accounts when called without IDs. With IDs, it refreshes known
 accounts without rediscovering identity. If a store switches accounts, the existing card shows the
