@@ -45,6 +45,8 @@ async function logins(options: Parameters<typeof discover>[1]) {
 async function database(path: string) {
   await mkdir((await import("node:path")).dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
+  // Create the fixture with one durable commit instead of one per row.
+  db.exec("BEGIN");
   db.exec(
     "CREATE TABLE auth_credentials (id INTEGER PRIMARY KEY, provider TEXT, credential_type TEXT, data TEXT, disabled_cause TEXT)",
   );
@@ -78,6 +80,7 @@ async function database(path: string) {
     null,
   );
   insert.run(5, "anthropic", "oauth", "invalid", null);
+  db.exec("COMMIT");
   db.close();
 }
 
