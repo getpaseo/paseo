@@ -225,12 +225,13 @@ function PushNotificationRouter() {
     }
 
     Notifications.setNotificationHandler({
-      handleNotification: async () => ({
-        // When the app is open, don't show OS banners.
-        shouldShowAlert: false,
-        shouldShowBanner: false,
-        shouldShowList: false,
-        shouldPlaySound: false,
+      handleNotification: async (notification) => ({
+        // Local task events have already passed this device's notification preferences.
+        // Remote push is suppressed in the foreground to avoid duplicate banners.
+        shouldShowAlert: notification.request.content.data.paseoLocalNotification === true,
+        shouldShowBanner: notification.request.content.data.paseoLocalNotification === true,
+        shouldShowList: notification.request.content.data.paseoLocalNotification === true,
+        shouldPlaySound: notification.request.content.data.paseoLocalNotification === true,
         shouldSetBadge: false,
       }),
     });

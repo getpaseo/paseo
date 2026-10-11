@@ -250,7 +250,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
     expect(pushNotifications.sent).toHaveLength(1);
   });
 
-  it("uses assistant preview text for push notifications with markdown removed", async () => {
+  it("keeps document and message content out of background push notifications", async () => {
     const getLastAssistantMessage = vi.fn(
       async () => "**Done**. Updated `README.md` and [link](https://example.com).",
     );
@@ -273,16 +273,17 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
     expect(pushNotifications.sent).toEqual([
       {
         title: "Agent finished",
-        body: "Done. Updated README.md and link.",
+        body: "Finished working.",
         data: {
           serverId: "srv-test",
           workspaceId: WORKSPACE_ID,
           agentId: "agent-1",
           reason: "finished",
+          eventId: expect.any(String),
         },
       },
     ]);
-    expect(getLastAssistantMessage).toHaveBeenCalledWith("agent-1");
+    expect(getLastAssistantMessage).not.toHaveBeenCalled();
   });
 
   it("sends push notifications regardless of UI label presence", async () => {
@@ -305,10 +306,10 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
     });
 
     expect(pushNotifications.sent).toHaveLength(1);
-    expect(getLastAssistantMessage).toHaveBeenCalledWith("agent-2");
+    expect(getLastAssistantMessage).not.toHaveBeenCalled();
   });
 
-  it("routes a hidden stale focused browser tab's notification to the present Electron web client", async () => {
+  it("delivers attention independently to both desktop clients and push", async () => {
     const { server, pushNotifications } = createServer();
     const nowMs = Date.now();
     const electronWs = connectClient(server, {
@@ -331,8 +332,8 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
     });
 
     expect(readAttentionRequiredMessage(electronWs).shouldNotify).toBe(true);
-    expect(readAttentionRequiredMessage(firefoxWs).shouldNotify).toBe(false);
-    expect(pushNotifications.sent).toEqual([]);
+    expect(readAttentionRequiredMessage(firefoxWs).shouldNotify).toBe(true);
+    expect(pushNotifications.sent).toHaveLength(1);
   });
 
   it("pushes non-error attention when the only connected client has never sent a heartbeat", async () => {
@@ -345,11 +346,11 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       reason: "finished",
     });
 
-    expect(readAttentionRequiredMessage(ws).shouldNotify).toBe(false);
+    expect(readAttentionRequiredMessage(ws).shouldNotify).toBe(true);
     expect(pushNotifications.sent).toHaveLength(1);
   });
 
-  it("does not push error attention when the only connected client has never sent a heartbeat", async () => {
+  it("pushes error attention without a heartbeat", async () => {
     const { server, pushNotifications } = createServer();
     const ws = connectClient(server, null);
 
@@ -359,7 +360,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       reason: "error",
     });
 
-    expect(readAttentionRequiredMessage(ws).shouldNotify).toBe(false);
-    expect(pushNotifications.sent).toEqual([]);
+    expect(readAttentionRequiredMessage(ws).shouldNotify).toBe(true);
+    expect(pushNotifications.sent).toHaveLength(1);
   });
 });

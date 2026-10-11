@@ -119,6 +119,10 @@ const DESKTOP_WINDOW_CHROME_MODE = resolveDesktopWindowChromeMode({
   isPackaged: app.isPackaged,
 });
 const UPDATE_QUIT_DEADLINE_MS = 5_000;
+let enhancedQuitRequested = false;
+app.on("before-quit", () => {
+  enhancedQuitRequested = true;
+});
 const pendingBrowserWindowOpenRequests = new PendingBrowserWindowOpenRequests();
 const agentNavigationInbox = new AgentNavigationInbox();
 
@@ -713,6 +717,16 @@ async function createWindow(
   mainWindow.webContents.on("did-start-navigation", (_event, _url, isSameDocument, isMainFrame) => {
     if (isMainFrame && !isSameDocument) {
       agentNavigationInbox.windowLoading(webContentsId);
+    }
+  });
+  mainWindow.on("close", (event) => {
+    if (
+      process.platform === "darwin" &&
+      !enhancedQuitRequested &&
+      BrowserWindow.getAllWindows().length === 1
+    ) {
+      event.preventDefault();
+      mainWindow.hide();
     }
   });
   mainWindow.on("closed", () => {

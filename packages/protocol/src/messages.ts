@@ -3741,6 +3741,7 @@ export const ServerInfoStatusPayloadSchema = z
         documentPreviews: z.boolean().optional(),
         fileReadCancellation: z.boolean().optional(),
         taskArtifacts: z.boolean().optional(),
+        deviceNotifications: z.boolean().optional(),
         // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.
         providerUsageList: z.boolean().optional(),
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.

@@ -7,3 +7,7 @@ export function startPushNotifications(_input: StartPushNotificationsInput): () 
 export async function revokePushNotifications(_input: RevokePushNotificationsInput): Promise<void> {
   // Push notifications are native-only.
 }
+
+export function isBackgroundPushConfigured(): boolean {
+  return false;
+}

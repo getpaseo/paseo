@@ -106,6 +106,12 @@ export interface AppSettings {
   chatOutlineEnabled: boolean;
   vimKeybindings: boolean;
   fileOpening: FileOpeningPreferences;
+  taskNotifications: {
+    completed: boolean;
+    failed: boolean;
+    waiting: boolean;
+    whileViewing: boolean;
+  };
   /** Desktop-only preferences for implicit opens into the ordinary side pane. */
   openInSidePane: OpenInSidePanePreferences;
   pullRequestOpenLocation: PullRequestOpenLocation;
@@ -163,6 +169,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   chatOutlineEnabled: true,
   vimKeybindings: false,
   fileOpening: { mode: "smart", byExtension: {} },
+  taskNotifications: { completed: true, failed: true, waiting: true, whileViewing: false },
   openInSidePane: DEFAULT_OPEN_IN_SIDE_PANE_PREFERENCES,
   pullRequestOpenLocation: "explorer",
 };
@@ -264,6 +271,14 @@ const StoredAppSettingsSchema = z
     compactToolCalls: z.boolean().optional().catch(undefined),
     chatOutlineEnabled: z.boolean().catch(true),
     vimKeybindings: z.boolean().catch(false),
+    taskNotifications: z
+      .object({
+        completed: z.boolean().catch(true),
+        failed: z.boolean().catch(true),
+        waiting: z.boolean().catch(true),
+        whileViewing: z.boolean().catch(false),
+      })
+      .catch({ completed: true, failed: true, waiting: true, whileViewing: false }),
     fileOpening: z
       .object({
         mode: z.enum(["smart", "preview", "external", "ask"]).catch("smart"),

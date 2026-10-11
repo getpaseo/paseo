@@ -72,10 +72,7 @@ import {
   isPushEligibleAttentionReason,
   type ClientPresenceState,
 } from "./agent-attention-policy.js";
-import {
-  buildAgentAttentionNotificationPayload,
-  findLatestPermissionRequest,
-} from "@getpaseo/protocol/agent-attention-notification";
+import { buildAgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
 import { createGitHubService } from "../services/github-service.js";
 import type { ForgeService } from "../services/forge-service.js";
 import {
@@ -1877,6 +1874,7 @@ export class VoiceAssistantWebSocketServer {
         documentPreviews: true,
         fileReadCancellation: true,
         taskArtifacts: true,
+        deviceNotifications: true,
         // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.
         providerUsageList: true,
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
@@ -2603,36 +2601,29 @@ export class VoiceAssistantWebSocketServer {
     const notificationEntries = clientEntries.filter(({ ws }) =>
       this.sessions.get(ws)?.session.wantsSourceNotification(ws, "agent_attention_required"),
     );
-    const allStates = notificationEntries.map((e) => e.state);
-    const nowMs = Date.now();
-    const assistantMessage = await this.agentManager.getLastAssistantMessage(params.agentId);
+    const timestamp = new Date().toISOString();
     const notification = buildAgentAttentionNotificationPayload({
       reason: params.reason,
       serverId: this.serverId,
       workspaceId: agent.workspaceId,
       agentId: params.agentId,
-      assistantMessage,
-      permissionRequest: findLatestPermissionRequest(agent.pendingPermissions),
+      assistantMessage: null,
+      permissionRequest: null,
     });
 
-    const plan = computeNotificationPlan({
-      allStates,
-      focusTarget: { kind: "agent", id: params.agentId },
-      pushEligible: isPushEligibleAttentionReason(params.reason),
-      nowMs,
-    });
+    // Agent attention is delivered independently to every subscribed device.
+    // A focused desktop must not suppress an Android phone's background push.
+    notification.data.eventId = `${this.serverId}:${params.agentId}:${params.reason}:${timestamp}`;
+    const shouldPush = isPushEligibleAttentionReason(params.reason);
 
-    if (plan.shouldPush) {
+    if (shouldPush) {
       void this.pushNotificationSender.send(notification).catch((err) => {
         this.logger.warn({ err, agentId: params.agentId }, "Failed to send push notification");
       });
     }
 
     for (const { ws } of clientEntries) {
-      const shouldNotify =
-        plan.inAppRecipientIndex !== null &&
-        notificationEntries[plan.inAppRecipientIndex]?.ws === ws;
-      const timestamp = new Date().toISOString();
+      const shouldNotify = notificationEntries.some((entry) => entry.ws === ws);
       const connection = this.sessions.get(ws);
       const attentionPayload = {
         agentId: params.agentId,
