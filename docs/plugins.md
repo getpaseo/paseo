@@ -575,6 +575,12 @@ index is the default.
 
 Transformers run synchronously and must be deterministic. When several transformers match, the
 first one that returns a result owns that source item. Plugin and registration ordering is stable.
+Use `addTimelineFooter` for controls that must remain above the composer while chat scrolls.
+Its component receives `agentId`, host, theme and layout under the installation's RPC context.
+Load durable plugin state through an RPC rather than depending on loaded history rows.
+`replaces` hides matching kinds and versions from this plugin's inline timeline, preventing duplicate cards.
+Footers unload with their plugin; an unregistered footer restores inline rendering.
+
 See `plugin-examples/timeline-items` for the complete contract.
 
 A plugin subprocess can also append a canonical plugin row from a server handler:

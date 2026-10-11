@@ -1,0 +1,133 @@
+
+$ pinned-host-evaluate-final.log
+
+> @getpaseo/app@0.11.1 test
+> vitest run src/plugins/evaluate.test.ts --bail=1
+
+
+ RUN  v4.1.7 <checkout>/packages/app
+
+
+ Test Files  1 passed (1)
+      Tests  43 passed (43)
+   Start at  13:29:10
+   Duration  39.50s (transform 32.24s, setup 225ms, import 38.56s, tests 57ms, environment 1ms)
+
+
+$ pinned-host-view-final.log
+
+> @getpaseo/app@0.11.1 test
+> vitest run src/plugins/timeline/view.test.tsx --bail=1
+
+
+ RUN  v4.1.7 <checkout>/packages/app
+
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  13:29:59
+   Duration  75.89s (transform 58.09s, setup 227ms, import 71.19s, tests 2.05s, environment 2.02s)
+
+
+$ pinned-sdk-boundaries.log
+
+> @getpaseo/plugin@0.11.1 test
+> vitest run src/boundaries.test.ts --bail=1
+
+
+ RUN  v4.1.7 <checkout>/packages/plugin
+
+
+ Test Files  1 passed (1)
+      Tests  50 passed (50)
+   Start at  13:22:55
+   Duration  3.84s (transform 1.43s, setup 0ms, import 2.43s, tests 481ms, environment 0ms)
+
+
+$ pinned-host-server-runtime.log
+
+ RUN  v4.1.6 <checkout>/packages/server
+
+
+ Test Files  1 passed (1)
+      Tests  41 passed (41)
+   Start at  13:25:04
+   Duration  211.87s (transform 61.49s, setup 422ms, import 68.33s, tests 142.32s, environment 0ms)
+
+
+$ pinned-host-typecheck-final.log
+
+> @getpaseo/app@0.11.1 typecheck
+> tsgo --noEmit
+
+
+$ pinned-sdk-typecheck.log
+
+> @getpaseo/plugin@0.11.1 typecheck
+> tsgo --noEmit && tsgo -p tsconfig.examples.json --noEmit
+
+
+$ pinned-host-lint-final.log
+
+> paseo@0.11.1 lint
+> oxlint packages/app/src/agent-stream/view.tsx packages/app/src/plugins/buttons/model.test.ts packages/app/src/plugins/command-center/contributions.test.ts packages/app/src/plugins/evaluate.test.ts packages/app/src/plugins/evaluate.ts packages/app/src/plugins/installation-provider.test.tsx packages/app/src/plugins/registry.ts packages/app/src/plugins/sidebar-groups.test.ts packages/app/src/plugins/surface-contribution.test.ts packages/app/src/plugins/theme.test.ts packages/app/src/plugins/timeline/model.test.ts packages/app/src/plugins/timeline/view.test.tsx packages/app/src/plugins/timeline/view.tsx packages/app/src/plugins/types.ts packages/app/src/plugins/workspace-panels/resolution.test.ts packages/plugin/src/client/contracts.ts packages/plugin/src/client/index.ts packages/app/src/plugins/timeline/footers.tsx
+
+Found 0 warnings and 0 errors.
+Finished in 661ms on 18 files with 177 rules using 4 threads.
+
+$ pinned-host-format-final.log
+
+> paseo@0.11.1 format:check:files
+> oxfmt --check docs/plugins.md packages/app/src/agent-stream/view.tsx packages/app/src/plugins/buttons/model.test.ts packages/app/src/plugins/command-center/contributions.test.ts packages/app/src/plugins/evaluate.test.ts packages/app/src/plugins/evaluate.ts packages/app/src/plugins/installation-provider.test.tsx packages/app/src/plugins/registry.ts packages/app/src/plugins/sidebar-groups.test.ts packages/app/src/plugins/surface-contribution.test.ts packages/app/src/plugins/theme.test.ts packages/app/src/plugins/timeline/model.test.ts packages/app/src/plugins/timeline/view.test.tsx packages/app/src/plugins/timeline/view.tsx packages/app/src/plugins/types.ts packages/app/src/plugins/workspace-panels/resolution.test.ts packages/plugin/src/client/contracts.ts packages/plugin/src/client/index.ts public-docs/plugins/reference.md packages/app/src/plugins/timeline/footers.tsx
+
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 2644ms on 20 files using 4 threads.
+
+Intentional duplicate-row regression (restored after failure):
+
+> @getpaseo/app@0.11.1 test
+> vitest run src/plugins/timeline/view.test.tsx -t pins plugin content --bail=1
+
+
+ RUN  v4.1.7 <checkout>/packages/app
+
+ ❯ |unit| src/plugins/timeline/view.test.tsx (7 tests | 1 failed | 6 skipped) 68ms
+     × pins plugin content outside chat history and restores inline rows when removed 64ms
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 6 skipped (7)
+   Start at  13:39:01
+   Duration  28.22s (transform 23.14s, setup 146ms, import 26.40s, tests 68ms, environment 1.32s)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |unit| src/plugins/timeline/view.test.tsx > PluginTimelineItemView > pins plugin content outside chat history and restores inline rows when removed
+AssertionError: expected 'Four tests passedPinned agent-1 on Lo…' to be 'Pinned agent-1 on Local' // Object.is equality
+
+Expected: "Pinned agent-1 on Local"
+Received: "Four tests passedPinned agent-1 on Local"
+
+ ❯ src/plugins/timeline/view.test.tsx:144:35
+    142|       ),
+    143|     );
+    144|     expect(container.textContent).toBe("Pinned agent-1 on Local");
+       |                                   ^
+    145|     await act(async () =>
+    146|       root.render(
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path <checkout>/packages/app
+npm error workspace @getpaseo/app@0.11.1
+npm error location <checkout>/packages/app
+npm error command failed
+npm error command sh -c vitest run src/plugins/timeline/view.test.tsx -t 'pins plugin content' --bail=1
+
+Live browser geometry, with disposable 5000px history content removed after the check:
+{"before":{"x":320,"y":556,"width":960,"height":150},"after":{"x":320,"y":556,"width":960,"height":150},"scrollTop":2000,"stable":true,"clickable":true,"footerInsideHistory":false,"copies":1}
+Long-message edit: 5099 stored characters loaded in full; preview bounded to 2001 characters; panel height 313.1875px in a 696px transcript. Delete left footer height 0 and margin 0px.

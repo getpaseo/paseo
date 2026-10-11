@@ -85,6 +85,7 @@ describe("evaluatePluginClientBundle", () => {
           plugin.addTheme({ id: "night", name: "Night", appearance: "dark", colors: { background: "#000", foreground: "#fff", raised: "#111", control: "#222", border: "#333", mutedForeground: "#aaa", ring: "#555" } }),
           plugin.addTimelineTransformer({ id: "transformer", query: { itemType: "tool_call" }, transform() { return { items: [] }; } }),
           plugin.addTimelineRenderer({ kind: "card", version: 1, schema, Component }),
+          plugin.addTimelineFooter({ id: "pending", replaces: [{ kind: "card", version: 1 }], Component }),
         ];
       `),
       {
@@ -115,6 +116,7 @@ describe("evaluatePluginClientBundle", () => {
         plugin.themes,
         plugin.timelineTransformers,
         plugin.timelineRenderers,
+        plugin.timelineFooters,
       ].every((items) => items.length === 1),
     ).toBe(true);
     expect(pillCount).toBe(1);
@@ -135,6 +137,7 @@ describe("evaluatePluginClientBundle", () => {
         plugin.themes,
         plugin.timelineTransformers,
         plugin.timelineRenderers,
+        plugin.timelineFooters,
       ].every((items) => items.length === 0),
     ).toBe(true);
     expect(pillCount).toBe(0);
@@ -445,6 +448,27 @@ describe("evaluatePluginClientBundle", () => {
         `),
       ),
     ).toThrow("Duplicate Command Center item: review");
+  });
+
+  it("rejects duplicate footer ids and invalid replacement versions", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "review",
+        bundle(`
+      const contribution = { id: "pending", Component() { return null; } };
+      plugin.addTimelineFooter(contribution);
+      plugin.addTimelineFooter(contribution);
+    `),
+      ),
+    ).toThrow("Duplicate timeline footer: pending");
+    expect(() =>
+      evaluatePluginClientBundle(
+        "review",
+        bundle(`
+      plugin.addTimelineFooter({ id: "pending", Component() { return null; }, replaces: [{ kind: "message", version: 0 }] });
+    `),
+      ),
+    ).toThrow("Timeline footer pending has invalid version");
   });
 
   it("runs the client entry with the full runtime context", () => {

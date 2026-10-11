@@ -15,6 +15,7 @@ import type {
   PluginScreenContribution,
   PluginSettingsScreenContribution,
   PluginTimelineRendererContribution,
+  PluginTimelineFooterContribution,
   PluginTimelineTransformerContribution,
   PluginPanelLocation,
   PluginWorkspacePanelContribution,
@@ -42,6 +43,7 @@ export interface EvaluatedPlugin {
   themes: PluginThemeContribution[];
   timelineTransformers: PluginTimelineTransformerContribution[];
   timelineRenderers: PluginTimelineRendererContribution[];
+  timelineFooters: PluginTimelineFooterContribution[];
 }
 
 export interface InstalledPlugin extends EvaluatedPlugin {
@@ -67,6 +69,7 @@ export type {
   PluginSettingsScreenContribution,
   PluginThemeContribution,
   PluginTimelineRendererContribution,
+  PluginTimelineFooterContribution,
   PluginTimelineTransformerContribution,
   PluginWorkspacePanelContribution,
 };

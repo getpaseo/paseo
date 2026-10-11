@@ -65,6 +65,15 @@ function PluginTimelineItemBody({
     return <TimelineItemUnavailable />;
   }
 
+  if (
+    plugin.timelineFooters.some((footer) =>
+      footer.replaces?.some(
+        (replaced) => replaced.kind === item.itemKind && replaced.version === item.version,
+      ),
+    )
+  )
+    return null;
+
   const Component = renderer.Component as ComponentType<PluginTimelineItemProps>;
   const props: PluginTimelineItemProps = {
     agentId,

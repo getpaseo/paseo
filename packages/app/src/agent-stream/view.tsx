@@ -105,6 +105,7 @@ import type { Theme } from "@/styles/theme";
 import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useStreamHistoryWindow } from "./use-stream-history-window";
+import { PluginTimelineFooters } from "@/plugins/timeline/footers";
 import { PluginTimelineItemView, useInstalledTimelineTransform } from "@/plugins/timeline";
 
 function renderLiveAuxiliaryNode(input: {
@@ -1155,6 +1156,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                 </Animated.View>
               </View>
             )}
+            <PluginTimelineFooters
+              agentId={agentId}
+              serverId={resolvedServerId}
+              bottomOverlayClearance={bottomOverlayTailClearance}
+            />
           </AssistantSelectionCopySurface>
         </ToolCallSheetProvider>
       </ChatFind>
