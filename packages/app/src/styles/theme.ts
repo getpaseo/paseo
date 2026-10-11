@@ -281,6 +281,7 @@ export function buildLightSemanticColors(tint: LightThemeConfig) {
 
     accent: tint.accent,
     accentBright: tint.accentBright,
+    link: baseColors.blue[600],
     accentForeground: tint.accentForeground ?? tint.surface0,
 
     destructive: tint.destructive,
@@ -412,6 +413,7 @@ export function buildDarkSemanticColors(tint: DarkThemeConfig) {
 
     accent: tint.accent,
     accentBright: tint.accentBright,
+    link: baseColors.blue[400],
     accentForeground: tint.accentForeground ?? "#ffffff",
 
     destructive: tint.destructive,
