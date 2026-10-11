@@ -79,16 +79,6 @@ function extractPathFromDiffHeader(lines: string[]): string {
   return "unknown";
 }
 
-function isMetadataLine(line: string): boolean {
-  return (
-    line.startsWith("index ") ||
-    line.startsWith("--- ") ||
-    line.startsWith("+++ ") ||
-    line.startsWith("new file mode") ||
-    line.startsWith("deleted file mode")
-  );
-}
-
 function parseHunkHeader(line: string): DiffHunk | null {
   const hunkMatch = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
   if (!hunkMatch) return null;
@@ -115,8 +105,6 @@ function parseSectionBody(lines: string[]): ParsedSectionBody {
 
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i];
-
-    if (isMetadataLine(line)) continue;
 
     const newHunk = parseHunkHeader(line);
     if (newHunk) {
