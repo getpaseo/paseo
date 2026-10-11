@@ -94,8 +94,7 @@ export const StyleSheet = {
 
 /**
  * Like the real HOC, the theme-derived props go under the caller's own props, so a themed
- * control (the switch track, for one) gets real colors in a browser test. A mapping that reads
- * a value this test theme does not model keeps the old behavior: the component, unmapped.
+ * control (the switch track, for one) gets real colors in a browser test.
  */
 export function withUnistyles<P extends object>(
   Component: ComponentType<P>,
@@ -103,13 +102,7 @@ export function withUnistyles<P extends object>(
 ): ComponentType<P> {
   if (!mappings) return Component;
   return function WithTestTheme(props: P) {
-    let themed: Partial<P> = {};
-    try {
-      themed = mappings(testTheme, UnistylesRuntime);
-    } catch {
-      themed = {};
-    }
-    return createElement(Component, { ...themed, ...props });
+    return createElement(Component, { ...mappings(testTheme, UnistylesRuntime), ...props });
   };
 }
 
