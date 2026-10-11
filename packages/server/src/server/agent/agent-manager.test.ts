@@ -12123,6 +12123,43 @@ describe("timeline window backfill", () => {
     }
   });
 
+  test("full-history reads retry after rewind instead of merging the old window", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-rewind-"));
+    const store = new PausedTimelineReadStore();
+    const replacement: AgentTimelineItem = { type: "user_message", text: "after rewind" };
+    const session = new (class extends TestAgentSession {
+      override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        yield { type: "timeline", provider: "codex", item: replacement };
+      }
+    })({ provider: "codex", cwd: workdir });
+    const client = new (class extends TestAgentClient {
+      override async createSession(): Promise<AgentSession> {
+        return session;
+      }
+    })();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      durableTimelineStore: store,
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {});
+    try {
+      await manager.appendTimelineItem(agent.id, { type: "user_message", text: "old branch" });
+      await manager.flush();
+      store.pauseNextRead();
+      const pendingRows = manager.getTimelineRows(agent.id);
+      await store.readStarted.promise;
+      await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+      await manager.flush();
+      store.readAllowed.resolve();
+      expect((await pendingRows).map((row) => row.item)).toEqual([replacement]);
+    } finally {
+      store.readAllowed.resolve();
+      await manager.closeAgent(agent.id);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
   test.each([0, 10])(
     "backfill pages retry the history snapshot after rewind (limit %i)",
     async (limit) => {
@@ -13363,6 +13400,153 @@ describe("durable timeline gap recovery", () => {
     return { manager, agentId: created.id, workdir };
   }
 
+  test.each(["before", "during"])(
+    "seeded child history preserves live completion arriving %s replay",
+    async (arrival) => {
+      const historyStarted = deferred<void>();
+      const historyAllowed = deferred<void>();
+      const session = new (class extends TestAgentSession {
+        override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+          historyStarted.resolve();
+          await historyAllowed.promise;
+          yield {
+            type: "provider_subagent",
+            provider: "codex",
+            event: { type: "upsert", id: "child", title: "Historical title", status: "running" },
+          };
+        }
+      })({ provider: "codex", cwd: "" });
+      const client = new (class extends TestAgentClient {
+        override async resumeSession(): Promise<AgentSession> {
+          return session;
+        }
+      })();
+      const { manager, agentId, workdir } = await resumeWithDurableRows(
+        client,
+        new RecordingTimelineStore(),
+        [gapRow(1, "one")],
+      );
+      const events: AgentManagerEvent[] = [];
+      const unsubscribe = manager.subscribe((event) => events.push(event), {
+        agentId,
+        replayState: false,
+      });
+      try {
+        const complete = async () => {
+          session.pushEvent({
+            type: "provider_subagent",
+            provider: "codex",
+            event: { type: "upsert", id: "child", status: "completed" },
+          });
+          await manager.flush();
+          expect(manager.listProviderSubagents(agentId)).toEqual([
+            expect.objectContaining({ id: "child", status: "completed" }),
+          ]);
+        };
+        if (arrival === "before") await complete();
+        const pending = manager.hydrateTimelineFromProvider(agentId, { broadcast: true });
+        await historyStarted.promise;
+        if (arrival === "during") await complete();
+        historyAllowed.resolve();
+        await pending;
+        expect(manager.listProviderSubagents(agentId)).toEqual([
+          expect.objectContaining({ id: "child", title: "Historical title", status: "completed" }),
+        ]);
+        expect(
+          events
+            .filter((event) => event.type === "provider_subagent" && event.event.type === "upsert")
+            .map((event) => {
+              if (event.type !== "provider_subagent" || event.event.type !== "upsert")
+                throw new Error("Expected child upsert");
+              return event.event.subagent.status;
+            }),
+        ).toEqual(["completed", "completed"]);
+      } finally {
+        historyAllowed.resolve();
+        unsubscribe();
+        await manager.closeAgent(agentId);
+        rmSync(workdir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test("seeded child replay retries preserve live fields and removals", async () => {
+    let failReplay = true;
+    const session = new (class extends TestAgentSession {
+      override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        for (const id of ["child", "removed"]) {
+          yield {
+            type: "provider_subagent",
+            provider: "codex",
+            event: {
+              type: "upsert",
+              id,
+              title: "Old title",
+              description: "Historical description",
+              status: "running",
+            },
+          };
+        }
+        if (failReplay) throw new Error("History unavailable");
+      }
+    })({ provider: "codex", cwd: "" });
+    const client = new (class extends TestAgentClient {
+      override async resumeSession(): Promise<AgentSession> {
+        return session;
+      }
+    })();
+    const { manager, agentId, workdir } = await resumeWithDurableRows(
+      client,
+      new RecordingTimelineStore(),
+      [gapRow(1, "one")],
+    );
+    try {
+      session.pushEvent({
+        type: "provider_subagent",
+        provider: "codex",
+        event: { type: "upsert", id: "child", status: "completed" },
+      });
+      session.pushEvent({
+        type: "provider_subagent",
+        provider: "codex",
+        event: { type: "upsert", id: "child", title: "Live title" },
+      });
+      session.pushEvent({
+        type: "provider_subagent",
+        provider: "codex",
+        event: { type: "remove", id: "removed" },
+      });
+      await manager.flush();
+      await manager.hydrateTimelineFromProvider(agentId);
+      expect(manager.listProviderSubagents(agentId)).toEqual([
+        expect.objectContaining({ id: "child", title: "Live title", status: "completed" }),
+      ]);
+      failReplay = false;
+      await manager.hydrateTimelineFromProvider(agentId);
+      expect(manager.listProviderSubagents(agentId)).toEqual([
+        expect.objectContaining({
+          id: "child",
+          title: "Live title",
+          description: "Historical description",
+          status: "completed",
+        }),
+      ]);
+      // Once replay has settled, later live activity is authoritative again.
+      session.pushEvent({
+        type: "provider_subagent",
+        provider: "codex",
+        event: { type: "upsert", id: "child", status: "running" },
+      });
+      await manager.flush();
+      expect(manager.listProviderSubagents(agentId)).toEqual([
+        expect.objectContaining({ id: "child", status: "running" }),
+      ]);
+    } finally {
+      await manager.closeAgent(agentId);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
   test("re-priming from provider history heals a seq gap left by a failed durable write", async () => {
     class GapHistorySession extends TestAgentSession {
       override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
@@ -13429,7 +13613,7 @@ describe("durable timeline gap recovery", () => {
     }
   });
 
-  test("does not re-prime a contiguous durable log on resume", async () => {
+  test("rebuilds a divergent contiguous durable log from the provider authority", async () => {
     class OtherHistorySession extends TestAgentSession {
       override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
         yield {
@@ -13456,13 +13640,10 @@ describe("durable timeline gap recovery", () => {
       await manager.hydrateTimelineFromProvider(agentId);
       await manager.flush();
 
-      // A contiguous log is already authoritative; the (different) provider
-      // history must not replace it.
+      // Contiguous stream rows alone cannot prove an item boundary in a
+      // divergent transcript. The provider's complete copy is authoritative.
       const rows = await manager.getTimelineRows(agentId);
-      expect(rows.map((row) => row.item)).toEqual([
-        { type: "user_message", text: "one", clientMessageId: "d1" },
-        { type: "user_message", text: "two", clientMessageId: "d2" },
-      ]);
+      expect(rows.map((row) => row.item)).toEqual([{ type: "user_message", text: "other" }]);
     } finally {
       await manager.closeAgent(agentId).catch(() => undefined);
       rmSync(workdir, { recursive: true, force: true });
@@ -13556,8 +13737,7 @@ describe("durable timeline gap recovery", () => {
   /**
    * The provider replays a conversation whose disk rows and replay items
    * differ in granularity, so a row-count comparison cannot see the tail the
-   * crash lost. Each case plants 3 durable rows and a 3-item replay; only
-   * identity/content alignment can find the unrecorded item.
+   * crash lost. Recovery needs a checked item boundary or a complete rebuild.
    */
   async function resumeWithCrashTailMismatch(
     durableRows: readonly AgentTimelineRow[],
@@ -13580,6 +13760,48 @@ describe("durable timeline gap recovery", () => {
     })();
     return resumeWithDurableRows(client, new RecordingTimelineStore(), durableRows);
   }
+
+  test("rebuilds from provider history when reasoning cannot establish a saved item boundary", async () => {
+    const timestamp = "2026-01-01T00:00:00.000Z";
+    const historyItems: AgentTimelineItem[] = [
+      { type: "user_message", text: "one", messageId: "pm1" },
+      { type: "reasoning", text: "final reasoning" },
+      { type: "assistant_message", text: "unsaved reply", messageId: "m2" },
+    ];
+    const { manager, agentId, workdir } = await resumeWithCrashTailMismatch(
+      [
+        { seq: 1, timestamp, item: historyItems[0] },
+        { seq: 2, timestamp, item: { type: "reasoning", text: "partial " } },
+        { seq: 3, timestamp, item: { type: "reasoning", text: "reasoning " } },
+        { seq: 4, timestamp, item: { type: "reasoning", text: "before crash" } },
+      ],
+      historyItems,
+    );
+    const epochBefore = manager.getTimelineEpoch(agentId);
+    const replacements: AgentManagerEvent[] = [];
+    const unsubscribe = manager.subscribe(
+      (event) => {
+        if (event.type === "timeline_replacement") replacements.push(event);
+      },
+      { agentId, replayState: false },
+    );
+    try {
+      await manager.hydrateTimelineFromProvider(agentId);
+      await manager.flush();
+      expect((await manager.getTimelineRows(agentId)).map((row) => row.item)).toEqual(historyItems);
+      expect(manager.getTimelineEpoch(agentId)).not.toBe(epochBefore);
+      expect(replacements).toEqual([
+        { type: "timeline_replacement", agentId, epoch: manager.getTimelineEpoch(agentId) },
+      ]);
+      await manager.hydrateTimelineFromProvider(agentId);
+      expect((await manager.getTimelineRows(agentId)).map((row) => row.item)).toEqual(historyItems);
+      expect(replacements).toHaveLength(1);
+    } finally {
+      unsubscribe();
+      await manager.closeAgent(agentId);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
 
   test("replays the provider's tail when chunk rows mask a count mismatch", async () => {
     const TS = "2026-01-01T00:00:00.000Z";

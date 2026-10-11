@@ -101,6 +101,7 @@ import { isPaseoToolPolicyEnabled } from "./paseo-tool-policy.js";
 import {
   ProviderSubagentStore,
   type ProviderSubagentDescriptor,
+  type ProviderSubagentInputEvent,
   type ProviderSubagentStoreEvent,
 } from "./provider-subagents/store.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
@@ -560,6 +561,8 @@ interface ManagedAgentBase {
 
 type ManagedAgentWithSession = ManagedAgentBase & {
   session: AgentSession;
+  /** Live descriptor fields received before history restoration take precedence over replay. */
+  liveSubagentUpdates: Map<string, Exclude<ProviderSubagentInputEvent, { type: "timeline" }>>;
 };
 
 type ManagedAgentInitializing = ManagedAgentWithSession & {
@@ -920,9 +923,6 @@ export class AgentManager {
   private readonly agents = new Map<string, LiveManagedAgent>();
   private readonly timelineStore: InMemoryAgentTimelineStore;
   private readonly durableTimelineWatermarks = new Map<string, number>();
-  // Rows seeded from the durable store at register: first hydration compares
-  // the provider's copy of the seeded log against this count.
-  private readonly durableTimelineSeededRowCounts = new Map<string, number>();
   /** Seqs with a durable write in flight or still failing (retried later). */
   private readonly durableTimelinePendingSeqs = new Map<string, Set<number>>();
   /** Rows whose direct write attempts are exhausted, awaiting a healthy disk. */
@@ -1442,13 +1442,9 @@ export class AgentManager {
     if (!this.durableTimelineStore) {
       return this.timelineStore.getRows(id);
     }
-    // Full-history reads (timeline search, prompt listing) must also see rows
-    // the background durable write has not committed yet, so the window is
-    // merged in on top of the disk rows.
-    return projectTimelineRows({
-      rows: await this.getMergedTimelineRows(id),
-      mode: "projected",
-    }).map((entry) => Object.assign({ seq: entry.seqEnd }, entry));
+    // Share the page reader's snapshot and generation check so search, prompt
+    // listing, and fork context cannot merge rows from a replaced history.
+    return (await this.fetchTimelineWithBackfill(id, { direction: "tail", limit: 0 })).rows;
   }
 
   fetchTimeline(id: string, options?: AgentTimelineFetchOptions): AgentTimelineFetchResult {
@@ -4339,7 +4335,6 @@ export class AgentManager {
       // the max seq (a write that failed before the restart) stays
       // un-persisted; provider history re-prime is its recovery path.
       this.setDurableWatermarkForAgent(agentId, durableTimelineSeed.watermark);
-      this.durableTimelineSeededRowCounts.set(agentId, durableTimelineSeed.rowCount);
     }
     if (options?.timelineRows?.length) {
       this.enqueueDurableTimelineBulkInsert(agentId, options.timelineRows);
@@ -4417,6 +4412,7 @@ export class AgentManager {
       ),
       historyPrimed,
       subagentHistoryRestored,
+      liveSubagentUpdates: new Map(),
       lastUserMessageAt: options?.lastUserMessageAt ?? null,
       lastUsage: options?.lastUsage,
       lastError: options?.lastError,
@@ -4429,7 +4425,7 @@ export class AgentManager {
   private async loadCommittedTimelineSeed(
     agentId: string,
     now: Date,
-  ): Promise<{ seed: SeedAgentTimelineOptions; watermark: number; rowCount: number } | null> {
+  ): Promise<{ seed: SeedAgentTimelineOptions; watermark: number } | null> {
     if (!this.durableTimelineStore) return null;
     const rows = await this.durableTimelineStore.getCommittedRows(agentId);
     let maxSeq = 0;
@@ -4441,7 +4437,6 @@ export class AgentManager {
       // A gap below the max seq means a write failed before the restart; the
       // seeded watermark must stop at the contiguous prefix, not the max.
       watermark: contiguousCommittedPrefix(rows.map((row) => row.seq)),
-      rowCount: rows.length,
     };
   }
 
@@ -4483,7 +4478,6 @@ export class AgentManager {
   private discardRetainedAgentState(agentId: string): void {
     this.timelineStore.delete(agentId);
     this.durableTimelineWatermarks.delete(agentId);
-    this.durableTimelineSeededRowCounts.delete(agentId);
     this.durableTimelinePendingSeqs.delete(agentId);
     this.durableTimelineFailedWrites.delete(agentId);
     this.durableTimelineMaxSeen.delete(agentId);
@@ -4597,6 +4591,19 @@ export class AgentManager {
   ): Promise<void> {
     if (event.type === "provider_subagent") {
       const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+      if (!agent.subagentHistoryRestored && event.event.type !== "timeline") {
+        const previous = agent.liveSubagentUpdates.get(event.event.id);
+        agent.liveSubagentUpdates.set(
+          event.event.id,
+          event.event.type === "upsert" && update.type === "upsert"
+            ? {
+                ...(previous?.type === "upsert" ? previous : {}),
+                ...event.event,
+                timestamp: update.subagent.updatedAt,
+              }
+            : event.event,
+        );
+      }
       this.dispatch({ type: "provider_subagent", event: update });
       return;
     }
@@ -4757,7 +4764,12 @@ export class AgentManager {
           typeof options?.broadcast === "function"
             ? options.broadcast()
             : (options?.broadcast ?? false);
-        await this.verifySeededTimelineAndRestoreSubagents(agent, broadcast);
+        const broadcastTimeline = options?.broadcastTimeline ?? broadcast;
+        await this.verifySeededTimelineAndRestoreSubagents(
+          agent,
+          broadcast,
+          typeof broadcastTimeline === "function" ? broadcastTimeline() : broadcastTimeline,
+        );
       }
       return;
     }
@@ -4812,6 +4824,7 @@ export class AgentManager {
   private async verifySeededTimelineAndRestoreSubagents(
     agent: ActiveManagedAgent,
     broadcast: boolean,
+    broadcastTimeline: boolean,
   ): Promise<void> {
     const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
     const subagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
@@ -4831,9 +4844,31 @@ export class AgentManager {
       return;
     }
 
-    const seededRowCount = this.durableTimelineSeededRowCounts.get(agent.id) ?? 0;
     if (this.timelineStore.getCanonicalRows(agent.id).length === 0) {
-      const missed = await this.findMissedTailEvents(agent.id, historyEvents, seededRowCount);
+      let missed: Extract<AgentStreamEvent, { type: "timeline" }>[] | null;
+      try {
+        missed = await this.findMissedTailEvents(agent.id, historyEvents);
+      } catch (error) {
+        this.logger.warn({ err: error, agentId: agent.id }, "Failed to verify seeded timeline");
+        return;
+      }
+      if (missed === null) {
+        // Stream rows and replay items have different granularity. Without a
+        // checked item boundary, rebuild from the provider's complete copy.
+        await this.forceHydrateTimelineFromLegacyProviderHistory(
+          agent,
+          false,
+          broadcast,
+          broadcastTimeline,
+          [...historyEvents, ...subagentEvents],
+        );
+        this.dispatch({
+          type: "timeline_replacement",
+          agentId: agent.id,
+          epoch: this.getTimelineEpoch(agent.id),
+        });
+        return;
+      }
       // The provider holds timeline items that never reached disk: a crash
       // between an append and its durable write. Replay the missing tail
       // onto the seeded seqs; the rows keep the log's numbering and their
@@ -4847,13 +4882,50 @@ export class AgentManager {
       }
     }
 
-    for (const event of subagentEvents) {
-      const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
-      if (broadcast) {
-        this.dispatch({ type: "provider_subagent", event: update });
+    this.restoreProviderSubagentHistory(agent, subagentEvents, { broadcast });
+  }
+
+  private restoreProviderSubagentHistory(
+    agent: ActiveManagedAgent,
+    history: readonly Extract<AgentStreamEvent, { type: "provider_subagent" }>[],
+    options: { replace?: boolean; broadcast: boolean },
+  ): AgentManagerEvent[] {
+    const events: AgentManagerEvent[] = [];
+    if (options.replace) {
+      for (const event of this.providerSubagents.deleteParent(agent.id)) {
+        if (!agent.liveSubagentUpdates.has(event.subagentId)) {
+          events.push({ type: "provider_subagent", event });
+        }
+      }
+      for (const live of agent.liveSubagentUpdates.values()) {
+        this.providerSubagents.apply(agent.id, agent.provider, live);
       }
     }
+    for (const event of history) {
+      const update = this.applyReplayedSubagentEvent(agent, event);
+      if (update) events.push({ type: "provider_subagent", event: update });
+    }
     agent.subagentHistoryRestored = true;
+    agent.liveSubagentUpdates.clear();
+    if (options.broadcast) {
+      for (const event of events) this.dispatch(event);
+    }
+    return events;
+  }
+
+  private applyReplayedSubagentEvent(
+    agent: ActiveManagedAgent,
+    event: Extract<AgentStreamEvent, { type: "provider_subagent" }>,
+  ): ProviderSubagentStoreEvent | null {
+    const live = agent.liveSubagentUpdates.get(event.event.id);
+    // A live removal must not be undone by replay. A historical removal
+    // likewise cannot delete a child announced by the live subscription.
+    if (live?.type === "remove" || (live && event.event.type === "remove")) return null;
+    const input =
+      event.event.type === "upsert" && live?.type === "upsert"
+        ? { ...event.event, ...live }
+        : event.event;
+    return this.providerSubagents.apply(agent.id, event.provider, input);
   }
 
   /**
@@ -4869,25 +4941,17 @@ export class AgentManager {
    * the projected seeded items with the replay items instead: by identity
    * where one exists (message ids, tool call ids), by text otherwise. The
    * missed tail is the replay suffix past the last aligned item, and it
-   * always ends at the provider's newest item. When the alignment cannot
-   * consume the whole seeded log (a middle divergence neither copy can
-   * explain), fall back to the row-count rule rather than guess.
+   * always ends at the provider's newest item. An unresolved boundary returns
+   * null so the caller rebuilds instead of treating stream rows as items.
    */
   private async findMissedTailEvents(
     agentId: string,
     historyEvents: readonly Extract<AgentStreamEvent, { type: "timeline" }>[],
-    seededRowCount: number,
-  ): Promise<Extract<AgentStreamEvent, { type: "timeline" }>[]> {
-    const byCount =
-      historyEvents.length > seededRowCount ? historyEvents.slice(seededRowCount) : [];
+  ): Promise<Extract<AgentStreamEvent, { type: "timeline" }>[] | null> {
     const durableStore = this.durableTimelineStore;
-    if (!durableStore) return byCount;
-    let seededRows: AgentTimelineRow[];
-    try {
-      seededRows = await durableStore.getCommittedRows(agentId);
-    } catch {
-      return byCount;
-    }
+    // An unavailable provider transcript must not erase the surviving log.
+    if (!durableStore || historyEvents.length === 0) return [];
+    const seededRows = await durableStore.getCommittedRows(agentId);
     const seededItems = projectTimelineRows({ rows: seededRows, mode: "projected" }).map(
       (entry) => entry.item,
     );
@@ -4903,13 +4967,13 @@ export class AgentManager {
       }
       // Daemon-only rows (system errors, compaction) never appear in the
       // provider's replay; skip them so the alignment stays anchored.
-      if (candidate !== undefined && isDaemonOnlyTimelineItem(seededItems[seededIndex])) {
+      if (isDaemonOnlyTimelineItem(seededItems[seededIndex])) {
         seededIndex += 1;
         continue;
       }
       break;
     }
-    return seededIndex === seededItems.length ? historyEvents.slice(replayIndex) : byCount;
+    return seededIndex === seededItems.length ? historyEvents.slice(replayIndex) : null;
   }
 
   private async forceHydrateTimelineFromLegacyProviderHistory(
@@ -4917,10 +4981,13 @@ export class AgentManager {
     explicit: boolean,
     broadcast: boolean,
     broadcastTimeline: boolean,
+    history:
+      | AsyncIterable<AgentStreamEvent>
+      | Iterable<AgentStreamEvent> = agent.session.streamHistory(),
   ): Promise<void> {
     const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
     const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
-    for await (const rawEvent of agent.session.streamHistory()) {
+    for await (const rawEvent of history) {
       const event = limitAgentStreamEventContent(rawEvent);
       if (event.type === "timeline") {
         const item = projectAgentMessage(event.item);
@@ -4938,19 +5005,11 @@ export class AgentManager {
       // destroy them. An explicit rebuild (a successful rewind) is
       // authoritative: an empty history is a legitimate clear. Subagent
       // state is synced from the history either way.
-      for (const event of this.providerSubagents.deleteParent(agent.id)) {
-        if (broadcast) {
-          this.dispatch({ type: "provider_subagent", event });
-        }
-      }
-      for (const event of providerSubagentEvents) {
-        const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
-        if (broadcast) {
-          this.dispatch({ type: "provider_subagent", event: update });
-        }
-      }
+      this.restoreProviderSubagentHistory(agent, providerSubagentEvents, {
+        replace: true,
+        broadcast,
+      });
       agent.historyPrimed = true;
-      agent.subagentHistoryRestored = true;
       return;
     }
 
@@ -4960,18 +5019,10 @@ export class AgentManager {
     this.timelineStore.initialize(agent.id, { timestamp: new Date().toISOString() });
     agent.historyPrimed = true;
 
-    for (const event of this.providerSubagents.deleteParent(agent.id)) {
-      if (broadcast) {
-        this.dispatch({ type: "provider_subagent", event });
-      }
-    }
-    for (const event of providerSubagentEvents) {
-      const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
-      if (broadcast) {
-        this.dispatch({ type: "provider_subagent", event: update });
-      }
-    }
-    agent.subagentHistoryRestored = true;
+    this.restoreProviderSubagentHistory(agent, providerSubagentEvents, {
+      replace: true,
+      broadcast,
+    });
     for (const event of historyEvents) {
       const row = this.recordTimeline(
         agent.id,
@@ -5035,16 +5086,13 @@ export class AgentManager {
       event: Extract<AgentStreamEvent, { type: "timeline" }>;
       row: AgentTimelineRow;
     }> = [];
-    const providerSubagentEvents: AgentManagerEvent[] = [];
-    for (const event of historySubagentEvents) {
-      const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
-      const managerEvent: AgentManagerEvent = { type: "provider_subagent", event: update };
-      if (deferredBroadcast) {
-        providerSubagentEvents.push(managerEvent);
-      } else if (broadcast) {
-        this.dispatch(managerEvent);
-      }
-    }
+    const providerSubagentEvents = this.restoreProviderSubagentHistory(
+      agent,
+      historySubagentEvents,
+      {
+        broadcast: !deferredBroadcast && broadcast === true,
+      },
+    );
     for (const event of historyEvents) {
       const row = this.recordTimeline(
         agent.id,
@@ -5062,7 +5110,6 @@ export class AgentManager {
       }
     }
     agent.historyPrimed = true;
-    agent.subagentHistoryRestored = true;
 
     if (!deferredBroadcast) return;
     const dispatchSubagents = resolveBroadcast(broadcast);

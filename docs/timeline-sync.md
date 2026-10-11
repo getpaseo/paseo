@@ -43,10 +43,12 @@ file on each request; there is no resident history cache. An oversized full-hist
 therefore allocate substantially more than the retained window.
 
 Provider history remains the recovery authority. Resume reuses durable history and checks
-provider history for a tail lost before it was written. A gapped log is rebuilt when provider history
-is available; otherwise the daemon keeps the surviving durable rows. An explicit rewind remains
+provider history for a tail lost before it was written. If the saved transcript cannot be matched
+to provider history, recovery rebuilds from the provider's complete copy. A gapped log is rebuilt
+when provider history is available; otherwise the daemon keeps the surviving durable rows. An explicit rewind remains
 authoritative, including an empty history. Provider-subagent state is replayed separately because
-it is not durable, and a failed subagent replay does not block timeline loading.
+it is not durable, and a failed subagent replay does not block timeline loading. Live child updates
+received during recovery take precedence over historical descriptor fields.
 
 Reconnect and refresh notify modern clients through `agent.timeline.replacement`; clients fetch
 their own pages. Pre-`timelineReplacementInvalidation` clients still receive full replay, including
