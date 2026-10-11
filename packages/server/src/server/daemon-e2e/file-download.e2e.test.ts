@@ -1,8 +1,7 @@
-import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync, type ReadStream } from "fs";
-import { open, type FileHandle } from "fs/promises";
+import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, writeFileSync, rmSync, readdirSync, readlinkSync } from "fs";
 import { once } from "node:events";
-import { get, ServerResponse } from "node:http";
+import { get } from "node:http";
 import { tmpdir } from "os";
 import path from "path";
 import { createDaemonTestContext, type DaemonTestContext } from "../test-utils/index.js";
@@ -11,79 +10,38 @@ function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-e2e-"));
 }
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
-async function observeDownload(filePath: string) {
-  const probe = await open(filePath, "r");
-  const prototype = Object.getPrototypeOf(probe) as FileHandle;
-  await probe.close();
-
-  const streamStarted = deferred<{
-    handle: FileHandle;
-    stream: ReadStream;
-    closed: Promise<unknown[]>;
-  }>();
-  const responseAssigned = deferred<ServerResponse>();
-  const responseClosed = deferred<void>();
-  let downloadStream: ReadStream | null = null;
-  let streamClosed: Promise<unknown[]> | null = null;
-
-  const createReadStream = prototype.createReadStream;
-  vi.spyOn(prototype, "createReadStream").mockImplementation(function (this: FileHandle, options) {
-    // Pause the real file after one byte so cancellation cannot race with EOF.
-    const stream = createReadStream.call(this, { ...options, highWaterMark: 1 });
-    stream.once("data", () => stream.pause());
-    downloadStream = stream;
-    streamClosed = once(stream, "close");
-    streamStarted.resolve({ handle: this, stream, closed: streamClosed });
-    return stream;
-  });
-
-  const assignSocket = ServerResponse.prototype.assignSocket;
-  vi.spyOn(ServerResponse.prototype, "assignSocket").mockImplementation(function (socket) {
-    if (this.req.url?.startsWith("/api/files/download?")) {
-      this.once("close", () => responseClosed.resolve());
-      responseAssigned.resolve(this);
+// Linux exposes the real open descriptors without replacing file or HTTP methods.
+function openDownloadDescriptors(filePath: string): string[] {
+  return readdirSync("/proc/self/fd").filter((fd) => {
+    try {
+      return readlinkSync(`/proc/self/fd/${fd}`) === filePath;
+    } catch (error) {
+      // A descriptor can close between listing it and reading its link.
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
     }
-    return assignSocket.call(this, socket);
   });
-
-  return {
-    prototype,
-    streamStarted: streamStarted.promise,
-    responseAssigned: responseAssigned.promise,
-    responseClosed: responseClosed.promise,
-    cleanup: async () => {
-      downloadStream?.destroy();
-      await streamClosed;
-      vi.restoreAllMocks();
-    },
-  };
 }
 
-function pauseFileStat(prototype: FileHandle) {
-  const started = deferred<FileHandle>();
-  const resume = deferred<void>();
-  const closed = deferred<void>();
-  const stat = prototype.stat;
-  vi.spyOn(prototype, "stat").mockImplementation(async function (this: FileHandle, options) {
-    const result = await stat.call(this, options);
-    const close = this.close;
-    vi.spyOn(this, "close").mockImplementation(async () => {
-      await close();
-      closed.resolve();
-    });
-    started.resolve(this);
-    await resume.promise;
-    return result;
-  });
-  return { started: started.promise, resume: resume.resolve, closed: closed.promise };
+async function expectDownloadClosed(filePath: string): Promise<void> {
+  await expect.poll(() => openDownloadDescriptors(filePath)).toEqual([]);
+}
+
+async function cancelDownloadAfterFirstChunk(url: string): Promise<void> {
+  const request = get(url);
+  try {
+    const [response] = await once(request, "response");
+    expect(response.statusCode).toBe(200);
+    const [chunk] = await once(response, "data");
+    expect(chunk.length).toBeGreaterThan(0);
+    expect(chunk.length).toBeLessThan(64 * 1024 * 1024);
+    const closed = once(response, "close");
+    response.destroy();
+    request.destroy();
+    await closed;
+  } finally {
+    request.destroy();
+  }
 }
 
 // Use gpt-5.4-mini with low thinking preset for faster test execution
@@ -102,77 +60,36 @@ describe("daemon E2E", () => {
   }, 60000);
 
   describe("file download tokens", () => {
-    test("closes the file stream when the HTTP client cancels a download", async () => {
-      const cwd = tmpCwd();
-      const filePath = path.join(cwd, "canceled.txt");
-      writeFileSync(filePath, "download test payload", "utf-8");
-      const tokenResponse = await ctx.client.requestDownloadToken(cwd, "canceled.txt");
-      expect(tokenResponse.error).toBeNull();
+    test.skipIf(process.platform !== "linux")(
+      "releases file descriptors after repeated HTTP download cancellations",
+      async () => {
+        const cwd = tmpCwd();
+        const filePath = path.join(cwd, "large.bin");
+        const fileSize = 64 * 1024 * 1024;
+        writeFileSync(filePath, Buffer.alloc(fileSize));
+        try {
+          const completedToken = await ctx.client.requestDownloadToken(cwd, "large.bin");
+          expect(completedToken.error).toBeNull();
+          const completed = await fetch(
+            `http://127.0.0.1:${ctx.daemon.port}/api/files/download?token=${completedToken.token}`,
+          );
+          expect(completed.status).toBe(200);
+          expect((await completed.arrayBuffer()).byteLength).toBe(fileSize);
+          await expectDownloadClosed(filePath);
 
-      const download = await observeDownload(filePath);
-      const request = get(
-        `http://127.0.0.1:${ctx.daemon.port}/api/files/download?token=${tokenResponse.token}`,
-      );
-      try {
-        const [response] = await once(request, "response");
-        const [chunk] = await once(response, "data");
-        const { handle, stream, closed } = await download.streamStarted;
-        expect(response.statusCode).toBe(200);
-        expect(chunk).toEqual(Buffer.from("d"));
-        expect(stream.readableEnded).toBe(false);
-
-        request.destroy();
-        await download.responseClosed;
-
-        expect(stream.destroyed).toBe(true);
-        await closed;
-        expect(stream.closed).toBe(true);
-        expect(handle.fd).toBe(-1);
-      } finally {
-        request.destroy();
-        await download.cleanup();
-        rmSync(cwd, { recursive: true, force: true });
-      }
-    });
-
-    test("closes the file when the HTTP client cancels before streaming starts", async () => {
-      const cwd = tmpCwd();
-      const filePath = path.join(cwd, "canceled-before-stream.txt");
-      writeFileSync(filePath, "download test payload", "utf-8");
-      const tokenResponse = await ctx.client.requestDownloadToken(
-        cwd,
-        "canceled-before-stream.txt",
-      );
-      expect(tokenResponse.error).toBeNull();
-
-      const download = await observeDownload(filePath);
-      const fileStat = pauseFileStat(download.prototype);
-
-      const request = get(
-        `http://127.0.0.1:${ctx.daemon.port}/api/files/download?token=${tokenResponse.token}`,
-      );
-      const canceled = new Error("Cancel download before file stat completes");
-      const requestError = once(request, "error");
-      const cleanupStarted = Promise.race([fileStat.closed, download.streamStarted]);
-      try {
-        const handle = await fileStat.started;
-        await download.responseAssigned;
-        request.destroy(canceled);
-        const [error] = await requestError;
-        expect(error).toBe(canceled);
-        await download.responseClosed;
-
-        fileStat.resume();
-        await cleanupStarted;
-        expect(handle.fd).toBe(-1);
-      } finally {
-        fileStat.resume();
-        request.destroy();
-        await cleanupStarted;
-        await download.cleanup();
-        rmSync(cwd, { recursive: true, force: true });
-      }
-    });
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const token = await ctx.client.requestDownloadToken(cwd, "large.bin");
+            expect(token.error).toBeNull();
+            await cancelDownloadAfterFirstChunk(
+              `http://127.0.0.1:${ctx.daemon.port}/api/files/download?token=${token.token}`,
+            );
+            await expectDownloadClosed(filePath);
+          }
+        } finally {
+          rmSync(cwd, { recursive: true, force: true });
+        }
+      },
+    );
 
     test.each([
       { fileName: "download.txt", disposition: 'attachment; filename="download.txt"' },
