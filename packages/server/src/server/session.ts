@@ -2983,6 +2983,8 @@ export class Session {
     source?: object,
   ): Promise<void> | undefined {
     switch (msg.type) {
+      case "fs.file.read.cancel.request":
+        return this.workspaceFilesSession.handleFileReadCancel(msg, source);
       case "file_explorer_request":
         return this.workspaceFilesSession.handleFileExplorerRequest(msg, source);
       case "fs.file.subscribe.request":

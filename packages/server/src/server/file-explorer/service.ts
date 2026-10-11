@@ -93,6 +93,29 @@ const TEXT_MIME_TYPES: Record<string, string> = {
 };
 
 const DEFAULT_TEXT_MIME_TYPE = "text/plain";
+const DOCUMENT_MIME_TYPES: Record<string, string> = {
+  ".pdf": "application/pdf",
+  ".doc": "application/msword",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".xls": "application/vnd.ms-excel",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ".ppt": "application/vnd.ms-powerpoint",
+  ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ".zip": "application/zip",
+  ".mp4": "video/mp4",
+  ".m4v": "video/mp4",
+  ".mov": "video/quicktime",
+  ".webm": "video/webm",
+  ".ogv": "video/ogg",
+  ".mkv": "video/x-matroska",
+  ".avi": "video/x-msvideo",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".m4a": "audio/mp4",
+  ".aac": "audio/aac",
+  ".flac": "audio/flac",
+  ".ogg": "audio/ogg",
+};
 const FILE_TYPE_SAMPLE_BYTES = 8192;
 export const FILE_EXPLORER_STREAM_CHUNK_BYTES = 256 * 1024;
 export const MAX_EDITABLE_FILE_BYTES = 1024 * 1024;
@@ -266,13 +289,13 @@ export async function readExplorerFileBytes({
       };
     }
 
-    if (isLikelyBinary(buffer) || !isValidUtf8(buffer)) {
+    if (ext in DOCUMENT_MIME_TYPES || isLikelyBinary(buffer) || !isValidUtf8(buffer)) {
       return {
         ...basePayload,
         kind: "binary",
         encoding: "binary",
         bytes: buffer,
-        mimeType: "application/octet-stream",
+        mimeType: DOCUMENT_MIME_TYPES[ext] ?? "application/octet-stream",
       };
     }
 
@@ -305,7 +328,8 @@ export async function streamExplorerFile(
     const advertisedRevision = fileRevision(stats);
     const ext = path.extname(filePath.resolvedPath).toLowerCase();
     const isImage = ext in IMAGE_MIME_TYPES;
-    const isBinary = isImage || (await isFileHandleBinary(handle, advertisedSize));
+    const isBinary =
+      isImage || ext in DOCUMENT_MIME_TYPES || (await isFileHandleBinary(handle, advertisedSize));
     let kind: ExplorerFileKind = "text";
     let mimeType = textMimeTypeForExtension(ext);
     if (isImage) {
@@ -313,7 +337,7 @@ export async function streamExplorerFile(
       mimeType = IMAGE_MIME_TYPES[ext];
     } else if (isBinary) {
       kind = "binary";
-      mimeType = "application/octet-stream";
+      mimeType = DOCUMENT_MIME_TYPES[ext] ?? "application/octet-stream";
     }
 
     await consume({
@@ -552,6 +576,8 @@ export async function getDownloadableFileInfo({ root, relativePath }: ReadFilePa
     let mimeType = "application/octet-stream";
     if (ext in IMAGE_MIME_TYPES) {
       mimeType = IMAGE_MIME_TYPES[ext];
+    } else if (ext in DOCUMENT_MIME_TYPES) {
+      mimeType = DOCUMENT_MIME_TYPES[ext];
     } else {
       const sample = Buffer.alloc(FILE_TYPE_SAMPLE_BYTES);
       const { bytesRead } = await handle.read(sample, 0, sample.length, 0);
