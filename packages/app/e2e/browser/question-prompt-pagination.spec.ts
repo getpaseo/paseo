@@ -1,4 +1,4 @@
-import { test } from "../support/fixtures";
+import { expect, test, type Page } from "../support/fixtures";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import {
   chooseQuestionOption,
@@ -23,7 +23,79 @@ const SUCCESS_QUESTION = "What success criteria should we use?";
 const REPO_URL_QUESTION = "What is the GitHub private repo URL to push to?";
 const COMMIT_MESSAGE_QUESTION = "What should the first commit message be?";
 
+function selectedText(page: Page) {
+  return page.evaluate(() => window.getSelection()?.toString());
+}
+
+function clipboardText(page: Page) {
+  return page.evaluate(() => navigator.clipboard.readText());
+}
+
 test.describe("Question prompt pagination", () => {
+  test("copies question text without selecting an answer or advancing", async ({
+    page,
+    context,
+  }) => {
+    test.setTimeout(180_000);
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "question-selection-",
+      title: "Question text selection e2e",
+      initialPrompt: "Emit synthetic questions.",
+    });
+
+    try {
+      await openAgentRoute(page, session);
+      await waitForQuestionPrompt(page, 120_000);
+
+      const card = page.getByTestId("question-form-card").first();
+      const question = card.getByTestId("question-form-current-question");
+      await expect(question).toHaveText(SURFACE_QUESTION);
+      await question.scrollIntoViewIfNeeded();
+      const bounds = await question.boundingBox();
+      if (!bounds) throw new Error("Question text is not visible");
+
+      const y = bounds.y + bounds.height / 2;
+      await page.mouse.move(bounds.x + 1, y);
+      await page.mouse.down();
+      await page.mouse.move(bounds.x + bounds.width - 1, y, { steps: 12 });
+      await page.mouse.up();
+      await expect.poll(() => selectedText(page)).toBe(SURFACE_QUESTION);
+      await page.keyboard.press("ControlOrMeta+C");
+      await expect.poll(() => clipboardText(page)).toBe(SURFACE_QUESTION);
+
+      await question.dblclick({ position: { x: 10, y: bounds.height / 2 } });
+      await expect.poll(() => selectedText(page)).toBe("Which");
+      await page.keyboard.press("ControlOrMeta+C");
+      await expect.poll(() => clipboardText(page)).toBe("Which");
+
+      await expectCurrentQuestion(page, {
+        index: 1,
+        total: TOTAL_QUESTIONS,
+        question: SURFACE_QUESTION,
+      });
+      await expect(card.getByRole("radio", { name: "App", exact: true })).toHaveAttribute(
+        "aria-checked",
+        "false",
+      );
+      await expect(card.getByRole("radio", { name: "Desktop", exact: true })).toHaveAttribute(
+        "aria-checked",
+        "false",
+      );
+      await expectQuestionPrimaryActionDisabled(page, "Next");
+
+      await chooseQuestionOption(page, "App");
+      await expectCurrentQuestion(page, {
+        index: 2,
+        total: TOTAL_QUESTIONS,
+        question: ROLLOUT_QUESTION,
+      });
+    } finally {
+      await session.cleanup();
+    }
+  });
+
   test("shows one question at a time with numbered navigation", async ({ page }) => {
     test.setTimeout(180_000);
 
