@@ -1,0 +1,66 @@
+[
+  {
+    "file": "SourceHanSansSC-Regular.otf",
+    "url": "https://raw.githubusercontent.com/adobe-fonts/source-han-sans/2.005R/OTF/SimplifiedChinese/SourceHanSansSC-Regular.otf",
+    "family": "思源黑体",
+    "version": "2.005R",
+    "bytes": 16529832,
+    "sha256": "f1d8611151880c6c336aabeac4640ef434fa13cbfbf1ffe82d0a71b2a5637256"
+  },
+  {
+    "file": "SourceHanSansSC-Bold.otf",
+    "url": "https://raw.githubusercontent.com/adobe-fonts/source-han-sans/2.005R/OTF/SimplifiedChinese/SourceHanSansSC-Bold.otf",
+    "family": "思源黑体",
+    "version": "2.005R",
+    "bytes": 16963428,
+    "sha256": "df2b90f5bcc6d01dfc964cec5f6d535d6b6aebd26ed7fd79a9c1b3f2112fcb6b"
+  },
+  {
+    "file": "SourceHanSansSC-LICENSE.txt",
+    "url": "https://raw.githubusercontent.com/adobe-fonts/source-han-sans/2.005R/LICENSE.txt",
+    "family": "思源黑体",
+    "version": "2.005R",
+    "bytes": 4463,
+    "sha256": "fcac737e761ec63dbfbdce11030a1780161920d80315edba9c8beff1c2bac5a2"
+  },
+  {
+    "file": "SourceHanSerifSC-Regular.otf",
+    "url": "https://raw.githubusercontent.com/adobe-fonts/source-han-serif/2.003R/OTF/SimplifiedChinese/SourceHanSerifSC-Regular.otf",
+    "family": "思源宋体",
+    "version": "2.003R",
+    "bytes": 24543332,
+    "sha256": "78aa7a328fd974df2d688c8a9fd74a33d8334dfa84ab24d9d11efb2ffc464117"
+  },
+  {
+    "file": "SourceHanSerifSC-Bold.otf",
+    "url": "https://raw.githubusercontent.com/adobe-fonts/source-han-serif/2.003R/OTF/SimplifiedChinese/SourceHanSerifSC-Bold.otf",
+    "family": "思源宋体",
+    "version": "2.003R",
+    "bytes": 25521732,
+    "sha256": "706b8c0de2deff6cbc0c87e2cdedfd33a78b7ffd76cebb4549012f197ba611fe"
+  },
+  {
+    "file": "SourceHanSerifSC-LICENSE.txt",
+    "url": "https://raw.githubusercontent.com/adobe-fonts/source-han-serif/2.003R/LICENSE.txt",
+    "family": "思源宋体",
+    "version": "2.003R",
+    "bytes": 4463,
+    "sha256": "9ff5bb567e1b92c801fc1069e5fbf992ff8efccacb9db94e5959a5b3ba9bb903"
+  },
+  {
+    "file": "LXGWWenKai-Regular.ttf",
+    "url": "https://raw.githubusercontent.com/lxgw/LxgwWenKai/v1.522/fonts/TTF/LXGWWenKai-Regular.ttf",
+    "family": "霞鹜文楷",
+    "version": "v1.522",
+    "bytes": 25575676,
+    "sha256": "39ad71264b588165b469e35e6afb162a378dacd1f95348160240ba9038ac3009"
+  },
+  {
+    "file": "LXGWWenKai-LICENSE.txt",
+    "url": "https://raw.githubusercontent.com/lxgw/LxgwWenKai/v1.522/OFL.txt",
+    "family": "霞鹜文楷",
+    "version": "v1.522",
+    "bytes": 4448,
+    "sha256": "c38b1994a5e48ac30ac7d1da7d0409fd8fd8127dfe28a13d6e787d5b1ef34a5e"
+  }
+]
