@@ -36,7 +36,8 @@
     "profile:workspace-tabs": "node ./scripts/profile-workspace-tabs.mjs",
     "deploy:web": "npm run build:web && wrangler pages deploy dist --project-name paseo-app --branch main",
     "build:terminal-webview": "node ./scripts/build-terminal-webview-html.mjs",
-    "build:mermaid-runtime": "node ./src/components/markdown/fence/mermaid/build-runtime.mjs"
+    "build:mermaid-runtime": "node ./src/components/markdown/fence/mermaid/build-runtime.mjs",
+    "build:pdf-runtime": "node ./src/file-access/pdf/build-runtime.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "6.10.4",
@@ -106,6 +107,7 @@
     "markdown-it": "^10.0.0",
     "mermaid": "^11.16.0",
     "mnemonic-id": "^3.2.7",
+    "pdfjs-dist": "6.4.299",
     "qrcode": "^1.5.4",
     "react": "19.1.0",
     "react-dom": "19.1.0",
