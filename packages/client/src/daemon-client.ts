@@ -27,6 +27,7 @@ import {
   SessionInboundMessageSchema,
   type ActiveTurnBehavior,
   type ServerInfoStatusPayload,
+  type TerminalClipboardWriteImageRequest,
 } from "@getpaseo/protocol/messages";
 import { validateWSOutboundMessage } from "@getpaseo/protocol/validation/ws-outbound";
 import type {
@@ -6074,6 +6075,36 @@ export class DaemonClient {
       responseType: "capture_terminal_response",
       options: { skipQueue: true },
     });
+  }
+
+  /**
+   * Transfers image bytes to a terminalImageFiles host, which stages a private
+   * file and injects its reference into the selected terminal.
+   */
+  async writeTerminalClipboardImage(
+    input: {
+      terminalId?: string;
+      data: string;
+      mimeType: TerminalClipboardWriteImageRequest["mimeType"];
+    },
+    requestId?: string,
+  ): Promise<{ success: boolean; error: string | null; path?: string; injected?: boolean }> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"terminal.clipboard.write_image.response">({
+        requestId,
+        message: {
+          type: "terminal.clipboard.write_image.request",
+          terminalId: input.terminalId,
+          data: input.data,
+          mimeType: input.mimeType,
+        },
+      });
+    return {
+      success: payload.success,
+      injected: payload.injected,
+      error: payload.error,
+      ...(payload.path ? { path: payload.path } : {}),
+    };
   }
 
   async scheduleCreate(options: CreateScheduleOptions): Promise<ScheduleCreatePayload> {

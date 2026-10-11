@@ -1847,6 +1847,10 @@ export class VoiceAssistantWebSocketServer {
         skillManagement: true,
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
         "terminal-restore-modes": true,
+        // COMPAT(terminalClipboardImage): added in v0.5.1, remove gate after 2027-08-24.
+        // Legacy clients retain native paste; this host no longer writes a shared clipboard.
+        terminalClipboardImage: false,
+        terminalImageFiles: true,
         // COMPAT(terminalInputModeReplay): added in v0.2.6, remove gate after 2027-02-02.
         "terminal-input-mode-replay": true,
         // COMPAT(terminalSizeOwnership): added in v0.2.6, remove gate after 2027-02-02.

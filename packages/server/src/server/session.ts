@@ -274,9 +274,11 @@ import {
   createProjectDirectory,
   ProjectDirectoryRequestError,
 } from "./project-directory-service.js";
+import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode";
 import { runGitCommand } from "../utils/run-git-command.js";
 import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dispatch.js";
 import { resolveWorktreeSourceCwd } from "./workspace-source.js";
+import { getTerminalImageStore, terminalImageReference } from "./host-clipboard.js";
 
 type ProviderSubagentManagerEvent = Extract<
   AgentManagerEvent,
@@ -3063,6 +3065,8 @@ export class Session {
         return this.handleWorkspaceScriptStartRequest(msg);
       case "workspace.script.stop.request":
         return this.handleWorkspaceScriptStopRequest(msg);
+      case "terminal.clipboard.write_image.request":
+        return this.handleTerminalClipboardWriteImageRequest(msg);
       default:
         return this.terminalController.dispatch(msg, this.delivery);
     }
@@ -7293,6 +7297,47 @@ export class Session {
           scriptName: request.scriptName,
           script: null,
           error: error instanceof Error ? error.message : "Failed to stop workspace script",
+        },
+      });
+    }
+  }
+
+  private async handleTerminalClipboardWriteImageRequest(
+    request: Extract<SessionInboundMessage, { type: "terminal.clipboard.write_image.request" }>,
+  ): Promise<void> {
+    try {
+      const terminal = request.terminalId && this.terminalManager?.getTerminal(request.terminalId);
+      if (!terminal || !this.terminalManager)
+        throw new Error("A live terminalId is required for image paste");
+      const modes = new TerminalInputModeTracker();
+      modes.feed(terminal.getReplayPreamble());
+      if (!modes.getState().bracketedPaste) {
+        throw new Error("Image paste requires an agent that accepts bracketed file paste");
+      }
+      const path = await getTerminalImageStore(this.paseoHome, this.terminalManager).save({
+        terminalId: terminal.id,
+        mimeType: request.mimeType,
+        dataBase64: request.data,
+      });
+      if (this.terminalManager.getTerminal(terminal.id) !== terminal || terminal.getExitInfo()) {
+        throw new Error("Terminal closed before image paste completed");
+      }
+      modes.reset();
+      modes.feed(terminal.getReplayPreamble());
+      if (!modes.getState().bracketedPaste)
+        throw new Error("Terminal stopped accepting file paste");
+      terminal.send({ type: "input", data: `\x1b[200~${terminalImageReference(path)}\x1b[201~` });
+      this.emit({
+        type: "terminal.clipboard.write_image.response",
+        payload: { requestId: request.requestId, success: true, injected: true, error: null },
+      });
+    } catch (error) {
+      this.emit({
+        type: "terminal.clipboard.write_image.response",
+        payload: {
+          requestId: request.requestId,
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
         },
       });
     }

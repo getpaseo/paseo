@@ -5814,3 +5814,24 @@ test("provider snapshots preserve versionless visibility while capabilities upda
   ]);
   expect(references.compactSnapshot!.entries[0]!.modes![0]!.icon).toBe("ShieldCheck");
 });
+
+test("legacy image requests fail explicitly without changing the host clipboard", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({ messages });
+  await session.handleMessage({
+    type: "terminal.clipboard.write_image.request",
+    requestId: "legacy-image",
+    data: "iVBORw0KGgo=",
+    mimeType: "image/png",
+  });
+  expect(messages).toEqual([
+    {
+      type: "terminal.clipboard.write_image.response",
+      payload: {
+        requestId: "legacy-image",
+        success: false,
+        error: "A live terminalId is required for image paste",
+      },
+    },
+  ]);
+});

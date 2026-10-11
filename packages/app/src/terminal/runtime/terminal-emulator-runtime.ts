@@ -33,6 +33,11 @@ import {
 import { isFindShortcut, type FindShortcutPlatform } from "@/pane-find/find-shortcut";
 import { isMacUserAgent } from "@/utils/mac-user-agent";
 import { resolveTerminalFontFamily, resolveTerminalFontSize } from "./terminal-font";
+import {
+  TERMINAL_IMAGE_PASTE_KEYSTROKE,
+  type TerminalImagePasteInput,
+  type TerminalImagePasteOutcome,
+} from "./terminal-paste";
 
 export type TerminalOutputData = Uint8Array;
 
@@ -83,6 +88,7 @@ export interface TerminalEmulatorRuntimeCallbacks {
     disposition: "main" | "side",
   ) => Promise<void> | void;
   onInputModeChange?: (state: TerminalInputModeState) => Promise<void> | void;
+  onImagePaste?: (input: TerminalImagePasteInput) => Promise<TerminalImagePasteOutcome>;
 }
 
 export interface TerminalResizeEvent {
@@ -122,6 +128,7 @@ interface TerminalEmulatorRuntimeDisposables {
   clearFitTimeouts: () => void;
   removeFontListeners: () => void;
   removeTouchListeners: () => void;
+  removeHostPaste: () => void;
   restoreDocumentStyles: () => void;
   restoreViewportStyles: () => void;
   disposeFitAddon: () => void;
@@ -178,6 +185,68 @@ function withOverviewRulerBorderHidden(theme: ITheme): ITheme {
     ...theme,
     overviewRulerBorder: theme.background ?? "transparent",
   };
+}
+
+const CLIPBOARD_IMAGE_MIME_TYPES = ["image/png", "image/jpeg"] as const;
+const BASE64_CHUNK_SIZE = 0x8000;
+
+function encodeBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += BASE64_CHUNK_SIZE) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + BASE64_CHUNK_SIZE));
+  }
+  return btoa(binary);
+}
+
+async function readClipboardImageFromTransfer(
+  transfer: DataTransfer,
+): Promise<TerminalImagePasteInput | null> {
+  for (const item of Array.from(transfer.items)) {
+    const mimeType = CLIPBOARD_IMAGE_MIME_TYPES.find((type) => item.type === type);
+    if (!mimeType) {
+      continue;
+    }
+    const file = item.getAsFile();
+    if (!file) {
+      continue;
+    }
+    try {
+      const data = encodeBase64(new Uint8Array(await file.arrayBuffer()));
+      return { data, mimeType };
+    } catch {
+      // Unreadable entry; keep looking at the remaining items.
+    }
+  }
+  return null;
+}
+
+async function readClipboardImageFromNavigator(): Promise<TerminalImagePasteInput | null> {
+  const clipboard = navigator.clipboard as Clipboard & { read?: () => Promise<ClipboardItem[]> };
+  if (!clipboard || typeof clipboard.read !== "function") {
+    return null;
+  }
+  let items: ClipboardItem[];
+  try {
+    items = await clipboard.read();
+  } catch {
+    // Reading the full clipboard can be permission-gated; treat as no image.
+    return null;
+  }
+  for (const item of items) {
+    for (const mimeType of CLIPBOARD_IMAGE_MIME_TYPES) {
+      if (!item.types.includes(mimeType)) {
+        continue;
+      }
+      try {
+        const blob = await item.getType(mimeType);
+        const data = encodeBase64(new Uint8Array(await blob.arrayBuffer()));
+        return { data, mimeType };
+      } catch {
+        // Try the next supported mime type on this representation.
+      }
+    }
+  }
+  return null;
 }
 
 export class TerminalEmulatorRuntime {
@@ -331,15 +400,10 @@ export class TerminalEmulatorRuntime {
           return false;
         }
 
-        // Ctrl+V: paste from clipboard into terminal
+        // Ctrl+V: paste text or forward clipboard images to the host daemon.
         if (key === "v") {
           event.preventDefault();
-          void navigator.clipboard.readText().then((text) => {
-            if (text) {
-              terminal.paste(text);
-            }
-            return;
-          });
+          void this.pasteClipboardTextOrImage(terminal);
           return false;
         }
 
@@ -666,6 +730,30 @@ export class TerminalEmulatorRuntime {
 
     this.attachKeyEventHandler(terminal);
 
+    // macOS Cmd+V and context-menu paste arrive as DOM paste events, not keydowns.
+    // Let xterm handle text. Intercept image-only pastes before its bubbling
+    // listener consumes them as empty text and stops propagation.
+    const hostPasteHandler = (event: ClipboardEvent): void => {
+      const transfer = event.clipboardData;
+      if (!transfer) {
+        return;
+      }
+      if (transfer.getData("text/plain").length > 0) {
+        return;
+      }
+      const hasImage = Array.from(transfer.items).some((item) => item.type.startsWith("image/"));
+      if (!hasImage) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      void this.forwardClipboardImage({
+        readImage: () => readClipboardImageFromTransfer(transfer),
+        input: (data) => terminal.input(data),
+      });
+    };
+    input.host.addEventListener("paste", hostPasteHandler, true);
+
     const removeTouchListeners = this.setupTouchScrollHandlers({
       root: input.root,
       host: input.host,
@@ -755,6 +843,9 @@ export class TerminalEmulatorRuntime {
         fontSet?.removeEventListener?.("loadingdone", fontReadyHandler);
       },
       removeTouchListeners,
+      removeHostPaste: () => {
+        input.host.removeEventListener("paste", hostPasteHandler, true);
+      },
       restoreDocumentStyles,
       restoreViewportStyles,
       disposeFitAddon: () => {
@@ -784,6 +875,7 @@ export class TerminalEmulatorRuntime {
       disposables.clearFitTimeouts();
       disposables.removeFontListeners();
       disposables.removeTouchListeners();
+      disposables.removeHostPaste();
       disposables.disposeFitAddon();
       disposables.disposeWebglAddon();
       disposables.disposeTerminal();
@@ -822,6 +914,50 @@ export class TerminalEmulatorRuntime {
 
   paste(text: string): void {
     this.terminal?.paste(text);
+  }
+
+  /** Feeds raw bytes (e.g. the \x16 image-paste keystroke) directly into xterm. */
+  inputRaw(data: string): void {
+    if (data.length === 0) {
+      return;
+    }
+    this.terminal?.input(data);
+  }
+
+  private async pasteClipboardTextOrImage(
+    terminal: Pick<Terminal, "paste" | "input">,
+  ): Promise<void> {
+    const text = await navigator.clipboard.readText().catch(() => "");
+    if (text.length > 0) {
+      terminal.paste(text);
+      return;
+    }
+    await this.forwardClipboardImage({
+      readImage: readClipboardImageFromNavigator,
+      input: (data) => terminal.input(data),
+    });
+  }
+
+  /**
+   * Ships clipboard image bytes to the onImagePaste callback when one is
+   * registered, then decides whether the raw keystroke still needs forwarding.
+   * Without bytes or a callback, today's bare \x16 fallback applies so agent
+   * TUIs keep reading the OS clipboard themselves.
+   */
+  private async forwardClipboardImage(input: {
+    readImage: () => Promise<TerminalImagePasteInput | null>;
+    input: (data: string) => void;
+  }): Promise<void> {
+    const onImagePaste = this.callbacks.onImagePaste;
+    const image = onImagePaste ? await input.readImage().catch(() => null) : null;
+    if (!onImagePaste || !image) {
+      input.input(TERMINAL_IMAGE_PASTE_KEYSTROKE);
+      return;
+    }
+    const outcome = await onImagePaste(image).catch(() => "error" as const);
+    if (outcome === "written" || outcome === "unsupported") {
+      input.input(TERMINAL_IMAGE_PASTE_KEYSTROKE);
+    }
   }
 
   renderSnapshot(input: { state: TerminalState | null; onCommitted?: () => void }): void {
