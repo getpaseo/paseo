@@ -155,22 +155,14 @@ type UniPropsMapping = (theme: typeof testTheme, runtime: object) => Record<stri
 
 /**
  * Like the real HOC, the theme-derived props go under the caller's own props, so a themed
- * control (the switch track, for one) gets real colors in a browser test. A mapping that reads
- * a value this test theme does not model keeps the old behavior: the component, unmapped.
+ * control (the switch track, for one) gets real colors in a browser test.
  */
 export function withUnistyles<P extends object>(
   Component: ComponentType<P>,
   mappings?: (theme: typeof testTheme, runtime: typeof UnistylesRuntime) => Partial<P>,
 ): ComponentType<P> {
   return function WithTestTheme({ uniProps, ...props }: P & { uniProps?: UniPropsMapping }) {
-    let themed: Partial<P> = {};
-    if (mappings) {
-      try {
-        themed = mappings(testTheme, UnistylesRuntime);
-      } catch {
-        themed = {};
-      }
-    }
+    const themed = mappings ? mappings(testTheme, UnistylesRuntime) : {};
     return createElement(Component, {
       ...themed,
       ...(uniProps ? uniProps(testTheme, {}) : {}),
