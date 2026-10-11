@@ -1414,10 +1414,15 @@ export class PiRpcAgentSession implements AgentSession {
     }
 
     const imageCount = payload.images?.length ?? 0;
-    const label =
-      payload.text.trim().length === 0 && imageCount > 0
-        ? `${imageCount} ${imageCount === 1 ? "image" : "images"}`
-        : payload.text;
+    const isImageOnly = payload.text.trim().length === 0 && imageCount > 0;
+    let label = payload.text;
+    if (isImageOnly) {
+      if (imageCount === 1) {
+        label = "1 image";
+      } else {
+        label = `${imageCount} images`;
+      }
+    }
     const submission: PiPendingSteerSubmission = {
       text: payload.text,
       label,
