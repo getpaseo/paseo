@@ -873,21 +873,22 @@ async function waitForCapturedLog(
     process.env.PASEO_PRIMARY_LAN_IP = "192.168.1.12";
 
     const { logger, lines } = createCapturingLogger();
-    await startRelay({ useLocalRelay: true });
-
-    const daemon = await createTestPaseoDaemon({
-      listen: "127.0.0.1",
-      logger,
-      relayEnabled: true,
-      relayEndpoint: `127.0.0.1:${relayPort}`,
-    });
-    const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "paseo-relay-download-"));
+    let daemon: Awaited<ReturnType<typeof createTestPaseoDaemon>> | null = null;
+    let workspaceDir: string | null = null;
     const fileName = "rapport données.bin";
     const source = randomBytes(4 * FILE_EXPLORER_STREAM_CHUNK_BYTES + 123);
-    await writeFile(path.join(workspaceDir, fileName), source);
     let client: DaemonClient | null = null;
 
     try {
+      await startRelay({ useLocalRelay: true });
+      daemon = await createTestPaseoDaemon({
+        listen: "127.0.0.1",
+        logger,
+        relayEnabled: true,
+        relayEndpoint: `127.0.0.1:${relayPort}`,
+      });
+      workspaceDir = await mkdtemp(path.join(os.tmpdir(), "paseo-relay-download-"));
+      await writeFile(path.join(workspaceDir, fileName), source);
       const offerUrl = await getPairingOfferUrl({
         paseoHome: daemon.paseoHome,
         relayEnabled: daemon.config.relayEnabled,
@@ -923,9 +924,11 @@ async function waitForCapturedLog(
       throw err;
     } finally {
       await client?.close().catch(() => undefined);
-      await daemon.close();
+      await daemon?.close();
       await stopRelay();
-      await rm(workspaceDir, { recursive: true, force: true });
+      if (workspaceDir) {
+        await rm(workspaceDir, { recursive: true, force: true });
+      }
     }
   }, 90000);
 });
