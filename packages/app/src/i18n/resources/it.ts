@@ -29,6 +29,7 @@ export const it: TranslationResources = {
     back: "Indietro",
     loading: "Caricamento...",
     actions: {
+      save: "Salva",
       back: "Indietro",
       cancel: "Annulla",
       close: "Chiudi",
@@ -2070,6 +2071,18 @@ export const it: TranslationResources = {
     accessibility: "Finestra di contesto utilizzata al {{percentage}}%",
   },
   review: {
+    feedback: {
+      send: "Invia commenti ({{count}})",
+      sending: "Invio dei commenti ({{count}})",
+      chooseAgent: "Scegli un agente",
+      sent: "Commenti inviati a {{recipient}}",
+      "no-agents":
+        "Apri una scheda per un agente in questo ambiente di lavoro per inviare i commenti.",
+      disconnected: "Connettiti all'host per inviare i commenti.",
+      "no-context": "I commenti salvati non corrispondono più a questo diff.",
+      failed: "Invio dei commenti non riuscito. Riprova.",
+      prompt: "Intervieni sui punti indicati in questa revisione del codice.",
+    },
     comment: {
       add: "Aggiungi commento di revisione",
       edit: "Modifica commento di revisione",
