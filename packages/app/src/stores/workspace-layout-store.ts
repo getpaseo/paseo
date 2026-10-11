@@ -185,7 +185,7 @@ interface WorkspaceFocusRestorationState {
 const MAX_TREE_DEPTH = 5;
 
 const LEGACY_EXPLORER_SIDEBAR_REFERENCE_WIDTH = 1440;
-const WORKSPACE_LAYOUT_PERSIST_VERSION = 2;
+const WORKSPACE_LAYOUT_PERSIST_VERSION = 3;
 
 function convertLegacyExplorerSidebarRatios(
   ratiosByWorkspace: Record<string, number>,
@@ -304,6 +304,7 @@ function migrateVersionOneWorkspaceLayout(input: {
     (tab) =>
       legacyExplorerPane.tabIds.includes(tab.tabId) &&
       tab.target.kind !== "files" &&
+      tab.target.kind !== "artifacts" &&
       tab.target.kind !== "changes_tree",
   );
   const preservedSide = preserveVersionOneSideTabs({
@@ -345,6 +346,33 @@ function migrateWorkspaceLayoutPersistedState(
   const result = WorkspaceLayoutPersistedStateSchema.safeParse(persistedState);
   if (!result.success || version >= WORKSPACE_LAYOUT_PERSIST_VERSION) {
     return result.success ? result.data : { layoutByWorkspace: {} };
+  }
+
+  if (version >= 2) {
+    return {
+      ...result.data,
+      layoutByWorkspace: Object.fromEntries(
+        Object.entries(result.data.layoutByWorkspace).map(([key, layout]) => {
+          const paneId = resolveExplorerSidebarPaneId(
+            layout,
+            result.data.explorerSidebarPaneIdByWorkspace?.[key] ??
+              result.data.explorerPaneIdByWorkspace?.[key],
+          );
+          if (!paneId || collectAllTabs(layout.root).some((tab) => tab.target.kind === "artifacts"))
+            return [key, layout];
+          return [
+            key,
+            openTabInLayoutBackground({
+              layout,
+              target: { kind: "artifacts" },
+              now: Date.now(),
+              placement: { mode: "pane", paneId },
+              explorerSidebarPaneId: paneId,
+            })?.layout ?? layout,
+          ];
+        }),
+      ),
+    };
   }
 
   const layoutByWorkspace: Record<string, WorkspaceLayout> = {};

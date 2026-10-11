@@ -6136,6 +6136,18 @@ export class DaemonClient {
     });
   }
 
+  async getTaskArtifacts(agentId: string) {
+    return this.sendCorrelatedSessionRequest({
+      message: { type: "agent.artifacts.list.request", agentId },
+      responseType: "agent.artifacts.list.response",
+    });
+  }
+  async updateTaskArtifact(agentId: string, action: "add" | "remove", path: string) {
+    return this.sendCorrelatedSessionRequest({
+      message: { type: "agent.artifacts.update.request", agentId, action, path },
+      responseType: "agent.artifacts.update.response",
+    });
+  }
   async createDocumentPreview(cwd: string, path: string) {
     return this.sendCorrelatedSessionRequest({
       message: { type: "fs.document.preview.request", cwd, path },

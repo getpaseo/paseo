@@ -103,6 +103,26 @@ describe("Explorer sidebar", () => {
     expect(activeExplorerTarget).toBe("files");
   });
 
+  it.each([true, false])("opens current artifacts in compact=%s", (isCompact) => {
+    openExplorerSidebarView({
+      isCompact,
+      supportsPaneSplits: true,
+      workspaceKey: WORKSPACE_KEY,
+      checkout: CHECKOUT,
+      view: "artifacts",
+    });
+    if (isCompact) {
+      expect(usePanelStore.getState().explorerTab).toBe("artifacts");
+    } else {
+      const state = useWorkspaceLayoutStore.getState();
+      const layout = state.layoutByWorkspace[WORKSPACE_KEY];
+      const pane = findPaneById(layout.root, selectExplorerSidebarPaneId(state, WORKSPACE_KEY));
+      expect(
+        collectAllTabs(layout.root).find((tab) => tab.tabId === pane?.focusedTabId)?.target,
+      ).toEqual({ kind: "artifacts" });
+    }
+  });
+
   it("toggles the compact Explorer without changing its selected view", () => {
     usePanelStore.getState().setExplorerTabForCheckout({ ...CHECKOUT, tab: "files" });
     const input = {

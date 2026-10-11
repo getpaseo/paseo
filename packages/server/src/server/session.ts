@@ -1,4 +1,5 @@
 import { AgentDirectory } from "./agent/directory.js";
+import { TaskArtifactStore } from "./file-explorer/task-artifacts.js";
 import { createDocumentPreview } from "./file-explorer/document-preview.js";
 import { searchTimeline } from "./agent/chat-search/index.js";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
@@ -2979,6 +2980,47 @@ export class Session {
     }
   }
 
+  private async handleTaskArtifacts(
+    request: Extract<
+      SessionInboundMessage,
+      { type: "agent.artifacts.list.request" | "agent.artifacts.update.request" }
+    >,
+  ): Promise<void> {
+    let items: import("@getpaseo/protocol/messages").TaskArtifact[] = [];
+    let error: string | null = null;
+    try {
+      const agent = await this.getAgentPayloadById(request.agentId);
+      const workspace = agent?.workspaceId
+        ? await this.workspaceRegistry.get(agent.workspaceId)
+        : null;
+      if (!workspace || workspace.archivedAt) throw new Error("Task workspace is unavailable");
+      const store = new TaskArtifactStore(this.paseoHome);
+      if (request.type === "agent.artifacts.list.request") {
+        await ensureAgentLoaded(request.agentId, {
+          agentManager: this.agentManager,
+          agentStorage: this.agentStorage,
+          logger: this.sessionLogger,
+        });
+      }
+      items =
+        request.type === "agent.artifacts.list.request"
+          ? await store.discover(
+              request.agentId,
+              workspace.cwd,
+              (await this.agentManager.getTimelineRows(request.agentId)).map((row) => row.item),
+            )
+          : await store.update(request.agentId, workspace.cwd, request.action, request.path);
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    }
+    this.emit({
+      type:
+        request.type === "agent.artifacts.list.request"
+          ? "agent.artifacts.list.response"
+          : "agent.artifacts.update.response",
+      payload: { items, error, requestId: request.requestId },
+    });
+  }
   private async handleDocumentPreview(
     request: Extract<SessionInboundMessage, { type: "fs.document.preview.request" }>,
   ): Promise<void> {
@@ -3000,6 +3042,9 @@ export class Session {
     source?: object,
   ): Promise<void> | undefined {
     switch (msg.type) {
+      case "agent.artifacts.list.request":
+      case "agent.artifacts.update.request":
+        return this.handleTaskArtifacts(msg);
       case "fs.document.preview.request":
         return this.handleDocumentPreview(msg);
       case "fs.file.read.cancel.request":

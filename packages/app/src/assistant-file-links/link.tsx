@@ -122,7 +122,12 @@ export function AssistantMarkdownLink({
         <FileLinkHoverTooltip filePath={tooltipPath}>{anchor}</FileLinkHoverTooltip>
       </ContextMenuTrigger>
       <ContextMenuContent>
-        <FileActionItems target={actionTarget} onPreview={preview} onStatus={report} />
+        <FileActionItems
+          target={actionTarget}
+          onPreview={preview}
+          onStatus={report}
+          agentId={configRef.current.agentId}
+        />
       </ContextMenuContent>
     </ContextMenu>
   );

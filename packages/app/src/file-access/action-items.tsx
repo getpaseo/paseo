@@ -12,8 +12,10 @@ export function FileActionItems({
   target,
   onPreview,
   onStatus,
+  agentId,
 }: {
   target: FileAccessTarget | null;
+  agentId?: string;
   onPreview?(): void;
   onStatus(message: string, error?: boolean): void;
 }) {
@@ -71,6 +73,20 @@ export function FileActionItems({
     if (target)
       void Clipboard.setStringAsync(target.path).catch((error) => onStatus(String(error), true));
   }, [target, onStatus]);
+  const addArtifact = useCallback(() => {
+    if (!target || !agentId) return;
+    const session = useSessionStore.getState().sessions[target.serverId];
+    if (session?.serverInfo?.features?.taskArtifacts !== true) {
+      onStatus(t("fileAccess.updateHost"), true);
+      return;
+    }
+    void session.client
+      ?.updateTaskArtifact(agentId, "add", target.path)
+      .then((result) =>
+        onStatus(result.error ?? t("fileAccess.artifactAdded"), Boolean(result.error)),
+      )
+      .catch((error) => onStatus(String(error), true));
+  }, [target, agentId, onStatus, t]);
   const desktop = Boolean(getDesktopHost()?.files);
   return (
     <>
@@ -97,6 +113,11 @@ export function FileActionItems({
       <MenuItem onSelect={share} disabled={!target}>
         {t("fileAccess.share")}
       </MenuItem>
+      {agentId ? (
+        <MenuItem onSelect={addArtifact} disabled={!target}>
+          {t("fileAccess.addArtifact")}
+        </MenuItem>
+      ) : null}
       <MenuItem onSelect={copy} disabled={!target}>
         {t("fileAccess.copyPath")}
       </MenuItem>
