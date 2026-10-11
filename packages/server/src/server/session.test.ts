@@ -28,6 +28,10 @@ import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentManagerEvent } from "./agent/agent-manager.js";
+import type {
+  AgentTimelineFetchResult,
+  AgentTimelineRow,
+} from "./agent/agent-timeline-store-types.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { WorkspaceLabelError, type WorkspaceLabelService } from "./workspace-labels/index.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
@@ -5813,4 +5817,240 @@ test("provider snapshots preserve versionless visibility while capabilities upda
     "plugin-provider",
   ]);
   expect(references.compactSnapshot!.entries[0]!.modes![0]!.icon).toBe("ShieldCheck");
+});
+
+// ---------------------------------------------------------------------------
+// Legacy timeline replay ordering
+// ---------------------------------------------------------------------------
+
+interface LegacyReplayInternals {
+  deliverTimelineReplacement(agentId: string, initiatingSource?: object): void;
+  subscribeToAgentEvents(): void;
+}
+
+function legacyReplayRow(seq: number, text: string): AgentTimelineRow {
+  return {
+    seq,
+    timestamp: "2026-10-10T00:00:00.000Z",
+    item: { type: "user_message", text },
+  };
+}
+
+function legacyReplayTimelineEvent(agentId: string, seq: number, text: string): AgentManagerEvent {
+  return {
+    type: "agent_stream",
+    agentId,
+    seq,
+    epoch: "epoch-1",
+    event: {
+      type: "timeline",
+      provider: "codex",
+      item: { type: "assistant_message", text },
+      timestamp: "2026-10-11T00:00:00.000Z",
+    },
+  };
+}
+
+function legacyReplayTurnEvent(agentId: string): AgentManagerEvent {
+  return {
+    type: "agent_stream",
+    agentId,
+    seq: 3,
+    epoch: "epoch-1",
+    event: { type: "turn_started", provider: "codex", turnId: "turn-1" },
+  };
+}
+
+async function flushLegacyReplayChain(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function createLegacyReplayHarness(options: { targeted?: boolean } = {}) {
+  const agentId = "replay-ordering-agent";
+  const messages: SessionOutboundMessage[] = [];
+  const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
+  let streamListener: ((event: AgentManagerEvent) => void) | null = null;
+  let pendingReplayRows: AgentTimelineRow[] | null = null;
+  const fetchCalls: Array<{
+    resolve: (rows: AgentTimelineRow[]) => void;
+    resolved: boolean;
+  }> = [];
+  const session = createSessionForTest({
+    messages,
+    ...(options.targeted ? { targetedMessages } : {}),
+    agentManager: {
+      getAgent: vi.fn(() => ({ id: agentId, provider: "codex", lifecycle: "running" })),
+      getTimelineEpoch: vi.fn(() => "epoch-1"),
+      hasDurableTimeline: vi.fn(() => true),
+      fetchTimelineWithBackfill: vi.fn(
+        () =>
+          new Promise<AgentTimelineFetchResult>((settle) => {
+            const call = {
+              resolved: false,
+              resolve: (rows: AgentTimelineRow[]): void => {
+                if (call.resolved) return;
+                call.resolved = true;
+                settle({ rows } as AgentTimelineFetchResult);
+              },
+            };
+            fetchCalls.push(call);
+            // Replay reads start on a microtask behind the previous replay;
+            // a resolveReplay that lands first must still apply its rows.
+            if (pendingReplayRows !== null) call.resolve(pendingReplayRows);
+          }),
+      ),
+      subscribe: vi.fn((listener: (event: AgentManagerEvent) => void) => {
+        streamListener = listener;
+        return () => {};
+      }),
+    },
+  });
+  const internals = asSessionInternals<LegacyReplayInternals>(session);
+
+  const seqsFor = (source?: object): number[] => {
+    const pool = options.targeted
+      ? targetedMessages
+          .filter((entry) => source === undefined || entry.source === source)
+          .map((entry) => entry.message)
+      : messages;
+    return pool
+      .filter(
+        (message): message is Extract<SessionOutboundMessage, { type: "agent_stream" }> =>
+          message.type === "agent_stream" &&
+          message.payload.agentId === agentId &&
+          message.payload.event.type === "timeline",
+      )
+      .flatMap((message) => (typeof message.payload.seq === "number" ? [message.payload.seq] : []));
+  };
+
+  return {
+    agentId,
+    session,
+    targetedMessages,
+    fetchCalls,
+    deliverReplacement(): void {
+      internals.deliverTimelineReplacement(agentId);
+    },
+    registerSource(capabilities: Record<string, unknown> | null): object {
+      const source = { legacyReplayHarness: true };
+      session.updateClientCapabilities(capabilities, source);
+      return source;
+    },
+    dispatchStream(event: AgentManagerEvent): void {
+      if (!streamListener) throw new Error("Agent manager subscription was not captured");
+      streamListener(event);
+    },
+    resolveCall(index: number, rows: AgentTimelineRow[]): void {
+      const call = fetchCalls[index];
+      if (call) call.resolve(rows);
+    },
+    resolveReplay(rows: AgentTimelineRow[]): void {
+      pendingReplayRows = rows;
+      for (const call of fetchCalls) call.resolve(rows);
+    },
+    seqsFor,
+  };
+}
+
+describe("legacy timeline replay ordering", () => {
+  test("holds live timeline rows for legacy sources until the in-flight legacy replay is delivered", async () => {
+    const harness = createLegacyReplayHarness({ targeted: true });
+    const legacySource = harness.registerSource(null);
+    harness.deliverReplacement();
+
+    harness.dispatchStream(legacyReplayTimelineEvent(harness.agentId, 3, "live row"));
+
+    // The live row must not overtake the replay it races with on the legacy wire:
+    // old clients drop seqs at or below their cursor as stale.
+    expect(harness.seqsFor(legacySource)).toEqual([]);
+
+    harness.resolveReplay([legacyReplayRow(1, "row one"), legacyReplayRow(2, "row two")]);
+    await flushLegacyReplayChain();
+
+    expect(harness.seqsFor(legacySource)).toEqual([1, 2, 3]);
+  });
+
+  test("delivers live rows immediately to sources that support replacement invalidation", async () => {
+    const harness = createLegacyReplayHarness({ targeted: true });
+    const legacySource = harness.registerSource(null);
+    const replacementSource = harness.registerSource({
+      [CLIENT_CAPS.timelineReplacementInvalidation]: true,
+    });
+    harness.deliverReplacement();
+
+    harness.dispatchStream(legacyReplayTimelineEvent(harness.agentId, 3, "live row"));
+
+    expect(harness.seqsFor(replacementSource)).toEqual([3]);
+    expect(harness.seqsFor(legacySource)).toEqual([]);
+
+    harness.resolveReplay([legacyReplayRow(1, "row one"), legacyReplayRow(2, "row two")]);
+    await flushLegacyReplayChain();
+
+    expect(harness.seqsFor(legacySource)).toEqual([1, 2, 3]);
+    expect(harness.seqsFor(replacementSource)).toEqual([3]);
+  });
+
+  test("does not hold non-timeline stream events during a legacy replay", async () => {
+    const harness = createLegacyReplayHarness({ targeted: true });
+    const legacySource = harness.registerSource(null);
+    harness.deliverReplacement();
+
+    harness.dispatchStream(legacyReplayTurnEvent(harness.agentId));
+
+    const turnDelivered = harness.targetedMessages.some(
+      ({ source, message }) =>
+        source === legacySource &&
+        message.type === "agent_stream" &&
+        message.payload.event.type === "turn_started",
+    );
+    expect(turnDelivered).toBe(true);
+    expect(harness.seqsFor(legacySource)).toEqual([]);
+
+    harness.resolveReplay([legacyReplayRow(1, "row one"), legacyReplayRow(2, "row two")]);
+    await flushLegacyReplayChain();
+
+    expect(harness.seqsFor(legacySource)).toEqual([1, 2]);
+  });
+
+  test("holds live timeline rows for a single-source legacy session until the replay is delivered", async () => {
+    const harness = createLegacyReplayHarness();
+    asSessionInternals<LegacyReplayInternals>(harness.session).subscribeToAgentEvents();
+    harness.session.updateClientCapabilities(null);
+    harness.deliverReplacement();
+
+    harness.dispatchStream(legacyReplayTimelineEvent(harness.agentId, 3, "live row"));
+
+    expect(harness.seqsFor()).toEqual([]);
+
+    harness.resolveReplay([legacyReplayRow(1, "row one"), legacyReplayRow(2, "row two")]);
+    await flushLegacyReplayChain();
+
+    expect(harness.seqsFor()).toEqual([1, 2, 3]);
+  });
+
+  test("serializes legacy replay reads behind the previous replay", async () => {
+    const harness = createLegacyReplayHarness({ targeted: true });
+    const legacySource = harness.registerSource(null);
+
+    const olderRows = [legacyReplayRow(1, "row one"), legacyReplayRow(2, "row two")];
+    const newerRows = [...olderRows, legacyReplayRow(3, "row three")];
+
+    harness.deliverReplacement(); // replay 1 starts its durable read
+    harness.deliverReplacement(); // replay 2 must queue behind replay 1's read
+
+    // The second read may resolve first, but it must not emit before the
+    // first replay has been delivered: the client would drop the out-of-order
+    // burst, or, across a rewind epoch change, reset to the old timeline.
+    harness.resolveCall(1, newerRows);
+    await flushLegacyReplayChain();
+    expect(harness.seqsFor(legacySource)).toEqual([]);
+
+    harness.resolveCall(0, olderRows);
+    await flushLegacyReplayChain();
+    expect(harness.seqsFor(legacySource)).toEqual([1, 2]);
+
+    harness.resolveCall(1, newerRows);
+    await flushLegacyReplayChain();
+    expect(harness.seqsFor(legacySource)).toEqual([1, 2, 1, 2, 3]);
+  });
 });

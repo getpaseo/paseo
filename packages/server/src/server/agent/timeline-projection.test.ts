@@ -1,10 +1,12 @@
 import { describe, expect, test } from "vitest";
 
 import type { AgentTimelineRow } from "./agent-manager.js";
+import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import {
   projectTimelineRows,
   selectProjectedTimelinePage,
   selectTimelineWindowByProjectedLimit,
+  TimelineProjection,
 } from "./timeline-projection.js";
 
 describe("projectTimelineRows", () => {
@@ -776,5 +778,68 @@ describe("selectProjectedTimelinePage", () => {
 
     expect(page.entries.some((entry) => entry.item.type === "tool_call")).toBe(true);
     expect(page.endSeq).toBe(501);
+  });
+});
+
+describe("TimelineProjection.evictBefore", () => {
+  function row(seq: number, item: AgentTimelineItem): AgentTimelineRow {
+    return { seq, timestamp: new Date(1000 + seq).toISOString(), item };
+  }
+
+  function toolItem(
+    callId: string,
+    status: "running" | "completed",
+  ): Extract<AgentTimelineItem, { type: "tool_call" }> {
+    return {
+      type: "tool_call",
+      callId,
+      name: "shell",
+      status,
+      error: null,
+      detail: { type: "plain_text", label: "work" },
+    };
+  }
+
+  test("removes rows that end before the cutoff and keeps spanning rows whole", () => {
+    const projection = new TimelineProjection();
+    projection.append(row(1, { type: "assistant_message", text: "A", messageId: "m" }));
+    projection.append(row(2, { type: "assistant_message", text: "B", messageId: "m" }));
+    projection.append(row(3, { type: "assistant_message", text: "C", messageId: "m" }));
+    projection.append(row(4, { type: "user_message", text: "next", clientMessageId: "u1" }));
+
+    expect(projection.evictBefore(2)).toBe(1);
+    expect(projection.getRows().map((r) => [r.seqStart, r.seqEnd])).toEqual([
+      [1, 3],
+      [4, 4],
+    ]);
+
+    expect(projection.evictBefore(4)).toBe(4);
+    expect(projection.getRows().map((r) => [r.seqStart, r.seqEnd])).toEqual([[4, 4]]);
+
+    expect(projection.evictBefore(99)).toBeNull();
+    expect(projection.getRows()).toEqual([]);
+  });
+
+  test("keeps identity merging working for surviving rows after eviction", () => {
+    const projection = new TimelineProjection();
+    projection.append(row(1, toolItem("t1", "running")));
+    projection.append(row(2, toolItem("t2", "running")));
+    projection.append(row(3, toolItem("t1", "completed")));
+
+    // The completed update extends t1 to seqEnd 3, so only the standalone t2 row is evictable.
+    expect(projection.evictBefore(3)).toBe(1);
+    expect(projection.getRows().map((r) => [r.seqStart, r.seqEnd])).toEqual([[1, 3]]);
+
+    // t2's identity was evicted, so its completion becomes a standalone row; t1's
+    // identity must keep resolving to the surviving row.
+    projection.append(row(4, toolItem("t2", "completed")));
+    projection.append(row(5, toolItem("t1", "completed")));
+    expect(projection.getRows().map((r) => [r.seqStart, r.seqEnd])).toEqual([
+      [1, 5],
+      [4, 4],
+    ]);
+    expect(projection.getRows()[0]?.item).toEqual(
+      expect.objectContaining({ type: "tool_call", callId: "t1", status: "completed" }),
+    );
   });
 });
