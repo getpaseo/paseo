@@ -135,6 +135,29 @@ export function runAlternateSendAction(ctx: SendActionContext): void {
   }
 }
 
+export type MessageInputEnterAction = "alternate-send" | "default-send";
+
+export interface MessageInputEnterContext {
+  submitOnEnter: boolean;
+  commandEnterToSend: boolean;
+  shiftKey: boolean;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  isAgentRunning: boolean;
+  onQueue: ((payload: MessagePayload) => void) | undefined;
+}
+
+export function resolveMessageInputEnterAction(
+  ctx: MessageInputEnterContext,
+): MessageInputEnterAction | null {
+  if (!ctx.submitOnEnter) return null;
+  if (ctx.shiftKey) return null;
+  const hasModifier = ctx.metaKey || ctx.ctrlKey;
+  if (ctx.commandEnterToSend) return hasModifier ? "default-send" : null;
+  if (hasModifier && ctx.isAgentRunning && ctx.onQueue) return "alternate-send";
+  return "default-send";
+}
+
 export function runMessageInputKeyboardAction(
   action: MessageInputKeyboardActionKind,
   actions: MessageInputKeyboardActions,
