@@ -1107,12 +1107,14 @@ function useBrowserTabRow({
   variant,
   tabs,
   viewportWidth,
+  layoutSignature,
   onNavigateTab,
   label,
 }: {
   variant: "workspace" | "browser";
   tabs: ResolvedWorkspaceDesktopTabRowItem[];
   viewportWidth: number;
+  layoutSignature: string;
   onNavigateTab: (tabId: string) => void;
   label: string;
 }) {
@@ -1131,7 +1133,7 @@ function useBrowserTabRow({
       scroller.scrollLeft += tabBounds.left - scrollBounds.left;
     else if (tabBounds.right > scrollBounds.right)
       scroller.scrollLeft += tabBounds.right - scrollBounds.right;
-  }, [activeBrowserTabId, viewportWidth]);
+  }, [activeBrowserTabId, viewportWidth, layoutSignature]);
 
   const handleBrowserRowKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
@@ -1561,6 +1563,11 @@ function ResolvedWorkspaceDesktopTabsRow({
     variant,
     tabs: displayedTabs,
     viewportWidth: tabsContainerWidth,
+    layoutSignature: JSON.stringify([
+      displayedTabs.map(({ tab }) => tab.tabId),
+      layout.items,
+      layoutMetrics.actionsReservedWidth,
+    ]),
     onNavigateTab,
     label: t("workspace.browser.tabs"),
   });
