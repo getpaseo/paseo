@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Load the copies the Expo CLI uses for prebuild, not older hoisted ones.
 const requireFromExpo = createRequire(require.resolve("expo/package.json"));
@@ -57,5 +57,24 @@ describe("Android app config", () => {
       );
     },
     30_000,
+  );
+});
+
+describe("optional enhanced distribution identity", () => {
+  afterEach(() => vi.unstubAllEnvs());
+  it.each([undefined, "production", "enhanced"])(
+    "keeps the identity isolated for variant %s",
+    async (variant) => {
+      vi.stubEnv("APP_VARIANT", variant);
+      const { exp } = await getPrebuildConfigAsync(__dirname, { platforms: ["android"] });
+      const enhanced = variant === "enhanced";
+      expect(exp.name).toBe(enhanced ? "Paseo Enhanced" : "Paseo");
+      expect(exp.android?.package).toBe(enhanced ? "sh.paseo.enhanced" : "sh.paseo");
+      expect(exp.scheme).toBe(enhanced ? "paseo-enhanced" : "paseo");
+      expect(exp.extra?.enhancedBranding).toBe(enhanced);
+      if (enhanced) expect(exp.owner).toBeUndefined();
+      else expect(exp.extra?.eas?.projectId).toBe("0e7f65ce-0367-46c8-a238-2b65963d235a");
+    },
+    30000,
   );
 });

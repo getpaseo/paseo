@@ -224,7 +224,10 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
 
 const appUpdateService = createAppUpdateService({
   runtime: new ElectronAppUpdateRuntime(),
-  isPackaged: () => app.isPackaged,
+  isPackaged: () =>
+    app.isPackaged &&
+    (process.env.PASEO_DEEP_LINK_SCHEME !== "paseo-enhanced" ||
+      process.env.PASEO_ENHANCED_UPDATES === "1"),
   now: () => Date.now(),
   bucket: async () => bucketFromStagingUserId(await getStagingUserId()),
   reportCheckError: (error) => {

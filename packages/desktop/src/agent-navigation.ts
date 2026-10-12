@@ -1,8 +1,12 @@
 import { parseAgentDeepLink, type AgentDeepLinkTarget } from "@getpaseo/protocol/agent-deep-link";
 
+export function parseEnhancedAgentDeepLink(input: string): AgentDeepLinkTarget | null {
+  return parseAgentDeepLink(input.replace(/^paseo-enhanced:/, "paseo:"));
+}
+
 export function parseAgentDeepLinkFromArgv(argv: string[]): AgentDeepLinkTarget | null {
   for (const arg of argv) {
-    const target = parseAgentDeepLink(arg);
+    const target = parseEnhancedAgentDeepLink(arg);
     if (target) {
       return target;
     }

@@ -21,12 +21,20 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)
 RESOURCES_DIR=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
 
 MACOS_DIR="${RESOURCES_DIR}/../MacOS"
-MACOS_HELPER_EXECUTABLE="${RESOURCES_DIR}/../Frameworks/Paseo Helper.app/Contents/MacOS/Paseo Helper"
+APP_BUNDLE_NAME=$(basename "${RESOURCES_DIR}/../.." .app)
+MACOS_HELPER_NAME="${APP_BUNDLE_NAME} Helper"
+MACOS_HELPER_EXECUTABLE="${RESOURCES_DIR}/../Frameworks/${MACOS_HELPER_NAME}.app/Contents/MacOS/${MACOS_HELPER_NAME}"
 
 # macOS CLI invocations must enter Electron through the agent Helper. Launching
 # the main APPL executable here makes later daemon supervision inherit app UI
 # lifecycle behavior.
 if [ -d "${MACOS_DIR}" ]; then
+  if [ "$APP_BUNDLE_NAME" = "Paseo Enhanced" ]; then
+    PASEO_HOME=${PASEO_HOME:-"${HOME}/Library/Application Support/Paseo Enhanced/daemon"}
+    PASEO_DESKTOP_APP_PATH=$(CDPATH= cd -- "${RESOURCES_DIR}/../.." && pwd)
+    PASEO_DEEP_LINK_SCHEME=paseo-enhanced
+    export PASEO_HOME PASEO_DESKTOP_APP_PATH PASEO_DEEP_LINK_SCHEME
+  fi
   if [ ! -x "${MACOS_HELPER_EXECUTABLE}" ]; then
     echo "Bundled Paseo Helper executable not found at ${MACOS_HELPER_EXECUTABLE}" >&2
     exit 1

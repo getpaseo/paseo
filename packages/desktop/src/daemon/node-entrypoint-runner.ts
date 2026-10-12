@@ -1,4 +1,5 @@
 import { pathToFileURL } from "node:url";
+import { initializeEnhancedDaemonHome } from "./enhanced-home.js";
 
 export async function main(): Promise<void> {
   const [argvMode, entryPath, ...args] = process.argv.slice(2);
@@ -7,6 +8,9 @@ export async function main(): Promise<void> {
   }
   if (!entryPath) {
     throw new Error("Missing node entrypoint path.");
+  }
+  if (process.env.PASEO_DEEP_LINK_SCHEME === "paseo-enhanced" && process.env.PASEO_HOME) {
+    await initializeEnhancedDaemonHome(process.env.PASEO_HOME);
   }
 
   process.argv =

@@ -715,3 +715,22 @@ describe("file explorer service", () => {
     }
   });
 });
+
+it.each([
+  ["report.pdf", "application/pdf"],
+  ["clip.mp4", "video/mp4"],
+  ["clip.mov", "video/quicktime"],
+  ["sound.mp3", "audio/mpeg"],
+  ["report.doc", "application/msword"],
+  ["report.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+])("keeps %s binary even when its bytes are ASCII and preserves its MIME", async (name, mime) => {
+  const root = await createTempDir("paseo-document-mime-");
+  try {
+    await writeFile(path.join(root, name), "%PDF-ASCII document fixture");
+    const result = await readExplorerFile({ root, relativePath: name });
+    expect(result).toMatchObject({ kind: "binary", mimeType: mime });
+    expect(result.content).toBeUndefined();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -71,6 +71,13 @@ const manifests = {
     singleton: true,
     resourceKey: () => "files",
   },
+  artifacts: {
+    kind: "artifacts",
+    supportedHosts: ["explorer"],
+    showCloseButton: false,
+    singleton: true,
+    resourceKey: () => "artifacts",
+  },
   pull_request: {
     kind: "pull_request",
     supportedHosts: ["main", "explorer"],

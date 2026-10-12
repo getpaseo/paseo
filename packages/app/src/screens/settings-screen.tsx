@@ -1,3 +1,5 @@
+import { FileOpeningSection } from "@/file-access/settings-section";
+import { TaskNotificationSettings } from "@/file-access/notification-settings";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import {
@@ -1359,6 +1361,8 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
             <>
               <GeneralSection settings={settings} handleLanguageChange={handleLanguageChange} />
               <SendingSection />
+              <FileOpeningSection />
+              <TaskNotificationSettings />
               {isDesktopApp ? <OpenLocationSection /> : null}
             </>
           );

@@ -1,3 +1,4 @@
+import { initializeEnhancedDaemonHome } from "./enhanced-home.js";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { app, ipcMain, powerMonitor } from "electron";
@@ -301,6 +302,8 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
   }
 
   const home = getPaseoHome();
+  if (process.env.PASEO_DEEP_LINK_SCHEME === "paseo-enhanced")
+    await initializeEnhancedDaemonHome(home);
   const invocation = createNodeEntrypointInvocation({
     entrypoint: resolveDaemonRunnerEntrypoint(),
     argvMode: "node-script",
@@ -312,7 +315,13 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
       home,
       timeoutMs: 30_000,
       ...invocation,
-      env: { ...invocation.env, PASEO_CLI: getBundledCliShimPath() },
+      env: {
+        ...invocation.env,
+        PASEO_CLI: getBundledCliShimPath(),
+        ...(app.isPackaged
+          ? { PASEO_DOCUMENT_FONTS_PATH: path.join(process.resourcesPath, "document-fonts") }
+          : {}),
+      },
       mode: "managed",
       desktopManaged: true,
       onAcquired: (instance) => {
