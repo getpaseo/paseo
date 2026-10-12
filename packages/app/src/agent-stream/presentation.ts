@@ -1,5 +1,5 @@
 import type { AssistantMessageItem, StreamItem, UserMessageItem } from "@/types/stream";
-import type { TimelineItemTransform } from "@/plugins/timeline/model";
+import type { TimelineItemFilter, TimelineItemTransform } from "@/plugins/timeline/model";
 import { projectPluginTimelineItems } from "@/plugins/timeline/projection";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
 import {
@@ -13,6 +13,7 @@ interface PresentationInput {
   tail: StreamItem[];
   head: StreamItem[];
   transform: TimelineItemTransform | undefined;
+  filter?: TimelineItemFilter;
   level: ToolCallDetailLevel;
   isTurnActive: boolean;
 }
@@ -71,6 +72,7 @@ export function createStreamPresentation() {
   let liveSources = new Map<string, AssistantMessageItem>();
   let historySource: StreamItem[] | undefined;
   let historyTransform: TimelineItemTransform | undefined;
+  let historyFilter: TimelineItemFilter | undefined;
   let historyRows: StreamItem[] = [];
   let displayTail: StreamItem[] = [];
   let displayHistory: StreamItem[] | undefined;
@@ -137,20 +139,27 @@ export function createStreamPresentation() {
 
   return (input: PresentationInput) => {
     // Retained history is not reprojected or regrouped on each live text update.
-    if (historySource !== input.tail || historyTransform !== input.transform) {
+    if (
+      historySource !== input.tail ||
+      historyTransform !== input.transform ||
+      historyFilter !== input.filter
+    ) {
       // One rendering path: history splits the same way the live head does, and
       // `blocksBySource` keeps both the live block identities and the split cost
       // from being paid again when only the tail's array identity changed.
-      historyRows = projectPluginTimelineItems(input.tail, input.transform).flatMap<StreamItem>(
+      const projected = projectPluginTimelineItems(input.tail, input.transform);
+      historyRows = (input.filter ? input.filter(projected) : projected).flatMap<StreamItem>(
         nativeBlocks,
       );
       historySource = input.tail;
       historyTransform = input.transform;
+      historyFilter = input.filter;
     }
     const head: StreamItem[] = [];
     const promoted: StreamItem[] = [];
     const nextLiveSources = new Map<string, AssistantMessageItem>();
-    for (const item of projectPluginTimelineItems(input.head, input.transform, "streaming")) {
+    const projectedHead = projectPluginTimelineItems(input.head, input.transform, "streaming");
+    for (const item of input.filter ? input.filter(projectedHead) : projectedHead) {
       const blocks = nativeBlocks(item);
       if (item.kind === "assistant_message") nextLiveSources.set(item.id, item);
       if (item.kind === "assistant_message" && blocks.length > 1) {

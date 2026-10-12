@@ -450,6 +450,33 @@ describe("evaluatePluginClientBundle", () => {
     ).toThrow("Duplicate Command Center item: review");
   });
 
+  it.each(["memo", "forwardRef"])(
+    "accepts %s timeline footers alongside other contributions",
+    (wrapper) => {
+      const plugin = evaluatePluginClientBundle(
+        "reports",
+        bundle(`
+      const Component = require("react").${wrapper}(function Footer() { return null; });
+      plugin.addTimelineFooter({ id: "pending", Component });
+      plugin.addTimelineRenderer({ kind: "card", version: 1, schema: { safeParse(data) { return { success: true, data }; } }, Component() { return null; } });
+    `),
+      );
+      expect(plugin.timelineFooters.map((footer) => footer.id)).toEqual(["pending"]);
+      expect(plugin.timelineRenderers.map((renderer) => renderer.kind)).toEqual(["card"]);
+    },
+  );
+
+  it("rejects invalid footer components", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "reports",
+        bundle(`
+      plugin.addTimelineFooter({ id: "pending", Component: {} });
+    `),
+      ),
+    ).toThrow("Timeline footer pending is not a component");
+  });
+
   it("rejects duplicate footer ids and invalid replacement versions", () => {
     expect(() =>
       evaluatePluginClientBundle(

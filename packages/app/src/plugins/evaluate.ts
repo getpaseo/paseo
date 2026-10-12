@@ -413,7 +413,7 @@ export function runPluginClientBundle(
       const normalizedId = requireId(contribution.id, "timeline footer id");
       if (timelineFooterIds.has(normalizedId))
         throw new Error(`Duplicate timeline footer: ${normalizedId}`);
-      if (typeof contribution.Component !== "function")
+      if (!isComponentType(contribution.Component))
         throw new Error(`Timeline footer ${normalizedId} is not a component`);
       const replaces = contribution.replaces?.map((replaced) => {
         const kind = requireId(replaced.kind, "timeline footer kind");

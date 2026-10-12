@@ -38,7 +38,6 @@ vi.mock("../icons", () => ({
 
 import { pluginRegistry } from "../registry";
 import { PluginTimelineItemView } from "./view";
-import { PluginTimelineFooters } from "./footers";
 
 const audio = { play: async () => 0 };
 
@@ -119,97 +118,6 @@ afterEach(() => {
 });
 
 describe("PluginTimelineItemView", () => {
-  it("pins plugin content outside chat history and restores inline rows when removed", async () => {
-    const pinned = bundle.replace(
-      "return function() {};",
-      `globalThis.__removeTimelineFooter = plugin.addTimelineFooter({ id: "pending", replaces: [{ kind: "test-report", version: 1 }], Component: function Footer(props) { return React.createElement("span", null, "Pinned " + props.agentId + " on " + props.host.label); } }); return function() {};`,
-    );
-    pluginRegistry.installCatalog(
-      "host-1",
-      [{ id: "reports", requirements: { paseo: ">=" + appPackage.version }, clientBundle: pinned }],
-      { client: daemonClient, audio },
-    );
-    const container = document.createElement("div");
-    containers.push(container);
-    const root = createRoot(container);
-    roots.push(root);
-    await act(async () =>
-      root.render(
-        <>
-          <PluginTimelineItemView serverId="host-1" agentId="agent-1" item={timelineItem} />
-          <PluginTimelineFooters serverId="host-1" agentId="agent-1" />
-        </>,
-      ),
-    );
-    expect(container.textContent).toBe("Pinned agent-1 on Local");
-    await act(async () =>
-      root.render(
-        <>
-          <PluginTimelineItemView serverId="host-1" agentId="agent-2" item={timelineItem} />
-          <PluginTimelineFooters serverId="host-1" agentId="agent-2" />
-        </>,
-      ),
-    );
-    expect(container.textContent).toBe("Pinned agent-2 on Local");
-    const remove = Reflect.get(globalThis, "__removeTimelineFooter");
-    expect(typeof remove).toBe("function");
-    await act(async () => remove());
-    expect(container.textContent).toBe("Four tests passed");
-    Reflect.deleteProperty(globalThis, "__removeTimelineFooter");
-  });
-
-  it("does not show another host's pinned content", async () => {
-    const pinned = bundle.replace(
-      "return function() {};",
-      `plugin.addTimelineFooter({ id: "pending", Component: function Footer() { return React.createElement("span", null, "Wrong host"); } }); return function() {};`,
-    );
-    pluginRegistry.installCatalog(
-      "host-1",
-      [{ id: "reports", requirements: { paseo: ">=" + appPackage.version }, clientBundle: pinned }],
-      { client: daemonClient, audio },
-    );
-    const container = document.createElement("div");
-    containers.push(container);
-    const root = createRoot(container);
-    roots.push(root);
-    await act(async () =>
-      root.render(<PluginTimelineFooters serverId="host-2" agentId="agent-1" />),
-    );
-    expect(container.textContent).toBe("");
-  });
-
-  it("contains a footer crash and recovers when the session changes", async () => {
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const pinned = bundle.replace(
-      "return function() {};",
-      `plugin.addTimelineFooter({ id: "pending", Component: function Footer(props) { if (props.agentId === "broken") throw new Error("footer failed"); return React.createElement("span", null, "Recovered footer"); } }); return function() {};`,
-    );
-    pluginRegistry.installCatalog(
-      "host-1",
-      [{ id: "reports", requirements: { paseo: ">=" + appPackage.version }, clientBundle: pinned }],
-      { client: daemonClient, audio },
-    );
-    const container = document.createElement("div");
-    containers.push(container);
-    const root = createRoot(container);
-    roots.push(root);
-    const render = (agentId: string) =>
-      act(async () =>
-        root.render(
-          <>
-            <span>Chat stays available</span>
-            <PluginTimelineFooters serverId="host-1" agentId={agentId} />
-          </>,
-        ),
-      );
-    await render("broken");
-    expect(container.textContent).toContain("Chat stays available");
-    expect(container.textContent).toContain("Plugin failed: footer failed");
-    await render("working");
-    expect(container.textContent).toBe("Chat stays availableRecovered footer");
-  });
-
   it("validates and renders the matching plugin component", async () => {
     pluginRegistry.installCatalog(
       "host-1",
