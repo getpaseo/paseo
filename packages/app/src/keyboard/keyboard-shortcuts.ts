@@ -1288,7 +1288,7 @@ function matchesKeyOrCode(combo: KeyCombo, event: KeyboardShortcutInput): boolea
   // Recording an unsupported letter (for example Cyrillic и on KeyB)
   // stores its physical A-Z key. Dispatch must accept that same key without
   // giving Latin layouts such as Dvorak a second physical-key binding.
-  if (/^[a-z]$/.test(combo.key) && /^\p{Letter}$/u.test(eventKey) && !/^[a-z]$/.test(eventKey)) {
+  if (/^[a-z]$/.test(combo.key) && /^\p{Letter}$/u.test(event.key) && !/^[a-z]$/.test(eventKey)) {
     return event.code === combo.code;
   }
   // macOS rewrites event.key when Option is held (Option+T -> "†",

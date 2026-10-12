@@ -1040,6 +1040,18 @@ describe("unassigned shortcuts", () => {
       );
     });
 
+    it("dispatches a recorded dotted-uppercase letter with Shift held", () => {
+      const event = keyboardInput({ key: "İ", code: "KeyS", ctrlKey: true, shiftKey: true });
+      const combo = keyboardEventToComboString(event as KeyboardEvent);
+      expect(combo).toBe("Ctrl+Shift+S");
+      const bindings = buildEffectiveBindings({
+        "sidebar-toggle-left-ctrl-period-non-mac": combo!,
+      });
+      expect(resolveShortcut({ event, context: desktopNonMac, bindings }).match?.action).toBe(
+        "sidebar.toggle.left",
+      );
+    });
+
     it.each(["и", "И", "β", "ش", "ב", "é"])(
       "matches default and recorded letter bindings for unsupported letter %s",
       (key) => {
