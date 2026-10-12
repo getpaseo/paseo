@@ -11,7 +11,19 @@ import { AssistantFileLinkResolverProvider } from "./provider";
 import type { DirectorySuggestionResult } from "./resolver";
 import { useFileLink } from "./use-file-link";
 import type { OpenFileDisposition } from "@/workspace/file-open";
+import { useSessionStore } from "@/stores/session-store";
+import { performFileAction } from "@/file-access/actions";
+const openingMode = vi.hoisted(() => ({ value: "smart" }));
 
+vi.mock("@/hooks/use-settings", () => ({
+  loadAppSettingsFromStorage: async () => ({
+    fileOpening: { mode: openingMode.value, byExtension: {} },
+  }),
+}));
+vi.mock("@/file-access/actions", () => ({ performFileAction: vi.fn() }));
+vi.mock("@/components/adaptive-modal-sheet", () => ({ AdaptiveModalSheet: () => null }));
+vi.mock("@/components/ui/button", () => ({ Button: () => null }));
+vi.mock("react-native-unistyles", () => ({ StyleSheet: { create: () => ({ options: {} }) } }));
 vi.mock("@/utils/open-external-url", () => ({
   openExternalUrl: vi.fn(async () => {}),
 }));
@@ -99,6 +111,44 @@ function createWrapper(input: { client: TestClient; openedFiles: OpenedFile[]; t
 }
 
 describe("useFileLink", () => {
+  it.each(["smart", "preview"])(
+    "opens unsupported video in a system application with %s settings",
+    async (mode) => {
+      openingMode.value = mode;
+      const state = useSessionStore.getState();
+      const spy = vi.spyOn(useSessionStore, "getState").mockReturnValue({
+        ...state,
+        sessions: {
+          "server-1": { client: { isConnected: true } },
+        },
+      } as unknown as ReturnType<typeof useSessionStore.getState>);
+      vi.mocked(performFileAction).mockClear();
+      const openedFiles: OpenedFile[] = [];
+      try {
+        const { result } = renderHook(() => useFileLink({ href: "./video%20demo.mp4" }), {
+          wrapper: createWrapper({ client: { getDirectorySuggestions: vi.fn() }, openedFiles }),
+        });
+        act(() => result.current.onPress());
+        await waitFor(() =>
+          expect(performFileAction).toHaveBeenCalledWith(
+            expect.objectContaining({
+              action: "external",
+              target: {
+                serverId: "server-1",
+                cwd: "/Users/test/project",
+                path: "/Users/test/project/video demo.mp4",
+              },
+            }),
+          ),
+        );
+        expect(openedFiles).toEqual([]);
+      } finally {
+        openingMode.value = "smart";
+        spy.mockRestore();
+      }
+    },
+  );
+
   it("returns the same object across no-op parent rerenders", () => {
     const getDirectorySuggestions = vi.fn(async () => resolvedSuggestions([]));
     const queryClient = createQueryClient();

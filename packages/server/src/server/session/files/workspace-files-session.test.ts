@@ -612,3 +612,46 @@ describe("WorkspaceFilesSession", () => {
     await ownership.close();
   });
 });
+
+test.each(["owner", "another device"])(
+  "file cancellation from %s is scoped to the initiating device",
+  async (cancelFrom) => {
+    const cwd = makeDir("paseo-cancel-owner-");
+    writeFileSync(join(cwd, "report.pdf"), Buffer.alloc(200000, 65));
+    const owner = {};
+    const other = {};
+    const requestId = "shared-transfer-id";
+    const instance = makeSubsystem({
+      hasBinaryChannel: true,
+      emitBinary: async (bytes) => {
+        if (decodeFileTransferFrame(bytes)?.opcode === FileTransferOpcode.FileBegin) {
+          await instance.subsystem.handleFileReadCancel(
+            { type: "fs.file.read.cancel.request", requestId: "cancel", transferId: requestId },
+            cancelFrom === "owner" ? owner : other,
+          );
+        }
+      },
+    });
+    await instance.subsystem.handleFileExplorerRequest(
+      {
+        type: "file_explorer_request",
+        cwd,
+        path: "report.pdf",
+        mode: "file",
+        acceptBinary: true,
+        requestId,
+      },
+      owner,
+    );
+    const opcodes = new Set(instance.binary.map((bytes) => decodeFileTransferFrame(bytes)?.opcode));
+    expect(opcodes.has(FileTransferOpcode.FileEnd)).toBe(cancelFrom !== "owner");
+    expect(opcodes.has(FileTransferOpcode.FileChunk)).toBe(cancelFrom !== "owner");
+    if (cancelFrom === "owner")
+      expect(instance.emitted).toContainEqual(
+        expect.objectContaining({
+          type: "file_explorer_response",
+          payload: expect.objectContaining({ requestId, file: null, error: expect.any(String) }),
+        }),
+      );
+  },
+);

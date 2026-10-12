@@ -49,6 +49,7 @@ import {
   registerNotificationHandlers,
   ensureNotificationCenterRegistration,
 } from "./features/notifications.js";
+import { registerFileHandlers } from "./features/files.js";
 import { createExternalUrlOpener } from "./features/opener.js";
 import { createBrowserCaptureService } from "./features/browser-capture.js";
 import { registerEditorTargetHandlers } from "./features/editor-targets/ipc.js";
@@ -118,6 +119,10 @@ const DESKTOP_WINDOW_CHROME_MODE = resolveDesktopWindowChromeMode({
   isPackaged: app.isPackaged,
 });
 const UPDATE_QUIT_DEADLINE_MS = 5_000;
+let enhancedQuitRequested = false;
+app.on("before-quit", () => {
+  enhancedQuitRequested = true;
+});
 const pendingBrowserWindowOpenRequests = new PendingBrowserWindowOpenRequests();
 const agentNavigationInbox = new AgentNavigationInbox();
 
@@ -714,6 +719,16 @@ async function createWindow(
       agentNavigationInbox.windowLoading(webContentsId);
     }
   });
+  mainWindow.on("close", (event) => {
+    if (
+      process.platform === "darwin" &&
+      !enhancedQuitRequested &&
+      BrowserWindow.getAllWindows().length === 1
+    ) {
+      event.preventDefault();
+      mainWindow.hide();
+    }
+  });
   mainWindow.on("closed", () => {
     options.onClosed?.(webContentsId);
     agentNavigationInbox.removeWindow(webContentsId);
@@ -968,6 +983,7 @@ async function bootstrap(): Promise<void> {
   const openExternalUrl = createExternalUrlOpener({ open: shell.openExternal });
   ipcMain.handle("paseo:opener:openUrl", (_event, value: unknown) => openExternalUrl(value));
   registerEditorTargetHandlers();
+  registerFileHandlers();
   registerBrowserAutomationIpc();
 
   // In-app "Open in new window": opens a window that lands on the given project

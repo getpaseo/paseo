@@ -66,6 +66,12 @@ export class UnresolvedFileLinkError extends Error {
     this.name = "UnresolvedFileLinkError";
   }
 }
+export class AmbiguousFileLinkError extends Error {
+  constructor(readonly candidates: InlinePathTarget[]) {
+    super(i18n.t("fileAccess.chooseFile"));
+    this.name = "AmbiguousFileLinkError";
+  }
+}
 
 export async function fetchDaemonResolution({
   ambiguousQuery,
@@ -87,13 +93,22 @@ export async function fetchDaemonResolution({
       includeFiles: true,
       includeDirectories: false,
       matchMode: "suffix",
-      limit: 1,
+      limit: 20,
     });
   } catch {
     throw new UnresolvedFileLinkError(token);
   }
 
-  const match = suggestions.entries.find((entry) => entry.kind === "file");
+  const matches = suggestions.entries.filter((entry) => entry.kind === "file");
+  const exact = matches.find(
+    (entry) => entry.path.replace(/^\.\//, "") === ambiguousQuery.replace(/^\.\//, ""),
+  );
+  if (!exact && matches.length > 1) {
+    throw new AmbiguousFileLinkError(
+      matches.map((entry) => ({ ...target, path: joinWorkspacePath(trimmedRoot, entry.path) })),
+    );
+  }
+  const match = exact ?? matches[0];
   if (!match || suggestions.error) {
     throw new UnresolvedFileLinkError(token);
   }
@@ -117,6 +132,7 @@ export function classifyForResolution(
   const classification = classifyAssistantFileLink(token, {
     workspaceRoot: context.workspaceRoot,
     decodeHref: tokenInfo.fromHref,
+    explicit: source.sourceType !== "inline-code" && !isLinkifiedSource(source),
   });
   if (!classification) {
     return { kind: "resolved", value: { kind: "ignored" } };

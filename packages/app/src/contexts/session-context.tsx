@@ -1,3 +1,6 @@
+import { shouldNotifyTask } from "@/file-access/notification-policy";
+import { DEFAULT_APP_SETTINGS, loadAppSettingsFromStorage } from "@/hooks/use-settings";
+import { isNative } from "@/constants/platform";
 import { useRef, ReactNode, useCallback, useEffect } from "react";
 import { Buffer } from "buffer";
 import { AppState } from "react-native";
@@ -6,7 +9,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useClientActivity } from "@/hooks/use-client-activity";
 import { useAppVisible } from "@/hooks/use-app-visible";
-import { startPushNotifications } from "@/push-notifications";
+import { startPushNotifications, isBackgroundPushConfigured } from "@/push-notifications";
 import {
   createSetAgentInitializing,
   refreshAgentInitializationTimeout,
@@ -265,7 +268,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   useEffect(() => startPushNotifications({ client, serverId }), [client, serverId]);
 
   const notifyAgentAttention = useCallback(
-    (params: {
+    async (params: {
       agentId: string;
       reason: "finished" | "error" | "permission";
       timestamp: string;
@@ -274,21 +277,27 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       const appState = appStateRef.current;
       const session = useSessionStore.getState().sessions[serverId];
       const attentionFocusedAgentId = session?.focusedAgentId ?? null;
-      if (params.reason === "error") {
-        return;
-      }
       const isActivelyVisible = getIsAppActivelyVisible(appState);
       const isAwayFromAgent = !isActivelyVisible || attentionFocusedAgentId !== params.agentId;
-      if (!isAwayFromAgent) {
+      const preferences = (await loadAppSettingsFromStorage().catch(() => DEFAULT_APP_SETTINGS))
+        .taskNotifications;
+      if (
+        !shouldNotifyTask({
+          reason: params.reason,
+          preferences,
+          away: isAwayFromAgent,
+          native: isNative,
+          visible: isActivelyVisible,
+          backgroundPush: isBackgroundPushConfigured(),
+        })
+      )
         return;
-      }
-
       const timestampMs = new Date(params.timestamp).getTime();
-      const lastNotified = attentionNotifiedRef.current.get(params.agentId);
+      const lastNotified = attentionNotifiedRef.current.get(`${params.agentId}:${params.reason}`);
       if (lastNotified && lastNotified >= timestampMs) {
         return;
       }
-      attentionNotifiedRef.current.set(params.agentId, timestampMs);
+      attentionNotifiedRef.current.set(`${params.agentId}:${params.reason}`, timestampMs);
 
       const head = session?.agentStreamHead.get(params.agentId) ?? [];
       const tail = session?.agentStreamTail.get(params.agentId) ?? [];

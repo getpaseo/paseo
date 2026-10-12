@@ -7527,3 +7527,179 @@ test.each([false, true])(
     await send;
   },
 );
+
+async function connectFileSinkTest(features: Record<string, boolean> = {}) {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_file_sink",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  mock.triggerOpen({ features });
+  await connected;
+  return { client, mock };
+}
+test("file sink rejects an already aborted Hermes-style signal before starting a request", async () => {
+  const { client, mock } = await connectFileSinkTest();
+  const controller = new AbortController();
+  Object.defineProperty(controller.signal, "throwIfAborted", { value: undefined });
+  controller.abort();
+  await expect(
+    client.readFileToSink({
+      cwd: "/tmp/project",
+      path: "report.pdf",
+      signal: controller.signal,
+      sink: { begin: vi.fn(), write: vi.fn(), end: vi.fn() },
+    }),
+  ).rejects.toThrow("File transfer canceled");
+  expect(mock.sent).toHaveLength(0);
+});
+function beginSinkTransfer(
+  mock: ReturnType<typeof createMockTransport>,
+  requestId: string,
+  size = 5,
+) {
+  mock.triggerMessage(
+    encodeFileTransferFrame({
+      opcode: FileTransferOpcode.FileBegin,
+      requestId,
+      metadata: {
+        mime: "application/pdf",
+        size,
+        encoding: "binary",
+        modifiedAt: "2026-10-11T00:00:00.000Z",
+      },
+    }),
+  );
+}
+test("file sink receives chunks before completion and returns metadata without retained bytes", async () => {
+  const { client, mock } = await connectFileSinkTest();
+  const sink = { begin: vi.fn(), write: vi.fn(), end: vi.fn() };
+  const controller = new AbortController();
+  Object.defineProperty(controller.signal, "throwIfAborted", { value: undefined });
+  const pending = client.readFileToSink({
+    cwd: "/tmp/project",
+    path: "report.pdf",
+    sink,
+    signal: controller.signal,
+  });
+  const requestId = JSON.parse(assertStr(mock.sent[0])).message.requestId;
+  beginSinkTransfer(mock, requestId);
+  mock.triggerMessage(
+    encodeFileTransferFrame({
+      opcode: FileTransferOpcode.FileChunk,
+      requestId,
+      payload: new Uint8Array([1, 2]),
+    }),
+  );
+  expect(sink.write).toHaveBeenCalledWith(new Uint8Array([1, 2]));
+  expect(sink.end).not.toHaveBeenCalled();
+  mock.triggerMessage(
+    encodeFileTransferFrame({
+      opcode: FileTransferOpcode.FileChunk,
+      requestId,
+      payload: new Uint8Array([3, 4, 5]),
+    }),
+  );
+  mock.triggerMessage(encodeFileTransferFrame({ opcode: FileTransferOpcode.FileEnd, requestId }));
+  const result = await pending;
+  expect(result).toMatchObject({ path: "report.pdf", size: 5, mime: "application/pdf" });
+  expect(result).not.toHaveProperty("bytes");
+  expect(sink.end).toHaveBeenCalledOnce();
+});
+test.each([3, 7])(
+  "file sink refuses a transfer whose actual size is %s rather than 5",
+  async (actual) => {
+    const { client, mock } = await connectFileSinkTest();
+    const sink = { begin: vi.fn(), write: vi.fn(), end: vi.fn() };
+    const pending = client.readFileToSink({ cwd: "/tmp/project", path: "report.pdf", sink });
+    const assertion = expect(pending).rejects.toThrow(
+      actual < 5 ? "Incomplete file transfer" : "exceeded its declared size",
+    );
+    const requestId = JSON.parse(assertStr(mock.sent[0])).message.requestId;
+    beginSinkTransfer(mock, requestId);
+    mock.triggerMessage(
+      encodeFileTransferFrame({
+        opcode: FileTransferOpcode.FileChunk,
+        requestId,
+        payload: new Uint8Array(actual),
+      }),
+    );
+    mock.triggerMessage(encodeFileTransferFrame({ opcode: FileTransferOpcode.FileEnd, requestId }));
+    await assertion;
+    expect(sink.end).not.toHaveBeenCalled();
+  },
+);
+test.each([false, true])(
+  "file sink cancellation ignores late chunks and feature-gates server cancellation (%s)",
+  async (supportsCancel) => {
+    const { client, mock } = await connectFileSinkTest({ fileReadCancellation: supportsCancel });
+    const controller = new AbortController();
+    const sink = { begin: vi.fn(), write: vi.fn(), end: vi.fn() };
+    const pending = client.readFileToSink({
+      cwd: "/tmp/project",
+      path: "report.pdf",
+      sink,
+      signal: controller.signal,
+    });
+    const assertion = expect(pending).rejects.toThrow("File transfer canceled");
+    const requestId = JSON.parse(assertStr(mock.sent[0])).message.requestId;
+    beginSinkTransfer(mock, requestId);
+    controller.abort();
+    mock.triggerMessage(
+      encodeFileTransferFrame({
+        opcode: FileTransferOpcode.FileChunk,
+        requestId,
+        payload: new Uint8Array(5),
+      }),
+    );
+    mock.triggerMessage(encodeFileTransferFrame({ opcode: FileTransferOpcode.FileEnd, requestId }));
+    await assertion;
+    expect(sink.write).not.toHaveBeenCalled();
+    expect(sink.end).not.toHaveBeenCalled();
+    const cancellation = mock.sent
+      .filter((item) => typeof item === "string")
+      .map((item) => JSON.parse(assertStr(item)))
+      .find((item) => item.message?.type === "fs.file.read.cancel.request");
+    expect(Boolean(cancellation)).toBe(supportsCancel);
+    if (cancellation) {
+      expect(cancellation.message.transferId).toBe(requestId);
+      mock.triggerMessage(
+        JSON.stringify({
+          type: "session",
+          message: {
+            type: "fs.file.read.cancel.response",
+            payload: { requestId: cancellation.message.requestId },
+          },
+        }),
+      );
+    }
+  },
+);
+test("file sink propagates disk write errors and does not report completion", async () => {
+  const { client, mock } = await connectFileSinkTest();
+  const sink = {
+    begin: vi.fn(),
+    write: vi.fn(() => {
+      throw new Error("disk full");
+    }),
+    end: vi.fn(),
+  };
+  const pending = client.readFileToSink({ cwd: "/tmp/project", path: "report.pdf", sink });
+  const assertion = expect(pending).rejects.toThrow("disk full");
+  const requestId = JSON.parse(assertStr(mock.sent[0])).message.requestId;
+  beginSinkTransfer(mock, requestId);
+  mock.triggerMessage(
+    encodeFileTransferFrame({
+      opcode: FileTransferOpcode.FileChunk,
+      requestId,
+      payload: new Uint8Array(5),
+    }),
+  );
+  await assertion;
+  expect(sink.end).not.toHaveBeenCalled();
+});
