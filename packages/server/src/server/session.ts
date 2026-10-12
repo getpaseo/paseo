@@ -1,4 +1,5 @@
 import { AgentDirectory } from "./agent/directory.js";
+import { createDocumentPreview } from "./file-explorer/document-preview.js";
 import { searchTimeline } from "./agent/chat-search/index.js";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { BrowserAutomationHostCapabilitySchema } from "@getpaseo/protocol/browser-automation/capabilities";
@@ -2978,11 +2979,31 @@ export class Session {
     }
   }
 
+  private async handleDocumentPreview(
+    request: Extract<SessionInboundMessage, { type: "fs.document.preview.request" }>,
+  ): Promise<void> {
+    let target = { cwd: request.cwd, path: request.path };
+    let error: string | null = null;
+    try {
+      target = await createDocumentPreview(this.paseoHome, request.cwd, request.path);
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    }
+    this.emit({
+      type: "fs.document.preview.response",
+      payload: { ...target, error, requestId: request.requestId },
+    });
+  }
+
   private dispatchWorkspaceFileMessage(
     msg: SessionInboundMessage,
     source?: object,
   ): Promise<void> | undefined {
     switch (msg.type) {
+      case "fs.document.preview.request":
+        return this.handleDocumentPreview(msg);
+      case "fs.file.read.cancel.request":
+        return this.workspaceFilesSession.handleFileReadCancel(msg, source);
       case "file_explorer_request":
         return this.workspaceFilesSession.handleFileExplorerRequest(msg, source);
       case "fs.file.subscribe.request":

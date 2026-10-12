@@ -76,10 +76,40 @@ const ASSISTANT_FILE_EXTENSIONS = new Set([
   "yaml",
   "yml",
   "zsh",
+  "pdf",
+  "doc",
+  "docx",
+  "xls",
+  "xlsx",
+  "ppt",
+  "pptx",
+  "csv",
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "svg",
+  "zip",
+  "mp3",
+  "mp4",
+  "m4v",
+  "mov",
+  "webm",
+  "ogv",
+  "mkv",
+  "avi",
+  "wav",
+  "m4a",
+  "aac",
+  "flac",
+  "ogg",
 ]);
 
 export interface AssistantHrefParseOptions {
   workspaceRoot?: string;
+  /** Explicit Markdown destinations may name any file; automatic text detection stays conservative. */
+  explicit?: boolean;
   /**
    * True only when `value` is a markdown href — the renderer percent-encodes
    * non-ASCII and space characters, so the path must be decoded. Raw path
@@ -269,6 +299,7 @@ export function classifyAssistantFileLink(
   value: string,
   options: AssistantHrefParseOptions = {},
 ): AssistantFileLinkClassification | null {
+  options = { ...options, decodeHref: options.decodeHref ?? options.explicit };
   const raw = value ?? "";
   const trimmed = raw.trim();
   if (!trimmed) {
@@ -282,7 +313,7 @@ export function classifyAssistantFileLink(
     };
   }
 
-  if (/\s/.test(trimmed)) {
+  if (!options.explicit && /\s/.test(trimmed)) {
     return null;
   }
 
@@ -308,6 +339,7 @@ export function parseAssistantFileLink(
   value: string,
   options: AssistantHrefParseOptions = {},
 ): InlinePathTarget | null {
+  options = { ...options, decodeHref: options.decodeHref ?? options.explicit };
   const fileUrlTarget = parseFileProtocolUrl(value);
   if (fileUrlTarget) {
     return fileUrlTarget;
@@ -335,6 +367,7 @@ export function parseAssistantFileLink(
   const relativeTarget = parseWorkspaceRelativeFileLink(trimmed, {
     workspaceRoot: options.workspaceRoot,
     decodeHref: options.decodeHref,
+    explicit: options.explicit,
   });
   if (relativeTarget) {
     return relativeTarget;
@@ -350,7 +383,11 @@ export function parseAssistantFileLink(
   // still-encoded name.
   let pathPart: string;
   let hashPart: string;
-  if (options.decodeHref) {
+  if (options.explicit) {
+    const parts = splitLocalFileDestination(trimmed);
+    pathPart = options.decodeHref ? safeDecodeURIComponent(parts.path) : parts.path;
+    hashPart = parts.fragment;
+  } else if (options.decodeHref) {
     let parsedUrl: URL;
     try {
       parsedUrl = new URL(trimmed, "http://paseo.invalid");
@@ -468,19 +505,25 @@ function parseWorkspaceRelativeFileLink(
 
 function parseLocalPathParts(
   value: string,
-  options: Pick<AssistantHrefParseOptions, "decodeHref"> = {},
+  options: Pick<AssistantHrefParseOptions, "decodeHref" | "explicit"> = {},
 ): {
   path: string;
   lines: Pick<InlinePathTarget, "lineStart" | "lineEnd">;
 } | null {
   const normalized = normalizePathToken(value);
-  if (!normalized || normalized.includes("?")) {
+  if (!normalized || (!options.explicit && normalized.includes("?"))) {
     return null;
   }
 
   const hashIndex = normalized.indexOf("#");
-  const beforeHash = hashIndex >= 0 ? normalized.slice(0, hashIndex) : normalized;
-  const hash = hashIndex >= 0 ? normalized.slice(hashIndex) : "";
+  const parts = options.explicit
+    ? splitLocalFileDestination(normalized)
+    : {
+        path: hashIndex >= 0 ? normalized.slice(0, hashIndex) : normalized,
+        fragment: hashIndex >= 0 ? normalized.slice(hashIndex) : "",
+      };
+  const beforeHash = parts.path;
+  const hash = parts.fragment;
   const fragmentLines = parseLineFragment(hash);
   if (!fragmentLines) {
     return null;
@@ -494,7 +537,7 @@ function parseLocalPathParts(
     if (options.decodeHref) {
       pathPart = safeDecodeURIComponent(pathPart);
     }
-    if (!isPlausibleAssistantLocalPath(pathPart)) {
+    if (!options.explicit && !isPlausibleAssistantLocalPath(pathPart)) {
       return null;
     }
     return {
@@ -515,7 +558,7 @@ function parseLocalPathParts(
     decodedBeforeHash = safeDecodeURIComponent(beforeHash);
   }
   const plausiblePath = parseInlinePathToken(decodedBeforeHash)?.path ?? decodedBeforeHash;
-  if (!isPlausibleAssistantLocalPath(plausiblePath)) {
+  if (!options.explicit && !isPlausibleAssistantLocalPath(plausiblePath)) {
     return null;
   }
 
@@ -523,6 +566,15 @@ function parseLocalPathParts(
     path: decodedBeforeHash,
     lines: fragmentLines,
   };
+}
+
+function splitLocalFileDestination(value: string): { path: string; fragment: string } {
+  const index = value.lastIndexOf("#");
+  const fragment = index >= 0 ? value.slice(index + 1) : "";
+  // Only a source-line suffix has navigation semantics. Other # characters belong to the filename.
+  return index >= 0 && (INLINE_LINE_FRAGMENT.test(fragment) || /^L\d/.test(fragment))
+    ? { path: value.slice(0, index), fragment: `#${fragment}` }
+    : { path: value, fragment: "" };
 }
 
 export function normalizeInlinePathTarget(

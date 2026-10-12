@@ -108,6 +108,35 @@ describe("parseFileProtocolUrl", () => {
 });
 
 describe("classifyAssistantFileLink", () => {
+  it("opens explicit document destinations with spaces and arbitrary formats", () => {
+    for (const name of [
+      "report.pdf",
+      "report.docx",
+      "季度 报告（终版）.pdf",
+      "model.custom",
+      "LICENSE",
+    ]) {
+      expect(
+        classifyAssistantFileLink(name, { workspaceRoot: "/project", explicit: true }),
+      ).toEqual({
+        kind: "ambiguousFileCandidate",
+        target: { raw: name, path: `/project/${name}`, lineStart: undefined, lineEnd: undefined },
+      });
+    }
+  });
+
+  it("decodes file destinations once without losing filename punctuation", () => {
+    expect(
+      parseAssistantFileLink("reports/a%2520%23b%3F.pdf", {
+        workspaceRoot: "/project",
+        explicit: true,
+      })?.path,
+    ).toBe("/project/reports/a%20#b?.pdf");
+    expect(parseAssistantFileLink("/tmp/季度 报告#终版.pdf", { explicit: true })?.path).toBe(
+      "/tmp/季度 报告#终版.pdf",
+    );
+  });
+
   it("keeps explicit external URLs out of file parsing", () => {
     expect(
       classifyAssistantFileLink("http://dumm.md", {
@@ -611,3 +640,11 @@ describe("encoded filename line markers", () => {
     },
   );
 });
+it.each(["mp4", "mov", "m4v", "webm", "mkv", "avi", "wav", "mp3"])(
+  "recognizes inline media file %s",
+  (extension) => {
+    expect(
+      classifyAssistantFileLink(`demo.${extension}`, { workspaceRoot: "/repo" }),
+    ).toMatchObject({ target: { path: `/repo/demo.${extension}` } });
+  },
+);

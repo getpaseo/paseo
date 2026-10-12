@@ -549,6 +549,13 @@ export interface FileReadResult {
   modifiedAt: string;
   revision?: string;
 }
+export type FileReadMetadata = Omit<FileReadResult, "bytes">;
+/** Synchronous writes preserve frame order and avoid an unbounded asynchronous write queue. */
+export interface FileReadSink {
+  begin(metadata: FileReadMetadata): void;
+  write(bytes: Uint8Array): void;
+  end(metadata: FileReadMetadata): void;
+}
 export interface FileUploadInput {
   fileName: string;
   mimeType: string;
@@ -957,6 +964,7 @@ interface PendingBinaryFileRead {
   cwd: string;
   path: string;
   maxBytes?: number;
+  sink?: FileReadSink;
 }
 
 interface BinaryFileTransferState extends PendingBinaryFileRead {
@@ -969,6 +977,7 @@ interface BinaryFileTransferState extends PendingBinaryFileRead {
   modifiedAt: string;
   revision?: string;
   chunks: Uint8Array[];
+  receivedBytes: number;
 }
 
 type RpcWaitResult<T> = { kind: "ok"; value: T } | { kind: "error"; error: DaemonRpcError };
@@ -4776,9 +4785,10 @@ export class DaemonClient {
     path: string,
     requestId?: string,
     maxBytes?: number,
+    sink?: FileReadSink,
   ): Promise<FileReadResult> {
     const resolvedRequestId = this.createRequestId(requestId);
-    this.pendingBinaryFileReads.set(resolvedRequestId, { cwd, path, maxBytes });
+    this.pendingBinaryFileReads.set(resolvedRequestId, { cwd, path, maxBytes, sink });
     try {
       const payload = await this.requestFileExplorer(
         cwd,
@@ -4799,10 +4809,60 @@ export class DaemonClient {
       if (!payload.file) {
         throw new Error("File unavailable.");
       }
-      return legacyExplorerFileToBytes(payload.file);
+      const result = legacyExplorerFileToBytes(payload.file);
+      if (sink) {
+        if (maxBytes && result.size > maxBytes) throw new Error("File is too large to display");
+        sink.begin(result);
+        sink.write(result.bytes);
+        sink.end(result);
+        return { ...result, bytes: new Uint8Array() };
+      }
+      return result;
     } finally {
       this.pendingBinaryFileReads.delete(resolvedRequestId);
       this.activeBinaryFileTransfers.delete(resolvedRequestId);
+      this.completedBinaryFileReads.delete(resolvedRequestId);
+    }
+  }
+
+  async readFileToSink(input: {
+    cwd: string;
+    path: string;
+    sink: FileReadSink;
+    maxBytes?: number;
+    signal?: AbortSignal;
+  }): Promise<FileReadMetadata> {
+    if (input.signal?.aborted) throw new Error("File transfer canceled");
+    const requestId = this.createRequestId();
+    const read = this.readFile(input.cwd, input.path, requestId, input.maxBytes, input.sink);
+    const abort = () => {
+      this.activeBinaryFileTransfers.delete(requestId);
+      this.pendingBinaryFileReads.delete(requestId);
+      this.handleSessionMessage({
+        type: "file_explorer_response",
+        payload: {
+          cwd: input.cwd,
+          path: input.path,
+          mode: "file",
+          file: null,
+          directory: null,
+          error: "File transfer canceled",
+          requestId,
+        },
+      });
+      if (this.lastServerInfoMessage?.features?.fileReadCancellation === true) {
+        void this.sendCorrelatedSessionRequest({
+          message: { type: "fs.file.read.cancel.request", transferId: requestId },
+          responseType: "fs.file.read.cancel.response",
+        }).catch(() => {});
+      }
+    };
+    input.signal?.addEventListener("abort", abort, { once: true });
+    try {
+      const { bytes: _bytes, ...metadata } = await read;
+      return metadata;
+    } finally {
+      input.signal?.removeEventListener("abort", abort);
     }
   }
 
@@ -6076,6 +6136,14 @@ export class DaemonClient {
     });
   }
 
+  async createDocumentPreview(cwd: string, path: string) {
+    return this.sendCorrelatedSessionRequest({
+      message: { type: "fs.document.preview.request", cwd, path },
+      responseType: "fs.document.preview.response",
+      timeout: 90_000,
+    });
+  }
+
   async scheduleCreate(options: CreateScheduleOptions): Promise<ScheduleCreatePayload> {
     return this.sendCorrelatedSessionRequest({
       requestId: options.requestId,
@@ -6473,11 +6541,42 @@ export class DaemonClient {
   }
 
   private handleFileTransferFrame(frame: FileTransferFrame): void {
+    try {
+      this.consumeFileTransferFrame(frame);
+    } catch (error) {
+      const transfer =
+        this.activeBinaryFileTransfers.get(frame.requestId) ??
+        this.pendingBinaryFileReads.get(frame.requestId);
+      this.activeBinaryFileTransfers.delete(frame.requestId);
+      if (!transfer) return;
+      this.handleSessionMessage({
+        type: "file_explorer_response",
+        payload: {
+          cwd: transfer.cwd,
+          path: transfer.path,
+          mode: "file",
+          directory: null,
+          file: null,
+          error: error instanceof Error ? error.message : "Failed to receive file",
+          requestId: frame.requestId,
+        },
+      });
+    }
+  }
+
+  private consumeFileTransferFrame(frame: FileTransferFrame): void {
     if (frame.opcode === FileTransferOpcode.FileBegin) {
       const pending = this.pendingBinaryFileReads.get(frame.requestId);
       if (!pending) {
         return;
       }
+      if (pending.maxBytes && frame.metadata.size > pending.maxBytes)
+        throw new Error("File is too large to display");
+      pending.sink?.begin({
+        ...frame.metadata,
+        path: pending.path,
+        kind: binaryFileKind(frame.metadata.mime, frame.metadata.encoding),
+      });
       this.activeBinaryFileTransfers.set(frame.requestId, {
         ...pending,
         mime: frame.metadata.mime,
@@ -6486,6 +6585,7 @@ export class DaemonClient {
         modifiedAt: frame.metadata.modifiedAt,
         revision: frame.metadata.revision,
         chunks: [],
+        receivedBytes: 0,
       });
       return;
     }
@@ -6501,7 +6601,11 @@ export class DaemonClient {
       if (transfer.maxBytes && transfer.size > transfer.maxBytes) {
         return;
       }
-      transfer.chunks.push(frame.payload);
+      transfer.receivedBytes += frame.payload.byteLength;
+      if (transfer.receivedBytes > transfer.size)
+        throw new Error("File transfer exceeded its declared size");
+      if (transfer.sink) transfer.sink.write(frame.payload);
+      else transfer.chunks.push(frame.payload);
       return;
     }
 
@@ -6523,10 +6627,21 @@ export class DaemonClient {
       return;
     }
 
-    const bytes = concatByteChunks(transfer.chunks, transfer.size);
+    if (transfer.receivedBytes !== transfer.size) throw new Error("Incomplete file transfer");
+    const bytes = transfer.sink
+      ? new Uint8Array()
+      : concatByteChunks(transfer.chunks, transfer.size);
     this.activeBinaryFileTransfers.delete(frame.requestId);
     this.completedBinaryFileReads.set(frame.requestId, {
       bytes,
+      mime: transfer.mime,
+      size: transfer.size,
+      path: transfer.path,
+      kind: binaryFileKind(transfer.mime, transfer.encoding),
+      modifiedAt: transfer.modifiedAt,
+      revision: transfer.revision,
+    });
+    transfer.sink?.end({
       mime: transfer.mime,
       size: transfer.size,
       path: transfer.path,
