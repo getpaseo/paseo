@@ -603,6 +603,13 @@ export const es: TranslationResources = {
       },
     },
     browser: {
+      tabs: "Pestañas del navegador",
+      newTab: "Nueva pestaña del navegador",
+      allTabs: "Todas las pestañas",
+      hide: "Ocultar navegador",
+      show: "Mostrar navegador",
+      reopenLastClosedTab: "Reabrir la última pestaña cerrada",
+      address: "Dirección",
       placementUnavailable:
         "No se pudo abrir el navegador en esta disposición. Cierra un panel y vuelve a intentarlo.",
       unavailable: {

@@ -594,6 +594,13 @@ export const en = {
       },
     },
     browser: {
+      tabs: "Browser tabs",
+      newTab: "New browser tab",
+      allTabs: "All tabs",
+      hide: "Hide browser",
+      show: "Show browser",
+      reopenLastClosedTab: "Reopen last closed tab",
+      address: "Address",
       placementUnavailable: "Couldn't open the browser in this layout. Close a pane and retry.",
       unavailable: {
         title: "Browser is desktop-only",

@@ -602,6 +602,13 @@ export const ru: TranslationResources = {
       },
     },
     browser: {
+      tabs: "Вкладки браузера",
+      newTab: "Новая вкладка браузера",
+      allTabs: "Все вкладки",
+      hide: "Скрыть браузер",
+      show: "Показать браузер",
+      reopenLastClosedTab: "Открыть последнюю закрытую вкладку",
+      address: "Адрес",
       placementUnavailable:
         "Не удалось открыть браузер в этой раскладке. Закройте панель и повторите попытку.",
       unavailable: {

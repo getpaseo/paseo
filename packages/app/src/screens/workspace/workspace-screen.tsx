@@ -2505,13 +2505,6 @@ function WorkspaceScreenContent({
     [tabFallbackLabels, tabs],
   );
 
-  const handleCreateDraftTab = useCallback(
-    (input?: { paneId?: string }) => {
-      openWorkspaceDraftTab({ paneId: input?.paneId });
-    },
-    [openWorkspaceDraftTab],
-  );
-
   const handleCreateTerminal = useStableEvent((input?: { paneId?: string }) => {
     createTerminal({
       destination: input?.paneId ? { kind: "open", paneId: input.paneId } : { kind: "open" },
@@ -2539,11 +2532,21 @@ function WorkspaceScreenContent({
       if (!persistenceKey || !getIsElectron()) return;
       openManualBrowser({
         workspaceKey: persistenceKey,
+        url: "about:blank",
+        state: { browserAddressFocusPending: true },
         intent: "reveal",
         placement: input?.paneId ? paneLocalPlacement(input.paneId) : undefined,
       });
     },
     [openManualBrowser, persistenceKey],
+  );
+
+  const handleCreateDraftTab = useCallback(
+    (input?: { paneId?: string; kind?: "browser" }) => {
+      if (input?.kind === "browser") handleCreateBrowserTab(input);
+      else openWorkspaceDraftTab({ paneId: input?.paneId });
+    },
+    [handleCreateBrowserTab, openWorkspaceDraftTab],
   );
 
   const launchWorkspaceTab = useCallback(
@@ -2579,6 +2582,8 @@ function WorkspaceScreenContent({
       if (!getIsElectron()) return;
       openManualBrowser({
         workspaceKey: persistenceKey,
+        url: "about:blank",
+        state: { browserAddressFocusPending: true },
         intent: "reveal",
         replaceTabId: destination.kind === "replace" ? destination.tabId : undefined,
         placement:

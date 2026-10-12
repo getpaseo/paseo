@@ -602,6 +602,13 @@ export const fr: TranslationResources = {
       },
     },
     browser: {
+      tabs: "Onglets du navigateur",
+      newTab: "Nouvel onglet navigateur",
+      allTabs: "Tous les onglets",
+      hide: "Masquer le navigateur",
+      show: "Afficher le navigateur",
+      reopenLastClosedTab: "Réouvrir le dernier onglet fermé",
+      address: "Adresse",
       placementUnavailable:
         "Impossible d’ouvrir le navigateur dans cette disposition. Fermez un panneau et réessayez.",
       unavailable: {

@@ -598,6 +598,13 @@ export const ko: TranslationResources = {
       },
     },
     browser: {
+      tabs: "브라우저 탭",
+      newTab: "새 브라우저 탭",
+      allTabs: "모든 탭",
+      hide: "브라우저 숨기기",
+      show: "브라우저 표시",
+      reopenLastClosedTab: "마지막으로 닫은 탭 다시 열기",
+      address: "주소",
       placementUnavailable:
         "이 레이아웃에서 브라우저를 열 수 없습니다. 패널을 닫고 다시 시도하세요.",
       unavailable: {

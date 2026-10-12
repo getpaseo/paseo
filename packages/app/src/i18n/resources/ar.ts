@@ -597,6 +597,13 @@ export const ar: TranslationResources = {
       },
     },
     browser: {
+      tabs: "علامات تبويب المتصفح",
+      newTab: "علامة تبويب متصفح جديدة",
+      allTabs: "كل علامات التبويب",
+      hide: "إخفاء المتصفح",
+      show: "إظهار المتصفح",
+      reopenLastClosedTab: "إعادة فتح آخر علامة تبويب مغلقة",
+      address: "العنوان",
       placementUnavailable: "تعذّر فتح المتصفح في هذا التخطيط. أغلق لوحة وأعد المحاولة.",
       unavailable: {
         title: "المتصفح مخصص لسطح المكتب فقط",

@@ -597,6 +597,13 @@ export const zhCN: TranslationResources = {
       },
     },
     browser: {
+      tabs: "浏览器标签页",
+      newTab: "新建浏览器标签页",
+      allTabs: "所有标签页",
+      hide: "隐藏浏览器",
+      show: "显示浏览器",
+      reopenLastClosedTab: "重新打开上次关闭的标签页",
+      address: "地址",
       placementUnavailable: "无法在此布局中打开浏览器。请关闭一个面板后重试。",
       unavailable: {
         title: "浏览器仅桌面端可用",

@@ -14,6 +14,7 @@ export interface WorkspaceTabLayoutMetrics {
 }
 
 export interface WorkspaceTabLayoutInput {
+  variant?: "workspace" | "browser";
   viewportWidth: number;
   tabLabelWidths: number[];
   metrics: WorkspaceTabLayoutMetrics;
@@ -82,7 +83,11 @@ export function computeWorkspaceTabLayout(
   const requiresHorizontalScrollFallback = availableTabsWidth < minimumTotalWidth;
 
   let resolvedWidths = naturalWidths;
-  if (requiresHorizontalScrollFallback) {
+  if (input.variant === "browser") {
+    resolvedWidths = Array.from({ length: tabCount }, () =>
+      clamp(availableTabsWidth / tabCount, input.metrics.minTabWidth, input.metrics.maxTabWidth),
+    );
+  } else if (requiresHorizontalScrollFallback) {
     resolvedWidths = Array.from({ length: tabCount }, () => input.metrics.minTabWidth);
   } else if (naturalTotalWidth > availableTabsWidth) {
     const widthToRemove = naturalTotalWidth - availableTabsWidth;

@@ -683,6 +683,67 @@ async function runRegression({
 
   const originalDeck = page.getByTestId(`workspace-deck-entry-${serverId}:${originalWorkspaceId}`);
   await originalDeck.getByTestId(`workspace-tab-browser_${browserId}`).click();
+  if (phase === "after") {
+    const browserRow = originalDeck.getByRole("tablist", { name: "Browser tabs", exact: true });
+    await browserRow.getByRole("button", { name: "New browser tab", exact: true }).click();
+    const address = page
+      .getByRole("textbox", { name: "Address", exact: true })
+      .filter({ visible: true });
+    assert((await address.inputValue()) === "", "New tab must show an empty address");
+    assert(
+      await address.evaluate((element) => document.activeElement === element),
+      "New tab must focus the address before typing",
+    );
+    await address.press("Enter");
+    assert((await address.inputValue()) === "", "Empty address submission must remain blank");
+    await address.fill(targetUrl);
+    await address.press("Enter");
+    assert(
+      (await browserRow.getByRole("tab", { selected: true }).count()) === 1,
+      "Browser row must have exactly one selected tab",
+    );
+    const manualTab = browserRow.getByRole("tab", { selected: true });
+    const manualTabTestId = await manualTab.getAttribute("data-testid");
+    await manualTab.focus();
+    await manualTab.press("Home");
+    assert(
+      await browserRow
+        .getByRole("tab")
+        .first()
+        .evaluate((element) => document.activeElement === element),
+      "Home must keep focus on the first browser tab",
+    );
+    await browserRow.getByRole("tab").first().press("End");
+    assert(
+      await browserRow
+        .getByRole("tab")
+        .last()
+        .evaluate((element) => document.activeElement === element),
+      "End must keep focus on the last browser tab",
+    );
+    await browserRow.getByRole("tab").last().press("ArrowLeft");
+    assert(
+      await browserRow
+        .getByRole("tab")
+        .first()
+        .evaluate((element) => document.activeElement === element),
+      "ArrowLeft must keep focus in the browser row",
+    );
+    await browserRow.getByRole("tab").first().press("ArrowRight");
+    assert(
+      await browserRow
+        .getByRole("tab")
+        .last()
+        .evaluate((element) => document.activeElement === element),
+      "ArrowRight must keep focus in the browser row",
+    );
+    assert(manualTabTestId, "Manual browser tab must have a stable test id");
+    await originalDeck
+      .getByTestId(manualTabTestId.replace("workspace-tab-browser_", "workspace-browser-close-"))
+      .click();
+    await originalDeck.getByTestId(`workspace-tab-browser_${browserId}`).click();
+  }
+
   await page.waitForFunction(
     (id) => {
       const webview = document.querySelector(`[data-paseo-browser-id="${id}"]`);

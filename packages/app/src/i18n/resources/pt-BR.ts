@@ -602,6 +602,13 @@ export const ptBR: TranslationResources = {
       },
     },
     browser: {
+      tabs: "Abas do navegador",
+      newTab: "Nova aba do navegador",
+      allTabs: "Todas as abas",
+      hide: "Ocultar navegador",
+      show: "Mostrar navegador",
+      reopenLastClosedTab: "Reabrir a última aba fechada",
+      address: "Endereço",
       placementUnavailable:
         "Não foi possível abrir o navegador neste layout. Feche um painel e tente novamente.",
       unavailable: {

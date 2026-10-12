@@ -603,6 +603,13 @@ export const ja: TranslationResources = {
       },
     },
     browser: {
+      tabs: "ブラウザーのタブ",
+      newTab: "新しいブラウザータブ",
+      allTabs: "すべてのタブ",
+      hide: "ブラウザーを非表示",
+      show: "ブラウザーを表示",
+      reopenLastClosedTab: "最後に閉じたタブを開く",
+      address: "アドレス",
       placementUnavailable:
         "このレイアウトではブラウザーを開けません。パネルを閉じて再試行してください。",
       unavailable: {

@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
+import { useCallback, useMemo } from "react";
 import { Image } from "react-native";
 import { Globe } from "lucide-react-native";
 import invariant from "tiny-invariant";
@@ -39,15 +40,19 @@ function useBrowserPanelDescriptor(target: {
   kind: "browser";
   browserId: string;
 }): PanelDescriptor {
+  const { t } = useTranslation();
   const browser = useBrowserStore((state) => state.browsersById[target.browserId] ?? null);
   const url = browser?.url ?? "https://example.com";
   const icon = createBrowserTabIcon(browser?.faviconUrl ?? null);
-  const label = getBrowserLabel({ title: browser?.title ?? "", url });
+  const label =
+    url === "about:blank"
+      ? t("workspace.browser.newTab")
+      : getBrowserLabel({ title: browser?.title ?? "", url });
 
   return {
     label,
     subtitle: url,
-    tooltip: url || label,
+    tooltip: url === "about:blank" ? label : url || label,
     titleState: "ready",
     icon,
     statusBucket: browser?.isLoading ? "running" : null,
@@ -55,7 +60,16 @@ function useBrowserPanelDescriptor(target: {
 }
 
 function BrowserPanel() {
-  const { serverId, workspaceId, target } = usePaneContext();
+  const { serverId, workspaceId, target, state, setCurrentTabState } = usePaneContext();
+  const tabState = useMemo(
+    () => (state && typeof state === "object" && !Array.isArray(state) ? state : {}),
+    [state],
+  );
+  const focusAddressOnOpen = tabState.browserAddressFocusPending === true;
+  const onAddressFocusHandled = useCallback(() => {
+    const { browserAddressFocusPending: _pending, ...rest } = tabState;
+    setCurrentTabState(rest);
+  }, [tabState, setCurrentTabState]);
   const { focusPane, isInteractive } = usePaneFocus();
   const cwd = useWorkspaceDirectory(serverId, workspaceId);
   invariant(target.kind === "browser", "BrowserPanel requires browser target");
@@ -67,6 +81,8 @@ function BrowserPanel() {
       cwd={cwd}
       isInteractive={isInteractive}
       onFocusPane={focusPane}
+      focusAddressOnOpen={focusAddressOnOpen}
+      onAddressFocusHandled={onAddressFocusHandled}
     />
   );
 }

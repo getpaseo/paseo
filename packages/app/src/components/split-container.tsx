@@ -1,3 +1,4 @@
+import { getIsElectron } from "@/constants/platform";
 import {
   Fragment,
   useCallback,
@@ -116,7 +117,7 @@ interface SplitContainerProps {
   onCloseTabsToLeft: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
-  onCreateNewTab: (input: { paneId?: string }) => void;
+  onCreateNewTab: (input: { paneId?: string; kind?: "browser" }) => void;
   onOpenExplorerTerminalFile: (request: WorkspaceFileOpenRequest) => void;
   buildPaneContentModel: (input: {
     paneId: string;
@@ -195,7 +196,6 @@ interface SplitNodeViewProps extends Omit<
 interface SplitPaneViewProps extends Omit<
   SplitNodeViewProps,
   | "node"
-  | "workspaceKey"
   | "focusedPaneId"
   | "activeDragTabId"
   | "showDropZones"
@@ -1015,6 +1015,7 @@ function SplitNodeView({
       >
         <WindowChromeRegion corners={windowChromeCorners}>
           <SplitPaneView
+            workspaceKey={workspaceKey}
             pane={node.pane}
             uiTabs={uiTabs}
             isFocused={node.pane.id === focusedPaneId}
@@ -1127,6 +1128,7 @@ function SplitNodeView({
 }
 
 function SplitPaneView({
+  workspaceKey,
   pane,
   uiTabs,
   isFocused,
@@ -1175,6 +1177,15 @@ function SplitPaneView({
   );
   const paneTabs = useMemo(() => paneState.tabs.map((tab) => tab.descriptor), [paneState.tabs]);
   const activeTabDescriptor = paneState.activeTab?.descriptor ?? null;
+  const rememberedBrowserPaneId = useWorkspaceLayoutStore(
+    (state) => state.browserPaneIdByWorkspace[workspaceKey],
+  );
+  const browserVariant =
+    getIsElectron() &&
+    ((paneTabs.length > 0 && paneTabs.every((tab) => tab.kind === "browser")) ||
+      (pane.id === rememberedBrowserPaneId &&
+        paneTabs.length === 1 &&
+        paneTabs[0]?.kind === "new_tab"));
   const desktopTabRowItems = useMemo<WorkspaceDesktopTabRowItem[]>(
     () =>
       paneTabs.map((tab) => ({
@@ -1265,6 +1276,7 @@ function SplitPaneView({
         <WindowChromeSafeArea placement="inline" style={styles.paneTabs}>
           <TitlebarDragRegion />
           <WorkspaceDesktopTabsRow
+            variant={browserVariant ? "browser" : "workspace"}
             paneId={pane.id}
             isFocused={isFocused && isWorkspaceFocused}
             tabs={desktopTabRowItems}

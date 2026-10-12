@@ -586,6 +586,8 @@ export function BrowserPane({
   cwd,
   isInteractive,
   onFocusPane,
+  focusAddressOnOpen,
+  onAddressFocusHandled,
 }: {
   browserId: string;
   serverId: string;
@@ -593,6 +595,8 @@ export function BrowserPane({
   cwd: string | null;
   isInteractive?: boolean;
   onFocusPane?: () => void;
+  focusAddressOnOpen?: boolean;
+  onAddressFocusHandled?: () => void;
 }) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -631,7 +635,9 @@ export function BrowserPane({
   // Screenshot is captured at selection time (overlay already torn down, no
   // scroll drift) and reused when the annotation card is submitted.
   const pendingScreenshotRef = useRef<AttachmentMetadata | undefined>(undefined);
-  const [draftUrl, setDraftUrl] = useState(browser?.url ?? "https://example.com");
+  const [draftUrl, setDraftUrl] = useState(
+    browser?.url === "about:blank" ? "" : (browser?.url ?? "https://example.com"),
+  );
   const workspaceAttachmentScopeKey = useMemo(
     () => buildBrowserAttachmentScopeKey({ cwd, serverId, workspaceId }),
     [cwd, serverId, workspaceId],
@@ -675,7 +681,7 @@ export function BrowserPane({
   browserErrorLabelsRef.current = browserErrorLabels;
 
   useEffect(() => {
-    const nextUrl = browser?.url ?? "https://example.com";
+    const nextUrl = browser?.url === "about:blank" ? "" : (browser?.url ?? "https://example.com");
     urlInputRef.current?.replaceText(nextUrl);
     setDraftUrl((current) => (current === nextUrl ? current : nextUrl));
   }, [browser?.url]);
@@ -697,6 +703,14 @@ export function BrowserPane({
     urlInputRef.current?.focus();
     selectUrlBar();
   }, [selectUrlBar]);
+
+  useEffect(() => {
+    if (!focusAddressOnOpen || !isPresented || !isInteractive || !urlInputRef.current) return;
+    focusUrlBar();
+    if (document.activeElement === getTextInputNativeElement(urlInputRef.current)) {
+      onAddressFocusHandled?.();
+    }
+  }, [focusAddressOnOpen, isPresented, isInteractive, focusUrlBar, onAddressFocusHandled]);
 
   const syncNavigationState = useCallback((input?: { syncUrl?: boolean }) => {
     const webview = webviewRef.current;
@@ -1051,7 +1065,7 @@ export function BrowserPane({
   }, [focusUrlBar, isInteractive]);
 
   const handleNavigateDraftUrl = useCallback(() => {
-    navigate(draftUrl);
+    if (draftUrl.trim()) navigate(draftUrl);
   }, [draftUrl, navigate]);
 
   const addElementAttachment = useCallback(
@@ -1466,7 +1480,7 @@ export function BrowserPane({
         </View>
         <View style={styles.urlBarWrap}>
           <TextInput
-            accessibilityLabel={t("workspace.browser.controls.browserUrl")}
+            accessibilityLabel={t("workspace.browser.address")}
             autoCapitalize="none"
             autoCorrect={false}
             onChangeText={setDraftUrl}
