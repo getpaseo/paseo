@@ -227,7 +227,7 @@ export async function expectVirtualizedPluginPromptVisible(
 
 export async function attachPromptTimelineEvidence(page: Page, info: TestInfo): Promise<void> {
   await info.attach("plugin-outline-jump", {
-    body: await page.screenshot(),
+    body: await page.screenshot({ path: info.outputPath("plugin-outline-jump.png") }),
     contentType: "image/png",
   });
 }
