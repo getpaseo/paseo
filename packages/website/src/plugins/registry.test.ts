@@ -11,6 +11,7 @@ import {
   type Plugin,
   readmeBody,
   recentlyUpdated,
+  reportBugUrl,
   searchPlugins,
   updatedAgo,
 } from "./registry";
@@ -291,6 +292,20 @@ describe("plugin registry", () => {
   it("offers a registry install command", () => {
     expect(installCommand(plugin)).toBe("paseo plugin add acme/example");
     expect(formatInstalls(1250)).toBe("1.3k");
+  });
+  it("reports bugs on the source repository's GitHub issue tracker", () => {
+    const at = (url: string) => reportBugUrl({ ...plugin, repository: { url } });
+    expect(at("https://github.com/acme/example")).toBe(
+      "https://github.com/acme/example/issues/new",
+    );
+    expect(at("https://github.com/acme/plugins.git")).toBe(
+      "https://github.com/acme/plugins/issues/new",
+    );
+    expect(at("https://github.com/acme/plugins/tree/HEAD/packages/example")).toBe(
+      "https://github.com/acme/plugins/issues/new",
+    );
+    expect(at("https://gitlab.com/acme/example")).toBeUndefined();
+    expect(at("javascript:alert(1)")).toBeUndefined();
   });
 });
 
