@@ -337,6 +337,8 @@ export interface AgentManagerOptions {
   agentStreamCoalesceWindowMs?: number;
   /** Timeout for releasing idle, persisted Codex app-server backends; 0 disables eviction. */
   codexIdleBackendTimeoutMs?: number;
+  /** Timeout for releasing idle, persisted Claude processes; 0 or undefined disables eviction. */
+  claudeIdleBackendTimeoutMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
   beforeSteerUnavailableFallback?: (input: {
     agentId: string;
@@ -773,6 +775,7 @@ export class AgentManager {
     { session: AgentSession; timer: NodeJS.Timeout }
   >();
   private readonly codexIdleBackendTimeoutMs: number | undefined;
+  private readonly claudeIdleBackendTimeoutMs: number | undefined;
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
@@ -805,6 +808,7 @@ export class AgentManager {
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
     this.codexIdleBackendTimeoutMs = options.codexIdleBackendTimeoutMs;
+    this.claudeIdleBackendTimeoutMs = options.claudeIdleBackendTimeoutMs;
     this.rescueTimeouts = {
       reloadSessionCloseMs:
         options.rescueTimeouts?.reloadSessionCloseMs ?? RELOAD_SESSION_CLOSE_TIMEOUT_MS,
@@ -1814,11 +1818,18 @@ export class AgentManager {
     this.idleBackendTimers.delete(agentId);
   }
 
+  private idleBackendTimeoutMs(provider: AgentProvider): number | undefined {
+    if (provider === "codex") return this.codexIdleBackendTimeoutMs;
+    if (provider === "claude") return this.claudeIdleBackendTimeoutMs;
+    return undefined;
+  }
+
   private isIdleBackendEvictionCandidate(agent: ActiveManagedAgent): boolean {
+    const timeoutMs = this.idleBackendTimeoutMs(agent.provider);
     return (
       this.acceptingAgentRegistrations &&
-      this.codexIdleBackendTimeoutMs !== undefined &&
-      this.codexIdleBackendTimeoutMs > 0 &&
+      timeoutMs !== undefined &&
+      timeoutMs > 0 &&
       agent.session.idleBackendEvictionEligible === true &&
       !agent.internal &&
       agent.lifecycle === "idle" &&
@@ -1844,7 +1855,7 @@ export class AgentManager {
     const existing = this.idleBackendTimers.get(agent.id);
     if (existing?.session === agent.session) return;
     this.cancelIdleBackendTimer(agent.id);
-    const timeoutMs = this.codexIdleBackendTimeoutMs;
+    const timeoutMs = this.idleBackendTimeoutMs(agent.provider);
     if (timeoutMs === undefined) return;
     const session = agent.session;
     const idleSince = Date.now();
@@ -1863,12 +1874,15 @@ export class AgentManager {
         onClose: (current) => {
           this.logger.info(
             { agentId: current.id, provider: current.provider, idleMs: Date.now() - idleSince },
-            "Evicting idle Codex backend",
+            "Evicting idle provider backend",
           );
         },
       })
         .catch((error) => {
-          this.logger.warn({ err: error, agentId: agent.id }, "Failed to evict idle Codex backend");
+          this.logger.warn(
+            { err: error, agentId: agent.id },
+            "Failed to evict idle provider backend",
+          );
         })
         .finally(() => {
           const current = this.agents.get(agent.id);

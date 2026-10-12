@@ -559,6 +559,18 @@ interface ResolveConfigFromPersistedOptions {
   relayEnabledFallback?: boolean;
 }
 
+function resolveIdleBackendTimeouts(persisted: PersistedConfig): {
+  codexIdleBackendTimeoutMs: number;
+  claudeIdleBackendTimeoutMs: number;
+} {
+  return {
+    codexIdleBackendTimeoutMs:
+      persisted.agents?.codexIdleBackendTimeoutMs ?? DEFAULT_CODEX_IDLE_BACKEND_TIMEOUT_MS,
+    // Opt-in: Claude idle eviction relies on Claude Code announcing its background work.
+    claudeIdleBackendTimeoutMs: persisted.agents?.claudeIdleBackendTimeoutMs ?? 0,
+  };
+}
+
 export function resolveConfigFromPersisted(
   paseoHome: string,
   persisted: PersistedConfig,
@@ -651,8 +663,7 @@ export function resolveConfigFromPersisted(
     voiceLlmModel: voiceLlm.model,
     agentProviderSettings: extractAgentProviderSettings(providerOverrides),
     providerCatalogRefreshTimeoutMs: persisted.agents?.catalogRefreshTimeoutMs,
-    codexIdleBackendTimeoutMs:
-      persisted.agents?.codexIdleBackendTimeoutMs ?? DEFAULT_CODEX_IDLE_BACKEND_TIMEOUT_MS,
+    ...resolveIdleBackendTimeouts(persisted),
     metadataGeneration: persisted.agents?.metadataGeneration,
     providerOverrides,
     log: resolveLogConfigFromEnv(env, persisted),

@@ -2898,6 +2898,54 @@ test("keeps an idle Codex backend resident when eviction is disabled", async () 
   }
 });
 
+test("releases idle Claude runtimes only when the Claude timeout is enabled", async () => {
+  vi.useFakeTimers();
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-claude-eviction-"));
+  const sessions: EvictableTestAgentSession[] = [];
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const session = new EvictableTestAgentSession(config);
+      sessions.push(session);
+      return session;
+    }
+  })("claude");
+  const codexOnly = new AgentManager({
+    clients: { claude: client },
+    codexIdleBackendTimeoutMs: 10_000,
+    logger,
+  });
+  const claudeEnabled = new AgentManager({
+    clients: { claude: client },
+    claudeIdleBackendTimeoutMs: 10_000,
+    logger,
+  });
+
+  try {
+    const retained = await codexOnly.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const released = await claudeEnabled.createAgent(
+      { provider: "claude", cwd: workdir },
+      undefined,
+      { workspaceId: undefined },
+    );
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await claudeEnabled.waitForAgentClose(released.id);
+
+    expect(sessions[0]?.closed).toBe(false);
+    expect(codexOnly.getAgent(retained.id)?.lifecycle).toBe("idle");
+    expect(sessions[1]?.closed).toBe(true);
+    expect(claudeEnabled.getAgent(released.id)).toBeNull();
+    await codexOnly.closeAgent(retained.id);
+  } finally {
+    codexOnly.prepareForShutdown();
+    claudeEnabled.prepareForShutdown();
+    vi.useRealTimers();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("keeps an active Codex backend until its turn becomes idle", async () => {
   vi.useFakeTimers();
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-active-eviction-"));

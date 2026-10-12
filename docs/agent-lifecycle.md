@@ -34,6 +34,15 @@ for Codex-tracked background terminals and retains the runtime if any are runnin
 fails. Detached commands that Codex does not track remain outside this guard. Set
 `agents.codexIdleBackendTimeoutMs` to `0` to retain Codex runtimes between turns.
 
+Claude runtimes use the same eviction path when `agents.claudeIdleBackendTimeoutMs` is positive; it
+defaults to `0` (resident). The Claude guard reads Claude Code's own task protocol: every
+`task_started` (background Bash, `Monitor`, workflows, backgrounded subagents) stays live until a
+terminal `task_updated` or `task_notification`, and a `session_state_changed` of `running` or
+`requires_action` also retains the process. The tracker is scoped to one Claude process and resets
+when a new process starts. If a turn ran but Claude never reported its session state, idleness
+cannot be proven and the process is retained. Detached commands that Claude does not announce as
+tasks remain outside this guard.
+
 A provider runtime can still die on its own — crash, OOM kill, host suspend. Work the agent parked
 inside that process dies with it: Claude Code's background Bash shells, `Monitor` watches, and
 workflows all live in the CLI process, and the completion notification that would have woken the

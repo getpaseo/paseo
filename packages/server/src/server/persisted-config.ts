@@ -336,6 +336,9 @@ export const PersistedConfigSchema = z
         codexIdleBackendTimeoutMs: z
           .union([z.literal(0), z.number().int().min(60_000).max(2_147_483_647)])
           .optional(),
+        claudeIdleBackendTimeoutMs: z
+          .union([z.literal(0), z.number().int().min(60_000).max(2_147_483_647)])
+          .optional(),
         metadataGeneration: AgentMetadataGenerationSchema.optional(),
         skills: z.object({ selection: AgentSkillSelectionSchema.optional() }).strict().optional(),
       })

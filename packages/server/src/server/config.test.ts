@@ -69,6 +69,19 @@ describe("server config", () => {
     expect(loadConfig(paseoHome, { env: {} }).codexIdleBackendTimeoutMs).toBe(0);
   });
 
+  test("keeps Claude runtimes resident unless a Claude idle timeout is configured", async () => {
+    const defaultHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-claude-idle-default-"));
+    const customHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-claude-idle-"));
+    roots.push(defaultHome, customHome);
+    await writeFile(
+      path.join(customHome, "config.json"),
+      JSON.stringify({ agents: { claudeIdleBackendTimeoutMs: 1_800_000 } }),
+    );
+
+    expect(loadConfig(defaultHome, { env: {} }).claudeIdleBackendTimeoutMs).toBe(0);
+    expect(loadConfig(customHome, { env: {} }).claudeIdleBackendTimeoutMs).toBe(1_800_000);
+  });
+
   test("resolves reload state from the supplied validated snapshot", async () => {
     const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-snapshot-"));
     roots.push(paseoHome);
