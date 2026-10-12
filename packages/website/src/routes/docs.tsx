@@ -65,7 +65,7 @@ function DocsLayout() {
             {doc && <DocsBreadcrumbs doc={doc} tree={tree} />}
             <Outlet />
             <div className="mt-16">
-              <SponsorsSection />
+              <SponsorsSection placement="footer" />
             </div>
           </div>
         </main>

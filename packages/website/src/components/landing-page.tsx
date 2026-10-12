@@ -87,7 +87,7 @@ import { DiscordIcon, GitHubIcon, SlackIcon } from "~/components/brand-icons";
 import { MobileChat, MobileDiff, MobileSidebar, PhoneFrame } from "~/components/mockup";
 import { FAQItem } from "~/components/faq-item";
 import { SiteFooter } from "~/components/site-footer";
-import { SponsorSection } from "~/components/sponsorship";
+import { SponsorSection, SponsorsSection } from "~/components/sponsorship";
 import { SiteHeader } from "~/components/site-header";
 import "~/styles.css";
 
@@ -120,6 +120,10 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
         </motion.div>
       </div>
 
+      <div className="px-6 md:px-20 pb-12 md:pb-16 max-w-5xl mx-auto">
+        <SponsorsSection placement="page" />
+      </div>
+
       {/* Phone showcase */}
       <PhoneShowcase />
 
@@ -137,7 +141,7 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
             <SponsorSection />
           </div>
         </main>
-        <SiteFooter />
+        <SiteFooter sponsors={false} />
       </div>
     </CursorFieldProvider>
   );

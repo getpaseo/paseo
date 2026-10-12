@@ -241,30 +241,42 @@ export function SponsorSection() {
   );
 }
 
+const SPONSORS_PLACEMENT_CLASSES = {
+  page: { section: "space-y-6", logo: "h-12" },
+  footer: { section: "space-y-5 border-t border-white/10 py-8", logo: "h-10" },
+} as const;
+
+interface SponsorsSectionProps {
+  /** `page` sits in a page's content; `footer` is the band above the footer links. */
+  placement: keyof typeof SPONSORS_PLACEMENT_CLASSES;
+}
+
 /**
- * The companies sponsoring Paseo, shown on every page above the footer: one
- * monochrome logo per sponsor and, while spots are open, a quiet invitation.
+ * The companies sponsoring Paseo: one monochrome logo per sponsor and, while
+ * spots are open, a quiet invitation. Every page shows it once.
  */
-export function SponsorsSection() {
+export function SponsorsSection({ placement }: SponsorsSectionProps) {
+  const classes = SPONSORS_PLACEMENT_CLASSES[placement];
   const open = openSpotCount();
   return (
-    <section
-      aria-labelledby="sponsors-heading"
-      className="flex flex-col gap-5 border-t border-white/10 py-8 sm:flex-row sm:items-center sm:gap-10"
-    >
-      <h2 id="sponsors-heading" className="shrink-0 text-sm text-extra-muted-foreground">
+    <section aria-labelledby="sponsors-heading" className={classes.section}>
+      <h2 id="sponsors-heading" className="text-sm text-extra-muted-foreground">
         Sponsored by
       </h2>
-      <ul className="flex flex-wrap items-center gap-x-10 gap-y-5">
+      <ul className="flex flex-wrap items-center gap-x-12 gap-y-6">
         {SPONSORS.map((sponsor) => (
           <li key={sponsor.url}>
             <a
               href={sponsorHref(sponsor, "website")}
               target="_blank"
               rel="noopener noreferrer sponsored"
-              className="block opacity-60 transition-opacity hover:opacity-100"
+              className="block opacity-85 transition-opacity hover:opacity-100"
             >
-              <img src={sponsor.logo.onDark} alt={sponsor.name} className="h-8 w-auto" />
+              <img
+                src={sponsor.logo.onDark}
+                alt={sponsor.name}
+                className={`${classes.logo} w-auto`}
+              />
             </a>
           </li>
         ))}
@@ -272,7 +284,7 @@ export function SponsorsSection() {
           <li>
             <a
               href="/sponsor#spot"
-              className="inline-flex h-8 items-center rounded-md border border-dashed border-white/15 px-3 text-xs text-white/40 transition-colors hover:border-white/30 hover:text-white/70"
+              className="inline-flex h-9 items-center rounded-md border border-dashed border-white/15 px-3.5 text-sm text-white/45 transition-colors hover:border-white/30 hover:text-white/75"
             >
               Become a sponsor
             </a>
