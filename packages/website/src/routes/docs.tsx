@@ -64,9 +64,7 @@ function DocsLayout() {
           <div className="max-w-prose mx-auto">
             {doc && <DocsBreadcrumbs doc={doc} tree={tree} />}
             <Outlet />
-            <div className="mt-16">
-              <SponsorsSection placement="footer" />
-            </div>
+            <SponsorsSection placement="footer" />
           </div>
         </main>
 
