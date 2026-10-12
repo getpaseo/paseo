@@ -12,6 +12,7 @@ import { findExecutable } from "../executable-resolution/executable-resolution.j
 import type { TerminalCell, TerminalState } from "@getpaseo/protocol/messages";
 import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode";
 import { TerminalActivityTracker } from "./activity/terminal-activity-tracker.js";
+import { TERMINAL_MODEL_SCROLLBACK_LINES } from "./terminal-model-limits.js";
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
 
 const { Terminal } = xterm;
@@ -935,7 +936,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   const terminal = new Terminal({
     rows,
     cols,
-    scrollback: 1000,
+    scrollback: TERMINAL_MODEL_SCROLLBACK_LINES,
     allowProposedApi: true,
   });
 

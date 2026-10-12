@@ -5,6 +5,7 @@ import {
   encodeTerminalStreamFrame,
 } from "@getpaseo/protocol/binary-frames/index";
 import { renderTerminalSnapshotToAnsi } from "@getpaseo/protocol/terminal-snapshot";
+import { TERMINAL_MODEL_SCROLLBACK_LINES } from "./terminal-model-limits.js";
 import type { TerminalStateSnapshot, TerminalStateSnapshotOptions } from "./terminal.js";
 
 export const MAX_TERMINAL_OUTPUT_FRAME_BYTES = 256 * 1024;
@@ -16,8 +17,12 @@ export const MAX_TERMINAL_OUTPUT_FRAME_BYTES = 256 * 1024;
 // enough that a stalled socket crosses it long before a large burst finishes.
 export const MAX_CLIENT_BUFFERED_BYTES = 4 * 1024 * 1024;
 
+// Fallback for a client that asks for a visible snapshot without naming a line
+// count. Current clients send their configured scrollback.
 const DEFAULT_VISIBLE_RESTORE_SCROLLBACK_LINES = 200;
-const MAX_VISIBLE_RESTORE_SCROLLBACK_LINES = 500;
+// The model cannot hand out more rows than it keeps, and asking for more would
+// only repeat rows in a larger restore frame.
+const MAX_VISIBLE_RESTORE_SCROLLBACK_LINES = TERMINAL_MODEL_SCROLLBACK_LINES;
 
 export type TerminalRestoreOptions = NonNullable<SubscribeTerminalRequest["restore"]>;
 
