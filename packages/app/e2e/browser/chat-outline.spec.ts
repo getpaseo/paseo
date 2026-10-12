@@ -26,6 +26,10 @@ import {
 } from "../support/helpers/chat-outline";
 import { createCreationScenario } from "../support/helpers/creation";
 import {
+  expectPromptsDrawnByPlugin,
+  withPromptTimelinePlugin,
+} from "../support/helpers/plugin-timeline";
+import {
   expectTimelineAtMaximumScrollWithPromptVisible,
   expectTimelinePromptNotMounted,
   expectTimelinePromptLandedBelowTop,
@@ -100,6 +104,31 @@ test.describe("desktop chat outline", () => {
       await agent.client.sendAgentMessage(agent.agentId, "live prompt while viewing old history");
       await agent.client.waitForFinish(agent.agentId, 15_000);
       await expectTimelinePromptVisible(page, agent.oldestPrompt);
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
+  test("jumps to prompts a timeline plugin draws", async ({ page }) => {
+    test.setTimeout(180_000);
+    const agent = await seedLongMockAgentTimeline({ turns: 80 });
+    try {
+      await withPromptTimelinePlugin(async () => {
+        await page.setViewportSize(WIDE_VIEWPORT);
+        await openAgentTimeline(page, agent);
+        await expectChatOutlinePrompts(page, 80);
+        await expectPromptsDrawnByPlugin(page);
+        await expectTimelinePromptNotMounted(page, agent.prompts[39]);
+
+        // Unloaded, then loaded but virtualized, then mounted near the newest edge.
+        await clickChatOutlineRowEdge(page, 40);
+        await expectTimelinePromptLandedBelowTop(page, agent.prompts[39]);
+        await clickChatOutlineRowEdge(page, 45);
+        await expectTimelinePromptLandedBelowTop(page, agent.prompts[44]);
+        await clickChatOutlineRowEdge(page, 78);
+        await expectTimelineAtMaximumScrollWithPromptVisible(page, agent.prompts[77]);
+        await expectPromptsDrawnByPlugin(page);
+      });
     } finally {
       await agent.cleanup();
     }
