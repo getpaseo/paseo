@@ -25,7 +25,7 @@ function render(markdown: string) {
 function attribute(element: Element, name: string) {
   return element.attrs.find((attr) => attr.name === name)?.value;
 }
-function images(html: string) {
+function imageSources(html: string) {
   return elements(html)
     .filter((node) => node.tagName === "img")
     .map((node) => attribute(node, "src"));
@@ -127,7 +127,7 @@ describe("registry images", () => {
       createElement(PluginCard, { plugin }),
     ]) {
       expect(
-        images(renderToStaticMarkup(component)).filter((src) => src !== avatarUrl(plugin)),
+        imageSources(renderToStaticMarkup(component)).filter((src) => src !== avatarUrl(plugin)),
       ).toEqual([]);
     }
   });
@@ -140,7 +140,7 @@ it("uses the first HTTPS screenshot when an earlier screenshot is rejected", () 
     icon: undefined,
     media: ["data:image/png;base64,AAAA", source],
   } as Plugin;
-  expect(images(renderToStaticMarkup(createElement(PluginCard, { plugin })))).toEqual([
+  expect(imageSources(renderToStaticMarkup(createElement(PluginCard, { plugin })))).toEqual([
     source,
     avatarUrl(plugin),
   ]);
