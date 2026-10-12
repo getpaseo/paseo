@@ -33,6 +33,7 @@ export interface TerminalEmulatorProps {
   ref: Ref<TerminalEmulatorHandle>;
   streamKey: string;
   supportsTerminalInputModeReplay: boolean;
+  supportsTerminalUnicode11Widths: boolean;
   testId?: string;
   xtermTheme?: ITheme;
   scrollbackLines: number;

@@ -18,6 +18,9 @@ export interface NativeHeadlessTerminalOptions {
   rows: number;
   cols: number;
   scrollbackLines?: number;
+  // COMPAT(terminalUnicode11Widths): added in v0.11.3, remove after 2027-04-11.
+  // Daemons before this send Unicode 6 snapshots, where most emoji take one cell.
+  unicode11Widths?: boolean;
 }
 
 export interface NativeHeadlessTerminal {
@@ -342,8 +345,10 @@ export function createNativeHeadlessTerminal(
     allowProposedApi: true,
   });
   // Match the server and web terminal widths, so emoji take two cells everywhere.
-  terminal.loadAddon(new Unicode11Addon());
-  terminal.unicode.activeVersion = "11";
+  if (options.unicode11Widths) {
+    terminal.loadAddon(new Unicode11Addon());
+    terminal.unicode.activeVersion = "11";
+  }
   const decoder = new TextDecoder();
   let coordinateEpoch = 0;
   const coordinateStorage = new Map<object, TerminalCoordinateStorage>();

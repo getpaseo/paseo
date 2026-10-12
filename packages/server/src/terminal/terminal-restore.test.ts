@@ -10,6 +10,7 @@ import {
   resolveRestoreAfterOutputOverflow,
   resolveTerminalRestoreSnapshotOptions,
   resolveTerminalSubscriptionSnapshotMode,
+  toUnicode6Widths,
 } from "./terminal-restore.js";
 
 function terminalRow(text: string, cols = 80): TerminalCell[] {
@@ -71,5 +72,17 @@ describe("terminal restore policy", () => {
     expect(frame?.opcode).toBe(TerminalStreamOpcode.Restore);
     expect(frame?.slot).toBe(4);
     expect(new TextDecoder().decode(frame?.payload ?? new Uint8Array())).toContain("restored");
+  });
+
+  test("sends emoji spacers as spaces for Unicode 6 clients and keeps CJK spacers", () => {
+    const emoji = String.fromCodePoint(0x1f4be);
+    const state = terminalState("");
+    state.grid = [[{ char: emoji }, { char: "" }, { char: "a" }]];
+    state.scrollback = [[{ char: "中" }, { char: "" }, { char: "a" }]];
+
+    const downgraded = toUnicode6Widths(state);
+
+    expect(downgraded.grid[0]?.map((cell) => cell.char)).toEqual([emoji, " ", "a"]);
+    expect(downgraded.scrollback[0]?.map((cell) => cell.char)).toEqual(["中", "", "a"]);
   });
 });

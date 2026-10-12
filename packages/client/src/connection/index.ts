@@ -132,6 +132,7 @@ export const DEFAULT_CLIENT_CAPABILITIES = {
   [CLIENT_CAPS.reasoningMergeEnum]: true,
   [CLIENT_CAPS.customModeIcons]: true,
   [CLIENT_CAPS.terminalReflowableSnapshot]: true,
+  [CLIENT_CAPS.terminalUnicode11Widths]: true,
   [CLIENT_CAPS.providerSubagents]: true,
   [CLIENT_CAPS.projectedSubagentTimeline]: true,
   [CLIENT_CAPS.projectUpdates]: true,
