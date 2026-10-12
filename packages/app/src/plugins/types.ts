@@ -9,6 +9,7 @@ import type {
 import type {
   PluginCommandCenterItemContribution,
   PluginClientSlashCommandContribution,
+  PluginAssistantFileLinkHandlerContribution,
   PluginComposerPillContribution,
   PluginSidebarContribution,
   PluginSidebarItemContribution,
@@ -39,6 +40,7 @@ export interface EvaluatedPlugin {
   commandCenterItems: PluginCommandCenterItemContribution[];
   clientSlashCommands: PluginClientSlashCommandContribution[];
   attachmentSources: PluginAttachmentSourceContribution[];
+  assistantFileLinkHandlers: PluginAssistantFileLinkHandlerContribution[];
   themes: PluginThemeContribution[];
   timelineTransformers: PluginTimelineTransformerContribution[];
   timelineRenderers: PluginTimelineRendererContribution[];
@@ -60,6 +62,7 @@ export type {
   PluginAttachmentSourceContribution,
   PluginCommandCenterItemContribution,
   PluginClientSlashCommandContribution,
+  PluginAssistantFileLinkHandlerContribution,
   PluginComposerPillContribution,
   PluginSidebarContribution,
   PluginSidebarItemContribution,

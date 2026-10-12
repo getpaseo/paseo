@@ -106,6 +106,7 @@ import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useStreamHistoryWindow } from "./use-stream-history-window";
 import { PluginTimelineItemView, useInstalledTimelineTransform } from "@/plugins/timeline";
+import { useAssistantFileLinkHandler } from "@/plugins/assistant-file-link-handlers";
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -375,6 +376,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     // Get serverId (fallback to agent's serverId if not provided)
     const resolvedServerId = serverId ?? context.serverId ?? "";
     const transformTimelineItem = useInstalledTimelineTransform(resolvedServerId);
+    const handlePluginAssistantFileLink = useAssistantFileLinkHandler(resolvedServerId);
 
     const client = useSessionStore((state) => state.sessions[resolvedServerId]?.client ?? null);
     const sessionStreamHead = useSessionStore((state) =>
@@ -438,7 +440,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     }, [agentId]);
 
     const handleInlinePathPress = useStableEvent(
-      (target: InlinePathTarget, disposition: OpenFileDisposition) => {
+      (target: InlinePathTarget, disposition: OpenFileDisposition, allowPluginHandlers = true) => {
         if (!target.path) {
           return;
         }
@@ -455,6 +457,21 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             lineEnd: target.lineEnd,
           });
           if (!location) {
+            return;
+          }
+
+          if (
+            allowPluginHandlers &&
+            context.workspaceId &&
+            handlePluginAssistantFileLink({
+              workspaceId: context.workspaceId,
+              agentId,
+              path: location.path,
+              ...(location.lineStart !== undefined ? { lineStart: location.lineStart } : {}),
+              ...(location.lineEnd !== undefined ? { lineEnd: location.lineEnd } : {}),
+              disposition,
+            })
+          ) {
             return;
           }
 
@@ -498,7 +515,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     );
 
     const handleToolCallOpenFile = useStableEvent((filePath: string) => {
-      handleInlinePathPress({ raw: filePath, path: filePath }, "preferred");
+      handleInlinePathPress({ raw: filePath, path: filePath }, "preferred", false);
     });
 
     const handleForkAssistantTurn: AssistantTurnForkHandler = useStableEvent(

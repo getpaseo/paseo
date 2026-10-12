@@ -122,6 +122,26 @@ export interface PluginClientOpenPanelOptions extends PluginOpenPanelOptions {
   agentId?: string;
 }
 
+export type PluginAssistantFileLinkDisposition = "main" | "preferred" | "side";
+
+export interface PluginAssistantFileLinkInput {
+  /** ID of the daemon connection that owns the workspace. */
+  serverId: string;
+  workspaceId: string;
+  agentId: string;
+  /** Normalized workspace file path, which may be absolute or workspace-relative. */
+  path: string;
+  lineStart?: number;
+  lineEnd?: number;
+  disposition: PluginAssistantFileLinkDisposition;
+}
+
+export interface PluginAssistantFileLinkHandlerContribution {
+  id: string;
+  /** Return true to handle this link; false lets the next handler or Paseo open it. */
+  handle(input: PluginAssistantFileLinkInput): boolean;
+}
+
 // COMPAT(pluginSidebarAliases): added in v0.11.0, remove after 2027-03-29
 interface PluginClientContextAliases {
   /** @deprecated Use `addScreen`. */
@@ -143,6 +163,9 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   addHeaderButton(contribution: PluginHeaderButtonContribution): PluginButtonRegistration;
   addComposerPill(contribution: PluginComposerPillContribution): PluginButtonRegistration;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): PluginCleanup;
+  addAssistantFileLinkHandler(
+    contribution: PluginAssistantFileLinkHandlerContribution,
+  ): PluginCleanup;
   addTheme(contribution: PluginThemeContribution): PluginCleanup;
   addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(
     contribution: PluginTimelineTransformerContribution<ItemType>,

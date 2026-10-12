@@ -36,6 +36,7 @@ function installation(
     commandCenterItems: [],
     clientSlashCommands: [],
     attachmentSources: [],
+    assistantFileLinkHandlers: [],
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],

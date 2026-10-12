@@ -97,6 +97,7 @@ export class PluginRegistry {
           commandCenterItems: [],
           clientSlashCommands: [],
           attachmentSources: [],
+          assistantFileLinkHandlers: [],
           themes: [],
           timelineTransformers: [],
           timelineRenderers: [],

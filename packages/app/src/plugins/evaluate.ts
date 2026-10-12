@@ -17,6 +17,7 @@ import {
   type PluginThemeContribution,
 } from "@getpaseo/plugin";
 import {
+  type PluginAssistantFileLinkHandlerContribution,
   type PluginCommandCenterItemContribution,
   type PluginClientContext,
   type PluginClientSlashCommandContribution,
@@ -117,6 +118,7 @@ export function runPluginClientBundle(
     commandCenterItems: [],
     clientSlashCommands: [],
     attachmentSources: [],
+    assistantFileLinkHandlers: [],
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
@@ -131,6 +133,7 @@ export function runPluginClientBundle(
   const commandCenterItemIds = new Set<string>();
   const clientSlashCommandNames = new Set<string>();
   const attachmentSourceIds = new Set<string>();
+  const assistantFileLinkHandlerIds = new Set<string>();
   const themeIds = new Set<string>();
   const timelineTransformerIds = new Set<string>();
   const timelineRendererIds = new Set<string>();
@@ -376,6 +379,21 @@ export function runPluginClientBundle(
         () => attachmentSourceIds.delete(normalizedId),
       );
     },
+    addAssistantFileLinkHandler(contribution: PluginAssistantFileLinkHandlerContribution) {
+      const normalizedId = requireId(contribution.id, "assistant file link handler id");
+      if (assistantFileLinkHandlerIds.has(normalizedId)) {
+        throw new Error(`Duplicate assistant file link handler: ${normalizedId}`);
+      }
+      if (typeof contribution.handle !== "function") {
+        throw new Error(`Assistant file link handler ${normalizedId} has no handler`);
+      }
+      assistantFileLinkHandlerIds.add(normalizedId);
+      return register(
+        collector.assistantFileLinkHandlers,
+        { ...contribution, id: normalizedId },
+        () => assistantFileLinkHandlerIds.delete(normalizedId),
+      );
+    },
     addTheme(contribution: PluginThemeContribution) {
       const normalizedId = requireId(contribution.id, "theme id");
       if (themeIds.has(normalizedId)) throw new Error(`Duplicate theme: ${normalizedId}`);
@@ -519,6 +537,7 @@ export function runPluginClientBundle(
     commandCenterItems: collector.commandCenterItems,
     clientSlashCommands: collector.clientSlashCommands,
     attachmentSources: collector.attachmentSources,
+    assistantFileLinkHandlers: collector.assistantFileLinkHandlers,
     themes: collector.themes,
     timelineTransformers: collector.timelineTransformers,
     timelineRenderers: collector.timelineRenderers,

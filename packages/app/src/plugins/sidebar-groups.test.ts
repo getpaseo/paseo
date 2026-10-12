@@ -34,6 +34,7 @@ function installed(
     commandCenterItems: [],
     clientSlashCommands: [],
     attachmentSources: [],
+    assistantFileLinkHandlers: [],
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
