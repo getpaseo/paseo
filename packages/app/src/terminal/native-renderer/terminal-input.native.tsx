@@ -110,9 +110,19 @@ export function createTerminalTextInputState(): TerminalTextInputState {
   // would delete whatever is actually sitting there rather than the character
   // the buffer thinks it is replacing. Stay off until the input state resets.
   let replacementDesynced = false;
+  // Android soft keyboards report the text change before the matching
+  // keypress; iOS reports the keypress first. Remember the printable character
+  // the last text change appended so a late keypress for the same character is
+  // not emitted a second time. Keypress-first input leaves this empty and the
+  // keypress still emits, which preserves the keyboard that only reports keys.
+  let pendingTextChangeKey = "";
 
   return {
     receiveKeyPress(key: string): TerminalTextInputChange {
+      // Every keypress consumes the pending text-change character. Only the
+      // immediately following keypress can be a duplicate.
+      const textChangeKey = pendingTextChangeKey;
+      pendingTextChangeKey = "";
       const terminalKey = resolveNativeTerminalKey(key);
       if (terminalKey) {
         return { data: "", key: terminalKey, shouldClear: false };
@@ -129,12 +139,16 @@ export function createTerminalTextInputState(): TerminalTextInputState {
         return { data: "\r", shouldClear: true };
       }
       if (isPrintableKey(key)) {
+        if (textChangeKey === key) {
+          return { data: "", shouldClear: false };
+        }
         previousText += key;
         return { data: key, shouldClear: false };
       }
       return { data: "", shouldClear: false };
     },
     receiveTextChange(text: string): TerminalTextInputChange {
+      pendingTextChangeKey = "";
       if (submittedText !== null) {
         const lateSubmitText = `${submittedText}\n`;
         submittedText = null;
@@ -170,6 +184,9 @@ export function createTerminalTextInputState(): TerminalTextInputState {
 
       const appendedText = text.slice(previousText.length);
       previousText = text;
+      if (isPrintableKey(appendedText)) {
+        pendingTextChangeKey = appendedText;
+      }
       return {
         data: appendedText,
         shouldClear: false,
@@ -178,6 +195,7 @@ export function createTerminalTextInputState(): TerminalTextInputState {
     reset(): void {
       previousText = "";
       replacementDesynced = false;
+      pendingTextChangeKey = "";
     },
   };
 }
