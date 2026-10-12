@@ -102,7 +102,6 @@ import {
   useKeyboardActionDispatcher,
 } from "@/keyboard/keyboard-action-dispatcher-context";
 import { polyfillCrypto } from "@/polyfills/crypto";
-import { polyfillNavigator } from "@/polyfills/navigator";
 import {
   getHostRuntimeStore,
   hasConfiguredLocalDaemonOverride,
@@ -138,7 +137,6 @@ import {
   type WebNotificationClickDetail,
 } from "@/utils/os-notifications";
 
-polyfillNavigator();
 polyfillCrypto();
 
 export interface HostRuntimeBootstrapState {
