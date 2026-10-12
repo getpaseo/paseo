@@ -75,7 +75,7 @@ export function encodeTerminalRestoreFrame(input: {
   return encodeTerminalStreamFrame({
     opcode: TerminalStreamOpcode.Restore,
     slot: input.slot,
-    payload: renderTerminalSnapshotToAnsi(input.snapshot.state),
+    payload: input.snapshot.ansi ?? renderTerminalSnapshotToAnsi(input.snapshot.state),
   });
 }
 

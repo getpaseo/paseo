@@ -81,4 +81,19 @@ describe("terminal restore policy", () => {
     expect(frame?.slot).toBe(4);
     expect(new TextDecoder().decode(frame?.payload ?? new Uint8Array())).toContain("restored");
   });
+
+  test("sends ANSI the terminal already rendered without reading the cells", () => {
+    const frame = decodeTerminalStreamFrame(
+      encodeTerminalRestoreFrame({
+        slot: 4,
+        snapshot: {
+          state: terminalState(""),
+          revision: 1,
+          ansi: "pre-rendered",
+        },
+      }),
+    );
+
+    expect(new TextDecoder().decode(frame?.payload ?? new Uint8Array())).toBe("pre-rendered");
+  });
 });
