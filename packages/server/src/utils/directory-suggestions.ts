@@ -146,6 +146,7 @@ export const WORKSPACE_SEARCH_HIDDEN_DIRECTORIES = [
   ".agents",
   ".claude",
   ".codex",
+  ".cursor",
   ".github",
   ".opencode",
   ".paseo",

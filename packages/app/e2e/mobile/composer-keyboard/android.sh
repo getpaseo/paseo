@@ -660,9 +660,9 @@ adb shell am start -a android.intent.action.VIEW -d "paseo://h/${SERVER_ID}/agen
 ad wait "text=\"${AGENT_TITLE}\"" 10000
 run_host_scenario chat
 ad keyboard dismiss || true
-ad press 'id="workspace-header-menu-trigger"' --settle
-ad wait 'id="workspace-header-new-agent"' 10000
-ad press 'id="workspace-header-new-agent"' --settle
+ad press 'id="workspace-tab-switcher-trigger"' --settle
+ad wait 'id="workspace-tab-switcher-new-agent"' 10000
+ad press 'id="workspace-tab-switcher-new-agent"' --settle
 ad wait 'text="New Agent"' 10000
 run_host_scenario workspace-draft
 ad keyboard dismiss || true

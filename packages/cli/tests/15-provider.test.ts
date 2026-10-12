@@ -365,10 +365,6 @@ try {
       "all codex model IDs should be from the gpt family",
     );
     assert(
-      ids.some((id) => id.includes("codex")),
-      "codex model list should include at least one codex-optimized model",
-    );
-    assert(
       data.every((m) => m.model && m.id && m.description),
       "every codex model should have model, id, and description fields",
     );

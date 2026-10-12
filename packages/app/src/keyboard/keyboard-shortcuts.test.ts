@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { formatShortcut } from "@/utils/format-shortcut";
+import { keyboardEventToComboString } from "./shortcut-string";
 import {
   buildKeyboardShortcutHelpSections,
   buildEffectiveBindings,
@@ -1026,6 +1027,25 @@ describe("unassigned shortcuts", () => {
   });
 
   describe("matching", () => {
+    it("dispatches a captured Dvorak binding on the same logical key", () => {
+      const event = keyboardInput({ key: "b", code: "KeyN", metaKey: true });
+      const combo = keyboardEventToComboString(event as KeyboardEvent);
+      expect(combo).toBe("Cmd+B");
+      const bindings = buildEffectiveBindings({ "sidebar-toggle-left-mac-cmd-b": combo! });
+
+      expect(
+        resolveShortcut({ event, context: { isMac: true, isDesktop: true }, bindings }).match
+          ?.action,
+      ).toBe("sidebar.toggle.left");
+      expect(
+        resolveShortcut({
+          event: { key: "x", code: "KeyB", metaKey: true },
+          context: { isMac: true, isDesktop: true },
+          bindings,
+        }).match,
+      ).toBeNull();
+    });
+
     it("stops matching a shortcut the user unassigned", () => {
       const bindings = buildEffectiveBindings({ [TAB_NEW_BINDING]: UNASSIGNED_COMBO });
 
