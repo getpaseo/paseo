@@ -8,6 +8,7 @@ import {
   type ACPConfigFeatureOption,
   DEFAULT_ACP_CAPABILITIES,
   type ACPExtensionCommandsParser,
+  type ACPTransportAcquirer,
 } from "./acp-agent.js";
 import {
   buildBinaryDiagnosticRows,
@@ -30,6 +31,7 @@ interface GenericACPAgentClientOptions {
   extensionCommandsParser?: ACPExtensionCommandsParser;
   catalogModelResolver?: ACPCatalogModelResolver;
   now?: () => number;
+  transportAcquirer?: ACPTransportAcquirer;
 }
 
 export class GenericACPAgentClient extends ACPAgentClient {
@@ -56,6 +58,7 @@ export class GenericACPAgentClient extends ACPAgentClient {
       extensionCommandsParser: options.extensionCommandsParser,
       catalogModelResolver: options.catalogModelResolver,
       now: options.now,
+      transportAcquirer: options.transportAcquirer,
     });
 
     this.command = options.command;
