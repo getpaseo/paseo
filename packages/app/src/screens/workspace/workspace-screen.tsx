@@ -22,12 +22,14 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useRouter, type Href } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, ChevronRight } from "lucide-react-native";
+import { ChevronDown, ChevronRight, Globe } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import invariant from "tiny-invariant";
 import { SidebarMenuToggle } from "@/components/headers/menu-header";
+import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
+import { resolveBrowserPaneId } from "@/stores/workspace-layout-actions";
 import { ScreenHeader } from "@/components/headers/screen-header";
 import { ScreenTitle } from "@/components/headers/screen-title";
 import { HostBadge } from "@/hosts/host-badge";
@@ -262,6 +264,7 @@ function buildWorkspaceFileLocation(
 }
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
+const ThemedGlobe = withUnistyles(Globe);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -1942,6 +1945,26 @@ function WorkspaceScreenContent({
   const explorerSidebarPaneId = useWorkspaceLayoutStore((state) =>
     persistenceKey ? selectExplorerSidebarPaneId(state, persistenceKey) : null,
   );
+  const rememberedBrowserPaneId = useWorkspaceLayoutStore((state) =>
+    persistenceKey ? state.browserPaneIdByWorkspace[persistenceKey] : null,
+  );
+  const browserPaneId = workspaceLayout
+    ? resolveBrowserPaneId(workspaceLayout, rememberedBrowserPaneId, explorerSidebarPaneId)
+    : null;
+  const browserPane = workspaceLayout ? findPaneById(workspaceLayout.root, browserPaneId) : null;
+  const isBrowserShowing = Boolean(browserPane && browserPane.hidden !== true);
+  const canHideBrowser = Boolean(
+    workspaceLayout &&
+    browserPaneId &&
+    canDismissPaneInLayout(workspaceLayout, browserPaneId, explorerSidebarPaneId),
+  );
+  const browserToggleLabel = t(
+    isBrowserShowing ? "workspace.browser.hide" : "workspace.browser.show",
+  );
+  const browserToggleAccessibilityState = useMemo(
+    () => ({ expanded: isBrowserShowing }),
+    [isBrowserShowing],
+  );
   const lastMainPaneRef = useLastMainPane({
     workspaceKey: persistenceKey,
     layout: workspaceLayout,
@@ -2519,10 +2542,35 @@ function WorkspaceScreenContent({
   );
 
   const [browserOpenError, setBrowserOpenError] = useState<
+    | { kind: "pane"; input: { workspaceKey: string } }
     | { kind: "browser"; input: OpenWorkspaceBrowserInput }
     | { kind: "preview"; input: Parameters<typeof openWorkspaceDevPreview>[0] }
     | null
   >(null);
+  const showBrowserPane = useCallback((input: { workspaceKey: string }) => {
+    const store = useWorkspaceLayoutStore.getState();
+    const paneId = store.ensureBrowserPane(input.workspaceKey, { reveal: true });
+    if (paneId) store.focusPane(input.workspaceKey, paneId);
+    setBrowserOpenError(paneId ? null : { kind: "pane", input });
+  }, []);
+  const handleToggleBrowserPane = useCallback(() => {
+    if (!persistenceKey || !getIsElectron()) return;
+    if (isBrowserShowing) {
+      const store = useWorkspaceLayoutStore.getState();
+      const layout = store.layoutByWorkspace[persistenceKey];
+      if (
+        !layout ||
+        !resolveBrowserPaneId(
+          layout,
+          store.browserPaneIdByWorkspace[persistenceKey],
+          explorerSidebarPaneId,
+        )
+      )
+        return;
+      store.ensureBrowserPane(persistenceKey, { reveal: false });
+      store.hideBrowserPane(persistenceKey);
+    } else showBrowserPane({ workspaceKey: persistenceKey });
+  }, [explorerSidebarPaneId, isBrowserShowing, persistenceKey, showBrowserPane]);
   const openManualBrowser = useCallback((input: OpenWorkspaceBrowserInput) => {
     const result = openWorkspaceBrowser(input);
     setBrowserOpenError(result.ok ? null : { kind: "browser", input });
@@ -2646,8 +2694,9 @@ function WorkspaceScreenContent({
   const retryBrowserOpen = useCallback(() => {
     if (!browserOpenError) return;
     if (browserOpenError.kind === "browser") openManualBrowser(browserOpenError.input);
+    else if (browserOpenError.kind === "pane") showBrowserPane(browserOpenError.input);
     else handleOpenDevPreview(browserOpenError.input);
-  }, [browserOpenError, handleOpenDevPreview, openManualBrowser]);
+  }, [browserOpenError, handleOpenDevPreview, openManualBrowser, showBrowserPane]);
   const dismissBrowserOpenError = useCallback(() => setBrowserOpenError(null), []);
 
   // Closing the preview goes through the same cleanup path as any browser tab, which also
@@ -3984,6 +4033,21 @@ function WorkspaceScreenContent({
   const headerRight = useMemo(
     () => (
       <View style={styles.headerRight}>
+        {getIsElectron() ? (
+          <HeaderToggleButton
+            testID="workspace-browser-toggle"
+            onPress={handleToggleBrowserPane}
+            accessibilityRole="button"
+            accessibilityLabel={browserToggleLabel}
+            accessibilityState={browserToggleAccessibilityState}
+            tooltipLabel={browserToggleLabel}
+            tooltipKeys={[]}
+            tooltipSide="bottom"
+            disabled={isBrowserShowing && !canHideBrowser}
+          >
+            <ThemedGlobe size={18} strokeWidth={1.5} uniProps={extraMutedIconColorMapping} />
+          </HeaderToggleButton>
+        ) : null}
         <PluginHeaderButtons serverId={normalizedServerId} workspaceId={normalizedWorkspaceId} />
         {!isMobile ? <WorkspaceTodosButton hideLabels={hideHeaderActionLabels} /> : null}
         {!isMobile && workspaceDescriptor ? (
@@ -4041,6 +4105,11 @@ function WorkspaceScreenContent({
       </View>
     ),
     [
+      handleToggleBrowserPane,
+      browserToggleLabel,
+      browserToggleAccessibilityState,
+      isBrowserShowing,
+      canHideBrowser,
       hideHeaderActionLabels,
       isMobile,
       workspaceDescriptor,

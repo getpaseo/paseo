@@ -83,6 +83,7 @@ import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-
 import {
   createDefaultLayout,
   findPaneById,
+  selectExplorerSidebarPaneId,
   useWorkspaceLayoutStore,
   type SplitNode,
   type SplitPane,
@@ -352,10 +353,9 @@ export function SplitContainer({
     workspaceKey: string;
     paneId: string;
   } | null>(null);
-  const maximizedPaneId =
-    maximizedPane?.workspaceKey === workspaceKey ? maximizedPane.paneId : null;
-  const explorerSidebarPaneId = useWorkspaceLayoutStore(
-    (state) => state.explorerSidebarPaneIdByWorkspace[workspaceKey] ?? null,
+
+  const explorerSidebarPaneId = useWorkspaceLayoutStore((state) =>
+    selectExplorerSidebarPaneId(state, workspaceKey),
   );
 
   const sensors = useSensors(
@@ -379,26 +379,37 @@ export function SplitContainer({
     [layout.root, explorerSidebarPaneId],
   );
   const workspaceHasMultiplePanes = Boolean(mainRoot && hasMultipleVisiblePanes(mainRoot));
-  useEffect(() => {
+  const maximizedPaneId = useMemo(() => {
     if (
-      maximizedPaneId &&
-      (focusModeEnabled ||
-        !workspaceHasMultiplePanes ||
-        !mainRoot ||
-        !splitNodeContainsPane(mainRoot, maximizedPaneId))
-    ) {
-      setMaximizedPane(null);
-    }
-  }, [focusModeEnabled, mainRoot, maximizedPaneId, workspaceHasMultiplePanes]);
+      focusModeEnabled ||
+      !workspaceHasMultiplePanes ||
+      !mainRoot ||
+      maximizedPane?.workspaceKey !== workspaceKey
+    )
+      return null;
+    const pane = findPaneById(mainRoot, maximizedPane.paneId);
+    return pane && pane.hidden !== true && pane.id === layout.focusedPaneId ? pane.id : null;
+  }, [
+    focusModeEnabled,
+    workspaceHasMultiplePanes,
+    mainRoot,
+    maximizedPane,
+    workspaceKey,
+    layout.focusedPaneId,
+  ]);
+  useEffect(() => {
+    if (maximizedPane && !maximizedPaneId) setMaximizedPane(null);
+  }, [maximizedPane, maximizedPaneId]);
   const handleTogglePaneMaximized = useCallback(
     (paneId: string) => {
+      onFocusPane(paneId);
       setMaximizedPane((current) =>
         current?.workspaceKey === workspaceKey && current.paneId === paneId
           ? null
           : { workspaceKey, paneId },
       );
     },
-    [workspaceKey],
+    [onFocusPane, workspaceKey],
   );
   const splitRoot = useMemo(
     () =>

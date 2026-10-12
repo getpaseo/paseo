@@ -4,7 +4,6 @@ const http = require("node:http");
 const path = require("node:path");
 const { isDeepStrictEqual } = require("node:util");
 const { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, session } = require("electron");
-const { adaptWebContents } = require("../dist/features/browser-automation/ipc.js");
 
 const ROOT = __dirname;
 const OUT_DIR = process.env.PASEO_CAPTURE_HARNESS_OUT_DIR || path.join(ROOT, "out");
@@ -443,10 +442,7 @@ async function readGuestMetrics(contents) {
 }
 
 async function capturePageSequence(contents) {
-  return adaptWebContents(contents).withFrameProduction(async () => {
-    contents.invalidate();
-    return await withTimeout(contents.capturePage(undefined, { stayHidden: false }), "capturePage");
-  });
+  return withTimeout(contents.capturePage(undefined, { stayHidden: false }), "capturePage");
 }
 
 async function captureFullPage(contents) {
@@ -488,10 +484,7 @@ async function captureFullPage(contents) {
 }
 
 async function captureFullPageSequence(contents) {
-  return adaptWebContents(contents).withFrameProduction(async () => {
-    contents.invalidate();
-    return await captureFullPage(contents);
-  });
+  return captureFullPage(contents);
 }
 
 function installHarnessWebviewGuards(win, options = {}) {

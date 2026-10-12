@@ -35,8 +35,6 @@ export interface TabContents {
   goForward(): void;
   reload(): void;
   captureFrame(signal: AbortSignal): Promise<TabImage>;
-  invalidate(): void;
-  withFrameProduction<T>(capture: () => Promise<T>): Promise<T>;
   sendInputEvent(event: IsolatedKeyboardInputEvent): void;
   // Commits text into this tab's focused element. CDP Input.insertText would
   // commit into whichever element has focus in the Paseo window instead.
@@ -165,13 +163,11 @@ async function runSerializedPixelCapture<T>(capture: () => Promise<T>): Promise<
 }
 
 async function capturePixelFrameWithRetry<T>(
-  contents: TabContents,
   capture: () => Promise<T>,
   deadline: number,
 ): Promise<T> {
   while (Date.now() < deadline) {
     try {
-      contents.invalidate();
       return await withPixelCaptureTimeout(capture(), deadline - Date.now());
     } catch (error) {
       if (isScreenshotNoFrameError(error)) {
@@ -195,47 +191,24 @@ function isKnownNoFrameCaptureError(error: unknown): boolean {
   );
 }
 
-async function waitForPaint(contents: TabContents, deadline: number): Promise<void> {
-  // A hidden page may have unpainted DOM updates. The first animation callback
-  // precedes paint; the next frame ensures capture cannot reuse the old surface.
-  await withPixelCaptureTimeout(
-    contents.executeJavaScript(
-      "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))",
-    ),
-    deadline - Date.now(),
+async function runPixelCapture<T>(capture: () => Promise<T>): Promise<T> {
+  return runSerializedPixelCapture(() =>
+    capturePixelFrameWithRetry(capture, Date.now() + PIXEL_CAPTURE_TIMEOUT_MS),
   );
 }
 
-async function runPaintedPixelCapture<T>(
-  contents: TabContents,
-  capture: () => Promise<T>,
-): Promise<T> {
-  return runSerializedPixelCapture(() =>
-    contents.withFrameProduction(async () => {
-      const deadline = Date.now() + PIXEL_CAPTURE_TIMEOUT_MS;
-      await waitForPaint(contents, deadline);
-      return capturePixelFrameWithRetry(contents, capture, deadline);
-    }),
-  );
-}
-
-async function capturePaintedViewport(contents: TabContents): Promise<TabImage> {
-  return runSerializedPixelCapture(() =>
-    contents.withFrameProduction(async () => {
-      const deadline = Date.now() + PIXEL_CAPTURE_TIMEOUT_MS;
-      const controller = new AbortController();
-      try {
-        await waitForPaint(contents, deadline);
-        contents.invalidate();
-        return await withPixelCaptureTimeout(
-          contents.captureFrame(controller.signal),
-          deadline - Date.now(),
-        );
-      } finally {
-        controller.abort();
-      }
-    }),
-  );
+async function captureViewport(contents: TabContents): Promise<TabImage> {
+  return runSerializedPixelCapture(async () => {
+    const controller = new AbortController();
+    try {
+      return await capturePixelFrameWithRetry(
+        () => contents.captureFrame(controller.signal),
+        Date.now() + PIXEL_CAPTURE_TIMEOUT_MS,
+      );
+    } finally {
+      controller.abort();
+    }
+  });
 }
 
 function tabInfoFromContents(
@@ -1235,7 +1208,7 @@ async function executeScreenshot(
   return withDialogCapture(target.contents, async () => {
     let image: TabImage;
     try {
-      image = await capturePaintedViewport(target.contents);
+      image = await captureViewport(target.contents);
     } catch (error) {
       if (error instanceof BrowserTabClosedError) {
         return fail(requestId, "browser_tab_closed", `Browser tab ${browserId} has been closed`);
@@ -1338,7 +1311,7 @@ async function executeFullPageScreenshot(
     let width = 0;
     let height = 0;
     try {
-      screenshot = await runPaintedPixelCapture(target.contents, async () => {
+      screenshot = await runPixelCapture(async () => {
         const metrics = await getCdpLayoutMetrics(target.contents);
         width = metrics.contentWidth;
         height = metrics.contentHeight;

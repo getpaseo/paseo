@@ -521,12 +521,147 @@ async function setWindowHidden(inspectorPort, hidden) {
   );
 }
 
+async function readScreenshotPixel(inspectorPort, screenshot) {
+  const readPixel = `(async () => {
+    const image = new Image();
+    image.src = ${JSON.stringify(`data:image/png;base64,${screenshot.data}`)};
+    await image.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const context = canvas.getContext('2d');
+    context.drawImage(image, 0, 0);
+    return [...context.getImageData(Math.floor(image.width / 2), Math.floor(image.height / 2), 1, 1).data];
+  })()`;
+  const pixel = await evaluateMain(
+    inspectorPort,
+    `process.mainModule.require('electron').BrowserWindow.getAllWindows().find(win => win.webContents.getURL().includes('localhost:')).webContents.executeJavaScript(${JSON.stringify(readPixel)})`,
+  );
+  return pixel;
+}
+
+async function verifyCaptureCancellation({
+  client,
+  browserId,
+  webContentsId,
+  inspectorPort,
+  artifactDir,
+}) {
+  const ipcPath = path.join(desktopDir, "dist/features/browser-automation/ipc.js");
+  const registryPath = path.join(desktopDir, "dist/features/browser-webviews/index.js");
+  const cancel = await evaluateMain(
+    inspectorPort,
+    `(async () => {
+    const wc = process.mainModule.require('electron').webContents.fromId(${webContentsId});
+    const tab = process.mainModule.require(${JSON.stringify(ipcPath)}).adaptWebContents(wc);
+    const controller = new AbortController();
+    const primary = new Error('runtime capture cancellation');
+    const send = wc.debugger.sendCommand;
+    let native;
+    let primaryPreserved = false;
+    const start = performance.now();
+    wc.debugger.sendCommand = function(command, params) {
+      const pending = send.call(this, command, params);
+      if (command === 'Page.captureScreenshot') { native = pending; queueMicrotask(() => controller.abort(primary)); }
+      return pending;
+    };
+    try { await tab.captureFrame(controller.signal); }
+    catch (error) { primaryPreserved = error === primary; }
+    finally { wc.debugger.sendCommand = send; }
+    let timeout;
+    let recovery;
+    try {
+      const [, image] = await Promise.race([Promise.all([native, tab.captureFrame(new AbortController().signal)]), new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('Capture cancellation recovery exceeded 5 seconds')), 5000); })]);
+      recovery = { size: image.getSize() };
+    } catch (error) { recovery = { error: String(error) }; }
+    finally { clearTimeout(timeout); }
+    return { primaryPreserved, nativeStarted: Boolean(native), elapsedMs: performance.now() - start, recovery, id: wc.id, captured: wc.isBeingCaptured(), throttling: wc.getBackgroundThrottling() };
+  })()`,
+  );
+  writeJson(path.join(artifactDir, "hidden-capture-cancellation.json"), cancel);
+  assert(
+    cancel.nativeStarted && cancel.primaryPreserved,
+    "Capture cancellation lost its primary error",
+  );
+  assert(
+    !cancel.recovery.error && !cancel.captured && cancel.id === webContentsId,
+    `Native capture did not release after cancellation: ${JSON.stringify(cancel)}`,
+  );
+  const url = JSON.parse(
+    (
+      await callBrowserTool(client, "browser_evaluate", {
+        browserId,
+        function: "() => location.href",
+      })
+    ).resultJson,
+  );
+  const closing = await callBrowserTool(client, "browser_new_tab", { url });
+  try {
+    await callBrowserTool(client, "browser_wait", {
+      browserId: closing.browserId,
+      text: "Bridge target",
+      timeoutMs: 5000,
+    });
+    const close = await evaluateMain(
+      inspectorPort,
+      `(async () => {
+      const { BrowserWindow, webContents } = process.mainModule.require('electron');
+      const host = BrowserWindow.getAllWindows().find(win => win.webContents.getURL().includes('localhost:')).webContents;
+      const id = await host.executeJavaScript(${JSON.stringify(`document.querySelector('[data-paseo-browser-id="${closing.browserId}"]').getWebContentsId()`)});
+      const wc = webContents.fromId(id);
+      const tab = process.mainModule.require(${JSON.stringify(ipcPath)}).adaptWebContents(wc);
+      const send = wc.debugger.sendCommand;
+      let native;
+      let errorName;
+      const start = performance.now();
+      wc.debugger.sendCommand = function(command, params) {
+        const pending = send.call(this, command, params);
+        if (command === 'Page.captureScreenshot') { native = pending.then(() => 'completed', error => String(error)); queueMicrotask(() => wc.close({ waitForBeforeUnload: false })); }
+        return pending;
+      };
+      try { await tab.captureFrame(new AbortController().signal); }
+      catch (error) { errorName = error.name; }
+      let timeout;
+      let nativeOutcome;
+      try { nativeOutcome = await Promise.race([native, new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('Destroyed CDP capture did not settle')), 5000); })]); }
+      catch (error) { nativeOutcome = String(error); }
+      finally { clearTimeout(timeout); }
+      const registry = process.mainModule.require(${JSON.stringify(registryPath)});
+      return { id, errorName, nativeStarted: Boolean(native), nativeOutcome, elapsedMs: performance.now() - start, destroyed: wc.isDestroyed(), fromIdAbsent: !webContents.fromId(id), absentFromAll: !webContents.getAllWebContents().some(contents => contents.id === id), registryAbsent: !registry.getPaseoBrowserWebContentsForHostWindow(${JSON.stringify(closing.browserId)}, host.id) };
+    })()`,
+    );
+    writeJson(path.join(artifactDir, "hidden-capture-destruction.json"), close);
+    assert(
+      close.nativeStarted &&
+        close.destroyed &&
+        close.errorName === "BrowserTabClosedError" &&
+        close.fromIdAbsent &&
+        close.absentFromAll &&
+        close.registryAbsent,
+      `Capture destruction retained guest resources: ${JSON.stringify(close)}`,
+    );
+  } finally {
+    await callBrowserTool(client, "browser_close_tab", { browserId: closing.browserId });
+  }
+  await callBrowserTool(client, "browser_screenshot", { browserId });
+  const surviving = await evaluateMain(
+    inspectorPort,
+    `(() => { const wc = process.mainModule.require('electron').webContents.fromId(${webContentsId}); return { id: wc.id, captured: wc.isBeingCaptured(), destroyed: wc.isDestroyed() }; })()`,
+  );
+  writeJson(path.join(artifactDir, "hidden-capture-surviving-guest.json"), surviving);
+  assert(
+    surviving.id === webContentsId && !surviving.captured && !surviving.destroyed,
+    `Surviving capture did not release: ${JSON.stringify(surviving)}`,
+  );
+}
+
 async function verifyHiddenBrowserScreenshots({
   page,
   client,
   browserId,
   artifactDir,
   inspectorPort,
+  reconnect,
 }) {
   const readFrames = async () => {
     const result = await callBrowserTool(client, "browser_evaluate", {
@@ -555,10 +690,57 @@ async function verifyHiddenBrowserScreenshots({
     writeJson(path.join(artifactDir, "hidden-browser-frames.json"), measurements);
     assert(frames === 0, `${label}: hidden browser produced ${frames} animation frames`);
   };
+  const originalGuest = await readGuest(page, browserId);
+  const referencePixels = [];
+  const fullPageReferencePixels = [];
+  for (const color of ["rgb(0,255,0)", "rgb(255,0,0)"]) {
+    await callBrowserTool(client, "browser_evaluate", {
+      browserId,
+      function: `() => { document.body.style.background = ${JSON.stringify(color)}; }`,
+    });
+    const reference = await client.callTool({ name: "browser_screenshot", args: { browserId } });
+    mcpPayload(reference, "browser_screenshot");
+    const screenshot = reference.content.find((item) => item.type === "image");
+    assert(screenshot, "Visible reference screenshot returned no image");
+    referencePixels.push(await readScreenshotPixel(inspectorPort, screenshot));
+    const fullPage = await client.callTool({
+      name: "browser_screenshot",
+      args: { browserId, fullPage: true },
+    });
+    mcpPayload(fullPage, "browser_screenshot");
+    const fullPageImage = fullPage.content.find((item) => item.type === "image");
+    assert(fullPageImage, "Full-page reference returned no image");
+    fullPageReferencePixels.push(await readScreenshotPixel(inspectorPort, fullPageImage));
+  }
+  const [greenPixel, redPixel] = referencePixels;
+  writeJson(path.join(artifactDir, "hidden-browser-reference-pixels.json"), {
+    greenPixel,
+    redPixel,
+  });
+  assert(
+    JSON.stringify(greenPixel) !== JSON.stringify(redPixel),
+    "Reference captures did not distinguish red and green",
+  );
+  let reconnectedPage;
+  const readVisibility = () =>
+    evaluateMain(
+      inspectorPort,
+      `(async () => { const { app, BrowserWindow, webContents } = process.mainModule.require('electron'); return {
+      colorProfile: app.commandLine.getSwitchValue('force-color-profile'),
+      windows: BrowserWindow.getAllWindows().map(win => ({ id: win.id, visible: win.isVisible(), minimized: win.isMinimized(), webContentsId: win.webContents.id })),
+      contents: await Promise.all(webContents.getAllWebContents().map(async wc => ({ id: wc.id, type: wc.getType(), debuggerAttached: wc.debugger.isAttached(), captured: wc.isBeingCaptured(), backgroundThrottling: wc.getBackgroundThrottling(), visibility: await wc.executeJavaScript('document.visibilityState') })))
+    }; })()`,
+    );
   try {
     await expectAnimation();
+    // Playwright's attached host session keeps hidden guests animating; sample native visibility without it.
+    await page.context().browser().close();
     await setWindowHidden(inspectorPort, true);
+    const nativeStates = { atHide: await readVisibility() };
+    writeJson(path.join(artifactDir, "hidden-browser-native-state.json"), nativeStates);
     await expectIdle("before-capture");
+    nativeStates.beforeCapture = await readVisibility();
+    writeJson(path.join(artifactDir, "hidden-browser-native-state.json"), nativeStates);
     await callBrowserTool(client, "browser_evaluate", {
       browserId,
       function: "() => { document.body.style.background = 'rgb(0,255,0)'; }",
@@ -571,29 +753,68 @@ async function verifyHiddenBrowserScreenshots({
       path.join(artifactDir, "hidden-browser-viewport.png"),
       Buffer.from(screenshot.data, "base64"),
     );
-    const pixel = await page.evaluate(async (base64) => {
-      const image = new Image();
-      image.src = `data:image/png;base64,${base64}`;
-      await image.decode();
-      const canvas = document.createElement("canvas");
-      canvas.width = image.width;
-      canvas.height = image.height;
-      const context = canvas.getContext("2d");
-      context.drawImage(image, 0, 0);
-      return [
-        ...context.getImageData(Math.floor(image.width / 2), Math.floor(image.height / 2), 1, 1)
-          .data,
-      ];
-    }, screenshot.data);
+    nativeStates.afterCapture = await readVisibility();
+    writeJson(path.join(artifactDir, "hidden-browser-native-state.json"), nativeStates);
+    const pixel = await readScreenshotPixel(inspectorPort, screenshot);
+    nativeStates.afterPixelDecoder = await readVisibility();
+    writeJson(path.join(artifactDir, "hidden-browser-native-state.json"), nativeStates);
     assert(
-      JSON.stringify(pixel) === "[0,255,0,255]",
-      `Hidden screenshot returned stale pixels: ${pixel}`,
+      JSON.stringify(pixel) === JSON.stringify(greenPixel) &&
+        JSON.stringify(pixel) !== JSON.stringify(redPixel),
+      `Hidden screenshot returned stale pixels: ${pixel}; expected green ${greenPixel}, not red ${redPixel}`,
     );
+    writeJson(path.join(artifactDir, "hidden-browser-reference-pixels.json"), {
+      greenPixel,
+      redPixel,
+      hiddenPixel: pixel,
+    });
     await expectIdle("after-capture");
+    await callBrowserTool(client, "browser_evaluate", {
+      browserId,
+      function: "() => { document.body.style.background = 'rgb(255,0,0)'; }",
+    });
+    const fullPage = await client.callTool({
+      name: "browser_screenshot",
+      args: { browserId, fullPage: true },
+    });
+    mcpPayload(fullPage, "browser_screenshot");
+    const fullPageImage = fullPage.content.find((item) => item.type === "image");
+    assert(fullPageImage, "Hidden full-page capture returned no image");
+    fs.writeFileSync(
+      path.join(artifactDir, "hidden-browser-full-page.png"),
+      Buffer.from(fullPageImage.data, "base64"),
+    );
+    const fullPagePixel = await readScreenshotPixel(inspectorPort, fullPageImage);
+    writeJson(path.join(artifactDir, "hidden-browser-full-page-pixels.json"), {
+      references: fullPageReferencePixels,
+      hidden: fullPagePixel,
+    });
+    assert(
+      JSON.stringify(fullPagePixel) === JSON.stringify(fullPageReferencePixels[1]) &&
+        JSON.stringify(fullPagePixel) !== JSON.stringify(fullPageReferencePixels[0]),
+      "Hidden full-page screenshot returned stale pixels",
+    );
+    await expectIdle("after-full-page-capture");
+    await verifyCaptureCancellation({
+      client,
+      browserId,
+      webContentsId: originalGuest.webContentsId,
+      inspectorPort,
+      artifactDir,
+    });
+    await expectIdle("after-capture-cancellation-and-destruction");
+    nativeStates.afterRecovery = await readVisibility();
+    writeJson(path.join(artifactDir, "hidden-browser-native-state.json"), nativeStates);
   } finally {
     await setWindowHidden(inspectorPort, false);
+    reconnectedPage = await reconnect();
   }
   await expectAnimation();
+  assert(
+    (await readGuest(reconnectedPage, browserId)).webContentsId === originalGuest.webContentsId,
+    "Observer reconnect replaced browser WebContents",
+  );
+  return reconnectedPage;
 }
 
 async function verifyBackgroundTypingStaysInGuest({ page, client, serverId, browserId, agent }) {
@@ -658,10 +879,11 @@ async function runRegression({
   typingAgent,
   artifactDir,
   inspectorPort,
+  reconnect,
 }) {
   const failures = [];
   const originalWorkspaceId = workspaceIds[0];
-  const originalWorkspaceRow = page.getByTestId(
+  let originalWorkspaceRow = page.getByTestId(
     `sidebar-workspace-row-${serverId}:${originalWorkspaceId}`,
   );
   await originalWorkspaceRow.waitFor({ state: "visible", timeout: timeoutMs });
@@ -681,7 +903,8 @@ async function runRegression({
   const browserId = created.browserId;
   assert(typeof browserId === "string", "browser_new_tab returned no browserId");
 
-  const originalDeck = page.getByTestId(`workspace-deck-entry-${serverId}:${originalWorkspaceId}`);
+  let originalDeck = page.getByTestId(`workspace-deck-entry-${serverId}:${originalWorkspaceId}`);
+  await revealBrowserForAfter(originalDeck);
   await originalDeck.getByTestId(`workspace-tab-browser_${browserId}`).click();
   if (phase === "after") {
     const browserRow = originalDeck.getByRole("tablist", { name: "Browser tabs", exact: true });
@@ -694,6 +917,22 @@ async function runRegression({
       await address.evaluate((element) => document.activeElement === element),
       "New tab must focus the address before typing",
     );
+    const blankTestId = await browserRow
+      .getByRole("tab", { selected: true })
+      .getAttribute("data-testid");
+    assert(blankTestId, "Blank tab must have an identity");
+    await page.waitForFunction(
+      (id) => {
+        const webview = document.querySelector(`[data-paseo-browser-id="${id}"]`);
+        return webview && webview.getWebContentsId() > 0 && !webview.isLoading();
+      },
+      blankTestId.replace("workspace-tab-browser_", ""),
+    );
+    assert(
+      await address.evaluate((el) => el === document.activeElement),
+      "Guest attachment stole the blank address focus",
+    );
+    await page.screenshot({ path: path.join(artifactDir, "browser-new-empty.png") });
     await address.press("Enter");
     assert((await address.inputValue()) === "", "Empty address submission must remain blank");
     await address.fill(targetUrl);
@@ -704,6 +943,13 @@ async function runRegression({
     );
     const manualTab = browserRow.getByRole("tab", { selected: true });
     const manualTabTestId = await manualTab.getAttribute("data-testid");
+    await hideBrowserForAfter(originalDeck);
+    await revealBrowserForAfter(originalDeck);
+    await address.waitFor({ state: "visible" });
+    assert(
+      await address.evaluate((element) => document.activeElement !== element),
+      "Revealing a used manual tab must not replay its initial address focus",
+    );
     await manualTab.focus();
     await manualTab.press("Home");
     assert(
@@ -857,6 +1103,7 @@ async function runRegression({
   const responsiveViewport = await readViewport(client, browserId);
 
   await originalDeck.getByTestId(`workspace-tab-agent_${callerAgentId}`).click();
+  await hideBrowserForAfter(originalDeck);
   await page.waitForFunction(
     ({ id, webContentsId }) => {
       const webview = document.querySelector(`[data-paseo-browser-id="${id}"]`);
@@ -914,6 +1161,7 @@ async function runRegression({
     }
   }, browserId);
 
+  await revealBrowserForAfter(originalDeck);
   await originalDeck.getByTestId(`workspace-tab-browser_${browserId}`).click();
   await page.waitForFunction(
     ({ id, webContentsId }) => {
@@ -984,7 +1232,18 @@ async function runRegression({
   const parkedGuest = await readGuest(page, browserId);
   assert(parkedGuest, "Browser guest was not parked after workspace eviction");
 
-  await verifyHiddenBrowserScreenshots({ page, client, browserId, artifactDir, inspectorPort });
+  page = await verifyHiddenBrowserScreenshots({
+    page,
+    client,
+    browserId,
+    artifactDir,
+    inspectorPort,
+    reconnect,
+  });
+  originalWorkspaceRow = page.getByTestId(
+    `sidebar-workspace-row-${serverId}:${originalWorkspaceId}`,
+  );
+  originalDeck = page.getByTestId(`workspace-deck-entry-${serverId}:${originalWorkspaceId}`);
 
   const listed = await callBrowserTool(client, "browser_list_tabs");
   assert(
@@ -1120,12 +1379,17 @@ async function runRegression({
   await originalDeck.getByRole("button", { name: "Cancel element selector" }).click();
 
   await originalDeck.getByTestId(`workspace-tab-agent_${callerAgentId}`).click();
+  const rowCountBeforeSplit = await originalDeck
+    .getByTestId("workspace-tabs-row")
+    .filter({ visible: true })
+    .count();
   await page.getByTestId("sidebar-search").click();
   await page.getByTestId("command-center-input").fill("Split pane right");
   await page.getByText("Split pane right", { exact: true }).click();
   assert(
-    (await originalDeck.getByTestId("workspace-tabs-row").filter({ visible: true }).count()) === 2,
-    "Split pane command did not produce two visible panes",
+    (await originalDeck.getByTestId("workspace-tabs-row").filter({ visible: true }).count()) ===
+      rowCountBeforeSplit + 1,
+    "Split pane command did not add one ordinary pane",
   );
   await originalDeck.getByTestId(`workspace-tab-browser_${browserId}`).last().click();
   await originalDeck
@@ -1176,6 +1440,511 @@ async function readContinuity(page, client, browserId) {
       "() => ({ inputValue: document.querySelector('#typing-target').value, scrollY, loadCount, httpLoadCount, fixtureId })",
   });
   return { ...guest, ...JSON.parse(state.resultJson) };
+}
+
+async function verifyPresentationContinuity({
+  page,
+  client,
+  serverId,
+  callerAgentId,
+  target,
+  artifactDir,
+  inspectorPort,
+}) {
+  const workspaceKey = `${serverId}:${workspaceIds[0]}`;
+  await page.getByTestId(`sidebar-workspace-row-${workspaceKey}`).click();
+  const deck = page.getByTestId(`workspace-deck-entry-${workspaceKey}`);
+  await deck.getByTestId(`workspace-tab-agent_${callerAgentId}`).click();
+  const composer = deck
+    .getByRole("textbox", { name: "Message agent..." })
+    .filter({ visible: true })
+    .first();
+  const layoutState = () =>
+    page.evaluate((key) => {
+      const state = JSON.parse(localStorage.getItem("workspace-layout-state")).state;
+      return {
+        layout: state.layoutByWorkspace[key],
+        browserPaneId: state.browserPaneIdByWorkspace[key] ?? null,
+      };
+    }, workspaceKey);
+  const initial = await layoutState();
+  assert(initial.browserPaneId === null, "First background open must start without a browser pane");
+  await composer.click();
+  await composer.pressSequentially("conversation draft preserved");
+  const composerBefore = await composer.evaluate((el) => {
+    globalThis.__presentationComposer = el;
+    globalThis.__presentationComposerEvents = [];
+    for (const type of ["focus", "blur", "select"])
+      el.addEventListener(type, () =>
+        globalThis.__presentationComposerEvents.push({
+          type,
+          start: el.selectionStart,
+          end: el.selectionEnd,
+          time: performance.now(),
+        }),
+      );
+    return { value: el.value, start: el.selectionStart, end: el.selectionEnd };
+  });
+  const created = await callBrowserTool(client, "browser_new_tab", {
+    url: `${target.url}?fixture=presentation-0`,
+  });
+  const browserId = created.browserId;
+  const background = await layoutState();
+  assert(
+    background.layout.focusedPaneId === initial.layout.focusedPaneId,
+    "First agent browser stole pane focus",
+  );
+  assert(
+    await composer.evaluate((el) => el === document.activeElement),
+    "First agent browser stole composer DOM focus",
+  );
+  const composerAfter = await composer.evaluate((el) => ({
+    value: el.value,
+    start: el.selectionStart,
+    end: el.selectionEnd,
+    sameElement: el === globalThis.__presentationComposer,
+    originalConnected: globalThis.__presentationComposer.isConnected,
+    events: globalThis.__presentationComposerEvents,
+  }));
+  writeJson(path.join(artifactDir, "first-background-composer.json"), {
+    before: composerBefore,
+    after: composerAfter,
+    initialLayout: initial,
+    backgroundLayout: background,
+  });
+  assert(
+    composerAfter.sameElement && composerAfter.originalConnected,
+    "First background browser remounted the composer",
+  );
+  assert(
+    composerAfter.start === composerBefore.start && composerAfter.end === composerBefore.end,
+    "First background browser moved the caret",
+  );
+  await composer.pressSequentially(" while agent opens");
+  const draft = await composer.inputValue();
+  assert(
+    draft === "conversation draft preserved while agent opens",
+    `First browser interrupted typing: ${JSON.stringify(draft)}`,
+  );
+  assert(
+    await deck.getByRole("button", { name: "Show browser", exact: true }).isVisible(),
+    "Agent browser must remain hidden",
+  );
+  await page.screenshot({ path: path.join(artifactDir, "browser-hidden.png") });
+  await deck.getByRole("button", { name: "Show browser", exact: true }).click();
+  const row = deck.getByRole("tablist", { name: "Browser tabs", exact: true });
+  await row.getByTestId(`workspace-tab-browser_${browserId}`).click();
+  await callBrowserTool(client, "browser_evaluate", {
+    browserId,
+    function:
+      "() => { document.querySelector('#typing-target').value = 'page form preserved'; sessionStorage.setItem('presentation-session', 'kept'); scrollTo(0, 640); return true; }",
+  });
+  await delay(100);
+  const before = await readContinuity(page, client, browserId);
+  const sharedLayout = await layoutState();
+  const splitSizes = (node) =>
+    node.kind === "pane" ? [] : [node.group.sizes, ...node.group.children.flatMap(splitSizes)];
+  const originalSizes = JSON.stringify(splitSizes(sharedLayout.layout.root));
+  const report = { before, transitions: [] };
+  const check = async (label) => {
+    const current = await readContinuity(page, client, browserId);
+    for (const key of ["webContentsId", "inputValue", "scrollY", "loadCount", "httpLoadCount"]) {
+      assert(
+        current[key] === before[key],
+        `${label} changed ${key}: ${current[key]} vs ${before[key]}`,
+      );
+    }
+    const session = await callBrowserTool(client, "browser_evaluate", {
+      browserId,
+      function: "() => sessionStorage.getItem('presentation-session')",
+    });
+    assert(JSON.parse(session.resultJson) === "kept", `${label} lost local session`);
+    const composerState = await page.evaluate(() => ({
+      value: globalThis.__presentationComposer.value,
+      connected: globalThis.__presentationComposer.isConnected,
+    }));
+    assert(
+      composerState.connected && composerState.value === draft,
+      `${label} lost conversation DOM or draft`,
+    );
+    const state = await layoutState();
+    assert(
+      JSON.stringify(splitSizes(state.layout.root)) === originalSizes,
+      `${label} changed persisted split sizes`,
+    );
+    report.transitions.push({ label, ...current });
+    writeJson(path.join(artifactDir, "presentation-continuity.json"), report);
+  };
+  await page.screenshot({ path: path.join(artifactDir, "browser-shared.png") });
+  await deck.getByRole("button", { name: "Hide browser", exact: true }).click();
+  await check("hidden");
+  await deck.getByRole("button", { name: "Show browser", exact: true }).click();
+  await check("revealed");
+  await row.getByTestId("workspace-maximize-pane").click();
+  await check("maximized");
+  await page.screenshot({ path: path.join(artifactDir, "browser-maximized.png") });
+  const extra = await callBrowserTool(client, "browser_new_tab", {
+    url: `${target.url}?fixture=presentation-1`,
+  });
+  assert(
+    await row.getByTestId("workspace-restore-pane").isVisible(),
+    "Background open exited maximize",
+  );
+  await check("background-open-while-maximized");
+  await callBrowserTool(client, "browser_close_tab", { browserId: extra.browserId });
+  await page.getByTestId("sidebar-search").click();
+  await page.getByTestId("command-center-input").fill("Browser desktop browser E2E caller");
+  await page.getByTestId(`command-center-agent-${serverId}:${callerAgentId}`).click();
+  assert(
+    await composer.isVisible(),
+    "User reveal of already-selected conversation retained browser maximize",
+  );
+  assert(
+    await row.getByTestId("workspace-maximize-pane").isVisible(),
+    "User reveal did not clear local maximization",
+  );
+  await check("user-reveal-selected-conversation");
+  await row.getByTestId("workspace-maximize-pane").click();
+  await row.getByTestId("workspace-restore-pane").click();
+  await check("restored");
+  await row.getByTestId("workspace-maximize-pane").click();
+  await deck.getByRole("button", { name: "Hide browser", exact: true }).click();
+  await check("hidden-from-maximize");
+  assert(await composer.isVisible(), "Hide from maximize left the conversation blank");
+  await deck.getByRole("button", { name: "Show browser", exact: true }).click();
+  assert(
+    await row.getByTestId("workspace-maximize-pane").isVisible(),
+    "Reveal retained stale maximize",
+  );
+  await evaluateMain(
+    inspectorPort,
+    `(() => { const win = process.mainModule.require('electron').BrowserWindow.getAllWindows().find(win => win.webContents.getURL().includes('localhost:')); win.minimize(); })()`,
+  );
+  await check("minimized-window");
+  await evaluateMain(
+    inspectorPort,
+    `(() => { const win = process.mainModule.require('electron').BrowserWindow.getAllWindows().find(win => win.webContents.getURL().includes('localhost:')); win.restore(); })()`,
+  );
+  await check("restored-window");
+  const mainPane = deck.getByTestId(`workspace-pane-${initial.layout.focusedPaneId}`);
+  await mainPane.getByTestId("workspace-split-pane-menu").click();
+  await page.getByTestId("workspace-split-pane-down").click();
+  const threePaneLayout = await layoutState();
+  const thirdPaneId = threePaneLayout.layout.focusedPaneId;
+  await row.getByTestId("workspace-maximize-pane").click();
+  await deck.getByRole("button", { name: "Hide browser", exact: true }).click();
+  assert(
+    await mainPane.isVisible(),
+    "Hiding maximized browser failed to restore first of three panes",
+  );
+  const thirdPane = deck.getByTestId(`workspace-pane-${thirdPaneId}`);
+  assert(await thirdPane.isVisible(), "Hiding maximized browser failed to restore third pane");
+  await page.screenshot({ path: path.join(artifactDir, "browser-hidden-three-panes.png") });
+  await deck.getByRole("button", { name: "Show browser", exact: true }).click();
+  assert(
+    (await mainPane.isVisible()) && (await thirdPane.isVisible()),
+    "Reveal reused invalid maximization with three panes",
+  );
+  await thirdPane
+    .locator('[data-testid^="workspace-tab-"]')
+    .filter({ visible: true })
+    .first()
+    .hover();
+  await thirdPane.getByRole("button", { name: "Close", exact: true }).click();
+  await thirdPane.waitFor({ state: "detached" });
+
+  await deck.getByRole("button", { name: "Hide browser", exact: true }).click();
+  await callBrowserTool(client, "browser_close_tab", { browserId });
+  await composer.fill("");
+}
+
+async function verifyBrowserOverflow({ page, client, target, artifactDir, inspectorPort }) {
+  const originalBounds = await evaluateMain(
+    inspectorPort,
+    `process.mainModule.require('electron').BrowserWindow.getAllWindows().find(win => win.webContents.getURL().includes('localhost:')).getBounds()`,
+  );
+  const ids = [];
+  try {
+    await evaluateMain(
+      inspectorPort,
+      `process.mainModule.require('electron').BrowserWindow.getAllWindows().find(win => win.webContents.getURL().includes('localhost:')).setSize(1100, 800)`,
+    );
+    for (let index = 0; index < 10; index++) {
+      const tab = await callBrowserTool(client, "browser_new_tab", {
+        url: `${target.url}?fixture=overflow-${index}`,
+      });
+      ids.push(tab.browserId);
+      if (index === 0) await revealBrowserForAfter(page);
+      if ([0, 4, 9].includes(index)) {
+        await page.screenshot({ path: path.join(artifactDir, `browser-${index + 1}-tabs.png`) });
+      }
+    }
+    const selectedId = ids[5];
+    const selected = page
+      .getByTestId(`workspace-tab-browser_${selectedId}`)
+      .filter({ visible: true });
+    const row = page
+      .getByRole("tablist", { name: "Browser tabs", exact: true })
+      .filter({ has: selected });
+    const scroller = row.getByTestId("workspace-tabs-scroll");
+    assert(
+      (await row.getByRole("tab").count()) === 10,
+      "Browser row must expose all ten chips as tabs",
+    );
+    await selected.click();
+    const readTabs = () =>
+      page.evaluate(() => ({
+        rows: [...document.querySelectorAll('[role="tablist"]')].map((tabRow) => ({
+          label: tabRow.getAttribute("aria-label"),
+          tabs: [...tabRow.querySelectorAll('[role="tab"]')].map((tab) => ({
+            id: tab.getAttribute("data-testid"),
+            selected: tab.getAttribute("aria-selected"),
+            bounds: tab.getBoundingClientRect().toJSON(),
+          })),
+        })),
+        layout: JSON.parse(localStorage.getItem("workspace-layout-state")).state,
+      }));
+    writeJson(path.join(artifactDir, "overflow-before-removal.json"), await readTabs());
+    assert(
+      (await selected.getAttribute("aria-selected")) === "true",
+      "Sixth browser tab click did not select it",
+    );
+    await selected.evaluate((el) => {
+      const scroll = el
+        .closest('[role="tablist"]')
+        .querySelector('[data-testid="workspace-tabs-scroll"]');
+      scroll.scrollLeft += el.getBoundingClientRect().left - scroll.getBoundingClientRect().left;
+    });
+    const assertSelectedVisible = async (label) => {
+      assert(
+        (await row.getByRole("tab", { selected: true }).getAttribute("data-testid")) ===
+          `workspace-tab-browser_${selectedId}`,
+        `${label} changed selected browser`,
+      );
+      await page.waitForFunction((id) => {
+        const tab = document.querySelector(`[data-testid="workspace-tab-browser_${id}"]`);
+        const scroll = tab
+          .closest('[role="tablist"]')
+          .querySelector('[data-testid="workspace-tabs-scroll"]');
+        const a = tab.getBoundingClientRect(),
+          b = scroll.getBoundingClientRect();
+        return a.left >= b.left - 1 && a.right <= b.right + 1;
+      }, selectedId);
+    };
+    await callBrowserTool(client, "browser_close_tab", { browserId: ids[0] });
+    await row.getByTestId(`workspace-tab-browser_${ids[0]}`).waitFor({ state: "detached" });
+    writeJson(path.join(artifactDir, "overflow-after-removal.json"), await readTabs());
+    await assertSelectedVisible("inactive removal");
+    await page.screenshot({ path: path.join(artifactDir, "browser-overflow-removal.png") });
+    const order = () =>
+      row
+        .getByRole("tab")
+        .evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("data-testid")));
+    for (const direction of [-1, 1]) {
+      const before = await order();
+      await scroller.evaluate((el, scrollDirection) => {
+        el.scrollLeft = scrollDirection < 0 ? 0 : el.scrollWidth;
+      }, direction);
+      await selected.scrollIntoViewIfNeeded();
+      const a = await selected.boundingBox(),
+        b = await scroller.boundingBox();
+      assert(a && b, "Overflow drag needs visible tab and scroller bounds");
+      await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(direction < 0 ? b.x + 8 : b.x + b.width - 8, a.y + a.height / 2, {
+        steps: 15,
+      });
+      await delay(1200);
+      await page.mouse.up();
+      await delay(250);
+      assert(
+        JSON.stringify(await order()) !== JSON.stringify(before),
+        "Browser tab drag did not change order",
+      );
+      await assertSelectedVisible(`reorder ${direction}`);
+      await page.screenshot({
+        path: path.join(artifactDir, `browser-overflow-reorder-${direction}.png`),
+      });
+    }
+    await scroller.evaluate((el) => {
+      el.scrollLeft = 0;
+    });
+    const scrollBefore = await scroller.evaluate((el) => el.scrollLeft);
+    await callBrowserTool(client, "browser_evaluate", {
+      browserId: ids[9],
+      function: "() => { document.title = 'Updated fixture title'; return true; }",
+    });
+    await delay(250);
+    assert(
+      (await scroller.evaluate((el) => el.scrollLeft)) === scrollBefore,
+      "Metadata update pulled row back to selection",
+    );
+    writeJson(path.join(artifactDir, "overflow-result.json"), {
+      selectedId,
+      order: await order(),
+      metadataScrollLeft: scrollBefore,
+    });
+    await page
+      .getByRole("button", { name: "Hide browser", exact: true })
+      .filter({ visible: true })
+      .click();
+  } catch (error) {
+    await page.screenshot({ path: path.join(artifactDir, "browser-overflow-failure.png") });
+    throw error;
+  } finally {
+    for (const browserId of ids.slice(1))
+      await callBrowserTool(client, "browser_close_tab", { browserId });
+    await evaluateMain(
+      inspectorPort,
+      `process.mainModule.require('electron').BrowserWindow.getAllWindows().find(win => win.webContents.getURL().includes('localhost:')).setBounds(${JSON.stringify(originalBounds)})`,
+    );
+  }
+}
+
+async function verifyBrowserLastOrdinary({ page, serverId, artifactDir }) {
+  const workspaceKey = `${serverId}:${workspaceIds[1]}`;
+  await page.getByTestId(`sidebar-workspace-row-${workspaceKey}`).click();
+  const deck = page.getByTestId(`workspace-deck-entry-${workspaceKey}`);
+  const originalPaneId = await page.evaluate(
+    (key) =>
+      JSON.parse(localStorage.getItem("workspace-layout-state")).state.layoutByWorkspace[key]
+        .focusedPaneId,
+    workspaceKey,
+  );
+  await deck.getByRole("button", { name: "Show browser", exact: true }).click();
+  const originalPane = deck.getByTestId(`workspace-pane-${originalPaneId}`);
+  await originalPane
+    .locator('[data-testid^="workspace-tab-"]')
+    .filter({ visible: true })
+    .first()
+    .hover();
+  await originalPane.getByRole("button", { name: "Close", exact: true }).click();
+  await originalPane.waitFor({ state: "detached" });
+  await deck.getByRole("button", { name: "Open Explorer sidebar", exact: true }).click();
+  const hide = deck.getByRole("button", { name: "Hide browser", exact: true });
+  assert(await hide.isDisabled(), "Explorer must not allow hiding the final ordinary browser pane");
+  assert(
+    await deck.getByRole("tablist", { name: "Browser tabs", exact: true }).isVisible(),
+    "Final ordinary browser disappeared",
+  );
+  await page.screenshot({ path: path.join(artifactDir, "browser-last-ordinary-explorer.png") });
+  await deck.getByRole("button", { name: "Close Explorer sidebar", exact: true }).click();
+  await page.getByTestId(`sidebar-workspace-row-${serverId}:${workspaceIds[0]}`).click();
+}
+
+async function verifyBrowserPlacementError({ page, client, serverId, typingAgent, artifactDir }) {
+  const workspaceKey = `${serverId}:${typingAgent.workspaceId}`;
+  const deck = page.getByTestId(`workspace-deck-entry-${workspaceKey}`);
+  const readLayout = () =>
+    page.evaluate(
+      (key) =>
+        JSON.parse(localStorage.getItem("workspace-layout-state")).state.layoutByWorkspace[key],
+      workspaceKey,
+    );
+  const runCommand = async (label) => {
+    await page.getByTestId("sidebar-search").click();
+    await page.getByTestId("command-center-input").fill(label);
+    await page.getByText(label, { exact: true }).click();
+  };
+  await page.getByTestId(`sidebar-workspace-row-${workspaceKey}`).click();
+  await deck.getByTestId(`workspace-tab-agent_${typingAgent.agentId}`).click();
+  const newPaneIds = [];
+  for (const direction of ["down", "right", "down"]) {
+    await runCommand(`Split pane ${direction}`);
+    newPaneIds.push((await readLayout()).focusedPaneId);
+  }
+  await deck.getByTestId(`workspace-tab-agent_${typingAgent.agentId}`).click();
+  const alert = deck.getByTestId("workspace-browser-open-error");
+  const recordsBefore = await callBrowserTool(client, "browser_list_tabs");
+  await deck.getByRole("button", { name: "Show browser", exact: true }).click();
+  await alert.waitFor({ state: "visible" });
+  await page.screenshot({ path: path.join(artifactDir, "browser-show-placement-error.png") });
+  const deepestPane = deck.getByTestId(`workspace-pane-${newPaneIds.pop()}`);
+  await deepestPane
+    .locator('[data-testid^="workspace-tab-"]')
+    .filter({ visible: true })
+    .first()
+    .hover();
+  await deepestPane.getByRole("button", { name: "Close", exact: true }).click();
+  await deepestPane.waitFor({ state: "detached" });
+  await alert.getByRole("button", { name: "Retry", exact: true }).click();
+  await alert.waitFor({ state: "detached" });
+  const blankRow = deck.getByRole("tablist", { name: "Browser tabs", exact: true });
+  assert(await blankRow.isVisible(), "Show Retry did not reveal its blank browser pane");
+  assert(
+    JSON.stringify((await callBrowserTool(client, "browser_list_tabs")).tabs) ===
+      JSON.stringify(recordsBefore.tabs),
+    "Show Retry created a BrowserRecord",
+  );
+  await blankRow.getByRole("tab", { selected: true }).hover();
+  await blankRow.getByRole("button", { name: "Close", exact: true }).click();
+  await blankRow.waitFor({ state: "detached" });
+  const previousDeepest = deck.getByTestId(`workspace-pane-${newPaneIds.at(-1)}`);
+  await previousDeepest
+    .locator('[data-testid^="workspace-tab-"]')
+    .filter({ visible: true })
+    .first()
+    .click();
+  await runCommand("Split pane down");
+  newPaneIds.push((await readLayout()).focusedPaneId);
+  await deck.getByTestId(`workspace-tab-agent_${typingAgent.agentId}`).click();
+  const before = await readLayout();
+  await runCommand("New browser");
+  await alert.waitFor({ state: "visible" });
+  assert(
+    (await alert.innerText()).includes(
+      "Couldn't open the browser in this layout. Close a pane and retry.",
+    ),
+    "Placement failure must expose recovery copy",
+  );
+  assert(
+    JSON.stringify(await readLayout()) === JSON.stringify(before),
+    "Failed placement changed the layout",
+  );
+  await page.screenshot({ path: path.join(artifactDir, "browser-placement-error.png") });
+  await page.getByTestId(`sidebar-workspace-row-${serverId}:${workspaceIds[0]}`).click();
+  assert(
+    (await page.getByTestId("workspace-browser-open-error").filter({ visible: true }).count()) ===
+      0,
+    "Placement error leaked to another workspace",
+  );
+  await page.getByTestId(`sidebar-workspace-row-${workspaceKey}`).click();
+  await alert.getByRole("button", { name: "Dismiss", exact: true }).click();
+  await alert.waitFor({ state: "detached" });
+  assert(
+    JSON.stringify(await readLayout()) === JSON.stringify(before),
+    "Dismiss changed the layout",
+  );
+  await runCommand("New browser");
+  await alert.waitFor({ state: "visible" });
+  const lastPane = deck.getByTestId(`workspace-pane-${newPaneIds.at(-1)}`);
+  await lastPane
+    .locator('[data-testid^="workspace-tab-"]')
+    .filter({ visible: true })
+    .first()
+    .hover();
+  await lastPane.getByRole("button", { name: "Close", exact: true }).click();
+  await lastPane.waitFor({ state: "detached" });
+  await alert.getByRole("button", { name: "Retry", exact: true }).click();
+  await alert.waitFor({ state: "detached" });
+  const row = deck
+    .getByRole("tablist", { name: "Browser tabs", exact: true })
+    .filter({ visible: true });
+  assert(
+    (await row.getByRole("tab", { selected: true }).count()) === 1,
+    "Retry did not create/select the requested browser",
+  );
+  await page.screenshot({ path: path.join(artifactDir, "browser-placement-retried.png") });
+  await row.getByRole("tab", { selected: true }).hover();
+  await row.getByRole("button", { name: "Close", exact: true }).click();
+  await row.waitFor({ state: "detached" });
+  for (const paneId of newPaneIds.slice(0, -1).toReversed()) {
+    const pane = deck.getByTestId(`workspace-pane-${paneId}`);
+    await pane.locator('[data-testid^="workspace-tab-"]').filter({ visible: true }).first().hover();
+    await pane.getByRole("button", { name: "Close", exact: true }).click();
+    await pane.waitFor({ state: "detached" });
+  }
+  await page.getByTestId(`sidebar-workspace-row-${serverId}:${workspaceIds[0]}`).click();
 }
 
 async function readRendererMemory(inspectorPort, cohort) {
@@ -1286,6 +2055,22 @@ async function measureTabSwitch(page, browserId, sampleId) {
   });
 }
 
+async function hideBrowserForAfter(page) {
+  if (phase === "after")
+    await page
+      .getByRole("button", { name: "Hide browser", exact: true })
+      .filter({ visible: true })
+      .click();
+}
+
+async function revealBrowserForAfter(page) {
+  if (phase === "after")
+    await page
+      .getByRole("button", { name: "Show browser", exact: true })
+      .filter({ visible: true })
+      .click();
+}
+
 async function runTabBaseline({ page, client, serverId, target, artifactDir, inspectorPort }) {
   await page.getByTestId(`sidebar-workspace-row-${serverId}:${workspaceIds[0]}`).click();
   const reportPath = path.join(artifactDir, `browser-tabs-${phase}.json`);
@@ -1394,6 +2179,7 @@ async function runTabBaseline({ page, client, serverId, target, artifactDir, ins
       assert(guest, "Measurement guest has no original WebContents identity");
       cohort.push({ browserId: created.browserId, fixtureId, webContentsId: guest.webContentsId });
       if (index === 1) {
+        await revealBrowserForAfter(page);
         const beforeStates = [];
         for (const [tabIndex, tab] of cohort.entries()) {
           await page
@@ -1771,6 +2557,12 @@ async function main() {
       .getByRole("button", { name: "Settings", exact: true })
       .waitFor({ state: "visible", timeout: timeoutMs });
 
+    const reconnect = async () => {
+      browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
+      page = await waitForAppPage(browser, expoPort);
+      return page;
+    };
+
     const checkPluginLinks = () =>
       runPluginLinksRegression({
         page,
@@ -1809,6 +2601,41 @@ async function main() {
       ),
     );
     client = await experimental_createMCPClient({ transport });
+    if (phase === "after")
+      await verifyPresentationContinuity({
+        page,
+        client,
+        serverId: status.serverId,
+        callerAgentId,
+        target,
+        artifactDir,
+        inspectorPort,
+        reconnect,
+      });
+    if (phase === "after")
+      await verifyBrowserOverflow({ page, client, target, artifactDir, inspectorPort });
+    if (phase === "after") {
+      const placementClient = await experimental_createMCPClient({
+        transport: new StreamableHTTPClientTransport(
+          new URL(
+            `http://127.0.0.1:${daemonPort}/mcp/agents?callerAgentId=${encodeURIComponent(typingAgent.agentId)}`,
+          ),
+        ),
+      });
+      try {
+        await verifyBrowserPlacementError({
+          page,
+          client: placementClient,
+          serverId: status.serverId,
+          typingAgent,
+          artifactDir,
+        });
+      } finally {
+        await placementClient.close();
+      }
+    }
+    if (phase === "after")
+      await verifyBrowserLastOrdinary({ page, serverId: status.serverId, artifactDir });
     await runTabBaseline({
       page,
       client,
@@ -1823,6 +2650,7 @@ async function main() {
       serverId: status.serverId,
       targetUrl: target.url,
       inspectorPort,
+      reconnect,
       callerAgentId,
       typingAgent,
       artifactDir,

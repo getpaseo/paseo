@@ -1206,8 +1206,13 @@ function BrowserTabMenuItem({
 }
 
 function browserTabAccessibility(variant: "workspace" | "browser", isActive: boolean) {
+  // React Native Web prefers the sortable handle's raw role over accessibilityRole.
   return variant === "browser"
-    ? { accessibilityRole: "tab" as const, tabIndex: isActive ? (0 as const) : (-1 as const) }
+    ? {
+        role: "tab" as const,
+        accessibilityRole: "tab" as const,
+        tabIndex: isActive ? (0 as const) : (-1 as const),
+      }
     : {};
 }
 

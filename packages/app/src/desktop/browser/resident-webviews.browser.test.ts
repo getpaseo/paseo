@@ -163,6 +163,65 @@ describe("resident browser webviews", () => {
     expect(webview.parentElement).toBe(permanentParent);
   });
 
+  it("keeps one connected webview through hide, reveal, maximize and restore", () => {
+    const browserId = "browser-presentation-transitions";
+    const webview = ensureTestBrowser({
+      browserId,
+      workspaceId: "workspace-a",
+      url: "https://example.com",
+    });
+    if (!webview?.parentElement) throw new Error("Expected permanent browser surface");
+    const surface = webview.parentElement;
+    const anchor = document.createElement("div");
+    let bounds = { left: 500, top: 100, width: 500, height: 600 };
+    Object.defineProperty(anchor, "getBoundingClientRect", { value: () => bounds });
+    const mutations: MutationRecord[] = [];
+    const observer = new MutationObserver((records) => mutations.push(...records));
+    observer.observe(residentHost(), { childList: true, subtree: true });
+    const originalSrc = (webview as HTMLElement & { src: string }).src;
+    try {
+      for (const width of [500, 1000, 500]) {
+        bounds.width = width;
+        presentBrowserWebview(browserId, webview, anchor, anchor, { mode: "responsive" });
+        expect(webview.style.width).toBe(`${width}px`);
+        expect(webview.parentElement).toBe(surface);
+        releaseResidentBrowserWebview(browserId, webview);
+        expectParkedSurface(surface);
+        expect(webview.isConnected).toBe(true);
+        expect(takeResidentBrowserWebview(browserId)).toBe(webview);
+        expect((webview as HTMLElement & { src: string }).src).toBe(originalSrc);
+      }
+      expect([...mutations, ...observer.takeRecords()]).toEqual([]);
+    } finally {
+      observer.disconnect();
+    }
+  });
+
+  it("keeps the responsive viewport while a revealed pane has no layout area yet", () => {
+    const browserId = "browser-pending-layout";
+    const webview = ensureTestBrowser({
+      browserId,
+      workspaceId: "workspace-a",
+      url: "https://example.com",
+    });
+    if (!webview?.parentElement) throw new Error("Expected permanent browser surface");
+    const surface = webview.parentElement;
+    rememberBrowserWebviewSize({ browserId, width: 472, height: 692 });
+    releaseResidentBrowserWebview(browserId, webview);
+    const anchor = document.createElement("div");
+    const bounds = { left: 500, top: 100, width: 0, height: 692 };
+    Object.defineProperty(anchor, "getBoundingClientRect", { value: () => bounds });
+    presentBrowserWebview(browserId, webview, anchor, anchor, { mode: "responsive" });
+    expect(webview.style.width).toBe("472px");
+    expect(webview.style.height).toBe("692px");
+    expectParkedSurface(surface);
+    bounds.width = 472;
+    presentBrowserWebview(browserId, webview, anchor, anchor, { mode: "responsive" });
+    expect(webview.style.width).toBe("472px");
+    expect(webview.parentElement).toBe(surface);
+    expect(surface.style.pointerEvents).toBe("auto");
+  });
+
   it("clips an oversized fixed viewport to its pane without resizing the webview", () => {
     const webview = ensureTestBrowser({
       browserId: "browser-oversized",

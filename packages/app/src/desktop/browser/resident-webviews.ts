@@ -270,6 +270,12 @@ export function presentBrowserWebview(
   const surfaceRight = Math.floor(right);
   const surfaceBottom = Math.floor(bottom);
   const hasVisibleArea = surfaceRight > surfaceLeft && surfaceBottom > surfaceTop;
+  if (!hasVisibleArea) {
+    // A revealed retained pane can be measured before its layout is restored.
+    applyParkedBrowserSurfaceStyle(surface);
+    applyInactiveBrowserWebviewViewport(normalizedBrowserId, webview, viewport);
+    return;
+  }
   surface.setAttribute("aria-hidden", "false");
   surface.style.position = "fixed";
   surface.style.left = `${surfaceLeft}px`;
@@ -278,7 +284,7 @@ export function presentBrowserWebview(
   surface.style.height = `${Math.max(0, surfaceBottom - surfaceTop)}px`;
   surface.style.overflow = "hidden";
   surface.style.opacity = "1";
-  surface.style.pointerEvents = hasVisibleArea ? "auto" : "none";
+  surface.style.pointerEvents = "auto";
   surface.style.display = "flex";
   surface.style.visibility = "visible";
   clearResidentWebviewParkingStyle(webview);

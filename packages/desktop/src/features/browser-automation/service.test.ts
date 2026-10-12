@@ -33,9 +33,6 @@ class FakeImage implements TabImage {
 }
 
 class FakeTab implements TabContents {
-  public withFrameProduction<T>(capture: () => Promise<T>): Promise<T> {
-    return capture();
-  }
   public readonly loadedUrls: string[] = [];
   public readonly scripts: string[] = [];
   public readonly actions: string[] = [];
@@ -68,7 +65,6 @@ class FakeTab implements TabContents {
   public networkEntries: unknown[] = [];
   public consoleMessages: BrowserAutomationConsoleLogEntry[] = [];
   public dialogsToCapture: BrowserAutomationDialogEvent[] = [];
-  public paintDelayMs = 0;
   public captureNeverPaints = false;
   public captureThrows = false;
   public captureErrorMessage = "capture failed";
@@ -119,9 +115,6 @@ class FakeTab implements TabContents {
 
   public async executeJavaScript(code: string): Promise<unknown> {
     this.scripts.push(code);
-    if (code.includes("requestAnimationFrame") && this.paintDelayMs > 0) {
-      await new Promise((resolve) => setTimeout(resolve, this.paintDelayMs));
-    }
     if (code.includes("document.body.innerText")) {
       return this.bodyText;
     }
@@ -184,10 +177,6 @@ class FakeTab implements TabContents {
       });
     }
     return new FakeImage();
-  }
-
-  public invalidate(): void {
-    this.actions.push("invalidate");
   }
 
   public getConsoleMessages(): BrowserAutomationConsoleLogEntry[] {
@@ -1579,8 +1568,11 @@ describe("executeAutomationCommand", () => {
       },
     });
     expect(browser.tab.capturedViewports).toHaveLength(1);
+    expect(browser.tab.scripts.some((script) => script.includes("requestAnimationFrame"))).toBe(
+      false,
+    );
     expect(browser.tab.capturedViewports[0].aborted).toBe(true);
-    expect(browser.tab.actions).toEqual(["invalidate", "capture"]);
+    expect(browser.tab.actions).toEqual(["capture"]);
   });
 
   test("screenshot returns no-frame when the viewport never paints", async () => {
@@ -1604,18 +1596,17 @@ describe("executeAutomationCommand", () => {
           retryable: true,
         },
       });
-      expect(browser.tab.actions).toEqual(["invalidate", "capture"]);
+      expect(browser.tab.actions).toEqual(["capture"]);
       expect(browser.tab.capturedViewports[0].aborted).toBe(true);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  test("paint and pixel capture share the five-second screenshot budget", async () => {
+  test("viewport capture keeps its five-second budget without waiting for animation", async () => {
     vi.useFakeTimers();
     try {
       const browser = new BrowserAutomationHarness();
-      browser.tab.paintDelayMs = 4_000;
       browser.tab.captureNeverPaints = true;
       let result: unknown;
       void browser
@@ -1647,7 +1638,7 @@ describe("executeAutomationCommand", () => {
       }),
     ).rejects.toThrow("capture failed");
 
-    expect(browser.tab.actions).toEqual(["invalidate", "capture"]);
+    expect(browser.tab.actions).toEqual(["capture"]);
   });
 
   test("overlapping screenshots serialize through the shared capture queue", async () => {
@@ -1669,17 +1660,17 @@ describe("executeAutomationCommand", () => {
     );
     await Promise.resolve();
 
-    expect(browser.tab.actions).toEqual(["invalidate", "capture"]);
+    expect(browser.tab.actions).toEqual(["capture"]);
 
     browser.tab.finishNextCapture();
     await browser.tab.waitForCaptureStart(2);
 
-    expect(browser.tab.actions).toEqual(["invalidate", "capture", "invalidate", "capture"]);
+    expect(browser.tab.actions).toEqual(["capture", "capture"]);
 
     browser.tab.finishNextCapture();
     await expect(first).resolves.toMatchObject({ requestId: "req-screenshot", ok: true });
     await expect(second).resolves.toMatchObject({ requestId: "req-screenshot-2", ok: true });
-    expect(browser.tab.actions).toEqual(["invalidate", "capture", "invalidate", "capture"]);
+    expect(browser.tab.actions).toEqual(["capture", "capture"]);
   });
 
   test("overlapping screenshots across browser tabs serialize through the shared capture queue", async () => {
@@ -1712,19 +1703,19 @@ describe("executeAutomationCommand", () => {
     );
     await Promise.resolve();
 
-    expect(firstTab.actions).toEqual(["invalidate", "capture"]);
+    expect(firstTab.actions).toEqual(["capture"]);
     expect(secondTab.actions).toEqual([]);
 
     firstTab.finishNextCapture();
     await secondTab.waitForCaptureStart(1);
 
-    expect(firstTab.actions).toEqual(["invalidate", "capture"]);
-    expect(secondTab.actions).toEqual(["invalidate", "capture"]);
+    expect(firstTab.actions).toEqual(["capture"]);
+    expect(secondTab.actions).toEqual(["capture"]);
 
     secondTab.finishNextCapture();
     await expect(first).resolves.toMatchObject({ requestId: "req-screenshot", ok: true });
     await expect(second).resolves.toMatchObject({ requestId: "req-screenshot-2", ok: true });
-    expect(secondTab.actions).toEqual(["invalidate", "capture"]);
+    expect(secondTab.actions).toEqual(["capture"]);
   });
 
   test("screenshot with fullPage captures the page content area through CDP", async () => {
@@ -1759,7 +1750,6 @@ describe("executeAutomationCommand", () => {
       },
     ]);
     expect(browser.tab.actions).toEqual([
-      "invalidate",
       "debug:Page.getLayoutMetrics",
       "debug:Page.captureScreenshot",
     ]);
@@ -1784,7 +1774,6 @@ describe("executeAutomationCommand", () => {
       },
     });
     expect(browser.tab.actions).toEqual([
-      "invalidate",
       "debug:Page.getLayoutMetrics",
       "debug:Page.captureScreenshot",
     ]);
@@ -1815,10 +1804,8 @@ describe("executeAutomationCommand", () => {
         },
       });
       expect(browser.tab.actions).toEqual([
-        "invalidate",
         "debug:Page.getLayoutMetrics",
         "debug:Page.captureScreenshot",
-        "invalidate",
         "debug:Page.getLayoutMetrics",
         "debug:Page.captureScreenshot",
       ]);
@@ -1839,7 +1826,6 @@ describe("executeAutomationCommand", () => {
       }),
     ).rejects.toThrow("Debugger detached");
     expect(browser.tab.actions).toEqual([
-      "invalidate",
       "debug:Page.getLayoutMetrics",
       "debug:Page.captureScreenshot",
     ]);
