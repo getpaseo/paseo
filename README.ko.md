@@ -163,9 +163,13 @@ npm run typecheck
 
 ## 스폰서
 
-Paseo는 한 사람이 개발하며, 사용하는 분들의 후원으로 운영됩니다. [GitHub Sponsors](https://github.com/sponsors/boudra)로 후원할 수 있습니다. 회사는 매월 [Paseo를 후원](https://paseo.sh/sponsor#spot)하고 로고를 이곳과 paseo.sh 홈페이지에 게재할 수 있습니다.
+Paseo는 한 사람이 개발하며, 사용하는 분들의 후원으로 운영됩니다. [GitHub Sponsors](https://github.com/sponsors/boudra)로 후원할 수 있습니다. 회사는 매월 [Paseo를 후원](https://paseo.sh/sponsor#spot)하고 로고를 이곳과 paseo.sh의 모든 페이지에 게재할 수 있습니다.
 
 <!-- Sponsor logos go here, in the same order as packages/website/src/data/sponsors.ts -->
+
+<p>
+  <a href="https://hoplite.sh/?utm_source=paseo&utm_medium=readme&utm_campaign=sponsor"><picture><source media="(prefers-color-scheme: dark)" srcset="https://paseo.sh/sponsors/hoplite-on-dark.svg"><img src="https://paseo.sh/sponsors/hoplite-on-light.svg" alt="Hoplite" height="40"></picture></a>
+</p>
 
 ## 관련 프로젝트
 

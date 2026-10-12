@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import { DocsBreadcrumbs } from "~/components/docs-breadcrumbs";
 import { DocsNav } from "~/components/docs-nav";
 import { DocsOutline } from "~/components/docs-outline";
+import { SponsorsSection } from "~/components/sponsorship";
 import { buildDocsNavTree, getDoc, getDocs } from "~/docs";
 import "~/styles.css";
 
@@ -63,6 +64,9 @@ function DocsLayout() {
           <div className="max-w-prose mx-auto">
             {doc && <DocsBreadcrumbs doc={doc} tree={tree} />}
             <Outlet />
+            <div className="mt-16">
+              <SponsorsSection />
+            </div>
           </div>
         </main>
 

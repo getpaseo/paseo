@@ -1,6 +1,7 @@
 import { PLUGINS_LINKED } from "~/plugins/launch";
 import { getAlternativePages } from "~/data/alternative-pages";
 import { appStoreUrl, playStoreUrl, webAppUrl } from "~/downloads";
+import { SponsorsSection } from "~/components/sponsorship";
 
 interface SiteFooterProps {
   width?: "default" | "prose" | "wide";
@@ -17,6 +18,7 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
   const alternatives = getAlternativePages();
   return (
     <footer className={`${widthClasses} mx-auto mt-12 md:mt-16`}>
+      <SponsorsSection />
       <div className="border-t border-white/10 pt-8 pb-4 grid grid-cols-2 sm:grid-cols-5 gap-8 text-sm">
         <div className="space-y-3">
           <p className="text-extra-muted-foreground">Product</p>
