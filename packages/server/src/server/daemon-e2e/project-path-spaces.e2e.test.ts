@@ -15,6 +15,7 @@ let projectId: string;
 
 beforeEach(async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "paseo-project-path-spaces-")));
+  onTestFinished(() => rmSync(root, { recursive: true, force: true }));
   repoDir = join(root, "repo ");
   execFileSync("git", ["init", "-b", "main", repoDir], { stdio: "pipe" });
   execFileSync(
@@ -34,12 +35,10 @@ beforeEach(async () => {
     { cwd: repoDir, stdio: "pipe" },
   );
   const daemon = await createTestPaseoDaemon();
+  onTestFinished(() => daemon.close());
   client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
-  onTestFinished(async () => {
-    await client.close().catch(() => undefined);
-    await daemon.close();
-    rmSync(root, { recursive: true, force: true });
-  });
+  const testClient = client;
+  onTestFinished(() => testClient.close());
   await client.connect();
   const added = await client.addProject(repoDir);
   expect(added.error).toBeNull();
