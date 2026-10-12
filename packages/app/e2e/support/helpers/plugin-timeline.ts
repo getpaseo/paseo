@@ -49,9 +49,12 @@ export default function contribute(client) {
 
 const PROMPT_PLUGIN_ID = "timeline-prompt-e2e";
 
-const PROMPT_CLIENT_SOURCE = `import React from "react";
+function promptClientSource(prompts?: readonly string[]): string {
+  return `import React from "react";
 import { Text, View } from "react-native";
 import { z } from "zod";
+
+const selectedPrompts = ${JSON.stringify(prompts ?? null)};
 
 function PromptCard({ item }) {
   return <View testID="plugin-prompt"><Text>{item.data.text}</Text></View>;
@@ -62,6 +65,7 @@ export default function contribute(client) {
     id: "prompt",
     query: { itemType: "user_message" },
     transform({ item }) {
+      if (selectedPrompts && !selectedPrompts.includes(item.text)) return undefined;
       return { items: [{ type: "plugin", kind: "prompt", version: 1, data: { text: item.text } }] };
     },
   });
@@ -72,12 +76,14 @@ export default function contribute(client) {
   });
   return () => {};
 }`;
+}
 
-async function withDirectoryPlugin(
-  pluginId: string,
-  source: string,
-  run: () => Promise<void>,
-): Promise<void> {
+async function withDirectoryPlugin(options: {
+  pluginId: string;
+  source: string;
+  run: () => Promise<void>;
+}): Promise<void> {
+  const { pluginId, source, run } = options;
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-timeline-plugin-"));
   const pluginClient = await connectNewWorkspaceDaemonClient({ ownProjects: false });
   const previous = await pluginClient.getDaemonConfig();
@@ -126,31 +132,44 @@ export async function withTimelinePlugin(
         : {},
   });
   try {
-    await withDirectoryPlugin(PLUGIN_ID, CLIENT_SOURCE, async () => {
-      try {
-        await openAgentRoute(page, agent);
-        await expect(page.getByRole("textbox", { name: "Message agent..." }).first()).toBeVisible();
-        await run(agent);
-        await info.attach("timeline-plugin", {
-          body: await page.screenshot({ path: info.outputPath("timeline-plugin.png") }),
-          contentType: "image/png",
-        });
-      } catch (error) {
-        await info.attach("timeline-before-cleanup", {
-          body: await page.screenshot({ path: info.outputPath("timeline-before-cleanup.png") }),
-          contentType: "image/png",
-        });
-        throw error;
-      }
+    await withDirectoryPlugin({
+      pluginId: PLUGIN_ID,
+      source: CLIENT_SOURCE,
+      run: async () => {
+        try {
+          await openAgentRoute(page, agent);
+          await expect(
+            page.getByRole("textbox", { name: "Message agent..." }).first(),
+          ).toBeVisible();
+          await run(agent);
+          await info.attach("timeline-plugin", {
+            body: await page.screenshot({ path: info.outputPath("timeline-plugin.png") }),
+            contentType: "image/png",
+          });
+        } catch (error) {
+          await info.attach("timeline-before-cleanup", {
+            body: await page.screenshot({ path: info.outputPath("timeline-before-cleanup.png") }),
+            contentType: "image/png",
+          });
+          throw error;
+        }
+      },
     });
   } finally {
     await agent.cleanup();
   }
 }
 
-/** Installs a plugin that draws every prompt as its own card. */
-export async function withPromptTimelinePlugin(run: () => Promise<void>): Promise<void> {
-  await withDirectoryPlugin(PROMPT_PLUGIN_ID, PROMPT_CLIENT_SOURCE, run);
+/** Draws all prompts, or only the selected prompts, as plugin cards. */
+export async function withPromptTimelinePlugin(
+  run: () => Promise<void>,
+  prompts?: readonly string[],
+): Promise<void> {
+  await withDirectoryPlugin({
+    pluginId: PROMPT_PLUGIN_ID,
+    source: promptClientSource(prompts),
+    run,
+  });
 }
 
 export async function expectPromptsDrawnByPlugin(page: Page): Promise<void> {
@@ -193,4 +212,22 @@ export async function expectBothConsecutiveTools(page: Page): Promise<void> {
   const grep = page.getByRole("heading", { name: "Tool grep complete", exact: true }).first();
   await grep.scrollIntoViewIfNeeded();
   await expect(grep).toBeVisible();
+}
+
+/** The row belongs to the virtualized history, not the always-mounted recent window. */
+export async function expectVirtualizedPluginPromptVisible(
+  page: Page,
+  prompt: string,
+): Promise<void> {
+  const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+  await expect(
+    timeline.locator("[data-index]").getByTestId("plugin-prompt").filter({ hasText: prompt }),
+  ).toBeVisible();
+}
+
+export async function attachPromptTimelineEvidence(page: Page, info: TestInfo): Promise<void> {
+  await info.attach("plugin-outline-jump", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  });
 }
