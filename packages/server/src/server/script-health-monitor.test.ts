@@ -99,14 +99,14 @@ function createStubTerminalManager(
   };
 }
 
-async function startTcpServer(): Promise<TcpServerHandle> {
+async function startTcpServer(host = "127.0.0.1"): Promise<TcpServerHandle> {
   const server = net.createServer((socket) => {
     socket.end();
   });
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
+    server.listen(0, host, () => {
       server.off("error", reject);
       resolve();
     });
@@ -151,6 +151,45 @@ describe("ScriptHealthMonitor", () => {
 
     await Promise.all(Array.from(servers, (server) => closeServer(server)));
     servers.clear();
+  });
+
+  it.each(["127.0.0.1", "::1"])("reports a service bound only to %s as healthy", async (host) => {
+    const service = await startTcpServer(host);
+    servers.add(service.server);
+    const serviceProxy = new ScriptRouteStore();
+    serviceProxy.registerWorkspaceService({
+      workspaceId: "workspace-a",
+      projectSlug: "repo",
+      branchName: "main",
+      scriptName: "api",
+      port: service.port,
+    });
+    const updates: ScriptHealthEntry[][] = [];
+    const monitor = new ScriptHealthMonitor({
+      serviceProxy,
+      onChange: (_workspaceId, scripts) => updates.push(scripts),
+      pollIntervalMs: 10,
+      probeTimeoutMs: 100,
+      graceMs: 0,
+      failuresBeforeStopped: 1,
+    });
+    monitor.start();
+    try {
+      await vi.waitFor(() => {
+        expect(updates).toEqual([
+          [
+            {
+              scriptName: "api",
+              hostname: "api--repo.localhost",
+              port: service.port,
+              health: "healthy",
+            },
+          ],
+        ]);
+      });
+    } finally {
+      monitor.stop();
+    }
   });
 
   it("starts new service routes in pending and transitions to healthy after the grace period", async () => {
