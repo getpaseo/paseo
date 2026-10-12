@@ -96,7 +96,9 @@ test("browses from the directory into a category, a plugin, and its author", asy
   await expect(page.getByRole("link", { name: /Defer/ })).toHaveCount(0);
 });
 
-test("ranks plugins on browse pages by installs in a window or by newest", async ({ page }) => {
+test("ranks plugins on browse pages by installs in a window, by newest, or by latest update", async ({
+  page,
+}) => {
   await page.goto("/plugins/all");
   await expect(page.getByRole("heading", { level: 1, name: /^All plugins/ })).toBeVisible();
   await expect(page.getByRole("link", { name: "Most installed" })).toHaveAttribute(
@@ -116,6 +118,21 @@ test("ranks plugins on browse pages by installs in a window or by newest", async
   await expect(page.getByRole("main").getByRole("link", { name: /Base2Tone/ })).toContainText(
     "ago",
   );
+
+  await page.getByRole("link", { name: "Recently updated" }).click();
+  await expect(page).toHaveURL(/\/plugins\/all\?sort=updated$/);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(/^All plugins\s*2$/);
+  await expect(page.getByRole("main").getByRole("link", { name: /Defer|OMP/ })).toHaveText([
+    /Defer/,
+    /OMP/,
+  ]);
+});
+
+test("shows each plugin's author with their avatar on browse cards", async ({ page }) => {
+  await page.goto("/plugins/all");
+  const card = page.getByRole("main").getByRole("link", { name: /Defer/ });
+  await expect(card).toContainText("Tom Gringauz");
+  await expect(card.locator('img[src="https://github.com/tomgrin10.png?size=80"]')).toHaveCount(1);
 });
 
 test("filters by search and clears to all plugins", async ({ page }) => {
@@ -577,7 +594,9 @@ test.describe("registry fixture layout", () => {
   test("shows the plugin tile on cards when its media has no image", async ({ page }) => {
     await page.goto("/plugins/all");
     const card = page.getByRole("main").getByRole("link", { name: /launchd Jobs/ });
-    await expect(card.locator("img, video")).toHaveCount(0);
+    // The only image is the author's avatar.
+    await expect(card.locator("img, video")).toHaveCount(1);
+    await expect(card.locator('img[src^="https://github.com/gpambrozio.png"]')).toHaveCount(1);
     await card.click();
     await expect(
       page.getByRole("link", { name: "launchd Jobs video 1" }).locator("video"),
@@ -610,6 +629,18 @@ test.describe("registry fixture layout", () => {
       /PromptKit/,
       /Defer/,
     ]);
+  });
+
+  test("lists only plugins updated since they were listed under Recently updated", async ({
+    page,
+  }) => {
+    await openPlugins(page);
+    await expect(pluginCards(page, "Recently updated")).toHaveText([/Defer/, /OMP/]);
+    await page
+      .getByRole("region", { name: "Recently updated" })
+      .getByRole("link", { name: "See all" })
+      .click();
+    await expect(page).toHaveURL(/\/plugins\/all\?sort=updated$/);
   });
 });
 
