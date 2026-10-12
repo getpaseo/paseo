@@ -312,7 +312,13 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
       home,
       timeoutMs: 30_000,
       ...invocation,
-      env: { ...invocation.env, PASEO_CLI: getBundledCliShimPath() },
+      env: {
+        ...invocation.env,
+        PASEO_CLI: getBundledCliShimPath(),
+        ...(app.isPackaged
+          ? { PASEO_DOCUMENT_FONTS_PATH: path.join(process.resourcesPath, "document-fonts") }
+          : {}),
+      },
       mode: "managed",
       desktopManaged: true,
       onAcquired: (instance) => {
