@@ -37,6 +37,7 @@ function installed(
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    markdownExtensions: [],
   };
 }
 

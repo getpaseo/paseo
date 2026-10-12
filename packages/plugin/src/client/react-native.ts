@@ -10,6 +10,7 @@ import type {
 import type {
   StyleProp,
   ViewStyle,
+  TextStyle,
   ScrollView as NativeScrollView,
   ScrollViewProps,
   FlatList as NativeFlatList,
@@ -74,3 +75,23 @@ export declare function copyText(text: string): Promise<void>;
 export declare const TextInput: ForwardRefExoticComponent<
   TextInputProps & RefAttributes<NativeTextInput>
 >;
+
+/** Renders an SVG document string. Narrower than react-native-svg's XmlProps by design. */
+export declare const SvgXml: ComponentType<{
+  xml: string | null;
+  width?: number | string;
+  height?: number | string;
+  color?: string;
+}>;
+
+export interface MarkdownSourceProps {
+  /** The markdown this element copies as when a web selection includes it. */
+  source: string;
+  /** Render a block instead of an inline run. Default false. Native always uses View. */
+  display?: boolean;
+  style?: StyleProp<ViewStyle | TextStyle>;
+  children?: ReactNode;
+}
+
+/** Wraps non-text content so a web drag selection copies `source` verbatim. */
+export declare const MarkdownSource: ComponentType<MarkdownSourceProps>;

@@ -6,6 +6,10 @@ import {
   setAssistantImageMetadata,
 } from "@/utils/assistant-image-metadata";
 import {
+  clearAssistantMessageHeightEstimateCache,
+  setAssistantMarkdownBlockHeight,
+} from "@/utils/assistant-message-height-estimate";
+import {
   DEFAULT_WEB_MOUNTED_RECENT_STREAM_ITEMS,
   DEFAULT_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD,
   estimateStreamItemHeight,
@@ -211,6 +215,25 @@ describe("estimateStreamItemHeight", () => {
     expect(
       estimateStreamItemHeight({ item, contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH }),
     ).toBeGreaterThan(220);
+  });
+
+  it("finds a host-keyed markdown block measurement", () => {
+    clearAssistantMessageHeightEstimateCache();
+    setAssistantMarkdownBlockHeight({
+      block: "$$x$$",
+      width: 804,
+      height: 100,
+      serverId: "host-a",
+    });
+
+    const item: StreamItem = {
+      kind: "assistant_message",
+      id: "a-math",
+      text: "$$x$$",
+      timestamp: createTimestamp(3),
+    };
+
+    expect(estimateStreamItemHeight({ item, contentMaxWidth: 820, serverId: "host-a" })).toBe(124);
   });
 });
 
