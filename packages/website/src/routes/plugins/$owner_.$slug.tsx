@@ -1,5 +1,6 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import { ExternalLink } from "lucide-react";
+import { GitHubIcon } from "~/components/brand-icons";
 import { CodeBlock } from "~/components/code-block";
 import { PluginOverview, PluginContentLink } from "~/plugins/overview";
 import { SiteShell } from "~/components/site-shell";
@@ -14,6 +15,7 @@ import {
   npmUrl,
   pluginVersion,
   readmeBody,
+  reportBugUrl,
 } from "~/plugins";
 import { AuthorAvatar, AuthorLink } from "~/plugins/author-link";
 import { InstallCount } from "~/plugins/install-count";
@@ -48,6 +50,8 @@ export const Route = createFileRoute("/plugins/$owner_/$slug")({
 
 const META_LINK_CLASS =
   "inline-flex items-center gap-1 text-xs text-extra-muted-foreground transition-colors hover:text-muted-foreground";
+const REPORT_BUG_CLASS =
+  "inline-flex items-center gap-2 rounded-lg border border-white/12 px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground";
 const AUTHOR_LINK_CLASS =
   "inline-flex items-center gap-1.5 text-xs text-extra-muted-foreground transition-colors hover:text-muted-foreground";
 
@@ -56,6 +60,7 @@ function PluginPage() {
   const category = getCategory(plugin.categories[0]);
   const author = getAuthor(plugin);
   const npm = npmUrl(plugin);
+  const reportBug = reportBugUrl(plugin);
 
   return (
     <SiteShell width="default">
@@ -64,8 +69,16 @@ function PluginPage() {
       </a>
       <h1 className="mt-4 text-3xl font-medium tracking-tight">{plugin.name}</h1>
       <p className="mt-3 text-lg leading-relaxed text-white/70">{plugin.description}</p>
-      <div className="mt-6 w-fit max-w-full">
-        <CodeBlock size="sm">{installCommand(plugin)}</CodeBlock>
+      <div className="mt-6 flex flex-wrap items-center gap-3">
+        <div className="w-fit max-w-full">
+          <CodeBlock size="sm">{installCommand(plugin)}</CodeBlock>
+        </div>
+        {reportBug && (
+          <PluginContentLink href={reportBug} className={REPORT_BUG_CLASS}>
+            <GitHubIcon className="h-4 w-4" />
+            Report a bug
+          </PluginContentLink>
+        )}
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-2 text-xs text-extra-muted-foreground [&>*+*]:before:mr-2 [&>*+*]:before:content-['·'_/_'']">
         <AuthorLink author={author} className={AUTHOR_LINK_CLASS}>

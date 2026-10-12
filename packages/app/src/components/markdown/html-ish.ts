@@ -29,6 +29,12 @@ const FENCE_LINE_RE = /^ {0,3}([`~]{3,})[^\n\r]*(?:\r?\n|$)/gm;
 const BACKTICK_RUN_RE = /`+/g;
 const SAFE_IMAGE_SRC_RE = /^(https?:\/\/|data:image\/(?:png|gif|jpe?g);base64,)/i;
 const SAFE_LINK_HREF_RE = /^(https?:\/\/|#(?:$|[\w-]))/i;
+// CommonMark open and closing tags (spec "Raw HTML"); comments are matched separately.
+const HTML_ATTRIBUTE = String.raw`\s+[A-Za-z_:][\w.:-]*(?:\s*=\s*(?:[^\s"'=<>\x60]+|'[^']*'|"[^"]*"))?`;
+const HTML_TAG_RE = new RegExp(
+  String.raw`<(?:[A-Za-z][A-Za-z0-9-]*(?:${HTML_ATTRIBUTE})*\s*\/?|\/[A-Za-z][A-Za-z0-9-]*\s*)>`,
+  "y",
+);
 const VOID_HTML_TAGS = new Set(["br", "img", "source"]);
 const MARKDOWN_TAG_WRAPPERS: Readonly<Record<string, readonly [string, string]>> = {
   b: ["**", "**"],
@@ -373,14 +379,16 @@ function renderInlineTokens(tokens: HtmlToken[]): string {
     }
 
     const children = tokens.slice(index + 1, closeIndex);
-    output += renderHtmlTag(token, children);
+    const close = tokens[closeIndex];
+    const closeRaw = isClosingTag(close, token.name) ? close.raw : `</${token.name}>`;
+    output += renderHtmlTag(token, children, closeRaw);
     index = closeIndex;
   }
 
   return output;
 }
 
-function renderHtmlTag(token: HtmlTagToken, children: HtmlToken[]): string {
+function renderHtmlTag(token: HtmlTagToken, children: HtmlToken[], closeRaw: string): string {
   if (token.name === "a") {
     return renderLinkToken(token, children);
   }
@@ -400,7 +408,7 @@ function renderHtmlTag(token: HtmlTagToken, children: HtmlToken[]): string {
   if (token.name === "p" || token.name === "div") {
     return `\n\n${renderInlineTokens(children).trim()}\n\n`;
   }
-  return `${token.raw}${renderInlineTokens(children)}</${token.name}>`;
+  return `${token.raw}${renderInlineTokens(children)}${closeRaw}`;
 }
 
 function renderTableTokens(tokens: HtmlToken[]): string {
@@ -606,7 +614,15 @@ function tokenizeHtmlishMarkdown(source: string): HtmlToken[] {
 function createHtmlishTokenParser(source: string, tokens: HtmlToken[]): HtmlishTokenParser {
   let stripNextLeadingLineBreak = false;
   let skippedLength = 0;
+  let writtenLength = 0;
+  let chunkStart = 0;
   let parser!: Parser;
+  // Unknown tags render as text, so keep them as written: the parser lowercases names
+  // and rewrites attributes. A tag split by a protected range has no single slice.
+  const readRawTag = (): string | null =>
+    parser.startIndex < chunkStart
+      ? null
+      : source.slice(parser.startIndex + skippedLength, parser.endIndex + 1 + skippedLength);
   parser = new Parser(
     {
       onopentag(name, attributes, isImplied) {
@@ -620,7 +636,7 @@ function createHtmlishTokenParser(source: string, tokens: HtmlToken[]): HtmlishT
           closing: false,
           selfClosing,
           attributes,
-          raw: renderStartTag(name, attributes),
+          raw: readRawTag() ?? renderStartTag(name, attributes),
         });
       },
       onclosetag(name, isImplied) {
@@ -633,7 +649,7 @@ function createHtmlishTokenParser(source: string, tokens: HtmlToken[]): HtmlishT
           closing: true,
           selfClosing: false,
           attributes: {},
-          raw: `</${name}>`,
+          raw: readRawTag() ?? `</${name}>`,
         });
       },
       ontext(value) {
@@ -660,6 +676,8 @@ function createHtmlishTokenParser(source: string, tokens: HtmlToken[]): HtmlishT
   );
   return {
     write(chunk) {
+      chunkStart = writtenLength;
+      writtenLength += chunk.length;
       parser.write(chunk);
     },
     skip(length) {
@@ -698,7 +716,58 @@ function escapeAttribute(value: string): string {
 
 function getProtectedMarkdownRanges(source: string): ProtectedMarkdownRange[] {
   const fencedRanges = getFencedCodeRanges(source);
-  return mergeProtectedRanges([...fencedRanges, ...getInlineCodeRanges(source, fencedRanges)]);
+  const codeRanges = mergeProtectedRanges([
+    ...fencedRanges,
+    ...getInlineCodeRanges(source, fencedRanges),
+  ]);
+  return mergeProtectedRanges([...codeRanges, ...getLiteralAngleBracketRanges(source, codeRanges)]);
+}
+
+/**
+ * htmlparser2 reads any `<` followed by a letter as a tag and keeps collecting attributes up
+ * to the next `>`, so `1<n<2` in a table cell swallows the rows after it and an autolink loses
+ * its slashes. Hand it only what CommonMark would read as raw HTML; every other `<` is text.
+ */
+function getLiteralAngleBracketRanges(
+  source: string,
+  codeRanges: ProtectedMarkdownRange[],
+): ProtectedMarkdownRange[] {
+  const ranges: ProtectedMarkdownRange[] = [];
+  let codeIndex = 0;
+  // Reused across comment openers so unclosed comments stay linear.
+  let commentClose = -1;
+  let index = source.indexOf("<");
+
+  while (index !== -1) {
+    while ((codeRanges[codeIndex]?.end ?? Infinity) <= index) {
+      codeIndex += 1;
+    }
+    const code = codeRanges[codeIndex];
+    if (code && code.start <= index) {
+      index = source.indexOf("<", code.end);
+      continue;
+    }
+
+    let htmlEnd: number | null;
+    if (source.startsWith("<!--", index)) {
+      if (commentClose !== source.length && commentClose < index + 2) {
+        const close = source.indexOf("-->", index + 2);
+        commentClose = close === -1 ? source.length : close;
+      }
+      htmlEnd = commentClose === source.length ? null : commentClose + 3;
+    } else {
+      HTML_TAG_RE.lastIndex = index;
+      htmlEnd = HTML_TAG_RE.test(source) ? HTML_TAG_RE.lastIndex : null;
+    }
+
+    if (htmlEnd === null) {
+      ranges.push({ start: index, end: index + 1 });
+      htmlEnd = index + 1;
+    }
+    index = source.indexOf("<", htmlEnd);
+  }
+
+  return ranges;
 }
 
 function getFencedCodeRanges(source: string): ProtectedMarkdownRange[] {

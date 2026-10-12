@@ -16,7 +16,9 @@ import {
   mostInstalled,
   newestFirst,
   type Plugin,
+  recentlyUpdated,
   searchPlugins,
+  updatedAgo,
 } from "./registry";
 import { WindowSwitch } from "./window-switch";
 
@@ -34,7 +36,7 @@ const TAB_OFF = `${TAB_BASE} border-transparent text-muted-foreground hover:text
 const CLEAR_CLASS =
   "text-sm text-extra-muted-foreground transition-colors hover:text-muted-foreground";
 
-/** All plugins or one category: sidebar, Most installed / Newest tabs, and the card grid. */
+/** All plugins or one category: sidebar, Most installed / Newest / Recently updated tabs, and the card grid. */
 export function BrowsePage({
   plugins,
   installs,
@@ -47,8 +49,7 @@ export function BrowsePage({
   query: BrowseQuery;
 }) {
   const category = query.category ? getCategory(query.category) : null;
-  const ordered =
-    query.sort === "new" ? newestFirst(plugins) : mostInstalled(plugins, installs, query.window);
+  const ordered = sortPlugins(plugins, installs, query);
   // Search ranks by relevance; the tab's order breaks ties.
   const matches = query.q ? searchPlugins(ordered, query.q) : ordered;
   const results = category ? getPluginsInCategory(matches, category.slug) : matches;
@@ -89,21 +90,19 @@ export function BrowsePage({
               </div>
             )}
             {results.length === 0 && !query.q && (
-              <p className="text-sm text-muted-foreground">No plugins in this category yet.</p>
+              <p className="text-sm text-muted-foreground">
+                {query.sort === "updated"
+                  ? "No plugins have been updated since they were listed."
+                  : "No plugins in this category yet."}
+              </p>
             )}
             {results.length > 0 && (
               <div className={PLUGIN_GRID_CLASS}>
-                {results.map((plugin) =>
-                  query.sort === "new" ? (
-                    <PluginCard key={plugin.id} plugin={plugin}>
-                      {addedAgo(plugin, now)}
-                    </PluginCard>
-                  ) : (
-                    <PluginCard key={plugin.id} plugin={plugin}>
-                      <InstallCount count={installs[plugin.id]?.[query.window] ?? 0} />
-                    </PluginCard>
-                  ),
-                )}
+                {results.map((plugin) => (
+                  <PluginCard key={plugin.id} plugin={plugin}>
+                    <CardDetail plugin={plugin} installs={installs} now={now} query={query} />
+                  </PluginCard>
+                ))}
               </div>
             )}
           </PluginSection>
@@ -111,6 +110,33 @@ export function BrowsePage({
       </div>
     </SiteShell>
   );
+}
+
+function sortPlugins(
+  plugins: Plugin[],
+  installs: Record<string, InstallCounts>,
+  query: BrowseQuery,
+): Plugin[] {
+  if (query.sort === "new") return newestFirst(plugins);
+  if (query.sort === "updated") return recentlyUpdated(plugins);
+  return mostInstalled(plugins, installs, query.window);
+}
+
+/** What the card shows beside the author: the date the tab sorts by, or the install count. */
+function CardDetail({
+  plugin,
+  installs,
+  now,
+  query,
+}: {
+  plugin: Plugin;
+  installs: Record<string, InstallCounts>;
+  now: string;
+  query: BrowseQuery;
+}) {
+  if (query.sort === "new") return addedAgo(plugin, now);
+  if (query.sort === "updated") return updatedAgo(plugin, now);
+  return <InstallCount count={installs[plugin.id]?.[query.window] ?? 0} />;
 }
 
 interface NavEntry {
@@ -207,6 +233,13 @@ function SortTabs({ query }: { query: BrowseQuery }) {
             className={query.sort === "new" ? TAB_ON : TAB_OFF}
           >
             Newest
+          </a>
+          <a
+            href={browseHref({ ...query, sort: "updated" })}
+            aria-current={query.sort === "updated" ? "page" : undefined}
+            className={query.sort === "updated" ? TAB_ON : TAB_OFF}
+          >
+            Recently updated
           </a>
         </div>
         {windowSwitch && <div className="hidden pb-2 sm:block">{windowSwitch}</div>}

@@ -27,6 +27,8 @@ import {
   mostInstalled,
   newestFirst,
   pluginOwner,
+  recentlyUpdated,
+  updatedAgo,
 } from "~/plugins";
 import { ContributeSection } from "~/plugins/contribute-links";
 import { PluginsHero } from "~/plugins/hero";
@@ -41,7 +43,7 @@ import {
   parseWindow,
 } from "~/plugins/links";
 import { InstallCount } from "~/plugins/install-count";
-import { NewPluginCard, PluginRankRow } from "~/plugins/plugin-card";
+import { PluginCard, PluginRankRow } from "~/plugins/plugin-card";
 import { PluginSection, PluginSectionHeader, PluginSectionTitle } from "~/plugins/section";
 import { WindowSwitch } from "~/plugins/window-switch";
 import "~/styles.css";
@@ -61,9 +63,9 @@ const CATEGORY_ICONS: Record<CategorySlug, LucideIcon> = {
   utils: Wrench,
 };
 
-// What's new and Featured cards: a swipeable row on phones, a grid from `sm` up.
+// Card sections: a swipeable row on phones, a grid from `sm` up.
 const CARD_ROW_CLASS =
-  "-mx-6 flex gap-4 overflow-x-auto px-6 pb-1 sm:mx-0 sm:grid sm:grid-cols-2 sm:px-0 lg:grid-cols-4";
+  "-mx-6 flex gap-4 overflow-x-auto px-6 pb-1 *:w-[70%] *:flex-shrink-0 sm:mx-0 sm:grid sm:grid-cols-2 sm:px-0 sm:*:w-auto lg:grid-cols-4";
 const SEE_ALL_CLASS =
   "inline-flex items-center gap-0.5 text-sm text-muted-foreground transition-colors hover:text-foreground";
 
@@ -79,7 +81,7 @@ export const Route = createFileRoute("/plugins/")({
     const sort = parseSort(params.get("sort")) ?? "installs";
     const window = parseWindow(params.get("window")) ?? DEFAULT_WINDOW;
     const q = parseSearchTerm(params.get("q"));
-    if (category || sort === "new" || q)
+    if (category || sort !== "installs" || q)
       throw redirect({
         href: browseHref({ category: category?.slug, sort, window, q }),
         statusCode: 301,
@@ -100,6 +102,7 @@ function PluginsPage() {
   const window = Route.useSearch().window ?? DEFAULT_WINDOW;
   const featured = featuredPlugins(plugins, featuredIds);
   const newest = newestFirst(plugins).slice(0, NEW_COUNT);
+  const updated = recentlyUpdated(plugins).slice(0, NEW_COUNT);
   const top = mostInstalled(plugins, installs, window).slice(0, TOP_COUNT);
   const windowHrefs = useMemo(
     () => ({
@@ -138,9 +141,9 @@ function PluginsPage() {
             </PluginSectionHeader>
             <div className={CARD_ROW_CLASS}>
               {featured.map((plugin) => (
-                <NewPluginCard key={plugin.id} plugin={plugin}>
+                <PluginCard key={plugin.id} plugin={plugin}>
                   <InstallCount count={installs[plugin.id]?.all ?? 0} />
-                </NewPluginCard>
+                </PluginCard>
               ))}
             </div>
           </PluginSection>
@@ -156,12 +159,34 @@ function PluginsPage() {
           </PluginSectionHeader>
           <div className={CARD_ROW_CLASS}>
             {newest.map((plugin) => (
-              <NewPluginCard key={plugin.id} plugin={plugin}>
+              <PluginCard key={plugin.id} plugin={plugin}>
                 {addedAgo(plugin, now)}
-              </NewPluginCard>
+              </PluginCard>
             ))}
           </div>
         </PluginSection>
+
+        {updated.length > 0 && (
+          <PluginSection labelledBy="recently-updated">
+            <PluginSectionHeader>
+              <PluginSectionTitle id="recently-updated">Recently updated</PluginSectionTitle>
+              <a
+                href={browseHref({ sort: "updated", window: DEFAULT_WINDOW })}
+                className={SEE_ALL_CLASS}
+              >
+                See all
+                <ChevronRight className="h-3.5 w-3.5" />
+              </a>
+            </PluginSectionHeader>
+            <div className={CARD_ROW_CLASS}>
+              {updated.map((plugin) => (
+                <PluginCard key={plugin.id} plugin={plugin}>
+                  {updatedAgo(plugin, now)}
+                </PluginCard>
+              ))}
+            </div>
+          </PluginSection>
+        )}
 
         <PluginSection labelledBy="categories">
           <PluginSectionTitle id="categories">Categories</PluginSectionTitle>
