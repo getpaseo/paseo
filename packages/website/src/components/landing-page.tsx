@@ -120,10 +120,6 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
         </motion.div>
       </div>
 
-      <div className="px-6 md:px-20 pb-12 md:pb-16 max-w-5xl mx-auto">
-        <SponsorsSection placement="page" />
-      </div>
-
       {/* Phone showcase */}
       <PhoneShowcase />
 
@@ -138,6 +134,7 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
             <ExtensibleSection />
             <FAQ />
             <PhilosophySection />
+            <SponsorsSection placement="page" />
             <SponsorSection />
           </div>
         </main>

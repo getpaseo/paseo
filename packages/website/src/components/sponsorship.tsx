@@ -241,14 +241,28 @@ export function SponsorSection() {
   );
 }
 
-const SPONSORS_PLACEMENT_CLASSES = {
-  page: { section: "space-y-6", logo: "h-12" },
-  footer: { section: "space-y-5 border-t border-white/10 py-8", logo: "h-10" },
+const SPONSORS_PLACEMENTS = {
+  page: {
+    title: "Sponsors",
+    section: "space-y-10",
+    heading: "text-3xl font-medium tracking-tight",
+    link: "",
+    logo: "h-14",
+    button: "h-12 px-5 text-sm",
+  },
+  footer: {
+    title: "Sponsored by",
+    section: "space-y-5 border-t border-white/10 py-8",
+    heading: "text-sm text-extra-muted-foreground",
+    link: "opacity-85 transition-opacity hover:opacity-100",
+    logo: "h-10",
+    button: "h-9 px-3.5 text-sm",
+  },
 } as const;
 
 interface SponsorsSectionProps {
-  /** `page` sits in a page's content; `footer` is the band above the footer links. */
-  placement: keyof typeof SPONSORS_PLACEMENT_CLASSES;
+  /** `page` is a homepage section; `footer` is the band above other pages' footers. */
+  placement: keyof typeof SPONSORS_PLACEMENTS;
 }
 
 /**
@@ -256,26 +270,26 @@ interface SponsorsSectionProps {
  * spots are open, a quiet invitation. Every page shows it once.
  */
 export function SponsorsSection({ placement }: SponsorsSectionProps) {
-  const classes = SPONSORS_PLACEMENT_CLASSES[placement];
+  const style = SPONSORS_PLACEMENTS[placement];
   const open = openSpotCount();
   return (
-    <section aria-labelledby="sponsors-heading" className={classes.section}>
-      <h2 id="sponsors-heading" className="text-sm text-extra-muted-foreground">
-        Sponsored by
+    <section aria-labelledby="sponsors-heading" className={style.section}>
+      <h2 id="sponsors-heading" className={style.heading}>
+        {style.title}
       </h2>
-      <ul className="flex flex-wrap items-center gap-x-12 gap-y-6">
+      <ul className="flex flex-wrap items-center gap-x-14 gap-y-8">
         {SPONSORS.map((sponsor) => (
           <li key={sponsor.url}>
             <a
               href={sponsorHref(sponsor, "website")}
               target="_blank"
               rel="noopener noreferrer sponsored"
-              className="block opacity-85 transition-opacity hover:opacity-100"
+              className={`block ${style.link}`}
             >
               <img
                 src={sponsor.logo.onDark}
                 alt={sponsor.name}
-                className={`${classes.logo} w-auto`}
+                className={`${style.logo} w-auto`}
               />
             </a>
           </li>
@@ -284,7 +298,7 @@ export function SponsorsSection({ placement }: SponsorsSectionProps) {
           <li>
             <a
               href="/sponsor#spot"
-              className="inline-flex h-9 items-center rounded-md border border-dashed border-white/15 px-3.5 text-sm text-white/45 transition-colors hover:border-white/30 hover:text-white/75"
+              className={`inline-flex items-center rounded-md border border-dashed border-white/15 text-white/45 transition-colors hover:border-white/30 hover:text-white/75 ${style.button}`}
             >
               Become a sponsor
             </a>
