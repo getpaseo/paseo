@@ -2245,6 +2245,7 @@ export class Session {
     try {
       unregister = this.browserToolsBroker.registerClient({
         id: owner.id,
+        reconnectKey: JSON.stringify([this.clientId, this.sessionId]),
         hostKind: request.hostKind,
         supportedCommands: request.supportedCommands,
         sendBrowserAutomationRequest: (message) => owner.emit(message),

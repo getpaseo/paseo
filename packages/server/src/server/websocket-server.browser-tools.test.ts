@@ -143,6 +143,25 @@ describe("WebSocketServer browser tools wiring", () => {
       clientId,
       capabilities: browserHostCapabilities(),
     });
+    const opened = harness.broker.execute({
+      command: { command: "new_tab", args: {} },
+      workspaceId: "workspace-1",
+    });
+    const openRequest = await originalBrowserHost.nextBrowserRequest();
+    originalBrowserHost.respondToBrowserRequest({
+      type: "browser.automation.execute.response",
+      payload: {
+        requestId: openRequest.requestId,
+        ok: true,
+        result: {
+          command: "new_tab",
+          browserId: BROWSER_ID,
+          workspaceId: "workspace-1",
+          url: "https://example.com",
+        },
+      },
+    });
+    await expect(opened).resolves.toMatchObject({ ok: true });
     await originalBrowserHost.disconnect();
 
     const resumedBrowserHost = await harness.connectBrowserHostClient({

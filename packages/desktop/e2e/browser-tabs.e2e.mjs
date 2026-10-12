@@ -2438,7 +2438,7 @@ async function verifyBrowserPlacementError({ page, client, serverId, typingAgent
   await page.getByTestId(`sidebar-workspace-row-${serverId}:${workspaceIds[0]}`).click();
 }
 
-async function rediscoverReloadedBrowser({ page, client, browserId, artifactDir, label }) {
+async function verifyReloadedBrowser({ page, client, browserId, artifactDir, label }) {
   await page.waitForFunction((id) => {
     const guest = document.querySelector(`[data-paseo-browser-id="${id}"]`);
     try {
@@ -2466,27 +2466,17 @@ async function rediscoverReloadedBrowser({ page, client, browserId, artifactDir,
     native.fixture.inputPresent && native.fixture.fixtureId === "final-0",
     `${label} native page did not restore`,
   );
-  const direct = (
-    await client.callTool({
-      name: "browser_evaluate",
-      args: { browserId, function: "() => fixtureId" },
-    })
-  ).structuredContent;
-  writeJson(path.join(artifactDir, `${label}-rediscovery.json`), { native, direct });
-  const listed = await callBrowserTool(client, "browser_list_tabs");
-  assert(
-    listed.tabs.some((tab) => tab.browserId === browserId),
-    `${label} discovery lost restored browser`,
-  );
-  await waitForBrowserFixture(client, browserId);
-  const afterDiscovery = await readContinuity(page, client, browserId);
-  writeJson(path.join(artifactDir, `${label}-rediscovery.json`), {
-    native,
-    direct,
-    listed,
-    afterDiscovery,
+  const response = await client.callTool({
+    name: "browser_evaluate",
+    args: { browserId, function: "() => fixtureId" },
   });
-  return afterDiscovery;
+  const direct = response.structuredContent;
+  writeJson(path.join(artifactDir, `${label}-direct.json`), { native, direct });
+  const result = mcpPayload(response, "browser_evaluate");
+  assert(JSON.parse(result.resultJson) === "final-0", `${label} direct evaluation lost fixture`);
+  const afterDirect = await readContinuity(page, client, browserId);
+  writeJson(path.join(artifactDir, `${label}-direct.json`), { native, direct, afterDirect });
+  return afterDirect;
 }
 
 async function verifyBrowserFinalLifecycle({
@@ -2619,7 +2609,7 @@ async function verifyBrowserFinalLifecycle({
     "Application reload lost manual placement",
   );
   await deck.getByTestId(`workspace-tab-browser_${tab.browserId}`).click();
-  const reloadGuest = await rediscoverReloadedBrowser({
+  const reloadGuest = await verifyReloadedBrowser({
     page,
     client,
     browserId: tab.browserId,
@@ -2648,7 +2638,7 @@ async function verifyBrowserFinalLifecycle({
     "Legacy layout restore lost browser",
   );
   await deck.getByTestId(`workspace-tab-browser_${tab.browserId}`).click();
-  await rediscoverReloadedBrowser({
+  await verifyReloadedBrowser({
     page,
     client,
     browserId: tab.browserId,
