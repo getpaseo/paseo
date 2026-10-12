@@ -10,8 +10,8 @@ it("installs navigator before the app entry loads its other dependencies", () =>
     readFileSync(new URL("../../index.ts", import.meta.url), "utf8"),
     ts.ScriptTarget.Latest,
   );
-  const imports = entry.statements.filter(ts.isImportDeclaration);
-  expect(imports[0]?.moduleSpecifier.getText(entry)).toBe('"./src/polyfills/install-early"');
+  const firstImport = entry.statements.find(ts.isImportDeclaration);
+  expect(firstImport?.moduleSpecifier.getText(entry)).toBe('"./src/polyfills/install-early"');
   const early = ts.createSourceFile(
     "install-early.ts",
     readFileSync(new URL("./install-early.ts", import.meta.url), "utf8"),
