@@ -1,4 +1,4 @@
-import { useMemo, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useMemo, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { Platform, Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { isNative, isWeb } from "@/constants/platform";
@@ -12,6 +12,9 @@ import { useAssistantFileLinkResolverContext } from "./provider";
 import type { AssistantFileLinkSource } from "./resolver";
 import { formatFileLinkTooltipPath } from "./tooltip-path";
 import { useFileLink } from "./use-file-link";
+import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { FileActionItems } from "@/file-access/action-items";
+import { resolveFilePreviewReadTarget } from "@/file-explorer/preview-target";
 
 interface AssistantMarkdownLinkProps {
   source: AssistantFileLinkSource;
@@ -31,9 +34,22 @@ export function AssistantMarkdownLink({
   monoSurface,
   children,
 }: AssistantMarkdownLinkProps) {
-  const { target, onHoverIn, onPress } = useFileLink(source);
+  const { target, onHoverIn, onPress, open } = useFileLink(source);
   const { configRef } = useAssistantFileLinkResolverContext();
   const workspaceRoot = configRef.current.workspaceRoot;
+  const serverId = configRef.current.serverId;
+  const actionTarget = useMemo(() => {
+    if (!target || !serverId) return null;
+    const read = resolveFilePreviewReadTarget({ path: target.path, workspaceRoot });
+    return read ? { serverId, ...read } : null;
+  }, [target, serverId, workspaceRoot]);
+  const preview = useCallback(() => open(source, "main"), [open, source]);
+  const report = useCallback(
+    (message: string, error = false) => {
+      if (message) configRef.current.toast?.show(message, { variant: error ? "error" : "default" });
+    },
+    [configRef],
+  );
   const tooltipPath = useMemo(
     () => (target ? formatFileLinkTooltipPath({ target, workspaceRoot }) : null),
     [target, workspaceRoot],
@@ -99,7 +115,22 @@ export function AssistantMarkdownLink({
     </a>
   );
 
-  return <FileLinkHoverTooltip filePath={tooltipPath}>{anchor}</FileLinkHoverTooltip>;
+  if (!target) return <FileLinkHoverTooltip filePath={tooltipPath}>{anchor}</FileLinkHoverTooltip>;
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger contextOnly style={FILE_LINK_TOOLTIP_TRIGGER_STYLE} onHoverIn={onHoverIn}>
+        <FileLinkHoverTooltip filePath={tooltipPath}>{anchor}</FileLinkHoverTooltip>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <FileActionItems
+          target={actionTarget}
+          onPreview={preview}
+          onStatus={report}
+          agentId={configRef.current.agentId}
+        />
+      </ContextMenuContent>
+    </ContextMenu>
+  );
 }
 
 interface AssistantMarkdownCodeLinkProps {

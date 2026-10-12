@@ -275,7 +275,7 @@ describe("fetchDaemonResolution", () => {
         query: "file.ts",
         cwd: "/Users/test/project",
         matchMode: "suffix",
-        limit: 1,
+        limit: 20,
       },
     ]);
     expect(result).toEqual({
@@ -357,4 +357,45 @@ describe("getAssistantFileLinkToken", () => {
       }),
     ).toBe("workspace-git-service.ts:1553");
   });
+});
+
+it("asks for a choice when multiple workspaces paths share a basename", async () => {
+  const { getDirectorySuggestions } = suggestionsFromMap({
+    "report.pdf": [
+      { path: "a/report.pdf", kind: "file" },
+      { path: "b/report.pdf", kind: "file" },
+    ],
+  });
+  await expect(
+    fetchDaemonResolution({
+      ambiguousQuery: "report.pdf",
+      token: "report.pdf",
+      target: { raw: "report.pdf", path: "/Users/test/project/report.pdf" },
+      workspaceRoot: CONTEXT.workspaceRoot,
+      getDirectorySuggestions,
+    }),
+  ).rejects.toMatchObject({
+    name: "AmbiguousFileLinkError",
+    candidates: [
+      { path: "/Users/test/project/a/report.pdf" },
+      { path: "/Users/test/project/b/report.pdf" },
+    ],
+  });
+});
+it("prefers an exact workspace-relative path over other suffix matches", async () => {
+  const { getDirectorySuggestions } = suggestionsFromMap({
+    "report.pdf": [
+      { path: "a/report.pdf", kind: "file" },
+      { path: "report.pdf", kind: "file" },
+    ],
+  });
+  await expect(
+    fetchDaemonResolution({
+      ambiguousQuery: "report.pdf",
+      token: "report.pdf",
+      target: { raw: "report.pdf", path: "/Users/test/project/report.pdf" },
+      workspaceRoot: CONTEXT.workspaceRoot,
+      getDirectorySuggestions,
+    }),
+  ).resolves.toMatchObject({ path: "/Users/test/project/report.pdf" });
 });

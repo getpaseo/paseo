@@ -34,6 +34,7 @@ import { useMountedTabSet } from "@/screens/workspace/use-mounted-tab-set";
 import { usePullRequestPanelAvailability } from "@/panels/pull-request-availability";
 import { PullRequestContent } from "@/panels/pull-request";
 import { useAddFileToChat } from "@/panels/use-add-file-to-chat";
+import { WorkspaceArtifacts } from "@/file-access/workspace-artifacts";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
@@ -47,6 +48,8 @@ import {
 import { ToolbarButton } from "@/components/ui/pane-content-toolbar";
 import { mutedIconColorMapping } from "@/components/ui/icon-button-chrome";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+
+const ignoreFileOpen = () => {};
 
 const ThemedX = withUnistyles(X);
 
@@ -352,7 +355,7 @@ function ExplorerSidebarContent({
   const resolvedTab: ExplorerTab = requestedTab === "pr" && !showPrTab ? "changes" : requestedTab;
   const prTabLabel = formatPrTabLabel(prPane.prNumber);
   const availableTabs = useMemo<ExplorerTab[]>(() => {
-    const tabs: ExplorerTab[] = isGit ? ["changes", "files"] : ["files"];
+    const tabs: ExplorerTab[] = isGit ? ["changes", "files", "artifacts"] : ["files", "artifacts"];
     if (isGit && showPrTab) tabs.push("pr");
     return tabs;
   }, [isGit, showPrTab]);
@@ -383,6 +386,13 @@ function ExplorerSidebarContent({
             label={t("workspace.tabs.explorerSidebar.files")}
             onTabPress={onTabPress}
             testID="explorer-tab-files"
+          />
+          <ExplorerTabButton
+            tab="artifacts"
+            active={resolvedTab === "artifacts"}
+            label={t("fileAccess.artifactsTab")}
+            onTabPress={onTabPress}
+            testID="explorer-tab-artifacts"
           />
           {isGit && showPrTab && (
             <ExplorerTabButton
@@ -437,6 +447,15 @@ function ExplorerSidebarContent({
               workspaceId={workspaceId}
               workspaceRoot={workspaceRoot}
               onOpenFile={onOpenFile}
+            />
+          </RetainedPanel>
+        ) : null}
+        {mountedTabIds.has("artifacts") ? (
+          <RetainedPanel active={resolvedTab === "artifacts"}>
+            <WorkspaceArtifacts
+              serverId={serverId}
+              workspaceId={workspaceId}
+              onOpen={onOpenFile ?? ignoreFileOpen}
             />
           </RetainedPanel>
         ) : null}

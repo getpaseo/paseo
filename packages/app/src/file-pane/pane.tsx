@@ -40,6 +40,9 @@ import { confirmDialog } from "@/utils/confirm-dialog";
 import { usePublishPanelInstanceAttributes } from "@/panels/panel-instance-attributes";
 import type { Theme } from "@/styles/theme";
 import { ZoomableImage } from "@/components/zoomable-viewport/image";
+import { FileActionsToolbar } from "@/file-access/toolbar";
+import { DocumentPane } from "@/file-access/document-pane";
+import { documentKind } from "@/file-access/types";
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -219,7 +222,44 @@ function FilePreviewBody({
   );
 }
 
-export function FilePane({
+export function FilePane(props: {
+  serverId: string;
+  workspaceRoot: string;
+  location: WorkspaceFileLocation;
+  navigationRevision: number;
+}) {
+  const target = useMemo(
+    () =>
+      resolveFilePreviewReadTarget({
+        path: props.location.path,
+        workspaceRoot: props.workspaceRoot,
+      }),
+    [props.location.path, props.workspaceRoot],
+  );
+  const documentTarget = useMemo(
+    () => (target ? { serverId: props.serverId, ...target } : null),
+    [props.serverId, target],
+  );
+  return (
+    <View style={styles.container}>
+      <FileActionsToolbar
+        serverId={props.serverId}
+        workspaceRoot={props.workspaceRoot}
+        path={props.location.path}
+      />
+      {documentTarget && documentKind(props.location.path) ? (
+        <DocumentPane
+          key={`${props.serverId}:${documentTarget.cwd}:${documentTarget.path}`}
+          target={documentTarget}
+        />
+      ) : (
+        <StandardFilePane {...props} />
+      )}
+    </View>
+  );
+}
+
+function StandardFilePane({
   serverId,
   workspaceRoot,
   location,

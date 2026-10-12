@@ -93,7 +93,7 @@ describe("working diff tab identity", () => {
 });
 
 describe("workspace utility panel identity", () => {
-  it.each(["files", "pull_request"] as const)(
+  it.each(["files", "pull_request", "artifacts"] as const)(
     "normalizes and deterministically keys %s",
     (kind) => {
       const target = { kind };

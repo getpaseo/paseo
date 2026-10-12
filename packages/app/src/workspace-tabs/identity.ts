@@ -57,6 +57,7 @@ function normalizeSimpleWorkspaceTabTarget(value: WorkspaceTabTarget): Workspace
     }
     case "changes_tree":
     case "files":
+    case "artifacts":
     case "pull_request":
       return { kind: value.kind };
     case "setup": {
@@ -143,6 +144,9 @@ function secondaryWorkspaceTabTargetsEqual(
   if (left.kind === "files" && right.kind === "files") {
     return true;
   }
+  if (left.kind === "artifacts" && right.kind === "artifacts") {
+    return true;
+  }
   if (left.kind === "changes_tree" && right.kind === "changes_tree") {
     return true;
   }
@@ -219,7 +223,12 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
   if (target.kind === "working_diff") {
     return "working_diff";
   }
-  if (target.kind === "changes_tree" || target.kind === "files" || target.kind === "pull_request") {
+  if (
+    target.kind === "changes_tree" ||
+    target.kind === "files" ||
+    target.kind === "artifacts" ||
+    target.kind === "pull_request"
+  ) {
     return target.kind;
   }
   if (target.kind === "plugin") {

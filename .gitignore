@@ -93,3 +93,8 @@ app.json
 
 # Heap snapshots dumped by --heapsnapshot-near-heap-limit; keep them for debugging.
 *.heapsnapshot
+
+# Reproducible document font assets (pinned by manifest.json)
+/packages/server/assets/document-fonts/register-fonts
+/packages/server/assets/document-fonts/*.otf
+/packages/server/assets/document-fonts/*.ttf

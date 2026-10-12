@@ -1,3 +1,4 @@
+import { TaskArtifacts } from "@/file-access/task-artifacts";
 import { ChatFind, ChatFindExpansion } from "@/agent-stream/chat-find";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
@@ -719,6 +720,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           <AssistantFileLinkResolverProvider
             client={client}
             serverId={resolvedServerId}
+            agentId={agentId}
             workspaceRoot={workspaceRoot}
             onOpenWorkspaceFile={handleInlinePathPress}
             toast={toast}
@@ -1110,6 +1112,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         <ToolCallSheetProvider>
           <AssistantSelectionCopySurface style={stylesheet.container}>
             <MessageOuterSpacingProvider disableOuterSpacing>
+              <TaskArtifacts
+                key={`${resolvedServerId}:${agentId}`}
+                serverId={resolvedServerId}
+                agentId={agentId}
+                onOpen={handleInlinePathPress}
+              />
               {streamRenderStrategy.render({
                 agentId,
                 segments: renderModel.segments,
