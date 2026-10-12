@@ -1712,6 +1712,151 @@ async function waitForBrowserFixture(client, browserId) {
   throw new Error(`Browser fixture ${browserId} never loaded`);
 }
 
+async function verifyManualBrowserInsertion({ page, client, serverId, target, artifactDir }) {
+  const workspaceKey = `${serverId}:${workspaceIds[0]}`;
+  await page.getByTestId(`sidebar-workspace-row-${workspaceKey}`).click();
+  const deck = page.getByTestId(`workspace-deck-entry-${workspaceKey}`);
+  const tabs = [];
+  for (const label of ["A", "B", "C"]) {
+    tabs.push(
+      await callBrowserTool(client, "browser_new_tab", {
+        url: `${target.url}?fixture=insertion-${label}`,
+      }),
+    );
+  }
+  await revealBrowserForAfter(deck);
+  const row = deck.getByRole("tablist", { name: "Browser tabs", exact: true });
+  const ids = tabs.map((tab) => `workspace-tab-browser_${tab.browserId}`);
+  await row.getByTestId(ids[0]).click();
+  const order = () =>
+    row
+      .getByRole("tab")
+      .evaluateAll((elements) => elements.map((element) => element.getAttribute("data-testid")));
+  assert(
+    JSON.stringify(await order()) === JSON.stringify(ids),
+    "Insertion fixture must start A,B,C",
+  );
+  const paneId = await row.evaluate((element) =>
+    element.closest('[data-testid^="workspace-pane-"]').getAttribute("data-testid"),
+  );
+  await row.getByRole("button", { name: "New browser tab", exact: true }).click();
+  const selected = await row.getByRole("tab", { selected: true }).getAttribute("data-testid");
+  const after = await order();
+  const expected = [ids[0], selected, ids[1], ids[2]];
+  writeJson(path.join(artifactDir, "browser-manual-insertion.json"), {
+    before: ids,
+    after,
+    expected,
+    paneId,
+    selected,
+  });
+  assert(selected && !ids.includes(selected), "Plus must select the newly created tab");
+  assert(
+    JSON.stringify(after) === JSON.stringify(expected),
+    "Plus must insert after active A: A,new,B,C",
+  );
+  assert(
+    (await row.evaluate((element) =>
+      element.closest('[data-testid^="workspace-pane-"]').getAttribute("data-testid"),
+    )) === paneId,
+    "Plus changed the destination pane",
+  );
+  const address = deck
+    .getByRole("textbox", { name: "Address", exact: true })
+    .filter({ visible: true });
+  assert((await address.inputValue()) === "", "Plus must create a blank address");
+  assert(
+    await address.evaluate((element) => document.activeElement === element),
+    "Plus must focus the new address",
+  );
+  await page.screenshot({ path: path.join(artifactDir, "browser-manual-insertion.png") });
+  await hideBrowserForAfter(deck);
+  for (const id of [...ids, selected])
+    await callBrowserTool(client, "browser_close_tab", {
+      browserId: id.replace("workspace-tab-browser_", ""),
+    });
+}
+
+async function verifyUnpresentedBrowserCrash({
+  page,
+  client,
+  target,
+  artifactDir,
+  inspectorPort,
+  evicted,
+}) {
+  const kind = evicted ? "evicted" : "background";
+  const keeper = await callBrowserTool(client, "browser_new_tab", {
+    url: `${target.url}?fixture=crash-keeper-${kind}`,
+  });
+  const tab = await callBrowserTool(client, "browser_new_tab", {
+    url: `${target.url}?fixture=crash-${kind}`,
+  });
+  const siblings = [keeper];
+  if (evicted) {
+    await revealBrowserForAfter(page);
+    await page
+      .getByTestId(`workspace-tab-browser_${tab.browserId}`)
+      .filter({ visible: true })
+      .click();
+    for (let index = 0; index < 3; index++) {
+      const sibling = await callBrowserTool(client, "browser_new_tab", {
+        url: `${target.url}?fixture=crash-sibling-${index}`,
+      });
+      siblings.push(sibling);
+      await page
+        .getByTestId(`workspace-tab-browser_${sibling.browserId}`)
+        .filter({ visible: true })
+        .click();
+    }
+  }
+  await page.getByTestId(`browser-webview-clip-${tab.browserId}`).waitFor({ state: "detached" });
+  if (evicted) await hideBrowserForAfter(page);
+  await waitForBrowserFixture(client, tab.browserId);
+  const before = await readContinuity(page, client, tab.browserId);
+  const crashed = await evaluateMain(
+    inspectorPort,
+    `(async () => {
+    const guest = process.mainModule.require('electron').webContents.fromId(${before.webContentsId});
+    const gone = new Promise(resolve => guest.once('render-process-gone', (_event, details) => resolve(details)));
+    guest.forcefullyCrashRenderer();
+    return await gone;
+  })()`,
+  );
+  await revealBrowserForAfter(page);
+  await page
+    .getByTestId(`workspace-tab-browser_${tab.browserId}`)
+    .filter({ visible: true })
+    .click();
+  const error = page
+    .getByText("This page crashed. Reload to try again.", { exact: true })
+    .filter({ visible: true });
+  await error.waitFor({ state: "visible", timeout: 10_000 });
+  const revealed = await readGuest(page, tab.browserId);
+  assert(
+    revealed.webContentsId === before.webContentsId,
+    "Reveal replaced the crashed resident before Retry",
+  );
+  await page.screenshot({ path: path.join(artifactDir, `browser-crashed-${kind}.png`) });
+  await page.getByRole("button", { name: "Retry", exact: true }).filter({ visible: true }).click();
+  await error.waitFor({ state: "detached" });
+  await waitForBrowserFixture(client, tab.browserId);
+  const recovered = await readContinuity(page, client, tab.browserId);
+  assert(
+    recovered.httpLoadCount === before.httpLoadCount + 1,
+    "Retry must reload the crashed guest once",
+  );
+  writeJson(path.join(artifactDir, `browser-crash-${kind}.json`), {
+    before,
+    crashed,
+    revealed,
+    recovered,
+  });
+  await page.screenshot({ path: path.join(artifactDir, `browser-crash-${kind}-retried.png`) });
+  for (const closed of [tab, ...siblings])
+    await callBrowserTool(client, "browser_close_tab", { browserId: closed.browserId });
+}
+
 async function verifyBrowserCrash({ page, client, target, artifactDir, inspectorPort }) {
   const tab = await callBrowserTool(client, "browser_new_tab", {
     url: `${target.url}?fixture=crash-0`,
@@ -3402,6 +3547,13 @@ async function main() {
     );
     client = await experimental_createMCPClient({ transport });
     if (phase === "after") {
+      await verifyManualBrowserInsertion({
+        page,
+        client,
+        serverId: status.serverId,
+        target,
+        artifactDir,
+      });
       await verifyPresentationContinuity({
         page,
         client,
@@ -3411,6 +3563,22 @@ async function main() {
         artifactDir,
         inspectorPort,
         reconnect,
+      });
+      await verifyUnpresentedBrowserCrash({
+        page,
+        client,
+        target,
+        artifactDir,
+        inspectorPort,
+        evicted: false,
+      });
+      await verifyUnpresentedBrowserCrash({
+        page,
+        client,
+        target,
+        artifactDir,
+        inspectorPort,
+        evicted: true,
       });
       await verifyBrowserCrash({ page, client, target, artifactDir, inspectorPort });
       await verifyBrowserCloseReopen({

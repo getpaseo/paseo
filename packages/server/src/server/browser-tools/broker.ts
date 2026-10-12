@@ -65,7 +65,7 @@ export class BrowserToolsBroker {
 
   public registerClient(client: BrowserHostClient): () => void {
     this.unregisterClient(client.id);
-    // Delivery remains source-owned; only an unambiguous resumed session can reclaim affinity.
+    // Delivery remains source-owned; only an unambiguous admitted identity can reclaim affinity.
     if (
       client.reconnectKey &&
       ![...this.clients.values()].some((host) => host.client.reconnectKey === client.reconnectKey)

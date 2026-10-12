@@ -2592,12 +2592,16 @@ function WorkspaceScreenContent({
   const handleCreateBrowserTab = useCallback(
     (input?: { paneId?: string }) => {
       if (!persistenceKey || !getIsElectron()) return;
+      const layout = useWorkspaceLayoutStore.getState().layoutByWorkspace[persistenceKey];
+      const afterTabId =
+        input?.paneId && layout ? findPaneById(layout.root, input.paneId)?.focusedTabId : null;
       openManualBrowser({
         workspaceKey: persistenceKey,
         url: "about:blank",
         state: { browserAddressFocusPending: true },
         intent: "reveal",
         placement: input?.paneId ? paneLocalPlacement(input.paneId) : undefined,
+        insertionPosition: afterTabId ? { afterTabId } : undefined,
       });
     },
     [openManualBrowser, persistenceKey],

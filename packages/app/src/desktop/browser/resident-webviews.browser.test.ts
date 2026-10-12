@@ -19,6 +19,8 @@ import {
   takeCommandCenterFocusRestoreElement,
 } from "../../utils/command-center-focus-restore";
 
+import { useBrowserStore } from "./store";
+
 const RESIDENT_HOST_ID = "paseo-browser-resident-webviews";
 const attachedBrowsers: Array<{
   browserId: string;
@@ -101,6 +103,33 @@ describe("resident browser webviews", () => {
 
   afterEach(() => {
     clearResidentBrowserWebviewsForTests();
+  });
+
+  it("retains a never-presented resident crash through release and clears it on retry or removal", () => {
+    const browserId = useBrowserStore
+      .getState()
+      .createBrowser({ initialUrl: "https://example.com" });
+    const webview = ensureTestBrowser({
+      browserId,
+      workspaceId: "workspace-crash",
+      url: "https://example.com",
+    })!;
+    webview.dispatchEvent(new Event("render-process-gone"));
+    expect(useBrowserStore.getState().browsersById[browserId]).toMatchObject({
+      isLoading: false,
+      lastError: "This page crashed. Reload to try again.",
+    });
+    releaseResidentBrowserWebview(browserId, webview);
+    expect(takeResidentBrowserWebview(browserId)).toBe(webview);
+    expect(useBrowserStore.getState().browsersById[browserId].lastError).toBe(
+      "This page crashed. Reload to try again.",
+    );
+    webview.dispatchEvent(new Event("did-start-loading"));
+    expect(useBrowserStore.getState().browsersById[browserId].lastError).toBeNull();
+    removeResidentBrowserWebview(browserId);
+    webview.dispatchEvent(new Event("render-process-gone"));
+    expect(useBrowserStore.getState().browsersById[browserId].lastError).toBeNull();
+    useBrowserStore.getState().removeBrowser(browserId);
   });
 
   it("parks a browser webview in the permanent paintable 1x1 host", () => {

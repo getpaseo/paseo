@@ -812,7 +812,9 @@ describe("BrowserToolsBroker", () => {
 
   test("a sole reconnected subscription reclaims affinity without accepting old-source responses", async () => {
     const broker = createBroker();
-    const owner = new FakeBrowserHostClient("old-subscription", { reconnectKey: "client/session" });
+    const owner = new FakeBrowserHostClient("old-subscription", {
+      reconnectKey: "principal/client",
+    });
     const unregister = broker.registerClient(owner);
     await openBrowserOnHost(broker, owner);
     const interrupted = broker.execute({ command: snapshotCommand(), requestId: "interrupted" });
@@ -822,7 +824,7 @@ describe("BrowserToolsBroker", () => {
       error: { code: "browser_no_host" },
     });
     const resumed = new FakeBrowserHostClient("new-subscription", {
-      reconnectKey: "client/session",
+      reconnectKey: "principal/client",
     });
     broker.registerClient(resumed);
     unregister();
@@ -852,11 +854,11 @@ describe("BrowserToolsBroker", () => {
     await expect(pending).resolves.toMatchObject({ ok: true });
   });
 
-  test.each(["different-client/session", "client/different-session"])(
+  test.each(["different-principal/client", "principal/other-client"])(
     "reconnect key %s cannot reclaim another identity",
     async (reconnectKey) => {
       const broker = createBroker();
-      const owner = new FakeBrowserHostClient("old", { reconnectKey: "client/session" });
+      const owner = new FakeBrowserHostClient("old", { reconnectKey: "principal/client" });
       const unregister = broker.registerClient(owner);
       await openBrowserOnHost(broker, owner);
       unregister();
@@ -870,12 +872,12 @@ describe("BrowserToolsBroker", () => {
     },
   );
 
-  test("a same-session sibling cannot take active or stranded owner affinity", async () => {
+  test("a same-identity sibling cannot take active or stranded owner affinity", async () => {
     const broker = createBroker();
-    const owner = new FakeBrowserHostClient("owner", { reconnectKey: "client/session" });
+    const owner = new FakeBrowserHostClient("owner", { reconnectKey: "principal/client" });
     const unregister = broker.registerClient(owner);
     await openBrowserOnHost(broker, owner);
-    const sibling = new FakeBrowserHostClient("sibling", { reconnectKey: "client/session" });
+    const sibling = new FakeBrowserHostClient("sibling", { reconnectKey: "principal/client" });
     broker.registerClient(sibling);
     const active = broker.execute({
       command: { command: "click", args: { browserId: BROWSER_ID, ref: "@e1" } },
@@ -885,7 +887,7 @@ describe("BrowserToolsBroker", () => {
     unregister();
     await expect(active).resolves.toMatchObject({ ok: false });
     const replacement = new FakeBrowserHostClient("replacement", {
-      reconnectKey: "client/session",
+      reconnectKey: "principal/client",
     });
     broker.registerClient(replacement);
     await expect(broker.execute({ command: snapshotCommand() })).resolves.toMatchObject({
@@ -896,17 +898,17 @@ describe("BrowserToolsBroker", () => {
     expect(replacement.receivedRequests).toEqual([]);
   });
 
-  test("two stranded source owners remain ambiguous after same-session registration", async () => {
+  test("two stranded source owners remain ambiguous after same-identity registration", async () => {
     const broker = createBroker();
-    const first = new FakeBrowserHostClient("first", { reconnectKey: "client/session" });
+    const first = new FakeBrowserHostClient("first", { reconnectKey: "principal/client" });
     const closeFirst = broker.registerClient(first);
     await openBrowserOnHost(broker, first);
-    const second = new FakeBrowserHostClient("second", { reconnectKey: "client/session" });
+    const second = new FakeBrowserHostClient("second", { reconnectKey: "principal/client" });
     const closeSecond = broker.registerClient(second);
     await openBrowserOnHost(broker, second, SECOND_BROWSER_ID);
     closeFirst();
     closeSecond();
-    const resumed = new FakeBrowserHostClient("resumed", { reconnectKey: "client/session" });
+    const resumed = new FakeBrowserHostClient("resumed", { reconnectKey: "principal/client" });
     broker.registerClient(resumed);
     for (const browserId of [BROWSER_ID, SECOND_BROWSER_ID]) {
       await expect(

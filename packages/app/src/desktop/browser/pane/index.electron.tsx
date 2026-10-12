@@ -671,7 +671,6 @@ export function BrowserPane({
   const browserErrorLabels = useMemo(
     () => ({
       failedToLoad: t("workspace.browser.errors.failedToLoad"),
-      crashed: t("workspace.browser.errors.crashed"),
       invalidUrl: t("workspace.browser.errors.invalidUrl"),
       unsupportedProtocol: (protocol: string) =>
         t("workspace.browser.errors.unsupportedProtocol", { protocol }),
@@ -853,10 +852,6 @@ export function BrowserPane({
     };
     const handleRenderProcessGone = () => {
       selectorControllerRef.current?.stopForWebview(webview);
-      updateBrowserRef.current(browserIdRef.current, {
-        isLoading: false,
-        lastError: browserErrorLabelsRef.current.crashed,
-      });
     };
     const handleDomReady = () => {
       syncNavigationState();

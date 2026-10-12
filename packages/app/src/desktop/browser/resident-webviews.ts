@@ -3,7 +3,8 @@ import {
   type DesktopAttachedBrowserRegistration,
   type DesktopBrowserBridge,
 } from "@/desktop/host";
-import type { BrowserViewport } from "@/desktop/browser/store";
+import { useBrowserStore, type BrowserViewport } from "@/desktop/browser/store";
+import { i18n } from "@/i18n/i18next";
 import { WEB_SURFACE_PLANE } from "@/lib/overlay-root";
 
 const RESIDENT_BROWSER_HOST_ID = "paseo-browser-resident-webviews";
@@ -73,6 +74,26 @@ function registerBrowserWhenAttached(
         console.error("[browser-webview] attached registration failed", error);
       });
   });
+}
+
+function handleResidentRenderProcessGone(event: Event): void {
+  const browserId = (event.currentTarget as HTMLElement).getAttribute(BROWSER_ID_ATTRIBUTE);
+  if (browserId) {
+    useBrowserStore.getState().updateBrowser(browserId, {
+      isLoading: false,
+      lastError: i18n.t("workspace.browser.errors.crashed"),
+    });
+  }
+}
+
+function handleResidentStartLoading(event: Event): void {
+  const browserId = (event.currentTarget as HTMLElement).getAttribute(BROWSER_ID_ATTRIBUTE);
+  if (browserId) useBrowserStore.getState().updateBrowser(browserId, { lastError: null });
+}
+
+function removeResidentListeners(webview: HTMLElement): void {
+  webview.removeEventListener("render-process-gone", handleResidentRenderProcessGone);
+  webview.removeEventListener("did-start-loading", handleResidentStartLoading);
 }
 
 function trimNonEmpty(value: string | null | undefined): string | null {
@@ -319,6 +340,8 @@ export function prepareBrowserWebview(
     (webview as BrowserWebviewElement).src = input.initialUrl;
   }
   registerBrowserWhenAttached(webview as BrowserWebviewElement, input, browser);
+  webview.addEventListener("render-process-gone", handleResidentRenderProcessGone);
+  webview.addEventListener("did-start-loading", handleResidentStartLoading);
 }
 
 export function ensureResidentBrowserWebview(input: {
@@ -453,12 +476,14 @@ export function removeResidentBrowserWebview(browserId: string): void {
   residentWebviewsByBrowserId.delete(normalizedBrowserId);
   residentSurfacesByBrowserId.delete(normalizedBrowserId);
   residentWebviewSizesByBrowserId.delete(normalizedBrowserId);
+  if (resident) removeResidentListeners(resident);
   resident?.remove();
   surface?.remove();
 }
 
 export function clearResidentBrowserWebviewsForTests(): void {
   for (const webview of residentWebviewsByBrowserId.values()) {
+    removeResidentListeners(webview);
     webview.remove();
   }
   residentWebviewsByBrowserId.clear();
