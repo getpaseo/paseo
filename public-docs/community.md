@@ -30,7 +30,8 @@ us, so read a plugin's source before installing it.
 
 ## Hosting and infrastructure
 
-| Project                                                            | What it does                                                                                         |
-| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| [Paseo Self-hosted](https://github.com/blockfeed/paseo-selfhosted) | Packages the Paseo web UI and a local daemon as a Docker deployment.                                 |
-| [Devbox Fleet](https://github.com/omrihaviv/devbox-fleet)          | Provisions and maintains per-developer GCP devboxes with Paseo, coding agents, and Tailscale access. |
+| Project                                                                     | What it does                                                                                                                                                             |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [Paseo Self-hosted](https://github.com/blockfeed/paseo-selfhosted)          | Packages the Paseo web UI and a local daemon as a Docker deployment.                                                                                                     |
+| [Devbox Fleet](https://github.com/omrihaviv/devbox-fleet)                   | Provisions and maintains per-developer GCP devboxes with Paseo, coding agents, and Tailscale access.                                                                     |
+| [Paseo Vercel Sandbox](https://github.com/vercel-labs/paseo-vercel-sandbox) | Creates persistent Vercel Sandboxes running a Paseo daemon with Codex, Claude Code, OpenCode, or Pi through Vercel AI Gateway. Pair each sandbox as a remote Paseo host. |
