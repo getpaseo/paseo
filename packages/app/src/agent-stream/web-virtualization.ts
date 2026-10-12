@@ -48,12 +48,14 @@ interface StreamItemHeightEstimateInput {
   item: StreamItem;
   contentMaxWidth: number;
   imageContext?: AssistantImageContext;
+  serverId?: string;
 }
 
 export function estimateStreamItemHeight({
   item,
   contentMaxWidth,
   imageContext,
+  serverId,
 }: StreamItemHeightEstimateInput): number {
   switch (item.kind) {
     case "user_message":
@@ -64,6 +66,7 @@ export function estimateStreamItemHeight({
           markdown: item.text,
           contentMaxWidth,
           imageContext,
+          serverId,
         }) ?? 220
       );
     case "tool_call":

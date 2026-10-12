@@ -45,6 +45,7 @@ export function PluginCatalogSync({
           .catch((error) => {
             if (!cancelled) {
               console.warn(`[Plugins] Failed to load catalog for ${serverId}`, error);
+              pluginRegistry.acknowledgeEmptyHost(serverId);
             }
             return undefined;
           }),
