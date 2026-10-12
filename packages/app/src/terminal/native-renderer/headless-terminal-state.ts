@@ -4,6 +4,7 @@ import {
   type IBufferLine,
   type Terminal as HeadlessTerminalInstance,
 } from "@xterm/headless";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
 import type { TerminalCell, TerminalState } from "@getpaseo/protocol/messages";
 
 export type NativeTerminalWriteData = Uint8Array | string;
@@ -340,6 +341,9 @@ export function createNativeHeadlessTerminal(
     scrollback: options.scrollbackLines ?? 1000,
     allowProposedApi: true,
   });
+  // Match the server and web terminal widths, so emoji take two cells everywhere.
+  terminal.loadAddon(new Unicode11Addon());
+  terminal.unicode.activeVersion = "11";
   const decoder = new TextDecoder();
   let coordinateEpoch = 0;
   const coordinateStorage = new Map<object, TerminalCoordinateStorage>();
