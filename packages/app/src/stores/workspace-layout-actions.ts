@@ -2092,6 +2092,33 @@ export function focusPaneInLayout(input: FocusPaneInLayoutInput): WorkspaceLayou
   });
 }
 
+/** Reuses browser-only ordinary panes, including hidden panes, without moving their tabs. */
+export function resolveBrowserPaneId(
+  layout: WorkspaceLayout,
+  rememberedPaneId: string | null | undefined,
+  explorerSidebarPaneId: string | null,
+): string | null {
+  function isBrowserPane(pane: SplitPane, allowLauncher: boolean): boolean {
+    if (pane.id === explorerSidebarPaneId) return false;
+    const tabs = collectAllTabs({ kind: "pane", pane });
+    const browserOnly = tabs.length > 0 && tabs.every((tab) => tab.target.kind === "browser");
+    const launcherOnly = allowLauncher && tabs.length === 1 && tabs[0].target.kind === "new_tab";
+    return browserOnly || launcherOnly;
+  }
+  const rememberedPane = findPaneById(layout.root, rememberedPaneId ?? null);
+  if (rememberedPane && isBrowserPane(rememberedPane, true)) return rememberedPane.id;
+
+  function findBrowserPane(node: SplitNode): string | null {
+    if (node.kind === "pane") return isBrowserPane(node.pane, false) ? node.pane.id : null;
+    for (const child of node.group.children) {
+      const paneId = findBrowserPane(child);
+      if (paneId) return paneId;
+    }
+    return null;
+  }
+  return findBrowserPane(layout.root);
+}
+
 export function setPaneHiddenInLayout(input: {
   layout: WorkspaceLayout;
   paneId: string;

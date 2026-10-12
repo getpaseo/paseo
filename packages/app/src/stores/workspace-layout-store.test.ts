@@ -631,6 +631,7 @@ describe("workspace-layout-store version 2 migration", () => {
       const persisted = JSON.parse((await AsyncStorage.getItem("workspace-layout-state")) ?? "{}");
       expect(persisted.version).toBe(2);
       expect(Object.keys(persisted.state).sort()).toEqual([
+        "browserPaneIdByWorkspace",
         "explorerPaneIdByWorkspace",
         "explorerSidebarWidthByWorkspace",
         "layoutByWorkspace",
@@ -1186,7 +1187,39 @@ describe("workspace-layout-store actions", () => {
       hiddenAgentIdsByWorkspace: {},
       focusRestorationByWorkspace: {},
       explorerSidebarPaneIdByWorkspace: {},
+      browserPaneIdByWorkspace: {},
     });
+  });
+
+  it("creates a hidden browser pane without changing workspace focus", () => {
+    const store = createWorkspaceLayoutStore(createDeterministicWorkspaceLayoutIds());
+    const workspaceKey = `${SERVER_ID}:${WORKSPACE_ID}`;
+    store.getState().openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "browser-pane-conversation" },
+      intent: "reveal",
+    });
+    const before = store.getState().layoutByWorkspace[workspaceKey];
+    const updates: Array<{ focusedPaneId: string | null; browserHidden: boolean | undefined }> = [];
+    const stop = store.subscribe((state) => {
+      const layout = state.layoutByWorkspace[workspaceKey];
+      updates.push({
+        focusedPaneId: layout.focusedPaneId,
+        browserHidden: findPaneById(layout.root, state.browserPaneIdByWorkspace[workspaceKey])
+          ?.hidden,
+      });
+    });
+    const paneId = store.getState().ensureBrowserPane(workspaceKey, { reveal: false });
+    expect(paneId).not.toBeNull();
+    const state = store.getState();
+    expect(state.layoutByWorkspace[workspaceKey].focusedPaneId).toBe(before.focusedPaneId);
+    expect(findPaneById(state.layoutByWorkspace[workspaceKey].root, paneId!)?.hidden).toBe(true);
+    expect(findPaneById(state.layoutByWorkspace[workspaceKey].root, before.focusedPaneId)).toEqual(
+      findPaneById(before.root, before.focusedPaneId),
+    );
+    expect(updates).toEqual([{ focusedPaneId: before.focusedPaneId, browserHidden: true }]);
+    expect(state.ensureBrowserPane(workspaceKey, { reveal: false })).toBe(paneId);
+    stop();
   });
 
   it("replaces a pane's sole New tab when real content opens", () => {
@@ -3231,6 +3264,7 @@ describe("workspace-layout-store actions", () => {
       explorerPaneIdByWorkspace: {},
       pullRequestTabAutoOpenedByWorkspace: currentState.pullRequestTabAutoOpenedByWorkspace,
       sidePaneIdByWorkspace: currentState.sidePaneIdByWorkspace,
+      browserPaneIdByWorkspace: currentState.browserPaneIdByWorkspace,
     });
     expect(layout && collectAllTabs(layout.root).map((tab) => tab.target)).toEqual([
       {
@@ -3465,6 +3499,7 @@ describe("workspace-layout-store actions", () => {
       explorerSidebarWidthByWorkspace: {},
       explorerPaneIdByWorkspace: {},
       sidePaneIdByWorkspace: {},
+      browserPaneIdByWorkspace: {},
     });
   });
 
@@ -4520,4 +4555,373 @@ it("persists the once-only PR add after closing, and clears it when purging the 
   restored.getState().purgeWorkspace(workspaceKey);
   expect(restored.getState().pullRequestTabAutoOpenedByWorkspace[workspaceKey]).toBeUndefined();
   expect(restored.getState().autoOpenPullRequestTab(workspaceKey, placement)).toBe("pull_request");
+});
+
+describe("browser pane ownership", () => {
+  const workspaceKey = `${SERVER_ID}:${WORKSPACE_ID}`;
+
+  beforeEach(async () => {
+    await AsyncStorage.removeItem("workspace-layout-state");
+  });
+
+  function createConversationStore() {
+    const store = createWorkspaceLayoutStore(createDeterministicWorkspaceLayoutIds());
+    store.getState().openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "browser-pane-conversation" },
+      intent: "reveal",
+    });
+    return store;
+  }
+
+  it("reuses the browser pane and preserves visibility, selected pages and focus restoration", () => {
+    const store = createConversationStore();
+    const paneId = store.getState().ensureBrowserPane(workspaceKey, { reveal: false })!;
+    const firstTabId = store.getState().openTab({
+      workspaceKey,
+      target: { kind: "browser", browserId: "first-page" },
+      intent: "background",
+      placement: { mode: "pane", paneId },
+    })!;
+    store.getState().openTab({
+      workspaceKey,
+      target: { kind: "browser", browserId: "second-page" },
+      intent: "background",
+      placement: { mode: "pane", paneId },
+    });
+    store.getState().selectTabInPane(workspaceKey, paneId, firstTabId);
+    const token = store.getState().unfocusPane(workspaceKey);
+    const restoration = store.getState().focusRestorationByWorkspace;
+    const before = store.getState().layoutByWorkspace[workspaceKey];
+    expect(store.getState().ensureBrowserPane(workspaceKey, { reveal: false })).toBe(paneId);
+    expect(store.getState().layoutByWorkspace[workspaceKey]).toBe(before);
+    expect(store.getState().ensureBrowserPane(workspaceKey, { reveal: true })).toBe(paneId);
+    const revealed = store.getState().layoutByWorkspace[workspaceKey];
+    expect(revealed.focusedPaneId).toBeNull();
+    expect(findPaneById(revealed.root, paneId)?.hidden).toBeUndefined();
+    expect(findPaneById(revealed.root, paneId)?.focusedTabId).toBe(firstTabId);
+    expect(findPaneById(revealed.root, paneId)?.tabIds).toHaveLength(2);
+    expect(store.getState().focusRestorationByWorkspace).toBe(restoration);
+    expect(store.getState().ensureBrowserPane(workspaceKey, { reveal: false })).toBe(paneId);
+    expect(store.getState().layoutByWorkspace[workspaceKey]).toBe(revealed);
+    store.getState().hideBrowserPane(workspaceKey);
+    const hidden = store.getState().layoutByWorkspace[workspaceKey];
+    expect(findPaneById(hidden.root, paneId)?.hidden).toBe(true);
+    expect(findPaneById(hidden.root, paneId)?.tabIds).toEqual(
+      findPaneById(revealed.root, paneId)?.tabIds,
+    );
+    expect(hidden.focusedPaneId).toBeNull();
+    expect(store.getState().focusRestorationByWorkspace).toBe(restoration);
+    store.getState().restorePaneFocus(workspaceKey, token!);
+    expect(store.getState().layoutByWorkspace[workspaceKey].focusedPaneId).toBe("main");
+  });
+
+  it("preserves pending focus restoration when first creating the hidden browser pane", () => {
+    const store = createConversationStore();
+    const token = store.getState().unfocusPane(workspaceKey)!;
+    const restoration = store.getState().focusRestorationByWorkspace;
+    const paneId = store.getState().ensureBrowserPane(workspaceKey, { reveal: false })!;
+    expect(store.getState().layoutByWorkspace[workspaceKey].focusedPaneId).toBeNull();
+    expect(
+      findPaneById(store.getState().layoutByWorkspace[workspaceKey].root, paneId)?.hidden,
+    ).toBe(true);
+    expect(store.getState().focusRestorationByWorkspace).toBe(restoration);
+    store.getState().restorePaneFocus(workspaceKey, token);
+    expect(store.getState().layoutByWorkspace[workspaceKey].focusedPaneId).toBe("main");
+  });
+
+  it.each(["missing-pane", "explorer"])(
+    "ignores the %s reference and reuses another hidden browser pane",
+    (reference) => {
+      const store = createConversationStore();
+      const paneId = store.getState().ensureBrowserPane(workspaceKey, { reveal: false })!;
+      store.getState().openTab({
+        workspaceKey,
+        target: { kind: "browser", browserId: "hidden-page" },
+        intent: "background",
+        placement: { mode: "pane", paneId },
+      });
+      store.setState({ browserPaneIdByWorkspace: { [workspaceKey]: reference } });
+      const before = store.getState().layoutByWorkspace[workspaceKey];
+      store.getState().hideBrowserPane(workspaceKey);
+      expect(store.getState().layoutByWorkspace[workspaceKey]).toBe(before);
+      expect(store.getState().ensureBrowserPane(workspaceKey, { reveal: false })).toBe(paneId);
+      expect(store.getState().browserPaneIdByWorkspace[workspaceKey]).toBe(paneId);
+      expect(store.getState().layoutByWorkspace[workspaceKey]).toBe(before);
+    },
+  );
+
+  it("ignores a mixed browser pane without changing its content or visibility", () => {
+    const store = createConversationStore();
+    const mixedId = store.getState().ensureBrowserPane(workspaceKey, { reveal: true })!;
+    store.getState().openTab({
+      workspaceKey,
+      target: { kind: "browser", browserId: "mixed-page" },
+      intent: "reveal",
+      placement: { mode: "pane", paneId: mixedId },
+    });
+    store.getState().openTab({
+      workspaceKey,
+      target: { kind: "terminal", terminalId: "mixed-terminal" },
+      intent: "reveal",
+      placement: { mode: "pane", paneId: mixedId },
+    });
+    store.setState({ browserPaneIdByWorkspace: { [workspaceKey]: mixedId } });
+    const before = store.getState().layoutByWorkspace[workspaceKey];
+    const mixed = findPaneById(before.root, mixedId);
+    store.getState().hideBrowserPane(workspaceKey);
+    expect(store.getState().layoutByWorkspace[workspaceKey]).toBe(before);
+    const replacement = store.getState().ensureBrowserPane(workspaceKey, { reveal: false });
+    expect(replacement).not.toBeNull();
+    expect(replacement).not.toBe(mixedId);
+    const after = store.getState().layoutByWorkspace[workspaceKey];
+    expect(findPaneById(after.root, mixedId)).toEqual(mixed);
+    expect(after.focusedPaneId).toBe(before.focusedPaneId);
+    expect(findPaneById(after.root, replacement)?.hidden).toBe(true);
+  });
+
+  it("replaces a mixed reference with an existing hidden browser pane", () => {
+    const store = createConversationStore();
+    const mixedId = store.getState().ensureBrowserPane(workspaceKey, { reveal: true })!;
+    store.getState().openTab({
+      workspaceKey,
+      target: { kind: "browser", browserId: "mixed-page" },
+      intent: "reveal",
+      placement: { mode: "pane", paneId: mixedId },
+    });
+    store.getState().openTab({
+      workspaceKey,
+      target: { kind: "terminal", terminalId: "mixed-terminal" },
+      intent: "reveal",
+      placement: { mode: "pane", paneId: mixedId },
+    });
+    const browserId = store.getState().ensureBrowserPane(workspaceKey, { reveal: false })!;
+    store.getState().openTab({
+      workspaceKey,
+      target: { kind: "browser", browserId: "hidden-replacement-page" },
+      intent: "background",
+      placement: { mode: "pane", paneId: browserId },
+    });
+    store.setState({ browserPaneIdByWorkspace: { [workspaceKey]: mixedId } });
+    const before = store.getState().layoutByWorkspace[workspaceKey];
+    expect(store.getState().ensureBrowserPane(workspaceKey, { reveal: false })).toBe(browserId);
+    expect(store.getState().layoutByWorkspace[workspaceKey]).toBe(before);
+    expect(findPaneById(before.root, browserId)?.hidden).toBe(true);
+  });
+
+  it("never chooses Explorer even when Explorer contains only browser pages", () => {
+    const store = createConversationStore();
+    const initial = store.getState().layoutByWorkspace[workspaceKey];
+    const explorer = findPaneById(initial.root, "explorer")!;
+    const replacementRoot = {
+      kind: "group" as const,
+      group: {
+        id: "root",
+        direction: "horizontal" as const,
+        sizes: [0.7, 0.3],
+        children: [
+          { kind: "pane" as const, pane: findPaneById(initial.root, "main")! },
+          {
+            kind: "pane" as const,
+            pane: {
+              ...explorer,
+              tabIds: ["explorer-page"],
+              focusedTabId: "explorer-page",
+              tabs: [
+                {
+                  tabId: "explorer-page",
+                  target: { kind: "browser" as const, browserId: "explorer-page" },
+                  createdAt: 1,
+                },
+              ],
+            },
+          },
+        ],
+      },
+    };
+    store.setState({
+      layoutByWorkspace: { [workspaceKey]: { root: replacementRoot, focusedPaneId: "main" } },
+      browserPaneIdByWorkspace: { [workspaceKey]: "explorer" },
+    });
+    const before = store.getState().layoutByWorkspace[workspaceKey];
+    store.getState().hideBrowserPane(workspaceKey);
+    expect(store.getState().layoutByWorkspace[workspaceKey]).toBe(before);
+    const paneId = store.getState().ensureBrowserPane(workspaceKey, { reveal: false });
+    expect(paneId).not.toBeNull();
+    expect(paneId).not.toBe("explorer");
+    expect(findPaneById(store.getState().layoutByWorkspace[workspaceKey].root, "explorer")).toEqual(
+      findPaneById(before.root, "explorer"),
+    );
+  });
+
+  it("returns focus to an ordinary pane when hiding the focused browser beside Explorer", () => {
+    const store = createConversationStore();
+    const paneId = store.getState().ensureBrowserPane(workspaceKey, { reveal: true })!;
+    store.getState().openTab({
+      workspaceKey,
+      target: { kind: "browser", browserId: "focused-page" },
+      intent: "reveal",
+      placement: { mode: "pane", paneId },
+    });
+    store.getState().showExplorerSidebar(workspaceKey);
+    expect(store.getState().layoutByWorkspace[workspaceKey].focusedPaneId).toBe(paneId);
+    const tabs = store.getState().getWorkspaceTabs(workspaceKey);
+    store.getState().hideBrowserPane(workspaceKey);
+    const layout = store.getState().layoutByWorkspace[workspaceKey];
+    expect(layout.focusedPaneId).toBe("main");
+    expect(findPaneById(layout.root, paneId)?.hidden).toBe(true);
+    expect(store.getState().getWorkspaceTabs(workspaceKey)).toEqual(tabs);
+    const state = store.getState();
+    store.getState().hideBrowserPane(workspaceKey);
+    expect(store.getState()).toBe(state);
+  });
+
+  it("does not hide the last ordinary pane when Explorer is visible", () => {
+    const store = createConversationStore();
+    const paneId = store.getState().ensureBrowserPane(workspaceKey, { reveal: true })!;
+    store.getState().openTab({
+      workspaceKey,
+      target: { kind: "browser", browserId: "only-page" },
+      intent: "reveal",
+      placement: { mode: "pane", paneId },
+    });
+    store.getState().showExplorerSidebar(workspaceKey);
+    store.getState().closePane(workspaceKey, "main");
+    const before = store.getState().layoutByWorkspace[workspaceKey];
+    expect(collectAllPanes(before.root).map((pane) => pane.id)).toEqual(["explorer", paneId]);
+    store.getState().hideBrowserPane(workspaceKey);
+    expect(store.getState().layoutByWorkspace[workspaceKey]).toBe(before);
+  });
+
+  it("reconciles removed browser panes after closing or moving their final page", () => {
+    const store = createConversationStore();
+    const paneId = store.getState().ensureBrowserPane(workspaceKey, { reveal: true })!;
+    const tabId = store.getState().openTab({
+      workspaceKey,
+      target: { kind: "browser", browserId: "move-page" },
+      intent: "reveal",
+      placement: { mode: "pane", paneId },
+    })!;
+    store.getState().moveTabToPane(workspaceKey, tabId, "main");
+    expect(store.getState().browserPaneIdByWorkspace[workspaceKey]).toBeNull();
+    expect(findPaneById(store.getState().layoutByWorkspace[workspaceKey].root, paneId)).toBeNull();
+    const nextId = store.getState().ensureBrowserPane(workspaceKey, { reveal: true })!;
+    expect(nextId).not.toBe(paneId);
+    store.getState().closePane(workspaceKey, nextId);
+    expect(store.getState().browserPaneIdByWorkspace[workspaceKey]).toBeNull();
+    const thirdId = store.getState().ensureBrowserPane(workspaceKey, { reveal: true })!;
+    const thirdTabId = store.getState().openTab({
+      workspaceKey,
+      target: { kind: "browser", browserId: "close-page" },
+      intent: "reveal",
+      placement: { mode: "pane", paneId: thirdId },
+    })!;
+    store.getState().closeTab(workspaceKey, thirdTabId);
+    expect(store.getState().browserPaneIdByWorkspace[workspaceKey]).toBeNull();
+  });
+
+  it("returns null without mutating the workspace at the maximum tree depth", () => {
+    const store = createConversationStore();
+    for (const position of ["bottom", "right", "bottom"] as const) {
+      expect(
+        store.getState().splitPaneEmpty(workspaceKey, { targetPaneId: "main", position }),
+      ).not.toBeNull();
+    }
+    const before = store.getState();
+    expect(getTreeDepth(before.layoutByWorkspace[workspaceKey].root)).toBe(5);
+    expect(store.getState().ensureBrowserPane(workspaceKey, { reveal: false })).toBeNull();
+    expect(store.getState()).toBe(before);
+  });
+
+  it("persists a hidden browser pane, reloads it and purges its workspace reference", async () => {
+    const writer = createConversationStore();
+    const paneId = writer.getState().ensureBrowserPane(workspaceKey, { reveal: false })!;
+    const tabId = writer.getState().openTab({
+      workspaceKey,
+      target: { kind: "browser", browserId: "saved-page" },
+      intent: "background",
+      placement: { mode: "pane", paneId },
+    });
+    await vi.waitFor(async () => {
+      const raw = await AsyncStorage.getItem("workspace-layout-state");
+      expect(JSON.parse(raw!).state.browserPaneIdByWorkspace).toEqual({ [workspaceKey]: paneId });
+    });
+    const reader = createWorkspaceLayoutStore(createDeterministicWorkspaceLayoutIds());
+    await reader.persist.rehydrate();
+    expect(reader.getState().browserPaneIdByWorkspace[workspaceKey]).toBe(paneId);
+    const before = reader.getState().layoutByWorkspace[workspaceKey];
+    expect(findPaneById(before.root, paneId)?.hidden).toBe(true);
+    expect(findPaneById(before.root, paneId)?.tabIds).toEqual([tabId]);
+    expect(reader.getState().ensureBrowserPane(workspaceKey, { reveal: false })).toBe(paneId);
+    expect(reader.getState().layoutByWorkspace[workspaceKey]).toBe(before);
+    reader.getState().purgeWorkspace(workspaceKey);
+    expect(reader.getState().browserPaneIdByWorkspace).toEqual({});
+  });
+
+  it("restores the empty browser launcher without revealing it", async () => {
+    const writer = createConversationStore();
+    const paneId = writer.getState().ensureBrowserPane(workspaceKey, { reveal: false })!;
+    await vi.waitFor(async () => {
+      const raw = await AsyncStorage.getItem("workspace-layout-state");
+      expect(JSON.parse(raw!).state.browserPaneIdByWorkspace).toEqual({ [workspaceKey]: paneId });
+    });
+    const reader = createWorkspaceLayoutStore(createDeterministicWorkspaceLayoutIds());
+    await reader.persist.rehydrate();
+    expect(reader.getState().ensureBrowserPane(workspaceKey, { reveal: false })).toBe(paneId);
+    const pane = findPaneById(reader.getState().layoutByWorkspace[workspaceKey].root, paneId)!;
+    expect(pane.hidden).toBe(true);
+    expect(collectAllTabs({ kind: "pane", pane }).map((tab) => tab.target)).toEqual([
+      { kind: "new_tab" },
+    ]);
+  });
+
+  it.each(["missing-pane", "main", "explorer"])(
+    "clears the persisted incompatible %s reference without rearranging content",
+    async (reference) => {
+      const writer = createConversationStore();
+      const layout = writer.getState().layoutByWorkspace[workspaceKey];
+      await AsyncStorage.setItem(
+        "workspace-layout-state",
+        JSON.stringify({
+          version: 2,
+          state: {
+            layoutByWorkspace: { [workspaceKey]: layout },
+            browserPaneIdByWorkspace: { [workspaceKey]: reference },
+          },
+        }),
+      );
+      const reader = createWorkspaceLayoutStore(createDeterministicWorkspaceLayoutIds());
+      await reader.persist.rehydrate();
+      expect(reader.getState().browserPaneIdByWorkspace[workspaceKey]).toBeNull();
+      expect(reader.getState().layoutByWorkspace[workspaceKey]).toEqual(layout);
+    },
+  );
+
+  it("keeps browser pane ownership isolated by workspace, including purge", () => {
+    const store = createConversationStore();
+    const otherKey = `${SERVER_ID}:other-workspace`;
+    const paneId = store.getState().ensureBrowserPane(workspaceKey, { reveal: false })!;
+    const otherId = store.getState().ensureBrowserPane(otherKey, { reveal: true })!;
+    expect(otherId).not.toBe(paneId);
+    const otherLayout = store.getState().layoutByWorkspace[otherKey];
+    store.getState().purgeWorkspace(workspaceKey);
+    expect(store.getState().browserPaneIdByWorkspace).toEqual({ [otherKey]: otherId });
+    expect(store.getState().layoutByWorkspace[otherKey]).toBe(otherLayout);
+    expect(store.getState().ensureBrowserPane("  ", { reveal: false })).toBeNull();
+    store.getState().hideBrowserPane("missing-workspace");
+    expect(store.getState().layoutByWorkspace).toEqual({ [otherKey]: otherLayout });
+  });
+
+  it("reads an old layout blob without the browser reference and preserves its tabs", async () => {
+    const writer = createConversationStore();
+    const layout = writer.getState().layoutByWorkspace[workspaceKey];
+    await AsyncStorage.setItem(
+      "workspace-layout-state",
+      JSON.stringify({ version: 2, state: { layoutByWorkspace: { [workspaceKey]: layout } } }),
+    );
+    const reader = createWorkspaceLayoutStore(createDeterministicWorkspaceLayoutIds());
+    await reader.persist.rehydrate();
+    expect(reader.getState().browserPaneIdByWorkspace).toEqual({});
+    expect(reader.getState().layoutByWorkspace[workspaceKey]).toEqual(layout);
+  });
 });
