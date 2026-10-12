@@ -58,6 +58,31 @@ function httpGet(port: number, host: string, options: HttpGetOptions = {}) {
   });
 }
 
+function httpPost(port: number, host: string, requestPath: string, payload: string) {
+  return new Promise<{ status: number; body: string }>((resolve, reject) => {
+    const request = http.request(
+      {
+        hostname: "127.0.0.1",
+        port,
+        method: "POST",
+        path: requestPath,
+        headers: { host, "content-type": "application/json" },
+      },
+      (res) => {
+        let body = "";
+        res.on("data", (chunk: Buffer) => {
+          body += chunk.toString();
+        });
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+        res.on("error", reject);
+      },
+    );
+    request.on("error", reject);
+    request.write(payload.slice(0, 5));
+    request.end(payload.slice(5));
+  });
+}
+
 describe("service proxy subsystem shape", () => {
   it("keeps production imports behind the service-proxy entrypoint", () => {
     const offenders: string[] = [];
@@ -453,29 +478,14 @@ describe("service proxy loopback services", () => {
       const fixture = await startForwardedHeadersFixture(host);
       try {
         const payload = JSON.stringify({ message: "hello" });
-        const response = await new Promise<string>((resolve, reject) => {
-          const request = http.request(
-            {
-              hostname: "127.0.0.1",
-              port: fixture.daemonPort,
-              method: "POST",
-              path: "/submit?q=one%20two",
-              headers: { host: fixture.hostname, "content-type": "application/json" },
-            },
-            (res) => {
-              let body = "";
-              res.on("data", (chunk: Buffer) => {
-                body += chunk.toString();
-              });
-              res.on("end", () => resolve(body));
-              res.on("error", reject);
-            },
-          );
-          request.on("error", reject);
-          request.write(payload.slice(0, 5));
-          request.end(payload.slice(5));
-        });
-        expect(JSON.parse(response)).toMatchObject({
+        const response = await httpPost(
+          fixture.daemonPort,
+          fixture.hostname,
+          "/submit?q=one%20two",
+          payload,
+        );
+        expect(response.status).toBe(200);
+        expect(JSON.parse(response.body)).toMatchObject({
           host: fixture.hostname,
           "content-type": "application/json",
           method: "POST",
