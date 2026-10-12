@@ -57,9 +57,9 @@ test("Changes shows files in a project whose folder ends in a space", async ({
   try {
     await gotoWorkspace(page, project.workspaceId);
     await openChangesTreePanel(page);
-    await page.screenshot({ path: testInfo.outputPath("changes-before-assertion.png") });
     await expect(page.getByText("visible-change.txt", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("Not a git repository", { exact: true })).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath("changes.png") });
   } finally {
     await project.cleanup();
   }
