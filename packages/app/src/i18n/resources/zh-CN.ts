@@ -597,6 +597,7 @@ export const zhCN: TranslationResources = {
       },
     },
     browser: {
+      placementUnavailable: "无法在此布局中打开浏览器。请关闭一个面板后重试。",
       unavailable: {
         title: "浏览器仅桌面端可用",
         subtitle: "在 Electron 中打开此 workspace 以使用内置浏览器。",

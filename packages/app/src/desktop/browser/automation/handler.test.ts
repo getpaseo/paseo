@@ -1,12 +1,22 @@
-import { beforeEach, describe, expect, test } from "vitest";
+import { indexedDB as fakeIndexedDb } from "fake-indexeddb";
+
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { createJSONStorage, type StateStorage } from "zustand/middleware";
 import { mountBrowserAutomationHandler } from "./handler";
 import type { DesktopHostBridge } from "@/desktop/host";
-import { useBrowserStore } from "@/desktop/browser/store";
-import { findPaneById } from "@/stores/workspace-layout-actions";
+import { createWorkspaceBrowser, getBrowserRecord, useBrowserStore } from "@/desktop/browser/store";
+import {
+  collectAllTabs,
+  findPaneById,
+  findPaneContainingTab,
+} from "@/stores/workspace-layout-actions";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { useSessionStore } from "@/stores/session-store";
+import { openWorkspaceBrowser } from "@/workspace-tabs/browser";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
+
+globalThis.indexedDB = fakeIndexedDb;
 
 type BrowserAutomationExecuteRequest = Extract<
   SessionOutboundMessage,
@@ -267,6 +277,36 @@ function waitForRegistrationTimeout(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 20));
 }
 
+function seedWorkspace(serverId: string, workspaceId: string) {
+  useSessionStore.getState().initializeSession(serverId, null);
+  useSessionStore.getState().setWorkspaces(
+    serverId,
+    (previous) =>
+      new Map([
+        ...previous,
+        [
+          workspaceId,
+          {
+            id: workspaceId,
+            projectId: "project-1",
+            projectDisplayName: "Project",
+            projectRootPath: "/repo",
+            workspaceDirectory: "/repo",
+            projectKind: "git",
+            workspaceKind: "directory",
+            name: "Workspace",
+            status: "running",
+            statusEnteredAt: null,
+            archivingAt: null,
+            diffStat: null,
+            scripts: [],
+          },
+        ],
+      ]),
+  );
+  return buildWorkspaceTabPersistenceKey({ serverId, workspaceId })!;
+}
+
 const browserAutomationStorage = new FakeStateStorage();
 useBrowserStore.persist.setOptions({
   storage: createJSONStorage(() => browserAutomationStorage),
@@ -279,7 +319,15 @@ describe("mountBrowserAutomationHandler", () => {
   beforeEach(() => {
     browserAutomationStorage.clear();
     useBrowserStore.setState({ browsersById: {} });
-    useWorkspaceLayoutStore.setState({ layoutByWorkspace: {} });
+    useWorkspaceLayoutStore.setState({
+      layoutByWorkspace: {},
+      browserPaneIdByWorkspace: {},
+      sidePaneIdByWorkspace: {},
+      explorerSidebarPaneIdByWorkspace: {},
+      focusRestorationByWorkspace: {},
+    });
+    useSessionStore.setState({ sessions: {} });
+    seedWorkspace("server-1", "wks_workspace_a");
   });
 
   test("browser_new_tab creates a workspace browser tab without stealing focus", async () => {
@@ -296,6 +344,7 @@ describe("mountBrowserAutomationHandler", () => {
       target: { kind: "draft", draftId: "human-draft" },
       intent: "reveal",
     });
+    const before = useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
     browser.mount({ serverId: "server-1" });
 
     browser.receive(browserNewTabRequest());
@@ -309,12 +358,13 @@ describe("mountBrowserAutomationHandler", () => {
         target: { kind: "browser", browserId: result.browserId },
       }),
     ]);
-    // Workspaces keep a stable hidden explorer companion pane at the root
-    // (see "retain workspace explorer pane"), so the root is a group and the
-    // draft/browser tabs land in the "main" pane, not at the root directly.
     if (!layout) {
       throw new Error("Expected workspace layout");
     }
+    expect(layout.focusedPaneId).toBe(before.focusedPaneId);
+    expect(layout.root).not.toEqual(before.root);
+    expect(findPaneContainingTab(layout.root, openedTabs[0].tabId)?.hidden).toBe(true);
+    expect(findPaneContainingTab(layout.root, previousFocusedTabId!)?.id).toBe("main");
     expect(layout.root.kind).toBe("group");
     expect(findPaneById(layout.root, "main")).toEqual(
       expect.objectContaining({ focusedTabId: previousFocusedTabId }),
@@ -337,6 +387,30 @@ describe("mountBrowserAutomationHandler", () => {
         command: { command: "list_tabs", args: {} },
       },
     ]);
+    const snapshotRequest: BrowserAutomationExecuteRequest = {
+      type: "browser.automation.execute.request",
+      requestId: "req-snapshot",
+      workspaceId: "wks_workspace_a",
+      command: { command: "snapshot", args: { browserId: result.browserId } },
+    };
+    browser.browser.response = {
+      requestId: "req-snapshot",
+      ok: true,
+      result: {
+        command: "snapshot",
+        browserId: result.browserId,
+        url: result.url,
+        title: "Example",
+        format: "aria-yaml",
+        snapshot: "- document: Example",
+        truncated: false,
+        stats: { nodeCount: 1, refCount: 0, textLength: 7 },
+      },
+    };
+    browser.receive(snapshotRequest);
+    await flushAsyncWork();
+    expect(browser.browser.executedRequests.at(-1)).toEqual(snapshotRequest);
+    expect(browser.client.payloadAt(1)).toEqual(browser.browser.response);
   });
 
   test("browser_new_tab returns a retryable timeout when the resident webview does not register", async () => {
@@ -371,6 +445,17 @@ describe("mountBrowserAutomationHandler", () => {
         url: "https://example.com",
       }),
     ]);
+    expect(useBrowserStore.getState().browsersById).toEqual({});
+    const key = buildWorkspaceTabPersistenceKey({
+      serverId: "server-1",
+      workspaceId: "wks_workspace_a",
+    })!;
+    expect(
+      useWorkspaceLayoutStore
+        .getState()
+        .getWorkspaceTabs(key)
+        .filter((tab) => tab.target.kind === "browser"),
+    ).toEqual([]);
   });
 
   test("browser_new_tab wraps registration bridge errors in a response", async () => {
@@ -395,6 +480,17 @@ describe("mountBrowserAutomationHandler", () => {
         },
       },
     ]);
+    expect(useBrowserStore.getState().browsersById).toEqual({});
+    const key = buildWorkspaceTabPersistenceKey({
+      serverId: "server-1",
+      workspaceId: "wks_workspace_a",
+    })!;
+    expect(
+      useWorkspaceLayoutStore
+        .getState()
+        .getWorkspaceTabs(key)
+        .filter((tab) => tab.target.kind === "browser"),
+    ).toEqual([]);
   });
 
   test("browser_resize updates resident webview dimensions", async () => {
@@ -614,5 +710,407 @@ describe("mountBrowserAutomationHandler", () => {
 
     expect(browser.browser.executedRequests).toEqual([]);
     expect(browser.client.sentResponses).toEqual([]);
+  });
+  test("shared opening knows unvisited workspaces and never trusts an orphan layout", () => {
+    const key = seedWorkspace("server-1", "unvisited");
+    expect(useWorkspaceLayoutStore.getState().layoutByWorkspace[key]).toBeUndefined();
+    const opened = openWorkspaceBrowser({
+      workspaceKey: key,
+      intent: "reveal",
+      url: "http://localhost:3000",
+    });
+    expect(opened).toMatchObject({ ok: true, created: true });
+    useSessionStore.getState().setWorkspaces("server-1", new Map());
+    const before = useWorkspaceLayoutStore.getState().layoutByWorkspace[key];
+    const records = useBrowserStore.getState().browsersById;
+    expect(openWorkspaceBrowser({ workspaceKey: key, intent: "reveal" })).toEqual({
+      ok: false,
+      code: "workspace_unavailable",
+    });
+    expect(useWorkspaceLayoutStore.getState().layoutByWorkspace[key]).toBe(before);
+    expect(useBrowserStore.getState().browsersById).toBe(records);
+  });
+
+  test("shared opening matches opaque host/workspace keys and isolates identical IDs across hosts", () => {
+    const key = seedWorkspace("host:opaque", "workspace:opaque");
+    const otherKey = seedWorkspace("other:host", "workspace:opaque");
+    const first = openWorkspaceBrowser({ workspaceKey: key, intent: "reveal" });
+    if (!first.ok) throw new Error("Expected browser");
+    expect(
+      openWorkspaceBrowser({
+        workspaceKey: otherKey,
+        browserId: first.browserId,
+        intent: "reveal",
+      }),
+    ).toEqual({ ok: false, code: "browser_unavailable" });
+    expect(useWorkspaceLayoutStore.getState().layoutByWorkspace[otherKey]).toBeUndefined();
+    expect(openWorkspaceBrowser({ workspaceKey: otherKey, intent: "reveal" })).toMatchObject({
+      ok: true,
+      created: true,
+    });
+    expect(
+      useWorkspaceLayoutStore
+        .getState()
+        .getWorkspaceTabs(key)
+        .filter((tab) => tab.target.kind === "browser"),
+    ).toHaveLength(1);
+    expect(
+      useWorkspaceLayoutStore
+        .getState()
+        .getWorkspaceTabs(otherKey)
+        .filter((tab) => tab.target.kind === "browser"),
+    ).toHaveLength(1);
+  });
+
+  test("same URL opens independent pages and a record without a workspace tab cannot be revealed", () => {
+    const key = seedWorkspace("server-1", "unvisited");
+    const first = openWorkspaceBrowser({
+      workspaceKey: key,
+      intent: "reveal",
+      url: "https://example.com",
+    });
+    const second = openWorkspaceBrowser({
+      workspaceKey: key,
+      intent: "reveal",
+      url: "https://example.com",
+    });
+    if (!first.ok || !second.ok) throw new Error("Expected browser pages");
+    expect(second.browserId).not.toBe(first.browserId);
+    expect(second.tabId).not.toBe(first.tabId);
+    const orphan = createWorkspaceBrowser();
+    const before = useWorkspaceLayoutStore.getState().layoutByWorkspace[key];
+    expect(
+      openWorkspaceBrowser({ workspaceKey: key, browserId: orphan.browserId, intent: "reveal" }),
+    ).toEqual({ ok: false, code: "browser_unavailable" });
+    expect(useWorkspaceLayoutStore.getState().layoutByWorkspace[key]).toBe(before);
+  });
+
+  test("reveal follows a moved browser and ignores its URL or replacement state", () => {
+    const key = seedWorkspace("server-1", "unvisited");
+    const first = openWorkspaceBrowser({
+      workspaceKey: key,
+      intent: "reveal",
+      url: "https://example.com",
+      state: { marker: "keep" },
+    });
+    if (!first.ok) throw new Error("Expected browser");
+    const store = useWorkspaceLayoutStore.getState();
+    store.moveTabToPane(key, first.tabId, "main");
+    store.hideBrowserPane(key);
+    const paneCount = collectAllTabs(
+      useWorkspaceLayoutStore.getState().layoutByWorkspace[key].root,
+    ).length;
+    expect(
+      openWorkspaceBrowser({
+        workspaceKey: key,
+        browserId: first.browserId,
+        url: "https://changed.example",
+        state: { marker: "replace" },
+        intent: "reveal",
+      }),
+    ).toEqual({ ...first, created: false });
+    const layout = useWorkspaceLayoutStore.getState().layoutByWorkspace[key];
+    expect(findPaneContainingTab(layout.root, first.tabId)?.id).toBe("main");
+    expect(layout.focusedPaneId).toBe("main");
+    expect(collectAllTabs(layout.root)).toHaveLength(paneCount);
+    expect(collectAllTabs(layout.root).find((tab) => tab.tabId === first.tabId)?.state).toEqual({
+      marker: "keep",
+    });
+    expect(getBrowserRecord(first.browserId)?.url).toBe("https://example.com");
+  });
+
+  test("background opens preserve conversation selection and pending restoration without revealing the hidden browser pane", () => {
+    const key = seedWorkspace("server-1", "unvisited");
+    const store = useWorkspaceLayoutStore.getState();
+    const conversation = store.openTab({
+      workspaceKey: key,
+      target: { kind: "draft", draftId: "conversation" },
+      intent: "reveal",
+    });
+    const first = openWorkspaceBrowser({ workspaceKey: key, intent: "background" });
+    if (!first.ok) throw new Error("Expected browser");
+    store.unfocusPane(key);
+    const before = useWorkspaceLayoutStore.getState();
+    const second = openWorkspaceBrowser({
+      workspaceKey: key,
+      intent: "background",
+      state: { marker: "background" },
+    });
+    if (!second.ok) throw new Error("Expected background browser");
+    const after = useWorkspaceLayoutStore.getState();
+    expect(after.layoutByWorkspace[key].focusedPaneId).toBe(
+      before.layoutByWorkspace[key].focusedPaneId,
+    );
+    expect(after.focusRestorationByWorkspace).toBe(before.focusRestorationByWorkspace);
+    expect(findPaneById(after.layoutByWorkspace[key].root, "main")?.focusedTabId).toBe(
+      conversation,
+    );
+    const browserPane = findPaneContainingTab(after.layoutByWorkspace[key].root, first.tabId)!;
+    expect(browserPane.hidden).toBe(true);
+    expect(browserPane.focusedTabId).toBe(first.tabId);
+    expect(
+      collectAllTabs(after.layoutByWorkspace[key].root).find((tab) => tab.tabId === second.tabId)
+        ?.state,
+    ).toEqual({ marker: "background" });
+    expect(
+      openWorkspaceBrowser({
+        workspaceKey: key,
+        browserId: first.browserId,
+        intent: "background",
+        placement: { mode: "pane", paneId: "main" },
+      }),
+    ).toEqual({ ok: false, code: "placement_unavailable" });
+    expect(useWorkspaceLayoutStore.getState().layoutByWorkspace[key]).toBe(
+      after.layoutByWorkspace[key],
+    );
+    expect(
+      openWorkspaceBrowser({
+        workspaceKey: key,
+        browserId: first.browserId,
+        intent: "background",
+        placement: { mode: "pane", paneId: browserPane.id },
+      }),
+    ).toEqual({ ...first, created: false });
+    expect(
+      openWorkspaceBrowser({
+        workspaceKey: key,
+        browserId: first.browserId,
+        intent: "background",
+        placement: { mode: "prefer", paneId: "main" },
+      }),
+    ).toEqual({ ...first, created: false });
+    expect(
+      findPaneContainingTab(
+        useWorkspaceLayoutStore.getState().layoutByWorkspace[key].root,
+        first.tabId,
+      )?.hidden,
+    ).toBe(true);
+  });
+
+  test("explicit unavailable or Explorer placement fails before creating a record", () => {
+    const key = seedWorkspace("server-1", "unvisited");
+    const store = useWorkspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey: key,
+      target: { kind: "draft", draftId: "conversation" },
+      intent: "reveal",
+    });
+    const before = useWorkspaceLayoutStore.getState().layoutByWorkspace[key];
+    for (const paneId of ["missing", "explorer"]) {
+      expect(
+        openWorkspaceBrowser({
+          workspaceKey: key,
+          intent: "reveal",
+          placement: { mode: "pane", paneId },
+        }),
+      ).toEqual({ ok: false, code: "placement_unavailable" });
+    }
+    expect(useBrowserStore.getState().browsersById).toEqual({});
+    expect(useWorkspaceLayoutStore.getState().layoutByWorkspace[key]).toBe(before);
+  });
+
+  test("only a reveal creation can replace a valid launcher and failed opens remove only their new record", () => {
+    const key = seedWorkspace("server-1", "unvisited");
+    const store = useWorkspaceLayoutStore.getState();
+    const launcherId = store.openTab({
+      workspaceKey: key,
+      target: { kind: "new_tab" },
+      intent: "new",
+    })!;
+    expect(
+      openWorkspaceBrowser({ workspaceKey: key, intent: "background", replaceTabId: launcherId }),
+    ).toEqual({ ok: false, code: "placement_unavailable" });
+    expect(
+      openWorkspaceBrowser({ workspaceKey: key, intent: "reveal", replaceTabId: "missing" }),
+    ).toEqual({ ok: false, code: "placement_unavailable" });
+    expect(useBrowserStore.getState().browsersById).toEqual({});
+    const opened = openWorkspaceBrowser({
+      workspaceKey: key,
+      intent: "reveal",
+      replaceTabId: launcherId,
+      state: { marker: "launcher" },
+    });
+    if (!opened.ok) throw new Error("Expected launcher replacement");
+    expect(
+      findPaneContainingTab(
+        useWorkspaceLayoutStore.getState().layoutByWorkspace[key].root,
+        opened.tabId,
+      )?.id,
+    ).toBe("main");
+    expect(store.getWorkspaceTabs(key).find((tab) => tab.tabId === opened.tabId)?.state).toEqual({
+      marker: "launcher",
+    });
+    expect(
+      openWorkspaceBrowser({
+        workspaceKey: key,
+        browserId: opened.browserId,
+        intent: "reveal",
+        replaceTabId: opened.tabId,
+      }),
+    ).toEqual({ ok: false, code: "placement_unavailable" });
+    const records = useBrowserStore.getState().browsersById;
+    const open = vi.spyOn(useWorkspaceLayoutStore.getState(), "openTab").mockReturnValue(null);
+    expect(
+      openWorkspaceBrowser({
+        workspaceKey: key,
+        intent: "reveal",
+        placement: { mode: "pane", paneId: "main" },
+      }),
+    ).toEqual({ ok: false, code: "placement_unavailable" });
+    expect(useBrowserStore.getState().browsersById).toEqual(records);
+    expect(
+      openWorkspaceBrowser({ workspaceKey: key, browserId: opened.browserId, intent: "reveal" }),
+    ).toEqual({ ok: false, code: "placement_unavailable" });
+    expect(getBrowserRecord(opened.browserId)).not.toBeNull();
+    open.mockRestore();
+  });
+  test("shared opening respects explicit reveal moves, prefer placement and insertion independently of parentage", () => {
+    const key = seedWorkspace("server-1", "unvisited");
+    const source = openWorkspaceBrowser({
+      workspaceKey: key,
+      intent: "reveal",
+      placement: { mode: "pane", paneId: "main" },
+    });
+    if (!source.ok) throw new Error("Expected source page");
+    const sibling = openWorkspaceBrowser({
+      workspaceKey: key,
+      intent: "reveal",
+      placement: { mode: "pane", paneId: "main" },
+    });
+    if (!sibling.ok) throw new Error("Expected sibling page");
+    const child = openWorkspaceBrowser({
+      workspaceKey: key,
+      intent: "reveal",
+      placement: { mode: "pane", paneId: "main" },
+      insertionPosition: { afterTabId: source.tabId },
+      parentTabId: source.tabId,
+    });
+    if (!child.ok) throw new Error("Expected child page");
+    const store = useWorkspaceLayoutStore.getState();
+    expect(findPaneById(store.layoutByWorkspace[key].root, "main")?.tabIds).toEqual([
+      source.tabId,
+      child.tabId,
+      sibling.tabId,
+    ]);
+    expect(store.layoutByWorkspace[key].parentTabIdByTabId?.[child.tabId]).toBe(source.tabId);
+    const paneId = store.splitPaneEmpty(key, { targetPaneId: "main", position: "right" })!;
+    expect(
+      openWorkspaceBrowser({
+        workspaceKey: key,
+        browserId: source.browserId,
+        intent: "reveal",
+        placement: { mode: "prefer", paneId },
+      }),
+    ).toEqual({ ...source, created: false });
+    expect(
+      findPaneContainingTab(
+        useWorkspaceLayoutStore.getState().layoutByWorkspace[key].root,
+        source.tabId,
+      )?.id,
+    ).toBe("main");
+    expect(
+      openWorkspaceBrowser({
+        workspaceKey: key,
+        browserId: source.browserId,
+        intent: "reveal",
+        placement: { mode: "pane", paneId },
+      }),
+    ).toEqual({ ...source, created: false });
+    expect(
+      findPaneContainingTab(
+        useWorkspaceLayoutStore.getState().layoutByWorkspace[key].root,
+        source.tabId,
+      )?.id,
+    ).toBe(paneId);
+  });
+
+  test("maximum-depth placement fails without allocating an orphan browser", () => {
+    const key = seedWorkspace("server-1", "unvisited");
+    const store = useWorkspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey: key,
+      target: { kind: "draft", draftId: "conversation" },
+      intent: "reveal",
+    });
+    for (const position of ["bottom", "right", "bottom"] as const) {
+      expect(store.splitPaneEmpty(key, { targetPaneId: "main", position })).not.toBeNull();
+    }
+    const before = useWorkspaceLayoutStore.getState();
+    expect(openWorkspaceBrowser({ workspaceKey: key, intent: "reveal" })).toEqual({
+      ok: false,
+      code: "placement_unavailable",
+    });
+    expect(useWorkspaceLayoutStore.getState()).toBe(before);
+    expect(useBrowserStore.getState().browsersById).toEqual({});
+  });
+
+  test("agent creation preserves the public default URL and resolves descriptor IDs to their workspace map key", async () => {
+    const key = seedWorkspace("server-1", "opaque:workspace");
+    useSessionStore
+      .getState()
+      .setWorkspaces(
+        "server-1",
+        (previous) =>
+          new Map([
+            [
+              "opaque:workspace",
+              { ...previous.get("opaque:workspace")!, id: "descriptor:workspace" },
+            ],
+          ]),
+      );
+    const browser = new BrowserAutomationHandlerHarness();
+    browser.mount({ serverId: "server-1" });
+    browser.receive({
+      ...browserNewTabRequest(),
+      workspaceId: "descriptor:workspace",
+      command: { command: "new_tab", args: {} },
+    });
+    await flushAsyncWork();
+    const payload = browser.client.payloadAt(0);
+    expect(payload).toMatchObject({
+      ok: true,
+      result: {
+        command: "new_tab",
+        workspaceId: "descriptor:workspace",
+        url: "https://example.com",
+      },
+    });
+    if (!payload.ok || payload.result.command !== "new_tab") throw new Error("Expected new tab");
+    expect(workspaceBrowserTabs(key, payload.result.browserId)).toHaveLength(1);
+    expect(
+      useWorkspaceLayoutStore.getState().layoutByWorkspace["server-1:descriptor:workspace"],
+    ).toBeUndefined();
+  });
+
+  test("registration failure retains the bridge cause, clears the incomplete page, and preserves pending focus restoration", async () => {
+    const key = seedWorkspace("server-1", "wks_workspace_a");
+    const store = useWorkspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey: key,
+      target: { kind: "draft", draftId: "conversation" },
+      intent: "reveal",
+    });
+    store.unfocusPane(key);
+    const before = useWorkspaceLayoutStore.getState();
+    const browser = new BrowserAutomationHandlerHarness();
+    browser.browser.response = {
+      requestId: "req-new:list_tabs",
+      ok: false,
+      error: { code: "browser_unsupported", message: "Registration unavailable", retryable: false },
+    };
+    browser.mount({ serverId: "server-1" });
+    browser.receive(browserNewTabRequest());
+    await flushAsyncWork();
+    expect(browser.client.payloadAt(0)).toEqual({
+      requestId: "req-new",
+      ok: false,
+      error: { code: "browser_unsupported", message: "Registration unavailable", retryable: false },
+    });
+    expect(useBrowserStore.getState().browsersById).toEqual({});
+    const after = useWorkspaceLayoutStore.getState();
+    expect(after.layoutByWorkspace[key].focusedPaneId).toBe(
+      before.layoutByWorkspace[key].focusedPaneId,
+    );
+    expect(after.focusRestorationByWorkspace[key]).toBe(before.focusRestorationByWorkspace[key]);
   });
 });

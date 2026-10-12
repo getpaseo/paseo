@@ -594,6 +594,7 @@ export const en = {
       },
     },
     browser: {
+      placementUnavailable: "Couldn't open the browser in this layout. Close a pane and retry.",
       unavailable: {
         title: "Browser is desktop-only",
         subtitle: "Open this workspace in Electron to use the built-in browser.",

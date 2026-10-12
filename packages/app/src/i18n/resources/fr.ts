@@ -602,6 +602,8 @@ export const fr: TranslationResources = {
       },
     },
     browser: {
+      placementUnavailable:
+        "Impossible d’ouvrir le navigateur dans cette disposition. Fermez un panneau et réessayez.",
       unavailable: {
         title: "Le navigateur est réservé à l’application de bureau",
         subtitle: "Ouvrez ce workspace dans Electron pour utiliser le navigateur intégré.",

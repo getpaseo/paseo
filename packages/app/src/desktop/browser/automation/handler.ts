@@ -8,11 +8,13 @@ import {
 } from "@/desktop/browser/resident-webviews";
 import {
   createFixedBrowserViewport,
-  createWorkspaceBrowser,
   getBrowserRecord,
   useBrowserStore,
 } from "@/desktop/browser/store";
 import { collectAllTabs, useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { useSessionStore } from "@/stores/session-store";
+import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
+import { openWorkspaceBrowser } from "@/workspace-tabs/browser";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 
 type BrowserAutomationExecuteRequest = Extract<
@@ -292,6 +294,17 @@ async function closeBrowserTabForRequest(params: {
   };
 }
 
+function resolveRequestWorkspaceKey(
+  serverId: string,
+  workspaceId: string | undefined,
+): string | null {
+  const resolvedId = resolveWorkspaceMapKeyByIdentity({
+    workspaces: useSessionStore.getState().sessions[serverId]?.workspaces,
+    workspaceId,
+  });
+  return resolvedId ? buildWorkspaceTabPersistenceKey({ serverId, workspaceId: resolvedId }) : null;
+}
+
 function findWorkspaceBrowserTab(input: {
   serverId: string;
   workspaceId: string | undefined;
@@ -300,10 +313,7 @@ function findWorkspaceBrowserTab(input: {
   if (!input.workspaceId) {
     return null;
   }
-  const workspaceKey = buildWorkspaceTabPersistenceKey({
-    serverId: input.serverId,
-    workspaceId: input.workspaceId,
-  });
+  const workspaceKey = resolveRequestWorkspaceKey(input.serverId, input.workspaceId);
   if (!workspaceKey) {
     return null;
   }
@@ -348,8 +358,7 @@ async function openBrowserTabForRequest(params: {
   }
 
   const url = command.args.url ?? "https://example.com";
-  const { browserId, url: normalizedUrl } = createWorkspaceBrowser({ initialUrl: url });
-  const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
+  const workspaceKey = resolveRequestWorkspaceKey(serverId, workspaceId);
   if (!workspaceKey) {
     return browserAutomationFailure({
       requestId: request.requestId,
@@ -357,39 +366,70 @@ async function openBrowserTabForRequest(params: {
       message: "Cannot create a browser tab without a workspace context.",
     });
   }
-  useWorkspaceLayoutStore.getState().openTab({
-    workspaceKey,
-    target: { kind: "browser", browserId },
-    intent: "background",
-  });
-
-  if (browserHost?.executeAutomationCommand) {
-    ensureResidentBrowserWebview({ browserId, workspaceId, url: normalizedUrl });
-    const registered = await waitForBrowserRegistration({
-      request,
-      browserId,
-      workspaceId,
-      executeAutomationCommand: browserHost.executeAutomationCommand,
-      ...(registrationWaitTimeoutMs !== undefined ? { timeoutMs: registrationWaitTimeoutMs } : {}),
-      ...(registrationPollIntervalMs !== undefined
-        ? { pollIntervalMs: registrationPollIntervalMs }
-        : {}),
+  const opened = openWorkspaceBrowser({ workspaceKey, url, intent: "background" });
+  if (!opened.ok) {
+    return browserAutomationFailure({
+      requestId: request.requestId,
+      code: opened.code === "browser_unavailable" ? "browser_tab_not_found" : "browser_unsupported",
+      message: `Cannot create a browser tab: ${opened.code}.`,
     });
-    if (!registered) {
-      return browserAutomationFailure({
-        requestId: request.requestId,
-        code: "browser_timeout",
-        message: `Timed out waiting for browser tab ${browserId} to register with the browser automation host. Try browser_new_tab again.`,
-        retryable: true,
-      });
-    }
   }
-
-  return {
-    requestId: request.requestId,
-    ok: true,
-    result: { command: "new_tab", browserId, workspaceId, url: normalizedUrl },
+  const { browserId, tabId } = opened;
+  const normalizedUrl = getBrowserRecord(browserId)!.url;
+  const cleanup = () => {
+    const restoration =
+      useWorkspaceLayoutStore.getState().focusRestorationByWorkspace[workspaceKey];
+    useWorkspaceLayoutStore.getState().closeTab(workspaceKey, tabId);
+    if (restoration)
+      useWorkspaceLayoutStore.setState((state) => ({
+        focusRestorationByWorkspace: {
+          ...state.focusRestorationByWorkspace,
+          [workspaceKey]: restoration,
+        },
+      }));
+    useBrowserStore.getState().removeBrowser(browserId);
+    removeResidentBrowserWebview(browserId);
+    // Preserve the registration error if unregister also fails.
+    void Promise.resolve()
+      .then(() => browserHost?.unregisterWorkspaceBrowser?.(browserId))
+      .catch(() => {});
   };
+
+  try {
+    if (browserHost?.executeAutomationCommand) {
+      ensureResidentBrowserWebview({ browserId, workspaceId, url: normalizedUrl });
+      const registered = await waitForBrowserRegistration({
+        request,
+        browserId,
+        workspaceId,
+        executeAutomationCommand: browserHost.executeAutomationCommand,
+        ...(registrationWaitTimeoutMs !== undefined
+          ? { timeoutMs: registrationWaitTimeoutMs }
+          : {}),
+        ...(registrationPollIntervalMs !== undefined
+          ? { pollIntervalMs: registrationPollIntervalMs }
+          : {}),
+      });
+      if (!registered) {
+        cleanup();
+        return browserAutomationFailure({
+          requestId: request.requestId,
+          code: "browser_timeout",
+          message: `Timed out waiting for browser tab ${browserId} to register with the browser automation host. Try browser_new_tab again.`,
+          retryable: true,
+        });
+      }
+    }
+
+    return {
+      requestId: request.requestId,
+      ok: true,
+      result: { command: "new_tab", browserId, workspaceId, url: normalizedUrl },
+    };
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
 }
 
 async function waitForBrowserRegistration(params: {
@@ -412,7 +452,8 @@ async function waitForBrowserRegistration(params: {
       workspaceId: params.workspaceId,
       command: { command: "list_tabs", args: {} },
     });
-    if (payload.ok && payload.result.command === "list_tabs") {
+    if (!payload.ok) throw payload.error;
+    if (payload.result.command === "list_tabs") {
       if (payload.result.tabs.some((tab) => tab.browserId === params.browserId)) {
         return true;
       }

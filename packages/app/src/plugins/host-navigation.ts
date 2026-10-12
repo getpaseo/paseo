@@ -6,7 +6,7 @@ import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store"
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 
 import { getIsElectron } from "@/constants/platform";
-import { createWorkspaceBrowser } from "@/desktop/browser/store";
+import { openWorkspaceBrowser } from "@/workspace-tabs/browser";
 import { createPluginHostNavigation } from "./host-navigation-model";
 
 export function usePluginHostNavigation(
@@ -18,7 +18,7 @@ export function usePluginHostNavigation(
         browserAvailable: getIsElectron(),
         openAgent: navigateToAgent,
         openWorkspace: navigateToWorkspace,
-        createBrowser: createWorkspaceBrowser,
+        openBrowser: openWorkspaceBrowser,
         resolveWorkspace: ({ serverId: targetServerId, workspaceId }) =>
           resolveWorkspaceMapKeyByIdentity({
             workspaces: useSessionStore.getState().sessions[targetServerId]?.workspaces,

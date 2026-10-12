@@ -72,6 +72,37 @@ it("round-trips the Router draft launch profile across reload", async () => {
   expect(layout && collectAllTabs(layout.root).map((tab) => tab.target)).toContainEqual(target);
 });
 
+it.each(["reveal", "background"] as const)(
+  "preserves tab state on %s creation and later existing-target opens",
+  (intent) => {
+    const store = createWorkspaceLayoutStore(createDeterministicWorkspaceLayoutIds());
+    store.setState({ layoutByWorkspace: {}, focusRestorationByWorkspace: {} });
+    const workspaceKey = "state:workspace";
+    const target = { kind: "browser" as const, browserId: `browser-${intent}` };
+    const tabId = store
+      .getState()
+      .openTab({ workspaceKey, target, intent, state: { devPreviewScriptName: "app" } });
+    const openedTab = store
+      .getState()
+      .getWorkspaceTabs(workspaceKey)
+      .find((tab) => tab.tabId === tabId);
+    expect(openedTab?.state).toEqual({ devPreviewScriptName: "app" });
+    const revealed = store.getState().openTab({
+      workspaceKey,
+      target,
+      intent: "reveal",
+      state: { devPreviewScriptName: "different" },
+    });
+    expect(revealed).toBe(tabId);
+    expect(
+      store
+        .getState()
+        .getWorkspaceTabs(workspaceKey)
+        .find((tab) => tab.tabId === tabId)?.state,
+    ).toEqual({ devPreviewScriptName: "app" });
+  },
+);
+
 function createDeterministicWorkspaceLayoutIds() {
   let values: string[] = [];
   let fallbackIndex = 0;

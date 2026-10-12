@@ -130,6 +130,7 @@ export interface WorkspaceTabInsertionPosition {
 }
 
 interface OpenTabInLayoutInput {
+  state?: JsonValue;
   insertionPosition?: WorkspaceTabInsertionPosition;
   layout: WorkspaceLayout;
   target: WorkspaceTabTarget;
@@ -141,7 +142,6 @@ interface OpenTabInLayoutInput {
 
 interface CreateTabInLayoutInput extends OpenTabInLayoutInput {
   createTabId: () => string;
-  state?: JsonValue;
 }
 
 interface OpenTabInLayoutResult {

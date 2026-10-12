@@ -1,5 +1,10 @@
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import type { NavigateToWorkspaceInput } from "@/stores/navigation-active-workspace-store";
+import type {
+  OpenWorkspaceBrowserInput,
+  OpenWorkspaceBrowserResult,
+} from "@/workspace-tabs/browser";
+import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { isHttpUrl } from "@/utils/http-url";
 
 interface HostNavigationOwner {
@@ -7,7 +12,7 @@ interface HostNavigationOwner {
   openAgent(input: { serverId: string; agentId: string }): void;
   openWorkspace(input: NavigateToWorkspaceInput): void;
   resolveWorkspace(input: { serverId: string; workspaceId: string }): string | null;
-  createBrowser(input: { initialUrl: string }): { browserId: string };
+  openBrowser(input: OpenWorkspaceBrowserInput): OpenWorkspaceBrowserResult;
 }
 
 export function createPluginHostNavigation(
@@ -30,7 +35,13 @@ export function createPluginHostNavigation(
           });
           if (!destinationWorkspaceId)
             throw new Error("Workspace is unavailable on the requested host.");
-          const { browserId } = owner.createBrowser({ initialUrl: url });
+          const workspaceKey = buildWorkspaceTabPersistenceKey({
+            serverId: destinationServerId,
+            workspaceId: destinationWorkspaceId,
+          })!;
+          const opened = owner.openBrowser({ workspaceKey, url, intent: "reveal" });
+          if (!opened.ok) throw new Error(`Cannot open browser: ${opened.code}.`);
+          const { browserId } = opened;
           owner.openWorkspace({
             serverId: destinationServerId,
             workspaceId: destinationWorkspaceId,

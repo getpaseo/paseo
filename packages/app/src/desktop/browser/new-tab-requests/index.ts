@@ -1,6 +1,10 @@
 import { useEffect } from "react";
 import { getDesktopHost, type DesktopBrowserNewTabRequestEvent } from "@/desktop/host";
-import { collectAllTabs, type WorkspaceLayout } from "@/stores/workspace-layout-store";
+import {
+  collectAllTabs,
+  findPaneContainingTab,
+  type WorkspaceLayout,
+} from "@/stores/workspace-layout-store";
 import { getIsElectron } from "@/constants/platform";
 import { useStableEvent } from "@/hooks/use-stable-event";
 
@@ -65,10 +69,32 @@ export function resolveBrowserNewTabRequest(input: {
   return request;
 }
 
+export function resolveBrowserNewTabPlacement(input: {
+  request: BrowserNewTabRequest;
+  workspaceLayout: WorkspaceLayout | null | undefined;
+}) {
+  const source =
+    input.workspaceLayout &&
+    collectAllTabs(input.workspaceLayout.root).find(
+      (tab) =>
+        tab.target.kind === "browser" && tab.target.browserId === input.request.sourceBrowserId,
+    );
+  const pane =
+    source &&
+    input.workspaceLayout &&
+    findPaneContainingTab(input.workspaceLayout.root, source.tabId);
+  if (!source || !pane) return null;
+  return {
+    placement: { mode: "pane" as const, paneId: pane.id },
+    insertionPosition: { afterTabId: source.tabId },
+    parentTabId: source.tabId,
+  };
+}
+
 export function useDesktopBrowserNewTabRequests(input: {
   enabled: boolean;
   workspaceLayout: WorkspaceLayout | null | undefined;
-  openUrl: (url: string) => void;
+  openUrl: (request: BrowserNewTabRequest) => void;
 }): void {
   const handleNewTabRequest = useStableEvent((payload: unknown) => {
     const request = resolveBrowserNewTabRequest({
@@ -78,7 +104,7 @@ export function useDesktopBrowserNewTabRequests(input: {
     if (!request) {
       return;
     }
-    input.openUrl(request.url);
+    input.openUrl(request);
   });
 
   useEffect(() => {

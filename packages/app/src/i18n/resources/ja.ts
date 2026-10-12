@@ -603,6 +603,8 @@ export const ja: TranslationResources = {
       },
     },
     browser: {
+      placementUnavailable:
+        "このレイアウトではブラウザーを開けません。パネルを閉じて再試行してください。",
       unavailable: {
         title: "ブラウザはデスクトップ専用です",
         subtitle: "組み込みブラウザを使用するには、このワークスペースをElectronで開いてください。",

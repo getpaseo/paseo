@@ -603,6 +603,8 @@ export const es: TranslationResources = {
       },
     },
     browser: {
+      placementUnavailable:
+        "No se pudo abrir el navegador en esta disposición. Cierra un panel y vuelve a intentarlo.",
       unavailable: {
         title: "El navegador es solo para escritorio",
         subtitle: "Abra este espacio de trabajo en Electron para usar el navegador integrado.",

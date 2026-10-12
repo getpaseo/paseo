@@ -602,6 +602,8 @@ export const ptBR: TranslationResources = {
       },
     },
     browser: {
+      placementUnavailable:
+        "Não foi possível abrir o navegador neste layout. Feche um painel e tente novamente.",
       unavailable: {
         title: "O navegador é exclusivo do desktop",
         subtitle: "Abra este workspace no Electron para usar o navegador integrado.",

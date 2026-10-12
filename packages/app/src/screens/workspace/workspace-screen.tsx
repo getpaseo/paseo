@@ -118,7 +118,7 @@ import { confirmDialog } from "@/utils/confirm-dialog";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { removeResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
-import { createWorkspaceBrowser, useBrowserStore } from "@/desktop/browser/store";
+import { useBrowserStore } from "@/desktop/browser/store";
 import { getDesktopHost } from "@/desktop/host";
 import { buildProviderCommand } from "@/utils/provider-command-templates";
 import { generateDraftId } from "@/stores/draft-keys";
@@ -143,7 +143,14 @@ import {
   buildWorkspaceTabMenuEntries,
   type WorkspaceTabMenuLabels,
 } from "@/screens/workspace/workspace-tab-menu";
-import { useDesktopBrowserNewTabRequests } from "@/desktop/browser/new-tab-requests";
+import { openWorkspaceBrowser, type OpenWorkspaceBrowserInput } from "@/workspace-tabs/browser";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import {
+  resolveBrowserNewTabPlacement,
+  useDesktopBrowserNewTabRequests,
+  type BrowserNewTabRequest,
+} from "@/desktop/browser/new-tab-requests";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import {
   resolveWorkspaceExplorerToggleOwner,
@@ -2518,19 +2525,25 @@ function WorkspaceScreenContent({
     [createTerminal],
   );
 
+  const [browserOpenError, setBrowserOpenError] = useState<
+    | { kind: "browser"; input: OpenWorkspaceBrowserInput }
+    | { kind: "preview"; input: Parameters<typeof openWorkspaceDevPreview>[0] }
+    | null
+  >(null);
+  const openManualBrowser = useCallback((input: OpenWorkspaceBrowserInput) => {
+    const result = openWorkspaceBrowser(input);
+    setBrowserOpenError(result.ok ? null : { kind: "browser", input });
+  }, []);
   const handleCreateBrowserTab = useCallback(
     (input?: { paneId?: string }) => {
-      if (!persistenceKey || !getIsElectron()) {
-        return;
-      }
-      const { browserId } = createWorkspaceBrowser();
-      openWorkspaceTabFocused(
-        persistenceKey,
-        { kind: "browser", browserId },
-        paneLocalPlacement(input?.paneId),
-      );
+      if (!persistenceKey || !getIsElectron()) return;
+      openManualBrowser({
+        workspaceKey: persistenceKey,
+        intent: "reveal",
+        placement: input?.paneId ? paneLocalPlacement(input.paneId) : undefined,
+      });
     },
-    [openWorkspaceTabFocused, persistenceKey],
+    [openManualBrowser, persistenceKey],
   );
 
   const launchWorkspaceTab = useCallback(
@@ -2563,25 +2576,49 @@ function WorkspaceScreenContent({
         });
         return;
       }
-      const { browserId } = createWorkspaceBrowser();
-      openTarget({ kind: "browser", browserId });
+      if (!getIsElectron()) return;
+      openManualBrowser({
+        workspaceKey: persistenceKey,
+        intent: "reveal",
+        replaceTabId: destination.kind === "replace" ? destination.tabId : undefined,
+        placement:
+          destination.kind === "open" && destination.paneId
+            ? paneLocalPlacement(destination.paneId)
+            : undefined,
+      });
     },
-    [createTerminal, createWorkspaceTab, persistenceKey, replaceWorkspaceTabTarget],
+    [
+      createTerminal,
+      createWorkspaceTab,
+      openManualBrowser,
+      persistenceKey,
+      replaceWorkspaceTabTarget,
+    ],
   );
 
   const handleOpenUrlInBrowserTab = useCallback(
     (url: string) => {
-      if (!persistenceKey || !getIsElectron()) {
-        return;
-      }
-      const { browserId } = createWorkspaceBrowser({ initialUrl: url });
-      openWorkspaceTabFocused(
-        persistenceKey,
-        { kind: "browser", browserId },
-        FOCUSED_PANE_PLACEMENT,
-      );
+      if (!persistenceKey || !getIsElectron()) return;
+      openManualBrowser({ workspaceKey: persistenceKey, url, intent: "reveal" });
     },
-    [openWorkspaceTabFocused, persistenceKey],
+    [openManualBrowser, persistenceKey],
+  );
+  const handleBrowserNewTabRequest = useCallback(
+    (request: BrowserNewTabRequest) => {
+      if (!persistenceKey || !getIsElectron()) return;
+      const source = resolveBrowserNewTabPlacement({
+        request,
+        workspaceLayout: useWorkspaceLayoutStore.getState().layoutByWorkspace[persistenceKey],
+      });
+      if (!source) return;
+      openManualBrowser({
+        workspaceKey: persistenceKey,
+        url: request.url,
+        intent: "reveal",
+        ...source,
+      });
+    },
+    [openManualBrowser, persistenceKey],
   );
 
   const handleOpenDevPreview = useCallback(
@@ -2594,14 +2631,19 @@ function WorkspaceScreenContent({
         scriptName: input.scriptName,
         url: input.url,
       });
-      if (!result.ok) {
-        toast.show(t("workspace.scripts.states.previewPlacementUnavailable"), {
-          variant: "error",
-        });
-      }
+      setBrowserOpenError(
+        result.ok ? null : { kind: "preview", input: { workspaceKey: persistenceKey, ...input } },
+      );
     },
-    [persistenceKey, t, toast],
+    [persistenceKey],
   );
+
+  const retryBrowserOpen = useCallback(() => {
+    if (!browserOpenError) return;
+    if (browserOpenError.kind === "browser") openManualBrowser(browserOpenError.input);
+    else handleOpenDevPreview(browserOpenError.input);
+  }, [browserOpenError, handleOpenDevPreview, openManualBrowser]);
+  const dismissBrowserOpenError = useCallback(() => setBrowserOpenError(null), []);
 
   // Closing the preview goes through the same cleanup path as any browser tab, which also
   // tears down the webview and its Electron registration. Ordinary browsers never match.
@@ -2648,7 +2690,7 @@ function WorkspaceScreenContent({
   useDesktopBrowserNewTabRequests({
     enabled: Boolean(persistenceKey),
     workspaceLayout,
-    openUrl: handleOpenUrlInBrowserTab,
+    openUrl: handleBrowserNewTabRequest,
   });
 
   const handleSelectSwitcherTab = useCallback(
@@ -4235,6 +4277,20 @@ function WorkspaceScreenContent({
   const workspaceCenterColumn = (
     <View style={styles.centerColumn}>
       {rendersDesktopSplitContent ? null : renderWorkspaceScreenHeader()}
+      {browserOpenError?.input.workspaceKey === persistenceKey ? (
+        <Alert
+          variant="error"
+          description={t("workspace.browser.placementUnavailable")}
+          testID="workspace-browser-open-error"
+        >
+          <Button size="sm" onPress={retryBrowserOpen}>
+            {t("common.actions.retry")}
+          </Button>
+          <Button size="sm" variant="ghost" onPress={dismissBrowserOpenError}>
+            {t("common.actions.dismiss")}
+          </Button>
+        </Alert>
+      ) : null}
 
       {isMobile ? (
         <MobileWorkspaceTabSwitcher

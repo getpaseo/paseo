@@ -735,6 +735,7 @@ export function createWorkspaceLayoutStore(
               insertionPosition: input.insertionPosition,
               target: normalizedTarget,
               now: Date.now(),
+              state: input.state,
             });
           } else {
             result = revealTargetInLayout({
@@ -743,6 +744,7 @@ export function createWorkspaceLayoutStore(
               target: normalizedTarget,
               now: Date.now(),
               createTabId: createWorkspaceTabInstanceId,
+              state: input.state,
             });
           }
           if (!result) {
@@ -755,7 +757,9 @@ export function createWorkspaceLayoutStore(
           );
           const shouldPinAgent = input.pin === true && normalizedTarget.kind === "agent";
           set((state) => ({
-            ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+            ...(input.intent !== "background"
+              ? withoutFocusRestoration(state, normalizedWorkspaceKey)
+              : {}),
             ...reconcileRememberedPanes(state, normalizedWorkspaceKey, nextLayout),
             hiddenAgentIdsByWorkspace:
               normalizedTarget.kind !== "agent"

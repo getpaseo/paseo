@@ -598,6 +598,8 @@ export const ko: TranslationResources = {
       },
     },
     browser: {
+      placementUnavailable:
+        "이 레이아웃에서 브라우저를 열 수 없습니다. 패널을 닫고 다시 시도하세요.",
       unavailable: {
         title: "브라우저는 데스크톱 전용입니다",
         subtitle: "내장 브라우저를 사용하려면 이 워크스페이스를 Electron에서 여세요.",

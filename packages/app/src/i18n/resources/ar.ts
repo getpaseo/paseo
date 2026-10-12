@@ -597,6 +597,7 @@ export const ar: TranslationResources = {
       },
     },
     browser: {
+      placementUnavailable: "تعذّر فتح المتصفح في هذا التخطيط. أغلق لوحة وأعد المحاولة.",
       unavailable: {
         title: "المتصفح مخصص لسطح المكتب فقط",
         subtitle: "افتح مساحة العمل هذه في Electron لاستخدام المتصفح المدمج.",

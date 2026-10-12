@@ -602,6 +602,8 @@ export const ru: TranslationResources = {
       },
     },
     browser: {
+      placementUnavailable:
+        "Не удалось открыть браузер в этой раскладке. Закройте панель и повторите попытку.",
       unavailable: {
         title: "Встроенный браузер доступен только в настольном приложении",
         subtitle:

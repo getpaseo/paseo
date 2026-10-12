@@ -1,3 +1,5 @@
+import { indexedDB as fakeIndexedDb } from "fake-indexeddb";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@react-native-async-storage/async-storage", () => {
@@ -15,6 +17,9 @@ vi.mock("@react-native-async-storage/async-storage", () => {
   };
 });
 
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useSessionStore } from "@/stores/session-store";
+import { createWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { getBrowserRecord, useBrowserStore } from "@/desktop/browser/store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import {
@@ -32,6 +37,8 @@ import {
   openWorkspaceDevPreview,
   readWorkspaceDevPreviewScriptName,
 } from "@/workspace-tabs/dev-preview";
+
+globalThis.indexedDB = fakeIndexedDb;
 
 const SERVER_ID = "server-1";
 const WORKSPACE_ID = "ws-main";
@@ -95,10 +102,37 @@ function resetStores() {
   useWorkspaceLayoutStore.setState({
     layoutByWorkspace: {},
     splitSizesByWorkspace: {},
+    browserPaneIdByWorkspace: {},
+    focusRestorationByWorkspace: {},
     sidePaneIdByWorkspace: {},
     explorerSidebarPaneIdByWorkspace: {},
   });
   useBrowserStore.setState({ browsersById: {} });
+  useSessionStore.setState({ sessions: {} });
+  useSessionStore.getState().initializeSession(SERVER_ID, null);
+  useSessionStore.getState().setWorkspaces(
+    SERVER_ID,
+    new Map([
+      [
+        WORKSPACE_ID,
+        {
+          id: WORKSPACE_ID,
+          projectId: "project-1",
+          projectDisplayName: "Project",
+          projectRootPath: "/repo",
+          workspaceDirectory: "/repo",
+          projectKind: "git",
+          workspaceKind: "directory",
+          name: "Workspace",
+          status: "running",
+          statusEnteredAt: null,
+          archivingAt: null,
+          diffStat: null,
+          scripts: [],
+        },
+      ],
+    ]),
+  );
 }
 
 function seedConversationTab(): string {
@@ -261,5 +295,40 @@ describe("workspace dev preview", () => {
     expect(Object.keys(useBrowserStore.getState().browsersById)).toHaveLength(0);
     expect(browserPreviewTabs()).toHaveLength(0);
     expect(findWorkspaceDevPreview({ workspaceKey, scriptName: "app" })).toBeNull();
+  });
+  it("persists the preview marker and reveals it where the user moved it after reload", async () => {
+    seedConversationTab();
+    const opened = openWorkspaceDevPreview({
+      workspaceKey,
+      scriptName: "app",
+      url: "http://localhost:3000",
+    });
+    if (!opened.ok) throw new Error("Expected preview");
+    await vi.waitFor(async () =>
+      expect(await AsyncStorage.getItem("workspace-layout-state")).toContain(
+        "devPreviewScriptName",
+      ),
+    );
+    const reader = createWorkspaceLayoutStore();
+    await reader.persist.rehydrate();
+    const restored = reader.getState().layoutByWorkspace[workspaceKey];
+    expect(collectAllTabs(restored.root).find((tab) => tab.tabId === opened.tabId)?.state).toEqual({
+      devPreviewScriptName: "app",
+    });
+    useWorkspaceLayoutStore.setState({ layoutByWorkspace: { [workspaceKey]: restored } });
+    useWorkspaceLayoutStore.getState().moveTabToPane(workspaceKey, opened.tabId, "main");
+    const paneCount = collectAllPanes(
+      useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey].root,
+    ).length;
+    expect(
+      openWorkspaceDevPreview({ workspaceKey, scriptName: "app", url: "http://localhost:5173" }),
+    ).toEqual({ ...opened, created: false });
+    const revealed = useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    expect(findPaneById(revealed.root, "main")?.focusedTabId).toBe(opened.tabId);
+    expect(collectAllTabs(revealed.root).find((tab) => tab.tabId === opened.tabId)?.state).toEqual({
+      devPreviewScriptName: "app",
+    });
+    expect(collectAllPanes(revealed.root)).toHaveLength(paneCount);
+    expect(getBrowserRecord(opened.browserId)?.url).toBe("http://localhost:3000");
   });
 });
