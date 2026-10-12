@@ -317,9 +317,15 @@ On Wayland (seen on ChromeOS Linux) a window created with `show: false` can sit
 forever without a single compositor frame: the renderer loads and runs, but
 `ready-to-show` never fires, so the window is never shown and the app looks like
 it did not start while every process is alive. `showWindowWhenReady`
-(`packages/desktop/src/window/show-when-ready.ts`) shows the main window after a
-short grace period when the event does not arrive. The fallback is Linux-only;
-macOS and Windows keep waiting for `ready-to-show`.
+(`packages/desktop/src/window/show-when-ready.ts`) shows the main window when
+the document finishes loading if the event has not arrived. The fallback is
+Linux-only; macOS and Windows keep waiting for `ready-to-show`.
+
+Run the startup regression on Linux with an isolated display:
+
+```bash
+xvfb-run -a npm run test:e2e:window-startup --workspace=@getpaseo/desktop
+```
 
 ### Daemon logs
 

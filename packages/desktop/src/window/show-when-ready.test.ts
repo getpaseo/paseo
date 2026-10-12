@@ -1,87 +1,57 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "node:events";
+import { describe, expect, it } from "vitest";
+import { showWindowWhenReady } from "./show-when-ready.js";
 
-import { type ReadyToShowWindow, showWindowWhenReady } from "./show-when-ready.js";
-
-function fakeWindow() {
-  const listeners = new Map<string, Array<() => void>>();
-  let destroyed = false;
-  const win: ReadyToShowWindow & {
-    shows: number;
-    emit: (event: "ready-to-show" | "closed") => void;
-    destroy: () => void;
-  } = {
-    shows: 0,
-    once(event, listener) {
-      listeners.set(event, [...(listeners.get(event) ?? []), listener]);
-      return win;
-    },
-    show() {
-      win.shows += 1;
-    },
-    isDestroyed: () => destroyed,
-    emit(event) {
-      const queued = listeners.get(event) ?? [];
-      listeners.set(event, []);
-      for (const listener of queued) listener();
-    },
-    destroy() {
-      destroyed = true;
-    },
-  };
-  return win;
+class Window extends EventEmitter {
+  webContents = new EventEmitter();
+  shows = 0;
+  destroyed = false;
+  show() {
+    this.shows += 1;
+  }
+  isDestroyed() {
+    return this.destroyed;
+  }
+  close() {
+    this.destroyed = true;
+    this.emit("closed");
+  }
 }
 
 describe("showWindowWhenReady", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("shows the window on ready-to-show and not again on the fallback", () => {
-    const win = fakeWindow();
-    showWindowWhenReady(win, { fallbackMs: 2_000 });
-    win.emit("ready-to-show");
-    expect(win.shows).toBe(1);
-    vi.advanceTimersByTime(5_000);
-    expect(win.shows).toBe(1);
-  });
-
-  it("shows the window after the fallback when ready-to-show never fires", () => {
-    const win = fakeWindow();
-    showWindowWhenReady(win, { fallbackMs: 2_000 });
-    vi.advanceTimersByTime(1_999);
+  it("shows a loaded Linux window even when no initial frame was painted", () => {
+    const win = new Window();
+    showWindowWhenReady(win, { showOnLoad: true });
     expect(win.shows).toBe(0);
-    vi.advanceTimersByTime(1);
+    win.webContents.emit("did-finish-load");
     expect(win.shows).toBe(1);
     win.emit("ready-to-show");
     expect(win.shows).toBe(1);
   });
 
-  it("does nothing on the fallback once the window closed", () => {
-    const win = fakeWindow();
-    showWindowWhenReady(win, { fallbackMs: 2_000 });
-    win.emit("closed");
-    win.destroy();
-    vi.advanceTimersByTime(5_000);
-    expect(win.shows).toBe(0);
-  });
-
-  it("never shows a destroyed window from ready-to-show", () => {
-    const win = fakeWindow();
-    showWindowWhenReady(win, { fallbackMs: null });
-    win.destroy();
+  it("shows on the first frame without showing again after load", () => {
+    const win = new Window();
+    showWindowWhenReady(win, { showOnLoad: true });
     win.emit("ready-to-show");
-    expect(win.shows).toBe(0);
+    win.webContents.emit("did-finish-load");
+    expect(win.shows).toBe(1);
   });
 
-  it("keeps the old behaviour when the fallback is disabled", () => {
-    const win = fakeWindow();
-    showWindowWhenReady(win, { fallbackMs: null });
-    vi.advanceTimersByTime(60_000);
+  it("preserves waiting for the initial frame when show on load is disabled", () => {
+    const win = new Window();
+    showWindowWhenReady(win, { showOnLoad: false });
+    win.webContents.emit("did-finish-load");
     expect(win.shows).toBe(0);
     win.emit("ready-to-show");
     expect(win.shows).toBe(1);
+  });
+
+  it("keeps a closed window closed when readiness arrives later", () => {
+    const win = new Window();
+    showWindowWhenReady(win, { showOnLoad: true });
+    win.close();
+    win.webContents.emit("did-finish-load");
+    win.emit("ready-to-show");
+    expect(win.shows).toBe(0);
   });
 });
