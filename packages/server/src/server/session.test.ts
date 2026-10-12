@@ -27,7 +27,7 @@ import { OWNER_PERMISSIONS, type DaemonPermission } from "./authorization/index.
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
-import type { AgentManagerEvent } from "./agent/agent-manager.js";
+import { AgentManagerShuttingDownError, type AgentManagerEvent } from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { WorkspaceLabelError, type WorkspaceLabelService } from "./workspace-labels/index.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
@@ -136,6 +136,39 @@ test("onlyIfIdle shutdown reports AGENTS_BUSY and does not emit a lifecycle inte
       code: "AGENTS_BUSY",
     },
   });
+});
+
+test("agent creation refused by an idle shutdown never starts a creation record", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const create = vi.fn();
+  const session = createSessionForTest({
+    messages,
+    creationService: { create, subscribe: vi.fn() },
+    agentManager: {
+      runAdmittedAgentWork: vi.fn(async () => {
+        throw new AgentManagerShuttingDownError();
+      }),
+    },
+  });
+
+  await session.handleMessage({
+    type: "create_agent_request",
+    requestId: "req-create-after-claim",
+    idempotencyKey: "create-after-claim",
+    config: { provider: "codex", cwd: "/tmp/project" },
+    attachments: [],
+  });
+
+  expect(create).not.toHaveBeenCalled();
+  expect(messages).toContainEqual(
+    expect.objectContaining({
+      type: "status",
+      payload: expect.objectContaining({
+        status: "agent_create_failed",
+        requestId: "req-create-after-claim",
+      }),
+    }),
+  );
 });
 
 test("interruptAgentIfRunning rejects when graceful cancellation is refused", async () => {
@@ -322,6 +355,7 @@ interface SessionForTestOptions {
   clientId?: string;
   permissions?: readonly DaemonPermission[];
   agentManager?: { [K in keyof SessionOptions["agentManager"]]?: unknown };
+  creationService?: SessionOptions["creationService"];
   agentStorage?: { [K in keyof SessionOptions["agentStorage"]]?: unknown };
   github?: Partial<ForgeService & GitHubService>;
   checkoutDiffManager?: { scheduleRefreshForCwd: ReturnType<typeof vi.fn> };
@@ -400,7 +434,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
 
   const sessionOptions: SessionOptions = {
     messageReceipts: createMessageReceiptsStub(),
-    creationService: createTestCreationService(),
+    creationService: options.creationService ?? createTestCreationService(),
     clientId: options.clientId ?? "test-client",
     onLifecycleIntent: options.onLifecycleIntent,
     onMessage: (message) => messages.push(message),

@@ -2,7 +2,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { AgentManager } from "../agent/agent-manager.js";
+import { AgentManager, AgentManagerShuttingDownError } from "../agent/agent-manager.js";
 import { AgentStorage } from "../agent/agent-storage.js";
 import { createAgentCommand } from "../agent/create-agent/create.js";
 import type {
@@ -485,6 +485,41 @@ describe("ScheduleService", () => {
     expect(result.nextRunAt).toBeNull();
     expect(result.runs).toHaveLength(1);
     expect(result.runs[0].status).toBe("succeeded");
+  });
+
+  test("leaves a due run for after the restart when an idle shutdown refuses it", async () => {
+    const agentManager = new AgentManager({ logger: createTestLogger() });
+    let dispatches = 0;
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => {
+        dispatches += 1;
+        return { agentId: null, output: "done" };
+      },
+    });
+    const created = await service.create({
+      prompt: "Run once on January 5 when it is Monday",
+      cadence: { type: "cron", expression: "0 6 5 1 1" },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+      maxRuns: 1,
+    });
+    expect(agentManager.tryClaimIdleShutdown()).toBe(true);
+
+    now = new Date("2026-01-05T06:00:00.000Z");
+    await service.tick();
+
+    const result = await service.inspect(created.id);
+    expect(dispatches).toBe(0);
+    expect(result.status).toBe("active");
+    expect(result.nextRunAt).toBe(created.nextRunAt);
+    expect(result.runs).toEqual([]);
+    await expect(service.runOnce(created.id)).rejects.toBeInstanceOf(AgentManagerShuttingDownError);
+    expect((await service.inspect(created.id)).runs).toEqual([]);
   });
 
   test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(

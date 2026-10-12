@@ -9,7 +9,7 @@ import type {
 } from "@getpaseo/protocol/messages";
 import { relative } from "node:path";
 import { isAbsolute } from "node:path";
-import { CreationService, type CreatedAgent } from "./creation/index.js";
+import { CreationService, type CreatedAgent, type CreationInput } from "./creation/index.js";
 import type { CreationSnapshot, AgentCreateRequest } from "@getpaseo/protocol/messages";
 import type { MessageReceipts } from "./message-receipts/index.js";
 import equal from "fast-deep-equal";
@@ -4006,12 +4006,25 @@ export class Session {
       ? (await this.workspaceRegistry.get(id)) !== null
       : this.agentManager.getAgent(id) != null || (await this.agentStorage.get(id)) !== null;
 
+  // Agent creation can provision a workspace or worktree before the agent
+  // registers. Admitting the whole creation keeps an idle shutdown out of that
+  // gap, and a creation refused by one never writes its record.
+  private createWithAdmission(
+    input: CreationInput,
+    observer?: (snapshot: CreationSnapshot) => void,
+  ): Promise<CreationSnapshot> {
+    if (!input.hasAgent) return this.creationService.create(input, observer);
+    return this.agentManager.runAdmittedAgentWork(() =>
+      this.creationService.create(input, observer),
+    );
+  }
+
   private createRequestedAgent(
     request: AgentCreateRequest,
     observer?: (snapshot: CreationSnapshot) => void,
   ): Promise<CreationSnapshot> {
     const { requestId, type: _type, subscribe: _subscribe, idempotencyKey, ...intent } = request;
-    return this.creationService.create(
+    return this.createWithAdmission(
       {
         kind: "agent",
         key: idempotencyKey ?? requestId,
@@ -4100,7 +4113,7 @@ export class Session {
         throw new Error("Session is not authorized to create an agent");
       }
       const agentInput = request.agent;
-      const creation = await this.creationService.create(
+      const creation = await this.createWithAdmission(
         {
           kind: "workspace",
           key: idempotencyKey ?? requestId,
