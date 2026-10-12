@@ -1,3 +1,4 @@
+import { useBrowserStore } from "@/desktop/browser/store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useState } from "react";
 import { create } from "zustand";
@@ -1053,7 +1054,9 @@ export function createWorkspaceLayoutStore(
             }
 
             return {
-              ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+              ...(closingTab?.target.kind === "browser" && closingPane?.id !== layout.focusedPaneId
+                ? {}
+                : withoutFocusRestoration(state, normalizedWorkspaceKey)),
               ...reconcileRememberedPanes(state, normalizedWorkspaceKey, nextLayout),
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
@@ -1756,6 +1759,11 @@ export function createWorkspaceLayoutStore(
             return;
           }
 
+          useBrowserStore.setState((state) => {
+            const { [normalizedWorkspaceKey]: _closed, ...lastClosedByWorkspace } =
+              state.lastClosedByWorkspace;
+            return { lastClosedByWorkspace };
+          });
           set((state) => {
             const hasAny =
               normalizedWorkspaceKey in state.layoutByWorkspace ||

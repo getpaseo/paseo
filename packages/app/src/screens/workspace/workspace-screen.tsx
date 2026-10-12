@@ -119,8 +119,6 @@ import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useStableEvent } from "@/hooks/use-stable-event";
-import { removeResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
-import { useBrowserStore } from "@/desktop/browser/store";
 import { getDesktopHost } from "@/desktop/host";
 import { buildProviderCommand } from "@/utils/provider-command-templates";
 import { generateDraftId } from "@/stores/draft-keys";
@@ -145,7 +143,12 @@ import {
   buildWorkspaceTabMenuEntries,
   type WorkspaceTabMenuLabels,
 } from "@/screens/workspace/workspace-tab-menu";
-import { openWorkspaceBrowser, type OpenWorkspaceBrowserInput } from "@/workspace-tabs/browser";
+import {
+  closeWorkspaceBrowser,
+  reopenLastWorkspaceBrowser,
+  openWorkspaceBrowser,
+  type OpenWorkspaceBrowserInput,
+} from "@/workspace-tabs/browser";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -2035,6 +2038,7 @@ function WorkspaceScreenContent({
     function closeWorkspaceTabWithCleanup(input: {
       tabId: string;
       target?: WorkspaceTabTarget | null;
+      rememberBrowser?: boolean;
     }) {
       const normalizedTabId = trimNonEmpty(input.tabId);
       if (!normalizedTabId || !persistenceKey) {
@@ -2046,14 +2050,18 @@ function WorkspaceScreenContent({
         hideWorkspaceAgent(persistenceKey, input.target.agentId);
       }
       if (input.target?.kind === "browser") {
-        const { browserId } = input.target;
-        useBrowserStore.getState().removeBrowser(browserId);
-        removeResidentBrowserWebview(browserId);
-        void getDesktopHost()?.browser?.unregisterWorkspaceBrowser?.(browserId);
+        void closeWorkspaceBrowser({
+          workspaceKey: persistenceKey,
+          browserId: input.target.browserId,
+          remember: input.rememberBrowser !== false,
+        }).catch((error) =>
+          toast.error(error instanceof Error ? error.message : t("common.errors.error")),
+        );
+        return;
       }
       closeWorkspaceTab(persistenceKey, normalizedTabId);
     },
-    [closeWorkspaceTab, hideWorkspaceAgent, persistenceKey, unpinWorkspaceAgent],
+    [closeWorkspaceTab, hideWorkspaceAgent, persistenceKey, unpinWorkspaceAgent, toast, t],
   );
 
   const focusedPaneTabState = useMemo(
@@ -2543,6 +2551,7 @@ function WorkspaceScreenContent({
 
   const [browserOpenError, setBrowserOpenError] = useState<
     | { kind: "pane"; input: { workspaceKey: string } }
+    | { kind: "reopen"; input: { workspaceKey: string } }
     | { kind: "browser"; input: OpenWorkspaceBrowserInput }
     | { kind: "preview"; input: Parameters<typeof openWorkspaceDevPreview>[0] }
     | null
@@ -2574,6 +2583,11 @@ function WorkspaceScreenContent({
   const openManualBrowser = useCallback((input: OpenWorkspaceBrowserInput) => {
     const result = openWorkspaceBrowser(input);
     setBrowserOpenError(result.ok ? null : { kind: "browser", input });
+  }, []);
+  const handleReopenBrowserTab = useCallback((input: { workspaceKey: string }) => {
+    if (!getIsElectron()) return;
+    const result = reopenLastWorkspaceBrowser(input.workspaceKey);
+    setBrowserOpenError(result.ok ? null : { kind: "reopen", input });
   }, []);
   const handleCreateBrowserTab = useCallback(
     (input?: { paneId?: string }) => {
@@ -2694,9 +2708,16 @@ function WorkspaceScreenContent({
   const retryBrowserOpen = useCallback(() => {
     if (!browserOpenError) return;
     if (browserOpenError.kind === "browser") openManualBrowser(browserOpenError.input);
+    else if (browserOpenError.kind === "reopen") handleReopenBrowserTab(browserOpenError.input);
     else if (browserOpenError.kind === "pane") showBrowserPane(browserOpenError.input);
     else handleOpenDevPreview(browserOpenError.input);
-  }, [browserOpenError, handleOpenDevPreview, openManualBrowser, showBrowserPane]);
+  }, [
+    browserOpenError,
+    handleOpenDevPreview,
+    handleReopenBrowserTab,
+    openManualBrowser,
+    showBrowserPane,
+  ]);
   const dismissBrowserOpenError = useCallback(() => setBrowserOpenError(null), []);
 
   // Closing the preview goes through the same cleanup path as any browser tab, which also
@@ -2713,6 +2734,7 @@ function WorkspaceScreenContent({
       closeWorkspaceTabWithCleanup({
         tabId: existing.tabId,
         target: { kind: "browser", browserId: existing.browserId },
+        rememberBrowser: false,
       });
     },
     [closeWorkspaceTabWithCleanup, persistenceKey],
@@ -3394,6 +3416,9 @@ function WorkspaceScreenContent({
         case "workspace.terminal.new":
           handleCreateTerminal();
           return true;
+        case "workspace.browser.reopen-last-closed":
+          if (persistenceKey) handleReopenBrowserTab({ workspaceKey: persistenceKey });
+          return true;
         case "workspace.browser.new":
           handleCreateBrowserTab();
           return true;
@@ -3433,6 +3458,8 @@ function WorkspaceScreenContent({
       handleCloseTabById,
       handleCreateDraftTab,
       handleCreateBrowserTab,
+      handleReopenBrowserTab,
+      persistenceKey,
       handleCreateTerminal,
       focusedPaneTabState.pane?.id,
       navigateToTabId,
@@ -3609,6 +3636,7 @@ function WorkspaceScreenContent({
       "workspace.tab.navigate-relative",
       "workspace.terminal.new",
       "workspace.browser.new",
+      "workspace.browser.reopen-last-closed",
       "workspace.tab.menu.open",
     ] as const,
     enabled: workspaceActionsEnabled,

@@ -1,3 +1,9 @@
+import { getDesktopHost, type DesktopBrowserBridge } from "@/desktop/host";
+import {
+  readResidentBrowserUrl,
+  removeResidentBrowserWebview,
+} from "@/desktop/browser/resident-webviews";
+import type { BrowserViewport } from "@/desktop/browser/store";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { createWorkspaceBrowser, getBrowserRecord, useBrowserStore } from "@/desktop/browser/store";
 import { useSessionStore } from "@/stores/session-store";
@@ -11,7 +17,10 @@ import {
   type WorkspaceTabPlacement,
   type WorkspaceLayout,
 } from "@/stores/workspace-layout-store";
-import type { WorkspaceTabInsertionPosition } from "@/stores/workspace-layout-actions";
+import {
+  resolveBrowserPaneId,
+  type WorkspaceTabInsertionPosition,
+} from "@/stores/workspace-layout-actions";
 import { panelTargetSupportsHostForWorkspaceKey } from "@/plugins/workspace-panels/locations";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 import { buildWorkspaceTabPersistenceKey, type WorkspaceTab } from "@/workspace-tabs/model";
@@ -19,6 +28,7 @@ import { buildWorkspaceTabPersistenceKey, type WorkspaceTab } from "@/workspace-
 export interface OpenWorkspaceBrowserInput {
   workspaceKey: string;
   url?: string;
+  viewport?: BrowserViewport;
   browserId?: string;
   intent: "reveal" | "background";
   placement?: WorkspaceTabPlacement;
@@ -146,6 +156,8 @@ export function openWorkspaceBrowser(input: OpenWorkspaceBrowserInput): OpenWork
   });
   if (!placement) return { ok: false, code: "placement_unavailable" };
   const browserId = input.browserId ?? createWorkspaceBrowser({ initialUrl: input.url }).browserId;
+  if (!hasBrowserId && input.viewport)
+    useBrowserStore.getState().setBrowserViewport(browserId, input.viewport);
   let tabId: string | null;
   try {
     tabId =
@@ -172,4 +184,67 @@ export function openWorkspaceBrowser(input: OpenWorkspaceBrowserInput): OpenWork
   }
   if (input.intent === "reveal") store.focusTab(workspaceKey, tabId);
   return { ok: true, tabId, browserId, created: !hasBrowserId };
+}
+
+export async function closeWorkspaceBrowser(
+  input: { workspaceKey: string; browserId: string; remember: boolean },
+  ...bridgeOverride: [DesktopBrowserBridge | undefined] | []
+): Promise<void> {
+  const layoutStore = useWorkspaceLayoutStore.getState();
+  const layout = layoutStore.layoutByWorkspace[input.workspaceKey];
+  if (!layout) return;
+  const tab = collectAllTabs(layout.root).find(
+    (candidate) =>
+      candidate.target.kind === "browser" && candidate.target.browserId === input.browserId,
+  );
+  const record = getBrowserRecord(input.browserId);
+  if (!tab) return;
+  if (input.remember && record) {
+    useBrowserStore.setState((state) => ({
+      lastClosedByWorkspace: {
+        ...state.lastClosedByWorkspace,
+        [input.workspaceKey]: {
+          url: readResidentBrowserUrl(input.browserId) ?? record.url,
+          viewport: record.viewport,
+          paneId: findPaneContainingTab(layout.root, tab.tabId)?.id ?? null,
+        },
+      },
+    }));
+  }
+  // Drop local ownership before awaiting the bridge so repeated closes cannot unregister twice.
+  layoutStore.closeTab(input.workspaceKey, tab.tabId);
+  useBrowserStore.getState().removeBrowser(input.browserId);
+  removeResidentBrowserWebview(input.browserId);
+  const bridge = bridgeOverride.length ? bridgeOverride[0] : getDesktopHost()?.browser;
+  await bridge?.unregisterWorkspaceBrowser?.(input.browserId);
+}
+
+export function reopenLastWorkspaceBrowser(workspaceKey: string): OpenWorkspaceBrowserResult {
+  const descriptor = useBrowserStore.getState().lastClosedByWorkspace[workspaceKey];
+  if (!descriptor) return { ok: false, code: "browser_unavailable" };
+  const store = useWorkspaceLayoutStore.getState();
+  const layout = store.layoutByWorkspace[workspaceKey];
+  const paneId =
+    layout &&
+    descriptor.paneId &&
+    resolveBrowserPaneId(
+      layout,
+      descriptor.paneId,
+      store.explorerSidebarPaneIdByWorkspace[workspaceKey] ?? "explorer",
+    ) === descriptor.paneId
+      ? descriptor.paneId
+      : null;
+  const result = openWorkspaceBrowser({
+    workspaceKey,
+    url: descriptor.url,
+    viewport: descriptor.viewport,
+    intent: "reveal",
+    ...(paneId ? { placement: { mode: "pane", paneId } } : {}),
+  });
+  if (result.ok)
+    useBrowserStore.setState((state) => {
+      const { [workspaceKey]: _closed, ...lastClosedByWorkspace } = state.lastClosedByWorkspace;
+      return { lastClosedByWorkspace };
+    });
+  return result;
 }

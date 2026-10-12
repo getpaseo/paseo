@@ -1,3 +1,5 @@
+import { useBrowserStore } from "@/desktop/browser/store";
+import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { usePathname, useRouter } from "expo-router";
 import { getIsElectronRuntime } from "@/constants/layout";
@@ -84,6 +86,12 @@ export function useKeyboardShortcuts({
   });
   const openProjectPickerAction = useOpenAddProject();
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
+  const browserWorkspaceKey = activeWorkspaceSelection
+    ? buildWorkspaceTabPersistenceKey(activeWorkspaceSelection)
+    : null;
+  const browserCanReopen = useBrowserStore((state) =>
+    Boolean(browserWorkspaceKey && state.lastClosedByWorkspace[browserWorkspaceKey]),
+  );
   const keyboardWorkspaceSelectionRef = useRef<ActiveWorkspaceSelection | null>(null);
 
   const publishBrowserShortcutPolicy = useCallback(
@@ -95,11 +103,12 @@ export function useKeyboardShortcuts({
               chordState,
               isMac,
               isDesktop: isDesktopApp,
+              browserCanReopen,
             })
           : { menuPrefixes: [], prefixes: [] };
       void getDesktopHost()?.browser?.setShortcutPolicy?.(policy);
     },
-    [bindings, enabled, isDesktopApp, isMac, shortcutsAvailable],
+    [bindings, browserCanReopen, enabled, isDesktopApp, isMac, shortcutsAvailable],
   );
 
   useEffect(() => {
@@ -268,6 +277,7 @@ export function useKeyboardShortcuts({
         isDesktop: isDesktopApp,
         focusScope: input.focusScope,
         commandCenterOpen: store.commandCenterOpen,
+        browserCanReopen,
       },
       chordState: chordStateRef.current,
       onChordReset: () => {

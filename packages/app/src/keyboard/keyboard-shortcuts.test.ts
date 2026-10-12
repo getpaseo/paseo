@@ -1279,3 +1279,40 @@ describe("direct new-tab target shortcuts", () => {
     ).toEqual([["ctrl", "shift", "H"]]);
   });
 });
+
+describe("reopen last browser binding", () => {
+  it("is assignable without taking the terminal Shift+T defaults", () => {
+    const bindings = buildEffectiveBindings({});
+    const binding = bindings.find((item) => item.action === "workspace.browser.reopen-last-closed");
+    expect(binding?.combo).toBe("");
+    expect(binding?.parsedChord).toEqual([]);
+    for (const isMac of [true, false]) {
+      const result = resolveShortcut({
+        event: { code: "KeyT", key: "T", shiftKey: true, metaKey: isMac, ctrlKey: !isMac },
+        context: { isMac, isDesktop: true, focusScope: "browser" },
+      });
+      expect(result.match?.action).toBe("workspace.terminal.new");
+    }
+  });
+
+  it("runs a user binding only for Electron browser focus with a closed descriptor", () => {
+    const bindings = buildEffectiveBindings({
+      "workspace-browser-reopen-last-closed": "Mod+Shift+Y",
+    });
+    const event = { code: "KeyY", key: "Y", shiftKey: true, ctrlKey: true };
+    expect(
+      resolveShortcut({
+        event,
+        bindings,
+        context: { isDesktop: true, focusScope: "browser", browserCanReopen: true },
+      }).match?.action,
+    ).toBe("workspace.browser.reopen-last-closed");
+    for (const context of [
+      { isDesktop: false, focusScope: "browser", browserCanReopen: true },
+      { isDesktop: true, focusScope: "other", browserCanReopen: true },
+      { isDesktop: true, focusScope: "browser", browserCanReopen: false },
+    ] as const) {
+      expect(resolveShortcut({ event, bindings, context }).match).toBeNull();
+    }
+  });
+});

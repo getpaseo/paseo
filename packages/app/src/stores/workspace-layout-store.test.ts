@@ -4650,6 +4650,61 @@ describe("browser pane ownership", () => {
     return store;
   }
 
+  it("closing a browser child in a mixed nonfocused pane selects its right neighbor without stealing focus", () => {
+    const store = createConversationStore();
+    const parentId = collectAllTabs(store.getState().layoutByWorkspace[workspaceKey].root).find(
+      (tab) => tab.target.kind === "agent",
+    )!.tabId;
+    const childId = store.getState().openTab({
+      workspaceKey,
+      target: { kind: "browser", browserId: "child" },
+      intent: "reveal",
+      parentTabId: parentId,
+      placement: { mode: "pane", paneId: "main" },
+    })!;
+    const rightId = store.getState().openTab({
+      workspaceKey,
+      target: { kind: "draft", draftId: "right" },
+      intent: "background",
+      placement: { mode: "pane", paneId: "main" },
+    })!;
+    store.getState().focusTab(workspaceKey, childId);
+    const otherPaneId = store
+      .getState()
+      .splitPaneEmpty(workspaceKey, { targetPaneId: "main", position: "right" })!;
+    store.getState().focusPane(workspaceKey, otherPaneId);
+    store.getState().closeTab(workspaceKey, childId);
+    const layout = store.getState().layoutByWorkspace[workspaceKey];
+    expect(findPaneById(layout.root, "main")?.focusedTabId).toBe(rightId);
+    expect(layout.focusedPaneId).toBe(otherPaneId);
+  });
+
+  it("closing a page in a hidden pane selects its neighbor without revealing the pane", () => {
+    const store = createConversationStore();
+    const paneId = store.getState().ensureBrowserPane(workspaceKey, { reveal: false })!;
+    const firstId = store.getState().openTab({
+      workspaceKey,
+      target: { kind: "browser", browserId: "hidden-first" },
+      intent: "background",
+      placement: { mode: "pane", paneId },
+    })!;
+    const secondId = store.getState().openTab({
+      workspaceKey,
+      target: { kind: "browser", browserId: "hidden-second" },
+      intent: "background",
+      placement: { mode: "pane", paneId },
+    })!;
+    store.getState().unfocusPane(workspaceKey);
+    const before = store.getState().layoutByWorkspace[workspaceKey].focusedPaneId;
+    const restoration = store.getState().focusRestorationByWorkspace[workspaceKey];
+    store.getState().closeTab(workspaceKey, firstId);
+    const layout = store.getState().layoutByWorkspace[workspaceKey];
+    expect(findPaneById(layout.root, paneId)?.focusedTabId).toBe(secondId);
+    expect(findPaneById(layout.root, paneId)?.hidden).toBe(true);
+    expect(layout.focusedPaneId).toBe(before);
+    expect(store.getState().focusRestorationByWorkspace[workspaceKey]).toEqual(restoration);
+  });
+
   it("reuses the browser pane and preserves visibility, selected pages and focus restoration", () => {
     const store = createConversationStore();
     const paneId = store.getState().ensureBrowserPane(workspaceKey, { reveal: false })!;

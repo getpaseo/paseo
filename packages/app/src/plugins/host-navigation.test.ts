@@ -17,7 +17,7 @@ describe("plugin host navigation", () => {
     const workspaces = new Set(["selected:one", "remote:two", "remote:one"]);
     const opened: Array<{ tabId: string; browserId: string }> = [];
     useSessionStore.setState({ sessions: {} });
-    useBrowserStore.setState({ browsersById: {} });
+    useBrowserStore.setState({ browsersById: {}, lastClosedByWorkspace: {} });
     useWorkspaceLayoutStore.setState({
       layoutByWorkspace: {},
       browserPaneIdByWorkspace: {},

@@ -1,3 +1,7 @@
+import { useBrowserStore } from "@/desktop/browser/store";
+import { getIsElectron } from "@/constants/platform";
+import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
+import { useKeyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher-context";
 import { WorkspaceNewTabMenuContent } from "@/screens/workspace/workspace-new-tab-menu";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
@@ -43,7 +47,12 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
@@ -1253,6 +1262,17 @@ function ResolvedWorkspaceDesktopTabsRow({
   onExitFocusMode,
 }: ResolvedWorkspaceDesktopTabsRowProps) {
   const { t } = useTranslation();
+  const browserWorkspaceKey = buildWorkspaceTabPersistenceKey({
+    serverId: normalizedServerId,
+    workspaceId: normalizedWorkspaceId,
+  });
+  const canReopenBrowser = useBrowserStore((state) =>
+    Boolean(browserWorkspaceKey && state.lastClosedByWorkspace[browserWorkspaceKey]),
+  );
+  const dispatcher = useKeyboardActionDispatcher();
+  const handleReopenBrowser = useCallback(() => {
+    dispatcher.dispatch({ id: "workspace.browser.reopen-last-closed", scope: "workspace" });
+  }, [dispatcher]);
   const newTabKeys = useShortcutKeys("workspace-tab-new");
   const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
   const [exitFocusModeWidth, setExitFocusModeWidth] = useState<number>(0);
@@ -1661,6 +1681,14 @@ function ResolvedWorkspaceDesktopTabsRow({
             {displayedTabs.map((item) => (
               <BrowserTabMenuItem key={item.tab.tabId} item={item} onNavigateTab={onNavigateTab} />
             ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              testID="workspace-browser-reopen-last-closed"
+              disabled={!getIsElectron() || !canReopenBrowser}
+              onSelect={handleReopenBrowser}
+            >
+              {t("workspace.browser.reopenLastClosedTab")}
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       ) : null}

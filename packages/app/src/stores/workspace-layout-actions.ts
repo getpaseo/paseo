@@ -1534,18 +1534,31 @@ export function closeTabInLayout(input: CloseTabInLayoutInput): WorkspaceLayout 
   if (!pane) {
     return null;
   }
-  const preserveEmptyPaneId =
+  const paneTabs = collectAllTabs({ kind: "pane", pane });
+  const isBrowser = paneTabs.find((tab) => tab.tabId === input.tabId)?.target.kind === "browser";
+  const browserOnly = isBrowser && paneTabs.every((tab) => tab.target.kind === "browser");
+  const otherVisibleOrdinaryPane = collectAllPanes(input.layout.root).some(
+    (candidate) =>
+      candidate.id !== pane.id &&
+      candidate.id !== input.explorerSidebarPaneId &&
+      candidate.hidden !== true,
+  );
+  let preserveEmptyPaneId: string | null = null;
+  if (browserOnly) {
+    if (!otherVisibleOrdinaryPane) preserveEmptyPaneId = pane.id;
+  } else if (
     pane.id === DEFAULT_PANE_ID ||
     pane.id === input.explorerSidebarPaneId ||
     isLastVisibleOrdinaryPane(input.layout, pane.id, input.explorerSidebarPaneId)
-      ? pane.id
-      : null;
+  ) {
+    preserveEmptyPaneId = pane.id;
+  }
 
   const closeSuccessorTabId = getCloseSuccessorTabId({
     pane,
     tabId: input.tabId,
     openTabIds: new Set(collectAllTabs(internalLayout.root).map((tab) => tab.tabId)),
-    parentTabIdByTabId: input.layout.parentTabIdByTabId,
+    parentTabIdByTabId: isBrowser ? undefined : input.layout.parentTabIdByTabId,
   });
   const fallbackPaneId = findNearestSiblingPaneId(internalLayout.root, pane.id);
   const nextRoot = detachTabFromTree(internalLayout.root, {
@@ -1569,6 +1582,16 @@ export function closeTabInLayout(input: CloseTabInLayoutInput): WorkspaceLayout 
   const nextLayoutWithParentMap = parentTabIdByTabId
     ? { ...nextLayout, parentTabIdByTabId }
     : nextLayout;
+
+  if (isBrowser && closeSuccessorTabId) {
+    return {
+      ...nextLayoutWithParentMap,
+      root: updatePaneInTree(nextRoot, {
+        paneId: pane.id,
+        updater: (current) => ({ ...current, focusedTabId: closeSuccessorTabId }),
+      }),
+    };
+  }
 
   if (closeSuccessorTabId && findPaneContainingTab(nextRoot, closeSuccessorTabId)) {
     const focusedLayout =

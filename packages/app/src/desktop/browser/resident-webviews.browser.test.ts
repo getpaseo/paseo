@@ -5,6 +5,7 @@ import {
   clearResidentBrowserWebviewsForTests,
   ensureResidentBrowserWebview,
   getResidentBrowserWebview,
+  readResidentBrowserUrl,
   prepareBrowserWebview,
   presentBrowserWebview,
   rememberBrowserWebviewSize,
@@ -261,6 +262,29 @@ describe("resident browser webviews", () => {
     expect(webview.style.top).toBe("-450px");
     expect(webview.parentElement.style.width).toBe("800px");
     expect(webview.parentElement.style.height).toBe("600px");
+  });
+
+  it("reads the ready parked guest URL and destroys its DOM identity on close", () => {
+    const input = {
+      browserId: "closed-guest",
+      workspaceId: "closed-workspace",
+      url: "https://example.com/initial",
+    };
+    const guest = ensureTestBrowser(input)!;
+    expect(readResidentBrowserUrl(input.browserId)).toBeNull();
+    Object.defineProperties(guest, {
+      getWebContentsId: { value: () => 42 },
+      getURL: { value: () => "https://example.com/background-navigation" },
+    });
+    expect(readResidentBrowserUrl(input.browserId)).toBe(
+      "https://example.com/background-navigation",
+    );
+    removeResidentBrowserWebview(input.browserId);
+    expect(guest.isConnected).toBe(false);
+    expect(getResidentBrowserWebview(input.browserId)).toBeNull();
+    expect(readResidentBrowserUrl(input.browserId)).toBeNull();
+    const replacement = ensureTestBrowser(input)!;
+    expect(replacement).not.toBe(guest);
   });
 
   it("creates a resident webview for an agent-created unfocused tab", () => {

@@ -23,6 +23,7 @@ export type KeyboardActionId =
   | "workspace.tab.menu.open"
   | "workspace.tab.target.agent"
   | "workspace.tab.target.browser"
+  | "workspace.browser.reopen-last-closed"
   | "workspace.tab.target.changes"
   | "workspace.tab.target.files"
   | "workspace.tab.close.current"

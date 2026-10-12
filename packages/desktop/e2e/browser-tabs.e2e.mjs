@@ -1658,6 +1658,315 @@ async function verifyPresentationContinuity({
   await composer.fill("");
 }
 
+async function verifyBrowserCloseReopen({
+  page,
+  client,
+  serverId,
+  target,
+  artifactDir,
+  inspectorPort,
+}) {
+  const workspaceKey = `${serverId}:${workspaceIds[0]}`;
+  await page.getByTestId(`sidebar-workspace-row-${workspaceKey}`).click();
+  const deck = page.getByTestId(`workspace-deck-entry-${workspaceKey}`);
+  const keeper = await callBrowserTool(client, "browser_new_tab", { url: target.url });
+  const closed = await callBrowserTool(client, "browser_new_tab", { url: target.url });
+  const ready = async (browserId) =>
+    page.waitForFunction((id) => {
+      const guest = document.querySelector(`[data-paseo-browser-id="${id}"]`);
+      try {
+        return guest && guest.getWebContentsId() > 0 && !guest.isLoading();
+      } catch {
+        return false;
+      }
+    }, browserId);
+  await ready(closed.browserId);
+  const oldGuest = await readGuest(page, closed.browserId);
+  await page.evaluate((id) => {
+    window.__task6ClosedGuest = document.querySelector(`[data-paseo-browser-id="${id}"]`);
+  }, closed.browserId);
+  const lastUrl = `${target.url}?task6=last-background-url`;
+  // This guest has never been selected; its pane has not installed navigation listeners.
+  await callBrowserTool(client, "browser_evaluate", {
+    browserId: closed.browserId,
+    function: `() => { location.href = ${JSON.stringify(lastUrl)}; return true; }`,
+  });
+  await page.waitForFunction(
+    ({ id, url }) => {
+      const guest = document.querySelector(`[data-paseo-browser-id="${id}"]`);
+      try {
+        return guest && guest.getURL() === url && !guest.isLoading();
+      } catch {
+        return false;
+      }
+    },
+    { id: closed.browserId, url: lastUrl },
+  );
+  await callBrowserTool(client, "browser_resize", {
+    browserId: closed.browserId,
+    width: 390,
+    height: 844,
+  });
+  const staleUrl = await page.evaluate(
+    (id) => JSON.parse(localStorage.getItem("workspace-browser-store")).state.browsersById[id].url,
+    closed.browserId,
+  );
+  assert(
+    staleUrl === target.url,
+    "Background navigation fixture must leave the record URL stale before first presentation",
+  );
+  await revealBrowserForAfter(deck);
+  const row = deck.getByRole("tablist", { name: "Browser tabs", exact: true });
+  await deck.getByTestId(`workspace-tab-browser_${keeper.browserId}`).click();
+  await deck.getByTestId(`workspace-tab-browser_${closed.browserId}`).hover();
+  await deck.getByTestId(`workspace-browser-close-${closed.browserId}`).click();
+  await page.waitForFunction(() => !window.__task6ClosedGuest.isConnected);
+  assert(
+    await evaluateMain(
+      inspectorPort,
+      `process.mainModule.require('electron').webContents.fromId(${oldGuest.webContentsId}) == null`,
+    ),
+    "Closed browser retained native guest WebContents",
+  );
+  const persisted = await page.evaluate(
+    () => JSON.parse(localStorage.getItem("workspace-browser-store")).state,
+  );
+  assert(
+    !("lastClosedByWorkspace" in persisted) && !(closed.browserId in persisted.browsersById),
+    "Closed descriptor or browser record persisted",
+  );
+  await row.getByRole("button", { name: "All tabs", exact: true }).click();
+  const reopen = page.getByTestId("workspace-browser-reopen-last-closed").filter({ visible: true });
+  assert(await reopen.isEnabled(), "Manual close did not enable browser reopen menu");
+  await reopen.click();
+  const selectedId = async () =>
+    (await row.getByRole("tab", { selected: true }).getAttribute("data-testid")).replace(
+      "workspace-tab-browser_",
+      "",
+    );
+  let reopenedId = await selectedId();
+  assert(
+    reopenedId !== closed.browserId && reopenedId !== keeper.browserId,
+    "Reopen reused a closed id",
+  );
+  await ready(reopenedId);
+  const reopenedGuest = await readGuest(page, reopenedId);
+  assert(
+    reopenedGuest.webContentsId !== oldGuest.webContentsId,
+    "Reopen reused a destroyed native guest",
+  );
+  const restored = await callBrowserTool(client, "browser_evaluate", {
+    browserId: reopenedId,
+    function: "() => ({ url: location.href, width: innerWidth, height: innerHeight })",
+  });
+  const restoredState = JSON.parse(restored.resultJson);
+  assert(
+    restoredState.url === lastUrl && restoredState.width === 390 && restoredState.height === 844,
+    `Reopen lost URL/viewport: ${restored.resultJson}`,
+  );
+  assert(
+    await page.evaluate(
+      (id) =>
+        document.querySelector(`[data-paseo-browser-id="${id}"]`) !== window.__task6ClosedGuest,
+      reopenedId,
+    ),
+    "Reopen reused closed DOM reference",
+  );
+  await page.screenshot({ path: path.join(artifactDir, "browser-task6-reopened.png") });
+  await row.getByRole("button", { name: "All tabs", exact: true }).click();
+  assert(await reopen.isDisabled(), "Successful reopen did not consume closed descriptor");
+  await delay(200);
+  await page.screenshot({ path: path.join(artifactDir, "browser-task6-reopen-consumed.png") });
+  await page.keyboard.press("Escape");
+  const sendGuestKey = async (id, key, modifiers, focus = true) => {
+    const guest = await readGuest(page, id);
+    await evaluateMain(
+      inspectorPort,
+      `(() => { const wc = process.mainModule.require('electron').webContents.fromId(${guest.webContentsId}); ${focus ? "wc.focus();" : ""} wc.sendInputEvent(${JSON.stringify({ type: "keyDown", keyCode: key, modifiers })}); wc.sendInputEvent(${JSON.stringify({ type: "keyUp", keyCode: key, modifiers })}); return true; })()`,
+    );
+  };
+  const mod = process.platform === "darwin" ? "meta" : "control";
+  const focusField = async (id, iframe = false) => {
+    await callBrowserTool(client, "browser_evaluate", {
+      browserId: id,
+      function: iframe
+        ? "async () => { const frame = document.createElement('iframe'); frame.srcdoc = '<input id=iframe-typing>'; document.body.appendChild(frame); await new Promise(resolve => frame.onload = resolve); frame.contentDocument.querySelector('input').focus(); return true; }"
+        : "() => { document.querySelector('#typing-target').focus(); return true; }",
+    });
+  };
+  await focusField(reopenedId, true);
+  await sendGuestKey(reopenedId, "W", [mod]);
+  await deck.getByTestId(`workspace-tab-browser_${reopenedId}`).waitFor({ state: "detached" });
+  await deck.getByTestId(`workspace-tab-browser_${keeper.browserId}`).click();
+  await focusField(keeper.browserId);
+  await sendGuestKey(keeper.browserId, "Y", [mod, "shift"]);
+  await page.waitForFunction(
+    (old) =>
+      [...document.querySelectorAll('[role="tab"][aria-selected="true"]')].some(
+        (tab) =>
+          tab.getAttribute("data-testid")?.startsWith("workspace-tab-browser_") &&
+          tab.getAttribute("data-testid") !== `workspace-tab-browser_${old}`,
+      ),
+    keeper.browserId,
+  );
+  const fieldReopenedId = await selectedId();
+  assert(
+    fieldReopenedId !== reopenedId && fieldReopenedId !== keeper.browserId,
+    "Configured reopen did not cross the guest field",
+  );
+  await ready(fieldReopenedId);
+  await focusField(fieldReopenedId, true);
+  await sendGuestKey(fieldReopenedId, "]", ["alt", "shift"]);
+  await page.waitForFunction(
+    (id) =>
+      document
+        .querySelector(`[data-testid="workspace-tab-browser_${id}"]`)
+        ?.getAttribute("aria-selected") === "true",
+    keeper.browserId,
+  );
+  await focusField(keeper.browserId, true);
+  await sendGuestKey(keeper.browserId, "Y", [mod, "shift"]);
+  // No descriptor remains: the same binding must be absent from the browser policy.
+  await delay(150);
+  assert((await selectedId()) === keeper.browserId, "Unavailable reopen intercepted an iframe key");
+  await focusField(keeper.browserId);
+  await callBrowserTool(client, "browser_evaluate", {
+    browserId: keeper.browserId,
+    function:
+      "() => { window.task6Keys = []; window.task6Composition = []; for (const type of ['compositionstart', 'compositionupdate', 'compositionend']) window.addEventListener(type, event => window.task6Composition.push({ type, data: event.data, trusted: event.isTrusted })); window.addEventListener('keydown', event => window.task6Keys.push({ code: event.code, isComposing: event.isComposing, keyCode: event.keyCode, trusted: event.isTrusted })); return true; }",
+  });
+  const keeperGuest = await readGuest(page, keeper.browserId);
+  const beforeIme = (await callBrowserTool(client, "browser_list_tabs")).tabs.length;
+  writeJson(path.join(artifactDir, "browser-task6-before-ime.json"), {
+    closedId: closed.browserId,
+    oldGuest,
+    reopenedId,
+    reopenedGuest,
+    restoredState,
+    staleUrl,
+    fieldReopenedId,
+    keeperGuest,
+  });
+  await evaluateMain(
+    inspectorPort,
+    `process.mainModule.require('electron').webContents.fromId(${keeperGuest.webContentsId}).focus()`,
+  );
+  await clickGuestElement(page, client, keeper.browserId, "#typing-target");
+  assert(
+    await waitForGuestActiveElement(client, keeper.browserId, "typing-target"),
+    "IME fixture physical click did not focus root input",
+  );
+  await evaluateMain(
+    inspectorPort,
+    `process.mainModule.require('electron').webContents.fromId(${keeperGuest.webContentsId}).debugger.sendCommand('Input.imeSetComposition', { text: '仮', selectionStart: 0, selectionEnd: 1 })`,
+  );
+  const compositionBeforeKey = JSON.parse(
+    (
+      await callBrowserTool(client, "browser_evaluate", {
+        browserId: keeper.browserId,
+        function:
+          "() => ({ activeId: document.activeElement.id, events: window.task6Composition, inputValue: document.querySelector('#typing-target').value })",
+      })
+    ).resultJson,
+  );
+  writeJson(
+    path.join(artifactDir, "browser-task6-composition-before-key.json"),
+    compositionBeforeKey,
+  );
+  await sendGuestKey(keeper.browserId, "B", [mod, "shift"], false);
+  await delay(150);
+  const imeEvents = JSON.parse(
+    (
+      await callBrowserTool(client, "browser_evaluate", {
+        browserId: keeper.browserId,
+        function: "() => window.task6Keys",
+      })
+    ).resultJson,
+  );
+  const composition = JSON.parse(
+    (
+      await callBrowserTool(client, "browser_evaluate", {
+        browserId: keeper.browserId,
+        function:
+          "() => ({ events: window.task6Composition, inputValue: document.querySelector('#typing-target').value })",
+      })
+    ).resultJson,
+  );
+  writeJson(path.join(artifactDir, "browser-task6-ime-discriminator.json"), {
+    imeEvents,
+    composition,
+    tabs: (await callBrowserTool(client, "browser_list_tabs")).tabs,
+  });
+  assert(
+    imeEvents.some((event) => event.trusted && event.isComposing),
+    `No trusted composing key reached guest: ${JSON.stringify(imeEvents)}`,
+  );
+  assert(
+    (await callBrowserTool(client, "browser_list_tabs")).tabs.length === beforeIme,
+    "Browser creation shortcut escaped IME composition",
+  );
+  await evaluateMain(
+    inspectorPort,
+    `process.mainModule.require('electron').webContents.fromId(${keeperGuest.webContentsId}).debugger.sendCommand('Input.imeSetComposition', { text: '', selectionStart: 0, selectionEnd: 0 })`,
+  );
+  await evaluateMain(
+    inspectorPort,
+    `process.mainModule.require('electron').webContents.fromId(${keeperGuest.webContentsId}).debugger.sendCommand('Input.dispatchKeyEvent', ${JSON.stringify({ type: "keyDown", key: "B", code: "KeyB", windowsVirtualKeyCode: 229, modifiers: process.platform === "darwin" ? 9 : 3 })})`,
+  );
+  await delay(150);
+  const key229Events = JSON.parse(
+    (
+      await callBrowserTool(client, "browser_evaluate", {
+        browserId: keeper.browserId,
+        function: "() => window.task6Keys",
+      })
+    ).resultJson,
+  );
+  assert(
+    key229Events.some((event) => event.trusted && event.keyCode === 229),
+    `No trusted keyCode229 reached guest: ${JSON.stringify(key229Events)}`,
+  );
+  assert(
+    (await callBrowserTool(client, "browser_list_tabs")).tabs.length === beforeIme,
+    "Browser creation shortcut escaped keyCode229 containment",
+  );
+  await focusField(keeper.browserId, true);
+  await sendGuestKey(keeper.browserId, "B", [mod, "shift"]);
+  await page.waitForFunction(
+    (id) =>
+      [...document.querySelectorAll('[role="tab"][aria-selected="true"]')].some(
+        (tab) =>
+          tab.getAttribute("data-testid")?.startsWith("workspace-tab-browser_") &&
+          tab.getAttribute("data-testid") !== `workspace-tab-browser_${id}`,
+      ),
+    keeper.browserId,
+  );
+  const createdId = await selectedId();
+  assert(
+    createdId !== keeper.browserId && createdId !== fieldReopenedId,
+    "Browser creation shortcut failed from iframe",
+  );
+  const address = page
+    .getByRole("textbox", { name: "Address", exact: true })
+    .filter({ visible: true });
+  await address.press(process.platform === "darwin" ? "Meta+w" : "Control+w");
+  await deck.getByTestId(`workspace-tab-browser_${createdId}`).waitFor({ state: "detached" });
+  writeJson(path.join(artifactDir, "browser-task6-lifecycle.json"), {
+    closedId: closed.browserId,
+    oldGuest,
+    reopenedId,
+    reopenedGuest,
+    restoredState,
+    fieldReopenedId,
+    imeEvents,
+    key229Events,
+    createdId,
+  });
+  await hideBrowserForAfter(deck);
+  await callBrowserTool(client, "browser_close_tab", { browserId: fieldReopenedId });
+  await callBrowserTool(client, "browser_close_tab", { browserId: keeper.browserId });
+}
+
 async function verifyBrowserOverflow({ page, client, target, artifactDir, inspectorPort }) {
   const originalBounds = await evaluateMain(
     inspectorPort,
@@ -1828,6 +2137,33 @@ async function verifyBrowserLastOrdinary({ page, serverId, artifactDir }) {
     "Final ordinary browser disappeared",
   );
   await page.screenshot({ path: path.join(artifactDir, "browser-last-ordinary-explorer.png") });
+  const row = deck.getByRole("tablist", { name: "Browser tabs", exact: true });
+  await row.getByRole("button", { name: "All tabs", exact: true }).click();
+  const reopen = page.getByTestId("workspace-browser-reopen-last-closed").filter({ visible: true });
+  assert(await reopen.isDisabled(), "Empty launcher without descriptor must disable reopen");
+  await page.keyboard.press("Escape");
+  await row.getByRole("button", { name: "New browser tab", exact: true }).click();
+  const tabId = await row.getByRole("tab", { selected: true }).getAttribute("data-testid");
+  await page
+    .getByRole("textbox", { name: "Address", exact: true })
+    .filter({ visible: true })
+    .press(process.platform === "darwin" ? "Meta+w" : "Control+w");
+  await deck.getByTestId(tabId).waitFor({ state: "detached" });
+  assert(await row.isVisible(), "Closing the last browser removed its ordinary launcher");
+  await row.getByRole("button", { name: "All tabs", exact: true }).click();
+  assert(await reopen.isEnabled(), "Retained launcher cannot reopen its manually closed page");
+  await delay(200);
+  await page.screenshot({ path: path.join(artifactDir, "browser-task6-last-launcher-menu.png") });
+  await reopen.click();
+  assert(
+    (await row.getByRole("tab", { selected: true }).getAttribute("data-testid")) !== tabId,
+    "Launcher reopen reused a closed browser id",
+  );
+  await page
+    .getByRole("textbox", { name: "Address", exact: true })
+    .filter({ visible: true })
+    .click();
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+w" : "Control+w");
   await deck.getByRole("button", { name: "Close Explorer sidebar", exact: true }).click();
   await page.getByTestId(`sidebar-workspace-row-${serverId}:${workspaceIds[0]}`).click();
 }
@@ -2539,17 +2875,22 @@ async function main() {
     await page
       .getByTestId(`sidebar-workspace-row-${initialStatus.serverId}:${workspaceIds[0]}`)
       .waitFor({ state: "visible", timeout: timeoutMs });
-    const rendererEnvironment = await page.evaluate(() => {
+    const rendererEnvironment = await page.evaluate((testPhase) => {
       const key = "@paseo:app-settings";
       const settings = JSON.parse(localStorage.getItem(key) ?? "{}");
       // Existing journey selectors are English; use the app's persisted language setting.
       localStorage.setItem(key, JSON.stringify({ ...settings, language: "en" }));
+      if (testPhase === "after")
+        localStorage.setItem(
+          "@paseo:keyboard-shortcut-overrides",
+          JSON.stringify({ "workspace-browser-reopen-last-closed": "Mod+Shift+Y" }),
+        );
       return {
         language: navigator.language,
         languages: navigator.languages,
         fixtureLanguage: "en",
       };
-    });
+    }, phase);
     writeJson(path.join(artifactDir, "renderer-environment.json"), rendererEnvironment);
     await page.reload();
     const status = await waitForDesktopStatus(page);
@@ -2611,6 +2952,15 @@ async function main() {
         artifactDir,
         inspectorPort,
         reconnect,
+      });
+    if (phase === "after")
+      await verifyBrowserCloseReopen({
+        page,
+        client,
+        serverId: status.serverId,
+        target,
+        artifactDir,
+        inspectorPort,
       });
     if (phase === "after")
       await verifyBrowserOverflow({ page, client, target, artifactDir, inspectorPort });

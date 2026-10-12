@@ -3,7 +3,6 @@ import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/pr
 import { getDesktopHost, type DesktopHostBridge } from "@/desktop/host";
 import {
   ensureResidentBrowserWebview as ensureResidentBrowserWebviewDefault,
-  removeResidentBrowserWebview,
   resizeResidentBrowserWebview,
 } from "@/desktop/browser/resident-webviews";
 import {
@@ -14,7 +13,7 @@ import {
 import { collectAllTabs, useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { useSessionStore } from "@/stores/session-store";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
-import { openWorkspaceBrowser } from "@/workspace-tabs/browser";
+import { closeWorkspaceBrowser, openWorkspaceBrowser } from "@/workspace-tabs/browser";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 
 type BrowserAutomationExecuteRequest = Extract<
@@ -282,10 +281,10 @@ async function closeBrowserTabForRequest(params: {
     });
   }
 
-  useWorkspaceLayoutStore.getState().closeTab(workspaceTab.workspaceKey, workspaceTab.tabId);
-  useBrowserStore.getState().removeBrowser(browserId);
-  removeResidentBrowserWebview(browserId);
-  await browserHost?.unregisterWorkspaceBrowser?.(browserId);
+  await closeWorkspaceBrowser(
+    { workspaceKey: workspaceTab.workspaceKey, browserId, remember: false },
+    browserHost,
+  );
 
   return {
     requestId: request.requestId,
@@ -374,26 +373,10 @@ async function openBrowserTabForRequest(params: {
       message: `Cannot create a browser tab: ${opened.code}.`,
     });
   }
-  const { browserId, tabId } = opened;
+  const { browserId } = opened;
   const normalizedUrl = getBrowserRecord(browserId)!.url;
-  const cleanup = () => {
-    const restoration =
-      useWorkspaceLayoutStore.getState().focusRestorationByWorkspace[workspaceKey];
-    useWorkspaceLayoutStore.getState().closeTab(workspaceKey, tabId);
-    if (restoration)
-      useWorkspaceLayoutStore.setState((state) => ({
-        focusRestorationByWorkspace: {
-          ...state.focusRestorationByWorkspace,
-          [workspaceKey]: restoration,
-        },
-      }));
-    useBrowserStore.getState().removeBrowser(browserId);
-    removeResidentBrowserWebview(browserId);
-    // Preserve the registration error if unregister also fails.
-    void Promise.resolve()
-      .then(() => browserHost?.unregisterWorkspaceBrowser?.(browserId))
-      .catch(() => {});
-  };
+  const cleanup = () =>
+    closeWorkspaceBrowser({ workspaceKey, browserId, remember: false }, browserHost);
 
   try {
     if (browserHost?.executeAutomationCommand) {
@@ -402,6 +385,7 @@ async function openBrowserTabForRequest(params: {
         request,
         browserId,
         workspaceId,
+        workspaceKey,
         executeAutomationCommand: browserHost.executeAutomationCommand,
         ...(registrationWaitTimeoutMs !== undefined
           ? { timeoutMs: registrationWaitTimeoutMs }
@@ -411,7 +395,7 @@ async function openBrowserTabForRequest(params: {
           : {}),
       });
       if (!registered) {
-        cleanup();
+        await cleanup().catch(() => {});
         return browserAutomationFailure({
           requestId: request.requestId,
           code: "browser_timeout",
@@ -427,7 +411,8 @@ async function openBrowserTabForRequest(params: {
       result: { command: "new_tab", browserId, workspaceId, url: normalizedUrl },
     };
   } catch (error) {
-    cleanup();
+    // Preserve the registration error even if cleanup fails.
+    await cleanup().catch(() => {});
     throw error;
   }
 }
@@ -436,31 +421,64 @@ async function waitForBrowserRegistration(params: {
   request: BrowserAutomationExecuteRequest;
   browserId: string;
   workspaceId: string;
+  workspaceKey: string;
   executeAutomationCommand: (
     request: BrowserAutomationExecuteRequest,
   ) => Promise<BrowserAutomationResponsePayload>;
   timeoutMs?: number;
   pollIntervalMs?: number;
 }): Promise<boolean> {
-  const deadline = Date.now() + (params.timeoutMs ?? 5_000);
-  while (Date.now() < deadline) {
-    const payload = await params.executeAutomationCommand({
-      type: "browser.automation.execute.request",
-      requestId: `${params.request.requestId}:list_tabs`,
-      agentId: params.request.agentId,
-      cwd: params.request.cwd,
-      workspaceId: params.workspaceId,
-      command: { command: "list_tabs", args: {} },
-    });
-    if (!payload.ok) throw payload.error;
-    if (payload.result.command === "list_tabs") {
-      if (payload.result.tabs.some((tab) => tab.browserId === params.browserId)) {
+  const isClosed = () => {
+    const layout = useWorkspaceLayoutStore.getState().layoutByWorkspace[params.workspaceKey];
+    return (
+      !getBrowserRecord(params.browserId) ||
+      !layout ||
+      !collectAllTabs(layout.root).some(
+        (tab) => tab.target.kind === "browser" && tab.target.browserId === params.browserId,
+      )
+    );
+  };
+  const closedError = {
+    code: "browser_tab_closed",
+    message: `Browser tab ${params.browserId} was closed while registering.`,
+  };
+  let onChange = () => {};
+  const closed = new Promise<never>((_resolve, reject) => {
+    onChange = () => {
+      if (isClosed()) reject(closedError);
+    };
+  });
+  const unsubscribeBrowser = useBrowserStore.subscribe(onChange);
+  const unsubscribeLayout = useWorkspaceLayoutStore.subscribe(onChange);
+  try {
+    const deadline = Date.now() + (params.timeoutMs ?? 5_000);
+    while (Date.now() < deadline) {
+      if (isClosed()) throw closedError;
+      const payload = await Promise.race([
+        params.executeAutomationCommand({
+          type: "browser.automation.execute.request",
+          requestId: `${params.request.requestId}:list_tabs`,
+          agentId: params.request.agentId,
+          cwd: params.request.cwd,
+          workspaceId: params.workspaceId,
+          command: { command: "list_tabs", args: {} },
+        }),
+        closed,
+      ]);
+      if (isClosed()) throw closedError;
+      if (!payload.ok) throw payload.error;
+      if (
+        payload.result.command === "list_tabs" &&
+        payload.result.tabs.some((tab) => tab.browserId === params.browserId)
+      )
         return true;
-      }
+      await Promise.race([delay(params.pollIntervalMs ?? 100), closed]);
     }
-    await delay(params.pollIntervalMs ?? 100);
+    return false;
+  } finally {
+    unsubscribeBrowser();
+    unsubscribeLayout();
   }
-  return false;
 }
 
 function delay(ms: number): Promise<void> {

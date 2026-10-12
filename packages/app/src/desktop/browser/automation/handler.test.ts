@@ -11,7 +11,12 @@ import {
 } from "@/stores/workspace-layout-actions";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { useSessionStore } from "@/stores/session-store";
-import { openWorkspaceBrowser } from "@/workspace-tabs/browser";
+import {
+  closeWorkspaceBrowser,
+  reopenLastWorkspaceBrowser,
+  openWorkspaceBrowser,
+} from "@/workspace-tabs/browser";
+import { purgeArchivedWorkspaceState } from "@/workspace/use-workspace-archive";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 
 vi.hoisted(async () => {
@@ -90,6 +95,9 @@ class FakeBrowserBridge {
   }> = [];
   public response: BrowserAutomationResponsePayload | null = null;
   public thrownError: unknown = null;
+  public pendingResponse: Promise<BrowserAutomationResponsePayload> | null = null;
+  public unregisterWait: Promise<void> | null = null;
+  public unregisterError: unknown = null;
 
   public executeAutomationCommand = async (
     request: BrowserAutomationExecuteRequest,
@@ -98,11 +106,13 @@ class FakeBrowserBridge {
     if (this.thrownError) {
       throw this.thrownError;
     }
-    return this.response ?? currentListTabsPayload(request.requestId);
+    return this.pendingResponse ?? this.response ?? currentListTabsPayload(request.requestId);
   };
 
   public unregisterWorkspaceBrowser = async (browserId: string): Promise<void> => {
     this.unregisteredWorkspaceBrowsers.push(browserId);
+    await this.unregisterWait;
+    if (this.unregisterError) throw this.unregisterError;
   };
 
   public setWorkspaceActiveBrowser = async (input: {
@@ -319,7 +329,7 @@ useWorkspaceLayoutStore.persist.setOptions({
 describe("mountBrowserAutomationHandler", () => {
   beforeEach(() => {
     browserAutomationStorage.clear();
-    useBrowserStore.setState({ browsersById: {} });
+    useBrowserStore.setState({ browsersById: {}, lastClosedByWorkspace: {} });
     useWorkspaceLayoutStore.setState({
       layoutByWorkspace: {},
       browserPaneIdByWorkspace: {},
@@ -329,6 +339,207 @@ describe("mountBrowserAutomationHandler", () => {
     });
     useSessionStore.setState({ sessions: {} });
     seedWorkspace("server-1", "wks_workspace_a");
+  });
+
+  test("manual close restores the last URL and viewport with a new browser id", async () => {
+    const workspaceKey = seedWorkspace("server-1", "wks_workspace_a");
+    const opened = openWorkspaceBrowser({
+      workspaceKey,
+      url: "https://example.com/last",
+      intent: "reveal",
+    });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) throw new Error(opened.code);
+    useBrowserStore
+      .getState()
+      .setBrowserViewport(opened.browserId, { mode: "fixed", width: 390, height: 844 });
+    await closeWorkspaceBrowser({ workspaceKey, browserId: opened.browserId, remember: true });
+    const result = reopenLastWorkspaceBrowser(workspaceKey);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.code);
+    expect(result.browserId).not.toBe(opened.browserId);
+    expect(getBrowserRecord(result.browserId)?.url).toBe("https://example.com/last");
+    expect(getBrowserRecord(result.browserId)?.viewport).toEqual({
+      mode: "fixed",
+      width: 390,
+      height: 844,
+    });
+    expect(getBrowserRecord(opened.browserId)).toBeNull();
+    expect(useBrowserStore.getState().lastClosedByWorkspace[workspaceKey]).toBeUndefined();
+  });
+
+  test("closed descriptors are memory only and a failed reopen keeps them", async () => {
+    const workspaceKey = seedWorkspace("server-1", "wks_workspace_a");
+    const opened = openWorkspaceBrowser({
+      workspaceKey,
+      url: "https://example.com/closed",
+      intent: "reveal",
+    });
+    if (!opened.ok) throw new Error(opened.code);
+    await closeWorkspaceBrowser({ workspaceKey, browserId: opened.browserId, remember: true });
+    const persisted = browserAutomationStorage.getItem("workspace-browser-store")!;
+    expect(JSON.parse(persisted).state).not.toHaveProperty("lastClosedByWorkspace");
+    useSessionStore.setState({ sessions: {} });
+    expect(reopenLastWorkspaceBrowser(workspaceKey)).toEqual({
+      ok: false,
+      code: "workspace_unavailable",
+    });
+    expect(Object.keys(useBrowserStore.getState().browsersById)).toHaveLength(0);
+    expect(useBrowserStore.getState().lastClosedByWorkspace[workspaceKey]?.url).toBe(
+      "https://example.com/closed",
+    );
+    useBrowserStore.setState({ lastClosedByWorkspace: {} });
+    await useBrowserStore.persist.rehydrate();
+    expect(useBrowserStore.getState().lastClosedByWorkspace).toEqual({});
+    expect(reopenLastWorkspaceBrowser(workspaceKey)).toEqual({
+      ok: false,
+      code: "browser_unavailable",
+    });
+  });
+
+  test("a second close is idempotent before unregister finishes and bridge errors retain local cleanup", async () => {
+    const workspaceKey = seedWorkspace("server-1", "wks_workspace_a");
+    const opened = openWorkspaceBrowser({ workspaceKey, intent: "background" });
+    if (!opened.ok) throw new Error(opened.code);
+    const bridge = new FakeBrowserBridge();
+    let finish!: () => void;
+    bridge.unregisterWait = new Promise((resolve) => {
+      finish = resolve;
+    });
+    const failure = new Error("unregister failed");
+    bridge.unregisterError = failure;
+    const first = closeWorkspaceBrowser(
+      { workspaceKey, browserId: opened.browserId, remember: true },
+      bridge,
+    );
+    await closeWorkspaceBrowser(
+      { workspaceKey, browserId: opened.browserId, remember: true },
+      bridge,
+    );
+    expect(bridge.unregisteredWorkspaceBrowsers).toEqual([opened.browserId]);
+    expect(getBrowserRecord(opened.browserId)).toBeNull();
+    expect(workspaceBrowserTabs(workspaceKey, opened.browserId)).toEqual([]);
+    finish();
+    await expect(first).rejects.toBe(failure);
+    expect(useBrowserStore.getState().lastClosedByWorkspace[workspaceKey]).toBeDefined();
+  });
+
+  test("closing during a pending registration cancels new_tab without recreating its guest", async () => {
+    const browser = new BrowserAutomationHandlerHarness();
+    browser.browser.pendingResponse = new Promise(() => {});
+    browser.mount({ serverId: "server-1" });
+    browser.receive(browserNewTabRequest());
+    await flushAsyncWork();
+    const browserId = Object.keys(useBrowserStore.getState().browsersById)[0];
+    const workspaceKey = seedWorkspace("server-1", "wks_workspace_a");
+    await closeWorkspaceBrowser({ workspaceKey, browserId, remember: false }, browser.browser);
+    await flushAsyncWork();
+    expect(browser.client.payloadAt(0)).toMatchObject({
+      ok: false,
+      error: { code: "browser_tab_closed" },
+    });
+    expect(browser.resident.ensuredWebviews).toHaveLength(1);
+    expect(browser.browser.unregisteredWorkspaceBrowsers).toEqual([browserId]);
+    expect(getBrowserRecord(browserId)).toBeNull();
+    expect(useBrowserStore.getState().lastClosedByWorkspace).toEqual({});
+    browser.unmount();
+  });
+
+  test("reopen reuses a compatible retained pane and falls back after it becomes mixed", async () => {
+    const workspaceKey = seedWorkspace("server-1", "wks_workspace_a");
+    const first = openWorkspaceBrowser({ workspaceKey, intent: "reveal" });
+    if (!first.ok) throw new Error(first.code);
+    const second = openWorkspaceBrowser({ workspaceKey, intent: "background" });
+    if (!second.ok) throw new Error(second.code);
+    const paneId = findPaneContainingTab(
+      useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey].root,
+      first.tabId,
+    )!.id;
+    await closeWorkspaceBrowser({ workspaceKey, browserId: first.browserId, remember: true });
+    const reopened = reopenLastWorkspaceBrowser(workspaceKey);
+    if (!reopened.ok) throw new Error(reopened.code);
+    expect(
+      findPaneContainingTab(
+        useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey].root,
+        reopened.tabId,
+      )?.id,
+    ).toBe(paneId);
+    await closeWorkspaceBrowser({ workspaceKey, browserId: reopened.browserId, remember: true });
+    useWorkspaceLayoutStore.getState().openTab({
+      workspaceKey,
+      target: { kind: "draft", draftId: "mixed" },
+      intent: "background",
+      placement: { mode: "pane", paneId },
+    });
+    const fallback = reopenLastWorkspaceBrowser(workspaceKey);
+    if (!fallback.ok) throw new Error(fallback.code);
+    expect(
+      findPaneContainingTab(
+        useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey].root,
+        fallback.tabId,
+      )?.id,
+    ).not.toBe(paneId);
+  });
+
+  test("closing from another workspace cannot remove its browser record", async () => {
+    const workspaceKey = seedWorkspace("server-1", "wks_workspace_a");
+    const otherKey = seedWorkspace("server-1", "wks_workspace_b");
+    const opened = openWorkspaceBrowser({ workspaceKey, intent: "background" });
+    if (!opened.ok) throw new Error(opened.code);
+    const bridge = new FakeBrowserBridge();
+    await closeWorkspaceBrowser(
+      { workspaceKey: otherKey, browserId: opened.browserId, remember: true },
+      bridge,
+    );
+    expect(getBrowserRecord(opened.browserId)).not.toBeNull();
+    expect(bridge.unregisteredWorkspaceBrowsers).toEqual([]);
+    expect(useBrowserStore.getState().lastClosedByWorkspace).toEqual({});
+  });
+
+  test("purge removes hidden pages and closed memory while isolating another workspace", async () => {
+    const workspaceKey = seedWorkspace("server-1", "wks_workspace_a");
+    const otherKey = seedWorkspace("server-1", "wks_workspace_b");
+    const first = openWorkspaceBrowser({ workspaceKey, intent: "background" });
+    const second = openWorkspaceBrowser({ workspaceKey, intent: "background" });
+    const other = openWorkspaceBrowser({ workspaceKey: otherKey, intent: "background" });
+    if (!first.ok || !second.ok || !other.ok) throw new Error("expected opens");
+    await closeWorkspaceBrowser({ workspaceKey, browserId: first.browserId, remember: true });
+    useBrowserStore.setState((state) => ({
+      lastClosedByWorkspace: {
+        ...state.lastClosedByWorkspace,
+        [otherKey]: {
+          url: "https://example.com/other",
+          viewport: { mode: "responsive" },
+          paneId: null,
+        },
+      },
+    }));
+    const bridge = new FakeBrowserBridge();
+    const bridgeError = new Error("archive unregister failed");
+    bridge.unregisterError = bridgeError;
+    await expect(
+      purgeArchivedWorkspaceState({ serverId: "server-1", workspaceId: "wks_workspace_a" }, bridge),
+    ).rejects.toBe(bridgeError);
+    expect(bridge.unregisteredWorkspaceBrowsers).toEqual([second.browserId]);
+    expect(useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey]).toBeUndefined();
+    expect(getBrowserRecord(second.browserId)).toBeNull();
+    expect(useBrowserStore.getState().lastClosedByWorkspace[workspaceKey]).toBeUndefined();
+    expect(getBrowserRecord(other.browserId)).not.toBeNull();
+    expect(useBrowserStore.getState().lastClosedByWorkspace[otherKey]?.url).toBe(
+      "https://example.com/other",
+    );
+    useBrowserStore.setState((state) => ({
+      lastClosedByWorkspace: {
+        ...state.lastClosedByWorkspace,
+        [workspaceKey]: {
+          url: "https://example.com/stale",
+          viewport: { mode: "responsive" },
+          paneId: null,
+        },
+      },
+    }));
+    useWorkspaceLayoutStore.getState().purgeWorkspace(workspaceKey);
+    expect(useBrowserStore.getState().lastClosedByWorkspace[workspaceKey]).toBeUndefined();
   });
 
   test("browser_new_tab creates a workspace browser tab without stealing focus", async () => {
@@ -572,6 +783,7 @@ describe("mountBrowserAutomationHandler", () => {
     expect(useBrowserStore.getState().browsersById[result.browserId]).toBeUndefined();
     expect(browser.browser.unregisteredWorkspaceBrowsers).toEqual([result.browserId]);
     expect(currentBrowserTabs()).toEqual([]);
+    expect(useBrowserStore.getState().lastClosedByWorkspace).toEqual({});
   });
 
   test("browser_close_tab returns not found after the tab is gone", async () => {

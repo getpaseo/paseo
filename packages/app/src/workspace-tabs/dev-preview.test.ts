@@ -107,7 +107,7 @@ function resetStores() {
     sidePaneIdByWorkspace: {},
     explorerSidebarPaneIdByWorkspace: {},
   });
-  useBrowserStore.setState({ browsersById: {} });
+  useBrowserStore.setState({ browsersById: {}, lastClosedByWorkspace: {} });
   useSessionStore.setState({ sessions: {} });
   useSessionStore.getState().initializeSession(SERVER_ID, null);
   useSessionStore.getState().setWorkspaces(

@@ -19,6 +19,7 @@ const residentWebviewSizesByBrowserId = new Map<string, { width: number; height:
 interface BrowserWebviewElement extends HTMLElement {
   src: string;
   getWebContentsId(): number;
+  getURL?(): string;
 }
 
 interface BrowserWebviewIdentity {
@@ -371,6 +372,17 @@ export function getResidentBrowserWebview(browserId: string): HTMLElement | null
   }
   const ownerDocument = readDocument();
   return ownerDocument ? findBrowserWebview(normalizedBrowserId, ownerDocument) : null;
+}
+
+/** A parked guest can navigate before any pane has installed its navigation listeners. */
+export function readResidentBrowserUrl(browserId: string): string | null {
+  const webview = getResidentBrowserWebview(browserId) as BrowserWebviewElement | null;
+  try {
+    return webview && webview.getWebContentsId() > 0 ? trimNonEmpty(webview.getURL?.()) : null;
+  } catch {
+    // Electron guest methods throw until the webview is ready.
+    return null;
+  }
 }
 
 export function takeResidentBrowserWebview(browserId: string): HTMLElement | null {
