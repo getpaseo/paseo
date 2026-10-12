@@ -1,31 +1,56 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { runInNewContext } from "node:vm";
-import { afterEach, expect, it, vi } from "vitest";
+import { createContext, runInContext } from "node:vm";
+import ts from "typescript";
+import { expect, it } from "vitest";
 
-vi.mock("expo-crypto", () => ({
-  getRandomValues: <T extends ArrayBufferView | null>(array: T): T => array,
-}));
-
-afterEach(() => {
-  vi.unstubAllGlobals();
+it("installs navigator before the app entry loads its other dependencies", () => {
+  const entry = ts.createSourceFile(
+    "index.ts",
+    readFileSync(new URL("../../index.ts", import.meta.url), "utf8"),
+    ts.ScriptTarget.Latest,
+  );
+  const imports = entry.statements.filter(ts.isImportDeclaration);
+  expect(imports[0]?.moduleSpecifier.getText(entry)).toBe('"./src/polyfills/install-early"');
+  const early = ts.createSourceFile(
+    "install-early.ts",
+    readFileSync(new URL("./install-early.ts", import.meta.url), "utf8"),
+    ts.ScriptTarget.Latest,
+  );
+  expect(
+    early.statements.some(
+      (statement) =>
+        ts.isExpressionStatement(statement) &&
+        ts.isCallExpression(statement.expression) &&
+        statement.expression.expression.getText(early) === "polyfillNavigator",
+    ),
+  ).toBe(true);
 });
 
-it("installs the early polyfills before any other app entry import", () => {
-  const entry = readFileSync(new URL("../../index.ts", import.meta.url), "utf8");
-  const firstImport = entry.match(/^import\s.*$/m)?.[0];
-  expect(firstImport).toBe('import "./src/polyfills/install-early";');
-});
-
-it("loads the native terminal dependency after the early polyfills run", async () => {
-  // React Native exposes a navigator without userAgent until the polyfill runs.
-  vi.stubGlobal("navigator", {});
-  await import("./install-early");
-
+it("initializes the native navigator before evaluating the real terminal dependency", () => {
   const require = createRequire(import.meta.url);
-  const source = readFileSync(require.resolve("@xterm/headless"), "utf8");
-  const module = { exports: {} };
-  expect(() =>
-    runInNewContext(source, { navigator: globalThis.navigator, module, exports: module.exports }),
-  ).not.toThrow();
+  const terminalSource = readFileSync(require.resolve("@xterm/headless"), "utf8");
+  const navigatorSource = ts.transpileModule(
+    readFileSync(new URL("./navigator.ts", import.meta.url), "utf8"),
+    { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } },
+  ).outputText;
+  // Each VM owns its globals, so the native navigator shape never replaces
+  // globals in the test runner or needs a native-module mock.
+  const uninitialized = createContext({
+    navigator: {},
+    window: {},
+    module: { exports: {} },
+    exports: {},
+  });
+  expect(() => runInContext(terminalSource, uninitialized)).toThrow(/includes/);
+
+  const initialized = createContext({
+    navigator: {},
+    window: {},
+    module: { exports: {} },
+    exports: {},
+  });
+  runInContext(navigatorSource, initialized);
+  runInContext("exports.polyfillNavigator()", initialized);
+  expect(() => runInContext(terminalSource, initialized)).not.toThrow();
 });
