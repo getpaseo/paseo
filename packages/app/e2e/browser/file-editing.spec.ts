@@ -702,9 +702,14 @@ test.describe("CodeMirror workspace file editing", () => {
     await writeFile(path.join(workspace.repoPath, "data", "cache", "hero.png"), RED_PIXEL);
     await writeFile(
       path.join(workspace.repoPath, "docs", "guide.md"),
-      ["# Guide", "", "![sibling](./sibling.png)", "", "![hero](../data/cache/hero.png)", ""].join(
-        "\n",
-      ),
+      [
+        "# Guide",
+        "",
+        "![sibling](./sibling.png)",
+        "",
+        "![hero](../data/cache/hero.png?v=2#preview)",
+        "",
+      ].join("\n"),
       "utf8",
     );
     await workspace.navigateTo();

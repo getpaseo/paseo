@@ -126,8 +126,9 @@ export function resolveMarkdownPreviewImageSource(input: {
     return source;
   }
 
+  const pathSource = source.replace(/[?#].*$/, "");
   const path = localFileSourceToPath(
-    source.startsWith("file://") ? source : decodeRelativeSource(source),
+    pathSource.startsWith("file://") ? pathSource : decodeRelativeSource(pathSource),
   );
   if (!path) {
     return null;

@@ -59,6 +59,33 @@ describe("resolveMarkdownPreviewImageSource", () => {
     ).toBe("/Users/test/project/docs/images/hero.png");
   });
 
+  it("ignores local URL query strings and fragments", () => {
+    expect(
+      resolveMarkdownPreviewImageSource({
+        source: "./images/hero.png?v=2#preview",
+        markdownPath: "docs/guide.md",
+        workspaceRoot: "/workspace",
+      }),
+    ).toBe("/workspace/docs/images/hero.png");
+  });
+
+  it("preserves encoded filename characters when stripping URL suffixes", () => {
+    expect(
+      resolveMarkdownPreviewImageSource({
+        source: "./hero%23draft%3Fv.png?v=2#preview",
+        markdownPath: "docs/guide.md",
+        workspaceRoot: "/workspace",
+      }),
+    ).toBe("/workspace/docs/hero#draft?v.png");
+  });
+
+  it("preserves remote URL query strings and fragments", () => {
+    const source = "https://example.com/hero.png?v=2#preview";
+    expect(resolveMarkdownPreviewImageSource({ source, markdownPath: "docs/guide.md" })).toBe(
+      source,
+    );
+  });
+
   it("resolves parent-relative images that stay inside the workspace", () => {
     expect(
       resolveMarkdownPreviewImageSource({
