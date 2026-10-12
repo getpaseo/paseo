@@ -179,6 +179,7 @@ async function mergeFeatureIntoBaseWorktree(baseName: string): Promise<void> {
     git({ cwd: base, args: ["config", "user.name", "Paseo Test"] });
     git({ cwd: base, args: ["config", "user.email", "test@paseo.local"] });
     git({ cwd: base, args: ["config", "commit.gpgsign", "false"] });
+    git({ cwd: base, args: ["config", "core.autocrlf", "false"] });
     git({ cwd: base, args: ["commit", "--allow-empty", "-m", "base"] });
     git({ cwd: base, args: ["worktree", "add", "-b", "feature", feature] });
     writeFileSync(path.join(feature, "feature.txt"), "feature payload\n");
