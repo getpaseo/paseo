@@ -36,6 +36,7 @@ export interface TerminalEmulatorProps {
   testId?: string;
   xtermTheme?: ITheme;
   scrollbackLines: number;
+  copyOnSelect?: boolean;
   fontFamily?: string;
   fontSize?: number;
   keyboardInset?: number;

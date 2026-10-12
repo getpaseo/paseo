@@ -401,6 +401,37 @@ describe("terminal emulator runtime in a real browser", () => {
     });
   });
 
+  it("copies the selection to the clipboard only when copy on select is on", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    await waitFor({ predicate: () => window.__paseoTerminal !== undefined });
+    const terminal = window.__paseoTerminal!;
+    const execCommand = vi.spyOn(document, "execCommand").mockReturnValue(true);
+
+    terminal.select(0, 0, 4);
+    expect(execCommand).not.toHaveBeenCalled();
+
+    mounted.runtime.setCopyOnSelect(true);
+    terminal.select(0, 0, 5);
+    expect(execCommand).toHaveBeenCalledExactlyOnceWith("copy");
+  });
+
+  it("does not copy find matches when copy on select is on", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    await waitFor({ predicate: () => window.__paseoTerminal !== undefined });
+    await new Promise<void>((resolve) =>
+      mounted.runtime.write({ data: terminalOutput("needle haystack"), onCommitted: resolve }),
+    );
+    const execCommand = vi.spyOn(document, "execCommand").mockReturnValue(true);
+    mounted.runtime.setCopyOnSelect(true);
+
+    mounted.runtime.find.search("needle", "next");
+
+    expect(window.__paseoTerminal?.getSelection()).toBe("needle");
+    expect(execCommand).not.toHaveBeenCalled();
+  });
+
   it("pastes through xterm's input producer", async () => {
     await page.viewport(900, 600);
     const mounted = createTerminalHost({ width: 720, height: 360 });

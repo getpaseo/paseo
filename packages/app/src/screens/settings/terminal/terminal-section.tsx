@@ -4,6 +4,8 @@ import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { SettingsSection } from "@/components/settings";
 import { FormTextInput } from "@/components/ui/form-field";
+import { Switch } from "@/components/ui/switch";
+import { isWeb } from "@/constants/platform";
 import { parseTerminalScrollbackLines, useAppSettings } from "@/hooks/use-settings";
 import { settingsStyles } from "@/styles/settings";
 
@@ -24,6 +26,13 @@ export function TerminalSection() {
       void updateSettings({ terminalScrollbackLines: nextValue });
     }
   }, [scrollbackValue, settings.terminalScrollbackLines, updateSettings]);
+
+  const handleCopyOnSelectChange = useCallback(
+    (terminalCopyOnSelect: boolean) => {
+      void updateSettings({ terminalCopyOnSelect });
+    },
+    [updateSettings],
+  );
 
   useEffect(() => {
     setScrollbackValue(String(settings.terminalScrollbackLines));
@@ -54,6 +63,24 @@ export function TerminalSection() {
             accessibilityLabel={t("settings.general.terminalScrollback.accessibilityLabel")}
           />
         </View>
+        {/* Native terminals copy through the floating Copy action instead. */}
+        {isWeb ? (
+          <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+            <View style={settingsStyles.rowContent}>
+              <Text style={settingsStyles.rowTitle}>
+                {t("settings.general.terminalCopyOnSelect.label")}
+              </Text>
+              <Text style={settingsStyles.rowHint}>
+                {t("settings.general.terminalCopyOnSelect.description")}
+              </Text>
+            </View>
+            <Switch
+              value={settings.terminalCopyOnSelect}
+              onValueChange={handleCopyOnSelectChange}
+              accessibilityLabel={t("settings.general.terminalCopyOnSelect.label")}
+            />
+          </View>
+        ) : null}
       </View>
     </SettingsSection>
   );

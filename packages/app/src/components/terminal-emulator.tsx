@@ -109,6 +109,7 @@ interface TerminalEmulatorProps {
   testId?: string;
   xtermTheme?: ITheme;
   scrollbackLines: number;
+  copyOnSelect?: boolean;
   fontFamily?: string;
   fontSize?: number;
   keyboardInset?: number;
@@ -174,6 +175,7 @@ export default function TerminalEmulator({
     cursor: "#e6e6e6",
   },
   scrollbackLines,
+  copyOnSelect = false,
   fontFamily,
   fontSize,
   swipeGesturesEnabled = false,
@@ -203,6 +205,8 @@ export default function TerminalEmulator({
   const fontSizeRef = useRef(fontSize);
   const scrollbackLinesRef = useRef(scrollbackLines);
   scrollbackLinesRef.current = scrollbackLines;
+  const copyOnSelectRef = useRef(copyOnSelect);
+  copyOnSelectRef.current = copyOnSelect;
   fontFamilyRef.current = fontFamily;
   fontSizeRef.current = fontSize;
   const themeKey = useMemo(() => buildXtermThemeKey(xtermTheme), [xtermTheme]);
@@ -343,6 +347,10 @@ export default function TerminalEmulator({
   }, [scrollbackLines]);
 
   useEffect(() => {
+    runtimeRef.current?.setCopyOnSelect(copyOnSelect);
+  }, [copyOnSelect]);
+
+  useEffect(() => {
     const root = rootRef.current;
     if (!root || !swipeGesturesEnabled) {
       return () => {};
@@ -474,6 +482,7 @@ export default function TerminalEmulator({
       },
     });
     runtime.setPendingModifiers({ pendingModifiers: pendingModifiersRef.current });
+    runtime.setCopyOnSelect(copyOnSelectRef.current);
     runtime.mount({
       root,
       host,
