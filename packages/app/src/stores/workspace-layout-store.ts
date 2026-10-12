@@ -129,7 +129,10 @@ interface WorkspaceLayoutStore {
   hideExplorerSidebar: (workspaceKey: string) => void;
   /** Returns the ordinary right-side workspace pane, creating it when absent. */
   ensureSidePane: (workspaceKey: string, options?: { focus: boolean }) => string | null;
-  ensureBrowserPane: (workspaceKey: string, options: { reveal: boolean }) => string | null;
+  ensureBrowserPane: (
+    workspaceKey: string,
+    options: { reveal: boolean; reuseVisibleLauncher?: boolean },
+  ) => string | null;
   hideBrowserPane: (workspaceKey: string) => void;
   closeTab: (workspaceKey: string, tabId: string) => void;
   focusTab: (workspaceKey: string, tabId: string) => void;
@@ -915,6 +918,15 @@ export function createWorkspaceLayoutStore(
               state.browserPaneIdByWorkspace[key],
               explorerPaneId,
             );
+            if (paneId && options.reuseVisibleLauncher === false) {
+              const candidate = findPaneById(layout.root, paneId);
+              const candidateTabs = candidate
+                ? collectAllTabs({ kind: "pane", pane: candidate })
+                : [];
+              const hasVisibleLauncher =
+                candidate?.hidden !== true && candidateTabs[0]?.target.kind === "new_tab";
+              if (hasVisibleLauncher) paneId = resolveBrowserPaneId(layout, null, explorerPaneId);
+            }
             let nextLayout = layout;
             if (paneId) {
               if (options.reveal) {

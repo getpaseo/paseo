@@ -108,9 +108,10 @@ function resolveBrowserPlacement(
   }
   if (context.existing) return placement ?? { mode: "ambient" };
   if (!placement) {
-    const paneId = useWorkspaceLayoutStore
-      .getState()
-      .ensureBrowserPane(context.workspaceKey, { reveal: input.intent === "reveal" });
+    const paneId = useWorkspaceLayoutStore.getState().ensureBrowserPane(context.workspaceKey, {
+      reveal: input.intent === "reveal",
+      reuseVisibleLauncher: input.intent !== "background",
+    });
     return paneId ? { mode: "pane", paneId } : null;
   }
   const focused = findPaneById(context.layout.root, context.layout.focusedPaneId);

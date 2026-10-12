@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.hoisted(async () => {
+  const { indexedDB } = await import("fake-indexeddb");
+  globalThis.indexedDB = indexedDB;
+});
+
 vi.mock("@react-native-async-storage/async-storage", () => {
   const storage = new Map<string, string>();
   return {
@@ -100,6 +105,46 @@ it.each(["reveal", "background"] as const)(
         .getWorkspaceTabs(workspaceKey)
         .find((tab) => tab.tabId === tabId)?.state,
     ).toEqual({ devPreviewScriptName: "app" });
+  },
+);
+
+it.each([false, true])(
+  "background insertion retains a visible launcher with pending restoration=%s",
+  (pendingRestoration) => {
+    const store = createWorkspaceLayoutStore(createDeterministicWorkspaceLayoutIds());
+    store.setState({ layoutByWorkspace: {}, focusRestorationByWorkspace: {} });
+    const workspaceKey = "launcher:workspace";
+    const draftId = store.getState().openTab({
+      workspaceKey,
+      target: { kind: "draft", draftId: "temporary" },
+      intent: "reveal",
+    })!;
+    store.getState().closeTab(workspaceKey, draftId);
+    const launcher = findPaneById(store.getState().layoutByWorkspace[workspaceKey].root, "main")!;
+    expect(collectAllTabs({ kind: "pane", pane: launcher }).map((tab) => tab.target.kind)).toEqual([
+      "new_tab",
+    ]);
+    const launcherId = launcher.focusedTabId!;
+    if (pendingRestoration) store.getState().unfocusPane(workspaceKey);
+    const before = store.getState();
+    const tabId = store.getState().openTab({
+      workspaceKey,
+      target: { kind: "browser", browserId: "background-page" },
+      intent: "background",
+      placement: { mode: "pane", paneId: "main" },
+    });
+    const after = store.getState();
+    expect(after.layoutByWorkspace[workspaceKey].focusedPaneId).toBe(
+      before.layoutByWorkspace[workspaceKey].focusedPaneId,
+    );
+    const pane = findPaneById(after.layoutByWorkspace[workspaceKey].root, "main")!;
+    expect(pane.focusedTabId).toBe(launcherId);
+    expect(pane.tabIds).toEqual([launcherId, tabId]);
+    expect(collectAllTabs({ kind: "pane", pane: pane }).map((tab) => tab.target.kind)).toEqual([
+      "new_tab",
+      "browser",
+    ]);
+    expect(after.focusRestorationByWorkspace).toBe(before.focusRestorationByWorkspace);
   },
 );
 
@@ -4645,6 +4690,30 @@ describe("browser pane ownership", () => {
     expect(store.getState().focusRestorationByWorkspace).toBe(restoration);
     store.getState().restorePaneFocus(workspaceKey, token!);
     expect(store.getState().layoutByWorkspace[workspaceKey].focusedPaneId).toBe("main");
+  });
+
+  it("keeps default visible-launcher reuse while background placement can skip it", () => {
+    const store = createConversationStore();
+    const visibleId = store.getState().ensureBrowserPane(workspaceKey, { reveal: true })!;
+    const before = store.getState();
+    const visibleLauncher = findPaneById(before.layoutByWorkspace[workspaceKey].root, visibleId)!;
+    expect(
+      collectAllTabs({ kind: "pane", pane: visibleLauncher }).map((tab) => tab.target.kind),
+    ).toEqual(["new_tab"]);
+    expect(store.getState().ensureBrowserPane(workspaceKey, { reveal: false })).toBe(visibleId);
+    expect(store.getState()).toBe(before);
+    const hiddenId = store
+      .getState()
+      .ensureBrowserPane(workspaceKey, { reveal: false, reuseVisibleLauncher: false })!;
+    expect(hiddenId).not.toBe(visibleId);
+    const after = store.getState();
+    const layout = after.layoutByWorkspace[workspaceKey];
+    expect(findPaneById(layout.root, visibleId)).toEqual(visibleLauncher);
+    expect(findPaneById(layout.root, hiddenId)?.hidden).toBe(true);
+    expect(
+      after.ensureBrowserPane(workspaceKey, { reveal: false, reuseVisibleLauncher: false }),
+    ).toBe(hiddenId);
+    expect(store.getState()).toBe(after);
   });
 
   it("preserves pending focus restoration when first creating the hidden browser pane", () => {

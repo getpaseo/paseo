@@ -849,7 +849,15 @@ function insertTabIntoPane(
     invariant(node.kind === "pane", "Expected pane while inserting tab");
     const existingIndex = node.pane.tabs.findIndex((tab) => tab.tabId === input.tab.tabId);
     let nextTabs: WorkspaceTab[];
-    if (input.tab.target.kind !== "new_tab" && isSoleNewTabPane(node.pane)) {
+    const preservesVisibleSelection =
+      input.tab.target.kind === "browser" &&
+      node.pane.hidden !== true &&
+      input.focusTabId === node.pane.focusedTabId;
+    if (
+      input.tab.target.kind !== "new_tab" &&
+      isSoleNewTabPane(node.pane) &&
+      !preservesVisibleSelection
+    ) {
       nextTabs = [input.tab];
     } else if (existingIndex >= 0) {
       nextTabs = node.pane.tabs.map((tab, index) => (index === existingIndex ? input.tab : tab));
@@ -1366,7 +1374,9 @@ function insertNewTabIntoPane(
   };
 
   const currentTab = isSoleNewTabPane(targetPane) ? targetPane.tabs[0] : null;
-  if (currentTab && input.target.kind !== "new_tab") {
+  const mayReplaceLauncher =
+    input.focus || input.target.kind !== "browser" || targetPane.hidden === true;
+  if (currentTab && input.target.kind !== "new_tab" && mayReplaceLauncher) {
     return {
       tabId,
       layout: withNormalizedParentTabMap({

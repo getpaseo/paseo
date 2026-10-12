@@ -1,5 +1,3 @@
-import { indexedDB as fakeIndexedDb } from "fake-indexeddb";
-
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { createJSONStorage, type StateStorage } from "zustand/middleware";
@@ -16,7 +14,10 @@ import { useSessionStore } from "@/stores/session-store";
 import { openWorkspaceBrowser } from "@/workspace-tabs/browser";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 
-globalThis.indexedDB = fakeIndexedDb;
+vi.hoisted(async () => {
+  const { indexedDB } = await import("fake-indexeddb");
+  globalThis.indexedDB = indexedDB;
+});
 
 type BrowserAutomationExecuteRequest = Extract<
   SessionOutboundMessage,
@@ -1112,5 +1113,95 @@ describe("mountBrowserAutomationHandler", () => {
       before.layoutByWorkspace[key].focusedPaneId,
     );
     expect(after.focusRestorationByWorkspace[key]).toBe(before.focusRestorationByWorkspace[key]);
+  });
+  test("explicit background placement preserves a focused visible launcher and its selected page", () => {
+    const key = seedWorkspace("server-1", "launcher-workspace");
+    const store = useWorkspaceLayoutStore.getState();
+    const draftId = store.openTab({
+      workspaceKey: key,
+      target: { kind: "draft", draftId: "temporary" },
+      intent: "reveal",
+    })!;
+    store.closeTab(key, draftId);
+    const launcher = findPaneById(
+      useWorkspaceLayoutStore.getState().layoutByWorkspace[key].root,
+      "main",
+    )!;
+    expect(collectAllTabs({ kind: "pane", pane: launcher }).map((tab) => tab.target.kind)).toEqual([
+      "new_tab",
+    ]);
+    const launcherId = launcher.focusedTabId!;
+    const before = useWorkspaceLayoutStore.getState();
+    const opened = openWorkspaceBrowser({
+      workspaceKey: key,
+      intent: "background",
+      placement: { mode: "pane", paneId: "main" },
+    });
+    if (!opened.ok) throw new Error("Expected background creation");
+    const after = useWorkspaceLayoutStore.getState();
+    const pane = findPaneById(after.layoutByWorkspace[key].root, "main")!;
+    expect(after.layoutByWorkspace[key].focusedPaneId).toBe(
+      before.layoutByWorkspace[key].focusedPaneId,
+    );
+    expect(pane.focusedTabId).toBe(launcherId);
+    expect(
+      collectAllTabs({ kind: "pane", pane: pane }).find((tab) => tab.tabId === launcherId)?.target,
+    ).toEqual({ kind: "new_tab" });
+    expect(pane.tabIds).toEqual([launcherId, opened.tabId]);
+    expect(after.focusRestorationByWorkspace).toBe(before.focusRestorationByWorkspace);
+    expect(after.browserPaneIdByWorkspace[key]).toBeUndefined();
+  });
+
+  test("implicit background creation skips a remembered visible launcher and reuses one hidden browser-only pane", () => {
+    const key = seedWorkspace("server-1", "launcher-workspace");
+    const store = useWorkspaceLayoutStore.getState();
+    const visiblePaneId = store.ensureBrowserPane(key, { reveal: true })!;
+    const visibleLauncher = findPaneById(
+      useWorkspaceLayoutStore.getState().layoutByWorkspace[key].root,
+      visiblePaneId,
+    )!;
+    store.focusTab(key, visibleLauncher.focusedTabId!);
+    store.unfocusPane(key);
+    const before = useWorkspaceLayoutStore.getState();
+    const first = openWorkspaceBrowser({ workspaceKey: key, intent: "background" });
+    const second = openWorkspaceBrowser({ workspaceKey: key, intent: "background" });
+    if (!first.ok || !second.ok) throw new Error("Expected background pages");
+    const after = useWorkspaceLayoutStore.getState();
+    const layout = after.layoutByWorkspace[key];
+    expect(findPaneById(layout.root, visiblePaneId)).toEqual(visibleLauncher);
+    expect(layout.focusedPaneId).toBe(before.layoutByWorkspace[key].focusedPaneId);
+    expect(after.focusRestorationByWorkspace).toBe(before.focusRestorationByWorkspace);
+    const browserPane = findPaneContainingTab(layout.root, first.tabId)!;
+    expect(browserPane.id).not.toBe(visiblePaneId);
+    expect(browserPane.hidden).toBe(true);
+    expect(browserPane.tabIds).toEqual([first.tabId, second.tabId]);
+    expect(
+      collectAllTabs({ kind: "pane", pane: browserPane }).map((tab) => tab.target.kind),
+    ).toEqual(["browser", "browser"]);
+    expect(browserPane.focusedTabId).toBe(first.tabId);
+    expect(after.browserPaneIdByWorkspace[key]).toBe(browserPane.id);
+  });
+
+  test("implicit background creation reuses a remembered hidden launcher without revealing it", () => {
+    const key = seedWorkspace("server-1", "launcher-workspace");
+    const store = useWorkspaceLayoutStore.getState();
+    const hiddenPaneId = store.ensureBrowserPane(key, { reveal: false })!;
+    const before = useWorkspaceLayoutStore.getState();
+    const first = openWorkspaceBrowser({ workspaceKey: key, intent: "background" });
+    const second = openWorkspaceBrowser({ workspaceKey: key, intent: "background" });
+    if (!first.ok || !second.ok) throw new Error("Expected background pages");
+    const after = useWorkspaceLayoutStore.getState();
+    const layout = after.layoutByWorkspace[key];
+    const pane = findPaneById(layout.root, hiddenPaneId)!;
+    expect(pane.hidden).toBe(true);
+    expect(pane.tabIds).toEqual([first.tabId, second.tabId]);
+    expect(collectAllTabs({ kind: "pane", pane: pane }).map((tab) => tab.target.kind)).toEqual([
+      "browser",
+      "browser",
+    ]);
+    expect(pane.focusedTabId).toBe(first.tabId);
+    expect(layout.focusedPaneId).toBe(before.layoutByWorkspace[key].focusedPaneId);
+    expect(after.focusRestorationByWorkspace).toBe(before.focusRestorationByWorkspace);
+    expect(after.browserPaneIdByWorkspace[key]).toBe(hiddenPaneId);
   });
 });
