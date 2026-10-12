@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import fs from "node:fs";
 import { createServer } from "node:http";
 import net from "node:net";
@@ -28,6 +29,8 @@ const workspaceIds = [
   "desktop-browser-evict-three",
 ];
 const timeoutMs = 90_000;
+const phase = process.env.PASEO_DESKTOP_BROWSER_E2E_PHASE ?? "after";
+assert(["baseline", "after"].includes(phase), "Browser E2E phase must be baseline or after");
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -196,13 +199,26 @@ async function waitForDesktopStatus(page) {
 }
 
 async function startTargetPage() {
-  const server = createServer((_request, response) => {
+  const httpLoadCounts = new Map();
+  const server = createServer((request, response) => {
+    const fixtureId = new URL(request.url, "http://localhost").searchParams.get("fixture");
+    // Count documents only; favicon requests must not look like guest reloads.
+    const httpLoadCount = fixtureId ? (httpLoadCounts.get(fixtureId) ?? 0) + 1 : 0;
+    if (fixtureId) httpLoadCounts.set(fixtureId, httpLoadCount);
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    const fixtureIndex = Number(fixtureId?.split("-").at(-1)) || 0;
+    const background = fixtureId ? `hsl(${(fixtureIndex * 37) % 360}, 70%, 65%)` : "rgb(255, 0, 0)";
     response.end(`<!doctype html>
       <html>
         <head><title>Desktop browser target</title>
-          <style>body { min-height: 100vh; background: rgb(255, 0, 0); }</style>
+          <style>body { min-height: ${fixtureId ? "4000px" : "100vh"}; background: ${background}; }
+          #fixture-marker { position: fixed; right: 24px; top: 24px; font: 48px monospace; }</style>
           <script>
+            window.fixtureId = ${JSON.stringify(fixtureId)};
+            window.httpLoadCount = ${httpLoadCount};
+            const loadKey = "paseo-load-count:" + window.fixtureId;
+            window.loadCount = Number(sessionStorage.getItem(loadKey) || 0) + 1;
+            sessionStorage.setItem(loadKey, String(window.loadCount));
             window.frameCount = 0;
             function tick() { window.frameCount++; requestAnimationFrame(tick); }
             requestAnimationFrame(tick);
@@ -212,6 +228,7 @@ async function startTargetPage() {
           <button id="bridge-target" onclick="this.textContent = 'Clicked'">Bridge target</button>
           <label for="typing-target">Typing target</label>
           <input id="typing-target" />
+          <div id="fixture-marker">${fixtureId ? `TAB ${fixtureIndex}` : ""}</div>
         </body>
       </html>`);
   });
@@ -221,7 +238,7 @@ async function startTargetPage() {
   });
   const address = server.address();
   assert(address && typeof address !== "string", "Target page did not bind a TCP port");
-  return { server, url: `http://127.0.0.1:${address.port}/` };
+  return { server, url: `http://127.0.0.1:${address.port}/`, httpLoadCounts };
 }
 
 async function closeServer(server) {
@@ -455,17 +472,29 @@ function recordViewportMismatch(failures, label, actual, expected) {
   );
 }
 
-async function setWindowHidden(inspectorPort, hidden) {
+async function evaluateMain(inspectorPort, expression) {
   const [target] = await (await fetch(`http://127.0.0.1:${inspectorPort}/json/list`)).json();
   const socket = new WebSocket(target.webSocketDebuggerUrl);
   try {
-    await new Promise((resolve, reject) => {
-      socket.addEventListener("error", reject, { once: true });
+    return await new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("Electron main evaluation timed out")),
+        timeoutMs,
+      );
+      socket.addEventListener(
+        "error",
+        (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+        { once: true },
+      );
       socket.addEventListener("message", ({ data }) => {
         const response = JSON.parse(data);
         if (response.id !== 1) return;
+        clearTimeout(timer);
         if (response.error || response.result?.exceptionDetails) reject(new Error(data));
-        else resolve();
+        else resolve(response.result.result.value);
       });
       socket.addEventListener(
         "open",
@@ -474,9 +503,7 @@ async function setWindowHidden(inspectorPort, hidden) {
             JSON.stringify({
               id: 1,
               method: "Runtime.evaluate",
-              params: {
-                expression: `(() => { const win = process.mainModule.require('electron').BrowserWindow.getAllWindows().find(win => win.webContents.getURL().includes('localhost:')); win.${hidden ? "hide" : "show"}(); if (win.isVisible() !== ${!hidden}) throw new Error('Window visibility did not change'); })()`,
-              },
+              params: { expression, awaitPromise: true, returnByValue: true },
             }),
           ),
         { once: true },
@@ -485,6 +512,13 @@ async function setWindowHidden(inspectorPort, hidden) {
   } finally {
     socket.close();
   }
+}
+
+async function setWindowHidden(inspectorPort, hidden) {
+  await evaluateMain(
+    inspectorPort,
+    `(() => { const win = process.mainModule.require('electron').BrowserWindow.getAllWindows().find(win => win.webContents.getURL().includes('localhost:')); win.${hidden ? "hide" : "show"}(); if (win.isVisible() !== ${!hidden}) throw new Error('Window visibility did not change'); })()`,
+  );
 }
 
 async function verifyHiddenBrowserScreenshots({
@@ -1073,6 +1107,444 @@ async function runRegression({
   };
 }
 
+async function readContinuity(page, client, browserId) {
+  const guest = await readGuest(page, browserId);
+  const state = await callBrowserTool(client, "browser_evaluate", {
+    browserId,
+    function:
+      "() => ({ inputValue: document.querySelector('#typing-target').value, scrollY, loadCount, httpLoadCount, fixtureId })",
+  });
+  return { ...guest, ...JSON.parse(state.resultJson) };
+}
+
+async function readRendererMemory(page, inspectorPort, cohort) {
+  const guests = await Promise.all(
+    cohort.map(async (tab) => ({
+      ...tab,
+      webContentsId: (await readGuest(page, tab.browserId))?.webContentsId ?? null,
+    })),
+  );
+  return await evaluateMain(
+    inspectorPort,
+    `(() => {
+    const { app, webContents, BrowserWindow } = process.mainModule.require('electron');
+    const host = BrowserWindow.getAllWindows().find(win => win.webContents.getURL().includes('localhost:')).webContents;
+    const guests = ${JSON.stringify(guests)}.map(tab => {
+      const guest = tab.webContentsId === null ? null : webContents.fromId(tab.webContentsId);
+      return { ...tab, pid: guest && !guest.isDestroyed() ? guest.getOSProcessId() : null };
+    });
+    const rawMetrics = app.getAppMetrics();
+    const guestPids = [...new Set(guests.map(tab => tab.pid).filter(Boolean))];
+    const cohortRendererMetrics = rawMetrics.filter(metric => guestPids.includes(metric.pid));
+    return { capturedAt: new Date().toISOString(), guests, guestPids, host: { webContentsId: host.id, pid: host.getOSProcessId() },
+      hostRendererMetric: rawMetrics.find(metric => metric.pid === host.getOSProcessId()), cohortRendererMetrics,
+      cohortWorkingSetSizeKiB: cohortRendererMetrics.reduce((sum, metric) => sum + metric.memory.workingSetSize, 0),
+      rawMetrics, memoryUnit: 'KiB', versions: process.versions };
+  })()`,
+  );
+}
+
+async function measureTabSwitch(page, browserId, sampleId) {
+  const tabLocator = page
+    .getByTestId(`workspace-tab-browser_${browserId}`)
+    .filter({ visible: true })
+    .first();
+  // Visibility and scrolling happen before the timed pointer event, outside the latency interval.
+  await tabLocator.scrollIntoViewIfNeeded();
+  const bounds = await tabLocator.boundingBox();
+  assert(bounds, "Measured browser tab has no clickable bounds");
+  await page.evaluate(
+    ({ browserId: id, sampleId: markerId }) => {
+      const tab = [
+        ...document.querySelectorAll(`[data-testid="workspace-tab-browser_${id}"]`),
+      ].find((element) => element.getBoundingClientRect().width > 0);
+      const surface = document.querySelector(`[data-paseo-browser-surface="${id}"]`);
+      if (!tab || !surface) throw new Error("Missing measured tab or guest surface");
+      const sample = {
+        browserId: id,
+        sampleId: markerId,
+        timeOrigin: performance.timeOrigin,
+        click: null,
+        selectionApplied: null,
+        presentationRequested: null,
+      };
+      globalThis.__paseoTabSample = sample;
+      const mark = (name) => {
+        performance.mark(`${markerId}:${name}`);
+        console.timeStamp(`${markerId}:${name}`);
+      };
+      const observer = new MutationObserver(() => {
+        if (sample.click === null) return;
+        if (sample.selectionApplied === null && tab.getAttribute("aria-selected") === "true") {
+          sample.selectionApplied = performance.now();
+          mark("selection-applied");
+        }
+        if (
+          sample.presentationRequested === null &&
+          surface.getAttribute("aria-hidden") === "false" &&
+          surface.style.pointerEvents === "auto"
+        ) {
+          sample.presentationRequested = performance.now();
+          mark("presentation-requested");
+        }
+        if (sample.selectionApplied !== null && sample.presentationRequested !== null)
+          observer.disconnect();
+      });
+      observer.observe(document.body, { attributes: true, childList: true, subtree: true });
+      tab.addEventListener(
+        "pointerdown",
+        () => {
+          sample.click = performance.now();
+          mark("click");
+        },
+        { once: true, capture: true },
+      );
+    },
+    { browserId, sampleId },
+  );
+  await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  await page.waitForFunction(
+    () =>
+      globalThis.__paseoTabSample?.selectionApplied !== null &&
+      globalThis.__paseoTabSample?.presentationRequested !== null,
+    null,
+    { timeout: timeoutMs },
+  );
+  return await page.evaluate(() => {
+    const sample = globalThis.__paseoTabSample;
+    return {
+      ...sample,
+      selectionAppliedMs: sample.selectionApplied - sample.click,
+      presentationRequestedMs: sample.presentationRequested - sample.click,
+    };
+  });
+}
+
+async function runTabBaseline({ page, client, serverId, target, artifactDir, inspectorPort }) {
+  await page.getByTestId(`sidebar-workspace-row-${serverId}:${workspaceIds[0]}`).click();
+  const reportPath = path.join(artifactDir, `browser-tabs-${phase}.json`);
+  const git = (...args) => execFileSync("git", args, { cwd: rootDir, encoding: "utf8" }).trim();
+  fs.writeFileSync(
+    path.join(artifactDir, "measurement-source.patch"),
+    execFileSync("git", ["diff", "HEAD", "--", "packages/desktop/e2e/browser-tabs.e2e.mjs"], {
+      cwd: rootDir,
+      encoding: "utf8",
+    }),
+  );
+  const sourceManifestPath = path.join(
+    rootDir,
+    ".superpowers/sdd/2026-10-12-browser-tabs/source-state.json",
+  );
+  const report = {
+    phase,
+    startedAt: new Date().toISOString(),
+    buildMode: "development: Expo Metro + tsc desktop main + tsx daemon",
+    source: {
+      head: git("rev-parse", "HEAD"),
+      status: git("status", "--short"),
+      instrumentationPatch: "measurement-source.patch",
+      manifest: fs.existsSync(sourceManifestPath)
+        ? JSON.parse(fs.readFileSync(sourceManifestPath, "utf8"))
+        : null,
+    },
+    machine: {
+      platform: os.platform(),
+      release: os.release(),
+      arch: os.arch(),
+      cpu: os.cpus()[0]?.model,
+      cpuCount: os.cpus().length,
+      totalMemoryBytes: os.totalmem(),
+    },
+    measurementLabels: {
+      selection: "selection applied",
+      page: "presentation requested",
+      pixelsPresented: false,
+      reason:
+        "Renderer DOM mutations do not prove presented pixels; Chromium compositor frames are preserved without claiming guest attribution.",
+    },
+    samples: [],
+    memory: {},
+    cohort: [],
+  };
+  writeJson(reportPath, report);
+  const cohort = report.cohort;
+  const tracePath = path.join(artifactDir, "browser-tabs-chromium-trace.json");
+  const cdp = await page.context().newCDPSession(page);
+  const framesDir = path.join(artifactDir, "tab-switch-video-frames");
+  fs.rmSync(framesDir, { recursive: true, force: true });
+  fs.mkdirSync(framesDir, { recursive: true });
+  const videoFrames = [];
+  cdp.on("Page.screencastFrame", ({ data, metadata, sessionId }) => {
+    const file = `frame-${String(videoFrames.length).padStart(5, "0")}.jpg`;
+    fs.writeFileSync(path.join(framesDir, file), Buffer.from(data, "base64"));
+    videoFrames.push({ file, ...metadata });
+    void cdp.send("Page.screencastFrameAck", { sessionId }).catch(() => undefined);
+  });
+  let tracing = false;
+  try {
+    const counterUrl = `${target.url}?fixture=counter-self-check`;
+    const counterTab = await callBrowserTool(client, "browser_new_tab", { url: counterUrl });
+    const initial = await readContinuity(page, client, counterTab.browserId);
+    await page.evaluate(
+      (id) => document.querySelector(`[data-paseo-browser-id="${id}"]`).reload(),
+      counterTab.browserId,
+    );
+    await page.waitForFunction(
+      async ({ id, previousCount }) => {
+        const webview = document.querySelector(`[data-paseo-browser-id="${id}"]`);
+        if (webview.isLoading()) return false;
+        return await webview.executeJavaScript(`window.loadCount > ${previousCount}`);
+      },
+      { id: counterTab.browserId, previousCount: initial.loadCount },
+    );
+    const reloaded = await readContinuity(page, client, counterTab.browserId);
+    assert(
+      reloaded.loadCount === initial.loadCount + 1 &&
+        reloaded.httpLoadCount === initial.httpLoadCount + 1,
+      "Fixture counters did not detect a reload",
+    );
+    await callBrowserTool(client, "browser_close_tab", { browserId: counterTab.browserId });
+    const replacement = await callBrowserTool(client, "browser_new_tab", { url: counterUrl });
+    const recreated = await readContinuity(page, client, replacement.browserId);
+    assert(
+      recreated.webContentsId !== reloaded.webContentsId &&
+        recreated.httpLoadCount === reloaded.httpLoadCount + 1,
+      "HTTP fixture counter did not detect a new guest",
+    );
+    await callBrowserTool(client, "browser_close_tab", { browserId: replacement.browserId });
+    report.counterSelfCheck = { initial, reloaded, recreated };
+    await delay(10_000);
+    report.memory.idle = await readRendererMemory(page, inspectorPort, cohort);
+    for (let index = 0; index < 10; index++) {
+      const fixtureId = `measurement-${index}`;
+      const created = await callBrowserTool(client, "browser_new_tab", {
+        url: `${target.url}?fixture=${fixtureId}`,
+      });
+      cohort.push({ browserId: created.browserId, fixtureId });
+      await callBrowserTool(client, "browser_evaluate", {
+        browserId: created.browserId,
+        function: "() => document.readyState",
+      });
+      if (index === 1) {
+        const beforeStates = [];
+        for (const [tabIndex, tab] of cohort.entries()) {
+          await page
+            .getByTestId(`workspace-tab-browser_${tab.browserId}`)
+            .filter({ visible: true })
+            .first()
+            .click();
+          await callBrowserTool(client, "browser_evaluate", {
+            browserId: tab.browserId,
+            function: `() => { document.querySelector('#typing-target').value = 'brouillon conservé'; scrollTo(0, ${640 + tabIndex * 180}); return true; }`,
+          });
+          await delay(100);
+          const before = await readContinuity(page, client, tab.browserId);
+          assert(
+            before.scrollY === 640 + tabIndex * 180,
+            "Continuity fixture did not scroll to its known position",
+          );
+          beforeStates.push(before);
+        }
+        await page
+          .getByTestId(`workspace-tab-browser_${cohort[0].browserId}`)
+          .filter({ visible: true })
+          .first()
+          .click();
+        for (let switchIndex = 0; switchIndex < 20; switchIndex++) {
+          await measureTabSwitch(
+            page,
+            cohort[(switchIndex + 1) % 2].browserId,
+            `continuity-${switchIndex}`,
+          );
+        }
+        report.continuity = { tabs: [], switches: 20 };
+        for (const [tabIndex, tab] of cohort.entries()) {
+          const before = beforeStates[tabIndex];
+          const after = await readContinuity(page, client, tab.browserId);
+          assert(after.webContentsId === before.webContentsId, "Tab switch recreated the guest");
+          assert(after.inputValue === "brouillon conservé", "Tab switch lost the draft");
+          assert(after.scrollY === before.scrollY, "Tab switch lost scroll position");
+          assert(after.loadCount === before.loadCount, "Tab switch reloaded the page");
+          assert(
+            target.httpLoadCounts.get(tab.fixtureId) === before.httpLoadCount,
+            "Tab switch created another HTTP document guest",
+          );
+          report.continuity.tabs.push({ browserId: tab.browserId, before, after });
+        }
+        await evaluateMain(
+          inspectorPort,
+          `process.mainModule.require('electron').contentTracing.startRecording({ included_categories: ['blink.user_timing', 'devtools.timeline', 'cc', 'viz', 'disabled-by-default-devtools.timeline.frame'] })`,
+        );
+        tracing = true;
+      }
+      if (index === 1 || index === 9) {
+        const count = index + 1;
+        // Start each series on tab 0 so every following click changes selection.
+        await page
+          .getByTestId(`workspace-tab-browser_${cohort[0].browserId}`)
+          .filter({ visible: true })
+          .first()
+          .click();
+        await cdp.send("Page.startScreencast", {
+          format: "jpeg",
+          quality: 70,
+          maxWidth: 1280,
+          maxHeight: 800,
+          everyNthFrame: 3,
+        });
+        for (let switchIndex = 0; switchIndex < 35; switchIndex++) {
+          const sample = await measureTabSwitch(
+            page,
+            cohort[(switchIndex + 1) % count].browserId,
+            `tabs-${count}-${switchIndex}`,
+          );
+          report.samples.push({ tabCount: count, warmup: switchIndex < 5, ...sample });
+          // Give the illustrative screencast time to sample both pages; this gap is outside timing.
+          await delay(100);
+        }
+        await cdp.send("Page.stopScreencast");
+        writeJson(reportPath, report);
+      }
+    }
+    await evaluateMain(
+      inspectorPort,
+      `process.mainModule.require('electron').contentTracing.stopRecording(${JSON.stringify(tracePath)})`,
+    );
+    tracing = false;
+    const trace = JSON.parse(fs.readFileSync(tracePath, "utf8"));
+    report.trace = {
+      file: path.basename(tracePath),
+      rendererMarkers: trace.traceEvents.filter(
+        (event) =>
+          event.name?.startsWith("tabs-") || event.args?.data?.message?.startsWith("tabs-"),
+      ),
+      compositorEventCount: trace.traceEvents.filter((event) =>
+        /drawframe|submitcompositorframe|presentation|swapbuffers/i.test(event.name),
+      ).length,
+    };
+    assert(
+      report.trace.rendererMarkers.length >= 70,
+      "Trace did not include renderer timing markers",
+    );
+    await delay(10_000);
+    report.memory.tenPages = await readRendererMemory(page, inspectorPort, cohort);
+    assert(
+      report.memory.tenPages.guests.every((tab) => tab.pid),
+      "Memory cohort has a missing guest PID",
+    );
+    for (const tab of cohort.slice(1))
+      await callBrowserTool(client, "browser_close_tab", { browserId: tab.browserId });
+    await delay(10_000);
+    report.memory.afterClosingNine = await readRendererMemory(page, inspectorPort, cohort);
+    assert(
+      report.memory.afterClosingNine.guests.filter((tab) => tab.pid).length === 1,
+      "Closed cohort guests remained registered",
+    );
+    const listed = await callBrowserTool(client, "browser_list_tabs");
+    assert(
+      cohort.slice(1).every((tab) => !listed.tabs.some((live) => live.browserId === tab.browserId)),
+      "Closed measurement tabs remained listed",
+    );
+    for (const count of [2, 10])
+      assert(
+        report.samples.filter((sample) => sample.tabCount === count && !sample.warmup).length ===
+          30,
+        "Incomplete measured switch series",
+      );
+    const compositorEvents = trace.traceEvents.filter((event) =>
+      /drawframe|submitcompositorframe|presentation|swapbuffers/i.test(event.name),
+    );
+    report.trace.correlations = report.samples.map((sample) => {
+      const marker = report.trace.rendererMarkers.find(
+        (event) => event.name === `${sample.sampleId}:click`,
+      );
+      assert(marker, `Missing Chromium click marker for ${sample.sampleId}`);
+      const guest = report.memory.tenPages.guests.find((tab) => tab.browserId === sample.browserId);
+      return {
+        sampleId: sample.sampleId,
+        clickTraceTimestampUs: marker.ts,
+        hostPid: report.memory.tenPages.host.pid,
+        guestPid: guest.pid,
+        frameCandidates: compositorEvents
+          .filter(
+            (event) =>
+              event.ts >= marker.ts &&
+              event.ts <= marker.ts + (sample.presentationRequestedMs + 100) * 1000 &&
+              [guest.pid, report.memory.tenPages.host.pid].includes(event.pid),
+          )
+          .slice(0, 50),
+        attribution:
+          "unproven: process/time proximity does not identify presented guest or chrome pixels",
+      };
+    });
+    const require = createRequire(import.meta.url);
+    const { registry } = require(
+      path.join(
+        path.dirname(require.resolve("playwright-core/package.json")),
+        "lib/server/registry/index.js",
+      ),
+    );
+    const videoPath = path.join(artifactDir, "tab-switches.webm");
+    execFileSync(
+      registry.findExecutable("ffmpeg").executablePath(),
+      [
+        "-loglevel",
+        "error",
+        "-y",
+        "-f",
+        "image2pipe",
+        "-framerate",
+        "10",
+        "-c:v",
+        "mjpeg",
+        "-i",
+        "pipe:0",
+        "-c:v",
+        "vp8",
+        "-deadline",
+        "realtime",
+        "-speed",
+        "8",
+        "-threads",
+        "1",
+        videoPath,
+      ],
+      {
+        input: Buffer.concat(
+          videoFrames.map((frame) => fs.readFileSync(path.join(framesDir, frame.file))),
+        ),
+        stdio: ["pipe", "ignore", "pipe"],
+      },
+    );
+    report.video = {
+      file: path.basename(videoPath),
+      frames: videoFrames,
+      playbackFramesPerSecond: 10,
+      note: "Illustrative CDP host screencast; frame timestamps are raw, playback is constant rate and is not latency evidence.",
+    };
+    assert(videoFrames.length > 1, "Tab-switch video contains no changing frames");
+    report.completedAt = new Date().toISOString();
+    return report;
+  } catch (error) {
+    report.error = String(error);
+    throw error;
+  } finally {
+    if (tracing)
+      await evaluateMain(
+        inspectorPort,
+        `process.mainModule.require('electron').contentTracing.stopRecording(${JSON.stringify(tracePath)})`,
+      ).catch(() => undefined);
+    writeJson(path.join(artifactDir, "tab-switch-video-timestamps.json"), videoFrames);
+    writeJson(reportPath, report);
+    await cdp.detach();
+    // Leave the existing journey's tab cohort independent of the measured ten guests.
+    for (const tab of cohort)
+      await callBrowserTool(client, "browser_close_tab", { browserId: tab.browserId }).catch(
+        () => undefined,
+      );
+  }
+}
+
 async function main() {
   const artifactDir =
     process.env.PASEO_DESKTOP_BROWSER_E2E_ARTIFACT_DIR ??
@@ -1099,6 +1571,7 @@ async function main() {
   seedPaseoHome(remoteHome, `127.0.0.1:${remotePort}`, path.join(runtimeDir, "remote-workspaces"));
   const children = [];
   let browser = null;
+  let page = null;
   let client = null;
 
   try {
@@ -1187,8 +1660,29 @@ async function main() {
     await waitForPort(cdpPort, "Electron CDP", desktop);
 
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
-    const page = await waitForAppPage(browser, expoPort);
+    page = await waitForAppPage(browser, expoPort);
+    const initialStatus = await waitForDesktopStatus(page);
+    await page.waitForLoadState("load");
+    await page
+      .getByTestId(`sidebar-workspace-row-${initialStatus.serverId}:${workspaceIds[0]}`)
+      .waitFor({ state: "visible", timeout: timeoutMs });
+    const rendererEnvironment = await page.evaluate(() => {
+      const key = "@paseo:app-settings";
+      const settings = JSON.parse(localStorage.getItem(key) ?? "{}");
+      // Existing journey selectors are English; use the app's persisted language setting.
+      localStorage.setItem(key, JSON.stringify({ ...settings, language: "en" }));
+      return {
+        language: navigator.language,
+        languages: navigator.languages,
+        fixtureLanguage: "en",
+      };
+    });
+    writeJson(path.join(artifactDir, "renderer-environment.json"), rendererEnvironment);
+    await page.reload();
     const status = await waitForDesktopStatus(page);
+    await page
+      .getByRole("button", { name: "Settings", exact: true })
+      .waitFor({ state: "visible", timeout: timeoutMs });
 
     const checkPluginLinks = () =>
       runPluginLinksRegression({
@@ -1228,6 +1722,14 @@ async function main() {
       ),
     );
     client = await experimental_createMCPClient({ transport });
+    await runTabBaseline({
+      page,
+      client,
+      serverId: status.serverId,
+      target,
+      artifactDir,
+      inspectorPort,
+    });
     const report = await runRegression({
       page,
       client,
@@ -1239,13 +1741,35 @@ async function main() {
       artifactDir,
     });
     const pluginLinks = await checkPluginLinks();
-    writeJson(path.join(artifactDir, "result.json"), { ...report, settingsMemory, pluginLinks });
+    writeJson(path.join(artifactDir, "result.json"), {
+      ...report,
+      phase,
+      tabBaselineFile: `browser-tabs-${phase}.json`,
+      settingsMemory,
+      pluginLinks,
+    });
     console.log(
       `Browser desktop browser E2E passed: WebContents ${report.originalWebContentsId} remained ${report.finalWebContentsId}; viewport, inactive capture, focus continuity, list, snapshot, click, local-page selectors passed.`,
     );
   } catch (error) {
     console.error(`Browser desktop browser E2E failed. Artifacts: ${artifactDir}`);
     console.error(error);
+    if (page && !page.isClosed()) {
+      await page.screenshot({ path: path.join(artifactDir, "failure.png") }).catch(() => undefined);
+      const state = await page
+        .evaluate(() => ({
+          url: location.href,
+          language: navigator.language,
+          languages: navigator.languages,
+          text: document.body.innerText,
+          buttons: [...document.querySelectorAll('button,[role="button"]')].map((element) => ({
+            text: element.textContent,
+            label: element.getAttribute("aria-label"),
+          })),
+        }))
+        .catch(() => null);
+      writeJson(path.join(artifactDir, "failure-renderer.json"), state);
+    }
     throw error;
   } finally {
     await client?.close().catch(() => undefined);
