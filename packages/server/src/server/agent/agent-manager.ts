@@ -1825,30 +1825,62 @@ export class AgentManager {
   }
 
   private isIdleBackendEvictionCandidate(agent: ActiveManagedAgent): boolean {
+    return this.idleBackendEvictionBlocker(agent) === null;
+  }
+
+  /** Names the first condition that keeps an agent's runtime resident, or null when none does. */
+  private idleBackendEvictionBlocker(agent: ActiveManagedAgent): string | null {
     const timeoutMs = this.idleBackendTimeoutMs(agent.provider);
-    return (
-      this.acceptingAgentRegistrations &&
-      timeoutMs !== undefined &&
-      timeoutMs > 0 &&
-      agent.session.idleBackendEvictionEligible === true &&
-      !agent.internal &&
-      agent.lifecycle === "idle" &&
-      agent.capabilities.supportsSessionPersistence &&
-      Boolean(agent.persistence?.sessionId) &&
-      agent.persistence?.sessionId === agent.session.describePersistence()?.sessionId &&
-      !agent.activeForegroundTurnId &&
-      !agent.activeTurnId &&
-      !agent.pendingReplacement &&
-      agent.pendingPermissions.size === 0 &&
-      agent.inFlightPermissionResponses.size === 0 &&
-      !this.runs.hasRun(agent.id) &&
-      !this.inFlightOutOfBand.has(agent.id) &&
-      !this.providerSubagents.list(agent.id).some((subagent) => subagent.status === "running")
-    );
+    if (!this.acceptingAgentRegistrations) return "shutting down";
+    if (timeoutMs === undefined || timeoutMs <= 0) return "eviction disabled for provider";
+    if (agent.session.idleBackendEvictionEligible !== true) return "session not eligible";
+    if (agent.internal) return "internal agent";
+    if (agent.lifecycle !== "idle") return `lifecycle ${agent.lifecycle}`;
+    if (!agent.capabilities.supportsSessionPersistence) return "no session persistence";
+    if (!agent.persistence?.sessionId) return "no persisted session";
+    if (agent.persistence.sessionId !== agent.session.describePersistence()?.sessionId) {
+      return "persisted session differs from live session";
+    }
+    if (agent.activeForegroundTurnId) return "foreground turn active";
+    if (agent.activeTurnId) return "turn active";
+    if (agent.pendingReplacement) return "replacement pending";
+    if (agent.pendingPermissions.size > 0) return "permission pending";
+    if (agent.inFlightPermissionResponses.size > 0) return "permission response in flight";
+    if (this.runs.hasRun(agent.id)) return "run in progress";
+    if (this.inFlightOutOfBand.has(agent.id)) return "out-of-band command in flight";
+    if (this.providerSubagents.list(agent.id).some((subagent) => subagent.status === "running")) {
+      return "provider subagent running";
+    }
+    return null;
+  }
+
+  // A run can settle after the turn's last state emission (the stream forwarder settles it in a
+  // finally block). Re-check idle eviction then, or an idle agent would never arm its timer.
+  private settleForegroundRun(agentId: string, token: string): void {
+    this.runs.settleForegroundRun(agentId, token);
+    this.syncIdleBackendTimerAfterRun(agentId);
+  }
+
+  private clearAgentRun(agentId: string): void {
+    this.runs.clearAgentRun(agentId);
+    this.syncIdleBackendTimerAfterRun(agentId);
+  }
+
+  private syncIdleBackendTimerAfterRun(agentId: string): void {
+    const agent = this.agents.get(agentId);
+    if (agent && !this.runs.hasRun(agentId)) this.syncIdleBackendTimer(agent);
   }
 
   private syncIdleBackendTimer(agent: ManagedAgent): void {
-    if (agent.lifecycle === "closed" || !this.isIdleBackendEvictionCandidate(agent)) {
+    if (agent.lifecycle === "closed") {
+      this.cancelIdleBackendTimer(agent.id);
+      return;
+    }
+    const blocker = this.idleBackendEvictionBlocker(agent);
+    if (blocker !== null) {
+      if (agent.lifecycle === "idle" && this.idleBackendTimeoutMs(agent.provider)) {
+        this.logger.debug({ agentId: agent.id, blocker }, "Idle backend eviction blocked");
+      }
       this.cancelIdleBackendTimer(agent.id);
       return;
     }
@@ -2702,7 +2734,7 @@ export class AgentManager {
         pendingRun.start = { status: "failed", error: error.message };
         agent.pendingReplacement = false;
         if (!agent.activeForegroundTurnId) agent.lifecycle = "idle";
-        this.runs.settleForegroundRun(agentId, pendingRun.token);
+        this.settleForegroundRun(agentId, pendingRun.token);
         throw error;
       }
       agent.pendingReplacement = false;
@@ -2720,7 +2752,7 @@ export class AgentManager {
         error: errorMsg,
       });
       this.finalizeForegroundTurn(agent);
-      this.runs.settleForegroundRun(agentId, pendingRun.token);
+      this.settleForegroundRun(agentId, pendingRun.token);
       throw error;
     }
   }
@@ -2850,7 +2882,7 @@ export class AgentManager {
         if (turnStream) {
           this.runs.deleteWaiter(agent, turnStream.waiter);
         }
-        this.runs.settleForegroundRun(agentId, pendingRun.token);
+        this.settleForegroundRun(agentId, pendingRun.token);
         if (!agent.activeForegroundTurnId) {
           await this.refreshRuntimeInfo(agent);
         }
@@ -3311,7 +3343,7 @@ export class AgentManager {
         { agentId, kind: run.kind },
         "cancelAgentRun: acknowledged pending turn still active after timeout, clearing it",
       );
-      this.runs.settleForegroundRun(agentId, run.token);
+      this.settleForegroundRun(agentId, run.token);
       if (!agent.pendingReplacement) {
         agent.lifecycle = "idle";
         this.touchUpdatedAt(agent);
@@ -3449,7 +3481,7 @@ export class AgentManager {
       );
       throw error;
     } finally {
-      this.runs.settleForegroundRun(agentId, lock.token);
+      this.settleForegroundRun(agentId, lock.token);
     }
   }
 
@@ -3967,7 +3999,7 @@ export class AgentManager {
       reason: cancelReason,
       turnId,
     }));
-    this.runs.clearAgentRun(agent.id);
+    this.clearAgentRun(agent.id);
     this.inFlightOutOfBand.delete(agent.id);
     return {
       ...agent,
@@ -4484,6 +4516,9 @@ export class AgentManager {
     if (!options?.fromHistory) {
       if (isTurnTerminalEvent(event)) {
         this.runs.settleTerminalRun(agent.id, eventTurnId);
+        // The terminal state was emitted while this run was still tracked. A foreground turn
+        // re-emits below; an autonomous one does not, so re-check idle eviction here.
+        this.syncIdleBackendTimerAfterRun(agent.id);
         if (isForegroundEvent) {
           this.finalizeForegroundTurn(agent, eventTurnId);
         }

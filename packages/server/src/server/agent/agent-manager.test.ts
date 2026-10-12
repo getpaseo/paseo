@@ -2993,6 +2993,45 @@ test("keeps an active Codex backend until its turn becomes idle", async () => {
   }
 });
 
+test("arms idle eviction after an autonomous provider turn settles", async () => {
+  vi.useFakeTimers();
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-autonomous-eviction-"));
+  let session: EvictableTestAgentSession | null = null;
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new EvictableTestAgentSession(config);
+      return session;
+    }
+  })("claude");
+  const manager = new AgentManager({
+    clients: { claude: client },
+    claudeIdleBackendTimeoutMs: 10_000,
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    // Background work finished and woke the agent without a user prompt.
+    session?.pushEvent({ type: "turn_started", provider: "claude", turnId: "wake-1" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+    session?.pushEvent({ type: "turn_completed", provider: "claude", turnId: "wake-1" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await manager.waitForAgentClose(agent.id);
+    expect(session?.closed).toBe(true);
+    expect(manager.getAgent(agent.id)).toBeNull();
+  } finally {
+    manager.prepareForShutdown();
+    vi.useRealTimers();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("opening an idle agent resets its backend eviction timeout", async () => {
   vi.useFakeTimers();
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-access-"));

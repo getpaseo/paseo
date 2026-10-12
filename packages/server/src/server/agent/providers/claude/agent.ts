@@ -2749,6 +2749,15 @@ class ClaudeAgentSession implements AgentSession {
     return this.persistSession !== false && !this.closed;
   }
 
+  private idleEvictionBusyReason(): string | null {
+    if (this.activeForegroundTurnId) return "foreground turn";
+    if (this.autonomousTurn) return "autonomous turn";
+    if (this.mainTurnInFlight) return "main turn in flight";
+    if (this.compacting) return "compacting";
+    if (this.pendingPermissions.size > 0) return "permission pending";
+    return null;
+  }
+
   /**
    * Idle eviction ends this Claude process. Retain it while the process owns anything that would
    * die with it or could still wake the agent: a turn, a permission prompt, or background work
@@ -2758,13 +2767,9 @@ class ClaudeAgentSession implements AgentSession {
     if (this.closed) {
       throw new Error("Claude session is already closed");
     }
-    if (
-      this.activeForegroundTurnId ||
-      this.autonomousTurn ||
-      this.mainTurnInFlight ||
-      this.compacting ||
-      this.pendingPermissions.size > 0
-    ) {
+    const busy = this.idleEvictionBusyReason();
+    if (busy) {
+      this.logger.debug({ reason: busy }, "Retaining busy Claude process");
       return false;
     }
     if (!this.query) {
