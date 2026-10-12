@@ -117,10 +117,16 @@ test.each([
       }
       expect(requestCount).toBe(2);
     } finally {
-      await session.close();
-      server.closeAllConnections();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-      await rm(cwd, { recursive: true, force: true });
+      try {
+        await session.close();
+      } finally {
+        try {
+          server.closeAllConnections();
+          await new Promise<void>((resolve) => server.close(() => resolve()));
+        } finally {
+          await rm(cwd, { recursive: true, force: true });
+        }
+      }
     }
   },
   60_000,
