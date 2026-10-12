@@ -605,13 +605,15 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
         return;
       }
 
-      if (event.event.type === "turn_completed" && hasSeenRunning) {
-        notifySafely("finished");
-        return;
-      }
-
-      if (event.event.type === "turn_canceled" && hasSeenTurn) {
-        notifySafely("was canceled");
+      if (event.event.type === "turn_completed" || event.event.type === "turn_canceled") {
+        // Replacing a turn keeps the child running through the displaced turn's
+        // cancellation. The task settles only when the child becomes idle.
+        if (agentManager.getAgent(childAgentId)?.lifecycle !== "idle") return;
+        if (event.event.type === "turn_completed" && hasSeenRunning) {
+          notifySafely("finished");
+        } else if (event.event.type === "turn_canceled" && hasSeenTurn) {
+          notifySafely("was canceled");
+        }
         return;
       }
 

@@ -4359,6 +4359,10 @@ describe("send_agent_prompt MCP tool", () => {
       await vi.waitFor(() => expect(finishNotifications()).not.toHaveLength(0));
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(finishNotifications()).toHaveLength(1);
+      expect(parentClient.sessions[0]!.prompts).toHaveLength(1);
+      expect(parseAgentMessage(parentClient.sessions[0]!.prompts[0])).toMatchObject({
+        source: { kind: "agent-notification", agentId: childId, event: "finished" },
+      });
     } finally {
       await removeAgentStateDir(agentManager, storage, workdir);
     }
