@@ -76,33 +76,38 @@ describe("plugin registry", () => {
     ]);
     expect(featuredPlugins(listed, ["acme/not-published"])).toEqual([]);
   });
-  it("lists what's new by first-listing date, not submission or update dates", () => {
-    const listedFirst = {
+  it("lists what's new by submission time, not review, listing or update dates", () => {
+    const submittedFirst = {
       ...plugin,
-      id: "acme/listed-first",
-      submittedAt: "2026-09-20",
-      reviewedAt: "2026-09-21",
-      updatedAt: "2026-10-02",
-      publishedAt: "2026-09-02",
+      id: "acme/submitted-first",
+      submittedAt: "2026-09-02T00:00:00.000Z",
+      reviewedAt: "2026-10-02T00:00:00.000Z",
+      updatedAt: "2026-10-02T00:00:00.000Z",
+      publishedAt: "2026-10-02T00:00:00.000Z",
     };
-    const listedLater = {
+    const submittedLater = {
       ...plugin,
-      id: "acme/listed-later",
-      submittedAt: "2026-09-01",
-      reviewedAt: "2026-09-01",
-      updatedAt: "2026-09-01",
-      publishedAt: "2026-09-30",
+      id: "acme/submitted-later",
+      submittedAt: "2026-09-30T00:00:00.000Z",
+      reviewedAt: "2026-09-30T00:00:00.000Z",
+      updatedAt: "2026-09-30T00:00:00.000Z",
+      publishedAt: "2026-09-30T00:00:00.000Z",
     };
-    expect(newestFirst([listedFirst, listedLater]).map((p) => p.id)).toEqual([
-      "acme/listed-later",
-      "acme/listed-first",
+    expect(newestFirst([submittedFirst, submittedLater]).map((p) => p.id)).toEqual([
+      "acme/submitted-later",
+      "acme/submitted-first",
     ]);
     const now = "2026-10-03T12:00:00.000Z";
-    expect(addedAgo(listedLater, now)).toBe("3d ago");
-    expect(addedAgo(listedFirst, now)).toBe("4w ago");
+    expect(addedAgo(submittedLater, now)).toBe("3d ago");
+    expect(addedAgo(submittedFirst, now)).toBe("4w ago");
   });
-  it("orders by listing date and by installs in a window, keeping index order for ties", () => {
-    const older = { ...plugin, id: "acme/older", publishedAt: "2026-09-01" };
+  it("orders same-day submissions by their time", () => {
+    const morning = { ...plugin, id: "acme/morning", submittedAt: "2026-10-12T00:00:00.000Z" };
+    const noon = { ...plugin, id: "acme/noon", submittedAt: "2026-10-12T11:38:00.000Z" };
+    expect(newestFirst([morning, noon]).map((p) => p.id)).toEqual(["acme/noon", "acme/morning"]);
+  });
+  it("orders by submission time and by installs in a window, keeping index order for ties", () => {
+    const older = { ...plugin, id: "acme/older", submittedAt: "2026-09-01" };
     const twin = { ...plugin, id: "acme/twin" };
     expect(newestFirst([older, plugin, twin]).map((p) => p.id)).toEqual([
       "acme/example",

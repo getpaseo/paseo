@@ -106,9 +106,9 @@ export function featuredPlugins(plugins: Plugin[], featured: string[]): Plugin[]
   const byId = new Map(plugins.map((plugin) => [plugin.id, plugin]));
   return [...new Set(featured)].flatMap((id) => byId.get(id) ?? []);
 }
-/** Most recently listed first; equal dates keep index order. */
+/** Most recently submitted first, so updates never resurface a plugin; equal times keep index order. */
 export function newestFirst(plugins: Plugin[]): Plugin[] {
-  return [...plugins].sort((a, b) => b.publishedAt.localeCompare(a.publishedAt));
+  return [...plugins].sort((a, b) => Date.parse(b.submittedAt) - Date.parse(a.submittedAt));
 }
 /** Most installs in the window first; equal counts keep index order. */
 export function mostInstalled(
@@ -119,9 +119,9 @@ export function mostInstalled(
   const count = (plugin: Plugin) => installs[plugin.id]?.[window] ?? 0;
   return [...plugins].sort((a, b) => count(b) - count(a));
 }
-/** How long ago the plugin was first listed, relative to the loader's clock. */
+/** How long ago the plugin was submitted, relative to the loader's clock. */
 export function addedAgo(plugin: Plugin, now: string): string {
-  const days = Math.floor((Date.parse(now) - Date.parse(plugin.publishedAt)) / DAY_MS);
+  const days = Math.floor((Date.parse(now) - Date.parse(plugin.submittedAt)) / DAY_MS);
   if (days <= 0) return "today";
   if (days === 1) return "yesterday";
   if (days < 14) return `${days}d ago`;
