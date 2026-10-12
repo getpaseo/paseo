@@ -106,9 +106,18 @@ export function featuredPlugins(plugins: Plugin[], featured: string[]): Plugin[]
   const byId = new Map(plugins.map((plugin) => [plugin.id, plugin]));
   return [...new Set(featured)].flatMap((id) => byId.get(id) ?? []);
 }
-/** Most recently listed first; equal dates keep index order. */
+/**
+ * Most recently listed first. A slow review does not push a plugin down, and an update does not
+ * bring it back up. Equal times keep index order.
+ */
 export function newestFirst(plugins: Plugin[]): Plugin[] {
-  return [...plugins].sort((a, b) => b.publishedAt.localeCompare(a.publishedAt));
+  return [...plugins].sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
+}
+/** Plugins with a version approved after their first listing, most recent update first. */
+export function recentlyUpdated(plugins: Plugin[]): Plugin[] {
+  return plugins
+    .filter((plugin) => Date.parse(plugin.updatedAt) > Date.parse(plugin.publishedAt))
+    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
 }
 /** Most installs in the window first; equal counts keep index order. */
 export function mostInstalled(
@@ -121,7 +130,14 @@ export function mostInstalled(
 }
 /** How long ago the plugin was first listed, relative to the loader's clock. */
 export function addedAgo(plugin: Plugin, now: string): string {
-  const days = Math.floor((Date.parse(now) - Date.parse(plugin.publishedAt)) / DAY_MS);
+  return ago(plugin.publishedAt, now);
+}
+/** How long ago the plugin's current version was approved, relative to the loader's clock. */
+export function updatedAgo(plugin: Plugin, now: string): string {
+  return ago(plugin.updatedAt, now);
+}
+function ago(date: string, now: string): string {
+  const days = Math.floor((Date.parse(now) - Date.parse(date)) / DAY_MS);
   if (days <= 0) return "today";
   if (days === 1) return "yesterday";
   if (days < 14) return `${days}d ago`;

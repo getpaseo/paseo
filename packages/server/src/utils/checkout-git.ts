@@ -1187,13 +1187,16 @@ export function parseWorktreeList(output: string): GitWorktreeEntry[] {
 
 async function getWorktreePathForBranch(cwd: string, branchName: string): Promise<string | null> {
   try {
-    const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
-      cwd,
-      envOverlay: READ_ONLY_GIT_ENV,
-    });
-    const entries = parseWorktreeList(stdout);
     const ref = branchName.startsWith("refs/heads/") ? branchName : `refs/heads/${branchName}`;
-    return entries.find((entry) => entry.branchRef === ref)?.path ?? null;
+    const { stdout } = await runGitCommand(
+      ["for-each-ref", "--format=%(refname)%00%(worktreepath)%00", ref],
+      { cwd, envOverlay: READ_ONLY_GIT_ENV },
+    );
+    for (const record of stdout.split("\0\n")) {
+      const [reference, worktreePath] = record.split("\0");
+      if (reference === ref) return worktreePath || null;
+    }
+    return null;
   } catch {
     return null;
   }

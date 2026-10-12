@@ -10,7 +10,9 @@ import {
   newestFirst,
   type Plugin,
   readmeBody,
+  recentlyUpdated,
   searchPlugins,
+  updatedAgo,
 } from "./registry";
 import { readInstallCounts, recordInstall } from "./installs";
 import { handlePluginRegistryRequest, loadRegistryIndex, loadRegistryPlugin } from "./published";
@@ -76,22 +78,22 @@ describe("plugin registry", () => {
     ]);
     expect(featuredPlugins(listed, ["acme/not-published"])).toEqual([]);
   });
-  it("lists what's new by first-listing date, not submission or update dates", () => {
+  it("lists what's new by first listing time, so neither a slow review nor an update moves a plugin", () => {
     const listedFirst = {
       ...plugin,
       id: "acme/listed-first",
-      submittedAt: "2026-09-20",
-      reviewedAt: "2026-09-21",
-      updatedAt: "2026-10-02",
-      publishedAt: "2026-09-02",
+      submittedAt: "2026-09-30T00:00:00.000Z",
+      publishedAt: "2026-09-30T06:00:00.000Z",
+      reviewedAt: "2026-10-02T00:00:00.000Z",
+      updatedAt: "2026-10-02T00:00:00.000Z",
     };
     const listedLater = {
       ...plugin,
       id: "acme/listed-later",
-      submittedAt: "2026-09-01",
-      reviewedAt: "2026-09-01",
-      updatedAt: "2026-09-01",
-      publishedAt: "2026-09-30",
+      submittedAt: "2026-09-02T00:00:00.000Z",
+      publishedAt: "2026-09-30T08:00:00.000Z",
+      reviewedAt: "2026-09-30T08:00:00.000Z",
+      updatedAt: "2026-09-30T08:00:00.000Z",
     };
     expect(newestFirst([listedFirst, listedLater]).map((p) => p.id)).toEqual([
       "acme/listed-later",
@@ -99,9 +101,33 @@ describe("plugin registry", () => {
     ]);
     const now = "2026-10-03T12:00:00.000Z";
     expect(addedAgo(listedLater, now)).toBe("3d ago");
-    expect(addedAgo(listedFirst, now)).toBe("4w ago");
+    expect(updatedAgo(listedFirst, now)).toBe("yesterday");
   });
-  it("orders by listing date and by installs in a window, keeping index order for ties", () => {
+  it("lists only plugins updated after their first listing as recently updated, latest update first", () => {
+    const bumped = {
+      ...plugin,
+      id: "acme/bumped",
+      publishedAt: "2026-09-10T00:00:00.000Z",
+      updatedAt: "2026-10-01T09:00:00.000Z",
+    };
+    const bumpedLater = {
+      ...plugin,
+      id: "acme/bumped-later",
+      publishedAt: "2026-09-20T00:00:00.000Z",
+      updatedAt: "2026-10-01T17:00:00.000Z",
+    };
+    const neverUpdated = {
+      ...plugin,
+      id: "acme/never-updated",
+      publishedAt: "2026-10-02T00:00:00.000Z",
+      updatedAt: "2026-10-02T00:00:00.000Z",
+    };
+    expect(recentlyUpdated([bumped, neverUpdated, bumpedLater]).map((p) => p.id)).toEqual([
+      "acme/bumped-later",
+      "acme/bumped",
+    ]);
+  });
+  it("orders by first listing time and by installs in a window, keeping index order for ties", () => {
     const older = { ...plugin, id: "acme/older", publishedAt: "2026-09-01" };
     const twin = { ...plugin, id: "acme/twin" };
     expect(newestFirst([older, plugin, twin]).map((p) => p.id)).toEqual([

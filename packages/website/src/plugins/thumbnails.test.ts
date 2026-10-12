@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { handlePluginThumbnailRequest, pluginCardScreenshot } from "./thumbnails";
-import { NewPluginCard, PluginCard } from "./plugin-card";
+import { PluginCard } from "./plugin-card";
 import type { Plugin } from "./registry";
 
 const source = "https://cdn.jsdelivr.net/npm/paseo-example@1.2.3/preview.png";
@@ -29,6 +29,8 @@ const plugin: Plugin = {
   installs: 42,
 };
 
+const avatar = 'src="https://github.com/acme.png?size=80"';
+
 describe("plugin card thumbnails", () => {
   it("uses the first image in the plugin's media, skipping a leading video", () => {
     const html = renderToStaticMarkup(
@@ -42,7 +44,7 @@ describe("plugin card thumbnails", () => {
     const html = renderToStaticMarkup(
       createElement(PluginCard, { plugin: { ...plugin, media: [video] } }),
     );
-    expect(html).not.toContain("<img");
+    expect(html.match(/<img [^>]*>/g)).toEqual([expect.stringContaining(avatar)]);
     expect(html).not.toContain("<video");
     expect(html).toContain(">E</div>");
   });
@@ -56,11 +58,14 @@ describe("plugin card thumbnails", () => {
     expect(html).not.toContain("/plugins/thumb/");
   });
 
-  it.each([
-    ["PluginCard", () => createElement(PluginCard, { plugin }, "today")],
-    ["NewPluginCard", () => createElement(NewPluginCard, { plugin }, "today")],
-  ])("renders a thumbnail instead of downloading the original screenshot (%s)", (_name, card) => {
-    const html = renderToStaticMarkup(card());
+  it("shows the author's avatar and name beside the card detail", () => {
+    const html = renderToStaticMarkup(createElement(PluginCard, { plugin }, "today"));
+    expect(html).toContain(avatar);
+    expect(html).toMatch(/>acme<\/span><span aria-hidden="true">·<\/span><span[^>]*>today<\/span>/);
+  });
+
+  it("renders a thumbnail instead of downloading the original screenshot", () => {
+    const html = renderToStaticMarkup(createElement(PluginCard, { plugin }, "today"));
     expect(html).toContain(
       `src="/plugins/thumb/592/${encodeURIComponent(source)}?plugin=acme%2Fexample"`,
     );

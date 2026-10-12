@@ -24,6 +24,71 @@ afterEach(async () => {
 
 describe("file explorer", () => {
   test.each([
+    { description: "a long ASCII name", fileName: `${"a".repeat(236)}.txt` },
+    { description: "an ordinary name", fileName: "notes.txt" },
+    { description: "a long Unicode name", fileName: `${"文".repeat(76)}.txt` },
+  ])("saves text files with $description", async ({ fileName }) => {
+    const cwd = tmpCwd();
+    try {
+      const created = await ctx.client.createFileEntry({
+        cwd,
+        parentPath: ".",
+        name: fileName,
+        kind: "file",
+      });
+      expect(created).toMatchObject({ path: fileName, success: true, error: null });
+      writeFileSync(path.join(cwd, fileName), "original payload\n");
+      const initial = await ctx.client.readFile(cwd, fileName);
+
+      const saved = await ctx.client.writeFile({
+        cwd,
+        path: fileName,
+        content: "saved payload\n",
+        expectedModifiedAt: initial.modifiedAt,
+        expectedRevision: initial.revision,
+      });
+      expect(saved).toMatchObject({ status: "written", size: 14 });
+      const after = await ctx.client.readFile(cwd, fileName);
+      expect(after.path).toBe(fileName);
+      expect(new TextDecoder().decode(after.bytes)).toBe("saved payload\n");
+
+      const staleSave = await ctx.client.writeFile({
+        cwd,
+        path: fileName,
+        content: "stale payload\n",
+        expectedModifiedAt: initial.modifiedAt,
+        expectedRevision: initial.revision,
+      });
+      expect(staleSave).toMatchObject({
+        status: "conflict",
+        version: {
+          status: "ready",
+          path: fileName,
+          size: after.size,
+          modifiedAt: after.modifiedAt,
+          revision: after.revision,
+        },
+      });
+      const afterConflict = await ctx.client.readFile(cwd, fileName);
+      expect(new TextDecoder().decode(afterConflict.bytes)).toBe("saved payload\n");
+
+      const secondSave = await ctx.client.writeFile({
+        cwd,
+        path: fileName,
+        content: "second payload\n",
+        expectedModifiedAt: afterConflict.modifiedAt,
+        expectedRevision: afterConflict.revision,
+      });
+      expect(secondSave).toMatchObject({ status: "written", size: 15 });
+      const final = await ctx.client.readFile(cwd, fileName);
+      expect(new TextDecoder().decode(final.bytes)).toBe("second payload\n");
+      expect(readdirSync(cwd)).toEqual([fileName]);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
     {
       query: "implementation",
       expectedPaths: [
