@@ -1117,28 +1117,33 @@ async function readContinuity(page, client, browserId) {
   return { ...guest, ...JSON.parse(state.resultJson) };
 }
 
-async function readRendererMemory(page, inspectorPort, cohort) {
-  const guests = await Promise.all(
-    cohort.map(async (tab) => ({
-      ...tab,
-      webContentsId: (await readGuest(page, tab.browserId))?.webContentsId ?? null,
-    })),
-  );
+async function readRendererMemory(inspectorPort, cohort) {
   return await evaluateMain(
     inspectorPort,
     `(() => {
     const { app, webContents, BrowserWindow } = process.mainModule.require('electron');
     const host = BrowserWindow.getAllWindows().find(win => win.webContents.getURL().includes('localhost:')).webContents;
-    const guests = ${JSON.stringify(guests)}.map(tab => {
-      const guest = tab.webContentsId === null ? null : webContents.fromId(tab.webContentsId);
-      return { ...tab, pid: guest && !guest.isDestroyed() ? guest.getOSProcessId() : null };
+    const guests = ${JSON.stringify(cohort)}.map(tab => {
+      const guest = webContents.fromId(tab.webContentsId);
+      const webContentsAlive = Boolean(guest && !guest.isDestroyed());
+      const pid = webContentsAlive ? guest.getOSProcessId() : null;
+      return { ...tab, originalPid: tab.originalPid ?? pid, webContentsAlive, pid };
     });
     const rawMetrics = app.getAppMetrics();
     const guestPids = [...new Set(guests.map(tab => tab.pid).filter(Boolean))];
-    const cohortRendererMetrics = rawMetrics.filter(metric => guestPids.includes(metric.pid));
-    return { capturedAt: new Date().toISOString(), guests, guestPids, host: { webContentsId: host.id, pid: host.getOSProcessId() },
-      hostRendererMetric: rawMetrics.find(metric => metric.pid === host.getOSProcessId()), cohortRendererMetrics,
+    const cohortPids = [...new Set(guests.map(tab => tab.originalPid).filter(Boolean))];
+    const cohortRendererMetrics = rawMetrics.filter(metric => cohortPids.includes(metric.pid));
+    const liveGuestRendererMetrics = rawMetrics.filter(metric => guestPids.includes(metric.pid));
+    const pidAttribution = cohortPids.map(pid => ({ pid,
+      browserIds: guests.filter(tab => tab.originalPid === pid).map(tab => tab.browserId),
+      liveBrowserIds: guests.filter(tab => tab.pid === pid).map(tab => tab.browserId),
+      sharedWithHost: pid === host.getOSProcessId(),
+      processStillPresent: rawMetrics.some(metric => metric.pid === pid) }));
+    return { capturedAt: new Date().toISOString(), guests, guestPids, cohortPids, pidAttribution,
+      host: { webContentsId: host.id, pid: host.getOSProcessId() },
+      hostRendererMetric: rawMetrics.find(metric => metric.pid === host.getOSProcessId()), cohortRendererMetrics, liveGuestRendererMetrics,
       cohortWorkingSetSizeKiB: cohortRendererMetrics.reduce((sum, metric) => sum + metric.memory.workingSetSize, 0),
+      liveGuestWorkingSetSizeKiB: liveGuestRendererMetrics.reduce((sum, metric) => sum + metric.memory.workingSetSize, 0),
       rawMetrics, memoryUnit: 'KiB', versions: process.versions };
   })()`,
   );
@@ -1314,17 +1319,19 @@ async function runTabBaseline({ page, client, serverId, target, artifactDir, ins
     await callBrowserTool(client, "browser_close_tab", { browserId: replacement.browserId });
     report.counterSelfCheck = { initial, reloaded, recreated };
     await delay(10_000);
-    report.memory.idle = await readRendererMemory(page, inspectorPort, cohort);
+    report.memory.idle = await readRendererMemory(inspectorPort, cohort);
     for (let index = 0; index < 10; index++) {
       const fixtureId = `measurement-${index}`;
       const created = await callBrowserTool(client, "browser_new_tab", {
         url: `${target.url}?fixture=${fixtureId}`,
       });
-      cohort.push({ browserId: created.browserId, fixtureId });
       await callBrowserTool(client, "browser_evaluate", {
         browserId: created.browserId,
         function: "() => document.readyState",
       });
+      const guest = await readGuest(page, created.browserId);
+      assert(guest, "Measurement guest has no original WebContents identity");
+      cohort.push({ browserId: created.browserId, fixtureId, webContentsId: guest.webContentsId });
       if (index === 1) {
         const beforeStates = [];
         for (const [tabIndex, tab] of cohort.entries()) {
@@ -1427,18 +1434,37 @@ async function runTabBaseline({ page, client, serverId, target, artifactDir, ins
       "Trace did not include renderer timing markers",
     );
     await delay(10_000);
-    report.memory.tenPages = await readRendererMemory(page, inspectorPort, cohort);
+    report.memory.tenPages = await readRendererMemory(inspectorPort, cohort);
     assert(
       report.memory.tenPages.guests.every((tab) => tab.pid),
       "Memory cohort has a missing guest PID",
     );
+    cohort.forEach((tab, index) => {
+      tab.originalPid = report.memory.tenPages.guests[index].originalPid;
+    });
     for (const tab of cohort.slice(1))
       await callBrowserTool(client, "browser_close_tab", { browserId: tab.browserId });
     await delay(10_000);
-    report.memory.afterClosingNine = await readRendererMemory(page, inspectorPort, cohort);
+    report.memory.afterClosingNine = await readRendererMemory(inspectorPort, cohort);
     assert(
-      report.memory.afterClosingNine.guests.filter((tab) => tab.pid).length === 1,
-      "Closed cohort guests remained registered",
+      report.memory.afterClosingNine.guests.filter((tab) => tab.webContentsAlive).length === 1 &&
+        report.memory.afterClosingNine.guests.slice(1).every((tab) => !tab.webContentsAlive),
+      "Closed cohort WebContents remained registered",
+    );
+    assert(
+      report.memory.afterClosingNine.guests.every(
+        (tab, index) =>
+          tab.webContentsId === report.memory.tenPages.guests[index].webContentsId &&
+          tab.originalPid === report.memory.tenPages.guests[index].originalPid,
+      ),
+      "After-close memory lost original cohort identities",
+    );
+    assert(
+      report.memory.afterClosingNine.cohortPids.length ===
+        report.memory.tenPages.guestPids.length &&
+        report.memory.afterClosingNine.pidAttribution.flatMap((group) => group.browserIds)
+          .length === 10,
+      "After-close memory lost historical or shared-PID attribution",
     );
     const listed = await callBrowserTool(client, "browser_list_tabs");
     assert(
