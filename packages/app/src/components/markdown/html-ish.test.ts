@@ -391,6 +391,43 @@ describe("splitHtmlishMarkdown", () => {
     );
   });
 
+  it("keeps table rows after a comparison that only looks like a tag", () => {
+    const source = [
+      "| ID | Note | Status |",
+      "|---|---|---|",
+      "| a-1 | accepts 1<size<2 only | open |",
+      "| a-2 | second row | open |",
+      "",
+      "Later x -> y.",
+    ].join("\n");
+
+    expect(splitHtmlishMarkdown(source)).toEqual([{ kind: "markdown", text: source }]);
+  });
+
+  it.each(["See <https://example.com/docs> for more.", "Stop when a<b", "Keep </ b> and a <b"])(
+    "keeps %j literal because it is not HTML",
+    (source) => {
+      expect(normalizeHtmlishMarkdown(source)).toBe(source);
+    },
+  );
+
+  it.each([
+    "Call As<Integer>() before limits<DWORD>::max()",
+    "<Kbd Data-Key='K'>Ctrl</Kbd> then <Foo/>",
+  ])("echoes unknown tags in %j as written", (source) => {
+    expect(normalizeHtmlishMarkdown(source)).toBe(source);
+  });
+
+  it("rebuilds an unknown tag that a code span splits", () => {
+    expect(normalizeHtmlishMarkdown('<Tip title="`x`">hi</Tip>')).toBe("`x`<tip title>hi</Tip>");
+  });
+
+  it("still reads tags and comments next to literal angle brackets", () => {
+    expect(normalizeHtmlishMarkdown("1<n<2 <b>bold</b><!-- hidden --> 3<4")).toBe(
+      "1<n<2 **bold** 3<4",
+    );
+  });
+
   it("falls back to inert markdown when details are unclosed", () => {
     const source = "<details><summary>Open</summary>Still open";
 

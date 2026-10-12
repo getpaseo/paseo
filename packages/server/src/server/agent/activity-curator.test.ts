@@ -39,6 +39,45 @@ function row(seq: number, item: AgentTimelineItem): AgentTimelineRow {
 }
 
 describe("curateAgentActivity", () => {
+  it("keeps reasoning before the assistant text that followed it", () => {
+    const timeline: AgentTimelineItem[] = [
+      { type: "reasoning", text: "Check the commands first." },
+      { type: "assistant_message", text: "I will list the commands." },
+      toolCallItem({
+        callId: "shell-order",
+        name: "Bash",
+        detail: {
+          type: "shell",
+          command: "ls packages/cli/src/commands/agent/",
+          output: "",
+          exitCode: 0,
+        },
+      }),
+    ];
+
+    expect(curateAgentActivity(timeline)).toBe(
+      "[Thought] Check the commands first.\nI will list the commands.\n[Shell] ls packages/cli/src/commands/agent/",
+    );
+  });
+
+  it("preserves alternating text kinds, labels, and fragment concatenation", () => {
+    const timeline: AgentTimelineItem[] = [
+      { type: "assistant_message", text: "First message." },
+      { type: "reasoning", text: "First " },
+      { type: "reasoning", text: "thought." },
+      { type: "assistant_message", text: "Second " },
+      { type: "assistant_message", text: "message." },
+      { type: "reasoning", text: "Second thought." },
+    ];
+
+    expect(curateAgentActivity(timeline, { labelAssistantMessages: true })).toBe(
+      "[Assistant] First message.\n[Thought] First thought.\n[Assistant] Second message.\n[Thought] Second thought.",
+    );
+    expect(curateAgentActivity(timeline, { maxItems: 2 })).toBe(
+      "Second message.\n[Thought] Second thought.",
+    );
+  });
+
   it("renders user/assistant/reasoning entries", () => {
     const timeline: AgentTimelineItem[] = [
       { type: "user_message", text: "Hello" },
