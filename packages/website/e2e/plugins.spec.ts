@@ -98,6 +98,11 @@ test("browses from the directory into a category, a plugin, and its author", asy
     "href",
     "/plugins/category/git",
   );
+  // The source is a folder in a monorepo; issues are filed on the repository.
+  await expect(page.getByRole("link", { name: "Report a bug" })).toHaveAttribute(
+    "href",
+    "https://github.com/omercnet/paseo-plugins/issues/new",
+  );
 
   await page.getByRole("link", { name: "Omer Cohen" }).click();
   await expect(page).toHaveURL(/\/plugins\/omercnet$/);
@@ -764,6 +769,7 @@ async function expectPluginOverviewSafe(page: Page) {
   });
   expect(violations).toEqual([]);
   await expect(page.getByRole("link", { name: "Source", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Report a bug" })).toHaveCount(0);
   await expect(page.getByRole("img", { name: /screenshot/ })).toHaveCount(0);
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(securityPlugin.name);
   await expect(

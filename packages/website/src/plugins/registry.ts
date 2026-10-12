@@ -1,4 +1,9 @@
 import type { z } from "zod";
+import {
+  isGitHubHost,
+  parseGitHubRemoteIdentity,
+  parseGitRemoteLocation,
+} from "@getpaseo/protocol/git-remote";
 import { pluginOverviewUrl } from "@getpaseo/protocol/plugin-overview";
 import { pluginMediaKind, type PublishedPluginSchema } from "@getpaseo/protocol/plugin-registry";
 import { scoreTextFields } from "@getpaseo/protocol/search/text-match";
@@ -52,6 +57,14 @@ export function npmUrl(plugin: Plugin): string | undefined {
   return plugin.artifact.kind === "npm"
     ? `https://www.npmjs.com/package/${plugin.artifact.package}`
     : undefined;
+}
+/** A new issue on the plugin's GitHub repository; absent when the source is hosted elsewhere. */
+export function reportBugUrl(plugin: Plugin): string | undefined {
+  const location = parseGitRemoteLocation(plugin.repository.url);
+  if (!location || !isGitHubHost(location.host)) return undefined;
+  // A monorepo source points at the plugin's folder; issues belong to the repository.
+  const repository = parseGitHubRemoteIdentity(location.path.split("/").slice(0, 2).join("/"));
+  return repository ? `https://github.com/${repository.repo}/issues/new` : undefined;
 }
 export function authorNpmUrl(author: Author): string | undefined {
   return author.npm ? `https://www.npmjs.com/~${author.npm}` : undefined;
