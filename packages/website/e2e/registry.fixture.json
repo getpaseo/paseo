@@ -608,7 +608,7 @@
     {
       "id": "tomgrin10/graphite",
       "name": "Graphite",
-      "description": "Workspace-native Graphite stack status and PR action radar for Paseo.",
+      "description": "Workspace-native Graphite stack status and PR action radar for Paseo. <p align=\"center\">   <picture>     <source media=\"(prefers-color-scheme: dark)\" srcset=\"https://raw.githubusercontent.com/xpufx/paseo/main/plugins/slash/docs/screenshots/slash-logo-for-dark-bg.png\">     <source media=\"(prefers-color-scheme: light)\" srcset",
       "artifact": {
         "kind": "npm",
         "package": "paseo-graphite",

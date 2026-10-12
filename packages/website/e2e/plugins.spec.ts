@@ -24,6 +24,16 @@ test("scrolls mobile plugin carousels without widening the page", async ({ page 
   await expectPageWithinViewport(page);
 });
 
+// Graphite's fixture description ends in raw README HTML with an unbreakable srcset URL.
+test("keeps browse grids within a phone's width when a description has an unbreakable word", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/plugins/all");
+  await expect(page.getByRole("heading", { level: 1, name: /^All plugins/ })).toBeVisible();
+  await expectPageWithinViewport(page);
+});
+
 async function expectPageWithinViewport(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
     await page.evaluate(() => document.documentElement.clientWidth),

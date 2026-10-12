@@ -41,13 +41,14 @@ function PluginShot({ plugin }: { plugin: Plugin }) {
 export function PluginCard({ plugin, children }: { plugin: Plugin; children?: ReactNode }) {
   const author = getAuthor(plugin);
   return (
-    <a href={pluginHref(plugin.id)} className="group block">
+    // Grid items size to their content by default; min-w-0 keeps the card in its column.
+    <a href={pluginHref(plugin.id)} className="group block min-w-0">
       <PluginShot plugin={plugin} />
       <div className="mt-3 flex items-center gap-2">
         <PluginTile plugin={plugin} size="xs" />
         <p className="min-w-0 truncate text-sm font-medium text-white">{plugin.name}</p>
       </div>
-      <p className="mt-2 line-clamp-2 min-h-10 text-xs leading-5 text-muted-foreground">
+      <p className="mt-2 line-clamp-2 min-h-10 break-words text-xs leading-5 text-muted-foreground">
         {plugin.description}
       </p>
       <p className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-extra-muted-foreground">
