@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, test } from "vitest";
 import { createPaseoClient, type PaseoClient } from "@getpaseo/client";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { runPaseoCli } from "../test-utils/cli.js";
 
 let daemon: TestPaseoDaemon;
 let client: DaemonClient;
@@ -26,6 +27,68 @@ afterEach(async () => {
   await sdk.close();
   await daemon.close();
   await rm(cwd, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+});
+
+async function createQuietTerminal() {
+  const workspaceId = await createWorkspace("CLI capture");
+  return sdk.terminals.create({
+    workspaceId,
+    command: process.execPath,
+    args: ["-e", "process.stdin.resume()"],
+    size: { rows: 10, cols: 40 },
+  });
+}
+
+test.each([
+  ["--start", "1.5"],
+  ["--end", "1.5"],
+  ["--start", "1abc"],
+  ["--end", "1abc"],
+  ["--start", ""],
+  ["--end", ""],
+  ["--start", "9007199254740993"],
+  ["--end", "9007199254740993"],
+])("CLI terminal capture rejects %s %j", async (flag, value) => {
+  const terminal = await createQuietTerminal();
+  try {
+    const result = await runPaseoCli({
+      daemon,
+      args: ["terminal", "capture", terminal.id, flag, value, "--json"],
+    });
+    expect(result.exitCode, result.stdout + result.stderr).toBe(1);
+    expect(JSON.parse(result.stderr)).toEqual({
+      error: {
+        code: "INVALID_LINE_NUMBER",
+        message: `Invalid ${flag} value: ${value}`,
+        details: "Use an integer line number.",
+      },
+    });
+  } finally {
+    await terminal.kill();
+  }
+});
+
+test.each([
+  { args: [], lineCount: 10 },
+  { args: ["--start", "0", "--end", "1"], lineCount: 2 },
+  { args: ["--start", "-2", "--end", "-1"], lineCount: 2 },
+  { args: ["--scrollback", "--start", "7", "--end", "1"], lineCount: 2 },
+])("CLI terminal capture preserves valid ranges $args", async ({ args, lineCount }) => {
+  const terminal = await createQuietTerminal();
+  try {
+    const result = await runPaseoCli({
+      daemon,
+      args: ["terminal", "capture", terminal.id, ...args, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      terminalId: terminal.id,
+      lines: Array.from({ length: lineCount }, () => ""),
+      totalLines: 10,
+    });
+  } finally {
+    await terminal.kill();
+  }
 });
 
 test("SDK and workspace handles preserve ownership and actual process directories", async () => {

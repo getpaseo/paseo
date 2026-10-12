@@ -85,8 +85,9 @@ function parseLineNumber(flag: string, value?: string): number | undefined {
     return undefined;
   }
 
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed)) {
+  const parsed = Number(value);
+  const isIntegerLineNumber = value.trim().length > 0 && Number.isSafeInteger(parsed);
+  if (!isIntegerLineNumber) {
     throw {
       code: "INVALID_LINE_NUMBER",
       message: `Invalid ${flag} value: ${value}`,

@@ -441,8 +441,9 @@ function buildNewAgentConfigPatch(
 }
 
 function parsePositiveInt(value: string, flag: string): number {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
+  const parsed = Number(value);
+  const isPositiveInteger = Number.isSafeInteger(parsed) && parsed > 0;
+  if (!isPositiveInteger) {
     throw {
       code: "INVALID_INTEGER",
       message: `${flag} must be a positive integer`,

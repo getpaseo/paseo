@@ -13,6 +13,7 @@ import {
 } from "./test-utils/index.js";
 import type { SessionOutboundMessage } from "./messages.js";
 import { getPaseoWorktreesRoot } from "../utils/worktree.js";
+import { runPaseoCli } from "./test-utils/cli.js";
 
 type AgentUpdateMessage = Extract<SessionOutboundMessage, { type: "agent_update" }>;
 type WorkspaceUpdateMessage = Extract<SessionOutboundMessage, { type: "workspace_update" }>;
@@ -41,6 +42,131 @@ function makeTempDir(prefix: string): string {
   tempRoots.push(dir);
   return dir;
 }
+
+test.each(["2.5", "2runs", "9007199254740993", "0", "-1", ""])(
+  "CLI schedule create rejects max-runs %j without saving a schedule",
+  async (maxRuns) => {
+    const cwd = makeTempDir("schedule-cli-integer-");
+    const result = await runPaseoCli({
+      daemon: ctx.daemon,
+      args: [
+        "schedule",
+        "create",
+        "Integer limit",
+        "--cron",
+        "0 0 1 1 *",
+        "--provider",
+        "claude",
+        "--cwd",
+        cwd,
+        "--max-runs",
+        maxRuns,
+        "--json",
+      ],
+    });
+    expect(result.exitCode, result.stdout + result.stderr).toBe(1);
+    expect(JSON.parse(result.stderr)).toEqual({
+      error: { code: "INVALID_INTEGER", message: "--max-runs must be a positive integer" },
+    });
+    expect((await ctx.client.scheduleList()).schedules).toEqual([]);
+  },
+);
+
+test.each(["2.5", "2runs"])(
+  "CLI schedule update rejects max-runs %j without changing the schedule",
+  async (maxRuns) => {
+    const cwd = makeTempDir("schedule-cli-update-integer-");
+    const schedule = await createNewAgentSchedule({
+      prompt: "Original prompt",
+      cadence: { type: "cron", expression: "0 0 1 1 *", timezone: "UTC" },
+      target: { type: "new-agent", config: { provider: "claude", cwd } },
+      maxRuns: 3,
+      runOnCreate: false,
+    });
+    const before = await ctx.client.scheduleInspect({ id: schedule.id });
+    const result = await runPaseoCli({
+      daemon: ctx.daemon,
+      args: [
+        "schedule",
+        "update",
+        schedule.id,
+        "--prompt",
+        "Should not apply",
+        "--max-runs",
+        maxRuns,
+        "--json",
+      ],
+    });
+    expect(result.exitCode, result.stdout + result.stderr).toBe(1);
+    expect(JSON.parse(result.stderr)).toEqual({
+      error: { code: "INVALID_INTEGER", message: "--max-runs must be a positive integer" },
+    });
+    const after = await ctx.client.scheduleInspect({ id: schedule.id });
+    expect(after.error).toBeNull();
+    expect(after.schedule).toEqual(before.schedule);
+  },
+);
+
+test.each([
+  { limitArgs: [], maxRuns: null },
+  { limitArgs: ["--max-runs", "3"], maxRuns: 3 },
+  { limitArgs: ["--max-runs", "3.0"], maxRuns: 3 },
+  { limitArgs: ["--max-runs", "1e2"], maxRuns: 100 },
+])(
+  "CLI schedule create stores max-runs $maxRuns from $limitArgs",
+  async ({ limitArgs, maxRuns }) => {
+    const cwd = makeTempDir("schedule-cli-valid-integer-");
+    const result = await runPaseoCli({
+      daemon: ctx.daemon,
+      args: [
+        "schedule",
+        "create",
+        "Integer limit",
+        "--cron",
+        "0 0 1 1 *",
+        "--provider",
+        "claude",
+        "--cwd",
+        cwd,
+        ...limitArgs,
+        "--json",
+      ],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect((await ctx.client.scheduleList()).schedules).toEqual([
+      expect.objectContaining({ maxRuns, prompt: "Integer limit" }),
+    ]);
+  },
+);
+
+test("CLI schedule update preserves, changes, and clears valid run limits", async () => {
+  const cwd = makeTempDir("schedule-cli-valid-update-");
+  const schedule = await createNewAgentSchedule({
+    prompt: "Original prompt",
+    cadence: { type: "cron", expression: "0 0 1 1 *", timezone: "UTC" },
+    target: { type: "new-agent", config: { provider: "claude", cwd } },
+    maxRuns: 3,
+    runOnCreate: false,
+  });
+  for (const { args, maxRuns } of [
+    { args: ["--name", "Renamed"], maxRuns: 3 },
+    { args: ["--max-runs", "5"], maxRuns: 5 },
+    { args: ["--no-max-runs"], maxRuns: null },
+  ]) {
+    const result = await runPaseoCli({
+      daemon: ctx.daemon,
+      args: ["schedule", "update", schedule.id, ...args, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect((await ctx.client.scheduleInspect({ id: schedule.id })).schedule).toMatchObject({
+      maxRuns,
+      name: "Renamed",
+      prompt: schedule.prompt,
+      target: schedule.target,
+      cadence: schedule.cadence,
+    });
+  }
+}, 60_000);
 
 function createGitRepo(): string {
   const tempRoot = makeTempDir("schedule-run-worktree-");
