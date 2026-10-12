@@ -318,7 +318,7 @@ describe("Suite A: Core Fixes", () => {
     ["Reload", "refreshAgent"],
   ] as const)(
     "%s tells the parent that a watched child was canceled",
-    async (action, method) => {
+    async (_action, method) => {
       let releaseChild!: () => void;
       let childReachedGate!: () => void;
       const heldTurn = new Promise<void>((resolve) => {
@@ -395,9 +395,6 @@ describe("Suite A: Core Fixes", () => {
           check: () => (parentPrompts.length === 1 ? true : null),
         });
         const notification = parseAgentMessage(parentPrompts[0]);
-        console.log(
-          `${action}: child terminal events=${JSON.stringify(terminalEvents)}\nparent notification=${JSON.stringify(notification)}`,
-        );
         expect(terminalEvents).toEqual(["turn_canceled"]);
         expect(notification.source).toEqual({
           kind: "agent-notification",
