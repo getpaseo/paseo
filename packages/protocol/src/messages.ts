@@ -2751,6 +2751,16 @@ const FileExplorerDirectorySchema = z.object({
   entries: z.array(FileExplorerEntrySchema),
 });
 
+export const FileReadCancelRequestSchema = z.object({
+  type: z.literal("fs.file.read.cancel.request"),
+  transferId: z.string(),
+  requestId: z.string(),
+});
+export const FileReadCancelResponseSchema = z.object({
+  type: z.literal("fs.file.read.cancel.response"),
+  payload: z.object({ requestId: z.string() }),
+});
+
 export const FileExplorerRequestSchema = z.object({
   type: z.literal("file_explorer_request"),
   cwd: z.string(),
@@ -3350,6 +3360,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceClearAttentionRequestSchema,
   WorkspaceMarkUnreadRequestSchema,
   FileExplorerRequestSchema,
+  FileReadCancelRequestSchema,
   FileSubscribeRequestSchema,
   FileUnsubscribeRequestSchema,
   FileWriteRequestSchema,
@@ -3670,6 +3681,7 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceRecovery: z.boolean().optional(),
         // COMPAT(workspaceFileEditing): added in v0.2.0, remove after 2027-01-18 once daemon floor >= v0.2.0.
         workspaceFileEditing: z.boolean().optional(),
+        fileReadCancellation: z.boolean().optional(),
         // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.
         providerUsageList: z.boolean().optional(),
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
@@ -7011,6 +7023,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   PaseoWorktreeArchiveResponseSchema,
   CreatePaseoWorktreeResponseSchema,
   FileExplorerResponseSchema,
+  FileReadCancelResponseSchema,
   FileSubscribeResponseSchema,
   FileUnsubscribeResponseSchema,
   FileWriteResponseSchema,

@@ -64,6 +64,14 @@ export interface DesktopOpenerBridge {
   openUrl?: (url: string) => Promise<void>;
 }
 
+export interface DesktopFilesBridge {
+  materialize(input: { name: string; bytes: Uint8Array }): Promise<string>;
+  chooseApplication(): Promise<string | null>;
+  open(input: { path: string; application?: string }): Promise<void>;
+  reveal(path: string): Promise<void>;
+  save(input: { name: string; bytes: Uint8Array }): Promise<string | null>;
+}
+
 export interface DesktopEditorTargetDescriptor {
   id: string;
   label: string;
@@ -183,6 +191,7 @@ export interface DesktopHostBridge {
   dialog?: DesktopDialogBridge;
   notification?: DesktopNotificationBridge;
   opener?: DesktopOpenerBridge;
+  files?: DesktopFilesBridge;
   editor?: DesktopEditorBridge;
   webUtils?: DesktopWebUtilsBridge;
   menu?: DesktopMenuBridge;

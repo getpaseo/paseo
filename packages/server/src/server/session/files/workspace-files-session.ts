@@ -65,6 +65,8 @@ export interface WorkspaceFilesSessionOptions {
  * the whole concern.
  */
 export class WorkspaceFilesSession {
+  private readonly transfers = new WeakMap<object, Map<string, AbortController>>();
+  private readonly unscopedSource = {};
   private readonly host: WorkspaceFilesSessionHost;
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly logger: pino.Logger;
@@ -243,6 +245,20 @@ export class WorkspaceFilesSession {
     });
   }
 
+  async handleFileReadCancel(
+    request: Extract<SessionInboundMessage, { type: "fs.file.read.cancel.request" }>,
+    source?: object,
+  ): Promise<void> {
+    this.transfers
+      .get(source ?? this.unscopedSource)
+      ?.get(request.transferId)
+      ?.abort();
+    this.host.emit(
+      { type: "fs.file.read.cancel.response", payload: { requestId: request.requestId } },
+      source,
+    );
+  }
+
   async handleFileExplorerRequest(request: FileExplorerRequest, source?: object): Promise<void> {
     const { cwd: workspaceCwd, path: requestedPath = ".", mode, requestId } = request;
     const cwd = workspaceCwd.trim();
@@ -265,6 +281,11 @@ export class WorkspaceFilesSession {
       return;
     }
 
+    const sourceKey = source ?? this.unscopedSource;
+    const active = this.transfers.get(sourceKey) ?? new Map<string, AbortController>();
+    this.transfers.set(sourceKey, active);
+    const cancellation = new AbortController();
+    active.set(requestId, cancellation);
     try {
       if (mode === "list") {
         const directory = await listDirectoryEntries({
@@ -311,6 +332,7 @@ export class WorkspaceFilesSession {
               source,
             );
             for await (const chunk of file.chunks) {
+              cancellation.signal.throwIfAborted();
               await this.host.emitBinary(
                 encodeFileTransferFrame({
                   opcode: FileTransferOpcode.FileChunk,
@@ -371,6 +393,8 @@ export class WorkspaceFilesSession {
         },
         source,
       );
+    } finally {
+      active.delete(requestId);
     }
   }
 
