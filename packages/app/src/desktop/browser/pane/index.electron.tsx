@@ -671,6 +671,7 @@ export function BrowserPane({
   const browserErrorLabels = useMemo(
     () => ({
       failedToLoad: t("workspace.browser.errors.failedToLoad"),
+      crashed: t("workspace.browser.errors.crashed"),
       invalidUrl: t("workspace.browser.errors.invalidUrl"),
       unsupportedProtocol: (protocol: string) =>
         t("workspace.browser.errors.unsupportedProtocol", { protocol }),
@@ -850,6 +851,13 @@ export function BrowserPane({
         lastError: message,
       });
     };
+    const handleRenderProcessGone = () => {
+      selectorControllerRef.current?.stopForWebview(webview);
+      updateBrowserRef.current(browserIdRef.current, {
+        isLoading: false,
+        lastError: browserErrorLabelsRef.current.crashed,
+      });
+    };
     const handleDomReady = () => {
       syncNavigationState();
       // The previous page's overlay is gone after a load; re-apply markers for
@@ -878,6 +886,7 @@ export function BrowserPane({
     webview.addEventListener("page-title-updated", handleTitleUpdated);
     webview.addEventListener("page-favicon-updated", handleFaviconUpdated);
     webview.addEventListener("did-fail-load", handleLoadFailed);
+    webview.addEventListener("render-process-gone", handleRenderProcessGone);
     webview.addEventListener("dom-ready", handleDomReady);
     webview.addEventListener("focus", handleWebviewFocus);
     webview.addEventListener("mousedown", handleWebviewFocus);
@@ -904,6 +913,7 @@ export function BrowserPane({
       webview.removeEventListener("page-title-updated", handleTitleUpdated);
       webview.removeEventListener("page-favicon-updated", handleFaviconUpdated);
       webview.removeEventListener("did-fail-load", handleLoadFailed);
+      webview.removeEventListener("render-process-gone", handleRenderProcessGone);
       webview.removeEventListener("dom-ready", handleDomReady);
       webview.removeEventListener("focus", handleWebviewFocus);
       webview.removeEventListener("mousedown", handleWebviewFocus);
@@ -1547,6 +1557,9 @@ export function BrowserPane({
           <Text numberOfLines={1} style={errorTextStyle}>
             {browser.lastError}
           </Text>
+          <Button variant="ghost" size="sm" onPress={handleRefresh}>
+            {t("common.actions.retry")}
+          </Button>
         </View>
       ) : null}
       <View
@@ -1760,6 +1773,8 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: 0,
   },
   errorRow: {
+    flexDirection: "row",
+    alignItems: "center",
     paddingHorizontal: theme.spacing[2],
     paddingVertical: theme.spacing[1],
     borderBottomWidth: 1,
@@ -1767,6 +1782,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface0,
   },
   metaError: {
+    flex: 1,
     fontSize: theme.fontSize.sm,
   },
   webviewWrap: {

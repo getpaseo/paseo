@@ -638,6 +638,7 @@ export const zhCN: TranslationResources = {
         responsive: "自适应",
       },
       errors: {
+        crashed: "此页面已崩溃。请重新加载后重试。",
         failedToLoad: "页面加载失败",
         invalidUrl: "浏览器 URL 无效",
         unsupportedProtocol: "已阻止不支持的浏览器 URL：{{protocol}}",

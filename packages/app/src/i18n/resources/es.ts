@@ -645,6 +645,7 @@ export const es: TranslationResources = {
         responsive: "Adaptable",
       },
       errors: {
+        crashed: "Esta página falló. Recárgala para volver a intentarlo.",
         failedToLoad: "No se pudo cargar la página",
         invalidUrl: "Navegador no válidoURL",
         unsupportedProtocol: "Navegador bloqueado no compatibleURL:{{protocol}}",

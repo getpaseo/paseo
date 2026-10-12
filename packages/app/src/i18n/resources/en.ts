@@ -635,6 +635,7 @@ export const en = {
         responsive: "Responsive",
       },
       errors: {
+        crashed: "This page crashed. Reload to try again.",
         failedToLoad: "Failed to load page",
         invalidUrl: "Invalid browser URL",
         unsupportedProtocol: "Blocked unsupported browser URL: {{protocol}}",

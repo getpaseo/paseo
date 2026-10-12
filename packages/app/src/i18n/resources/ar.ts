@@ -638,6 +638,7 @@ export const ar: TranslationResources = {
         responsive: "متجاوب",
       },
       errors: {
+        crashed: "تعطلت هذه الصفحة. أعد تحميلها للمحاولة مجددًا.",
         failedToLoad: "فشل تحميل الصفحة",
         invalidUrl: "متصفح غير صالح URL",
         unsupportedProtocol: "متصفح محظور غير مدعوم URL:{{protocol}}",

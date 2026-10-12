@@ -644,6 +644,7 @@ export const ptBR: TranslationResources = {
         responsive: "Responsivo",
       },
       errors: {
+        crashed: "Esta página falhou. Recarregue para tentar novamente.",
         failedToLoad: "Falha ao carregar página",
         invalidUrl: "URL de navegador inválida",
         unsupportedProtocol: "URL de navegador sem suporte bloqueada: {{protocol}}",

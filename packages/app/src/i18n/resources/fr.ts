@@ -644,6 +644,7 @@ export const fr: TranslationResources = {
         responsive: "Adaptatif",
       },
       errors: {
+        crashed: "Cette page a planté. Rechargez-la pour réessayer.",
         failedToLoad: "Impossible de charger la page",
         invalidUrl: "URL du navigateur invalide",
         unsupportedProtocol:

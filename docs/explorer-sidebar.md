@@ -76,7 +76,7 @@ Removing a pane clears its remembered id; a later side open creates a new pane. 
 ordinary pane stays when its final tab closes and shows the New launcher. An empty workspace does
 not automatically create an agent draft tab; choosing Agent opens one. Explorer cannot replace the
 workspace canvas, even when visible. Restoring a saved layout enforces the same rule while preserving Explorer and saved
-tab content. There is no hidden side-pane lifecycle.
+tab content. Ordinary side panes have no hidden lifecycle; the browser pane below owns its separate visibility contract.
 
 Placement intent still controls existing tabs:
 
@@ -89,6 +89,28 @@ Placement intent still controls existing tabs:
 
 Explicit **Open to Side** uses `pane`. Implicit opens use `prefer`, so a preference affects only a
 new target and never yanks an existing tab out of a user-selected pane.
+
+## Browser pane
+
+Electron remembers one browser-only ordinary pane per workspace. User opens reveal that pane;
+agent opens create or reuse it in the background, preserving conversation focus and visible width.
+Show and Hide affect this pane without closing its pages. Maximize is temporary presentation state;
+hiding the pane or revealing another pane clears it without rewriting saved split sizes.
+
+Tabs stay in the shared workspace layout. Each page has a distinct browser id even when URLs match.
+If you move a tab, later opens respect that placement. Adding an agent or terminal turns the pane
+into an ordinary mixed pane: browser toggles leave it visible and create or reuse a browser-only pane.
+No browser toggle closes a terminal or archives an agent.
+
+Manual close remembers one URL, viewport and former pane for Reopen last closed tab in the All tabs
+menu. The descriptor lasts only for this app session and is consumed on a successful reopen. Reopen
+creates a fresh page; it does not restore history, form state or DOM. Agent closes and workspace purge
+do not replace this descriptor. Purging a workspace releases all its browser guests without touching
+another workspace. Closing the final visible ordinary tab retains the New launcher.
+
+Resident guests retain their DOM across selection, hide and maximize transitions. Their native
+presentation and automation capture constraints belong to [Browser Capture Harness](browser-capture-harness.md).
+Browser chrome uses existing workspace and browser tools and requires no new daemon capability.
 
 ## Routing preferences
 

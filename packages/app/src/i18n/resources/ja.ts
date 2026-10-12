@@ -645,6 +645,7 @@ export const ja: TranslationResources = {
         responsive: "レスポンシブ",
       },
       errors: {
+        crashed: "このページがクラッシュしました。再読み込みしてお試しください。",
         failedToLoad: "ページの読み込みに失敗しました",
         invalidUrl: "無効なブラウザURL",
         unsupportedProtocol: "サポートされていないブラウザURLをブロック: {{protocol}}",

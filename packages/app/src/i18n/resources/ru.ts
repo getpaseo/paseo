@@ -645,6 +645,7 @@ export const ru: TranslationResources = {
         responsive: "Адаптивный режим",
       },
       errors: {
+        crashed: "Страница аварийно завершила работу. Перезагрузите её, чтобы повторить попытку.",
         failedToLoad: "Не удалось загрузить страницу",
         invalidUrl: "Недопустимый URL браузера",
         unsupportedProtocol:

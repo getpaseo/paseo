@@ -640,6 +640,7 @@ export const ko: TranslationResources = {
         responsive: "반응형",
       },
       errors: {
+        crashed: "이 페이지가 비정상적으로 종료되었습니다. 새로고침하여 다시 시도하세요.",
         failedToLoad: "페이지를 불러오지 못했습니다",
         invalidUrl: "잘못된 브라우저 URL",
         unsupportedProtocol: "지원되지 않는 브라우저 URL을 차단했습니다: {{protocol}}",
