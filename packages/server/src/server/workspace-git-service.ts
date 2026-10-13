@@ -765,6 +765,16 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       worktreesRoot: this.worktreesRoot,
       logger: this.logger,
     });
+    const cached = this.peekSnapshot(normalizedCwd);
+    if (cached && cached.git.isGit !== status.isGit) {
+      // A fresh checkout read discovered a repository transition. Keep the
+      // shared snapshot current before exposing the new project capability.
+      await this.getSnapshot(normalizedCwd, {
+        force: true,
+        includeForge: false,
+        reason: "checkout-classification-changed",
+      });
+    }
     if (!status.isGit) {
       return checkoutLiteFromGitSnapshot(normalizedCwd, {
         isGit: false,
