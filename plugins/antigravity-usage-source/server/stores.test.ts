@@ -121,7 +121,7 @@ describe("antigravity stores", () => {
     expect(auth?.expires).toBe(fakeExpiryMs);
   });
 
-  it("deduplicates accounts when multiple token files share the same email", async () => {
+  it("preserves alternate login inputs with the same account key when multiple token files share the same email", async () => {
     const cliDir = join(tempHome, ".gemini", "antigravity-cli");
     const rootGemini = join(tempHome, ".gemini");
     await mkdir(cliDir, { recursive: true });
@@ -144,8 +144,13 @@ describe("antigravity stores", () => {
     );
 
     const accounts = await discover({ kind: "global" }, { home: tempHome, env: {} });
-    expect(accounts).toHaveLength(1);
+    expect(accounts).toHaveLength(2);
+    expect(accounts[0]?.key).toBe(accounts[1]?.key);
     expect(accounts[0]?.label).toBe("shared@google.com");
-    expect(accounts[0]?.input.route.path).toBe(join(cliDir, "antigravity-oauth-token"));
+    expect(accounts[1]?.label).toBe("shared@google.com");
+    expect(accounts.map((a) => (a.input as AntigravityUsageInput).route.path)).toEqual([
+      join(cliDir, "antigravity-oauth-token"),
+      join(rootGemini, "oauth_creds.json"),
+    ]);
   });
 });
