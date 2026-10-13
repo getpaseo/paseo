@@ -80,7 +80,8 @@ test("a fresh checkout read makes a newly initialized repository available to ca
   execFileSync("git", ["init", "-b", "main"], { cwd: repo, stdio: "pipe" });
 
   expect((await service.getCheckout(repo)).isGit).toBe(true);
-  await expect(service.resolveRepoRoot(repo)).resolves.toBe(repo);
+  const repoRoot = await service.resolveRepoRoot(repo);
+  expect(realpathSync.native(repoRoot)).toBe(realpathSync.native(repo));
 }, 30_000);
 
 test("recursive observation updates tracked state and prunes ignored storms", async () => {
