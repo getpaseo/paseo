@@ -249,3 +249,14 @@ describe("web virtualization test overrides", () => {
     }
   });
 });
+
+it("reserves image height for cross-client timeline attachments", () => {
+  const item: StreamItem = {
+    kind: "user_message",
+    id: "inline-image",
+    text: "",
+    timestamp: createTimestamp(1),
+    inlineImages: [{ data: "AA==", mimeType: "image/png" }],
+  };
+  expect(estimateStreamItemHeight({ item, contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH })).toBe(220);
+});

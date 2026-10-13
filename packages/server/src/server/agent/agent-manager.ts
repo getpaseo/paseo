@@ -110,6 +110,13 @@ const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
 
 type TimeoutResult = "completed" | "timed_out";
 
+function submittedPromptImages(prompt: AgentPromptInput) {
+  if (typeof prompt === "string") return [];
+  return prompt.flatMap((block) =>
+    block.type === "image" ? [{ data: block.data, mimeType: block.mimeType }] : [],
+  );
+}
+
 function submittedPromptText(prompt: AgentPromptInput): string {
   if (typeof prompt === "string") {
     return prompt;
@@ -4809,9 +4816,11 @@ export class AgentManager {
     outcome: "accepted" | "rejected",
     options?: { messageId?: string; providerMessageId?: string; turnId?: string },
   ): void {
+    const images = submittedPromptImages(prompt);
     const item = projectAgentMessage({
       type: "user_message",
       text: submittedPromptText(prompt),
+      ...(images.length > 0 ? { images } : {}),
       clientMessageId,
       ...(options?.messageId ? { messageId: options.messageId } : {}),
     });

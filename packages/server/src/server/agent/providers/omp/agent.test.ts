@@ -16,6 +16,33 @@ import { OmpAgentClient } from "./agent.js";
 import { FakeOmp } from "./test-utils/fake-omp.js";
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 
+test.each(["", "Describe this image"])(
+  "cross-client live events preserve images with text %j",
+  async (text) => {
+    const omp = new OmpHarness();
+    await omp.start();
+    onTestFinished(() => omp.close());
+    const message: Extract<OmpAgentMessage, { role: "user" }> & { id: string } = {
+      role: "user",
+      id: "user-image",
+      content: [
+        { type: "text", text },
+        { type: "image", data: "AA==", mimeType: "image/png" },
+      ],
+    };
+    omp.emit({ type: "message_end", message });
+    omp.emit({ type: "message_end", message });
+    expect(omp.timeline()).toEqual([
+      {
+        type: "user_message",
+        text,
+        messageId: "user-image",
+        images: [{ data: "AA==", mimeType: "image/png" }],
+      },
+    ]);
+  },
+);
+
 const TURN_LIFECYCLE_EVENTS = new Set<AgentStreamEvent["type"]>([
   "turn_started",
   "turn_completed",

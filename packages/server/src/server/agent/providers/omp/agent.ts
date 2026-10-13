@@ -71,7 +71,7 @@ import {
 export { formatOmpVersionSupport, resolveOmpDiagnosticPaths } from "./provider-config.js";
 import { OmpSubagentCardTracker, type OmpSubagentCardScheduler } from "./subagent-card-tracker.js";
 import { ompSkillPromptUserText, shouldDisplayOmpCustomMessage } from "./custom-message.js";
-import { getUserMessageText } from "./message-history.js";
+import { getUserMessageImages, getUserMessageText } from "./message-history.js";
 import { mapOmpSystemNoticeToNotification } from "./system-notice.js";
 import { materializeProviderImage } from "../provider-image-output.js";
 import { OmpCliRuntime } from "./cli-runtime.js";
@@ -2038,7 +2038,8 @@ export class OmpAgentSession implements AgentSession {
       return;
     }
     const text = getUserMessageText(event.message.content);
-    if (!text) {
+    const images = getUserMessageImages(event.message.content);
+    if (!text && images.length === 0) {
       return;
     }
     const nativeMessage = event.message as OmpAgentMessage & { id?: unknown; entryId?: unknown };
@@ -2061,6 +2062,7 @@ export class OmpAgentSession implements AgentSession {
         item: {
           type: "user_message",
           text,
+          ...(images.length > 0 ? { images } : {}),
           ...(resolvedMessageId ? { messageId: resolvedMessageId } : {}),
           ...(clientMessageId ? { clientMessageId } : {}),
         },

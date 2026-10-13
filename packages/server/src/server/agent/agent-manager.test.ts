@@ -11857,3 +11857,47 @@ test.each([false, true])(
     }
   },
 );
+
+test.each(["", "Describe this image"])(
+  "cross-client submitted images survive canonical acceptance with text %j",
+  async (text) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-images-"));
+    const manager = new AgentManager({ clients: { codex: new TestAgentClient() }, logger });
+    let agentId: string | null = null;
+    try {
+      const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      agentId = agent.id;
+      await drainAsyncGenerator(
+        manager.streamAgent(
+          agent.id,
+          [
+            { type: "text", text },
+            { type: "image", data: "AA==", mimeType: "image/png" },
+          ],
+          { clientMessageId: "client-image" },
+        ),
+      );
+      const messages = manager.getTimeline(agent.id).filter((item) => item.type === "user_message");
+      expect(messages).toEqual([
+        {
+          type: "user_message",
+          text,
+          clientMessageId: "client-image",
+          messageId: "client-image",
+          images: [{ data: "AA==", mimeType: "image/png" }],
+        },
+      ]);
+      expect(
+        manager
+          .fetchTimeline(agent.id, { limit: 0 })
+          .rows.filter((row) => row.item.type === "user_message")
+          .map((row) => row.item),
+      ).toEqual(messages);
+    } finally {
+      if (agentId) await manager.closeAgent(agentId);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);

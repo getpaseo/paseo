@@ -61,7 +61,7 @@ import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { MarkdownRenderer, type MarkdownStyles } from "@/components/markdown/renderer";
 import type { TaskActivity, TodoEntry, UserMessageImageAttachment } from "@/types/stream";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
-import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
+import type { AgentTimelineImage, ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { buildToolCallPresentation } from "@/tool-calls/presentation";
 import { resolveToolCallIcon } from "@/utils/tool-call-icon";
 import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-list";
@@ -99,6 +99,7 @@ import {
   AttachmentFrame,
   AttachmentLabel,
   AttachmentThumbnail,
+  AttachmentUriThumbnail,
 } from "@/components/attachment-pill";
 import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -125,6 +126,7 @@ interface UserMessageProps {
   messageId?: string;
   message: string;
   images?: UserMessageImageAttachment[];
+  inlineImages?: AgentTimelineImage[];
   attachments?: AgentAttachment[];
   timestamp: number;
   capabilities?: AgentCapabilityFlags;
@@ -425,6 +427,27 @@ function UserMessageImagePill({ image, onOpen, accessibilityLabel }: UserMessage
   );
 }
 
+function UserMessageInlineImagePill({
+  uri,
+  onOpen,
+  accessibilityLabel,
+}: {
+  uri: string;
+  onOpen: (source: ImageLightboxSource) => void;
+  accessibilityLabel: string;
+}) {
+  const handlePress = useCallback(() => onOpen({ type: "uri", uri }), [onOpen, uri]);
+  return (
+    <AttachmentFrame
+      onPress={handlePress}
+      accessibilityLabel={accessibilityLabel}
+      testID="user-message-image"
+    >
+      <AttachmentUriThumbnail uri={uri} />
+    </AttachmentFrame>
+  );
+}
+
 const MESSAGE_TEXT_DATASET = { messageText: "true" };
 
 export const UserMessage = memo(function UserMessage({
@@ -433,6 +456,7 @@ export const UserMessage = memo(function UserMessage({
   messageId,
   message,
   images = [],
+  inlineImages = [],
   attachments = [],
   timestamp,
   capabilities,
@@ -445,15 +469,22 @@ export const UserMessage = memo(function UserMessage({
   const isCompact = useIsCompactFormFactor();
   const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
-  const [lightboxMetadata, setLightboxMetadata] = useState<UserMessageImageAttachment | null>(null);
-  const handleLightboxClose = useCallback(() => setLightboxMetadata(null), []);
-  const lightboxSource = useMemo<ImageLightboxSource | null>(
-    () => (lightboxMetadata ? { type: "attachment", metadata: lightboxMetadata } : null),
-    [lightboxMetadata],
+  const [lightboxSource, setLightboxSource] = useState<ImageLightboxSource | null>(null);
+  const handleLightboxClose = useCallback(() => setLightboxSource(null), []);
+  const handleOpenImage = useCallback((metadata: UserMessageImageAttachment) => {
+    setLightboxSource({ type: "attachment", metadata });
+  }, []);
+  const inlinePreviews = useMemo(
+    () =>
+      inlineImages.map((image, index) => ({
+        id: `image-${index}`,
+        uri: `data:${image.mimeType};base64,${image.data}`,
+      })),
+    [inlineImages],
   );
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
   const hasText = message.trim().length > 0;
-  const hasImages = images.length > 0;
+  const hasImages = images.length > 0 || inlinePreviews.length > 0;
   const hasAttachments = attachments.length > 0;
   const showTrailingRow = !isPending && hasText && (isCompact || isNative || isHovered);
   const formattedTimestamp = useMemo(
@@ -517,14 +548,23 @@ export const UserMessage = memo(function UserMessage({
         <View style={userMessageStylesheet.bubble}>
           {hasImages ? (
             <View style={imagePreviewContainerStyle}>
-              {images.map((image) => (
-                <UserMessageImagePill
-                  key={image.id}
-                  image={image}
-                  onOpen={setLightboxMetadata}
-                  accessibilityLabel={t("composer.attachments.openImage")}
-                />
-              ))}
+              {inlinePreviews.length > 0
+                ? inlinePreviews.map((preview) => (
+                    <UserMessageInlineImagePill
+                      key={preview.id}
+                      uri={preview.uri}
+                      onOpen={setLightboxSource}
+                      accessibilityLabel={t("composer.attachments.openImage")}
+                    />
+                  ))
+                : images.map((image) => (
+                    <UserMessageImagePill
+                      key={image.id}
+                      image={image}
+                      onOpen={handleOpenImage}
+                      accessibilityLabel={t("composer.attachments.openImage")}
+                    />
+                  ))}
             </View>
           ) : null}
           {hasAttachments ? (
