@@ -110,3 +110,117 @@ test.each([
     }
   },
 );
+
+test("retains 200k context limit after switching back from a 1M model when modelUsage contains both", async () => {
+  let activeModel = "claude-opus-4-8[1m]";
+  const accumulatedModelUsage: Record<string, { contextWindow: number }> = {
+    "claude-opus-4-8[1m]": { contextWindow: 1_000_000 },
+  };
+
+  const queryFactory: ClaudeQueryFactory = ({ prompt }) => {
+    const messages = (async function* () {
+      if (typeof prompt === "string") throw new Error("Expected streaming input");
+      for await (const _message of prompt) {
+        yield {
+          type: "system",
+          subtype: "init",
+          session_id: "context-session",
+          permissionMode: "default",
+          model: activeModel,
+        };
+        yield {
+          type: "stream_event",
+          session_id: "context-session",
+          event: { type: "message_start", message: { usage: { input_tokens: 10_000 } } },
+        };
+        yield {
+          type: "stream_event",
+          session_id: "context-session",
+          event: { type: "message_delta", usage: { output_tokens: 50 } },
+        };
+        yield {
+          type: "result",
+          subtype: "success",
+          session_id: "context-session",
+          duration_ms: 1,
+          duration_api_ms: 1,
+          is_error: false,
+          num_turns: 1,
+          result: "done",
+          stop_reason: null,
+          total_cost_usd: 0,
+          usage: { input_tokens: 10_000, output_tokens: 50, cache_read_input_tokens: 0 },
+          modelUsage: { ...accumulatedModelUsage },
+          permission_denials: [],
+          uuid: "context-result",
+        };
+      }
+    })();
+    return Object.assign(messages, {
+      close: () => {
+        void messages.return();
+      },
+      interrupt: async () => undefined,
+      setModel: async (value: string) => {
+        activeModel = value;
+        accumulatedModelUsage[value] = {
+          contextWindow: value.includes("[1m]") ? 1_000_000 : 200_000,
+        };
+      },
+      setPermissionMode: async () => undefined,
+      applyFlagSettings: async () => undefined,
+      supportedModels: async () => [],
+      supportedCommands: async () => [],
+    }) as ReturnType<ClaudeQueryFactory>;
+  };
+
+  const client = new ClaudeAgentClient({
+    logger: createTestLogger(),
+    queryFactory,
+    resolveBinary: async () => process.execPath,
+  });
+  const session = await client.createSession({
+    provider: "claude",
+    cwd: process.cwd(),
+    model: "claude-opus-4-8[1m]",
+  });
+  try {
+    const firstTurn = await collectSessionTurnEvents(session, "first turn with 1m");
+    expect(firstTurn).toContainEqual(
+      expect.objectContaining({
+        type: "turn_completed",
+        usage: expect.objectContaining({ contextWindowMaxTokens: 1_000_000 }),
+      }),
+    );
+
+    // Switch back to 200k model
+    await session.setModel?.("claude-haiku-4-5");
+
+    const secondTurn = await collectSessionTurnEvents(session, "second turn with 200k");
+    const liveUsage = secondTurn.filter((event) => event.type === "usage_updated");
+    expect(liveUsage.map((event) => event.usage.contextWindowMaxTokens)).toEqual([
+      200_000, 200_000,
+    ]);
+    expect(secondTurn).toContainEqual(
+      expect.objectContaining({
+        type: "turn_completed",
+        usage: expect.objectContaining({ contextWindowMaxTokens: 200_000 }),
+      }),
+    );
+
+    // Third turn to verify subsequent turn retains 200_000
+    const thirdTurn = await collectSessionTurnEvents(session, "third turn with 200k");
+    const thirdLiveUsage = thirdTurn.filter((event) => event.type === "usage_updated");
+    expect(thirdLiveUsage.map((event) => event.usage.contextWindowMaxTokens)).toEqual([
+      200_000, 200_000,
+    ]);
+    expect(thirdTurn).toContainEqual(
+      expect.objectContaining({
+        type: "turn_completed",
+        usage: expect.objectContaining({ contextWindowMaxTokens: 200_000 }),
+      }),
+    );
+  } finally {
+    await session.close();
+  }
+});

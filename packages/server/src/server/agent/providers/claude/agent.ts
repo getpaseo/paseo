@@ -41,6 +41,7 @@ import {
   CLAUDE_ULTRACODE_THINKING_OPTION_ID,
   parseClaudeCodeVersion,
   resolveClaudeDisabledThinkingForModel,
+  normalizeClaudeManifestModelId,
 } from "./model-manifest.js";
 import { parsePartialJsonObject } from "./partial-json.js";
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
@@ -1829,29 +1830,95 @@ async function resolveClaudeAuth(
   }
 }
 
-function extractContextWindowSize(modelUsage: unknown): number | undefined {
+function readContextWindow(value: unknown): number | undefined {
+  const valueRecord = toObjectRecord(value);
+  if (!valueRecord) {
+    return undefined;
+  }
+  const contextWindow = valueRecord.contextWindow;
+  if (typeof contextWindow !== "number" || !Number.isFinite(contextWindow) || contextWindow <= 0) {
+    return undefined;
+  }
+  return contextWindow;
+}
+
+function findModelUsageContextWindow(
+  usageRecord: Record<string, unknown>,
+  targetModel: string,
+): number | undefined {
+  // 1. Direct key match
+  const directCw = readContextWindow(usageRecord[targetModel]);
+  if (directCw !== undefined) {
+    return directCw;
+  }
+
+  const entries = Object.entries(usageRecord);
+  const lowerTarget = targetModel.toLowerCase();
+  const normalizedTarget = normalizeClaudeRuntimeModelId(targetModel);
+  const manifestTarget = normalizeClaudeManifestModelId(targetModel);
+  const targetHas1m = lowerTarget.includes("[1m]");
+
+  // 2. Exact (case-insensitive) or normalized ID match
+  for (const [key, value] of entries) {
+    const lowerKey = key.toLowerCase();
+    const isExactMatch = lowerKey === lowerTarget;
+    const isNormalizedMatch =
+      Boolean(normalizedTarget && normalizeClaudeRuntimeModelId(key) === normalizedTarget) ||
+      Boolean(manifestTarget && normalizeClaudeManifestModelId(key) === manifestTarget);
+
+    if (isExactMatch || isNormalizedMatch) {
+      const cw = readContextWindow(value);
+      if (cw !== undefined) {
+        return cw;
+      }
+    }
+  }
+
+  // 3. Substring / prefix match if 1M status matches
+  for (const [key, value] of entries) {
+    const lowerKey = key.toLowerCase();
+    const keyHas1m = lowerKey.includes("[1m]");
+    if (
+      targetHas1m === keyHas1m &&
+      (lowerKey.includes(lowerTarget) || lowerTarget.includes(lowerKey))
+    ) {
+      const cw = readContextWindow(value);
+      if (cw !== undefined) {
+        return cw;
+      }
+    }
+  }
+
+  // 4. Single entry fallback
+  if (entries.length === 1) {
+    return readContextWindow(entries[0][1]);
+  }
+
+  // 5. Look up manifest limit for known target model
+  return getClaudeContextWindowMaxTokens(targetModel);
+}
+
+function extractContextWindowSize(
+  modelUsage: unknown,
+  currentModel?: string | null,
+): number | undefined {
   const usageRecord = toObjectRecord(modelUsage);
   if (!usageRecord) {
     return undefined;
   }
 
-  let maxContextWindow: number | undefined;
-  for (const value of Object.values(usageRecord)) {
-    const valueRecord = toObjectRecord(value);
-    if (!valueRecord) {
-      continue;
-    }
-    const contextWindow = valueRecord.contextWindow;
-    if (
-      typeof contextWindow !== "number" ||
-      !Number.isFinite(contextWindow) ||
-      contextWindow <= 0
-    ) {
-      continue;
-    }
-    maxContextWindow = Math.max(maxContextWindow ?? 0, contextWindow);
+  const trimmedModel = typeof currentModel === "string" ? currentModel.trim() : null;
+  if (trimmedModel) {
+    return findModelUsageContextWindow(usageRecord, trimmedModel);
   }
 
+  let maxContextWindow: number | undefined;
+  for (const value of Object.values(usageRecord)) {
+    const contextWindow = readContextWindow(value);
+    if (contextWindow !== undefined) {
+      maxContextWindow = Math.max(maxContextWindow ?? 0, contextWindow);
+    }
+  }
   return maxContextWindow;
 }
 
@@ -1987,13 +2054,19 @@ function readClaudeParentToolUseId(message: SDKMessage): string | null {
 
 class ClaudeContextUsageState {
   private contextWindowMaxTokens: number | undefined;
+  private currentModel: string | null = null;
   private streamRequestInputUsage: StreamRequestInputUsage | undefined;
   private streamRequestOutputTokens: number | undefined;
   private compactedContextWindowUsedTokens: number | undefined;
   private completedResultTurns = 0;
 
-  constructor(initialContextWindowMaxTokens?: number) {
+  constructor(initialContextWindowMaxTokens?: number, initialModel?: string | null) {
     this.contextWindowMaxTokens = initialContextWindowMaxTokens;
+    this.currentModel = initialModel ?? null;
+  }
+
+  setCurrentModel(model: string | null | undefined): void {
+    this.currentModel = typeof model === "string" && model.trim().length > 0 ? model.trim() : null;
   }
 
   beginTurn(): void {
@@ -2006,8 +2079,9 @@ class ClaudeContextUsageState {
     this.contextWindowMaxTokens = contextWindowMaxTokens;
   }
 
-  recordModelUsage(modelUsage: unknown): number | undefined {
-    const contextWindowMaxTokens = extractContextWindowSize(modelUsage);
+  recordModelUsage(modelUsage: unknown, currentModel?: string | null): number | undefined {
+    const effectiveModel = currentModel ?? this.currentModel;
+    const contextWindowMaxTokens = extractContextWindowSize(modelUsage, effectiveModel);
     if (contextWindowMaxTokens !== undefined) {
       this.contextWindowMaxTokens = contextWindowMaxTokens;
     }
@@ -2050,7 +2124,11 @@ class ClaudeContextUsageState {
     return this.createUsageUpdatedEvent(usedTokens);
   }
 
-  buildResultUsage(message: SDKResultMessage, modelUsage: unknown): AgentUsage | undefined {
+  buildResultUsage(
+    message: SDKResultMessage,
+    modelUsage: unknown,
+    currentModel?: string | null,
+  ): AgentUsage | undefined {
     try {
       if (!message.usage) {
         return undefined;
@@ -2062,7 +2140,10 @@ class ClaudeContextUsageState {
         totalCostUsd: message.total_cost_usd,
       };
 
-      const modelContextWindowMaxTokens = this.recordModelUsage(modelUsage ?? message.modelUsage);
+      const modelContextWindowMaxTokens = this.recordModelUsage(
+        modelUsage ?? message.modelUsage,
+        currentModel,
+      );
       if (this.contextWindowMaxTokens !== undefined) {
         usage.contextWindowMaxTokens = this.contextWindowMaxTokens;
       } else if (modelContextWindowMaxTokens !== undefined) {
@@ -2241,6 +2322,7 @@ class ClaudeAgentSession implements AgentSession {
     this.rewindSdk = options.rewindSdk ?? realClaudeRewindSdk;
     this.contextUsage = new ClaudeContextUsageState(
       getClaudeContextWindowMaxTokens(this.config.model),
+      this.config.model,
     );
     const handle = options.handle;
 
@@ -2571,6 +2653,7 @@ class ClaudeAgentSession implements AgentSession {
     if (!claudeModelSupportsFastMode(this.config.model) && this.config.featureValues?.fast_mode) {
       await this.applyFastModeFeature(false, activeQuery);
     }
+    this.contextUsage.setCurrentModel(normalizedModelId);
     this.contextUsage.setInitialContextWindowMaxTokens(
       getClaudeContextWindowMaxTokens(this.config.model),
     );
@@ -4821,6 +4904,7 @@ class ClaudeAgentSession implements AgentSession {
     this.observePermissionMode(message.permissionMode);
     this.persistence = null;
     if (message.model) {
+      this.contextUsage.setCurrentModel(message.model);
       const runtimeContextWindowMaxTokens = getClaudeContextWindowMaxTokens(message.model);
       // Seed usage before the first result, including settings-resolved aliases.
       // A repeated init for the same model must retain the SDK's reported limit.
@@ -4877,7 +4961,8 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private convertUsage(message: SDKResultMessage, modelUsage?: unknown): AgentUsage | undefined {
-    return this.contextUsage.buildResultUsage(message, modelUsage);
+    const currentModel = this.lastRuntimeModel ?? this.config.model ?? null;
+    return this.contextUsage.buildResultUsage(message, modelUsage, currentModel);
   }
 
   private handlePermissionRequest: CanUseTool = async (
