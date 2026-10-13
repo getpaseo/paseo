@@ -5,16 +5,30 @@ export function workspaceSheet(page: Page, label: string): Locator {
   return page.getByRole("dialog", { name: label });
 }
 
-/** The sheet rests at its snap point, docked to the bottom edge. A sheet pushed up past it covers the workspace header. */
+/** Sheet height as a fraction of the viewport; mirrors the host's 92% snap point. */
+const SHEET_SNAP_FRACTION = 0.92;
+/** The dialog starts below the sheet's drag handle. */
+const SHEET_HANDLE_MAX_HEIGHT = 32;
+
+/**
+ * The sheet rests at its snap point, docked to the bottom edge. A sheet pushed up past it
+ * covers the workspace header; a sheet sunk below it hides content.
+ */
 export async function expectWorkspaceSheetAtSnap(page: Page, label: string): Promise<void> {
   const viewportHeight = page.viewportSize()?.height ?? 0;
+  const snapTop = Math.round(viewportHeight * (1 - SHEET_SNAP_FRACTION));
   const sheet = workspaceSheet(page, label);
   await expect
     .poll(async () => {
       const box = await sheet.boundingBox();
-      return box ? Math.round(box.y + box.height) : null;
+      if (!box) return null;
+      const top = Math.round(box.y);
+      return {
+        dockedToBottom: Math.round(box.y + box.height) === viewportHeight,
+        topAtSnap: top >= snapTop && top <= snapTop + SHEET_HANDLE_MAX_HEIGHT,
+      };
     })
-    .toBe(viewportHeight);
+    .toEqual({ dockedToBottom: true, topAtSnap: true });
 }
 
 export async function expectOpenTabCount(page: Page, count: number): Promise<void> {
