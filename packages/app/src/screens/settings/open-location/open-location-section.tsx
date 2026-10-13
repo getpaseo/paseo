@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { SettingsSection, SettingsCard, SettingsSelect } from "@/components/settings";
 import {
   useAppSettings,
+  type ChatLinkBehavior,
   type OpenInSidePanePreferences,
   type PullRequestOpenLocation,
   type ServiceUrlBehavior,
@@ -22,6 +23,20 @@ const SERVICE_URL_LABEL_KEYS: Record<ServiceUrlBehavior, string> = {
   ask: "settings.general.serviceUrls.options.ask",
   "in-app": "settings.general.serviceUrls.options.inApp",
   external: "settings.general.serviceUrls.options.external",
+};
+
+const CHAT_LINK_BEHAVIORS: readonly ChatLinkBehavior[] = [
+  "ask",
+  "internal-side",
+  "internal-tab",
+  "external",
+];
+
+const CHAT_LINK_LABEL_KEYS: Record<ChatLinkBehavior, string> = {
+  ask: "settings.general.chatLinks.options.ask",
+  "internal-side": "settings.general.chatLinks.options.internalSide",
+  "internal-tab": "settings.general.chatLinks.options.internalTab",
+  external: "settings.general.chatLinks.options.external",
 };
 
 type OpenLocationSource = keyof OpenInSidePanePreferences | "pullRequests";
@@ -83,7 +98,28 @@ function ServiceUrlRow() {
   );
 }
 
-/** Where things open: files, diffs, subagents, pull requests, and script URLs. Desktop only. */
+function ChatLinkRow() {
+  const { t } = useTranslation();
+  const { settings, updateSettings } = useAppSettings();
+  const options = useMemo(
+    () => CHAT_LINK_BEHAVIORS.map((value) => ({ value, label: t(CHAT_LINK_LABEL_KEYS[value]) })),
+    [t],
+  );
+  const change = useCallback(
+    (chatLinkBehavior: ChatLinkBehavior) => void updateSettings({ chatLinkBehavior }),
+    [updateSettings],
+  );
+  return (
+    <SettingsSelect
+      label={t("settings.layout.openInSidePane.sources.chatLinks.label")}
+      value={settings.chatLinkBehavior}
+      options={options}
+      onValueChange={change}
+    />
+  );
+}
+
+/** Where things open: files, diffs, subagents, pull requests, chat URLs, and script URLs. */
 export function OpenLocationSection() {
   const { t } = useTranslation();
   const { settings, updateSettings } = useAppSettings();
@@ -116,6 +152,7 @@ export function OpenLocationSection() {
           allowExplorer
           onDestinationChange={handleDestinationChange}
         />
+        <ChatLinkRow />
         <ServiceUrlRow />
       </SettingsCard>
     </SettingsSection>

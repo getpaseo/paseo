@@ -19,6 +19,7 @@ interface OpenWorkspaceTargetInput {
   workspaceKey: string | null;
   target: WorkspaceTabTarget;
   parentTabId?: string | null;
+  preferredMainPaneId?: string | null;
 }
 
 export interface OpenPreferredWorkspaceTargetInput extends OpenWorkspaceTargetInput {
@@ -91,6 +92,7 @@ export function openPreferredWorkspaceTarget(
     target: input.target,
     location: input.preferences[input.source] ? "side" : "main",
     parentTabId: input.parentTabId,
+    preferredMainPaneId: input.preferredMainPaneId,
   });
 }
 
@@ -114,6 +116,13 @@ export function openWorkspaceTargetAtLocation(
     // A target opened from a tab belongs in that tab's pane, whichever pane has focus.
     const parentPane = findPaneContainingTab(layout.root, input.parentTabId);
     placement = parentPane ? { mode: "prefer", paneId: parentPane.id } : undefined;
+  } else if (!shouldOpenBeside && layout) {
+    const mainPane = resolveMainPane({
+      workspaceKey: input.workspaceKey,
+      explorerSidebarPaneId: store.explorerSidebarPaneIdByWorkspace[input.workspaceKey] ?? null,
+      lastMainPaneId: input.preferredMainPaneId ?? null,
+    });
+    placement = mainPane ? { mode: "prefer", paneId: mainPane.id } : undefined;
   }
   return store.openTab({
     workspaceKey: input.workspaceKey,

@@ -44,12 +44,21 @@ export interface DesktopDialogAskWithCheckboxResult {
   dontAskAgain: boolean;
 }
 
+export interface DesktopDialogChooseOptions {
+  title?: string;
+  buttons: string[];
+  defaultId?: number;
+  cancelId?: number;
+  kind?: "info" | "warning" | "error";
+}
+
 export interface DesktopDialogBridge {
   ask?: (message: string, options?: DesktopDialogAskOptions) => Promise<boolean>;
   askWithCheckbox?: (
     message: string,
     options: DesktopDialogAskWithCheckboxOptions,
   ) => Promise<DesktopDialogAskWithCheckboxResult>;
+  choose?: (message: string, options: DesktopDialogChooseOptions) => Promise<number | null>;
   open?: (options?: DesktopDialogOpenOptions) => Promise<string | string[] | null>;
 }
 
