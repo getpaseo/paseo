@@ -4,6 +4,7 @@ import { expect, test } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { CodexAppServerAgentClient } from "./codex-app-server-agent.js";
+import type { AgentSession } from "../agent-sdk-types.js";
 
 // A protocol peer exercises the public session interface without a Codex install.
 test("marks set, pause, resume and clear as user goal mutations", async () => {
@@ -35,13 +36,14 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     command: { mode: "replace", argv: [process.execPath, script] },
     env: { CODEX_HOME: root, CAPTURE: capture },
   });
-  const session = await client.createSession({
-    provider: "codex",
-    cwd: root,
-    model: "test-model",
-    thinkingOptionId: "low",
-  });
+  let session: AgentSession | null = null;
   try {
+    session = await client.createSession({
+      provider: "codex",
+      cwd: root,
+      model: "test-model",
+      thinkingOptionId: "low",
+    });
     for (const command of ["/goal ship feature", "/goal pause", "/goal resume", "/goal clear"]) {
       const handler = session.tryHandleOutOfBand?.(command);
       if (!handler) throw new Error(`Missing handler for ${command}`);
@@ -73,7 +75,10 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       { method: "thread/goal/clear", params: { threadId: "goal-thread", origin: "user" } },
     ]);
   } finally {
-    await session.close();
-    rmSync(root, { recursive: true, force: true });
+    try {
+      await session?.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   }
 });
