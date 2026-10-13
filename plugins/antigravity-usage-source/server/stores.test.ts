@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { discover, readAuth, accountIdentity } from "./stores.js";
+import type { AntigravityUsageInput } from "../shared/input.js";
 
 describe("antigravity stores", () => {
   let tempHome: string;
