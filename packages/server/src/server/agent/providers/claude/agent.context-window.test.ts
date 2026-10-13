@@ -6,17 +6,28 @@ import type { ClaudeQueryFactory } from "./query.js";
 
 // A query dependency that speaks the same stream interface as Claude Code.
 // Each request repeats init so a second turn exercises runtime-limit retention.
-function contextQuery(
-  runtimeModel: string,
-  reportedLimit: number,
-  modelWindowsByTurn?: Array<Record<string, number>>,
-): ClaudeQueryFactory {
+function contextQuery({
+  runtimeModel,
+  reportedLimit,
+  modelWindowsByTurn,
+}: {
+  runtimeModel: string;
+  reportedLimit: number;
+  modelWindowsByTurn?: Array<Record<string, number>>;
+}): ClaudeQueryFactory {
   return ({ prompt }) => {
     let model = runtimeModel;
     let turn = 0;
     const messages = (async function* () {
       if (typeof prompt === "string") throw new Error("Expected streaming input");
       for await (const _message of prompt) {
+        const modelWindows = modelWindowsByTurn?.[turn] ?? { [model]: reportedLimit };
+        turn += 1;
+        const usageEntries = Object.entries(modelWindows).map(([id, contextWindow]) => [
+          id,
+          { contextWindow },
+        ]);
+        const modelUsage = Object.fromEntries(usageEntries);
         yield {
           type: "system",
           subtype: "init",
@@ -46,11 +57,7 @@ function contextQuery(
           stop_reason: null,
           total_cost_usd: 0,
           usage: { input_tokens: 249_950, output_tokens: 50, cache_read_input_tokens: 0 },
-          modelUsage: Object.fromEntries(
-            Object.entries(modelWindowsByTurn?.[turn++] ?? { [model]: reportedLimit }).map(
-              ([id, contextWindow]) => [id, { contextWindow }],
-            ),
-          ),
+          modelUsage,
           permission_denials: [],
           uuid: "context-result",
         };
@@ -80,7 +87,7 @@ test.each([
   async ({ selected, runtime, expected }) => {
     const client = new ClaudeAgentClient({
       logger: createTestLogger(),
-      queryFactory: contextQuery(runtime, 800_000),
+      queryFactory: contextQuery({ runtimeModel: runtime, reportedLimit: 800_000 }),
       resolveBinary: async () => process.execPath,
     });
     const session = await client.createSession({
@@ -126,11 +133,15 @@ test("completed turns use the active model's window after switching both ways", 
   const client = new ClaudeAgentClient({
     logger: createTestLogger(),
     resolveBinary: async () => process.execPath,
-    queryFactory: contextQuery(haiku, 200_000, [
-      { [haiku]: 200_000 },
-      { [haiku]: 200_000, [opus]: 1_000_000 },
-      { [haiku]: 200_000, [opus]: 1_000_000 },
-    ]),
+    queryFactory: contextQuery({
+      runtimeModel: haiku,
+      reportedLimit: 200_000,
+      modelWindowsByTurn: [
+        { [haiku]: 200_000 },
+        { [haiku]: 200_000, [opus]: 1_000_000 },
+        { [haiku]: 200_000, [opus]: 1_000_000 },
+      ],
+    }),
   });
   const session = await client.createSession({
     provider: "claude",
@@ -186,7 +197,11 @@ test.each([
   const client = new ClaudeAgentClient({
     logger: createTestLogger(),
     resolveBinary: async () => process.execPath,
-    queryFactory: contextQuery(model, expected, [windows]),
+    queryFactory: contextQuery({
+      runtimeModel: model,
+      reportedLimit: expected,
+      modelWindowsByTurn: [windows],
+    }),
   });
   const session = await client.createSession({ provider: "claude", cwd: process.cwd(), model });
   try {
