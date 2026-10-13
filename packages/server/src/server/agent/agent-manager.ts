@@ -3372,9 +3372,6 @@ export class AgentManager {
       await this.cancelAgentRunBefore(agentId, "rewind");
     }
 
-    if (this.idleShutdownHeld) {
-      throw new AgentManagerShuttingDownError();
-    }
     const lock = this.runs.createPendingRun(agentId);
     try {
       this.logger.info(

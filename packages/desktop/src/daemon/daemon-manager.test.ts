@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAppUpdateService } from "../features/app-update-service";
 import { FakeAppUpdateRuntime } from "../features/fake-app-update-runtime";
 import { DEFAULT_DESKTOP_SETTINGS } from "../settings/desktop-settings";
+import type { DesktopCommandContext } from "../settings/desktop-settings-commands";
 import { createDaemonCommandHandlers } from "./daemon-manager";
 
 const mocks = vi.hoisted(() => ({
@@ -149,6 +150,51 @@ function daemonStatusFromLock(lockPath: string) {
     daemonVersion: "1.2.3",
     desktopManaged: true,
     serverId: "srv_test",
+  };
+}
+
+// Answers `daemon status` from the lock file. An idle stop reports busy, and
+// any other stop exits the supervisor, which is how Windows stops through the
+// lifecycle RPC (POSIX signals the supervisor without the CLI).
+function answerDaemonStops(supervisor: { lockPath: string; exit(): void }): {
+  firstIdleStopRefused: Promise<void>;
+  idleStopCount(): number;
+} {
+  let idleStops = 0;
+  let markRefused: () => void = () => undefined;
+  const firstIdleStopRefused = new Promise<void>((resolve) => {
+    markRefused = resolve;
+  });
+  mocks.runExternalCliJsonCommand.mockImplementation(async (args: string[]) => {
+    if (args[1] === "status") return daemonStatusFromLock(supervisor.lockPath);
+    if (args[1] !== "stop") throw new Error(`Unexpected CLI command: ${args.join(" ")}`);
+    if (!args.includes("--if-idle")) {
+      supervisor.exit();
+      return { action: "shutdown_requested" };
+    }
+    idleStops += 1;
+    markRefused();
+    return { action: "busy" };
+  });
+  return { firstIdleStopRefused, idleStopCount: () => idleStops };
+}
+
+async function downloadStarted(runtime: FakeAppUpdateRuntime): Promise<void> {
+  await vi.waitFor(() => expect(runtime.downloadCallCount).toBe(1));
+}
+
+// A renderer window whose reload or close the test controls.
+function rendererWindow(senderId: number): DesktopCommandContext & { leave(): void } {
+  const listeners = new Set<() => void>();
+  return {
+    senderId,
+    onSenderLeave(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    leave() {
+      for (const listener of listeners) listener();
+    },
   };
 }
 
@@ -304,7 +350,7 @@ describe("daemon-manager commands", () => {
     const download = runtime.beginUpdateDownload(UPDATE_INFO, { announce: false });
 
     const first = handlers.install_app_update({ whenIdle: true }, { senderId: 1 });
-    await vi.waitFor(() => expect(runtime.downloadCallCount).toBe(1));
+    await downloadStarted(runtime);
     const second = handlers.install_app_update({ whenIdle: true }, { senderId: 2 });
     handlers.cancel_app_update(undefined, { senderId: 2 });
 
@@ -316,33 +362,46 @@ describe("daemon-manager commands", () => {
 
   it("ends a When idle wait when another window chooses Install & restart", async () => {
     const supervisor = installFakeSupervisor(fixtureRoot);
-    let idleStops = 0;
-    mocks.runExternalCliJsonCommand.mockImplementation(async (args: string[]) => {
-      if (args[1] === "status") return daemonStatusFromLock(supervisor.lockPath);
-      if (args[1] === "stop" && args.includes("--if-idle")) {
-        idleStops += 1;
-        return { action: "busy" };
-      }
-      throw new Error(`Unexpected CLI command: ${args.join(" ")}`);
-    });
+    const stops = answerDaemonStops(supervisor);
     const runtime = new FakeAppUpdateRuntime();
     runtime.nextCheck({ isUpdateAvailable: true, updateInfo: UPDATE_INFO });
     const handlers = createUpdateHandlers(runtime);
     try {
       await handlers.start_desktop_daemon();
       const waiting = handlers.install_app_update({ whenIdle: true }, { senderId: 1 });
-      await vi.waitFor(() => expect(idleStops).toBe(1));
+      await stops.firstIdleStopRefused;
 
       const now = handlers.install_app_update(undefined, { senderId: 2 });
 
       await expect(waiting).resolves.toMatchObject({ installed: true });
       await expect(now).resolves.toMatchObject({ installed: true });
-      expect(idleStops).toBe(1);
+      expect(stops.idleStopCount()).toBe(1);
       expect(runtime.installedVersions).toEqual([UPDATE_INFO.version]);
     } finally {
       supervisor.kill();
       await handlers.stop_desktop_daemon().catch(() => undefined);
     }
+  });
+
+  it("drops a When idle request when its window closes, and keeps one another window still wants", async () => {
+    const runtime = new FakeAppUpdateRuntime();
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: UPDATE_INFO });
+    const handlers = createUpdateHandlers(runtime);
+    const download = runtime.beginUpdateDownload(UPDATE_INFO, { announce: false });
+    const firstWindow = rendererWindow(1);
+    const secondWindow = rendererWindow(2);
+    const installing = handlers.install_app_update({ whenIdle: true }, firstWindow);
+    await downloadStarted(runtime);
+    const joined = handlers.install_app_update({ whenIdle: true }, secondWindow);
+
+    firstWindow.leave();
+    expect(runtime.cancelCount).toBe(0);
+    secondWindow.leave();
+
+    await expect(installing).resolves.toMatchObject({ installed: false, cancelled: true });
+    await expect(joined).resolves.toMatchObject({ installed: false, cancelled: true });
+    expect(runtime.installedVersions).toEqual([]);
+    download.resolve();
   });
 
   it("ignores a cancel from a window that did not start the update", async () => {
@@ -352,7 +411,7 @@ describe("daemon-manager commands", () => {
     const download = runtime.beginUpdateDownload(UPDATE_INFO, { announce: false });
 
     const installing = handlers.install_app_update({ whenIdle: true }, { senderId: 1 });
-    await vi.waitFor(() => expect(runtime.downloadCallCount).toBe(1));
+    await downloadStarted(runtime);
 
     handlers.cancel_app_update(undefined, { senderId: 2 });
     expect(runtime.cancelCount).toBe(0);

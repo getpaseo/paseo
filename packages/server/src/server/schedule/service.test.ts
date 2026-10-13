@@ -487,7 +487,7 @@ describe("ScheduleService", () => {
     expect(result.runs[0].status).toBe("succeeded");
   });
 
-  test("leaves a due run for after the restart when an idle shutdown refuses it", async () => {
+  test("records nothing and keeps the run count when an idle shutdown refuses a due run", async () => {
     const agentManager = new AgentManager({ logger: createTestLogger() });
     let dispatches = 0;
     const service = createScheduleService({

@@ -710,14 +710,19 @@ export class ScheduleService {
     this.runningScheduleIds.add(schedule.id);
     try {
       // Admit before the run is recorded. An idle shutdown that refuses the
-      // admission leaves the schedule due, so the run happens after the restart
-      // instead of counting as a failure toward maxRuns. A run also stays
-      // admitted while it loads its target or creates a workspace.
+      // admission records nothing, so the slot is handled like any slot due
+      // while the daemon is down and never counts as a failure toward maxRuns.
+      // A run also stays admitted while it loads its target or creates a
+      // workspace.
       await this.agentManager.runAdmittedAgentWork(() =>
         this.recordAndRunSchedule(schedule, now, manual),
       );
     } catch (error) {
       if (manual || !(error instanceof AgentManagerShuttingDownError)) throw error;
+      this.logger.info(
+        { scheduleId: schedule.id },
+        "Scheduled run not started: the daemon is stopping for an idle update",
+      );
     } finally {
       this.runningScheduleIds.delete(schedule.id);
     }

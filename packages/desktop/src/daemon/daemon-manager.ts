@@ -25,6 +25,7 @@ import {
 import type {
   AppUpdateInstallResult,
   AppUpdateService,
+  BeforeInstall,
   InstallAfterStop,
 } from "../features/app-update-service.js";
 import {
@@ -47,6 +48,7 @@ import { createNodeEntrypointInvocation, resolveDaemonRunnerEntrypoint } from ".
 import { runExternalCliJsonCommand, runExternalCliTextCommand } from "./cli/external.js";
 import {
   createDesktopSettingsCommandHandlers,
+  type DesktopCommandContext,
   type DesktopCommandHandler,
 } from "../settings/desktop-settings-commands.js";
 import type { DesktopSettings } from "../settings/desktop-settings.js";
@@ -472,8 +474,99 @@ async function installWhenAgentsIdle(
   }
 }
 
+// Stops the daemon for the update: right away, or once agents are idle.
+function stopDaemonForUpdate(
+  whenIdle: boolean,
+  signal: AbortSignal,
+  installNow: AbortSignal,
+): BeforeInstall {
+  return async (installAfterStop) => {
+    if (whenIdle) {
+      await installWhenAgentsIdle(signal, installNow, installAfterStop);
+      return;
+    }
+    await installAfterStop(stopDaemonForImmediateUpdate);
+  };
+}
+
+async function stopDaemonForImmediateUpdate(): Promise<void> {
+  await stopDesktopDaemon("app_update");
+}
+
+// A When idle request belongs to its window. Reloading or closing the window
+// drops that window's request, so an invisible request cannot restart the app.
+async function awaitForWindow(
+  result: Promise<AppUpdateInstallResult>,
+  whenIdle: boolean,
+  context: DesktopCommandContext | undefined,
+): Promise<AppUpdateInstallResult> {
+  const senderId = context?.senderId;
+  const stopWatching = whenIdle
+    ? context?.onSenderLeave?.(() => leavePendingUpdate(senderId))
+    : undefined;
+  try {
+    return await result;
+  } finally {
+    stopWatching?.();
+  }
+}
+
+type InstallAppUpdate = AppUpdateService["downloadAndInstallUpdate"];
+
+async function installAppUpdateForWindow(
+  installAppUpdate: InstallAppUpdate,
+  args: Record<string, unknown> | undefined,
+  context: DesktopCommandContext | undefined,
+): Promise<AppUpdateInstallResult> {
+  const whenIdle = args?.whenIdle === true;
+  // Another window already started this install. Join it instead of failing,
+  // and let Install & restart end a When idle wait.
+  if (pendingUpdate) {
+    pendingUpdate.senderIds.add(context?.senderId);
+    if (!whenIdle) pendingUpdate.installNow.abort();
+    return awaitForWindow(pendingUpdate.result, whenIdle, context);
+  }
+  const controller = new AbortController();
+  const installNow = new AbortController();
+  const result = resolveRequestedReleaseChannel(args).then((releaseChannel) =>
+    installAppUpdate(
+      { currentVersion: resolveDesktopAppVersion(), releaseChannel, signal: controller.signal },
+      stopDaemonForUpdate(whenIdle, controller.signal, installNow.signal),
+    ),
+  );
+  pendingUpdate = { controller, installNow, senderIds: new Set([context?.senderId]), result };
+  try {
+    return await awaitForWindow(result, whenIdle, context);
+  } finally {
+    pendingUpdate = null;
+  }
+}
+
+// Tells a command when its window reloads, navigates away, or closes.
+function createCommandContext(sender: Electron.WebContents): DesktopCommandContext {
+  return {
+    senderId: sender.id,
+    onSenderLeave(listener) {
+      const onNavigation = (
+        _event: Electron.Event,
+        _url: string,
+        inPlace: boolean,
+        mainFrame: boolean,
+      ) => {
+        if (mainFrame && !inPlace) listener();
+      };
+      sender.on("did-start-navigation", onNavigation);
+      sender.once("destroyed", listener);
+      return () => {
+        sender.removeListener("did-start-navigation", onNavigation);
+        sender.removeListener("destroyed", listener);
+      };
+    },
+  };
+}
+
 export function createDaemonCommandHandlers(deps?: {
-  installAppUpdate?: AppUpdateService["downloadAndInstallUpdate"];
+  installAppUpdate?: InstallAppUpdate;
 }): Record<string, DesktopCommandHandler> {
   const installAppUpdate = deps?.installAppUpdate ?? downloadAndInstallUpdate;
   return {
@@ -534,46 +627,8 @@ export function createDaemonCommandHandlers(deps?: {
         intent: parseAppUpdateCheckIntent(args),
       });
     },
-    install_app_update: async (args, context) => {
-      const whenIdle = args?.whenIdle === true;
-      // Another window already started this install. Join it instead of
-      // failing, and let Install & restart end a When idle wait.
-      if (pendingUpdate) {
-        pendingUpdate.senderIds.add(context?.senderId);
-        if (!whenIdle) pendingUpdate.installNow.abort();
-        return await pendingUpdate.result;
-      }
-      const controller = new AbortController();
-      const installNow = new AbortController();
-      const result = (async () =>
-        installAppUpdate(
-          {
-            currentVersion: resolveDesktopAppVersion(),
-            releaseChannel: await resolveRequestedReleaseChannel(args),
-            signal: controller.signal,
-          },
-          async (installAfterStop) => {
-            if (whenIdle) {
-              await installWhenAgentsIdle(controller.signal, installNow.signal, installAfterStop);
-              return;
-            }
-            await installAfterStop(async () => {
-              await stopDesktopDaemon("app_update");
-            });
-          },
-        ))();
-      pendingUpdate = {
-        controller,
-        installNow,
-        senderIds: new Set([context?.senderId]),
-        result,
-      };
-      try {
-        return await result;
-      } finally {
-        pendingUpdate = null;
-      }
-    },
+    install_app_update: (args, context) =>
+      installAppUpdateForWindow(installAppUpdate, args, context),
     cancel_app_update: (_args, context) => {
       cancelPendingUpdate(context?.senderId);
     },
@@ -595,29 +650,7 @@ export function registerDaemonManager(): void {
       if (!handler) {
         throw new Error(`Unknown desktop command: ${command}`);
       }
-      const context = { senderId: _event.sender.id };
-      if (command !== "install_app_update" || args?.whenIdle !== true) {
-        return await handler(args, context);
-      }
-      // A one-time request belongs to its renderer. Reloading or closing it
-      // drops that window's request.
-      const cancel = () => leavePendingUpdate(context.senderId);
-      const cancelOnNavigation = (
-        _: Electron.Event,
-        _url: string,
-        inPlace: boolean,
-        mainFrame: boolean,
-      ) => {
-        if (mainFrame && !inPlace) cancel();
-      };
-      _event.sender.on("did-start-navigation", cancelOnNavigation);
-      _event.sender.once("destroyed", cancel);
-      try {
-        return await handler(args, context);
-      } finally {
-        _event.sender.removeListener("did-start-navigation", cancelOnNavigation);
-        _event.sender.removeListener("destroyed", cancel);
-      }
+      return await handler(args, createCommandContext(_event.sender));
     },
   );
 }

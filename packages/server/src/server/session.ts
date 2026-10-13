@@ -3159,6 +3159,21 @@ export class Session {
   }
 
   private async handleShutdownServerRequest(requestId: string, onlyIfIdle = false): Promise<void> {
+    // An idle claim is never released, so only a daemon that can act on the
+    // shutdown may take one. Without a lifecycle handler it would refuse all
+    // new agent work while it keeps running.
+    if (onlyIfIdle && !this.onLifecycleIntent) {
+      this.emit({
+        type: "rpc_error",
+        payload: {
+          requestId,
+          requestType: "shutdown_server_request",
+          error: "This daemon cannot stop itself",
+          code: "SHUTDOWN_UNAVAILABLE",
+        },
+      });
+      return;
+    }
     if (onlyIfIdle && !this.agentManager.tryClaimIdleShutdown()) {
       this.emit({
         type: "rpc_error",

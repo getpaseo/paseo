@@ -4,6 +4,8 @@ import type { DesktopSettingsStore } from "./desktop-settings.js";
 // the window that issued it.
 export interface DesktopCommandContext {
   senderId: number;
+  /** Calls `listener` when the window reloads, navigates away, or closes. Returns a stop function. */
+  onSenderLeave?(listener: () => void): () => void;
 }
 
 export type DesktopCommandHandler = (

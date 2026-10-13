@@ -587,9 +587,15 @@ function HostVersionRow({
 
 function getUpdateButtonLabel(
   t: TFunction,
-  status: DesktopAppUpdateStatus,
-  isInstalling: boolean,
-  latestVersion: string | null | undefined,
+  {
+    status,
+    isInstalling,
+    latestVersion,
+  }: {
+    status: DesktopAppUpdateStatus;
+    isInstalling: boolean;
+    latestVersion: string | null | undefined;
+  },
 ): string {
   if (status === "waiting-for-idle") return t("desktop.updates.callout.waitingTitle");
   if (isInstalling) return t("settings.about.updates.installing");
@@ -725,7 +731,11 @@ function DesktopAppUpdateRow() {
             onPress={handleInstallUpdate}
             disabled={isChecking || isInstalling || !isUpdateReady}
           >
-            {getUpdateButtonLabel(t, status, isInstalling, readyUpdateVersion)}
+            {getUpdateButtonLabel(t, {
+              status,
+              isInstalling,
+              latestVersion: readyUpdateVersion,
+            })}
           </Button>
         </View>
       </View>

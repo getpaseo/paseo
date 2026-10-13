@@ -143,10 +143,22 @@ describe("checkForAppUpdate", () => {
   });
 });
 
+// Keeps the updater's download running and reports the token it was given.
+function holdUpdaterDownload(): { receivedToken: Promise<CancellationToken> } {
+  let receive: (token: CancellationToken) => void = () => undefined;
+  const receivedToken = new Promise<CancellationToken>((resolve) => {
+    receive = resolve;
+  });
+  autoUpdaterMock.downloadUpdate.mockImplementationOnce((token: CancellationToken) => {
+    receive(token);
+    return new Promise(() => undefined);
+  });
+  return { receivedToken };
+}
+
 describe("downloadAndInstallUpdate", () => {
   it("cancels the updater download when the install signal aborts", async () => {
     const token = new CancellationToken();
-    let passed: CancellationToken | undefined;
     autoUpdaterMock.checkForUpdates.mockResolvedValueOnce({
       isUpdateAvailable: true,
       updateInfo: {
@@ -156,17 +168,14 @@ describe("downloadAndInstallUpdate", () => {
       },
       cancellationToken: token,
     });
-    autoUpdaterMock.downloadUpdate.mockImplementationOnce((candidate: CancellationToken) => {
-      passed = candidate;
-      return new Promise(() => undefined);
-    });
+    const download = holdUpdaterDownload();
     const controller = new AbortController();
     const pending = downloadAndInstallUpdate({
       currentVersion: "1.2.3",
       releaseChannel: "stable",
       signal: controller.signal,
     });
-    await vi.waitFor(() => expect(passed).toBe(token));
+    await expect(download.receivedToken).resolves.toBe(token);
 
     controller.abort();
 

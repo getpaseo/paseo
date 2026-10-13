@@ -33,6 +33,11 @@ export async function runStopCommand(options: CommandOptions, _command: Command)
       await client.close();
     }
   };
+  if (ifIdle && options.force)
+    throw {
+      code: "INVALID_OPTIONS",
+      message: "--if-idle cannot be combined with --force; a busy daemon keeps running.",
+    };
   if (target.kind === "endpoint" && options.force)
     throw {
       code: "INVALID_OPTIONS",
@@ -57,8 +62,7 @@ export async function runStopCommand(options: CommandOptions, _command: Command)
       target.kind === "instance"
         ? {
             ...(await stopDaemonInstance(target.home, {
-              // A busy refusal must not fall through to a forced kill.
-              force: ifIdle ? false : options.force === true,
+              force: options.force === true,
               timeoutMs,
               killTimeoutMs: parseTimeoutMs(options.killTimeout, 3_000),
               ...(ifIdle ? { requireLifecycleRpc: true } : {}),

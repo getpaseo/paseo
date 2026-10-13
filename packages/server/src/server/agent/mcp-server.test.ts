@@ -12,7 +12,7 @@ import { z } from "zod";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createAgentMcpServer as createAgentMcpServerWithDependencies } from "./mcp-server.js";
-import { AgentManager, type ManagedAgent } from "./agent-manager.js";
+import { AgentManager, AgentManagerShuttingDownError, type ManagedAgent } from "./agent-manager.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import type {
@@ -1348,6 +1348,32 @@ describe("create_agent MCP tool", () => {
       undefined,
       { workspaceId: "workspace-created" },
     );
+  });
+
+  it("creates no workspace when an idle shutdown refuses top-level creation", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    Reflect.set(agentManager, "runAdmittedAgentWork", async () => {
+      throw new AgentManagerShuttingDownError();
+    });
+    const ensureWorkspace = vi.fn(async () => "workspace-created");
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      ensureWorkspaceForCreate: ensureWorkspace,
+      logger,
+    });
+
+    await expect(
+      registeredTool(server, "create_agent").handler({
+        title: "Top-level agent",
+        provider: "codex/gpt-5.4",
+        initialPrompt: "Do work",
+      }),
+    ).rejects.toBeInstanceOf(AgentManagerShuttingDownError);
+
+    expect(ensureWorkspace).not.toHaveBeenCalled();
+    expect(spies.agentManager.createAgent).not.toHaveBeenCalled();
   });
 
   it("rejects public internal helpers and the old top-level execution background option", async () => {

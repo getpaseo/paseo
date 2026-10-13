@@ -138,6 +138,29 @@ test("onlyIfIdle shutdown reports AGENTS_BUSY and does not emit a lifecycle inte
   });
 });
 
+test("onlyIfIdle shutdown is refused without claiming when the daemon cannot stop itself", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const tryClaimIdleShutdown = vi.fn(() => true);
+  const session = createSessionForTest({ messages, agentManager: { tryClaimIdleShutdown } });
+
+  await session.handleMessage({
+    type: "shutdown_server_request",
+    requestId: "req-no-handler",
+    onlyIfIdle: true,
+  });
+
+  expect(tryClaimIdleShutdown).not.toHaveBeenCalled();
+  expect(messages).toContainEqual({
+    type: "rpc_error",
+    payload: {
+      requestId: "req-no-handler",
+      requestType: "shutdown_server_request",
+      error: "This daemon cannot stop itself",
+      code: "SHUTDOWN_UNAVAILABLE",
+    },
+  });
+});
+
 test("agent creation refused by an idle shutdown never starts a creation record", async () => {
   const messages: SessionOutboundMessage[] = [];
   const create = vi.fn();

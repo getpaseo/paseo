@@ -8425,6 +8425,14 @@ test("acknowledged cancellation settles a pending run before it has a turn id", 
   }
 });
 
+function reportRunningSubagent(session: TestAgentSession | null, id: string): void {
+  session?.pushEvent({
+    type: "provider_subagent",
+    provider: "codex",
+    event: { type: "upsert", id, status: "running" },
+  });
+}
+
 test("idle shutdown claim stays held across a second request and queued session work", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-shutdown-"));
   let session: TestAgentSession | null = null;
@@ -8445,18 +8453,13 @@ test("idle shutdown claim stays held across a second request and queued session 
     const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
       workspaceId: undefined,
     });
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(manager.tryClaimIdleShutdown()).toBe(true);
+    // The claim succeeds once the new agent's registration settles.
+    await vi.waitFor(() => expect(manager.tryClaimIdleShutdown()).toBe(true));
     await expect(manager.runAgent(agent.id, "after claim")).rejects.toBeInstanceOf(
       AgentManagerShuttingDownError,
     );
 
-    session?.pushEvent({
-      type: "provider_subagent",
-      provider: "codex",
-      event: { type: "upsert", id: "late-child", status: "running" },
-    });
+    reportRunningSubagent(session, "late-child");
     expect(manager.tryClaimIdleShutdown()).toBe(true);
     await expect(manager.runAgent(agent.id, "still held")).rejects.toBeInstanceOf(
       AgentManagerShuttingDownError,

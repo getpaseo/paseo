@@ -189,6 +189,18 @@ test("removed flags and ambiguous targets fail before side effects; observation 
       expect(result.stderr).toContain("REMOVED_LAUNCH_OPTION");
       expect(existsSync(home)).toBe(false);
     }
+    const idleForce = await f.run([
+      "--json",
+      "daemon",
+      "stop",
+      "--home",
+      home,
+      "--if-idle",
+      "--force",
+    ]);
+    expect(idleForce.code).toBe(1);
+    expect(idleForce.stderr).toContain("INVALID_OPTIONS");
+    expect(existsSync(home)).toBe(false);
     const ambiguous = await f.run(["--home", home, "project", "ls", "--host", "unused:12345"]);
     expect(ambiguous.stderr).toContain("Choose either --home or --host");
     expect(existsSync(home)).toBe(false);
