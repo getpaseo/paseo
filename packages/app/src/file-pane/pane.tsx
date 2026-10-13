@@ -41,6 +41,8 @@ import { usePublishPanelInstanceAttributes } from "@/panels/panel-instance-attri
 import type { Theme } from "@/styles/theme";
 import { ZoomableImage } from "@/components/zoomable-viewport/image";
 
+import { FileActionsToolbar } from "@/file-access/toolbar";
+
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
@@ -231,7 +233,25 @@ function FilePreviewBody({
   );
 }
 
-export function FilePane({
+export function FilePane(props: {
+  serverId: string;
+  workspaceRoot: string;
+  location: WorkspaceFileLocation;
+  navigationRevision: number;
+}) {
+  return (
+    <View style={styles.container}>
+      <FileActionsToolbar
+        serverId={props.serverId}
+        workspaceRoot={props.workspaceRoot}
+        path={props.location.path}
+      />
+      <StandardFilePane {...props} />
+    </View>
+  );
+}
+
+function StandardFilePane({
   serverId,
   workspaceRoot,
   location,
