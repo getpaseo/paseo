@@ -144,6 +144,34 @@ const title = "Hello";
     );
   });
 
+  it("highlights Astro markup containing only an empty expression", () => {
+    const code = "<p>{}</p>";
+
+    const tokens = highlightCode(code, "Empty.astro").flat();
+
+    expect(tokens.map((token) => token.text).join("")).toBe(code);
+    expect(tokens).toContainEqual({ text: "p", style: "tag" });
+  });
+
+  it.each([
+    "<p>{title} {} {title}</p>",
+    '<p class="{} {title}">{title}</p>',
+    "<p class={} title={title}>{title}</p>",
+  ])("highlights Astro containing an empty expression: %s", (markup) => {
+    const code = `---\nconst title = "Hello";\n---\n${markup}\n<style>.page { color: red; }</style>`;
+
+    const lines = highlightCode(code, "Empty.astro");
+
+    expect(lines).toHaveLength(code.split("\n").length);
+    for (const [index, tokens] of lines.entries()) {
+      expect(tokens.map((token) => token.text).join("")).toBe(code.split("\n")[index]);
+    }
+    expect(lines.flat()).toContainEqual({ text: "const", style: "keyword" });
+    expect(lines.flat()).toContainEqual({ text: "p", style: "tag" });
+    expect(lines.flat()).toContainEqual({ text: "color", style: "property" });
+    expect(lines.flat()).toContainEqual({ text: "title", style: "variable" });
+  });
+
   it("keeps an Astro expression open through nested template strings", () => {
     const code = "<p>{`a ${`}`} b`}</p>";
 

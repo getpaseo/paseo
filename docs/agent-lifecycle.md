@@ -151,11 +151,12 @@ lifecycle queue. Resume chooses its history or interactive purpose from the dura
 entering that queue. Shutdown must finish before the manager releases runtime ownership; a failed
 close retains the runtime for cleanup and blocks replacement through that close operation.
 
-Authoritative timeline catch-up can use a runtime-only `history` resume purpose. For Codex, that
-purpose initializes a temporary app-server, reads the persisted thread and child histories, and
-releases the process before returning. It never loads, resumes, or unarchives a native thread,
-including legacy records whose native archive failed. The retained history session contains only
-the read results. Interactive resume remains responsible for repairing a provider session archived
+Authoritative timeline catch-up can use a runtime-only `history` resume purpose. The retained
+history session contains only the read results and must release its provider process once replay
+finishes. Codex reads the persisted thread and child histories on a temporary app-server and never
+loads, resumes, or unarchives a native thread, including legacy records whose native archive failed.
+ACP providers spawn the CLI, replay the session through `session/load`, and terminate the process
+before returning. Interactive resume remains responsible for repairing a provider session archived
 outside Paseo while its Paseo agent is active.
 
 Provider session connection owns every process it spawns until the session is registered with

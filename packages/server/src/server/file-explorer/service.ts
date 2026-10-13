@@ -669,6 +669,7 @@ export async function duplicateExplorerEntry({
       errorOnExist: true,
       force: false,
       preserveTimestamps: true,
+      verbatimSymlinks: true,
     });
     return { status: "ok", path: normalizeRelativePath({ root, targetPath }) };
   } catch (error) {
