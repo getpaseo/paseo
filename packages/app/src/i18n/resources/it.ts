@@ -123,6 +123,8 @@ export const it: TranslationResources = {
     input: {
       accessibilityLabel: "Scrivi all'agente...",
       terminalAccessibilityLabel: "Prompt del terminale",
+      fullscreen: "Schermo intero",
+      exitFullscreen: "Esci da schermo intero",
       focusHint: "{{shortcut}} per attivare il campo",
       addAttachment: "Aggiungi allegato",
       interruptAgent: "Interrompi agente",
@@ -613,6 +615,9 @@ export const it: TranslationResources = {
       hostDisconnected: "L'host non è connesso",
       updateHost: "Aggiorna l'host per usare il renderer nativo del terminale.",
       unableToSubscribe: "Impossibile sottoscrivere gli aggiornamenti del terminale",
+    },
+    sheet: {
+      openAsTab: "Apri come scheda",
     },
     tabs: {
       loading: "Caricamento...",
