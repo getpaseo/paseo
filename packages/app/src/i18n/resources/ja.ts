@@ -2173,6 +2173,7 @@ export const ja: TranslationResources = {
         options: {
           ask: "確認する",
           inApp: "Paseoで",
+          inAppSide: "Paseoで — サイド",
           external: "外部ブラウザ",
         },
       },

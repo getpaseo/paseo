@@ -28,7 +28,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { MENU_ITEM_HEIGHT } from "@/components/ui/menu/menu-geometry";
 import { useToast } from "@/contexts/toast-context";
-import { openServiceUrl } from "@/utils/open-service-url";
+import { openServiceUrl, type ServiceUrlInAppLocation } from "@/utils/open-service-url";
 import {
   resolveWorkspaceScriptLink,
   type WorkspaceScriptLinkKind,
@@ -48,7 +48,7 @@ interface WorkspaceScriptsButtonProps {
   liveTerminalIds?: readonly string[];
   onScriptTerminalStarted?: (terminalId: string) => void;
   onViewTerminal?: (terminalId: string) => void;
-  onOpenUrlInBrowserTab?: (url: string) => void;
+  onOpenUrlInBrowserTab?: (url: string, location?: ServiceUrlInAppLocation) => void;
   hideLabels?: boolean;
   presentation?: "split" | "ghost";
 }
@@ -361,7 +361,7 @@ interface ScriptRowProps {
   preferredRouteKind: WorkspaceScriptLinkKind | null;
   onSelectRouteKind: (kind: WorkspaceScriptLinkKind) => void;
   onViewTerminal?: (terminalId: string) => void;
-  onOpenUrlInBrowserTab?: (url: string) => void;
+  onOpenUrlInBrowserTab?: (url: string, location?: ServiceUrlInAppLocation) => void;
 }
 
 function resolveScriptIconColorMapping(args: {

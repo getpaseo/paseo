@@ -2204,6 +2204,7 @@ export const es: TranslationResources = {
         options: {
           ask: "Preguntar",
           inApp: "EnPaseo",
+          inAppSide: "En Paseo — lateral",
           external: "Navegador externo",
         },
       },

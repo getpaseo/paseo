@@ -2188,6 +2188,7 @@ export const ru: TranslationResources = {
         options: {
           ask: "Спрашивать",
           inApp: "В Paseo",
+          inAppSide: "В Paseo — сбоку",
           external: "Внешний браузер",
         },
       },

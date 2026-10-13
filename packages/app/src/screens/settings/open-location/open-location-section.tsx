@@ -17,11 +17,17 @@ const SOURCES = [
   "subagents",
 ] as const satisfies readonly (keyof OpenInSidePanePreferences)[];
 
-const SERVICE_URL_BEHAVIORS: readonly ServiceUrlBehavior[] = ["ask", "in-app", "external"];
+const SERVICE_URL_BEHAVIORS: readonly ServiceUrlBehavior[] = [
+  "ask",
+  "in-app",
+  "in-app-side",
+  "external",
+];
 
 const SERVICE_URL_LABEL_KEYS: Record<ServiceUrlBehavior, string> = {
   ask: "settings.general.serviceUrls.options.ask",
   "in-app": "settings.general.serviceUrls.options.inApp",
+  "in-app-side": "settings.general.serviceUrls.options.inAppSide",
   external: "settings.general.serviceUrls.options.external",
 };
 

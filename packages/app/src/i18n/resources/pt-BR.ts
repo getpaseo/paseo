@@ -2187,6 +2187,7 @@ export const ptBR: TranslationResources = {
         options: {
           ask: "Perguntar",
           inApp: "No Paseo",
+          inAppSide: "No Paseo — lateral",
           external: "Navegador externo",
         },
       },

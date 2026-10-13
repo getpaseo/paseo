@@ -374,6 +374,18 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.chatLinkBehavior).toBe("ask");
   });
 
+  it("keeps script service URLs opening in Paseo on the side", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ serviceUrlBehavior: "in-app-side" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.serviceUrlBehavior).toBe("in-app-side");
+  });
+
   it("uses the native terminal renderer by default", async () => {
     const deps = makeDeps();
 

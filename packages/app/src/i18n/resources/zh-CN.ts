@@ -2128,6 +2128,7 @@ export const zhCN: TranslationResources = {
         options: {
           ask: "询问",
           inApp: "在 Paseo 中",
+          inAppSide: "在 Paseo 中 — 侧边",
           external: "外部浏览器",
         },
       },

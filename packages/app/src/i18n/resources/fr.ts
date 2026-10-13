@@ -2201,6 +2201,7 @@ export const fr: TranslationResources = {
         options: {
           ask: "Demander",
           inApp: "Dans Paseo",
+          inAppSide: "Dans Paseo — sur le côté",
           external: "Navigateur externe",
         },
       },

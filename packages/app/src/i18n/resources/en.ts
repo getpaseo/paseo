@@ -2280,6 +2280,7 @@ export const en = {
         options: {
           ask: "Ask",
           inApp: "In Paseo",
+          inAppSide: "In Paseo — side",
           external: "External browser",
         },
       },

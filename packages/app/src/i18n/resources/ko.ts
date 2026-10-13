@@ -2164,6 +2164,7 @@ export const ko: TranslationResources = {
         options: {
           ask: "물어보기",
           inApp: "Paseo에서",
+          inAppSide: "Paseo에서 — 측면",
           external: "외부 브라우저",
         },
       },

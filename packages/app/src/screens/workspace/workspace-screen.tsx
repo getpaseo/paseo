@@ -112,6 +112,7 @@ import { useWorkspaceTerminalSessionRetention } from "@/terminal/hooks/use-works
 import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { openExternalUrl } from "@/utils/open-external-url";
+import type { ServiceUrlInAppLocation } from "@/utils/open-service-url";
 import { openChatLink, resolveChatLinkDialogChoice } from "@/assistant-file-links/open-chat-link";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useStableEvent } from "@/hooks/use-stable-event";
@@ -1879,19 +1880,29 @@ function WorkspaceScreenContent({
   );
 
   const handleOpenUrlInBrowserTab = useCallback(
-    (url: string) => {
+    (url: string, location: ServiceUrlInAppLocation = "focused") => {
       if (!persistenceKey || !getIsElectron()) {
         void openExternalUrl(url);
         return;
       }
       const { browserId } = createWorkspaceBrowser({ initialUrl: url });
+      if (location === "side") {
+        openWorkspaceTargetAtLocation({
+          isCompact: isMobile,
+          workspaceKey: persistenceKey,
+          target: { kind: "browser", browserId },
+          location: "side",
+          preferredMainPaneId: lastMainPaneId,
+        });
+        return;
+      }
       openWorkspaceTabFocused(
         persistenceKey,
         { kind: "browser", browserId },
         FOCUSED_PANE_PLACEMENT,
       );
     },
-    [openWorkspaceTabFocused, persistenceKey],
+    [isMobile, lastMainPaneId, openWorkspaceTabFocused, persistenceKey],
   );
 
   const handleOpenChatLink = useCallback(

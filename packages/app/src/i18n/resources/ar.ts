@@ -2153,6 +2153,7 @@ export const ar: TranslationResources = {
         options: {
           ask: "بسأل",
           inApp: "في Paseo",
+          inAppSide: "في Paseo — الجانب",
           external: "متصفح خارجي",
         },
       },
