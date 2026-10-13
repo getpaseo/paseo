@@ -150,6 +150,7 @@ export function createFakeCodexAppServer(
     initialize: () => ({}),
     "collaborationMode/list": () => ({ data: [] }),
     "config/read": () => ({ config: {} }),
+    "configRequirements/read": () => ({ supportsIndependentSpeedModes: true, requirements: null }),
     getUserSavedConfig: () => ({ config: {} }),
     "model/list": () => ({
       data: [

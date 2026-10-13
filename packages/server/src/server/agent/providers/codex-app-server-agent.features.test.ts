@@ -98,9 +98,16 @@ function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSession
   };
 }
 
+interface SessionHarnessOptions {
+  logger?: pino.Logger;
+  models?: unknown[];
+  codexConfig?: Record<string, unknown>;
+  configRequirements?: Record<string, unknown>;
+}
+
 function createSessionHarness(
   configOverrides: Partial<AgentSessionConfig> = {},
-  options: { logger?: pino.Logger; models?: unknown[] } = {},
+  options: SessionHarnessOptions = {},
 ): {
   session: CodexFeaturesTestSession;
   appServer: FakeCodexAppServer;
@@ -109,6 +116,10 @@ function createSessionHarness(
   const appServer = createFakeCodexAppServer({
     "collaborationMode/list": () => ({ data: TEST_COLLABORATION_MODES }),
     "model/list": () => ({ data: options.models ?? TEST_SPEED_MODELS }),
+    ...(options.codexConfig ? { "config/read": () => ({ config: options.codexConfig }) } : {}),
+    ...(options.configRequirements
+      ? { "configRequirements/read": () => options.configRequirements }
+      : {}),
   });
   const session = new CodexAppServerAgentSession(
     { ...config, provider: CODEX_PROVIDER },
@@ -121,7 +132,7 @@ function createSessionHarness(
 
 async function createConnectedSession(
   configOverrides: Partial<AgentSessionConfig> = {},
-  options: { logger?: pino.Logger; models?: unknown[] } = {},
+  options: SessionHarnessOptions = {},
 ): Promise<{
   session: CodexFeaturesTestSession;
   appServer: FakeCodexAppServer;
@@ -602,5 +613,161 @@ describe("Codex app-server provider features", () => {
         mode: "plan",
       }),
     });
+  });
+
+  test("filters out priority tier when fast_mode is disabled in Codex config", async () => {
+    const { session, appServer } = await createConnectedSession(
+      { model: "gpt-6.1-sol", featureValues: { service_tier: "priority" } },
+      {
+        models: [
+          {
+            id: "gpt-6.1-sol",
+            serviceTiers: [
+              { id: "priority", name: "Fast", description: "Faster processing" },
+              { id: "ultrafast", name: "Ultrafast", description: "Lowest latency" },
+            ],
+          },
+        ],
+        codexConfig: {
+          features: { fast_mode: false, ultrafast_mode: true },
+        },
+        configRequirements: {
+          supportsIndependentSpeedModes: true,
+        },
+      },
+    );
+    try {
+      const speed = session.features.find((f) => f.id === "service_tier");
+      expect(speed).toMatchObject({
+        id: "service_tier",
+        type: "select",
+        value: "default",
+        options: [
+          { id: "default", label: "Normal", isDefault: true },
+          { id: "ultrafast", label: "Ultrafast" },
+        ],
+      });
+      await expect(session.setFeature?.("service_tier", "priority")).rejects.toThrow(
+        "Codex speed 'priority' is not available for model 'gpt-6.1-sol'",
+      );
+      await expect(session.setFeature?.("fast_mode", true)).rejects.toThrow(
+        "Codex fast mode is not available for model 'gpt-6.1-sol'",
+      );
+      await session.startTurn("hello");
+      await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
+        serviceTier: "default",
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("filters out ultrafast tier when ultrafast_mode is disabled in Codex config", async () => {
+    const { session, appServer } = await createConnectedSession(
+      { model: "gpt-6.1-sol", featureValues: { service_tier: "ultrafast" } },
+      {
+        models: [
+          {
+            id: "gpt-6.1-sol",
+            serviceTiers: [
+              { id: "priority", name: "Fast", description: "Faster processing" },
+              { id: "ultrafast", name: "Ultrafast", description: "Lowest latency" },
+            ],
+          },
+        ],
+        codexConfig: {
+          features: { fast_mode: true, ultrafast_mode: false },
+        },
+        configRequirements: {
+          supportsIndependentSpeedModes: true,
+        },
+      },
+    );
+    try {
+      const speed = session.features.find((f) => f.id === "service_tier");
+      expect(speed).toMatchObject({
+        id: "service_tier",
+        type: "select",
+        value: "default",
+        options: [
+          { id: "default", label: "Normal", isDefault: true },
+          { id: "priority", label: "Fast" },
+        ],
+      });
+      await expect(session.setFeature?.("service_tier", "ultrafast")).rejects.toThrow(
+        "Codex speed 'ultrafast' is not available for model 'gpt-6.1-sol'",
+      );
+      await session.startTurn("hello");
+      await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
+        serviceTier: "default",
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("hides speed menu when all advertised tiers are disabled in Codex config", async () => {
+    const { session } = await createConnectedSession(
+      { model: "gpt-6.1-sol" },
+      {
+        models: [
+          {
+            id: "gpt-6.1-sol",
+            serviceTiers: [
+              { id: "priority", name: "Fast", description: "Faster processing" },
+              { id: "ultrafast", name: "Ultrafast", description: "Lowest latency" },
+            ],
+          },
+        ],
+        codexConfig: {
+          features: { fast_mode: false, ultrafast_mode: false },
+        },
+        configRequirements: {
+          supportsIndependentSpeedModes: true,
+        },
+      },
+    );
+    try {
+      expect(session.features.some((f) => f.id === "service_tier")).toBe(false);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("does not gate ultrafast when supportsIndependentSpeedModes is not advertised", async () => {
+    const { session } = await createConnectedSession(
+      { model: "gpt-6.1-sol" },
+      {
+        models: [
+          {
+            id: "gpt-6.1-sol",
+            serviceTiers: [
+              { id: "priority", name: "Fast", description: "Faster processing" },
+              { id: "ultrafast", name: "Ultrafast", description: "Lowest latency" },
+            ],
+          },
+        ],
+        codexConfig: {
+          features: { fast_mode: true, ultrafast_mode: false },
+        },
+        configRequirements: {
+          supportsIndependentSpeedModes: false,
+        },
+      },
+    );
+    try {
+      const speed = session.features.find((f) => f.id === "service_tier");
+      expect(speed).toMatchObject({
+        id: "service_tier",
+        type: "select",
+        options: [
+          { id: "default", label: "Normal", isDefault: true },
+          { id: "priority", label: "Fast" },
+          { id: "ultrafast", label: "Ultrafast" },
+        ],
+      });
+    } finally {
+      await session.close();
+    }
   });
 });

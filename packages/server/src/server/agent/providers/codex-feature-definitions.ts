@@ -9,6 +9,45 @@ export const CodexServiceTierSchema = z.object({
 });
 export type CodexServiceTier = z.infer<typeof CodexServiceTierSchema>;
 
+export interface CodexSpeedFeatureGateOptions {
+  supportsIndependentSpeedModes?: boolean;
+  features?: {
+    fast_mode?: boolean;
+    ultrafast_mode?: boolean;
+  };
+}
+
+export function isFastCodexServiceTier(tier: CodexServiceTier): boolean {
+  const id = tier.id.toLowerCase();
+  const name = tier.name.toLowerCase();
+  return id === "priority" || id === "fast" || name === "fast";
+}
+
+export function isUltrafastCodexServiceTier(tier: CodexServiceTier): boolean {
+  const id = tier.id.toLowerCase();
+  const name = tier.name.toLowerCase().replace(/\s+/g, "");
+  return id === "ultrafast" || name === "ultrafast";
+}
+
+export function filterCodexServiceTiers(
+  tiers: CodexServiceTier[],
+  gates: CodexSpeedFeatureGateOptions = {},
+): CodexServiceTier[] {
+  return tiers.filter((tier) => {
+    if (isFastCodexServiceTier(tier) && gates.features?.fast_mode === false) {
+      return false;
+    }
+    if (
+      isUltrafastCodexServiceTier(tier) &&
+      gates.supportsIndependentSpeedModes &&
+      gates.features?.ultrafast_mode === false
+    ) {
+      return false;
+    }
+    return true;
+  });
+}
+
 function buildCodexSpeedFeature(tiers: CodexServiceTier[], value: string): AgentFeature[] {
   if (tiers.length === 0) return [];
   return [
