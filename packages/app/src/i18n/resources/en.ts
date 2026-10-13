@@ -610,6 +610,9 @@ export const en = {
       updateHost: "Update the host to use the native terminal renderer.",
       unableToSubscribe: "Unable to subscribe to terminal",
     },
+    sheet: {
+      openAsTab: "Open as tab",
+    },
     tabs: {
       loading: "Loading...",
       modified: "Unsaved changes",
