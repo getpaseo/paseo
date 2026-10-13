@@ -421,6 +421,7 @@ function serializeAgentToolCall(data: AgentToolCallData): StoredToolCall {
     name: data.name,
     detail: data.detail,
     ...(data.metadata ? { metadata: data.metadata } : {}),
+    ...(data.agentMessage ? { agentMessage: data.agentMessage } : {}),
   };
   switch (data.status) {
     case "running":
@@ -584,6 +585,7 @@ function deserializeBuiltinTimelineItem(
             error: tool.error,
             detail: tool.detail,
             ...(tool.metadata ? { metadata: tool.metadata } : {}),
+            ...(tool.agentMessage ? { agentMessage: tool.agentMessage } : {}),
           },
         },
       };

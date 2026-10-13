@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -773,3 +773,19 @@ describe("image prompts", () => {
     expect((await h.records()).filter((entry) => entry.input)).toHaveLength(0);
   });
 });
+
+it.runIf(process.platform === "win32")(
+  "launches an Antigravity command shim for probes and conversation startup",
+  async () => {
+    const h = await harness();
+    const shim = path.join(h.cwd, "agy launcher.cmd");
+    await writeFile(shim, `@echo off\r\n"${process.execPath}" "${fake}" %*\r\n`);
+    h.launch.command = shim;
+    h.launch.args = ["--launch-prefix"];
+    expect(await provider.status!({ launch: h.launch })).toEqual({ available: true });
+    await h.open();
+    expect(await h.wait((event) => event.type === "session.opened")).toMatchObject({
+      sessionId: "s",
+    });
+  },
+);

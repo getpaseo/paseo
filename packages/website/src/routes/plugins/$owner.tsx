@@ -1,3 +1,4 @@
+import { PluginContentLink } from "~/plugins/overview";
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import { ExternalLink } from "lucide-react";
 import { useMemo } from "react";
@@ -10,12 +11,13 @@ import {
   getAuthor,
   getRegistry,
   getPluginsByAuthor,
+  mostInstalled,
   pluginOwner,
-  sortPlugins,
 } from "~/plugins";
 import { AuthorAvatar } from "~/plugins/author-link";
 import { PluginsNotFound } from "~/plugins/not-found";
-import { PLUGIN_GRID_CLASS, PluginCard } from "~/plugins/plugin-card";
+import { InstallCount } from "~/plugins/install-count";
+import { PluginCard } from "~/plugins/plugin-card";
 import "~/styles.css";
 
 export const Route = createFileRoute("/plugins/$owner")({
@@ -23,7 +25,7 @@ export const Route = createFileRoute("/plugins/$owner")({
     const registry = await getRegistry();
     const first = registry.plugins.find((plugin) => pluginOwner(plugin) === params.owner);
     if (!first) throw notFound();
-    return { plugins: registry.plugins, author: getAuthor(first) };
+    return { plugins: registry.plugins, installs: registry.installs, author: getAuthor(first) };
   },
   head: ({ params, loaderData }) =>
     pageMeta(
@@ -43,13 +45,13 @@ const LINK_CLASS =
   "inline-flex items-center gap-1 text-xs text-extra-muted-foreground transition-colors hover:text-muted-foreground";
 
 function AuthorPage() {
-  const { plugins: allPlugins, author } = Route.useLoaderData();
+  const { plugins: allPlugins, installs, author } = Route.useLoaderData();
   const crumbs = useMemo<BreadcrumbItem[]>(
     () => [{ label: "Plugins", href: "/plugins" }, { label: author.name }],
     [author],
   );
 
-  const plugins = sortPlugins(getPluginsByAuthor(allPlugins, author.username), "popular");
+  const plugins = mostInstalled(getPluginsByAuthor(allPlugins, author.username), installs, "all");
   const github = authorGitHubUrl(author);
 
   return (
@@ -64,29 +66,26 @@ function AuthorPage() {
           </p>
           <div className="flex items-center gap-4 pt-1">
             {authorNpmUrl(author) && (
-              <a
-                href={authorNpmUrl(author)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={LINK_CLASS}
-              >
+              <PluginContentLink href={authorNpmUrl(author)} className={LINK_CLASS}>
                 npm
                 <ExternalLink className="h-3 w-3" />
-              </a>
+              </PluginContentLink>
             )}
             {github && (
-              <a href={github} target="_blank" rel="noopener noreferrer" className={LINK_CLASS}>
+              <PluginContentLink href={github} className={LINK_CLASS}>
                 GitHub
                 <ExternalLink className="h-3 w-3" />
-              </a>
+              </PluginContentLink>
             )}
           </div>
         </div>
       </div>
 
-      <div className={`mt-12 ${PLUGIN_GRID_CLASS}`}>
+      <div className="mt-12 grid gap-x-4 gap-y-8 sm:grid-cols-2 lg:grid-cols-3">
         {plugins.map((plugin) => (
-          <PluginCard key={plugin.id} plugin={plugin} />
+          <PluginCard key={plugin.id} plugin={plugin}>
+            <InstallCount count={installs[plugin.id]?.all ?? 0} />
+          </PluginCard>
         ))}
       </div>
     </SiteShell>

@@ -7,7 +7,11 @@ import {
   installUsageReportsFixture,
   type UsageReportsFixture,
 } from "../support/helpers/usage-reports";
-import { refreshAllUsage, showUsageAs } from "../support/helpers/usage-sidebar-item";
+import {
+  openUsageFromIcon,
+  refreshAllUsage,
+  showUsageAs,
+} from "../support/helpers/usage-sidebar-item";
 
 const ICON = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="currentColor"/></svg>';
 
@@ -95,10 +99,11 @@ test.describe("usage settings", () => {
     await expect(card.getByText("2026-12-31", { exact: true })).toBeVisible();
     await expect(card.getByText("Gamma auth expired", { exact: true })).toBeVisible();
 
-    // Percentages now live on the Usage screen, and still apply to the host section.
-    await expect(card.getByTestId("usage-options-toggle")).toHaveCount(0);
+    // The shared percentages setting applies to the host section.
+    await expect(page.getByTestId("usage-options-menu")).toBeVisible();
     const hostUsageUrl = page.url();
-    await page.goto("/usage");
+    await gotoAppShell(page);
+    await openUsageFromIcon(page);
     await showUsageAs(page, "remaining");
     await page.goto(hostUsageUrl);
     await expect(card.getByText("30% left")).toBeVisible();

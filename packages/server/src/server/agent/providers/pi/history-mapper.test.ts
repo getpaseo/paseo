@@ -16,6 +16,35 @@ async function collectHistory(
 }
 
 describe("Pi history mapper", () => {
+  test("renders visible custom messages as completed tools and hides private context", async () => {
+    const events = await collectHistory([
+      {
+        role: "custom",
+        customType: "project-context",
+        content: "Project instructions",
+        display: true,
+      },
+      {
+        role: "custom",
+        customType: "private-context",
+        content: "Hidden instructions",
+        display: false,
+      },
+      { role: "custom", customType: "project-context", content: "Project instructions" },
+    ]);
+    expect(events.map((event) => event.item)).toEqual(
+      [1, 2].map((index) => ({
+        type: "tool_call",
+        callId: `pi-custom-${index}`,
+        name: "project-context",
+        status: "completed",
+        detail: { type: "plain_text", text: "Project instructions" },
+        metadata: { synthetic: true, customType: "project-context" },
+        error: null,
+      })),
+    );
+  });
+
   test("replays user, assistant, reasoning, and completed tool calls", async () => {
     await expect(
       collectHistory([
@@ -128,14 +157,22 @@ describe("Pi history mapper", () => {
     ]);
   });
 
-  test("replays non-notice custom messages as assistant text, matching the live path", async () => {
+  test("replays custom messages as completed tools, matching the live path", async () => {
     await expect(
       collectHistory([{ role: "custom", content: "Extension command output" }]),
     ).resolves.toEqual([
       {
         type: "timeline",
         provider: "pi",
-        item: { type: "assistant_message", text: "Extension command output" },
+        item: {
+          type: "tool_call",
+          callId: "pi-custom-1",
+          name: "custom-message",
+          status: "completed",
+          detail: { type: "plain_text", text: "Extension command output" },
+          metadata: { synthetic: true, customType: "custom-message" },
+          error: null,
+        },
       },
     ]);
   });

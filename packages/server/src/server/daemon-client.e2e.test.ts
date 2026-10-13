@@ -831,6 +831,29 @@ test("send_agent_message auto-unarchives archived agents", async () => {
   }
 }, 180000);
 
+test("send_agent_message leaves an archived agent archived when its directory is gone", async () => {
+  const cwd = tmpCwd();
+  try {
+    const created = await ctx.client.createAgent({
+      config: {
+        ...getFullAccessConfig("codex"),
+        cwd,
+      },
+    });
+    const archived = await ctx.client.archiveAgent(created.id);
+    rmSync(cwd, { recursive: true, force: true });
+
+    await expect(ctx.client.sendMessage(created.id, "hello")).rejects.toThrow(
+      "Working directory does not exist",
+    );
+
+    const afterSend = await ctx.client.fetchAgent({ agentId: created.id });
+    expect(afterSend?.agent.archivedAt).toBe(archived.archivedAt);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 30000);
+
 test("refresh_agent auto-unarchives archived agents", async () => {
   const cwd = tmpCwd();
   try {

@@ -294,6 +294,14 @@ export class OmpHarness {
     return await run;
   }
 
+  async runPromptWithoutTurnOnNextRuntime(input: string, requestId: string): Promise<unknown> {
+    const session = this.requireSession();
+    this.omp.queueSessionSetup((runtime) => {
+      runtime.promptAck = { requestId, agentInvoked: false };
+    });
+    return await session.run(input);
+  }
+
   async runPromptWithoutTurn(input: string): Promise<unknown> {
     const session = this.requireSession();
     this.omp.latestSession().promptAck = { agentInvoked: false };
@@ -327,6 +335,31 @@ export class OmpHarness {
       agentInvoked: false,
     });
     return { completed: () => isCompleted, completion };
+  }
+
+  async runPromptRejectedBeforeAgentRuns(
+    input: string,
+    error: string,
+    order: "result after ack" | "result before ack",
+  ): Promise<unknown> {
+    const session = this.requireSession();
+    const runtime = this.omp.latestSession();
+    runtime.promptAck = { requestId: "prompt-rejected" };
+    const rejection = {
+      type: "prompt_result",
+      id: "prompt-rejected",
+      agentInvoked: false,
+      status: "error",
+      sessionSettled: true,
+      error: { message: error, retryable: false },
+    } as const;
+    const promptStarted = runtime.nextPrompt();
+    const run = session.run(input);
+    if (order === "result before ack") runtime.emit(rejection);
+    await promptStarted;
+    await waitForImmediate();
+    if (order === "result after ack") runtime.emit(rejection);
+    return await run;
   }
 
   async runPromptAfterCorrelatedTrueResult(
@@ -564,6 +597,10 @@ export class OmpHarness {
 
   canceledTurnCount(): number {
     return this.events.filter((event) => event.type === "turn_canceled").length;
+  }
+
+  usageSession() {
+    return this.requireSession().usageSession();
   }
 
   async close(): Promise<void> {

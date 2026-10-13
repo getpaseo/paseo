@@ -11,7 +11,7 @@ canonical files and are trying to add or change one.
 | ---------------------------------------- | ----------------------------------------------------------------- |
 | `components/ui/combobox.tsx`             | Anchored picker with search; mobile falls back to bottom sheet    |
 | `components/ui/tooltip.tsx`              | Non-interactive hover/long-press tooltip                          |
-| `components/workspace-hover-card.tsx`    | Desktop-web hover card with measure + computePosition + Portal    |
+| `components/ui/hover-card.tsx`           | Desktop-web hover card the pointer can move onto; Portal          |
 | `components/ui/autocomplete-popover.tsx` | Slash-command autocomplete anchored to the focused composer input |
 
 Each handles a different mix of concerns: combobox owns input focus, tooltip is
@@ -92,7 +92,7 @@ portal can cover them.
 Painting and keyboard ownership use the same relative layer model. Register
 desktop modal, combobox, and dropdown focus scopes with `useWebOverlayRegistration`; the
 highest painted scope alone receives overlay keys, traps focus, and restores
-focus when it closes. Do not add component-local global Escape listeners: two
+focus when it closes. Hover cards register with `manageFocus={false}`: they claim overlay keys without moving or trapping focus on pointer hover. Do not add component-local global Escape listeners: two
 stacked overlays would both close on one keypress.
 
 If an overlay is rendered by a global host rather than beneath its opener in
@@ -304,7 +304,9 @@ track phase.
 
 All sheets use the app-wide Gorhom modal provider through `IsolatedBottomSheetModal`. This
 includes native centered dialogs: separate React Native Modals cannot present a root-owned
-sibling dialog over an existing iOS presenter.
+sibling dialog over an existing iOS presenter. The one exception is the
+[workspace sheet](explorer-sidebar.md#workspace-sheet), an in-tree Gorhom `BottomSheet` that hosts a
+whole workspace panel.
 
 The wrapper must give Gorhom an object ref. Gorhom accepts a callback ref at the React boundary
 but stores it in the modal queue and later reads `.current`; provider dismissal, replacement,

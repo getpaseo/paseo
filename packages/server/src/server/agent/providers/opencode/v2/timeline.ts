@@ -1,4 +1,8 @@
 import { mapOpencodeToolCall } from "../tool-call-mapper.js";
+import {
+  materializeProviderImage,
+  renderProviderImageOutputAsAssistantMarkdown,
+} from "../../provider-image-output.js";
 import type { SessionMessageAssistantTool } from "@opencode/client";
 import { STRUCTURED_OUTPUT_TOOL } from "./structured-output.js";
 import type { SessionMessageInfo } from "@opencode/client";
@@ -158,8 +162,21 @@ export class V2Timeline {
     const serialized = JSON.stringify(part);
     if (serialized === this.content.get(key)) return;
     this.content.set(key, serialized);
-    const item = toolFromV2(part);
+    const { output, images } = splitToolContent(part.state);
+    const item = toolFromV2(part, output);
     if (item) push(item);
+    // Images follow their tool call as markdown, as Claude and Codex emit them,
+    // so base64 never reaches the tool output.
+    images.forEach((image, index) => {
+      const imageKey = `${key}:image:${index}`;
+      if (this.content.has(imageKey)) return;
+      this.content.set(imageKey, "");
+      const imageItem = renderProviderImageOutputAsAssistantMarkdown(
+        { url: image.uri, mimeType: image.mime },
+        { materialize: materializeProviderImage },
+      );
+      if (imageItem) push(imageItem);
+    });
   }
 
   private compactionMessage(
@@ -187,12 +204,28 @@ interface TextPartIdentity {
 interface TextPartDelta extends TextPartIdentity {
   delta: string;
 }
-function toolFromV2(tool: SessionMessageAssistantTool): AgentTimelineItem | null {
+function splitToolContent(state: SessionMessageAssistantTool["state"]): {
+  output: string | undefined;
+  images: { uri: string; mime: string }[];
+} {
+  if (!("content" in state) || !state.content) return { output: undefined, images: [] };
+  const images: { uri: string; mime: string }[] = [];
+  const output = state.content
+    .map((part) => {
+      if (part.type === "text") return part.text;
+      if (!part.uri.startsWith("data:image/")) return part.uri;
+      images.push(part);
+      return "[image]";
+    })
+    .join("\n");
+  return { output, images };
+}
+
+function toolFromV2(
+  tool: SessionMessageAssistantTool,
+  output: string | undefined,
+): AgentTimelineItem | null {
   const state = tool.state;
-  const output =
-    "content" in state
-      ? state.content?.map((part) => (part.type === "text" ? part.text : part.uri)).join("\n")
-      : undefined;
   return mapOpencodeToolCall({
     toolName: tool.name,
     callId: tool.id,

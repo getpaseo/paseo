@@ -30,6 +30,7 @@ export const ko: TranslationResources = {
     back: "뒤로",
     loading: "불러오는 중...",
     actions: {
+      save: "저장",
       back: "뒤로",
       cancel: "취소",
       close: "닫기",
@@ -123,6 +124,8 @@ export const ko: TranslationResources = {
     input: {
       accessibilityLabel: "에이전트에게 메시지...",
       terminalAccessibilityLabel: "Terminal prompt",
+      fullscreen: "전체 화면",
+      exitFullscreen: "전체 화면 종료",
       focusHint: "{{shortcut}}로 포커스",
       addAttachment: "첨부 추가",
       interruptAgent: "에이전트 중단",
@@ -383,6 +386,9 @@ export const ko: TranslationResources = {
         completed: "완료됨",
       },
     },
+    turnFooter: {
+      workedFor: "작업 시간 {{duration}}",
+    },
     compaction: {
       loading: "압축하는 중...",
       auto: "컨텍스트가 자동으로 압축되었습니다",
@@ -607,6 +613,9 @@ export const ko: TranslationResources = {
       hostDisconnected: "호스트가 연결되어 있지 않습니다",
       updateHost: "기본 터미널 렌더러를 사용하도록 호스트를 업데이트합니다.",
       unableToSubscribe: "터미널을 구독할 수 없습니다",
+    },
+    sheet: {
+      openAsTab: "탭으로 열기",
     },
     tabs: {
       loading: "불러오는 중...",
@@ -977,6 +986,47 @@ export const ko: TranslationResources = {
         actions: {
           viewPullRequest: "보기",
           openOn: "{{brand}}에서 열기",
+          addToChat: "채팅에 추가",
+          addAllToChat: "모두 채팅에 추가",
+          addingToChat: "추가 중...",
+        },
+        checksOverview: {
+          headline: {
+            actionRequired: "확인이 필요한 검사가 있습니다",
+            failure: "실패한 검사가 있습니다",
+            pending: "아직 완료되지 않은 검사가 있습니다",
+            success: "모든 검사를 통과했습니다",
+            none: "검사 없음",
+          },
+          count: {
+            actionRequired: "{{count}}개 조치 필요",
+            warning: "{{count}}개 경고",
+            failure: "{{count}}개 실패",
+            pending: "{{count}}개 진행 중",
+            manual: "{{count}}개 수동",
+            success: "{{count}}개 성공",
+            ignored: "{{count}}개 건너뜀",
+          },
+          detailOne: "검사: {{parts}}",
+          detailMany: "검사: {{parts}}",
+          groupOne: {
+            actionRequired: "조치 필요 검사 {{count}}개",
+            warning: "경고 검사 {{count}}개",
+            failure: "실패한 검사 {{count}}개",
+            pending: "진행 중인 검사 {{count}}개",
+            manual: "수동 검사 {{count}}개",
+            success: "성공한 검사 {{count}}개",
+            ignored: "건너뛴 검사 {{count}}개",
+          },
+          groupMany: {
+            actionRequired: "조치 필요 검사 {{count}}개",
+            warning: "경고 검사 {{count}}개",
+            failure: "실패한 검사 {{count}}개",
+            pending: "진행 중인 검사 {{count}}개",
+            manual: "수동 검사 {{count}}개",
+            success: "성공한 검사 {{count}}개",
+            ignored: "건너뛴 검사 {{count}}개",
+          },
         },
         checksSummary: {
           passedLabel: "통과",
@@ -990,17 +1040,21 @@ export const ko: TranslationResources = {
           checks: "검사",
           pipeline: "파이프라인",
           reviews: "리뷰",
+          activity: "활동",
         },
         empty: {
           noJobs: "작업 없음",
           loadingPipeline: "파이프라인 로드 중…",
           pipelineJobsLoadFailed: "파이프라인 작업을 로드할 수 없습니다.",
           allowedToFail: "실패가 허용됨",
+          noActivity: "아직 활동이 없습니다",
         },
         approvals: "{{required}} 중 {{given}} 승인",
         accessibility: {
           pullRequest: "풀 리퀘스트 #{{number}}",
           pullRequest_mr: "병합 요청 !{{number}}",
+          commentActions: "댓글 작업",
+          threadActions: "스레드 작업",
           checkStatus: {
             passed: "통과",
             failed: "실패",
@@ -1029,6 +1083,8 @@ export const ko: TranslationResources = {
         },
         thread: {
           discussion: "토론 스레드",
+          resolved: "해결됨",
+          outdated: "오래됨",
         },
         errors: {
           statusLoadFailed: "풀 리퀘스트 상태를 불러올 수 없습니다",
@@ -1095,7 +1151,16 @@ export const ko: TranslationResources = {
     },
   },
   sidebar: {
+    statusGroupAccessibility: "{{label}} 그룹",
+    statusBucket: {
+      needsInput: "입력 필요",
+      failed: "실패",
+      readyToReview: "검토 대기",
+      working: "실행 중",
+      done: "완료",
+    },
     display: {
+      showBackground: "백그라운드 표시",
       trigger: "표시 설정",
       heading: "표시",
       grouping: {
@@ -1711,6 +1776,12 @@ export const ko: TranslationResources = {
       helper: "원격 호스트에서 실행 중인 Paseo 데몬에 연결합니다.",
       fields: {
         target: "SSH 호스트",
+        password: "데몬 비밀번호",
+        optional: "선택 사항",
+      },
+      passwordVisibility: {
+        show: "비밀번호 표시",
+        hide: "비밀번호 숨기기",
       },
       actions: {
         cancel: "취소",
@@ -1941,6 +2012,8 @@ export const ko: TranslationResources = {
     dismiss: "닫기",
   },
   contextWindow: {
+    noData: "컨텍스트 데이터 없음",
+    accessibilityNoData: "컨텍스트 창: 컨텍스트 데이터 없음",
     title: "컨텍스트 윈도우",
     used: "{{percentage}}% 사용됨",
     tokens: "{{used}} / {{max}} 토큰",
@@ -1948,6 +2021,17 @@ export const ko: TranslationResources = {
     accessibility: "컨텍스트 윈도우 {{percentage}}% 사용됨",
   },
   review: {
+    feedback: {
+      send: "피드백 보내기 ({{count}})",
+      sending: "피드백 전송 중 ({{count}})",
+      chooseAgent: "에이전트 선택",
+      sent: "{{recipient}}에게 피드백을 보냈습니다",
+      "no-agents": "피드백을 보내려면 이 작업 공간에서 에이전트 탭을 여세요.",
+      disconnected: "피드백을 보내려면 호스트에 연결하세요.",
+      "no-context": "저장된 댓글이 더 이상 이 변경 사항과 일치하지 않습니다.",
+      failed: "피드백 전송에 실패했습니다. 다시 시도하세요.",
+      prompt: "이 코드 리뷰를 반영해 주세요.",
+    },
     comment: {
       add: "리뷰 댓글 추가",
       edit: "리뷰 댓글 편집",

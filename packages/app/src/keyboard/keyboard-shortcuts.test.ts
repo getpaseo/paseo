@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { formatShortcut } from "@/utils/format-shortcut";
+import { keyboardEventToComboString } from "./shortcut-string";
 import {
   buildKeyboardShortcutHelpSections,
   buildEffectiveBindings,
@@ -1026,6 +1027,90 @@ describe("unassigned shortcuts", () => {
   });
 
   describe("matching", () => {
+    it("dispatches a captured Russian letter shortcut on the same key", () => {
+      const event = keyboardInput({ key: "и", code: "KeyB", ctrlKey: true });
+      const combo = keyboardEventToComboString(event as KeyboardEvent);
+      expect(combo).toBe("Ctrl+B");
+      const bindings = buildEffectiveBindings({
+        "sidebar-toggle-left-ctrl-period-non-mac": combo!,
+      });
+
+      expect(resolveShortcut({ event, context: desktopNonMac, bindings }).match?.action).toBe(
+        "sidebar.toggle.left",
+      );
+    });
+
+    it("dispatches a recorded dotted-uppercase letter with Shift held", () => {
+      const event = keyboardInput({ key: "İ", code: "KeyS", ctrlKey: true, shiftKey: true });
+      const combo = keyboardEventToComboString(event as KeyboardEvent);
+      expect(combo).toBe("Ctrl+Shift+S");
+      const bindings = buildEffectiveBindings({
+        "sidebar-toggle-left-ctrl-period-non-mac": combo!,
+      });
+      expect(resolveShortcut({ event, context: desktopNonMac, bindings }).match?.action).toBe(
+        "sidebar.toggle.left",
+      );
+    });
+
+    it.each(["и", "И", "β", "ش", "ב", "é"])(
+      "matches default and recorded letter bindings for unsupported letter %s",
+      (key) => {
+        const event = keyboardInput({ key, code: "KeyB", ctrlKey: true });
+        expectShortcutResolution({
+          event,
+          context: desktopNonMac,
+          action: "sidebar.toggle.left",
+        });
+        const combo = keyboardEventToComboString(event as KeyboardEvent);
+        expect(combo).toBe("Ctrl+B");
+        expect(
+          resolveShortcut({
+            event,
+            context: desktopNonMac,
+            bindings: buildEffectiveBindings({
+              "sidebar-toggle-left-ctrl-period-non-mac": combo!,
+            }),
+          }).match?.action,
+        ).toBe("sidebar.toggle.left");
+      },
+    );
+
+    it.each(["v", "†", "Dead", "Unidentified", ""])(
+      "does not match an unrelated character or named key %s by physical letter",
+      (key) => {
+        expectNoShortcutResolution({
+          event: { key, code: "KeyB", ctrlKey: true },
+          context: desktopNonMac,
+        });
+      },
+    );
+
+    it("does not match non-letter bindings by physical key for unsupported letters", () => {
+      expectNoShortcutResolution({
+        event: { key: "ю", code: "Period", ctrlKey: true },
+        context: desktopNonMac,
+      });
+    });
+
+    it("dispatches a captured Dvorak binding on the same logical key", () => {
+      const event = keyboardInput({ key: "b", code: "KeyN", metaKey: true });
+      const combo = keyboardEventToComboString(event as KeyboardEvent);
+      expect(combo).toBe("Cmd+B");
+      const bindings = buildEffectiveBindings({ "sidebar-toggle-left-mac-cmd-b": combo! });
+
+      expect(
+        resolveShortcut({ event, context: { isMac: true, isDesktop: true }, bindings }).match
+          ?.action,
+      ).toBe("sidebar.toggle.left");
+      expect(
+        resolveShortcut({
+          event: { key: "x", code: "KeyB", metaKey: true },
+          context: { isMac: true, isDesktop: true },
+          bindings,
+        }).match,
+      ).toBeNull();
+    });
+
     it("stops matching a shortcut the user unassigned", () => {
       const bindings = buildEffectiveBindings({ [TAB_NEW_BINDING]: UNASSIGNED_COMBO });
 

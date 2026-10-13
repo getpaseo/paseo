@@ -21,7 +21,12 @@ test("lists built-in and subprocess usage; validates input and isolates fetch er
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.9.2" });
   try {
     await client.connect();
-    const first = await client.listUsageReports();
+    const updates: string[] = [];
+    const first = await client.listUsageReports({}, (report) => updates.push(report.id));
+    expect(updates).toEqual(first.reports.map((report) => report.id));
+    await expect(client.listUsageReports({ agentId: "missing-agent" })).rejects.toThrow(
+      "Unknown agent",
+    );
     expect(first.reports).toHaveLength(4);
     expect(first.reports[0]?.icon).toContain("<svg");
     expect(first.reports[0]?.fetchedAt).toMatch(/^\d{4}-/);
@@ -220,7 +225,7 @@ async function fetchApi(url, init) {
 }
 export default function contribute(server) {
   server.registerUsageSource({ id: '${source}', label: '${source}', input: inputSchema,
-    discover: () => discover(lookup${source === "claude" ? ", fetchApi" : ""}),
+    discover: (scope) => discover(scope, lookup${source === "claude" ? ", fetchApi" : ""}),
     fetch: (input) => fetchUsage(inputSchema.parse(input), fetchApi, lookup),
   });
   return () => {};

@@ -1,3 +1,4 @@
+import { UsageScopeSchema, type UsageScope } from "@getpaseo/plugin/server/usage";
 import type {
   ProviderConnectRequest,
   ProviderCatalogOptions,
@@ -52,7 +53,7 @@ export type PluginProcessRequest =
   | { type: "hook"; requestId: string; kind: "event" | "before"; name: string; input: unknown }
   | { type: "hook.cancel"; requestId: string }
   | { type: "usage.fetch"; requestId: string; sourceId: string; input: unknown }
-  | { type: "usage.discover"; requestId: string; sourceId: string }
+  | { type: "usage.discover"; requestId: string; sourceId: string; scope: UsageScope }
   | { type: "invoke"; requestId: string; method: string; input: unknown }
   | {
       type: "provider.connect";
@@ -199,7 +200,12 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
       })
       .strict(),
     z
-      .object({ type: z.literal("usage.discover"), requestId: z.string(), sourceId: z.string() })
+      .object({
+        type: z.literal("usage.discover"),
+        requestId: z.string(),
+        sourceId: z.string(),
+        scope: UsageScopeSchema,
+      })
       .strict(),
     z
       .object({

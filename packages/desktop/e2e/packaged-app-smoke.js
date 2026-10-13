@@ -848,6 +848,11 @@ async function assertSandboxState({ browser, page, expectedSandbox, stdout, stde
 
 function assertLinuxDesktopIdentity(appPath) {
   if (process.platform === "linux") {
+    assert.deepEqual(
+      fs.readFileSync(path.join(appPath, "resources", "icon.png")),
+      fs.readFileSync(path.join(__dirname, "..", "assets", "icon.png")),
+      "Packaged Linux windows must have the Paseo icon at their runtime lookup path",
+    );
     const metadata = JSON.parse(
       extractFile(path.join(appPath, "resources", "app.asar"), "package.json").toString(),
     );

@@ -2,10 +2,7 @@ import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import type { ProcessEnvRecord } from "../server/paseo-env.js";
 import { execCommand } from "../utils/spawn.js";
-import { isWindowsCommandScript } from "../utils/windows-command.js";
 import { windowsExecutableResolution } from "./windows.js";
-
-export { quoteWindowsArgument, quoteWindowsCommand } from "../utils/windows-command.js";
 
 type Which = (
   command: string,
@@ -82,7 +79,6 @@ export async function probeExecutable(
       timeout: timeoutMs,
       killSignal: "SIGKILL",
       maxBuffer: 64 * 1024,
-      shell: isWindowsCommandScript(executablePath),
     });
     return true;
   } catch (error) {

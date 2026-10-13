@@ -1,3 +1,4 @@
+import { createHook } from "node:async_hooks";
 import { execFileSync } from "node:child_process";
 import {
   mkdtempSync,
@@ -696,6 +697,105 @@ describe("absolute directory-path configuration", () => {
   });
 });
 
+describe("home search with excluded discovery paths", () => {
+  let homeDir: string;
+  let libraryDir: string;
+
+  beforeEach(() => {
+    homeDir = realpathSync.native(mkdtempSync(path.join(tmpdir(), "directory-excluded-")));
+    libraryDir = path.join(homeDir, "Library");
+    mkdirSync(path.join(libraryDir, "sub", "match-me"), { recursive: true });
+    mkdirSync(path.join(homeDir, "projects", "other"), { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  function searchHome(query: string) {
+    return searchDirectoryEntries({
+      root: homeDir,
+      query,
+      pathFormat: "absolute",
+      includeDirectories: true,
+      includeFiles: false,
+      pathQueryPolicy: "rooted",
+      rootAliases: ["~"],
+      blankQueryBehavior: "none",
+      confidentResultScanThreshold: 5_000,
+      excludedDiscoveryPaths: [libraryDir],
+    }).then((entries) => entries.map((entry) => entry.path));
+  }
+
+  it("does not discover entries inside an excluded path", async () => {
+    await expect(searchHome("match")).resolves.toEqual([]);
+    await expect(searchHome("~")).resolves.toEqual([path.join(homeDir, "projects")]);
+  });
+
+  it("excludes by path, so a nested directory with the same name is still discovered", async () => {
+    const nested = path.join(homeDir, "projects", "game", "Library", "match-me");
+    mkdirSync(nested, { recursive: true });
+
+    await expect(searchHome("match")).resolves.toEqual([nested]);
+  });
+
+  // POSIX-only: creates and follows a symlink fixture.
+  it.skipIf(isWindows)("does not discover an excluded path through a symlink", async () => {
+    symlinkSync(path.join(libraryDir, "sub"), path.join(homeDir, "link"), "dir");
+
+    await expect(searchHome("match")).resolves.toEqual([]);
+  });
+
+  it("resolves an exact typed path inside an excluded path", async () => {
+    await expect(searchHome("~/Library/sub/match-me")).resolves.toEqual([
+      path.join(libraryDir, "sub", "match-me"),
+    ]);
+  });
+
+  it("lists one level when browsing inside an excluded path", async () => {
+    await expect(searchHome("~/Library/")).resolves.toEqual([
+      libraryDir,
+      path.join(libraryDir, "sub"),
+    ]);
+    await expect(searchHome("~/Library/su")).resolves.toEqual([path.join(libraryDir, "sub")]);
+  });
+});
+
+describe("rooted queries with a typed parent", () => {
+  let homeDir: string;
+
+  beforeEach(() => {
+    homeDir = realpathSync.native(mkdtempSync(path.join(tmpdir(), "directory-typed-parent-")));
+    mkdirSync(path.join(homeDir, "Developer", "pasta"), { recursive: true });
+    mkdirSync(path.join(homeDir, "Archive", "Developer", "pasta"), { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  it("walks only under the typed parent when it exists", async () => {
+    await expect(
+      searchAbsoluteDirectoryPaths({ homeDir, query: "~/Developer/pas" }),
+    ).resolves.toEqual([path.join(homeDir, "Developer", "pasta")]);
+  });
+
+  it("matches the whole tree when the typed parent does not exist", async () => {
+    await expect(searchAbsoluteDirectoryPaths({ homeDir, query: "~/Devel/pas" })).resolves.toEqual([
+      path.join(homeDir, "Developer", "pasta"),
+      path.join(homeDir, "Archive", "Developer", "pasta"),
+    ]);
+  });
+
+  it("returns the typed directory first", async () => {
+    mkdirSync(path.join(homeDir, "Developer", "pasta-extra"));
+
+    const results = await searchAbsoluteDirectoryPaths({ homeDir, query: "~/Developer/pasta" });
+
+    expect(results[0]).toBe(path.join(homeDir, "Developer", "pasta"));
+  });
+});
+
 describe("relative typed-entry configuration", () => {
   let tempRoot: string;
   let workspaceDir: string;
@@ -1023,4 +1123,66 @@ describe("home-tree scan cost", () => {
       rmSync(outside, { recursive: true, force: true });
     },
   );
+});
+
+// Every pending fs call holds one of libuv's shared threadpool threads (4 by default). A read that
+// never returns, such as one on a hung network mount, keeps its thread, so searches that pile up
+// while the user types must not be able to take every thread from the rest of the daemon.
+describe("filesystem threads held by concurrent searches", () => {
+  const SEARCHES = 8;
+  let scanRoot: string;
+
+  beforeEach(() => {
+    scanRoot = realpathSync.native(mkdtempSync(path.join(tmpdir(), "directory-scan-threads-")));
+    for (let branch = 0; branch < 20; branch += 1) {
+      mkdirSync(path.join(scanRoot, `b${branch}`, "inner", "leaf"), { recursive: true });
+    }
+  });
+
+  afterEach(() => {
+    rmSync(scanRoot, { recursive: true, force: true });
+  });
+
+  async function peakPendingFilesystemRequests(run: () => Promise<unknown>): Promise<number> {
+    const pending = new Set<number>();
+    let peak = 0;
+    const hook = createHook({
+      init(asyncId, type) {
+        if (type !== "FSREQPROMISE" && type !== "FSREQCALLBACK") return;
+        pending.add(asyncId);
+        peak = Math.max(peak, pending.size);
+      },
+      before(asyncId) {
+        pending.delete(asyncId);
+      },
+    });
+    hook.enable();
+    try {
+      await run();
+    } finally {
+      hook.disable();
+    }
+    return peak;
+  }
+
+  function searchWhileTyping() {
+    const queries = Array.from({ length: SEARCHES }, (_, index) => `nomatch${index}`);
+    return Promise.all(
+      queries.map((query) => searchAbsoluteDirectoryPaths({ homeDir: scanRoot, query })),
+    );
+  }
+
+  it("leaves threadpool threads free for the rest of the daemon", async () => {
+    const peak = await peakPendingFilesystemRequests(searchWhileTyping);
+
+    expect(peak).toBeLessThanOrEqual(2);
+  });
+
+  // Searches over one tree walk it in the same order, so searches stuck on one unreadable folder
+  // must hold one thread between them and leave the other for unrelated searches.
+  it("shares one filesystem request among searches waiting on the same path", async () => {
+    const peak = await peakPendingFilesystemRequests(searchWhileTyping);
+
+    expect(peak).toBe(1);
+  });
 });

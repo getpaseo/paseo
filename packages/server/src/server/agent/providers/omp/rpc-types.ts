@@ -41,6 +41,13 @@ const OmpUserMessageSchema = z
     content: z.union([z.string(), z.array(z.union([OmpTextContentSchema, OmpImageContentSchema]))]),
   })
   .passthrough();
+// OMP injects hidden developer messages, such as rule-violation reminders, into a run.
+const OmpDeveloperMessageSchema = z
+  .object({
+    role: z.literal("developer"),
+    content: z.union([z.string(), z.array(z.union([OmpTextContentSchema, OmpImageContentSchema]))]),
+  })
+  .passthrough();
 const OmpCustomMessageSchema = z
   .object({
     role: z.literal("custom"),
@@ -79,13 +86,30 @@ const OmpBashExecutionMessageSchema = z
     timestamp: z.number(),
   })
   .passthrough();
+// Roles Paseo does not render. They are listed so that a frame carrying one, such as
+// agent_end, still parses; every role in OMP's RPC AgentMessage must appear in the union.
+const OmpPythonExecutionMessageSchema = z
+  .object({ role: z.literal("pythonExecution") })
+  .passthrough();
+const OmpHookMessageSchema = z.object({ role: z.literal("hookMessage") }).passthrough();
+const OmpBranchSummaryMessageSchema = z.object({ role: z.literal("branchSummary") }).passthrough();
+const OmpCompactionSummaryMessageSchema = z
+  .object({ role: z.literal("compactionSummary") })
+  .passthrough();
+const OmpFileMentionMessageSchema = z.object({ role: z.literal("fileMention") }).passthrough();
 
 export const OmpAgentMessageSchema = z.discriminatedUnion("role", [
   OmpUserMessageSchema,
+  OmpDeveloperMessageSchema,
   OmpCustomMessageSchema,
   OmpAssistantMessageSchema,
   OmpToolResultMessageSchema,
   OmpBashExecutionMessageSchema,
+  OmpPythonExecutionMessageSchema,
+  OmpHookMessageSchema,
+  OmpBranchSummaryMessageSchema,
+  OmpCompactionSummaryMessageSchema,
+  OmpFileMentionMessageSchema,
 ]);
 
 export const OmpModelThinkingSchema = z
@@ -480,6 +504,8 @@ export const OmpRuntimeEventSchema = z.discriminatedUnion("type", [
       type: z.literal("prompt_result"),
       id: z.string().optional(),
       agentInvoked: z.boolean().optional(),
+      status: z.string().optional(),
+      error: z.object({ message: z.string() }).passthrough().optional(),
     })
     .passthrough(),
   z.object({ type: z.literal("process_exit"), error: z.string() }).passthrough(),
@@ -609,6 +635,36 @@ export type OmpSubagentEventPayload = z.infer<typeof OmpSubagentEventPayloadSche
 export type OmpAssistantMessageEvent = z.infer<typeof OmpAssistantMessageEventSchema>;
 export type OmpAgentSessionEvent = z.infer<typeof OmpAgentSessionEventSchema>;
 export type OmpRuntimeEvent = z.infer<typeof OmpRuntimeEventSchema>;
+
+/**
+ * COMPAT(ompLatePromptRejection): added in v0.11.0, remove after 2027-04-05 once the
+ * minimum supported OMP version emits prompt_result errors.
+ * OMP 18.3 reports a prompt it rejects after acknowledging it, such as one whose model has
+ * no API key, only as a second failed `response` frame for the prompt id. Later releases
+ * report the same outcome as a `prompt_result` with `status: "error"`.
+ */
+const OmpLatePromptRejectionSchema = z.object({
+  type: z.literal("response"),
+  command: z.literal("prompt"),
+  id: z.string(),
+  success: z.literal(false),
+  error: z.string(),
+});
+
+export function parseOmpRuntimeEvent(message: unknown): OmpRuntimeEvent | null {
+  const rejection = OmpLatePromptRejectionSchema.safeParse(message);
+  if (rejection.success) {
+    return {
+      type: "prompt_result",
+      id: rejection.data.id,
+      agentInvoked: false,
+      status: "error",
+      error: { message: rejection.data.error },
+    };
+  }
+  const event = OmpRuntimeEventSchema.safeParse(message);
+  return event.success ? event.data : null;
+}
 export type OmpTodoItem = z.infer<typeof OmpTodoItemSchema>;
 export type OmpTodoPhase = z.infer<typeof OmpTodoPhaseSchema>;
 export type OmpTodoReminderEvent = z.infer<typeof OmpTodoReminderEventSchema>;
