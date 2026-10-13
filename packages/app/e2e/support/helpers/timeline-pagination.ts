@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type TestInfo, type Page } from "@playwright/test";
 import { buildAgentRoute, seedMockAgentWorkspace, type MockAgentWorkspace } from "./mock-agent";
 import { readReplicaCache } from "./replica-cache-storage";
 import {
@@ -573,4 +573,59 @@ async function waitForTimelineGeometryToSettle(page: Page): Promise<void> {
         requestAnimationFrame(sample);
       }),
   );
+}
+
+function spokenTimelinePrompt(text: string): string {
+  return `<spoken-input>\n${text}\n</spoken-input>\n<instruction>This message was spoken by the user. Respond using the speak tool only, not normal messages, because the user may not be looking at the chat.</instruction>`;
+}
+
+export async function expectSpokenTimelinePrompt(page: Page, text: string): Promise<void> {
+  await expectTimelinePromptVisible(page, text);
+  const row = page.getByTestId("user-message").filter({ hasText: text });
+  await expect(row).not.toContainText("<spoken-input>");
+  await expect(row).not.toContainText("<instruction>");
+  await expect(row).not.toContainText("This message was spoken by the user.");
+}
+
+export async function sendSpokenTimelinePrompt(
+  agent: MockAgentWorkspace,
+  text: string,
+): Promise<void> {
+  await agent.client.sendAgentMessage(agent.agentId, spokenTimelinePrompt(text));
+  await agent.client.waitForFinish(agent.agentId, 15_000);
+}
+
+export async function withSpokenTimeline(
+  historyText: string,
+  run: (agent: MockAgentWorkspace) => Promise<void>,
+): Promise<void> {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "spoken-timeline-",
+    title: "Spoken timeline presentation",
+    initialPrompt: spokenTimelinePrompt(historyText),
+  });
+  try {
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+    await run(agent);
+  } finally {
+    await agent.cleanup();
+  }
+}
+
+export async function reloadSpokenTimeline(page: Page): Promise<void> {
+  await page.reload();
+}
+
+export async function captureSpokenTimeline(
+  page: Page,
+  testInfo: TestInfo,
+  size: "desktop" | "compact",
+): Promise<void> {
+  await page.setViewportSize(
+    size === "compact" ? { width: 390, height: 844 } : { width: 1280, height: 900 },
+  );
+  await testInfo.attach(`spoken-${size}-web`, {
+    body: await page.screenshot({ path: testInfo.outputPath(`spoken-${size}-web.png`) }),
+    contentType: "image/png",
+  });
 }

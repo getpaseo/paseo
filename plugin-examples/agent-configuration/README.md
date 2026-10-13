@@ -20,7 +20,7 @@ The callback receives the request after earlier plugins have transformed it. The
 preserve their settings; the explicit values replace only the named fields. Paseo validates and saves
 the resulting configuration before starting the agent. Existing agents are unchanged.
 
-See the [lifecycle reference](../../public-docs/plugins/v0.8/reference.md#lifecycle-hooks) for ordering
+See the [lifecycle reference](../../public-docs/plugins/reference.md#lifecycle-hooks) for ordering
 and callback shapes. [Lifecycle actions](../lifecycle-actions) demonstrates provider switching and
 environment injection. Its provider-switch callback clears provider options when changing Codex to
 Claude, so use these examples separately when trying the Codex-specific settings.

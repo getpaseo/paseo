@@ -14,6 +14,7 @@ import {
 import { parser as cssParser } from "@lezer/css";
 import { parser as htmlParser } from "@lezer/html";
 import { parser as jsParser } from "@lezer/javascript";
+import { findClosingBrace } from "../js-scanner.js";
 
 interface Range {
   from: number;
@@ -23,88 +24,11 @@ interface Range {
 const jsxParser = jsParser.configure({ dialect: "ts jsx" });
 const typescriptParser = jsParser.configure({ dialect: "ts" });
 
-function isSpace(code: number): boolean {
-  return code === 32 || code === 9 || code === 10 || code === 13;
-}
-
-function isRegexStart(text: string, position: number): boolean {
-  let previous = position - 1;
-  while (previous >= 0 && isSpace(text.charCodeAt(previous))) previous--;
-  if (previous < 0) return true;
-
-  const character = text[previous];
-  if (/[)\]}<"'`\d]/.test(character)) return false;
-  const code = text.charCodeAt(previous);
-  if (code === 62) return previous > 0 && text.charCodeAt(previous - 1) === 61;
-  if (!/[A-Za-z_$]/.test(character)) return true;
-
-  let start = previous;
-  while (start >= 0 && /[A-Za-z0-9_$]/.test(text[start])) start--;
-  const keyword = text.slice(start + 1, previous + 1);
-  return /^(return|typeof|instanceof|in|of|new|void|delete|yield|await|case|do|else|throw|extends|assert|with)$/.test(
-    keyword,
-  );
-}
-
-function skipQuotedText(text: string, opening: number): number {
-  const quote = text.charCodeAt(opening);
-  for (let position = opening + 1; position < text.length; position++) {
-    const code = text.charCodeAt(position);
-    if (code === 92) position++;
-    else if (code === quote) return position;
-  }
-  return text.length - 1;
-}
-
-function skipLineComment(text: string, opening: number): number {
-  const newline = text.indexOf("\n", opening + 2);
-  return newline >= 0 ? newline : text.length - 1;
-}
-
-function skipBlockComment(text: string, opening: number): number {
-  const closing = text.indexOf("*/", opening + 2);
-  return closing >= 0 ? closing + 1 : text.length - 1;
-}
-
-function skipRegex(text: string, opening: number): number {
-  let isInCharacterClass = false;
-  for (let position = opening + 1; position < text.length; position++) {
-    const code = text.charCodeAt(position);
-    if (code === 10 || code === 13) return position;
-    if (code === 92) position++;
-    else if (isInCharacterClass && code === 93) isInCharacterClass = false;
-    else if (!isInCharacterClass && code === 91) isInCharacterClass = true;
-    else if (!isInCharacterClass && code === 47) return position;
-  }
-  return text.length - 1;
-}
-
-function findClosingBrace(text: string, opening: number): number {
-  let depth = 0;
-  for (let position = opening; position < text.length; position++) {
-    const code = text.charCodeAt(position);
-    if (code === 47 && text.charCodeAt(position + 1) === 47) {
-      position = skipLineComment(text, position);
-    } else if (code === 47 && text.charCodeAt(position + 1) === 42) {
-      position = skipBlockComment(text, position);
-    } else if (code === 47 && isRegexStart(text, position)) {
-      position = skipRegex(text, position);
-    } else if (code === 34 || code === 39 || code === 96) {
-      position = skipQuotedText(text, position);
-    } else if (code === 123) {
-      depth++;
-    } else if (code === 125 && --depth === 0) {
-      return position;
-    }
-  }
-  return -1;
-}
-
 function findExpressions(text: string): Range[] {
   const ranges: Range[] = [];
   for (let position = 0; position < text.length; position++) {
     if (text.charCodeAt(position) !== 123) continue;
-    const closing = findClosingBrace(text, position);
+    const closing = findClosingBrace(text, position + 1);
     if (closing < 0) break;
     ranges.push({ from: position, to: closing });
     position = closing;

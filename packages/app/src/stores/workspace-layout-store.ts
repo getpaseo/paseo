@@ -54,6 +54,7 @@ import {
   type SplitNode,
   type SplitPane,
   type WorkspaceTabPlacement,
+  type WorkspaceTabInsertionPosition,
   type WorkspaceTabReconcileState,
   type WorkspaceTabSnapshot,
   type WorkspaceLayout,
@@ -99,6 +100,7 @@ export interface OpenWorkspaceTabInput {
   /** Keeps an explicitly opened agent visible even when it is archived. */
   pin?: boolean;
   placement?: WorkspaceTabPlacement;
+  insertionPosition?: WorkspaceTabInsertionPosition;
   parentTabId?: string;
   state?: JsonValue;
 }
@@ -112,12 +114,19 @@ interface WorkspaceLayoutStore {
   focusRestorationByWorkspace: Record<string, WorkspaceFocusRestorationState>;
   explorerSidebarPaneIdByWorkspace: Record<string, string | null>;
   sidePaneIdByWorkspace: Record<string, string | null>;
+  /** Workspaces where PR detection already added its tab once; a closed tab never returns. */
+  pullRequestTabAutoOpenedByWorkspace: Record<string, true>;
   openTab: (input: OpenWorkspaceTabInput) => string | null;
+  /** Placement resolves lazily so an already acknowledged workspace never creates a side pane. */
+  autoOpenPullRequestTab: (
+    workspaceKey: string,
+    resolvePlacement: () => Pick<OpenWorkspaceTabInput, "placement" | "insertionPosition">,
+  ) => string | null;
   /** Reveals the Explorer sidebar without selecting a view. Returns its pane id. */
   showExplorerSidebar: (workspaceKey: string) => string | null;
   hideExplorerSidebar: (workspaceKey: string) => void;
   /** Returns the ordinary right-side workspace pane, creating it when absent. */
-  ensureSidePane: (workspaceKey: string) => string | null;
+  ensureSidePane: (workspaceKey: string, options?: { focus: boolean }) => string | null;
   closeTab: (workspaceKey: string, tabId: string) => void;
   focusTab: (workspaceKey: string, tabId: string) => void;
   selectTabInPane: (workspaceKey: string, paneId: string, tabId: string) => void;
@@ -648,6 +657,25 @@ export function createWorkspaceLayoutStore(
   return create<WorkspaceLayoutStore>()(
     persist(
       (set, get) => ({
+        autoOpenPullRequestTab: (workspaceKey, resolvePlacement) => {
+          const key = trimNonEmpty(workspaceKey);
+          if (!key || get().pullRequestTabAutoOpenedByWorkspace[key]) return null;
+          const tabId = get().openTab({
+            workspaceKey: key,
+            target: { kind: "pull_request" },
+            intent: "background",
+            ...resolvePlacement(),
+          });
+          if (tabId) {
+            set((state) => ({
+              pullRequestTabAutoOpenedByWorkspace: {
+                ...state.pullRequestTabAutoOpenedByWorkspace,
+                [key]: true,
+              },
+            }));
+          }
+          return tabId;
+        },
         layoutByWorkspace: {},
         splitSizesByWorkspace: {},
         explorerSidebarWidthByWorkspace: {},
@@ -656,6 +684,7 @@ export function createWorkspaceLayoutStore(
         focusRestorationByWorkspace: {},
         explorerSidebarPaneIdByWorkspace: {},
         sidePaneIdByWorkspace: {},
+        pullRequestTabAutoOpenedByWorkspace: {},
         openTab: (input) => {
           const normalizedWorkspaceKey = trimNonEmpty(input.workspaceKey);
           const normalizedTarget = normalizeWorkspaceTabTarget(input.target);
@@ -672,6 +701,7 @@ export function createWorkspaceLayoutStore(
           if (input.intent === "new") {
             result = createTabInLayout({
               ...placement,
+              insertionPosition: input.insertionPosition,
               target: normalizedTarget,
               now: Date.now(),
               createTabId: createWorkspaceTabInstanceId,
@@ -680,12 +710,14 @@ export function createWorkspaceLayoutStore(
           } else if (input.intent === "background") {
             result = openTabInLayoutBackground({
               ...placement,
+              insertionPosition: input.insertionPosition,
               target: normalizedTarget,
               now: Date.now(),
             });
           } else {
             result = revealTargetInLayout({
               ...placement,
+              insertionPosition: input.insertionPosition,
               target: normalizedTarget,
               now: Date.now(),
               createTabId: createWorkspaceTabInstanceId,
@@ -798,7 +830,7 @@ export function createWorkspaceLayoutStore(
             };
           });
         },
-        ensureSidePane: (workspaceKey) => {
+        ensureSidePane: (workspaceKey, options) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
           if (!normalizedWorkspaceKey) {
             return null;
@@ -829,7 +861,10 @@ export function createWorkspaceLayoutStore(
             ...withoutFocusRestoration(state, normalizedWorkspaceKey),
             layoutByWorkspace: {
               ...state.layoutByWorkspace,
-              [normalizedWorkspaceKey]: result.layout,
+              [normalizedWorkspaceKey]:
+                options?.focus === false
+                  ? { ...result.layout, focusedPaneId: layout.focusedPaneId }
+                  : result.layout,
             },
             sidePaneIdByWorkspace: {
               ...state.sidePaneIdByWorkspace,
@@ -1625,10 +1660,15 @@ export function createWorkspaceLayoutStore(
               normalizedWorkspaceKey in state.hiddenAgentIdsByWorkspace ||
               normalizedWorkspaceKey in state.focusRestorationByWorkspace ||
               normalizedWorkspaceKey in state.explorerSidebarPaneIdByWorkspace ||
-              normalizedWorkspaceKey in state.sidePaneIdByWorkspace;
+              normalizedWorkspaceKey in state.sidePaneIdByWorkspace ||
+              normalizedWorkspaceKey in state.pullRequestTabAutoOpenedByWorkspace;
             if (!hasAny) {
               return state;
             }
+            const {
+              [normalizedWorkspaceKey]: _autoOpened,
+              ...pullRequestTabAutoOpenedByWorkspace
+            } = state.pullRequestTabAutoOpenedByWorkspace;
             const { [normalizedWorkspaceKey]: _layout, ...layoutByWorkspace } =
               state.layoutByWorkspace;
             const { [normalizedWorkspaceKey]: _splits, ...splitSizesByWorkspace } =
@@ -1650,6 +1690,7 @@ export function createWorkspaceLayoutStore(
             const { [normalizedWorkspaceKey]: _sidePane, ...sidePaneIdByWorkspace } =
               state.sidePaneIdByWorkspace;
             return {
+              pullRequestTabAutoOpenedByWorkspace,
               layoutByWorkspace,
               splitSizesByWorkspace,
               explorerSidebarWidthByWorkspace,
@@ -1689,6 +1730,7 @@ export function createWorkspaceLayoutStore(
             explorerSidebarWidthByWorkspace: state.explorerSidebarWidthByWorkspace,
             explorerPaneIdByWorkspace: state.explorerSidebarPaneIdByWorkspace,
             sidePaneIdByWorkspace: state.sidePaneIdByWorkspace,
+            pullRequestTabAutoOpenedByWorkspace: state.pullRequestTabAutoOpenedByWorkspace,
           };
         },
         merge: (persistedState, currentState) => {
@@ -1741,6 +1783,8 @@ export function createWorkspaceLayoutStore(
               ),
             explorerSidebarPaneIdByWorkspace,
             sidePaneIdByWorkspace: result.data.sidePaneIdByWorkspace ?? {},
+            pullRequestTabAutoOpenedByWorkspace:
+              result.data.pullRequestTabAutoOpenedByWorkspace ?? {},
           };
         },
       },
@@ -1750,7 +1794,12 @@ export function createWorkspaceLayoutStore(
 
 export const useWorkspaceLayoutStore = createWorkspaceLayoutStore();
 
-/** Observe open chats independently of which workspace views are mounted. */
+/**
+ * The agent tabs that exist right now, across every workspace of this host, independently
+ * of which workspace views are mounted. Timeline sync uses this to release a chat when its
+ * tab closes. It is not a subscription source: this layout is restored from disk at launch,
+ * so subscribing to it would resume every agent the user has ever opened.
+ */
 export function observeOpenWorkspaceAgentIds(
   serverId: string,
   listener: (agentIds: string[]) => void,

@@ -27,12 +27,13 @@ import {
 interface FieldProps {
   label: string;
   children: ReactNode;
+  trailing?: ReactNode;
   hint?: string;
   error?: string | null;
   testID?: string;
 }
 
-export function Field({ label, children, hint, error, testID }: FieldProps) {
+export function Field({ label, children, trailing, hint, error, testID }: FieldProps) {
   const hintTestID = useMemo(() => (testID ? `${testID}-hint` : undefined), [testID]);
   const errorTestID = useMemo(() => (testID ? `${testID}-error` : undefined), [testID]);
   const subtext = useMemo(() => {
@@ -55,7 +56,10 @@ export function Field({ label, children, hint, error, testID }: FieldProps) {
 
   return (
     <View style={styles.container} testID={testID}>
-      <Text style={styles.label}>{label}</Text>
+      <View style={styles.header}>
+        <Text style={styles.label}>{label}</Text>
+        {trailing}
+      </View>
       {children}
       {subtext}
     </View>
@@ -226,7 +230,15 @@ const styles = StyleSheet.create((theme) => ({
   container: {
     gap: theme.spacing[2],
   },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[2],
+  },
   label: {
+    flexShrink: 1,
+    minWidth: 0,
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,

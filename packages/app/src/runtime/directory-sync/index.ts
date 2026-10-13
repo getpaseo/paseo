@@ -61,6 +61,10 @@ interface AgentSnapshot {
   syncRemovals: Array<{ id: string; seq: number }>;
 }
 
+interface WorkspaceRefreshSnapshot extends WorkspaceDirectorySnapshot {
+  readonly requestCursors: Readonly<Pick<DirectoryCheckpoint, "projects" | "workspaces">>;
+}
+
 interface AgentPageInfo {
   hasMore?: boolean;
   hasMoreAfter?: boolean;
@@ -133,7 +137,7 @@ export class DirectorySync {
     AgentDirectoryDelta
   >();
   private readonly workspaceTransactions = new DirectoryTransactionOwner<
-    WorkspaceDirectorySnapshot,
+    WorkspaceRefreshSnapshot,
     WorkspaceDirectoryDelta
   >();
   private readonly agents: AgentDirectoryReplica;
@@ -189,6 +193,8 @@ export class DirectorySync {
     this.connection = connection;
     this.abortPendingSessionWaits();
     if (!connection.client || connection.status !== "online") return true;
+    // Reattach labels here because route-only demand can satisfy the epoch before full demand requests them.
+    void this.connectWorkspaceLabels().catch(() => undefined);
     if (this.hasDemand()) void this.requestDemandRefresh().catch(() => undefined);
     return true;
   }
@@ -476,14 +482,20 @@ export class DirectorySync {
     const onlineConnection = this.getOnlineConnection();
     if (!onlineConnection) return;
     const { client, source } = onlineConnection;
-    const transaction = this.workspaceTransactions.begin(source, () => ({
-      workspaces: new Map(useSessionStore.getState().sessions[this.serverId]?.workspaces),
-      projects: new Map(useSessionStore.getState().sessions[this.serverId]?.projects),
-      syncCursors: {},
-      syncModes: {},
-      touchedWorkspaceIds: new Set(),
-      touchedProjectIds: new Set(),
-    }));
+    const transaction = this.workspaceTransactions.begin(source, () => {
+      const baseline = this.workspaces.snapshot();
+      return {
+        workspaces: new Map(baseline.workspaces),
+        projects: new Map(baseline.projects),
+        // Cache hydration can advance the live replica while these requests await responses.
+        // Every page must use the cursors belonging to the maps captured here.
+        requestCursors: { ...this.cursors },
+        syncCursors: {},
+        syncModes: {},
+        touchedWorkspaceIds: new Set(),
+        touchedProjectIds: new Set(),
+      };
+    });
     try {
       await this.waitForSessionMetadata(client, source);
       const serverInfo = useSessionStore.getState().sessions[this.serverId]?.serverInfo;
@@ -515,7 +527,7 @@ export class DirectorySync {
   private async fetchWorkspaceSnapshot(
     client: DaemonClient,
     source: DirectorySourceToken,
-    transaction: DirectoryTransaction<WorkspaceDirectorySnapshot, WorkspaceDirectoryDelta>,
+    transaction: DirectoryTransaction<WorkspaceRefreshSnapshot, WorkspaceDirectoryDelta>,
     initialSubscribe: boolean,
     supportsDirectorySync: boolean,
   ): Promise<void> {
@@ -523,9 +535,12 @@ export class DirectorySync {
     let subscribe = initialSubscribe;
     while (true) {
       const query: Parameters<DaemonClient["observeWorkspaces"]>[0] = {
+        ...(client.supportsBackgroundWorkspaces() ? { includeBackground: true } : {}),
         sort: [{ key: "activity_at", direction: "desc" }],
         page: cursor ? { limit: PAGE_LIMIT, cursor } : { limit: PAGE_LIMIT },
-        ...(supportsDirectorySync ? { sync: this.readCursors().workspaces ?? {} } : {}),
+        ...(supportsDirectorySync
+          ? { sync: transaction.snapshot.requestCursors.workspaces ?? {} }
+          : {}),
       };
       let payload: FetchWorkspacesPayload;
       if (subscribe) {
@@ -620,6 +635,7 @@ export class DirectorySync {
       const limit = input.page?.limit ?? PAGE_LIMIT;
       const query: Omit<FetchAgentsOptions, "subscribe"> = {
         ...(input.filter ? { filter: input.filter } : { scope: "active" as const }),
+        ...(client.supportsBackgroundWorkspaces() ? { includeBackground: true } : {}),
         sort: AGENT_SORT,
         page: cursor ? { limit, cursor } : { limit },
         ...(!input.filter && cursor === null && this.supportsDirectorySync()
@@ -665,7 +681,7 @@ export class DirectorySync {
   private assertWorkspaceTransactionCurrent(
     client: DaemonClient,
     source: DirectorySourceToken,
-    transaction: DirectoryTransaction<WorkspaceDirectorySnapshot, WorkspaceDirectoryDelta>,
+    transaction: DirectoryTransaction<WorkspaceRefreshSnapshot, WorkspaceDirectoryDelta>,
   ): void {
     if (!this.workspaceTransactions.isCurrent(transaction) || !this.isCurrent(client, source)) {
       throw new DirectoryRefreshSupersededError("workspace fetch no longer current");
@@ -722,11 +738,13 @@ export class DirectorySync {
   private async fetchProjectSnapshot(
     client: DaemonClient,
     source: DirectorySourceToken,
-    transaction: DirectoryTransaction<WorkspaceDirectorySnapshot, WorkspaceDirectoryDelta>,
+    transaction: DirectoryTransaction<WorkspaceRefreshSnapshot, WorkspaceDirectoryDelta>,
     supportsDirectorySync: boolean,
   ): Promise<void> {
     const payload = await client.listProjects(
-      supportsDirectorySync ? { sync: this.readCursors().projects ?? {} } : undefined,
+      supportsDirectorySync
+        ? { sync: transaction.snapshot.requestCursors.projects ?? {} }
+        : undefined,
     );
     this.assertWorkspaceTransactionCurrent(client, source, transaction);
     if (payload.sync?.mode !== "changes") transaction.snapshot.projects.clear();
@@ -751,7 +769,7 @@ export class DirectorySync {
   private completeWorkspaceRefresh(
     client: DaemonClient,
     source: DirectorySourceToken,
-    transaction: DirectoryTransaction<WorkspaceDirectorySnapshot, WorkspaceDirectoryDelta>,
+    transaction: DirectoryTransaction<WorkspaceRefreshSnapshot, WorkspaceDirectoryDelta>,
   ): void {
     if (!this.isCurrent(client, source) || !this.hasMatchingSession(client, source)) {
       throw new DirectoryRefreshSupersededError("workspace completion no longer current");

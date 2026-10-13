@@ -2,13 +2,19 @@
 import { resolveCliVersion } from "../../src/version.js";
 import { readPluginManifest } from "../../../server/src/server/plugins/manifest.js";
 
+import {
+  startNpmRegistry,
+  npmPluginPackages,
+} from "../../../../scripts/test-support/npm-registry.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { once } from "node:events";
+import { WebSocket, WebSocketServer } from "ws";
 import { connectToDaemon } from "../../src/utils/client.ts";
 import { createE2ETestContext } from "../helpers/test-daemon.ts";
 
@@ -26,7 +32,8 @@ async function git(cwd: string, args: string[]): Promise<void> {
 async function main(): Promise<void> {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-cli-e2e-"));
   const gitDirectory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-git-cli-e2e-"));
-  const context = await createE2ETestContext({ timeout: 45_000 });
+  const registry = await startNpmRegistry(npmPluginPackages());
+  const context = await createE2ETestContext({ timeout: 45_000, env: registry.env });
   try {
     const scaffold = path.join(context.workDir, "authored-plugin");
     const init = await context.paseo(["plugin", "init", scaffold, "--json"]);
@@ -39,6 +46,81 @@ async function main(): Promise<void> {
       JSON.stringify({ id: "cli-e2e", requirements: { paseo: `>=${resolveCliVersion()}` } }),
     );
     await writeFile(path.join(directory, "index.server.ts"), pluginSource);
+
+    // Observe real CLI requests while forwarding them to the isolated daemon.
+    const proxy = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    const sources: string[] = [];
+    proxy.on("connection", (socket, request) => {
+      const upstream = new WebSocket(`ws://127.0.0.1:${context.port}${request.url}`, {
+        headers: { authorization: request.headers.authorization ?? "" },
+      });
+      const ready = once(upstream, "open");
+      socket.on("message", async (data, isBinary) => {
+        const message = JSON.parse(data.toString());
+        if (
+          message.type === "session" &&
+          message.message.type === "plugin.source.install.request"
+        ) {
+          sources.push(message.message.source);
+        }
+        await ready;
+        upstream.send(data, { binary: isBinary });
+      });
+      upstream.on("message", (data, isBinary) => socket.send(data, { binary: isBinary }));
+      socket.on("close", () => upstream.close());
+      upstream.on("close", () => socket.close());
+    });
+    await once(proxy, "listening");
+    const address = proxy.address();
+    assert.ok(address && typeof address !== "string");
+    const sibling = path.join(context.workDir, "x");
+    const caller = path.join(context.workDir, "caller");
+    await mkdir(caller);
+    await mkdir(path.join(sibling, "sub"), { recursive: true });
+    for (const target of [caller, path.join(sibling, "sub"), context.paseoHome]) {
+      await writeFile(
+        path.join(target, "paseo-plugin.json"),
+        JSON.stringify({
+          id: "relative-cli",
+          requirements: { paseo: `>=${resolveCliVersion()}` },
+        }),
+      );
+      await writeFile(path.join(target, "index.server.ts"), pluginSource);
+    }
+    assert.notEqual(caller, process.cwd()); // The daemon inherits the test runner's cwd.
+    try {
+      for (const [source, expectedSource, expectedDirectory, extraArgs] of [
+        [".", caller, caller, []],
+        ["../x:sub", `${sibling}:sub`, path.join(sibling, "sub"), []],
+        ["../x", `${sibling}:sub`, path.join(sibling, "sub"), ["--path", "sub"]],
+        ["~", context.paseoHome, context.paseoHome, []],
+        ["~/.:.", `${context.paseoHome}:.`, context.paseoHome, []],
+      ] as const) {
+        sources.length = 0;
+        const result = await context.paseo(
+          ["plugin", "add", source, ...extraArgs, "--host", `127.0.0.1:${address.port}`, "--json"],
+          { cwd: caller },
+        );
+        assert.deepEqual(sources, [expectedSource]);
+        assert.equal(result.exitCode, 0, result.stderr);
+        assert.equal(JSON.parse(result.stdout).path, expectedDirectory);
+        const removed = await context.paseo(["plugin", "remove", "relative-cli", "--json"]);
+        assert.equal(removed.exitCode, 0, removed.stderr);
+      }
+      // An absolute path belongs to the daemon's platform, which can differ from the CLI's.
+      const windowsSource = `C:\\${path.basename(context.workDir)}\\missing:sub`;
+      sources.length = 0;
+      const missing = await context.paseo(
+        ["plugin", "add", windowsSource, "--host", `127.0.0.1:${address.port}`, "--json"],
+        { cwd: caller },
+      );
+      assert.deepEqual(sources, [windowsSource]);
+      assert.equal(missing.exitCode, 1);
+      assert.match(missing.stderr, /Plugin directory does not exist/);
+    } finally {
+      for (const socket of proxy.clients) socket.close();
+      await promisify(proxy.close.bind(proxy))();
+    }
 
     const install = await context.paseo(["plugin", "install", directory, "--json"]);
     assert.equal(install.exitCode, 0, install.stderr);
@@ -82,7 +164,7 @@ async function main(): Promise<void> {
     const gitInstall = await context.paseo([
       "plugin",
       "add",
-      pathToFileURL(gitDirectory).href,
+      `git:${pathToFileURL(gitDirectory).href}`,
       "--json",
     ]);
     assert.equal(gitInstall.exitCode, 0, gitInstall.stderr);
@@ -99,11 +181,11 @@ async function main(): Promise<void> {
     assert.equal(JSON.parse(status.stdout)[0].status, "running");
     assert.equal(JSON.parse(status.stdout)[0].commit, JSON.parse(gitInstall.stdout).commit);
 
-    const update = await context.paseo(["plugin", "update", "git-cli-e2e", "--json"]);
+    const update = await context.paseo(["plugin", "update", "git-cli-e2e", "--yes", "--json"]);
     assert.equal(update.exitCode, 0, update.stderr);
-    assert.equal(JSON.parse(update.stdout)[0].updated, true);
+    assert.equal(JSON.parse(update.stdout)[0].outcome, "updated");
 
-    const installedCommit = JSON.parse(update.stdout)[0].currentCommit;
+    const installedCommit = JSON.parse(update.stdout)[0].plugin.installation.currentRevision;
     const buildMarker = path.join(context.workDir, "incompatible-build-ran");
     await writeFile(
       path.join(gitDirectory, "paseo-plugin.json"),
@@ -122,9 +204,15 @@ async function main(): Promise<void> {
     );
     await git(gitDirectory, ["add", "-A"]);
     await git(gitDirectory, ["commit", "-m", "requires a future Paseo"]);
-    const incompatibleUpdate = await context.paseo(["plugin", "update", "git-cli-e2e", "--json"]);
+    const incompatibleUpdate = await context.paseo([
+      "plugin",
+      "update",
+      "git-cli-e2e",
+      "--yes",
+      "--json",
+    ]);
     assert.equal(incompatibleUpdate.exitCode, 1);
-    assert.match(incompatibleUpdate.stderr, /requires Paseo >=999.0.0/);
+    assert.match(JSON.parse(incompatibleUpdate.stdout)[0].error, /requires Paseo >=999.0.0/);
     await assert.rejects(readFile(buildMarker), { code: "ENOENT" });
     const retained = await context.paseo(["plugin", "ls", "git-cli-e2e", "--json"]);
     assert.equal(retained.exitCode, 0, retained.stderr);
@@ -160,11 +248,54 @@ async function main(): Promise<void> {
     assert.equal(removeGit.exitCode, 0, removeGit.stderr);
     const removeScaffold = await context.paseo(["plugin", "remove", "authored-plugin", "--json"]);
     assert.equal(removeScaffold.exitCode, 0, removeScaffold.stderr);
+    for (const source of ["npm:paseo-fixture-plugin@^1.0.0", "npm:@paseo-fixture/review@2.0.0"]) {
+      const npmInstall = await context.paseo([
+        "plugin",
+        "install",
+        source,
+        "--path",
+        ".",
+        "--json",
+      ]);
+      assert.equal(npmInstall.exitCode, 0, npmInstall.stderr);
+      assert.equal(JSON.parse(npmInstall.stdout).id, "npm-review");
+      assert.equal(JSON.parse(npmInstall.stdout).status, "running");
+      assert.equal(
+        JSON.parse(npmInstall.stdout).installation.currentRevision,
+        source.includes("@paseo-fixture") ? "2.0.0" : "1.1.0",
+      );
+      const npmDisabled = await context.paseo(["plugin", "disable", "npm-review", "--json"]);
+      assert.equal(npmDisabled.exitCode, 0, npmDisabled.stderr);
+      const restart = await context.paseo(["daemon", "restart", "--timeout", "45", "--json"], {
+        timeout: 60_000,
+      });
+      assert.equal(restart.exitCode, 0, restart.stderr);
+      assert.notEqual(
+        JSON.parse(restart.stdout).workerPid,
+        JSON.parse(restart.stdout).previousWorkerPid,
+      );
+      const persisted = await context.paseo(["plugin", "ls", "npm-review", "--json"]);
+      assert.equal(persisted.exitCode, 0, persisted.stderr);
+      assert.equal(JSON.parse(persisted.stdout)[0].status, "disabled");
+      assert.equal(JSON.parse(persisted.stdout)[0].path, JSON.parse(npmInstall.stdout).path);
+      assert.deepEqual(
+        JSON.parse(persisted.stdout)[0].installation,
+        JSON.parse(npmInstall.stdout).installation,
+      );
+      const npmEnabled = await context.paseo(["plugin", "enable", "npm-review", "--json"]);
+      assert.equal(npmEnabled.exitCode, 0, npmEnabled.stderr);
+      assert.equal(JSON.parse(npmEnabled.stdout).status, "running");
+      const npmReload = await context.paseo(["plugin", "reload", "npm-review", "--json"]);
+      assert.equal(npmReload.exitCode, 0, npmReload.stderr);
+      const npmRemove = await context.paseo(["plugin", "remove", "npm-review", "--json"]);
+      assert.equal(npmRemove.exitCode, 0, npmRemove.stderr);
+    }
     const list = await context.paseo(["plugin", "ls", "--json"]);
     assert.equal(list.exitCode, 0, list.stderr);
     assert.deepEqual(JSON.parse(list.stdout), []);
   } finally {
     await context.stop();
+    await registry.close();
     await rm(directory, { recursive: true, force: true });
     await rm(gitDirectory, { recursive: true, force: true });
   }

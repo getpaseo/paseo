@@ -12,6 +12,10 @@ export const BottomSheetScrollView = PassThrough;
 export const BottomSheetView = PassThrough;
 export const BottomSheetTextInput = Stub;
 
+export function useBottomSheetModal(): never {
+  throw new Error("Modal stack interactions require the real Gorhom provider in browser E2E tests");
+}
+
 // The app imports the internal layout values to compute the visible sheet body. Browser unit tests
 // never render the native sheet, but Vite still validates this module's export surface.
 const sharedValue = (value: unknown) => ({ get: () => value });

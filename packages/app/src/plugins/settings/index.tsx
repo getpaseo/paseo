@@ -3,15 +3,16 @@ import { useTranslation } from "react-i18next";
 import { Platform, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { router } from "expo-router";
+import { ArrowLeft } from "lucide-react-native";
 import type { PluginHostProps } from "@getpaseo/plugin/client";
-import { SettingsAction } from "@/components/settings";
 import { Button } from "@/components/ui/button";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useHostFeature } from "@/runtime/host-features";
 import { useHostRuntimeClient, useHostRuntimeIsConnected, useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import { useInstalledPlugin } from "../registry";
-import { PluginRuntimeBoundary } from "../runtime-boundary";
+import { PluginInstallationProvider } from "../installation-provider";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { toPluginTheme } from "../theme";
 import { buildPluginSettingsRoute } from "./routes";
@@ -22,35 +23,42 @@ interface SettingsIdentity {
   screenId: string;
 }
 
-function SettingsLink({
+function PluginSettingsMenuItem({
   serverId,
   pluginId,
   screenId,
   title,
-}: SettingsIdentity & { title: string }) {
-  const { t } = useTranslation();
+  disabled,
+}: SettingsIdentity & { title: string; disabled?: boolean }) {
   const open = useCallback(
     () => router.push(buildPluginSettingsRoute(serverId, pluginId, screenId)),
     [serverId, pluginId, screenId],
   );
   return (
-    <SettingsAction label={title} actionLabel={t("settings.plugins.screens.open")} onPress={open} />
+    <DropdownMenuItem onSelect={open} disabled={disabled}>
+      {title}
+    </DropdownMenuItem>
   );
 }
 
-export function PluginSettingsLinks({ serverId, pluginId }: Omit<SettingsIdentity, "screenId">) {
+export function PluginSettingsMenuItems({
+  serverId,
+  pluginId,
+  disabled,
+}: Omit<SettingsIdentity, "screenId"> & { disabled?: boolean }) {
   const plugin = useInstalledPlugin(serverId, pluginId);
   const supported = useHostFeature(serverId, "pluginSettings");
   if (!supported || !plugin) return null;
   return (
     <>
       {plugin.settingsScreens.map((screen) => (
-        <SettingsLink
+        <PluginSettingsMenuItem
           key={screen.id}
           serverId={serverId}
           pluginId={pluginId}
           screenId={screen.id}
           title={screen.title}
+          disabled={disabled}
         />
       ))}
     </>
@@ -111,16 +119,40 @@ function SettingsContent({
         resetKey={attempt}
         renderError={renderError}
       >
-        <PluginRuntimeBoundary plugin={plugin} client={client}>
+        <PluginInstallationProvider plugin={plugin}>
           <Component theme={theme} layout={layout} host={host} />
-        </PluginRuntimeBoundary>
+        </PluginInstallationProvider>
       </SurfaceErrorBoundary>
     </View>
   );
 }
 const ThemedSettingsContent = withUnistyles(SettingsContent);
+// Settings routes carry no screen params.
 const themeMapping = (theme: Theme) => ({ theme: toPluginTheme(theme) });
-export function PluginSettingsContent(props: SettingsIdentity) {
-  return <ThemedSettingsContent {...props} uniProps={themeMapping} />;
+export function PluginSettingsContent({
+  onBackToPlugins,
+  showBackToPlugins,
+  ...identity
+}: SettingsIdentity & { onBackToPlugins: () => void; showBackToPlugins: boolean }) {
+  const { t } = useTranslation();
+  return (
+    <View>
+      {showBackToPlugins ? (
+        <Button
+          onPress={onBackToPlugins}
+          variant="ghost"
+          size="sm"
+          leftIcon={ArrowLeft}
+          style={styles.backButton}
+        >
+          {t("settings.plugins.screens.backToPlugins")}
+        </Button>
+      ) : null}
+      <ThemedSettingsContent {...identity} uniProps={themeMapping} />
+    </View>
+  );
 }
-const styles = StyleSheet.create((theme) => ({ message: { color: theme.colors.foregroundMuted } }));
+const styles = StyleSheet.create((theme) => ({
+  message: { color: theme.colors.foregroundMuted },
+  backButton: { alignSelf: "flex-start", paddingHorizontal: 0, marginBottom: theme.spacing[4] },
+}));

@@ -1,0 +1,3 @@
+{"t_ms": 0, "stream": "capture", "data": {"argv": ["<HOME>/.local/opt/agy/1.2.13/agy", "mcp", "add", "phase0", "http://127.0.0.1:<PORT>/mcp"], "cwd": "<WORKSPACE>", "home": "<HOME>", "settings": null, "env": {}}}
+{"t_ms": 68, "stream": "capture", "data": {"written_file": "<HOME>/.gemini/config/mcp_config.json", "content": {"mcpServers": {"phase0": {"disabled": false, "serverUrl": "http://127.0.0.1:<PORT>/mcp"}}}}}
+{"t_ms": 69, "stream": "capture", "data": {"exit_code": 0}}

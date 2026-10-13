@@ -1,0 +1,9 @@
+Added
+- Added Cmd/Ctrl+F Find to file panes, with replacement in editable files
+- Added Cmd/Ctrl+F Find to terminal scrollback
+- Added Cmd/Ctrl+F Find to chat, including messages outside the loaded history window
+- Added Jump to file to mobile Changes, opening the changed-files tree in a sheet
+- Added automatic Pull request tab opening once per workspace when a PR is detected
+- Added expandable plan cards, with rejected plans collapsed by default
+
+Full notes: https://paseo.sh/changelog

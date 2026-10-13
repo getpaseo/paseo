@@ -1,13 +1,13 @@
 import path from "node:path";
 import type { Command } from "commander";
 import { isCancel, password as passwordPrompt } from "@clack/prompts";
+import { hashDaemonPassword } from "@getpaseo/server/auth";
 import {
-  hashDaemonPassword,
   readPersistedConfig,
-  resolvePaseoHome,
   savePersistedConfig,
   type PersistedConfig,
-} from "@getpaseo/server";
+} from "@getpaseo/server/configuration";
+import { resolvePaseoHome } from "@getpaseo/server/daemon-control";
 import type {
   CommandError,
   CommandOptions,
@@ -55,6 +55,17 @@ const setPasswordResultSchema: OutputSchema<SetPasswordResult> = {
 
 function createCommandError(code: string, message: string, details?: string): CommandError {
   return { code, message, ...(details ? { details } : {}) };
+}
+
+function terminalPasswordPrompt(): PromptPassword {
+  if (!process.stdin.isTTY) {
+    throw createCommandError(
+      "PASSWORD_TTY_REQUIRED",
+      "paseo daemon set-password needs a terminal to read the password",
+      "Run it in an interactive terminal, or set PASEO_PASSWORD in the daemon's environment instead.",
+    );
+  }
+  return (message) => passwordPrompt({ message });
 }
 
 async function promptForPassword(promptPassword: PromptPassword): Promise<string> {
@@ -112,7 +123,7 @@ export async function runSetPasswordCommand(
   const promptPassword =
     typeof options.promptPassword === "function"
       ? (options.promptPassword as PromptPassword)
-      : (message: string) => passwordPrompt({ message });
+      : terminalPasswordPrompt();
   const newPassword = await promptForPassword(promptPassword);
   const result = await setDaemonPasswordInConfig(newPassword, {
     home: options.daemonTarget.kind === "instance" ? options.daemonTarget.home : undefined,

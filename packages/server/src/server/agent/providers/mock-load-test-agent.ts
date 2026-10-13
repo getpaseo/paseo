@@ -147,6 +147,18 @@ const MODELS: AgentModelDefinition[] = [
   },
   {
     provider: MOCK_LOAD_TEST_PROVIDER_ID,
+    id: "max-only-thinking-stream",
+    label: "Max-only thinking stream",
+    description: "Fast realistic stream with one supported thinking level.",
+    thinkingOptions: [{ id: "max", label: "Max", isDefault: true }],
+    defaultThinkingOptionId: "max",
+    metadata: {
+      durationMs: 10_000,
+      intervalMs: 5,
+    },
+  },
+  {
+    provider: MOCK_LOAD_TEST_PROVIDER_ID,
     id: "e2e-fast-stream",
     label: "E2E fast stream",
     description: "Short deterministic stream for browser tests.",
@@ -714,11 +726,19 @@ export class MockLoadTestAgentClient implements AgentClient {
   }
 }
 
+function getConfiguredAssistantResponses(value: unknown): string[] {
+  return Array.isArray(value) && value.every((response) => typeof response === "string")
+    ? [...value]
+    : [];
+}
+
 export class MockLoadTestAgentSession implements AgentSession {
   readonly provider: AgentProvider = MOCK_LOAD_TEST_PROVIDER_ID;
   readonly capabilities = CAPABILITIES;
   readonly features: AgentFeature[] = [];
   readonly id: string;
+  private readonly usageSessionKey = randomUUID();
+
   private readonly listeners = new Set<(event: AgentStreamEvent) => void>();
   private readonly history: AgentStreamEvent[] = [];
   private readonly logger?: Logger;
@@ -727,6 +747,7 @@ export class MockLoadTestAgentSession implements AgentSession {
   private modeId: string | null;
   private modelId: string | null;
   private readonly assistantResponse: string | null;
+  private readonly assistantResponses: string[];
   private readonly streamingAssistantResponse: string | null;
   private readonly streamingAssistantIntervalMs: number;
   private readonly rewindError: string | null;
@@ -742,6 +763,9 @@ export class MockLoadTestAgentSession implements AgentSession {
       typeof options.config.featureValues?.mockAssistantResponse === "string"
         ? options.config.featureValues.mockAssistantResponse
         : null;
+    this.assistantResponses = getConfiguredAssistantResponses(
+      options.config.featureValues?.mockAssistantResponses,
+    );
     this.streamingAssistantResponse =
       typeof options.config.featureValues?.mockStreamingAssistantResponse === "string"
         ? options.config.featureValues.mockStreamingAssistantResponse
@@ -768,6 +792,15 @@ export class MockLoadTestAgentSession implements AgentSession {
     this.remainingSteerFailures = getPositiveFeatureInteger(
       options.config.featureValues?.mockSteerAmbiguousFailures,
     );
+  }
+
+  usageSession() {
+    return {
+      provider: this.provider,
+      model: this.modelId ?? undefined,
+      env: {},
+      sessionKey: this.usageSessionKey,
+    };
   }
 
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
@@ -829,8 +862,11 @@ export class MockLoadTestAgentSession implements AgentSession {
         this.scheduleSteeringReplayTurn(turn, steeringReplayShape);
       } else if (this.streamingAssistantResponse !== null) {
         this.scheduleStreamingAssistantTurn(turn, this.streamingAssistantResponse);
-      } else if (this.assistantResponse !== null) {
-        this.scheduleSettledAssistantTurn(turn, this.assistantResponse);
+      } else if (this.assistantResponses.length > 0 || this.assistantResponse !== null) {
+        this.scheduleSettledAssistantTurn(
+          turn,
+          (this.assistantResponses.shift() ?? this.assistantResponse)!,
+        );
       } else if (structuredBranchName) {
         this.scheduleSettledAssistantTurn(turn, JSON.stringify(structuredBranchName));
       } else if (settledAssistantImageMarkdown) {

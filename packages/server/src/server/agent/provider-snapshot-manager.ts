@@ -185,10 +185,7 @@ export interface AgentManagerProviderState {
   providerDefinitions: Partial<
     Record<
       AgentProvider,
-      Pick<
-        ProviderDefinition,
-        "enabled" | "derivedFromProviderId" | "validateOptions" | "applyOptions" | "applyToolPolicy"
-      >
+      Pick<ProviderDefinition, "enabled" | "derivedFromProviderId" | "applyToolPolicy">
     >
   >;
   clients: Partial<Record<AgentProvider, AgentClient>>;
@@ -256,6 +253,7 @@ export class ProviderSnapshotManager {
   private providerClients: Record<AgentProvider, AgentClient>;
   private readonly ownedClients = new Set<AgentClient>();
   private readonly pluginProviders: PluginAgentClientRegistry;
+  private pluginProvidersSettled = false;
 
   constructor(options: ProviderSnapshotManagerOptions) {
     this.logger = options.logger;
@@ -281,7 +279,6 @@ export class ProviderSnapshotManager {
     );
     this.providerClients = {
       ...this.extraClients,
-      ...this.pluginProviders.clients(),
     } as Record<AgentProvider, AgentClient>;
     for (const client of Object.values(this.providerClients)) this.ownedClients.add(client);
   }
@@ -369,8 +366,6 @@ export class ProviderSnapshotManager {
       providerDefinitions[provider] = {
         enabled: definition.enabled,
         derivedFromProviderId: definition.derivedFromProviderId,
-        validateOptions: definition.validateOptions,
-        applyOptions: definition.applyOptions,
         applyToolPolicy: definition.applyToolPolicy,
       };
       if (definition.enabled) {
@@ -385,17 +380,28 @@ export class ProviderSnapshotManager {
     return { providerDefinitions, clients };
   }
 
+  /** Called after built-in and configured plugin startup has completed, including disabled plugins. */
+  settlePluginProviders(): void {
+    if (this.pluginProvidersSettled) return;
+    this.pluginProvidersSettled = true;
+    this.warnUnknownProviderOverrides();
+  }
+
+  private warnUnknownProviderOverrides(): void {
+    if (!this.pluginProvidersSettled) return;
+    for (const [provider, override] of Object.entries(this.providerOverrides ?? {})) {
+      if (!override.extends && !this.generation.definitions[provider]) {
+        this.logger.warn({ provider }, "Provider override matches no registered provider");
+      }
+    }
+  }
+
   replacePluginProviders(
     registrations: readonly ProviderRegistration[],
   ): AgentManagerProviderState {
     for (const registration of registrations) {
-      if (
-        (this.generation.definitions[registration.id] || this.extraClients[registration.id]) &&
-        !this.pluginProviders.has(registration.id)
-      ) {
-        throw new Error(
-          `Plugin provider '${registration.id}' conflicts with a configured provider`,
-        );
+      if (BUILTIN_PROVIDER_IDS.includes(registration.id) || this.extraClients[registration.id]) {
+        throw new Error(`Plugin provider '${registration.id}' conflicts with a built-in provider`);
       }
     }
     const previousPlugins = this.pluginProviders.definitions();
@@ -405,17 +411,30 @@ export class ProviderSnapshotManager {
     this.pluginProviders.replace(registrations);
     const plugins = this.pluginProviders.definitions();
     const retiredProviders = Object.keys(previousPlugins).filter(
-      (provider) => previousPlugins[provider] !== plugins[provider],
+      (provider) =>
+        previousPlugins[provider] !== plugins[provider] &&
+        !this.providerOverrides?.[provider]?.extends,
     );
-    const definitions = { ...this.generation.definitions };
+    const definitions = this.buildRegistry(this.runtimeSettings, this.providerOverrides);
     const changed = new Set<AgentProvider>();
-    for (const provider of new Set([...Object.keys(previousPlugins), ...Object.keys(plugins)])) {
-      if (previousPlugins[provider] !== plugins[provider]) changed.add(provider);
-      delete definitions[provider];
-      delete clients[provider];
+    for (const provider of new Set([...this.generation.order, ...Object.keys(definitions)])) {
+      const before = this.generation.definitions[provider];
+      const after = definitions[provider];
+      const registrationChanged =
+        previousPlugins[provider] !== plugins[provider] &&
+        !this.providerOverrides?.[provider]?.extends;
+      if (
+        registrationChanged ||
+        !before ||
+        !after ||
+        !isDeepStrictEqual(before.configuration, after.configuration)
+      ) {
+        changed.add(provider);
+        delete clients[provider];
+      } else {
+        definitions[provider] = before;
+      }
     }
-    Object.assign(definitions, plugins);
-    Object.assign(clients, this.pluginProviders.clients());
     for (const client of Object.values(clients)) this.ownedClients.add(client);
     const generation = this.createGeneration(definitions, this.providerOverrides);
     const state = this.createAgentManagerState(definitions, clients);
@@ -492,11 +511,9 @@ export class ProviderSnapshotManager {
       ];
     }
 
-    const definition = this.requireProvider(input.provider);
     return validateAgentConfigurationAgainstProvider({
       input,
       provider,
-      validateOptions: definition.validateOptions,
     });
   }
 
@@ -607,7 +624,7 @@ export class ProviderSnapshotManager {
         definitions[provider] = before;
       }
     }
-    Object.assign(clients, this.extraClients, this.pluginProviders.clients());
+    Object.assign(clients, this.extraClients);
     const generation = this.createGeneration(definitions, providerOverrides);
     const agentManagerState = this.createAgentManagerState(definitions, clients);
     return {
@@ -631,6 +648,7 @@ export class ProviderSnapshotManager {
     }
     this.generation = generation;
     this.providerClients = clients;
+    this.warnUnknownProviderOverrides();
     for (const [key, catalogs] of this.catalogs) {
       for (const provider of changed) catalogs.delete(provider);
       if (catalogs.size === 0) this.catalogs.delete(key);
@@ -689,18 +707,12 @@ export class ProviderSnapshotManager {
     const registry = buildProviderRegistry(this.logger, {
       runtimeSettings,
       providerOverrides,
+      pluginProviders: this.pluginProviders.definitions(),
       workspaceGitService: this.workspaceGitService,
       managedProcesses: this.managedProcesses,
       openCodeBridge: this.openCodeBridge,
       isDev: this.isDev,
     });
-
-    for (const [provider, definition] of Object.entries(this.pluginProviders.definitions())) {
-      if (registry[provider]) {
-        throw new Error(`Plugin provider '${provider}' conflicts with a configured provider`);
-      }
-      registry[provider] = definition;
-    }
 
     for (const [provider, client] of Object.entries(this.extraClients) as Array<
       [AgentProvider, AgentClient]

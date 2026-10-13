@@ -1,0 +1,412 @@
+{
+  "provenance": {
+    "package": "pi-subagents",
+    "version": "0.71.0",
+    "sourceCommit": "4af5e85a427b9f87334585ae8d0eb365d4dd2a1e",
+    "piVersion": "0.84.4",
+    "captureDate": "2026-09-23"
+  },
+  "events": [
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "call_451394",
+      "toolName": "subagent",
+      "args": {
+        "agent": "scout",
+        "task": "list files in this empty workspace",
+        "async": true
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "call_451394",
+      "toolName": "subagent",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Run fan-out: 1/64 used, 63 remaining\nAsync: scout [33b193f7-7519-4395-a09c-e45e8f5ce4fa]\n\nThe async run is detached and running in the background.\nYou are in an interactive session. Return control to the user now; Pi will wake you through the native completion notification when this subagent completes or needs attention. Do not run sleep/polling loops to wait for this async subagent; it does not need a wait call.\nUse bg_wait only for provider, detached, or other background work that lacks a native completion notification.\nIf the current turn must receive results from work without a native notification before it ends, call blocking bg_wait(); ordinary async subagent runs do not need a wait call because their completion is delivered natively.\nOtherwise, continue any independent work or return control to the user. Use subagent({ action: \"status\", id: \"...\" }) for a one-shot status/result or to inspect a blocked/stale run, never as a wait loop.\nMission: 812446a0-b883-48e0-ac3c-f810ffbcb7a9 (active)"
+          }
+        ],
+        "details": {
+          "mode": "single",
+          "runId": "33b193f7-7519-4395-a09c-e45e8f5ce4fa",
+          "results": [],
+          "asyncId": "33b193f7-7519-4395-a09c-e45e8f5ce4fa",
+          "asyncDir": "/tmp/pi-subagents-uid-1000/async-subagent-runs/33b193f7-7519-4395-a09c-e45e8f5ce4fa",
+          "launchContractDigest": "1c2799c32119977a96c1e4987cea70fccbe931d8cd1904fd2da8d8689dd0fa08",
+          "launchResolvedExtensions": {
+            "version": 1,
+            "source": "launch-resolved",
+            "disableAmbientExtensions": false,
+            "runtime": ["sha256:c41552bd9557eaab"],
+            "configured": [],
+            "required": [],
+            "effective": ["sha256:c41552bd9557eaab"],
+            "omitted": {
+              "runtime": 0,
+              "configured": 0,
+              "required": 0,
+              "effective": 0
+            }
+          },
+          "context": "fresh",
+          "timeoutMs": 1800000,
+          "deadlineAt": 1790200012953,
+          "runFanoutBudget": {
+            "used": 1,
+            "limit": 64,
+            "remaining": 63
+          },
+          "missionId": "812446a0-b883-48e0-ac3c-f810ffbcb7a9",
+          "missionPath": "/tmp/paseo-pi-extension-phase3/pi-agent/missions/projects/8618955a5c85eb731bdb33d90016edaaf64963be032225b8a26a6936621a378d/812446a0-b883-48e0-ac3c-f810ffbcb7a9.json",
+          "mission": {
+            "schemaVersion": 1,
+            "id": "812446a0-b883-48e0-ac3c-f810ffbcb7a9",
+            "title": "[prompt redacted]",
+            "objective": "[prompt redacted]",
+            "status": "active",
+            "createdAt": "2026-09-23T21:16:52.950Z",
+            "updatedAt": "2026-09-23T21:16:52.962Z",
+            "runs": [
+              {
+                "runId": "33b193f7-7519-4395-a09c-e45e8f5ce4fa",
+                "mode": "single",
+                "asyncDir": "/tmp/pi-subagents-uid-1000/async-subagent-runs/33b193f7-7519-4395-a09c-e45e8f5ce4fa",
+                "status": "active",
+                "startedAt": "2026-09-23T21:16:52.962Z"
+              }
+            ],
+            "workflowChildren": [],
+            "decisions": [],
+            "artifacts": [
+              {
+                "kind": "status",
+                "path": "/tmp/pi-subagents-uid-1000/async-subagent-runs/33b193f7-7519-4395-a09c-e45e8f5ce4fa/status.json"
+              },
+              {
+                "kind": "other",
+                "path": "/tmp/pi-subagents-uid-1000/async-subagent-runs/33b193f7-7519-4395-a09c-e45e8f5ce4fa/events.jsonl",
+                "description": "Lifecycle events"
+              }
+            ],
+            "receipts": [],
+            "cwd": "/tmp/paseo-pi-extension-phase3/workspace",
+            "ownerSessionId": "/tmp/paseo-pi-extension-phase3/sessions-nico/2026-09-23T21-16-49-809Z_01a0d020-dd11-7a6e-a902-107f51c3c198.jsonl"
+          }
+        }
+      },
+      "isError": false
+    },
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "call_512773",
+      "toolName": "bg_wait",
+      "args": {
+        "all": true
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "call_512773",
+      "toolName": "bg_wait",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Waited 7.8s for 1 async run(s); done. Outcome: 1 complete.\nResult [33b193f7-7519-4395-a09c-e45e8f5ce4fa]: /tmp/pi-subagents-uid-1000/async-subagent-results/output-archives/33b193f7-7519-4395-a09c-e45e8f5ce4fa.json\n Completion/control events have been observed; inspect status if a notification is not visible yet."
+          }
+        ],
+        "usage": {
+          "input": 7435,
+          "output": 884,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 8319,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0.00889125
+          }
+        },
+        "details": {
+          "mode": "management",
+          "results": [],
+          "completions": [
+            {
+              "runId": "33b193f7-7519-4395-a09c-e45e8f5ce4fa",
+              "agent": "scout",
+              "mode": "single",
+              "state": "complete",
+              "success": true,
+              "results": [
+                {
+                  "agent": "scout",
+                  "usage": {
+                    "input": 7435,
+                    "output": 884,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "cost": 0.00889125,
+                    "turns": 3
+                  },
+                  "sessionFile": "/tmp/paseo-pi-extension-phase3/sessions-nico/2026-09-23T21-16-49-809Z_01a0d020-dd11-7a6e-a902-107f51c3c198/53dcdf6f-7871-44ae-bf72-7744df7845f2/run-0/session.jsonl",
+                  "success": true,
+                  "outputState": "present",
+                  "model": "openrouter/google/gemini-3.6-flash:low",
+                  "artifactPaths": {
+                    "inputPath": "/tmp/paseo-pi-extension-phase3/sessions-nico/subagent-artifacts/33b193f7-7519-4395-a09c-e45e8f5ce4fa_scout_input.md",
+                    "outputPath": "/tmp/paseo-pi-extension-phase3/sessions-nico/subagent-artifacts/33b193f7-7519-4395-a09c-e45e8f5ce4fa_scout_output.md",
+                    "jsonlPath": "/tmp/paseo-pi-extension-phase3/sessions-nico/subagent-artifacts/33b193f7-7519-4395-a09c-e45e8f5ce4fa_scout.jsonl",
+                    "transcriptPath": "/tmp/paseo-pi-extension-phase3/sessions-nico/subagent-artifacts/33b193f7-7519-4395-a09c-e45e8f5ce4fa_scout_transcript.jsonl",
+                    "metadataPath": "/tmp/paseo-pi-extension-phase3/sessions-nico/subagent-artifacts/33b193f7-7519-4395-a09c-e45e8f5ce4fa_scout_meta.json"
+                  }
+                }
+              ],
+              "archivePath": "/tmp/pi-subagents-uid-1000/async-subagent-results/output-archives/33b193f7-7519-4395-a09c-e45e8f5ce4fa.json"
+            }
+          ]
+        }
+      },
+      "isError": false
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "custom",
+        "customType": "subagent-notify",
+        "content": "Background task completed: **scout**\n\nscout:\n# Code Context\n\n## Files Retrieved\nNo files found in workspace `/tmp/paseo-pi-extension-phase3/workspace`.\n\n## Key Code\nNone. The directory is empty.\n\n## Architecture\nN/A - Empty workspace.\n\n## Start Here\n`/tmp/paseo-pi-extension-phase3/workspace` - Root workspace directory.\n\nOutput saved to: /tmp/paseo-pi-extension-phase3/sessions-nico/subagent-artifacts/outputs/33b193f7-7519-4395-a09c-e45e8f5ce4fa/context.md (275 B, 13 lines). Read this file if needed.\n\nRetention-managed async directory: /tmp/pi-subagents-uid-1000/async-subagent-runs/33b193f7-7519-4395-a09c-e45e8f5ce4fa\n\nSession file: /tmp/paseo-pi-extension-phase3/sessions-nico/2026-09-23T21-16-49-809Z_01a0d020-dd11-7a6e-a902-107f51c3c198/53dcdf6f-7871-44ae-bf72-7744df7845f2/run-0/session.jsonl",
+        "display": false,
+        "timestamp": 1790198222119
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "call_451394",
+          "name": "subagent",
+          "arguments": {
+            "agent": "scout",
+            "task": "list files in this empty workspace",
+            "async": true
+          }
+        }
+      ],
+      "api": "openai-completions",
+      "provider": "openrouter",
+      "model": "google/gemini-3.6-flash",
+      "usage": {
+        "input": 9469,
+        "output": 127,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 96,
+        "totalTokens": 9596,
+        "cost": {
+          "input": 0.00710175,
+          "output": 0.00047625,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0.0075780000000000005
+        }
+      },
+      "stopReason": "toolUse",
+      "timestamp": 1790198210866,
+      "responseId": "gen-1790198211-rIrfe6SMT2s34Gp8iGou",
+      "rawStopReason": "tool_calls"
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call_451394",
+      "toolName": "subagent",
+      "content": [
+        {
+          "type": "text",
+          "text": "Run fan-out: 1/64 used, 63 remaining\nAsync: scout [33b193f7-7519-4395-a09c-e45e8f5ce4fa]\n\nThe async run is detached and running in the background.\nYou are in an interactive session. Return control to the user now; Pi will wake you through the native completion notification when this subagent completes or needs attention. Do not run sleep/polling loops to wait for this async subagent; it does not need a wait call.\nUse bg_wait only for provider, detached, or other background work that lacks a native completion notification.\nIf the current turn must receive results from work without a native notification before it ends, call blocking bg_wait(); ordinary async subagent runs do not need a wait call because their completion is delivered natively.\nOtherwise, continue any independent work or return control to the user. Use subagent({ action: \"status\", id: \"...\" }) for a one-shot status/result or to inspect a blocked/stale run, never as a wait loop.\nMission: 812446a0-b883-48e0-ac3c-f810ffbcb7a9 (active)"
+        }
+      ],
+      "details": {
+        "mode": "single",
+        "runId": "33b193f7-7519-4395-a09c-e45e8f5ce4fa",
+        "results": [],
+        "asyncId": "33b193f7-7519-4395-a09c-e45e8f5ce4fa",
+        "asyncDir": "/tmp/pi-subagents-uid-1000/async-subagent-runs/33b193f7-7519-4395-a09c-e45e8f5ce4fa",
+        "launchContractDigest": "1c2799c32119977a96c1e4987cea70fccbe931d8cd1904fd2da8d8689dd0fa08",
+        "launchResolvedExtensions": {
+          "version": 1,
+          "source": "launch-resolved",
+          "disableAmbientExtensions": false,
+          "runtime": ["sha256:c41552bd9557eaab"],
+          "configured": [],
+          "required": [],
+          "effective": ["sha256:c41552bd9557eaab"],
+          "omitted": {
+            "runtime": 0,
+            "configured": 0,
+            "required": 0,
+            "effective": 0
+          }
+        },
+        "context": "fresh",
+        "timeoutMs": 1800000,
+        "deadlineAt": 1790200012953,
+        "runFanoutBudget": {
+          "used": 1,
+          "limit": 64,
+          "remaining": 63
+        },
+        "missionId": "812446a0-b883-48e0-ac3c-f810ffbcb7a9",
+        "missionPath": "/tmp/paseo-pi-extension-phase3/pi-agent/missions/projects/8618955a5c85eb731bdb33d90016edaaf64963be032225b8a26a6936621a378d/812446a0-b883-48e0-ac3c-f810ffbcb7a9.json",
+        "mission": {
+          "schemaVersion": 1,
+          "id": "812446a0-b883-48e0-ac3c-f810ffbcb7a9",
+          "title": "[prompt redacted]",
+          "objective": "[prompt redacted]",
+          "status": "active",
+          "createdAt": "2026-09-23T21:16:52.950Z",
+          "updatedAt": "2026-09-23T21:16:52.962Z",
+          "runs": [
+            {
+              "runId": "33b193f7-7519-4395-a09c-e45e8f5ce4fa",
+              "mode": "single",
+              "asyncDir": "/tmp/pi-subagents-uid-1000/async-subagent-runs/33b193f7-7519-4395-a09c-e45e8f5ce4fa",
+              "status": "active",
+              "startedAt": "2026-09-23T21:16:52.962Z"
+            }
+          ],
+          "workflowChildren": [],
+          "decisions": [],
+          "artifacts": [
+            {
+              "kind": "status",
+              "path": "/tmp/pi-subagents-uid-1000/async-subagent-runs/33b193f7-7519-4395-a09c-e45e8f5ce4fa/status.json"
+            },
+            {
+              "kind": "other",
+              "path": "/tmp/pi-subagents-uid-1000/async-subagent-runs/33b193f7-7519-4395-a09c-e45e8f5ce4fa/events.jsonl",
+              "description": "Lifecycle events"
+            }
+          ],
+          "receipts": [],
+          "cwd": "/tmp/paseo-pi-extension-phase3/workspace",
+          "ownerSessionId": "/tmp/paseo-pi-extension-phase3/sessions-nico/2026-09-23T21-16-49-809Z_01a0d020-dd11-7a6e-a902-107f51c3c198.jsonl"
+        }
+      },
+      "isError": false,
+      "timestamp": 1790198212965
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "call_512773",
+          "name": "bg_wait",
+          "arguments": {
+            "all": true
+          }
+        }
+      ],
+      "api": "openai-completions",
+      "provider": "openrouter",
+      "model": "google/gemini-3.6-flash",
+      "usage": {
+        "input": 2622,
+        "output": 32,
+        "cacheRead": 6971,
+        "cacheWrite": 0,
+        "reasoning": 18,
+        "totalTokens": 9625,
+        "cost": {
+          "input": 0.0019665,
+          "output": 0.00012,
+          "cacheRead": 0.000522825,
+          "cacheWrite": 0,
+          "total": 0.002609325
+        }
+      },
+      "stopReason": "toolUse",
+      "timestamp": 1790198212966,
+      "responseId": "gen-1790198213-Dg2TqjSl8UQiCKWHWbRE",
+      "rawStopReason": "tool_calls"
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call_512773",
+      "toolName": "bg_wait",
+      "content": [
+        {
+          "type": "text",
+          "text": "Waited 7.8s for 1 async run(s); done. Outcome: 1 complete.\nResult [33b193f7-7519-4395-a09c-e45e8f5ce4fa]: /tmp/pi-subagents-uid-1000/async-subagent-results/output-archives/33b193f7-7519-4395-a09c-e45e8f5ce4fa.json\n Completion/control events have been observed; inspect status if a notification is not visible yet."
+        }
+      ],
+      "details": {
+        "mode": "management",
+        "results": [],
+        "completions": [
+          {
+            "runId": "33b193f7-7519-4395-a09c-e45e8f5ce4fa",
+            "agent": "scout",
+            "mode": "single",
+            "state": "complete",
+            "success": true,
+            "results": [
+              {
+                "agent": "scout",
+                "usage": {
+                  "input": 7435,
+                  "output": 884,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "cost": 0.00889125,
+                  "turns": 3
+                },
+                "sessionFile": "/tmp/paseo-pi-extension-phase3/sessions-nico/2026-09-23T21-16-49-809Z_01a0d020-dd11-7a6e-a902-107f51c3c198/53dcdf6f-7871-44ae-bf72-7744df7845f2/run-0/session.jsonl",
+                "success": true,
+                "outputState": "present",
+                "model": "openrouter/google/gemini-3.6-flash:low",
+                "artifactPaths": {
+                  "inputPath": "/tmp/paseo-pi-extension-phase3/sessions-nico/subagent-artifacts/33b193f7-7519-4395-a09c-e45e8f5ce4fa_scout_input.md",
+                  "outputPath": "/tmp/paseo-pi-extension-phase3/sessions-nico/subagent-artifacts/33b193f7-7519-4395-a09c-e45e8f5ce4fa_scout_output.md",
+                  "jsonlPath": "/tmp/paseo-pi-extension-phase3/sessions-nico/subagent-artifacts/33b193f7-7519-4395-a09c-e45e8f5ce4fa_scout.jsonl",
+                  "transcriptPath": "/tmp/paseo-pi-extension-phase3/sessions-nico/subagent-artifacts/33b193f7-7519-4395-a09c-e45e8f5ce4fa_scout_transcript.jsonl",
+                  "metadataPath": "/tmp/paseo-pi-extension-phase3/sessions-nico/subagent-artifacts/33b193f7-7519-4395-a09c-e45e8f5ce4fa_scout_meta.json"
+                }
+              }
+            ],
+            "archivePath": "/tmp/pi-subagents-uid-1000/async-subagent-results/output-archives/33b193f7-7519-4395-a09c-e45e8f5ce4fa.json"
+          }
+        ]
+      },
+      "usage": {
+        "input": 7435,
+        "output": 884,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 8319,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0.00889125
+        }
+      },
+      "isError": false,
+      "timestamp": 1790198222122
+    },
+    {
+      "role": "custom",
+      "customType": "subagent-notify",
+      "content": "Background task completed: **scout**\n\nscout:\n# Code Context\n\n## Files Retrieved\nNo files found in workspace `/tmp/paseo-pi-extension-phase3/workspace`.\n\n## Key Code\nNone. The directory is empty.\n\n## Architecture\nN/A - Empty workspace.\n\n## Start Here\n`/tmp/paseo-pi-extension-phase3/workspace` - Root workspace directory.\n\nOutput saved to: /tmp/paseo-pi-extension-phase3/sessions-nico/subagent-artifacts/outputs/33b193f7-7519-4395-a09c-e45e8f5ce4fa/context.md (275 B, 13 lines). Read this file if needed.\n\nRetention-managed async directory: /tmp/pi-subagents-uid-1000/async-subagent-runs/33b193f7-7519-4395-a09c-e45e8f5ce4fa\n\nSession file: /tmp/paseo-pi-extension-phase3/sessions-nico/2026-09-23T21-16-49-809Z_01a0d020-dd11-7a6e-a902-107f51c3c198/53dcdf6f-7871-44ae-bf72-7744df7845f2/run-0/session.jsonl",
+      "display": false,
+      "timestamp": 1790198222119
+    }
+  ]
+}

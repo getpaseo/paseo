@@ -8,7 +8,6 @@ export interface InlineImageExplicitDimensions {
   height?: number;
 }
 
-const INLINE_IMAGE_FALLBACK_SIZE = 16;
 const INLINE_IMAGE_MAX_WIDTH = 240;
 const INLINE_IMAGE_MAX_HEIGHT = 160;
 
@@ -59,5 +58,5 @@ function resolveInlineImageDimensions(input: {
     return { width: input.explicit.height, height: input.explicit.height };
   }
 
-  return input.natural ?? { width: INLINE_IMAGE_FALLBACK_SIZE, height: INLINE_IMAGE_FALLBACK_SIZE };
+  return input.natural ?? { width: INLINE_IMAGE_MAX_WIDTH, height: INLINE_IMAGE_MAX_HEIGHT };
 }

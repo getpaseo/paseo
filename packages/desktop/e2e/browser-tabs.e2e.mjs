@@ -15,6 +15,8 @@ import { chromium } from "playwright";
 import { runAppearanceFontSizeRegression } from "./appearance-font-size.electron.mjs";
 import { runSettingsMemoryRegression } from "./settings-memory.electron.mjs";
 
+import { seedPluginLinks, runPluginLinksRegression } from "./plugin-links.electron.mjs";
+
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopDir = path.resolve(scriptDir, "..");
 const rootDir = path.resolve(desktopDir, "../..");
@@ -270,7 +272,7 @@ async function waitForGuestActiveElement(client, browserId, elementId) {
   return false;
 }
 
-async function createCallerAgent(daemonPort) {
+async function createCallerAgent(daemonPort, workspaceId = workspaceIds[0]) {
   const transport = new StreamableHTTPClientTransport(
     new URL(`http://127.0.0.1:${daemonPort}/mcp/agents`),
   );
@@ -280,12 +282,11 @@ async function createCallerAgent(daemonPort) {
       name: "create_agent",
       args: {
         relationship: { kind: "detached" },
-        workspace: { kind: "existing", workspaceId: workspaceIds[0] },
+        workspace: { kind: "existing", workspaceId },
         title: "Browser desktop browser E2E caller",
         provider: "mock/ten-second-stream",
         settings: { modeId: "load-test" },
         initialPrompt: "Remain available while the browser bridge regression runs.",
-        background: true,
       },
     });
     const result = response.structuredContent;
@@ -295,7 +296,7 @@ async function createCallerAgent(daemonPort) {
     );
     assert(typeof result.agentId === "string", "create_agent returned no caller agent id");
     assert(
-      result.workspaceId === workspaceIds[0],
+      result.workspaceId === workspaceId,
       `MCP caller attached to unexpected workspace ${result.workspaceId}`,
     );
     return result.agentId;
@@ -560,12 +561,66 @@ async function verifyHiddenBrowserScreenshots({
   await expectAnimation();
 }
 
+async function verifyBackgroundTypingStaysInGuest({ page, client, serverId, browserId, agent }) {
+  await page
+    .getByTestId(`workspace-deck-entry-${serverId}:${agent.workspaceId}`)
+    .getByTestId(`workspace-tab-agent_${agent.agentId}`)
+    .click({ timeout: timeoutMs });
+  const composer = page
+    .getByRole("textbox", { name: "Message agent..." })
+    .filter({ visible: true })
+    .first();
+  const draft = "draft the user is typing";
+  await composer.click();
+  await composer.pressSequentially(draft);
+  assert(
+    await composer.evaluate((element) => element === document.activeElement),
+    "Composer did not keep focus while the user typed",
+  );
+
+  const snapshot = await callBrowserTool(client, "browser_snapshot", { browserId });
+  const ref = snapshot.snapshot.match(/textbox "Typing target" \[ref=(@e\d+)\]/)?.[1];
+  assert(ref, `browser_snapshot did not expose the typing target: ${snapshot.snapshot}`);
+  await callBrowserTool(client, "browser_type", { browserId, ref, text: "agent text" });
+  await callBrowserTool(client, "browser_keypress", { browserId, ref, key: "!" });
+
+  // The user keeps typing in the composer while the agent types into the tab's focused field.
+  await composer.click();
+  await composer.press("End");
+  assert(
+    await composer.evaluate((element) => element === document.activeElement),
+    "Composer did not take focus back from the browser tab",
+  );
+  await callBrowserTool(client, "browser_type", { browserId, text: " more" });
+  await callBrowserTool(client, "browser_keypress", { browserId, key: "?" });
+
+  const guestValue = JSON.parse(
+    (
+      await callBrowserTool(client, "browser_evaluate", {
+        browserId,
+        function: "() => document.getElementById('typing-target').value",
+      })
+    ).resultJson,
+  );
+  const composerValue = await composer.inputValue();
+  assert(
+    composerValue === draft,
+    `browser_type and browser_keypress in a background tab changed the focused composer: ${JSON.stringify(composerValue)}`,
+  );
+  assert(
+    guestValue === "agent text! more?",
+    `browser_type and browser_keypress did not reach the browser tab: ${JSON.stringify(guestValue)}`,
+  );
+  await composer.fill("");
+}
+
 async function runRegression({
   page,
   client,
   serverId,
   targetUrl,
   callerAgentId,
+  typingAgent,
   artifactDir,
   inspectorPort,
 }) {
@@ -855,6 +910,13 @@ async function runRegression({
     text: "Clicked",
     timeoutMs: 5_000,
   });
+  await verifyBackgroundTypingStaysInGuest({
+    page,
+    client,
+    serverId,
+    browserId,
+    agent: typingAgent,
+  });
 
   await originalWorkspaceRow.click();
   await originalDeck.getByTestId(`workspace-tab-browser_${browserId}`).click();
@@ -1021,7 +1083,8 @@ async function main() {
   const workspaceRoot = path.join(runtimeDir, "workspaces");
   fs.mkdirSync(paseoHome, { recursive: true });
 
-  const [daemonPort, expoPort, cdpPort, inspectorPort] = await Promise.all([
+  const [daemonPort, expoPort, cdpPort, inspectorPort, remotePort] = await Promise.all([
+    reservePort(),
     reservePort(),
     reservePort(),
     reservePort(),
@@ -1030,13 +1093,28 @@ async function main() {
   const listen = `127.0.0.1:${daemonPort}`;
   seedPaseoHome(paseoHome, listen, workspaceRoot);
   const target = await startTargetPage();
+  seedPluginLinks(paseoHome, workspaceIds[0], target.url, workspaceIds[1]);
+  const remoteHome = path.join(runtimeDir, "remote-home");
+  seedPaseoHome(remoteHome, `127.0.0.1:${remotePort}`, path.join(runtimeDir, "remote-workspaces"));
   const children = [];
   let browser = null;
   let client = null;
 
   try {
+    // Observe the real Electron shell handoff without launching a user's browser.
+    const openerDirectory = path.join(runtimeDir, "url-handler");
+    const externalOpenLog = path.join(artifactDir, "external-opens.txt");
+    fs.mkdirSync(openerDirectory, { recursive: true });
+    fs.writeFileSync(externalOpenLog, "");
+    fs.writeFileSync(
+      path.join(openerDirectory, "xdg-open"),
+      '#!/bin/sh\nprintf "%s\\n" "$1" >> "$PASEO_TEST_EXTERNAL_OPEN_LOG"\n',
+      { mode: 0o755 },
+    );
     const commonEnv = {
       ...process.env,
+      PATH: `${openerDirectory}${path.delimiter}${process.env.PATH}`,
+      PASEO_TEST_EXTERNAL_OPEN_LOG: externalOpenLog,
       PASEO_HOME: paseoHome,
       PASEO_LISTEN: listen,
       PASEO_DAEMON_ENDPOINT: `localhost:${daemonPort}`,
@@ -1056,6 +1134,25 @@ async function main() {
     );
     children.push(daemon.child);
     await waitForPort(daemonPort, "daemon", daemon);
+
+    const remoteDaemon = spawnLogged(
+      "remote-daemon",
+      process.execPath,
+      ["--import", "tsx", path.join(rootDir, "packages/server/scripts/dev-runner.ts")],
+      {
+        cwd: rootDir,
+        env: {
+          ...commonEnv,
+          PASEO_HOME: remoteHome,
+          PASEO_LISTEN: `127.0.0.1:${remotePort}`,
+          PASEO_SERVER_ID: "plugin-links-remote",
+          PASEO_NODE_ENV: "development",
+        },
+      },
+      artifactDir,
+    );
+    children.push(remoteDaemon.child);
+    await waitForPort(remotePort, "remote daemon", remoteDaemon);
 
     const desktopArgs = [
       process.execPath,
@@ -1092,6 +1189,22 @@ async function main() {
     const page = await waitForAppPage(browser, expoPort);
     const status = await waitForDesktopStatus(page);
 
+    const checkPluginLinks = () =>
+      runPluginLinksRegression({
+        page,
+        remotePort,
+        workspaceId: workspaceIds[0],
+        remoteWorkspaceId: workspaceIds[1],
+        url: target.url,
+        artifactDir,
+        externalOpenLog: process.platform === "linux" ? externalOpenLog : null,
+      });
+    if (process.env.PASEO_DESKTOP_PLUGIN_LINKS_ONLY === "1") {
+      const pluginLinks = await checkPluginLinks();
+      writeJson(path.join(artifactDir, "result.json"), { pluginLinks });
+      console.log("Plugin external links and workspace browser passed.");
+      return;
+    }
     const settingsMemory = await runSettingsMemoryRegression(page);
     if (process.env.PASEO_DESKTOP_SETTINGS_MEMORY_ONLY === "1") {
       writeJson(path.join(artifactDir, "result.json"), { settingsMemory });
@@ -1104,6 +1217,10 @@ async function main() {
     await runAppearanceFontSizeRegression(page);
 
     const callerAgentId = await createCallerAgent(daemonPort);
+    const typingAgent = {
+      workspaceId: workspaceIds.at(-1),
+      agentId: await createCallerAgent(daemonPort, workspaceIds.at(-1)),
+    };
     const transport = new StreamableHTTPClientTransport(
       new URL(
         `http://127.0.0.1:${daemonPort}/mcp/agents?callerAgentId=${encodeURIComponent(callerAgentId)}`,
@@ -1117,9 +1234,11 @@ async function main() {
       targetUrl: target.url,
       inspectorPort,
       callerAgentId,
+      typingAgent,
       artifactDir,
     });
-    writeJson(path.join(artifactDir, "result.json"), { ...report, settingsMemory });
+    const pluginLinks = await checkPluginLinks();
+    writeJson(path.join(artifactDir, "result.json"), { ...report, settingsMemory, pluginLinks });
     console.log(
       `Browser desktop browser E2E passed: WebContents ${report.originalWebContentsId} remained ${report.finalWebContentsId}; viewport, inactive capture, focus continuity, list, snapshot, click, local-page selectors passed.`,
     );

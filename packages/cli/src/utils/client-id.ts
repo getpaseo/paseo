@@ -1,4 +1,4 @@
-import { ensurePrivateDirectory } from "@getpaseo/server";
+import { ensurePrivateDirectory } from "@getpaseo/server/daemon-control";
 import { readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";

@@ -90,3 +90,52 @@ a failed provider tap leaves its modal open, so dismiss it before the next run. 
 journeys remain outside the default mobile suite, alongside the compact sheet journeys above.
 
 Keep generated screenshots, recordings, and run logs outside the repository.
+
+## Stacked adaptive sheets
+
+`stacked-pairing.ad` opens the welcome screen's pairing sheet and then the root-mounted host
+confirmation. It first types without tapping the input to verify autofocus, then cancels the
+confirmation, closes and reopens the underlying sheet, confirms again,
+and completes the password retry. `stacked-settings.ad` checks the same return and retry through
+Settings → add host → Direct connection → Advanced. Run both on phones and tablets so both the
+bottom sheet and centered dialog are exercised.
+
+These integration journeys require the host-confirmation flow in the test app. Include both the
+sheet fix and that flow in the QA checkout when verifying them; the production sheet component
+has no dependency on the host-confirmation feature.
+
+Use a fresh English app with notification permission granted and first-use keyboard prompts
+already dismissed. Load this checkout from an isolated Metro. Start an isolated password-protected
+daemon and a local Wrangler relay with `--var 'PASEO_RELAY_UPSTREAM:'`; the checked-in upstream
+setting otherwise forwards traffic to the hosted relay, which drops password rejection replies.
+Set `PAIRING_LINK` to the daemon's `relay://` URI with an intentionally incorrect `password` query
+parameter, and `PASSWORD` to its correct password. This exercises password retry even while the
+daemon accepts relay connections with no credential.
+
+```sh
+agent-device replay packages/app/e2e/mobile/modal-sheet/stacked-pairing.ad \
+  --state-dir "$SHEET_QA_DEVICE_STATE" --session stacked-ipad --platform ios \
+  --udid "$SHEET_QA_IOS_UDID" \
+  --env PAIRING_LINK="$SHEET_QA_LINK" --env PASSWORD="$SHEET_QA_PASSWORD" \
+  --env OUT="$SHEET_QA_OUTPUT"
+```
+
+For Settings, first open Settings with Add host visible. With a saved host, open Switch host
+first. Use a second loopback spelling
+(`localhost` instead of `127.0.0.1`) for the same local relay so the saved host asks for confirmation
+of its changed connection. Pass that link to `stacked-settings.ad` with the same arguments.
+For an app with no saved hosts, use the original link; Add host is visible directly in Settings.
+
+Android uses the same journeys: copy each script outside the repository, change its context's
+`platform=ios` to `platform=android`, and pass `--serial` instead of `--udid`. Reverse both Metro
+(including the port advertised by its manifest) and the local relay ports. Keep driver state,
+artifacts, and sessions separate from other runs. These host-dependent journeys remain outside the
+default mobile suite, alongside the existing modal-sheet scripts.
+
+On iPhone, bulk replacement or bulk keyboard entry of the advanced URI field triggers a
+repeated-update error with both the parent and stacked-sheet implementations. Entering the complete
+URI one character at a time passed with both implementations; faster typing remains unverified.
+On iPad, replacing the field a second time appends text. For this Settings journey, use the
+native clipboard Paste menu, then continue the assertions manually. Dismiss the password keyboard
+with Done to submit when the Connect button is below the keyboard. The welcome pairing regression
+runs end to end without these adjustments.

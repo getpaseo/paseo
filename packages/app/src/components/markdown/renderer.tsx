@@ -1,4 +1,3 @@
-import { useWordFadeRules } from "@/word-stream/markdown";
 import React, {
   useCallback,
   useEffect,
@@ -40,6 +39,10 @@ import {
   type MarkdownInlineImagePart,
 } from "./html-ish";
 import { resolveInlineImageSize, type InlineImageDimensions } from "./inline-image-size";
+import {
+  getAssistantImageMetadata,
+  setAssistantImageMetadata,
+} from "@/utils/assistant-image-metadata";
 import { groupMarkdownParts, type MarkdownPartGroup } from "./part-groups";
 import { colorMarkdownLinkChildren } from "./link-children";
 import { MarkdownLinkText } from "./link-text";
@@ -81,7 +84,6 @@ export interface MarkdownRendererProps {
   allowedImageHandlers?: readonly string[];
   topLevelMaxExceededItem?: ReactNode;
   enableHtmlish?: boolean;
-  sourceOffset?: number;
 }
 
 export function MarkdownRenderer({
@@ -93,7 +95,6 @@ export function MarkdownRenderer({
   allowedImageHandlers,
   topLevelMaxExceededItem,
   enableHtmlish = true,
-  sourceOffset = 0,
 }: MarkdownRendererProps) {
   const markdownRules = useMemo(() => rules ?? createSharedMarkdownRules(), [rules]);
   const parts = useMemo(
@@ -103,7 +104,6 @@ export function MarkdownRenderer({
   const rendererProps = useMemo(
     () => ({
       compact,
-      sourceOffset,
       rules: markdownRules,
       markdownit,
       onLinkPress,
@@ -113,7 +113,6 @@ export function MarkdownRenderer({
     [
       allowedImageHandlers,
       compact,
-      sourceOffset,
       markdownRules,
       markdownit,
       onLinkPress,
@@ -179,7 +178,6 @@ function MarkdownPart({
 
 function MarkdownFragment({
   text,
-  sourceOffset = 0,
   compact,
   rules,
   markdownit,
@@ -187,12 +185,11 @@ function MarkdownFragment({
   allowedImageHandlers,
   topLevelMaxExceededItem,
 }: MarkdownRendererProps & { rules: RenderRules }) {
-  const fadeRules = useWordFadeRules(rules, sourceOffset);
   const uniProps = compact ? compactMarkdownStyleMapping : markdownStyleMapping;
   return (
     <ThemedMarkdown
       uniProps={uniProps}
-      rules={fadeRules}
+      rules={rules}
       markdownit={markdownit}
       onLinkPress={onLinkPress}
       allowedImageHandlers={allowedImageHandlers}
@@ -208,11 +205,16 @@ function useNaturalImageDimensions(part: MarkdownInlineImagePart): {
   failed: boolean;
   setFailed: (failed: boolean) => void;
 } {
-  const [natural, setNatural] = useState<InlineImageDimensions | null>(null);
+  const cached = useMemo(() => getAssistantImageMetadata({ source: part.src }), [part.src]);
+  const [resolved, setResolved] = useState<{
+    source: string;
+    dimensions: InlineImageDimensions;
+  } | null>(null);
+  const natural = resolved?.source === part.src ? resolved.dimensions : cached;
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    if (part.width && part.height) {
+    if ((part.width && part.height) || cached) {
       return;
     }
 
@@ -220,8 +222,9 @@ function useNaturalImageDimensions(part: MarkdownInlineImagePart): {
     Image.getSize(
       part.src,
       (width, height) => {
+        setAssistantImageMetadata({ source: part.src }, { width, height });
         if (!cancelled) {
-          setNatural({ width, height });
+          setResolved({ source: part.src, dimensions: { width, height } });
         }
       },
       () => {
@@ -234,7 +237,7 @@ function useNaturalImageDimensions(part: MarkdownInlineImagePart): {
     return () => {
       cancelled = true;
     };
-  }, [part.height, part.src, part.width]);
+  }, [cached, part.height, part.src, part.width]);
 
   return { natural, failed, setFailed };
 }

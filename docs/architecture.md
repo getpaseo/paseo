@@ -54,6 +54,15 @@ The heart of Paseo. A Node.js process that:
 
 All paths are under `packages/server/src/`.
 
+Desktop and CLI import server capabilities through explicit package subpaths such as
+`@getpaseo/server/daemon-control`, `/configuration`, and `/process`. The root export
+loads daemon bootstrap eagerly, even when a caller only uses a path or process helper.
+Keep process-management and configuration dependencies independent of bootstrap and
+WebSocket message schemas. Shared configuration schemas belong in protocol leaf modules;
+`messages` imports and re-exports them. This prevents every supervising process from
+retaining the daemon's runtime and wire-schema allocations. The server export tests guard
+these dependency trees with tree-shaking disabled to match unbundled production imports.
+
 Project identity is daemon-global rather than session-owned. After registry bootstrap, the daemon's
 project Git observer keeps one non-recursive watch on each lexically equivalent active project root
 and listens only for the root `.git` entry, with a slow rescan as a missed-event fallback. It runs
@@ -335,6 +344,10 @@ key. Reconnect subscribes to that key; retries
 join active work or reuse committed stages. A persisted resource alone cannot prove
 that a provider accepted its initial prompt. Interrupted side effects with no conclusive
 receipt return an unknown outcome instead of being repeated.
+
+Agent registration commits creation. Rejecting the first prompt is a turn error on that
+agent; reporting creation failure leaves an orphaned agent and invites another Create.
+Receipt replay must not resend the prompt.
 
 `packages/client/src/creation/` owns capability selection and legacy orchestration.
 Callers always pass the initial prompt to agent creation. On an older host, the client

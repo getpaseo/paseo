@@ -2967,7 +2967,7 @@ test("fetch_agent_history_request pages archived historical rows separately", as
   expect(session.agentUpdates.hasSubscription()).toBe(false);
 });
 
-test("fetch_agent_history_request ranks a search across the whole history, not one page", async () => {
+test("fetch_agent_history_request filters across history and paginates chronologically", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests();
   const historyCwd = path.resolve("/tmp/history-search");
@@ -2996,8 +2996,7 @@ test("fetch_agent_history_request ranks a search across the whole history, not o
   session.workspaceRegistry.list = async () => [workspace];
   session.workspaceRegistry.get = async () => workspace;
   session.listAgentPayloads = async () => [
-    // The strong match is the oldest row, so a chronological answer would rank
-    // it last and a first-page-only search would not see it at all.
+    // Search keeps chronological order, skipping unrelated rows between pages.
     {
       ...makeAgent({
         id: "weak",
@@ -3037,38 +3036,24 @@ test("fetch_agent_history_request ranks a search across the whole history, not o
     page: { limit: 1 },
   });
 
-  const truncated = emitted[0];
-  if (truncated?.type !== "fetch_agent_history_response") {
-    throw new Error(`Expected a history response, got ${truncated?.type}`);
-  }
-  expect(truncated.payload.entries.map((entry) => entry.agent.id)).toEqual(["strong"]);
-  expect(truncated.payload.entries[0].searchScore).toBeTypeOf("number");
-  // More matched than fit. `hasMore` stays false because no page is fetchable;
-  // truncation is its own fact, so a rank offset can never go stale.
-  expect(truncated.payload.searchTruncated).toBe(true);
-  expect(truncated.payload.pageInfo).toEqual({
-    nextCursor: null,
-    prevCursor: null,
-    hasMore: false,
-  });
-
+  expect(emitted).toHaveLength(1);
+  const first = filterByType(emitted, "fetch_agent_history_response")[0];
+  expect(first.payload.entries.map((entry) => entry.agent.id)).toEqual(["weak"]);
+  expect(first.payload.pageInfo.hasMore).toBe(true);
+  expect(first.payload.entries[0].searchScore).toBeUndefined();
   await session.handleMessage({
     type: "fetch_agent_history_request",
-    requestId: "req-search-whole",
+    requestId: "req-search-next",
     search: "bill",
-    page: { limit: 25 },
+    page: { limit: 1, cursor: first.payload.pageInfo.nextCursor! },
   });
-
-  const whole = emitted[1];
-  if (whole?.type !== "fetch_agent_history_response") {
-    throw new Error(`Expected a history response, got ${whole?.type}`);
-  }
-  expect(whole.payload.entries.map((entry) => entry.agent.id)).toEqual(["strong", "weak"]);
-  expect(whole.payload.searchTruncated).toBe(false);
-  expect(whole.payload.pageInfo.hasMore).toBe(false);
+  expect(emitted).toHaveLength(2);
+  const second = filterByType(emitted, "fetch_agent_history_response")[1];
+  expect(second.payload.entries.map((entry) => entry.agent.id)).toEqual(["strong"]);
+  expect(second.payload.pageInfo.hasMore).toBe(false);
 });
 
-test("fetch_agent_history_request rejects a cursor on a searched request", async () => {
+test("fetch_agent_history_request rejects a malformed search cursor", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests();
   const historyCwd = path.resolve("/tmp/history-cursor");
@@ -3109,8 +3094,7 @@ test("fetch_agent_history_request rejects a cursor on a searched request", async
     },
   ];
 
-  // A ranked result set has no pages to walk. Answering with the ranked head
-  // would let a caller believe it had paged, so this fails loudly instead.
+  // Search uses the same validated chronological cursor as unfiltered history.
   await session.handleMessage({
     type: "fetch_agent_history_request",
     requestId: "req-cursor",
@@ -3482,7 +3466,7 @@ test("fetch_agent_request still resolves archived historical agents", async () =
   session.resolveAgentIdentifier = async (identifier: string) =>
     identifier === "Archived History Agent"
       ? { ok: true, agentId: agent.id }
-      : { ok: false, error: `Agent not found: ${identifier}` };
+      : { ok: false, notFound: true, error: `Agent not found: ${identifier}` };
   session.getAgentPayloadById = async (agentId: string) => (agentId === agent.id ? agent : null);
   session.buildProjectPlacementForWorkspaceId = async () => ({
     projectKey: "proj-history-detail",
@@ -9528,6 +9512,50 @@ test("workspace.create.request attaches a directory workspace to its explicit ac
     cwd: REPO_CWD,
     projectId: "prj_explicit",
   });
+});
+
+test("workspace.create.request with background persists a hidden workspace that only opted-in listings show", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const workspaces = new Map<string, PersistedWorkspaceRecord>();
+  const session = createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) });
+  session.workspaceRegistry.upsert = async (record: unknown) => {
+    const workspace = record as PersistedWorkspaceRecord;
+    workspaces.set(workspace.workspaceId, workspace);
+  };
+  session.workspaceRegistry.get = async (workspaceId: string) =>
+    workspaces.get(workspaceId) ?? null;
+  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+
+  await session.handleMessage({
+    type: "workspace.create.request",
+    requestId: "req-background-workspace",
+    background: true,
+    source: { kind: "directory", path: REPO_CWD },
+  });
+
+  const response = findByType(emitted, "workspace.create.response");
+  expect(response?.payload).toMatchObject({
+    requestId: "req-background-workspace",
+    error: null,
+    workspace: { background: true },
+  });
+  const workspaceId = response?.payload.workspace?.id as string;
+  expect(workspaces.get(workspaceId)?.background).toBe(true);
+  // No subscription exists, and the legacy causal update stays quiet for a hidden workspace.
+  expect(filterByType(emitted, "workspace_update")).toEqual([]);
+
+  const hidden = await session.listFetchWorkspacesEntries({
+    type: "fetch_workspaces_request",
+    requestId: "req-list-hidden",
+  });
+  expect(hidden.entries).toEqual([]);
+
+  const shown = await session.listFetchWorkspacesEntries({
+    type: "fetch_workspaces_request",
+    requestId: "req-list-shown",
+    filter: { includeBackground: true },
+  });
+  expect(shown.entries.map((entry) => [entry.id, entry.background])).toEqual([[workspaceId, true]]);
 });
 
 test("workspace.create.request reports an unknown explicit project", async () => {

@@ -7,6 +7,7 @@ export interface ObserverMetrics extends Omit<
   | "nativeTrackedFileCount"
   | "pendingEventCount"
   | "pendingReconciliationWorkCount"
+  | "pendingClassificationCount"
   | "reconciliationInFlightCount"
 > {}
 
@@ -14,6 +15,7 @@ export interface BackendDiagnostics {
   nativeHandleCount: number;
   nativeTrackedFileCount: number;
   pendingReconciliationWorkCount: number;
+  pendingClassificationCount: number;
   reconciliationInFlight: boolean;
 }
 

@@ -1,12 +1,19 @@
+import { relative } from "node:path";
 import type {
   ProviderConnection,
+  ProviderLaunch,
   ProviderEvent,
   ProviderInput,
   ProviderRegistration,
 } from "@getpaseo/plugin/server/provider";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import { describe, expect, test } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
-import type { AgentStreamEvent } from "./agent-sdk-types.js";
+import type { AgentClient, AgentStreamEvent } from "./agent-sdk-types.js";
+import { toStoredAgentRecord } from "./agent-projections.js";
+import { AgentManager } from "./agent-manager.js";
+import { buildProviderRegistry } from "./provider-registry.js";
+import { ProviderOverrideSchema } from "@getpaseo/protocol/provider-config";
 import { PluginAgentClientRegistry } from "./plugin-provider.js";
 import {
   isStaleProviderSessionError,
@@ -24,6 +31,8 @@ const CAPABILITIES = [
 interface ProviderHarnessOptions {
   capabilities?: ProviderConnection["capabilities"];
   completeTurn?: boolean;
+  openChildren?: (rootSessionId: string, emit: (event: ProviderEvent) => void) => void;
+  handleInput?: (input: ProviderInput, emit: (event: ProviderEvent) => void) => Promise<boolean>;
 }
 
 function createProviderHarness(options: ProviderHarnessOptions = {}) {
@@ -42,6 +51,7 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
     capabilities,
     async send(input) {
       inputs.push(input);
+      if (await options.handleInput?.(input, emit)) return;
       if (input.type === "catalog") {
         emit({
           type: "catalog",
@@ -108,6 +118,7 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
           state: "completed",
         });
         emit({ type: "session.ready", sessionId: "child-1" });
+        options.openChildren?.(input.sessionId, emit);
         emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
         return;
       }
@@ -202,6 +213,7 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
 
   return {
     registration,
+    emit,
     inputs,
     closeCount: () => closeCount,
     waitForClose: () => closed,
@@ -212,7 +224,263 @@ function eventsOfType(events: AgentStreamEvent[], type: AgentStreamEvent["type"]
   return events.filter((event) => event.type === type);
 }
 
+function openNestedChildren(rootSessionId: string, emit: (event: ProviderEvent) => void) {
+  for (const [sessionId, parentSessionId] of [
+    ["a", rootSessionId],
+    ["a.b", "a"],
+    ["a.b.c", "a.b"],
+    ["sibling", rootSessionId],
+  ]) {
+    emit({
+      type: "session.opened",
+      sessionId,
+      parentSessionId,
+      toolCallId: `${sessionId}-task`,
+      capabilities: [],
+      restoration: "parent",
+      cwd: "/workspace",
+    });
+    emit({
+      type: "timeline.item",
+      sessionId,
+      item: { type: "assistant_message", id: `${sessionId}-message`, text: sessionId },
+    });
+    emit({
+      type: "session.turn",
+      sessionId,
+      turnId: `${sessionId}-turn`,
+      state: "completed",
+    });
+  }
+}
+
+function expectNestedChildren(events: AgentStreamEvent[]) {
+  for (const [id, parentSubagentId] of [
+    ["a", null],
+    ["a.b", "a"],
+    ["a.b.c", "a.b"],
+    ["sibling", null],
+  ]) {
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "provider_subagent",
+        event: expect.objectContaining({
+          type: "upsert",
+          id,
+          parentSubagentId,
+          toolCallId: `${id}-task`,
+          status: "running",
+        }),
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "provider_subagent",
+        event: expect.objectContaining({
+          type: "timeline",
+          id,
+          item: expect.objectContaining({ text: id }),
+        }),
+      }),
+    );
+  }
+}
+
 describe("PluginAgentClientRegistry", () => {
+  test("stores only agent options while the plugin receives merged defaults", async () => {
+    const logger = createTestLogger();
+    const harness = createProviderHarness();
+    const plugins = new PluginAgentClientRegistry(logger);
+    plugins.replace([harness.registration]);
+    const registry = buildProviderRegistry(logger, {
+      pluginProviders: plugins.definitions(),
+      providerOverrides: {
+        "plugin-direct": { options: { nested: { base: true, replace: "config" } } },
+      },
+    });
+    const manager = new AgentManager({
+      logger,
+      clients: { "plugin-direct": registry["plugin-direct"].createClient(logger) },
+      providerDefinitions: { "plugin-direct": registry["plugin-direct"] },
+    });
+    const own = { nested: { replace: "agent" } };
+    const agent = await manager.createAgent(
+      { provider: "plugin-direct", cwd: "/tmp", providerOptions: own },
+      undefined,
+      { workspaceId: undefined },
+    );
+    expect(toStoredAgentRecord(agent).config?.providerOptions).toEqual(own);
+    expect(harness.inputs.find((input) => input.type === "session.open")).toMatchObject({
+      config: { providerOptions: { nested: { base: true, replace: "agent" } } },
+    });
+    await agent.session?.close();
+  });
+
+  test.each([
+    { options: { nested: { base: true, replace: "config" }, list: [1, 2], scalar: "config" } },
+    { params: { nested: { base: true, replace: "config" }, list: [1, 2], scalar: "config" } },
+    {
+      params: { ignored: true },
+      options: { nested: { base: true, replace: "config" }, list: [1, 2], scalar: "config" },
+    },
+  ])(
+    "merges configured options into plugin session.open, preserving caller input: %j",
+    async (override) => {
+      const logger = createTestLogger();
+      const harness = createProviderHarness();
+      const plugins = new PluginAgentClientRegistry(logger);
+      plugins.replace([harness.registration]);
+      const registry = buildProviderRegistry(logger, {
+        pluginProviders: plugins.definitions(),
+        providerOverrides: { "plugin-direct": ProviderOverrideSchema.parse(override) },
+      });
+      const client = registry["plugin-direct"].createClient(logger);
+      const defaultsSession = await client.createSession({
+        provider: "plugin-direct",
+        cwd: "/tmp",
+      });
+      const defaultsOpen = harness.inputs.findLast((input) => input.type === "session.open")!;
+      expect(defaultsOpen.config.providerOptions).toEqual({
+        nested: { base: true, replace: "config" },
+        list: [1, 2],
+        scalar: "config",
+      });
+      await defaultsSession.close();
+      const config = {
+        provider: "plugin-direct",
+        cwd: "/tmp",
+        providerOptions: { nested: { replace: "agent" }, list: [3], scalar: null },
+      };
+      const session = await client.createSession(config);
+      const open = harness.inputs.findLast((input) => input.type === "session.open")!;
+      expect(open.config.providerOptions).toEqual({
+        nested: { base: true, replace: "agent" },
+        list: [3],
+        scalar: null,
+      });
+      expect(config.providerOptions).toEqual({
+        nested: { replace: "agent" },
+        list: [3],
+        scalar: null,
+      });
+      const handle = session.describePersistence()!;
+      await session.close();
+      const updatedRegistry = buildProviderRegistry(logger, {
+        pluginProviders: plugins.definitions(),
+        providerOverrides: {
+          "plugin-direct": {
+            options: {
+              nested: { base: false, replace: "new-config" },
+              list: [4],
+              scalar: "new-config",
+            },
+          },
+        },
+      });
+      const resumed = await updatedRegistry["plugin-direct"]
+        .createClient(logger)
+        .resumeSession(handle, config);
+      const resumedOpen = harness.inputs.findLast((input) => input.type === "session.open")!;
+      expect(resumedOpen.config.providerOptions).toEqual({
+        nested: { base: false, replace: "agent" },
+        list: [3],
+        scalar: null,
+      });
+      await resumed.close();
+    },
+  );
+
+  test.each([false, true])(
+    "contains a failed session open while send is pending: %s",
+    async (pendingSend) => {
+      let listener: ((event: ProviderEvent) => void) | undefined;
+      const unhandled: unknown[] = [];
+      const observeUnhandled = (reason: unknown) => unhandled.push(reason);
+      const registry = new PluginAgentClientRegistry(createTestLogger());
+      registry.replace([
+        {
+          id: "failing-provider",
+          label: "Failing provider",
+          async connect() {
+            return {
+              version: 1,
+              capabilities: ["session.persistence"],
+              async send(input) {
+                if (input.type !== "session.open") return;
+                listener?.({
+                  type: "request.failed",
+                  requestId: input.requestId,
+                  error: { message: "OMP persistent session registration is in progress" },
+                });
+                // Keep acceptance pending across a Node event-loop turn, as IPC can do.
+                if (pendingSend) await nextTurn();
+              },
+              onEvent(nextListener) {
+                listener = nextListener;
+                return () => {
+                  listener = undefined;
+                };
+              },
+              async close() {},
+            };
+          },
+        },
+      ]);
+      process.on("unhandledRejection", observeUnhandled);
+      try {
+        await expect(
+          registry.clients()["failing-provider"]!.createSession({
+            provider: "failing-provider",
+            cwd: "/workspace",
+          }),
+        ).rejects.toThrow("OMP persistent session registration is in progress");
+        await nextTurn();
+        expect(unhandled).toEqual([]);
+      } finally {
+        await registry.shutdown();
+        process.off("unhandledRejection", observeUnhandled);
+      }
+    },
+  );
+
+  test("preserves nested provider child ownership during opening", async () => {
+    const harness = createProviderHarness({ openChildren: openNestedChildren });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const session = await registry.clients()[harness.registration.id]!.createSession({
+      provider: harness.registration.id,
+      cwd: "/workspace",
+    });
+    try {
+      const events: AgentStreamEvent[] = [];
+      for await (const event of session.streamHistory()) events.push(event);
+      expectNestedChildren(events);
+    } finally {
+      await session.close();
+      registry.replace([]);
+    }
+  });
+
+  test("preserves nested provider child ownership during live events", async () => {
+    const harness = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const session = await registry.clients()[harness.registration.id]!.createSession({
+      provider: harness.registration.id,
+      cwd: "/workspace",
+    });
+    try {
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+      const open = harness.inputs.find((input) => input.type === "session.open")!;
+      openNestedChildren(open.sessionId, harness.emit);
+      expectNestedChildren(events);
+    } finally {
+      await session.close();
+      registry.replace([]);
+    }
+  });
+
   test("gates persistence operations on negotiated provider capabilities", async () => {
     const harness = createProviderHarness({ capabilities: ["session.persistence"] });
     const registry = new PluginAgentClientRegistry(createTestLogger());
@@ -270,6 +538,63 @@ describe("PluginAgentClientRegistry", () => {
 
     registry.replace([]);
     expect(eventsOfType(events, "turn_failed")).toHaveLength(1);
+  });
+
+  test("leaves a completed session without a failure when its plugin provider is removed", async () => {
+    const harness = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const session = await registry.clients()[harness.registration.id]!.createSession({
+      provider: harness.registration.id,
+      cwd: "/workspace",
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.run("hello", { clientMessageId: "completed-message" });
+    expect(eventsOfType(events, "turn_completed")).toHaveLength(1);
+
+    registry.replace([]);
+    await harness.waitForClose();
+
+    expect(eventsOfType(events, "turn_failed")).toEqual([]);
+    await expect(
+      session.startTurn("after reload", { clientMessageId: "after-reload" }),
+    ).rejects.toBeInstanceOf(StaleProviderSessionError);
+  });
+
+  test("fails an accepted turn that has not started when its plugin provider is removed", async () => {
+    const harness = createProviderHarness({
+      handleInput: async (input, emit) => {
+        if (input.type !== "session.prompt") return false;
+        emit({
+          type: "session.prompt_result",
+          sessionId: input.sessionId,
+          clientMessageId: input.prompt.clientMessageId,
+          result: { type: "turn", turnId: "accepted-turn" },
+        });
+        return true;
+      },
+    });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const session = await registry.clients()[harness.registration.id]!.createSession({
+      provider: harness.registration.id,
+      cwd: "/workspace",
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await expect(
+      session.startTurn("hello", { clientMessageId: "accepted-message" }),
+    ).resolves.toEqual({ turnId: "accepted-turn" });
+
+    registry.replace([]);
+    await harness.waitForClose();
+
+    expect(eventsOfType(events, "turn_failed")).toEqual([
+      expect.objectContaining({ error: "Provider connection closed" }),
+    ]);
   });
 
   test("closes a stale session after its plugin provider is replaced", async () => {
@@ -436,4 +761,363 @@ describe("PluginAgentClientRegistry", () => {
     await expect.poll(harness.closeCount).toBe(1);
     expect(harness.inputs.map((input) => input.type)).toContain("session.close");
   });
+});
+
+type RequestKind = "session.open" | "catalog" | "session.configure" | "session.prompt";
+
+async function requestFromClient(client: AgentClient, kind: RequestKind): Promise<unknown> {
+  if (kind === "catalog") return client.fetchCatalog({ scope: "global" });
+  const session = await client.createSession({ provider: client.provider, cwd: "/workspace" });
+  if (kind === "session.open") return session;
+  if (kind === "session.configure") return session.setMode("build");
+  return session.startTurn("hello", { clientMessageId: "pending-message" });
+}
+
+async function withObservedProvider(
+  options: ProviderHarnessOptions,
+  run: (client: AgentClient, registry: PluginAgentClientRegistry) => Promise<void>,
+): Promise<void> {
+  const harness = createProviderHarness(options);
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  const unhandled: unknown[] = [];
+  const observe = (reason: unknown) => unhandled.push(reason);
+  process.on("unhandledRejection", observe);
+  registry.replace([harness.registration]);
+  try {
+    await run(registry.clients()[harness.registration.id]!, registry);
+    await registry.shutdown();
+    await nextTurn();
+    expect(unhandled).toEqual([]);
+  } finally {
+    await registry.shutdown();
+    process.off("unhandledRejection", observe);
+  }
+}
+
+test("commits notices emitted during session open as the initial timeline with stable history timestamps", async () => {
+  await withObservedProvider(
+    {
+      openChildren(sessionId, emit) {
+        emit({
+          type: "session.notice",
+          sessionId,
+          notice: {
+            id: "startup",
+            severity: "warning",
+            title: "Full access",
+            description: "Tools run without asking.",
+          },
+        });
+        emit({
+          type: "session.notice",
+          sessionId,
+          notice: { id: "dismissed", severity: "info", title: "Hidden", dismissed: true },
+        });
+      },
+    },
+    async (client) => {
+      const session = await client.createSession({ provider: client.provider, cwd: "/workspace" });
+      try {
+        expect(session.initialTimeline).toEqual([
+          {
+            timestamp: expect.any(String),
+            item: {
+              type: "notification",
+              level: "warning",
+              message: "Full access\nTools run without asking.",
+            },
+          },
+        ]);
+        const history: AgentStreamEvent[] = [];
+        for await (const event of session.streamHistory()) history.push(event);
+        expect(
+          history.filter(
+            (event) => event.type === "timeline" && event.item.type === "notification",
+          ),
+        ).toEqual([
+          { type: "timeline", provider: client.provider, ...session.initialTimeline![0] },
+        ]);
+      } finally {
+        await session.close();
+      }
+    },
+  );
+});
+
+describe("pending provider responses", () => {
+  test.each<RequestKind>(["session.open", "catalog", "session.configure", "session.prompt"])(
+    "preserves the send error for %s",
+    async (kind) => {
+      const failure = new Error("Provider send failed");
+      await withObservedProvider(
+        {
+          async handleInput(input) {
+            if (input.type === kind) throw failure;
+            return false;
+          },
+        },
+        async (client) => {
+          await expect(requestFromClient(client, kind)).rejects.toBe(failure);
+        },
+      );
+    },
+  );
+
+  test.each([
+    [
+      "catalog",
+      expect.objectContaining({
+        models: [expect.objectContaining({ id: "plugin-model", isDefault: true })],
+        defaultModeId: "build",
+      }),
+    ],
+    ["session.configure", undefined],
+  ] as const)(
+    "contains an early request.failed for %s and permits a successful retry",
+    async (kind, result) => {
+      let failed = false;
+      await withObservedProvider(
+        {
+          async handleInput(input, emit) {
+            if (input.type !== kind || !("requestId" in input) || failed) return false;
+            failed = true;
+            emit({
+              type: "request.failed",
+              requestId: input.requestId,
+              error: { message: "Provider request failed", code: "busy", diagnostic: "retry" },
+            });
+            await nextTurn();
+            return true;
+          },
+        },
+        async (client) => {
+          await expect(requestFromClient(client, kind)).rejects.toMatchObject({
+            message: "Provider request failed",
+            code: "busy",
+            diagnostic: "retry",
+          });
+          await expect(requestFromClient(client, kind)).resolves.toEqual(result);
+        },
+      );
+    },
+  );
+
+  test.each([
+    ["session.open", "Provider session closed"],
+    ["session.configure", "Provider session closed"],
+    ["session.prompt", StaleProviderSessionError],
+  ] as const)("contains session closure while accepting %s", async (kind, error) => {
+    await withObservedProvider(
+      {
+        async handleInput(input, emit) {
+          if (input.type !== kind || !("sessionId" in input)) return false;
+          emit({
+            type: "session.closed",
+            sessionId: input.sessionId,
+            error: { message: "Provider session closed" },
+          });
+          await nextTurn();
+          return true;
+        },
+      },
+      async (client) => {
+        await expect(requestFromClient(client, kind)).rejects.toThrow(error);
+      },
+    );
+  });
+
+  test.each([
+    ["session.open", "Provider connection closed"],
+    ["catalog", "Provider closed"],
+    ["session.configure", "Provider closed"],
+    ["session.prompt", StaleProviderSessionError],
+  ] as const)("contains connection shutdown while accepting %s", async (kind, error) => {
+    let disconnect!: () => Promise<void>;
+    await withObservedProvider(
+      {
+        async handleInput(input) {
+          if (input.type !== kind) return false;
+          await disconnect();
+          await nextTurn();
+          return true;
+        },
+      },
+      async (client, registry) => {
+        disconnect = () => registry.shutdown();
+        await expect(requestFromClient(client, kind)).rejects.toThrow(error);
+      },
+    );
+  });
+
+  test.each([true, false])(
+    "preserves cancellation with acceptance pending: %s",
+    async (pending) => {
+      const controller = new AbortController();
+      const reason = new Error("Catalog refresh cancelled");
+      await withObservedProvider(
+        {
+          async handleInput(input) {
+            if (input.type !== "catalog") return false;
+            if (pending) {
+              controller.abort(reason);
+              await nextTurn();
+            } else {
+              setImmediate(() => controller.abort(reason));
+            }
+            return true;
+          },
+        },
+        async (client) => {
+          await expect(
+            client.fetchCatalog({ scope: "global" }, { signal: controller.signal }),
+          ).rejects.toBe(reason);
+        },
+      );
+    },
+  );
+});
+
+describe("plugin provider launch and status", () => {
+  test("resolves the executable against the provider's PATH override", async () => {
+    const harness = createProviderHarness();
+    const registration: ProviderRegistration = { ...harness.registration, command: ["node"] };
+    const logger = createTestLogger();
+    const registry = new PluginAgentClientRegistry(logger);
+    registry.replace([registration]);
+    try {
+      const definition = registry.definitions()[registration.id]!;
+      const client = definition.createClient(logger, { env: { PATH: "/paseo-nonexistent-bin" } });
+      expect(await client.isAvailable()).toBe(false);
+      expect(await client.getDiagnostic!()).toEqual({ diagnostic: "node not found on PATH" });
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
+  test("strips parent-session and daemon-control variables from session env overlays", async () => {
+    const harness = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    try {
+      const client = registry.clients()[harness.registration.id]!;
+      await client.createSession(
+        { provider: harness.registration.id, cwd: "/workspace" },
+        {
+          env: {
+            SESSION_TOKEN: "session",
+            PASEO_AGENT_ID: "agent",
+            CLAUDECODE: "parent",
+            PASEO_NODE_ENV: "development",
+          },
+        },
+      );
+      const input = harness.inputs.find((value) => value.type === "session.open");
+      expect(input).toMatchObject({
+        config: { env: { SESSION_TOKEN: "session", PASEO_AGENT_ID: "agent" } },
+      });
+      if (input?.type !== "session.open") throw new Error("Expected session.open");
+      expect(input.config.env).not.toHaveProperty("CLAUDECODE");
+      expect(input.config.env).not.toHaveProperty("PASEO_NODE_ENV");
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
+  test("resolves relative executable paths before sending launch data", async () => {
+    const harness = createProviderHarness();
+    const launches: Array<ProviderLaunch | undefined> = [];
+    const registration: ProviderRegistration = {
+      ...harness.registration,
+      command: [relative(process.cwd(), process.execPath)],
+      async connect(request) {
+        launches.push(request.launch);
+        return harness.registration.connect(request);
+      },
+    };
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([registration]);
+    try {
+      await registry.clients()[registration.id]!.fetchCatalog({ scope: "global" });
+      expect(launches).toMatchObject([{ command: process.execPath }]);
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
+  test("a missing executable is unavailable with a diagnostic without connecting", async () => {
+    const harness = createProviderHarness();
+    const registration: ProviderRegistration = {
+      ...harness.registration,
+      command: ["paseo-nonexistent-provider-executable"],
+    };
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([registration]);
+    try {
+      const client = registry.clients()[registration.id]!;
+      expect(await client.isAvailable()).toBe(false);
+      expect(await client.getDiagnostic!()).toEqual({
+        diagnostic: "paseo-nonexistent-provider-executable not found on PATH",
+      });
+      expect(harness.inputs).toEqual([]);
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
+  test.each([
+    { mode: "default" as const },
+    { mode: "append" as const, args: ["extra"] },
+    { mode: "replace" as const, argv: [process.execPath, "replacement"] },
+  ])(
+    "resolves $mode launch and supplies identical data to status, catalogue identity, and connect",
+    async (command) => {
+      const harness = createProviderHarness();
+      const launches: Array<ProviderLaunch | undefined> = [];
+      const registration: ProviderRegistration = {
+        ...harness.registration,
+        command: [process.execPath, "default"],
+        async status(request) {
+          launches.push(request.launch);
+          return { available: true };
+        },
+        async getCatalogCacheKey(options) {
+          launches.push(options.launch);
+          return "shared";
+        },
+        async connect(request) {
+          launches.push(request.launch);
+          return harness.registration.connect(request);
+        },
+      };
+      const logger = createTestLogger();
+      const registry = new PluginAgentClientRegistry(logger);
+      registry.replace([registration]);
+      try {
+        const client = registry.definitions()[registration.id]!.createClient(logger, {
+          command,
+          env: { PLUGIN_SETTING: "custom", CLAUDECODE: "parent" },
+        });
+        expect(await client.isAvailable()).toBe(true);
+        expect(await client.getCatalogCacheKey!({ scope: "global" })).toBe("shared");
+        await client.fetchCatalog({ scope: "global" });
+        let expectedArgs = ["default"];
+        if (command.mode === "replace") expectedArgs = ["replacement"];
+        if (command.mode === "append") expectedArgs = ["default", "extra"];
+        expect(launches).toHaveLength(3);
+        for (const launch of launches) {
+          expect(launch).toMatchObject({
+            command: process.execPath,
+            args: expectedArgs,
+            env: { PLUGIN_SETTING: "custom" },
+          });
+          expect(launch!.env).not.toHaveProperty("CLAUDECODE");
+          expect(launch!.env).not.toHaveProperty("PASEO_NODE_ENV");
+        }
+        expect(launches[0]).toEqual(launches[1]);
+        expect(launches[1]).toEqual(launches[2]);
+      } finally {
+        await registry.shutdown();
+      }
+    },
+  );
 });

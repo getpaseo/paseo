@@ -90,17 +90,17 @@ An environment is a complete named object. A step selects its name; objects are 
 
 Each agent is one complete provider configuration:
 
-| Field              | Required | Notes                                                            |
-| ------------------ | -------- | ---------------------------------------------------------------- |
-| `provider`         | yes      | Provider ID.                                                     |
-| `model`            | no       | Provider model ID.                                               |
-| `mode`             | no       | Paseo mode ID.                                                   |
-| `thinkingOptionId` | no       | Provider thinking option.                                        |
-| `options`          | no       | JSON-safe provider-native options, preserving names and nesting. |
+| Field              | Required | Notes                                                                  |
+| ------------------ | -------- | ---------------------------------------------------------------------- |
+| `provider`         | yes      | Provider ID. Hub runs unattended, so `claude`, `codex`, or `opencode`. |
+| `model`            | no       | Provider model ID.                                                     |
+| `mode`             | no       | Paseo mode ID.                                                         |
+| `thinkingOptionId` | no       | Provider thinking option.                                              |
+| `options`          | no       | JSON-safe provider-native options, preserving names and nesting.       |
 
 A named selection preserves the complete object, including structured options. Named agents have no parent, patch, or per-step override.
 
-Hub passes `model`, `mode`, `thinkingOptionId`, and `options` to the Paseo daemon without renaming or flattening provider fields. The selected daemon validates them against its current provider schema; Hub does not translate provider-native options.
+Hub passes `model`, `mode`, `thinkingOptionId`, and `options` to the Paseo daemon without renaming or flattening provider fields. The selected daemon validates them against its current provider schema when the trigger is saved or deployed, so a value it does not offer is refused then rather than at the first run; Hub does not translate provider-native options. See [Saving checks the agent against the daemon](/docs/hub/triggers#saving-checks-the-agent-against-the-daemon).
 
 ## Workflow files
 

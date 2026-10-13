@@ -2,6 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { configDefaults, defineConfig } from "vitest/config";
 
+// React's test APIs require its development build, even in a production shell.
+process.env.NODE_ENV = "test";
+
 const appDir = path.resolve(__dirname, "packages/app");
 const appNodeModules = path.resolve(appDir, "node_modules");
 const rootNodeModules = path.resolve(__dirname, "node_modules");

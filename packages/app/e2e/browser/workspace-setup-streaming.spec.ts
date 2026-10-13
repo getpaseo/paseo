@@ -203,6 +203,41 @@ test.describe("Workspace setup streaming", () => {
     }
   });
 
+  test("keeps a workspace usable when its setup config cannot be parsed", async ({ page }) => {
+    const client = await connectWorkspaceSetupClient();
+    const repo = await createTempGitRepo("setup-invalid-config-", {
+      files: [{ path: "paseo.json", content: "{ invalid json\n" }],
+    });
+
+    try {
+      await seedProjectForWorkspaceSetup(client, repo.path);
+      const failed = waitForWorkspaceSetupProgress(
+        client,
+        (payload) => payload.status === "failed",
+      );
+      const workspace = await createWorkspaceThroughDaemon(client, {
+        cwd: repo.path,
+        worktreeSlug: "workspace-setup-invalid-config",
+      });
+      const failedPayload = await failed;
+      expect(failedPayload.error).toContain("Failed to parse paseo.json");
+      expect(failedPayload.detail.commands).toEqual([]);
+
+      await openHomeWithProject(page, repo.path);
+      await navigateToWorkspaceViaSidebar(page, workspace.id);
+      await expectFailedSetupTabSeededInMainPane(page, workspace.id);
+      await expect(page.getByText(/Failed to parse paseo\.json at/)).toBeVisible();
+      await closeSetupTab(page, workspace.id);
+      await clickNewChat(page);
+      await expectComposerVisible(page);
+      await openFileExplorer(page);
+      await expectExplorerEntryVisible(page, "paseo.json");
+    } finally {
+      await client.close();
+      await repo.cleanup();
+    }
+  });
+
   daemonTest("emits a completed empty snapshot when no setup commands exist", async () => {
     const client = await connectWorkspaceSetupClient();
     const repo = await createTempGitRepo("setup-none-");

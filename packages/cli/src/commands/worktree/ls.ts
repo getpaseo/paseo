@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import { basename } from "node:path";
 import { connectToDaemon } from "../../utils/client.js";
+import { resolveRepositoryDirectory } from "./repository-directory.js";
 import type { CommandOptions, ListResult, OutputSchema, CommandError } from "../../output/index.js";
 
 /** Worktree list item for display */
@@ -40,12 +41,14 @@ export type WorktreeLsResult = ListResult<WorktreeListItem>;
 
 export interface WorktreeLsOptions extends CommandOptions {
   host?: string;
+  cwd?: string;
 }
 
 export async function runLsCommand(
   options: WorktreeLsOptions,
   _command: Command,
 ): Promise<WorktreeLsResult> {
+  const cwd = resolveRepositoryDirectory(options);
   const client = await connectToDaemon({ target: options.daemonTarget });
 
   try {
@@ -53,7 +56,7 @@ export async function runLsCommand(
     const agents = agentsPayload.entries.map((entry) => entry.agent);
 
     // Get worktree list from daemon
-    const response = await client.getPaseoWorktreeList({});
+    const response = await client.getPaseoWorktreeList({ cwd });
 
     await client.close();
 

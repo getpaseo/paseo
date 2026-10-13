@@ -15,7 +15,7 @@ const daemon = await startTestDaemon({
 
 try {
   {
-    console.log("Test 1: status reports password requirement without marking daemon unreachable");
+    console.log("Test 1: local status uses the daemon's local credential");
     const result = await runLocalPaseo(["daemon", "status", "--json"], {
       PASEO_HOME: daemon.paseoHome,
       PASEO_HOST: "",
@@ -26,12 +26,11 @@ try {
     const status = JSON.parse(result.stdout);
 
     assert.strictEqual(status.localDaemon, "running");
-    assert.strictEqual(status.connectedDaemon, "auth_required");
+    assert.strictEqual(status.connectedDaemon, "reachable");
     assert(!("runningAgents" in status), "status should not fetch agent counts");
     assert(!("idleAgents" in status), "status should not fetch agent counts");
-    assert.match(status.note, /Password required/i);
-    assert.doesNotMatch(status.note, /not reachable/i);
-    console.log("✓ missing password reports auth_required\n");
+    assert.doesNotMatch(status.note ?? "", /Password required|not reachable/i);
+    console.log("✓ missing password uses local credential\n");
   }
 
   {

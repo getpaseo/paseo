@@ -33,8 +33,8 @@ export interface UseChatOutlineInput {
   enabled: boolean;
   viewportRef: RefObject<StreamViewportHandle | null>;
   onJumpError: () => void;
-  visibleItemIds?: ReadonlySet<string>;
-  revealLoadedItem?: (itemId: string) => boolean;
+  visibleMessageIds?: ReadonlySet<string>;
+  revealLoadedMessage?: (messageId: string) => boolean;
 }
 
 export interface ChatOutline {
@@ -53,8 +53,8 @@ export function useChatOutline({
   enabled,
   viewportRef,
   onJumpError,
-  visibleItemIds,
-  revealLoadedItem,
+  visibleMessageIds,
+  revealLoadedMessage,
 }: UseChatOutlineInput): ChatOutline {
   const [index, setIndex] = useState<AgentTimelinePromptIndexPayload | null>(null);
   const [pendingJump, setPendingJump] = useState<PendingPromptJump | null>(null);
@@ -77,8 +77,10 @@ export function useChatOutline({
 
   useEffect(() => setIndex(null), [agentId, enabled, serverId, timelineEpoch]);
 
+  // Only a timeline the daemon has served can be indexed. A draft's optimistic stream has no
+  // epoch, and its id names no agent the daemon knows.
   useEffect(() => {
-    if (!isWeb || !enabled) {
+    if (!isWeb || !enabled || timelineEpoch === null) {
       setIndex(null);
       return;
     }
@@ -136,8 +138,8 @@ export function useChatOutline({
     const target = loadedItems.find((item) => item.timelineCursor?.seq === pendingJump.seq);
     if (target) {
       if (pendingJump.hasScrolled) return;
-      if (visibleItemIds?.has(target.id) === false) {
-        revealLoadedItem?.(target.id);
+      if (visibleMessageIds?.has(target.id) === false) {
+        revealLoadedMessage?.(target.id);
         return;
       }
       viewportRef.current?.scrollToMessage?.(target.id);
@@ -148,7 +150,7 @@ export function useChatOutline({
       return;
     }
     if (pendingJump.fetchSettled) setPendingJump(null);
-  }, [loadedItems, pendingJump, revealLoadedItem, viewportRef, visibleItemIds]);
+  }, [loadedItems, pendingJump, revealLoadedMessage, viewportRef, visibleMessageIds]);
 
   const jumpToPrompt = useCallback(
     (seq: number) => {
@@ -156,7 +158,7 @@ export function useChatOutline({
       setPendingJump(null);
       const loaded = loadedItems.find((item) => item.timelineCursor?.seq === seq);
       if (loaded) {
-        if (revealLoadedItem?.(loaded.id)) {
+        if (revealLoadedMessage?.(loaded.id)) {
           const requestId = nextJumpRequestIdRef.current;
           setPendingJump({ requestId, seq, fetchSettled: true, hasScrolled: false });
           return;
@@ -180,7 +182,7 @@ export function useChatOutline({
           });
         });
     },
-    [agentId, index, loadedItems, onJumpError, revealLoadedItem, serverId, viewportRef],
+    [agentId, index, loadedItems, onJumpError, revealLoadedMessage, serverId, viewportRef],
   );
 
   return { prompts, activePrompt, jumpToPrompt, reportReadingPosition };

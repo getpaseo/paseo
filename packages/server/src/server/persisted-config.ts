@@ -1,3 +1,4 @@
+import { PluginRegistriesSchema } from "@getpaseo/protocol/plugin-registry";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
@@ -9,13 +10,9 @@ import {
 } from "./agent/provider-launch-config.js";
 import type { AgentProviderRuntimeSettingsMap } from "./agent/provider-launch-config.js";
 import { ensurePrivateFile, writePrivateFileAtomicSync } from "./private-files.js";
-import {
-  AgentProfileSchema,
-  AgentSkillSelectionSchema,
-  PluginIdSchema,
-  PluginSourceSchema,
-  TerminalProfileSchema,
-} from "@getpaseo/protocol/messages";
+import { AgentProfileSchema, AgentSkillSelectionSchema } from "@getpaseo/protocol/agent-profile";
+import { PluginIdSchema, PluginSourceSchema } from "@getpaseo/protocol/plugin-config";
+import { TerminalProfileSchema } from "@getpaseo/protocol/terminal-profile";
 import { PaseoServicePortAllocationSchema } from "@getpaseo/protocol/paseo-config-schema";
 
 export const LogLevelSchema = z.enum(["trace", "debug", "info", "warn", "error", "fatal"]);
@@ -240,7 +237,12 @@ export const PersistedConfigSchema = z
         listen: z.string().optional(),
         hostnames: z.union([z.literal(true), z.array(z.string())]).optional(),
         allowedHosts: z.union([z.literal(true), z.array(z.string())]).optional(),
-        trustedProxies: z.union([z.literal(true), z.array(z.string())]).optional(),
+        trustedProxies: z
+          .union([z.literal(true), z.array(z.string())])
+          .optional()
+          .describe(
+            'Express trusted proxy setting for X-Forwarded-* headers. Defaults to ["loopback"]. Use true only when the final trusted proxy overwrites client-supplied forwarded headers.',
+          ),
         mcp: z
           .object({
             enabled: z.boolean().optional(),
@@ -287,9 +289,22 @@ export const PersistedConfigSchema = z
             // COMPAT(serviceProxyEnabled): added 2026-06-02, remove after 2026-12-02.
             // Parsed only to suppress optional public/listen layers for old configs;
             // localhost service proxying remains always enabled.
-            enabled: z.boolean().optional(),
-            listen: z.string().optional(),
-            publicBaseUrl: z.url().optional(),
+            enabled: z
+              .boolean()
+              .optional()
+              .describe(
+                "Compatibility shim. false suppresses optional service proxy listen/public layers only; localhost proxying remains enabled.",
+              ),
+            listen: z
+              .string()
+              .optional()
+              .describe(
+                "Optional service-only listener address. Presence enables the standalone service proxy listener.",
+              ),
+            publicBaseUrl: z
+              .url()
+              .optional()
+              .describe("Optional public base URL for service host aliases."),
           })
           .strict()
           .optional(),
@@ -310,6 +325,7 @@ export const PersistedConfigSchema = z
       .optional(),
 
     providers: ProvidersSchema.optional(),
+    pluginRegistries: PluginRegistriesSchema.optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
     worktrees: WorktreesConfigSchema.optional(),
@@ -440,27 +456,9 @@ export function loadPersistedConfig(paseoHome: string, logger?: LoggerLike): Per
     });
   }
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`[Config] Invalid JSON in ${configPath}: ${message}`, {
-      cause: err,
-    });
-  }
-
-  const migrated = stripRemovedConfigFields(parsed);
-  const result = PersistedConfigSchema.safeParse(migrated);
-  if (!result.success) {
-    const issues = result.error.issues
-      .map((i) => `  - ${i.path.join(".")}: ${i.message}`)
-      .join("\n");
-    throw new Error(`[Config] Invalid config in ${configPath}:\n${issues}`);
-  }
-
+  const config = parseConfigFile(configPath, raw);
   log?.info(`Loaded from ${configPath}`);
-  return result.data as PersistedConfig;
+  return config;
 }
 
 /** Observe the file without initializing a home, identity, or default configuration. */
@@ -468,15 +466,42 @@ export function readPersistedConfig(
   paseoHome: string,
   options: { defaultsIfMissing?: boolean } = {},
 ): PersistedConfig {
+  const configPath = getConfigPath(paseoHome);
   let raw: string;
   try {
-    raw = readFileSync(getConfigPath(paseoHome), "utf8");
+    raw = readFileSync(configPath, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT")
       return options.defaultsIfMissing ? structuredClone(DEFAULT_PERSISTED_CONFIG) : {};
     throw error;
   }
-  return PersistedConfigSchema.parse(stripRemovedConfigFields(JSON.parse(raw))) as PersistedConfig;
+  return parseConfigFile(configPath, raw);
+}
+
+function parseConfigFile(configPath: string, raw: string): PersistedConfig {
+  let parsed: unknown;
+  try {
+    parsed = parseConfigText(raw);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`[Config] Invalid JSON in ${configPath}: ${message}`, {
+      cause: err,
+    });
+  }
+
+  const result = PersistedConfigSchema.safeParse(stripRemovedConfigFields(parsed));
+  if (!result.success) {
+    const issues = result.error.issues
+      .map((i) => `  - ${i.path.join(".")}: ${i.message}`)
+      .join("\n");
+    throw new Error(`[Config] Invalid config in ${configPath}:\n${issues}`);
+  }
+  return result.data as PersistedConfig;
+}
+
+/** Editors such as Windows Notepad save UTF-8 with a byte order mark, which JSON.parse rejects. */
+function parseConfigText(raw: string): unknown {
+  return JSON.parse(raw.replace(/^\uFEFF/, ""));
 }
 
 function configPathParts(field: string): string[] {

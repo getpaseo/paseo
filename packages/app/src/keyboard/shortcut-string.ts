@@ -245,8 +245,17 @@ export function heldModifiersFromEvent(event: KeyboardEvent): string | null {
   return parts.length > 0 ? parts.join("+") : null;
 }
 
+/**
+ * Whether a keydown carries a modifier key itself rather than a key pressed
+ * with one. The browser emits one of these before every combo that holds a
+ * modifier, and it is the prefix of a combo, never a combo of its own.
+ */
+export function isModifierKeyCode(code: string): boolean {
+  return MODIFIER_CODES.has(code);
+}
+
 export function keyboardEventToComboString(event: KeyboardEvent): string | null {
-  if (MODIFIER_CODES.has(event.code)) {
+  if (isModifierKeyCode(event.code)) {
     return null;
   }
 
@@ -257,7 +266,16 @@ export function keyboardEventToComboString(event: KeyboardEvent): string | null 
   if (event.shiftKey) parts.push("Shift");
   if (event.metaKey) parts.push("Cmd");
 
-  const humanKey = CODE_TO_KEY[event.code];
+  // Capture the same logical character that dispatch matches. Keep the code
+  // fallback for named keys and Option combinations whose key is rewritten.
+  const eventKey = event.key.toLowerCase();
+  const logicalKey = Object.entries(KEY_MAP).find(
+    ([, mapping]) =>
+      mapping.key?.length === 1 &&
+      (mapping.key.toLowerCase() === eventKey ||
+        (event.shiftKey && mapping.shiftedKey === event.key)),
+  )?.[0];
+  const humanKey = logicalKey ?? CODE_TO_KEY[event.code];
   if (humanKey) {
     parts.push(humanKey);
   } else {

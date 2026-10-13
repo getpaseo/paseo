@@ -634,6 +634,72 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
     expect(events[0]).toMatchObject({ id: TOOL_USE_ID });
   });
 
+  test.each(["Agent", "Task"] as const)(
+    "labels a background %s call's card with its type and task after a restart",
+    async (toolName) => {
+      writeSession({
+        parentLines: [
+          parentEntry([
+            {
+              type: "tool_use",
+              id: TOOL_USE_ID,
+              name: toolName,
+              input: {
+                subagent_type: "general-purpose",
+                description: "Count files here",
+                prompt: "Run ls and reply with the number of entries.",
+              },
+            },
+          ]),
+          JSON.stringify({
+            type: "user",
+            sessionId: "replay-session",
+            timestamp: "2026-07-26T06:27:48.000Z",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: TOOL_USE_ID,
+                  content: [
+                    {
+                      type: "text",
+                      text: `Async agent launched successfully.\nagentId: ${AGENT_ID}`,
+                    },
+                  ],
+                },
+              ],
+            },
+            toolUseResult: { isAsync: true, status: "async_launched", agentId: AGENT_ID },
+          }),
+        ],
+        meta: JSON.stringify({
+          agentType: "general-purpose",
+          description: "Count files here",
+          toolUseId: TOOL_USE_ID,
+          spawnDepth: 1,
+          requestShape: "background",
+        }),
+      });
+
+      const cards = (await replayEvents()).flatMap((event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.callId === TOOL_USE_ID
+          ? [event.item]
+          : [],
+      );
+      expect(cards.at(-1)).toMatchObject({
+        status: "completed",
+        detail: {
+          type: "sub_agent",
+          subAgentType: "general-purpose",
+          description: "Count files here",
+        },
+      });
+    },
+  );
+
   test("replays the subagent's own transcript onto its timeline", async () => {
     writeSession({
       parentLines: [taskToolUse(), taskToolResult()],
@@ -645,5 +711,57 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
       .filter((event) => event.type === "timeline");
     expect(timeline.length).toBeGreaterThan(0);
     expect(timeline[0]).toMatchObject({ id: TOOL_USE_ID });
+  });
+
+  test("replays a SubagentHandback report as the subagent's final message", async () => {
+    const handbackId = "toolu_handback";
+    const report = "## Verdict\n\n- **Coherent**";
+    writeSession({
+      parentLines: [taskToolUse(), taskToolResult()],
+      meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+      sidechainLines: [
+        JSON.stringify({
+          type: "assistant",
+          isSidechain: true,
+          agentId: AGENT_ID,
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: handbackId,
+                name: "SubagentHandback",
+                input: { message: report },
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          type: "user",
+          isSidechain: true,
+          agentId: AGENT_ID,
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: handbackId,
+                content: [
+                  {
+                    type: "text",
+                    text: '{"success":true,"message":"Report delivered to your caller."}',
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      ],
+    });
+
+    const items = (await replayDescriptors()).flatMap((event) =>
+      event.event.type === "timeline" ? [event.event.item] : [],
+    );
+    expect(items).toEqual([{ type: "assistant_message", text: report }]);
   });
 });

@@ -9,7 +9,7 @@ import {
   openSubPage,
   type MenuPath,
 } from "./menu-navigation";
-import type { Rect } from "./menu-anchor";
+import type { Rect } from "../anchor";
 
 /**
  * How a menu draws itself once it is open.

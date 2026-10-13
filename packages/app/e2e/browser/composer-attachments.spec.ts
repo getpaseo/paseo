@@ -38,6 +38,7 @@ import { seedWorkspace } from "../support/helpers/seed-client";
 import { hasGithubAuth, createTempGithubRepo } from "../support/helpers/github-fixtures";
 import { getServerId } from "../support/helpers/server-id";
 import { openFileExplorer } from "../support/helpers/file-explorer";
+import { attachFileFromMenu, controlFileUploadCompletion } from "../support/helpers/composer";
 
 const MINIMAL_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
@@ -52,6 +53,31 @@ const TEST_JSON = {
 };
 
 test.describe("Composer attachments", () => {
+  test("selected file shows a loading attachment until upload is acknowledged", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const upload = await controlFileUploadCompletion(page);
+    const workspace = await withWorkspace({ prefix: "attach-upload-pending-" });
+    await workspace.navigateTo();
+    await clickNewChat(page);
+    await expectComposerVisible(page);
+
+    upload.hold();
+    await attachFileFromMenu(page, TEST_JSON);
+    await upload.waitForUpload();
+
+    const pending = page.getByTestId("composer-pending-file-attachment");
+    await expect(pending).toContainText(TEST_JSON.name);
+    await expect(pending.getByRole("progressbar")).toBeVisible();
+    await expect(page.getByTestId("composer-file-attachment-pill")).toHaveCount(0);
+
+    upload.complete();
+    await expect(pending).toHaveCount(0);
+    await expect(page.getByTestId("composer-file-attachment-pill")).toContainText(TEST_JSON.name);
+    await expectComposerEditable(page);
+  });
+
   test("compact Plus menu aligns attachment rows with its sheet title", async ({
     page,
     withWorkspace,

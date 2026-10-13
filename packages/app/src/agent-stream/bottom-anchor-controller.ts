@@ -726,7 +726,7 @@ export function useBottomAnchorController(input: {
   routeRequest: BottomAnchorRouteRequest | null;
   isAuthoritativeHistoryReady: boolean;
   renderStrategy: string;
-  transportBehavior: BottomAnchorTransportBehavior;
+  getTransportBehavior: () => BottomAnchorTransportBehavior;
   getMeasurementState: () => ControllerMeasurementState;
   isNearBottom: () => boolean;
   scrollToBottom: (animated: boolean) => void;
@@ -735,7 +735,7 @@ export function useBottomAnchorController(input: {
   const agentIdRef = useRef(input.agentId);
   const readinessRef = useRef(input.isAuthoritativeHistoryReady);
   const renderStrategyRef = useRef(input.renderStrategy);
-  const transportBehaviorRef = useRef(input.transportBehavior);
+  const getTransportBehaviorRef = useRef(input.getTransportBehavior);
   const getMeasurementStateRef = useRef(input.getMeasurementState);
   const isNearBottomRef = useRef(input.isNearBottom);
   const scrollToBottomRef = useRef(input.scrollToBottom);
@@ -744,7 +744,7 @@ export function useBottomAnchorController(input: {
   agentIdRef.current = input.agentId;
   readinessRef.current = input.isAuthoritativeHistoryReady;
   renderStrategyRef.current = input.renderStrategy;
-  transportBehaviorRef.current = input.transportBehavior;
+  getTransportBehaviorRef.current = input.getTransportBehavior;
   getMeasurementStateRef.current = input.getMeasurementState;
   isNearBottomRef.current = input.isNearBottom;
   scrollToBottomRef.current = input.scrollToBottom;
@@ -754,7 +754,7 @@ export function useBottomAnchorController(input: {
       getAgentId: () => agentIdRef.current,
       getIsAuthoritativeHistoryReady: () => readinessRef.current,
       getRenderStrategy: () => renderStrategyRef.current,
-      getTransportBehavior: () => transportBehaviorRef.current,
+      getTransportBehavior: () => getTransportBehaviorRef.current(),
       getMeasurementState: () => getMeasurementStateRef.current(),
       isNearBottom: () => isNearBottomRef.current(),
       scrollToBottom: (animated) => scrollToBottomRef.current(animated),

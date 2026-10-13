@@ -22,6 +22,7 @@ type NewWorkspaceDaemonClient = Pick<
   | "getPaseoWorktreeList"
   | "getDaemonConfig"
   | "installDirectoryPlugin"
+  | "installPluginSource"
   | "disablePlugin"
   | "enablePlugin"
   | "inspectWorkspaceRecovery"
@@ -197,7 +198,8 @@ export async function openNewWorkspaceComposer(
 }
 
 export async function openGlobalNewWorkspaceComposer(page: Page): Promise<void> {
-  await page.getByTestId("sidebar-global-new-workspace").click();
+  // The shell keeps a hidden copy of the other layout's sidebar mounted.
+  await page.locator('[data-testid="sidebar-global-new-workspace"]:visible').first().click();
 
   await expect(page).toHaveURL(/\/new(?:\?.*)?$/, {
     timeout: 30_000,

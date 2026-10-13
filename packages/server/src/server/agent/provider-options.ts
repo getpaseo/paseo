@@ -36,11 +36,11 @@ export class ToolPolicyUnsupportedError extends Error {
   }
 }
 
-export function validateProviderOptions(
+export function validateProviderOptions<T extends ProviderOptions>(
   provider: string,
-  schema: z.ZodType<ProviderOptions>,
+  schema: z.ZodType<T>,
   options: ProviderOptions | undefined,
-): ProviderOptions | undefined {
+): T | undefined {
   if (options === undefined) return undefined;
   const parsed = schema.safeParse(options);
   if (parsed.success) return parsed.data;
@@ -74,4 +74,32 @@ function formatProviderOptionPath(path: Array<string | number>): string {
       ? `${formatted}.${segment}`
       : `${formatted}[${JSON.stringify(segment)}]`;
   }, "providerOptions");
+}
+
+/** Plain objects merge recursively; all other values replace the base value. */
+export function mergeProviderOptions(
+  base: ProviderOptions | undefined,
+  override: ProviderOptions | undefined,
+): ProviderOptions | undefined {
+  if (base === undefined && override === undefined) return undefined;
+  const merged: ProviderOptions = { ...base };
+  for (const [key, value] of Object.entries(override ?? {})) {
+    const previous = merged[key];
+    Object.defineProperty(merged, key, {
+      value:
+        isPlainObject(previous) && isPlainObject(value)
+          ? mergeProviderOptions(previous, value)
+          : value,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return merged;
+}
+
+function isPlainObject(value: unknown): value is ProviderOptions {
+  if (value === null || typeof value !== "object") return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
