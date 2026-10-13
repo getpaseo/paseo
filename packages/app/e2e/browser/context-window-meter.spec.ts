@@ -454,6 +454,7 @@ test("context details stay open while the chat streams", async ({ page }) => {
     await trigger.focus();
     const details = contextWindowDetails(page);
     await expect(details).toBeVisible();
+    await expect(stop).toBeVisible();
     await qaScreenshot(page, "context-details-while-streaming");
 
     await expect(stop).toHaveCount(0, { timeout: 30_000 });
