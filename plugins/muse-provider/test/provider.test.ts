@@ -1259,7 +1259,7 @@ for (const variant of ["tool", "dedicated", "workflow"]) {
 test("subagent children are not projected when session.subsession is not negotiated", async () => {
   const h = await harness(
     "subagent",
-    {},
+    { MUSE_TEST_CHILD: "tool" },
     undefined,
     PROVIDER_CAPABILITIES.filter((capability) => capability !== "session.subsession"),
   );
