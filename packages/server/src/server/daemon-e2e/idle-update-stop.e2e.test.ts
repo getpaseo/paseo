@@ -19,7 +19,8 @@ test("a daemon that cannot stop itself declines an idle stop and keeps accepting
       cwd: daemon.paseoHome,
       title: "Created after a declined idle stop",
     });
-    expect(agent.lifecycle).not.toBe("error");
+    const agents = await client.fetchAgents();
+    expect(agents.entries.map((entry) => entry.agent.id)).toContain(agent.id);
   } finally {
     await client.close();
     await daemon.close();

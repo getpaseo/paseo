@@ -10916,6 +10916,46 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
   }
 });
 
+test("a daemon-handled command keeps an idle stop out until it finishes", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-out-of-band-idle-"));
+  const commandFinished = deferred<void>();
+
+  class SlowCommandSession extends TestAgentSession {
+    override tryHandleOutOfBand(prompt: AgentPromptInput) {
+      if (prompt !== "/compact") return null;
+      return { run: async () => commandFinished.promise };
+    }
+  }
+
+  class SlowCommandClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new SlowCommandSession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new SlowCommandClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    // Let the registration settle, so only the command can make the claim fail.
+    await manager.flushForShutdown();
+    expect(manager.tryRunOutOfBand(snapshot.id, "/compact")).toBe(true);
+
+    expect(manager.tryClaimIdleShutdown()).toBe(false);
+    commandFinished.resolve();
+
+    await vi.waitFor(() => expect(manager.tryClaimIdleShutdown()).toBe(true));
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("authoritative timeline records a daemon-handled submitted prompt before its output", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-daemon-handled-prompt-"));
   const storagePath = join(workdir, "agents");
