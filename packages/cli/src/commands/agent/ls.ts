@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { connectToDaemon } from "../../utils/client.js";
 import type { CommandOptions, ListResult, OutputSchema, CommandError } from "../../output/index.js";
 import { collectMultiple } from "../../utils/command-options.js";
@@ -172,6 +173,33 @@ export function buildAgentLsFetchOptions(
  * - `paseo agent ls -a` → all agents, including archived and background
  * - `paseo agent ls -ag` → global agents, including archived
  */
+/**
+ * Fetch every agent the daemon can return for the given options.
+ *
+ * The daemon paginates with a fixed `page.limit` (200) so a single
+ * `fetchAgents` call only sees the first page. Without this loop
+ * `paseo agent ls` would silently truncate any workspace that holds more
+ * than one page of agents, see getpaseo/paseo#6031.
+ */
+async function fetchAllAgents(
+  client: DaemonClient,
+  fetchOptions: FetchAgentsOptions,
+): Promise<AgentSnapshotPayload[]> {
+  const agents: AgentSnapshotPayload[] = [];
+  let cursor: string | undefined;
+  do {
+    const payload = await client.fetchAgents({
+      ...fetchOptions,
+      ...(cursor ? { page: { limit: 200, cursor } } : { page: { limit: 200 } }),
+    });
+    for (const entry of payload.entries) {
+      agents.push(entry.agent);
+    }
+    cursor = payload.pageInfo.nextCursor ?? undefined;
+  } while (cursor);
+  return agents;
+}
+
 export async function runLsCommand(
   options: AgentLsOptions,
   _command: Command,
@@ -189,8 +217,7 @@ export async function runLsCommand(
     }
 
     const labelFilters = parseLabelFilters(options.label);
-    const fetchPayload = await client.fetchAgents(buildAgentLsFetchOptions(options));
-    let agents = fetchPayload.entries.map((entry) => entry.agent);
+    let agents = await fetchAllAgents(client, buildAgentLsFetchOptions(options));
 
     // By default, exclude archived agents. `-a` includes them.
     if (!options.all) {
