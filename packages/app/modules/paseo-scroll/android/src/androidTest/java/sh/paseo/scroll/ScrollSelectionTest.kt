@@ -20,7 +20,24 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class ScrollSelectionTest {
-  @Test fun focusingSelectableTextKeepsInvertedViewportStill() = withScroll(inverted = true) { scroll, text ->
+  @Test fun focusingSelectableTextKeepsInvertedViewportStill() =
+    withScroll(Inversion.NegativeScale, ::focusStays)
+
+  @Test fun focusingSelectableTextKeepsHalfTurnViewportStill() =
+    withScroll(Inversion.HalfTurn, ::focusStays)
+
+  @Test fun selectingTextKeepsInvertedViewportStill() =
+    withScroll(Inversion.NegativeScale, ::selectionStays)
+
+  @Test fun selectingTextKeepsHalfTurnViewportStill() =
+    withScroll(Inversion.HalfTurn, ::selectionStays)
+
+  @Test fun explicitScrollCommandsStillMoveInvertedViewport() = withScroll(Inversion.NegativeScale) { scroll, _ ->
+    scroll.scrollTo(0, 600)
+    assertEquals(600, scroll.scrollY)
+  }
+
+  private fun focusStays(scroll: ReactScrollView, text: TextView) {
     val before = scroll.scrollY
     assertTrue(text.requestFocus())
     assertSame(text, scroll.findFocus())
@@ -28,7 +45,7 @@ class ScrollSelectionTest {
     assertTrue(text.isTextSelectable)
   }
 
-  @Test fun selectingTextKeepsInvertedViewportStill() = withScroll(inverted = true) { scroll, text ->
+  private fun selectionStays(scroll: ReactScrollView, text: TextView) {
     val before = scroll.scrollY
     Selection.setSelection(text.text as Spannable, 0, 8)
     text.requestRectangleOnScreen(Rect(0, 0, 80, 40), true)
@@ -36,18 +53,15 @@ class ScrollSelectionTest {
     assertEquals("Selectab", text.text.subSequence(text.selectionStart, text.selectionEnd).toString())
   }
 
-  @Test fun explicitScrollCommandsStillMoveInvertedViewport() = withScroll(inverted = true) { scroll, _ ->
-    scroll.scrollTo(0, 600)
-    assertEquals(600, scroll.scrollY)
-  }
-
-  @Test fun ordinaryScrollViewsStillRevealSelectedText() = withScroll(inverted = false) { scroll, text ->
+  @Test fun ordinaryScrollViewsStillRevealSelectedText() = withScroll(Inversion.None) { scroll, text ->
     val before = scroll.scrollY
     text.requestRectangleOnScreen(Rect(0, 0, 80, 40), true)
     assertNotEquals(before, scroll.scrollY)
   }
 
-  private fun withScroll(inverted: Boolean, check: (ReactScrollView, TextView) -> Unit) {
+  private enum class Inversion { None, NegativeScale, HalfTurn }
+
+  private fun withScroll(inversion: Inversion, check: (ReactScrollView, TextView) -> Unit) {
     val instrumentation = InstrumentationRegistry.getInstrumentation()
     instrumentation.runOnMainSync {
       val appContext = instrumentation.targetContext
@@ -56,7 +70,22 @@ class ScrollSelectionTest {
       val context = ThemedReactContext(reactContext, appContext)
       val manager = PaseoScrollPackage().createViewManager(reactContext, ReactScrollViewManager.REACT_CLASS) as ReactScrollViewManager
       val scroll = manager.createViewInstance(context)
-      scroll.scaleY = if (inverted) -1f else 1f
+      // Android's production inverted list is `transform: [{scale: -1}]`, which React Native
+      // applies as a 180° rotation and a positive scale. `scaleY: -1` is the other flip.
+      when (inversion) {
+        Inversion.None -> {
+          scroll.scaleY = 1f
+          scroll.rotation = 0f
+        }
+        Inversion.NegativeScale -> {
+          scroll.scaleY = -1f
+          scroll.rotation = 0f
+        }
+        Inversion.HalfTurn -> {
+          scroll.scaleY = 1f
+          scroll.rotation = 180f
+        }
+      }
       val content = FrameLayout(context)
       val text = TextView(context).apply {
         setText("Selectable timeline text", TextView.BufferType.SPANNABLE)

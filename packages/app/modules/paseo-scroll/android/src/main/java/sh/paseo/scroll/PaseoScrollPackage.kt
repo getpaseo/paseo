@@ -9,6 +9,7 @@ import com.facebook.react.uimanager.ThemedReactContext
 import com.facebook.react.uimanager.ViewManager
 import com.facebook.react.views.scroll.ReactScrollView
 import com.facebook.react.views.scroll.ReactScrollViewManager
+import kotlin.math.abs
 
 /** Keeps RN's scroll props, commands, events, and Fabric component unchanged. */
 class PaseoScrollPackage : ReactPackage, ViewManagerOnDemandReactPackage {
@@ -31,5 +32,15 @@ private class PaseoScrollView(context: ThemedReactContext) : ReactScrollView(con
   // Its coordinates ignore inversion. Keep focus/selection bookkeeping, but leave timeline
   // movement to user gestures and explicit scroll commands.
   override fun computeScrollDeltaToGetChildRectOnScreen(rect: Rect): Int =
-    if (scaleY < 0) 0 else super.computeScrollDeltaToGetChildRectOnScreen(rect)
+    if (isVerticallyInverted()) 0 else super.computeScrollDeltaToGetChildRectOnScreen(rect)
+
+  // Android's inverted list is `transform: [{scale: -1}]`. React Native decomposes that
+  // uniform scale into a 180° rotation and a positive scale, so `scaleY < 0` never matches
+  // and selecting text scrolls the timeline. `scaleY: -1` still arrives as a negative scale.
+  // One of those flips the list; both together do not.
+  private fun isVerticallyInverted(): Boolean {
+    val turns = ((rotation % 360f) + 360f) % 360f
+    val halfTurn = abs(turns - 180f) <= 1f
+    return (scaleY < 0f) != halfTurn
+  }
 }
