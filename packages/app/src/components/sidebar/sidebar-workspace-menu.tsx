@@ -195,7 +195,7 @@ function SidebarWorkspaceMenuItems({
           leading={markAsReadLeadingIcon}
           onSelect={onMarkAsRead}
         >
-          Mark as read
+          {t("sidebar.workspace.actions.markAsRead")}
         </WorkspaceMenuItem>
       ) : null}
       {onMarkAsUnread ? (
@@ -205,7 +205,7 @@ function SidebarWorkspaceMenuItems({
           leading={markAsUnreadLeadingIcon}
           onSelect={onMarkAsUnread}
         >
-          Mark as unread
+          {t("sidebar.workspace.actions.markAsUnread")}
         </WorkspaceMenuItem>
       ) : null}
       {onTogglePin ? (

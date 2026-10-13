@@ -1262,6 +1262,8 @@ export const ptBR: TranslationResources = {
         copyPath: "Copiar caminho",
         copyBranchName: "Copiar nome da branch",
         rename: "Renomear workspace",
+        markAsRead: "Marcar como lido",
+        markAsUnread: "Marcar como não lido",
         pin: "Fixar no topo",
         unpin: "Desafixar",
         archive: "Arquivar",

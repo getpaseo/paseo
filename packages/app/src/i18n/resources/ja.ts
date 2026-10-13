@@ -1250,6 +1250,8 @@ export const ja: TranslationResources = {
         copyPath: "パスをコピー",
         copyBranchName: "ブランチ名をコピー",
         rename: "ワークスペースの名前を変更",
+        markAsRead: "既読にする",
+        markAsUnread: "未読にする",
         pin: "上部に固定",
         unpin: "固定解除",
         archive: "アーカイブ",
