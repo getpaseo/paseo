@@ -1,4 +1,11 @@
 export const en = {
+  workspaceHistory: {
+    title: "Closed conversations",
+    empty: "No closed conversations",
+    updateHost: "Update this host to use workspace history.",
+    loadError: "Could not load conversations.",
+    reopenError: "Could not reopen this conversation.",
+  },
   workspaceTodos: {
     title: "To-do",
     taskTitle: "Task title",

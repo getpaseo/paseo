@@ -1,4 +1,5 @@
 import { WorkspaceNewTabMenuContent } from "@/screens/workspace/workspace-new-tab-menu";
+import { WorkspaceHistoryMenu } from "@/screens/workspace/workspace-history-menu";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
   useCallback,
@@ -1117,6 +1118,7 @@ function ResolvedWorkspaceDesktopTabsRow({
   const { t } = useTranslation();
   const newTabKeys = useShortcutKeys("workspace-tab-new");
   const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
+  const [rowHovered, setRowHovered] = useState(false);
   const [exitFocusModeWidth, setExitFocusModeWidth] = useState<number>(0);
   const tabScrollBoundary = useHorizontalScrollBoundary();
   const [labelMeasurements, setLabelMeasurements] = useState(
@@ -1138,6 +1140,7 @@ function ResolvedWorkspaceDesktopTabsRow({
       actionsReservedWidth: Math.max(
         0,
         DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH +
+          smallIconButtonChromeFrameSize(false) +
           (focusModeEnabled ? exitFocusModeWidth : 0) +
           (showPaneSplitActions ? PANE_SPLIT_ACTIONS_RESERVED_WIDTH : 0) +
           (showPaneMaximizeAction ? PANE_MAXIMIZE_ACTION_RESERVED_WIDTH : 0),
@@ -1422,6 +1425,9 @@ function ResolvedWorkspaceDesktopTabsRow({
     <View
       style={styles.tabsContainer}
       testID="workspace-tabs-row"
+      {...(isWeb
+        ? { onMouseEnter: () => setRowHovered(true), onMouseLeave: () => setRowHovered(false) }
+        : {})}
       onLayout={handleTabsContainerLayout}
     >
       <View
@@ -1490,6 +1496,11 @@ function ResolvedWorkspaceDesktopTabsRow({
           rightStyle={tabScrollBoundary.rightShadeStyle}
         />
       </View>
+      <WorkspaceHistoryMenu
+        serverId={normalizedServerId}
+        workspaceId={normalizedWorkspaceId}
+        revealed={rowHovered}
+      />
       <WorkspacePaneToolbarActions
         panePanelKinds={panePanelKinds}
         host={host}

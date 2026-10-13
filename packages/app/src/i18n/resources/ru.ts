@@ -2,6 +2,13 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ru: TranslationResources = {
+  workspaceHistory: {
+    title: "Закрытые беседы",
+    empty: "Нет закрытых бесед",
+    updateHost: "Обновите этот хост, чтобы использовать историю рабочего пространства.",
+    loadError: "Не удалось загрузить беседы.",
+    reopenError: "Не удалось открыть беседу заново.",
+  },
   workspaceTodos: {
     title: "To-do",
     taskTitle: "Название задачи",

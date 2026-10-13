@@ -1,4 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { dispatchFileTarget } from "./open-path";
+import type {
+  AssistantFileLinkResolverConfig,
+  AssistantFileLinkResolverContextValue,
+} from "./provider";
 import {
   classifyForResolution,
   fetchDaemonResolution,
@@ -272,5 +277,58 @@ describe("getAssistantFileLinkToken", () => {
         sourceType: "inline-code",
       }),
     ).toBe("workspace-git-service.ts:1553");
+  });
+});
+
+function createContext(openDirectory: (path: string) => Promise<boolean>) {
+  const openedFiles: string[] = [];
+  const configRef = {
+    current: {
+      serverId: "local",
+      workspaceRoot: "/worktree",
+      onOpenWorkspaceFile: (target) => openedFiles.push(target.path),
+    } satisfies AssistantFileLinkResolverConfig,
+  };
+  const context: AssistantFileLinkResolverContextValue = {
+    configRef,
+    openDirectory,
+    getDirectorySuggestions: async () => ({ entries: [], error: null }),
+  };
+  return { context, openedFiles };
+}
+
+describe("assistant path opening", () => {
+  it("opens directories externally and leaves files in the workspace", async () => {
+    const checked: string[] = [];
+    const { context, openedFiles } = createContext(async (path) => {
+      checked.push(path);
+      return path === "/outside/folder";
+    });
+    for (const path of ["/outside/folder", "/worktree/file.ts"]) {
+      await dispatchFileTarget({
+        target: { raw: path, path },
+        disposition: "preferred",
+        capturedServerId: "local",
+        capturedWorkspaceRoot: "/worktree",
+        context,
+      });
+    }
+    expect(checked).toEqual(["/outside/folder", "/worktree/file.ts"]);
+    expect(openedFiles).toEqual(["/worktree/file.ts"]);
+  });
+
+  it("does not open a file after the workspace changes during the directory check", async () => {
+    const { context, openedFiles } = createContext(async () => {
+      context.configRef.current = { serverId: "other", workspaceRoot: "/other" };
+      return false;
+    });
+    await dispatchFileTarget({
+      target: { raw: "/worktree/file.ts", path: "/worktree/file.ts" },
+      disposition: "preferred",
+      capturedServerId: "local",
+      capturedWorkspaceRoot: "/worktree",
+      context,
+    });
+    expect(openedFiles).toEqual([]);
   });
 });

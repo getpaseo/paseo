@@ -5,6 +5,7 @@ import { useStableEvent } from "@/hooks/use-stable-event";
 import type { OpenFileDisposition } from "@/workspace/file-open";
 import { openExternalUrl } from "@/utils/open-external-url";
 import type { InlinePathTarget } from "./parse";
+import { dispatchFileTarget } from "./open-path";
 import {
   useAssistantFileLinkResolverContext,
   type AssistantFileLinkResolverContextValue,
@@ -12,6 +13,7 @@ import {
 import {
   classifyForResolution,
   fetchDaemonResolution,
+  UnresolvedFileLinkError,
   type AssistantFileLinkResolution,
   type AssistantFileLinkSource,
 } from "./resolver";
@@ -172,7 +174,15 @@ function openAssistantFileLink(input: {
       capturedServerId: capturedConfig.serverId,
       capturedWorkspaceRoot: capturedConfig.workspaceRoot,
       context: input.context,
-    });
+    }).catch((error: unknown) =>
+      dispatchUnresolvedError({
+        error,
+        noFileFoundMessage: input.formatNoFileFoundMessage(input.source.href),
+        capturedServerId: capturedConfig.serverId,
+        capturedWorkspaceRoot: capturedConfig.workspaceRoot,
+        context: input.context,
+      }),
+    );
     return;
   }
 
@@ -278,23 +288,6 @@ async function dispatchResolvedLink(input: {
   }
 }
 
-async function dispatchFileTarget(input: {
-  target: InlinePathTarget;
-  disposition: OpenFileDisposition;
-  capturedServerId?: string;
-  capturedWorkspaceRoot?: string;
-  context: AssistantFileLinkResolverContextValue;
-}) {
-  const current = input.context.configRef.current;
-  if (
-    current.serverId !== input.capturedServerId ||
-    current.workspaceRoot !== input.capturedWorkspaceRoot
-  ) {
-    return;
-  }
-  current.onOpenWorkspaceFile?.(input.target, input.disposition);
-}
-
 async function dispatchExternalUrl(input: {
   url: string;
   capturedServerId?: string;
@@ -325,7 +318,11 @@ async function dispatchUnresolvedError(input: {
   ) {
     return;
   }
-  current.toast?.show(input.noFileFoundMessage, {
+  const message =
+    input.error instanceof Error && !(input.error instanceof UnresolvedFileLinkError)
+      ? input.error.message
+      : input.noFileFoundMessage;
+  current.toast?.show(message, {
     variant: "error",
     testID: "assistant-file-link-not-found-toast",
   });

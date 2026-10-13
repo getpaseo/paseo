@@ -88,7 +88,7 @@ function planDesktopOpenTargets(input: {
   const workspacePath = resolvedDirectory?.absolutePath ?? input.workspaceDirectory;
 
   return input.desktopTargets.map((target) => {
-    if (!input.resolvedFile) {
+    if (!input.resolvedFile || target.kind === "file-manager") {
       return {
         source: "desktop",
         id: target.id,

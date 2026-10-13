@@ -2,6 +2,13 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
+  workspaceHistory: {
+    title: "閉じた会話",
+    empty: "閉じた会話はありません",
+    updateHost: "ワークスペースの履歴を使うには、このホストを更新してください。",
+    loadError: "会話を読み込めませんでした。",
+    reopenError: "この会話を再度開けませんでした。",
+  },
   workspaceTodos: {
     title: "To-do",
     taskTitle: "タスク名",

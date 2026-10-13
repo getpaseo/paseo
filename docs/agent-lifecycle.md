@@ -130,7 +130,9 @@ archived workspace. History navigation must not infer workspace lifecycle from `
 or mutate either lifecycle. The workspace route asks the daemon for authoritative recovery state;
 only the route's explicit Unarchive or Restore action changes the archived workspace.
 
-History navigation opens the selected agent without changing either archive state. Workspace
+Global History navigation opens the selected agent without changing either archive state. The
+workspace tab strip's closed-conversation menu explicitly unarchives the selected agent before
+opening it, so a single action resumes the conversation. Workspace
 **Restore** recovers only the workspace; the selected archived agent stays open with its callout.
 The agent's **Unarchive** runs the provider's native unarchive hook before interactive resume and
 history hydration. Other archived agents stay archived.

@@ -3868,12 +3868,8 @@ export class CodexAppServerAgentSession implements AgentSession {
     const settings: Record<string, unknown> = {};
     if (match.model) settings.model = match.model;
     if (match.reasoning_effort) settings.reasoning_effort = match.reasoning_effort;
-    const developerInstructions = composeSystemPromptParts(
-      match.developer_instructions,
-      this.config.systemPrompt,
-      this.config.daemonAppendSystemPrompt,
-    );
-    if (developerInstructions) settings.developer_instructions = developerInstructions;
+    // Null selects Codex's native mode instructions; custom prompts here would replace them.
+    settings.developer_instructions = match.developer_instructions ?? null;
     if (this.config.model) settings.model = this.config.model;
     const thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId);
     if (thinkingOptionId) settings.reasoning_effort = thinkingOptionId;

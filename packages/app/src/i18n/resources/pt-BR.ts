@@ -2,6 +2,13 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ptBR: TranslationResources = {
+  workspaceHistory: {
+    title: "Conversas fechadas",
+    empty: "Nenhuma conversa fechada",
+    updateHost: "Atualize este host para usar o histórico do espaço de trabalho.",
+    loadError: "Não foi possível carregar as conversas.",
+    reopenError: "Não foi possível reabrir esta conversa.",
+  },
   workspaceTodos: {
     title: "To-do",
     taskTitle: "Título da tarefa",
