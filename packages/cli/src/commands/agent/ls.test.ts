@@ -1,26 +1,43 @@
-import { describe, expect, it, vi } from "vitest";
-import { buildAgentLsFetchOptions, runLsCommand } from "./ls.js";
+import { describe, expect, it } from "vitest";
+import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
+import { buildAgentLsFetchOptions, listAgents } from "./ls.js";
 
 const daemonTarget = { kind: "endpoint" as const, host: "example.test:12345" };
 
-const daemonAgents = [3, 2, 1].map((n) => ({
-  id: `${n}${n}${n}${n}${n}${n}${n}${n}-0000-4000-8000-000000000000`,
-  provider: "codex",
-  title: `agent ${n}`,
-  status: "closed",
-  archivedAt: null,
-  cwd: "/tmp/project",
-  createdAt: `2026-10-0${n}T00:00:00.000Z`,
-  updatedAt: `2026-10-0${n}T00:00:00.000Z`,
-  labels: {},
-}));
-type DaemonAgent = (typeof daemonAgents)[number];
+function createPagingClient() {
+  const daemonAgents: AgentSnapshotPayload[] = [3, 2, 1].map((n) => ({
+    id: `${n}${n}${n}${n}${n}${n}${n}${n}-0000-4000-8000-000000000000`,
+    provider: "codex",
+    title: `agent ${n}`,
+    status: "closed",
+    archivedAt: null,
+    cwd: "/tmp/project",
+    createdAt: `2026-10-0${n}T00:00:00.000Z`,
+    updatedAt: `2026-10-0${n}T00:00:00.000Z`,
+    labels: {},
+    model: null,
+    lastUserMessageAt: null,
+    currentModeId: null,
+    availableModes: [],
+    pendingPermissions: [],
+    persistence: null,
+    capabilities: {
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: false,
+      supportsMcpServers: true,
+      supportsReasoningStream: true,
+      supportsToolInvocations: true,
+    },
+  }));
 
-// The fake daemon pages two agents at a time, newest first by the requested key
-// (updated_at by default), and agent 1 is updated right after the first page is served.
-const fetchAgents = vi.fn(
-  async (options?: { sort?: { key: string }[]; page?: { cursor?: string } }) => {
-    const key: keyof DaemonAgent =
+  // The fake daemon pages two agents at a time, newest first by the requested key
+  // (updated_at by default), and agent 1 is updated right after the first page is served.
+  const fetchAgents = async (options?: {
+    sort?: { key: string }[];
+    page?: { cursor?: string };
+  }) => {
+    const key: "createdAt" | "updatedAt" =
       options?.sort?.[0]?.key === "created_at" ? "createdAt" : "updatedAt";
     const cursor = options?.page?.cursor;
     const ordered = daemonAgents
@@ -35,12 +52,9 @@ const fetchAgents = vi.fn(
       entries: page.map((agent) => ({ agent })),
       pageInfo: { nextCursor: hasMore ? page[page.length - 1]![key] : null },
     };
-  },
-);
-
-vi.mock("../../utils/client.js", () => ({
-  connectToDaemon: vi.fn(async () => ({ fetchAgents, close: vi.fn(async () => undefined) })),
-}));
+  };
+  return { fetchAgents, close: async () => {} };
+}
 
 describe("buildAgentLsFetchOptions", () => {
   it("fetches active agents by default", () => {
@@ -110,7 +124,9 @@ describe("buildAgentLsFetchOptions", () => {
 
 describe("runLsCommand", () => {
   it("lists agents on every page, including one updated during the listing", async () => {
-    const result = await runLsCommand({ daemonTarget, all: true, global: true }, {} as never);
+    const result = await listAgents({ daemonTarget, all: true, global: true }, async () =>
+      createPagingClient(),
+    );
 
     expect(result.data.map((item) => item.name)).toEqual(["agent 3", "agent 2", "agent 1"]);
   });
