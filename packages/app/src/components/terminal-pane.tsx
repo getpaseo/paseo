@@ -1179,6 +1179,7 @@ const styles = StyleSheet.create((theme) => ({
   terminalGestureContainer: {
     flex: 1,
     minHeight: 0,
+    padding: theme.spacing[2],
   },
   attachOverlay: {
     ...StyleSheet.absoluteFillObject,

@@ -18,6 +18,18 @@ const metrics = {
 };
 
 describe("computeWorkspaceTabLayout", () => {
+  it("keeps supporting tabs at their content width even in a narrow sidebar", () => {
+    for (const viewportWidth of [180, 1200]) {
+      const result = computeWorkspaceTabLayout({
+        viewportWidth,
+        tabLabelWidths: [45, 95],
+        metrics: { ...metrics, fitContent: true },
+      });
+      expect(result.items.map((item) => item.width)).toEqual([79, 129]);
+      expect(result.requiresHorizontalScrollFallback).toBe(viewportWidth === 180);
+    }
+  });
+
   it("keeps each tab at its natural content width when space is available", () => {
     const result = computeWorkspaceTabLayout({
       viewportWidth: 1200,
