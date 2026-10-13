@@ -1,11 +1,12 @@
 import { resolveDaemonVersion } from "./daemon-version.js";
 import os from "node:os";
 import http from "node:http";
+import net from "node:net";
 import path from "node:path";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { WebSocket } from "ws";
+import { WebSocket, WebSocketServer } from "ws";
 
 import { createPaseoDaemon, parseListenString, type PaseoDaemonConfig } from "./bootstrap.js";
 import { loadConfig } from "./config.js";
@@ -495,6 +496,72 @@ describe("paseo daemon bootstrap", () => {
       expect(ws.readyState).toBe(WebSocket.OPEN);
     } finally {
       ws.close();
+      await daemonHandle.close();
+    }
+  });
+
+  test("service-bound websocket upgrades survive the daemon websocket server", async () => {
+    await expectServiceWebSocketUpgrade({ message: "hello-from-probe", requestPath: "/socket" });
+  });
+
+  test("service upgrade on the daemon's own /ws path reaches the service", async () => {
+    // /ws collides with the daemon's own upgrade path. Exactly one component must
+    // own the socket: the service proxy, because the host resolves to a route.
+    await expectServiceWebSocketUpgrade({ message: "service-on-ws", requestPath: "/ws" });
+  });
+
+  test("a malformed upgrade target does not stop the daemon", async () => {
+    const daemonHandle = await createTestPaseoDaemon();
+    // `//[/` throws in `new URL`; a throw from the upgrade listener used to exit
+    // the process. The dispatcher must contain it and keep serving.
+    const malformed = new Promise<void>((resolve) => {
+      const socket = net.connect({ host: "127.0.0.1", port: daemonHandle.port }, () => {
+        socket.write(
+          [
+            "GET //[/ HTTP/1.1",
+            `Host: 127.0.0.1:${daemonHandle.port}`,
+            "Upgrade: websocket",
+            "Connection: Upgrade",
+            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+            "Sec-WebSocket-Version: 13",
+            "",
+            "",
+          ].join("\r\n"),
+        );
+      });
+      const finish = () => {
+        socket.destroy();
+        resolve();
+      };
+      socket.once("close", finish);
+      socket.once("error", finish);
+      setTimeout(finish, 500);
+    });
+    try {
+      await malformed;
+      const ws = new WebSocket(`ws://127.0.0.1:${daemonHandle.port}/ws`);
+      await new Promise<void>((resolve, reject) => {
+        ws.once("open", resolve);
+        ws.once("error", reject);
+        setTimeout(() => reject(new Error("daemon did not accept a follow-up upgrade")), 3_000);
+      });
+      expect(ws.readyState).toBe(WebSocket.OPEN);
+      ws.close();
+    } finally {
+      await daemonHandle.close();
+    }
+  });
+
+  test("missing service websocket upgrades answer 404", async () => {
+    const daemonHandle = await createTestPaseoDaemon();
+    try {
+      const statusLine = await readUpgradeStatusLine({
+        port: daemonHandle.port,
+        host: `missing--repo.localhost:${daemonHandle.port}`,
+        path: "/socket",
+      });
+      expect(statusLine).toBe("HTTP/1.1 404 Not Found");
+    } finally {
       await daemonHandle.close();
     }
   });
@@ -1031,6 +1098,88 @@ async function beginDaemonShutdownWithAgentClosing(): Promise<BlockedDaemonShutd
       ]);
     },
   };
+}
+
+function ignoreError(): void {}
+
+async function expectServiceWebSocketUpgrade(input: {
+  message: string;
+  requestPath: string;
+}): Promise<void> {
+  const upstream = http.createServer();
+  const upstreamWss = new WebSocketServer({ server: upstream });
+  upstreamWss.on("connection", (socket) => {
+    socket.on("error", ignoreError);
+    socket.send(input.message);
+  });
+  const upstreamPort = await findFreePort();
+  await new Promise<void>((resolve) => upstream.listen(upstreamPort, "127.0.0.1", resolve));
+
+  const daemonHandle = await createTestPaseoDaemon();
+  const route = daemonHandle.daemon.serviceProxy.registerWorkspaceService({
+    workspaceId: "workspace-upgrade-regression",
+    projectSlug: "repo",
+    branchName: "feature",
+    scriptName: "probe",
+    port: upstreamPort,
+  });
+  const client = new WebSocket(`ws://127.0.0.1:${daemonHandle.port}${input.requestPath}`, {
+    headers: { Host: route.hostname },
+  });
+  try {
+    // A real client proves the tunnelled upgrade stays usable, not just that a
+    // 101 status line came back: it completes a message exchange end to end.
+    const message = await new Promise<string>((resolve, reject) => {
+      client.once("message", (data) => resolve(data.toString()));
+      client.once("error", reject);
+      client.once("unexpected-response", (_request, response) => {
+        reject(new Error(`upgrade rejected with HTTP ${response.statusCode}`));
+      });
+    });
+    expect(message).toBe(input.message);
+  } finally {
+    client.close();
+    upstreamWss.close();
+    upstream.closeAllConnections();
+    await new Promise<void>((resolve) => upstream.close(() => resolve()));
+    await daemonHandle.close();
+  }
+}
+
+function readUpgradeStatusLine({
+  port,
+  host,
+  path: requestPath,
+}: {
+  port: number;
+  host: string;
+  path: string;
+}): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect({ host: "127.0.0.1", port }, () => {
+      socket.write(
+        [
+          `GET ${requestPath} HTTP/1.1`,
+          `Host: ${host}`,
+          "Upgrade: websocket",
+          "Connection: Upgrade",
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+          "Sec-WebSocket-Version: 13",
+          "",
+          "",
+        ].join("\r\n"),
+      );
+    });
+    let raw = "";
+    socket.on("data", (chunk: Buffer) => {
+      raw += chunk.toString();
+      const lineEnd = raw.indexOf("\r\n");
+      if (lineEnd === -1) return;
+      socket.destroy();
+      resolve(raw.slice(0, lineEnd));
+    });
+    socket.on("error", reject);
+  });
 }
 
 function probeWebSocketConnection(

@@ -294,8 +294,7 @@ function createVoiceAssistantWebSocketServer(params: {
     onChange: () => () => {},
   };
 
-  return new VoiceAssistantWebSocketServer(
-    httpServer,
+  const wsServer = new VoiceAssistantWebSocketServer(
     createStub<pino.Logger>(createLogger()),
     "srv-test",
     createStub<AgentManager>(agentManager),
@@ -340,6 +339,14 @@ function createVoiceAssistantWebSocketServer(params: {
     undefined,
     broker,
   );
+  // The production dispatcher lives in bootstrap; this harness constructs the
+  // server directly, so it wires the same single upgrade handler here.
+  httpServer.on("upgrade", (req, socket, head) => {
+    if (!wsServer.handleUpgrade({ req, socket, head })) {
+      socket.destroy();
+    }
+  });
+  return wsServer;
 }
 
 function createBrowserRequestQueue(): QueuedBrowserRequests {
