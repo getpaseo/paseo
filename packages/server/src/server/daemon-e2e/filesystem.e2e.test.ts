@@ -23,6 +23,154 @@ afterEach(async () => {
 }, 60000);
 
 describe("file explorer", () => {
+  test.each(["..", "..."])(
+    "workspace suggestions resolve exact paths starting with %s",
+    async (prefix) => {
+      const cwd = tmpCwd();
+      const directoryName = `${prefix}docs`;
+      const nestedPath = `${directoryName}/notes.md`;
+      const fileName = `${prefix}notes.md`;
+      try {
+        mkdirSync(path.join(cwd, directoryName));
+        writeFileSync(path.join(cwd, nestedPath), "nested payload\n");
+        writeFileSync(path.join(cwd, fileName), "direct payload\n");
+        const file = await ctx.client.readFile(cwd, nestedPath);
+        expect(new TextDecoder().decode(file.bytes)).toBe("nested payload\n");
+
+        const nestedEntry = { path: nestedPath, kind: "file" };
+        const entries = [
+          nestedEntry,
+          { path: directoryName, kind: "directory" },
+          { path: fileName, kind: "file" },
+        ];
+        const cases = entries.flatMap((entry) => [
+          { query: `./${entry.path}`, entry },
+          { query: path.resolve(cwd, entry.path), entry },
+        ]);
+        cases.unshift({ query: nestedPath, entry: nestedEntry });
+        for (const { query, entry } of cases) {
+          const response = await ctx.client.getDirectorySuggestions({
+            cwd,
+            query,
+            limit: 1,
+            includeFiles: true,
+            includeDirectories: true,
+            matchMode: "suffix",
+          });
+          expect(response.error).toBeNull();
+          expect(response.entries).toEqual([entry]);
+        }
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test("workspace suggestions exclude exact parent and sibling paths", async () => {
+    const directory = tmpCwd();
+    const cwd = path.join(directory, "workspace");
+    const sibling = path.join(directory, "workspace-other");
+    try {
+      mkdirSync(cwd);
+      mkdirSync(sibling);
+      writeFileSync(path.join(cwd, "visible.txt"), "inside payload\n");
+      writeFileSync(path.join(sibling, "outside.txt"), "outside payload\n");
+      for (const query of [
+        "./..",
+        "../workspace-other/outside.txt",
+        path.join(sibling, "outside.txt"),
+      ]) {
+        const response = await ctx.client.getDirectorySuggestions({
+          cwd,
+          query,
+          limit: 1,
+          includeFiles: true,
+          includeDirectories: true,
+          matchMode: "suffix",
+        });
+        expect(response.error).toBeNull();
+        expect(response.entries).toEqual([]);
+      }
+      const control = await ctx.client.getDirectorySuggestions({
+        cwd,
+        query: "./visible.txt",
+        limit: 1,
+        includeFiles: true,
+        includeDirectories: false,
+        matchMode: "suffix",
+      });
+      expect(control.error).toBeNull();
+      expect(control.entries).toEqual([{ path: "visible.txt", kind: "file" }]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    { description: "a long ASCII name", fileName: `${"a".repeat(236)}.txt` },
+    { description: "an ordinary name", fileName: "notes.txt" },
+    { description: "a long Unicode name", fileName: `${"文".repeat(76)}.txt` },
+  ])("saves text files with $description", async ({ fileName }) => {
+    const cwd = tmpCwd();
+    try {
+      const created = await ctx.client.createFileEntry({
+        cwd,
+        parentPath: ".",
+        name: fileName,
+        kind: "file",
+      });
+      expect(created).toMatchObject({ path: fileName, success: true, error: null });
+      writeFileSync(path.join(cwd, fileName), "original payload\n");
+      const initial = await ctx.client.readFile(cwd, fileName);
+
+      const saved = await ctx.client.writeFile({
+        cwd,
+        path: fileName,
+        content: "saved payload\n",
+        expectedModifiedAt: initial.modifiedAt,
+        expectedRevision: initial.revision,
+      });
+      expect(saved).toMatchObject({ status: "written", size: 14 });
+      const after = await ctx.client.readFile(cwd, fileName);
+      expect(after.path).toBe(fileName);
+      expect(new TextDecoder().decode(after.bytes)).toBe("saved payload\n");
+
+      const staleSave = await ctx.client.writeFile({
+        cwd,
+        path: fileName,
+        content: "stale payload\n",
+        expectedModifiedAt: initial.modifiedAt,
+        expectedRevision: initial.revision,
+      });
+      expect(staleSave).toMatchObject({
+        status: "conflict",
+        version: {
+          status: "ready",
+          path: fileName,
+          size: after.size,
+          modifiedAt: after.modifiedAt,
+          revision: after.revision,
+        },
+      });
+      const afterConflict = await ctx.client.readFile(cwd, fileName);
+      expect(new TextDecoder().decode(afterConflict.bytes)).toBe("saved payload\n");
+
+      const secondSave = await ctx.client.writeFile({
+        cwd,
+        path: fileName,
+        content: "second payload\n",
+        expectedModifiedAt: afterConflict.modifiedAt,
+        expectedRevision: afterConflict.revision,
+      });
+      expect(secondSave).toMatchObject({ status: "written", size: 15 });
+      const final = await ctx.client.readFile(cwd, fileName);
+      expect(new TextDecoder().decode(final.bytes)).toBe("second payload\n");
+      expect(readdirSync(cwd)).toEqual([fileName]);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test.each([
     {
       query: "implementation",

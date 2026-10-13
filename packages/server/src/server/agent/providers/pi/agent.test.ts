@@ -1943,6 +1943,48 @@ describe("PiRpcAgentSession", () => {
     expect(session.describePersistence()?.metadata?.thinkingOptionId).toBe("off");
   });
 
+  test.each(["high", "off", "max"] as const)(
+    "publishes an extension's thinking change to %s before refreshing state",
+    async (level) => {
+      const { pi, session } = await createSession();
+      onTestFinished(() => session.close());
+      const changes: AgentStreamEvent[] = [];
+      session.subscribe((event) => {
+        if (event.type === "thinking_option_changed") {
+          expect(session.describePersistence()?.metadata?.thinkingOptionId).toBe(level);
+          changes.push(event);
+        }
+      });
+      const runtime = pi.latestSession();
+      runtime.state = { ...runtime.state, thinkingLevel: level };
+      runtime.emit({ type: "thinking_level_changed", level });
+
+      expect(changes).toEqual([
+        { type: "thinking_option_changed", provider: "pi", thinkingOptionId: level },
+      ]);
+      expect(session.describePersistence()?.metadata?.thinkingOptionId).toBe(level);
+      await expect(session.getRuntimeInfo()).resolves.toMatchObject({ thinkingOptionId: level });
+    },
+  );
+
+  test.each([undefined, null, "invalid", 123])(
+    "ignores a thinking change with invalid level %s",
+    async (level) => {
+      const { pi, session } = await createSession();
+      onTestFinished(() => session.close());
+      const initialThinking = session.describePersistence()?.metadata?.thinkingOptionId;
+      const changes: AgentStreamEvent[] = [];
+      session.subscribe((event) => {
+        if (event.type === "thinking_option_changed") changes.push(event);
+      });
+
+      pi.latestSession().emit({ type: "thinking_level_changed", level });
+
+      expect(changes).toEqual([]);
+      expect(session.describePersistence()?.metadata?.thinkingOptionId).toBe(initialThinking);
+    },
+  );
+
   test("surfaces state refresh failures after a Pi thinking update", async () => {
     const { pi, session } = await createSession();
     onTestFinished(() => session.close());

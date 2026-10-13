@@ -625,6 +625,28 @@ describe("highlightDiffFromHunks", () => {
 });
 
 describe("highlightDiffWithFileContent", () => {
+  it("renders an Astro diff with an empty expression and keeps surrounding highlighting", async () => {
+    const diff = ASTRO_DIFF.replace("{title}", "{title} {}");
+    const file = parseDiff(diff)[0];
+    const highlighted = await highlightDiffWithFileContent(file, ".", {
+      oldFileContent:
+        '---\nconst title = "Hello";\n---\n<main class="page">\n  <h1>{title} {}</h1>\n</main>',
+      newFileContent:
+        '---\nconst title = "Hello, Astro";\n---\n<main class="page">\n  <h1>{title} {}</h1>\n</main>',
+    });
+
+    expect(highlighted.hunks[0].lines.find((line) => line.type === "add")?.tokens).toContainEqual({
+      text: '"Hello, Astro"',
+      style: "string",
+    });
+    expect(highlighted.hunks[0].lines.map(({ content }) => content)).toEqual(
+      file.hunks[0].lines.map(({ content }) => content),
+    );
+    expect(
+      highlightDiffFromHunks(file).hunks[0].lines.find((line) => line.type === "add")?.tokens,
+    ).toContainEqual({ text: '"Hello, Astro"', style: "string" });
+  });
+
   it("leaves files with an oversized line unhighlighted", async () => {
     const oversizedLine = `const payload = "${"x".repeat(10_001)}";`;
     const [file] = parseDiff(

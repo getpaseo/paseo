@@ -35,19 +35,20 @@ function PluginShot({ plugin }: { plugin: Plugin }) {
 }
 
 /**
- * What's new and Featured card, in three rows under the screenshot: tile and name, description,
- * then author and `children`, such as when the plugin was added or its install count.
+ * Gallery card, in three rows under the screenshot: tile and name, description, then author and
+ * `children`, such as when the plugin was added or its install count.
  */
-export function NewPluginCard({ plugin, children }: { plugin: Plugin; children?: ReactNode }) {
+export function PluginCard({ plugin, children }: { plugin: Plugin; children?: ReactNode }) {
   const author = getAuthor(plugin);
   return (
-    <a href={pluginHref(plugin.id)} className="group block w-[70%] flex-shrink-0 sm:w-auto">
+    // Grid items size to their content by default; min-w-0 keeps the card in its column.
+    <a href={pluginHref(plugin.id)} className="group block min-w-0">
       <PluginShot plugin={plugin} />
       <div className="mt-3 flex items-center gap-2">
         <PluginTile plugin={plugin} size="xs" />
         <p className="min-w-0 truncate text-sm font-medium text-white">{plugin.name}</p>
       </div>
-      <p className="mt-2 line-clamp-2 min-h-10 text-xs leading-5 text-muted-foreground">
+      <p className="mt-2 line-clamp-2 min-h-10 break-words text-xs leading-5 text-muted-foreground">
         {plugin.description}
       </p>
       <p className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-extra-muted-foreground">
@@ -59,23 +60,6 @@ export function NewPluginCard({ plugin, children }: { plugin: Plugin; children?:
             <span className="flex-shrink-0">{children}</span>
           </>
         )}
-      </p>
-    </a>
-  );
-}
-
-/** Grid card: screenshot; tile, name, and `children` such as an install count; description. */
-export function PluginCard({ plugin, children }: { plugin: Plugin; children?: ReactNode }) {
-  return (
-    <a href={pluginHref(plugin.id)} className="group block">
-      <PluginShot plugin={plugin} />
-      <div className="mt-3 flex items-center gap-2">
-        <PluginTile plugin={plugin} size="xs" />
-        <p className="min-w-0 flex-1 truncate text-sm font-medium text-white">{plugin.name}</p>
-        <span className="flex-shrink-0 text-xs text-extra-muted-foreground">{children}</span>
-      </div>
-      <p className="mt-2 line-clamp-2 min-h-10 text-xs leading-5 text-muted-foreground">
-        {plugin.description}
       </p>
     </a>
   );
