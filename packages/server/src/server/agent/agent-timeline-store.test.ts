@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
+import { contiguousCommittedPrefix, InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 
 describe("InMemoryAgentTimelineStore", () => {
   it("clamps an overshooting before cursor into the bounded tail window", () => {
@@ -210,4 +210,203 @@ it("includes transitive tool updates in a contiguous projected tail", () => {
   const tail = store.fetch("a", { limit: 1 });
   expect(tail.rows.map((row) => row.seqStart)).toEqual([1, 2, 3, 5]);
   expect(tail).toMatchObject({ startSeq: 1, endSeq: 6, hasOlder: false });
+});
+
+describe("bounded in-memory window", () => {
+  const userItem = (n: number) =>
+    ({ type: "user_message", text: `m${n}`, clientMessageId: `c${n}` }) as const;
+
+  it("evicts oldest rows once the window exceeds the byte cap", () => {
+    const store = new InMemoryAgentTimelineStore({ maxWindowBytes: 2048 });
+    store.initialize("a");
+    for (let i = 1; i <= 100; i++) store.append("a", userItem(i));
+    store.setDurableWatermark("a", 100);
+    store.append("a", userItem(101));
+
+    const rows = store.getCanonicalRows("a");
+    expect(rows.length).toBeLessThan(101);
+    expect(rows[0]?.seq).toBeGreaterThan(1);
+    expect(rows.at(-1)?.seq).toBe(101);
+    expect(store.hasEvicted("a")).toBe(true);
+
+    const tail = store.fetch("a", { direction: "tail", limit: 200 });
+    expect(tail.rows.at(-1)?.item).toEqual(userItem(101));
+    expect(tail.window.minSeq).toBe(tail.rows[0]?.seqStart);
+  });
+
+  it("never evicts rows above the durable watermark", () => {
+    const store = new InMemoryAgentTimelineStore({ maxWindowBytes: 2048 });
+    store.initialize("a");
+    for (let i = 1; i <= 100; i++) store.append("a", userItem(i));
+
+    expect(store.getCanonicalRows("a")).toHaveLength(100);
+    expect(store.hasEvicted("a")).toBe(false);
+
+    store.setDurableWatermark("a", 50);
+    store.append("a", userItem(101));
+
+    const rows = store.getCanonicalRows("a");
+    expect(rows[0]?.seq).toBe(51);
+    expect(rows.at(-1)?.seq).toBe(101);
+  });
+
+  it("keeps a merged assistant row that spans the eviction boundary whole", () => {
+    const store = new InMemoryAgentTimelineStore({ maxWindowBytes: 2048 });
+    store.initialize("a");
+    for (let i = 1; i <= 20; i++) {
+      store.append("a", { type: "assistant_message", text: "x", messageId: "m" });
+    }
+    for (let i = 21; i <= 60; i++) store.append("a", userItem(i));
+    store.setDurableWatermark("a", 10);
+    store.append("a", userItem(61));
+
+    const rows = store.getCanonicalRows("a");
+    expect(rows[0]?.seq).toBe(11);
+    const tail = store.fetch("a", { direction: "tail", limit: 200 });
+    expect(tail.rows[0]?.item).toEqual({
+      type: "assistant_message",
+      text: "x".repeat(20),
+      messageId: "m",
+    });
+    expect(tail.rows[0]?.seqStart).toBe(1);
+    expect(tail.rows[0]?.seqEnd).toBe(20);
+    expect(tail.window.minSeq).toBe(1);
+  });
+
+  it("retains every row when no cap is configured", () => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("a");
+    for (let i = 1; i <= 500; i++) store.append("a", userItem(i));
+    expect(store.getCanonicalRows("a")).toHaveLength(500);
+    expect(store.hasEvicted("a")).toBe(false);
+  });
+
+  it("trims a seeded window above the cap once rows are durably confirmed", () => {
+    const store = new InMemoryAgentTimelineStore({ maxWindowBytes: 2048 });
+    const rows = Array.from({ length: 300 }, (_, i) => ({
+      seq: i + 1,
+      timestamp: "2026-01-01T00:00:00.000Z",
+      item: userItem(i + 1),
+    }));
+    store.initialize("a", { rows });
+    expect(store.getCanonicalRows("a")).toHaveLength(300);
+    store.setDurableWatermark("a", 300);
+    const retained = store.getCanonicalRows("a");
+    expect(retained.length).toBeLessThan(300);
+    expect(retained.at(-1)?.seq).toBe(300);
+    expect(store.hasEvicted("a")).toBe(true);
+  });
+
+  it("reports older history for tail pages of an evicted window", () => {
+    const store = new InMemoryAgentTimelineStore({ maxWindowRows: 4 });
+    store.initialize("a");
+    for (let i = 1; i <= 20; i++) {
+      store.append("a", {
+        type: "user_message",
+        text: `m${i}`,
+        clientMessageId: `c${i}`,
+      });
+    }
+    store.setDurableWatermark("a", 15);
+    expect(store.hasEvicted("a")).toBe(true);
+
+    // A tail page larger than the retained window still has durable rows
+    // below it; reporting hasOlder=false strands them for good.
+    const page = store.fetch("a", { direction: "tail", limit: 50 });
+    expect(page.hasOlder).toBe(true);
+  });
+
+  it("reports older history for a post-restart window seeded over the durable log", () => {
+    // A durable seed leaves the window empty with nextSeq above the committed
+    // log. The first new row jumps the window floor past seq 1 without any
+    // eviction in this lifetime; the rows below must stay reachable.
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("a", { nextSeq: 3, timestamp: "2026-01-01T00:00:00.000Z" });
+    store.append("a", userItem(3));
+
+    const page = store.fetch("a", { direction: "tail", limit: 50 });
+    expect(page.rows).toHaveLength(1);
+    expect(page.hasOlder).toBe(true);
+  });
+
+  it("anchors a straddling tool entry's tail page at the retained window floor", () => {
+    const store = new InMemoryAgentTimelineStore({ maxWindowRows: 7 });
+    store.initialize("a");
+    const tool = (status: "running" | "completed") => ({
+      type: "tool_call" as const,
+      callId: "t1",
+      name: "shell",
+      status,
+      error: null,
+      detail: { type: "plain_text" as const, label: "work" },
+    });
+    store.append("a", tool("running"));
+    for (let i = 2; i <= 30; i++) store.append("a", userItem(i));
+    store.append("a", tool("completed"));
+    store.setDurableWatermark("a", 24);
+    expect(store.getCanonicalRows("a").map((row) => row.seq)).toEqual([25, 26, 27, 28, 29, 30, 31]);
+
+    // The tool entry straddles the eviction boundary: its anchor (seq 1) must
+    // not become the backward cursor, or rows 2..24 are unreachable from the
+    // client's older paging.
+    const tail = store.fetch("a", { direction: "tail", limit: 200 });
+    expect(tail.rows[0]?.seqStart).toBe(1);
+    expect(tail.startSeq).toBe(25);
+    expect(tail.hasOlder).toBe(true);
+    const catchup = store.fetch("a", {
+      direction: "after",
+      cursor: { epoch: tail.epoch, seq: 10 },
+      limit: 200,
+    });
+    expect(catchup.gap).toBe(true);
+    expect(catchup.reset).toBe(true);
+    expect(catchup.endSeq).toBe(31);
+  });
+
+  it("reports older history when a stale after request resets onto an evicted tail", () => {
+    const store = new InMemoryAgentTimelineStore({ maxWindowRows: 4 });
+    store.initialize("a");
+    for (let i = 1; i <= 20; i++) {
+      store.append("a", {
+        type: "user_message",
+        text: `m${i}`,
+        clientMessageId: `c${i}`,
+      });
+    }
+    store.setDurableWatermark("a", 16);
+    expect(store.hasEvicted("a")).toBe(true);
+
+    // An after request with a stale epoch resets onto a tail page; the
+    // evicted rows below the page must stay reachable through hasOlder.
+    const page = store.fetch("a", {
+      direction: "after",
+      cursor: { epoch: "stale-epoch", seq: 5 },
+      limit: 50,
+    });
+    expect(page.reset).toBe(true);
+    expect(page.rows.map((row) => row.seq)).toEqual([17, 18, 19, 20]);
+    expect(page.hasOlder).toBe(true);
+  });
+});
+
+describe("contiguousCommittedPrefix", () => {
+  it("returns zero for an empty log", () => {
+    expect(contiguousCommittedPrefix([])).toBe(0);
+  });
+
+  it("returns the highest seq when every seq from one is present", () => {
+    expect(contiguousCommittedPrefix([1, 2, 3])).toBe(3);
+  });
+
+  it("returns zero when the leading seq is missing", () => {
+    expect(contiguousCommittedPrefix([2, 3, 4])).toBe(0);
+  });
+
+  it("stops at a gap in the middle", () => {
+    expect(contiguousCommittedPrefix([1, 2, 4, 5])).toBe(2);
+  });
+
+  it("ignores row order and duplicate seqs", () => {
+    expect(contiguousCommittedPrefix([2, 1, 4, 3, 1])).toBe(4);
+  });
 });

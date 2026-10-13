@@ -2,6 +2,10 @@ import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client";
 import { afterEach, describe, expect, test } from "vitest";
 import type { ProviderSubagentDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
+  ProviderSubagentStore,
+  type ProviderSubagentStoreEvent,
+} from "../../../server/src/server/agent/provider-subagents/store.js";
+import {
   observeProviderSubagentTimeline,
   providerSubagentKey,
   refreshProviderSubagents,
@@ -23,6 +27,88 @@ afterEach(() => {
 });
 
 describe("provider subagent client store", () => {
+  test("an open child accepts rebuilt history and later text after an ordered remove and upsert", () => {
+    const daemon = new ProviderSubagentStore();
+    const replica = useProviderSubagentStore.getState();
+    const key = providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID);
+    const forward = (event: ProviderSubagentStoreEvent) => {
+      if (event.type === "upsert") {
+        replica.applyUpdate(SERVER_ID, { kind: "upsert", subagent: event.subagent });
+      } else if (event.type === "remove") {
+        replica.applyUpdate(SERVER_ID, {
+          kind: "remove",
+          parentAgentId: event.parentAgentId,
+          subagentId: event.subagentId,
+        });
+      } else {
+        replica.applyUpdate(SERVER_ID, {
+          kind: "timeline",
+          parentAgentId: event.parentAgentId,
+          subagentId: event.subagentId,
+          provider: event.provider,
+          epoch: event.epoch,
+          seq: event.row.seq,
+          timestamp: event.row.timestamp,
+          item: event.row.item,
+        });
+      }
+    };
+    const descriptor = daemon.apply(PARENT_ID, "codex", {
+      type: "upsert",
+      id: SUBAGENT_ID,
+      title: "Child",
+      status: "running",
+    });
+    forward(descriptor);
+    const original = daemon.apply(PARENT_ID, "codex", {
+      type: "timeline",
+      id: SUBAGENT_ID,
+      item: { type: "assistant_message", messageId: "reply", text: "live " },
+    });
+    forward(original);
+    const before = useProviderSubagentStore.getState().timelines.get(key);
+    expect([...(before?.tail ?? []), ...(before?.head ?? [])]).toEqual([
+      expect.objectContaining({ kind: "assistant_message", text: "live " }),
+    ]);
+
+    const liveRows = daemon.takeTimelineRows(PARENT_ID, SUBAGENT_ID);
+    forward({ type: "remove", parentAgentId: PARENT_ID, subagentId: SUBAGENT_ID });
+    forward(descriptor);
+    forward(
+      daemon.apply(PARENT_ID, "codex", {
+        type: "timeline",
+        id: SUBAGENT_ID,
+        item: { type: "assistant_message", messageId: "reply", text: "historical " },
+      }),
+    );
+    for (const row of liveRows)
+      forward(
+        daemon.apply(PARENT_ID, "codex", {
+          type: "timeline",
+          id: SUBAGENT_ID,
+          item: row.item,
+          timestamp: row.timestamp,
+        }),
+      );
+    forward(
+      daemon.apply(PARENT_ID, "codex", {
+        type: "timeline",
+        id: SUBAGENT_ID,
+        item: { type: "assistant_message", messageId: "reply", text: "suffix" },
+      }),
+    );
+    const after = useProviderSubagentStore.getState().timelines.get(key);
+    expect(after?.epoch).not.toBe(before?.epoch);
+    expect(after?.lastSeq).toBe(3);
+    expect([...(after?.tail ?? []), ...(after?.head ?? [])]).toEqual([
+      expect.objectContaining({ kind: "assistant_message", text: "historical live suffix" }),
+    ]);
+    expect(useProviderSubagentStore.getState().descriptors.get(key)?.title).toBe("Child");
+    // The reset must not relax protection against delayed frames from the old branch.
+    forward(original);
+    expect(useProviderSubagentStore.getState().timelines.get(key)).toBe(after);
+  });
+
   test("builds a shared stream model from ordered provider updates", () => {
     const subagents = useProviderSubagentStore.getState();
     subagents.applyUpdate(SERVER_ID, {

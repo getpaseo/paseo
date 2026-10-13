@@ -297,7 +297,7 @@ export type ProjectedTimelineRow = AgentTimelineRow & TimelineProjectionEntry;
 
 /** Owns projected state; source events are consumed, never retained. */
 export class TimelineProjection {
-  private readonly rows: ProjectedTimelineRow[] = [];
+  private rows: ProjectedTimelineRow[] = [];
   private readonly identities = new Map<string, number>();
 
   append(row: AgentTimelineRow): void {
@@ -325,6 +325,36 @@ export class TimelineProjection {
 
   getRows(): ProjectedTimelineRow[] {
     return this.rows.map((row) => ({ ...row }));
+  }
+
+  /**
+   * Remove projected rows that end strictly before `seqExclusive`. Rows that
+   * span the cutoff (seqEnd >= seqExclusive) are kept whole, so a merged
+   * assistant message is never split by an eviction. Returns the seqStart of
+   * the first surviving row, or null when the projection becomes empty.
+   *
+   * The evictable set is not always a prefix: a straddling row (a tool call
+   * completed after a neighboring row) can sit before a fully evicted row, so
+   * this filters rather than splices. Identity indexes are rebuilt from the
+   * survivors — one row per identity is an append invariant, so the rebuild is
+   * exact.
+   */
+  evictBefore(seqExclusive: number): number | null {
+    let removed = 0;
+    for (const row of this.rows) {
+      if (row.seqEnd < seqExclusive) removed += 1;
+    }
+    if (removed === 0) return this.rows[0]?.seqStart ?? null;
+
+    this.rows = this.rows.filter((row) => row.seqEnd >= seqExclusive);
+    this.identities.clear();
+    for (let index = 0; index < this.rows.length; index++) {
+      const identity = timelineItemIdentity(this.rows[index].item);
+      if (identity !== null) {
+        this.identities.set(identity, index);
+      }
+    }
+    return this.rows[0]?.seqStart ?? null;
   }
 
   enrichSubmittedUserMessage(
@@ -536,7 +566,7 @@ function selectProjectedEntriesBefore(input: {
   };
 }
 
-function selectProjectedEntriesTail(
+export function selectProjectedEntriesTail(
   projectedAll: TimelineProjectionEntry[],
   limit: number,
   bounds: { minSeq: number; maxSeq: number },
@@ -548,13 +578,47 @@ function selectProjectedEntriesTail(
     if (projectedAll[i].seqEnd >= projectedAll[start].seqStart) start = i;
   }
   const selected = projectedAll.slice(start);
+  // A projected entry can anchor below the served rows' floor (a straddling
+  // update); the backward cursor may not point there, or the rows in between
+  // are unreachable.
   return {
     entries: selected,
-    startSeq: selected[0]?.seqStart ?? null,
+    startSeq: selected.length > 0 ? Math.max(selected[0].seqStart, bounds.minSeq) : null,
     endSeq: bounds.maxSeq,
     hasOlder: start > 0,
     hasNewer: false,
   };
+}
+
+/**
+ * Whether the projected entry of the oldest collected row can change once the
+ * rows above it become known: the row directly above the collected suffix
+ * (the probe) adjacency-merges into it under the assistant/reasoning chunk
+ * rules, or the probe carries an item identity the collected rows already
+ * hold. This probe does not rule out an identity further into an unread
+ * prefix: callers must resolve those anchors or fall back to full projection.
+ */
+export function tailBoundaryRowCrosses(input: {
+  /** Newest eligible row strictly above the collected suffix. */
+  probe: AgentTimelineRow;
+  /** Oldest row of the collected suffix. */
+  collectionOldest: AgentTimelineRow;
+  /** Non-null item identities held by the collected rows. */
+  collectedIdentities: ReadonlySet<string>;
+}): boolean {
+  const { probe, collectionOldest, collectedIdentities } = input;
+  const older = probe.item;
+  const newer = collectionOldest.item;
+  if (probe.seq + 1 === collectionOldest.seq && probe.turnId === collectionOldest.turnId) {
+    if (older.type === "reasoning" && newer.type === "reasoning") return true;
+    if (older.type === "assistant_message" && newer.type === "assistant_message") {
+      const olderMessageId = (older as { messageId?: string }).messageId;
+      const newerMessageId = (newer as { messageId?: string }).messageId;
+      if (!(newerMessageId !== undefined && olderMessageId !== newerMessageId)) return true;
+    }
+  }
+  const probeIdentity = timelineItemIdentity(probe.item);
+  return probeIdentity !== null && collectedIdentities.has(probeIdentity);
 }
 
 export function selectProjectedTimelinePage(input: {

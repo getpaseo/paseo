@@ -53,6 +53,8 @@ $PASEO_HOME/
 ├── agents/
 │   └── {sanitized-cwd}/
 │       └── {agentId}.json               # One file per agent
+├── timeline-rows/
+│   └── {agentId}.jsonl                  # Durable agent timeline rows (append-only)
 ├── schedules/
 │   └── {scheduleId}.json                # One file per schedule
 ├── projects/
@@ -164,6 +166,19 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 | `icon`        | `string?`             |
 | `value`       | `string \| null`      |
 | `options`     | `AgentSelectOption[]` |
+
+---
+
+## Durable Timeline Rows
+
+**Path:** `$PASEO_HOME/timeline-rows/{agentId}.jsonl`
+
+One append-only JSONL file per agent holds every committed timeline row: `{"seq": N, "timestamp": ..., "item": {...}, "turnId"?: ..., "providerMessageId"?: ...}`. The in-memory timeline window is bounded and evicts old rows ([timeline sync](timeline-sync.md#bounded-retention)); evicted rows and post-restart history are read back from this file.
+
+- Appends are serialized per agent. `updateCommittedRow` appends a new line for the same `seq`; reads apply last-write-wins per `seq`.
+- Readers validate the row and item shape and skip invalid lines. A crash mid-append can lose the partially written row; valid rows before and after it remain readable.
+- Provider history is the recovery authority. Resume and rewind guarantees live in [timeline sync](timeline-sync.md#bounded-retention).
+- The file is removed with the agent only on explicit state deletion, not on daemon shutdown, so a restart resumes from the durable history.
 
 ---
 

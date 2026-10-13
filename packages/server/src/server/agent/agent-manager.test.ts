@@ -19,9 +19,10 @@ import {
   type ManagedAgent,
 } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
-import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
+import { DEFAULT_TIMELINE_FETCH_LIMIT } from "./agent-timeline-store.js";
+import { FileAgentTimelineStore } from "./file-agent-timeline-store.js";
 import { toAgentPayload } from "./agent-projections.js";
-import { projectTimelineRows } from "./timeline-projection.js";
+import { projectTimelineRows, selectProjectedTimelinePage } from "./timeline-projection.js";
 import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { startAgentRun } from "./agent-prompt.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
@@ -32,6 +33,7 @@ import type {
   AgentTimelineFetchResult,
   AgentTimelineRow,
   AgentTimelineStore,
+  AgentTimelineTailRead,
 } from "./agent-timeline-store-types.js";
 import type {
   AgentClient,
@@ -115,10 +117,26 @@ const TEST_CAPABILITIES = {
 
 class RecordingTimelineStore implements AgentTimelineStore {
   readonly writes: AgentTimelineRow[][] = [];
-  private readonly memory = new InMemoryAgentTimelineStore();
+  fullReadCount = 0;
+  /**
+   * Committed rows per agent, preserving the seqs the manager mints. The
+   * durable store contract is that bulkInsert'd seqs survive a
+   * deleteAgent + reinsert cycle; re-minting them (as an in-memory window
+   * would) breaks the manager's window/durable merge on re-prime.
+   */
+  private readonly rows = new Map<string, AgentTimelineRow[]>();
 
-  private ensure(agentId: string): void {
-    if (!this.memory.has(agentId)) this.memory.initialize(agentId);
+  private committed(agentId: string): AgentTimelineRow[] {
+    return this.rows.get(agentId) ?? [];
+  }
+
+  private upsert(agentId: string, row: AgentTimelineRow): void {
+    const list = this.rows.get(agentId) ?? [];
+    const existing = list.findIndex((candidate) => candidate.seq === row.seq);
+    if (existing >= 0) list[existing] = { ...row };
+    else list.push({ ...row });
+    list.sort((a, b) => a.seq - b.seq);
+    this.rows.set(agentId, list);
   }
 
   async appendCommitted(
@@ -126,57 +144,171 @@ class RecordingTimelineStore implements AgentTimelineStore {
     item: AgentTimelineItem,
     options?: { timestamp?: string; turnId?: string },
   ): Promise<AgentTimelineRow> {
-    this.ensure(agentId);
-    return this.memory.append(agentId, item, options);
+    const seq = (await this.getLatestCommittedSeq(agentId)) + 1;
+    const row: AgentTimelineRow = {
+      seq,
+      timestamp: options?.timestamp ?? new Date().toISOString(),
+      item,
+      ...(options?.turnId ? { turnId: options.turnId } : {}),
+    };
+    this.upsert(agentId, row);
+    return row;
   }
 
   async fetchCommitted(
     agentId: string,
     options?: AgentTimelineFetchOptions,
   ): Promise<AgentTimelineFetchResult> {
-    this.ensure(agentId);
-    return this.memory.fetch(agentId, options);
+    const rows = this.committed(agentId);
+    const minSeq = rows.length > 0 ? rows[0].seq : 0;
+    const maxSeq = rows.length > 0 ? rows[rows.length - 1].seq : 0;
+    const direction = options?.direction ?? "tail";
+    const page = selectProjectedTimelinePage({
+      rows,
+      bounds: { minSeq, maxSeq },
+      direction,
+      cursorSeq: options?.cursor?.seq,
+      limit: options?.limit ?? DEFAULT_TIMELINE_FETCH_LIMIT,
+    });
+    return {
+      epoch: "",
+      direction,
+      reset: false,
+      staleCursor: false,
+      gap: false,
+      window: { minSeq, maxSeq, nextSeq: maxSeq + 1 },
+      hasOlder: page.hasOlder,
+      hasNewer: page.hasNewer,
+      startSeq: page.startSeq,
+      endSeq: page.endSeq,
+      rows: page.entries.map((entry) => Object.assign({ seq: entry.seqEnd }, entry)),
+    };
   }
 
   async getLatestCommittedSeq(agentId: string): Promise<number> {
-    return this.memory.has(agentId) ? (this.memory.getRows(agentId).at(-1)?.seq ?? 0) : 0;
+    const rows = this.committed(agentId);
+    return rows.length > 0 ? rows[rows.length - 1].seq : 0;
   }
 
   async getCommittedRows(agentId: string): Promise<AgentTimelineRow[]> {
-    return this.memory.has(agentId) ? this.memory.getRows(agentId) : [];
+    this.fullReadCount += 1;
+    return [...this.committed(agentId)];
   }
 
-  async getLastItem(agentId: string): Promise<AgentTimelineItem | null> {
-    return this.memory.has(agentId) ? this.memory.getLastItem(agentId) : null;
+  async getLastItem(
+    agentId: string,
+    options?: { maxSeq?: number },
+  ): Promise<AgentTimelineItem | null> {
+    const rows = this.rowsUpTo(agentId, options?.maxSeq);
+    return rows[rows.length - 1]?.item ?? null;
   }
 
-  async getLastAssistantMessage(agentId: string): Promise<string | null> {
-    return this.memory.has(agentId) ? this.memory.getLastAssistantMessage(agentId) : null;
+  async getLastAssistantMessage(
+    agentId: string,
+    options?: { maxSeq?: number },
+  ): Promise<string | null> {
+    const rows = this.rowsUpTo(agentId, options?.maxSeq);
+    const chunks: string[] = [];
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const item = rows[i]?.item;
+      if (item?.type !== "assistant_message") {
+        if (chunks.length > 0) break;
+        continue;
+      }
+      chunks.push(item.text);
+    }
+    return chunks.length > 0 ? chunks.toReversed().join("") : null;
+  }
+
+  private rowsUpTo(agentId: string, maxSeq: number | undefined): AgentTimelineRow[] {
+    const rows = this.committed(agentId);
+    if (maxSeq === undefined) {
+      return rows;
+    }
+    return rows.filter((row) => row.seq <= maxSeq);
   }
 
   async deleteAgent(agentId: string): Promise<void> {
-    this.memory.delete(agentId);
+    this.rows.delete(agentId);
   }
 
   async bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void> {
     this.writes.push(rows.map((row) => ({ ...row })));
-    this.ensure(agentId);
     for (const row of rows) {
-      this.memory.append(agentId, row.item, {
-        timestamp: row.timestamp,
-        turnId: row.turnId,
-      });
+      this.upsert(agentId, row);
     }
   }
 
   async updateCommittedRow(agentId: string, row: AgentTimelineRow): Promise<void> {
-    this.ensure(agentId);
-    const rows = this.memory.getRows(agentId);
-    const index = rows.findIndex((candidate) => candidate.seq === row.seq);
-    if (index >= 0) {
-      rows[index] = row;
-      this.memory.initialize(agentId, { rows });
+    this.upsert(agentId, row);
+  }
+
+  /** Number of rows requested per readTailRows call, in call order. */
+  readonly tailReadCounts: number[] = [];
+
+  async readTailRows(
+    agentId: string,
+    options: { maxSeq?: number; offset: number; count: number },
+  ): Promise<{ rows: AgentTimelineRow[]; atStart: boolean }> {
+    const eligible = this.committed(agentId).filter(
+      (row) => options.maxSeq === undefined || row.seq <= options.maxSeq,
+    );
+    this.tailReadCounts.push(options.count);
+    const slice = eligible
+      .toReversed()
+      .slice(options.offset, options.offset + options.count)
+      .toReversed();
+    return { rows: [...slice], atStart: options.offset + options.count >= eligible.length };
+  }
+}
+
+class PausedTimelineReadStore extends RecordingTimelineStore {
+  readonly readStarted = deferred<void>();
+  readonly readAllowed = deferred<void>();
+  private pauseNext = false;
+
+  pauseNextRead(): void {
+    this.pauseNext = true;
+  }
+
+  private async waitForRead(): Promise<void> {
+    if (!this.pauseNext) return;
+    this.pauseNext = false;
+    this.readStarted.resolve();
+    await this.readAllowed.promise;
+  }
+
+  override async getCommittedRows(agentId: string): Promise<AgentTimelineRow[]> {
+    const rows = await super.getCommittedRows(agentId);
+    await this.waitForRead();
+    return rows;
+  }
+
+  override async readTailRows(
+    agentId: string,
+    options: { maxSeq?: number; offset: number; count: number },
+  ): Promise<AgentTimelineTailRead> {
+    const result = await super.readTailRows(agentId, options);
+    await this.waitForRead();
+    return result;
+  }
+}
+
+/**
+ * Commits bulkInsert'd rows at or below a seq; later rows hang in flight
+ * forever, pinning the durable watermark at the boundary.
+ */
+class HoldAfterSeqStore extends RecordingTimelineStore {
+  constructor(private readonly commitUpToSeq: number) {
+    super();
+  }
+
+  override async bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void> {
+    if (rows.some((row) => row.seq > this.commitUpToSeq)) {
+      await new Promise<void>(() => undefined);
+      return;
     }
+    await super.bulkInsert(agentId, rows);
   }
 }
 
@@ -752,6 +884,45 @@ test("refreshing an agent replaces the injected timeline store instead of append
     ]);
   } finally {
     if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("an explicit force rebuild with an empty provider history clears the timeline", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-explicit-empty-"));
+  const store = new RecordingTimelineStore();
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    durableTimelineStore: store,
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    await manager.appendTimelineItem(agent.id, {
+      type: "user_message",
+      text: "one",
+      clientMessageId: "c1",
+    });
+    await manager.appendTimelineItem(agent.id, {
+      type: "user_message",
+      text: "two",
+      clientMessageId: "c2",
+    });
+    await manager.flush();
+    const epochBefore = manager.getTimelineEpoch(agent.id);
+
+    // A rewind to the first message lands here: the provider succeeded and
+    // now holds no history at all. Explicit force must clear the timeline
+    // instead of reading the empty history as "provider lost the session".
+    await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+
+    expect(await manager.getTimelineRows(agent.id)).toHaveLength(0);
+    expect(manager.getTimelineEpoch(agent.id)).not.toBe(epochBefore);
+    expect(await store.getCommittedRows(agent.id)).toEqual([]);
+  } finally {
+    await manager.closeAgent(agent.id).catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
   }
 });
@@ -11857,3 +12028,2238 @@ test.each([false, true])(
     }
   },
 );
+
+describe("timeline window backfill", () => {
+  const windowOptions = { maxWindowBytes: 2048, maxWindowRows: 10_000 };
+
+  test("tail backfill keeps distant tool anchors in projected display order", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-distant-anchor-"));
+    const store = new RecordingTimelineStore();
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      durableTimelineStore: store,
+      timelineWindow: { maxWindowRows: 3 },
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {});
+    try {
+      await manager.appendTimelineItem(agent.id, {
+        type: "tool_call",
+        callId: "long-tool",
+        name: "shell",
+        status: "running",
+        error: null,
+        detail: { type: "shell", command: "work" },
+      });
+      for (let i = 2; i < 300; i++)
+        await manager.appendTimelineItem(agent.id, { type: "error", message: `m${i}` });
+      await manager.appendTimelineItem(agent.id, {
+        type: "tool_call",
+        callId: "long-tool",
+        name: "shell",
+        status: "completed",
+        error: null,
+        detail: { type: "shell", command: "work" },
+      });
+      await manager.flush();
+      const rows = await store.getCommittedRows(agent.id);
+      const expected = selectProjectedTimelinePage({ rows, direction: "tail", limit: 2 });
+      const actual = await manager.fetchTimelineWithBackfill(agent.id, {
+        direction: "tail",
+        limit: 2,
+      });
+      expect(actual.rows.map(({ seqStart, seqEnd, item }) => ({ seqStart, seqEnd, item }))).toEqual(
+        expected.entries.map(({ seqStart, seqEnd, item }) => ({ seqStart, seqEnd, item })),
+      );
+      expect(actual.startSeq).toBe(expected.startSeq);
+      const catchup = manager.fetchTimeline(agent.id, {
+        direction: "after",
+        cursor: { epoch: actual.epoch, seq: 10 },
+        limit: 200,
+      });
+      expect(
+        manager.needsTimelineBackfill(agent.id, { direction: "after", limit: 200, sync: catchup }),
+      ).toBe(true);
+      const completeCatchup = await manager.fetchTimelineWithBackfill(agent.id, {
+        direction: "after",
+        cursor: { epoch: actual.epoch, seq: 10 },
+        limit: 0,
+      });
+      expect(completeCatchup.gap).toBe(false);
+      expect(completeCatchup.endSeq).toBe(300);
+    } finally {
+      await manager.closeAgent(agent.id);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("full backfill pages keep the history snapshot captured before a live append", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-page-append-"));
+    const store = new PausedTimelineReadStore();
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      durableTimelineStore: store,
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {});
+    try {
+      await manager.appendTimelineItem(agent.id, { type: "user_message", text: "before" });
+      await manager.flush();
+      store.pauseNextRead();
+      const pendingPage = manager.fetchTimelineWithBackfill(agent.id, { limit: 0 });
+      await store.readStarted.promise;
+      await manager.appendTimelineItem(agent.id, { type: "user_message", text: "after" });
+      await manager.flush();
+      store.readAllowed.resolve();
+      const page = await pendingPage;
+      expect(page.rows.map((row) => row.item)).toEqual([{ type: "user_message", text: "before" }]);
+      expect(page.window).toEqual({ minSeq: 1, maxSeq: 1, nextSeq: 2 });
+      expect(page.endSeq).toBe(1);
+      expect(manager.fetchTimeline(agent.id, { limit: 0 }).rows).toHaveLength(2);
+    } finally {
+      store.readAllowed.resolve();
+      await manager.closeAgent(agent.id);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("full-history reads retry after rewind instead of merging the old window", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-rewind-"));
+    const store = new PausedTimelineReadStore();
+    const replacement: AgentTimelineItem = { type: "user_message", text: "after rewind" };
+    const session = new (class extends TestAgentSession {
+      override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        yield { type: "timeline", provider: "codex", item: replacement };
+      }
+    })({ provider: "codex", cwd: workdir });
+    const client = new (class extends TestAgentClient {
+      override async createSession(): Promise<AgentSession> {
+        return session;
+      }
+    })();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      durableTimelineStore: store,
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {});
+    try {
+      await manager.appendTimelineItem(agent.id, { type: "user_message", text: "old branch" });
+      await manager.flush();
+      store.pauseNextRead();
+      const pendingRows = manager.getTimelineRows(agent.id);
+      await store.readStarted.promise;
+      await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+      await manager.flush();
+      store.readAllowed.resolve();
+      expect((await pendingRows).map((row) => row.item)).toEqual([replacement]);
+    } finally {
+      store.readAllowed.resolve();
+      await manager.closeAgent(agent.id);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test.each([0, 10])(
+    "backfill pages retry the history snapshot after rewind (limit %i)",
+    async (limit) => {
+      const workdir = mkdtempSync(join(tmpdir(), "agent-manager-page-rewind-"));
+      const store = new PausedTimelineReadStore();
+      const replacement: AgentTimelineItem = { type: "user_message", text: "after rewind" };
+      const session = new (class extends TestAgentSession {
+        override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+          yield { type: "timeline", provider: "codex", item: replacement };
+        }
+      })({ provider: "codex", cwd: workdir });
+      const client = new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })();
+      const manager = new AgentManager({
+        clients: { codex: client },
+        durableTimelineStore: store,
+        timelineWindow: { maxWindowRows: 3 },
+        logger,
+      });
+      const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {});
+      try {
+        for (let i = 0; i < 20; i++) {
+          await manager.appendTimelineItem(agent.id, { type: "user_message", text: `old ${i}` });
+        }
+        await manager.flush();
+        const previousEpoch = manager.getTimelineEpoch(agent.id);
+        store.pauseNextRead();
+        const pendingPage = manager.fetchTimelineWithBackfill(agent.id, {
+          limit,
+          cursor: { epoch: previousEpoch, seq: 20 },
+        });
+        await store.readStarted.promise;
+        await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+        await manager.flush();
+        store.readAllowed.resolve();
+        const page = await pendingPage;
+        expect(page.epoch).not.toBe(previousEpoch);
+        expect(page.epoch).toBe(manager.getTimelineEpoch(agent.id));
+        expect(page.reset).toBe(true);
+        expect(page.staleCursor).toBe(true);
+        expect(page.rows.map((row) => row.item)).toEqual([replacement]);
+        expect(page.window).toEqual({ minSeq: 1, maxSeq: 1, nextSeq: 2 });
+        expect(page.endSeq).toBe(1);
+      } finally {
+        store.readAllowed.resolve();
+        await manager.closeAgent(agent.id);
+        rmSync(workdir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  async function createBoundedBackfillManager(workdir: string, store: RecordingTimelineStore) {
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      durableTimelineStore: store,
+      timelineWindow: windowOptions,
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    for (let i = 1; i <= 101; i++) {
+      await manager.appendTimelineItem(agent.id, {
+        type: "user_message",
+        text: `m${i}`,
+        clientMessageId: `c${i}`,
+      });
+    }
+    await manager.flush();
+    return { manager, agentId: agent.id };
+  }
+
+  test("fetchTimelineWithBackfill serves rows evicted from the in-memory window", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-backfill-"));
+    const { manager, agentId } = await createBoundedBackfillManager(
+      workdir,
+      new RecordingTimelineStore(),
+    );
+    try {
+      expect(manager.getTimeline(agentId).length).toBeLessThan(101);
+      expect(manager.isTimelineWindowEmpty(agentId)).toBe(false);
+
+      const windowProbe = manager.fetchTimeline(agentId, { direction: "tail", limit: 1 });
+      const before = await manager.fetchTimelineWithBackfill(agentId, {
+        direction: "before",
+        cursor: { epoch: windowProbe.epoch, seq: windowProbe.window.minSeq },
+        limit: 2,
+      });
+      for (const entry of before.rows) {
+        expect(entry.item).toEqual({
+          type: "user_message",
+          text: `m${entry.seqStart}`,
+          clientMessageId: `c${entry.seqStart}`,
+        });
+      }
+      expect(before.rows.at(-1)?.seqStart).toBe(windowProbe.window.minSeq - 1);
+      expect(before.hasOlder).toBe(true);
+
+      const all = await manager.fetchTimelineWithBackfill(agentId, {
+        direction: "tail",
+        limit: 0,
+      });
+      expect(all.rows).toHaveLength(101);
+      expect(all.rows[0]?.item).toEqual({
+        type: "user_message",
+        text: "m1",
+        clientMessageId: "c1",
+      });
+      expect(all.rows.at(-1)?.seqStart).toBe(101);
+    } finally {
+      await manager.closeAgent(agentId).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("fetchTimelineWithBackfill falls back to the in-memory window without a durable store", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-backfill-none-"));
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      await manager.appendTimelineItem(agent.id, { type: "assistant_message", text: "live" });
+      const result = await manager.fetchTimelineWithBackfill(agent.id, {
+        direction: "tail",
+        limit: 5,
+      });
+      expect(result.rows).toHaveLength(1);
+      expect(result.rows[0]?.item).toEqual({ type: "assistant_message", text: "live" });
+      expect(
+        manager.needsTimelineBackfill(agent.id, {
+          direction: "tail",
+          limit: 5,
+          sync: result,
+        }),
+      ).toBe(false);
+    } finally {
+      await manager.closeAgent(agent.id).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("needsTimelineBackfill routes deep and full-history reads to durable backfill", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-backfill-route-"));
+    const { manager, agentId } = await createBoundedBackfillManager(
+      workdir,
+      new RecordingTimelineStore(),
+    );
+    try {
+      const tailSync = manager.fetchTimeline(agentId, { direction: "tail", limit: 100 });
+      expect(
+        manager.needsTimelineBackfill(agentId, {
+          direction: "tail",
+          limit: 100,
+          sync: tailSync,
+        }),
+      ).toBe(false);
+      expect(
+        manager.needsTimelineBackfill(agentId, {
+          direction: "after",
+          limit: 100,
+          sync: manager.fetchTimeline(agentId, { direction: "after", limit: 100 }),
+        }),
+      ).toBe(false);
+      expect(
+        manager.needsTimelineBackfill(agentId, {
+          direction: "tail",
+          limit: 0,
+          sync: manager.fetchTimeline(agentId, { limit: 0 }),
+        }),
+      ).toBe(true);
+
+      const innerBeforeSync = manager.fetchTimeline(agentId, {
+        direction: "before",
+        cursor: { epoch: tailSync.epoch, seq: tailSync.window.maxSeq },
+        limit: 10,
+      });
+      expect(innerBeforeSync.hasOlder).toBe(true);
+      expect(
+        manager.needsTimelineBackfill(agentId, {
+          direction: "before",
+          limit: 10,
+          sync: innerBeforeSync,
+        }),
+      ).toBe(false);
+
+      const boundaryBeforeSync = manager.fetchTimeline(agentId, {
+        direction: "before",
+        cursor: { epoch: tailSync.epoch, seq: tailSync.window.minSeq },
+        limit: 10,
+      });
+      expect(
+        manager.needsTimelineBackfill(agentId, {
+          direction: "before",
+          limit: 10,
+          sync: boundaryBeforeSync,
+        }),
+      ).toBe(true);
+    } finally {
+      await manager.closeAgent(agentId).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("fetchTimelineWithBackfill tail pages read a bounded durable scan", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-bounded-tail-"));
+    const store = new RecordingTimelineStore();
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      durableTimelineStore: store,
+      timelineWindow: { maxWindowBytes: 512, maxWindowRows: 10_000 },
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      for (let i = 1; i <= 300; i += 1) {
+        await manager.appendTimelineItem(agent.id, {
+          type: "error",
+          message: `m${i}`,
+        });
+      }
+      await manager.flush();
+
+      const previousFullReads = store.fullReadCount;
+      const result = await manager.fetchTimelineWithBackfill(agent.id, {
+        direction: "tail",
+        limit: 10,
+      });
+      expect(result.rows.map((row) => row.item)).toEqual(
+        Array.from({ length: 10 }, (_, i) => ({
+          type: "error",
+          message: `m${291 + i}`,
+        })),
+      );
+      // The durable log is scanned from the tail, not materialized whole.
+      expect(store.tailReadCounts.length).toBeGreaterThan(0);
+      expect(store.tailReadCounts.reduce((sum, count) => sum + count, 0)).toBeLessThan(300);
+      expect(store.fullReadCount).toBe(previousFullReads);
+    } finally {
+      await manager.closeAgent(agent.id).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("bounded tail backfill keeps an assistant run spanning the window boundary whole", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-bounded-tail-run-"));
+    const store = new RecordingTimelineStore();
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      durableTimelineStore: store,
+      timelineWindow: { maxWindowRows: 6 },
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      for (let i = 1; i <= 30; i += 1) {
+        await manager.appendTimelineItem(agent.id, { type: "assistant_message", text: `a${i}` });
+      }
+      await manager.flush();
+
+      const result = await manager.fetchTimelineWithBackfill(agent.id, {
+        direction: "tail",
+        limit: 5,
+      });
+      expect(result.rows).toHaveLength(1);
+      expect(result.rows[0]?.item).toEqual({
+        type: "assistant_message",
+        text: Array.from({ length: 30 }, (_, i) => `a${i + 1}`).join(""),
+      });
+      expect(result.rows[0]?.seqStart).toBe(1);
+      expect(result.hasOlder).toBe(false);
+    } finally {
+      await manager.closeAgent(agent.id).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("bounded tail backfill scans past a batch boundary into a long assistant run", async () => {
+    // 600 consecutive chunks: the first backfill batch (256 rows) ends
+    // mid-run. The stable-cut detection must probe the row above the batch,
+    // not compare the batch against itself, or the merged entry truncates at
+    // the cut and the client sees one reply as two entries.
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-bounded-tail-long-run-"));
+    const store = new RecordingTimelineStore();
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      durableTimelineStore: store,
+      timelineWindow: { maxWindowRows: 6 },
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      for (let i = 1; i <= 600; i += 1) {
+        await manager.appendTimelineItem(agent.id, { type: "assistant_message", text: `a${i}` });
+      }
+      await manager.flush();
+
+      const result = await manager.fetchTimelineWithBackfill(agent.id, {
+        direction: "tail",
+        limit: 5,
+      });
+      expect(result.rows).toHaveLength(1);
+      expect(result.rows[0]?.item).toEqual({
+        type: "assistant_message",
+        text: Array.from({ length: 600 }, (_, i) => `a${i + 1}`).join(""),
+      });
+      expect(result.rows[0]?.seqStart).toBe(1);
+      expect(result.hasOlder).toBe(false);
+    } finally {
+      await manager.closeAgent(agent.id).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("rows between a straddling tool anchor and the window floor stay reachable", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-straddle-reach-"));
+    // Rows 1..10 commit; 11+ stay in flight, so the watermark stops at 10.
+    // The tool pair (anchor seq 1, update seq 11) therefore always straddles
+    // any eviction: row 11 is above the watermark and can never be evicted,
+    // so the projection keeps the whole entry while rows 2..10 drop out of
+    // the window. The stable window is [11..30].
+    const store = new HoldAfterSeqStore(10);
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      durableTimelineStore: store,
+      timelineWindow: { maxWindowRows: 10 },
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      const tool = (status: "running" | "completed") => ({
+        type: "tool_call" as const,
+        callId: "t1",
+        name: "shell",
+        status,
+        error: null,
+        detail: { type: "plain_text" as const, label: "work" },
+      });
+      const user = (i: number) => ({
+        type: "user_message" as const,
+        text: `m${i}`,
+        clientMessageId: `c${i}`,
+      });
+      await manager.appendTimelineItem(agent.id, tool("running")); // seq 1
+      for (let i = 2; i <= 10; i += 1) await manager.appendTimelineItem(agent.id, user(i));
+      await manager.appendTimelineItem(agent.id, tool("completed")); // seq 11
+      for (let i = 12; i <= 30; i += 1) await manager.appendTimelineItem(agent.id, user(i));
+
+      // Wait for the watermark to land and the eviction to settle (the stable
+      // window [11..30] projects to 20 entries: the straddling tool + m12..m30).
+      for (
+        let i = 0;
+        i < 500 &&
+        manager.fetchTimeline(agent.id, { direction: "tail", limit: 200 }).rows.length !== 20;
+        i += 1
+      ) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+
+      const tail = manager.fetchTimeline(agent.id, { direction: "tail", limit: 200 });
+      expect(tail.rows).toHaveLength(20);
+      // The tool entry's anchor (seq 1) must not become the backward cursor,
+      // or rows 2..10 are unreachable from the client's older paging.
+      expect(tail.rows[0]?.seqStart).toBe(1);
+      expect(tail.startSeq).toBe(11);
+
+      const older = await manager.fetchTimelineWithBackfill(agent.id, {
+        direction: "before",
+        cursor: { epoch: tail.epoch, seq: tail.startSeq ?? 0 },
+        limit: 200,
+      });
+      const seqStarts = older.rows.map((row) => row.seqStart);
+      for (let seq = 2; seq <= 10; seq += 1) {
+        expect(seqStarts).toContain(seq);
+      }
+    } finally {
+      await manager.closeAgent(agent.id).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("durable timeline store integration", () => {
+  test.each([1, 2])(
+    "immediate durable retries preserve provider echo identity after %i failures",
+    async (failedAttempts) => {
+      class EchoBeforeRetryStore extends RecordingTimelineStore {
+        readonly firstWriteStarted = deferred<void>();
+        readonly enrichmentWritten = deferred<void>();
+        private first = true;
+        private failuresLeft = failedAttempts;
+
+        override async bulkInsert(
+          agentId: string,
+          rows: readonly AgentTimelineRow[],
+        ): Promise<void> {
+          if (this.first) {
+            this.first = false;
+            this.firstWriteStarted.resolve();
+            await this.enrichmentWritten.promise;
+          }
+          if (this.failuresLeft > 0) {
+            this.failuresLeft -= 1;
+            throw new Error("transient disk failure");
+          }
+          await super.bulkInsert(agentId, rows);
+        }
+
+        override async updateCommittedRow(agentId: string, row: AgentTimelineRow): Promise<void> {
+          await super.updateCommittedRow(agentId, row);
+          this.enrichmentWritten.resolve();
+        }
+      }
+      const workdir = mkdtempSync(join(tmpdir(), "agent-manager-immediate-retry-enrich-"));
+      const store = new EchoBeforeRetryStore();
+      const session = new TestAgentSession({ provider: "codex", cwd: workdir });
+      const client = new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })();
+      const manager = new AgentManager({
+        clients: { codex: client },
+        durableTimelineStore: store,
+        durableTimelineWrite: { maxAttempts: failedAttempts + 1, retryDelayMs: 1 },
+        logger,
+      });
+      const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {});
+      try {
+        await manager.appendTimelineItem(agent.id, {
+          type: "user_message",
+          text: "hello",
+          clientMessageId: "c1",
+        });
+        await store.firstWriteStarted.promise;
+        session.pushEvent({
+          type: "timeline",
+          provider: "codex",
+          item: { type: "user_message", text: "hello", clientMessageId: "c1", messageId: "pm1" },
+        });
+        await store.enrichmentWritten.promise;
+        await manager.flush();
+        expect(
+          (await store.getCommittedRows(agent.id)).map((row) => row.providerMessageId),
+        ).toEqual(["pm1"]);
+      } finally {
+        store.enrichmentWritten.resolve();
+        await manager.closeAgent(agent.id);
+        rmSync(workdir, { recursive: true, force: true });
+      }
+    },
+  );
+  class DeferredDurableTimelineStore implements AgentTimelineStore {
+    private readonly committed = new Map<string, AgentTimelineRow[]>();
+    private readonly pending = new Map<string, AgentTimelineRow[]>();
+
+    /** Makes pending durable writes visible to committed reads. */
+    release(agentId: string): void {
+      const rows = this.pending.get(agentId);
+      if (!rows || rows.length === 0) return;
+      this.pending.set(agentId, []);
+      const list = this.committed.get(agentId) ?? [];
+      for (const row of rows) {
+        const existing = list.findIndex((candidate) => candidate.seq === row.seq);
+        if (existing >= 0) list[existing] = row;
+        else list.push(row);
+      }
+      list.sort((a, b) => a.seq - b.seq);
+      this.committed.set(agentId, list);
+    }
+
+    async appendCommitted(
+      agentId: string,
+      item: AgentTimelineItem,
+      options?: { timestamp?: string; turnId?: string },
+    ): Promise<AgentTimelineRow> {
+      const seq = (await this.getLatestCommittedSeq(agentId)) + 1;
+      const row: AgentTimelineRow = {
+        seq,
+        timestamp: options?.timestamp ?? new Date().toISOString(),
+        item,
+        ...(options?.turnId !== undefined ? { turnId: options.turnId } : {}),
+      };
+      await this.bulkInsert(agentId, [row]);
+      return row;
+    }
+
+    async fetchCommitted(
+      _agentId: string,
+      _options?: AgentTimelineFetchOptions,
+    ): Promise<AgentTimelineFetchResult> {
+      throw new Error("fetchCommitted is not supported by DeferredDurableTimelineStore");
+    }
+
+    async getLatestCommittedSeq(agentId: string): Promise<number> {
+      return this.committed.get(agentId)?.at(-1)?.seq ?? 0;
+    }
+
+    async getCommittedRows(agentId: string): Promise<AgentTimelineRow[]> {
+      return [...(this.committed.get(agentId) ?? [])];
+    }
+
+    async getLastItem(
+      agentId: string,
+      options?: { maxSeq?: number },
+    ): Promise<AgentTimelineItem | null> {
+      return (await this.committedRowsUpTo(agentId, options?.maxSeq)).at(-1)?.item ?? null;
+    }
+
+    async getLastAssistantMessage(
+      agentId: string,
+      options?: { maxSeq?: number },
+    ): Promise<string | null> {
+      const rows = await this.committedRowsUpTo(agentId, options?.maxSeq);
+      const chunks: string[] = [];
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const item = rows[i]?.item;
+        if (item?.type !== "assistant_message") {
+          if (chunks.length > 0) break;
+          continue;
+        }
+        chunks.push(item.text);
+      }
+      return chunks.length > 0 ? chunks.toReversed().join("") : null;
+    }
+
+    private async committedRowsUpTo(
+      agentId: string,
+      maxSeq: number | undefined,
+    ): Promise<AgentTimelineRow[]> {
+      const rows = await this.getCommittedRows(agentId);
+      if (maxSeq === undefined) {
+        return rows;
+      }
+      return rows.filter((row) => row.seq <= maxSeq);
+    }
+
+    async deleteAgent(agentId: string): Promise<void> {
+      this.committed.delete(agentId);
+      this.pending.delete(agentId);
+    }
+
+    async bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void> {
+      const list = this.pending.get(agentId) ?? [];
+      for (const row of rows) {
+        list.push({ ...row });
+      }
+      this.pending.set(agentId, list);
+    }
+
+    async updateCommittedRow(agentId: string, row: AgentTimelineRow): Promise<void> {
+      const list = this.committed.get(agentId) ?? [];
+      const existing = list.findIndex((candidate) => candidate.seq === row.seq);
+      if (existing >= 0) list[existing] = { ...row };
+      else list.push({ ...row });
+      list.sort((a, b) => a.seq - b.seq);
+      this.committed.set(agentId, list);
+    }
+
+    async readTailRows(
+      agentId: string,
+      options: { maxSeq?: number; offset: number; count: number },
+    ): Promise<{ rows: AgentTimelineRow[]; atStart: boolean }> {
+      const eligible = (this.committed.get(agentId) ?? []).filter(
+        (row) => options.maxSeq === undefined || row.seq <= options.maxSeq,
+      );
+      const slice = eligible
+        .toReversed()
+        .slice(options.offset, options.offset + options.count)
+        .toReversed();
+      return { rows: [...slice], atStart: options.offset + options.count >= eligible.length };
+    }
+  }
+
+  /** Rejects every write that carries the given seq, permanently. */
+  class HoleDurableTimelineStore extends RecordingTimelineStore {
+    constructor(private readonly holeSeq: number) {
+      super();
+    }
+
+    override async bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void> {
+      if (rows.some((row) => row.seq === this.holeSeq)) {
+        throw new Error(`disk failure for seq ${this.holeSeq}`);
+      }
+      await super.bulkInsert(agentId, rows);
+    }
+  }
+
+  /** Rejects the very first write, then succeeds. */
+  class FailOnceDurableTimelineStore extends RecordingTimelineStore {
+    private calls = 0;
+
+    override async bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void> {
+      this.calls += 1;
+      if (this.calls === 1) {
+        throw new Error("transient disk failure");
+      }
+      await super.bulkInsert(agentId, rows);
+    }
+  }
+
+  /** Holds the first write until the test rejects it; later writes succeed. */
+  class HoldFirstWriteStore extends RecordingTimelineStore {
+    private firstGate: { reject: (error: Error) => void } | null = null;
+    private readonly firstWriteStarted: Promise<void>;
+    private readonly resolveFirstWrite: () => void;
+
+    constructor() {
+      super();
+      let resolve!: () => void;
+      this.firstWriteStarted = new Promise<void>((done) => {
+        resolve = done;
+      });
+      this.resolveFirstWrite = resolve;
+    }
+
+    failFirstWrite(): void {
+      this.firstGate?.reject(new Error("transient disk failure"));
+    }
+
+    override async bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void> {
+      if (this.firstGate === null) {
+        const gate = new Promise<void>((_resolve, reject) => {
+          this.firstGate = { reject };
+        });
+        this.resolveFirstWrite();
+        await gate;
+      }
+      await super.bulkInsert(agentId, rows);
+    }
+  }
+
+  /** Streams whatever the test pushes into the client's history items. */
+  class ScriptedHistorySession extends TestAgentSession {
+    constructor(
+      config: AgentSessionConfig,
+      private readonly historyItems: AgentTimelineItem[],
+    ) {
+      super(config);
+    }
+
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      for (const item of this.historyItems) {
+        yield { type: "timeline", provider: "codex", item };
+      }
+    }
+  }
+
+  class ScriptedHistoryClient extends TestAgentClient {
+    historyItems: AgentTimelineItem[] = [];
+
+    constructor(private readonly workdir: string) {
+      super();
+    }
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new ScriptedHistorySession(config, this.historyItems);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new ScriptedHistorySession(
+        { provider: "codex", cwd: config?.cwd ?? this.workdir },
+        this.historyItems,
+      );
+    }
+  }
+
+  test("getTimelineRows merges the in-memory window with unflushed durable writes", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-rows-merge-"));
+    const store = new DeferredDurableTimelineStore();
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      durableTimelineStore: store,
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      await manager.appendTimelineItem(agent.id, {
+        type: "user_message",
+        text: "one",
+        clientMessageId: "c1",
+      });
+      // The durable write for row 1 is still pending; the row must remain
+      // visible through the in-memory window.
+      expect(await manager.getTimelineRows(agent.id)).toHaveLength(1);
+
+      store.release(agent.id);
+      await manager.appendTimelineItem(agent.id, {
+        type: "user_message",
+        text: "two",
+        clientMessageId: "c2",
+      });
+      const merged = await manager.getTimelineRows(agent.id);
+      expect(merged.map((row) => row.item)).toEqual([
+        { type: "user_message", text: "one", clientMessageId: "c1" },
+        { type: "user_message", text: "two", clientMessageId: "c2" },
+      ]);
+    } finally {
+      await manager.closeAgent(agent.id);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("resuming an agent with a durable timeline restores provider children from history", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-subagent-cold-start-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const store = new RecordingTimelineStore();
+    class SubagentHistorySession extends TestAgentSession {
+      override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        yield {
+          type: "provider_subagent",
+          provider: "codex",
+          event: { type: "upsert", id: "cold-child", title: "Cold child", status: "completed" },
+        };
+      }
+    }
+    const client = new (class extends TestAgentClient {
+      override async createSession(config: AgentSessionConfig) {
+        return new SubagentHistorySession(config);
+      }
+      override async resumeSession(
+        _handle: AgentPersistenceHandle,
+        config?: Partial<AgentSessionConfig>,
+      ) {
+        return new SubagentHistorySession({
+          provider: "codex",
+          cwd: config?.cwd ?? workdir,
+        });
+      }
+    })();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      durableTimelineStore: store,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000221",
+    });
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      await manager.appendTimelineItem(created.id, {
+        type: "user_message",
+        text: "hello",
+        clientMessageId: "c1",
+      });
+      await manager.flush();
+      const handle = manager.getAgent(created.id)?.persistence;
+      if (!handle) throw new Error("Expected the created agent to have a persistence handle");
+      await manager.closeAgent(created.id);
+
+      // Second lifetime: the same durable store backs the timeline, so the
+      // resumed register marks the timeline primed. Hydration must still
+      // restore provider children from the session history.
+      const restarted = new AgentManager({
+        clients: { codex: client },
+        registry: storage,
+        durableTimelineStore: store,
+        logger,
+      });
+      try {
+        await restarted.resumeAgentFromPersistence(handle, undefined, created.id);
+        await restarted.hydrateTimelineFromProvider(created.id);
+        expect(restarted.listProviderSubagents(created.id)).toEqual([
+          expect.objectContaining({ id: "cold-child", status: "completed" }),
+        ]);
+      } finally {
+        await restarted.closeAgent(created.id);
+      }
+    } finally {
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps a row whose durable write keeps failing out of eviction reach", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-durable-hole-"));
+    const store = new HoleDurableTimelineStore(1);
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      durableTimelineStore: store,
+      timelineWindow: { maxWindowRows: 3 },
+      durableTimelineWrite: { maxAttempts: 2, retryDelayMs: 1 },
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      for (let i = 1; i <= 4; i++) {
+        await manager.appendTimelineItem(agent.id, {
+          type: "user_message",
+          text: `m${i}`,
+          clientMessageId: `c${i}`,
+        });
+      }
+      await manager.flush();
+
+      // seq 1 never reached disk, so it must not be treated as evictable:
+      // the window keeps it even past its hard row limit.
+      expect(manager.fetchTimeline(agent.id, { limit: 0 }).window.minSeq).toBe(1);
+      const all = await manager.fetchTimelineWithBackfill(agent.id, {
+        direction: "tail",
+        limit: 0,
+      });
+      expect(all.rows).toHaveLength(4);
+      expect(all.rows[0]?.item).toEqual({
+        type: "user_message",
+        text: "m1",
+        clientMessageId: "c1",
+      });
+    } finally {
+      await manager.closeAgent(agent.id).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("retries a transient durable write failure before giving up on the row", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-durable-retry-"));
+    const store = new FailOnceDurableTimelineStore();
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      durableTimelineStore: store,
+      timelineWindow: { maxWindowRows: 3 },
+      durableTimelineWrite: { maxAttempts: 3, retryDelayMs: 1 },
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      for (let i = 1; i <= 4; i++) {
+        await manager.appendTimelineItem(agent.id, {
+          type: "user_message",
+          text: `m${i}`,
+          clientMessageId: `c${i}`,
+        });
+        if (i === 1) await manager.flush();
+      }
+      await manager.flush();
+
+      // The first write (seq 1) failed once and its retry committed, so the
+      // watermark may pass it and eviction may drop it from the window.
+      const committed = await store.getCommittedRows(agent.id);
+      expect(committed.map((row) => row.seq)).toEqual([1, 2, 3, 4]);
+      expect(manager.fetchTimeline(agent.id, { limit: 0 }).window.minSeq).toBe(2);
+
+      const all = await manager.fetchTimelineWithBackfill(agent.id, {
+        direction: "tail",
+        limit: 0,
+      });
+      expect(all.rows).toHaveLength(4);
+      expect(all.rows[0]?.item).toEqual({
+        type: "user_message",
+        text: "m1",
+        clientMessageId: "c1",
+      });
+    } finally {
+      await manager.closeAgent(agent.id).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("a retry of a failed durable write preserves an enrichment committed in the meantime", async () => {
+    class FailFirstNDurableTimelineStore extends RecordingTimelineStore {
+      private calls = 0;
+
+      constructor(private readonly failCount: number) {
+        super();
+      }
+
+      override async bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void> {
+        this.calls += 1;
+        if (this.calls <= this.failCount) {
+          throw new Error("transient disk failure");
+        }
+        await super.bulkInsert(agentId, rows);
+      }
+    }
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-retry-enrich-"));
+    const store = new FailFirstNDurableTimelineStore(2);
+    let session: TestAgentSession | null = null;
+    const client = new (class extends TestAgentClient {
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        const created = new TestAgentSession(config);
+        session = created;
+        return created;
+      }
+    })();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      durableTimelineStore: store,
+      durableTimelineWrite: { maxAttempts: 2, retryDelayMs: 1 },
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      await manager.appendTimelineItem(agent.id, {
+        type: "user_message",
+        text: "hello",
+        clientMessageId: "c1",
+      });
+      await manager.flush();
+      // The write for seq 1 exhausted its attempts; the row stays queued for
+      // the next successful write while the window retains it.
+      expect(await store.getCommittedRows(agent.id)).toHaveLength(0);
+
+      // The provider echoes the prompt: the enrichment commits to disk while
+      // the original write is still queued.
+      session!.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "user_message",
+          text: "hello",
+          clientMessageId: "c1",
+          messageId: "pm1",
+        },
+      });
+      await manager.flush();
+      expect((await store.getCommittedRows(agent.id)).map((r) => r.providerMessageId)).toEqual([
+        "pm1",
+      ]);
+
+      // A later successful write triggers the retry of the failed row.
+      await manager.appendTimelineItem(agent.id, {
+        type: "user_message",
+        text: "again",
+        clientMessageId: "c2",
+      });
+      await manager.flush();
+
+      // The retry must rewrite the row as the window currently holds it, not
+      // the pre-echo snapshot: the committed row keeps the enrichment.
+      const committed = await store.getCommittedRows(agent.id);
+      expect(committed.map((r) => r.seq)).toEqual([1, 2]);
+      expect(committed[0]?.providerMessageId).toBe("pm1");
+    } finally {
+      await manager.closeAgent(agent.id).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("an in-flight durable write from a replaced history must not land in the rebuilt log", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stale-write-"));
+    const store = new HoldFirstWriteStore();
+    const client = new ScriptedHistoryClient(workdir);
+    const manager = new AgentManager({
+      clients: { codex: client },
+      durableTimelineStore: store,
+      durableTimelineWrite: { maxAttempts: 3, retryDelayMs: 1 },
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      await manager.appendTimelineItem(agent.id, {
+        type: "user_message",
+        text: "old",
+        clientMessageId: "c1",
+      });
+
+      // Hold the first durable write, then fail it: the retry loop is now
+      // asleep between attempts when the history is replaced below.
+      await store.firstWriteStarted;
+      store.failFirstWrite();
+
+      // The provider now holds a different history; an explicit force
+      // rebuilds the timeline from seq 1 on top of the in-flight write.
+      client.historyItems.push({ type: "user_message", text: "new", clientMessageId: "c1" });
+      await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+      await manager.flush();
+
+      // The stale write aborted instead of overwriting the re-primed row:
+      // the rebuilt log (and only it) is what a restart would restore.
+      expect((await store.getCommittedRows(agent.id)).map((row) => row.item)).toEqual([
+        { type: "user_message", text: "new", clientMessageId: "c1" },
+      ]);
+      expect((await manager.getTimelineRows(agent.id)).map((row) => row.item)).toEqual([
+        { type: "user_message", text: "new", clientMessageId: "c1" },
+      ]);
+    } finally {
+      await manager.closeAgent(agent.id).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("an echoed user message after restart enriches the durable row instead of re-recording it", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-echo-restart-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const store = new RecordingTimelineStore();
+    let resumedSession: TestAgentSession | null = null;
+    const client = new (class extends TestAgentClient {
+      override async resumeSession(
+        _handle: AgentPersistenceHandle,
+        config?: Partial<AgentSessionConfig>,
+      ) {
+        const session = new TestAgentSession({
+          provider: "codex",
+          cwd: config?.cwd ?? workdir,
+        });
+        resumedSession = session;
+        return session;
+      }
+    })();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      durableTimelineStore: store,
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      await manager.appendTimelineItem(agent.id, {
+        type: "user_message",
+        text: "hello",
+        clientMessageId: "c1",
+      });
+      await manager.flush();
+      const handle = manager.getAgent(agent.id)?.persistence;
+      if (!handle) throw new Error("Expected the created agent to have a persistence handle");
+      await manager.closeAgent(agent.id);
+
+      const restarted = new AgentManager({
+        clients: { codex: client },
+        registry: storage,
+        durableTimelineStore: store,
+        logger,
+      });
+      try {
+        await restarted.resumeAgentFromPersistence(handle, undefined, agent.id);
+        // The provider re-echoes a user message the daemon already recorded;
+        // the submitted row is on disk but not in the restarted window.
+        resumedSession!.pushEvent({
+          type: "timeline",
+          provider: "codex",
+          item: {
+            type: "user_message",
+            text: "hello",
+            clientMessageId: "c1",
+            messageId: "pm1",
+          },
+        });
+        await restarted.flush();
+
+        const rows = await restarted.getTimelineRows(agent.id);
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.item).toEqual({
+          type: "user_message",
+          text: "hello",
+          clientMessageId: "c1",
+        });
+        expect(rows[0]?.providerMessageId).toBe("pm1");
+      } finally {
+        await restarted.closeAgent(agent.id).catch(() => undefined);
+      }
+    } finally {
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("getLastAssistantMessage does not double-count rows the window already holds", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-last-msg-dup-"));
+    const store = new RecordingTimelineStore();
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      durableTimelineStore: store,
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      await manager.appendTimelineItem(agent.id, { type: "assistant_message", text: "A" });
+      await manager.appendTimelineItem(agent.id, { type: "assistant_message", text: "B" });
+      await manager.flush();
+      expect(await manager.getLastAssistantMessage(agent.id)).toBe("AB");
+    } finally {
+      await manager.closeAgent(agent.id).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("getLastAssistantMessage does not double-count a merged run kept whole at the eviction boundary", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-last-msg-boundary-"));
+    const store = new RecordingTimelineStore();
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      durableTimelineStore: store,
+      timelineWindow: { maxWindowRows: 4 },
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      for (const item of [
+        { type: "user_message", text: "u1", clientMessageId: "c1" } as const,
+        ...[1, 2, 3, 4, 5].map((i) => ({ type: "assistant_message", text: `a${i}` }) as const),
+      ]) {
+        await manager.appendTimelineItem(agent.id, item);
+        await manager.flush();
+      }
+
+      // The window holds the last four canonical rows (a2..a5). The merged
+      // assistant row spanning a1..a5 is kept whole across the eviction
+      // cutoff, so the window's minSeq is that row's seqStart (2): durable
+      // history below the window is only the u1 row, and the trailing run
+      // does not continue into it.
+      expect(manager.fetchTimeline(agent.id, { limit: 0 }).window.minSeq).toBe(2);
+      expect(await manager.getLastAssistantMessage(agent.id)).toBe("a1a2a3a4a5");
+    } finally {
+      await manager.closeAgent(agent.id).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("getLastAssistantMessage splices the durable tail when the run continues across a restart", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-last-msg-restart-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const store = new RecordingTimelineStore();
+    const client = new TestAgentClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      durableTimelineStore: store,
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      await manager.appendTimelineItem(agent.id, {
+        type: "user_message",
+        text: "u1",
+        clientMessageId: "c1",
+      });
+      for (let i = 1; i <= 3; i++) {
+        await manager.appendTimelineItem(agent.id, { type: "assistant_message", text: `a${i}` });
+      }
+      await manager.flush();
+      const handle = manager.getAgent(agent.id)?.persistence;
+      if (!handle) throw new Error("Expected the created agent to have a persistence handle");
+      await manager.closeAgent(agent.id);
+
+      // Second lifetime: the window starts empty above the durable tail and
+      // the assistant run continues across the restart boundary.
+      const restarted = new AgentManager({
+        clients: { codex: client },
+        registry: storage,
+        durableTimelineStore: store,
+        logger,
+      });
+      try {
+        await restarted.resumeAgentFromPersistence(handle, undefined, agent.id);
+        for (let i = 4; i <= 5; i++) {
+          await restarted.appendTimelineItem(agent.id, {
+            type: "assistant_message",
+            text: `a${i}`,
+          });
+        }
+        await restarted.flush();
+        expect(await restarted.getLastAssistantMessage(agent.id)).toBe("a1a2a3a4a5");
+      } finally {
+        await restarted.closeAgent(agent.id).catch(() => undefined);
+      }
+    } finally {
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("durable timeline gap recovery", () => {
+  function gapRow(seq: number, text: string): AgentTimelineRow {
+    return {
+      seq,
+      timestamp: "2026-01-01T00:00:00.000Z",
+      item: { type: "user_message", text, clientMessageId: `d${seq}` },
+    };
+  }
+
+  /**
+   * Simulates a daemon restart: a first lifetime creates the agent, a gapped
+   * durable log is planted under its id, then a second manager resumes it from
+   * the same registry + durable store.
+   */
+  async function resumeWithDurableRows(
+    client: TestAgentClient,
+    store: RecordingTimelineStore,
+    rows: readonly AgentTimelineRow[],
+  ): Promise<{ manager: AgentManager; agentId: string; workdir: string }> {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-gap-resume-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const first = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      durableTimelineStore: store,
+      logger,
+    });
+    const created = await first.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await store.bulkInsert(created.id, rows);
+    const handle = first.getAgent(created.id)?.persistence;
+    if (!handle) throw new Error("Expected the created agent to have a persistence handle");
+    await first.closeAgent(created.id);
+
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      durableTimelineStore: store,
+      logger,
+    });
+    await manager.resumeAgentFromPersistence(handle, undefined, created.id);
+    return { manager, agentId: created.id, workdir };
+  }
+
+  test.each(["before", "during"])(
+    "seeded child history preserves live completion arriving %s replay",
+    async (arrival) => {
+      const historyStarted = deferred<void>();
+      const historyAllowed = deferred<void>();
+      const session = new (class extends TestAgentSession {
+        override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+          historyStarted.resolve();
+          await historyAllowed.promise;
+          yield {
+            type: "provider_subagent",
+            provider: "codex",
+            event: { type: "upsert", id: "child", title: "Historical title", status: "running" },
+          };
+        }
+      })({ provider: "codex", cwd: "" });
+      const client = new (class extends TestAgentClient {
+        override async resumeSession(): Promise<AgentSession> {
+          return session;
+        }
+      })();
+      const { manager, agentId, workdir } = await resumeWithDurableRows(
+        client,
+        new RecordingTimelineStore(),
+        [gapRow(1, "one")],
+      );
+      const events: AgentManagerEvent[] = [];
+      const unsubscribe = manager.subscribe((event) => events.push(event), {
+        agentId,
+        replayState: false,
+      });
+      try {
+        const complete = async () => {
+          session.pushEvent({
+            type: "provider_subagent",
+            provider: "codex",
+            event: { type: "upsert", id: "child", status: "completed" },
+          });
+          await manager.flush();
+          expect(manager.listProviderSubagents(agentId)).toEqual([
+            expect.objectContaining({ id: "child", status: "completed" }),
+          ]);
+        };
+        if (arrival === "before") await complete();
+        const pending = manager.hydrateTimelineFromProvider(agentId, { broadcast: true });
+        await historyStarted.promise;
+        if (arrival === "during") await complete();
+        historyAllowed.resolve();
+        await pending;
+        expect(manager.listProviderSubagents(agentId)).toEqual([
+          expect.objectContaining({ id: "child", title: "Historical title", status: "completed" }),
+        ]);
+        expect(
+          events
+            .filter((event) => event.type === "provider_subagent" && event.event.type === "upsert")
+            .map((event) => {
+              if (event.type !== "provider_subagent" || event.event.type !== "upsert")
+                throw new Error("Expected child upsert");
+              return event.event.subagent.status;
+            }),
+        ).toEqual(["completed", "completed"]);
+      } finally {
+        historyAllowed.resolve();
+        unsubscribe();
+        await manager.closeAgent(agentId);
+        rmSync(workdir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test.each([
+    ["before replay", "saved copy", true],
+    ["during disk verification", "saved copy", true],
+    ["before replay", "provider copy", true],
+    ["during disk verification", "provider copy", true],
+    ["before replay", "saved copy", false],
+    ["during disk verification", "saved copy", false],
+    ["before replay", "provider copy", false],
+    ["during disk verification", "provider copy", false],
+  ] as const)(
+    "parent recovery preserves live child text arriving %s with parent history '%s' (broadcast %s)",
+    async (arrival, parentText, broadcast) => {
+      const session = new (class extends TestAgentSession {
+        override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+          yield {
+            type: "timeline",
+            provider: "codex",
+            item: { type: "user_message", text: parentText },
+          };
+          yield {
+            type: "provider_subagent",
+            provider: "codex",
+            event: { type: "upsert", id: "child", status: "running" },
+          };
+          yield {
+            type: "provider_subagent",
+            provider: "codex",
+            event: {
+              type: "timeline",
+              id: "child",
+              item: { type: "assistant_message", text: "historical ", messageId: "reply" },
+            },
+          };
+        }
+      })({ provider: "codex", cwd: "" });
+      const client = new (class extends TestAgentClient {
+        override async resumeSession(): Promise<AgentSession> {
+          return session;
+        }
+      })();
+      const store = new PausedTimelineReadStore();
+      const { manager, agentId, workdir } = await resumeWithDurableRows(client, store, [
+        gapRow(1, "saved copy"),
+      ]);
+      const updates: Extract<AgentManagerEvent, { type: "provider_subagent" }>["event"][] = [];
+      const unsubscribe = manager.subscribe(
+        (event) => {
+          if (event.type === "provider_subagent") updates.push(event.event);
+        },
+        { agentId, replayState: false },
+      );
+      let liveEpoch: string | undefined;
+      const live = async () => {
+        session.pushEvent({
+          type: "provider_subagent",
+          provider: "codex",
+          event: { type: "upsert", id: "child", status: "completed" },
+        });
+        session.pushEvent({
+          type: "provider_subagent",
+          provider: "codex",
+          event: {
+            type: "timeline",
+            id: "child",
+            item: { type: "assistant_message", text: "live ", messageId: "reply" },
+          },
+        });
+        await manager.flush();
+        liveEpoch = manager.fetchProviderSubagentTimeline(agentId, "child", { limit: 0 }).epoch;
+        expect(
+          manager
+            .fetchProviderSubagentTimeline(agentId, "child", { limit: 0 })
+            .rows.map((row) => row.item),
+        ).toEqual([{ type: "assistant_message", text: "live ", messageId: "reply" }]);
+      };
+      try {
+        if (arrival === "before replay") await live();
+        store.pauseNextRead();
+        const pending = manager.hydrateTimelineFromProvider(agentId, { broadcast });
+        await store.readStarted.promise;
+        if (arrival === "during disk verification") await live();
+        store.readAllowed.resolve();
+        await pending;
+        const restored = manager.fetchProviderSubagentTimeline(agentId, "child", { limit: 0 });
+        expect(restored.epoch).not.toBe(liveEpoch);
+        // An already-open client must clear its old epoch before replay starts,
+        // including when ordinary historical broadcasts are suppressed.
+        expect(updates.slice(2, 4)).toEqual([
+          { type: "remove", parentAgentId: agentId, subagentId: "child" },
+          { type: "upsert", subagent: manager.getProviderSubagent(agentId, "child") },
+        ]);
+        expect(
+          updates
+            .filter((update) => update.type === "timeline")
+            .map((update) => ({ epoch: update.epoch, seq: update.row.seq, item: update.row.item })),
+        ).toEqual([
+          {
+            epoch: liveEpoch,
+            seq: 1,
+            item: { type: "assistant_message", text: "live ", messageId: "reply" },
+          },
+          {
+            epoch: restored.epoch,
+            seq: 1,
+            item: { type: "assistant_message", text: "historical ", messageId: "reply" },
+          },
+          {
+            epoch: restored.epoch,
+            seq: 2,
+            item: { type: "assistant_message", text: "live ", messageId: "reply" },
+          },
+        ]);
+        expect(
+          manager
+            .fetchProviderSubagentTimeline(agentId, "child", { limit: 0 })
+            .rows.map((row) => row.item),
+        ).toEqual([{ type: "assistant_message", text: "historical live ", messageId: "reply" }]);
+        session.pushEvent({
+          type: "provider_subagent",
+          provider: "codex",
+          event: {
+            type: "timeline",
+            id: "child",
+            item: { type: "assistant_message", text: "suffix", messageId: "reply" },
+          },
+        });
+        await manager.flush();
+        expect(
+          manager
+            .fetchProviderSubagentTimeline(agentId, "child", { limit: 0 })
+            .rows.map((row) => row.item),
+        ).toEqual([
+          { type: "assistant_message", text: "historical live suffix", messageId: "reply" },
+        ]);
+        expect(manager.listProviderSubagents(agentId)).toEqual([
+          expect.objectContaining({ id: "child", status: "completed" }),
+        ]);
+      } finally {
+        unsubscribe();
+        store.readAllowed.resolve();
+        await manager.closeAgent(agentId);
+        rmSync(workdir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test("seeded child replay retries preserve live fields and removals", async () => {
+    let failReplay = true;
+    const session = new (class extends TestAgentSession {
+      override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        for (const id of ["child", "removed"]) {
+          yield {
+            type: "provider_subagent",
+            provider: "codex",
+            event: {
+              type: "upsert",
+              id,
+              title: "Old title",
+              description: "Historical description",
+              status: "running",
+            },
+          };
+        }
+        if (failReplay) throw new Error("History unavailable");
+      }
+    })({ provider: "codex", cwd: "" });
+    const client = new (class extends TestAgentClient {
+      override async resumeSession(): Promise<AgentSession> {
+        return session;
+      }
+    })();
+    const { manager, agentId, workdir } = await resumeWithDurableRows(
+      client,
+      new RecordingTimelineStore(),
+      [gapRow(1, "one")],
+    );
+    try {
+      session.pushEvent({
+        type: "provider_subagent",
+        provider: "codex",
+        event: { type: "upsert", id: "child", status: "completed" },
+      });
+      session.pushEvent({
+        type: "provider_subagent",
+        provider: "codex",
+        event: { type: "upsert", id: "child", title: "Live title" },
+      });
+      session.pushEvent({
+        type: "provider_subagent",
+        provider: "codex",
+        event: { type: "remove", id: "removed" },
+      });
+      await manager.flush();
+      await manager.hydrateTimelineFromProvider(agentId);
+      expect(manager.listProviderSubagents(agentId)).toEqual([
+        expect.objectContaining({ id: "child", title: "Live title", status: "completed" }),
+      ]);
+      failReplay = false;
+      await manager.hydrateTimelineFromProvider(agentId);
+      expect(manager.listProviderSubagents(agentId)).toEqual([
+        expect.objectContaining({
+          id: "child",
+          title: "Live title",
+          description: "Historical description",
+          status: "completed",
+        }),
+      ]);
+      // Once replay has settled, later live activity is authoritative again.
+      session.pushEvent({
+        type: "provider_subagent",
+        provider: "codex",
+        event: { type: "upsert", id: "child", status: "running" },
+      });
+      await manager.flush();
+      expect(manager.listProviderSubagents(agentId)).toEqual([
+        expect.objectContaining({ id: "child", status: "running" }),
+      ]);
+    } finally {
+      await manager.closeAgent(agentId);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("re-priming from provider history heals a seq gap left by a failed durable write", async () => {
+    class GapHistorySession extends TestAgentSession {
+      override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        for (const text of ["one", "two", "three"]) {
+          yield { type: "timeline", provider: "codex", item: { type: "user_message", text } };
+        }
+      }
+    }
+    const client = new (class extends TestAgentClient {
+      override async resumeSession(
+        _handle: AgentPersistenceHandle,
+        config?: Partial<AgentSessionConfig>,
+      ): Promise<AgentSession> {
+        return new GapHistorySession({ provider: "codex", cwd: config?.cwd ?? "" });
+      }
+    })();
+    const store = new RecordingTimelineStore();
+    const { manager, agentId, workdir } = await resumeWithDurableRows(client, store, [
+      gapRow(1, "one"),
+      gapRow(3, "three"),
+    ]);
+    try {
+      await manager.hydrateTimelineFromProvider(agentId);
+      await manager.flush();
+
+      // The gap (seq 2 never reached disk) must be healed by re-priming from
+      // the provider's full history, not served as a permanent hole.
+      const rows = await manager.getTimelineRows(agentId);
+      expect(rows.map((row) => row.item)).toEqual([
+        { type: "user_message", text: "one" },
+        { type: "user_message", text: "two" },
+        { type: "user_message", text: "three" },
+      ]);
+      expect(rows.map((row) => row.seq)).toEqual([1, 2, 3]);
+      expect((await store.getCommittedRows(agentId)).map((row) => row.seq)).toEqual([1, 2, 3]);
+    } finally {
+      await manager.closeAgent(agentId).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps gapped durable rows when the provider history is empty", async () => {
+    const store = new RecordingTimelineStore();
+    const { manager, agentId, workdir } = await resumeWithDurableRows(
+      new TestAgentClient(),
+      store,
+      [gapRow(1, "one"), gapRow(3, "three")],
+    );
+    try {
+      await manager.hydrateTimelineFromProvider(agentId);
+      await manager.flush();
+
+      // The provider no longer holds the session history. The committed rows
+      // are the only copy and must survive the hydration.
+      const rows = await manager.getTimelineRows(agentId);
+      expect(rows.map((row) => row.item)).toEqual([
+        { type: "user_message", text: "one", clientMessageId: "d1" },
+        { type: "user_message", text: "three", clientMessageId: "d3" },
+      ]);
+      expect((await store.getCommittedRows(agentId)).map((row) => row.seq)).toEqual([1, 3]);
+    } finally {
+      await manager.closeAgent(agentId).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("rebuilds a divergent contiguous durable log from the provider authority", async () => {
+    class OtherHistorySession extends TestAgentSession {
+      override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        yield {
+          type: "timeline",
+          provider: "codex",
+          item: { type: "user_message", text: "other" },
+        };
+      }
+    }
+    const client = new (class extends TestAgentClient {
+      override async resumeSession(
+        _handle: AgentPersistenceHandle,
+        config?: Partial<AgentSessionConfig>,
+      ): Promise<AgentSession> {
+        return new OtherHistorySession({ provider: "codex", cwd: config?.cwd ?? "" });
+      }
+    })();
+    const store = new RecordingTimelineStore();
+    const { manager, agentId, workdir } = await resumeWithDurableRows(client, store, [
+      gapRow(1, "one"),
+      gapRow(2, "two"),
+    ]);
+    try {
+      await manager.hydrateTimelineFromProvider(agentId);
+      await manager.flush();
+
+      // Contiguous stream rows alone cannot prove an item boundary in a
+      // divergent transcript. The provider's complete copy is authoritative.
+      const rows = await manager.getTimelineRows(agentId);
+      expect(rows.map((row) => row.item)).toEqual([{ type: "user_message", text: "other" }]);
+    } finally {
+      await manager.closeAgent(agentId).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("a post-restart window keeps the durable prefix reachable via older paging", async () => {
+    const store = new RecordingTimelineStore();
+    const { manager, agentId, workdir } = await resumeWithDurableRows(
+      new TestAgentClient(),
+      store,
+      [gapRow(1, "one"), gapRow(2, "two")],
+    );
+    try {
+      // A new row lands in the empty post-restart window. The durable rows
+      // below it were never evicted in this lifetime, but they must stay
+      // reachable through older paging.
+      await manager.appendTimelineItem(agentId, {
+        type: "user_message",
+        text: "three",
+        clientMessageId: "c3",
+      });
+
+      const sync = manager.fetchTimeline(agentId, { direction: "tail", limit: 200 });
+      expect(sync.hasOlder).toBe(true);
+
+      const older = await manager.fetchTimelineWithBackfill(agentId, {
+        direction: "before",
+        cursor: { epoch: sync.epoch, seq: sync.startSeq ?? 0 },
+        limit: 200,
+      });
+      expect(older.rows.map((row) => row.item)).toEqual([
+        { type: "user_message", text: "one", clientMessageId: "d1" },
+        { type: "user_message", text: "two", clientMessageId: "d2" },
+      ]);
+    } finally {
+      await manager.closeAgent(agentId).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("replays the provider's tail above a seeded log when a crash lost the unflushed rows", async () => {
+    class CrashTailHistorySession extends TestAgentSession {
+      override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        for (const text of ["one", "two"]) {
+          yield {
+            type: "timeline",
+            provider: "codex",
+            item: { type: "user_message", text, clientMessageId: `c${text}` },
+          };
+        }
+      }
+    }
+    const client = new (class extends TestAgentClient {
+      override async resumeSession(
+        _handle: AgentPersistenceHandle,
+        config?: Partial<AgentSessionConfig>,
+      ): Promise<AgentSession> {
+        return new CrashTailHistorySession({ provider: "codex", cwd: config?.cwd ?? "" });
+      }
+    })();
+    const store = new RecordingTimelineStore();
+    // Only seq 1 reached disk; the in-flight write of seq 2 died with the
+    // process, but the provider still holds both messages.
+    const { manager, agentId, workdir } = await resumeWithDurableRows(client, store, [
+      {
+        seq: 1,
+        timestamp: "2026-01-01T00:00:00.000Z",
+        item: { type: "user_message", text: "one", clientMessageId: "cone" },
+      },
+    ]);
+    try {
+      const epochBefore = manager.getTimelineEpoch(agentId);
+      await manager.hydrateTimelineFromProvider(agentId);
+
+      // The missing tail row is replayed onto the seeded seqs instead of being
+      // silently dropped, and the log is not re-primed.
+      const rows = await manager.getTimelineRows(agentId);
+      expect(rows.map((row) => row.seq)).toEqual([1, 2]);
+      expect(rows.map((row) => row.item)).toEqual([
+        { type: "user_message", text: "one", clientMessageId: "cone" },
+        { type: "user_message", text: "two", clientMessageId: "ctwo" },
+      ]);
+      expect(manager.getTimelineEpoch(agentId)).toBe(epochBefore);
+    } finally {
+      await manager.closeAgent(agentId).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * The provider replays a conversation whose disk rows and replay items
+   * differ in granularity, so a row-count comparison cannot see the tail the
+   * crash lost. Recovery needs a checked item boundary or a complete rebuild.
+   */
+  async function resumeWithCrashTailMismatch(
+    durableRows: readonly AgentTimelineRow[],
+    historyItems: readonly AgentTimelineItem[],
+  ): Promise<{ manager: AgentManager; agentId: string; workdir: string }> {
+    class CrashTailMismatchSession extends TestAgentSession {
+      override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        for (const item of historyItems) {
+          yield { type: "timeline", provider: "codex", item };
+        }
+      }
+    }
+    const client = new (class extends TestAgentClient {
+      override async resumeSession(
+        _handle: AgentPersistenceHandle,
+        config?: Partial<AgentSessionConfig>,
+      ): Promise<AgentSession> {
+        return new CrashTailMismatchSession({ provider: "codex", cwd: config?.cwd ?? "" });
+      }
+    })();
+    return resumeWithDurableRows(client, new RecordingTimelineStore(), durableRows);
+  }
+
+  test.each([
+    `<paseo-system>\nexample system envelope\n</paseo-system>`,
+    formatAgentMessage({ id: "example-client-id", source: null, text: "example human envelope" }),
+    formatAgentMessage({
+      id: "example-agent-id",
+      source: { kind: "agent-message", agentId: "example-sender" },
+      text: "example agent envelope",
+    }),
+  ])("seeded recovery preserves pasted envelope text: %s", async (text) => {
+    const prepared = prepareAgentMessage(text, undefined, "real-client-id");
+    if (typeof prepared.prompt !== "string") throw new Error("Expected string prompt");
+    const timestamp = "2026-01-01T00:00:00.000Z";
+    const expected: AgentTimelineItem[] = [
+      {
+        type: "user_message",
+        text,
+        messageId: "provider-message-id",
+        clientMessageId: "real-client-id",
+      },
+      { type: "reasoning", text: "final reasoning" },
+      { type: "assistant_message", text: "reply", messageId: "reply-id" },
+    ];
+    const { manager, agentId, workdir } = await resumeWithCrashTailMismatch(
+      [
+        { seq: 1, timestamp, item: expected[0] },
+        { seq: 2, timestamp, item: { type: "reasoning", text: "partial reasoning" } },
+      ],
+      [
+        { type: "user_message", text: prepared.prompt, messageId: "provider-message-id" },
+        expected[1],
+        expected[2],
+      ],
+    );
+    try {
+      await manager.hydrateTimelineFromProvider(agentId);
+      await manager.flush();
+      expect((await manager.getTimelineRows(agentId)).map((row) => row.item)).toEqual(expected);
+    } finally {
+      await manager.closeAgent(agentId);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("rebuilds from provider history when reasoning cannot establish a saved item boundary", async () => {
+    const timestamp = "2026-01-01T00:00:00.000Z";
+    const historyItems: AgentTimelineItem[] = [
+      { type: "user_message", text: "one", messageId: "pm1" },
+      { type: "reasoning", text: "final reasoning" },
+      { type: "assistant_message", text: "unsaved reply", messageId: "m2" },
+    ];
+    const { manager, agentId, workdir } = await resumeWithCrashTailMismatch(
+      [
+        { seq: 1, timestamp, item: historyItems[0] },
+        { seq: 2, timestamp, item: { type: "reasoning", text: "partial " } },
+        { seq: 3, timestamp, item: { type: "reasoning", text: "reasoning " } },
+        { seq: 4, timestamp, item: { type: "reasoning", text: "before crash" } },
+      ],
+      historyItems,
+    );
+    const epochBefore = manager.getTimelineEpoch(agentId);
+    const replacements: AgentManagerEvent[] = [];
+    const unsubscribe = manager.subscribe(
+      (event) => {
+        if (event.type === "timeline_replacement") replacements.push(event);
+      },
+      { agentId, replayState: false },
+    );
+    try {
+      await manager.hydrateTimelineFromProvider(agentId);
+      await manager.flush();
+      expect((await manager.getTimelineRows(agentId)).map((row) => row.item)).toEqual(historyItems);
+      expect(manager.getTimelineEpoch(agentId)).not.toBe(epochBefore);
+      expect(replacements).toEqual([
+        { type: "timeline_replacement", agentId, epoch: manager.getTimelineEpoch(agentId) },
+      ]);
+      await manager.hydrateTimelineFromProvider(agentId);
+      expect((await manager.getTimelineRows(agentId)).map((row) => row.item)).toEqual(historyItems);
+      expect(replacements).toHaveLength(1);
+    } finally {
+      unsubscribe();
+      await manager.closeAgent(agentId);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("replays the provider's tail when chunk rows mask a count mismatch", async () => {
+    const TS = "2026-01-01T00:00:00.000Z";
+    // The streamed reply was recorded as two chunk rows (one per delta), so
+    // disk holds 3 rows for content the provider replays as 2 items; the
+    // missed third item is invisible to a count comparison.
+    const { manager, agentId, workdir } = await resumeWithCrashTailMismatch(
+      [
+        {
+          seq: 1,
+          timestamp: TS,
+          item: { type: "user_message", text: "one", clientMessageId: "cone", messageId: "pm1" },
+        },
+        {
+          seq: 2,
+          timestamp: TS,
+          item: { type: "assistant_message", text: "hello ", messageId: "m1" },
+        },
+        {
+          seq: 3,
+          timestamp: TS,
+          item: { type: "assistant_message", text: "world", messageId: "m1" },
+        },
+      ],
+      [
+        { type: "user_message", text: "one", messageId: "pm1" },
+        { type: "assistant_message", text: "hello world", messageId: "m1" },
+        { type: "assistant_message", text: "missed", messageId: "m2" },
+      ],
+    );
+    try {
+      await manager.hydrateTimelineFromProvider(agentId);
+
+      // getTimelineRows serves projected rows: the two chunk rows merge into
+      // one item carrying the seq of its last row.
+      const timeline = await manager.getTimelineRows(agentId);
+      expect(timeline.map((row) => row.seq)).toEqual([1, 3, 4]);
+      expect(timeline.map((row) => row.item)).toEqual([
+        { type: "user_message", text: "one", clientMessageId: "cone", messageId: "pm1" },
+        { type: "assistant_message", text: "hello world", messageId: "m1" },
+        { type: "assistant_message", text: "missed", messageId: "m2" },
+      ]);
+    } finally {
+      await manager.closeAgent(agentId).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("replays the provider's tail past daemon-only rows that mask a count mismatch", async () => {
+    const TS = "2026-01-01T00:00:00.000Z";
+    // A system error row exists only in the daemon's log; the provider never
+    // re-emits it, so it inflates the row count and hides the missed item.
+    const { manager, agentId, workdir } = await resumeWithCrashTailMismatch(
+      [
+        {
+          seq: 1,
+          timestamp: TS,
+          item: { type: "user_message", text: "one", clientMessageId: "cone", messageId: "pm1" },
+        },
+        {
+          seq: 2,
+          timestamp: TS,
+          item: { type: "assistant_message", text: "hello", messageId: "m1" },
+        },
+        {
+          seq: 3,
+          timestamp: TS,
+          item: { type: "assistant_message", text: "[System Error] Provider run failed" },
+        },
+      ],
+      [
+        { type: "user_message", text: "one", messageId: "pm1" },
+        { type: "assistant_message", text: "hello", messageId: "m1" },
+        { type: "assistant_message", text: "missed", messageId: "m2" },
+      ],
+    );
+    try {
+      await manager.hydrateTimelineFromProvider(agentId);
+
+      // getTimelineRows serves projected rows: the system error row merges
+      // into the m1 reply (it carries no message id of its own), so the
+      // seeded log projects to two items under the unrecorded tail.
+      const timeline = await manager.getTimelineRows(agentId);
+      expect(timeline.map((row) => row.seq)).toEqual([1, 3, 4]);
+      expect(timeline.at(-1)?.item).toEqual({
+        type: "assistant_message",
+        text: "missed",
+        messageId: "m2",
+      });
+    } finally {
+      await manager.closeAgent(agentId).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps a chunked seeded log unchanged when the provider history matches it", async () => {
+    const TS = "2026-01-01T00:00:00.000Z";
+    // Disk holds 3 rows, the provider replays 2 items for the same content:
+    // the alignment must not re-record what is already there.
+    const { manager, agentId, workdir } = await resumeWithCrashTailMismatch(
+      [
+        {
+          seq: 1,
+          timestamp: TS,
+          item: { type: "user_message", text: "one", clientMessageId: "cone", messageId: "pm1" },
+        },
+        {
+          seq: 2,
+          timestamp: TS,
+          item: { type: "assistant_message", text: "hello ", messageId: "m1" },
+        },
+        {
+          seq: 3,
+          timestamp: TS,
+          item: { type: "assistant_message", text: "world", messageId: "m1" },
+        },
+      ],
+      [
+        { type: "user_message", text: "one", messageId: "pm1" },
+        { type: "assistant_message", text: "hello world", messageId: "m1" },
+      ],
+    );
+    try {
+      await manager.hydrateTimelineFromProvider(agentId);
+
+      // Projected: the two chunk rows merge into one item (seq of last row).
+      const timeline = await manager.getTimelineRows(agentId);
+      expect(timeline.map((row) => row.seq)).toEqual([1, 3]);
+    } finally {
+      await manager.closeAgent(agentId).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("replays only the unrecorded tail when a live row predates the provider's final text", async () => {
+    const TS = "2026-01-01T00:00:00.000Z";
+    // The live row holds a partial text for message m1 (a rewritten part);
+    // the provider's copy holds the final text. The matched item must not be
+    // re-recorded under a new seq — only the genuinely missing tail is.
+    const { manager, agentId, workdir } = await resumeWithCrashTailMismatch(
+      [
+        {
+          seq: 1,
+          timestamp: TS,
+          item: { type: "user_message", text: "one", clientMessageId: "cone", messageId: "pm1" },
+        },
+        {
+          seq: 2,
+          timestamp: TS,
+          item: { type: "assistant_message", text: "partial", messageId: "m1" },
+        },
+      ],
+      [
+        { type: "user_message", text: "one", messageId: "pm1" },
+        { type: "assistant_message", text: "full text", messageId: "m1" },
+        { type: "assistant_message", text: "tail", messageId: "m2" },
+      ],
+    );
+    try {
+      await manager.hydrateTimelineFromProvider(agentId);
+
+      const timeline = await manager.getTimelineRows(agentId);
+      expect(timeline.map((row) => row.seq)).toEqual([1, 2, 3]);
+      expect(timeline.map((row) => row.item)).toEqual([
+        { type: "user_message", text: "one", clientMessageId: "cone", messageId: "pm1" },
+        { type: "assistant_message", text: "partial", messageId: "m1" },
+        { type: "assistant_message", text: "tail", messageId: "m2" },
+      ]);
+    } finally {
+      await manager.closeAgent(agentId).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("a tail page keeps scanning past a stable cut until it holds the requested projected count", async () => {
+    const rows: AgentTimelineRow[] = [];
+    for (let i = 1; i <= 300; i += 1) {
+      for (const suffix of ["a", "b"]) {
+        rows.push({
+          seq: rows.length + 1,
+          timestamp: "2026-01-01T00:00:00.000Z",
+          item: {
+            type: "assistant_message",
+            text: `${suffix}${i}${suffix === "a" ? " " : ""}`,
+            messageId: `m${i}`,
+          },
+        });
+      }
+    }
+    const { manager, agentId, workdir } = await resumeWithDurableRows(
+      new TestAgentClient(),
+      new RecordingTimelineStore(),
+      rows,
+    );
+    try {
+      // Each of the 300 projected items is two chunk rows: the first 256-row
+      // batch projects to only 128 items, so the stable cut above it must not
+      // end a 200-item page while older items can still fill it.
+      const tail = await manager.fetchTimelineWithBackfill(agentId, {
+        direction: "tail",
+        limit: 200,
+      });
+      expect(tail.rows).toHaveLength(200);
+      expect(tail.startSeq).toBe(201);
+      expect(tail.hasOlder).toBe(true);
+      expect(tail.rows[0]?.item).toEqual({
+        type: "assistant_message",
+        text: "a101 b101",
+        messageId: "m101",
+      });
+    } finally {
+      await manager.closeAgent(agentId).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("a post-restart first fetch returns the true tail when old rows were re-appended to the log", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reappend-tail-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const store = new FileAgentTimelineStore({ directory: join(workdir, "timeline-rows") });
+    const first = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      registry: storage,
+      durableTimelineStore: store,
+      logger,
+    });
+    const created = await first.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const handle = first.getAgent(created.id)?.persistence;
+    if (!handle) throw new Error("Expected the created agent to have a persistence handle");
+    await first.closeAgent(created.id);
+
+    // A failed-write retry re-appended old rows after the newest mints, so the
+    // physical end of the log no longer reflects seq order.
+    const payload = "x".repeat(400);
+    const reAppendedRows = (count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        seq: i + 1,
+        timestamp: "2026-01-01T00:00:00.000Z",
+        item: {
+          type: "user_message" as const,
+          text: `m${i + 1} ${payload}`,
+          clientMessageId: `c${i + 1}`,
+        },
+      }));
+    await store.bulkInsert(created.id, reAppendedRows(2000));
+    await store.bulkInsert(created.id, reAppendedRows(1000));
+
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      registry: storage,
+      durableTimelineStore: store,
+      logger,
+    });
+    await manager.resumeAgentFromPersistence(handle, undefined, created.id);
+    try {
+      const tail = await manager.fetchTimelineWithBackfill(created.id, {
+        direction: "tail",
+        limit: 200,
+      });
+      expect(tail.rows.map((row) => row.seq)).toEqual(
+        Array.from({ length: 200 }, (_, i) => 1801 + i),
+      );
+      expect(tail.hasNewer).toBe(false);
+      expect(tail.hasOlder).toBe(true);
+    } finally {
+      await manager.closeAgent(created.id).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+});

@@ -5,7 +5,9 @@ Agent chat delivery has two paths:
 1. **Live stream** — `agent_stream` WebSocket messages for immediacy. These may be delta-shaped lifecycle updates.
 2. **Authoritative history** — `fetch_agent_timeline_request` for correctness. This always returns full projected timeline items, never lifecycle deltas.
 
-The daemon retains projected items in memory. Each source event advances the stream sequence,
+The daemon retains each agent's timeline in a bounded in-memory window over a durable append-only
+row log (`$PASEO_HOME/timeline-rows/{agentId}.jsonl`;
+[data model](data-model.md#durable-timeline-rows)). Each source event advances the stream sequence,
 then replaces the previous tool state or merges into the current text item. Intermediate payloads
 are never retained for history or catch-up. Provider history is the durable transcript authority
 and rebuilds the projection when an agent resumes.
@@ -20,6 +22,48 @@ Tool output is bounded before it enters either delivery path. Canonical shell to
 to 64 KiB, and the same bounded item is used for runtime timeline rows and live stream events.
 Provider history hydration applies the same rule so reopening an agent cannot restore an oversized
 tool payload.
+
+## Bounded retention
+
+The daemon keeps a recent in-memory window for each agent. The defaults are 16 MiB and 50,000 rows;
+set `PASEO_TIMELINE_WINDOW_MAX_BYTES` or `PASEO_TIMELINE_WINDOW_MAX_ROWS` to override them. The
+window grows to 1.25× a limit before trimming back. Projected items stay whole across the cutoff,
+so an individual merged message or tool call can exceed a limit.
+
+Eviction requires confirmed durable writes. Pending and failed rows stay in memory until they
+are saved, so persistent disk errors relax the limit for the affected agent and are logged as
+errors. Retried writes preserve prompt identities learned from provider echoes. Durable storage
+and file recovery rules live in [data model](data-model.md#durable-timeline-rows).
+
+Evicted rows remain available to pagination, search, prompt listing, and fork context. Bounded tail
+pages avoid loading complete history when their display anchors are known. A tail read falls back
+to full projection when an unread prefix could contain an older occurrence of an item identity.
+Deep paging and full-history reads can parse the complete
+file on each request; there is no resident history cache. An oversized full-history request can
+therefore allocate substantially more than the retained window.
+
+Provider history remains the recovery authority. Resume reuses durable history and checks
+provider history for a tail lost before it was written. If the saved transcript cannot be matched
+to provider history, recovery rebuilds from the provider's complete copy. A gapped log is rebuilt
+when provider history is available; otherwise the daemon keeps the surviving durable rows. An explicit rewind remains
+authoritative, including an empty history. Provider-subagent state is replayed separately because
+it is not durable, and a failed subagent replay does not block timeline loading. Live child updates
+received during recovery take precedence over historical descriptor fields.
+
+Reconnect and refresh notify modern clients through `agent.timeline.replacement`; clients fetch
+their own pages. Pre-`timelineReplacementInvalidation` clients still receive full replay, including
+evicted rows. Legacy replay and live delivery must stay ordered, so those clients may wait for the
+history read before seeing new timeline rows.
+
+MCP `get_agent_activity` without a limit returns the retained window. Rewind and prompt enrichment
+that address an evicted row use `clientMessageId` matching when its content is unavailable. These
+limits affect callers that previously treated the in-memory window as complete history.
+
+For the eviction, page-boundary, and recovery algorithms, see
+[AgentManager](../packages/server/src/server/agent/agent-manager.ts),
+[InMemoryAgentTimelineStore](../packages/server/src/server/agent/agent-timeline-store.ts), and
+[FileAgentTimelineStore](../packages/server/src/server/agent/file-agent-timeline-store.ts).
+The original failure is recorded in the [OOM incident](bug-20261011-timeline-retention-oom.md).
 
 ## Presence is not delivery
 
@@ -119,6 +163,11 @@ rejected it; changing steer-event ordering would also put new assistant output b
 Child transcripts use the same projected-page reconciliation as the main conversation. The client
 retains rendered items and sequence cursors, never a second cache of source events. Pagination
 uses the projected display anchor; live updates advance the source cursor without moving tools.
+
+When recovery changes a child's timeline epoch, clear the client's old child replica before replay.
+The existing removal and descriptor upsert provide that reset for older clients too. Children whose
+live rows were already delivered must receive the reset and replay even when ordinary history
+broadcasts are suppressed; a parent replacement does not refresh an open child conversation.
 
 Clients advertising `projected_subagent_timeline` receive child streams and projected fetches.
 Updated clients require `features.projectedSubagentTimeline` for child history; older hosts show
@@ -267,8 +316,10 @@ liveness, never from submission records or whichever timeline rows happen to be 
 For human prompts, the daemon records one canonical submitted user row at acceptance. Its wire `messageId` is the
 submission's `clientMessageId`, so the row is born with its final identity and remains immutable on
 the wire. A correlated provider echo records the provider's native identity internally without
-dispatching another timeline event. Rewind resolves the wire identity to that provider identity at
-the provider boundary. Daemon-handled prompts follow the same identity rule.
+dispatching another timeline event; when the submitted row is no longer in the window — evicted, or
+gone after a restart — the echo's lookup extends into the durable log and enriches that row instead
+of recording a second copy of the prompt. Rewind resolves the wire identity to that provider
+identity at the provider boundary. Daemon-handled prompts follow the same identity rule.
 
 Content matching is limited to the dated compatibility path for daemon timelines created before
 that field existed. Canonical ingestion may match only an explicit unreconciled local candidate;
@@ -293,6 +344,8 @@ canonical assistant prefix, it stays in the head lane. No row may be returned in
 ## Relevant code
 
 - Server live stream forwarding: `packages/server/src/server/session.ts`
+- Server in-memory timeline window: `packages/server/src/server/agent/agent-timeline-store.ts`
+- Server durable timeline rows: `packages/server/src/server/agent/file-agent-timeline-store.ts`
 - App sync planning: `packages/app/src/timeline/timeline-sync-plan.ts`
 - App viewed-agent synchronization: `packages/app/src/timeline/viewed-timeline-sync.ts`
 - App stream/timeline reducer: `packages/app/src/timeline/session-stream-reducers.ts`

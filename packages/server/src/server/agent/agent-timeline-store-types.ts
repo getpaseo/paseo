@@ -47,6 +47,17 @@ export interface AgentTimelineFetchResult {
   rows: ProjectedTimelineRow[];
 }
 
+export interface AgentTimelineTailRead {
+  /** Parsed rows in file (seq) order, deduplicated per seq with the newest line winning. */
+  rows: AgentTimelineRow[];
+  /**
+   * Whether no committed rows older than the returned range remain (within the
+   * `maxSeq` filter). `false` means more rows may exist above; the caller
+   * decides from its own boundary check.
+   */
+  atStart: boolean;
+}
+
 export interface AgentTimelineStore {
   appendCommitted(
     agentId: string,
@@ -59,8 +70,24 @@ export interface AgentTimelineStore {
   ): Promise<AgentTimelineFetchResult>;
   getLatestCommittedSeq(agentId: string): Promise<number>;
   getCommittedRows(agentId: string): Promise<AgentTimelineRow[]>;
-  getLastItem(agentId: string): Promise<AgentTimelineItem | null>;
-  getLastAssistantMessage(agentId: string): Promise<string | null>;
+  /**
+   * Read up to `count` committed rows from the end of the log, skipping the
+   * `offset` newest eligible rows. `options.maxSeq` limits which rows are
+   * eligible so callers can page below the in-memory window without
+   * re-counting the rows the window already serves. Implementations must not
+   * materialize rows newer than the returned range.
+   */
+  readTailRows(
+    agentId: string,
+    options: { maxSeq?: number; offset: number; count: number },
+  ): Promise<AgentTimelineTailRead>;
+  /**
+   * When `options.maxSeq` is given, only rows with a seq at or below it are
+   * considered, so callers can ask for history strictly below the in-memory
+   * window without re-counting rows the window already serves.
+   */
+  getLastItem(agentId: string, options?: { maxSeq?: number }): Promise<AgentTimelineItem | null>;
+  getLastAssistantMessage(agentId: string, options?: { maxSeq?: number }): Promise<string | null>;
   deleteAgent(agentId: string): Promise<void>;
   bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void>;
   updateCommittedRow(agentId: string, row: AgentTimelineRow): Promise<void>;
