@@ -1427,9 +1427,9 @@ export class VoiceAssistantWebSocketServer {
         }
         return maxBuffered;
       },
-      onLifecycleIntent: (intent) => {
-        this.onLifecycleIntent?.(intent);
-      },
+      // Absent when the daemon has no lifecycle handler, so a session can tell
+      // it cannot act on a shutdown.
+      onLifecycleIntent: this.onLifecycleIntent ?? undefined,
       hubExecutionAgents: admission.hubExecutionAgents,
       hubRelationships: this.hubRelationships ?? undefined,
     });
