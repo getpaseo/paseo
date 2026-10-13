@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, assert, beforeEach, describe, expect, it } from "vitest";
 import { fetchUsage } from "./usage.js";
 import type { AntigravityUsageInput } from "../shared/input.js";
 
@@ -101,6 +101,26 @@ describe("antigravity usage fetcher", () => {
     ).rejects.toThrow("The operation timed out");
   });
 
+  it("throws when loadCodeAssist returns HTTP error", async () => {
+    await writeFile(
+      authFile,
+      JSON.stringify({
+        token: { access_token: "token" },
+      }),
+    );
+
+    const mock500 = async (url: string | URL | Request) => {
+      if (String(url).includes("loadCodeAssist")) {
+        return new Response("Server error", { status: 500 });
+      }
+      return new Response("{}", { status: 200 });
+    };
+
+    await expect(
+      fetchUsage(makeInput(authFile), mock500 as unknown as typeof fetch),
+    ).rejects.toThrow("Antigravity account API returned 500");
+  });
+
   it("throws when endpoint returns HTML error page", async () => {
     await writeFile(
       authFile,
@@ -196,34 +216,33 @@ describe("antigravity usage fetcher", () => {
     const report = await fetchUsage(makeInput(authFile), mockFetch as unknown as typeof fetch);
 
     expect(report.status).toBe("available");
-    if (report.status === "available") {
-      expect(report.planLabel).toBe("standard-tier");
-      expect(report.windows).toHaveLength(2);
+    assert(report.status === "available");
+    expect(report.planLabel).toBe("standard-tier");
+    expect(report.windows).toHaveLength(2);
 
-      const geminiWindow = report.windows.find((w) => w.id === "gemini");
-      expect(geminiWindow).toMatchObject({
-        id: "gemini",
-        label: "Gemini (all models)",
-        shortLabel: "Gemini",
-        usedPct: 20,
-        remainingPct: 80,
-        summary: true,
-        resetsAt: "2026-10-13T18:00:00Z",
-        tone: "ok",
-      });
+    const geminiWindow = report.windows.find((w) => w.id === "gemini");
+    expect(geminiWindow).toMatchObject({
+      id: "gemini",
+      label: "Gemini (all models)",
+      shortLabel: "Gemini",
+      usedPct: 20,
+      remainingPct: 80,
+      summary: true,
+      resetsAt: "2026-10-13T18:00:00Z",
+      tone: "ok",
+    });
 
-      const claudeOssWindow = report.windows.find((w) => w.id === "claude-gpt-oss");
-      expect(claudeOssWindow).toMatchObject({
-        id: "claude-gpt-oss",
-        label: "Claude & GPT-OSS (all models)",
-        shortLabel: "Claude/OSS",
-        usedPct: 0,
-        remainingPct: 100,
-        summary: true,
-        resetsAt: "2026-10-13T19:00:00Z",
-        tone: "ok",
-      });
-    }
+    const claudeOssWindow = report.windows.find((w) => w.id === "claude-gpt-oss");
+    expect(claudeOssWindow).toMatchObject({
+      id: "claude-gpt-oss",
+      label: "Claude & GPT-OSS (all models)",
+      shortLabel: "Claude/OSS",
+      usedPct: 0,
+      remainingPct: 100,
+      summary: true,
+      resetsAt: "2026-10-13T19:00:00Z",
+      tone: "ok",
+    });
   });
 
   it("selects the most constrained quota in a bucket when models diverge", async () => {
@@ -268,15 +287,14 @@ describe("antigravity usage fetcher", () => {
     const report = await fetchUsage(makeInput(authFile), mockFetch as unknown as typeof fetch);
 
     expect(report.status).toBe("available");
-    if (report.status === "available") {
-      expect(report.windows).toHaveLength(1);
-      expect(report.windows[0]).toMatchObject({
-        id: "gemini",
-        label: "Gemini (all models)",
-        usedPct: 60,
-        remainingPct: 40,
-        resetsAt: "2026-10-13T16:00:00Z",
-      });
-    }
+    assert(report.status === "available");
+    expect(report.windows).toHaveLength(1);
+    expect(report.windows[0]).toMatchObject({
+      id: "gemini",
+      label: "Gemini (all models)",
+      usedPct: 60,
+      remainingPct: 40,
+      resetsAt: "2026-10-13T16:00:00Z",
+    });
   });
 });
