@@ -963,6 +963,7 @@ export const es: TranslationResources = {
         switchToSplit: "Cambiar a diferencia lado a lado",
         options: "Opciones de diferencia",
         inlineDiff: "Diferencia integrada",
+        expandSubmodules: "Expandir diffs de submódulos",
         hideWhitespace: "Ocultar espacios en blanco",
         showWhitespace: "Mostrar espacios en blanco",
         scrollLongLines: "Desplazarse por largas filas",

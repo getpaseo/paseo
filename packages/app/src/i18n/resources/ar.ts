@@ -930,6 +930,7 @@ export const ar: TranslationResources = {
         switchToSplit: "التبديل إلى الفرق جنبًا إلى جنب",
         options: "خيارات الفرق",
         inlineDiff: "فرق مضمّن",
+        expandSubmodules: "توسيع فروق الوحدات الفرعية",
         hideWhitespace: "إخفاء المسافة البيضاء",
         showWhitespace: "إظهار المسافة البيضاء",
         scrollLongLines: "قم بتمرير الخطوط الطويلة",

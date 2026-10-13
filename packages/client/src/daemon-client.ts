@@ -4129,26 +4129,34 @@ export class DaemonClient {
     mode: "uncommitted" | "base";
     baseRef?: string;
     ignoreWhitespace?: boolean;
-  }): { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean } {
+    expandSubmodules?: boolean;
+  }): {
+    mode: "uncommitted" | "base";
+    baseRef?: string;
+    ignoreWhitespace?: boolean;
+    expandSubmodules?: boolean;
+  } {
+    const flags = {
+      ...(compare.ignoreWhitespace === true ? { ignoreWhitespace: true as const } : {}),
+      ...(compare.expandSubmodules === true ? { expandSubmodules: true as const } : {}),
+    };
     if (compare.mode === "uncommitted") {
-      return compare.ignoreWhitespace === true
-        ? { mode: "uncommitted", ignoreWhitespace: true }
-        : { mode: "uncommitted" };
+      return { mode: "uncommitted", ...flags };
     }
     const trimmedBaseRef = compare.baseRef?.trim();
-    if (!trimmedBaseRef) {
-      return compare.ignoreWhitespace === true
-        ? { mode: "base", ignoreWhitespace: true }
-        : { mode: "base" };
-    }
-    return compare.ignoreWhitespace === true
-      ? { mode: "base", baseRef: trimmedBaseRef, ignoreWhitespace: true }
-      : { mode: "base", baseRef: trimmedBaseRef };
+    return trimmedBaseRef
+      ? { mode: "base", baseRef: trimmedBaseRef, ...flags }
+      : { mode: "base", ...flags };
   }
 
   async getCheckoutDiff(
     cwd: string,
-    compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean },
+    compare: {
+      mode: "uncommitted" | "base";
+      baseRef?: string;
+      ignoreWhitespace?: boolean;
+      expandSubmodules?: boolean;
+    },
     requestId?: string,
   ): Promise<CheckoutDiffPayload> {
     return this.sendCorrelatedSessionRequest({
@@ -4164,7 +4172,12 @@ export class DaemonClient {
 
   observeCheckoutDiff(
     cwd: string,
-    compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean },
+    compare: {
+      mode: "uncommitted" | "base";
+      baseRef?: string;
+      ignoreWhitespace?: boolean;
+      expandSubmodules?: boolean;
+    },
     options?: { requestId?: string; signal?: AbortSignal },
   ): OwnedSubscription<SubscribeCheckoutDiffPayload> {
     return this.observe(

@@ -943,6 +943,7 @@ export const ja: TranslationResources = {
         switchToSplit: "左右比較差分に切り替え",
         options: "差分オプション",
         inlineDiff: "インライン差分",
+        expandSubmodules: "サブモジュールの差分を展開",
         hideWhitespace: "空白を非表示",
         showWhitespace: "空白を表示",
         scrollLongLines: "長い行をスクロール",

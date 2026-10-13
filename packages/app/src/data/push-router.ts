@@ -36,6 +36,7 @@ interface CheckoutDiffCompare {
   mode: "uncommitted" | "base";
   baseRef?: string;
   ignoreWhitespace?: boolean;
+  expandSubmodules?: boolean;
 }
 
 interface CheckoutDiffRoute {
@@ -655,6 +656,7 @@ function readCheckoutDiffCompare(value: unknown): CheckoutDiffCompare | null {
   const mode = value.mode;
   const baseRef = value.baseRef;
   const ignoreWhitespace = value.ignoreWhitespace;
+  const expandSubmodules = value.expandSubmodules;
   if (mode !== "uncommitted" && mode !== "base") {
     return null;
   }
@@ -664,10 +666,14 @@ function readCheckoutDiffCompare(value: unknown): CheckoutDiffCompare | null {
   if (ignoreWhitespace !== undefined && typeof ignoreWhitespace !== "boolean") {
     return null;
   }
+  if (expandSubmodules !== undefined && typeof expandSubmodules !== "boolean") {
+    return null;
+  }
   return {
     mode,
     ...(baseRef ? { baseRef } : {}),
     ...(ignoreWhitespace !== undefined ? { ignoreWhitespace } : {}),
+    ...(expandSubmodules !== undefined ? { expandSubmodules } : {}),
   };
 }
 
@@ -681,7 +687,8 @@ function areCheckoutDiffRoutesEqual(
     left.cwd === right.cwd &&
     left.compare.mode === right.compare.mode &&
     left.compare.baseRef === right.compare.baseRef &&
-    left.compare.ignoreWhitespace === right.compare.ignoreWhitespace
+    left.compare.ignoreWhitespace === right.compare.ignoreWhitespace &&
+    left.compare.expandSubmodules === right.compare.expandSubmodules
   );
 }
 
@@ -692,7 +699,8 @@ function isCheckoutDiffQueryKeyForRoute(queryKey: QueryKey, route: CheckoutDiffR
     queryKey[2] === route.cwd &&
     queryKey[3] === route.compare.mode &&
     queryKey[4] === (route.compare.baseRef ?? "") &&
-    queryKey[5] === (route.compare.ignoreWhitespace === true)
+    queryKey[5] === (route.compare.ignoreWhitespace === true) &&
+    queryKey[6] === (route.compare.expandSubmodules === true)
   );
 }
 

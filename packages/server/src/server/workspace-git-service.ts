@@ -831,6 +831,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         ? { baseRef: options.baseRef }
         : {}),
       ...(options.ignoreWhitespace === true ? { ignoreWhitespace: true } : {}),
+      ...(options.expandSubmodules === true ? { expandSubmodules: true } : {}),
       ...(options.includeStructured === true ? { includeStructured: true } : {}),
     };
   }

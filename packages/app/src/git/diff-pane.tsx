@@ -22,6 +22,7 @@ import {
   ChevronDown,
   Columns2,
   ExternalLink,
+  FolderGit2,
   ListChevronsDownUp,
   ListChevronsUpDown,
   Maximize,
@@ -204,6 +205,7 @@ const ThemedAlignJustify = withUnistyles(AlignJustify);
 const ThemedColumns2 = withUnistyles(Columns2);
 const ThemedPilcrow = withUnistyles(Pilcrow);
 const ThemedWrapText = withUnistyles(WrapText);
+const ThemedFolderGit2 = withUnistyles(FolderGit2);
 const ThemedListChevronsDownUp = withUnistyles(ListChevronsDownUp);
 const ThemedListChevronsUpDown = withUnistyles(ListChevronsUpDown);
 const ThemedMaximize = withUnistyles(Maximize);
@@ -216,6 +218,9 @@ const DIFF_OPTIONS_WHITESPACE_ICON = (
 );
 const DIFF_OPTIONS_WRAP_ICON = (
   <ThemedWrapText size={14} uniProps={foregroundMutedIconColorMapping} />
+);
+const DIFF_OPTIONS_SUBMODULES_ICON = (
+  <ThemedFolderGit2 size={14} uniProps={foregroundMutedIconColorMapping} />
 );
 const DIFF_OPTIONS_SPLIT_ICON = (
   <ThemedColumns2 size={14} uniProps={foregroundMutedIconColorMapping} />
@@ -366,8 +371,10 @@ interface ChangesToolbarDiffOptions {
   } | null;
   hideWhitespace: boolean;
   wrapLines: boolean;
+  expandSubmodules: boolean;
   onToggleHideWhitespace: () => void;
   onToggleWrapLines: () => void;
+  onToggleExpandSubmodules: () => void;
 }
 
 type ChangesToolbarMode =
@@ -400,6 +407,7 @@ function buildChangesToolbarMode(input: {
   layout: "unified" | "split";
   hideWhitespace: boolean;
   wrapLines: boolean;
+  expandSubmodules: boolean;
   treeVisible: boolean;
   onOpenDiff: () => void;
   inlineDiff: ChangesToolbarInlineDiffToggle | null;
@@ -410,6 +418,7 @@ function buildChangesToolbarMode(input: {
   onToggleLayout: () => void;
   onToggleHideWhitespace: () => void;
   onToggleWrapLines: () => void;
+  onToggleExpandSubmodules: () => void;
   onToggleTree: () => void;
 }): ChangesToolbarMode {
   const refresh = input.refreshSupported
@@ -436,7 +445,9 @@ function buildChangesToolbarMode(input: {
       : null,
     hideWhitespace: input.hideWhitespace,
     wrapLines: input.wrapLines,
+    expandSubmodules: input.expandSubmodules,
     onToggleHideWhitespace: input.onToggleHideWhitespace,
+    onToggleExpandSubmodules: input.onToggleExpandSubmodules,
     onToggleWrapLines: input.onToggleWrapLines,
   };
   if (input.presentation === "diff") {
@@ -858,6 +869,15 @@ function ChangesDiffToolbar({
       >
         <ThemedWrapText size={iconSize} uniProps={extraMutedIconColorMapping} />
       </ToolbarButton>
+      <ToolbarButton
+        compact={compact}
+        label={t("workspace.git.diff.expandSubmodules")}
+        selected={options.expandSubmodules}
+        testID="changes-toggle-expand-submodules"
+        onPress={options.onToggleExpandSubmodules}
+      >
+        <ThemedFolderGit2 size={iconSize} uniProps={extraMutedIconColorMapping} />
+      </ToolbarButton>
     </>
   );
 }
@@ -1037,6 +1057,14 @@ function ChangesDiffOptions({ options }: { options: ChangesToolbarDiffOptions })
         onSelect={options.onToggleWrapLines}
       >
         {wrapLinesLabel}
+      </DropdownMenuItem>
+      <DropdownMenuItem
+        leading={DIFF_OPTIONS_SUBMODULES_ICON}
+        selected={options.expandSubmodules}
+        testID="changes-toggle-expand-submodules"
+        onSelect={options.onToggleExpandSubmodules}
+      >
+        {t("workspace.git.diff.expandSubmodules")}
       </DropdownMenuItem>
     </>
   );
@@ -1489,6 +1517,10 @@ export function ChangesSurface({
     void updatePreferences({ inlineDiff: !preferences.inlineDiff });
   }, [preferences.inlineDiff, updatePreferences]);
 
+  const handleToggleExpandSubmodules = useCallback(() => {
+    void updatePreferences({ expandSubmodules: !preferences.expandSubmodules });
+  }, [preferences.expandSubmodules, updatePreferences]);
+
   const handleToggleLayout = useCallback(() => {
     const layout = preferences.layout === "unified" ? "split" : "unified";
     void updatePreferences({ layout });
@@ -1558,6 +1590,7 @@ export function ChangesSurface({
     workspaceId: workspaceId ?? undefined,
     cwd,
     ignoreWhitespace: preferences.hideWhitespace,
+    expandSubmodules: preferences.expandSubmodules,
     enabled: enabled !== false,
   });
   usePublishWorkingDiffAttachment({
@@ -1848,6 +1881,7 @@ export function ChangesSurface({
         layout: preferences.layout,
         hideWhitespace: preferences.hideWhitespace,
         wrapLines,
+        expandSubmodules: preferences.expandSubmodules,
         treeVisible: desktopTreeVisible,
         onOpenDiff: handleOpenDiff,
         inlineDiff: !isMobile
@@ -1860,6 +1894,7 @@ export function ChangesSurface({
         onToggleLayout: handleToggleLayout,
         onToggleHideWhitespace: handleToggleHideWhitespace,
         onToggleWrapLines: handleToggleWrapLines,
+        onToggleExpandSubmodules: handleToggleExpandSubmodules,
         onToggleTree: handleToggleDesktopTree,
       }),
     [
@@ -1872,10 +1907,12 @@ export function ChangesSurface({
       handleToggleInlineDiff,
       handleRefresh,
       handleToggleDesktopTree,
+      handleToggleExpandSubmodules,
       handleToggleHideWhitespace,
       handleToggleLayout,
       handleToggleWrapLines,
       hasChanges,
+      preferences.expandSubmodules,
       preferences.hideWhitespace,
       preferences.inlineDiff,
       preferences.layout,

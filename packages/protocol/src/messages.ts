@@ -2183,6 +2183,8 @@ const CheckoutDiffCompareSchema = z.object({
   mode: z.enum(["uncommitted", "base"]),
   baseRef: z.string().optional(),
   ignoreWhitespace: z.boolean().optional(),
+  /** When true, expand dirty/moved git submodules into file-level diffs. Default (omit/false) keeps gitlink stubs. */
+  expandSubmodules: z.boolean().optional(),
 });
 
 export const CheckoutStatusRequestSchema = z.object({

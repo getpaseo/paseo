@@ -18,6 +18,7 @@ interface UseWorkingDiffOptions {
   workspaceId?: string;
   cwd: string;
   ignoreWhitespace: boolean;
+  expandSubmodules?: boolean;
   enabled: boolean;
   queryScope?: string;
   presentation?: string;
@@ -28,6 +29,7 @@ export function useWorkingDiff({
   workspaceId,
   cwd,
   ignoreWhitespace,
+  expandSubmodules = false,
   enabled,
   queryScope,
   presentation,
@@ -69,6 +71,7 @@ export function useWorkingDiff({
     mode: diffMode,
     baseRef,
     ignoreWhitespace,
+    expandSubmodules,
     enabled: enabled && isGit,
     queryScope,
   });
@@ -81,8 +84,9 @@ export function useWorkingDiff({
         mode: diffMode,
         baseRef,
         ignoreWhitespace,
+        expandSubmodules,
       }),
-    [baseRef, cwd, diffMode, ignoreWhitespace, serverId, workspaceId],
+    [baseRef, cwd, diffMode, expandSubmodules, ignoreWhitespace, serverId, workspaceId],
   );
   const reviewActions = useInlineReviewController({ reviewDraftKey, presentation });
   const reviewAttachment = useReviewAttachmentSnapshot({

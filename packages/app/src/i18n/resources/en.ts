@@ -938,6 +938,7 @@ export const en = {
         switchToSplit: "Switch to side-by-side diff",
         options: "Diff options",
         inlineDiff: "Inline diff",
+        expandSubmodules: "Expand submodule diffs",
         hideWhitespace: "Hide whitespace",
         showWhitespace: "Show whitespace",
         scrollLongLines: "Scroll long lines",

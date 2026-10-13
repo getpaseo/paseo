@@ -33,6 +33,7 @@ describe("loadChangesPreferencesFromStorage", () => {
       hideWhitespace: false,
       inlineDiff: false,
       commitsCollapsed: true,
+      expandSubmodules: false,
     });
     expect(storage.entries.get(CHANGES_PREFERENCES_STORAGE_KEY)).toBe(JSON.stringify(result));
   });
@@ -57,6 +58,7 @@ describe("loadChangesPreferencesFromStorage", () => {
       wrapLines: false,
       inlineDiff: false,
       commitsCollapsed: true,
+      expandSubmodules: false,
     });
     expect(storage.entries.get(CHANGES_PREFERENCES_STORAGE_KEY)).toBe(persisted);
     expect(storage.entries.size).toBe(1);
@@ -102,6 +104,22 @@ describe("changes preferences inlineDiff", () => {
     const prefs = await loadChangesPreferencesFromStorage(storage);
 
     expect(prefs.inlineDiff).toBe(true);
+  });
+});
+
+describe("changes preferences expandSubmodules", () => {
+  it("keeps submodule expansion disabled by default", () => {
+    expect(DEFAULT_CHANGES_PREFERENCES.expandSubmodules).toBe(false);
+  });
+
+  it("round-trips the expandSubmodules preference", async () => {
+    const storage = createInMemoryKeyValueStorage({
+      [CHANGES_PREFERENCES_STORAGE_KEY]: JSON.stringify({ expandSubmodules: true }),
+    });
+
+    const prefs = await loadChangesPreferencesFromStorage(storage);
+
+    expect(prefs.expandSubmodules).toBe(true);
   });
 });
 

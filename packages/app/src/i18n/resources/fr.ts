@@ -954,6 +954,7 @@ export const fr: TranslationResources = {
         switchToSplit: "Passer au diff côte à côte",
         options: "Options du diff",
         inlineDiff: "Diff en ligne",
+        expandSubmodules: "Développer les diffs des sous-modules",
         hideWhitespace: "Masquer les espaces",
         showWhitespace: "Afficher les espaces",
         scrollLongLines: "Faire défiler les longues lignes",

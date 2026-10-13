@@ -1,4 +1,4 @@
-import { resolve, dirname, basename } from "path";
+import { resolve, dirname, basename, join as joinPath } from "path";
 import { existsSync, realpathSync } from "fs";
 import { open as openFile, readFile, stat as statFile } from "fs/promises";
 import { setImmediate } from "node:timers/promises";
@@ -43,6 +43,7 @@ const READ_ONLY_GIT_ENV = {
   GIT_OPTIONAL_LOCKS: "0",
   LC_ALL: "C",
 } as const;
+const EMPTY_TREE_OBJECT_ID = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 /**
  * Why a git mutation is forcing a workspace snapshot refresh. Shared between the
@@ -590,6 +591,354 @@ async function listCheckoutFileChanges(
   return Array.from(byPath.values());
 }
 
+function joinCheckoutSubPath(subPath: string, relativePath: string): string {
+  return relativePath ? `${subPath}/${relativePath}` : subPath;
+}
+
+function resolveSubmoduleCwd(parentCwd: string, subPath: string): string | null {
+  const subCwd = resolve(parentCwd, subPath);
+  if (!existsSync(subCwd) || !existsSync(joinPath(subCwd, ".git"))) {
+    return null;
+  }
+  return subCwd;
+}
+
+function prefixDiffPathToken(token: string, subPath: string): string {
+  if (token === "/dev/null") {
+    return token;
+  }
+  if (token.startsWith("a/") || token.startsWith("b/")) {
+    return `${token.slice(0, 2)}${joinCheckoutSubPath(subPath, token.slice(2))}`;
+  }
+  return joinCheckoutSubPath(subPath, token);
+}
+
+function prefixDiffTextPaths(diffText: string, subPath: string): string {
+  if (!diffText) {
+    return diffText;
+  }
+
+  return diffText
+    .split("\n")
+    .map((line) => {
+      if (line.startsWith("diff --git ")) {
+        const rest = line.slice("diff --git ".length);
+        const match = rest.match(/^(a\/.+?) (b\/.+)$/);
+        if (!match) {
+          return line;
+        }
+        return `diff --git ${prefixDiffPathToken(match[1]!, subPath)} ${prefixDiffPathToken(match[2]!, subPath)}`;
+      }
+
+      if (line.startsWith("--- ") || line.startsWith("+++ ")) {
+        const marker = line.slice(0, 4);
+        const pathPart = line.slice(4);
+        const tabIndex = pathPart.indexOf("\t");
+        const pathToken = tabIndex >= 0 ? pathPart.slice(0, tabIndex) : pathPart;
+        const suffix = tabIndex >= 0 ? pathPart.slice(tabIndex) : "";
+        if (pathToken === "/dev/null") {
+          return line;
+        }
+        return `${marker}${prefixDiffPathToken(pathToken, subPath)}${suffix}`;
+      }
+
+      for (const header of ["rename from ", "rename to ", "copy from ", "copy to "] as const) {
+        if (line.startsWith(header)) {
+          return `${header}${joinCheckoutSubPath(subPath, line.slice(header.length))}`;
+        }
+      }
+
+      const placeholderMatch = line.match(/^# (.+): (binary diff omitted|diff too large omitted)$/);
+      if (placeholderMatch) {
+        return `# ${joinCheckoutSubPath(subPath, placeholderMatch[1]!)}: ${placeholderMatch[2]!}`;
+      }
+
+      return line;
+    })
+    .join("\n");
+}
+
+function prefixParsedDiffFile(
+  file: ParsedDiffFile & { oldPath?: string },
+  subPath: string,
+): ParsedDiffFile & { oldPath?: string } {
+  return {
+    ...file,
+    path: joinCheckoutSubPath(subPath, file.path),
+    ...(file.oldPath ? { oldPath: joinCheckoutSubPath(subPath, file.oldPath) } : {}),
+  };
+}
+
+async function findGitlinkChangePaths(
+  cwd: string,
+  changes: CheckoutFileChange[],
+  refs: CheckoutDiffRefs,
+  ignoreWhitespace: boolean,
+): Promise<Set<string>> {
+  const gitlinks = new Set<string>();
+  const trackedPaths = [
+    ...new Set(changes.filter((change) => !change.isUntracked).map((change) => change.path)),
+  ];
+
+  if (trackedPaths.length > 0) {
+    const { stdout } = await runGitCommand(
+      buildGitDiffArgs({
+        ignoreWhitespace,
+        extra: ["--raw", ...getCheckoutDiffRefArgs(refs), "--", ...trackedPaths],
+      }),
+      { cwd, envOverlay: READ_ONLY_GIT_ENV },
+    );
+
+    for (const line of stdout
+      .split("\n")
+      .map((entry) => entry.trimEnd())
+      .filter(Boolean)) {
+      // :srcMode dstMode srcSha dstSha status\tpath[\toldPath]
+      const match = line.match(/^:(\d{6}) (\d{6}) [0-9a-f]+ [0-9a-f]+ [^\t]+\t(.+)$/);
+      if (!match) {
+        continue;
+      }
+      if (match[1] !== "160000" && match[2] !== "160000") {
+        continue;
+      }
+      const pathField = match[3]!;
+      const tabIndex = pathField.indexOf("\t");
+      // Renames list oldPath\tnewPath; surface the destination path that name-status uses.
+      gitlinks.add(tabIndex >= 0 ? pathField.slice(tabIndex + 1) : pathField);
+    }
+  }
+
+  // Untracked-only submodule dirtiness does not appear in `git diff --name-status`.
+  // Status porcelain reports it as ` ? path` / ` m path`; verify those paths are gitlinks.
+  if (refs.includeUntracked) {
+    for (const path of await listStatusDirtySubmodulePaths(cwd)) {
+      gitlinks.add(path);
+    }
+  }
+
+  return gitlinks;
+}
+
+async function listStatusDirtySubmodulePaths(cwd: string): Promise<string[]> {
+  const { stdout } = await runGitCommand(["status", "--porcelain=1"], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+  });
+  const candidates: string[] = [];
+  for (const line of stdout
+    .split("\n")
+    .map((entry) => entry.trimEnd())
+    .filter(Boolean)) {
+    if (line.length < 4) {
+      continue;
+    }
+    const worktreeStatus = line[1];
+    // Dirty submodules show as ` m` / ` M` / ` ?` depending on git version and
+    // whether the dirt is tracked edits vs untracked files. Regular paths also
+    // use these letters, so candidates are verified as gitlinks below.
+    if (worktreeStatus !== "m" && worktreeStatus !== "M" && worktreeStatus !== "?") {
+      continue;
+    }
+    const pathField = line.slice(3);
+    const path = pathField.includes(" -> ")
+      ? (pathField.split(" -> ").at(-1) ?? pathField)
+      : pathField;
+    if (path) {
+      candidates.push(path);
+    }
+  }
+  if (candidates.length === 0) {
+    return [];
+  }
+
+  const { stdout: lsOut } = await runGitCommand(["ls-files", "-s", "--", ...candidates], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+  });
+  const gitlinks: string[] = [];
+  for (const line of lsOut
+    .split("\n")
+    .map((entry) => entry.trimEnd())
+    .filter(Boolean)) {
+    const match = line.match(/^160000 [0-9a-f]+ \d+\t(.+)$/);
+    if (match?.[1]) {
+      gitlinks.push(match[1]);
+    }
+  }
+  return gitlinks;
+}
+
+async function readGitLinkSha(cwd: string, ref: string, subPath: string): Promise<string | null> {
+  try {
+    const { stdout } = await runGitCommand(["rev-parse", `${ref}:${subPath}`], {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+    });
+    const sha = stdout.trim();
+    return sha.length > 0 ? sha : null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveSubmoduleExpansionRefs(
+  parentCwd: string,
+  subPath: string,
+  parentRefs: CheckoutDiffRefs,
+): Promise<CheckoutDiffRefs | null> {
+  if (parentRefs.includeUntracked) {
+    // Diff the parent-recorded gitlink against the submodule worktree (covers pointer
+    // moves and the `-dirty` working-tree case).
+    const recordedSha = await readGitLinkSha(parentCwd, parentRefs.baseRef, subPath);
+    return {
+      baseRef: recordedSha ?? EMPTY_TREE_OBJECT_ID,
+      includeUntracked: true,
+    };
+  }
+
+  const oldSha = await readGitLinkSha(parentCwd, parentRefs.baseRef, subPath);
+  const newSha = parentRefs.targetRef
+    ? await readGitLinkSha(parentCwd, parentRefs.targetRef, subPath)
+    : null;
+  if (!oldSha && !newSha) {
+    return null;
+  }
+  if (oldSha && newSha && oldSha === newSha) {
+    return null;
+  }
+  return {
+    baseRef: oldSha ?? EMPTY_TREE_OBJECT_ID,
+    targetRef: newSha ?? EMPTY_TREE_OBJECT_ID,
+    includeUntracked: false,
+  };
+}
+
+type SubmoduleExpansionOutcome = "expanded" | "skipped" | "too_large";
+
+async function appendExpandedSubmoduleDiff(input: {
+  parentCwd: string;
+  subPath: string;
+  parentRefs: CheckoutDiffRefs;
+  ignoreWhitespace: boolean;
+  includeStructured: boolean;
+  structured: StructuredDiffAccumulator;
+  appendDiff: (text: string) => void;
+}): Promise<SubmoduleExpansionOutcome> {
+  const {
+    parentCwd,
+    subPath,
+    parentRefs,
+    ignoreWhitespace,
+    includeStructured,
+    structured,
+    appendDiff,
+  } = input;
+
+  const subCwd = resolveSubmoduleCwd(parentCwd, subPath);
+  if (!subCwd) {
+    // Keep the parent gitlink stub when the submodule isn't checked out.
+    return "skipped";
+  }
+
+  const refs = await resolveSubmoduleExpansionRefs(parentCwd, subPath, parentRefs);
+  if (!refs) {
+    return "skipped";
+  }
+
+  let changes: CheckoutFileChange[];
+  try {
+    changes = await listCheckoutFileChanges(subCwd, refs, ignoreWhitespace);
+  } catch {
+    return "skipped";
+  }
+  if (changes.length === 0) {
+    return "skipped";
+  }
+  changes.sort((a, b) => {
+    if (a.path === b.path) return 0;
+    return a.path < b.path ? -1 : 1;
+  });
+
+  let bufferedDiff = "";
+  const bufferAppend = (text: string) => {
+    if (!text) return;
+    bufferedDiff += text;
+  };
+
+  const trackedChanges = changes.filter((change) => !change.isUntracked);
+  const untrackedChanges = changes.filter((change) => change.isUntracked === true);
+  const trackedDiff = await processTrackedChanges({
+    cwd: subCwd,
+    refsForDiff: refs,
+    trackedChanges,
+    ignoreWhitespace,
+    appendDiff: bufferAppend,
+  });
+
+  const appendTrackedPlaceholderComment = (
+    change: CheckoutFileChange,
+    status: "binary" | "too_large",
+  ) => {
+    if (status === "binary") {
+      bufferAppend(`# ${change.path}: binary diff omitted\n`);
+      return;
+    }
+    bufferAppend(`# ${change.path}: diff too large omitted\n`);
+  };
+
+  const localStructured = createStructuredDiffAccumulator();
+
+  if (includeStructured) {
+    const didAppendTrackedDiffs = await appendStructuredTrackedDiffs({
+      cwd: subCwd,
+      trackedChanges,
+      trackedNumstatByPath: trackedDiff.trackedNumstatByPath,
+      trackedPlaceholderByPath: trackedDiff.trackedPlaceholderByPath,
+      trackedDiffText: trackedDiff.trackedDiffText,
+      refsForDiff: refs,
+      ignoreWhitespace,
+      structured: localStructured,
+      appendTrackedPlaceholderComment,
+    });
+    if (!didAppendTrackedDiffs) {
+      return "too_large";
+    }
+  } else {
+    for (const change of trackedChanges) {
+      const placeholder = trackedDiff.trackedPlaceholderByPath.get(change.path);
+      if (placeholder) {
+        appendTrackedPlaceholderComment(change, placeholder.status);
+      }
+    }
+  }
+
+  for (const change of untrackedChanges) {
+    const didAppendUntrackedDiff = await processUntrackedChange({
+      cwd: subCwd,
+      change,
+      ignoreWhitespace,
+      includeStructured,
+      structured: localStructured,
+      appendDiff: bufferAppend,
+    });
+    if (!didAppendUntrackedDiff) {
+      return "too_large";
+    }
+  }
+
+  appendDiff(prefixDiffTextPaths(bufferedDiff, subPath));
+
+  if (includeStructured) {
+    for (const file of localStructured.files) {
+      if (!appendStructuredFile(structured, prefixParsedDiffFile(file, subPath))) {
+        return "too_large";
+      }
+    }
+  }
+
+  return "expanded";
+}
+
 async function readGitFileContentAtRef(
   cwd: string,
   ref: string,
@@ -650,7 +999,6 @@ function buildGitDiffArgs(args: { ignoreWhitespace?: boolean; extra: string[] })
 
 const TRACKED_DIFF_NUMSTAT_MAX_BYTES = 2 * 1024 * 1024; // 2MB
 const TRACKED_DIFF_BATCH_SIZE = 64;
-const EMPTY_TREE_OBJECT_ID = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 function isUnbornHeadDiffError(error: unknown): boolean {
   return (
@@ -910,6 +1258,8 @@ export interface CheckoutDiffCompare {
   baseRef?: string;
   ignoreWhitespace?: boolean;
   includeStructured?: boolean;
+  /** Opt-in: expand submodule gitlinks into file-level diffs. Default preserves gitlink stubs. */
+  expandSubmodules?: boolean;
 }
 
 export interface MergeToBaseOptions {
@@ -3434,6 +3784,7 @@ export async function getCheckoutDiff(
   }
 
   const ignoreWhitespace = compare.ignoreWhitespace === true;
+  const expandSubmodules = compare.expandSubmodules === true;
   let effectiveRefsForDiff = refsForDiff;
   let changes: CheckoutFileChange[];
   try {
@@ -3445,7 +3796,25 @@ export async function getCheckoutDiff(
     effectiveRefsForDiff = { ...refsForDiff, baseRef: EMPTY_TREE_OBJECT_ID };
     changes = await listCheckoutFileChanges(cwd, effectiveRefsForDiff, ignoreWhitespace);
   }
-  changes.sort((a, b) => {
+
+  let parentChanges: CheckoutFileChange[];
+  let submodulePaths: string[] = [];
+  if (expandSubmodules) {
+    const gitlinkPaths = await findGitlinkChangePaths(
+      cwd,
+      changes,
+      effectiveRefsForDiff,
+      ignoreWhitespace,
+    );
+    parentChanges = changes.filter((change) => !gitlinkPaths.has(change.path));
+    submodulePaths = [...gitlinkPaths].sort((a, b) => {
+      if (a === b) return 0;
+      return a < b ? -1 : 1;
+    });
+  } else {
+    parentChanges = [...changes];
+  }
+  parentChanges.sort((a, b) => {
     if (a.path === b.path) return 0;
     return a.path < b.path ? -1 : 1;
   });
@@ -3469,8 +3838,8 @@ export async function getCheckoutDiff(
     }
   };
 
-  const trackedChanges = changes.filter((change) => !change.isUntracked);
-  const untrackedChanges = changes.filter((change) => change.isUntracked === true);
+  const trackedChanges = parentChanges.filter((change) => !change.isUntracked);
+  const untrackedChanges = parentChanges.filter((change) => change.isUntracked === true);
   const trackedDiff = await processTrackedChanges({
     cwd,
     refsForDiff: effectiveRefsForDiff,
@@ -3528,6 +3897,86 @@ export async function getCheckoutDiff(
     });
     if (!didAppendUntrackedDiff) {
       return { diff: "", structured: [], diffTooLarge: true };
+    }
+  }
+
+  const unexpandedGitlinkPaths: string[] = [];
+  for (const subPath of submodulePaths) {
+    if (diffBytes >= TOTAL_DIFF_MAX_BYTES) {
+      break;
+    }
+    const expansionOutcome = await appendExpandedSubmoduleDiff({
+      parentCwd: cwd,
+      subPath,
+      parentRefs: effectiveRefsForDiff,
+      ignoreWhitespace,
+      includeStructured: compare.includeStructured === true,
+      structured,
+      appendDiff,
+    });
+    if (expansionOutcome === "too_large") {
+      return { diff: "", structured: [], diffTooLarge: true };
+    }
+    if (expansionOutcome === "skipped") {
+      unexpandedGitlinkPaths.push(subPath);
+    }
+  }
+
+  // Expansion removes gitlinks from the parent pass. If a submodule cannot be
+  // expanded (missing checkout, empty interior diff, git errors), restore the
+  // original gitlink stub so the change does not disappear from Changes.
+  if (unexpandedGitlinkPaths.length > 0) {
+    const stubPathSet = new Set(unexpandedGitlinkPaths);
+    const stubChanges = changes.filter((change) => stubPathSet.has(change.path));
+    const stubTracked = stubChanges.filter((change) => !change.isUntracked);
+    const stubUntracked = stubChanges.filter((change) => change.isUntracked === true);
+    if (stubTracked.length > 0) {
+      const stubTrackedDiff = await processTrackedChanges({
+        cwd,
+        refsForDiff: effectiveRefsForDiff,
+        trackedChanges: stubTracked,
+        ignoreWhitespace,
+        appendDiff,
+      });
+      if (compare.includeStructured) {
+        const didAppendStubDiffs = await appendStructuredTrackedDiffs({
+          cwd,
+          trackedChanges: stubTracked,
+          trackedNumstatByPath: stubTrackedDiff.trackedNumstatByPath,
+          trackedPlaceholderByPath: stubTrackedDiff.trackedPlaceholderByPath,
+          trackedDiffText: stubTrackedDiff.trackedDiffText,
+          refsForDiff: effectiveRefsForDiff,
+          ignoreWhitespace,
+          structured,
+          appendTrackedPlaceholderComment,
+        });
+        if (!didAppendStubDiffs) {
+          return { diff: "", structured: [], diffTooLarge: true };
+        }
+      } else {
+        for (const change of stubTracked) {
+          const placeholder = stubTrackedDiff.trackedPlaceholderByPath.get(change.path);
+          if (placeholder) {
+            appendTrackedPlaceholderComment(change, placeholder.status);
+          }
+        }
+      }
+    }
+    for (const change of stubUntracked) {
+      if (diffBytes >= TOTAL_DIFF_MAX_BYTES) {
+        break;
+      }
+      const didAppendUntrackedDiff = await processUntrackedChange({
+        cwd,
+        change,
+        ignoreWhitespace,
+        includeStructured: compare.includeStructured === true,
+        structured,
+        appendDiff,
+      });
+      if (!didAppendUntrackedDiff) {
+        return { diff: "", structured: [], diffTooLarge: true };
+      }
     }
   }
 
