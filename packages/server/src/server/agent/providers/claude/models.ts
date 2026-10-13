@@ -52,8 +52,9 @@ export async function getClaudeModelsWithSettings(
   logger: Logger,
   configDir: string,
   claudeCodeVersion?: string,
+  discoveredModelIds: ReadonlySet<string> = new Set(),
 ): Promise<AgentModelDefinition[]> {
-  const hardcodedModels = getClaudeModels(claudeCodeVersion);
+  const hardcodedModels = getClaudeManifestModels(claudeCodeVersion, discoveredModelIds);
   const settingsModels = await readClaudeSettingsModels(logger, configDir);
   if (settingsModels.length === 0) {
     return hardcodedModels;
@@ -70,7 +71,10 @@ export async function getClaudeModelsWithSettings(
       }
       continue;
     }
-    models.push(model);
+    const manifestModel = getClaudeModels(claudeCodeVersion).find(
+      (candidate) => candidate.id === model.id,
+    );
+    models.push({ ...manifestModel, ...model });
   }
 
   return models;

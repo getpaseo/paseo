@@ -1,4 +1,5 @@
 import type { AgentProvider, AgentStreamEvent, AgentTimelineItem } from "./agent-sdk-types.js";
+import { mergeToolCallItems } from "./timeline-projection.js";
 
 export const AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS = 60;
 
@@ -183,9 +184,16 @@ export class AgentStreamCoalescer {
     }
 
     const existingIndex = buffer.toolCallEntryIndexes.get(event.item.callId);
+    const existing = existingIndex !== undefined ? buffer.entries[existingIndex] : undefined;
+    // Merge rather than replace, so an update that carries less (an unknown detail after a
+    // labeled one) cannot erase what the timeline would have kept had both been flushed.
+    let item = event.item;
+    if (existing?.kind === "tool_call") {
+      item = mergeToolCallItems(existing.item, event.item);
+    }
     const entry: PendingToolCallEntry = {
       kind: "tool_call",
-      item: event.item,
+      item,
       provider: event.provider,
       ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
     };

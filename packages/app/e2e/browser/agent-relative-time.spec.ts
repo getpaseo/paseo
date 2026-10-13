@@ -4,7 +4,6 @@ import { getServerId } from "../support/helpers/server-id";
 import { seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { openAgentRoute } from "../support/helpers/mock-agent";
 import { resetSeededPageState, openSessions } from "../support/helpers/archive-tab";
-import { closeSidebarDisplayPreferences, openSidebarDisplayPage } from "../support/helpers/sidebar";
 
 test("agent list age advances and command center says just now for a fresh agent", async ({
   page,
@@ -41,9 +40,6 @@ test("agent list age advances and command center says just now for a fresh agent
       "3m ago",
     );
 
-    await openSidebarDisplayPage(page, "sidebar-display-show");
-    await page.getByRole("menuitem", { name: "Last activity", exact: true }).click();
-    await closeSidebarDisplayPreferences(page);
     await expect(page.getByTestId("sidebar-workspace-timestamp").first()).toHaveText("3m");
   } finally {
     await session.cleanup();

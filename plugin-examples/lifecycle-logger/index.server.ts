@@ -29,6 +29,10 @@ export default function contribute(server: PluginServerContext) {
     logHook("agent.created", event);
   });
 
+  server.on("agent.closed", (event) => {
+    logHook("agent.closed", event);
+  });
+
   server.on("agent.turn_started", (event) => {
     logHook("agent.turn_started", event);
   });

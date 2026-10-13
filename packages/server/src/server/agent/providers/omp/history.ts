@@ -20,6 +20,10 @@ interface OmpSessionEntry {
   [key: string]: unknown;
 }
 
+type OmpReplayEntry =
+  | { entry: OmpSessionEntry; message: OmpAgentMessage }
+  | { entry: OmpSessionEntry; item: AgentTimelineItem };
+
 export async function readOmpHistoryTodoState(
   sessionFile: string,
 ): Promise<AgentTimelineItem | null> {
@@ -90,13 +94,17 @@ export async function* streamOmpHistory(input: {
     throw error;
   }
   const messages: OmpAgentMessage[] = [];
-  const messageEntries: OmpSessionEntry[] = [];
+  const replayEntries: OmpReplayEntry[] = [];
   const userEntries: OmpCapturedUserMessageEntry[] = [];
   for (const entry of entries) {
+    if (entry.type === "compaction") {
+      replayEntries.push({ entry, item: mapCompactionEntry(entry) });
+      continue;
+    }
     const mapped = mapEntryMessage(entry);
     if (!mapped) continue;
     messages.push(mapped);
-    messageEntries.push(entry);
+    replayEntries.push({ entry, message: mapped });
     if (mapped.role === "user" && entry.id) {
       userEntries.push({ id: entry.id, text: textOf(mapped.content) });
     }
@@ -107,9 +115,13 @@ export async function* streamOmpHistory(input: {
     OMP_HISTORY_MAPPER_HOOKS,
     input.bridgedTools,
   );
-  for (let index = 0; index < messages.length; index += 1) {
-    const timestamp = normalizeProviderReplayTimestamp(messageEntries[index]?.timestamp);
-    for (const event of mapper.mapMessages([messages[index]!])) {
+  for (const replayEntry of replayEntries) {
+    const timestamp = normalizeProviderReplayTimestamp(replayEntry.entry.timestamp);
+    const events: AgentStreamEvent[] =
+      "item" in replayEntry
+        ? [{ type: "timeline", provider: input.provider, item: replayEntry.item }]
+        : mapper.mapMessages([replayEntry.message]);
+    for (const event of events) {
       yield timestamp && event.type === "timeline" ? { ...event, timestamp } : event;
     }
   }
@@ -360,8 +372,7 @@ function mapEntryMessage(entry: OmpSessionEntry): OmpAgentMessage | null {
         content.length === 1 &&
         content[0]?.type === "text" &&
         typeof content[0].text === "string" &&
-        content[0].text.trimStart().startsWith("<system-reminder>") &&
-        content[0].text.trimEnd().endsWith("</system-reminder>")
+        isSystemReminder(content[0].text)
       ) {
         return null;
       }
@@ -369,6 +380,19 @@ function mapEntryMessage(entry: OmpSessionEntry): OmpAgentMessage | null {
     }
     if (["user", "assistant", "toolResult", "custom", "bashExecution"].includes(message.role)) {
       return message as unknown as OmpAgentMessage;
+    }
+    // OMP roles the live timeline does not render either, such as the fileMention that carries
+    // an @-mentioned file's content.
+    if (
+      [
+        "pythonExecution",
+        "hookMessage",
+        "branchSummary",
+        "compactionSummary",
+        "fileMention",
+      ].includes(message.role)
+    ) {
+      return null;
     }
     return visibleFallback(message.role, message);
   }
@@ -379,6 +403,16 @@ function mapEntryMessage(entry: OmpSessionEntry): OmpAgentMessage | null {
     return null;
   }
   return visibleFallback(entry.type, entry);
+}
+
+// OMP persists a compaction as a top-level entry; the live timeline shows it as a compaction row.
+// The entry does not record whether a manual /compact or auto-compaction produced it.
+function mapCompactionEntry(entry: OmpSessionEntry): AgentTimelineItem {
+  return {
+    type: "compaction",
+    status: "completed",
+    ...(typeof entry.tokensBefore === "number" ? { preTokens: entry.tokensBefore } : {}),
+  };
 }
 
 // omp 18.1+ persists injected rows (skill prompts, hub messages, job notices) as top-level
@@ -399,6 +433,13 @@ function mapCustomMessageEntry(entry: OmpSessionEntry): OmpAgentMessage | null {
   } as OmpAgentMessage;
 }
 
+// OMP's rule-violation reminder carries attributes: <system-reminder reason="rule_violation" ...>
+function isSystemReminder(text: string): boolean {
+  return (
+    /^<system-reminder[\s>]/.test(text.trimStart()) && text.trimEnd().endsWith("</system-reminder>")
+  );
+}
+
 function isControlEntryType(type: string): boolean {
   return (
     type === "session" ||
@@ -410,6 +451,7 @@ function isControlEntryType(type: string): boolean {
     type === "system_prompt" ||
     type === "model_change" ||
     type === "thinking_level_change" ||
+    type === "ttsr_injection" ||
     type === "tool_execution" ||
     type.startsWith("tool_execution_")
   );

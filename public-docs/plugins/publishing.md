@@ -11,8 +11,23 @@ category: Plugins
 Publish your plugin so other people can install and use it in Paseo. Start with a working
 [plugin project](/docs/plugins), then choose where to share it:
 
+- [Plugin registry](#plugin-registry): share a reviewed artifact users install by `owner/slug`.
 - [npm](#publish-on-npm): publish a package on the public npm registry.
 - [GitHub or Git](#share-through-github-or-git): let users install from a repository.
+
+## Plugin registry
+
+Browse published plugins at [paseo.sh/plugins](https://paseo.sh/plugins).
+Users install the reviewed artifact with:
+
+```bash
+paseo plugin add owner/slug
+```
+
+Publish your artifact through npm or Git, then follow the
+[registry submission guide](https://github.com/getpaseo/plugins) to submit it for review.
+Registry installations and updates use the approved revision and plugin path.
+Direct Git installs use explicit `git:owner/repository` shorthand or a full Git URL.
 
 ## Publish on npm
 
@@ -56,6 +71,7 @@ The scaffold includes this `files` list in `package.json`:
 {
   "files": [
     "paseo-plugin.json",
+    "OVERVIEW.md",
     "index.client.ts",
     "index.client.tsx",
     "index.server.ts",
@@ -136,12 +152,84 @@ In the app, enter only the source identifier.
 
 :::
 
+## Icons and screenshots
+
+Declare your display name, icon, screenshots, and demo videos in `paseo-plugin.json`:
+
+```json
+{
+  "id": "review-tools",
+  "name": "Review tools",
+  "description": "Reviews changes before merge",
+  "icon": "assets/icon.png",
+  "media": ["assets/screenshot.png", "https://example.com/review-demo.mp4"],
+  "requirements": { "paseo": ">=0.11.0" }
+}
+```
+
+All three fields are optional. `name` gives the registry and website a display name without
+changing the installation ID. When omitted, the registry falls back to a humanized ID.
+Registry and website display requires the registry builder to read these fields from the pinned
+manifest. That update is a separate follow-up; until it lands, these fields are exposed only
+through the daemon's installed-plugin list.
+`icon` must point to a PNG inside the plugin package. `media` accepts paths to images and videos
+inside the package or HTTPS URLs, in display order. Paths are relative to the manifest; use
+forward slashes and keep them inside the package. See the [manifest reference](/docs/plugins/reference#project-files)
+for validation rules.
+
+Commit local assets alongside the manifest at the pinned revision. For npm, add their directory
+(for example, `assets/`) to `package.json`'s `files` list and verify it with `npm pack --dry-run`.
+The scaffold documents these fields in its manifest's `$comment`; add your display name and
+assets before publishing.
+
+Manifests using these fields fail to install on daemons before 0.11.0. Set
+`requirements.paseo` to `>=0.11.0` or a narrower supported range.
+
+## Your listing page
+
+Write `OVERVIEW.md` beside `paseo-plugin.json` for the plugin page inside Paseo.
+It helps someone decide whether to install your plugin; the install command is already at
+the top of that page. A README assumes a GitHub audience and carries installation
+instructions, technical details, and badges. Long, AI-generated READMEs make people read
+past that material to understand what a plugin does.
+
+`OVERVIEW.md` is required to list your plugin in the registry. Commit it beside
+`paseo-plugin.json` in the source repository at the pinned commit. The registry resolves it
+relative to the manifest, under `pluginPath` for monorepos. Include it in the published npm
+package too; the scaffold's `files` list includes it. Replace the scaffold's guidance comment
+with useful facts before publishing.
+
+The repository overview takes precedence over a registry import stopgap. Online validation
+fails when the pinned commit has no `OVERVIEW.md`, except for unchanged imported records
+that already carry `plugins/<owner>/<slug>.md` in the registry repository. Every version bump
+requires a repository overview and removes the stopgap in the same PR. A bump without the
+repository overview fails validation. README files do not supply the overview.
+
+Author overviews and registry stopgaps follow the same content contract, in this order.
+Choose headings only when they help; length follows complexity. A theme needs one paragraph.
+
+1. Explain what the plugin is and does in plain terms first.
+2. Explain how it works only when that is not obvious.
+3. Explain setup when needed: settings, accounts, tokens, providers, external tools, or other
+   plugins. Include applicable daemon version and operating system requirements. Setup
+   guidance is allowed; installation instructions are not.
+4. Explain capabilities and settings worth understanding, what each option does, what the
+   plugin reads or sends and where, permissions, and known limits.
+
+Use sentence case and plain factual language, with no em dashes. Omit installation commands,
+badges, changelog, contributing or license sections, marketing, and unsupported claims.
+Avoid implementation filler such as empty cleanup functions, catalogs of theme-token fields,
+or lists of absent features. Keep only what helps someone choose the plugin.
+
+If your plugin is an unchanged imported record, you can propose an author-written overview
+to replace the registry stopgap. Do not add import credit to your own `OVERVIEW.md`.
+
 ## Share through GitHub or Git
 
 Push the plugin project to a repository. Users can install it with:
 
 ```bash
-paseo plugin install github:acme/paseo-review
+paseo plugin add git:acme/paseo-review
 ```
 
 For another Git host:

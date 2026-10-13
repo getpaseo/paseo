@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { pluginRegistry as registry } from "./registry";
 
+const audio = { play: async () => 0 };
+
 vi.mock("./navigation", () => ({
   createPluginNavigation: () => ({}),
 }));
@@ -30,7 +32,7 @@ const pluginRegistry = {
     return registry.installCatalog(
       serverId,
       catalog.map((entry) => ({ ...entry, requirements: { paseo: `>=${appPackage.version}` } })),
-      { ...options, client: daemonClient },
+      { ...options, client: daemonClient, audio },
     );
   },
 };

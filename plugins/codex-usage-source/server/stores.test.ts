@@ -23,15 +23,15 @@ async function accountIdentity(
   input: Parameters<typeof fetchUsage>[0],
   env: NodeJS.ProcessEnv = {},
 ) {
-  const accounts = await discover(lookup(env));
+  const accounts = await discover({ kind: "global" }, lookup(env));
   const account = accounts.find(
     (candidate) => JSON.stringify(candidate.input) === JSON.stringify(input),
   );
   if (!account) throw new Error("Expected discovered login");
   return { key: account.key, ...(account.label ? { label: account.label } : {}) };
 }
-async function logins(options: Parameters<typeof discover>[0]) {
-  return (await discover(options)).map(
+async function logins(options: Parameters<typeof discover>[1]) {
+  return (await discover({ kind: "global" }, options)).map(
     (account) => account.input as Parameters<typeof fetchUsage>[0],
   );
 }
@@ -39,6 +39,8 @@ async function database(path: string) {
   await mkdir((await import("node:path")).dirname(path), { recursive: true });
   const { DatabaseSync } = await import("node:sqlite");
   const db = new DatabaseSync(path);
+  // Create the fixture with one durable commit instead of one per row.
+  db.exec("BEGIN");
   db.exec(
     "CREATE TABLE auth_credentials (id INTEGER PRIMARY KEY, provider TEXT, credential_type TEXT, data TEXT, disabled_cause TEXT)",
   );
@@ -72,6 +74,7 @@ async function database(path: string) {
     null,
   );
   insert.run(5, "openai-codex", "oauth", "invalid", null);
+  db.exec("COMMIT");
   db.close();
 }
 

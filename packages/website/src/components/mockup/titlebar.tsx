@@ -64,7 +64,7 @@ export function TitleBar({ state }: { state: MockupStateId }) {
         {shipping ? (
           <>
             <GithubGlyph size={13} />
-            Merge PR (squash)
+            Merge PR
           </>
         ) : (
           <>

@@ -155,6 +155,18 @@ test("keeps diagnostics available from Settings after globalizing the sheet", as
 test.describe("compact sidebar help", () => {
   test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
+  test("footer buttons provide finger-sized targets and accept taps beyond the glyph", async ({
+    page,
+  }) => {
+    await gotoAppShell(page);
+    await openCompactSidebar(page);
+    await expectFingerSizedFooterTargets(page);
+    await tapHelpNearTargetEdge(page);
+    await expect(page.getByTestId("sidebar-help-menu")).toBeVisible();
+    await page.getByTestId("sidebar-help-diagnostics").click();
+    await expectDiagnosticReport(page);
+  });
+
   test("offers diagnostics without advertising disabled keyboard shortcuts", async ({ page }) => {
     await gotoAppShell(page);
     await page.getByRole("button", { name: "Open menu", exact: true }).click();
@@ -165,3 +177,29 @@ test.describe("compact sidebar help", () => {
     await expectDiagnosticReport(page);
   });
 });
+
+async function openCompactSidebar(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Open menu", exact: true }).click();
+  await expect(page.getByTestId("sidebar-footer-bottom-line")).toBeVisible();
+}
+
+const MIN_TARGET_SIZE = 44;
+
+async function expectFingerSizedFooterTargets(page: Page): Promise<void> {
+  const buttons = page.getByTestId("sidebar-footer-bottom-line").getByRole("button");
+  await expect(buttons).toHaveCount(5);
+  for (const button of await buttons.all()) {
+    const bounds = await button.boundingBox();
+    // Layout can report a 44pt box as 43.99999, so compare at a hundredth of a point.
+    expect(bounds?.width).toBeGreaterThanOrEqual(MIN_TARGET_SIZE - 0.01);
+    expect(bounds?.height).toBeGreaterThanOrEqual(MIN_TARGET_SIZE - 0.01);
+    // Glyphs stay at the composer toolbar size (some optically smaller); only the target grows.
+    const glyphWidth = await button.locator("svg").first().getAttribute("width");
+    expect(Number(glyphWidth)).toBeLessThanOrEqual(20);
+  }
+}
+
+async function tapHelpNearTargetEdge(page: Page): Promise<void> {
+  const button = page.getByRole("button", { name: "Help and support", exact: true });
+  await button.tap({ position: { x: 40, y: 40 } });
+}

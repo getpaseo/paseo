@@ -23,6 +23,27 @@ describe("plugin protocol compatibility", () => {
       expect(SessionOutboundMessageSchema.parse(message)).toEqual(message);
     },
   );
+  it("preserves manifest metadata in plugin list responses", () => {
+    const message = {
+      type: "plugin.list.response",
+      payload: {
+        requestId: "metadata",
+        plugins: [
+          {
+            id: "review",
+            name: "Review tools",
+            icon: "assets/icon.png",
+            media: ["screenshot.png", "https://example.com/demo.mp4"],
+            path: "/plugins/review",
+            enabled: false,
+            status: "disabled",
+          },
+        ],
+      },
+    };
+    expect(SessionOutboundMessageSchema.parse(message)).toEqual(message);
+  });
+
   it("parses plugin timeline append messages and advertises the capability", () => {
     expect(
       SessionInboundMessageSchema.parse({

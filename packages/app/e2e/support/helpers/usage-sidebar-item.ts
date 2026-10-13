@@ -6,8 +6,9 @@ import type { UsageReportEntry } from "@getpaseo/protocol/messages";
 import { expect, type Locator, type Page } from "@playwright/test";
 import { connectNewWorkspaceDaemonClient } from "./new-workspace";
 import { pluginRequirements } from "./plugin-fixture";
+import { waitForSettledPosition } from "./sheet-layout";
 
-/** Real usage-source plugin; its long report exercises the sheet's scrolling boundary. */
+/** Real usage-source plugin; its long report makes the Usage modal scroll. */
 export async function installTallUsageSource() {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-tall-usage-"));
   const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
@@ -141,13 +142,9 @@ export function usageItem(page: Page): Locator {
   return visible(page, "sidebar-usage");
 }
 
-/** The compact usage sheet the Usage item opens. */
-export function usageSheet(page: Page): Locator {
-  return visible(page, "usage-expanded");
-}
-
-export async function expectOnUsageScreen(page: Page): Promise<void> {
-  await expect(page).toHaveURL(/\/usage$/);
+/** The Usage modal's body: a dialog on wide layouts, a bottom sheet on compact ones. */
+export function usageModal(page: Page): Locator {
+  return visible(page, "usage-modal-body");
 }
 
 /** Each pinned window as it reads: its percent and short label, "31% 5h". */
@@ -168,6 +165,19 @@ export function pinRow(scope: Locator, source: string, window: string): Locator 
   return scope.getByRole("checkbox", { name: new RegExp(`^Pin ${source} ${window}, `) });
 }
 
+/**
+ * A report card whose window rows do not pin: no pin toggle, no pin glyph, and nothing focusable
+ * but buttons, so no row presses or highlights on hover.
+ */
+export async function expectUnpinnableRows(card: Locator): Promise<void> {
+  await expect(card.getByRole("checkbox")).toHaveCount(0);
+  await expect(card.locator('[data-testid^="usage-pin-"]')).toHaveCount(0);
+  const focusable = await card
+    .locator("[tabindex]")
+    .evaluateAll((nodes) => nodes.filter((node) => node.getAttribute("role") !== "button").length);
+  expect(focusable).toBe(0);
+}
+
 export async function togglePin(scope: Locator, source: string, window: string) {
   const row = pinRow(scope, source, window);
   const pinned = await row.isChecked();
@@ -175,11 +185,94 @@ export async function togglePin(scope: Locator, source: string, window: string) 
   await expect(row).toBeChecked({ checked: !pinned });
 }
 
-/** Expand the inline Settings row when its controls are folded. */
+/**
+ * The footer's Usage icon, which is there whether or not the Usage item is on. On a phone the
+ * sidebar drawer has to be open.
+ */
+export async function openUsageFromIcon(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Usage", exact: true }).click({ timeout: 30_000 });
+  await expect(usageModal(page)).toBeVisible();
+}
+
+/** The footer's Usage item, its summary of pinned windows. */
+export async function openUsageFromItem(page: Page): Promise<void> {
+  await usageItem(page).click();
+  await expect(usageModal(page)).toBeVisible();
+}
+
+/** Scrolls the Usage modal's body with the mouse wheel, as a user does. */
+export async function scrollUsage(page: Page, deltaY: number): Promise<void> {
+  const body = await usageModal(page).boundingBox();
+  const viewport = page.viewportSize();
+  if (!body || !viewport) throw new Error("Usage must be open before scrolling it.");
+  // The middle of the part of the body on screen; the body itself runs past the viewport.
+  const top = Math.max(body.y, 0);
+  const bottom = Math.min(body.y + body.height, viewport.height);
+  await page.mouse.move(body.x + body.width / 2, (top + bottom) / 2);
+  await page.mouse.wheel(0, deltaY);
+}
+
+/** The modal's own Close button. */
+export async function closeUsage(page: Page): Promise<void> {
+  await visible(page, "usage-modal").getByRole("button", { name: "Close", exact: true }).click();
+  await expect(usageModal(page)).toHaveCount(0);
+}
+
+/** A tap on the backdrop above the bottom sheet. */
+export async function closeUsageFromBackdrop(page: Page): Promise<void> {
+  const sheet = usageModal(page);
+  await waitForSettledPosition(sheet);
+  const bounds = await visible(page, "usage-modal").boundingBox();
+  if (!bounds) throw new Error("Usage must be open before closing it.");
+  await page.mouse.click(bounds.x + bounds.width / 2, bounds.y / 2);
+  await expect(sheet).toHaveCount(0);
+}
+
+function summaryInSidebarSwitch(page: Page): Locator {
+  return page.getByRole("switch", { name: "Summary in sidebar", exact: true });
+}
+
+/** Turns the sidebar Usage summary on or off from the Usage modal's Settings. */
+export async function setSummaryInSidebar(page: Page, on: boolean): Promise<void> {
+  await openUsageOptions(page);
+  await summaryInSidebarSwitch(page).click();
+  await expectSummaryInSidebar(page, on);
+}
+
+export async function expectSummaryInSidebar(page: Page, on: boolean): Promise<void> {
+  await openUsageOptions(page);
+  await expect(summaryInSidebarSwitch(page)).toBeChecked({ checked: on });
+  await closeUsageOptions(page);
+}
+
+/** Open the cog's settings popover or compact sheet. */
 export async function openUsageOptions(page: Page): Promise<void> {
-  const toggle = visible(page, "usage-options-toggle");
-  if ((await toggle.getAttribute("aria-expanded")) === "false") await toggle.click();
+  if (!(await visible(page, "usage-display-used").isVisible())) {
+    await visible(page, "usage-options-menu").click();
+  }
   await expect(visible(page, "usage-display-used")).toBeVisible();
+}
+
+export function usageOptionsSurface(page: Page): Locator {
+  return page
+    .locator(
+      '[data-testid="usage-options-surface"]:visible, [data-testid="usage-options-surface-content"]:visible',
+    )
+    .first();
+}
+
+export async function expectUsageOptionsFitContent(page: Page): Promise<void> {
+  await waitForSettledPosition(usageOptionsSurface(page));
+  const surface = await usageOptionsSurface(page).boundingBox();
+  const fields = await page.getByTestId("usage-options-fields").boundingBox();
+  if (!surface || !fields) throw new Error("Settings must be visible before measuring its fit.");
+  expect(surface.y + surface.height - (fields.y + fields.height)).toBeLessThanOrEqual(10);
+}
+
+export async function closeUsageOptions(page: Page): Promise<void> {
+  await waitForSettledPosition(usageOptionsSurface(page));
+  await page.mouse.click(0, 0);
+  await expect(page.getByTestId("usage-display-used")).toHaveCount(0);
 }
 
 export async function showUsageAs(page: Page, displayAs: "used" | "remaining") {
@@ -189,6 +282,7 @@ export async function showUsageAs(page: Page, displayAs: "used" | "remaining") {
     "aria-selected",
     "true",
   );
+  await closeUsageOptions(page);
 }
 
 export async function refreshAllUsage(page: Page): Promise<void> {
@@ -198,10 +292,4 @@ export async function refreshAllUsage(page: Page): Promise<void> {
 /** Opens the compact sidebar drawer. */
 export async function openCompactSidebar(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Open menu", exact: true }).first().click();
-}
-
-/** On a phone the Usage screen has a back header instead of the sidebar menu. */
-export async function leaveUsageScreen(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Back", exact: true }).first().click();
-  await expect(page).not.toHaveURL(/\/usage$/);
 }
