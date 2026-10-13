@@ -613,6 +613,9 @@ export const ar: TranslationResources = {
       updateHost: "حدّث المضيف لاستخدام عارض الطرفية الأصلي.",
       unableToSubscribe: "غير قادر على الاشتراك في المحطة",
     },
+    sheet: {
+      openAsTab: "فتح كعلامة تبويب",
+    },
     tabs: {
       loading: "تحميل...",
       modified: "تغييرات غير محفوظة",
