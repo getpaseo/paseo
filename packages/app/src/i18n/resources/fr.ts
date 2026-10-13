@@ -947,6 +947,7 @@ export const fr: TranslationResources = {
         binaryFile: "Fichier binaire",
         tooLarge: "Diff trop volumineux pour être affiché",
         submodule: "Sous-module",
+        expandSubmodules: "Développer les diffs des sous-modules",
         previewTooLargeTitle: "Ce diff est trop volumineux pour être prévisualisé",
         previewTooLargeDescription: "Réduisez la comparaison pour le prévisualiser ici",
         unified: "Diff unifié",

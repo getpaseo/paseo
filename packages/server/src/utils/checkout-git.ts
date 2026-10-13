@@ -1162,6 +1162,8 @@ export interface CheckoutDiffCompare {
   baseRef?: string;
   ignoreWhitespace?: boolean;
   includeStructured?: boolean;
+  /** Opt-in: emit submodule stubs for nested expand in Changes. Default keeps gitlink diffs. */
+  expandSubmodules?: boolean;
 }
 
 export interface MergeToBaseOptions {
@@ -3698,17 +3700,24 @@ export async function getCheckoutDiff(
     changes = await listCheckoutFileChanges(cwd, effectiveRefsForDiff, ignoreWhitespace);
   }
 
-  const gitlinkPaths = await findGitlinkChangePaths(
-    cwd,
-    changes,
-    effectiveRefsForDiff,
-    ignoreWhitespace,
-  );
-  const parentChanges = changes.filter((change) => !gitlinkPaths.has(change.path));
-  const submodulePaths = [...gitlinkPaths].sort((a, b) => {
-    if (a === b) return 0;
-    return a < b ? -1 : 1;
-  });
+  const expandSubmodules = compare.expandSubmodules === true;
+  let parentChanges: CheckoutFileChange[];
+  let submodulePaths: string[] = [];
+  if (expandSubmodules) {
+    const gitlinkPaths = await findGitlinkChangePaths(
+      cwd,
+      changes,
+      effectiveRefsForDiff,
+      ignoreWhitespace,
+    );
+    parentChanges = changes.filter((change) => !gitlinkPaths.has(change.path));
+    submodulePaths = [...gitlinkPaths].sort((a, b) => {
+      if (a === b) return 0;
+      return a < b ? -1 : 1;
+    });
+  } else {
+    parentChanges = [...changes];
+  }
   parentChanges.sort((a, b) => {
     if (a.path === b.path) return 0;
     return a.path < b.path ? -1 : 1;

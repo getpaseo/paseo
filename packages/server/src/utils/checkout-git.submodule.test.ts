@@ -53,7 +53,22 @@ function addNestedSubmodule(repoDir: string, subPath = "libs/sub"): { subDir: st
 }
 
 describe("getCheckoutDiff submodule stubs", () => {
-  it("emits a dirty submodule as an isSubmodule stub with metadata", async () => {
+  it("keeps gitlink diffs when expandSubmodules is omitted (default)", async () => {
+    const repoDir = initRepo();
+    const { subDir } = addNestedSubmodule(repoDir);
+    writeFileSync(join(subDir, "nested.txt"), "sub\nchanged\n");
+
+    const result = await getCheckoutDiff(repoDir, {
+      mode: "uncommitted",
+      includeStructured: true,
+    });
+
+    expect(result.diff).toMatch(/Subproject commit/i);
+    expect(result.structured?.some((file) => file.isSubmodule === true)).toBeFalsy();
+    expect(result.structured?.some((file) => file.path === "libs/sub/nested.txt")).toBeFalsy();
+  });
+
+  it("emits a dirty submodule as an isSubmodule stub with metadata when enabled", async () => {
     const repoDir = initRepo();
     const { subDir, sha } = addNestedSubmodule(repoDir);
     writeFileSync(join(subDir, "nested.txt"), "sub\nchanged\n");
@@ -61,6 +76,7 @@ describe("getCheckoutDiff submodule stubs", () => {
     const result = await getCheckoutDiff(repoDir, {
       mode: "uncommitted",
       includeStructured: true,
+      expandSubmodules: true,
     });
 
     const stub = result.structured?.find((file) => file.path === "libs/sub");
@@ -77,7 +93,7 @@ describe("getCheckoutDiff submodule stubs", () => {
     expect(result.structured?.some((file) => file.path === "libs/sub/nested.txt")).toBeFalsy();
   });
 
-  it("records old/new commits for submodule pointer moves", async () => {
+  it("records old/new commits for submodule pointer moves when enabled", async () => {
     const repoDir = initRepo();
     const { subDir, sha: oldSha } = addNestedSubmodule(repoDir);
     writeFileSync(join(subDir, "nested.txt"), "sub\ncommitted\n");
@@ -88,6 +104,7 @@ describe("getCheckoutDiff submodule stubs", () => {
     const result = await getCheckoutDiff(repoDir, {
       mode: "uncommitted",
       includeStructured: true,
+      expandSubmodules: true,
     });
 
     const stub = result.structured?.find((file) => file.path === "libs/sub");
@@ -111,6 +128,7 @@ describe("getCheckoutDiff submodule stubs", () => {
     const result = await getCheckoutDiff(repoDir, {
       mode: "uncommitted",
       includeStructured: true,
+      expandSubmodules: true,
     });
 
     const stub = result.structured?.find((file) => file.path === "libs/sub");
@@ -130,6 +148,7 @@ describe("getCheckoutDiff submodule stubs", () => {
     const result = await getCheckoutDiff(repoDir, {
       mode: "uncommitted",
       includeStructured: true,
+      expandSubmodules: true,
     });
 
     expect(result.structured?.some((file) => file.path === "libs/sub")).toBe(true);

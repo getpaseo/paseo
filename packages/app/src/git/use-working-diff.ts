@@ -19,6 +19,7 @@ interface UseWorkingDiffOptions {
   workspaceId?: string;
   cwd: string;
   ignoreWhitespace: boolean;
+  expandSubmodules?: boolean;
   collapsedFilePaths?: readonly string[];
   enabled: boolean;
   queryScope?: string;
@@ -30,6 +31,7 @@ export function useWorkingDiff({
   workspaceId,
   cwd,
   ignoreWhitespace,
+  expandSubmodules = false,
   collapsedFilePaths = [],
   enabled,
   queryScope,
@@ -72,6 +74,7 @@ export function useWorkingDiff({
     mode: diffMode,
     baseRef,
     ignoreWhitespace,
+    expandSubmodules,
     enabled: enabled && isGit,
     queryScope,
   });
@@ -79,13 +82,16 @@ export function useWorkingDiff({
   const collapsedPathSet = useMemo(() => new Set(collapsedFilePaths), [collapsedFilePaths]);
   const expandedSubmodulePaths = useMemo(() => {
     const expanded = new Set<string>();
+    if (!expandSubmodules) {
+      return expanded;
+    }
     for (const file of parentFiles) {
       if (file.isSubmodule === true && !collapsedPathSet.has(file.path)) {
         expanded.add(file.path);
       }
     }
     return expanded;
-  }, [collapsedPathSet, parentFiles]);
+  }, [collapsedPathSet, expandSubmodules, parentFiles]);
 
   const files = useExpandedSubmoduleFiles({
     parentFiles,
@@ -95,7 +101,7 @@ export function useWorkingDiff({
     baseRef,
     ignoreWhitespace,
     expandedSubmodulePaths,
-    enabled: enabled && isGit,
+    enabled: enabled && isGit && expandSubmodules,
     queryScope,
   });
 
@@ -108,8 +114,9 @@ export function useWorkingDiff({
         mode: diffMode,
         baseRef,
         ignoreWhitespace,
+        expandSubmodules,
       }),
-    [baseRef, cwd, diffMode, ignoreWhitespace, serverId, workspaceId],
+    [baseRef, cwd, diffMode, expandSubmodules, ignoreWhitespace, serverId, workspaceId],
   );
   const reviewActions = useInlineReviewController({ reviewDraftKey, presentation });
   const reviewAttachment = useReviewAttachmentSnapshot({

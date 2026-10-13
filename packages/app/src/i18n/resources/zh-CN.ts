@@ -915,6 +915,7 @@ export const zhCN: TranslationResources = {
         binaryFile: "二进制文件",
         tooLarge: "Diff 过大，无法显示",
         submodule: "子模块",
+        expandSubmodules: "展开子模块差异",
         previewTooLargeTitle: "此 diff 过大，无法预览",
         previewTooLargeDescription: "缩小比较范围即可在此预览",
         unified: "Unified diff",

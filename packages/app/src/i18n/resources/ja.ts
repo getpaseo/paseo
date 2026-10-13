@@ -936,6 +936,7 @@ export const ja: TranslationResources = {
         binaryFile: "バイナリファイル",
         tooLarge: "差分が大きすぎて表示できません",
         submodule: "サブモジュール",
+        expandSubmodules: "サブモジュールの差分を展開",
         previewTooLargeTitle: "この差分は大きすぎるためプレビューできません",
         previewTooLargeDescription: "比較範囲を狭めると、ここでプレビューできます",
         unified: "ユニファイド差分",

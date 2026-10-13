@@ -930,6 +930,7 @@ export const ko: TranslationResources = {
         binaryFile: "바이너리 파일",
         tooLarge: "표시하기에 diff가 너무 큽니다",
         submodule: "서브모듈",
+        expandSubmodules: "서브모듈 Diff 펼치기",
         previewTooLargeTitle: "Diff가 너무 커서 미리 볼 수 없습니다",
         previewTooLargeDescription: "여기에서 미리 보려면 비교 범위를 좁히세요.",
         unified: "통합 diff",

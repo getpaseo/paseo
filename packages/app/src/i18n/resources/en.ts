@@ -931,6 +931,7 @@ export const en = {
         binaryFile: "Binary file",
         tooLarge: "Diff too large to display",
         submodule: "Submodule",
+        expandSubmodules: "Expand submodule diffs",
         previewTooLargeTitle: "This diff is too large to preview",
         previewTooLargeDescription: "Narrow the comparison to preview it here",
         unified: "Unified diff",

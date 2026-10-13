@@ -27,6 +27,7 @@ export function checkoutDiffQueryKey(
   mode: "uncommitted" | "base",
   baseRef?: string,
   ignoreWhitespace?: boolean,
+  expandSubmodules?: boolean,
 ) {
   return [
     "checkoutDiff",
@@ -35,6 +36,7 @@ export function checkoutDiffQueryKey(
     mode,
     baseRef ?? "",
     ignoreWhitespace === true,
+    expandSubmodules === true,
   ] as const;
 }
 

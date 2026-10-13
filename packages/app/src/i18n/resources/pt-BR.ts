@@ -946,6 +946,7 @@ export const ptBR: TranslationResources = {
         binaryFile: "Arquivo binário",
         tooLarge: "Diff grande demais para exibir",
         submodule: "Submódulo",
+        expandSubmodules: "Expandir diffs de submódulos",
         previewTooLargeTitle: "Este diff é grande demais para visualizar",
         previewTooLargeDescription: "Reduza a comparação para visualizá-la aqui",
         unified: "Diff unificado",
