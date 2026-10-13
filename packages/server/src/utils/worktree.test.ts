@@ -113,6 +113,7 @@ describe("paseo worktree manager", () => {
     async ({ existing, preferred, expected }) => {
       const git = (...args: string[]) =>
         execFileSync("git", args, { cwd: repoDir, encoding: "utf8", stdio: "pipe" }).trim();
+      git("config", "core.autocrlf", "false");
       const baseHead = git("rev-parse", "main");
       for (const branch of existing) git("branch", branch);
       git("checkout", "-b", "fixture-pr");
