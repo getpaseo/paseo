@@ -1,3 +1,4 @@
+import { parseSafeInteger } from "../../utils/integer.js";
 import type { Command } from "commander";
 import { renderError, toCommandError } from "../../output/render.js";
 import {
@@ -85,8 +86,8 @@ function parseLineNumber(flag: string, value?: string): number | undefined {
     return undefined;
   }
 
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed)) {
+  const parsed = parseSafeInteger(value);
+  if (parsed === undefined) {
     throw {
       code: "INVALID_LINE_NUMBER",
       message: `Invalid ${flag} value: ${value}`,
