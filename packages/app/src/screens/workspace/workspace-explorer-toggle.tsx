@@ -11,6 +11,8 @@ import type { ShortcutKey } from "@/utils/format-shortcut";
 
 const ThemedPanelRight = withUnistyles(PanelRight);
 
+export const EXPLORER_TOGGLE_KEYS: ShortcutKey[] = ["mod", "E"];
+
 interface WorkspaceExplorerToggleProps {
   onPress: () => void;
   label: string;

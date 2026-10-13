@@ -25,7 +25,10 @@ function git(args: string[], cwd?: string): void {
 }
 
 function commit(repoDir: string, message: string): void {
-  git(["-c", "commit.gpgsign=false", "commit", "-m", message], repoDir);
+  git(
+    ["-c", "commit.gpgsign=false", "commit", "--author=Test User <test@test.com>", "-m", message],
+    repoDir,
+  );
 }
 
 function commitFile(repoDir: string, name: string, content: string, message: string): void {
@@ -92,6 +95,30 @@ function addBareRemote(repoDir: string, tempDir: string): string {
 }
 
 describe("listCheckoutCommits", () => {
+  it("keeps fixture authors independent of command-scoped Git configuration", async () => {
+    const overrides = {
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "user.name",
+      GIT_CONFIG_VALUE_0: "Other User",
+    };
+    const previous = Object.fromEntries(
+      Object.keys(overrides).map((key) => [key, process.env[key]]),
+    );
+    let repoDir: string;
+    try {
+      Object.assign(process.env, overrides);
+      ({ repoDir } = initRepoOnMain());
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+
+    const { commits } = await listCheckoutCommits({ cwd: repoDir });
+    expect(commits[0]?.authorName).toBe("Test User");
+  });
+
   it("lists recent commits newest-first with on-remote flags and file stats", async () => {
     const { repoDir, tempDir } = initRepoOnMain();
     git(["checkout", "-b", "feature"], repoDir);

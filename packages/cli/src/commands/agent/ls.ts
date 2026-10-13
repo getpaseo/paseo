@@ -12,8 +12,9 @@ type FetchAgentsOptions = NonNullable<
 export function addLsOptions(cmd: Command): Command {
   return cmd
     .description("List agents. By default excludes archived agents.")
-    .option("-a, --all", "Include archived agents")
+    .option("-a, --all", "Include archived and background agents")
     .option("-g, --global", "List agents across all directories")
+    .option("--background", "Include background workspace agents")
     .option(
       "--label <key=value>",
       "Filter by label (can be used multiple times)",
@@ -109,6 +110,8 @@ export interface AgentLsOptions extends CommandOptions {
   all?: boolean;
   /** -g: List agents across all directories */
   global?: boolean;
+  /** --background: Include background workspace agents */
+  background?: boolean;
   /** Filter by specific status */
   status?: string;
   /** Filter by specific cwd */
@@ -133,7 +136,7 @@ function parseLabelFilters(labels: string[] | undefined): Record<string, string>
 }
 
 export function buildAgentLsFetchOptions(
-  options: Pick<AgentLsOptions, "all" | "global" | "label" | "thinking">,
+  options: Pick<AgentLsOptions, "all" | "global" | "background" | "label" | "thinking">,
 ): FetchAgentsOptions {
   const labelFilters = parseLabelFilters(options.label);
   const normalizedThinkingOptionId = options.thinking?.trim();
@@ -141,6 +144,9 @@ export function buildAgentLsFetchOptions(
 
   if (options.all) {
     daemonFilter.includeArchived = true;
+  }
+  if (options.background || options.all) {
+    daemonFilter.includeBackground = true;
   }
   if (Object.keys(labelFilters).length > 0) {
     daemonFilter.labels = labelFilters;
@@ -150,7 +156,7 @@ export function buildAgentLsFetchOptions(
   }
 
   const fetchOptions: FetchAgentsOptions = {};
-  if (!options.global) {
+  if (!options.global && !options.all) {
     fetchOptions.scope = "active";
   }
   if (Object.keys(daemonFilter).length > 0) {
@@ -163,7 +169,7 @@ export function buildAgentLsFetchOptions(
  * Agent ls command semantics:
  * - `paseo agent ls`    → active non-archived agents
  * - `paseo agent ls -g` → global non-archived agents
- * - `paseo agent ls -a` → active agents, including archived
+ * - `paseo agent ls -a` → all agents, including archived and background
  * - `paseo agent ls -ag` → global agents, including archived
  */
 export async function runLsCommand(

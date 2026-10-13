@@ -55,8 +55,13 @@ export function FounderNote() {
     <div className="max-w-2xl space-y-5 leading-relaxed text-white/70">
       <p>Paseo is an independent project used by tens of thousands of developers daily.</p>
       <p>
-        It is built by one person, full time, with no investors, no board and no company behind it.
-        I have turned down funding offers to keep it that way.
+        It is maintained by one person, full time, and shaped by the community. There are no
+        investors, no board and no company behind it. I have turned down funding offers to keep it
+        that way.
+      </p>
+      <p>
+        The community helps Paseo grow through feedback, testing, bug reports, code contributions
+        and plugins. Your sponsorship helps me keep improving and maintaining it.
       </p>
       <p>
         A tool that sits between you and your code, your keys and your machines has to stay neutral,
@@ -234,10 +239,10 @@ export function SponsorSection() {
         <div className="max-w-2xl space-y-5 leading-relaxed text-white/70">
           <p>Paseo is an independent project used by tens of thousands of developers daily.</p>
           <p>
-            It is built by one person, full time, with no investors and no company behind it. I have
-            turned down funding to keep it that way. A tool that sits between you and your code,
-            your keys and your machines has to stay neutral, and funding creates pressure to
-            monetize.
+            It is maintained by one person, full time, and shaped by the community. There are no
+            investors and no company behind it. I have turned down funding to keep it that way. A
+            tool that sits between you and your code, your keys and your machines has to stay
+            neutral, and funding creates pressure to monetize.
           </p>
           <p>
             Paseo is self-funded through sponsorship and{" "}

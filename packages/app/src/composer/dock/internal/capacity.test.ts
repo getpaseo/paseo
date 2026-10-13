@@ -1,11 +1,24 @@
 import { describe, expect, it } from "vitest";
 import {
   resolveCenteredClearance,
+  resolveInlineComposerCapacity,
   resolveComposerCapacity,
   updateComposerCapacity,
 } from "./capacity";
 
 describe("composer viewport", () => {
+  it("caps the complete compact composer at sixty percent of keyboard-reserved space", () => {
+    const open = updateComposerCapacity(undefined, {
+      height: 582,
+      bottomInset: 24,
+      safeAreaBottom: 0,
+      centered: false,
+      keyboardShift: 308,
+    });
+    expect(resolveInlineComposerCapacity(open.capacity, true)).toBe(147);
+    expect(resolveInlineComposerCapacity(open.capacity, false)).toBe(245);
+    expect(resolveInlineComposerCapacity(undefined, true)).toBeUndefined();
+  });
   it("preserves the editing capacity when the keyboard closes", () => {
     const viewport = { height: 582, bottomInset: 24, safeAreaBottom: 0, centered: false };
     const open = updateComposerCapacity(undefined, { ...viewport, keyboardShift: 308 });
