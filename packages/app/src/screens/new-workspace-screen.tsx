@@ -37,8 +37,6 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";
-import { useCheckoutStatusQuery } from "@/git/use-status-query";
-import { ensureCheckoutStatus } from "@/git/checkout-status-cache";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { resolveTerminalProfiles } from "@getpaseo/protocol/terminal-profiles";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
@@ -86,6 +84,7 @@ import {
   useHostProjects,
   type HostProjectListItem,
 } from "@/projects/host-projects";
+import { getDefaultWorkspaceIsolation } from "@/projects/host-project-model";
 import { useProjectIcons, type ProjectIconRenderData } from "@/projects/icons";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { chatStyles } from "@/styles/chat";
@@ -718,23 +717,26 @@ interface WorkspaceIsolationState {
 function useWorkspaceIsolation(input: {
   supportsMultiplicity: boolean;
   worktreeSupport: "supported" | "unsupported" | "unknown";
+  projectId: string | null;
+  targetKey: string;
 }): WorkspaceIsolationState {
   const { supportsMultiplicity, worktreeSupport } = input;
-  // The last isolation choice is remembered alongside the other New Workspace
-  // form preferences (provider, model, mode). A manual in-screen pick overrides
-  // the remembered default until the screen remounts.
-  const { preferences, updatePreferences } = useFormPreferences();
-  const [manualIsolation, setManualIsolation] = useState<"local" | "worktree" | null>(null);
-  const isolation = manualIsolation ?? preferences.isolation ?? "worktree";
+  const [manualIsolation, setManualIsolation] = useState<{
+    targetKey: string;
+    value: "local" | "worktree";
+  } | null>(null);
+  const isolation =
+    manualIsolation?.targetKey === input.targetKey
+      ? manualIsolation.value
+      : getDefaultWorkspaceIsolation(input.projectId);
   const canCreateWorktree = supportsMultiplicity && worktreeSupport !== "unsupported";
   const isWorktree = isolation === "worktree" && canCreateWorktree;
 
   const setIsolation = useCallback(
     (value: "local" | "worktree") => {
-      setManualIsolation(value);
-      void updatePreferences({ isolation: value });
+      setManualIsolation({ targetKey: input.targetKey, value });
     },
-    [updatePreferences],
+    [input.targetKey],
   );
 
   return {
@@ -1746,8 +1748,7 @@ export function NewWorkspaceScreen({
   const isStillOnCreateScreen = useNewWorkspaceScreenPresence();
 
   // Launch target: what the composer submits to (chat agent, or a terminal
-  // profile). Mirrors useWorkspaceIsolation's pattern below: the derived
-  // value reads live from preferences until the user manually picks
+  // profile). The derived value reads live from preferences until the user manually picks
   // something in this screen, so the async preferences load doesn't race a
   // frozen useState initializer.
   const { preferences: formPreferences, updatePreferences: updateFormPreferences } =
@@ -1872,11 +1873,6 @@ export function NewWorkspaceScreen({
   const hasSelectedSourceDirectory = selectedSourceDirectory !== null;
   const pickerQueryEnabled = pickerOpen && clientReady && hasSelectedSourceDirectory;
 
-  const { status: checkoutStatus } = useCheckoutStatusQuery({
-    serverId: selectedServerId,
-    cwd: selectedSourceDirectory ?? "",
-  });
-
   const worktreeSupport = selectedProject
     ? getWorktreeSupportForHostProject({ project: selectedProject, serverId: selectedServerId })
     : "unsupported";
@@ -1885,6 +1881,8 @@ export function NewWorkspaceScreen({
     useWorkspaceIsolation({
       supportsMultiplicity: supportsWorkspaceMultiplicity,
       worktreeSupport,
+      projectId: selectedProject ? getHostProjectId(selectedProject, selectedServerId) : null,
+      targetKey: JSON.stringify([selectedServerId, selectedSourceDirectory]),
     });
 
   const branchSuggestionsQuery = useQuery({
@@ -1930,10 +1928,7 @@ export function NewWorkspaceScreen({
     return githubPrSearchQuery.data?.items ?? [];
   }, [forgeSearchAuthenticated, githubPrSearchQuery.data?.items]);
 
-  const baseItem = useMemo(
-    () => selectedItem ?? (checkoutStatus ? defaultBasePickerItem(checkoutStatus) : null),
-    [checkoutStatus, selectedItem],
-  );
+  const baseItem = useMemo(() => selectedItem ?? defaultBasePickerItem(), [selectedItem]);
   const { options, itemById, selectedOptionId }: PickerOptionData = useMemo(
     () =>
       buildPickerOptionData({
@@ -2121,18 +2116,8 @@ export function NewWorkspaceScreen({
       }
       const connectedClient = withConnectedClient();
       const createsWorktree = !supportsWorkspaceMultiplicity || effectiveIsolation === "worktree";
-      const checkoutStatusForCreate = createsWorktree
-        ? await ensureCheckoutStatus({
-            queryClient,
-            client: connectedClient,
-            serverId: selectedServerId,
-            cwd: selectedSourceDirectory,
-          })
-        : null;
-      const checkoutRequest = checkoutStatusForCreate
-        ? pickerItemToCheckoutRequest(
-            selectedItem ?? defaultBasePickerItem(checkoutStatusForCreate),
-          )
+      const checkoutRequest = createsWorktree
+        ? pickerItemToCheckoutRequest(selectedItem ?? defaultBasePickerItem())
         : undefined;
       const normalizedWorkspace = await createMultiplicityWorkspace({
         idempotencyKey: creationIdentity.draftId,
@@ -2160,7 +2145,6 @@ export function NewWorkspaceScreen({
       creationResult,
       effectiveIsolation,
       mergeWorkspaces,
-      queryClient,
       selectedItem,
       selectedProject,
       selectedServerId,

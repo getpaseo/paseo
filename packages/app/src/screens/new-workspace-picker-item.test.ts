@@ -253,10 +253,12 @@ const mainRow: BranchPickerDetail = {
 
 describe("buildPickerOptionData", () => {
   it("marks origin and keeps an ahead local main explicit", () => {
-    const baseItem = defaultBasePickerItem({
-      currentBranch: "main",
-      upstreamRef: "refs/remotes/origin/main",
-    });
+    const baseItem: PickerItem = {
+      kind: "branch",
+      name: "main",
+      refName: "refs/remotes/origin/main",
+      accessibilityLabel: "main, origin branch",
+    };
     const data = buildPickerOptionData({ branchDetails: [mainRow], prItems: [], baseItem });
 
     expect(data.options.map((option) => option.label)).toEqual(["main", "main (local)"]);
@@ -264,10 +266,12 @@ describe("buildPickerOptionData", () => {
   });
 
   it("adds and disambiguates a fork upstream absent from branch suggestions", () => {
-    const baseItem = defaultBasePickerItem({
-      currentBranch: "main",
-      upstreamRef: "refs/remotes/upstream/main",
-    });
+    const baseItem: PickerItem = {
+      kind: "branch",
+      name: "main",
+      refName: "refs/remotes/upstream/main",
+      accessibilityLabel: "main, upstream branch",
+    };
     const data = buildPickerOptionData({
       branchDetails: [{ ...mainRow, localAhead: 0, localBehind: 0 }],
       prItems: [],
@@ -279,7 +283,12 @@ describe("buildPickerOptionData", () => {
   });
 
   it("marks a visible row on an old daemon when local and origin are in sync", () => {
-    const baseItem = defaultBasePickerItem({ currentBranch: "main" });
+    const baseItem: PickerItem = {
+      kind: "branch",
+      name: "main",
+      refName: "refs/heads/main",
+      accessibilityLabel: "main, local branch",
+    };
     const data = buildPickerOptionData({
       branchDetails: [{ ...mainRow, localAhead: 0, localBehind: 0 }],
       prItems: [],
@@ -311,32 +320,33 @@ describe("buildPickerOptionData", () => {
 });
 
 describe("defaultBasePickerItem", () => {
-  it("uses origin when the current branch tracks origin", () => {
-    expect(
-      defaultBasePickerItem({
-        currentBranch: "main",
-        upstreamRef: "refs/remotes/origin/main",
-      }),
-    ).toMatchObject({ refName: "refs/remotes/origin/main", name: "main" });
+  it("starts from main even when the checkout is on a feature branch", () => {
+    const item = defaultBasePickerItem();
+    expect(item).toMatchObject({ refName: "main", name: "main" });
+    expect(pickerItemToCheckoutRequest(item)).toEqual({ action: "branch-off", refName: "main" });
   });
 
-  it("uses the exact non-origin upstream", () => {
-    expect(
-      defaultBasePickerItem({
-        currentBranch: "main",
-        upstreamRef: "refs/remotes/upstream/main",
-      }),
-    ).toMatchObject({ refName: "refs/remotes/upstream/main", name: "main" });
-  });
-
-  it("keeps old-daemon behavior local", () => {
-    expect(defaultBasePickerItem({ currentBranch: "main" })).toMatchObject({
-      refName: "refs/heads/main",
+  it("marks the local main row without adding a duplicate default", () => {
+    const data = buildPickerOptionData({
+      branchDetails: [mainRow],
+      prItems: [],
+      baseItem: defaultBasePickerItem(),
+    });
+    expect(data.options).toHaveLength(2);
+    expect(data.selectedOptionId).toBe(branchPickerOptionId("refs/heads/main"));
+    expect(defaultBasePickerItem()).toMatchObject({
+      refName: "main",
       name: "main",
     });
   });
+});
 
-  it("has no default for detached HEAD", () => {
-    expect(defaultBasePickerItem({ currentBranch: null })).toBeNull();
+it("marks origin/main when only the remote main exists", () => {
+  const data = buildPickerOptionData({
+    branchDetails: [{ ...mainRow, hasLocal: false }],
+    prItems: [],
+    baseItem: defaultBasePickerItem(),
   });
+  expect(data.options).toHaveLength(1);
+  expect(data.selectedOptionId).toBe(branchPickerOptionId("refs/remotes/origin/main"));
 });

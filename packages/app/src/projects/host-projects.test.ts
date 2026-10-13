@@ -3,6 +3,7 @@ import type { HostProjectListItem } from "./host-project-model";
 import {
   canCreateWorkspaceForHostProject,
   getHostProjectId,
+  getDefaultWorkspaceIsolation,
   getHostProjectSourceDirectory,
   getWorktreeSupportForHostProject,
   hostProjectFromRoute,
@@ -161,4 +162,18 @@ describe("host project lookups", () => {
       hosts: [{ serverId: "host-a", projectId: "project-a" }],
     });
   });
+});
+
+describe("new workspace isolation defaults", () => {
+  test("defaults every ordinary and future project to a worktree", () => {
+    expect(getDefaultWorkspaceIsolation("prj_a")).toBe("worktree");
+    expect(getDefaultWorkspaceIsolation(null)).toBe("worktree");
+  });
+
+  test.each(["prj_c6385f310e80ffe2", "prj_79623d369509ceac", "prj_4538b764102aa626"])(
+    "keeps the local exception %s independent of its display name",
+    (projectId) => {
+      expect(getDefaultWorkspaceIsolation(projectId)).toBe("local");
+    },
+  );
 });

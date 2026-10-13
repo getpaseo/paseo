@@ -14,6 +14,17 @@ export interface HostProjectRouteContext {
   sourceDirectory?: string;
 }
 
+// Host-local project IDs keep these personal defaults stable across renames.
+const LOCAL_WORKSPACE_PROJECT_IDS = new Set([
+  "prj_c6385f310e80ffe2", // PARA
+  "prj_79623d369509ceac", // SeO Compagnon
+  "prj_4538b764102aa626", // debug
+]);
+
+export function getDefaultWorkspaceIsolation(projectId: string | null): "local" | "worktree" {
+  return projectId !== null && LOCAL_WORKSPACE_PROJECT_IDS.has(projectId) ? "local" : "worktree";
+}
+
 function trimOptional(value: string | undefined): string | undefined {
   const trimmed = value?.trim() ?? "";
   return trimmed.length > 0 ? trimmed : undefined;

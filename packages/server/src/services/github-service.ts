@@ -947,9 +947,8 @@ interface GitHubServiceDependencies {
   resolveRepoHost: (cwd: string) => Promise<string | null>;
   /**
    * owner/name slug for a workspace, resolved offline from the origin remote.
-   * Batched PR status polls need the repository identity up front (GraphQL
-   * repository(owner:, name:) aliases), unlike `gh pr view` which resolves it
-   * per invocation.
+   * Used by batch polls and explicit PR reads so gh cannot silently select
+   * a fork's parent instead of the checkout's origin.
    */
   resolveRepoSlug: (cwd: string) => Promise<string | null>;
 }
@@ -1084,8 +1083,6 @@ interface GitHubPollTarget {
 interface GitHubBatchPollEntry {
   target: GitHubPollTarget;
   host: string;
-  originOwner: string;
-  originName: string;
   owner: string;
   name: string;
   headRepositoryOwner?: string;
@@ -1157,10 +1154,6 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
   // Rollup nodes for merged/closed PRs keyed by repo#number@headOid: their
   // checks can no longer change, so each is fetched at most once per daemon run.
   const frozenPullRequestChecksCache = new Map<string, unknown[]>();
-  const pollRepositoryRedirects = new Map<
-    string,
-    { owner: string; name: string; headRepositoryOwner: string }
-  >();
   const pollPausedUntilByHost = new Map<string, number>();
   const rateLimitResetLoads = new Map<string, Promise<number | null>>();
   let githubPollTimer: NodeJS.Timeout | null = null;
@@ -1517,8 +1510,6 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       group.push({
         target,
         host: key,
-        originOwner: owner,
-        originName: name,
         owner,
         name,
       });
@@ -1617,13 +1608,12 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     entries: GitHubBatchPollEntry[],
     startedAt: number,
   ): Promise<void> {
-    const addressedEntries = entries.map(addressGitHubBatchEntry);
-    const firstEntry = addressedEntries[0];
+    const firstEntry = entries[0];
     if (!firstEntry) {
       return;
     }
     const query = buildBatchPullRequestStatusQuery(
-      addressedEntries.map((entry) => ({
+      entries.map((entry) => ({
         owner: entry.owner,
         name: entry.name,
         headRef: entry.target.headRef,
@@ -1631,7 +1621,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     );
     const args = ["api", "graphql", "-f", `query=${query}`];
     const response = await loadGitHubPollBatchResponse({
-      entries: addressedEntries,
+      entries,
       firstEntry,
       args,
     });
@@ -1641,12 +1631,12 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     const rateLimit = parseGraphqlBatchRateLimit(response.stdout);
     if (rateLimit && pauseGitHubPollsAtReserve(firstEntry.host, rateLimit)) {
       const error = new GitHubGraphqlPollPausedError(rateLimit);
-      reportGitHubBatchError(addressedEntries, error);
+      reportGitHubBatchError(entries, error);
       return;
     }
 
     const distribution = distributeGitHubPollBatch({
-      entries: addressedEntries,
+      entries,
       aliases: response.aliases,
       args,
       startedAt,
@@ -1712,17 +1702,19 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         );
         continue;
       }
-      if (repository.data.isFork && repository.data.parent) {
-        const forkOwner = repository.data.owner?.login ?? entry.owner;
-        pollRepositoryRedirects.set(batchRepositoryRedirectKey(entry), {
+      const node = selectBatchPollNode(entry, repository.data);
+      // A fork can receive its own PRs. Check it on every cycle before looking
+      // in the parent, so an earlier miss cannot hide a newly created local PR.
+      if (!node && repository.data.isFork && repository.data.parent) {
+        distribution.redirected.push({
+          ...entry,
           owner: repository.data.parent.owner.login,
           name: repository.data.parent.name,
-          headRepositoryOwner: forkOwner,
+          headRepositoryOwner:
+            entry.headRepositoryOwner ?? repository.data.owner?.login ?? entry.owner,
         });
-        distribution.redirected.push(entry);
         continue;
       }
-      const node = selectBatchPollNode(entry, repository.data);
       if (!node) {
         // Legacy fallback covers the two ways "no match" can be wrong: a fork
         // whose PR lives in the parent repository, and a full candidate page —
@@ -1768,22 +1760,6 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       }
     }
     return distribution;
-  }
-
-  function addressGitHubBatchEntry(entry: GitHubBatchPollEntry): GitHubBatchPollEntry {
-    const redirect = pollRepositoryRedirects.get(batchRepositoryRedirectKey(entry));
-    return redirect
-      ? {
-          ...entry,
-          owner: redirect.owner,
-          name: redirect.name,
-          headRepositoryOwner: redirect.headRepositoryOwner,
-        }
-      : entry;
-  }
-
-  function batchRepositoryRedirectKey(entry: GitHubBatchPollEntry): string {
-    return `${entry.host}\n${entry.originOwner}/${entry.originName}`;
   }
 
   function selectBatchPollNode(
@@ -2171,6 +2147,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
             headRef: input.headRef,
             headSha: input.headSha,
             headRepositoryOwner: input.headRepositoryOwner,
+            repo: await resolveRepoSlugCached(input.cwd),
             run,
           });
           return addCurrentPullRequestGithubFacts({ cwd: input.cwd, status, run });
@@ -2654,7 +2631,6 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         closeGitHubPollTarget(target);
       }
       pollTargets.clear();
-      pollRepositoryRedirects.clear();
       pollPausedUntilByHost.clear();
       rateLimitResetLoads.clear();
     },
@@ -2964,9 +2940,13 @@ async function resolveCurrentPullRequestView(options: {
   headRef: string;
   headSha?: string;
   headRepositoryOwner?: string;
+  repo: string | null;
   run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
 }): Promise<CurrentPullRequestStatus | null> {
-  const viewCandidate = await tryCurrentPullRequestView(options);
+  const viewCandidate = await tryCurrentPullRequestView({
+    ...options,
+    args: options.repo ? ["pr", "view", options.headRef, "--repo", options.repo] : undefined,
+  });
   const viewMatch = viewCandidate
     ? pickPullRequestCandidate({
         candidates: [viewCandidate],
@@ -2981,27 +2961,27 @@ async function resolveCurrentPullRequestView(options: {
 
   let headRepositoryOwner = options.headRepositoryOwner;
 
-  if (!headRepositoryOwner) {
+  if (!headRepositoryOwner || options.repo) {
     const repo = await getGitHubRepoView(options);
-    const forkOwner = repo?.owner?.login;
+    headRepositoryOwner ??= repo?.owner?.login;
     const parentOwner = repo?.parent?.owner?.login;
     const parentName = repo?.parent?.name;
-    if (!forkOwner) {
+    if (!headRepositoryOwner) {
       return null;
     }
     if (parentOwner && parentName) {
       return resolveForkPullRequestView({
         ...options,
-        forkOwner,
+        forkOwner: headRepositoryOwner,
         repo: `${parentOwner}/${parentName}`,
       });
     }
-    headRepositoryOwner = forkOwner;
   }
 
   const candidates = await listCurrentPullRequestCandidates({
     cwd: options.cwd,
     headRef: options.headRef,
+    repo: options.repo,
     run: options.run,
   });
   const match = pickPullRequestCandidate({
@@ -3167,11 +3147,13 @@ async function tryCurrentPullRequestView(options: {
 
 async function listCurrentPullRequestCandidates(options: {
   cwd: string;
+  repo?: string | null;
   headRef: string;
   run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
 }): Promise<ResolvedPullRequestCandidate[]> {
   const args = ["pr", "list", "--state", "all", "--head", options.headRef, "--limit", "10"];
   try {
+    if (options.repo) args.push("--repo", options.repo);
     const stdout = await runCurrentPullRequestStatusCommand({
       cwd: options.cwd,
       run: options.run,
@@ -3224,9 +3206,12 @@ async function resolveGitHubSlugFromOrigin(cwd: string): Promise<string | null> 
 
 async function getGitHubRepoView(options: {
   cwd: string;
+  repo?: string | null;
   run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
 }): Promise<z.infer<typeof GitHubRepoViewSchema> | null> {
-  const args = ["repo", "view", "--json", "owner,name,parent"];
+  const args = ["repo", "view"];
+  if (options.repo) args.push(options.repo);
+  args.push("--json", "owner,name,parent");
   try {
     const stdout = await options.run(args, {
       cwd: options.cwd,
