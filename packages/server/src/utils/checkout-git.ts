@@ -1187,13 +1187,16 @@ export function parseWorktreeList(output: string): GitWorktreeEntry[] {
 
 async function getWorktreePathForBranch(cwd: string, branchName: string): Promise<string | null> {
   try {
-    const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
-      cwd,
-      envOverlay: READ_ONLY_GIT_ENV,
-    });
-    const entries = parseWorktreeList(stdout);
     const ref = branchName.startsWith("refs/heads/") ? branchName : `refs/heads/${branchName}`;
-    return entries.find((entry) => entry.branchRef === ref)?.path ?? null;
+    const { stdout } = await runGitCommand(
+      ["for-each-ref", "--format=%(refname)%00%(worktreepath)%00", ref],
+      { cwd, envOverlay: READ_ONLY_GIT_ENV },
+    );
+    for (const record of stdout.split("\0\n")) {
+      const [reference, worktreePath] = record.split("\0");
+      if (reference === ref) return worktreePath || null;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -2662,10 +2665,11 @@ export async function getCommitFileDiff({
   sha: string;
   path: string;
 }): Promise<ParsedDiffFile | null> {
+  const worktreeRoot = await requireGitWorktreeRoot(cwd);
   const { stdout } = await runGitCommand(
     ["show", sha, "--format=", "--diff-merges=first-parent", ...GIT_PATCH_FORMAT_ARGS, "--", path],
     {
-      cwd,
+      cwd: worktreeRoot,
       envOverlay: READ_ONLY_GIT_ENV,
     },
   );
@@ -2674,9 +2678,9 @@ export async function getCommitFileDiff({
     return null;
   }
 
-  const parsedFiles = await parseAndHighlightDiff(stdout, cwd, {
-    getOldFileContent: (file) => readGitFileContentAtRef(cwd, `${sha}^`, file.path),
-    getNewFileContent: (file) => readGitFileContentAtRef(cwd, sha, file.path),
+  const parsedFiles = await parseAndHighlightDiff(stdout, worktreeRoot, {
+    getOldFileContent: (file) => readGitFileContentAtRef(worktreeRoot, `${sha}^`, file.path),
+    getNewFileContent: (file) => readGitFileContentAtRef(worktreeRoot, sha, file.path),
   });
 
   // `--` scopes the diff to a single pathspec, so there is at most one real

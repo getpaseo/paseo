@@ -33,7 +33,8 @@ const Notification = NotificationEntry.extend({
   others: z.array(NotificationEntry).optional(),
 });
 const status = (value: string): "running" | "completed" | "failed" | "canceled" => {
-  if (value === "completed") return "completed";
+  // A soft turn-limit wrap-up has finished; it is not an in-flight steering request.
+  if (value === "completed" || value === "steered") return "completed";
   if (value === "error") return "failed";
   if (value === "aborted" || value === "stopped") return "canceled";
   return "running";
