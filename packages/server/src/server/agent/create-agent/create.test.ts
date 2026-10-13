@@ -486,6 +486,7 @@ test("session create with an internal config skips provider session persistence"
   const createAgent = vi.fn(async () => snapshot);
   const dependencies: Parameters<typeof createAgentCommand>[0] = {
     agentManager: {
+      runAdmittedAgentWork,
       createAgent,
     } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
     agentStorage: {} as Parameters<typeof createAgentCommand>[0]["agentStorage"],

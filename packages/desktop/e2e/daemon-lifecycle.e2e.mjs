@@ -78,6 +78,54 @@ async function command(name, args) {
     { name, args },
   );
 }
+// Starts agents in two projects and keeps the second one running.
+async function startBusyAgentInSecondProject(client) {
+  const firstProject = path.join(root, "first-project");
+  const secondProject = path.join(root, "second-project");
+  await mkdir(firstProject);
+  await mkdir(secondProject);
+  await client.createAgent({ provider: "mock", model: "ten-second-stream", cwd: firstProject });
+  const busyAgent = await client.createAgent({
+    provider: "mock",
+    model: "ten-second-stream",
+    cwd: secondProject,
+  });
+  await client.sendMessage(busyAgent.id, "Withhold synthetic user message until interrupted.");
+  await expect
+    .poll(async () => {
+      const agents = await client.fetchAgents({ filter: { statuses: ["running"] } });
+      return agents.entries.map((entry) => entry.agent.id);
+    })
+    .toContain(busyAgent.id);
+  return busyAgent;
+}
+function stopDaemonWhenIdle() {
+  return desktop.evaluate(async () =>
+    global.lifecycle.stopDesktopDaemon("app_update", undefined, { onlyIfIdle: true }),
+  );
+}
+// The update's idle stop leaves a busy daemon running and stops it once idle.
+async function verifyIdleUpdateStop() {
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${port}/ws`,
+    clientId: "idle-update-native-test",
+  });
+  await client.connect();
+  try {
+    const busyAgent = await startBusyAgentInSecondProject(client);
+    await assert.rejects(stopDaemonWhenIdle(), /busy/i);
+    process.kill(captured.pid, 0);
+    await client.cancelAgent(busyAgent.id);
+    const idleStop = await stopDaemonWhenIdle();
+    assert.equal(idleStop.status, "stopped");
+    assert.equal(await readDaemonInstance(home), null);
+    console.log(
+      "Idle update: busy agent in a second project preserved; idle daemon stopped through Electron.",
+    );
+  } finally {
+    await client.close();
+  }
+}
 try {
   // Simulate a legacy independent launch that carries the old Desktop flag.
   const launch = await startDaemonInstance({
@@ -130,48 +178,7 @@ try {
   const liveWebUi = await fetch(`http://127.0.0.1:${port}/`);
   assert.equal(liveWebUi.status, 200);
   assert.match(await liveWebUi.text(), /Lifecycle web UI/);
-  const client = new DaemonClient({
-    url: `ws://127.0.0.1:${port}/ws`,
-    clientId: "idle-update-native-test",
-  });
-  await client.connect();
-  try {
-    const firstProject = path.join(root, "first-project");
-    const secondProject = path.join(root, "second-project");
-    await mkdir(firstProject);
-    await mkdir(secondProject);
-    await client.createAgent({ provider: "mock", model: "ten-second-stream", cwd: firstProject });
-    const busyAgent = await client.createAgent({
-      provider: "mock",
-      model: "ten-second-stream",
-      cwd: secondProject,
-    });
-    await client.sendMessage(busyAgent.id, "Withhold synthetic user message until interrupted.");
-    await expect
-      .poll(async () => {
-        const agents = await client.fetchAgents({ filter: { statuses: ["running"] } });
-        return agents.entries.map((entry) => entry.agent.id);
-      })
-      .toContain(busyAgent.id);
-    await assert.rejects(
-      desktop.evaluate(async () =>
-        global.lifecycle.stopDesktopDaemon("app_update", undefined, { onlyIfIdle: true }),
-      ),
-      /busy/i,
-    );
-    process.kill(captured.pid, 0);
-    await client.cancelAgent(busyAgent.id);
-    const idleStop = await desktop.evaluate(async () =>
-      global.lifecycle.stopDesktopDaemon("app_update", undefined, { onlyIfIdle: true }),
-    );
-    assert.equal(idleStop.status, "stopped");
-    assert.equal(await readDaemonInstance(home), null);
-    console.log(
-      "Idle update: busy agent in a second project preserved; idle daemon stopped through Electron.",
-    );
-  } finally {
-    await client.close();
-  }
+  await verifyIdleUpdateStop();
   await command("start_desktop_daemon");
   captured = await readDaemonInstance(home);
   await command("patch_desktop_settings", { daemon: { keepRunningAfterQuit: true } });
