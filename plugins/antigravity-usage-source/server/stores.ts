@@ -140,20 +140,16 @@ export async function discover(
 
   const candidates = scope.kind === "global" ? globalRoutes(lookup) : sessionRoutes(scope, lookup);
 
-  const seenKeys = new Set<string>();
   const present: UsageAccount[] = [];
   for (const input of candidates) {
     const auth = await readAuth(input, lookup);
     if (auth) {
       const identity = accountIdentity(auth, input);
-      if (!seenKeys.has(identity.key)) {
-        seenKeys.add(identity.key);
-        present.push({
-          ...identity,
-          harness: "Antigravity",
-          input,
-        });
-      }
+      present.push({
+        ...identity,
+        harness: "Antigravity",
+        input,
+      });
     }
   }
   return present;

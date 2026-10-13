@@ -42,43 +42,26 @@ interface CodeAssistResult {
 }
 
 function parseCodeAssistData(text: string): { planLabel?: string; projectId?: string } {
-  try {
-    const assist = loadCodeAssistSchema.safeParse(JSON.parse(text));
-    if (!assist.success) return {};
+  const json = JSON.parse(text);
+  const assist = loadCodeAssistSchema.parse(json);
 
-    const planLabel =
-      assist.data.currentTier?.id ?? assist.data.paidTier?.id ?? assist.data.allowedTiers?.[0]?.id;
+  const planLabel = assist.currentTier?.id ?? assist.paidTier?.id ?? assist.allowedTiers?.[0]?.id;
 
-    const compProject = assist.data.cloudaicompanionProject;
-    let projectId: string | undefined;
-    if (typeof compProject === "string" && compProject.length > 0) {
-      projectId = compProject;
-    } else if (typeof compProject === "object" && compProject?.id) {
-      projectId = compProject.id;
-    }
-
-    return { planLabel, projectId };
-  } catch {
-    return {};
+  const compProject = assist.cloudaicompanionProject;
+  let projectId: string | undefined;
+  if (typeof compProject === "string" && compProject.length > 0) {
+    projectId = compProject;
+  } else if (typeof compProject === "object" && compProject?.id) {
+    projectId = compProject.id;
   }
-}
 
-function isTimeoutOrAbort(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  return (
-    error.name === "AbortError" ||
-    error.name === "TimeoutError" ||
-    (error.cause instanceof Error && error.cause.name === "TimeoutError")
-  );
+  return { planLabel, projectId };
 }
 
 async function resolveCodeAssist(
   fetchApi: typeof fetch,
   headers: Record<string, string>,
 ): Promise<CodeAssistResult> {
-  let projectId = DEFAULT_PROJECT_ID;
-  let planLabel: string | undefined;
-
   const metadata = {
     ideName: "antigravity",
     ideType: "ANTIGRAVITY",
@@ -87,32 +70,34 @@ async function resolveCodeAssist(
     pluginType: "GEMINI",
   };
 
-  try {
-    const assistResponse = await fetchApi(`${CLOUDCODE_BASE_URL}/v1internal:loadCodeAssist`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        mode: "FULL_ELIGIBILITY_CHECK",
-        metadata,
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
+  const assistResponse = await fetchApi(`${CLOUDCODE_BASE_URL}/v1internal:loadCodeAssist`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      mode: "FULL_ELIGIBILITY_CHECK",
+      metadata,
+    }),
+    signal: AbortSignal.timeout(15_000),
+  });
 
-    if (assistResponse.status === 401 || assistResponse.status === 403) {
-      return { rejectedStatus: assistResponse.status, projectId };
-    }
-
-    if (assistResponse.ok) {
-      const text = await assistResponse.text();
-      const parsed = parseCodeAssistData(text);
-      if (parsed.planLabel) planLabel = parsed.planLabel;
-      if (parsed.projectId) projectId = parsed.projectId;
-    }
-  } catch (error) {
-    if (isTimeoutOrAbort(error)) throw error;
+  if (assistResponse.status === 401 || assistResponse.status === 403) {
+    return { rejectedStatus: assistResponse.status, projectId: DEFAULT_PROJECT_ID };
   }
 
-  return { projectId, planLabel };
+  if (!assistResponse.ok) {
+    throw new Error(`Antigravity account API returned ${assistResponse.status}`);
+  }
+
+  const text = await assistResponse.text();
+  if (text.trim().startsWith("<")) {
+    throw new Error("Antigravity account API returned HTML");
+  }
+
+  const parsed = parseCodeAssistData(text);
+  return {
+    projectId: parsed.projectId ?? DEFAULT_PROJECT_ID,
+    planLabel: parsed.planLabel,
+  };
 }
 
 interface ModelCandidate {
