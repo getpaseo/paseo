@@ -119,6 +119,7 @@ function modelVariantKey(input: Omit<BuildDiffDocumentModelInput, "reuseFrom">):
     paletteKey(input.palette),
     input.labels.binary,
     input.labels.tooLarge,
+    input.labels.submodule,
   ]);
 }
 

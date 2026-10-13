@@ -40,7 +40,6 @@ export interface BuildReviewDraftKeyInput {
   mode: ReviewDraftMode;
   baseRef?: string | null;
   ignoreWhitespace: boolean;
-  expandSubmodules?: boolean;
 }
 
 type BuildReviewDraftScopeKeyInput = Omit<BuildReviewDraftKeyInput, "mode">;
@@ -100,22 +99,15 @@ function buildReviewDraftScopeParts(input: BuildReviewDraftScopeKeyInput): strin
     workspacePart,
     `base=${encodeKeyPart(normalizeBaseRef(input.baseRef))}`,
     `ignoreWhitespace=${input.ignoreWhitespace ? "true" : "false"}`,
-    `expandSubmodules=${input.expandSubmodules === true ? "true" : "false"}`,
   ];
 }
 
 export function buildReviewDraftKey(input: BuildReviewDraftKeyInput): string {
-  const [prefix, serverPart, workspacePart, basePart, whitespacePart, expandSubmodulesPart] =
+  const [prefix, serverPart, workspacePart, basePart, whitespacePart] =
     buildReviewDraftScopeParts(input);
-  return [
-    prefix,
-    serverPart,
-    workspacePart,
-    `mode=${input.mode}`,
-    basePart,
-    whitespacePart,
-    expandSubmodulesPart,
-  ].join(":");
+  return [prefix, serverPart, workspacePart, `mode=${input.mode}`, basePart, whitespacePart].join(
+    ":",
+  );
 }
 
 function createDraftComment(input: ReviewDraftCommentInput): ReviewDraftComment {

@@ -37,7 +37,6 @@ export class CheckoutDiffCache {
       compare.mode,
       compare.mode === "base" ? (compare.baseRef ?? null) : null,
       compare.ignoreWhitespace === true,
-      compare.expandSubmodules === true,
       compare.includeStructured === true,
     ]);
     const cached = this.values.get(key);

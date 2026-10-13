@@ -4129,16 +4129,13 @@ export class DaemonClient {
     mode: "uncommitted" | "base";
     baseRef?: string;
     ignoreWhitespace?: boolean;
-    expandSubmodules?: boolean;
   }): {
     mode: "uncommitted" | "base";
     baseRef?: string;
     ignoreWhitespace?: boolean;
-    expandSubmodules?: boolean;
   } {
     const flags = {
       ...(compare.ignoreWhitespace === true ? { ignoreWhitespace: true as const } : {}),
-      ...(compare.expandSubmodules === true ? { expandSubmodules: true as const } : {}),
     };
     if (compare.mode === "uncommitted") {
       return { mode: "uncommitted", ...flags };
@@ -4155,7 +4152,6 @@ export class DaemonClient {
       mode: "uncommitted" | "base";
       baseRef?: string;
       ignoreWhitespace?: boolean;
-      expandSubmodules?: boolean;
     },
     requestId?: string,
   ): Promise<CheckoutDiffPayload> {
@@ -4176,7 +4172,6 @@ export class DaemonClient {
       mode: "uncommitted" | "base";
       baseRef?: string;
       ignoreWhitespace?: boolean;
-      expandSubmodules?: boolean;
     },
     options?: { requestId?: string; signal?: AbortSignal },
   ): OwnedSubscription<SubscribeCheckoutDiffPayload> {

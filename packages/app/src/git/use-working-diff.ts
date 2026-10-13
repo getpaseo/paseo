@@ -10,6 +10,7 @@ import {
   useReviewFeedback,
 } from "@/review";
 import { useCheckoutDiffQuery } from "@/git/use-diff-query";
+import { useExpandedSubmoduleFiles } from "@/git/use-expanded-submodule-files";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { useWorkingDiffComparison } from "@/git/working-diff-comparison";
 
@@ -18,7 +19,7 @@ interface UseWorkingDiffOptions {
   workspaceId?: string;
   cwd: string;
   ignoreWhitespace: boolean;
-  expandSubmodules?: boolean;
+  collapsedFilePaths?: readonly string[];
   enabled: boolean;
   queryScope?: string;
   presentation?: string;
@@ -29,7 +30,7 @@ export function useWorkingDiff({
   workspaceId,
   cwd,
   ignoreWhitespace,
-  expandSubmodules = false,
+  collapsedFilePaths = [],
   enabled,
   queryScope,
   presentation,
@@ -61,7 +62,7 @@ export function useWorkingDiff({
   const selectBase = useCallback(() => selectComparison("base"), [selectComparison]);
 
   const {
-    files,
+    files: parentFiles,
     payloadError: diffPayloadError,
     diffTooLarge,
     isLoading: isDiffLoading,
@@ -71,10 +72,33 @@ export function useWorkingDiff({
     mode: diffMode,
     baseRef,
     ignoreWhitespace,
-    expandSubmodules,
     enabled: enabled && isGit,
     queryScope,
   });
+
+  const collapsedPathSet = useMemo(() => new Set(collapsedFilePaths), [collapsedFilePaths]);
+  const expandedSubmodulePaths = useMemo(() => {
+    const expanded = new Set<string>();
+    for (const file of parentFiles) {
+      if (file.isSubmodule === true && !collapsedPathSet.has(file.path)) {
+        expanded.add(file.path);
+      }
+    }
+    return expanded;
+  }, [collapsedPathSet, parentFiles]);
+
+  const files = useExpandedSubmoduleFiles({
+    parentFiles,
+    serverId,
+    parentCwd: cwd,
+    mode: diffMode,
+    baseRef,
+    ignoreWhitespace,
+    expandedSubmodulePaths,
+    enabled: enabled && isGit,
+    queryScope,
+  });
+
   const reviewDraftKey = useMemo(
     () =>
       buildReviewDraftKey({
@@ -84,9 +108,8 @@ export function useWorkingDiff({
         mode: diffMode,
         baseRef,
         ignoreWhitespace,
-        expandSubmodules,
       }),
-    [baseRef, cwd, diffMode, expandSubmodules, ignoreWhitespace, serverId, workspaceId],
+    [baseRef, cwd, diffMode, ignoreWhitespace, serverId, workspaceId],
   );
   const reviewActions = useInlineReviewController({ reviewDraftKey, presentation });
   const reviewAttachment = useReviewAttachmentSnapshot({

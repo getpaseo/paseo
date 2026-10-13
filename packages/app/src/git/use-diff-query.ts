@@ -13,7 +13,6 @@ interface UseCheckoutDiffQueryOptions {
   mode: "uncommitted" | "base";
   baseRef?: string;
   ignoreWhitespace?: boolean;
-  expandSubmodules?: boolean;
   enabled?: boolean;
   queryScope?: string;
 }
@@ -26,26 +25,23 @@ export type DiffHunk = ParsedDiffFile["hunks"][number];
 export type DiffLine = DiffHunk["lines"][number];
 export type HighlightToken = NonNullable<DiffLine["tokens"]>[number];
 
-function normalizeCheckoutDiffCompare(compare: {
+export function normalizeCheckoutDiffCompare(compare: {
   mode: "uncommitted" | "base";
   baseRef?: string;
   ignoreWhitespace?: boolean;
-  expandSubmodules?: boolean;
 }): {
   mode: "uncommitted" | "base";
   baseRef?: string;
   ignoreWhitespace?: boolean;
-  expandSubmodules?: boolean;
 } {
   const ignoreWhitespace = compare.ignoreWhitespace === true;
-  const expandSubmodules = compare.expandSubmodules === true;
   if (compare.mode === "uncommitted") {
-    return { mode: "uncommitted", ignoreWhitespace, expandSubmodules };
+    return { mode: "uncommitted", ignoreWhitespace };
   }
   const trimmedBaseRef = compare.baseRef?.trim();
   return trimmedBaseRef
-    ? { mode: "base", baseRef: trimmedBaseRef, ignoreWhitespace, expandSubmodules }
-    : { mode: "base", ignoreWhitespace, expandSubmodules };
+    ? { mode: "base", baseRef: trimmedBaseRef, ignoreWhitespace }
+    : { mode: "base", ignoreWhitespace };
 }
 
 export function useCheckoutDiffQuery({
@@ -54,7 +50,6 @@ export function useCheckoutDiffQuery({
   mode,
   baseRef,
   ignoreWhitespace,
-  expandSubmodules,
   enabled = true,
   queryScope,
 }: UseCheckoutDiffQueryOptions) {
@@ -62,13 +57,12 @@ export function useCheckoutDiffQuery({
   const queryEnabled = enabled && retainedPanelActive;
   const isConnected = useHostRuntimeIsConnected(serverId);
   const normalizedCompare = useMemo(
-    () => normalizeCheckoutDiffCompare({ mode, baseRef, ignoreWhitespace, expandSubmodules }),
-    [mode, baseRef, ignoreWhitespace, expandSubmodules],
+    () => normalizeCheckoutDiffCompare({ mode, baseRef, ignoreWhitespace }),
+    [mode, baseRef, ignoreWhitespace],
   );
   const compareMode = normalizedCompare.mode;
   const compareBaseRef = normalizedCompare.baseRef;
   const compareIgnoreWhitespace = normalizedCompare.ignoreWhitespace;
-  const compareExpandSubmodules = normalizedCompare.expandSubmodules;
   const queryKey = useMemo(() => {
     const comparisonKey = checkoutDiffQueryKey(
       serverId,
@@ -76,19 +70,10 @@ export function useCheckoutDiffQuery({
       compareMode,
       compareBaseRef,
       compareIgnoreWhitespace,
-      compareExpandSubmodules,
     );
     const normalizedScope = queryScope?.trim();
     return normalizedScope ? [...comparisonKey, "scope", normalizedScope] : comparisonKey;
-  }, [
-    serverId,
-    cwd,
-    compareMode,
-    compareBaseRef,
-    compareIgnoreWhitespace,
-    compareExpandSubmodules,
-    queryScope,
-  ]);
+  }, [serverId, cwd, compareMode, compareBaseRef, compareIgnoreWhitespace, queryScope]);
   const subscriptionId = useMemo(() => `checkoutDiff:${JSON.stringify(queryKey)}`, [queryKey]);
   const routeEnabled = Boolean(queryEnabled && isConnected && cwd);
 
@@ -106,7 +91,6 @@ export function useCheckoutDiffQuery({
         mode: compareMode,
         ...(compareBaseRef ? { baseRef: compareBaseRef } : {}),
         ignoreWhitespace: compareIgnoreWhitespace,
-        expandSubmodules: compareExpandSubmodules,
       },
     }),
   });

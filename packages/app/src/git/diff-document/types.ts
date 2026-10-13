@@ -183,7 +183,7 @@ export interface BuildDiffDocumentModelInput {
   measureText: TextMeasurer;
   palette: DiffPalette;
   reviewActions?: InlineReviewActions;
-  labels: { binary: string; tooLarge: string };
+  labels: { binary: string; tooLarge: string; submodule: string };
   materializationWindow?: { top: number; height: number };
   /** A geometry-compatible model whose unchanged file measurements may be reused. */
   reuseFrom?: readonly DiffDocumentModel[];

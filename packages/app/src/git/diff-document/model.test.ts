@@ -65,12 +65,60 @@ function input(overrides: Partial<BuildDiffDocumentModelInput> = {}): BuildDiffD
       statusWarning: "orange",
       syntax: {},
     },
-    labels: { binary: "Binary", tooLarge: "Too large" },
+    labels: { binary: "Binary", tooLarge: "Too large", submodule: "Submodule" },
     ...overrides,
   };
 }
 
 describe("diff document model", () => {
+  it("renders a status row for submodule stubs using logSummary when present", () => {
+    const model = buildDiffDocumentModel(
+      input({
+        files: [
+          {
+            path: "libs/sub",
+            isNew: false,
+            isDeleted: false,
+            additions: 0,
+            deletions: 0,
+            hunks: [],
+            isSubmodule: true,
+            submodule: {
+              oldCommit: "aaaaaaaa",
+              newCommit: "bbbbbbbb",
+              logSummary: "1 commits",
+            },
+          },
+        ],
+      }),
+    );
+
+    const status = model.rows.find((row) => row.kind === "status");
+    expect(status).toMatchObject({ kind: "status", path: "libs/sub", label: "1 commits" });
+  });
+
+  it("falls back to the submodule label when logSummary is absent", () => {
+    const model = buildDiffDocumentModel(
+      input({
+        files: [
+          {
+            path: "libs/sub",
+            isNew: false,
+            isDeleted: false,
+            additions: 0,
+            deletions: 0,
+            hunks: [],
+            isSubmodule: true,
+            submodule: { oldCommit: "aaaaaaaa", newCommit: "aaaaaaaa", isDirty: true },
+          },
+        ],
+      }),
+    );
+
+    const status = model.rows.find((row) => row.kind === "status");
+    expect(status).toMatchObject({ kind: "status", path: "libs/sub", label: "Submodule" });
+  });
+
   it("preserves shaped wrap breaks when joining makes a longer prefix narrower", () => {
     const measure = (text: string) => {
       if (text === "لا") return 30;

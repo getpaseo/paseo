@@ -93,7 +93,7 @@ describe("buildReviewDraftKey", () => {
     });
 
     expect(base).toBe(
-      "review:server=local:workspace=workspace-1:mode=base:base=main:ignoreWhitespace=false:expandSubmodules=false",
+      "review:server=local:workspace=workspace-1:mode=base:base=main:ignoreWhitespace=false",
     );
     expect(
       buildReviewDraftKey({
@@ -114,9 +114,7 @@ describe("buildReviewDraftKey", () => {
         baseRef: "main",
         ignoreWhitespace: false,
       }),
-    ).toBe(
-      "review:server=local:cwd=%2Frepo:mode=base:base=main:ignoreWhitespace=false:expandSubmodules=false",
-    );
+    ).toBe("review:server=local:cwd=%2Frepo:mode=base:base=main:ignoreWhitespace=false");
   });
 });
 

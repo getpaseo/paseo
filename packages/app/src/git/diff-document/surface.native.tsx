@@ -136,6 +136,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
       labels: {
         binary: t("workspace.git.diff.binaryFile"),
         tooLarge: t("workspace.git.diff.tooLarge"),
+        submodule: t("workspace.git.diff.submodule"),
       },
       materializationWindow: diffMaterializationWindow(fileWindowTop, viewport.height),
       reuseFrom,

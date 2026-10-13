@@ -31,7 +31,7 @@ function initRepo(): string {
   return repoDir;
 }
 
-function addNestedSubmodule(repoDir: string, subPath = "libs/sub"): string {
+function addNestedSubmodule(repoDir: string, subPath = "libs/sub"): { subDir: string; sha: string } {
   const subDir = join(repoDir, subPath);
   mkdirSync(subDir, { recursive: true });
   git(subDir, "init", "-b", "main");
@@ -49,13 +49,13 @@ function addNestedSubmodule(repoDir: string, subPath = "libs/sub"): string {
   git(repoDir, "update-index", "--add", "--cacheinfo", `160000,${sha},${subPath}`);
   git(repoDir, "add", ".gitmodules");
   git(repoDir, "-c", "commit.gpgsign=false", "commit", "-m", "add submodule");
-  return subDir;
+  return { subDir, sha };
 }
 
-describe("getCheckoutDiff submodule expansion", () => {
-  it("keeps gitlink stubs when expandSubmodules is omitted (default)", async () => {
+describe("getCheckoutDiff submodule stubs", () => {
+  it("emits a dirty submodule as an isSubmodule stub with metadata", async () => {
     const repoDir = initRepo();
-    const subDir = addNestedSubmodule(repoDir);
+    const { subDir, sha } = addNestedSubmodule(repoDir);
     writeFileSync(join(subDir, "nested.txt"), "sub\nchanged\n");
 
     const result = await getCheckoutDiff(repoDir, {
@@ -63,91 +63,77 @@ describe("getCheckoutDiff submodule expansion", () => {
       includeStructured: true,
     });
 
-    expect(result.diff).toMatch(/Subproject commit/i);
+    const stub = result.structured?.find((file) => file.path === "libs/sub");
+    expect(stub).toMatchObject({
+      path: "libs/sub",
+      isSubmodule: true,
+      hunks: [],
+      submodule: {
+        oldCommit: sha,
+        newCommit: sha,
+        isDirty: true,
+      },
+    });
     expect(result.structured?.some((file) => file.path === "libs/sub/nested.txt")).toBeFalsy();
   });
 
-  it("expands dirty submodule file edits into structured file hunks when enabled", async () => {
+  it("records old/new commits for submodule pointer moves", async () => {
     const repoDir = initRepo();
-    const subDir = addNestedSubmodule(repoDir);
-    writeFileSync(join(subDir, "nested.txt"), "sub\nchanged\n");
-
-    const result = await getCheckoutDiff(repoDir, {
-      mode: "uncommitted",
-      includeStructured: true,
-      expandSubmodules: true,
-    });
-
-    expect(result.diff).not.toContain("Subproject commit");
-    expect(result.structured?.some((file) => file.path === "libs/sub")).toBe(false);
-
-    const nested = result.structured?.find((file) => file.path === "libs/sub/nested.txt");
-    expect(nested).toBeDefined();
-    expect(nested?.status).toBe("ok");
-    expect(nested?.hunks.length).toBeGreaterThan(0);
-    expect(nested?.hunks.flatMap((hunk) => hunk.lines)).toEqual(
-      expect.arrayContaining([expect.objectContaining({ type: "add", content: "changed" })]),
-    );
-    expect(result.diff).toContain("libs/sub/nested.txt");
-  });
-
-  it("includes untracked files inside dirty submodules when enabled", async () => {
-    const repoDir = initRepo();
-    const subDir = addNestedSubmodule(repoDir);
-    writeFileSync(join(subDir, "extra.txt"), "untracked\n");
-
-    const result = await getCheckoutDiff(repoDir, {
-      mode: "uncommitted",
-      includeStructured: true,
-      expandSubmodules: true,
-    });
-
-    expect(result.diff).not.toContain("Subproject commit");
-    const extra = result.structured?.find((file) => file.path === "libs/sub/extra.txt");
-    expect(extra).toBeDefined();
-    expect(extra?.isNew).toBe(true);
-    expect(extra?.hunks.flatMap((hunk) => hunk.lines)).toEqual(
-      expect.arrayContaining([expect.objectContaining({ type: "add", content: "untracked" })]),
-    );
-  });
-
-  it("expands submodule pointer moves into file-level diffs when enabled", async () => {
-    const repoDir = initRepo();
-    const subDir = addNestedSubmodule(repoDir);
+    const { subDir, sha: oldSha } = addNestedSubmodule(repoDir);
     writeFileSync(join(subDir, "nested.txt"), "sub\ncommitted\n");
     git(subDir, "add", "nested.txt");
     git(subDir, "-c", "commit.gpgsign=false", "commit", "-m", "sub change");
+    const newSha = git(subDir, "rev-parse", "HEAD");
 
     const result = await getCheckoutDiff(repoDir, {
       mode: "uncommitted",
       includeStructured: true,
-      expandSubmodules: true,
     });
 
-    expect(result.diff).not.toContain("Subproject commit");
-    const nested = result.structured?.find((file) => file.path === "libs/sub/nested.txt");
-    expect(nested).toBeDefined();
-    expect(nested?.hunks.flatMap((hunk) => hunk.lines)).toEqual(
-      expect.arrayContaining([expect.objectContaining({ type: "add", content: "committed" })]),
-    );
+    const stub = result.structured?.find((file) => file.path === "libs/sub");
+    expect(stub?.isSubmodule).toBe(true);
+    expect(stub?.submodule?.oldCommit).toBe(oldSha);
+    expect(stub?.submodule?.newCommit).toBe(newSha);
+    expect(stub?.hunks).toEqual([]);
+    expect(result.structured?.some((file) => file.path === "libs/sub/nested.txt")).toBeFalsy();
   });
 
-  it("keeps the gitlink stub when expansion is enabled but the submodule is missing", async () => {
+  it("still yields a stub when the submodule checkout is missing", async () => {
     const repoDir = initRepo();
-    const subDir = addNestedSubmodule(repoDir);
+    const { subDir, sha: oldSha } = addNestedSubmodule(repoDir);
     writeFileSync(join(subDir, "nested.txt"), "sub\ncommitted\n");
     git(subDir, "add", "nested.txt");
     git(subDir, "-c", "commit.gpgsign=false", "commit", "-m", "sub change");
+    const newSha = git(subDir, "rev-parse", "HEAD");
+    git(repoDir, "update-index", "--cacheinfo", `160000,${newSha},libs/sub`);
     rmSync(subDir, { recursive: true, force: true });
 
     const result = await getCheckoutDiff(repoDir, {
       mode: "uncommitted",
       includeStructured: true,
-      expandSubmodules: true,
     });
 
-    expect(result.diff).toMatch(/Subproject commit/i);
+    const stub = result.structured?.find((file) => file.path === "libs/sub");
+    expect(stub).toBeDefined();
+    expect(stub?.isSubmodule).toBe(true);
+    expect(stub?.submodule?.oldCommit).toBe(oldSha);
+    expect(stub?.submodule?.newCommit).toBe(newSha);
+    expect(result.structured?.some((file) => file.path.startsWith("libs/sub/"))).toBeFalsy();
+  });
+
+  it("does not flatten nested submodule file paths into the parent structured list", async () => {
+    const repoDir = initRepo();
+    const { subDir } = addNestedSubmodule(repoDir);
+    writeFileSync(join(subDir, "nested.txt"), "sub\nchanged\n");
+    writeFileSync(join(subDir, "extra.txt"), "untracked\n");
+
+    const result = await getCheckoutDiff(repoDir, {
+      mode: "uncommitted",
+      includeStructured: true,
+    });
+
     expect(result.structured?.some((file) => file.path === "libs/sub")).toBe(true);
-    expect(result.structured?.some((file) => file.path === "libs/sub/nested.txt")).toBeFalsy();
+    expect(result.structured?.some((file) => file.path === "libs/sub/nested.txt")).toBe(false);
+    expect(result.structured?.some((file) => file.path === "libs/sub/extra.txt")).toBe(false);
   });
 });

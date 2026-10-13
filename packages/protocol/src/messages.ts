@@ -2183,8 +2183,6 @@ const CheckoutDiffCompareSchema = z.object({
   mode: z.enum(["uncommitted", "base"]),
   baseRef: z.string().optional(),
   ignoreWhitespace: z.boolean().optional(),
-  /** When true, expand dirty/moved git submodules into file-level diffs. Default (omit/false) keeps gitlink stubs. */
-  expandSubmodules: z.boolean().optional(),
 });
 
 export const CheckoutStatusRequestSchema = z.object({
@@ -2727,6 +2725,15 @@ const ParsedDiffFileSchema = z.object({
   deletions: z.number(),
   hunks: z.array(DiffHunkSchema),
   status: z.enum(["ok", "too_large", "binary"]).optional(),
+  isSubmodule: z.boolean().optional(),
+  submodule: z
+    .object({
+      oldCommit: z.string().nullable(),
+      newCommit: z.string().nullable(),
+      isDirty: z.boolean().optional(),
+      logSummary: z.string().optional(),
+    })
+    .optional(),
 });
 
 const FileExplorerEntrySchema = z.object({

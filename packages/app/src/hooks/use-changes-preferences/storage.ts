@@ -15,7 +15,6 @@ const changesPreferencesSchema = z.strictObject({
   hideWhitespace: z.boolean().optional(),
   inlineDiff: z.boolean().optional(),
   commitsCollapsed: z.boolean().optional(),
-  expandSubmodules: z.boolean().optional(),
 });
 
 export interface ChangesPreferences {
@@ -25,8 +24,6 @@ export interface ChangesPreferences {
   hideWhitespace: boolean;
   inlineDiff: boolean;
   commitsCollapsed: boolean;
-  /** Opt-in: show file-level diffs inside dirty git submodules. Default keeps gitlink stubs. */
-  expandSubmodules: boolean;
 }
 
 export const DEFAULT_CHANGES_PREFERENCES: ChangesPreferences = {
@@ -36,7 +33,6 @@ export const DEFAULT_CHANGES_PREFERENCES: ChangesPreferences = {
   hideWhitespace: false,
   inlineDiff: false,
   commitsCollapsed: true,
-  expandSubmodules: false,
 };
 
 export interface KeyValueStorage {

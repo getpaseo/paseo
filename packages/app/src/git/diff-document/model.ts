@@ -217,8 +217,18 @@ function appendNewFileRows(candidate: {
   bodyTop: number;
   gutterWidth: number;
 }): FileRowsResult {
-  if (candidate.file.status === "binary" || candidate.file.status === "too_large") {
+  if (
+    candidate.file.status === "binary" ||
+    candidate.file.status === "too_large" ||
+    candidate.file.isSubmodule === true
+  ) {
     const height = candidate.input.typography.lineHeight + 24;
+    const label =
+      candidate.file.isSubmodule === true
+        ? (candidate.file.submodule?.logSummary ?? candidate.input.labels.submodule)
+        : candidate.file.status === "binary"
+          ? candidate.input.labels.binary
+          : candidate.input.labels.tooLarge;
     candidate.rows.push({
       kind: "status",
       index: candidate.rows.length,
@@ -226,10 +236,7 @@ function appendNewFileRows(candidate: {
       path: candidate.file.path,
       top: candidate.bodyTop,
       height,
-      label:
-        candidate.file.status === "binary"
-          ? candidate.input.labels.binary
-          : candidate.input.labels.tooLarge,
+      label,
     });
     return {
       bottom: candidate.bodyTop + height + DIFF_BODY_BORDER_HEIGHT,

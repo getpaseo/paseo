@@ -7,7 +7,7 @@ import {
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useWorkspaceFileDragSource } from "@/attachments/use-workspace-file-drag-source";
-import { DiffStat } from "@/components/diff-stat";
+import { DiffStat, SubmoduleStat } from "@/components/diff-stat";
 import { FileActionsContextMenuContent } from "@/components/file-actions-menu";
 import { FileChangeIcon } from "@/components/file-change-icon";
 import { MaterialFileIcon } from "@/components/material-file-icon";
@@ -75,6 +75,17 @@ function expandedAriaValue(showsBodyState: boolean, bodyVisible: boolean): boole
 
 function fileHeaderAccessibilityLabel(canvasRendered: boolean, file: ParsedDiffFile) {
   if (!canvasRendered) return undefined;
+  if (file.isSubmodule) {
+    const oldShort = file.submodule?.oldCommit?.slice(0, 7);
+    const newShort = file.submodule?.newCommit?.slice(0, 7);
+    const parts = [
+      file.path,
+      newShort ? `+${newShort}` : null,
+      oldShort ? `-${oldShort}` : null,
+      file.submodule?.isDirty ? "+dirty" : null,
+    ].filter(Boolean);
+    return parts.join(", ");
+  }
   return `${file.path}, +${formatDiffCount(file.additions)}, -${formatDiffCount(file.deletions)}`;
 }
 
@@ -273,11 +284,20 @@ export const FileHeader = memo(function FileHeader({
         )}
       </View>
       <View style={styles.right}>
-        <DiffStat
-          additions={file.additions}
-          deletions={file.deletions}
-          testID={testID ? `${testID}-stat` : undefined}
-        />
+        {file.isSubmodule ? (
+          <SubmoduleStat
+            oldCommit={file.submodule?.oldCommit ?? null}
+            newCommit={file.submodule?.newCommit ?? null}
+            isDirty={file.submodule?.isDirty}
+            testID={testID ? `${testID}-stat` : undefined}
+          />
+        ) : (
+          <DiffStat
+            additions={file.additions}
+            deletions={file.deletions}
+            testID={testID ? `${testID}-stat` : undefined}
+          />
+        )}
         {changeIcon}
       </View>
     </View>
