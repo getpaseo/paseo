@@ -1,4 +1,4 @@
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -298,7 +298,28 @@ function validateCommand(frame, recorded) {
   )
     throw new Error("Wrong approval stage");
 }
+function failedOrDelayedResponse(recordedMessage, recorded, frame) {
+  if (recordedMessage.method || recordedMessage.id !== recorded.id) return false;
+  if (frame.method === "item/readOutput" && process.env.MUSE_TEST_OUTPUT_FAILURE) {
+    // Only the patch response fails; subsequent turn notifications still arrive.
+    if (process.env.MUSE_TEST_OUTPUT_FAILURE === "error")
+      rpcError(frame, -32000, "outputUnavailable", "Stored patch unavailable");
+    return true;
+  }
+  if (frame.method === "session/resume" && process.env.MUSE_TEST_RESUME_GATE) {
+    const gate = process.env.MUSE_TEST_RESUME_GATE;
+    delete process.env.MUSE_TEST_RESUME_GATE;
+    function release() {
+      if (existsSync(gate)) emitFixtureMessage(recordedMessage, recorded, frame);
+      else setTimeout(release, 10);
+    }
+    release();
+    return true;
+  }
+  return false;
+}
 function emitFixtureMessage(recordedMessage, recorded, frame) {
+  if (failedOrDelayedResponse(recordedMessage, recorded, frame)) return;
   const message = replace(recordedMessage);
   if (!message.method && message.id === recorded.id) message.id = frame.id;
   if (
