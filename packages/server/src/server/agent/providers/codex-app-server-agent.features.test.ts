@@ -56,14 +56,13 @@ function speedFeature(value: string) {
 
 const TEST_COLLABORATION_MODES: CollaborationModeRecord[] = [
   {
-    name: "Code",
-    mode: "code",
-    developer_instructions: "Built-in code mode",
+    name: "Default",
+    mode: "default",
   },
   {
     name: "Plan",
     mode: "plan",
-    developer_instructions: "Built-in plan mode",
+    reasoning_effort: "medium",
   },
 ];
 
@@ -133,6 +132,35 @@ async function createConnectedSession(
 }
 
 describe("Codex app-server provider features", () => {
+  test.each([true, false])(
+    "preserves native collaboration instructions with custom prompts (plan=%s)",
+    async (planMode) => {
+      const { session, appServer } = await createConnectedSession({
+        featureValues: { plan_mode: planMode },
+        systemPrompt: "Use the project conventions.",
+        daemonAppendSystemPrompt: "Maintain the shared workspace todos.",
+      });
+
+      try {
+        await session.startTurn("Add a login screen.");
+
+        await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
+          developerInstructions:
+            "Use the project conventions.\n\nMaintain the shared workspace todos.",
+          collaborationMode: {
+            mode: planMode ? "plan" : "default",
+            settings: {
+              model: "gpt-5.4",
+              developer_instructions: null,
+            },
+          },
+        });
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
   test("GPT-6.1 Sol offers catalog speed tiers and sends Ultrafast", async () => {
     const { session, appServer } = await createConnectedSession(
       { model: "gpt-6.1-sol" },

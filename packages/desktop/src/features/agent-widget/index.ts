@@ -48,6 +48,7 @@ export function registerAgentWidget() {
   let requestGeneration = 0;
   let window: BrowserWindow | null = null;
   let reduced = false;
+  let hidden = false;
   let quitting = false;
 
   function hosts() {
@@ -81,14 +82,25 @@ export function registerAgentWidget() {
     };
   }
   function position() {
-    if (window && !window.isDestroyed())
-      window.setBounds(widgetBounds(screen.getPrimaryDisplay().workArea, reduced));
+    if (!window || window.isDestroyed()) return;
+    const current = window.getBounds();
+    const area = screen.getDisplayMatching(current).workArea;
+    const bounds = widgetBounds(area, reduced);
+    window.setBounds({
+      ...bounds,
+      x: Math.max(area.x, Math.min(current.x, area.x + area.width - bounds.width)),
+      y: Math.max(area.y, Math.min(current.y, area.y + area.height - bounds.height)),
+    });
   }
   function setReduced(value: boolean) {
     reduced = value || !requests().length;
     position();
     if (window && !window.isDestroyed())
       window.webContents.send("paseo:agent-widget:reduced", reduced);
+  }
+  function hide() {
+    hidden = true;
+    window?.hide();
   }
   function update() {
     const value = display();
@@ -97,13 +109,14 @@ export function registerAgentWidget() {
     requestKeys = nextKeys;
     if (arrived) {
       requestGeneration++;
+      hidden = false;
       setReduced(false);
     }
-    if (!value) {
+    if (!value || !value.requests.length) {
+      if (value) window?.webContents.send("paseo:agent-widget:update", value);
       window?.hide();
       return;
     }
-    if (!window && !value.requests.length) return;
     if (!window) {
       window = new BrowserWindow({
         ...widgetBounds(screen.getPrimaryDisplay().workArea, reduced),
@@ -134,7 +147,7 @@ export function registerAgentWidget() {
       window.on("close", (event) => {
         if (quitting) return;
         event.preventDefault();
-        setReduced(true);
+        hide();
       });
       window.on("closed", () => {
         window = null;
@@ -143,14 +156,13 @@ export function registerAgentWidget() {
       void created
         .loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(widgetDocument)}`)
         .then(() => {
-          if (!created.isDestroyed() && requests().length) created.showInactive();
+          if (!created.isDestroyed() && requests().length && !hidden) created.showInactive();
           return;
         })
         .catch((error) => console.error("[agent-widget] Failed to load window", error));
     }
     window.webContents.send("paseo:agent-widget:update", value);
-    if (value.requests.length && !window.isVisible() && !window.webContents.isLoading())
-      window.showInactive();
+    if (!hidden && !window.isVisible() && !window.webContents.isLoading()) window.showInactive();
   }
   function settle(operationId: string, error: string | null) {
     const operation = pending.get(operationId);
@@ -189,6 +201,10 @@ export function registerAgentWidget() {
     assertWidget(event.sender);
     if (typeof value !== "boolean") throw new Error("Invalid widget size.");
     setReduced(value);
+  });
+  ipcMain.handle("paseo:agent-widget:hide", (event) => {
+    assertWidget(event.sender);
+    hide();
   });
   ipcMain.handle("paseo:agent-widget:act", async (event, raw: unknown) => {
     assertWidget(event.sender);

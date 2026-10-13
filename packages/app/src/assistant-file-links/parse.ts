@@ -268,7 +268,11 @@ export function classifyAssistantFileLink(
     };
   }
 
-  if (/\s/.test(trimmed)) {
+  const explicitLocalPath =
+    isAbsolutePath(trimmed) ||
+    isHomeRelativePath(trimmed) ||
+    trimmed.toLowerCase().startsWith("file://");
+  if (/\s/.test(trimmed) && !explicitLocalPath) {
     return null;
   }
 

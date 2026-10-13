@@ -213,6 +213,28 @@ function buildHarness() {
 describe("matchesAgentUpdatesFilter", () => {
   const project = makeProject();
 
+  test("workspace history excludes conversations from other worktrees of the same project", () => {
+    const filter = { workspaceId: "ws-current", includeArchived: true };
+    const agents = [
+      makeAgentPayload({
+        id: "local",
+        workspaceId: "ws-current",
+        archivedAt: "2026-10-12T00:00:00Z",
+      }),
+      makeAgentPayload({
+        id: "other",
+        workspaceId: "ws-other",
+        archivedAt: "2026-10-12T00:00:00Z",
+      }),
+      makeAgentPayload({ id: "unplaced" }),
+    ];
+    expect(
+      agents
+        .filter((agent) => matchesAgentUpdatesFilter({ agent, project, filter }))
+        .map((agent) => agent.id),
+    ).toEqual(["local"]);
+  });
+
   test("no filter matches", () => {
     expect(matchesAgentUpdatesFilter({ agent: makeAgentPayload({ id: "a" }), project })).toBe(true);
   });

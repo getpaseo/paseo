@@ -40,6 +40,7 @@ interface WorkspaceOpenInEditorButtonProps {
 interface OpenTarget {
   id: string;
   label: string;
+  fileName: string | null;
   icon: ReactElement;
   onOpen: () => Promise<void> | void;
 }
@@ -135,6 +136,7 @@ export function WorkspaceOpenInEditorButton({
           return {
             id: target.id,
             label: target.label,
+            fileName: activeFileName,
             icon: renderForgeOpenTargetIcon(presentation.icon),
             onOpen: () => openExternalUrl(target.url),
           };
@@ -142,6 +144,7 @@ export function WorkspaceOpenInEditorButton({
         return {
           id: target.id,
           label: target.label,
+          fileName: target.openInput.filePath ? activeFileName : null,
           icon: (
             <ThemedEditorTargetIcon icon={target.icon} size={16} uniProps={mutedColorMapping} />
           ),
@@ -150,6 +153,7 @@ export function WorkspaceOpenInEditorButton({
       }),
     [
       activeFile,
+      activeFileName,
       checkoutStatus,
       cwd,
       desktopOpenTargets,
@@ -227,9 +231,9 @@ export function WorkspaceOpenInEditorButton({
           disabled={openMutation.isPending}
           accessibilityRole="button"
           accessibilityLabel={
-            activeFileName
+            primaryOption.fileName
               ? t("workspace.git.openInEditor.openFileIn", {
-                  fileName: activeFileName,
+                  fileName: primaryOption.fileName,
                   target: primaryOption.label,
                 })
               : t("workspace.git.openInEditor.openIn", {

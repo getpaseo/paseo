@@ -108,6 +108,18 @@ describe("parseFileProtocolUrl", () => {
 });
 
 describe("classifyAssistantFileLink", () => {
+  it("recognizes explicit local directory links containing spaces", () => {
+    for (const value of [
+      "/Users/test/My Documents",
+      "file:///Users/test/My Documents",
+      "~/My Documents",
+    ]) {
+      expect(classifyAssistantFileLink(value)).toMatchObject({
+        kind: "directFile",
+        target: { path: value.startsWith("~") ? "~/My Documents" : "/Users/test/My Documents" },
+      });
+    }
+  });
   it("keeps explicit external URLs out of file parsing", () => {
     expect(
       classifyAssistantFileLink("http://dumm.md", {

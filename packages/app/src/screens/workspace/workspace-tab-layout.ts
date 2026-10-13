@@ -1,6 +1,7 @@
 export type WorkspaceTabCloseButtonPolicy = "all";
 
 export interface WorkspaceTabLayoutMetrics {
+  fitContent?: boolean;
   rowHorizontalInset: number;
   actionsReservedWidth: number;
   rowPaddingHorizontal: number;
@@ -74,6 +75,15 @@ export function computeWorkspaceTabLayout(
     input.metrics.tabContentGap +
     input.metrics.tabHorizontalPadding * 2 +
     input.metrics.closeButtonWidth;
+  if (input.metrics.fitContent) {
+    const widths = input.tabLabelWidths.map((width) => Math.ceil(tabChromeWidth + width));
+    return {
+      items: widths.map((width) => ({ width, showLabel: true })),
+      closeButtonPolicy: "all",
+      requiresHorizontalScrollFallback:
+        widths.reduce((total, width) => total + width, 0) > availableTabsWidth,
+    };
+  }
   const naturalWidths = input.tabLabelWidths.map((labelWidth) =>
     clamp(tabChromeWidth + labelWidth, input.metrics.minTabWidth, input.metrics.maxTabWidth),
   );

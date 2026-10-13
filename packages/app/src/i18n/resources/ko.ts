@@ -2,6 +2,13 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
+  workspaceHistory: {
+    title: "닫힌 대화",
+    empty: "닫힌 대화가 없습니다",
+    updateHost: "작업 공간 기록을 사용하려면 이 호스트를 업데이트하세요.",
+    loadError: "대화를 불러오지 못했습니다.",
+    reopenError: "이 대화를 다시 열지 못했습니다.",
+  },
   workspaceTodos: {
     title: "To-do",
     taskTitle: "작업 제목",

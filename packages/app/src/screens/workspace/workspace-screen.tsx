@@ -135,6 +135,7 @@ import {
   WorkspaceTabRenameModal,
 } from "@/screens/workspace/use-workspace-tab-rename";
 import { MobileTabTrailingAccessory } from "@/screens/workspace/workspace-tab-trailing-accessory";
+import { WorkspaceHistoryMenu } from "@/screens/workspace/workspace-history-menu";
 import {
   WorkspaceDesktopTabsRow,
   type WorkspaceDesktopTabRowItem,
@@ -1109,6 +1110,9 @@ function WorkspaceHeaderTitleBar({
       ) : null}
       {headerTitleContent}
       <View style={styles.compactHeaderMenuCluster}>
+        {isMobile ? (
+          <WorkspaceHistoryMenu serverId={normalizedServerId} workspaceId={normalizedWorkspaceId} />
+        ) : null}
         {isMobile ? (
           <WorkspaceHeaderMenuMobile
             onEditIntention={supportsWorkspaceIntent ? editIntention : undefined}

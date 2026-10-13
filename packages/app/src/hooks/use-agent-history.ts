@@ -76,8 +76,10 @@ export async function fetchAgentHistoryPage(input: {
   serverId: string;
   cursor: string | null;
   search?: string;
+  workspaceId?: string;
 }): Promise<AgentHistoryPage> {
   const payload = await input.client.fetchAgentHistory({
+    ...(input.workspaceId ? { filter: { workspaceId: input.workspaceId } } : {}),
     ...(input.search ? { search: input.search } : {}),
     sort: AGENT_HISTORY_SORT,
     page: input.cursor
@@ -161,6 +163,7 @@ export async function fetchAgentHistoryBatch(input: {
   hosts: readonly AgentHistoryHost[];
   cursorByServerId: AgentHistoryCursorByServerId | null;
   search?: string;
+  workspaceId?: string;
 }): Promise<AgentHistoryBatchPage> {
   const cursorByServerId = input.cursorByServerId ?? {};
   const hasCursorFilter = Object.keys(cursorByServerId).length > 0;
@@ -174,6 +177,7 @@ export async function fetchAgentHistoryBatch(input: {
         client: host.client,
         serverId: host.serverId,
         cursor: cursorByServerId[host.serverId] ?? null,
+        workspaceId: input.workspaceId,
         ...(input.search ? { search: input.search } : {}),
       });
       return { host, page };
@@ -216,6 +220,7 @@ export async function fetchAgentHistoryBatch(input: {
 
 export function useAgentHistory(options: {
   serverId?: string | null;
+  workspaceId?: string;
   enabled?: boolean;
   search?: string;
 }): AgentHistoryResult {
@@ -278,8 +283,9 @@ export function useAgentHistory(options: {
     () => [
       ...(serverId ? agentHistoryQueryKey(serverId) : allAgentHistoryQueryKey(targetServerIds)),
       search,
+      options.workspaceId ?? null,
     ],
-    [search, serverId, targetServerIds],
+    [search, serverId, targetServerIds, options.workspaceId],
   );
   const serverLabelById = useMemo(
     () => new Map(daemons.map((daemon) => [daemon.serverId, daemon.label])),
@@ -295,7 +301,7 @@ export function useAgentHistory(options: {
   >({
     queryKey,
     enabled: Boolean(enabled && targetHosts.length > 0),
-    staleTime: 30_000,
+    staleTime: options.workspaceId ? 0 : 30_000,
     initialPageParam: null,
     getNextPageParam: getNextAgentHistoryPageParam,
     queryFn: async ({ pageParam }) => {
@@ -305,6 +311,7 @@ export function useAgentHistory(options: {
       return fetchAgentHistoryBatch({
         hosts: targetHosts,
         cursorByServerId: pageParam,
+        workspaceId: options.workspaceId,
         ...(search ? { search } : {}),
       });
     },

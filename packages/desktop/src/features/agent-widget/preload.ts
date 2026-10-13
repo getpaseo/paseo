@@ -132,11 +132,11 @@ function header(item: WidgetDisplayItem | undefined, labels: WidgetDisplay["labe
   const icon = project?.emoji
     ? `<span class="avatar emoji">${escape(project.emoji)}</span>`
     : `<span class="avatar" style="background-color:${project?.color ?? "#7a6aa8"}"><span class="initial">${initial}</span>${project?.iconDataUri ? `<img src="${escape(project.iconDataUri)}" alt="">` : ""}</span>`;
-  return `<header><button class="header-collapse" data-action="reduce" aria-label="${escape(labels.minimize)}">${icon}<span class="identity"><b>${escape(name)}</b><small>${escape(project?.branchName ?? "")}</small></span></button></header>`;
+  return `<header><div class="header-identity">${icon}<span class="identity"><b>${escape(name)}</b><small>${escape(project?.branchName ?? "")}</small></span></div><button data-action="reduce" aria-label="${escape(labels.minimize)}" title="${escape(labels.minimize)}">−</button></header>`;
 }
 function footer(position: number, count: number, labels: WidgetDisplay["labels"]) {
   const disabled = count < 2 || busy !== null;
-  return `<footer class="queue"><span>${count ? position : 0} / ${count}</span><button data-action="previous" aria-label="←" ${disabled ? "disabled" : ""}>←</button><button data-action="next" aria-label="→" ${disabled ? "disabled" : ""}>→</button><button data-action="reduce" aria-label="${escape(labels.close)}">×</button></footer>`;
+  return `<footer class="queue"><span>${count ? position : 0} / ${count}</span><button data-action="previous" aria-label="←" ${disabled ? "disabled" : ""}>←</button><button data-action="next" aria-label="→" ${disabled ? "disabled" : ""}>→</button><button data-action="hide" aria-label="${escape(labels.close)}">×</button></footer>`;
 }
 function render() {
   const root = document.getElementById("widget");
@@ -147,7 +147,7 @@ function render() {
   selected = item?.key ?? "";
   const { labels, requests } = display;
   if (reduced) {
-    root.innerHTML = `<button class="pill" data-action="restore">◈ <b>Paseo</b> · ${requests.length}</button>`;
+    root.innerHTML = `<div class="pill"><span aria-hidden="true">⠿</span><button data-action="restore"><b>Paseo</b> · ${requests.length}</button><button data-action="hide" aria-label="${escape(labels.close)}" title="${escape(labels.close)}">×</button></div>`;
     return;
   }
   const content = requestContent(item, labels);
@@ -232,6 +232,9 @@ function handleClick(event: MouseEvent) {
     return;
   }
   switch (button.dataset.action) {
+    case "hide":
+      void ipcRenderer.invoke("paseo:agent-widget:hide");
+      break;
     case "reduce":
       void resize(true);
       break;

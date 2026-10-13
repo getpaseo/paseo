@@ -24,7 +24,7 @@ beforeAll(async () => {
   fetchAgentHistoryBatch = module.fetchAgentHistoryBatch;
   fetchAgentHistoryPage = module.fetchAgentHistoryPage;
   collectAgentHistoryHostErrors = module.collectAgentHistoryHostErrors;
-});
+}, 60_000);
 
 type FetchAgentHistory = DaemonClient["fetchAgentHistory"];
 type FetchAgentHistoryResult = Awaited<ReturnType<FetchAgentHistory>>;
@@ -140,6 +140,24 @@ function historyEntry(input: {
 }
 
 describe("fetchAgentHistoryPage", () => {
+  it("keeps the workspace filter on subsequent history pages", async () => {
+    const client = createClient([
+      historyPayload({ entries: [], hasMore: false, nextCursor: null }),
+    ]);
+    await fetchAgentHistoryPage({
+      client,
+      serverId: "server-1",
+      workspaceId: "ws-current",
+      cursor: "older",
+    });
+    expect(client.calls).toEqual([
+      {
+        filter: { workspaceId: "ws-current" },
+        sort: [{ key: "updated_at", direction: "desc" }],
+        page: { limit: 200, cursor: "older" },
+      },
+    ]);
+  });
   it("builds the all-host query key independent of host order", () => {
     expect(allAgentHistoryQueryKey(["server-b", "server-a"])).toEqual(
       allAgentHistoryQueryKey(["server-a", "server-b"]),

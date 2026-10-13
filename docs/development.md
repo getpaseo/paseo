@@ -377,9 +377,14 @@ for machine-readable output.
 
 ## Worktree starting refs
 
-A new worktree starts from the current branch's upstream, or the local branch when it has no
-upstream. This keeps unpushed local commits out of new workspaces by default. The picker collapses
-identical refs; divergent local or non-origin refs remain explicit, qualified choices.
+The New workspace form defaults to a new worktree from `main`, regardless of the source
+checkout's current branch or the last isolation choice. Bare `main` resolves to local `main`,
+or `origin/main` when no local main exists. PARA, SeO Compagnon, and debug default to local
+workspaces; their host-local project IDs keep those exceptions stable across renames.
+Non-Git projects remain local. You can change the mode and base for a single creation.
+
+The picker collapses identical refs; divergent local or non-origin refs remain explicit,
+qualified choices.
 
 The daemon sends the exact upstream ref because the remote and branch names cannot be inferred.
 Worktrees retain that ref for comparisons and updates from base while exposing its branch name to

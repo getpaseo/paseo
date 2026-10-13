@@ -2,6 +2,13 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ar: TranslationResources = {
+  workspaceHistory: {
+    title: "المحادثات المغلقة",
+    empty: "لا توجد محادثات مغلقة",
+    updateHost: "حدّث هذا المضيف لاستخدام سجل مساحة العمل.",
+    loadError: "تعذّر تحميل المحادثات.",
+    reopenError: "تعذّرت إعادة فتح هذه المحادثة.",
+  },
   workspaceTodos: {
     title: "المهام",
     taskTitle: "عنوان المهمة",

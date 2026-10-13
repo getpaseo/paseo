@@ -63,6 +63,7 @@ export interface DesktopNotificationBridge {
 
 export interface DesktopOpenerBridge {
   openUrl?: (url: string) => Promise<void>;
+  openDirectory?: (path: string) => Promise<boolean>;
 }
 
 export interface DesktopEditorTargetDescriptor {

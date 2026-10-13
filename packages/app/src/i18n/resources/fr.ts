@@ -2,6 +2,13 @@ import type { TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
+  workspaceHistory: {
+    title: "Conversations fermées",
+    empty: "Aucune conversation fermée",
+    updateHost: "Mettez cet hôte à jour pour utiliser l’historique du worktree.",
+    loadError: "Impossible de charger les conversations.",
+    reopenError: "Impossible de rouvrir cette conversation.",
+  },
   workspaceTodos: {
     title: "To-do",
     taskTitle: "Titre de la tâche",

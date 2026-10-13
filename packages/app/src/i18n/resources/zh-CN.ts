@@ -2,6 +2,13 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
+  workspaceHistory: {
+    title: "已关闭的对话",
+    empty: "没有已关闭的对话",
+    updateHost: "请更新此主机以使用工作区历史记录。",
+    loadError: "无法加载对话。",
+    reopenError: "无法重新打开此对话。",
+  },
   workspaceTodos: {
     title: "待办事项",
     taskTitle: "任务标题",

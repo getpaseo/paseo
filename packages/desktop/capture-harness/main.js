@@ -2647,9 +2647,17 @@ async function main() {
       "automation",
       "browser-profile",
       "titlebar-drag",
+      "agent-widget",
     ].includes(HARNESS_GROUP)
   ) {
     fail(`unknown harness group ${HARNESS_GROUP}`);
+  }
+
+  if (HARNESS_GROUP === "agent-widget") {
+    const { runAgentWidgetGroup } = require("./agent-widget.js");
+    await runAgentWidgetGroup(OUT_DIR);
+    pass(`capture harness agent-widget complete output=${OUT_DIR}`);
+    return;
   }
 
   if (HARNESS_GROUP === "titlebar-drag") {

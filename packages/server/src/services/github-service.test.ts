@@ -847,6 +847,7 @@ describe("ForgeService", () => {
       ttlMs: 0,
       runner: runner.runner,
       resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoSlug: async () => null,
       now: () => now,
     });
     const reads = recordCurrentPullRequestStatusReads(service);
@@ -920,6 +921,7 @@ describe("ForgeService", () => {
       ttlMs: 0,
       runner: runner.runner,
       resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoSlug: async () => null,
       now: () => now,
     });
     const reads = recordCurrentPullRequestStatusReads(service);
@@ -966,6 +968,7 @@ describe("ForgeService", () => {
       ttlMs: 0,
       runner: runner.runner,
       resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoSlug: async () => null,
       now: () => now,
     });
     const reads = recordCurrentPullRequestStatusReads(service);
@@ -1009,6 +1012,7 @@ describe("ForgeService", () => {
       ttlMs: 0,
       runner: runner.runner,
       resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoSlug: async () => null,
       now: () => now,
     });
 
@@ -1038,6 +1042,7 @@ describe("ForgeService", () => {
       ttlMs: 0,
       runner: runner.runner,
       resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoSlug: async () => null,
       now: () => now,
     });
 
@@ -1417,7 +1422,52 @@ describe("ForgeService", () => {
     service.dispose?.();
   });
 
-  it("redirects a fork poll to its parent and reuses that batch address", async () => {
+  it("discovers a PR created in the fork after polling its parent without a match", async () => {
+    let now = 0;
+    const parent = { owner: { login: "upstream" }, name: "widgets" };
+    const fork = { isFork: true, parent, owner: { login: "forkowner" } };
+    const node = batchPollPrNodeJson({
+      url: "https://github.com/forkowner/widgets/pull/18",
+      number: 18,
+      state: "OPEN",
+      mergedAt: null,
+      headRepositoryOwner: { login: "forkowner" },
+    });
+    const runner = createScriptedRunner([
+      batchPollStatusJson({ t0: batchPollRepositoryJson([], fork) }),
+      batchPollStatusJson({ t0: batchPollRepositoryJson([]) }),
+      batchPollStatusJson({ t0: batchPollRepositoryJson([node], fork) }),
+      batchPollStatusJson({ t0: batchPollChecksAliasJson([]) }),
+    ]);
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => "forkowner/widgets",
+      now: () => now,
+    });
+    const statuses: Array<CurrentPullRequestStatus | null> = [];
+    const subscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-a",
+      headRef: "feat-a",
+      onStatus: (status) => statuses.push(status),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+    expect(statuses).toEqual([null]);
+    now = EXPECTED_GITHUB_SLOW_POLL_MS;
+    await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_SLOW_POLL_MS);
+    await flushMicrotasks();
+    expect(statuses).toEqual([
+      null,
+      expect.objectContaining({ number: 18, repoOwner: "forkowner", state: "open" }),
+    ]);
+    subscription?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("checks the fork before redirecting each poll to its parent", async () => {
     let now = 0;
     const parent = { owner: { login: "upstream" }, name: "widgets" };
     const forkPr = batchPollPrNodeJson({
@@ -1436,6 +1486,7 @@ describe("ForgeService", () => {
           { __typename: "StatusContext", context: "ci", state: "SUCCESS" },
         ]),
       }),
+      batchPollStatusJson({ t0: batchPollRepositoryJson([], { isFork: true, parent }) }),
       batchPollStatusJson({ t0: batchPollRepositoryJson([forkPr]) }),
     ]);
     const service = createGitHubService({
@@ -1473,9 +1524,13 @@ describe("ForgeService", () => {
     await flushMicrotasks();
 
     expect(runner.calls[3]?.args[3]).toContain(
-      't0: repository(owner: "upstream", name: "widgets")',
+      't0: repository(owner: "forkowner", name: "widgets")',
     );
 
+    expect(runner.calls[4]?.args[3]).toContain(
+      't0: repository(owner: "upstream", name: "widgets")',
+    );
+    expect(statuses).toHaveLength(2);
     subscription?.unsubscribe();
     service.dispose?.();
   });
@@ -3312,6 +3367,101 @@ describe("ForgeService", () => {
     expect(status).toMatchObject({ number: 43, state: "open" });
   });
 
+  it("reads the origin PR before gh's default parent repository", async () => {
+    const service = createGitHubService({
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => "forkowner/widgets",
+      runner: async (args) => {
+        if (args[0] === "pr" && args.includes("forkowner/widgets")) {
+          return {
+            stdout: currentPullRequestJson({
+              number: 18,
+              url: "https://github.com/forkowner/widgets/pull/18",
+              headRefName: "feature/fork",
+              headRepositoryOwner: { login: "forkowner" },
+            }),
+            stderr: "",
+          };
+        }
+        if (args[0] === "pr") {
+          throw Object.assign(new Error("gh exited 1"), {
+            code: 1,
+            stderr: "no pull requests found",
+          });
+        }
+        if (args[0] === "repo") {
+          return {
+            stdout: JSON.stringify({
+              owner: { login: "forkowner" },
+              name: "widgets",
+              parent: { owner: { login: "upstream" }, name: "widgets" },
+            }),
+            stderr: "",
+          };
+        }
+        if (args[1] === "graphql") {
+          return { stdout: currentPullRequestGithubFactsJson(), stderr: "" };
+        }
+        return { stdout: "[]", stderr: "" };
+      },
+    });
+    expect(
+      await service.getCurrentPullRequestStatus({ cwd: "/repo", headRef: "feature/fork" }),
+    ).toMatchObject({ number: 18, repoOwner: "forkowner" });
+    service.dispose?.();
+  });
+
+  it("finds an owner-scoped parent PR when origin is another fork", async () => {
+    const service = createGitHubService({
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => "alice/widgets",
+      runner: async (args) => {
+        if (args[0] === "repo") {
+          return {
+            stdout: JSON.stringify({
+              owner: { login: "alice" },
+              name: "widgets",
+              parent: { owner: { login: "upstream" }, name: "widgets" },
+            }),
+            stderr: "",
+          };
+        }
+        if (args[0] === "api" && args[1].startsWith("repos/upstream/widgets/pulls?")) {
+          const query = new URLSearchParams(args[1].split("?")[1]);
+          expect(query.get("head")).toBe("bob:main");
+          return { stdout: JSON.stringify([{ number: 99 }]), stderr: "" };
+        }
+        if (args[0] === "pr" && args.includes("upstream/widgets")) {
+          return {
+            stdout: currentPullRequestJson({
+              number: 99,
+              url: "https://github.com/upstream/widgets/pull/99",
+              headRefName: "main",
+              headRepositoryOwner: { login: "bob" },
+            }),
+            stderr: "",
+          };
+        }
+        if (args[1] === "graphql")
+          return { stdout: currentPullRequestGithubFactsJson(), stderr: "" };
+        throw Object.assign(new Error("gh exited 1"), {
+          code: 1,
+          stderr: "no pull requests found",
+        });
+      },
+    });
+    expect(
+      await service.getCurrentPullRequestStatus({
+        cwd: "/repo",
+        headRef: "main",
+        headRepositoryOwner: "bob",
+      }),
+    ).toMatchObject({ number: 99, repoOwner: "upstream" });
+    service.dispose?.();
+  });
+
   it("resolves fork PR heads to the parent repository when gh pr view returns a stale branch match", async () => {
     const runner = createScriptedRunner([
       currentPullRequestJson({
@@ -3996,6 +4146,7 @@ describe("ForgeService", () => {
       ttlMs: 50,
       runner: runner.runner,
       resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoSlug: async () => null,
       now: () => now,
     });
 
@@ -4404,6 +4555,7 @@ describe("ForgeService", () => {
     const service = createGitHubService({
       runner: runner.runner,
       resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoSlug: async () => null,
       now: () => now,
     });
 
@@ -4453,6 +4605,7 @@ describe("ForgeService", () => {
       runner: runner.runner,
       resolveGhPath: async () => "/usr/bin/gh",
       resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => null,
       now: () => 100,
     });
 
