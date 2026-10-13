@@ -121,14 +121,13 @@ function resolveConflictsPrompt(context: {
     "",
     "## Procédure",
     "",
-    "1. Vérifie sur le forge que la PR est toujours ouverte, qu'elle appartient au dépôt du workspace et que sa branche source correspond à la branche courante. Récupère sa branche cible réelle depuis la PR et vérifie qu'elle est bien paseo-local.",
+    "1. Vérifie sur le forge que la PR est toujours ouverte, qu'elle appartient au dépôt du workspace et que sa branche source correspond à la branche courante. Récupère sa branche cible actuelle depuis la PR. Cette cible prévaut sur la base locale du workspace. Si la PR ou sa branche cible ne peut pas être vérifiée, arrête-toi et explique le blocage.",
     "2. Examine l'état Git et les modifications locales. Préserve tout travail préexistant. Arrête-toi et signale tout obstacle qui empêche une intégration sûre.",
     "3. Récupère la branche cible puis fusionne-la localement dans la branche de la PR. Résous les conflits sans abandonner les changements existants.",
     "4. Lance les vérifications pertinentes. Si elles passent, crée un commit de résolution et pousse la branche de la PR vers son remote.",
     "5. Actualise le statut distant et indique si les conflits sont résolus ou ce qui bloque encore.",
     "",
     "Cette action autorise explicitement la fusion locale de la branche cible dans la branche courante de la PR, le commit de résolution et le push de cette branche vers son remote.",
-    "Si la branche cible réelle est main ou diffère de paseo-local, arrête-toi avant toute fusion, commit ou push et demande une confirmation explicite.",
     "Ne fais aucun force-push, rebase, reset, commit sans résolution, ni fusion distante de la PR. Vérifie que le remote et la branche poussés sont ceux de la PR.",
   ].join("\n");
 }
