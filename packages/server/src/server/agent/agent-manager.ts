@@ -2545,11 +2545,16 @@ export class AgentManager {
       return false;
     }
     // The handler runs without a run or a lifecycle change, so the idle check
-    // only sees it through this admission.
+    // only sees it through this admission. The handler task releases it.
     const release = this.admitAgentWork();
-    if (options?.clientMessageId) {
-      this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "accepted");
-      this.emitState(agent);
+    try {
+      if (options?.clientMessageId) {
+        this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "accepted");
+        this.emitState(agent);
+      }
+    } catch (error) {
+      release();
+      throw error;
     }
     const dispatch = (event: AgentStreamEvent): void => {
       // Persist timeline items so they show up in fetchAgentTimeline; broadcast
