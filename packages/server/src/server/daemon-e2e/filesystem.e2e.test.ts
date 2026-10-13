@@ -99,7 +99,8 @@ describe("checkout discard", () => {
           await subscription.release();
         }
       } finally {
-        rmSync(cwd, { recursive: true, force: true });
+        // afterEach shuts down the daemon and its repository observers first.
+        onTestFinished(() => rmSync(cwd, { recursive: true, force: true }));
       }
     },
   );
