@@ -3679,6 +3679,8 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private async loadCodexConfig(): Promise<void> {
     if (!this.client) return;
+    this.supportsIndependentSpeedModes = false;
+    this.codexConfigFeatures = {};
     try {
       const requirements = toObjectRecord(await this.client.request("configRequirements/read", {}));
       this.supportsIndependentSpeedModes = requirements?.supportsIndependentSpeedModes === true;
@@ -3701,6 +3703,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       };
     } catch (error) {
       this.logger.debug({ error }, "Failed to read resolved Codex config");
+      this.codexConfigFeatures = {};
     }
   }
 

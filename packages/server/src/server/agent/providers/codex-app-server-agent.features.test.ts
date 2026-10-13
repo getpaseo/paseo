@@ -770,4 +770,58 @@ describe("Codex app-server provider features", () => {
       await session.close();
     }
   });
+
+  test("clears stale speed restrictions if config read fails on reconnect", async () => {
+    const harness = createSessionHarness(
+      { model: "gpt-6.1-sol" },
+      {
+        models: [
+          {
+            id: "gpt-6.1-sol",
+            serviceTiers: [
+              { id: "priority", name: "Fast", description: "Faster processing" },
+              { id: "ultrafast", name: "Ultrafast", description: "Lowest latency" },
+            ],
+          },
+        ],
+        codexConfig: {
+          features: { fast_mode: false, ultrafast_mode: true },
+        },
+        configRequirements: {
+          supportsIndependentSpeedModes: true,
+        },
+      },
+    );
+    await harness.session.connect();
+    try {
+      expect(harness.session.features.find((f) => f.id === "service_tier")).toMatchObject({
+        options: [
+          { id: "default", label: "Normal", isDefault: true },
+          { id: "ultrafast", label: "Ultrafast" },
+        ],
+      });
+
+      const sessionWithPrivate = harness.session as unknown as {
+        loadCodexConfig: () => Promise<void>;
+        client: { request: (method: string, params: unknown) => Promise<unknown> };
+        reconcileServiceTier: () => void;
+      };
+      sessionWithPrivate.client.request = async (method: string) => {
+        if (method === "config/read") throw new Error("Connection reset");
+        return {};
+      };
+      await sessionWithPrivate.loadCodexConfig();
+      sessionWithPrivate.reconcileServiceTier();
+
+      expect(harness.session.features.find((f) => f.id === "service_tier")).toMatchObject({
+        options: [
+          { id: "default", label: "Normal", isDefault: true },
+          { id: "priority", label: "Fast" },
+          { id: "ultrafast", label: "Ultrafast" },
+        ],
+      });
+    } finally {
+      await harness.session.close();
+    }
+  });
 });
