@@ -605,29 +605,47 @@ test("finalizes local stream close even when sending Close fails", async () => {
   ).toThrow("already used");
 });
 
-test("opens and closes a network tunnel with client-capped limits", async () => {
+test("asks for its own limits and uses the ones the daemon agreed to", async () => {
   const { client, transport, connecting } = createTunnelClient();
   await connecting;
-  const tunnel = await openTunnel(client, transport, {
-    initialWindowBytes: TUNNEL_INITIAL_WINDOW_BYTES * 2,
-    maxDataBytes: TUNNEL_MAX_DATA_BYTES * 2,
-    maxStreams: TUNNEL_MAX_STREAMS * 2,
-    connectTimeoutMs: TUNNEL_CONNECT_TIMEOUT_MS * 2,
+  const opening = client.openNetworkTunnel();
+  const request = parseSentFrame(transport.sent.at(-1));
+  expect(request).toMatchObject({
+    type: "network.tunnel.open.request",
+    limits: {
+      initialWindowBytes: TUNNEL_INITIAL_WINDOW_BYTES,
+      maxDataBytes: TUNNEL_MAX_DATA_BYTES,
+      maxStreams: TUNNEL_MAX_STREAMS,
+      connectTimeoutMs: TUNNEL_CONNECT_TIMEOUT_MS,
+    },
   });
+  const agreed = {
+    initialWindowBytes: TUNNEL_INITIAL_WINDOW_BYTES / 2,
+    maxDataBytes: TUNNEL_MAX_DATA_BYTES / 2,
+    maxStreams: TUNNEL_MAX_STREAMS / 2,
+    connectTimeoutMs: TUNNEL_CONNECT_TIMEOUT_MS / 2,
+  };
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "network.tunnel.open.response",
+      payload: {
+        requestId: request.requestId,
+        ok: true,
+        subscriptionId: TUNNEL_SUBSCRIPTION_ID,
+        ...agreed,
+      },
+    }),
+  );
+  const tunnel = await opening;
   expect(tunnel.subscriptionId).toBe(TUNNEL_SUBSCRIPTION_ID);
-  expect(tunnel.limits).toEqual({
-    initialWindowBytes: TUNNEL_INITIAL_WINDOW_BYTES,
-    maxDataBytes: TUNNEL_MAX_DATA_BYTES,
-    maxStreams: TUNNEL_MAX_STREAMS,
-    connectTimeoutMs: TUNNEL_CONNECT_TIMEOUT_MS,
-  });
+  expect(tunnel.limits).toEqual(agreed);
 
   const closed = vi.fn();
   tunnel.onClosed(closed);
   const closing = tunnel.close();
   expect(closed).toHaveBeenCalledWith("closed");
-  const request = parseSentFrame(transport.sent.at(-1));
-  expect(request).toMatchObject({
+  const closeRequest = parseSentFrame(transport.sent.at(-1));
+  expect(closeRequest).toMatchObject({
     type: "network.tunnel.close.request",
     subscriptionId: TUNNEL_SUBSCRIPTION_ID,
   });
@@ -635,13 +653,56 @@ test("opens and closes a network tunnel with client-capped limits", async () => 
     wrapSessionMessage({
       type: "network.tunnel.close.response",
       payload: {
-        requestId: request.requestId,
+        requestId: closeRequest.requestId,
         ok: true,
         subscriptionId: TUNNEL_SUBSCRIPTION_ID,
       },
     }),
   );
   await closing;
+});
+
+test("refuses limits above the ones it asked for and closes that tunnel at open", async () => {
+  const { client, transport, connecting } = createTunnelClient();
+  await connecting;
+  const opening = client.openNetworkTunnel();
+  const request = parseSentFrame(transport.sent.at(-1));
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "network.tunnel.open.response",
+      payload: {
+        requestId: request.requestId,
+        ok: true,
+        subscriptionId: TUNNEL_SUBSCRIPTION_ID,
+        initialWindowBytes: TUNNEL_INITIAL_WINDOW_BYTES * 2,
+        maxDataBytes: TUNNEL_MAX_DATA_BYTES,
+        maxStreams: TUNNEL_MAX_STREAMS,
+        connectTimeoutMs: TUNNEL_CONNECT_TIMEOUT_MS,
+      },
+    }),
+  );
+  await vi.waitFor(() =>
+    expect(parseSentFrame(transport.sent.at(-1))).toMatchObject({
+      type: "network.tunnel.close.request",
+      subscriptionId: TUNNEL_SUBSCRIPTION_ID,
+    }),
+  );
+  const closeRequest = parseSentFrame(transport.sent.at(-1));
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "network.tunnel.close.response",
+      payload: {
+        requestId: closeRequest.requestId,
+        ok: true,
+        subscriptionId: TUNNEL_SUBSCRIPTION_ID,
+      },
+    }),
+  );
+  await expect(opening).rejects.toMatchObject({
+    name: "NetworkTunnelRpcError",
+    operation: "open",
+    code: "protocol_error",
+  });
 });
 
 test("reports close failures as NetworkTunnelRpcError operations", async () => {

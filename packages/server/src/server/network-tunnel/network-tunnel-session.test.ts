@@ -1,6 +1,6 @@
 import net from "node:net";
 import pino from "pino";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   TunnelCloseReason,
   TunnelOpcode,
@@ -8,6 +8,7 @@ import {
   type TunnelFrame,
   type TunnelTarget,
 } from "@getpaseo/protocol/binary-frames/index";
+import type { NetworkTunnelLimits } from "@getpaseo/protocol/network-tunnel/rpc-schemas";
 import type { SessionOutboundMessage } from "../messages.js";
 import { SessionDelivery } from "../session/owned-subscriptions/index.js";
 import {
@@ -32,7 +33,7 @@ interface Harness {
   messages: SessionOutboundMessage[];
   frames: TunnelFrame[];
   nextFrame(predicate: (frame: TunnelFrame) => boolean): Promise<TunnelFrame>;
-  open(socket?: object): Promise<string>;
+  open(socket?: object, clientLimits?: NetworkTunnelLimits): Promise<string>;
   closeTunnel(subscriptionId: string, socket?: object): Promise<SessionOutboundMessage>;
   attach(): object;
   setAllowed(allowed: boolean): void;
@@ -44,6 +45,7 @@ interface HarnessOptions {
   maxSubscriptions?: number;
   lookup?: TunnelLookup;
   modern?: boolean;
+  drainTimeoutMs?: number;
 }
 
 interface TestServer {
@@ -101,6 +103,7 @@ function createHarness(options: HarnessOptions = {}): Harness {
     limits: { ...LIMITS, ...options.limits },
     maxSubscriptions: options.maxSubscriptions,
     lookup: options.lookup,
+    drainTimeoutMs: options.drainTimeoutMs,
   });
   let requestCounter = 0;
   const harness: Harness = {
@@ -114,10 +117,11 @@ function createHarness(options: HarnessOptions = {}): Harness {
       if (existing) return Promise.resolve(existing);
       return new Promise((resolve) => waiters.push({ predicate, resolve }));
     },
-    open: async (requestSocket = socket) => {
+    open: async (requestSocket = socket, clientLimits) => {
       const request = {
         type: "network.tunnel.open.request" as const,
         requestId: `open-${++requestCounter}`,
+        ...(clientLimits ? { limits: clientLimits } : {}),
       };
       await delivery.request(requestSocket, request, async () =>
         controller.handleOpenRequest(request),
@@ -569,6 +573,127 @@ describe("NetworkTunnelSession", () => {
     expect(harness.controller.streamCount(id)).toBe(1);
     expect(harness.controller.subscriptionCount).toBe(1);
     expect(harness.messages.filter((m) => m.type === "network.tunnel.closed")).toEqual([]);
+  });
+
+  it("counts sockets still draining a graceful close against the stream limit", async () => {
+    // allowHalfOpen keeps the destination reading after our FIN, so the socket stays in `closing`.
+    const server = await listen(() => {}, { allowHalfOpen: true });
+    const harness = createHarness({ limits: { maxStreams: 1 } });
+    const id = await harness.open();
+    await harness.controller.handleFrame(
+      openFrame(id, "first", domain("127.0.0.1", server.port)),
+      harness.socket,
+    );
+    await harness.nextFrame(isConnected("first"));
+    await harness.controller.handleFrame(
+      {
+        opcode: TunnelOpcode.Close,
+        subscriptionId: id,
+        streamId: "first",
+        reason: TunnelCloseReason.Ok,
+      },
+      harness.socket,
+    );
+    expect(harness.controller.streamCount(id)).toBe(0);
+    expect(harness.controller.closingSocketCount(id)).toBe(1);
+
+    await harness.controller.handleFrame(
+      openFrame(id, "second", domain("127.0.0.1", server.port)),
+      harness.socket,
+    );
+    await harness.nextFrame(isClose("second", TunnelCloseReason.StreamLimit));
+
+    // Once the destination finishes, the drained socket frees its slot.
+    server.sockets[0].end();
+    await server.closed[0];
+    await vi.waitFor(() => expect(harness.controller.closingSocketCount(id)).toBe(0));
+    await harness.controller.handleFrame(
+      openFrame(id, "third", domain("127.0.0.1", server.port)),
+      harness.socket,
+    );
+    await harness.nextFrame(isConnected("third"));
+  });
+
+  it("destroys a draining socket at a fixed deadline while the destination keeps sending", async () => {
+    const server = await listen(() => {}, { allowHalfOpen: true });
+    const harness = createHarness({ drainTimeoutMs: 200 });
+    const id = await harness.open();
+    await harness.controller.handleFrame(
+      openFrame(id, "s", domain("127.0.0.1", server.port)),
+      harness.socket,
+    );
+    await harness.nextFrame(isConnected("s"));
+    await harness.controller.handleFrame(
+      {
+        opcode: TunnelOpcode.Close,
+        subscriptionId: id,
+        streamId: "s",
+        reason: TunnelCloseReason.Ok,
+      },
+      harness.socket,
+    );
+    expect(harness.controller.closingSocketCount(id)).toBe(1);
+
+    // Traffic every 50 ms would keep restarting an idle timeout; the deadline does not move.
+    const started = Date.now();
+    await probeUntilClosed(server.sockets[0], server.closed[0]);
+    expect(Date.now() - started).toBeLessThan(1000);
+    await vi.waitFor(() => expect(harness.controller.closingSocketCount(id)).toBe(0));
+  });
+
+  it("dials localhost names on the host's loopback without asking the resolver", async () => {
+    const server = await listen((socket) => socket.pipe(socket));
+    const lookup = vi.fn<TunnelLookup>(async () => {
+      throw new Error("localhost names must not reach the resolver");
+    });
+    const harness = createHarness({ lookup, limits: { maxStreams: 3 } });
+    const id = await harness.open();
+    for (const [streamId, name] of [
+      ["plain", "localhost"],
+      ["subdomain", "app.localhost"],
+      ["nested", "Tenant.App.LOCALHOST."],
+    ] as const) {
+      await harness.controller.handleFrame(
+        openFrame(id, streamId, domain(name, server.port)),
+        harness.socket,
+      );
+      await harness.nextFrame(isConnected(streamId));
+    }
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it("answers the open request with the per-field minimum of both sides' limits", async () => {
+    const server = await listen((socket) => socket.write(Buffer.alloc(600, 1)));
+    const harness = createHarness();
+    const clientLimits = {
+      initialWindowBytes: 300,
+      maxDataBytes: 100,
+      maxStreams: 8,
+      connectTimeoutMs: 500,
+    };
+    const id = await harness.open(harness.socket, clientLimits);
+    const response = harness.messages.find((m) => m.type === "network.tunnel.open.response");
+    expect(response?.payload).toMatchObject({
+      ok: true,
+      initialWindowBytes: 300,
+      maxDataBytes: 100,
+      maxStreams: LIMITS.maxStreams,
+      connectTimeoutMs: 500,
+    });
+
+    // The daemon sends within what the client accepts, not within its own larger window.
+    await harness.controller.handleFrame(
+      openFrame(id, "s", domain("127.0.0.1", server.port)),
+      harness.socket,
+    );
+    await harness.nextFrame(isConnected("s"));
+    await vi.waitFor(() => expect(dataBytes(harness.frames, "s")).toBe(300));
+    await settle(50);
+    expect(dataBytes(harness.frames, "s")).toBe(300);
+    const sizes = harness.frames
+      .filter((frame) => frame.opcode === TunnelOpcode.Data)
+      .map((frame) => (frame.opcode === TunnelOpcode.Data ? frame.payload.length : 0));
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(100);
   });
 
   it("destroys half-open sockets still draining a graceful close when the tunnel is released", async () => {

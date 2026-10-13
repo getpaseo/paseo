@@ -1,6 +1,7 @@
 import { TunnelCloseReason } from "@getpaseo/protocol/binary-frames/index";
 import { describe, expect, it } from "vitest";
 import {
+  loopbackForLocalhostName,
   TunnelTargetError,
   approveAddresses,
   describeTunnelTarget,
@@ -95,4 +96,23 @@ describe("tunnel target policy", () => {
       new TunnelTargetError(TunnelCloseReason.HostNotFound, "Host has no addresses"),
     );
   });
+});
+
+describe("loopbackForLocalhostName", () => {
+  it.each(["localhost", "LOCALHOST", "app.localhost", "tenant.app.localhost", "app.localhost."])(
+    "maps %s to the loopback addresses",
+    (name) => {
+      expect(loopbackForLocalhostName(name)).toEqual([
+        { address: "127.0.0.1", family: 4 },
+        { address: "::1", family: 6 },
+      ]);
+    },
+  );
+
+  it.each(["localhost.example.com", "notlocalhost", "localhostx", "example.com", "app-localhost"])(
+    "leaves %s to the resolver",
+    (name) => {
+      expect(loopbackForLocalhostName(name)).toBeNull();
+    },
+  );
 });

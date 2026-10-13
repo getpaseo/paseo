@@ -126,6 +126,28 @@ describe("network tunnel RPCs", () => {
     expect(SessionOutboundMessageSchema.parse(response)).toEqual(response);
   });
 
+  it("carries the client's limits in the open request, and keeps them optional", () => {
+    const withLimits = {
+      type: "network.tunnel.open.request",
+      requestId: "open",
+      limits: {
+        initialWindowBytes: 262144,
+        maxDataBytes: 65536,
+        maxStreams: 64,
+        connectTimeoutMs: 10000,
+      },
+    };
+    expect(SessionInboundMessageSchema.parse(withLimits)).toEqual(withLimits);
+    const withoutLimits = { type: "network.tunnel.open.request", requestId: "open" };
+    expect(SessionInboundMessageSchema.parse(withoutLimits)).toEqual(withoutLimits);
+    expect(() =>
+      SessionInboundMessageSchema.parse({
+        ...withLimits,
+        limits: { ...withLimits.limits, maxDataBytes: 0 },
+      }),
+    ).toThrow();
+  });
+
   it("registers tunnel support in the daemon capability allowlist", () => {
     expect(Object.values(CLIENT_CAPS)).toContain("network_tunnel");
     expect(NETWORK_TUNNEL_CAPABILITY).toBe(CLIENT_CAPS.networkTunnel);

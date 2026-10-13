@@ -5,6 +5,7 @@ import {
   TUNNEL_INITIAL_WINDOW_BYTES,
   TUNNEL_MAX_DATA_BYTES,
   TUNNEL_MAX_STREAMS,
+  type NetworkTunnelLimits,
 } from "@getpaseo/protocol/network-tunnel/rpc-schemas";
 import type { ProxyTarget, TunnelStreamHandle, TunnelStreamSink } from "./local-proxy.js";
 import { TunnelStreamError } from "./local-proxy.js";
@@ -33,14 +34,7 @@ export type TunnelInvokeResult<T extends object = Record<never, never>> =
   | ({ ok: true } & T)
   | { ok: false; error: { code: TunnelInvokeErrorCode; message: string } };
 
-export interface TunnelProviderLimits {
-  initialWindowBytes: number;
-  maxDataBytes: number;
-  maxStreams: number;
-  connectTimeoutMs: number;
-}
-
-export interface TunnelProviderRegistration extends TunnelProviderLimits {
+export interface TunnelProviderRegistration extends NetworkTunnelLimits {
   serverId: string;
   subscriptionId: string;
 }
@@ -100,7 +94,7 @@ interface ProviderState {
   readonly providerId: string;
   readonly subscriptionId: string;
   readonly senderId: number;
-  readonly limits: TunnelProviderLimits;
+  readonly limits: NetworkTunnelLimits;
   readonly streams: Map<string, StreamState>;
 }
 

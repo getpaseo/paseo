@@ -12,16 +12,29 @@ import {
   TUNNEL_MAX_DATA_BYTES,
   TUNNEL_MAX_STREAMS,
   type NetworkTunnelClosedReason as DaemonNetworkTunnelClosedReason,
-  type NetworkTunnelLimits as AnnouncedNetworkTunnelLimits,
+  type NetworkTunnelLimits,
 } from "@getpaseo/protocol/network-tunnel/rpc-schemas";
+
+export type { NetworkTunnelLimits };
 
 const RECENT_TUNNEL_ID_LIMIT = 2048;
 
-export interface NetworkTunnelLimits {
-  initialWindowBytes: number;
-  maxDataBytes: number;
-  maxStreams: number;
-  connectTimeoutMs: number;
+/** The most this client accepts. It goes with the open request; the daemon answers at or below it. */
+export const CLIENT_NETWORK_TUNNEL_LIMITS: NetworkTunnelLimits = {
+  initialWindowBytes: TUNNEL_INITIAL_WINDOW_BYTES,
+  maxDataBytes: TUNNEL_MAX_DATA_BYTES,
+  maxStreams: TUNNEL_MAX_STREAMS,
+  connectTimeoutMs: TUNNEL_CONNECT_TIMEOUT_MS,
+};
+
+/** An answer above what this client asked for would overrun its buffers mid-stream. */
+export function withinClientNetworkTunnelLimits(limits: NetworkTunnelLimits): boolean {
+  return (
+    limits.initialWindowBytes <= CLIENT_NETWORK_TUNNEL_LIMITS.initialWindowBytes &&
+    limits.maxDataBytes <= CLIENT_NETWORK_TUNNEL_LIMITS.maxDataBytes &&
+    limits.maxStreams <= CLIENT_NETWORK_TUNNEL_LIMITS.maxStreams &&
+    limits.connectTimeoutMs <= CLIENT_NETWORK_TUNNEL_LIMITS.connectTimeoutMs
+  );
 }
 
 export type NetworkTunnelClosedReason = "closed" | "disconnected" | "protocol_error";
@@ -116,15 +129,6 @@ class RecentIds {
   clear(): void {
     this.ids.clear();
   }
-}
-
-function applyClientLimits(announced: AnnouncedNetworkTunnelLimits): NetworkTunnelLimits {
-  return {
-    initialWindowBytes: Math.min(announced.initialWindowBytes, TUNNEL_INITIAL_WINDOW_BYTES),
-    maxDataBytes: Math.min(announced.maxDataBytes, TUNNEL_MAX_DATA_BYTES),
-    maxStreams: Math.min(announced.maxStreams, TUNNEL_MAX_STREAMS),
-    connectTimeoutMs: Math.min(announced.connectTimeoutMs, TUNNEL_CONNECT_TIMEOUT_MS),
-  };
 }
 
 function parseIpv4(host: string): Uint8Array | null {
@@ -380,11 +384,11 @@ class NetworkTunnelImpl implements NetworkTunnel {
 
   constructor(
     readonly subscriptionId: string,
-    announcedLimits: AnnouncedNetworkTunnelLimits,
+    limits: NetworkTunnelLimits,
     private readonly connection: NetworkTunnelConnection,
     private readonly finished: (subscriptionId: string) => void,
   ) {
-    this.limits = applyClientLimits(announcedLimits);
+    this.limits = limits;
   }
 
   openStream(
@@ -535,7 +539,7 @@ export class NetworkTunnelRegistry {
 
   constructor(private readonly connection: NetworkTunnelConnection) {}
 
-  open(subscriptionId: string, limits: AnnouncedNetworkTunnelLimits): NetworkTunnel {
+  open(subscriptionId: string, limits: NetworkTunnelLimits): NetworkTunnel {
     const tunnel = new NetworkTunnelImpl(subscriptionId, limits, this.connection, (closedId) => {
       this.tunnels.delete(closedId);
       this.closedSubscriptionIds.add(closedId);

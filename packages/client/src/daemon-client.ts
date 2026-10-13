@@ -182,8 +182,10 @@ import {
   PluginFrameOpcode,
 } from "@getpaseo/protocol/binary-frames/index";
 import {
+  CLIENT_NETWORK_TUNNEL_LIMITS,
   NetworkTunnelRpcError,
   NetworkTunnelRegistry,
+  withinClientNetworkTunnelLimits,
   type NetworkTunnel,
 } from "./network-tunnel.js";
 import {
@@ -7273,7 +7275,7 @@ export class DaemonClient {
     let payload: CorrelatedResponsePayload<"network.tunnel.open.response">;
     try {
       payload = await this.sendCorrelatedSessionRequest({
-        message: { type: "network.tunnel.open.request" },
+        message: { type: "network.tunnel.open.request", limits: CLIENT_NETWORK_TUNNEL_LIMITS },
         responseType: "network.tunnel.open.response",
       });
     } catch (error) {
@@ -7285,12 +7287,22 @@ export class DaemonClient {
     if (!payload.ok) {
       throw new NetworkTunnelRpcError("open", payload.error.code, payload.error.message);
     }
-    return this.networkTunnels.open(payload.subscriptionId, {
+    const limits = {
       initialWindowBytes: payload.initialWindowBytes,
       maxDataBytes: payload.maxDataBytes,
       maxStreams: payload.maxStreams,
       connectTimeoutMs: payload.connectTimeoutMs,
-    });
+    };
+    if (!withinClientNetworkTunnelLimits(limits)) {
+      // Refuse at open rather than tear the tunnel down in the middle of a download.
+      await this.closeNetworkTunnelSubscription(payload.subscriptionId);
+      throw new NetworkTunnelRpcError(
+        "open",
+        "protocol_error",
+        "The host answered with tunnel limits above the ones this client asked for.",
+      );
+    }
+    return this.networkTunnels.open(payload.subscriptionId, limits);
   }
 
   async waitForTerminalStreamEvent(

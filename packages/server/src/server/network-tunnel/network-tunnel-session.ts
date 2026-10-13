@@ -24,6 +24,7 @@ import {
   approveAddresses,
   closeReasonForError,
   describeTunnelTarget,
+  loopbackForLocalhostName,
   normalizeAddress,
   type ResolvedTunnelAddress,
 } from "./target-policy.js";
@@ -59,6 +60,8 @@ export interface NetworkTunnelSessionOptions {
   limits?: Partial<NetworkTunnelLimits>;
   maxSubscriptions?: number;
   lookup?: TunnelLookup;
+  /** How long a socket may drain after a client-initiated graceful close. */
+  drainTimeoutMs?: number;
 }
 
 /** Thrown for frames whose owner cannot be established; the socket's existing error path reports it. */
@@ -71,6 +74,8 @@ export class TunnelProtocolError extends Error {
 
 interface TunnelSubscription {
   owner: OwnedSubscription;
+  /** Agreed at open: the per-field minimum of the daemon's limits and the client's. */
+  limits: NetworkTunnelLimits;
   streams: Map<string, TunnelStream>;
   /** Sockets draining a client-initiated graceful close; released with the subscription. */
   closing: Set<net.Socket>;
@@ -98,6 +103,20 @@ interface TunnelStream {
   remoteEnded: boolean;
 }
 
+/** Per-field minimum: neither side sends more than the other accepts. */
+function agreeOnLimits(
+  own: NetworkTunnelLimits,
+  requested: NetworkTunnelLimits | undefined,
+): NetworkTunnelLimits {
+  if (!requested) return own;
+  return {
+    initialWindowBytes: Math.min(own.initialWindowBytes, requested.initialWindowBytes),
+    maxDataBytes: Math.min(own.maxDataBytes, requested.maxDataBytes),
+    maxStreams: Math.min(own.maxStreams, requested.maxStreams),
+    connectTimeoutMs: Math.min(own.connectTimeoutMs, requested.connectTimeoutMs),
+  };
+}
+
 async function defaultLookup(hostname: string): Promise<ResolvedTunnelAddress[]> {
   const results = await dnsLookup(hostname, { all: true });
   return results.map((entry) => normalizeAddress(entry.address));
@@ -116,6 +135,7 @@ export class NetworkTunnelSession {
   private readonly limits: NetworkTunnelLimits;
   private readonly maxSubscriptions: number;
   private readonly lookup: TunnelLookup;
+  private readonly drainTimeoutMs: number;
   private readonly subscriptions = new Map<string, TunnelSubscription>();
   private readonly recentlyClosed = new WeakMap<object, string[]>();
 
@@ -130,6 +150,7 @@ export class NetworkTunnelSession {
     };
     this.maxSubscriptions = options.maxSubscriptions ?? MAX_TUNNEL_SUBSCRIPTIONS_PER_SESSION;
     this.lookup = options.lookup ?? defaultLookup;
+    this.drainTimeoutMs = options.drainTimeoutMs ?? GRACEFUL_CLOSE_TIMEOUT_MS;
   }
 
   get subscriptionCount(): number {
@@ -163,16 +184,18 @@ export class NetworkTunnelSession {
       this.failOpen(requestId, "resource_limit", "Too many network tunnels for this session");
       return;
     }
+    const limits = agreeOnLimits(this.limits, request.limits);
     const owner = this.host.begin((id) => this.stop(id));
     this.subscriptions.set(owner.id, {
       owner,
+      limits,
       streams: new Map(),
       closing: new Set(),
       released: false,
     });
     this.host.emit({
       type: "network.tunnel.open.response",
-      payload: { requestId, ok: true, subscriptionId: owner.responseId, ...this.limits },
+      payload: { requestId, ok: true, subscriptionId: owner.responseId, ...limits },
     });
   }
 
@@ -280,7 +303,8 @@ export class NetworkTunnelSession {
       void this.violate(subscription, streamId, "duplicate stream open");
       return;
     }
-    if (subscription.streams.size >= this.limits.maxStreams) {
+    // Sockets still draining a graceful close hold daemon resources too.
+    if (subscription.streams.size + subscription.closing.size >= subscription.limits.maxStreams) {
       this.sendClose(subscription, streamId, TunnelCloseReason.StreamLimit);
       return;
     }
@@ -304,14 +328,15 @@ export class NetworkTunnelSession {
   }
 
   private async connectStream(stream: TunnelStream, target: TunnelTarget): Promise<void> {
-    const deadline = Date.now() + this.limits.connectTimeoutMs;
+    const deadline = Date.now() + stream.subscription.limits.connectTimeoutMs;
     const described = describeTunnelTarget(target);
     const hostLabel = described.kind === "literal" ? described.address.address : described.hostname;
     try {
       const candidates =
         described.kind === "literal"
           ? [described.address]
-          : await withDeadline(this.lookup(described.hostname), deadline, stream.cancel.signal);
+          : (loopbackForLocalhostName(described.hostname) ??
+            (await withDeadline(this.lookup(described.hostname), deadline, stream.cancel.signal)));
       const approved = approveAddresses(candidates);
       if (stream.state !== "connecting") return;
       const socket = await dialAny(approved, target.port, deadline, stream.cancel.signal);
@@ -338,8 +363,8 @@ export class NetworkTunnelSession {
   private attachSocket(stream: TunnelStream, socket: net.Socket): void {
     stream.socket = socket;
     stream.state = "connected";
-    stream.inboundCredit = this.limits.initialWindowBytes;
-    stream.outboundCredit = this.limits.initialWindowBytes;
+    stream.inboundCredit = stream.subscription.limits.initialWindowBytes;
+    stream.outboundCredit = stream.subscription.limits.initialWindowBytes;
     socket.setTimeout(0);
     socket.setNoDelay(true);
     socket.on("data", (chunk: Buffer) => {
@@ -367,7 +392,11 @@ export class NetworkTunnelSession {
     if (!socket) return;
     while (stream.pendingOutBytes > 0 && stream.outboundCredit > 0) {
       const head = stream.pendingOut[0];
-      const size = Math.min(head.length, this.limits.maxDataBytes, stream.outboundCredit);
+      const size = Math.min(
+        head.length,
+        stream.subscription.limits.maxDataBytes,
+        stream.outboundCredit,
+      );
       if (size === head.length) stream.pendingOut.shift();
       else stream.pendingOut[0] = head.subarray(size);
       stream.pendingOutBytes -= size;
@@ -414,7 +443,10 @@ export class NetworkTunnelSession {
       await this.violate(subscription, streamId, "Data before Connected");
       return;
     }
-    if (payload.length > this.limits.maxDataBytes || payload.length > stream.inboundCredit) {
+    if (
+      payload.length > subscription.limits.maxDataBytes ||
+      payload.length > stream.inboundCredit
+    ) {
       await this.violate(subscription, streamId, "Data exceeds credit");
       return;
     }
@@ -456,7 +488,7 @@ export class NetworkTunnelSession {
       await this.violate(subscription, streamId, "WindowUpdate before Connected");
       return;
     }
-    const inFlight = this.limits.initialWindowBytes - stream.outboundCredit;
+    const inFlight = subscription.limits.initialWindowBytes - stream.outboundCredit;
     if (credit > inFlight) {
       await this.violate(subscription, streamId, "WindowUpdate exceeds delivered bytes");
       return;
@@ -477,8 +509,14 @@ export class NetworkTunnelSession {
       subscription.streams.delete(streamId);
       detachSocket(socket);
       subscription.closing.add(socket);
-      socket.once("close", () => subscription.closing.delete(socket));
-      socket.setTimeout(GRACEFUL_CLOSE_TIMEOUT_MS, () => socket.destroy());
+      // A fixed deadline: an idle timeout restarts on every byte, so a destination that keeps
+      // sending would hold the socket, and its slot, forever.
+      const drainDeadline = setTimeout(() => socket.destroy(), this.drainTimeoutMs);
+      drainDeadline.unref?.();
+      socket.once("close", () => {
+        clearTimeout(drainDeadline);
+        subscription.closing.delete(socket);
+      });
       socket.end();
       return;
     }

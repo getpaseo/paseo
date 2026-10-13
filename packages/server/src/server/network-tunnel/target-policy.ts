@@ -82,6 +82,23 @@ export function isDeniedAddress(resolved: ResolvedTunnelAddress): boolean {
 }
 
 /** Throws PolicyDenied when any candidate is denied: a name that mixes approved and denied answers is not trusted. */
+const LOOPBACK_ADDRESSES: readonly ResolvedTunnelAddress[] = [
+  { address: "127.0.0.1", family: 4 },
+  { address: "::1", family: 6 },
+];
+
+/**
+ * `localhost` and every `*.localhost` name are the host's loopback (RFC 6761), the way Chromium
+ * treats them in an ordinary tab. The host's resolver is not asked: macOS and Windows do not
+ * answer subdomains, so `app.localhost` would otherwise fail on those hosts.
+ */
+export function loopbackForLocalhostName(
+  hostname: string,
+): readonly ResolvedTunnelAddress[] | null {
+  const name = hostname.toLowerCase().replace(/\.$/, "");
+  return name === "localhost" || name.endsWith(".localhost") ? LOOPBACK_ADDRESSES : null;
+}
+
 export function approveAddresses(
   candidates: readonly ResolvedTunnelAddress[],
 ): readonly ResolvedTunnelAddress[] {

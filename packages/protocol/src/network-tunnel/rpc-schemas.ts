@@ -37,6 +37,11 @@ const FailurePayloadSchema = z.object({
 export const NetworkTunnelOpenRequestSchema = z.object({
   type: z.literal("network.tunnel.open.request"),
   requestId: RequestIdSchema,
+  /**
+   * The most the client accepts. The daemon answers with the per-field minimum of these and its
+   * own limits, and both sides use that answer, so either side can raise its ceiling later.
+   */
+  limits: NetworkTunnelLimitsSchema.optional(),
 });
 
 export const NetworkTunnelOpenResponseSchema = z.object({
