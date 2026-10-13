@@ -18,6 +18,7 @@ import {
   type NetworkTunnelSessionOptions,
   type TunnelLookup,
 } from "./network-tunnel-session.js";
+import { TunnelTargetError } from "./target-policy.js";
 
 const LIMITS = {
   initialWindowBytes: 1024,
@@ -44,6 +45,7 @@ interface HarnessOptions {
   limits?: Partial<NetworkTunnelSessionOptions["limits"]>;
   maxSubscriptions?: number;
   lookup?: TunnelLookup;
+  dial?: NetworkTunnelSessionOptions["dial"];
   modern?: boolean;
   drainTimeoutMs?: number;
 }
@@ -57,9 +59,12 @@ interface TestServer {
 
 const servers: TestServer[] = [];
 const harnesses: Harness[] = [];
+const finishLookups: Array<() => void> = [];
 
 afterEach(async () => {
   for (const harness of harnesses.splice(0)) await harness.delivery.close();
+  for (const finish of finishLookups.splice(0)) finish();
+  await Promise.resolve();
   for (const server of servers.splice(0)) await server.close();
 });
 
@@ -103,6 +108,7 @@ function createHarness(options: HarnessOptions = {}): Harness {
     limits: { ...LIMITS, ...options.limits },
     maxSubscriptions: options.maxSubscriptions,
     lookup: options.lookup,
+    dial: options.dial,
     drainTimeoutMs: options.drainTimeoutMs,
   });
   let requestCounter = 0;
@@ -271,9 +277,211 @@ async function probeUntilClosed(socket: net.Socket, closed: Promise<void>): Prom
   }
 }
 
-const neverResolves: TunnelLookup = () => new Promise(() => {});
+const neverResolves: TunnelLookup = () =>
+  new Promise((resolve) => finishLookups.push(() => resolve([])));
 
 describe("NetworkTunnelSession", () => {
+  it("keeps cancelled and expired DNS work in the daemon-wide limit until it finishes", async () => {
+    const started: string[] = [];
+    const finishes: Array<() => void> = [];
+    const lookup: TunnelLookup = (hostname) => {
+      started.push(hostname);
+      return new Promise((resolve) => {
+        const finish = () => resolve([]);
+        finishes.push(finish);
+        finishLookups.push(finish);
+      });
+    };
+    const cancelled = createHarness({ lookup });
+    const expired = createHarness({ lookup, limits: { connectTimeoutMs: 40 } });
+    const waiting = createHarness({ lookup });
+    const a = await cancelled.open();
+    const b = await expired.open();
+    const c = await waiting.open();
+    await cancelled.controller.handleFrame(
+      openFrame(a, "a", domain("cancelled.test", 80)),
+      cancelled.socket,
+    );
+    await expired.controller.handleFrame(
+      openFrame(b, "b", domain("expired.test", 80)),
+      expired.socket,
+    );
+    await vi.waitFor(() => expect(started).toHaveLength(2));
+    await cancelled.closeTunnel(a);
+    await expired.nextFrame(isClose("b", TunnelCloseReason.Timeout));
+    await waiting.controller.handleFrame(
+      openFrame(c, "c", domain("waiting.test", 80)),
+      waiting.socket,
+    );
+    await settle(10);
+    expect(started).toEqual(["cancelled.test", "expired.test"]);
+    finishes[0]();
+    await vi.waitFor(() =>
+      expect(started).toEqual(["cancelled.test", "expired.test", "waiting.test"]),
+    );
+  });
+
+  it("times out waiting for a DNS slot without starting the lookup later", async () => {
+    const busy = createHarness({ lookup: neverResolves });
+    const id = await busy.open();
+    for (const stream of ["a", "b"]) {
+      await busy.controller.handleFrame(
+        openFrame(id, stream, domain("busy.test", 80)),
+        busy.socket,
+      );
+    }
+    await settle(0);
+    const started: string[] = [];
+    const waiting = createHarness({
+      lookup: async (hostname) => {
+        started.push(hostname);
+        return [];
+      },
+      limits: { connectTimeoutMs: 40 },
+    });
+    const other = await waiting.open();
+    await waiting.controller.handleFrame(
+      openFrame(other, "wait", domain("waiting.test", 80)),
+      waiting.socket,
+    );
+    await waiting.nextFrame(isClose("wait", TunnelCloseReason.Timeout));
+    expect(started).toEqual([]);
+    for (const finish of finishLookups.splice(0)) finish();
+    await settle(0);
+    expect(started).toEqual([]);
+  });
+
+  it("removes cancelled DNS waiters and releases slots after resolver errors", async () => {
+    const busy = createHarness({ lookup: neverResolves });
+    const id = await busy.open();
+    for (const stream of ["a", "b"]) {
+      await busy.controller.handleFrame(
+        openFrame(id, stream, domain("busy.test", 80)),
+        busy.socket,
+      );
+    }
+    await settle(0);
+    const started: string[] = [];
+    const waiting = createHarness({
+      lookup: async (hostname) => {
+        started.push(hostname);
+        throw Object.assign(new Error("missing"), { code: "ENOTFOUND" });
+      },
+    });
+    const other = await waiting.open();
+    await waiting.controller.handleFrame(
+      openFrame(other, "cancel", domain("cancel.test", 80)),
+      waiting.socket,
+    );
+    await waiting.controller.handleFrame(
+      {
+        opcode: TunnelOpcode.Close,
+        subscriptionId: other,
+        streamId: "cancel",
+        reason: TunnelCloseReason.Ok,
+      },
+      waiting.socket,
+    );
+    for (const finish of finishLookups.splice(0)) finish();
+    await settle(0);
+    for (const stream of ["first", "second", "third"]) {
+      await waiting.controller.handleFrame(
+        openFrame(other, stream, domain(`${stream}.test`, 80)),
+        waiting.socket,
+      );
+      await waiting.nextFrame(isClose(stream, TunnelCloseReason.HostNotFound));
+    }
+    expect(started).toEqual(["first.test", "second.test", "third.test"]);
+  });
+
+  it("reserves time for a reachable address after the first connection times out", async () => {
+    const server = await echoServer();
+    const budgets: number[] = [];
+    const harness = createHarness({
+      limits: { connectTimeoutMs: 240 },
+      lookup: async () => [
+        { address: "127.0.0.2", family: 4 },
+        { address: "127.0.0.1", family: 4 },
+      ],
+      dial: async (address, port, deadline) => {
+        budgets.push(deadline - Date.now());
+        if (address.address === "127.0.0.2") {
+          await settle(Math.max(0, deadline - Date.now()));
+          throw new TunnelTargetError(TunnelCloseReason.Timeout, "Connect timed out");
+        }
+        return new Promise((resolve, reject) => {
+          const socket = net.connect({ host: address.address, port, family: address.family });
+          socket.once("connect", () => resolve(socket));
+          socket.once("error", reject);
+        });
+      },
+    });
+    const id = await harness.open();
+    await harness.controller.handleFrame(
+      openFrame(id, "fallback", domain("fallback.test", server.port)),
+      harness.socket,
+    );
+    const result = await harness.nextFrame((frame) => frame.streamId === "fallback");
+    expect(result.opcode).toBe(TunnelOpcode.Connected);
+    expect(budgets).toHaveLength(2);
+    expect(budgets[0]).toBeLessThanOrEqual(120);
+    expect(budgets[1]).toBeGreaterThan(0);
+    expect(server.sockets).toHaveLength(1);
+  });
+
+  it("does not dial another address after the total deadline expires", async () => {
+    const attempts: string[] = [];
+    const harness = createHarness({
+      limits: { connectTimeoutMs: 40 },
+      lookup: async () => [
+        { address: "127.0.0.2", family: 4 },
+        { address: "127.0.0.1", family: 4 },
+      ],
+      dial: async (address) => {
+        attempts.push(address.address);
+        await settle(60);
+        throw new TunnelTargetError(TunnelCloseReason.Timeout, "Connect timed out");
+      },
+    });
+    const id = await harness.open();
+    await harness.controller.handleFrame(
+      openFrame(id, "expired", domain("expired.test", 80)),
+      harness.socket,
+    );
+    await harness.nextFrame(isClose("expired", TunnelCloseReason.Timeout));
+    expect(attempts).toEqual(["127.0.0.2"]);
+  });
+
+  it("does not dial another address after the stream is cancelled", async () => {
+    const attempts: string[] = [];
+    const harness = createHarness({
+      lookup: async () => [
+        { address: "127.0.0.2", family: 4 },
+        { address: "127.0.0.1", family: 4 },
+      ],
+      dial: async (address, _port, _deadline, signal) => {
+        attempts.push(address.address);
+        return new Promise((_resolve, reject) =>
+          signal.addEventListener(
+            "abort",
+            () => reject(new TunnelTargetError(TunnelCloseReason.Ok, "Stream cancelled")),
+            { once: true },
+          ),
+        );
+      },
+    });
+    const id = await harness.open();
+    await harness.controller.handleFrame(
+      openFrame(id, "cancel", domain("cancel.test", 80)),
+      harness.socket,
+    );
+    await vi.waitFor(() => expect(attempts).toHaveLength(1));
+    await harness.closeTunnel(id);
+    await settle(0);
+    expect(attempts).toEqual(["127.0.0.2"]);
+    expect(harness.frames).toEqual([]);
+  });
+
   it("echoes bytes through a TCP socket dialed from the host and tears the stream down on client Close", async () => {
     const server = await echoServer();
     const harness = createHarness();

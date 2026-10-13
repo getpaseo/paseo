@@ -1,4 +1,5 @@
 import { useNetworkRoutingStatus } from "./network-routing/status";
+import { resolveBrowserPartition, type RoutingDesktop } from "./network-routing/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyInactiveBrowserWebviewViewport,
@@ -758,26 +759,19 @@ describe("host browser partitions", () => {
 });
 
 it("recreates a resident tab from the desktop routing event and restores its URL", async () => {
-  const originalBridge = window.paseoDesktop;
   const listeners = new Map<string, (payload: unknown) => void>();
   let enabled = false;
-  window.paseoDesktop = {
-    browser: {
-      profilePartition: profileHost.profilePartition,
-      registerAttachedBrowser: profileHost.registerAttachedBrowser,
-    },
+  const desktop: RoutingDesktop = {
     invoke: async (command) => {
       expect(command).toBe("browser_routing_resolve_partition");
       if (enabled) return { ok: true, partition: "persist:paseo-browser-via-remote" };
       return { ok: false, error: { code: "routing_disabled", message: "disabled" } };
     },
-    events: {
-      on: (event, callback) => {
-        listeners.set(event, callback);
-        return () => {
-          listeners.delete(event);
-        };
-      },
+    listen: async (event, callback) => {
+      listeners.set(event, callback);
+      return () => {
+        listeners.delete(event);
+      };
     },
   };
   try {
@@ -786,6 +780,11 @@ it("recreates a resident tab from the desktop routing event and restores its URL
       serverId: "remote",
       workspaceId: "workspace",
       url: "http://intranet",
+      profileHost: {
+        ...profileHost,
+        resolvePartition: (serverId, shared) => resolveBrowserPartition(serverId, shared, desktop),
+      },
+      routingEvents: desktop,
     });
     expect(initial?.getAttribute("partition")).toBe("persist:paseo-browser");
     Object.assign(initial!, { getURL: () => "http://intranet/current" });
@@ -795,7 +794,8 @@ it("recreates a resident tab from the desktop routing event and restores its URL
     });
     const unsubscribe = subscribeBrowserWebviewReplacement("event-tab", replaced);
     enabled = true;
-    listeners.get("browser_routing_changed")!({ payload: { serverId: "remote", enabled: true } });
+    expect(listeners.size).toBe(2);
+    listeners.get("browser_routing_changed")!({ serverId: "remote", enabled: true });
     await replacement;
     const next = getResidentBrowserWebview("event-tab");
     expect(initial?.isConnected).toBe(false);
@@ -807,7 +807,58 @@ it("recreates a resident tab from the desktop routing event and restores its URL
     expect(listeners.size).toBe(0);
   } finally {
     clearResidentBrowserWebviewsForTests();
-    window.paseoDesktop = originalBridge;
+  }
+});
+
+it.each([new Error("unexpected guest URL failure"), "unexpected guest failure"])(
+  "rethrows unexpected getURL failures during routing changes (%s)",
+  async (failure) => {
+    try {
+      const webview = await ensureResidentBrowserWebview({
+        browserId: "url-error",
+        serverId: "remote",
+        workspaceId: "workspace",
+        url: "https://example.test/",
+        profileHost,
+      });
+      Object.assign(webview!, {
+        getURL: () => {
+          throw failure;
+        },
+      });
+      await expect(recreateHostBrowserWebviews("remote", true)).rejects.toBe(failure);
+      expect(webview?.isConnected).toBe(true);
+    } finally {
+      clearResidentBrowserWebviewsForTests();
+    }
+  },
+);
+
+it("preserves src when getURL reports Electron's known not-attached error", async () => {
+  let partition = "persist:paseo-browser";
+  try {
+    const webview = await ensureResidentBrowserWebview({
+      browserId: "url-pending",
+      serverId: "remote",
+      workspaceId: "workspace",
+      url: "https://example.test/",
+      profileHost: { ...profileHost, resolvePartition: async () => partition },
+    });
+    Object.assign(webview!, {
+      src: "https://example.test/current",
+      getURL: () => {
+        throw new Error(
+          "The WebView must be attached to the DOM and the dom-ready event emitted before this method can be called.",
+        );
+      },
+    });
+    partition = "persist:paseo-browser-via-remote";
+    await recreateHostBrowserWebviews("remote", true);
+    expect((getResidentBrowserWebview("url-pending") as HTMLElement & { src: string }).src).toBe(
+      "https://example.test/current",
+    );
+  } finally {
+    clearResidentBrowserWebviewsForTests();
   }
 });
 

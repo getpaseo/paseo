@@ -6,6 +6,7 @@ import {
   providerReadySchema,
   routingChangedSchema,
   routingDesktop,
+  type RoutingDesktop,
 } from "./network-routing/contract";
 import {
   getDesktopHost,
@@ -403,6 +404,7 @@ interface PrepareBrowserInput extends BrowserWebviewIdentity {
 interface ResidentBrowserInput extends BrowserWebviewIdentity {
   url: string;
   profileHost?: BrowserWebviewProfileHost;
+  routingEvents?: Pick<RoutingDesktop, "listen">;
 }
 const residentInputs = new Map<string, ResidentBrowserInput>();
 interface PendingWebview {
@@ -454,7 +456,7 @@ function configureBrowserWebview(
 export function ensureResidentBrowserWebview(
   input: ResidentBrowserInput,
 ): Promise<HTMLElement | null> {
-  if (!input.profileHost) ensureBrowserRoutingListener();
+  if (input.routingEvents || !input.profileHost) ensureBrowserRoutingListener(input.routingEvents);
   const pending = pendingWebviews.get(input.browserId);
   if (pending) {
     // A navigation submitted while the partition is prepared must not be lost.
@@ -511,8 +513,11 @@ function readWebviewUrl(webview: HTMLElement, fallback: string): string {
   const guest = webview as BrowserWebviewElement & { getURL?: () => string };
   try {
     return guest.getURL?.() || guest.src || fallback;
-  } catch {
-    return guest.src || fallback;
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith(ELECTRON_WEBVIEW_NOT_ATTACHED)) {
+      return guest.src || fallback;
+    }
+    throw error;
   }
 }
 
@@ -540,11 +545,13 @@ export async function recreateHostBrowserWebviews(
   await Promise.all(replacements);
 }
 let routingListener: Promise<() => void> | null = null;
-function ensureBrowserRoutingListener(): void {
+function ensureBrowserRoutingListener(
+  desktop: Pick<RoutingDesktop, "listen"> = routingDesktop,
+): void {
   if (routingListener) return;
   // Resident tabs outlive their host connection, so these listeners follow the tabs.
   routingListener = Promise.all([
-    routingDesktop.listen("browser_routing_changed", (raw) => {
+    desktop.listen("browser_routing_changed", (raw) => {
       const event = routingChangedSchema.parse(raw);
       // A routing change or a provider handoff: no window is known to be serving yet.
       const remote = remoteProviders.get(event.serverId);
@@ -553,7 +560,7 @@ function ensureBrowserRoutingListener(): void {
         console.error("[browser-routing] webview preparation failed", error),
       );
     }),
-    routingDesktop.listen("browser_routing_provider_ready", (raw) => {
+    desktop.listen("browser_routing_provider_ready", (raw) => {
       markRemoteProviderReady(providerReadySchema.parse(raw).serverId);
     }),
   ]).then((disposers) => () => {

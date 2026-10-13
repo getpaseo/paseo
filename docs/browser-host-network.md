@@ -16,7 +16,7 @@ tab (webview, partition persist:paseo-browser-via-<hash of serverId>)
                             `-- daemon: DNS + policy + net.connect
 ```
 
-The proxy hands the tunnel a `{host, port}` and nothing else. A hostname is never resolved on the desktop.
+The proxy hands the tunnel a `{host, port}` and nothing else. A hostname is never resolved on the desktop. The daemon uses `dns.lookup` so system resolver configuration, VPNs and `/etc/hosts` apply. Tunnel DNS work has a daemon-wide limit of two active lookups: cancelled or expired streams retain their slot until the resolver finishes, since stopping the wait cannot cancel libuv work. Waiting for a slot shares the connection deadline. Approved addresses are tried sequentially, each with the remaining time divided by the number of addresses left, so a silent first address leaves time for later answers.
 
 ## Decisions
 
