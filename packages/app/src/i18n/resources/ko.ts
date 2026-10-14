@@ -2169,6 +2169,11 @@ export const ko: TranslationResources = {
         description: "내장 터미널 버퍼에 보관되는 줄 수",
         accessibilityLabel: "터미널 스크롤백 줄 수",
       },
+      terminalMacOptionIsMeta: {
+        label: "Option 키를 Meta로 사용 (macOS)",
+        description:
+          "켜짐: Option+키가 터미널 Meta 단축키를 전송합니다. 꾼짐: Option+키가 키보드 레이아웃의 문자를 입력합니다(예: 독일어에서 Option+L → @).",
+      },
       autoExpandReasoning: {
         label: "추론 항상 펼치기",
         description: "에이전트의 사고 및 추론 블록을 기본적으로 모두 펼쳐 표시합니다.",

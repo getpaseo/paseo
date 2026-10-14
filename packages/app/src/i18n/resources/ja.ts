@@ -2178,6 +2178,11 @@ export const ja: TranslationResources = {
         description: "組み込みターミナルバッファに保持する行数",
         accessibilityLabel: "ターミナルスクロールバック行数",
       },
+      terminalMacOptionIsMeta: {
+        label: "OptionキーをMetaとして使用（macOS）",
+        description:
+          "オン: Option+キーでターミナルのMetaショートカットを送信します。オフ: Option+キーでキーボードレイアウトの文字を入力します（例: ドイツ語で Option+L → @）。",
+      },
       autoExpandReasoning: {
         label: "常に思考プロセスを展開",
         description: "デフォルトでAIのエージェント思考・推論ブロックを完全に展開して表示します",

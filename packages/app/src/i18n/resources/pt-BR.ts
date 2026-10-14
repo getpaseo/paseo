@@ -2192,6 +2192,11 @@ export const ptBR: TranslationResources = {
         description: "Linhas mantidas no buffer do terminal integrado",
         accessibilityLabel: "Linhas do scrollback do terminal",
       },
+      terminalMacOptionIsMeta: {
+        label: "Tecla Option como Meta (macOS)",
+        description:
+          "Ativado: Option+tecla envia atalhos Meta do terminal. Desativado: Option+tecla digita o caractere do seu layout de teclado (ex.: Option+L → @ no alemão).",
+      },
       autoExpandReasoning: {
         label: "Sempre expandir raciocínio",
         description:

@@ -4,6 +4,8 @@ import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { SettingsSection } from "@/components/settings";
 import { FormTextInput } from "@/components/ui/form-field";
+import { Switch } from "@/components/ui/switch";
+import { isWeb } from "@/constants/platform";
 import { parseTerminalScrollbackLines, useAppSettings } from "@/hooks/use-settings";
 import { settingsStyles } from "@/styles/settings";
 
@@ -24,6 +26,13 @@ export function TerminalSection() {
       void updateSettings({ terminalScrollbackLines: nextValue });
     }
   }, [scrollbackValue, settings.terminalScrollbackLines, updateSettings]);
+
+  const handleMacOptionIsMetaChange = useCallback(
+    (value: boolean) => {
+      void updateSettings({ terminalMacOptionIsMeta: value });
+    },
+    [updateSettings],
+  );
 
   useEffect(() => {
     setScrollbackValue(String(settings.terminalScrollbackLines));
@@ -54,6 +63,24 @@ export function TerminalSection() {
             accessibilityLabel={t("settings.general.terminalScrollback.accessibilityLabel")}
           />
         </View>
+        {isWeb ? (
+          <View style={settingsStyles.row} testID="terminal-mac-option-is-meta-row">
+            <View style={settingsStyles.rowContent}>
+              <Text style={settingsStyles.rowTitle}>
+                {t("settings.general.terminalMacOptionIsMeta.label")}
+              </Text>
+              <Text style={settingsStyles.rowHint}>
+                {t("settings.general.terminalMacOptionIsMeta.description")}
+              </Text>
+            </View>
+            <Switch
+              value={settings.terminalMacOptionIsMeta}
+              onValueChange={handleMacOptionIsMetaChange}
+              accessibilityLabel={t("settings.general.terminalMacOptionIsMeta.label")}
+              testID="terminal-mac-option-is-meta-switch"
+            />
+          </View>
+        ) : null}
       </View>
     </SettingsSection>
   );

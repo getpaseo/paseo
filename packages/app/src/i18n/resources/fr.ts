@@ -2206,6 +2206,11 @@ export const fr: TranslationResources = {
         description: "Lignes conservées dans le tampon du terminal intégré",
         accessibilityLabel: "Lignes d’historique du terminal",
       },
+      terminalMacOptionIsMeta: {
+        label: "Touche Option comme Meta (macOS)",
+        description:
+          "Activé : Option+touche envoie les raccourcis Meta du terminal. Désactivé : Option+touche saisit le caractère de votre disposition de clavier (p. ex. Option+L → @ en allemand).",
+      },
       autoExpandReasoning: {
         label: "Toujours afficher le raisonnement",
         description: "Afficher par défaut le raisonnement de l’agent entièrement déplié",
