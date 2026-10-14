@@ -3423,7 +3423,7 @@ export async function getCheckoutDiff(
   compare: CheckoutDiffCompare,
   context?: CheckoutContext,
 ): Promise<CheckoutDiffResult> {
-  await requireGitRepo(cwd);
+  cwd = await requireGitWorktreeRoot(cwd);
 
   const refsForDiff = await resolveCheckoutDiffRefs(cwd, compare, context);
   if (!refsForDiff) {
