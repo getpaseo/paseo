@@ -31,6 +31,7 @@ const replacements = new Map();
 const counts = new Map();
 const receipts = new Set();
 let pageHung = false;
+const failedChildReads = new Set();
 const lines = createInterface({ input: process.stdin });
 lines.on("line", receive);
 function receive(line) {
@@ -143,7 +144,20 @@ function scriptedResponse(frame) {
     respond(frame, { status: "accepted", commandId: frame.params.commandId });
     return true;
   }
-  return frame.method === "view/page" && failedPage(frame);
+  return (frame.method === "view/page" && failedPage(frame)) || failedChildRead(frame);
+}
+const childReadFailures = {
+  "view/page": "MUSE_TEST_CHILD_PAGE_FAIL",
+  "session/read": "MUSE_TEST_CHILD_READ_FAIL",
+};
+// Muse 1.4.7 can refuse to read a subagent's view right after creating it ("view range read failed").
+function failedChildRead(frame) {
+  const failure = process.env[childReadFailures[frame.method]];
+  if (!failure || frame.params.sessionId !== "fixture-child") return false;
+  if (failure === "once" && failedChildReads.has(frame.method)) return false;
+  failedChildReads.add(frame.method);
+  rpcError(frame, -32603, "internal", "view range read failed");
+  return true;
 }
 function failedPage(frame) {
   const anchor = frame.params.cursor;

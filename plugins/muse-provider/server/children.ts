@@ -37,11 +37,17 @@ export class Children {
       return;
     const id = item.childSessionId;
     if (!this.children.has(id)) {
-      const { session } = await this.host.request(
-        "session/read",
-        { sessionId: id },
-        childSessionSchema,
-      );
+      let session;
+      try {
+        ({ session } = await this.host.request(
+          "session/read",
+          { sessionId: id },
+          childSessionSchema,
+        ));
+      } catch (error) {
+        this.readFailed(id, error);
+        return;
+      }
       this.emit({
         type: "session.opened",
         sessionId: id,
@@ -58,8 +64,23 @@ export class Children {
         ended: false,
       });
     }
-    await this.page(id);
+    await this.read(id);
     this.end(id, item);
+  }
+  // A child's transcript is a projection: Muse 1.4.7 can refuse to read a subagent's view right
+  // after creating it, and that must not fail the parent. The next item update or refresh retries
+  // from the same cursor.
+  private async read(id: string): Promise<void> {
+    try {
+      await this.page(id);
+    } catch (error) {
+      this.readFailed(id, error);
+    }
+  }
+  private readFailed(id: string, error: unknown): void {
+    process.stderr.write(
+      `Muse child ${id} view read failed: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
   }
   // Muse sends no turn events for a child, so the parent's item is the only record that it finished.
   // A subagent_* tool call completes when the spawn is accepted, so only subagent and workflow items count.
@@ -88,7 +109,7 @@ export class Children {
     } else if (event.method === "item/delta") child.timeline.delta(deltaSchema.parse(event.params));
   }
   async refresh(): Promise<void> {
-    for (const id of this.children.keys()) await this.page(id);
+    for (const id of this.children.keys()) await this.read(id);
   }
   private async page(id: string): Promise<void> {
     const child = this.children.get(id)!;
