@@ -179,16 +179,19 @@ try {
   expect(geometry.bounds.y + geometry.bounds.height).toBe(
     geometry.area.y + geometry.area.height - 16,
   );
-  for (const target of [
-    () => widget.locator(".identity b").click(),
-    () => widget.locator(".avatar").click(),
-    () => widget.locator("header button").click({ position: { x: 460, y: 30 } }),
-  ]) {
-    await target();
-    await expect(widget.locator(".pill")).toBeVisible();
-    await widget.locator("[data-action=restore]").click();
+  // The identity is the current drag handle; only the dedicated button reduces.
+  expect(
+    await widget.locator("header").evaluate((element) => getComputedStyle(element).webkitAppRegion),
+  ).toBe("drag");
+  for (const selector of [".identity b", ".avatar"]) {
+    await widget.locator(selector).click();
     await expect(widget.locator("#comment")).toBeVisible();
+    await expect(widget.locator(".pill")).toHaveCount(0);
   }
+  await widget.locator('[data-action="reduce"]').click();
+  await expect(widget.locator(".pill")).toBeVisible();
+  await widget.locator("[data-action=restore]").click();
+  await expect(widget.locator("#comment")).toBeVisible();
   await widget.locator("header button").focus();
   await widget.locator("header button").press("Space");
   await expect(widget.locator(".pill")).toBeVisible();
@@ -224,7 +227,18 @@ try {
     labels,
   });
   await expect(widget.locator(".pill")).toHaveText(/Paseo.*0/);
-  await widget.screenshot({ path: path.join(output, "reduced-after-app-response.png") });
+  // CDP capture can stall after resizing a transparent window to the small pill.
+  // Capture the native Electron surface without changing the tested geometry.
+  const reducedCapture = await app.evaluate(async ({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows().find(
+      (candidate) => candidate.getTitle() === "Paseo",
+    );
+    return (await window.webContents.capturePage()).toPNG().toString("base64");
+  });
+  await writeFile(
+    path.join(output, "reduced-after-app-response.png"),
+    Buffer.from(reducedCapture, "base64"),
+  );
   await widget.locator("[data-action=restore]").click();
   await expect(widget.locator(".pill")).toBeVisible();
   await owner.evaluate((snapshot) => window.paseoDesktop.agentWidget.publish(snapshot), {

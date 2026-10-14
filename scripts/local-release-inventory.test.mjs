@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, realpathSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { auditReleaseSources } from "./local-release-inventory.mjs";
 const temporary = [];
 const git = (cwd, ...args) =>
@@ -123,4 +123,31 @@ test("checks only pushes to paseo-local and blocks release branch deletion", asy
       state,
     }),
   ).toThrow("delete");
+});
+
+test("audits each checkout independently of the Git environment inherited by a push hook", () => {
+  const { root, commit } = fixture();
+  const worktree = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-push-worktree-")));
+  temporary.push(worktree);
+  git(root, "worktree", "add", "-b", "candidate", worktree, commit);
+  writeFileSync(path.join(worktree, "feature.txt"), "candidate contents");
+  git(worktree, "commit", "-am", "candidate");
+  const candidate = git(worktree, "rev-parse", "HEAD");
+  const directory = git(worktree, "rev-parse", "--absolute-git-dir");
+  vi.stubEnv("GIT_DIR", directory);
+  vi.stubEnv("GIT_INDEX_FILE", path.join(directory, "index"));
+  vi.stubEnv("GIT_WORK_TREE", worktree);
+  try {
+    expect(auditReleaseSources({ root: worktree, commit: candidate }).blockers).toEqual([]);
+    writeFileSync(path.join(root, "unfinished.txt"), "real unsaved work");
+    expect(auditReleaseSources({ root: worktree, commit: candidate }).blockers).toEqual([
+      expect.objectContaining({
+        kind: "dirty",
+        worktree: root,
+        files: expect.stringContaining("unfinished.txt"),
+      }),
+    ]);
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });

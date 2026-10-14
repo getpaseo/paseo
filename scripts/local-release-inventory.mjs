@@ -9,15 +9,27 @@ import {
 import path from "node:path";
 import { homedir } from "node:os";
 import { execFileSync, spawnSync } from "node:child_process";
-const git = (cwd, ...args) =>
-  execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+// Git hooks export repository-local variables. Carrying them into another
+// checkout makes Git compare that checkout against the hook caller's index.
+const localGitEnvironment = execFileSync("git", ["rev-parse", "--local-env-vars"], {
+  encoding: "utf8",
+})
+  .trim()
+  .split("\n");
+function gitOptions(cwd) {
+  const env = { ...process.env };
+  for (const key of localGitEnvironment) delete env[key];
+  return { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] };
+}
+const git = (cwd, ...args) => execFileSync("git", args, gitOptions(cwd)).trim();
 export function auditReleaseSources({ root, commit, repositories = [root] }) {
   const blockers = [];
   for (const repository of repositories) {
     // Copy only the candidate object when a dedicated builder knows a newer release.
     // No source branch, index, or working file is changed.
     if (
-      spawnSync("git", ["cat-file", "-e", `${commit}^{commit}`], { cwd: repository }).status !== 0
+      spawnSync("git", ["cat-file", "-e", `${commit}^{commit}`], gitOptions(repository)).status !==
+      0
     )
       git(repository, "fetch", "--no-tags", "--no-write-fetch-head", root, commit);
 
@@ -30,7 +42,7 @@ export function auditReleaseSources({ root, commit, repositories = [root] }) {
       if (fields.includes("detached")) {
         const head = fields.find((field) => field.startsWith("HEAD ")).slice(5);
         if (
-          spawnSync("git", ["merge-base", "--is-ancestor", head, commit], { cwd: repository })
+          spawnSync("git", ["merge-base", "--is-ancestor", head, commit], gitOptions(repository))
             .status !== 0
         )
           blockers.push({ kind: "unmerged", repository, ref: worktree, commit: head });
@@ -46,7 +58,7 @@ export function auditReleaseSources({ root, commit, repositories = [root] }) {
     for (const line of refs.split("\n").filter(Boolean)) {
       const [ref, head] = line.split(" ");
       if (
-        spawnSync("git", ["merge-base", "--is-ancestor", head, commit], { cwd: repository })
+        spawnSync("git", ["merge-base", "--is-ancestor", head, commit], gitOptions(repository))
           .status !== 0
       ) {
         blockers.push({ kind: "unmerged", repository, ref, commit: head });
