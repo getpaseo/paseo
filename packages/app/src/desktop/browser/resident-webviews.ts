@@ -489,8 +489,10 @@ function prepareResidentBrowserWebview(
   const pending = pendingWebviews.get(input.browserId);
   if (pending) {
     // A navigation submitted while the partition is prepared must not be lost.
-    pending.url = url;
-    pending.input.url = input.url;
+    if (input.url !== pending.input.url) {
+      pending.url = url;
+      pending.input.url = input.url;
+    }
     return pending.creation;
   }
   const entry: PendingWebview = { creation: Promise.resolve(null), input: { ...input }, url };

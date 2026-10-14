@@ -664,6 +664,7 @@ describe("host browser partitions", () => {
     });
     resolvePartition = () => enablingPartition;
     const enabling = recreateHostBrowserWebviews("remote", true);
+    const reattaching = ensureResidentBrowserWebview(input);
     expect(first.isConnected).toBe(false);
 
     resolvePartition = () => Promise.resolve("persist:paseo-browser");
@@ -671,6 +672,7 @@ describe("host browser partitions", () => {
     const replacement = getResidentBrowserWebview(input.browserId)!;
     finishEnable("persist:paseo-browser-via-remote");
     await enabling;
+    expect(await reattaching).toBeNull();
 
     expect(getResidentBrowserWebview(input.browserId)).toBe(replacement);
     expect(replacement.getAttribute("partition")).toBe("persist:paseo-browser");
