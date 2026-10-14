@@ -16,6 +16,7 @@ const SERIALIZABLE_CONFIG_SCHEMA = z
     model: z.string().nullable().optional(),
     thinkingOptionId: z.string().nullable().optional(),
     featureValues: z.record(z.string(), z.unknown()).nullable().optional(),
+    controlValues: z.record(z.string(), z.unknown()).nullable().optional(),
     providerOptions: z.record(z.string(), z.unknown()).nullable().optional(),
     toolPolicy: z
       .object({
@@ -83,6 +84,7 @@ export type SerializableAgentConfig = Pick<
   | "model"
   | "thinkingOptionId"
   | "featureValues"
+  | "controlValues"
   | "providerOptions"
   | "toolPolicy"
   | "systemPrompt"

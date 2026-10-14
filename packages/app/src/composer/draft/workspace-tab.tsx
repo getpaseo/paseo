@@ -66,6 +66,7 @@ interface AutoSubmitConfig {
   model: string | null;
   thinkingOptionId: string | null;
   featureValues: Record<string, unknown>;
+  controlValues: Record<string, unknown>;
 }
 
 function resolveAutoSubmitConfig(
@@ -75,6 +76,7 @@ function resolveAutoSubmitConfig(
     model?: string | null;
     thinkingOptionId?: string | null;
     featureValues?: Record<string, unknown>;
+    controlValues?: Record<string, unknown>;
   } | null,
 ): AutoSubmitConfig | null {
   if (!pending) return null;
@@ -84,6 +86,7 @@ function resolveAutoSubmitConfig(
     model: pending.model ?? null,
     thinkingOptionId: pending.thinkingOptionId ?? null,
     featureValues: pending.featureValues ?? {},
+    controlValues: pending.controlValues ?? {},
   };
 }
 
@@ -99,6 +102,24 @@ function resolveDraftModeIdOverride(input: {
     return { modeId: effectiveModeId };
   }
   return {};
+}
+
+function resolveDraftSubmitValueMaps(input: {
+  autoSubmitConfig: AutoSubmitConfig | null;
+  composerState: {
+    featureValues: Record<string, unknown> | undefined;
+    controlValues: Record<string, unknown> | undefined;
+  };
+}): {
+  featureValues: Record<string, unknown> | undefined;
+  controlValues: Record<string, unknown> | undefined;
+} {
+  // Pending auto-submit values win wholesale so a background handoff does not
+  // race the draft feature query; the live composer state is the fallback.
+  return {
+    featureValues: input.autoSubmitConfig?.featureValues ?? input.composerState.featureValues,
+    controlValues: input.autoSubmitConfig?.controlValues ?? input.composerState.controlValues,
+  };
 }
 
 function resolveDraftModeId(input: {
@@ -132,6 +153,7 @@ async function submitDraftCreateRequest(input: {
     effectiveModelId: string | null;
     effectiveThinkingOptionId: string | null;
     featureValues: Record<string, unknown> | undefined;
+    controlValues: Record<string, unknown> | undefined;
   };
   hostDisconnectedMessage: string;
   selectModelMessage: string;
@@ -163,6 +185,10 @@ async function submitDraftCreateRequest(input: {
     autoSubmitConfig,
     effectiveModeId: composerState.effectiveModeId,
   });
+  const { featureValues, controlValues } = resolveDraftSubmitValueMaps({
+    autoSubmitConfig,
+    composerState,
+  });
   const config = buildWorkspaceDraftAgentConfig({
     provider,
     cwd,
@@ -170,7 +196,8 @@ async function submitDraftCreateRequest(input: {
     model: autoSubmitConfig?.model ?? (composerState.effectiveModelId || undefined),
     thinkingOptionId:
       autoSubmitConfig?.thinkingOptionId ?? (composerState.effectiveThinkingOptionId || undefined),
-    featureValues: autoSubmitConfig?.featureValues ?? composerState.featureValues,
+    featureValues,
+    controlValues,
   });
 
   const attachmentsArray = Array.isArray(attachments) ? attachments : undefined;
@@ -333,6 +360,7 @@ export function WorkspaceDraftAgentTab({
       initialServerId: serverId,
       initialValues: draftInitialValues,
       initialFeatureValues: draftSetup?.featureValues,
+      initialControlValues: draftSetup?.controlValues,
       isVisible: true,
       lockedWorkingDir: draftWorkingDirectory ?? undefined,
     },

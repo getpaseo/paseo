@@ -1,4 +1,7 @@
 import type {
+  AgentComposerControl,
+  AgentComposerControlContext,
+  AgentComposerControlValues,
   AgentFeature,
   AgentFeatureSelect,
   AgentFeatureToggle,
@@ -12,6 +15,9 @@ import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { PaseoToolCatalog } from "./tools/types.js";
 
 export type {
+  AgentComposerControl,
+  AgentComposerControlContext,
+  AgentComposerControlValues,
   AgentFeature,
   AgentFeatureSelect,
   AgentFeatureToggle,
@@ -601,6 +607,8 @@ export interface AgentSessionConfig {
   model?: string;
   thinkingOptionId?: string;
   featureValues?: Record<string, unknown>;
+  /** Host-held provider composer control values (draft/profile choices). */
+  controlValues?: AgentComposerControlValues;
   title?: string | null;
   providerOptions?: ProviderOptions;
   toolPolicy?: ToolPolicy;
@@ -697,6 +705,14 @@ export interface AgentSession {
   setModel?(modelId: string | null): Promise<void>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;
   setFeature?(featureId: string, value: unknown): Promise<void>;
+  /** List provider composer controls for a live session. */
+  listComposerControls?(input?: { agentId?: string }): Promise<AgentComposerControl[]>;
+  /** Invoke a provider composer control. Returns refreshed controls when the provider supplies them. */
+  invokeComposerControl?(input: {
+    agentId: string;
+    controlId: string;
+    value: unknown;
+  }): Promise<AgentComposerControl[] | void>;
   revertConversation?(input: { messageId: string }): Promise<void>;
   revertFiles?(input: { messageId: string }): Promise<void>;
   revertBoth?(input: { messageId: string }): Promise<void>;
@@ -780,6 +796,10 @@ export interface AgentClient {
   isCreateConfigUnattended?(input: AgentCreateConfigUnattendedInput): boolean;
   listCommands?(config: AgentSessionConfig): Promise<AgentSlashCommand[]>;
   listFeatures?(config: AgentSessionConfig): Promise<AgentFeature[]>;
+  listComposerControls?(
+    config: AgentSessionConfig,
+    surface?: AgentComposerControlContext["surface"],
+  ): Promise<AgentComposerControl[]>;
   listImportableSessions?(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]>;

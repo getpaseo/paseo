@@ -90,6 +90,7 @@ export interface AgentSelectOption {
   id: string;
   label: string;
   description?: string;
+  icon?: string;
   isDefault?: boolean;
   metadata?: AgentMetadata;
 }
@@ -153,6 +154,51 @@ export interface AgentFeatureSelect {
 }
 
 export type AgentFeature = AgentFeatureToggle | AgentFeatureSelect;
+
+export type AgentComposerControlSurface = "live" | "draft" | "profile";
+
+interface AgentComposerControlBase {
+  id: string;
+  label: string;
+  description?: string;
+  tooltip?: string;
+  icon?: string;
+  disabled?: boolean;
+  visible?: boolean;
+}
+
+export interface AgentComposerControlAction extends AgentComposerControlBase {
+  kind: "action";
+}
+
+export interface AgentComposerControlToggle extends AgentComposerControlBase {
+  kind: "toggle";
+  value: boolean;
+}
+
+export interface AgentComposerControlSelect extends AgentComposerControlBase {
+  kind: "select";
+  value: string | null;
+  options: AgentSelectOption[];
+}
+
+export type AgentComposerControl =
+  | AgentComposerControlAction
+  | AgentComposerControlToggle
+  | AgentComposerControlSelect;
+
+export type AgentComposerControlValues = Record<string, unknown>;
+
+export interface AgentComposerControlContext {
+  surface: AgentComposerControlSurface;
+  provider: AgentProvider;
+  model?: string;
+  modeId?: string;
+  thinkingOptionId?: string;
+  cwd?: string;
+  agentId?: string;
+  controlValues?: AgentComposerControlValues;
+}
 
 export interface AgentCapabilityFlags {
   [capability: string]: boolean | undefined;
@@ -524,6 +570,8 @@ export interface AgentSessionConfig {
   model?: string;
   thinkingOptionId?: string;
   featureValues?: Record<string, unknown>;
+  /** Host-held provider composer control values (draft/profile choices). */
+  controlValues?: AgentComposerControlValues;
   title?: string | null;
   providerOptions?: ProviderOptions;
   toolPolicy?: ToolPolicy;

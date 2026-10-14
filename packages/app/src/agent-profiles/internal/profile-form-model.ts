@@ -1,4 +1,5 @@
 import type {
+  AgentComposerControl,
   AgentFeature,
   AgentMode,
   AgentModelDefinition,
@@ -7,7 +8,12 @@ import type {
 } from "@getpaseo/protocol/agent-types";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
 import { formatAgentModeLabel, formatThinkingOptionLabel } from "@/agent-controls/labels";
-import { applyFeatureValues, pruneFeatureValues } from "@/hooks/feature-preferences";
+import {
+  applyControlValues,
+  applyFeatureValues,
+  pruneControlValues,
+  pruneFeatureValues,
+} from "@/hooks/feature-preferences";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
 
 /**
@@ -59,12 +65,15 @@ export interface AgentProfileFormSnapshot {
 /**
  * The inputs a feature listing needs. Features are provider-scoped and change
  * with model/mode/thinking, so every one of those is part of the request.
+ * Control values ride along so a provider can compute dependent controls.
  */
 export interface AgentProfileFeatureRequest {
   provider: string;
   model?: string;
   modeId?: string;
   thinkingOptionId?: string;
+  controlValues?: Record<string, unknown>;
+  surface: "profile";
 }
 
 export type AgentProfileResolutionStatus = "idle" | "pending" | "complete";
@@ -87,12 +96,14 @@ export interface AgentProfileFormState {
   modeId: string;
   thinkingOptionId: string;
   featureValues: Record<string, unknown>;
+  controlValues: Record<string, unknown>;
 
   providerOptions: AgentProfileFormOption[];
   modelOptions: AgentProfileFormOption[];
   modeOptions: AgentProfileFormOption[];
   thinkingOptions: AgentProfileFormOption[];
   features: AgentFeature[];
+  composerControls: AgentComposerControl[];
 
   providerDisplay: AgentProfileFormDisplay | null;
   modelDisplay: AgentProfileFormDisplay | null;
@@ -118,7 +129,11 @@ export interface AgentProfileFormModel {
   /** Late input: the host-scoped provider catalog. Never touches selections. */
   applyProviderCatalog: (entries: readonly ProviderSnapshotEntry[]) => void;
   /** Late input: the feature list for one request. Stale keys are ignored. */
-  applyFeatures: (requestKey: string, features: readonly AgentFeature[]) => void;
+  applyFeatures: (
+    requestKey: string,
+    features: readonly AgentFeature[],
+    controls?: readonly AgentComposerControl[],
+  ) => void;
   /** Resolve a request that produced no usable features (provider error). */
   applyFeaturesUnavailable: (requestKey: string) => void;
   setName: (value: string) => void;
@@ -129,6 +144,7 @@ export interface AgentProfileFormModel {
   setMode: (modeId: string, display: AgentProfileFormDisplay | null) => void;
   setThinking: (thinkingOptionId: string, display: AgentProfileFormDisplay | null) => void;
   setFeatureValue: (featureId: string, value: unknown) => void;
+  setControlValue: (controlId: string, value: unknown) => void;
   setSubmitting: (value: boolean) => void;
   setSubmitError: (value: string | null) => void;
 }
@@ -321,6 +337,10 @@ function buildFeatureRequest(state: AgentProfileFormState): AgentProfileFeatureR
     ...(state.modelId ? { model: state.modelId } : {}),
     ...(state.modeId ? { modeId: state.modeId } : {}),
     ...(state.thinkingOptionId ? { thinkingOptionId: state.thinkingOptionId } : {}),
+    ...(Object.keys(state.controlValues).length > 0
+      ? { controlValues: { ...state.controlValues } }
+      : {}),
+    surface: "profile",
   };
 }
 
@@ -351,6 +371,7 @@ function buildSubmitValue(state: AgentProfileFormState): AgentProfileValue | nul
     ...(state.modeId ? { modeId: state.modeId } : {}),
     ...(state.thinkingOptionId ? { thinkingOptionId: state.thinkingOptionId } : {}),
     ...(Object.keys(state.featureValues).length > 0 ? { featureValues: state.featureValues } : {}),
+    ...(Object.keys(state.controlValues).length > 0 ? { controlValues: state.controlValues } : {}),
     ...(notes ? { notes } : {}),
   };
 }
@@ -393,11 +414,13 @@ function buildInitialState(snapshot: AgentProfileFormSnapshot): AgentProfileForm
     modeId: profile.modeId ?? "",
     thinkingOptionId: profile.thinkingOptionId ?? "",
     featureValues: { ...profile.featureValues },
+    controlValues: profile.controlValues ? { ...profile.controlValues } : {},
     providerOptions: [],
     modelOptions: [],
     modeOptions: [],
     thinkingOptions: [],
     features: [],
+    composerControls: [],
     providerDisplay: seedDisplay(provider),
     modelDisplay: seedDisplay(modelId),
     modeDisplay: seedDisplay(profile.modeId),
@@ -424,6 +447,7 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
   let catalogResolution: AgentProfileResolutionStatus = "idle";
   let resolvedFeatureKey: string | null = null;
   let resolvedFeatures: AgentFeature[] = [];
+  let resolvedControls: AgentComposerControl[] = [];
   let listeners = new Set<() => void>();
   let closed = false;
 
@@ -443,6 +467,9 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
     const features = featuresAreCurrent
       ? applyFeatureValues(resolvedFeatures, next.featureValues)
       : [];
+    const composerControls = featuresAreCurrent
+      ? applyControlValues(resolvedControls, next.controlValues)
+      : [];
     const featureResolution = resolveFeatureStatus(featureRequestKey, featuresAreCurrent);
 
     const withOptions: AgentProfileFormState = {
@@ -452,6 +479,7 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
       modeOptions: buildModeOptions(modes),
       thinkingOptions: buildThinkingOptions(thinking),
       features,
+      composerControls,
       providerDisplay: refineDisplay(
         next.providerDisplay,
         next.provider,
@@ -492,7 +520,7 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
       showModeField: hasProvider && (modes.length > 0 || Boolean(withOptions.modeId)),
       showThinkingField:
         hasProvider && (thinking.length > 0 || Boolean(withOptions.thinkingOptionId)),
-      showFeaturesField: hasProvider && features.length > 0,
+      showFeaturesField: hasProvider && (features.length > 0 || composerControls.length > 0),
     };
     const canSubmit =
       withOptions.name.trim().length > 0 &&
@@ -531,15 +559,17 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
       catalogResolution = "complete";
       publish((current) => current);
     },
-    applyFeatures: (requestKey, features) => {
+    applyFeatures: (requestKey, features, controls) => {
       if (requestKey !== state.featureRequestKey) {
         return;
       }
       resolvedFeatureKey = requestKey;
       resolvedFeatures = [...features];
+      resolvedControls = [...(controls ?? [])];
       publish((current) => ({
         ...current,
         featureValues: pruneFeatureValues(current.featureValues, resolvedFeatures),
+        controlValues: pruneControlValues(current.controlValues, resolvedControls),
       }));
     },
     applyFeaturesUnavailable: (requestKey) => {
@@ -548,6 +578,7 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
       }
       resolvedFeatureKey = requestKey;
       resolvedFeatures = [];
+      resolvedControls = [];
       publish((current) => current);
     },
     setName: (value) => publish((current) => ({ ...current, name: value })),
@@ -573,6 +604,7 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
           thinkingOptionId: "",
           thinkingDisplay: null,
           featureValues: {},
+          controlValues: {},
         };
       }),
     setModel: (modelId, display) =>
@@ -602,6 +634,11 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
       publish((current) => ({
         ...current,
         featureValues: { ...current.featureValues, [featureId]: value },
+      })),
+    setControlValue: (controlId, value) =>
+      publish((current) => ({
+        ...current,
+        controlValues: { ...current.controlValues, [controlId]: value },
       })),
     setSubmitting: (value) => publish((current) => ({ ...current, isSubmitting: value })),
     setSubmitError: (value) => publish((current) => ({ ...current, submitError: value })),

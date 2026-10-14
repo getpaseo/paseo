@@ -39,6 +39,12 @@ export interface ProviderRegistration {
   /** Plugin-directory-relative path to a self-contained SVG file. */
   icon?: string;
   connect(request: ProviderConnectRequest): Promise<ProviderConnection>;
+  /**
+   * Optional declarative controls rendered inside the composer toolbar when
+   * this provider is selected. Paseo renders the descriptors and routes
+   * events; the plugin owns all semantics and state.
+   */
+  composerControls?: ProviderComposerControls;
 }
 
 export type ProviderCatalogOptions =
@@ -116,6 +122,8 @@ export interface ProviderSessionConfig {
   mode?: string;
   thinkingOption?: string;
   settings: Readonly<Record<string, JsonValue>>;
+  /** Host-held composer control values chosen in the draft/profile composer. */
+  controlValues?: Readonly<Record<string, JsonValue>>;
   providerOptions?: Readonly<Record<string, unknown>>;
   title?: string;
   persist: boolean;
@@ -315,6 +323,8 @@ export type ProviderSetting =
       id: string;
       label: string;
       description?: string;
+      /** Lucide icon name. Unknown names fall back to the default feature icon. */
+      icon?: string;
       value: boolean;
     }
   | {
@@ -322,9 +332,81 @@ export type ProviderSetting =
       id: string;
       label: string;
       description?: string;
+      /** Lucide icon name. Unknown names fall back to the default feature icon. */
+      icon?: string;
       value: string | null;
       options: ReadonlyArray<{ label: string; value: string }>;
     };
+
+export type ProviderComposerControlSurface = "live" | "draft" | "profile";
+
+export interface ProviderComposerControlContext {
+  surface: ProviderComposerControlSurface;
+  provider: string;
+  model?: string;
+  mode?: string;
+  thinkingOption?: string;
+  cwd?: string;
+  /** Set only for the live-agent composer. */
+  agentId?: string;
+  /** Host-held values for draft/profile surfaces; current values for live. */
+  controlValues?: Readonly<Record<string, unknown>>;
+}
+
+interface ProviderComposerControlBase {
+  id: string;
+  label: string;
+  /** Lucide icon name; any export of the app's lucide-react-native set. */
+  icon?: string;
+  tooltip?: string;
+  description?: string;
+  disabled?: boolean;
+  visible?: boolean;
+}
+
+export type ProviderComposerControl =
+  | (ProviderComposerControlBase & { kind: "action" })
+  | (ProviderComposerControlBase & { kind: "toggle"; value: boolean })
+  | (ProviderComposerControlBase & {
+      kind: "select";
+      value: string | null;
+      options: ReadonlyArray<{
+        label: string;
+        value: string;
+        description?: string;
+        icon?: string;
+      }>;
+    });
+
+export interface ProviderComposerControlEvent {
+  controlId: string;
+  /** Toggle carries a boolean, select a string id (or null), action carries nothing. */
+  value?: JsonValue;
+  context: ProviderComposerControlContext;
+}
+
+export interface ProviderComposerControls {
+  /**
+   * Return the controls for a composer surface. Return [] to show nothing.
+   * Called for live agents (context.agentId set), drafts, and profiles.
+   * A control whose state only makes sense against a running session should
+   * return [] (or disabled) for draft/profile contexts.
+   */
+  getControls(
+    context: ProviderComposerControlContext,
+  ): ProviderComposerControl[] | Promise<ProviderComposerControl[]>;
+  /**
+   * Every live-agent interaction lands here. Draft/profile value changes are
+   * held by the host and handed to the plugin at creation; they do not fire
+   * events. Return replacement controls to re-render, or void to keep state.
+   */
+  onControlEvent(
+    event: ProviderComposerControlEvent,
+  ):
+    | { controls?: ProviderComposerControl[] }
+    | void
+    | Promise<{ controls?: ProviderComposerControl[] } | void>;
+}
 
 export interface ProviderConfigState {
   model?: string;
@@ -744,6 +826,7 @@ const sessionConfigSchema = z
     mode: z.string().optional(),
     thinkingOption: z.string().optional(),
     settings: jsonObjectSchema,
+    controlValues: jsonObjectSchema.optional(),
     providerOptions: z.record(z.string(), z.unknown()).optional(),
     title: z.string().optional(),
     persist: z.boolean(),
@@ -998,6 +1081,7 @@ const settingSchema = z.discriminatedUnion("type", [
       id: idSchema,
       label: z.string(),
       description: z.string().optional(),
+      icon: z.string().optional(),
       value: z.boolean(),
     })
     .strip(),
@@ -1007,11 +1091,84 @@ const settingSchema = z.discriminatedUnion("type", [
       id: idSchema,
       label: z.string(),
       description: z.string().optional(),
+      icon: z.string().optional(),
       value: z.string().nullable(),
       options: z.array(z.object({ label: z.string(), value: z.string() }).strip()),
     })
     .strip(),
 ]);
+
+const composerControlIdSchema = z.string().min(1).max(128);
+const composerControlOptionSchema = z
+  .object({
+    label: z.string().min(1),
+    value: z.string().min(1),
+    description: z.string().optional(),
+    icon: z.string().optional(),
+  })
+  .strip();
+
+export const ProviderComposerControlSchema: z.ZodType<ProviderComposerControl> =
+  z.discriminatedUnion("kind", [
+    z
+      .object({
+        kind: z.literal("action"),
+        id: composerControlIdSchema,
+        label: z.string().min(1),
+        icon: z.string().optional(),
+        tooltip: z.string().optional(),
+        description: z.string().optional(),
+        disabled: z.boolean().optional(),
+        visible: z.boolean().optional(),
+      })
+      .strip(),
+    z
+      .object({
+        kind: z.literal("toggle"),
+        id: composerControlIdSchema,
+        label: z.string().min(1),
+        icon: z.string().optional(),
+        tooltip: z.string().optional(),
+        description: z.string().optional(),
+        disabled: z.boolean().optional(),
+        visible: z.boolean().optional(),
+        value: z.boolean(),
+      })
+      .strip(),
+    z
+      .object({
+        kind: z.literal("select"),
+        id: composerControlIdSchema,
+        label: z.string().min(1),
+        icon: z.string().optional(),
+        tooltip: z.string().optional(),
+        description: z.string().optional(),
+        disabled: z.boolean().optional(),
+        visible: z.boolean().optional(),
+        value: z.string().nullable(),
+        options: z.array(composerControlOptionSchema).min(1),
+      })
+      .strip(),
+  ]);
+
+export function parseProviderComposerControls(value: unknown): ProviderComposerControl[] {
+  const parsed = z.array(ProviderComposerControlSchema).safeParse(value ?? []);
+  if (!parsed.success) throw new Error("Provider returned invalid composer controls");
+  return parsed.data;
+}
+
+export const ProviderComposerControlContextSchema: z.ZodType<ProviderComposerControlContext> = z
+  .object({
+    surface: z.enum(["live", "draft", "profile"]),
+    provider: z.string().min(1),
+    model: z.string().optional(),
+    mode: z.string().optional(),
+    thinkingOption: z.string().optional(),
+    cwd: z.string().optional(),
+    agentId: z.string().optional(),
+    controlValues: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strip();
 const configStateSchema = z
   .object({
     model: z.string().optional(),

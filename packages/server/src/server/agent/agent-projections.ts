@@ -135,6 +135,9 @@ export function toAgentPayload(
     currentModeId: agent.currentModeId,
     availableModes: cloneAvailableModes(agent.availableModes),
     features: normalizeFeatures(agent.features),
+    ...(agent.composerControls?.length
+      ? { composerControls: agent.composerControls.map((control) => ({ ...control })) }
+      : {}),
     pendingPermissions: sanitizePendingPermissions(agent.pendingPermissions),
     persistence: projectPersistenceHandleForWire(agent.persistence),
     title: options?.title ?? null,
@@ -309,6 +312,12 @@ function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentC
     const featureValues = sanitizeMetadata(config.featureValues);
     if (featureValues !== undefined) {
       serializable.featureValues = featureValues;
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(config, "controlValues")) {
+    const controlValues = sanitizeMetadata(config.controlValues);
+    if (controlValues !== undefined) {
+      serializable.controlValues = controlValues;
     }
   }
   if (config.providerOptions !== undefined) {

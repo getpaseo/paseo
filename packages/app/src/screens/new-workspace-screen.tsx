@@ -793,6 +793,7 @@ interface WorkspaceDraftSubmissionConfig {
   model: string | null;
   thinkingOptionId: string | null;
   featureValues: Record<string, unknown> | undefined;
+  controlValues: Record<string, unknown> | undefined;
   target: WorkspaceTabTarget;
 }
 
@@ -896,6 +897,7 @@ function buildWorkspaceDraftSetupFromComposer(input: {
     model: input.composerState.effectiveModelId || null,
     thinkingOptionId: input.composerState.effectiveThinkingOptionId || null,
     featureValues: input.composerState.featureValues ?? {},
+    controlValues: input.composerState.controlValues ?? {},
   };
 }
 
@@ -976,6 +978,7 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
       model: composerState.effectiveModelId || undefined,
       thinkingOptionId: composerState.effectiveThinkingOptionId || undefined,
       featureValues: composerState.featureValues,
+      ...(composerState.controlValues ? { controlValues: composerState.controlValues } : {}),
     },
     initialPrompt: text,
     clientMessageId: `${input.draftId}:initial-message`,
@@ -1056,6 +1059,7 @@ function buildComposerConfig(input: {
     initialServerId: serverId || null,
     initialValues: buildComposerInitialValues({ initialSetup }),
     initialFeatureValues: initialSetup?.featureValues,
+    initialControlValues: initialSetup?.controlValues,
     isVisible: true,
     lockedWorkingDir: workingDir,
   };
@@ -1089,6 +1093,7 @@ function resolveWorkspaceDraftSubmissionConfig(input: {
       model: initialSetup.model,
       thinkingOptionId: initialSetup.thinkingOptionId,
       featureValues: initialSetup.featureValues,
+      controlValues: initialSetup.controlValues,
       target: { kind: "draft", draftId, setup: initialSetup },
     };
   }
@@ -1099,6 +1104,7 @@ function resolveWorkspaceDraftSubmissionConfig(input: {
     model: composerState.effectiveModelId || null,
     thinkingOptionId: composerState.effectiveThinkingOptionId || null,
     featureValues: composerState.featureValues,
+    controlValues: composerState.controlValues,
     target: { kind: "draft", draftId },
   };
 }
@@ -1157,6 +1163,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): SubmitOutcome {
     ...(submission.model ? { model: submission.model } : {}),
     ...(submission.thinkingOptionId ? { thinkingOptionId: submission.thinkingOptionId } : {}),
     ...(submission.featureValues ? { featureValues: submission.featureValues } : {}),
+    ...(submission.controlValues ? { controlValues: submission.controlValues } : {}),
     allowEmptyText: true,
     agentCreation: input.agentCreation,
   });

@@ -9,10 +9,13 @@ import {
   ProviderEventSchema,
   ProviderInputSchema,
   ProviderStatusSchema,
+  parseProviderComposerControls,
   type ProviderStatus,
   type ProviderLaunch,
   requireProviderCapabilities,
   type ProviderCapability,
+  type ProviderComposerControlContext,
+  type ProviderComposerControls,
   type ProviderConfigChanges,
   type ProviderConfigState,
   type ProviderConnection,
@@ -29,6 +32,8 @@ import {
 import type {
   AgentCapabilityFlags,
   AgentClient,
+  AgentComposerControl,
+  AgentComposerControlContext,
   AgentCreateSessionOptions,
   AgentFeature,
   AgentLaunchContext,
@@ -901,6 +906,7 @@ interface PendingChild {
 class PluginAgentClient implements AgentClient {
   readonly provider: string;
   private readonly runtime: ProviderRuntime;
+  private readonly registration: ProviderRegistration;
   private readonly rootsBySession = new Map<string, PluginAgentSession>();
   private readonly pendingChildren: PendingChild[] = [];
 
@@ -908,6 +914,7 @@ class PluginAgentClient implements AgentClient {
 
   constructor(registration: ProviderRegistration, runtimeSettings?: ProviderRuntimeSettings) {
     this.provider = registration.id;
+    this.registration = registration;
     this.runtime = new ProviderRuntime(registration, runtimeSettings);
     if (registration.getCatalogCacheKey)
       this.getCatalogCacheKey = (options) => this.runtime.catalogCacheKey(options);
@@ -969,6 +976,16 @@ class PluginAgentClient implements AgentClient {
       modes: catalog.modes.map((mode) => ({ ...mode })),
       defaultModeId: catalog.defaultMode,
     };
+  }
+
+  async listComposerControls(
+    config: AgentSessionConfig,
+    surface: AgentComposerControlContext["surface"] = "draft",
+  ): Promise<AgentComposerControl[]> {
+    return resolveComposerControls(
+      this.registration.composerControls,
+      composerControlContextForConfig(this.provider, config, surface),
+    );
   }
 
   async isAvailable(signal?: AbortSignal): Promise<boolean> {
@@ -1047,9 +1064,14 @@ class PluginAgentClient implements AgentClient {
       persistence: input.persistence,
       history: input.history,
     });
-    const session = new PluginAgentSession(this.provider, bridge, () => {
-      this.rootsBySession.delete(bridge.id);
-    });
+    const session = new PluginAgentSession(
+      this.provider,
+      bridge,
+      () => {
+        this.rootsBySession.delete(bridge.id);
+      },
+      this.registration,
+    );
     this.rootsBySession.set(bridge.id, session);
     this.attachPendingChildren();
     return session;
@@ -1109,6 +1131,7 @@ class PluginAgentSession implements AgentSession {
     readonly provider: string,
     private readonly bridge: ProviderRuntimeSession,
     private readonly onClose: () => void,
+    private readonly registration?: ProviderRegistration,
   ) {
     this.subagentIdsBySession.set(bridge.id, null);
     for (const event of bridge.history) this.accept(event, false);
@@ -1283,6 +1306,42 @@ class PluginAgentSession implements AgentSession {
     await this.bridge.configure({
       settings: { [featureId]: toJsonValue(value, `setting '${featureId}'`) },
     });
+  }
+
+  private liveComposerControlContext(agentId?: string): ProviderComposerControlContext {
+    const config = this.bridge.config;
+    return {
+      surface: "live",
+      provider: this.provider,
+      ...(config.model ? { model: config.model } : {}),
+      ...(config.mode ? { mode: config.mode } : {}),
+      ...(config.thinkingOption ? { thinkingOption: config.thinkingOption } : {}),
+      ...(agentId ? { agentId } : {}),
+    };
+  }
+
+  async listComposerControls(input?: { agentId?: string }): Promise<AgentComposerControl[]> {
+    return resolveComposerControls(
+      this.registration?.composerControls,
+      this.liveComposerControlContext(input?.agentId),
+    );
+  }
+
+  async invokeComposerControl(input: {
+    agentId: string;
+    controlId: string;
+    value: unknown;
+  }): Promise<AgentComposerControl[] | void> {
+    const controls = this.registration?.composerControls;
+    if (!controls) throw new Error(`Provider '${this.provider}' has no composer controls`);
+    const context = this.liveComposerControlContext(input.agentId);
+    const result = await controls.onControlEvent({
+      controlId: input.controlId,
+      ...(input.value === undefined ? {} : { value: input.value as JsonValue }),
+      context,
+    });
+    if (!result?.controls) return;
+    return toWireComposerControls(parseProviderComposerControls(result.controls));
   }
 
   async revertConversation(input: { messageId: string }): Promise<void> {
@@ -1578,6 +1637,67 @@ class PluginAgentSession implements AgentSession {
   }
 }
 
+function toWireComposerControls(
+  controls: ReturnType<typeof parseProviderComposerControls>,
+): AgentComposerControl[] {
+  return controls.map((control) => {
+    if (control.kind === "action") {
+      const { kind, id, label, description, tooltip, icon, disabled, visible } = control;
+      return { kind, id, label, description, tooltip, icon, disabled, visible };
+    }
+    if (control.kind === "toggle") {
+      const { kind, id, label, description, tooltip, icon, disabled, visible, value } = control;
+      return { kind, id, label, description, tooltip, icon, disabled, visible, value };
+    }
+    const { kind, id, label, description, tooltip, icon, disabled, visible, value, options } =
+      control;
+    return {
+      kind,
+      id,
+      label,
+      description,
+      tooltip,
+      icon,
+      disabled,
+      visible,
+      value,
+      options: options.map((option) => ({
+        id: option.value,
+        label: option.label,
+        description: option.description,
+        icon: option.icon,
+      })),
+    };
+  });
+}
+
+async function resolveComposerControls(
+  controls: ProviderComposerControls | undefined,
+  context: ProviderComposerControlContext,
+): Promise<AgentComposerControl[]> {
+  if (!controls) return [];
+  const raw = await controls.getControls(context);
+  return toWireComposerControls(parseProviderComposerControls(raw));
+}
+
+function composerControlContextForConfig(
+  provider: string,
+  config: AgentSessionConfig,
+  surface: AgentComposerControlContext["surface"],
+  agentId?: string,
+): ProviderComposerControlContext {
+  return {
+    surface,
+    provider,
+    ...(config.model ? { model: config.model } : {}),
+    ...(config.modeId ? { mode: config.modeId } : {}),
+    ...(config.thinkingOptionId ? { thinkingOption: config.thinkingOptionId } : {}),
+    cwd: config.cwd,
+    ...(agentId ? { agentId } : {}),
+    ...(config.controlValues ? { controlValues: { ...config.controlValues } } : {}),
+  };
+}
+
 function agentCapabilities(capabilities: readonly string[]): AgentCapabilityFlags {
   const supports = (capability: ProviderCapability) => capabilities.includes(capability);
   return {
@@ -1630,6 +1750,9 @@ function mapSessionConfig(
     mode: config.modeId,
     thinkingOption: config.thinkingOptionId,
     settings: toJsonObject(config.featureValues ?? {}, "provider settings"),
+    ...(config.controlValues
+      ? { controlValues: toJsonObject(config.controlValues, "provider control values") }
+      : {}),
     providerOptions: config.providerOptions,
     title: config.title ?? undefined,
     persist,

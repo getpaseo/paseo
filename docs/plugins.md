@@ -465,12 +465,20 @@ need no change. See [catalogue ownership](providers.md#provider-snapshot-refresh
 `send()` resolves after acceptance. Publish operation completion, prompt disposition, turn state,
 configuration, permissions, persistence, and complete timeline snapshots through `onEvent()`.
 Route messages, structured commands, steering, and command side effects through `session.prompt`.
-Provider settings are toggle/select data that Paseo renders in the composer. Keep private options in
+Provider settings are toggle/select data that Paseo renders in the composer. Settings accept an
+optional Lucide `icon` name; unknown names fall back to the default feature icon. Keep private
+options in
 the opaque `ProviderSessionConfig.providerOptions` object on `session.open`.
 It contains the provider defaults and per-agent overrides merged by the daemon.
 Validate and apply it inside the provider; core does not know your option shape.
 See [provider options](custom-providers.md#provider-options) for configuration and
 merge semantics.
+
+For controls Paseo must not own — a stateless action, or a value it must never persist or
+interpret — declare `composerControls` on the registration. Kinds are `action`, `toggle`, and
+`select`; Paseo renders them in the composer toolbar only while your provider is selected and
+routes live interactions to `onControlEvent`. Draft and profile value choices are host-held until
+creation; profiles never render actions. See the [composer controls guide](../public-docs/plugins/providers.md#add-composer-controls-beyond-settings).
 
 Agent refresh closes the current provider session and opens it again with current configuration and
 persistence. Re-read credentials and provider-owned configuration on `session.open`; consume the

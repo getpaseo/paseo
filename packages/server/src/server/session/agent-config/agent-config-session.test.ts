@@ -13,6 +13,7 @@ class FakeAgentConfigOperations implements AgentConfigOperations {
   readonly modeCalls: Array<{ agentId: string; modeId: string }> = [];
   readonly modelCalls: Array<{ agentId: string; modelId: string | null }> = [];
   readonly featureCalls: Array<{ agentId: string; featureId: string; value: unknown }> = [];
+  readonly controlCalls: Array<{ agentId: string; controlId: string; value: unknown }> = [];
   readonly thinkingCalls: Array<{ agentId: string; thinkingOptionId: string | null }> = [];
   /** Cross-operation ordering, which the per-operation arrays above cannot show. */
   readonly callLog: string[] = [];
@@ -43,6 +44,17 @@ class FakeAgentConfigOperations implements AgentConfigOperations {
     this.featureCalls.push({ agentId, featureId, value });
     this.callLog.push(`feature:${featureId}`);
     if (this.failWith) throw this.failWith;
+  }
+
+  async invokeComposerControl(
+    agentId: string,
+    controlId: string,
+    value: unknown,
+  ): Promise<import("../../agent/agent-sdk-types.js").AgentComposerControl[]> {
+    this.controlCalls.push({ agentId, controlId, value });
+    this.callLog.push(`control:${controlId}`);
+    if (this.failWith) throw this.failWith;
+    return [];
   }
 
   async setThinking(
@@ -253,6 +265,55 @@ describe("AgentConfigSession", () => {
     expect(emitted[1]).toEqual({
       type: "set_agent_feature_response",
       payload: { requestId: "req-1", agentId: "agent-1", accepted: false, error: "feature boom" },
+    });
+  });
+
+  test("invoke composer control: forwards the call and emits refreshed controls", async () => {
+    const { subsystem, emitted, operations } = makeSubsystem();
+
+    await subsystem.handleAgentComposerControlInvokeRequest({
+      type: "agent.composer_control.invoke.request",
+      agentId: "agent-1",
+      controlId: "send-pony",
+      requestId: "req-1",
+    });
+
+    expect(operations.controlCalls).toEqual([
+      { agentId: "agent-1", controlId: "send-pony", value: undefined },
+    ]);
+    expect(emitted).toEqual([
+      {
+        type: "agent.composer_control.invoke.response",
+        payload: {
+          requestId: "req-1",
+          agentId: "agent-1",
+          accepted: true,
+          error: null,
+          controls: [],
+        },
+      },
+    ]);
+  });
+
+  test("invoke composer control: a failed mutation reports the control-specific failure text", async () => {
+    const { subsystem, emitted, operations } = makeSubsystem();
+    operations.failWith = new Error("control boom");
+
+    await subsystem.handleAgentComposerControlInvokeRequest({
+      type: "agent.composer_control.invoke.request",
+      agentId: "agent-1",
+      controlId: "verbose",
+      value: true,
+      requestId: "req-1",
+    });
+
+    expect(emitted.map((m) => m.type)).toEqual([
+      "activity_log",
+      "agent.composer_control.invoke.response",
+    ]);
+    expect(emitted[1]).toEqual({
+      type: "agent.composer_control.invoke.response",
+      payload: { requestId: "req-1", agentId: "agent-1", accepted: false, error: "control boom" },
     });
   });
 

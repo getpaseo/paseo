@@ -33,6 +33,27 @@ interface ExampleSession {
 }
 
 export function createDirectExampleProvider(): ProviderRegistration {
+  // Composer-control state lives on the registration, not in any session: the
+  // daemon calls getControls for live, draft, and profile surfaces, and routes
+  // live-agent interactions back through onControlEvent.
+  let verboseReplies = false;
+  let pingCount = 0;
+  const controls = () => [
+    {
+      kind: "toggle" as const,
+      id: "verbose",
+      label: "Verbose replies",
+      icon: "zap",
+      value: verboseReplies,
+    },
+    {
+      kind: "action" as const,
+      id: "ping",
+      label: pingCount > 0 ? `Ping sessions (${pingCount})` : "Ping sessions",
+      icon: "bell",
+      tooltip: "Record a ping; the count shows in this label",
+    },
+  ];
   return {
     id: "direct-example",
     label: "Direct provider example",
@@ -41,6 +62,14 @@ export function createDirectExampleProvider(): ProviderRegistration {
     async connect(request) {
       if (!request.versions.includes(1)) throw new Error("Provider protocol version 1 is required");
       return createConnection(negotiateProviderCapabilities(request.capabilities, CAPABILITIES));
+    },
+    composerControls: {
+      getControls: () => controls(),
+      onControlEvent: async (event) => {
+        if (event.controlId === "verbose") verboseReplies = event.value === true;
+        if (event.controlId === "ping") pingCount += 1;
+        return { controls: controls() };
+      },
     },
   };
 }

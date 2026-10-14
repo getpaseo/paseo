@@ -344,6 +344,7 @@ describe("openAgentProfileForm", () => {
         model: "claude-opus-5",
         modeId: "plan",
         thinkingOptionId: "think",
+        surface: "profile",
       });
       const firstKey = model.getState().featureRequestKey;
 
@@ -355,6 +356,7 @@ describe("openAgentProfileForm", () => {
         model: "claude-haiku-4-5",
         modeId: "plan",
         thinkingOptionId: "think",
+        surface: "profile",
       });
     });
 
@@ -470,9 +472,11 @@ describe("buildFeatureRequestKey", () => {
   });
 
   it("separates the fields so a value cannot bleed across positions", () => {
-    expect(buildFeatureRequestKey({ provider: "claude", model: "a|b" })).toBe("claude|a|b||");
-    expect(buildFeatureRequestKey({ provider: "claude", modeId: "a" })).not.toBe(
-      buildFeatureRequestKey({ provider: "claude", model: "a" }),
+    expect(buildFeatureRequestKey({ provider: "claude", model: "a|b", surface: "profile" })).toBe(
+      "claude|a|b||",
     );
+    expect(
+      buildFeatureRequestKey({ provider: "claude", modeId: "a", surface: "profile" }),
+    ).not.toBe(buildFeatureRequestKey({ provider: "claude", model: "a", surface: "profile" }));
   });
 });

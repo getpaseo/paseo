@@ -2117,6 +2117,42 @@ test("listDraftFeatures does not start a fallback session without a model", asyn
   expect(client.availabilityCalls).toBe(0);
 });
 
+test("listDraftComposerControls returns [] without a session for clients without controls", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-draft-controls-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  class DraftControlClient extends TestAgentClient {
+    createSessionCalls = 0;
+    availabilityCalls = 0;
+
+    override async isAvailable(): Promise<boolean> {
+      this.availabilityCalls += 1;
+      return true;
+    }
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.createSessionCalls += 1;
+      return await super.createSession(config);
+    }
+  }
+  const client = new DraftControlClient();
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+  });
+
+  // With a model set: this is the case that must not open a throwaway session.
+  await expect(
+    manager.listDraftComposerControls({ provider: "codex", cwd: workdir, model: "gpt-5.4" }),
+  ).resolves.toEqual([]);
+
+  expect(client.createSessionCalls).toBe(0);
+  expect(client.availabilityCalls).toBe(0);
+});
+
 test("listDraftFeatures uses client feature listing without a model", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-draft-features-"));
   const storagePath = join(workdir, "agents");

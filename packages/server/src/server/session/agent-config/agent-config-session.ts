@@ -2,7 +2,7 @@ import type pino from "pino";
 import { v4 as uuidv4 } from "uuid";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import type { AgentConfigApply } from "@getpaseo/protocol/messages";
-import type { AgentProviderNotice } from "../../agent/agent-sdk-types.js";
+import type { AgentComposerControl, AgentProviderNotice } from "../../agent/agent-sdk-types.js";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
 
 /**
@@ -29,6 +29,11 @@ export interface AgentConfigOperations {
   setMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null>;
   setModel(agentId: string, modelId: string | null): Promise<void>;
   setFeature(agentId: string, featureId: string, value: unknown): Promise<void>;
+  invokeComposerControl(
+    agentId: string,
+    controlId: string,
+    value: unknown,
+  ): Promise<AgentComposerControl[]>;
   setThinking(
     agentId: string,
     thinkingOptionId: string | null,
@@ -117,6 +122,29 @@ export class AgentConfigSession {
         return undefined;
       },
       emitResponse: (payload) => this.host.emit({ type: "set_agent_feature_response", payload }),
+    });
+  }
+
+  handleAgentComposerControlInvokeRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.composer_control.invoke.request" }>,
+  ): Promise<void> {
+    const { agentId, controlId, value, requestId } = msg;
+    let controls: AgentComposerControl[] | undefined;
+    return this.applyConfigChange({
+      agentId,
+      requestId,
+      logLabel: "agent.composer_control.invoke.request",
+      logFields: { agentId, controlId, value, requestId },
+      failureText: "Failed to invoke composer control",
+      run: async () => {
+        controls = await this.operations.invokeComposerControl(agentId, controlId, value);
+        return undefined;
+      },
+      emitResponse: (payload) =>
+        this.host.emit({
+          type: "agent.composer_control.invoke.response",
+          payload: { ...payload, ...(controls ? { controls } : {}) },
+        }),
     });
   }
 
