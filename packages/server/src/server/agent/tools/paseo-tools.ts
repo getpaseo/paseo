@@ -2189,7 +2189,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       "mutate_workspace_todos",
       {
         description:
-          "Maintain shared project tasks. Initialize once with your first proposed plan, then update progress. Use the revision you read; on conflicts reread. Manually edited text is protected. This list is independent of internal agent tasks.",
+          "Maintain shared project tasks. Initialize once with your first proposed plan, then update progress. Use the revision you read; on conflicts reread. Manually edited text and milestone assignments are protected. Use the optional milestone field to group related tasks into a few named stages; reuse existing milestone labels. An empty milestone removes the assignment. This list is independent of internal agent tasks.",
         inputSchema: {
           revision: z.number().int().nonnegative(),
           mutation: WorkspaceTodoMutationSchema,

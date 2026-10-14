@@ -10,6 +10,16 @@ export const ja: TranslationResources = {
     reopenError: "この会話を再度開けませんでした。",
   },
   workspaceTodos: {
+    milestone: "マイルストーン",
+    ungrouped: "未分類",
+    milestoneDone: "マイルストーン完了",
+    remaining: "残り {{count}} 件",
+    completed: "完了 · {{count}}",
+    progress: "プロジェクトの進捗",
+    headline: "マイルストーンごとに進める",
+    subtitle: "各マイルストーンの進行中のタスク。",
+    details: "マイルストーンとメモ",
+
     title: "To-do",
     taskTitle: "タスク名",
     notes: "メモ",

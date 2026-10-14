@@ -10,6 +10,16 @@ export const ptBR: TranslationResources = {
     reopenError: "Não foi possível reabrir esta conversa.",
   },
   workspaceTodos: {
+    milestone: "Marco",
+    ungrouped: "A organizar",
+    milestoneDone: "Marco concluído",
+    remaining: "{{count}} restantes",
+    completed: "Concluídas · {{count}}",
+    progress: "Progresso do projeto",
+    headline: "Avançar, marco a marco",
+    subtitle: "As tarefas ativas em cada marco.",
+    details: "Marco e notas",
+
     title: "To-do",
     taskTitle: "Título da tarefa",
     notes: "Notas",

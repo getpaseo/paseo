@@ -10,6 +10,16 @@ export const ar: TranslationResources = {
     reopenError: "تعذّرت إعادة فتح هذه المحادثة.",
   },
   workspaceTodos: {
+    milestone: "مرحلة",
+    ungrouped: "للتنظيم",
+    milestoneDone: "اكتملت المرحلة",
+    remaining: "المتبقي: {{count}}",
+    completed: "مكتملة · {{count}}",
+    progress: "تقدم المشروع",
+    headline: "التقدم مرحلة بمرحلة",
+    subtitle: "المهام النشطة في كل مرحلة.",
+    details: "المرحلة والملاحظات",
+
     title: "المهام",
     taskTitle: "عنوان المهمة",
     notes: "ملاحظات",

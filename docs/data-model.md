@@ -604,7 +604,9 @@ Keep project tasks keyed by `workspaceId`, outside the workspace record. Archivi
 
 All sessions and agent tools share one store per daemon home. Its serialized mutations check the caller's read revision before an atomic write; publish only committed lists. The persisted initialization marker survives deleting the last task, so taking over an empty list cannot silently recreate a discarded plan.
 
-Manual title and note edits protect those fields separately. Agents can still update progress, but cannot rewrite protected text or delete a protected task. Agent tools derive workspace ownership from the authenticated caller, while client RPCs require [workspace authority](permissions.md). Agents populate and maintain the list through tools; no plan text is parsed automatically.
+Manual title, note and milestone edits protect those fields separately. Agents can still update progress, but cannot rewrite protected text, change a protected assignment or delete a protected task. Agent tools derive workspace ownership from the authenticated caller, while client RPCs require [workspace authority](permissions.md). Agents populate and maintain the list through tools; no plan text is parsed automatically.
+
+Milestone names are shared task metadata, not client-only display groups. Reuse a name to join a milestone; leave it empty to keep the task unassigned. Existing lists need no migration and remain visible under To organize. Renaming or reassigning a task does not change its identity. The Jalons UI requires `workspaceTodoMilestones` so an old daemon cannot silently discard assignments. The desktop dock sits between navigation and workspace content; compact layouts keep the same list in a sheet.
 
 ## 6. Push Token Store
 

@@ -10,6 +10,16 @@ export const ru: TranslationResources = {
     reopenError: "Не удалось открыть беседу заново.",
   },
   workspaceTodos: {
+    milestone: "Этап",
+    ungrouped: "Без этапа",
+    milestoneDone: "Этап завершён",
+    remaining: "Осталось: {{count}}",
+    completed: "Завершено · {{count}}",
+    progress: "Прогресс проекта",
+    headline: "Шаг за шагом",
+    subtitle: "Текущие задачи каждого этапа.",
+    details: "Этап и заметки",
+
     title: "To-do",
     taskTitle: "Название задачи",
     notes: "Заметки",

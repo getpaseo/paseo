@@ -1,16 +1,14 @@
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   createContext,
   useCallback,
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
   type Ref,
 } from "react";
-import { PanResponder, Pressable, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import {
@@ -21,6 +19,7 @@ import {
   ListTodo,
   MoreHorizontal,
   X,
+  Plus,
 } from "lucide-react-native";
 import type {
   WorkspaceTodo,
@@ -28,7 +27,7 @@ import type {
   WorkspaceTodos,
 } from "@getpaseo/protocol/workspace-todos";
 import { Button } from "@/components/ui/button";
-import { FormTextInput } from "@/components/ui/form-field";
+import { Field, FormTextInput } from "@/components/ui/form-field";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import {
   DropdownMenu,
@@ -37,12 +36,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { DraggableList } from "@/components/draggable-list";
+import { ScreenHeader } from "@/components/headers/screen-header";
+import { MilestoneSection } from "./milestone-section";
+import { groupTodoMilestones, mergeTodoOrder } from "./grouping";
 import type { DraggableRenderItemInfo } from "@/components/draggable-list.types";
-import { HEADER_INNER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { isWeb } from "@/constants/platform";
-import { clampTodoPosition, type TodoPosition } from "./position";
 import { useTodoViews } from "./view-store";
 
 const ThemedListTodo = withUnistyles(ListTodo);
@@ -73,11 +73,13 @@ export function WorkspaceTodosButton({ hideLabels = false }: { hideLabels?: bool
   );
 }
 interface EditDraft {
+  milestone?: string;
   title?: string;
   notes?: string;
   revision: number;
 }
 interface Drafts {
+  milestone: string;
   title: string;
   notes: string;
   edits: Record<string, EditDraft>;
@@ -86,7 +88,7 @@ interface Drafts {
 }
 // Drafts survive hiding the panel and switching workspaces within this app session.
 const draftsByWorkspace = new Map<string, Drafts>();
-const EMPTY_DRAFT: Drafts = { title: "", notes: "", edits: {} };
+const EMPTY_DRAFT: Drafts = { title: "", notes: "", milestone: "", edits: {} };
 export function WorkspaceTodosHost({
   serverId,
   workspaceId,
@@ -120,73 +122,25 @@ function TodoHost({
 }) {
   const { t } = useTranslation();
   const compact = useIsCompactFormFactor();
-  const insets = useSafeAreaInsets();
   const size = compact ? "md" : "sm";
   const client = useHostRuntimeClient(serverId);
   const connected = useHostRuntimeIsConnected(serverId);
   const view = useTodoViews((state) => state.views[viewKey]);
   const setView = useTodoViews((state) => state.setView);
   const open = view?.open ?? false;
-  const close = useCallback(
-    () => setView(viewKey, { open: false, position: view?.position }),
-    [setView, viewKey, view?.position],
-  );
-  const toggle = useCallback(
-    () => setView(viewKey, { open: !open, position: view?.position }),
-    [setView, viewKey, view?.position, open],
-  );
+  const close = useCallback(() => setView(viewKey, { open: false }), [setView, viewKey]);
+  const toggle = useCallback(() => setView(viewKey, { open: !open }), [setView, viewKey, open]);
   const contextValue = useMemo(() => ({ open, toggle }), [open, toggle]);
-  const [bounds, setBounds] = useState({ width: 0, height: 0 });
-  const [panelHeight, setPanelHeight] = useState(0);
-  const [dragPosition, setDragPosition] = useState<TodoPosition>();
   const [list, setList] = useState<WorkspaceTodos | null>(null);
   const [draft, setDraft] = useState<Drafts>(() => draftsByWorkspace.get(viewKey) ?? EMPTY_DRAFT);
   const [pending, setPending] = useState(false);
   const [loadError, setLoadError] = useState<string>();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [inputEpoch, setInputEpoch] = useState(0);
-  const capability = client?.getLastServerInfoMessage()?.features?.workspaceTodos === true;
-  const width = Math.min(360, bounds.width);
-  const position = useMemo(
-    () => clampTodoPosition(dragPosition ?? view?.position, bounds, { width, height: panelHeight }),
-    [dragPosition, view?.position, bounds, width, panelHeight],
-  );
-  const positionRef = useRef(position);
-  positionRef.current = position;
-  const dragOrigin = useRef(position);
-  const drag = useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: (_, gesture) =>
-          Math.abs(gesture.dx) + Math.abs(gesture.dy) > 3,
-        onPanResponderGrant: () => {
-          dragOrigin.current = positionRef.current;
-        },
-        onPanResponderMove: (_, gesture) =>
-          setDragPosition({
-            x: dragOrigin.current.x + gesture.dx,
-            y: dragOrigin.current.y + gesture.dy,
-          }),
-        onPanResponderRelease: () => {
-          setView(viewKey, { open: true, position: positionRef.current });
-          setDragPosition(undefined);
-        },
-        onPanResponderTerminate: () => {
-          setView(viewKey, { open: true, position: positionRef.current });
-          setDragPosition(undefined);
-        },
-      }),
-    [setView, viewKey],
-  );
+  const capability = client?.getLastServerInfoMessage()?.features?.workspaceTodoMilestones === true;
   useEffect(() => {
     draftsByWorkspace.set(viewKey, draft);
   }, [draft, viewKey]);
-  useEffect(() => {
-    if (compact || !view?.position || !bounds.width || dragPosition) return;
-    if (view.position.x !== position.x || view.position.y !== position.y)
-      setView(viewKey, { ...view, position });
-  }, [bounds, compact, dragPosition, position, setView, view, viewKey]);
   useEffect(() => {
     if (!active || !open || !client || !capability) return;
     const subscription = client.observeWorkspaceTodos(workspaceId);
@@ -220,7 +174,9 @@ function TodoHost({
           if (
             mutation.operation === "delete" ||
             (mutation.operation === "update" &&
-              (mutation.title !== undefined || mutation.notes !== undefined))
+              (mutation.title !== undefined ||
+                mutation.notes !== undefined ||
+                mutation.milestone !== undefined))
           )
             delete edits[mutation.id];
           return {
@@ -258,7 +214,7 @@ function TodoHost({
     }
   }, [client, draft.failed, mutate, pending, t, workspaceId]);
   const changeEdit = useCallback(
-    (task: WorkspaceTodo, field: "title" | "notes", text: string) =>
+    (task: WorkspaceTodo, field: "title" | "notes" | "milestone", text: string) =>
       setDraft((current) => ({
         ...current,
         failed: undefined,
@@ -272,8 +228,8 @@ function TodoHost({
   );
   const reorder = useCallback(
     (tasks: WorkspaceTodo[]) =>
-      void mutate({ operation: "reorder", ids: tasks.map((task) => task.id) }),
-    [mutate],
+      void mutate({ operation: "reorder", ids: mergeTodoOrder(list!.tasks, tasks) }),
+    [mutate, list],
   );
   const toggleNotes = useCallback(
     (id: string) =>
@@ -291,7 +247,7 @@ function TodoHost({
         info={info}
         list={list!}
         draft={draft.edits[info.item.id]}
-        expanded={expanded.has(info.item.id)}
+        expanded={expanded.has(info.item.id) || Boolean(draft.edits[info.item.id])}
         pending={pending}
         epoch={inputEpoch}
         onEdit={changeEdit}
@@ -312,9 +268,20 @@ function TodoHost({
       setDraft((current) => ({ ...current, notes, failed: undefined, error: undefined })),
     [],
   );
+  const onNewMilestone = useCallback(
+    (milestone: string) =>
+      setDraft((current) => ({ ...current, milestone, failed: undefined, error: undefined })),
+    [],
+  );
   const add = useCallback(
-    () => void mutate({ operation: "add", title: draft.title, notes: draft.notes }),
-    [draft.title, draft.notes, mutate],
+    () =>
+      void mutate({
+        operation: "add",
+        title: draft.title,
+        notes: draft.notes,
+        milestone: draft.milestone,
+      }),
+    [draft.title, draft.notes, draft.milestone, mutate],
   );
   const extraData = useMemo(
     () => ({ draft, expanded, pending, inputEpoch }),
@@ -336,6 +303,7 @@ function TodoHost({
       renderTask={renderTask}
       onReorder={reorder}
       onNewTitle={onNewTitle}
+      onNewMilestone={onNewMilestone}
       onNewNotes={onNewNotes}
       onAdd={add}
     />
@@ -347,81 +315,56 @@ function TodoHost({
     () => ({ title: t("workspaceTodos.title"), subtitle: counter }),
     [t, counter],
   );
-  const onHostLayout = useCallback(
-    (event: import("react-native").LayoutChangeEvent) =>
-      setBounds({ width: event.nativeEvent.layout.width, height: event.nativeEvent.layout.height }),
-    [],
+  const headerLeft = useMemo(
+    () => (
+      <>
+        <ThemedListTodo size={16} uniProps={todoIconColor} />
+        <Text style={styles.heading}>{t("workspaceTodos.title")}</Text>
+        <Text style={styles.text} testID="workspace-todos-counter">
+          {counter}
+        </Text>
+      </>
+    ),
+    [t, counter],
   );
-  const onPanelLayout = useCallback(
-    (event: import("react-native").LayoutChangeEvent) =>
-      setPanelHeight(event.nativeEvent.layout.height),
-    [],
+  const headerRight = useMemo(
+    () => (
+      <Button
+        variant="ghost"
+        size={size}
+        leftIcon={X}
+        onPress={close}
+        accessibilityLabel={t("workspaceTodos.close")}
+        testID="workspace-todos-close"
+      />
+    ),
+    [size, close, t],
   );
-  let overlay: ReactNode = null;
-  if (compact)
-    overlay = (
-      <AdaptiveModalSheet
-        visible={active && open}
-        onClose={close}
-        header={header}
-        testID="workspace-todos-sheet"
-      >
-        {content}
-      </AdaptiveModalSheet>
-    );
-  else if (active && open && bounds.width > 0)
-    overlay = (
-      <View
-        style={[
-          styles.panel,
-          { left: position.x, top: position.y, width, maxHeight: bounds.height },
-        ]}
-        onLayout={onPanelLayout}
-        testID="workspace-todos-panel"
-      >
-        <View style={styles.header}>
-          <View
-            style={styles.dragHeader}
-            {...drag.panHandlers}
-            testID="workspace-todos-drag-header"
-          >
-            <ThemedListTodo size={16} uniProps={todoIconColor} />
-            <Text style={styles.heading}>{t("workspaceTodos.title")}</Text>
-            <Text style={styles.text} testID="workspace-todos-counter">
-              {counter}
-            </Text>
-          </View>
-          <Button
-            variant="ghost"
-            size={size}
-            leftIcon={X}
-            onPress={close}
-            accessibilityLabel={t("workspaceTodos.close")}
-            testID="workspace-todos-close"
-          />
-        </View>
-        <ScrollView style={styles.scroll}>{content}</ScrollView>
-      </View>
-    );
   return (
     <TodoContext.Provider value={contextValue}>
       <View style={styles.host}>
-        {children}
-        {compact ? (
-          overlay
-        ) : (
-          <View
-            pointerEvents="box-none"
-            style={[styles.overlay, { top: HEADER_INNER_HEIGHT + insets.top }]}
-            onLayout={onHostLayout}
-          >
-            {overlay}
+        {!compact && active && open && (
+          <View style={styles.panel} testID="workspace-todos-panel">
+            <ScreenHeader left={headerLeft} right={headerRight} />
+            {content}
           </View>
+        )}
+        <View style={styles.workspace}>{children}</View>
+        {compact && (
+          <AdaptiveModalSheet
+            visible={active && open}
+            onClose={close}
+            header={header}
+            testID="workspace-todos-sheet"
+          >
+            {content}
+          </AdaptiveModalSheet>
         )}
       </View>
     </TodoContext.Provider>
   );
 }
+
 import { ScrollView } from "@/components/ui/scroll-view";
 interface ContentProps {
   connected: boolean;
@@ -437,10 +380,10 @@ interface ContentProps {
   onReorder(tasks: WorkspaceTodo[]): void;
   renderTask(info: DraggableRenderItemInfo<WorkspaceTodo>): import("react").ReactElement;
   onNewTitle(text: string): void;
+  onNewMilestone(text: string): void;
   onNewNotes(text: string): void;
   onAdd(): void;
 }
-const taskKey = (task: WorkspaceTodo) => task.id;
 function TodoContent({
   connected,
   capability,
@@ -456,10 +399,15 @@ function TodoContent({
   onReorder,
   onNewTitle,
   onNewNotes,
+  onNewMilestone,
   onAdd,
 }: ContentProps) {
   const { t } = useTranslation();
-  const size = useIsCompactFormFactor() ? "md" : "sm";
+  const compact = useIsCompactFormFactor();
+  const size = compact ? "md" : "sm";
+  const groups = useMemo(() => groupTodoMilestones(list?.tasks ?? []), [list]);
+  const editingIds = useMemo(() => new Set(Object.keys(draft.edits)), [draft.edits]);
+  const completed = list?.tasks.filter((task) => task.status === "done").length ?? 0;
   if (!connected && !list)
     return <Text style={styles.error}>{t("workspace.terminal.hostDisconnected")}</Text>;
   if (!capability && !list)
@@ -468,7 +416,7 @@ function TodoContent({
         {t("workspaceTodos.updateHost")}
       </Text>
     );
-  return (
+  const body = (
     <View style={styles.body}>
       {!connected ? (
         <Text style={styles.error} accessibilityRole="alert">
@@ -494,53 +442,158 @@ function TodoContent({
         <Text style={styles.text}>{t("common.loading")}</Text>
       ) : (
         <>
-          <DraggableList
-            data={list.tasks}
-            keyExtractor={taskKey}
-            useDragHandle
-            scrollEnabled={false}
-            extraData={extraData}
-            onDragEnd={onReorder}
-            renderItem={renderTask}
-            ListEmptyComponent={empty}
-          />
-          <View style={styles.add}>
-            <FormTextInput
-              size={size}
-              initialValue={draft.title}
-              resetKey={epoch}
-              onChangeText={onNewTitle}
-              placeholder={t("workspaceTodos.taskTitle")}
-              accessibilityLabel={t("workspaceTodos.taskTitle")}
-              editable={!pending}
-              testID="workspace-todos-new-title"
-            />
-            <FormTextInput
-              size={size}
-              initialValue={draft.notes}
-              resetKey={epoch}
-              onChangeText={onNewNotes}
-              placeholder={t("workspaceTodos.notes")}
-              accessibilityLabel={t("workspaceTodos.notes")}
-              multiline
-              editable={!pending}
-              testID="workspace-todos-new-notes"
-            />
-            <Button
-              size={size}
-              variant="default"
-              disabled={pending || !draft.title.trim()}
-              onPress={onAdd}
-              testID="workspace-todos-add"
-            >
-              {t("workspaceTodos.add")}
-            </Button>
+          <View style={styles.progressBlock}>
+            <View style={styles.row}>
+              <Text style={styles.status}>{t("workspaceTodos.progress")}</Text>
+              <Text style={styles.text}>
+                {completed}/{list.tasks.length}
+              </Text>
+            </View>
+            <View style={styles.progressTrack}>
+              <View
+                style={styles.progressFill(list.tasks.length ? completed / list.tasks.length : 0)}
+              />
+            </View>
           </View>
+          <View style={styles.intro}>
+            <Text style={styles.introTitle}>{t("workspaceTodos.headline")}</Text>
+            <Text style={styles.status}>{t("workspaceTodos.subtitle")}</Text>
+          </View>
+          {groups.length === 0
+            ? empty
+            : groups.map((group, index) => (
+                <MilestoneSection
+                  key={group.name}
+                  group={group}
+                  index={index}
+                  editingIds={editingIds}
+                  extraData={extraData}
+                  renderTask={renderTask}
+                  onReorder={onReorder}
+                />
+              ))}
+        </>
+      )}
+    </View>
+  );
+  const addForm = list ? (
+    <TodoAddForm
+      connected={connected}
+      draft={draft}
+      pending={pending}
+      epoch={epoch}
+      onNewTitle={onNewTitle}
+      onNewNotes={onNewNotes}
+      onNewMilestone={onNewMilestone}
+      onAdd={onAdd}
+    />
+  ) : null;
+  if (compact)
+    return (
+      <View>
+        {body}
+        {addForm}
+      </View>
+    );
+  return (
+    <View style={styles.workspace}>
+      <ScrollView style={styles.scroll}>{body}</ScrollView>
+      {addForm}
+    </View>
+  );
+}
+
+function TodoAddForm({
+  connected,
+  draft,
+  pending,
+  epoch,
+  onNewTitle,
+  onNewNotes,
+  onNewMilestone,
+  onAdd,
+}: Pick<
+  ContentProps,
+  | "connected"
+  | "draft"
+  | "pending"
+  | "epoch"
+  | "onNewTitle"
+  | "onNewNotes"
+  | "onNewMilestone"
+  | "onAdd"
+>) {
+  const { t } = useTranslation();
+  const size = useIsCompactFormFactor() ? "md" : "sm";
+  const [addDetails, setAddDetails] = useState(false);
+  const toggleDetails = useCallback(() => setAddDetails((value) => !value), []);
+  return (
+    <View style={styles.add}>
+      <View style={styles.row}>
+        <View style={styles.titleInput}>
+          <FormTextInput
+            size={size}
+            multiline
+            initialValue={draft.title}
+            resetKey={epoch}
+            onChangeText={onNewTitle}
+            placeholder={t("workspaceTodos.add")}
+            accessibilityLabel={t("workspaceTodos.taskTitle")}
+            editable={!pending && connected}
+            testID="workspace-todos-new-title"
+          />
+        </View>
+        <Button
+          size={size}
+          variant="ghost"
+          leftIcon={Plus}
+          disabled={pending || !connected || !draft.title.trim()}
+          onPress={onAdd}
+          accessibilityLabel={t("workspaceTodos.add")}
+          testID="workspace-todos-add"
+        />
+      </View>
+      {draft.title || draft.notes || addDetails ? (
+        <Button
+          size="xs"
+          variant="ghost"
+          leftIcon={addDetails ? ChevronDown : ChevronRight}
+          onPress={toggleDetails}
+          testID="workspace-todos-add-details"
+        >
+          {t("workspaceTodos.details")}
+        </Button>
+      ) : null}
+      {addDetails && (
+        <>
+          <Field label={t("workspaceTodos.milestone")}>
+            <FormTextInput
+              size={size}
+              initialValue={draft.milestone}
+              resetKey={epoch}
+              onChangeText={onNewMilestone}
+              placeholder={t("workspaceTodos.ungrouped")}
+              editable={!pending}
+              testID="workspace-todos-new-milestone"
+            />
+          </Field>
+          <FormTextInput
+            size={size}
+            initialValue={draft.notes}
+            resetKey={epoch}
+            onChangeText={onNewNotes}
+            placeholder={t("workspaceTodos.notes")}
+            accessibilityLabel={t("workspaceTodos.notes")}
+            multiline
+            editable={!pending}
+            testID="workspace-todos-new-notes"
+          />
         </>
       )}
     </View>
   );
 }
+
 interface RowProps {
   info: DraggableRenderItemInfo<WorkspaceTodo>;
   list: WorkspaceTodos;
@@ -548,13 +601,13 @@ interface RowProps {
   expanded: boolean;
   pending: boolean;
   epoch: number;
-  onEdit(task: WorkspaceTodo, field: "title" | "notes", text: string): void;
+  onEdit(task: WorkspaceTodo, field: "title" | "notes" | "milestone", text: string): void;
   onMutate(mutation: WorkspaceTodoMutation, revision?: number): Promise<void>;
   onToggleNotes(id: string): void;
   onReorder(tasks: WorkspaceTodo[]): void;
 }
 function TodoRow({
-  info: { item: task, index, drag, dragHandleProps },
+  info: { item: task, drag, dragHandleProps },
   list,
   draft,
   expanded,
@@ -566,14 +619,13 @@ function TodoRow({
   onReorder,
 }: RowProps) {
   const { t } = useTranslation();
+  const index = list.tasks.findIndex((item) => item.id === task.id);
   const size = useIsCompactFormFactor() ? "md" : "sm";
   const checked = useMemo(
     () => ({ checked: task.status === "done", disabled: pending }),
     [task.status, pending],
   );
   const expandedState = useMemo(() => ({ expanded }), [expanded]);
-  const changeTitle = useCallback((text: string) => onEdit(task, "title", text), [onEdit, task]);
-  const changeNotes = useCallback((text: string) => onEdit(task, "notes", text), [onEdit, task]);
   const toggle = useCallback(
     () =>
       void onMutate({
@@ -587,7 +639,13 @@ function TodoRow({
   const save = useCallback(() => {
     if (draft)
       void onMutate(
-        { operation: "update", id: task.id, title: draft.title, notes: draft.notes },
+        {
+          operation: "update",
+          id: task.id,
+          title: draft.title,
+          notes: draft.notes,
+          milestone: draft.milestone,
+        },
         draft.revision,
       );
   }, [draft, onMutate, task.id]);
@@ -668,48 +726,38 @@ function TodoRow({
           disabled={pending}
           onPress={toggle}
           testID={`workspace-todo-check-${task.id}`}
-          style={styles.checkbox}
+          style={[styles.checkbox, task.status === "in_progress" && styles.activeCheckbox]}
         >
           {task.status === "done" ? <ThemedCheck size={14} uniProps={todoIconColor} /> : null}
+          {task.status === "in_progress" ? <View style={styles.activeDot} /> : null}
         </Pressable>
-        <FormTextInput
-          size={size}
-          style={styles.titleInput}
-          initialValue={draft?.title ?? task.title}
-          resetKey={`${epoch}:${draft ? "draft" : list.revision}`}
-          onChangeText={changeTitle}
-          editable={!pending}
-          accessibilityLabel={t("workspaceTodos.taskTitle")}
-          testID={`workspace-todo-title-${task.id}`}
-        />
-        {menu}
-      </View>
-      <View style={styles.row}>
-        <Button
-          variant="ghost"
-          size={size}
-          leftIcon={expanded ? ChevronDown : ChevronRight}
+        <Pressable
           onPress={notes}
+          accessibilityRole="button"
           accessibilityState={expandedState}
+          style={styles.titleInput}
           testID={`workspace-todo-notes-toggle-${task.id}`}
         >
-          {t("workspaceTodos.notes")}
-        </Button>
-        <Text style={styles.status} testID={`workspace-todo-status-${task.id}`}>
-          {t(`workspaceTodos.${task.status}`)}
-        </Text>
+          <Text
+            style={[styles.taskTitle, task.status === "done" && styles.doneTitle]}
+            testID={`workspace-todo-label-${task.id}`}
+          >
+            {draft?.title ?? task.title}
+          </Text>
+        </Pressable>
+        {menu}
       </View>
+      <Text style={styles.rowStatus} testID={`workspace-todo-status-${task.id}`}>
+        {t(`workspaceTodos.${task.status}`)}
+      </Text>
       {expanded ? (
-        <FormTextInput
-          size={size}
-          initialValue={draft?.notes ?? task.notes}
-          resetKey={`${epoch}:${draft ? "draft" : list.revision}`}
-          multiline
-          numberOfLines={3}
-          onChangeText={changeNotes}
-          editable={!pending}
-          accessibilityLabel={t("workspaceTodos.notes")}
-          testID={`workspace-todo-notes-${task.id}`}
+        <TodoEditor
+          task={task}
+          draft={draft}
+          pending={pending}
+          epoch={epoch}
+          revision={list.revision}
+          onEdit={onEdit}
         />
       ) : null}
       {draft ? (
@@ -728,6 +776,65 @@ function TodoRow({
     </View>
   );
 }
+function TodoEditor({
+  task,
+  draft,
+  pending,
+  epoch,
+  revision,
+  onEdit,
+}: Pick<RowProps, "draft" | "pending" | "epoch" | "onEdit"> & {
+  task: WorkspaceTodo;
+  revision: number;
+}) {
+  const { t } = useTranslation();
+  const size = useIsCompactFormFactor() ? "md" : "sm";
+  const changeTitle = useCallback((text: string) => onEdit(task, "title", text), [onEdit, task]);
+  const changeMilestone = useCallback(
+    (text: string) => onEdit(task, "milestone", text),
+    [onEdit, task],
+  );
+  const changeNotes = useCallback((text: string) => onEdit(task, "notes", text), [onEdit, task]);
+  return (
+    <View style={styles.details}>
+      <Field label={t("workspaceTodos.taskTitle")}>
+        <FormTextInput
+          size={size}
+          initialValue={draft?.title ?? task.title}
+          resetKey={`${epoch}:${draft ? "draft" : revision}`}
+          onChangeText={changeTitle}
+          multiline
+          editable={!pending}
+          testID={`workspace-todo-title-${task.id}`}
+        />
+      </Field>
+      <Field label={t("workspaceTodos.milestone")}>
+        <FormTextInput
+          size={size}
+          initialValue={draft?.milestone ?? task.milestone ?? ""}
+          resetKey={`${epoch}:${draft ? "draft" : revision}`}
+          onChangeText={changeMilestone}
+          placeholder={t("workspaceTodos.ungrouped")}
+          editable={!pending}
+          testID={`workspace-todo-milestone-input-${task.id}`}
+        />
+      </Field>
+      <Field label={t("workspaceTodos.notes")}>
+        <FormTextInput
+          size={size}
+          initialValue={draft?.notes ?? task.notes}
+          resetKey={`${epoch}:${draft ? "draft" : revision}`}
+          multiline
+          numberOfLines={3}
+          onChangeText={changeNotes}
+          editable={!pending}
+          testID={`workspace-todo-notes-${task.id}`}
+        />
+      </Field>
+    </View>
+  );
+}
+
 function TodoDragHandle({
   taskId,
   drag,
@@ -766,32 +873,15 @@ const styles = StyleSheet.create((theme) => ({
     touchAction: "none",
     cursor: "pointer",
   },
-  host: { flex: 1, minHeight: 0 },
-  overlay: { position: "absolute", bottom: 0, left: 0, right: 0, pointerEvents: "box-none" },
+  host: { flex: 1, minHeight: 0, minWidth: 0, flexDirection: "row" },
+  workspace: { flex: 1, minWidth: 0, minHeight: 0 },
   panel: {
-    position: "absolute",
-    zIndex: 50,
-    backgroundColor: theme.colors.surface1,
+    width: 388,
+    maxWidth: "45%",
+    minHeight: 0,
+    backgroundColor: theme.colors.workspace.chrome,
+    borderRightWidth: 1,
     borderColor: theme.colors.border,
-    borderWidth: 1,
-    borderRadius: theme.borderRadius.lg,
-    overflow: "hidden",
-    boxShadow: "0 6px 24px rgba(0,0,0,0.2)",
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: theme.spacing[2],
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
-  dragHeader: {
-    userSelect: "none",
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    padding: theme.spacing[1],
   },
   heading: {
     flex: 1,
@@ -799,14 +889,12 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
   },
-  scroll: { flexShrink: 1 },
-  body: { padding: theme.spacing[3], gap: theme.spacing[3] },
+  scroll: { flex: 1, minHeight: 0 },
+  body: { padding: theme.spacing[4], gap: theme.spacing[4] },
   row: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
   task: {
     gap: theme.spacing[2],
     paddingVertical: theme.spacing[2],
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
   },
   titleInput: { flex: 1, minWidth: 0 },
   menuTrigger: { width: 32, height: 32, alignItems: "center", justifyContent: "center" },
@@ -821,7 +909,40 @@ const styles = StyleSheet.create((theme) => ({
   },
   text: { color: theme.colors.foreground, fontSize: theme.fontSize.sm },
   status: { flex: 1, color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm },
-  add: { gap: theme.spacing[2] },
+  add: {
+    gap: theme.spacing[2],
+    padding: theme.spacing[3],
+    borderTopWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  details: { gap: theme.spacing[3], paddingVertical: theme.spacing[2] },
+  taskTitle: { fontSize: theme.fontSize.base, lineHeight: 22, color: theme.colors.foreground },
+  doneTitle: { color: theme.colors.foregroundMuted },
+  rowStatus: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+    paddingLeft: theme.spacing[8],
+  },
+  activeCheckbox: { borderColor: theme.colors.accent },
+  activeDot: { width: 8, height: 8, borderRadius: 2, backgroundColor: theme.colors.accent },
+  progressBlock: { gap: theme.spacing[2] },
+  progressTrack: {
+    height: 4,
+    borderRadius: 4,
+    backgroundColor: theme.colors.surface3,
+    overflow: "hidden",
+  },
+  progressFill: (progress: number) => ({
+    height: "100%",
+    width: `${progress * 100}%`,
+    backgroundColor: theme.colors.accent,
+  }),
+  intro: { gap: theme.spacing[2], paddingVertical: theme.spacing[2] },
+  introTitle: {
+    fontSize: theme.fontSize.lg,
+    fontWeight: theme.fontWeight.medium,
+    color: theme.colors.foreground,
+  },
   errorBlock: { gap: theme.spacing[2] },
   error: { color: theme.colors.destructive, fontSize: theme.fontSize.sm },
 }));

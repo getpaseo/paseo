@@ -8,22 +8,30 @@ import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 
 test.use({ video: "off", trace: "off" });
 
-async function addTask(page: import("@playwright/test").Page, title: string, notes = "") {
+async function addTask(
+  page: import("@playwright/test").Page,
+  title: string,
+  notes = "",
+  milestone = "",
+) {
   await page.getByTestId("workspace-todos-new-title").filter({ visible: true }).fill(title);
+  await page.getByTestId("workspace-todos-add-details").filter({ visible: true }).click();
   await page.getByTestId("workspace-todos-new-notes").filter({ visible: true }).fill(notes);
+  await page.getByTestId("workspace-todos-new-milestone").filter({ visible: true }).fill(milestone);
   await page.getByTestId("workspace-todos-add").filter({ visible: true }).click();
   await expect(
-    page.locator('[data-testid^="workspace-todo-title-"]').filter({ visible: true }).last(),
-  ).toHaveValue(title);
+    page.locator('[data-testid^="workspace-todo-label-"]').filter({ visible: true }).last(),
+  ).toHaveText(title);
+  await page.getByTestId("workspace-todos-add-details").filter({ visible: true }).click();
 }
 
-test("shared To-do edits, ordering, drafts, workspace isolation and constrained window", async ({
+test("Jalons docks beside navigation, edits milestones, reorders tasks and preserves workspace drafts", async ({
   page,
 }, testInfo) => {
   const first = await seedWorkspace({ repoPrefix: "todo-directory-", git: false });
   const second = await seedWorkspace({ repoPrefix: "todo-other-", git: false });
   try {
-    await page.setViewportSize({ width: 1280, height: 850 });
+    await page.setViewportSize({ width: 1440, height: 1000 });
     await gotoAppShell(page);
     await switchWorkspaceViaSidebar({
       page,
@@ -33,11 +41,17 @@ test("shared To-do edits, ordering, drafts, workspace isolation and constrained 
     await page.getByTestId("workspace-todos-toggle").filter({ visible: true }).click();
     const panel = page.getByTestId("workspace-todos-panel").filter({ visible: true });
     await expect(panel).toBeVisible();
-    await addTask(page, "Prepare the shared plan", "Keep project steps visible to all agents.");
-    await addTask(page, "Validate the implementation");
+    await addTask(
+      page,
+      "Prepare the shared plan",
+      "Keep project steps visible to all agents.",
+      "Delivery",
+    );
+    await addTask(page, "Validate the implementation", "", "Delivery");
     const saved = (await first.client.getWorkspaceTodos(first.workspaceId)).list;
-    const id = saved.tasks[0]!.id;
-    const secondId = saved.tasks[1]!.id;
+    const id = saved.tasks[0]!.id,
+      secondId = saved.tasks[1]!.id;
+    expect(saved.tasks.map((task) => task.milestone)).toEqual(["Delivery", "Delivery"]);
     await page.getByTestId(`workspace-todo-notes-toggle-${id}`).click();
     await expect(page.getByTestId(`workspace-todo-notes-${id}`)).toHaveValue(
       "Keep project steps visible to all agents.",
@@ -48,13 +62,7 @@ test("shared To-do edits, ordering, drafts, workspace isolation and constrained 
       .fill("These notes are protected from agent rewrites.");
     await page.getByTestId(`workspace-todo-save-${id}`).click();
     await expect(page.getByTestId(`workspace-todo-save-${id}`)).toBeHidden();
-    await page.getByTestId(`workspace-todo-check-${id}`).click();
-    await expect(page.getByTestId("workspace-todos-counter").filter({ visible: true })).toHaveText(
-      "1/2",
-    );
-    await page.getByTestId(`workspace-todo-menu-${secondId}`).click();
-    await page.getByRole("menuitem", { name: "In progress", exact: true }).click();
-    await expect(page.getByTestId(`workspace-todo-status-${secondId}`)).toHaveText("In progress");
+    await page.getByTestId(`workspace-todo-notes-toggle-${id}`).click();
     await page.getByTestId(`workspace-todo-menu-${secondId}`).click();
     await page.getByRole("menuitem", { name: "Move up", exact: true }).click();
     await expect
@@ -73,19 +81,36 @@ test("shared To-do edits, ordering, drafts, workspace isolation and constrained 
         (await first.client.getWorkspaceTodos(first.workspaceId)).list.tasks.map((task) => task.id),
       )
       .toEqual([id, secondId]);
-    await expect(
-      page.locator('[data-testid^="workspace-todo-title-"]').filter({ visible: true }).first(),
-    ).toHaveValue("Prepare the project plan");
-    await page
-      .getByTestId("workspace-todos-new-title")
-      .filter({ visible: true })
-      .fill("Draft survives workspace changes");
-    await page.getByTestId("workspace-todos-close").filter({ visible: true }).click();
+    await page.getByTestId(`workspace-todo-check-${id}`).click();
+    await expect(page.getByTestId("workspace-todos-counter").filter({ visible: true })).toHaveText(
+      "1/2",
+    );
+    await expect(page.getByTestId(`workspace-todo-label-${id}`)).toBeHidden();
+    await page.getByTestId("workspace-todo-completed-toggle-Delivery").click();
+    await expect(page.getByTestId(`workspace-todo-label-${id}`)).toHaveText(
+      "Prepare the project plan",
+    );
+    await page.getByTestId(`workspace-todo-menu-${secondId}`).click();
+    await page.getByRole("menuitem", { name: "In progress", exact: true }).click();
+    await expect(page.getByTestId(`workspace-todo-status-${secondId}`)).toHaveText("In progress");
+    await page.getByTestId(`workspace-todo-notes-toggle-${secondId}`).click();
+    await page.getByTestId(`workspace-todo-milestone-input-${secondId}`).fill("Verification");
+    await page.getByTestId(`workspace-todo-save-${secondId}`).click();
+    await expect(page.getByTestId("workspace-todo-milestone-Verification")).toBeVisible();
+    await expect
+      .poll(
+        async () =>
+          (await first.client.getWorkspaceTodos(first.workspaceId)).list.tasks[1]?.milestone,
+      )
+      .toBe("Verification");
+    await page.getByTestId(`workspace-todo-notes-toggle-${secondId}`).click();
+    await page.getByTestId("workspace-todos-new-title").fill("Draft survives workspace changes");
+    await page.getByTestId("workspace-todos-close").click();
     await expect(panel).toBeHidden();
     await page.getByTestId("workspace-todos-toggle").filter({ visible: true }).click();
-    await expect(
-      page.getByTestId("workspace-todos-new-title").filter({ visible: true }),
-    ).toHaveValue("Draft survives workspace changes");
+    await expect(page.getByTestId("workspace-todos-new-title")).toHaveValue(
+      "Draft survives workspace changes",
+    );
     await switchWorkspaceViaSidebar({
       page,
       serverId: getServerId(),
@@ -101,57 +126,26 @@ test("shared To-do edits, ordering, drafts, workspace isolation and constrained 
       serverId: getServerId(),
       workspaceId: first.workspaceId,
     });
-    await expect(panel).toBeVisible();
     await expect(
       page.getByTestId("workspace-todos-new-title").filter({ visible: true }),
     ).toHaveValue("Draft survives workspace changes");
-    const beforeDrag = await panel.boundingBox();
+    const box = await panel.boundingBox();
     const header = await page
-      .getByTestId("workspace-todos-drag-header")
+      .getByTestId("workspace-header-title")
       .filter({ visible: true })
       .boundingBox();
-    await page.mouse.move(header!.x + 60, header!.y + 18);
-    await page.mouse.down();
-    await page.mouse.move(20, 800, { steps: 12 });
-    await page.mouse.up();
-    await expect
-      .poll(async () => {
-        const box = await panel.boundingBox();
-        return Boolean(box && beforeDrag && box.x < beforeDrag.x - 20 && box.y > beforeDrag.y + 20);
-      })
-      .toBe(true);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(header!.x);
+    expect(box!.height).toBeGreaterThan(900);
+    expect(box!.y).toBeLessThan(50);
+    await page.screenshot({ path: testInfo.outputPath("workspace-todos-wide.png") });
+    await page.reload();
+    await expect(panel).toBeVisible();
+    await expect(page.getByTestId("workspace-todo-milestone-Verification")).toBeVisible();
     await page.setViewportSize({ width: 1000, height: 650 });
     await expect
       .poll(async () => {
-        const box = await panel.boundingBox();
-        return (
-          box !== null &&
-          box.x >= 0 &&
-          box.y >= 0 &&
-          box.x + box.width <= 1000 &&
-          box.y + box.height <= 651
-        );
-      })
-      .toBe(true);
-    // Clicking workspace content leaves the nonmodal window open.
-    await page.getByTestId("workspace-header-title").filter({ visible: true }).click();
-    await expect(panel).toBeVisible();
-    await page.screenshot({ path: testInfo.outputPath("workspace-todos-wide.png") });
-    const beforeReload = await panel.boundingBox();
-    await page.reload();
-    await expect(panel).toBeVisible();
-    await expect(page.getByTestId("workspace-todos-counter").filter({ visible: true })).toHaveText(
-      "1/2",
-    );
-    await expect
-      .poll(async () => {
-        const box = await panel.boundingBox();
-        return Boolean(
-          box &&
-          beforeReload &&
-          Math.abs(box.x - beforeReload.x) < 1 &&
-          Math.abs(box.y - beforeReload.y) < 1,
-        );
+        const a = await panel.boundingBox();
+        return Boolean(a && a.x >= 0 && a.y >= 0 && a.x + a.width <= 1000 && a.y + a.height <= 651);
       })
       .toBe(true);
     await page.getByTestId(`workspace-todo-menu-${secondId}`).click();
@@ -180,6 +174,7 @@ test("compact To-do sheet and revision conflict preserve the draft", async ({ pa
     await addTask(page, "Implement shared tasks", "A compact sheet uses the same project list.");
     const list = (await workspace.client.getWorkspaceTodos(workspace.workspaceId)).list;
     const id = list.tasks[0]!.id;
+    await page.getByTestId(`workspace-todo-notes-toggle-${id}`).click();
     await page.getByTestId(`workspace-todo-title-${id}`).fill("My unsaved title");
     await workspace.client.mutateWorkspaceTodos(workspace.workspaceId, list.revision, {
       operation: "update",
@@ -217,7 +212,7 @@ test("old hosts explain the To-do update requirement at entry", async ({ page })
       const parsed = JSON.parse(message);
       const session = parsed.message ?? parsed;
       if (session.type === "status" && session.payload?.status === "server_info")
-        delete session.payload.features.workspaceTodos;
+        delete session.payload.features.workspaceTodoMilestones;
       socket.send(JSON.stringify(parsed));
     });
   });
@@ -253,6 +248,7 @@ test("To-do observations resynchronize on reconnect without discarding text draf
     await addTask(page, "Reconnect the list");
     const list = (await workspace.client.getWorkspaceTodos(workspace.workspaceId)).list;
     const id = list.tasks[0]!.id;
+    await page.getByTestId(`workspace-todo-notes-toggle-${id}`).click();
     await page.getByTestId(`workspace-todo-title-${id}`).fill("Keep this local draft");
     await gate.drop();
     await gate.waitForBlockedConnection();
@@ -275,6 +271,75 @@ test("To-do observations resynchronize on reconnect without discarding text draf
     );
   } finally {
     gate.restore();
+    await workspace.cleanup();
+  }
+});
+
+test("Jalons shows long titles in three real milestones without truncation", async ({
+  page,
+}, testInfo) => {
+  const workspace = await seedWorkspace({ repoPrefix: "jalons-preview-", git: false });
+  try {
+    const initial = await workspace.client.mutateWorkspaceTodos(workspace.workspaceId, 0, {
+      operation: "initialize",
+      tasks: [
+        {
+          title: "Clarifier les interactions et les couleurs de l’interface",
+          notes: "Conserver les raccourcis clavier et les interactions tactiles.",
+          milestone: "Interactions & interface",
+        },
+        {
+          title: "Activer les profils de handoff dans la fenêtre de validation des plans",
+          notes:
+            "Vérifier la version active de l’interface et conserver les conversations ouvertes.",
+          milestone: "Handoff & version locale",
+        },
+        {
+          title: "Fiabiliser la publication et l’activation des versions locales",
+          notes: "Comparer la version publiée, la version installée et celle réellement utilisée.",
+          milestone: "Handoff & version locale",
+        },
+        {
+          title: "Intégrer les réponses interactives et l’approfondissement dans les conversations",
+          notes: "Vérifier le rendu sur desktop et sur petit écran.",
+          milestone: "Conversations interactives",
+        },
+      ],
+    });
+    let revision = initial.revision;
+    for (const [index, task] of initial.tasks.entries()) {
+      const list = await workspace.client.mutateWorkspaceTodos(workspace.workspaceId, revision, {
+        operation: "update",
+        id: task.id,
+        status: index === 0 ? "done" : "in_progress",
+      });
+      revision = list.revision;
+    }
+    await page.setViewportSize({ width: 1440, height: 1050 });
+    await gotoAppShell(page);
+    await switchWorkspaceViaSidebar({
+      page,
+      serverId: getServerId(),
+      workspaceId: workspace.workspaceId,
+    });
+    await page.getByTestId("workspace-todos-toggle").filter({ visible: true }).click();
+    await expect(
+      page.getByTestId("workspace-todo-milestone-Conversations interactives"),
+    ).toBeVisible();
+    const title = page.getByTestId(`workspace-todo-label-${initial.tasks[3]!.id}`);
+    await expect(title).toHaveText(initial.tasks[3]!.title);
+    expect(
+      await title.evaluate(
+        (element) =>
+          element.scrollWidth <= element.clientWidth &&
+          element.scrollHeight <= element.clientHeight,
+      ),
+    ).toBe(true);
+    await page.mouse.move(1350, 900);
+    await page.getByTestId("workspace-header-title").filter({ visible: true }).click();
+    await expect(page.getByTestId("workspace-hover-card")).toBeHidden();
+    await page.screenshot({ path: testInfo.outputPath("jalons-desktop.png") });
+  } finally {
     await workspace.cleanup();
   }
 });

@@ -10,6 +10,16 @@ export const ko: TranslationResources = {
     reopenError: "이 대화를 다시 열지 못했습니다.",
   },
   workspaceTodos: {
+    milestone: "마일스톤",
+    ungrouped: "미분류",
+    milestoneDone: "마일스톤 완료",
+    remaining: "{{count}}개 남음",
+    completed: "완료 · {{count}}",
+    progress: "프로젝트 진행 상황",
+    headline: "마일스톤별로 진행하기",
+    subtitle: "각 마일스톤의 진행 중인 작업.",
+    details: "마일스톤 및 메모",
+
     title: "To-do",
     taskTitle: "작업 제목",
     notes: "메모",

@@ -10,6 +10,16 @@ export const fr: TranslationResources = {
     reopenError: "Impossible de rouvrir cette conversation.",
   },
   workspaceTodos: {
+    milestone: "Jalon",
+    ungrouped: "À organiser",
+    milestoneDone: "Jalon terminé",
+    remaining: "{{count}} à terminer",
+    completed: "Terminées · {{count}}",
+    progress: "Progression du projet",
+    headline: "Avancer, étape par étape",
+    subtitle: "Les tâches actives au cœur de chaque jalon.",
+    details: "Jalon et notes",
+
     title: "To-do",
     taskTitle: "Titre de la tâche",
     notes: "Notes",

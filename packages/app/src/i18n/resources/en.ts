@@ -7,6 +7,16 @@ export const en = {
     reopenError: "Could not reopen this conversation.",
   },
   workspaceTodos: {
+    milestone: "Milestone",
+    ungrouped: "To organize",
+    milestoneDone: "Milestone complete",
+    remaining: "{{count}} remaining",
+    completed: "Completed · {{count}}",
+    progress: "Project progress",
+    headline: "Advance, milestone by milestone",
+    subtitle: "Active tasks at the heart of each milestone.",
+    details: "Milestone and notes",
+
     title: "To-do",
     taskTitle: "Task title",
     notes: "Notes",

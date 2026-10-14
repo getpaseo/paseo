@@ -86,8 +86,10 @@ function applyMutation(
   mutation: WorkspaceTodoMutation,
   actor: "user" | "agent",
 ): void {
-  const newTask = (text: { title: string; notes: string }) => ({
+  const newTask = (text: { title: string; notes: string; milestone?: string }) => ({
     ...text,
+    milestone: text.milestone?.trim(),
+    milestoneProtected: actor === "user" && Boolean(text.milestone?.trim()),
     id: randomUUID(),
     status: "todo" as const,
     titleProtected: actor === "user",
@@ -99,7 +101,9 @@ function applyMutation(
       list.tasks = mutation.tasks.map(newTask);
       break;
     case "add":
-      list.tasks.push(newTask({ title: mutation.title, notes: mutation.notes }));
+      list.tasks.push(
+        newTask({ title: mutation.title, notes: mutation.notes, milestone: mutation.milestone }),
+      );
       break;
     case "reorder": {
       if (
@@ -121,7 +125,10 @@ function applyMutation(
       const task = list.tasks.find((item) => item.id === id);
       if (!task) throw new Error("Unknown task");
       if (mutation.operation === "delete") {
-        if (actor === "agent" && (task.titleProtected || task.notesProtected))
+        if (
+          actor === "agent" &&
+          (task.titleProtected || task.notesProtected || task.milestoneProtected)
+        )
           throw new Error("Manually edited task cannot be deleted by an agent");
         list.tasks = list.tasks.filter((item) => item.id !== task.id);
       } else {
@@ -140,7 +147,8 @@ function updateTask(
   if (
     actor === "agent" &&
     ((mutation.title !== undefined && task.titleProtected) ||
-      (mutation.notes !== undefined && task.notesProtected))
+      (mutation.notes !== undefined && task.notesProtected) ||
+      (mutation.milestone !== undefined && task.milestoneProtected))
   )
     throw new Error("Manually edited text is protected");
   if (mutation.title !== undefined) {
@@ -150,6 +158,10 @@ function updateTask(
   if (mutation.notes !== undefined) {
     task.notes = mutation.notes;
     task.notesProtected ||= actor === "user";
+  }
+  if (mutation.milestone !== undefined) {
+    task.milestone = mutation.milestone.trim();
+    task.milestoneProtected ||= actor === "user";
   }
   if (mutation.status !== undefined) task.status = mutation.status;
 }

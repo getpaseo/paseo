@@ -10,6 +10,16 @@ export const es: TranslationResources = {
     reopenError: "No se pudo reabrir esta conversación.",
   },
   workspaceTodos: {
+    milestone: "Hito",
+    ungrouped: "Por organizar",
+    milestoneDone: "Hito completado",
+    remaining: "{{count}} pendientes",
+    completed: "Completadas · {{count}}",
+    progress: "Progreso del proyecto",
+    headline: "Avanzar, hito a hito",
+    subtitle: "Las tareas activas en cada hito.",
+    details: "Hito y notas",
+
     title: "To-do",
     taskTitle: "Título de la tarea",
     notes: "Notas",

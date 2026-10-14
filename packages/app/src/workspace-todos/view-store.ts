@@ -3,10 +3,8 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { z } from "zod";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
-import type { TodoPosition } from "./position";
 interface TodoView {
   open: boolean;
-  position?: TodoPosition;
 }
 interface TodoViews {
   views: Record<string, TodoView>;
@@ -27,7 +25,6 @@ export const useTodoViews = create<TodoViews>()(
             z.string(),
             z.object({
               open: z.boolean(),
-              position: z.object({ x: z.number().finite(), y: z.number().finite() }).optional(),
             }),
           ),
         }),

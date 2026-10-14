@@ -10,6 +10,16 @@ export const zhCN: TranslationResources = {
     reopenError: "无法重新打开此对话。",
   },
   workspaceTodos: {
+    milestone: "里程碑",
+    ungrouped: "待整理",
+    milestoneDone: "里程碑已完成",
+    remaining: "剩余 {{count}} 项",
+    completed: "已完成 · {{count}}",
+    progress: "项目进度",
+    headline: "逐个里程碑推进",
+    subtitle: "每个里程碑中的进行中任务。",
+    details: "里程碑和备注",
+
     title: "待办事项",
     taskTitle: "任务标题",
     notes: "备注",
