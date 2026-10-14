@@ -98,6 +98,7 @@ export class BrowserRoutingManager {
   /** Renderers that passed the routing IPC trust gate and may own a DaemonClient. */
   private readonly trustedRendererIds = new Set<number>();
   private hosts: BrowserRoutingSettings = {};
+  private readonly changeVersionsByServerId = new Map<string, number>();
   private loaded: Promise<void> | null = null;
   /** Set first thing in `shutdown`: no route is materialized or published after it. */
   private shutDown = false;
@@ -139,17 +140,21 @@ export class BrowserRoutingManager {
   }
 
   public async setEnabled(serverId: string, enabled: boolean): Promise<SetEnabledResult> {
+    const version = (this.changeVersionsByServerId.get(serverId) ?? 0) + 1;
+    this.changeVersionsByServerId.set(serverId, version);
+    const isCurrent = () => this.changeVersionsByServerId.get(serverId) === version;
     await this.ensureLoaded();
+    if (!isCurrent()) return { ok: true };
     const partition = this.hosts[serverId]?.partition ?? browserRoutingPartitionForServer(serverId);
     if (enabled) {
       await this.persistHost(serverId, { enabled: true, partition });
       try {
         await this.ensureRoute(serverId);
       } catch (error) {
-        // Quitting is not a setup failure: the persisted choice stays as it is.
-        if (!this.shutDown) {
+        // A failed warm-up cannot roll back a newer choice or alter settings during shutdown.
+        if (!this.shutDown && isCurrent()) {
           await this.persistHost(serverId, { enabled: false, partition });
-          this.parkRoute(serverId);
+          if (isCurrent()) this.parkRoute(serverId);
         }
         this.log("warn", "route.setup-failed", { serverId, error: String(error) });
         return {
@@ -162,9 +167,9 @@ export class BrowserRoutingManager {
       }
     } else {
       await this.persistHost(serverId, { enabled: false, partition });
-      this.parkRoute(serverId);
+      if (isCurrent()) this.parkRoute(serverId);
     }
-    this.deps.broadcast(BROWSER_ROUTING_CHANGED_EVENT, { serverId, enabled });
+    if (isCurrent()) this.deps.broadcast(BROWSER_ROUTING_CHANGED_EVENT, { serverId, enabled });
     return { ok: true };
   }
 

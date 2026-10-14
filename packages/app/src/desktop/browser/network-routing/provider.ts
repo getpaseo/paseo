@@ -14,6 +14,7 @@ const identitySchema = z.object({
   providerId: z.uuid(),
   streamId: z.uuid(),
 });
+const providerIdentitySchema = identitySchema.omit({ streamId: true });
 const eventSchemas = {
   open: identitySchema.extend({
     host: z.string().min(1).max(255),
@@ -52,6 +53,10 @@ export async function openTunnelProvider(input: {
   const maxPendingIpcInvocations = windowBytes * 2 + 4;
   const streams = new Map<string, StreamState>();
   const unlisten: Array<() => void> = [];
+  // Main can publish opens/closes before its registration reply arrives. Keep
+  // the backlog bounded even if that reply never arrives, including a closure notice.
+  const maxRegistrationEvents = maxStreams * 2 + 1;
+  const registrationEvents: Array<() => void> = [];
   let providerId: string | null = null;
   let stopped = false;
   let closing: Promise<void> | null = null;
@@ -69,6 +74,7 @@ export async function openTunnelProvider(input: {
   function close(): Promise<void> {
     if (closing) return closing;
     stopped = true;
+    registrationEvents.length = 0;
     for (const dispose of unlisten.splice(0)) dispose();
     streams.clear();
     closing = (async () => {
@@ -203,7 +209,21 @@ export async function openTunnelProvider(input: {
   }
   async function listen(event: string, handler: (payload: unknown) => void): Promise<void> {
     if (stopped) return;
-    const dispose = await desktop.listen(event, handler);
+    const dispose = await desktop.listen(event, (raw) => {
+      if (stopped) return;
+      const identity = providerIdentitySchema.safeParse(raw);
+      if (!identity.success || identity.data.serverId !== input.serverId) return;
+      const deliver = () => {
+        if (!stopped && identity.data.providerId === providerId) handler(raw);
+      };
+      if (providerId !== null) {
+        deliver();
+      } else if (registrationEvents.length < maxRegistrationEvents) {
+        registrationEvents.push(deliver);
+      } else {
+        void fail(new Error("Tunnel registration event queue exceeded"));
+      }
+    });
     if (stopped) dispose();
     else unlisten.push(dispose);
   }
@@ -224,15 +244,6 @@ export async function openTunnelProvider(input: {
     else unlisten.push(removeClosedListener);
     for (const operation of ["open", "data", "credit", "close"] as const) {
       await listen(`network_tunnel_stream_${operation}`, (raw) => {
-        if (stopped || !providerId) return;
-        // A different provider/window generation cannot address this subscription.
-        const identity = z.object({ serverId: z.string(), providerId: z.string() }).safeParse(raw);
-        if (
-          !identity.success ||
-          identity.data.serverId !== input.serverId ||
-          identity.data.providerId !== providerId
-        )
-          return;
         try {
           if (operation === "open") {
             openStream(eventSchemas.open.parse(raw));
@@ -295,6 +306,11 @@ export async function openTunnelProvider(input: {
         providerId,
       });
       await close();
+    } else {
+      for (const deliver of registrationEvents.splice(0)) {
+        if (stopped) break;
+        deliver();
+      }
     }
     return { close, onClosed };
   } catch (error) {

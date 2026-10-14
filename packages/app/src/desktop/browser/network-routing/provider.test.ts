@@ -125,6 +125,81 @@ function harness() {
 }
 
 describe("network tunnel renderer provider", () => {
+  it("replays matching stream events received before the registration reply in order", async () => {
+    const h = harness();
+    const registered = deferred<unknown>();
+    h.invoke.mockImplementation((command) =>
+      command === "network_tunnel_provider_register"
+        ? registered.promise
+        : Promise.resolve({ ok: true }),
+    );
+    const opening = h.start();
+    await settle();
+    h.emit("stream_open", {
+      host: "ignored.test",
+      port: 80,
+      providerId: "00000000-0000-4000-8000-000000000099",
+    });
+    h.emit("stream_open", { host: "example.test", port: 80 });
+    h.emit("stream_close", { reason: 0 });
+    expect(h.openStream).not.toHaveBeenCalled();
+    registered.resolve({ ok: true, providerId });
+    const provider = await opening;
+    expect(h.openStream).toHaveBeenCalledExactlyOnceWith(
+      { streamId, host: "example.test", port: 80 },
+      expect.anything(),
+    );
+    expect(h.stream.close).toHaveBeenCalledExactlyOnceWith(0);
+    expect(h.onError).not.toHaveBeenCalled();
+    await provider.close();
+  });
+
+  it("observes a provider closure received before the registration reply", async () => {
+    const h = harness();
+    const registered = deferred<unknown>();
+    h.invoke.mockImplementation((command) =>
+      command === "network_tunnel_provider_register"
+        ? registered.promise
+        : Promise.resolve({ ok: true }),
+    );
+    const opening = h.start();
+    await settle();
+    h.emit("provider_closed", { reason: "disabled" });
+    registered.resolve({ ok: true, providerId });
+    const provider = await opening;
+    await settle();
+    const closed = vi.fn();
+    provider.onClosed(closed);
+    expect(closed).toHaveBeenCalledOnce();
+    expect(h.tunnel.close).toHaveBeenCalledOnce();
+    expect(h.listeners.size).toBe(0);
+    await provider.close();
+  });
+
+  it("bounds events held while the registration reply is pending", async () => {
+    const h = harness();
+    const registered = deferred<unknown>();
+    h.invoke.mockImplementation((command) =>
+      command === "network_tunnel_provider_register"
+        ? registered.promise
+        : Promise.resolve({ ok: true }),
+    );
+    const opening = h.start();
+    await settle();
+    for (let i = 0; i < h.tunnel.limits.maxStreams * 2 + 2; i++) {
+      h.emit("stream_open", { host: "example.test", port: 80 });
+    }
+    await settle();
+    registered.resolve({ ok: true, providerId });
+    await opening;
+    expect(h.onError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Tunnel registration event queue exceeded" }),
+    );
+    expect(h.tunnel.close).toHaveBeenCalledOnce();
+    expect(h.openStream).not.toHaveBeenCalled();
+    expect(h.listeners.size).toBe(0);
+  });
+
   it("opens, registers and forwards bytes with exactly the final consumer's credit", async () => {
     const h = harness();
     const provider = await h.start();
@@ -450,6 +525,7 @@ it("unregisters a late registration after cancellation", async () => {
     signal: controller.signal,
   });
   await settle();
+  h.emit("stream_open", { host: "example.test", port: 80 });
   controller.abort();
   await settle();
   expect(h.tunnel.close).toHaveBeenCalledOnce();
@@ -460,6 +536,7 @@ it("unregisters a late registration after cancellation", async () => {
     providerId,
   });
   expect(h.listeners.size).toBe(0);
+  expect(h.openStream).not.toHaveBeenCalled();
 });
 it("preserves the host network explanation when loadURL rejects with a Chromium message", () => {
   expect(

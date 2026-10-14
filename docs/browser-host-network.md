@@ -34,7 +34,7 @@ The proxy hands the tunnel a `{host, port}` and nothing else. A hostname is neve
 
 **Old clients.** The permission enum is closed in older clients, and one unknown value rejects the whole `server_info`. The daemon omits `network.proxy` from `server_info.permissions` and from the `hub.management.daemon.*` status payloads for clients that did not advertise `network_tunnel`. The feature itself is gated once on `server_info.features.networkTunnel`; an older host shows the option as unavailable with an update notice, with no fallback. Find every projection and gate with `rg "COMPAT\(networkTunnel\)"`.
 
-**The option lives in desktop settings, keyed by `serverId`.** Do not add it to the host registry or to the persisted browser record. Both are strict schemas (`StoredHostProfileSchema` at `packages/app/src/types/host-connection.ts:434`, `BrowserRecordSchema` at `packages/app/src/desktop/browser/store/state.ts:37`). An older app that meets one unknown key rejects the whole collection, so it loses every saved host or every saved tab. The partition is derived from the current option when the webview is created, not stored on the tab.
+**The option lives in desktop settings, keyed by `serverId`.** Do not add it to the host registry or to the persisted browser record. Both are strict schemas (`StoredHostProfileSchema` at `packages/app/src/types/host-connection.ts:434`, `BrowserRecordSchema` at `packages/app/src/desktop/browser/store/state.ts:37`). An older app that meets one unknown key rejects the whole collection, so it loses every saved host or every saved tab. The partition is derived from the current option when the webview is created, not stored on the tab. Changes from different windows can overlap while credentials warm: the settings lock orders writes, so rollback and announcements must also belong to the latest choice for that host.
 
 ## Gotchas measured in the spike and the reviews
 
@@ -46,7 +46,7 @@ The proxy hands the tunnel a `{host, port}` and nothing else. A hostname is neve
 - **Await `setProxy` before the webview attaches.** The race was not reproduced in 40 attempts, but a partition without a proxy uses the system configuration and leaves through the local network. `will-attach-webview` refuses a routed partition that is not ready.
 - **Never use `socks4://`.** Chromium resolves DNS locally for it. If SOCKS is ever revisited, write `socks5://`.
 - **A failed tab is blank.** Electron does not render Chromium's error page; the guest keeps the URL with an empty document. The reason is only in `did-fail-load`, which the app maps to host-aware text in `packages/app/src/desktop/browser/network-routing/load-error.ts`. A `502` body from the proxy does render for `http://`, but `https://` only gets `ERR_TUNNEL_CONNECTION_FAILED`.
-- **Without a provider the proxy answers `503`.** A routed partition never falls back to the local network, even while the host is disconnected.
+- **Without a provider the proxy answers `503`.** A routed partition never falls back to the local network, even while the host is disconnected. Main publishes a provider and announces readiness before its registration reply reaches the renderer; stream events can arrive first. Hold a bounded backlog until the returned provider ID selects which events belong to this registration, including a closure notice.
 
 ## Known limits
 

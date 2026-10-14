@@ -13,6 +13,7 @@ import {
   BrowserRoutingManager,
   browserRoutingPartitionForServer,
   type RoutedBrowserSession,
+  type BrowserRoutingManagerDependencies,
 } from "./manager.js";
 
 class FakeSession implements RoutedBrowserSession {
@@ -41,14 +42,17 @@ class FakeSession implements RoutedBrowserSession {
 interface Deferred {
   promise: Promise<void>;
   resolve: () => void;
+  reject: (error: Error) => void;
 }
 
 function deferred(): Deferred {
   let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
+  let reject!: (error: Error) => void;
+  const promise = new Promise<void>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 interface Harness {
@@ -92,7 +96,12 @@ afterEach(async () => {
 });
 
 async function createHarness(
-  options: { userDataPath?: string; holdWarmUp?: boolean; holdSetProxy?: boolean } = {},
+  options: {
+    userDataPath?: string;
+    holdWarmUp?: boolean;
+    holdSetProxy?: boolean;
+    warmUp?: BrowserRoutingManagerDependencies["warmUp"];
+  } = {},
 ): Promise<Harness> {
   const userDataPath =
     options.userDataPath ?? (await mkdtemp(path.join(os.tmpdir(), "paseo-browser-routing-")));
@@ -126,6 +135,7 @@ async function createHarness(
       warmUpStarted.resolve();
       if (options.holdWarmUp) await warmUpReleased.promise;
       if (failWarmUp.value) throw new Error("warm-up failed");
+      await options.warmUp?.({ session, credential });
       warmUps.push({ session: session as FakeSession, credential });
       sequence.push("credential.warmed");
     },
@@ -223,6 +233,55 @@ function isPortOpen(port: number): Promise<boolean> {
 }
 
 describe("BrowserRoutingManager", () => {
+  test("an older failed enable cannot roll back a newer disable and re-enable", async () => {
+    const firstStarted = deferred();
+    const firstWarmUp = deferred();
+    let attempts = 0;
+    const h = await createHarness({
+      warmUp: async () => {
+        if (++attempts === 1) {
+          firstStarted.resolve();
+          await firstWarmUp.promise;
+        }
+      },
+    });
+    const older = h.manager.setEnabled("server-a", true);
+    await firstStarted.promise;
+    expect(await h.manager.setEnabled("server-a", false)).toEqual({ ok: true });
+    const newer = h.manager.setEnabled("server-a", true);
+    firstWarmUp.reject(new Error("first warm-up failed"));
+    const [oldResult, newResult] = await Promise.all([older, newer]);
+    expect(oldResult.ok).toBe(false);
+    expect(newResult).toEqual({ ok: true });
+    expect(await h.manager.isEnabled("server-a")).toBe(true);
+    expect(await h.manager.resolvePartition("server-a")).toEqual({
+      ok: true,
+      partition: browserRoutingPartitionForServer("server-a"),
+    });
+    const persisted = await createDesktopSettingsStore({
+      userDataPath: h.userDataPath,
+    }).getBrowserRouting();
+    expect(persisted["server-a"].enabled).toBe(true);
+    expect(
+      h.events.filter((x) => x.event === BROWSER_ROUTING_CHANGED_EVENT).map((x) => x.payload),
+    ).toEqual([
+      { serverId: "server-a", enabled: false },
+      { serverId: "server-a", enabled: true },
+    ]);
+  });
+
+  test("announces only the newest choice when overlapping enables finish", async () => {
+    const h = await createHarness({ holdWarmUp: true });
+    const older = h.manager.setEnabled("server-a", true);
+    await h.warmUpGate.started;
+    const newer = h.manager.setEnabled("server-a", true);
+    h.warmUpGate.release();
+    expect(await Promise.all([older, newer])).toEqual([{ ok: true }, { ok: true }]);
+    expect(
+      h.events.filter((x) => x.event === BROWSER_ROUTING_CHANGED_EVENT).map((x) => x.payload),
+    ).toEqual([{ serverId: "server-a", enabled: true }]);
+  });
+
   test("derives a per-host partition that never matches a legacy tab profile", () => {
     const partition = browserRoutingPartitionForServer("server-a");
     expect(partition).toMatch(/^persist:paseo-browser-via-[0-9a-f]{16}$/);
