@@ -78,6 +78,7 @@ interface CreateTerminalHostInput {
   height: number;
   scrollback?: number;
   isMac?: boolean;
+  macOptionIsMeta?: boolean;
 }
 
 function createTerminalHost(input: CreateTerminalHostInput): MountedTerminal {
@@ -127,6 +128,7 @@ function createTerminalHost(input: CreateTerminalHostInput): MountedTerminal {
     host,
     initialSnapshot: null,
     scrollback: input.scrollback ?? 10_000,
+    macOptionIsMeta: input.macOptionIsMeta ?? true,
     theme: {
       background: "#0b0b0b",
       foreground: "#e6e6e6",
@@ -282,6 +284,23 @@ describe("terminal emulator runtime in a real browser", () => {
 
     expect(window.__paseoTerminal).toBe(terminal);
     expect(window.__paseoTerminal?.options.scrollback).toBe(42_000);
+  });
+
+  it("applies macOptionIsMeta at mount and updates it on the mounted xterm", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360, macOptionIsMeta: false });
+
+    await waitFor({
+      predicate: () => window.__paseoTerminal !== undefined,
+    });
+    const terminal = window.__paseoTerminal;
+
+    expect(window.__paseoTerminal?.options.macOptionIsMeta).toBe(false);
+
+    mounted.runtime.setMacOptionIsMeta({ enabled: true });
+
+    expect(window.__paseoTerminal).toBe(terminal);
+    expect(window.__paseoTerminal?.options.macOptionIsMeta).toBe(true);
   });
 
   it("does not claim PTY ownership from passive mount refits", async () => {
