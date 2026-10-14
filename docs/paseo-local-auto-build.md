@@ -4,10 +4,11 @@ Use the macOS LaunchAgent to rebuild `Paseo Local.app` after `origin/paseo-local
 
 Each run fetches the exact `paseo-local` ref, acquires a process lock, fast-forwards the clean checkout, and compares the remote commit with `last-successful-commit`. A changed commit runs `npm ci` followed by `npm run build`. The success marker is replaced atomically only after the build installs the app, so a failed build is retried at the next interval.
 
-After installation, the job restarts a running desktop-managed daemon from `~/.paseo` so its code
-and plugins match the new app. A separate marker makes this happen once per built commit. A failed
-restart is retried at the next interval without rebuilding the app. A stopped or independently
-managed daemon is left untouched.
+The job never restarts the daemon. Update the daemon separately when interrupting its agents is
+authorized. App installation and interface activation follow the [local release contract](development.md#local-macos-app).
+`last-built-commit` identifies the packaged commit, `last-successful-commit` the installed commit,
+and `last-active-commit` the commit confirmed by the running desktop and its windows. An installed
+app remains pending activation until that confirmation arrives.
 
 After each successful build, the job also archives `plugins/paseo-workflow` from that exact commit
 under `workflow-releases/<commit>`. When the configured `paseo-workflow` plugin is enabled and the
@@ -17,8 +18,9 @@ plugin. The first conversion keeps the existing directory as
 stay in place. If the daemon is stopped, the snapshot is ready and activation remains pending.
 Failed reloads restore the previous source and retry on the next run.
 
-The job does not open or close Paseo Local. Reopen the app to use the new renderer. The automatic
-daemon restart interrupts provider processes and background work still resident in them.
+The job does not open or close Paseo Local. The running desktop activates a newer installation
+at idle after checkpointing its windows. The first installation of that mechanism requires one
+manual interface relaunch.
 
 ## Commands
 
