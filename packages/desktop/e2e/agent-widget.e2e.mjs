@@ -227,18 +227,8 @@ try {
     labels,
   });
   await expect(widget.locator(".pill")).toHaveText(/Paseo.*0/);
-  // CDP capture can stall after resizing a transparent window to the small pill.
-  // Capture the native Electron surface without changing the tested geometry.
-  const reducedCapture = await app.evaluate(async ({ BrowserWindow }) => {
-    const window = BrowserWindow.getAllWindows().find(
-      (candidate) => candidate.getTitle() === "Paseo",
-    );
-    return (await window.webContents.capturePage()).toPNG().toString("base64");
-  });
-  await writeFile(
-    path.join(output, "reduced-after-app-response.png"),
-    Buffer.from(reducedCapture, "base64"),
-  );
+  // Transparent pill captures can stall in both CDP and capturePage after resize.
+  // Its contents and geometry are asserted; retain screenshots of the full window.
   await widget.locator("[data-action=restore]").click();
   await expect(widget.locator(".pill")).toBeVisible();
   await owner.evaluate((snapshot) => window.paseoDesktop.agentWidget.publish(snapshot), {
