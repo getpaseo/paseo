@@ -2,6 +2,29 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ptBR: TranslationResources = {
+  interactive: {
+    deepenPrompt:
+      "Explore this response: explain the assumptions, compare alternatives and ask a focused question if needed.",
+    deepen: "Explore further",
+    sent: "Sent",
+    queued: "Queued",
+    updateHost: "Update this host to use interactive responses.",
+    generating: "Generating interactive response…",
+    generationError: "Interactive response generation failed.",
+    loading: "Loading interactive response…",
+    loadError: "Could not load interactive response.",
+    saveError: "Could not save your choices.",
+    renderError: "Could not display this visual. Reload to try again.",
+    scriptBlocked:
+      "This visual contains JavaScript. Execution is blocked until an offline sandbox is available.",
+    artifact: "HTML visual",
+    send: "Send to agent",
+    expand: "Expand",
+    close: "Close",
+    retry: "Retry",
+    reload: "Reload",
+    reloadConflict: "Reload the document to resolve conflicting changes before sending.",
+  },
   workspaceHistory: {
     title: "Conversas fechadas",
     empty: "Nenhuma conversa fechada",
@@ -10,6 +33,16 @@ export const ptBR: TranslationResources = {
     reopenError: "Não foi possível reabrir esta conversa.",
   },
   workspaceTodos: {
+    milestone: "Marco",
+    ungrouped: "A organizar",
+    milestoneDone: "Marco concluído",
+    remaining: "{{count}} restantes",
+    completed: "Concluídas · {{count}}",
+    progress: "Progresso do projeto",
+    headline: "Avançar, marco a marco",
+    subtitle: "As tarefas ativas em cada marco.",
+    details: "Marco e notas",
+
     title: "To-do",
     taskTitle: "Título da tarefa",
     notes: "Notas",

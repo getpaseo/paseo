@@ -2,6 +2,29 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
+  interactive: {
+    deepenPrompt:
+      "Explore this response: explain the assumptions, compare alternatives and ask a focused question if needed.",
+    deepen: "Explore further",
+    sent: "Sent",
+    queued: "Queued",
+    updateHost: "Update this host to use interactive responses.",
+    generating: "Generating interactive response…",
+    generationError: "Interactive response generation failed.",
+    loading: "Loading interactive response…",
+    loadError: "Could not load interactive response.",
+    saveError: "Could not save your choices.",
+    renderError: "Could not display this visual. Reload to try again.",
+    scriptBlocked:
+      "This visual contains JavaScript. Execution is blocked until an offline sandbox is available.",
+    artifact: "HTML visual",
+    send: "Send to agent",
+    expand: "Expand",
+    close: "Close",
+    retry: "Retry",
+    reload: "Reload",
+    reloadConflict: "Reload the document to resolve conflicting changes before sending.",
+  },
   workspaceHistory: {
     title: "閉じた会話",
     empty: "閉じた会話はありません",
@@ -10,6 +33,16 @@ export const ja: TranslationResources = {
     reopenError: "この会話を再度開けませんでした。",
   },
   workspaceTodos: {
+    milestone: "マイルストーン",
+    ungrouped: "未分類",
+    milestoneDone: "マイルストーン完了",
+    remaining: "残り {{count}} 件",
+    completed: "完了 · {{count}}",
+    progress: "プロジェクトの進捗",
+    headline: "マイルストーンごとに進める",
+    subtitle: "各マイルストーンの進行中のタスク。",
+    details: "マイルストーンとメモ",
+
     title: "To-do",
     taskTitle: "タスク名",
     notes: "メモ",

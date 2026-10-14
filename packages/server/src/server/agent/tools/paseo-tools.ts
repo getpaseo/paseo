@@ -1,3 +1,8 @@
+import { interactiveInstructions } from "@getpaseo/protocol/interactive-response";
+import {
+  interactiveResponsesEnabled,
+  interactiveResponsesForHome,
+} from "../../interactive-responses.js";
 import { workspaceTodosForHome } from "../../workspace-todos.js";
 import { WorkspaceTodoMutationSchema } from "@getpaseo/protocol/workspace-todos";
 import { stat } from "node:fs/promises";
@@ -2164,6 +2169,43 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     },
   );
 
+  if (interactiveResponsesEnabled() && callerAgentId && options.paseoHome) {
+    registerTool(
+      "render_interactive_response",
+      {
+        description: interactiveInstructions,
+        inputSchema: {
+          title: z.string().min(1).max(200),
+          summary: z.string().max(10000),
+          source: z.string().min(1).max(131072),
+        },
+      },
+      async (input) => {
+        const document = await interactiveResponsesForHome(options.paseoHome!).create(
+          callerAgentId,
+          input,
+        );
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                documentId: document.id,
+                title: document.title,
+                summary: document.summary,
+              }),
+            },
+          ],
+          structuredContent: {
+            documentId: document.id,
+            title: document.title,
+            summary: document.summary,
+          },
+        };
+      },
+    );
+  }
+
   if (callerAgentId && options.paseoHome && options.workspaceRegistry) {
     const resolveTodosWorkspace = async () => {
       const agent = resolveCallerAgent();
@@ -2189,7 +2231,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       "mutate_workspace_todos",
       {
         description:
-          "Maintain shared project tasks. Initialize once with your first proposed plan, then update progress. Use the revision you read; on conflicts reread. Manually edited text is protected. This list is independent of internal agent tasks.",
+          "Maintain shared project tasks. Initialize once with your first proposed plan, then update progress. Use the revision you read; on conflicts reread. Manually edited text and milestone assignments are protected. Use the optional milestone field to group related tasks into a few named stages; reuse existing milestone labels. An empty milestone removes the assignment. This list is independent of internal agent tasks.",
         inputSchema: {
           revision: z.number().int().nonnegative(),
           mutation: WorkspaceTodoMutationSchema,

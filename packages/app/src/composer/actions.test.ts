@@ -180,7 +180,7 @@ interface FakeSendCall {
   text: string;
   options: {
     messageId: string;
-    activeTurnBehavior?: "interrupt" | "steer";
+    activeTurnBehavior?: "interrupt" | "steer" | "queue";
     images: Array<{ data: string; mimeType: string }>;
     attachments: AgentAttachment[];
   };
@@ -1122,4 +1122,41 @@ describe("file upload preparation", () => {
       expect(sends).toBe(0);
     },
   );
+});
+
+it("preserves interaction identity and document revision across queued retries", async () => {
+  const reference = { documentId: "00000000-0000-4000-8000-000000000001", revision: 2 };
+  const item: QueuedComposerMessage = {
+    id: "interaction-1",
+    text: "Pro selected",
+    attachments: [],
+    preserveMessageId: true,
+    interactiveReference: reference,
+  };
+  const queue = createFakeQueue(new Map([["agent", [item]]]));
+  const calls: unknown[] = [];
+  const failed = await sendQueuedComposerMessageNow({
+    agentId: "agent",
+    messageId: item.id,
+    queue,
+    submitMessage: async (input) => {
+      calls.push(input);
+      throw new Error("Offline");
+    },
+  });
+  expect(failed).toEqual({ status: "failed", errorMessage: "Offline" });
+  expect(queue.state.get("agent")?.[0]?.error).toBe("Offline");
+  await sendQueuedComposerMessageNow({
+    agentId: "agent",
+    messageId: item.id,
+    queue,
+    submitMessage: async (input) => {
+      calls.push(input);
+    },
+  });
+  expect(calls).toEqual([
+    { text: item.text, attachments: [], messageId: item.id, interactiveReference: reference },
+    { text: item.text, attachments: [], messageId: item.id, interactiveReference: reference },
+  ]);
+  expect(queue.state.get("agent")).toEqual([]);
 });

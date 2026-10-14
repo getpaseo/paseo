@@ -31,6 +31,7 @@
     "pretest": "npm run generate:validators"
   },
   "dependencies": {
+    "@openuidev/lang-core": "^1.0.0",
     "semver": "^7.8.5",
     "zod": "^4.4.3"
   },

@@ -425,6 +425,8 @@ export interface DaemonClientTrace {
 }
 
 export interface SendMessageOptions {
+  interactiveReference?: SendAgentMessageRequest["interactiveReference"];
+  deepenReference?: SendAgentMessageRequest["deepenReference"];
   messageId?: string;
   /** What happens when the agent is mid-turn. The daemon interrupts the turn when omitted. */
   activeTurnBehavior?: ActiveTurnBehavior;
@@ -3596,6 +3598,28 @@ export class DaemonClient {
   // Agent Interaction
   // ============================================================================
 
+  async getInteractiveResponse(agentId: string, documentId: string) {
+    return this.sendNamespacedCorrelatedSessionRequest<"conversation.ui.get.response">({
+      message: { type: "conversation.ui.get.request", agentId, documentId },
+    });
+  }
+  async updateInteractiveResponse(
+    agentId: string,
+    documentId: string,
+    revision: number,
+    state: import("@getpaseo/protocol/interactive-response").InteractiveState,
+  ) {
+    return this.sendNamespacedCorrelatedSessionRequest<"conversation.ui.state.update.response">({
+      message: {
+        type: "conversation.ui.state.update.request",
+        agentId,
+        documentId,
+        revision,
+        state,
+      },
+    });
+  }
+
   async sendAgentMessage(
     agentId: string,
     text: string,
@@ -3610,6 +3634,10 @@ export class DaemonClient {
       text,
       ...(messageId ? { messageId } : {}),
       ...(options?.activeTurnBehavior ? { activeTurnBehavior: options.activeTurnBehavior } : {}),
+      ...(options?.interactiveReference
+        ? { interactiveReference: options.interactiveReference }
+        : {}),
+      ...(options?.deepenReference ? { deepenReference: options.deepenReference } : {}),
       ...(options?.images ? { images: options.images } : {}),
       ...(options?.attachments ? { attachments: options.attachments } : {}),
     });

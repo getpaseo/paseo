@@ -92,3 +92,7 @@ export function isLikelyExternalToolName(name: string): boolean {
   }
   return isLikelyNamespacedToolName(normalized);
 }
+
+export function isInteractiveResponseToolName(name: string): boolean {
+  return (getPaseoToolLeafName(name) ?? normalizeToolName(name)) === "render_interactive_response";
+}

@@ -4,12 +4,14 @@ export const WorkspaceTodoStatusSchema = z.enum(["todo", "in_progress", "done"])
 const TodoTextSchema = z.object({
   title: z.string().trim().min(1).max(1000),
   notes: z.string().max(100000),
+  milestone: z.string().max(160).optional(),
 });
 export const WorkspaceTodoSchema = TodoTextSchema.extend({
   id: z.string().min(1),
   status: WorkspaceTodoStatusSchema,
   titleProtected: z.boolean(),
   notesProtected: z.boolean(),
+  milestoneProtected: z.boolean().optional(),
 });
 export const WorkspaceTodosSchema = z.object({
   revision: z.number().int().nonnegative(),
@@ -25,6 +27,7 @@ export const WorkspaceTodoMutationSchema = z.discriminatedUnion("operation", [
     id: z.string(),
     title: TodoTextSchema.shape.title.optional(),
     notes: TodoTextSchema.shape.notes.optional(),
+    milestone: TodoTextSchema.shape.milestone,
     status: WorkspaceTodoStatusSchema.optional(),
   }),
   z.object({ operation: z.literal("delete"), id: z.string() }),

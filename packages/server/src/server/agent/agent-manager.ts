@@ -1,3 +1,4 @@
+import { interactiveResponsesEnabled } from "../interactive-responses.js";
 import { projectTimelineRows } from "./timeline-projection.js";
 import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
 import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/index.js";
@@ -5828,6 +5829,9 @@ export class AgentManager {
   private applyDaemonAppendSystemPrompt(config: AgentSessionConfig): AgentSessionConfig {
     const daemonAppendSystemPrompt = [
       this.appendSystemPrompt.trim(),
+      interactiveResponsesEnabled() && this.paseoToolsEnabled && config.writePolicy !== "read_only"
+        ? "Use plain text for simple answers. When an interactive comparison, form, chart or explanation helps, use render_interactive_response if it is available, following its shared component catalog. Tool restrictions continue to apply. Each proposal is a distinct document; user choices are sent only through an explicit Paseo action."
+        : "",
       this.paseoToolsEnabled && config.writePolicy !== "read_only"
         ? "Use read_workspace_todos to read the shared project To-do list. On your first proposed plan, initialize an uninitialized list with its steps using mutate_workspace_todos. Reuse existing tasks when taking over work; never reinitialize a deliberately emptied list. Maintain task progress as you work. Reread after revision conflicts, respect manually protected text, and keep this list independent of your internal technical tasks."
         : "",

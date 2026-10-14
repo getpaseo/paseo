@@ -1,3 +1,4 @@
+import { DeepenResponse } from "@/interactive-response/deepen";
 import { chatStyles } from "@/styles/chat";
 import React, { memo, useCallback, useMemo, type ReactNode } from "react";
 import { View } from "react-native";
@@ -197,6 +198,7 @@ function CompletedTurnFooter({
   );
   return (
     <View style={stylesheet.turnFooterSlot}>
+      <DeepenResponse getContent={getContent} items={items} startIndex={startIndex} />
       <AssistantTurnFooter
         getContent={getContent}
         completedAt={timing?.completedAt}

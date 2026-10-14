@@ -2,6 +2,29 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
+  interactive: {
+    deepenPrompt:
+      "Explore this response: explain the assumptions, compare alternatives and ask a focused question if needed.",
+    deepen: "Explore further",
+    sent: "Sent",
+    queued: "Queued",
+    updateHost: "Update this host to use interactive responses.",
+    generating: "Generating interactive response…",
+    generationError: "Interactive response generation failed.",
+    loading: "Loading interactive response…",
+    loadError: "Could not load interactive response.",
+    saveError: "Could not save your choices.",
+    renderError: "Could not display this visual. Reload to try again.",
+    scriptBlocked:
+      "This visual contains JavaScript. Execution is blocked until an offline sandbox is available.",
+    artifact: "HTML visual",
+    send: "Send to agent",
+    expand: "Expand",
+    close: "Close",
+    retry: "Retry",
+    reload: "Reload",
+    reloadConflict: "Reload the document to resolve conflicting changes before sending.",
+  },
   workspaceHistory: {
     title: "已关闭的对话",
     empty: "没有已关闭的对话",
@@ -10,6 +33,16 @@ export const zhCN: TranslationResources = {
     reopenError: "无法重新打开此对话。",
   },
   workspaceTodos: {
+    milestone: "里程碑",
+    ungrouped: "待整理",
+    milestoneDone: "里程碑已完成",
+    remaining: "剩余 {{count}} 项",
+    completed: "已完成 · {{count}}",
+    progress: "项目进度",
+    headline: "逐个里程碑推进",
+    subtitle: "每个里程碑中的进行中任务。",
+    details: "里程碑和备注",
+
     title: "待办事项",
     taskTitle: "任务标题",
     notes: "备注",

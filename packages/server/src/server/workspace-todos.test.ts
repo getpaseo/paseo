@@ -26,6 +26,95 @@ describe("workspace project todos", () => {
     expect(await store.read("b")).toEqual({ revision: 0, initialized: false, tasks: [] });
     expect(await new WorkspaceTodosStore(directory).read("a")).toEqual(list);
   });
+  test("milestones persist, normalize and respect independent manual protection", async () => {
+    let list = await store.mutate(
+      "a",
+      0,
+      {
+        operation: "initialize",
+        tasks: [{ title: "First", notes: "", milestone: "  Delivery  " }],
+      },
+      "agent",
+    );
+    const id = list.tasks[0]!.id;
+    expect(list.tasks[0]?.milestone).toBe("Delivery");
+    list = await store.mutate(
+      "a",
+      list.revision,
+      { operation: "add", title: "Second", notes: "", milestone: "Delivery" },
+      "agent",
+    );
+    expect(list.tasks[1]?.milestone).toBe("Delivery");
+    list = await store.mutate(
+      "a",
+      list.revision,
+      { operation: "update", id, milestone: "Release" },
+      "user",
+    );
+    await expect(
+      store.mutate(
+        "a",
+        list.revision,
+        { operation: "update", id, milestone: "Rewrite", status: "done" },
+        "agent",
+      ),
+    ).rejects.toThrow("protected");
+    expect((await store.read("a")).tasks[0]?.status).toBe("todo");
+    await expect(
+      store.mutate("a", list.revision, { operation: "delete", id }, "agent"),
+    ).rejects.toThrow("cannot be deleted");
+    list = await store.mutate(
+      "a",
+      list.revision,
+      { operation: "update", id, title: "Agent title", notes: "Agent notes", status: "done" },
+      "agent",
+    );
+    expect((await new WorkspaceTodosStore(directory).read("a")).tasks[0]).toMatchObject({
+      milestone: "Release",
+      milestoneProtected: true,
+      status: "done",
+    });
+    list = await store.mutate(
+      "a",
+      list.revision,
+      { operation: "update", id, milestone: "  " },
+      "user",
+    );
+    expect(list.tasks[0]?.milestone).toBe("");
+    expect((await store.read("a")).tasks[0]?.milestoneProtected).toBe(true);
+  });
+  test("old persisted tasks without milestones remain writable", async () => {
+    const list = {
+      revision: 7,
+      initialized: true,
+      tasks: [
+        {
+          id: "legacy",
+          title: "Old task",
+          notes: "Keep these notes",
+          status: "todo",
+          titleProtected: false,
+          notesProtected: false,
+        },
+      ],
+    };
+    await writeFile(
+      path.join(directory, `${Buffer.from("a").toString("hex")}.json`),
+      JSON.stringify(list),
+    );
+    expect(await store.read("a")).toEqual(list);
+    const next = await store.mutate(
+      "a",
+      7,
+      { operation: "update", id: "legacy", milestone: "Delivery" },
+      "agent",
+    );
+    expect(next.tasks[0]).toMatchObject({
+      id: "legacy",
+      notes: "Keep these notes",
+      milestone: "Delivery",
+    });
+  });
   test("only one concurrent initialization wins", async () => {
     const results = await Promise.allSettled([initialize(), initialize()]);
     expect(results.map((result) => result.status)).toEqual(["fulfilled", "rejected"]);

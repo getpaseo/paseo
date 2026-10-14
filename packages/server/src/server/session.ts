@@ -1,3 +1,8 @@
+import { selectResponseContext } from "./response-context.js";
+import {
+  interactiveResponsesEnabled,
+  interactiveResponsesForHome,
+} from "./interactive-responses.js";
 import { workspaceTodosForHome } from "./workspace-todos.js";
 import { searchTimeline } from "./agent/chat-search/index.js";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
@@ -2686,7 +2691,7 @@ export class Session {
       case "agent.fork_context.request":
         return this.handleAgentForkContextRequest(msg);
       default:
-        return undefined;
+        return this.dispatchConversationUiMessage(msg);
     }
   }
 
@@ -2717,6 +2722,15 @@ export class Session {
       default:
         return undefined;
     }
+  }
+
+  private dispatchConversationUiMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    if (
+      msg.type === "conversation.ui.get.request" ||
+      msg.type === "conversation.ui.state.update.request"
+    )
+      return this.handleConversationUi(msg);
+    return undefined;
   }
 
   private dispatchAgentLifecycleMessage(msg: SessionInboundMessage): Promise<void> | undefined {
@@ -8364,6 +8378,34 @@ export class Session {
     }
   }
 
+  private async handleConversationUi(
+    msg: Extract<
+      SessionInboundMessage,
+      { type: "conversation.ui.get.request" | "conversation.ui.state.update.request" }
+    >,
+  ): Promise<void> {
+    const type =
+      msg.type === "conversation.ui.get.request"
+        ? "conversation.ui.get.response"
+        : "conversation.ui.state.update.response";
+    try {
+      if (!interactiveResponsesEnabled()) throw new Error("Interactive responses are disabled");
+      const resolved = await this.resolveAgentIdentifier(msg.agentId);
+      if (!resolved.ok) throw new Error(resolved.error);
+      const store = interactiveResponsesForHome(this.paseoHome);
+      const document =
+        msg.type === "conversation.ui.get.request"
+          ? await store.get(resolved.agentId, msg.documentId)
+          : await store.update(resolved.agentId, msg.documentId, msg.revision, msg.state);
+      this.emit({ type, payload: { requestId: msg.requestId, document, error: null } });
+    } catch (error) {
+      this.emit({
+        type,
+        payload: { requestId: msg.requestId, document: null, error: errorToFriendlyMessage(error) },
+      });
+    }
+  }
+
   private async handleSendAgentMessageRequest(
     msg: Extract<SessionInboundMessage, { type: "send_agent_message_request" }>,
   ): Promise<void> {
@@ -8384,7 +8426,62 @@ export class Session {
     try {
       const agentId = resolved.agentId;
 
-      const prompt = buildAgentPrompt(msg.text, msg.images, msg.attachments);
+      if ((msg.interactiveReference || msg.deepenReference) && !interactiveResponsesEnabled())
+        throw new Error("Interactive responses are disabled");
+      const attachments = [...(msg.attachments ?? [])];
+      if (msg.interactiveReference) {
+        if (!msg.messageId) throw new Error("Interactive submissions require a message identity");
+        const snapshot = await interactiveResponsesForHome(this.paseoHome).snapshot(
+          agentId,
+          msg.interactiveReference,
+          msg.messageId,
+        );
+        attachments.push({
+          type: "text",
+          mimeType: "text/plain",
+          title: snapshot.title,
+          text: `Interactive response snapshot (user-selected data):\n${JSON.stringify(snapshot)}`,
+        });
+      }
+      if (msg.deepenReference) {
+        if (!msg.messageId) throw new Error("Deepening requires a message identity");
+        await ensureAgentLoaded(agentId, {
+          agentManager: this.agentManager,
+          agentStorage: this.agentStorage,
+          logger: this.sessionLogger,
+        });
+        const epoch = this.agentManager.fetchTimeline(agentId, { limit: 1 }).epoch;
+        if (
+          msg.deepenReference.cursor &&
+          !msg.deepenReference.messageId &&
+          msg.deepenReference.cursor.epoch !== epoch
+        )
+          throw new Error("The original response changed; reload before deepening");
+        if (!msg.deepenReference.cursor && !msg.deepenReference.messageId)
+          throw new Error("Missing response identity");
+        const selected = selectResponseContext(
+          await this.agentManager.getTimelineRows(agentId),
+          msg.deepenReference,
+        );
+        const documents = await Promise.all(
+          selected.documentIds.map((id) =>
+            interactiveResponsesForHome(this.paseoHome).get(agentId, id),
+          ),
+        );
+        const context = await interactiveResponsesForHome(this.paseoHome).freezeContext(
+          agentId,
+          msg.messageId,
+          JSON.stringify(msg.deepenReference),
+          JSON.stringify({ reference: msg.deepenReference, response: selected.text, documents }),
+        );
+        attachments.push({
+          type: "text",
+          mimeType: "text/plain",
+          title: "Response to explore",
+          text: context,
+        });
+      }
+      const prompt = buildAgentPrompt(msg.text, msg.images, attachments);
       this.sessionLogger.trace(
         {
           agentId,

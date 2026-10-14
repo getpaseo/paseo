@@ -54,6 +54,7 @@ const CAPABILITIES: AgentCapabilityFlags = {
   supportsMcpServers: false,
   supportsReasoningStream: true,
   supportsToolInvocations: true,
+  supportsNativePaseoTools: true,
   supportsRewindConversation: true,
   supportsRewindFiles: true,
   supportsRewindBoth: true,
@@ -668,19 +669,20 @@ export class MockLoadTestAgentClient implements AgentClient {
 
   async createSession(
     config: AgentSessionConfig,
-    _launchContext?: AgentLaunchContext,
+    launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     return new MockLoadTestAgentSession({
       config,
       sessionId: randomUUID(),
       logger: this.logger,
+      paseoTools: launchContext?.paseoTools,
     });
   }
 
   async resumeSession(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
-    _launchContext?: AgentLaunchContext,
+    launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
     return new MockLoadTestAgentSession({
@@ -692,6 +694,7 @@ export class MockLoadTestAgentClient implements AgentClient {
       },
       sessionId: handle.sessionId,
       logger: this.logger,
+      paseoTools: launchContext?.paseoTools,
     });
   }
 
@@ -738,6 +741,7 @@ export class MockLoadTestAgentSession implements AgentSession {
   readonly features: AgentFeature[] = [];
   readonly id: string;
   private readonly usageSessionKey = randomUUID();
+  private readonly paseoTools?: AgentLaunchContext["paseoTools"];
 
   private readonly listeners = new Set<(event: AgentStreamEvent) => void>();
   private readonly history: AgentStreamEvent[] = [];
@@ -755,9 +759,15 @@ export class MockLoadTestAgentSession implements AgentSession {
   private remainingSteerFailures: number;
   private remainingPermissionResponseFailures: number;
 
-  constructor(options: { config: AgentSessionConfig; sessionId: string; logger?: Logger }) {
+  constructor(options: {
+    config: AgentSessionConfig;
+    sessionId: string;
+    logger?: Logger;
+    paseoTools?: AgentLaunchContext["paseoTools"];
+  }) {
     this.id = options.sessionId;
     this.logger = options.logger;
+    this.paseoTools = options.paseoTools;
     this.modeId = options.config.modeId ?? MOCK_LOAD_TEST_MODE_ID;
     this.modelId = options.config.model ?? MOCK_LOAD_TEST_DEFAULT_MODEL_ID;
     this.assistantResponse =
@@ -860,7 +870,22 @@ export class MockLoadTestAgentSession implements AgentSession {
     const settledAssistantImageMarkdown = parseSettledAssistantImageMarkdown(prompt);
     const steeringReplayShape = parseSteeringReplayShape(prompt);
     const scheduleTurn = () => {
-      if (shouldEmitTurnFailure(prompt)) {
+      if (promptToText(prompt).startsWith("Render synthetic interactive response: ")) {
+        turn.timer = setTimeout(() => {
+          void this.renderInteractiveTurn(turn);
+        }, 0);
+      } else if (
+        promptToText(prompt).includes("Interactive response snapshot (user-selected data):\n")
+      ) {
+        const snapshotText = promptToText(prompt)
+          .split("Interactive response snapshot (user-selected data):\n")
+          .at(-1)!;
+        const snapshot = JSON.parse(snapshotText) as { state: unknown };
+        this.scheduleSettledAssistantTurn(
+          turn,
+          `Selection received: ${JSON.stringify(snapshot.state)}`,
+        );
+      } else if (shouldEmitTurnFailure(prompt)) {
         this.scheduleFailedTurn(turn);
       } else if (steeringReplayShape) {
         this.scheduleSteeringReplayTurn(turn, steeringReplayShape);
@@ -1291,6 +1316,50 @@ export class MockLoadTestAgentSession implements AgentSession {
     };
     turn.timer = setTimeout(emitNext, 0);
     turn.timer.unref?.();
+  }
+
+  private async renderInteractiveTurn(turn: ActiveTurn): Promise<void> {
+    if (this.activeTurn !== turn) return;
+    const name = "render_interactive_response";
+    const callId = randomUUID();
+    const input = promptToText(turn.prompt).slice("Render synthetic interactive response: ".length);
+    this.emitTurnStarted(turn);
+    this.emitTimeline(
+      turn.turnId,
+      createToolCall({
+        callId,
+        name,
+        status: "running",
+        detail: { type: "unknown", input, output: null },
+      }),
+    );
+    try {
+      if (!this.paseoTools) throw new Error("Paseo tools are unavailable");
+      const result = await this.paseoTools.executeTool(name, JSON.parse(input));
+      if (this.activeTurn !== turn) return;
+      if (result.isError) throw new Error(JSON.stringify(result));
+      this.emitTimeline(
+        turn.turnId,
+        createToolCall({
+          callId,
+          name,
+          status: "completed",
+          detail: { type: "unknown", input, output: JSON.stringify(result) },
+        }),
+      );
+      this.emitSettledAssistantTurn(turn, "Choose an option in the interactive response.");
+    } catch (error) {
+      if (this.activeTurn !== turn) return;
+      this.emitTimeline(turn.turnId, {
+        type: "tool_call",
+        callId,
+        name,
+        status: "failed",
+        error: String(error),
+        detail: { type: "unknown", input, output: String(error) },
+      });
+      this.emitSettledAssistantTurn(turn, String(error));
+    }
   }
 
   private emitSettledAssistantTurn(turn: ActiveTurn, finalText: string): void {

@@ -2,6 +2,29 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ru: TranslationResources = {
+  interactive: {
+    deepenPrompt:
+      "Explore this response: explain the assumptions, compare alternatives and ask a focused question if needed.",
+    deepen: "Explore further",
+    sent: "Sent",
+    queued: "Queued",
+    updateHost: "Update this host to use interactive responses.",
+    generating: "Generating interactive response…",
+    generationError: "Interactive response generation failed.",
+    loading: "Loading interactive response…",
+    loadError: "Could not load interactive response.",
+    saveError: "Could not save your choices.",
+    renderError: "Could not display this visual. Reload to try again.",
+    scriptBlocked:
+      "This visual contains JavaScript. Execution is blocked until an offline sandbox is available.",
+    artifact: "HTML visual",
+    send: "Send to agent",
+    expand: "Expand",
+    close: "Close",
+    retry: "Retry",
+    reload: "Reload",
+    reloadConflict: "Reload the document to resolve conflicting changes before sending.",
+  },
   workspaceHistory: {
     title: "Закрытые беседы",
     empty: "Нет закрытых бесед",
@@ -10,6 +33,16 @@ export const ru: TranslationResources = {
     reopenError: "Не удалось открыть беседу заново.",
   },
   workspaceTodos: {
+    milestone: "Этап",
+    ungrouped: "Без этапа",
+    milestoneDone: "Этап завершён",
+    remaining: "Осталось: {{count}}",
+    completed: "Завершено · {{count}}",
+    progress: "Прогресс проекта",
+    headline: "Шаг за шагом",
+    subtitle: "Текущие задачи каждого этапа.",
+    details: "Этап и заметки",
+
     title: "To-do",
     taskTitle: "Название задачи",
     notes: "Заметки",

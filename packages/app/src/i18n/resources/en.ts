@@ -1,4 +1,27 @@
 export const en = {
+  interactive: {
+    deepenPrompt:
+      "Explore this response: explain the assumptions, compare alternatives and ask a focused question if needed.",
+    deepen: "Explore further",
+    sent: "Sent",
+    queued: "Queued",
+    updateHost: "Update this host to use interactive responses.",
+    generating: "Generating interactive response…",
+    generationError: "Interactive response generation failed.",
+    loading: "Loading interactive response…",
+    loadError: "Could not load interactive response.",
+    saveError: "Could not save your choices.",
+    renderError: "Could not display this visual. Reload to try again.",
+    scriptBlocked:
+      "This visual contains JavaScript. Execution is blocked until an offline sandbox is available.",
+    artifact: "HTML visual",
+    send: "Send to agent",
+    expand: "Expand",
+    close: "Close",
+    retry: "Retry",
+    reload: "Reload",
+    reloadConflict: "Reload the document to resolve conflicting changes before sending.",
+  },
   workspaceHistory: {
     title: "Closed conversations",
     empty: "No closed conversations",
@@ -7,6 +30,16 @@ export const en = {
     reopenError: "Could not reopen this conversation.",
   },
   workspaceTodos: {
+    milestone: "Milestone",
+    ungrouped: "To organize",
+    milestoneDone: "Milestone complete",
+    remaining: "{{count}} remaining",
+    completed: "Completed · {{count}}",
+    progress: "Project progress",
+    headline: "Advance, milestone by milestone",
+    subtitle: "Active tasks at the heart of each milestone.",
+    details: "Milestone and notes",
+
     title: "To-do",
     taskTitle: "Task title",
     notes: "Notes",
