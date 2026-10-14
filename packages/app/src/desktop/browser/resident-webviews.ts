@@ -480,11 +480,8 @@ export function recordBrowserNavigationRequest(browserId: string, url: string): 
   const id = trimNonEmpty(browserId);
   if (!id) return;
   const pending = pendingWebviews.get(id);
-  if (pending && url !== pending.input.url) {
-    pending.url = url;
-    pending.input.url = url;
-  }
-  const input = residentInputs.get(id);
+  if (pending) pending.url = url;
+  const input = pending?.input ?? residentInputs.get(id);
   if (input) input.url = url;
   const webview = getResidentBrowserWebview(id);
   if (webview) pendingNavigationUrls.set(webview, url);

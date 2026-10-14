@@ -12,6 +12,7 @@ import {
   reloadFailedHostBrowserWebviews,
   subscribeBrowserWebviewReplacement,
   presentBrowserWebview,
+  recordBrowserNavigationRequest,
   rememberBrowserWebviewSize,
   releaseResidentBrowserWebview,
   removeResidentBrowserWebview,
@@ -679,6 +680,42 @@ describe("host browser partitions", () => {
     expect(await ensureResidentBrowserWebview(input)).toBe(replacement);
     expect((replacement as HTMLElement & { src: string }).src).toBe(currentUrl);
   });
+  it.each([true, false])(
+    "honors an explicit submission of the remembered address during routing setup (%s)",
+    async (enabled) => {
+      const initialPartition = enabled
+        ? "persist:paseo-browser"
+        : "persist:paseo-browser-via-remote";
+      let resolvePartition = () => Promise.resolve(initialPartition);
+      const input = {
+        browserId: "explicit-remembered-navigation",
+        serverId: "remote",
+        workspaceId: "workspace",
+        url: "https://example.test/remembered",
+        profileHost: { ...profileHost, resolvePartition: () => resolvePartition() },
+      };
+      const first = (await ensureResidentBrowserWebview(input))!;
+      Object.assign(first, { getURL: () => "https://example.test/current" });
+      let ready!: (partition: string) => void;
+      const preparingPartition = new Promise<string>((resolve) => {
+        ready = resolve;
+      });
+      resolvePartition = () => preparingPartition;
+      const changing = recreateHostBrowserWebviews("remote", enabled);
+      expect(first.isConnected).toBe(false);
+
+      recordBrowserNavigationRequest(input.browserId, input.url);
+      const attaching = ensureResidentBrowserWebview(input);
+      const partition = enabled ? "persist:paseo-browser-via-remote" : "persist:paseo-browser";
+      ready(partition);
+      await changing;
+      const replacement = await attaching;
+
+      expect(replacement).toBe(getResidentBrowserWebview(input.browserId));
+      expect(replacement?.getAttribute("partition")).toBe(partition);
+      expect((replacement as HTMLElement & { src: string }).src).toBe(input.url);
+    },
+  );
   it("keeps a committed guest when reattaching with its current address", async () => {
     const input = {
       browserId: "committed-navigation",
