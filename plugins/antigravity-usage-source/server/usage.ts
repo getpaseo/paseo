@@ -55,7 +55,10 @@ export const DEFAULT_PROJECT_ID = "aicode-consumers";
 
 export function formatPlanLabel(rawTierId?: string): string | undefined {
   if (!rawTierId) return undefined;
-  const cleaned = rawTierId.replace(/-tier$/i, "").replace(/-/g, " ").trim();
+  const cleaned = rawTierId
+    .replace(/-tier$/i, "")
+    .replace(/-/g, " ")
+    .trim();
   if (!cleaned) return undefined;
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 }
@@ -64,7 +67,12 @@ export function buildUserAgent(
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch,
 ): string {
-  const osName = platform === "darwin" ? "darwin" : platform === "win32" ? "windows" : "linux";
+  let osName = "linux";
+  if (platform === "darwin") {
+    osName = "darwin";
+  } else if (platform === "win32") {
+    osName = "windows";
+  }
   return `antigravity/1.107.0 ${osName}/${arch}`;
 }
 
@@ -260,6 +268,90 @@ function buildWindows(models: Record<string, z.infer<typeof modelQuotaSchema>>):
   return windows;
 }
 
+interface QuotaSummaryResult {
+  rejectedStatus?: number;
+  windows?: UsageWindow[];
+}
+
+async function resolveUserQuotaSummary(
+  fetchApi: typeof fetch,
+  headers: Record<string, string>,
+): Promise<QuotaSummaryResult> {
+  try {
+    const summaryResponse = await fetchApi(
+      `${CLOUDCODE_BASE_URL}/v1internal:retrieveUserQuotaSummary`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({}),
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+
+    if (summaryResponse.status === 401 || summaryResponse.status === 403) {
+      return { rejectedStatus: summaryResponse.status };
+    }
+
+    if (!summaryResponse.ok) return {};
+
+    const summaryText = await summaryResponse.text();
+    if (summaryText.trim().startsWith("<")) return {};
+
+    const parsedSummary = retrieveUserQuotaSummarySchema.safeParse(JSON.parse(summaryText));
+    if (
+      !parsedSummary.success ||
+      !parsedSummary.data.groups ||
+      parsedSummary.data.groups.length === 0
+    ) {
+      return {};
+    }
+
+    const windows = buildSummaryWindows(parsedSummary.data.groups);
+    if (windows.length > 0) {
+      return { windows };
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") {
+      throw error;
+    }
+  }
+  return {};
+}
+
+interface AvailableModelsResult {
+  rejectedStatus?: number;
+  windows?: UsageWindow[];
+}
+
+async function resolveAvailableModels(
+  fetchApi: typeof fetch,
+  headers: Record<string, string>,
+  projectId: string,
+): Promise<AvailableModelsResult> {
+  const modelsResponse = await fetchApi(`${CLOUDCODE_BASE_URL}/v1internal:fetchAvailableModels`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ project: projectId }),
+    signal: AbortSignal.timeout(15_000),
+  });
+
+  if (modelsResponse.status === 401 || modelsResponse.status === 403) {
+    return { rejectedStatus: modelsResponse.status };
+  }
+
+  if (!modelsResponse.ok) {
+    throw new Error(`Antigravity usage API returned ${modelsResponse.status}`);
+  }
+
+  const modelsText = await modelsResponse.text();
+  if (modelsText.trim().startsWith("<")) {
+    throw new Error("Antigravity usage API returned HTML");
+  }
+
+  const parsed = fetchAvailableModelsSchema.parse(JSON.parse(modelsText));
+  return { windows: buildWindows(parsed.models ?? {}) };
+}
+
 export async function fetchUsage(
   input: AntigravityUsageInput,
   fetchApi: typeof fetch = fetch,
@@ -293,77 +385,30 @@ export async function fetchUsage(
 
   const planLabel = formatPlanLabel(assistResult.planLabel);
 
-  try {
-    const summaryResponse = await fetchApi(
-      `${CLOUDCODE_BASE_URL}/v1internal:retrieveUserQuotaSummary`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({}),
-        signal: AbortSignal.timeout(15_000),
-      },
-    );
-
-    if (summaryResponse.status === 401 || summaryResponse.status === 403) {
-      return unavailable({ kind: "rejected", status: summaryResponse.status, refreshedBy });
-    }
-
-    if (summaryResponse.ok) {
-      const summaryText = await summaryResponse.text();
-      if (!summaryText.trim().startsWith("<")) {
-        const parsedSummary = retrieveUserQuotaSummarySchema.safeParse(JSON.parse(summaryText));
-        if (
-          parsedSummary.success &&
-          parsedSummary.data.groups &&
-          parsedSummary.data.groups.length > 0
-        ) {
-          const windows = buildSummaryWindows(parsedSummary.data.groups);
-          if (windows.length > 0) {
-            return {
-              status: "available",
-              planLabel,
-              windows,
-              balances: [],
-              details: [],
-            };
-          }
-        }
-      }
-    }
-  } catch (error) {
-    if (error instanceof Error && error.name === "TimeoutError") {
-      throw error;
-    }
+  const summaryResult = await resolveUserQuotaSummary(fetchApi, headers);
+  if (summaryResult.rejectedStatus !== undefined) {
+    return unavailable({ kind: "rejected", status: summaryResult.rejectedStatus, refreshedBy });
+  }
+  if (summaryResult.windows && summaryResult.windows.length > 0) {
+    return {
+      status: "available",
+      planLabel,
+      windows: summaryResult.windows,
+      balances: [],
+      details: [],
+    };
   }
 
   // Fallback: fetchAvailableModels
-  const modelsResponse = await fetchApi(`${CLOUDCODE_BASE_URL}/v1internal:fetchAvailableModels`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ project: assistResult.projectId }),
-    signal: AbortSignal.timeout(15_000),
-  });
-
-  if (modelsResponse.status === 401 || modelsResponse.status === 403) {
-    return unavailable({ kind: "rejected", status: modelsResponse.status, refreshedBy });
+  const modelsResult = await resolveAvailableModels(fetchApi, headers, assistResult.projectId);
+  if (modelsResult.rejectedStatus !== undefined) {
+    return unavailable({ kind: "rejected", status: modelsResult.rejectedStatus, refreshedBy });
   }
-
-  if (!modelsResponse.ok) {
-    throw new Error(`Antigravity usage API returned ${modelsResponse.status}`);
-  }
-
-  const modelsText = await modelsResponse.text();
-  if (modelsText.trim().startsWith("<")) {
-    throw new Error("Antigravity usage API returned HTML");
-  }
-
-  const parsed = fetchAvailableModelsSchema.parse(JSON.parse(modelsText));
-  const windows = buildWindows(parsed.models ?? {});
 
   return {
     status: "available",
     planLabel,
-    windows,
+    windows: modelsResult.windows ?? [],
     balances: [],
     details: [],
   };

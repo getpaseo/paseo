@@ -149,10 +149,13 @@ describe("antigravity stores", () => {
     expect(accounts[0]?.key).toBe(accounts[1]?.key);
     expect(accounts[0]?.label).toBe("shared@google.com");
     expect(accounts[1]?.label).toBe("shared@google.com");
-    expect(accounts.map((a) => (a.input as AntigravityUsageInput).route.store === "antigravity" ? (a.input as AntigravityUsageInput).route.path : "")).toEqual([
-      join(cliDir, "antigravity-oauth-token"),
-      join(rootGemini, "oauth_creds.json"),
-    ]);
+    expect(
+      accounts.map((a) =>
+        (a.input as AntigravityUsageInput).route.store === "antigravity"
+          ? (a.input as AntigravityUsageInput).route.path
+          : "",
+      ),
+    ).toEqual([join(cliDir, "antigravity-oauth-token"), join(rootGemini, "oauth_creds.json")]);
   });
 
   it("reads credentials from macOS Keychain with go-keyring-base64: prefix", async () => {
