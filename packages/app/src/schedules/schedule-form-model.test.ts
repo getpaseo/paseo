@@ -186,6 +186,88 @@ function applyPreferences(form: ReturnType<typeof open>, preferences: FormPrefer
 }
 
 describe("schedule form model", () => {
+  it("offers Fast only for the resolved model and submits explicit on and off values", () => {
+    const form = open({
+      mode: "create",
+      defaults: { serverId: "host-a", projectTargets: PROJECT_TARGETS },
+    });
+    form.setProject(PROJECT_TARGETS[0]!.optionId, { label: "Project A" });
+    form.applyProviderSnapshot("host-a", providerSnapshot(ALL_MODELS));
+    form.setModel("mock", "model-a");
+    const scope = { serverId: "host-a", provider: "mock", cwd: "/repo/a", modelId: "model-a" };
+    const features = [{ id: "fast_mode", type: "toggle", label: "Fast", value: false }] as const;
+    expect(form.getState().fastModeSupported).toBe(false);
+    form.applyFeatureSnapshot({ ...scope, features: [...features] });
+    expect(form.getState().fastModeSupported).toBe(true);
+    expect(form.getState().featureValues).toEqual({ fast_mode: false });
+    form.setFastMode(true);
+    expect(form.getState().featureValues).toEqual({ fast_mode: true });
+    form.applyFeatureSnapshot({ ...scope, features: [...features] });
+    expect(form.getState().featureValues).toEqual({ fast_mode: true });
+    form.setFastMode(false);
+    expect(form.getState().featureValues).toEqual({ fast_mode: false });
+    form.setFastMode(true);
+    form.setModel("mock", "model-b");
+    expect(form.getState().fastModeSupported).toBe(false);
+    expect(form.getState().featureValues).toEqual({});
+    form.applyFeatureSnapshot({ ...scope, features: [...features] });
+    expect(form.getState().fastModeSupported).toBe(false);
+    form.applyFeatureSnapshot({ ...scope, modelId: "model-b", features: [] });
+    expect(form.getState().featureValues).toEqual({});
+  });
+
+  it("clears Fast when updated preferences change the selected model", () => {
+    const form = open({
+      mode: "create",
+      defaults: {
+        serverId: "host-a",
+        projectTargets: PROJECT_TARGETS,
+        preferences: { provider: "mock", providerPreferences: { mock: { model: "model-a" } } },
+      },
+    });
+    form.setProject(PROJECT_TARGETS[0]!.optionId, { label: "Project A" });
+    form.applyProviderSnapshot("host-a", providerSnapshot(ALL_MODELS));
+    form.applyFeatureSnapshot({
+      serverId: "host-a",
+      provider: "mock",
+      cwd: "/repo/a",
+      modelId: "model-a",
+      features: [{ id: "fast_mode", type: "toggle", label: "Fast", value: false }],
+    });
+    expect(form.getState().fastModeSupported).toBe(true);
+    form.setFastMode(true);
+    form.applyPreferences({
+      provider: "mock",
+      providerPreferences: { mock: { model: "model-b" } },
+    });
+    expect(form.getState().selectedModel).toBe("model-b");
+    expect(form.getState().fastModeSupported).toBe(false);
+    expect(form.getState().featureValues).toEqual({});
+  });
+
+  it("restores scheduled Fast values without changing other features", () => {
+    const schedule = scheduleOnHost({
+      serverId: "host-a",
+      serverName: "Host A",
+      cwd: "/repo/a",
+      model: "model-a",
+    });
+    if (schedule.target.type !== "new-agent") throw new Error("Expected new-agent schedule");
+    schedule.target.config.featureValues = { fast_mode: true, custom: "kept" };
+    const form = open({ mode: "edit", schedule, defaults: { projectTargets: PROJECT_TARGETS } });
+    form.applyProviderSnapshot("host-a", providerSnapshot(ALL_MODELS));
+    form.applyFeatureSnapshot({
+      serverId: "host-a",
+      provider: "mock",
+      cwd: "/repo/a",
+      modelId: "model-a",
+      features: [{ id: "fast_mode", type: "toggle", label: "Fast", value: false }],
+    });
+    expect(form.getState().featureValues).toEqual({ fast_mode: true, custom: "kept" });
+    form.setFastMode(false);
+    expect(form.getState().featureValues).toEqual({ fast_mode: false, custom: "kept" });
+  });
+
   it("opens edit from the schedule host snapshot and completes that host resolution", () => {
     const previous = open({
       mode: "edit",

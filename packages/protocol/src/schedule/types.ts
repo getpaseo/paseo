@@ -89,6 +89,7 @@ export interface CreateScheduleInput {
 }
 
 export interface UpdateScheduleNewAgentConfig {
+  featureValues?: Record<string, unknown>;
   provider?: string;
   model?: string | null;
   modeId?: string | null;

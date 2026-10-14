@@ -69,6 +69,9 @@ function applyNewAgentConfig(
   patch: UpdateScheduleNewAgentConfig,
 ): Extract<ScheduleTarget, { type: "new-agent" }> {
   const config = { ...target.config };
+  if (patch.featureValues !== undefined) {
+    config.featureValues = patch.featureValues;
+  }
   if (patch.provider !== undefined) {
     const trimmed = patch.provider.trim();
     if (!trimmed) {

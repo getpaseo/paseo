@@ -860,6 +860,7 @@ export interface CreateScheduleOptions {
           modeId?: string;
           model?: string;
           thinkingOptionId?: string;
+          featureValues?: AgentSessionConfig["featureValues"];
           archiveOnFinish?: boolean;
           isolation?: "local" | "worktree";
           title?: string | null;
@@ -878,6 +879,7 @@ export interface InspectScheduleOptions {
   requestId?: string;
 }
 export interface UpdateScheduleNewAgentConfig {
+  featureValues?: AgentSessionConfig["featureValues"];
   provider?: string;
   model?: string | null;
   modeId?: string | null;
