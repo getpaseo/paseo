@@ -539,6 +539,124 @@ describe("host browser partitions", () => {
     expect(next?.isConnected).toBe(false);
     expect(getResidentBrowserWebview("switch-host")?.getAttribute("partition")).toBe(partition);
   });
+  it.each([true, false])(
+    "preserves a loading main-frame address when routing becomes %s",
+    async (enabled) => {
+      let partition = enabled ? "persist:paseo-browser" : "persist:paseo-browser-via-remote";
+      const input = {
+        browserId: "loading-navigation",
+        serverId: "remote",
+        workspaceId: "workspace",
+        profileHost: { ...profileHost, resolvePartition: async () => partition },
+      };
+      const currentUrl = "https://example.test/current";
+      const requestedUrl = "https://example.test/loading";
+      const first = (await ensureResidentBrowserWebview({ ...input, url: currentUrl }))!;
+      Object.assign(first, { getURL: () => currentUrl });
+      const navigation = new Event("did-start-navigation");
+      Object.assign(navigation, { url: requestedUrl, isMainFrame: true, isInPlace: false });
+      first.dispatchEvent(navigation);
+
+      partition = enabled ? "persist:paseo-browser-via-remote" : "persist:paseo-browser";
+      await recreateHostBrowserWebviews("remote", enabled);
+
+      const replacement = getResidentBrowserWebview(input.browserId)!;
+      expect(first.isConnected).toBe(false);
+      expect(replacement.getAttribute("partition")).toBe(partition);
+      expect((replacement as HTMLElement & { src: string }).src).toBe(requestedUrl);
+      expect(await ensureResidentBrowserWebview({ ...input, url: requestedUrl })).toBe(replacement);
+      expect((replacement as HTMLElement & { src: string }).src).toBe(requestedUrl);
+    },
+  );
+  it("applies an address requested before the replacement guest starts navigating", async () => {
+    let partition = "persist:paseo-browser";
+    const input = {
+      browserId: "navigation-before-start",
+      serverId: "remote",
+      workspaceId: "workspace",
+      profileHost: { ...profileHost, resolvePartition: async () => partition },
+    };
+    const currentUrl = "https://example.test/current";
+    const requestedUrl = "https://example.test/loading";
+    const first = (await ensureResidentBrowserWebview({ ...input, url: currentUrl }))!;
+    Object.assign(first, { getURL: () => currentUrl });
+    partition = "persist:paseo-browser-via-remote";
+    await recreateHostBrowserWebviews("remote", true);
+    const replacement = getResidentBrowserWebview(input.browserId)!;
+
+    expect(await ensureResidentBrowserWebview({ ...input, url: requestedUrl })).toBe(replacement);
+    expect((replacement as HTMLElement & { src: string }).src).toBe(requestedUrl);
+  });
+  it("preserves a redirect while loading and ignores subframe navigation", async () => {
+    let partition = "persist:paseo-browser";
+    const first = (await ensureResidentBrowserWebview({
+      browserId: "redirecting-navigation",
+      serverId: "remote",
+      workspaceId: "workspace",
+      url: "https://example.test/current",
+      profileHost: { ...profileHost, resolvePartition: async () => partition },
+    }))!;
+    Object.assign(first, { getURL: () => "https://example.test/current" });
+    for (const [type, url, isMainFrame] of [
+      ["did-start-navigation", "https://example.test/loading", true],
+      ["did-redirect-navigation", "https://example.test/redirected", true],
+      ["did-start-navigation", "https://example.test/frame", false],
+    ] as const) {
+      const event = new Event(type);
+      Object.assign(event, { url, isMainFrame, isInPlace: false });
+      first.dispatchEvent(event);
+    }
+    partition = "persist:paseo-browser-via-remote";
+    await recreateHostBrowserWebviews("remote", true);
+    expect(
+      (getResidentBrowserWebview("redirecting-navigation") as HTMLElement & { src: string }).src,
+    ).toBe("https://example.test/redirected");
+  });
+  it("keeps a committed guest when reattaching with its current address", async () => {
+    const input = {
+      browserId: "committed-navigation",
+      serverId: "remote",
+      workspaceId: "workspace",
+      profileHost,
+    };
+    const initialUrl = "https://example.test/initial";
+    const currentUrl = "https://example.test/current";
+    const first = (await ensureResidentBrowserWebview({ ...input, url: initialUrl }))!;
+    Object.assign(first, { getURL: () => currentUrl });
+
+    expect(await ensureResidentBrowserWebview({ ...input, url: currentUrl })).toBe(first);
+    expect((first as HTMLElement & { src: string }).src).toBe(initialUrl);
+  });
+  it.each(["did-navigate", "did-stop-loading"])(
+    "uses the committed page after %s",
+    async (completionEvent) => {
+      let partition = "persist:paseo-browser";
+      const input = {
+        browserId: "finished-navigation",
+        serverId: "remote",
+        workspaceId: "workspace",
+        profileHost: { ...profileHost, resolvePartition: async () => partition },
+      };
+      const first = (await ensureResidentBrowserWebview({
+        ...input,
+        url: "https://example.test/",
+      }))!;
+      const navigation = new Event("did-start-navigation");
+      Object.assign(navigation, {
+        url: "https://example.test/loading",
+        isMainFrame: true,
+        isInPlace: false,
+      });
+      first.dispatchEvent(navigation);
+      first.dispatchEvent(new Event(completionEvent));
+      Object.assign(first, { getURL: () => "https://example.test/committed#section" });
+      partition = "persist:paseo-browser-via-remote";
+      await recreateHostBrowserWebviews("remote", true);
+      expect(
+        (getResidentBrowserWebview(input.browserId) as HTMLElement & { src: string }).src,
+      ).toBe("https://example.test/committed#section");
+    },
+  );
   it("does not resurrect a tab closed while its partition was resolving", async () => {
     let ready!: (partition: string) => void;
     const partition = new Promise<string>((resolve) => {

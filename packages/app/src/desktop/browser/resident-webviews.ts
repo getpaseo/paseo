@@ -27,6 +27,7 @@ const retiredWebviews = new WeakSet<HTMLElement>();
 // Every guest listener a webview owns hangs off one controller, so retiring the element
 // drops them all at once instead of trusting each handler to notice it is stale.
 const webviewListenerControllers = new WeakMap<HTMLElement, AbortController>();
+const pendingNavigationUrls = new WeakMap<HTMLElement, string>();
 // The dom-ready fallback a did-attach left behind, if any: it belongs to that guest only.
 const pendingAttachFallbacks = new WeakMap<HTMLElement, AbortController>();
 const residentSurfacesByBrowserId = new Map<string, HTMLElement>();
@@ -449,6 +450,27 @@ function configureBrowserWebview(
   webview.setAttribute("allowpopups", "true");
   webview.setAttribute("spellcheck", "false");
   webview.setAttribute("autosize", "on");
+  const signal = listenerSignal(webview);
+  const rememberNavigation = (event: Event) => {
+    const navigation = event as Event & {
+      url?: unknown;
+      isMainFrame?: boolean;
+      isInPlace?: boolean;
+    };
+    if (
+      navigation.isMainFrame === true &&
+      !navigation.isInPlace &&
+      typeof navigation.url === "string" &&
+      navigation.url
+    ) {
+      pendingNavigationUrls.set(webview, navigation.url);
+    }
+  };
+  const clearNavigation = () => pendingNavigationUrls.delete(webview);
+  webview.addEventListener("did-start-navigation", rememberNavigation, { signal });
+  webview.addEventListener("did-redirect-navigation", rememberNavigation, { signal });
+  webview.addEventListener("did-navigate", clearNavigation, { signal });
+  webview.addEventListener("did-stop-loading", clearNavigation, { signal });
   if (input.initialUrl) (webview as BrowserWebviewElement).src = input.initialUrl;
   registerBrowserWhenAttached(webview as BrowserWebviewElement, input, browser);
   observeHostNetworkFailures(webview, input.serverId);
@@ -478,6 +500,7 @@ async function createResidentBrowserWebview(
   const ownerDocument = readDocument();
   if (!browserId || !ownerDocument) return null;
   const browser = getBrowserBridge(input.profileHost);
+  const previousInput = residentInputs.get(browserId);
   residentInputs.set(browserId, input);
   const partition = await (browser.resolvePartition ?? resolveBrowserPartition)(
     input.serverId,
@@ -486,6 +509,9 @@ async function createResidentBrowserWebview(
   // Closing a tab or changing routing while preparation was pending cancels that attach.
   if (residentInputs.get(browserId) !== input) return null;
   const requestedUrl = latestUrl();
+  const hasNewRequestedUrl =
+    requestedUrl !== input.url ||
+    (previousInput !== undefined && requestedUrl !== previousInput.url);
   const existing = getResidentBrowserWebview(browserId);
   if (existing?.getAttribute("partition") === partition) {
     if (
@@ -493,13 +519,15 @@ async function createResidentBrowserWebview(
       existing.parentElement?.id === RESIDENT_BROWSER_HOST_ID
     )
       releaseResidentBrowserWebview(browserId, existing);
-    if (requestedUrl !== input.url) (existing as BrowserWebviewElement).src = requestedUrl;
+    if (hasNewRequestedUrl && readWebviewUrl(existing, requestedUrl) !== requestedUrl) {
+      (existing as BrowserWebviewElement).src = requestedUrl;
+    }
     return existing;
   }
   let url = requestedUrl;
   if (existing) {
     // A routing change keeps the page the old guest was on, unless a newer URL was asked for.
-    url = requestedUrl === input.url ? readWebviewUrl(existing, url) : requestedUrl;
+    url = hasNewRequestedUrl ? requestedUrl : readWebviewUrl(existing, url);
     retireBrowserWebview(existing);
     residentWebviewsByBrowserId.delete(browserId);
   }
@@ -512,7 +540,8 @@ async function createResidentBrowserWebview(
 function readWebviewUrl(webview: HTMLElement, fallback: string): string {
   const guest = webview as BrowserWebviewElement & { getURL?: () => string };
   try {
-    return guest.getURL?.() || guest.src || fallback;
+    // getURL keeps the committed page until the pending main-frame navigation commits.
+    return pendingNavigationUrls.get(webview) || guest.getURL?.() || guest.src || fallback;
   } catch (error) {
     if (error instanceof Error && error.message.startsWith(ELECTRON_WEBVIEW_NOT_ATTACHED)) {
       return guest.src || fallback;
