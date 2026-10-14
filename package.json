@@ -126,7 +126,7 @@
     "release:patch": "npm run release:check && npm run version:all:patch && npm run release:publish && npm run release:push",
     "release:minor": "npm run release:check && npm run version:all:minor && npm run release:publish && npm run release:push",
     "release:major": "npm run release:check && npm run version:all:major && npm run release:publish && npm run release:push",
-    "build:desktop:local:bundle": "npm run build:app-deps:clean && cd packages/app && cross-env PASEO_WEB_PLATFORM=electron npx expo export --platform web && cd ../.. && npm run build:local --workspace=@getpaseo/desktop"
+    "build:desktop:local:bundle": "npm run build:app-deps:clean && cd packages/app && cross-env PASEO_WEB_PLATFORM=electron npx expo export --platform web --clear && cd ../.. && npm run build:local --workspace=@getpaseo/desktop"
   },
   "devDependencies": {
     "@types/ws": "^8.5.14",

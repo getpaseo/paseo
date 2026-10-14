@@ -22,6 +22,7 @@ const env = {
   PASEO_LOCAL_RELEASE_COMMIT: commit,
   EXPO_PUBLIC_PASEO_BUILD_ID: commit,
 };
+// Metro caches inlined EXPO_PUBLIC values between exports; the bundle script clears that cache.
 execFileSync("npm", ["run", "build:desktop:local:bundle"], { cwd: root, env, stdio: "inherit" });
 
 const state =
