@@ -476,15 +476,28 @@ function configureBrowserWebview(
   registerBrowserWhenAttached(webview as BrowserWebviewElement, input, browser);
   observeHostNetworkFailures(webview, input.serverId);
 }
-export function recordBrowserNavigationRequest(browserId: string, url: string): void {
+/** Returns whether the pane must acquire its current guest before using guest APIs. */
+export function recordBrowserNavigationRequest(
+  browserId: string,
+  url: string,
+  paneWebview: HTMLElement | null,
+): boolean {
   const id = trimNonEmpty(browserId);
-  if (!id) return;
+  if (!id) return true;
   const pending = pendingWebviews.get(id);
   if (pending) pending.url = url;
   const input = pending?.input ?? residentInputs.get(id);
   if (input) input.url = url;
   const webview = getResidentBrowserWebview(id);
-  if (webview) pendingNavigationUrls.set(webview, url);
+  const needsAttachment = webview !== paneWebview || !paneWebview?.isConnected;
+  if (webview) {
+    pendingNavigationUrls.set(webview, url);
+    if (needsAttachment) {
+      // src queues navigation while the replacement still awaits guest attachment.
+      webview.setAttribute("src", url);
+    }
+  }
+  return needsAttachment;
 }
 
 export function ensureResidentBrowserWebview(

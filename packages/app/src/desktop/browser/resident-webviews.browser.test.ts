@@ -704,7 +704,7 @@ describe("host browser partitions", () => {
       const changing = recreateHostBrowserWebviews("remote", enabled);
       expect(first.isConnected).toBe(false);
 
-      recordBrowserNavigationRequest(input.browserId, input.url);
+      recordBrowserNavigationRequest(input.browserId, input.url, first);
       const attaching = ensureResidentBrowserWebview(input);
       const partition = enabled ? "persist:paseo-browser-via-remote" : "persist:paseo-browser";
       ready(partition);
@@ -716,6 +716,31 @@ describe("host browser partitions", () => {
       expect((replacement as HTMLElement & { src: string }).src).toBe(input.url);
     },
   );
+  it("queues an explicit address on the replacement before the pane acquires its guest", async () => {
+    let partition = "persist:paseo-browser";
+    const input = {
+      browserId: "explicit-during-handoff",
+      serverId: "remote",
+      workspaceId: "workspace",
+      url: "https://example.test/remembered",
+      profileHost: { ...profileHost, resolvePartition: async () => partition },
+    };
+    const currentUrl = "https://example.test/current";
+    const first = (await ensureResidentBrowserWebview(input))!;
+    Object.assign(first, { getURL: () => currentUrl });
+    partition = "persist:paseo-browser-via-remote";
+    await recreateHostBrowserWebviews("remote", true);
+    const replacement = getResidentBrowserWebview(input.browserId)!;
+    replacement.setAttribute("src", currentUrl);
+    expect(first.isConnected).toBe(false);
+
+    const needsAttachment = recordBrowserNavigationRequest(input.browserId, input.url, first);
+
+    expect(replacement.getAttribute("src")).toBe(input.url);
+    expect(needsAttachment).toBe(true);
+    expect(await ensureResidentBrowserWebview(input)).toBe(replacement);
+    expect(replacement.getAttribute("src")).toBe(input.url);
+  });
   it("keeps a committed guest when reattaching with its current address", async () => {
     const input = {
       browserId: "committed-navigation",

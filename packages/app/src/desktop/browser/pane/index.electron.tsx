@@ -999,8 +999,12 @@ export function BrowserPane({
         });
         return;
       }
-      recordBrowserNavigationRequest(browserIdRef.current, normalizedUrl);
-      if (!webview || !webview.isConnected) {
+      const needsAttachment = recordBrowserNavigationRequest(
+        browserIdRef.current,
+        normalizedUrl,
+        webview,
+      );
+      if (needsAttachment || !webview || !webview.isConnected) {
         setWebviewRevision((revision) => revision + 1);
         return;
       }
