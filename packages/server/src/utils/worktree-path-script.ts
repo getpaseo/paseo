@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, parse, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 import { resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { getRealpathAwareRelativePath } from "./path.js";
@@ -94,6 +94,25 @@ function normalizeAbsolute(path: string): string {
   }
 }
 
+// Resolve a path that does not exist yet (the normal case for a worktree
+// destination): realpath the nearest existing ancestor, then append the
+// missing tail. A plain resolve() would let a symlinked parent smuggle
+// the destination past the denylist — e.g. <repo>/alias -> <repo>/.git.
+function normalizeCandidatePath(path: string): string {
+  let current = resolve(path);
+  const missing: string[] = [];
+  while (!existsSync(current)) {
+    missing.unshift(basename(current));
+    const parent = dirname(current);
+    if (parent === current) {
+      break;
+    }
+    current = parent;
+  }
+  const resolvedAncestor = normalizeAbsolute(current);
+  return missing.length > 0 ? join(resolvedAncestor, ...missing) : resolvedAncestor;
+}
+
 async function resolveRepoPath(cwd: string): Promise<string> {
   const { stdout } = await runGitCommand(["rev-parse", "--git-common-dir"], { cwd });
   const commonDir = resolveGitRevParsePath(cwd, stdout);
@@ -184,7 +203,7 @@ export function validateWorktreeScriptPath(options: {
       `Worktree path script returned a relative path '${candidate}'; it must print an absolute path`,
     );
   }
-  const normalized = normalizeAbsolute(candidate);
+  const normalized = normalizeCandidatePath(candidate);
   const normalizedRepoPath = normalizeAbsolute(repoPath);
 
   if (normalized === parse(normalized).root) {
@@ -258,6 +277,7 @@ export async function resolveWorktreePathFromScript(options: {
   }
 
   let stdout: string;
+  let stderr = "";
   try {
     const result = await execCommand(script, buildWorktreePathScriptArgv(context), {
       cwd: context.repoPath,
@@ -267,25 +287,38 @@ export async function resolveWorktreePathFromScript(options: {
       shell: false,
     });
     stdout = result.stdout;
+    stderr = result.stderr;
   } catch (error) {
     throw describeScriptFailure(script, error);
   }
 
+  // The script's stderr explains its choices; keep its tail in every
+  // contract error, not just process failures.
+  const stderrTail = stderr.trim().slice(-STDERR_TAIL_LENGTH);
+  const withStderr = (message: string): string =>
+    stderrTail.length > 0 ? `${message}: ${stderrTail}` : message;
+
   if (Buffer.byteLength(stdout, "utf8") > WORKTREE_PATH_SCRIPT_MAX_OUTPUT_BYTES) {
     throw new Error(
-      `Worktree path script '${script}' printed more than ${WORKTREE_PATH_SCRIPT_MAX_OUTPUT_BYTES} bytes; it must print exactly one line containing the absolute worktree path (send logs to stderr)`,
+      withStderr(
+        `Worktree path script '${script}' printed more than ${WORKTREE_PATH_SCRIPT_MAX_OUTPUT_BYTES} bytes; it must print exactly one line containing the absolute worktree path (send logs to stderr)`,
+      ),
     );
   }
 
   const output = stdout.trim();
   if (output.length === 0) {
     throw new Error(
-      `Worktree path script '${script}' printed nothing; it must print exactly one line containing the absolute worktree path`,
+      withStderr(
+        `Worktree path script '${script}' printed nothing; it must print exactly one line containing the absolute worktree path`,
+      ),
     );
   }
   if (output.includes("\n")) {
     throw new Error(
-      `Worktree path script '${script}' printed more than one line; it must print exactly one line containing the absolute worktree path (send logs to stderr)`,
+      withStderr(
+        `Worktree path script '${script}' printed more than one line; it must print exactly one line containing the absolute worktree path (send logs to stderr)`,
+      ),
     );
   }
 
@@ -293,6 +326,6 @@ export async function resolveWorktreePathFromScript(options: {
     return validateWorktreeScriptPath({ candidate: output, repoPath: context.repoPath });
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(`Worktree path script '${script}': ${reason}`, { cause: error });
+    throw new Error(withStderr(`Worktree path script '${script}': ${reason}`), { cause: error });
   }
 }

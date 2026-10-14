@@ -80,7 +80,7 @@ printf '%s.worktrees/%s\n' "$1" "$6"
 
 Send any logging to stderr. Anything extra on stdout breaks the one-line contract.
 
-To see what Paseo would pass for a given repo and branch without running your script, use `paseo worktree path-script-preview --path ~/dev/my-app --branch feature/example`. It reads `config.json` on disk and prints the script, working directory, arguments, and environment; it never executes the script. For `branch-off`, pass `--base-ref` yourself to match a real creation. At creation time Paseo passes the resolved base ref.
+To see what Paseo would pass for a given repo and branch without running your script, use `paseo worktree path-script-preview --path ~/dev/my-app --branch feature/example`. It reads `config.json` on disk and prints the script, working directory, arguments, and environment; it never executes the script. The preview shows the inputs as supplied: live creation can adjust them (the branch is uniquified when it is already checked out in another worktree, and `branch-off` passes the resolved base ref, so pass `--base-ref` yourself to match a real creation).
 
 ## Create a worktree-backed workspace
 

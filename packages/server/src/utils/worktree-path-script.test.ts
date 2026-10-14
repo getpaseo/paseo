@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -168,6 +169,27 @@ describe("worktree-path-script", () => {
     expect(() => validateWorktreeScriptPath({ candidate: tempDir, repoPath })).toThrow(
       "ancestor of the repository",
     );
+  });
+
+  it("rejects a destination smuggled inside .git through a symlinked parent", () => {
+    const tempDir = makeTempDir();
+    const repoPath = join(tempDir, "repo");
+    mkdirSync(join(repoPath, ".git"), { recursive: true });
+    symlinkSync(join(repoPath, ".git"), join(tempDir, "alias"));
+
+    expect(() =>
+      validateWorktreeScriptPath({ candidate: join(tempDir, "alias", "new-wt"), repoPath }),
+    ).toThrow("inside a .git directory");
+  });
+
+  it("includes stderr when a successful script prints invalid output", async () => {
+    const tempDir = makeTempDir();
+    const repoPath = join(tempDir, "repo");
+    mkdirSync(repoPath, { recursive: true });
+    const script = writeScript(tempDir, "echo 'cannot place: disk full' >&2\nexit 0");
+    await expect(
+      resolveWorktreePathFromScript({ script, context: makeContext(repoPath) }),
+    ).rejects.toThrow(/printed nothing;.*cannot place: disk full/);
   });
 
   it("rejects an existing path and hints the script must not create it", async () => {

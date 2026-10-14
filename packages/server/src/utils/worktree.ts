@@ -1332,6 +1332,40 @@ async function listLocalBranchNames(cwd: string): Promise<Set<string>> {
   );
 }
 
+// The one local branch a source plan can create while resolving: a
+// checkout-branch plan fetches refs/heads/<source.branchName>, and a
+// change-request/PR plan fetches refs/heads/<localBranchName> (which is
+// the plan's branchName). branch-off creates no local branch. Only this
+// ref may be rolled back when the path script fails — never any other
+// branch that appeared in the meantime; other creators own those.
+function planCreatedLocalBranch(
+  source: WorktreeSource,
+  sourcePlan: WorktreeSourcePlan,
+): string | null {
+  switch (source.kind) {
+    case "checkout-branch":
+      return source.branchName;
+    case "checkout-change-request":
+    case "checkout-github-pr":
+      return sourcePlan.branchName;
+    default:
+      return null;
+  }
+}
+
+async function readLocalBranchTip(cwd: string, branchName: string): Promise<string | null> {
+  try {
+    const { stdout } = await runGitCommand(
+      ["rev-parse", "--verify", `refs/heads/${branchName}^{commit}`],
+      { cwd },
+    );
+    const tip = stdout.trim();
+    return tip.length > 0 ? tip : null;
+  } catch {
+    return null;
+  }
+}
+
 async function resolveScriptWorktreePath(options: {
   cwd: string;
   source: WorktreeSource;
@@ -1341,6 +1375,13 @@ async function resolveScriptWorktreePath(options: {
   pathScript: string;
   branchesBefore: Set<string> | null;
 }): Promise<string> {
+  // Capture the plan-created branch and its tip now, so a script failure
+  // can delete exactly that ref, and only if nobody has moved it since.
+  const createdBranch = planCreatedLocalBranch(options.source, options.sourcePlan);
+  const createdBranchTip =
+    createdBranch && options.branchesBefore && !options.branchesBefore.has(createdBranch)
+      ? await readLocalBranchTip(options.cwd, createdBranch)
+      : null;
   try {
     const context = await deriveWorktreePathScriptContext({
       cwd: options.cwd,
@@ -1355,22 +1396,14 @@ async function resolveScriptWorktreePath(options: {
     });
     return await resolveWorktreePathFromScript({ script: options.pathScript, context });
   } catch (error) {
-    if (options.branchesBefore) {
-      await deleteBranchesCreatedSince(options.cwd, options.branchesBefore).catch(() => {});
+    if (createdBranch && createdBranchTip) {
+      const currentTip = await readLocalBranchTip(options.cwd, createdBranch).catch(() => null);
+      if (currentTip === createdBranchTip) {
+        // Fails if the branch is checked out somewhere; best-effort.
+        await runGitCommand(["branch", "-D", createdBranch], { cwd: options.cwd }).catch(() => {});
+      }
     }
     throw error;
-  }
-}
-
-async function deleteBranchesCreatedSince(cwd: string, before: Set<string>): Promise<void> {
-  const after = await listLocalBranchNames(cwd);
-  for (const name of after) {
-    if (before.has(name)) {
-      continue;
-    }
-    // Fails if the branch is checked out somewhere; that is the plan's own
-    // worktree-add path, not ours to clean up. Best-effort by design.
-    await runGitCommand(["branch", "-D", name], { cwd }).catch(() => {});
   }
 }
 

@@ -64,6 +64,7 @@ const pathScriptPreviewSchema: OutputSchema<PathScriptPreviewResult> = {
       `Script: ${data.scriptPath}`,
       `Source: ${data.configPath} (reflects config on disk; restart the daemon to create worktrees with it)`,
       "Not executed: run the script yourself with these values to see the path it returns.",
+      "Supplied inputs only: live creation can adjust them (the branch is uniquified when it is already checked out in another worktree, and branch-off passes the resolved base ref).",
       "",
       `cwd: ${data.cwd}`,
       "",

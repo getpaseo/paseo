@@ -1516,6 +1516,38 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(localBranches.trim()).toBe("");
     });
 
+    it("does not delete unrelated branches created while the script runs", async () => {
+      const remoteDir = join(tempDir, "remote.git");
+      execFileSync("git", ["clone", "--bare", repoDir, remoteDir], { cwd: tempDir });
+      execFileSync("git", ["remote", "add", "origin", remoteDir], { cwd: repoDir });
+      execFileSync("git", ["push", "origin", "main"], { cwd: repoDir });
+      execFileSync("git", ["branch", "feature/remote-check"], { cwd: repoDir });
+      execFileSync("git", ["push", "origin", "feature/remote-check"], { cwd: repoDir });
+      execFileSync("git", ["branch", "-D", "feature/remote-check"], { cwd: repoDir });
+      execFileSync("git", ["fetch", "origin"], { cwd: repoDir });
+
+      // Another creator adds a branch during the script's run; a script
+      // failure rolls back only the ref the source plan fetched.
+      const script = writePlaceScript("git branch unrelated-keep\necho 'no placement' >&2\nexit 1");
+      await expect(
+        createWorktreePrimitive({
+          cwd: repoDir,
+          worktreeSlug: "remote-check-2",
+          source: { kind: "checkout-branch", branchName: "feature/remote-check" },
+          runSetup: false,
+          paseoHome,
+          pathScript: script,
+        }),
+      ).rejects.toThrow(/no placement/);
+
+      const branches = execFileSync("git", ["branch", "--list"], {
+        cwd: repoDir,
+        encoding: "utf8",
+      });
+      expect(branches).toContain("unrelated-keep");
+      expect(branches).not.toContain("feature/remote-check");
+    });
+
     it("explicit worktreePath bypasses the script", async () => {
       const script = writePlaceScript("exit 1");
       const explicitPath = join(tempDir, "explicit-wt");
