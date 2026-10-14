@@ -2,8 +2,10 @@ import { useMemo } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react-native";
 import { Pressable, Text } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { DensityIcon } from "@/components/ui/density-icon";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
+import { density, densityFontSize } from "@/styles/density";
 import type { Theme } from "@/styles/theme";
 
 const ThemedChevronDown = withUnistyles(ChevronDown);
@@ -21,6 +23,7 @@ interface SidebarSectionHeaderProps {
   collapsed: boolean;
   onToggle: () => void;
   testID: string;
+  densityAware?: boolean;
 }
 
 export function SidebarSectionHeader({
@@ -28,6 +31,7 @@ export function SidebarSectionHeader({
   collapsed,
   onToggle,
   testID,
+  densityAware = false,
 }: SidebarSectionHeaderProps) {
   const isCompact = useIsCompactFormFactor();
   const accessibilityState = useMemo(() => ({ expanded: !collapsed }), [collapsed]);
@@ -35,6 +39,11 @@ export function SidebarSectionHeader({
   // so the attribute a screen reader and the e2e suite read is set here.
   const ariaExpandedProps = isWeb ? ({ "aria-expanded": !collapsed } as const) : null;
   const Chevron = collapsed ? ThemedChevronRight : ThemedChevronDown;
+  const chevron = densityAware ? (
+    <DensityIcon icon={collapsed ? ChevronRight : ChevronDown} size="xs" color="foregroundMuted" />
+  ) : (
+    <Chevron size={12} uniProps={foregroundMutedColorMapping} />
+  );
 
   return (
     <Pressable
@@ -42,15 +51,13 @@ export function SidebarSectionHeader({
       accessibilityState={accessibilityState}
       {...ariaExpandedProps}
       onPress={onToggle}
-      style={styles.header}
+      style={[styles.header, densityAware ? styles.densityHeader : null]}
       testID={testID}
     >
       {({ hovered }) => (
         <>
-          <Text style={styles.title}>{title}</Text>
-          {hovered || isNative || isCompact ? (
-            <Chevron size={12} uniProps={foregroundMutedColorMapping} />
-          ) : null}
+          <Text style={[styles.title, densityAware ? styles.densityTitle : null]}>{title}</Text>
+          {hovered || isNative || isCompact ? chevron : null}
         </>
       )}
     </Pressable>
@@ -68,9 +75,15 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[1],
     userSelect: "none",
   },
+  densityHeader: {
+    minHeight: density.rowHeight,
+  },
   title: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
+  },
+  densityTitle: {
+    fontSize: densityFontSize(theme, "sm"),
   },
 }));

@@ -16,6 +16,7 @@ export function PinnedSectionHeader({
       collapsed={collapsed}
       onToggle={onToggle}
       testID="sidebar-pinned-section-header"
+      densityAware
     />
   );
 }
