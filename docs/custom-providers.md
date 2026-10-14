@@ -484,7 +484,7 @@ The [Agent Client Protocol (ACP)](https://agentclientprotocol.com) is an open st
 
 ACP agents communicate over JSON-RPC 2.0 on stdio. Paseo spawns the agent process and talks to it through stdin/stdout.
 
-Paseo also ships an in-app ACP provider catalog for common agents, including CodeWhale, Cursor, DeepAgents, DimCode, Gemini CLI, Hermes, Qwen Code, and Kimi Code. Catalog entries create the same `extends: "acp"` provider config shown below.
+Paseo also ships an in-app ACP provider catalog for common agents, including CodeWhale, Cursor, DeepAgents, DimCode, Gemini CLI, Hermes, Prime Agent, Qwen Code, and Kimi Code. Catalog entries create the same `extends: "acp"` provider config shown below.
 
 ### Adding a generic ACP provider
 
@@ -622,6 +622,30 @@ Ref: [Gemini CLI ACP mode docs](https://github.com/google-gemini/gemini-cli/blob
 ```
 
 Ref: [Hermes ACP docs](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp)
+
+### Example: Prime Agent (Prime Intellect)
+
+[Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent) is an open-source coding assistant and reasoning agent by Prime Intellect. It supports ACP via the `--mode acp` flag.
+
+1. Install: `curl -fsSL https://app.primeintellect.ai/prime-agent/install.sh | sh`
+2. Authenticate or configure models in `~/.prime/agent/`
+3. Add to config.json:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "prime-agent": {
+        "extends": "acp",
+        "label": "Prime Agent",
+        "command": ["prime-agent", "--mode", "acp"]
+      }
+    }
+  }
+}
+```
+
+Ref: [Prime Agent GitHub](https://github.com/PrimeIntellect-ai/prime-agent)
 
 ### How ACP providers work in Paseo
 

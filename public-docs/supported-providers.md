@@ -92,6 +92,7 @@ Pick any of these from the in-app provider catalog. Each entry is a one-click in
 - [Mistral Vibe](https://github.com/mistralai/mistral-vibe), Mistral's open-source CLI assistant.
 - [Nova](https://www.compassap.ai/portfolio/nova.html), Compass AI's software engineer.
 - [Poolside](https://docs.poolside.ai/cli/pool), Poolside's coding agent.
+- [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent), self-improving AI coding assistant and RLM agent by Prime Intellect.
 - [Qoder](https://qoder.com), agentic coding assistant.
 - [Qwen Code](https://qwenlm.github.io/qwen-code-docs/en/users/overview), Alibaba's Qwen coding assistant.
 - [siGit Code](https://github.com/getsigit/sigit), local-first coding agent with optional on-device LLM.
