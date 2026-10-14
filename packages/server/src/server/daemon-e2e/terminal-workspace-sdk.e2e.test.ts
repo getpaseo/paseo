@@ -1,5 +1,5 @@
 import { resolveDaemonVersion } from "../daemon-version.js";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
@@ -244,3 +244,49 @@ async function observeScriptLifecycles(
   await subscription.ready;
   return lifecycles;
 }
+
+async function observeWorkspaceScriptNames(
+  daemonClient: DaemonClient,
+): Promise<Map<string, string[]>> {
+  const scriptNames = new Map<string, string[]>();
+  daemonClient.subscribe((event) => {
+    if (event.type !== "workspace_update" || event.payload.kind !== "upsert") return;
+    const names = event.payload.workspace.scripts.map((script) => script.scriptName);
+    scriptNames.set(event.workspaceId, names);
+  });
+  await daemonClient.fetchWorkspaces({ subscribe: {} });
+  return scriptNames;
+}
+
+test("editing paseo.json refreshes every subscribed client for each workspace sharing a directory", async () => {
+  const first = await createWorkspace("First workspace");
+  const second = await createWorkspace("Second workspace");
+  const registry = path.join(daemon.paseoHome, "projects", "workspaces.json");
+  const originalRegistry = await readFile(registry, "utf8");
+  const observer = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  await observer.connect();
+  try {
+    const seen = await Promise.all([client, observer].map(observeWorkspaceScriptNames));
+    const expectScripts = (names: string[]) =>
+      expect
+        .poll(() => seen.map((scriptNames) => [scriptNames.get(first), scriptNames.get(second)]), {
+          timeout: 10_000,
+        })
+        .toEqual([
+          [names, names],
+          [names, names],
+        ]);
+
+    await writeFile(
+      path.join(cwd, "paseo.json"),
+      JSON.stringify({ scripts: { build: { command: "npm run build" } } }),
+    );
+    await expectScripts(["build"]);
+    await rm(path.join(cwd, "paseo.json"));
+    await expectScripts([]);
+    expect(await readFile(registry, "utf8")).toBe(originalRegistry);
+    expect((await client.listTerminals()).terminals).toEqual([]);
+  } finally {
+    await observer.close();
+  }
+});

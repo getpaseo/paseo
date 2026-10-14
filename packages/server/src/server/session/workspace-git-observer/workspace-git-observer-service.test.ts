@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import type pino from "pino";
 import { describe, expect, test } from "vitest";
+import type { FileObserver } from "../../file-explorer/observer.js";
 import type { WorkspaceDescriptorPayload } from "../../messages.js";
 import type {
   WorkspaceGitListener,
@@ -49,7 +50,9 @@ function flushMicrotasks(): Promise<void> {
   return new Promise((done) => setImmediate(done));
 }
 
-function buildHarness(opts: { emitCwdRejects?: boolean } = {}) {
+function buildHarness(
+  opts: { emitCwdRejects?: boolean; configWatchRejects?: boolean; configExists?: boolean } = {},
+) {
   const listeners = new Map<string, WorkspaceGitListener>();
   const registerCalls: string[] = [];
   const unsubscribeCalls: string[] = [];
@@ -57,6 +60,30 @@ function buildHarness(opts: { emitCwdRejects?: boolean } = {}) {
   const statusCalls: Array<{ cwd: string; branch: string | null }> = [];
   const branchChanges: Array<[string, string | null, string | null]> = [];
   const warnCalls: unknown[][] = [];
+  const configWatchCalls: Array<{ cwd: string; path: string }> = [];
+  const configUnwatchCalls: string[] = [];
+  const configListeners = new Map<string, () => void>();
+  const pendingConfigWatches: Array<() => void> = [];
+
+  // paseo.json watches stay pending until a test calls resolveConfigWatches(), so a test
+  // controls when each watch starts.
+  const configObserver: Pick<FileObserver, "subscribe"> = {
+    async subscribe(input, listener) {
+      configWatchCalls.push(input);
+      if (opts.configWatchRejects) throw new Error("watch boom");
+      await new Promise<void>((done) => pendingConfigWatches.push(done));
+      configListeners.set(input.cwd, () => listener({ status: "missing", ...input }));
+      return {
+        initial: opts.configExists
+          ? { status: "ready", ...input, size: 2, modifiedAt: "2026-01-01T00:00:00.000Z" }
+          : { status: "missing", ...input },
+        unsubscribe() {
+          configUnwatchCalls.push(input.cwd);
+          configListeners.delete(input.cwd);
+        },
+      };
+    },
+  };
 
   const workspaceGitService: Pick<WorkspaceGitService, "registerWorkspace"> = {
     registerWorkspace({ cwd }, listener) {
@@ -85,6 +112,7 @@ function buildHarness(opts: { emitCwdRejects?: boolean } = {}) {
     onBranchChanged: (workspaceId, oldBranch, newBranch) => {
       branchChanges.push([workspaceId, oldBranch, newBranch]);
     },
+    configObserver,
     logger: { warn: (...args: unknown[]) => warnCalls.push(args) } as unknown as pino.Logger,
   });
 
@@ -96,9 +124,25 @@ function buildHarness(opts: { emitCwdRejects?: boolean } = {}) {
     listener(makeSnapshot(cwd, branch));
   }
 
+  function changeConfig(cwd: string): void {
+    const listener = configListeners.get(cwd);
+    if (!listener) {
+      throw new Error(`no paseo.json listener registered for ${cwd}`);
+    }
+    listener();
+  }
+
+  function resolveConfigWatches(): void {
+    for (const done of pendingConfigWatches.splice(0)) done();
+  }
+
   return {
     service,
     emitSnapshot,
+    changeConfig,
+    resolveConfigWatches,
+    configWatchCalls,
+    configUnwatchCalls,
     registerCalls,
     unsubscribeCalls,
     emitCwdCalls,
@@ -340,5 +384,90 @@ describe("teardown", () => {
     const descriptor = makeDescriptor({ id: "ws1", workspaceDirectory: WS1, name: "main" });
     h.service.recordDescriptorState("ws1", descriptor);
     expect(h.branchChanges).toEqual([]);
+  });
+});
+
+describe("paseo.json observation", () => {
+  const directory = (id: string, workspaceDirectory: string) =>
+    makeDescriptor({
+      id,
+      workspaceDirectory,
+      projectKind: "directory",
+      workspaceKind: "directory",
+    });
+
+  test("watches paseo.json for Git and directory workspaces and refreshes on start and change", async () => {
+    const h = buildHarness({ configExists: true });
+    h.service.syncObservers([
+      directory("ws1", WS1),
+      makeDescriptor({ id: "ws2", workspaceDirectory: WS2 }),
+    ]);
+    expect(h.configWatchCalls).toEqual([
+      { cwd: WS1, path: "paseo.json" },
+      { cwd: WS2, path: "paseo.json" },
+    ]);
+
+    h.resolveConfigWatches();
+    await flushMicrotasks();
+    expect(h.emitCwdCalls).toEqual([WS1, WS2]);
+
+    h.changeConfig(WS1);
+    await flushMicrotasks();
+    expect(h.emitCwdCalls).toEqual([WS1, WS2, WS1]);
+  });
+
+  test("shares one watch per directory until its last workspace is removed", async () => {
+    const h = buildHarness();
+    h.service.syncObservers([directory("ws1", WS1), directory("ws2", WS1)]);
+    h.service.syncObservers([directory("ws1", WS1)]);
+    h.resolveConfigWatches();
+    await flushMicrotasks();
+    expect(h.configWatchCalls).toHaveLength(1);
+    expect(h.emitCwdCalls).toEqual([]);
+
+    h.service.removeForWorkspaceId("ws1");
+    expect(h.configUnwatchCalls).toEqual([]);
+    h.service.removeForWorkspaceId("ws2");
+    expect(h.configUnwatchCalls).toEqual([WS1]);
+  });
+
+  test("moves the watch when a workspace changes directory", async () => {
+    const h = buildHarness();
+    h.service.syncObservers([directory("ws1", WS1)]);
+    h.resolveConfigWatches();
+    await flushMicrotasks();
+    h.service.syncObservers([directory("ws1", WS2)]);
+    expect(h.configUnwatchCalls).toEqual([WS1]);
+    expect(h.configWatchCalls.map((call) => call.cwd)).toEqual([WS1, WS2]);
+  });
+
+  test("releases a watch removed before its subscription resolves", async () => {
+    const h = buildHarness();
+    h.service.syncObservers([directory("ws1", WS1)]);
+    h.service.removeForWorkspaceId("ws1");
+    expect(h.configUnwatchCalls).toEqual([]);
+
+    h.resolveConfigWatches();
+    await flushMicrotasks();
+    expect(h.configUnwatchCalls).toEqual([WS1]);
+  });
+
+  test("reconcile and dispose release watches", async () => {
+    const h = buildHarness();
+    h.service.syncObservers([directory("ws1", WS1), directory("ws2", WS2)]);
+    h.resolveConfigWatches();
+    await flushMicrotasks();
+
+    h.service.reconcileObservers([directory("ws2", WS2)]);
+    expect(h.configUnwatchCalls).toEqual([WS1]);
+    h.service.dispose();
+    expect(h.configUnwatchCalls).toEqual([WS1, WS2]);
+  });
+
+  test("logs a failed watch without failing the sync", async () => {
+    const h = buildHarness({ configWatchRejects: true });
+    expect(() => h.service.syncObservers([directory("ws1", WS1)])).not.toThrow();
+    await flushMicrotasks();
+    expect(h.warnCalls).toHaveLength(1);
   });
 });

@@ -1,5 +1,7 @@
 import { resolve } from "node:path";
 import type pino from "pino";
+import { PASEO_CONFIG_FILE_NAME } from "../../../utils/paseo-config-file.js";
+import { workspaceFileObserver, type FileObserver } from "../../file-explorer/observer.js";
 import type { WorkspaceDescriptorPayload } from "../../messages.js";
 import type {
   WorkspaceGitRuntimeSnapshot,
@@ -32,6 +34,9 @@ export interface WorkspaceGitObserverMetrics {
  * Branch changes reach `onBranchChanged` from two paths that share `lastBranchName`: the
  * on-disk snapshot listener (handleBranchSnapshot) and the workspace-emit loop's Git runtime
  * projection (recordDescriptorState). Both stay inside this module so the shared state is coherent.
+ *
+ * Every workspace, Git or not, also watches its paseo.json and refreshes its workspace cards on
+ * change, so the Scripts menu follows edits made outside Paseo.
  */
 export interface WorkspaceGitObserverService {
   syncObservers(workspaces: Iterable<WorkspaceDescriptorPayload>): void;
@@ -56,6 +61,7 @@ export function createWorkspaceGitObserverService(deps: {
     oldBranch: string | null,
     newBranch: string | null,
   ) => void;
+  configObserver?: Pick<FileObserver, "subscribe">;
   logger: pino.Logger;
 }): WorkspaceGitObserverService {
   const {
@@ -63,12 +69,72 @@ export function createWorkspaceGitObserverService(deps: {
     emitWorkspaceUpdateForCwd,
     emitStatusUpdate,
     onBranchChanged,
+    configObserver = workspaceFileObserver,
     logger,
   } = deps;
 
   const watchTargets = new Map<string, WorkspaceGitWatchTarget>();
   const workspaceStates = new Map<string, WorkspaceGitWatchState>();
   const subscriptions = new Map<string, () => void>();
+  const configWatches = new Map<string, { workspaceIds: Set<string>; release: () => void }>();
+  const configCwds = new Map<string, string>();
+
+  function observeConfig(cwd: string, workspaceId: string): void {
+    const currentCwd = configCwds.get(workspaceId);
+    if (currentCwd === cwd) return;
+    if (currentCwd !== undefined) unobserveConfig(workspaceId);
+    configCwds.set(workspaceId, cwd);
+    const existing = configWatches.get(cwd);
+    if (existing) {
+      existing.workspaceIds.add(workspaceId);
+      return;
+    }
+
+    let unsubscribe: (() => void) | null = null;
+    let released = false;
+    configWatches.set(cwd, {
+      workspaceIds: new Set([workspaceId]),
+      release: () => {
+        released = true;
+        unsubscribe?.();
+      },
+    });
+    const refresh = () => {
+      void emitWorkspaceUpdateForCwd(cwd).catch((error) => {
+        logger.warn({ err: error, cwd }, "Failed to emit workspace update after paseo.json change");
+      });
+    };
+    void (async () => {
+      try {
+        const subscription = await configObserver.subscribe(
+          { cwd, path: PASEO_CONFIG_FILE_NAME },
+          refresh,
+        );
+        if (released) {
+          subscription.unsubscribe();
+          return;
+        }
+        unsubscribe = subscription.unsubscribe;
+        // Catch an edit made between the client's snapshot and the watch starting.
+        // shortcut: a removal in that window stays stale until the next edit; drop the check if that matters.
+        if (subscription.initial.status !== "missing") refresh();
+      } catch (error) {
+        logger.warn({ err: error, cwd }, "Failed to observe paseo.json");
+      }
+    })();
+  }
+
+  function unobserveConfig(workspaceId: string): void {
+    const cwd = configCwds.get(workspaceId);
+    if (cwd === undefined) return;
+    configCwds.delete(workspaceId);
+    const watch = configWatches.get(cwd);
+    watch?.workspaceIds.delete(workspaceId);
+    if (watch?.workspaceIds.size === 0) {
+      configWatches.delete(cwd);
+      watch.release();
+    }
+  }
 
   function rememberDescriptorState(
     workspaceId: string,
@@ -95,7 +161,7 @@ export function createWorkspaceGitObserverService(deps: {
     subscriptions.delete(normalizedCwd);
   }
 
-  function removeForWorkspaceId(workspaceId: string): void {
+  function removeGitObservation(workspaceId: string): void {
     const state = workspaceStates.get(workspaceId);
     if (!state) {
       return;
@@ -106,6 +172,11 @@ export function createWorkspaceGitObserverService(deps: {
     if (target?.workspaceIds.size === 0) {
       removeForCwd(state.cwd);
     }
+  }
+
+  function removeForWorkspaceId(workspaceId: string): void {
+    unobserveConfig(workspaceId);
+    removeGitObservation(workspaceId);
   }
 
   function handleBranchSnapshot(cwd: string, branchName: string | null): void {
@@ -130,12 +201,13 @@ export function createWorkspaceGitObserverService(deps: {
 
   function syncObserver(cwd: string, options: { isGit: boolean; workspaceId: string }): void {
     const normalizedCwd = resolve(cwd);
+    observeConfig(normalizedCwd, options.workspaceId);
     const currentState = workspaceStates.get(options.workspaceId);
     if (currentState && currentState.cwd !== normalizedCwd) {
-      removeForWorkspaceId(options.workspaceId);
+      removeGitObservation(options.workspaceId);
     }
     if (!options.isGit) {
-      removeForWorkspaceId(options.workspaceId);
+      removeGitObservation(options.workspaceId);
       return;
     }
 
@@ -168,7 +240,7 @@ export function createWorkspaceGitObserverService(deps: {
         emitStatusUpdate(normalizedCwd, snapshot);
       });
     } catch (error) {
-      removeForWorkspaceId(options.workspaceId);
+      removeGitObservation(options.workspaceId);
       throw error;
     }
     subscriptions.set(normalizedCwd, subscription.unsubscribe);
@@ -187,7 +259,7 @@ export function createWorkspaceGitObserverService(deps: {
   return {
     reconcileObservers(workspaces) {
       const retained = new Map([...workspaces].map((workspace) => [workspace.id, workspace]));
-      for (const workspaceId of workspaceStates.keys()) {
+      for (const workspaceId of new Set([...workspaceStates.keys(), ...configCwds.keys()])) {
         if (!retained.has(workspaceId)) removeForWorkspaceId(workspaceId);
       }
       for (const workspace of retained.values()) {
@@ -228,6 +300,11 @@ export function createWorkspaceGitObserverService(deps: {
       subscriptions.clear();
       watchTargets.clear();
       workspaceStates.clear();
+      for (const watch of configWatches.values()) {
+        watch.release();
+      }
+      configWatches.clear();
+      configCwds.clear();
     },
   };
 }
