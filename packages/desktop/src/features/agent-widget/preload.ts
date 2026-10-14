@@ -283,6 +283,18 @@ window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("widget")!.style.height = "100%";
   document.addEventListener("click", handleClick);
   document.addEventListener("input", handleInput);
+  document.addEventListener("keydown", (event) => {
+    if (
+      event.key !== "Enter" ||
+      event.shiftKey ||
+      event.isComposing ||
+      !(event.target instanceof HTMLTextAreaElement) ||
+      event.target.id !== "answer"
+    )
+      return;
+    event.preventDefault();
+    document.querySelector<HTMLButtonElement>("#answer-button")?.click();
+  });
   document.addEventListener("submit", (event) => {
     event.preventDefault();
     const item = current();

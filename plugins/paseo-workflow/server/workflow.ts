@@ -15,6 +15,7 @@ import type {
   AgentTimelineItem,
   PaseoAgentConfig,
 } from "./types";
+import { handoffPlanTitle } from "../shared/handoff-presentation";
 
 export interface PlanContext {
   workspaceId: string;
@@ -39,6 +40,7 @@ export interface WorkflowAgent {
 }
 export interface WorkflowLaunch {
   workspaceId: string;
+  title?: string;
   parent?: string;
   launchProfileId?: string;
   idempotencyKey: string;
@@ -749,6 +751,7 @@ export class WorkflowController {
       handoff.agentId ??
       (await this.port.create({
         workspaceId: workflow.workspaceId,
+        title: handoffPlanTitle(plan.context.text),
         idempotencyKey: `workflow:${workflow.id}:handoff:${plan.context.callId}`,
         config: {
           provider: `${decision.provider}/${decision.model}`,

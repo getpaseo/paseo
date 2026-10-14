@@ -1128,6 +1128,7 @@ test("handoff routes once and delivers only the exact plan and original git cont
   expect(f.launches).toHaveLength(1);
   expect(f.launches[0]).toMatchObject({
     workspaceId: "workspace",
+    title: "Execute this plan.",
     idempotencyKey: "workflow:planner:handoff:plan-1",
     config: {
       provider: "codex/gpt-6-astra",

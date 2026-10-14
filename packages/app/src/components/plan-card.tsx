@@ -192,7 +192,7 @@ function createPlanMarkdownRules() {
 
 export type PlanOutcome = "pending" | "approved" | "rejected" | "canceled";
 
-interface PlanCardProps {
+export interface PlanCardProps {
   title?: string;
   description?: string;
   text: string;

@@ -9,6 +9,8 @@ export {
   SettingsAction,
 } from "@/components/settings";
 
+export { PlanCard } from "@/components/plan-card";
+
 export { ExternalLink } from "@/components/ui/external-link";
 
 export { SidebarRow, SidebarSeparator } from "@/plugins/sidebar-items/kit";

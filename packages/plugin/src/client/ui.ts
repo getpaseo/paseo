@@ -44,6 +44,14 @@ export interface SettingsActionProps extends SettingsRowProps {
   onPress(): void;
   disabled?: boolean;
 }
+export interface PlanCardProps {
+  title?: string;
+  text: string;
+  disableOuterSpacing?: boolean;
+  testID?: string;
+}
+/** Render Markdown using the same expandable plan card as native plan actions. */
+export declare const PlanCard: ComponentType<PlanCardProps>;
 export declare const SettingsGroup: ComponentType<SettingsSectionProps>;
 export declare const SettingsSection: ComponentType<SettingsSectionProps>;
 export declare const SettingsCard: ComponentType<{ children: ReactNode; testID?: string }>;

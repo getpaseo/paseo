@@ -10,7 +10,13 @@ import React, {
   type Dispatch,
   type SetStateAction,
 } from "react";
-import { Pressable, Text, View, type LayoutChangeEvent } from "react-native";
+import {
+  Pressable,
+  Text,
+  View,
+  type LayoutChangeEvent,
+  type ScrollView as NativeScrollView,
+} from "react-native";
 import {
   CopyX,
   ArrowLeftToLine,
@@ -1084,6 +1090,7 @@ function ResolvedWorkspaceDesktopTabsRow({
   const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
   const [exitFocusModeWidth, setExitFocusModeWidth] = useState<number>(0);
   const tabScrollBoundary = useHorizontalScrollBoundary();
+  const tabsScrollRef = useRef<NativeScrollView | null>(null);
   const [labelMeasurements, setLabelMeasurements] = useState(
     () => new Map<string, WorkspaceTabLabelMeasurement>(),
   );
@@ -1383,6 +1390,38 @@ function ResolvedWorkspaceDesktopTabsRow({
     [layout.requiresHorizontalScrollFallback],
   );
 
+  useEffect(() => {
+    if (!isWeb || !layout.requiresHorizontalScrollFallback) return;
+
+    const scrollNode = tabsScrollRef.current?.getScrollableNode();
+    if (!(scrollNode instanceof HTMLElement)) return;
+
+    const handleWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || event.metaKey || event.deltaY === 0) return;
+      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+
+      let horizontalDelta = event.deltaY;
+      if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+        horizontalDelta *= 16;
+      } else if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+        horizontalDelta *= scrollNode.clientWidth;
+      }
+
+      const maxScrollLeft = scrollNode.scrollWidth - scrollNode.clientWidth;
+      const nextScrollLeft = Math.max(
+        0,
+        Math.min(maxScrollLeft, scrollNode.scrollLeft + horizontalDelta),
+      );
+      if (nextScrollLeft === scrollNode.scrollLeft) return;
+
+      event.preventDefault();
+      scrollNode.scrollLeft = nextScrollLeft;
+    };
+
+    scrollNode.addEventListener("wheel", handleWheel, { passive: false });
+    return () => scrollNode.removeEventListener("wheel", handleWheel);
+  }, [layout.requiresHorizontalScrollFallback]);
+
   const row = (
     <View
       style={styles.tabsContainer}
@@ -1412,6 +1451,7 @@ function ResolvedWorkspaceDesktopTabsRow({
       />
       <View style={styles.tabsScrollContainer}>
         <Animated.ScrollView
+          ref={tabsScrollRef}
           horizontal
           scrollEnabled={layout.requiresHorizontalScrollFallback}
           testID="workspace-tabs-scroll"
