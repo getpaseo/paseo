@@ -95,6 +95,7 @@ export function BrowserRoutingSetting({
         const event = routingChangedSchema.parse(raw);
         if (event.serverId === serverId) {
           routingEventVersion.current += 1;
+          void queryClient.cancelQueries({ queryKey: ["browser-routing", serverId], exact: true });
           queryClient.setQueryData(["browser-routing", serverId], event.enabled);
         }
       })

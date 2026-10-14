@@ -17,6 +17,8 @@ class FakeRoutingDesktop implements RoutingDesktop {
   failNextLoad = false;
   failNextSave = false;
   saveReplyGate: Promise<void> | undefined;
+  readReplyGate: Promise<void> | undefined;
+  readonly reads: boolean[] = [];
   readonly saved: boolean[] = [];
   private readonly listeners = new Map<string, Set<(payload: unknown) => void>>();
 
@@ -26,7 +28,10 @@ class FakeRoutingDesktop implements RoutingDesktop {
         this.failNextLoad = false;
         throw new Error("desktop bridge unavailable");
       }
-      return { ok: true, enabled: this.enabled };
+      const enabled = this.enabled;
+      this.reads.push(enabled);
+      await this.readReplyGate;
+      return { ok: true, enabled };
     }
     if (command === "browser_routing_set_enabled") {
       if (this.failNextSave) {
@@ -62,13 +67,18 @@ interface Mounted {
 }
 const mounted: Mounted[] = [];
 
-function mountSetting(desktop: RoutingDesktop, { available = true } = {}): HTMLDivElement {
+function mountSetting(
+  desktop: RoutingDesktop,
+  {
+    available = true,
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    }),
+  } = {},
+): HTMLDivElement {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
   act(() =>
     root.render(
       <I18nextProvider i18n={i18n}>
@@ -156,6 +166,58 @@ describe("host browser routing setting", () => {
       await vi.waitFor(() => expect(isDisabled(container)).toBe(false));
       expect(isChecked(container)).toBe(String(desktop.enabled));
       expect(desktop.enabled).toBe(initiallyEnabled);
+    },
+  );
+
+  it.each([
+    { initiallyEnabled: false, initialLoad: true },
+    { initiallyEnabled: true, initialLoad: true },
+    { initiallyEnabled: false, initialLoad: false },
+    { initiallyEnabled: true, initialLoad: false },
+  ])(
+    "keeps a newer window choice after an older read (enabled: $initiallyEnabled, initial load: $initialLoad)",
+    async ({ initiallyEnabled, initialLoad }) => {
+      const desktop = new FakeRoutingDesktop();
+      desktop.enabled = initiallyEnabled;
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      });
+      let finishRead: () => void = () => {
+        throw new Error("Read reply gate not initialized");
+      };
+      const gate = new Promise<void>((resolve) => {
+        finishRead = resolve;
+      });
+      if (initialLoad) desktop.readReplyGate = gate;
+      const container = mountSetting(desktop, { queryClient });
+      if (!initialLoad) {
+        await vi.waitFor(() => expect(isDisabled(container)).toBe(false));
+        desktop.readReplyGate = gate;
+      }
+      let read: Promise<void> = Promise.resolve();
+      act(() => {
+        read = queryClient.refetchQueries(
+          { queryKey: ["browser-routing", "remote"] },
+          { cancelRefetch: false },
+        );
+      });
+      await vi.waitFor(() =>
+        expect(desktop.reads).toEqual(
+          initialLoad ? [initiallyEnabled] : [initiallyEnabled, initiallyEnabled],
+        ),
+      );
+
+      act(() => desktop.changeFromAnotherWindow("remote", !initiallyEnabled));
+      await expectSwitchShows(container, initiallyEnabled ? "off" : "on");
+      await act(async () => {
+        finishRead();
+        await read;
+      });
+      expect(queryClient.getQueryData(["browser-routing", "remote"])).toBe(!initiallyEnabled);
+      await expectSwitchShows(container, initiallyEnabled ? "off" : "on");
+
+      press(switchOf(container));
+      await vi.waitFor(() => expect(desktop.saved).toEqual([initiallyEnabled]));
     },
   );
 
