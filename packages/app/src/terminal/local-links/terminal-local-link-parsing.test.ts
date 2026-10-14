@@ -37,4 +37,22 @@ describe("detectTerminalLocalLinks", () => {
       },
     ]);
   });
+
+  it("excludes the shell prompt terminator from a prompt's working directory", () => {
+    expect(detectTerminalLocalLinks("user@host:~/projects$ ls")).toMatchObject([
+      { path: { index: 10, text: "~/projects" }, suffix: undefined },
+    ]);
+    expect(detectTerminalLocalLinks("root@host:/etc/nginx# ")).toMatchObject([
+      { path: { index: 10, text: "/etc/nginx" }, suffix: undefined },
+    ]);
+    expect(detectTerminalLocalLinks("user@host ~/src% ")).toMatchObject([
+      { path: { index: 10, text: "~/src" }, suffix: undefined },
+    ]);
+  });
+
+  it("keeps a dollar sign inside a path", () => {
+    expect(detectTerminalLocalLinks("cat src/$id/page.tsx")).toMatchObject([
+      { path: { index: 4, text: "src/$id/page.tsx" }, suffix: undefined },
+    ]);
+  });
 });
