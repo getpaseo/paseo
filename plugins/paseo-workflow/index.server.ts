@@ -39,7 +39,7 @@ export default function contribute(server: PluginServerContext) {
   server.handle(
     handoffToProfileRpc,
     async ({ profileId: selectedProfileId, ...context }, { paseo }) => ({
-      type: "workflow.plan.handoffToProfile.response" as const,
+      type: "workflow.plan.handoff_to_profile.response" as const,
       ...(await workflow(paseo).handoff(context, selectedProfileId)),
     }),
   );

@@ -46,7 +46,7 @@ test("the client contributes Revue and an explicit profile Handoff", async () =>
   expect(calls).toEqual([
     { rpc: "workflow.plan.review.request", input: expected },
     {
-      rpc: "workflow.plan.handoffToProfile.request",
+      rpc: "workflow.plan.handoff_to_profile.request",
       input: { ...expected, profileId: "custom-profile" },
     },
     { replacedAgentId: "executor" },

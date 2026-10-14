@@ -533,6 +533,28 @@ test("workflow profile panel transfers the exact plan with the selected host pro
       modeId: "load-test",
       thinkingOptionId: "high",
     },
+    {
+      id: "workflow-panel-docs",
+      name: "Documentation",
+      provider: "mock",
+      model: "e2e-fast-stream",
+      modeId: "load-test",
+    },
+    {
+      id: "workflow-panel-quick-fix",
+      name: "Quick fix",
+      provider: "mock",
+      model: "e2e-fast-stream",
+      modeId: "load-test",
+    },
+    {
+      id: "workflow-panel-architecture",
+      name: "Architecture",
+      provider: "mock",
+      model: "ten-second-stream",
+      modeId: "load-test",
+      thinkingOptionId: "high",
+    },
   ];
   const session = await seedMockAgentWorkspace({
     repoPrefix: "workflow-profile-panel-",
@@ -551,6 +573,10 @@ test("workflow profile panel transfers the exact plan with the selected host pro
     await expect(row).toBeVisible();
     await expect(row.getByRole("button")).toHaveText(profiles.map((profile) => profile.name));
     await capture(page, testInfo, "workflow-profile-panel-desktop");
+    await page.setViewportSize(COMPACT_VIEWPORT);
+    await expect(row.getByRole("button")).toHaveText(profiles.map((profile) => profile.name));
+    await capture(page, testInfo, "workflow-profile-panel-compact");
+    await page.setViewportSize(WIDE_VIEWPORT);
     const before = (await client.invokePluginRpc("paseo-workflow", "workflow.status.get.request", {
       workspaceId: session.workspaceId,
       agentId: session.agentId,
@@ -583,7 +609,7 @@ test("workflow profile panel transfers the exact plan with the selected host pro
     });
     const resumed = (await client.invokePluginRpc(
       "paseo-workflow",
-      "workflow.plan.handoffToProfile.request",
+      "workflow.plan.handoff_to_profile.request",
       {
         ...before.plan,
         profileId: profiles[1].id,

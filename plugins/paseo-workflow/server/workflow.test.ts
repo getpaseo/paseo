@@ -194,6 +194,22 @@ test("handoff preserves a non-plan profile's settings to a root in the same work
   expect(f.port).not.toHaveProperty("classify");
 });
 
+test("duplicate profile handoffs for one plan reuse the same executor", async () => {
+  const f = fixture();
+  const controller = new WorkflowController(f.port);
+  const results = await Promise.all([
+    controller.handoff(plan, "paseo-workflow-executor-standard"),
+    controller.handoff(plan, "paseo-workflow-executor-standard"),
+  ]);
+
+  expect(results).toEqual([{ agentId: "child-1" }, { agentId: "child-1" }]);
+  expect(f.launches).toHaveLength(1);
+  expect(f.launches[0]).toMatchObject({
+    launchProfileId: "paseo-workflow-executor-standard",
+    idempotencyKey: "workflow:planner:handoff:plan-1",
+  });
+});
+
 test.each([
   {
     provider: "codex",

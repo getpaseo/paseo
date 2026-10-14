@@ -58,10 +58,10 @@ export const handoffRpc = defineRpc({
   output: z.object({ type: z.literal("workflow.plan.handoff.response"), agentId: z.string() }),
 });
 export const handoffToProfileRpc = defineRpc({
-  name: "workflow.plan.handoffToProfile.request",
+  name: "workflow.plan.handoff_to_profile.request",
   input: planContext.extend({ profileId: z.string().min(1) }),
   output: z.object({
-    type: z.literal("workflow.plan.handoffToProfile.response"),
+    type: z.literal("workflow.plan.handoff_to_profile.response"),
     agentId: z.string(),
   }),
 });
