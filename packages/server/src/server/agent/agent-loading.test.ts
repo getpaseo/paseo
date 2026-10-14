@@ -60,6 +60,8 @@ test("loads archived records for history and active records with the interactive
     const archived = await manager.createAgent({ provider: "codex", cwd: root }, archivedId, {
       workspaceId: "workspace-archived",
     });
+    await manager.runAgent(archived.id, "hello");
+    expect(manager.getAgent(archived.id)?.lastUsage).toEqual({ inputTokens: 1, outputTokens: 1 });
     await manager.archiveAgent(archived.id);
 
     const active = await manager.createAgent({ provider: "codex", cwd: root }, activeId, {
@@ -70,6 +72,10 @@ test("loads archived records for history and active records with the interactive
     await ensureAgentLoaded(archived.id, { agentManager: manager, agentStorage: storage, logger });
     await ensureAgentLoaded(active.id, { agentManager: manager, agentStorage: storage, logger });
 
+    expect(manager.getAgent(archived.id)?.lastUsage).toEqual({
+      inputTokens: 1,
+      outputTokens: 1,
+    });
     expect(resumeOptions).toEqual([{ purpose: "history" }, { purpose: "interactive" }]);
   } finally {
     await Promise.all([
