@@ -114,7 +114,11 @@ function createWorkspaceRegistry(records: PersistedWorkspaceRecord[]): Workspace
   });
 }
 
-function createServer(terminalManager: TerminalManager, workspaceRegistry?: WorkspaceRegistry) {
+function createServer(
+  terminalManager: TerminalManager,
+  workspaceRegistry?: WorkspaceRegistry,
+  daemonConfig: { agentFinishedNotifications: boolean } = { agentFinishedNotifications: true },
+) {
   const pushNotifications = new RecordingPushNotificationSender();
   const agentManager = {
     setAgentAttentionCallback: vi.fn(),
@@ -132,6 +136,7 @@ function createServer(terminalManager: TerminalManager, workspaceRegistry?: Work
     })),
   };
   const daemonConfigStore = {
+    get: vi.fn(() => daemonConfig),
     onApply: vi.fn(() => () => {}),
     onChange: vi.fn(() => () => {}),
   };
@@ -499,5 +504,47 @@ describe("VoiceAssistantWebSocketServer terminal attention notifications", () =>
       terminalId: "term-1",
       workspaceId: "ws-1",
     });
+  });
+
+  it("neither pushes nor notifies a finished terminal when finished notifications are off", async () => {
+    const { manager, emit } = createTerminalManager();
+    const { server, pushNotifications } = createServer(manager, undefined, {
+      agentFinishedNotifications: false,
+    });
+    const ws = connectClient(server);
+
+    emit(
+      transition({
+        previousState: "working",
+        previousChangedAt: 1000,
+        state: "idle",
+        changedAt: 11001,
+      }),
+    );
+    await flushAsync();
+
+    expect(readTerminalAttentionMessage(ws).shouldNotify).toBe(false);
+    expect(pushNotifications.sent).toEqual([]);
+  });
+
+  it("still pushes a terminal that needs input when finished notifications are off", async () => {
+    const { manager, emit } = createTerminalManager();
+    const { server, pushNotifications } = createServer(manager, undefined, {
+      agentFinishedNotifications: false,
+    });
+    const ws = connectClient(server);
+
+    emit(
+      transition({
+        previousState: "working",
+        previousChangedAt: 1000,
+        state: "attention",
+        changedAt: 15000,
+      }),
+    );
+    await flushAsync();
+
+    expect(readTerminalAttentionMessage(ws).reason).toBe("needs_input");
+    expect(pushNotifications.sent).toHaveLength(1);
   });
 });

@@ -82,7 +82,10 @@ class RecordingPushNotificationSender implements PushNotificationSender {
   }
 }
 
-function createServer(agentManagerOverrides?: Record<string, unknown>) {
+function createServer(
+  agentManagerOverrides?: Record<string, unknown>,
+  daemonConfig: { agentFinishedNotifications: boolean } = { agentFinishedNotifications: true },
+) {
   const pushNotifications = new RecordingPushNotificationSender();
   const agentManager = {
     subscribe: vi.fn(() => () => {}),
@@ -101,6 +104,7 @@ function createServer(agentManagerOverrides?: Record<string, unknown>) {
     ...agentManagerOverrides,
   };
   const daemonConfigStore = {
+    get: vi.fn(() => daemonConfig),
     onApply: vi.fn(() => () => {}),
     onChange: vi.fn(() => () => {}),
   };
@@ -361,5 +365,44 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
 
     expect(readAttentionRequiredMessage(ws).shouldNotify).toBe(false);
     expect(pushNotifications.sent).toEqual([]);
+  });
+
+  it("neither pushes nor notifies finished attention when finished notifications are off", async () => {
+    const { server, pushNotifications } = createServer(undefined, {
+      agentFinishedNotifications: false,
+    });
+    const present = connectClient(server, {
+      deviceType: "web",
+      appVisible: true,
+      focusedAgentId: "agent-other",
+      lastActivityAt: new Date(),
+    });
+    const away = connectClient(server, null);
+
+    await asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
+      agentId: "agent-1",
+      provider: "claude",
+      reason: "finished",
+    });
+
+    expect(readAttentionRequiredMessage(present).shouldNotify).toBe(false);
+    expect(readAttentionRequiredMessage(away).shouldNotify).toBe(false);
+    expect(pushNotifications.sent).toEqual([]);
+  });
+
+  it("still pushes permission attention when finished notifications are off", async () => {
+    const { server, pushNotifications } = createServer(undefined, {
+      agentFinishedNotifications: false,
+    });
+    const ws = connectClient(server, null);
+
+    await asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
+      agentId: "agent-1",
+      provider: "claude",
+      reason: "permission",
+    });
+
+    expect(readAttentionRequiredMessage(ws).shouldNotify).toBe(false);
+    expect(pushNotifications.sent).toHaveLength(1);
   });
 });

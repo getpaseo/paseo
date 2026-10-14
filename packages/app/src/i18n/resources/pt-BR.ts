@@ -2127,6 +2127,7 @@ export const ptBR: TranslationResources = {
       projects: "Projetos",
       connections: "Conexões",
       agents: "Agentes",
+      notifications: "Notificações",
       metadata: "Metadados",
       workspaces: "Workspaces",
       providers: "Provedores",
@@ -2576,6 +2577,14 @@ export const ptBR: TranslationResources = {
       },
       agents: {
         unavailable: "Conecte-se a este host para gerenciar agentes",
+      },
+      notifications: {
+        agentFinished: {
+          title: "Notificar quando um agente terminar",
+          hint: "Desative para ser notificado só quando um agente precisar de permissão ou de uma resposta",
+          accessibilityLabel: "Notificar quando um agente terminar",
+          updateFailed: "Não foi possível atualizar as notificações",
+        },
       },
       workspaces: {
         unavailable: "Conecte-se a este host para gerenciar workspaces",

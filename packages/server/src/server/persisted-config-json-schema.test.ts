@@ -18,6 +18,7 @@ test("editors accept the daemon's browser, profile, plugin and metadata configur
     version: 1,
     daemon: {
       browserTools: { enabled: true },
+      agentFinishedNotifications: false,
       terminalProfiles: [],
       agentProfiles: [],
     },

@@ -2072,6 +2072,7 @@ export const zhCN: TranslationResources = {
       projects: "项目",
       connections: "连接",
       agents: "Agents",
+      notifications: "通知",
       metadata: "元数据",
       workspaces: "Workspaces",
       providers: "Providers",
@@ -2510,6 +2511,14 @@ export const zhCN: TranslationResources = {
       },
       agents: {
         unavailable: "连接到这个 Host 以管理 Agent",
+      },
+      notifications: {
+        agentFinished: {
+          title: "代理完成时通知",
+          hint: "关闭后，仅在代理需要权限或输入时通知",
+          accessibilityLabel: "代理完成时通知",
+          updateFailed: "无法更新通知",
+        },
       },
       workspaces: {
         unavailable: "连接到这个 Host 以管理 Workspace",

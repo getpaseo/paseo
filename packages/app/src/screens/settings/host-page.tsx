@@ -40,6 +40,7 @@ import { useDesktopSettings } from "@/desktop/settings/desktop-settings";
 import { PairDeviceModal } from "@/desktop/components/pair-device-modal";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
+import { useHostFeature } from "@/runtime/host-features";
 import {
   getHostRuntimeStore,
   isHostRuntimeConnected,
@@ -296,9 +297,23 @@ export function HostAgentsPage({ serverId }: { serverId: string }) {
           <Text style={styles.emptyText}>{t("settings.host.agents.unavailable")}</Text>
         </View>
       )}
+      {isConnected ? <HostNotificationsSection serverId={serverId} /> : null}
       <AgentSkillsSection serverId={serverId} />
       <AgentProfilesSection serverId={serverId} />
     </View>
+  );
+}
+
+function HostNotificationsSection({ serverId }: { serverId: string }) {
+  const { t } = useTranslation();
+  const supported = useHostFeature(serverId, "agentFinishedNotifications");
+
+  if (!supported) return null;
+
+  return (
+    <SettingsSection title={t("settings.hostSections.notifications")}>
+      <AgentFinishedNotificationsCard serverId={serverId} />
+    </SettingsSection>
   );
 }
 
@@ -931,6 +946,45 @@ function AutoArchiveMergedWorkspacesCard({ serverId }: { serverId: string }) {
           onValueChange={handleValueChange}
           accessibilityLabel="Archive merged PR workspaces"
           testID="host-page-auto-archive-merged-workspaces-switch"
+        />
+      </View>
+    </View>
+  );
+}
+
+function AgentFinishedNotificationsCard({ serverId }: { serverId: string }) {
+  const { t } = useTranslation();
+  const { config, patchConfig } = useDaemonConfig(serverId);
+
+  const handleValueChange = useCallback(
+    (next: boolean) => {
+      void patchConfig({ agentFinishedNotifications: next }).catch((error) => {
+        console.error("[HostPage] Failed to update finished notifications", error);
+        Alert.alert(
+          t("settings.host.notifications.agentFinished.updateFailed"),
+          error instanceof Error ? error.message : String(error),
+        );
+      });
+    },
+    [patchConfig, t],
+  );
+
+  return (
+    <View style={settingsStyles.card} testID="host-page-agent-finished-notifications-card">
+      <View style={settingsStyles.row}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>
+            {t("settings.host.notifications.agentFinished.title")}
+          </Text>
+          <Text style={settingsStyles.rowHint}>
+            {t("settings.host.notifications.agentFinished.hint")}
+          </Text>
+        </View>
+        <Switch
+          value={config?.agentFinishedNotifications !== false}
+          onValueChange={handleValueChange}
+          accessibilityLabel={t("settings.host.notifications.agentFinished.accessibilityLabel")}
+          testID="host-page-agent-finished-notifications-switch"
         />
       </View>
     </View>

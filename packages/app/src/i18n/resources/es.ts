@@ -2142,6 +2142,7 @@ export const es: TranslationResources = {
       projects: "Proyectos",
       connections: "Conexiones",
       agents: "Agents",
+      notifications: "Notificaciones",
       metadata: "Metadatos",
       workspaces: "Workspaces",
       providers: "Proveedores",
@@ -2594,6 +2595,14 @@ export const es: TranslationResources = {
       },
       agents: {
         unavailable: "Connect to this host to manage agents",
+      },
+      notifications: {
+        agentFinished: {
+          title: "Notificar cuando un agente termine",
+          hint: "Desactívalo para recibir avisos solo cuando un agente necesite permiso o una respuesta",
+          accessibilityLabel: "Notificar cuando un agente termine",
+          updateFailed: "No se pudieron actualizar las notificaciones",
+        },
       },
       workspaces: {
         unavailable: "Connect to this host to manage workspaces",
