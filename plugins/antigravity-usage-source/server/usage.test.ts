@@ -217,7 +217,7 @@ describe("antigravity usage fetcher", () => {
 
     expect(report.status).toBe("available");
     assert(report.status === "available");
-    expect(report.planLabel).toBe("standard-tier");
+    expect(report.planLabel).toBe("Standard");
     expect(report.windows).toHaveLength(2);
 
     const geminiWindow = report.windows.find((w) => w.id === "gemini");
@@ -296,5 +296,165 @@ describe("antigravity usage fetcher", () => {
       remainingPct: 40,
       resetsAt: "2026-10-13T16:00:00Z",
     });
+  });
+
+  it("tracks weekly and 5h quota windows via retrieveUserQuotaSummary with formatted plan label", async () => {
+    await writeFile(
+      authFile,
+      JSON.stringify({
+        token: { access_token: "quota-summary-token" },
+      }),
+    );
+
+    let recordedHeaders: Headers | undefined;
+    const mockFetch = async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = String(url);
+      if (urlStr.includes("loadCodeAssist")) {
+        return new Response(
+          JSON.stringify({
+            currentTier: { id: "free-tier" },
+          }),
+          { status: 200 },
+        );
+      }
+      if (urlStr.includes("retrieveUserQuotaSummary")) {
+        recordedHeaders = new Headers(init?.headers);
+        return new Response(
+          JSON.stringify({
+            groups: [
+              {
+                displayName: "Gemini Models",
+                buckets: [
+                  {
+                    bucketId: "gemini-weekly",
+                    window: "weekly",
+                    displayName: "Weekly Limit Remaining",
+                    remainingFraction: 0.5,
+                    resetTime: "2026-10-19T07:00:00Z",
+                  },
+                  {
+                    bucketId: "gemini-5h",
+                    window: "5h",
+                    displayName: "Five Hour Limit Remaining",
+                    remainingFraction: 0.8,
+                    resetTime: "2026-10-14T18:00:00Z",
+                  },
+                ],
+              },
+              {
+                displayName: "Claude and GPT models",
+                buckets: [
+                  {
+                    bucketId: "3p-weekly",
+                    window: "weekly",
+                    displayName: "Weekly Limit Remaining",
+                    remainingFraction: 1.0,
+                    resetTime: "2026-10-21T15:00:00Z",
+                  },
+                  {
+                    bucketId: "3p-5h",
+                    window: "5h",
+                    displayName: "Five Hour Limit Remaining",
+                    remainingFraction: 1.0,
+                    resetTime: "2026-10-14T20:00:00Z",
+                  },
+                ],
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("Not found", { status: 404 });
+    };
+
+    const report = await fetchUsage(makeInput(authFile), mockFetch as unknown as typeof fetch, {
+      platform: "darwin",
+    });
+
+    expect(report.status).toBe("available");
+    assert(report.status === "available");
+    expect(report.planLabel).toBe("Free");
+    expect(report.windows).toHaveLength(4);
+
+    expect(report.windows).toEqual([
+      expect.objectContaining({
+        id: "gemini-weekly",
+        label: "Gemini \u00b7 Weekly",
+        shortLabel: "Gemini wk",
+        usedPct: 50,
+        remainingPct: 50,
+        summary: true,
+        resetsAt: "2026-10-19T07:00:00Z",
+      }),
+      expect.objectContaining({
+        id: "gemini-5h",
+        label: "Gemini \u00b7 5h",
+        shortLabel: "Gemini 5h",
+        usedPct: 20,
+        remainingPct: 80,
+        resetsAt: "2026-10-14T18:00:00Z",
+      }),
+      expect.objectContaining({
+        id: "claude-gpt-oss-weekly",
+        label: "Claude & GPT-OSS \u00b7 Weekly",
+        shortLabel: "Claude/OSS wk",
+        usedPct: 0,
+        remainingPct: 100,
+        summary: true,
+        resetsAt: "2026-10-21T15:00:00Z",
+      }),
+      expect.objectContaining({
+        id: "claude-gpt-oss-5h",
+        label: "Claude & GPT-OSS \u00b7 5h",
+        shortLabel: "Claude/OSS 5h",
+        usedPct: 0,
+        remainingPct: 100,
+        resetsAt: "2026-10-14T20:00:00Z",
+      }),
+    ]);
+
+    expect(recordedHeaders?.get("User-Agent")).toContain("antigravity/1.107.0 darwin/");
+  });
+
+  it("falls back to fetchAvailableModels when retrieveUserQuotaSummary returns 404", async () => {
+    await writeFile(
+      authFile,
+      JSON.stringify({
+        token: { access_token: "fallback-token" },
+      }),
+    );
+
+    const mockFetch = async (url: string | URL | Request) => {
+      const urlStr = String(url);
+      if (urlStr.includes("loadCodeAssist")) {
+        return new Response(JSON.stringify({ currentTier: { id: "pro-tier" } }), { status: 200 });
+      }
+      if (urlStr.includes("retrieveUserQuotaSummary")) {
+        return new Response("Not found", { status: 404 });
+      }
+      if (urlStr.includes("fetchAvailableModels")) {
+        return new Response(
+          JSON.stringify({
+            models: {
+              "gemini-2.5-pro": {
+                displayName: "Gemini 2.5 Pro",
+                quotaInfo: { remainingFraction: 0.7, resetTime: "2026-10-14T15:00:00Z" },
+              },
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("Not found", { status: 404 });
+    };
+
+    const report = await fetchUsage(makeInput(authFile), mockFetch as unknown as typeof fetch);
+
+    expect(report.status).toBe("available");
+    assert(report.status === "available");
+    expect(report.planLabel).toBe("Pro");
+    expect(report.windows).toHaveLength(1);
+    expect(report.windows[0]?.id).toBe("gemini");
   });
 });
