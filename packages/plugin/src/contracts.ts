@@ -76,6 +76,10 @@ export interface PluginAttachmentSourceContribution {
   icon: string;
   pickerTitle: string;
   searchPlaceholder: string;
+  /** Also show this source as a shortcut on New Agent drafts. */
+  newAgentShortcut?: boolean;
+  /** Allow selection from composers connected to another host. */
+  crossHost?: boolean;
   search: PluginRpcContract;
 }
 
