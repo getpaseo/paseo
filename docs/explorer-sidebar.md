@@ -7,6 +7,7 @@ contracts.
 | ---------------- | ---------------------------- | ------------------------------------------ |
 | Explorer sidebar | Files and Changes navigation | Cmd+E shows or hides the dedicated dock    |
 | Side pane        | Ordinary workspace content   | Created and closed like any workspace pane |
+| Workspace sheet  | Compact look-ups             | Holds one tab; closes or becomes a tab     |
 
 ## Panel host contract
 
@@ -21,6 +22,24 @@ item available again. Other compatible tabs, including agents, terminals, files,
 can move between Explorer and main panes.
 Keep panel implementations independent of either shell. `WorkspacePanelHost` owns mounting and
 retention, while each shell owns its tabs, focus, dragging, resizing, and shortcuts.
+
+## Workspace sheet
+
+On compact layouts, files and subagents open in a closable sheet over the workspace, so the tab
+switcher keeps only agents and terminals. A panel kind opts in with `compactSheet` in its manifest
+(`packages/app/src/panels/panel-manifest.ts`), and the layout store's `openTab` decides between
+sheet and tab, so callers open targets the same way on every layout. The sheet holds one ordinary
+`WorkspaceTab`, which is not persisted.
+
+The sheet is modal and covers the whole compact column, header included. It renders in the
+workspace tree rather than through `IsolatedBottomSheetModal`: its panel needs the navigator and
+every workspace provider an ordinary pane has, and a portal drops them
+([floating-panels.md Gotcha 7](floating-panels.md#gotcha-7--a-sheet-cannot-read-context-from-its-call-site)).
+
+A sheet holding unsaved work is never implicitly displaced; only its guarded close removes it.
+Moving its tab to another host remounts the panel, and the file editor keeps unsaved text in the
+mounted view, so the move would drop it. Widening the layout is the known exception: it still moves
+the sheet's tab into a pane, and edits the autosave has not started writing are lost.
 
 ## Explorer sidebar
 
@@ -62,7 +81,9 @@ lifecycle.
 
 `packages/app/src/workspace-tabs/open-beside.ts` owns content opened beside the user's work. The
 layout store remembers one ordinary pane per workspace. The first side open creates a full-height
-right split around the workspace root; later side opens reuse it.
+right split around the workspace root; later side opens reuse it. Only the `split-panes` layout
+mode opens beside. Compact and single-pane layouts (touch tablets) open the same target in the main
+pane, so callers never check whether splits render.
 
 Removing a pane clears its remembered id; a later side open creates a new pane. The last visible
 ordinary pane stays when its final tab closes and shows the New launcher. An empty workspace does

@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, beforeEach, afterEach, onTestFinished } from "vitest";
 import {
   mkdtempSync,
   writeFileSync,
@@ -10,6 +10,7 @@ import {
 } from "fs";
 import { tmpdir } from "os";
 import path from "path";
+import { execFileSync } from "node:child_process";
 import { createDaemonTestContext, type DaemonTestContext } from "../test-utils/index.js";
 
 function tmpCwd(): string {
@@ -574,4 +575,64 @@ describe("file explorer", () => {
     await ctx.client.deleteAgent(agent.id);
     rmSync(cwd, { recursive: true, force: true });
   }, 60000); // 1 minute timeout
+});
+
+describe("commit file diffs", () => {
+  test.each([".", "apps/web"])("opens committed files from %s workspaces", async (relativePath) => {
+    const cwd = tmpCwd();
+    onTestFinished(() =>
+      rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }),
+    );
+    const workspace = path.join(cwd, relativePath);
+    const filePath = "apps/web/notes.txt";
+    function git(args: string[]): string {
+      return execFileSync("git", args, { cwd, encoding: "utf8" });
+    }
+    git(["init", "-b", "main"]);
+    git(["config", "user.name", "Test"]);
+    git(["config", "user.email", "test@example.com"]);
+    git(["config", "core.autocrlf", "false"]);
+    mkdirSync(path.join(cwd, "apps", "web"), { recursive: true });
+    writeFileSync(path.join(cwd, filePath), "before\n");
+    writeFileSync(path.join(cwd, "apps/web/untouched.txt"), "unchanged\n");
+    git(["add", "."]);
+    git(["-c", "commit.gpgsign=false", "commit", "-m", "initial"]);
+    git(["checkout", "-b", "feature"]);
+    writeFileSync(path.join(cwd, filePath), "after\n");
+    git(["add", "."]);
+    git(["-c", "commit.gpgsign=false", "commit", "-m", "edit"]);
+    const sha = git(["rev-parse", "HEAD"]).trim();
+
+    const history = await ctx.client.listCheckoutCommits(workspace);
+    const commit = history.commits.find((entry) => entry.sha === sha);
+    expect(commit?.files).toEqual([
+      { path: filePath, additions: 1, deletions: 1, status: "modified" },
+    ]);
+    const result = await ctx.client.getCommitFileDiff(workspace, sha, filePath);
+    expect(result).toEqual({
+      file: {
+        path: filePath,
+        isNew: false,
+        isDeleted: false,
+        additions: 1,
+        deletions: 1,
+        hunks: [
+          {
+            oldStart: 1,
+            oldCount: 1,
+            newStart: 1,
+            newCount: 1,
+            lines: [
+              { type: "header", content: "@@ -1 +1 @@" },
+              { type: "remove", content: "before" },
+              { type: "add", content: "after" },
+            ],
+          },
+        ],
+      },
+    });
+    expect(await ctx.client.getCommitFileDiff(workspace, sha, "apps/web/untouched.txt")).toEqual({
+      file: null,
+    });
+  });
 });
