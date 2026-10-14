@@ -37,6 +37,10 @@ export default defineConfig({
       },
       {
         extends: true,
+        // App components rely on Expo/Metro's automatic JSX runtime and don't
+        // all import default React; esbuild's classic transform (the default)
+        // would throw `React is not defined` when rendering them for real.
+        esbuild: { jsx: "automatic" },
         test: {
           name: "browser",
           fileParallelism: false,

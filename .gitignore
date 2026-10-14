@@ -72,6 +72,8 @@ CLAUDE.local.md
 
 # Local agent/tooling artifacts (do not commit)
 PLAN.md
+.omo/
+.vitest-attachments/
 .valknut/
 valknut-report.html/
 valknut-report.json/
@@ -88,6 +90,8 @@ packages/protocol/src/generated/validation/*.aot.ts
 
 /artifacts
 packages/desktop/.cache/
+packages/desktop/release/
+packages/desktop/release-*/
 packages/desktop/src-tauri/resources/managed-runtime/
 app.json
 

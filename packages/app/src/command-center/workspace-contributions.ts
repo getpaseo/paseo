@@ -102,6 +102,7 @@ export interface WorkspaceCommandCenterShortcuts {
   toggleFocusMode?: ShortcutKey[][];
   toggleExplorerSidebar?: ShortcutKey[][];
   pinWorkspace?: ShortcutKey[][];
+  renameWorkspace?: ShortcutKey[][];
 }
 
 export interface WorkspaceCommandCenterSource {
@@ -611,6 +612,7 @@ export function buildWorkspaceCommandCenterContributions(
       title: source.labels.rename,
       keywords: ["rename", "title", "name", "label"],
       icon: source.icons.rename,
+      shortcutKeys: source.shortcuts.renameWorkspace,
       action: { id: "workspace.rename", scope: "workspace" },
       visibility: "query",
     }),

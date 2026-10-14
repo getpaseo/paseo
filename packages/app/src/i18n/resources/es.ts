@@ -2399,6 +2399,7 @@ export const es: TranslationResources = {
         newWorkspace: "Nuevo espacio de trabajo",
         newWorktree: "Nuevo árbol de trabajo",
         archiveWorkspace: "Archivar espacio de trabajo",
+        renameWorkspace: "Renombrar espacio de trabajo",
         newTab: "Nueva pestaña",
         closeCurrentTab: "Cerrar pestaña actual",
         jumpToWorkspace: "Saltar al espacio de trabajo",
