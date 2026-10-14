@@ -36,40 +36,42 @@ export class Children {
     )
       return;
     const id = item.childSessionId;
-    if (!this.children.has(id)) {
-      let session;
-      try {
-        ({ session } = await this.host.request(
-          "session/read",
-          { sessionId: id },
-          childSessionSchema,
-        ));
-      } catch (error) {
-        this.readFailed(id, error);
-        return;
-      }
-      this.emit({
-        type: "session.opened",
-        sessionId: id,
-        parentSessionId: this.parentId,
-        toolCallId: item.callId ?? item.itemId,
-        capabilities: [],
-        restoration: "parent",
-        cwd: session.workspaceRoot ?? this.cwd,
-        title: session.title,
-      });
-      this.children.set(id, {
-        timeline: new Timeline(this.host, id, id, this.emit),
-        cursor: undefined,
-        ended: false,
-      });
-    }
+    if (!this.children.has(id)) await this.open(id, item);
     await this.read(id);
     this.end(id, item);
   }
   // A child's transcript is a projection: Muse 1.4.7 can refuse to read a subagent's view right
-  // after creating it, and that must not fail the parent. The next item update or refresh retries
-  // from the same cursor.
+  // after creating it, and that must not fail the parent. A child whose session/read fails still
+  // opens, without its title and workspace, so a later item update or refresh() can read it: the
+  // item may be the child's last revision, which a replay would not deliver again.
+  private async open(id: string, item: WireItem): Promise<void> {
+    let session;
+    try {
+      ({ session } = await this.host.request(
+        "session/read",
+        { sessionId: id },
+        childSessionSchema,
+      ));
+    } catch (error) {
+      this.readFailed(id, error);
+    }
+    this.emit({
+      type: "session.opened",
+      sessionId: id,
+      parentSessionId: this.parentId,
+      toolCallId: item.callId ?? item.itemId,
+      capabilities: [],
+      restoration: "parent",
+      cwd: session?.workspaceRoot ?? this.cwd,
+      title: session?.title,
+    });
+    this.children.set(id, {
+      timeline: new Timeline(this.host, id, id, this.emit),
+      cursor: undefined,
+      ended: false,
+    });
+  }
+  // The next item update or refresh() reads a failed child again from the same cursor.
   private async read(id: string): Promise<void> {
     try {
       await this.page(id);
