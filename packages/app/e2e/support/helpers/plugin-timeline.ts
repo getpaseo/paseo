@@ -47,10 +47,39 @@ export default function contribute(client) {
   return () => {};
 }`;
 
+const HANDOFF_CLIENT_SOURCE = `import { z } from "zod";
+import { PlanCard } from "@getpaseo/plugin/client/ui";
+
+function HandoffCard({ item }) {
+  return <PlanCard title="Plan transféré" text={item.data.text} testID="handoff-plan-card" />;
+}
+
+export default function contribute(client) {
+  client.addTimelineTransformer({
+    id: "handoff-plan", query: { itemType: "user_message" },
+    transform({ item }) {
+      if (!item.text.startsWith("/paseo-handoff\\n") || !item.text.includes("PASEO_WORKFLOW_HANDOFF ")) return undefined;
+      const start = item.text.lastIndexOf("\\n{");
+      if (start < 0) return undefined;
+      try {
+        const payload = JSON.parse(item.text.slice(start + 1));
+        return typeof payload.plan === "string"
+          ? { items: [{ type: "plugin", kind: "handoff-plan", version: 1, data: { text: payload.plan } }] }
+          : undefined;
+      } catch { return undefined; }
+    },
+  });
+  client.addTimelineRenderer({
+    kind: "handoff-plan", version: 1,
+    schema: z.object({ text: z.string() }), Component: HandoffCard,
+  });
+  return () => {};
+}`;
+
 export async function withTimelinePlugin(
   page: Page,
   info: TestInfo,
-  mode: "assistant" | "tools",
+  mode: "assistant" | "tools" | "handoff",
   run: (agent: MockAgentWorkspace) => Promise<void>,
 ): Promise<void> {
   info.setTimeout(120_000);
@@ -63,7 +92,10 @@ export async function withTimelinePlugin(
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-timeline-plugin-"));
   const agent = await seedMockAgentWorkspace({
     repoPrefix: "timeline-plugin-",
-    title: "Timeline plugin regression",
+    title:
+      mode === "handoff"
+        ? "Harmoniser les couleurs du popup externe"
+        : "Timeline plugin regression",
     model: "ten-second-stream",
     featureValues:
       mode === "assistant"
@@ -80,7 +112,10 @@ export async function withTimelinePlugin(
       path.join(directory, "paseo-plugin.json"),
       JSON.stringify({ id: PLUGIN_ID, requirements: pluginRequirements }),
     );
-    await writeFile(path.join(directory, "index.client.tsx"), CLIENT_SOURCE);
+    await writeFile(
+      path.join(directory, "index.client.tsx"),
+      mode === "handoff" ? HANDOFF_CLIENT_SOURCE : CLIENT_SOURCE,
+    );
     await pluginClient.patchDaemonConfig({ pluginsEnabled: true });
     await pluginClient.installDirectoryPlugin(directory);
     await openAgentRoute(page, agent);

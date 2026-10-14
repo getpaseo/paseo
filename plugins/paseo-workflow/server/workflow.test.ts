@@ -176,6 +176,7 @@ test("handoff preserves a non-plan profile's settings to a root in the same work
     {
       workspaceId: "workspace",
       launchProfileId: "custom",
+      title: "Exact (c) plan",
       idempotencyKey: "workflow:planner:handoff:plan-1",
       config: {
         provider: "claude/sonnet",
@@ -1229,6 +1230,7 @@ test("handoff delivers only the exact plan and original git context", async () =
   expect(f.launches).toHaveLength(1);
   expect(f.launches[0]).toMatchObject({
     workspaceId: "workspace",
+    title: "Execute this plan.",
     idempotencyKey: "workflow:planner:handoff:plan-1",
     config: {
       provider: "codex/gpt-5.6-sol",

@@ -72,6 +72,8 @@ explicitly authorized restart. The first installation of this mechanism needs on
 relaunch. This Local build uses production `~/.paseo` state and port 6767, with separate Electron
 preferences and no public release auto-updates. Do not run two apps managing that port.
 
+To distribute this installed build to another Apple Silicon Mac, use the [iCloud mirror](paseo-local-auto-build.md#icloud-mirror).
+
 Vibe Island can open a Paseo Local conversation with `paseo-local://focus?session=<id>&cwd=<cwd>`.
 The desktop resolves the provider session from local agent persistence; `cwd` only narrows a
 session match. Configure the provider environment with `__CFBundleIdentifier=sh.paseo.desktop.local`

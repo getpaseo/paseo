@@ -291,17 +291,28 @@ try {
   await widget.locator("[data-action=next]").click();
   await expect(widget.locator(".question-title")).toContainText("Quand");
   await widget.screenshot({ path: path.join(output, "question.png") });
-  await widget.locator("input[name=option]").first().check();
-  await widget.locator("[data-action=question-next]").click();
+  await widget.locator("#answer").press("Enter");
+  await expect(widget.locator(".question-title")).toContainText("Quand");
+  await widget.locator("#answer").fill("Après validation.");
+  await widget.locator("#answer").press("Enter");
+  await expect(widget.locator(".question-title")).toContainText("Que souhaitez-vous voir");
   await widget.locator("input[name=option]").nth(0).check();
   await widget.locator("input[name=option]").nth(1).check();
   await widget.screenshot({ path: path.join(output, "multiple.png") });
   await widget.locator("[data-action=question-next]").click();
   await expect(widget.locator("[data-action=answer]")).toBeEnabled();
   await widget.locator("#answer").fill("Ne pas interrompre la saisie.");
+  await widget.locator("#answer").press("End");
+  await widget.locator("#answer").press("Shift+Enter");
+  await expect(widget.locator("#answer")).toHaveValue("Ne pas interrompre la saisie.\n");
+  await widget.locator("#answer").dispatchEvent("keydown", {
+    key: "Enter",
+    isComposing: true,
+  });
+  await expect(widget.locator("#answer")).toBeEnabled();
   await widget.screenshot({ path: path.join(output, "free.png") });
   await owner.evaluate(() => (window.widgetError = null));
-  await widget.locator("[data-action=answer]").click();
+  await widget.locator("#answer").press("Enter");
   await expect(widget.locator(".pill")).toBeVisible();
   await widget.screenshot({ path: path.join(output, "reduced-after-answer.png") });
   await widget.locator("[data-action=restore]").click();
@@ -312,8 +323,8 @@ try {
   expect(actions.map((action) => action.type)).toEqual(["comment", "answer", "handoff"]);
   expect(actions.at(-1).profileId).toBe("profile-1");
   expect(actions[2]).toMatchObject({ planCallId: "plan-call", planText: plan.planText });
-  expect(actions[1].selections).toEqual([[0], [0, 1], []]);
-  expect(actions[1].texts).toEqual(["", "", "Ne pas interrompre la saisie."]);
+  expect(actions[1].selections).toEqual([[], [0, 1], []]);
+  expect(actions[1].texts).toEqual(["Après validation.", "", "Ne pas interrompre la saisie.\n"]);
   // A lagging owner snapshot cannot resurrect a handled request.
   await owner.evaluate((snapshot) => window.paseoDesktop.agentWidget.publish(snapshot), {
     serverId: "host",

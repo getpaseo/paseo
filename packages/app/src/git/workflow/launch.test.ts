@@ -149,31 +149,54 @@ describe("workspace workflow launch", () => {
     ).rejects.toThrow();
   });
 
-  it("launches conflict resolution with the PR model and explicit local merge and push scope", async () => {
-    await launchWorkspaceWorkflowAction({
-      ...context,
-      action: "resolve-conflicts",
-      prUrl: "https://example.com/pr/8",
-      config: {
-        prModel: { provider: "codex", model: "pr" },
-        commitAndPushPrompt: "COMMIT_PUSH_SENTINEL",
-      },
-    });
+  it.each(["origin/main", "origin/develop", "origin/paseo-local"])(
+    "launches conflict resolution using the verified PR target regardless of workspace base %s",
+    async (baseRef) => {
+      await launchWorkspaceWorkflowAction({
+        ...context,
+        baseRef,
+        action: "resolve-conflicts",
+        prUrl: "https://example.com/pr/8",
+        config: {
+          prModel: { provider: "codex", model: "pr" },
+          commitAndPushPrompt: "COMMIT_PUSH_SENTINEL",
+        },
+      });
 
-    const request = calls.submitting.mock.calls[0][0];
-    expect(request).toMatchObject({ provider: "codex", model: "pr", cwd: "/repo" });
-    const prompt = request.text as string;
-    expect(prompt).toContain("https://example.com/pr/8");
-    expect(prompt).toContain("Branche courante : feature");
-    expect(prompt).toContain("branche cible réelle");
-    expect(prompt).toContain("vérifie qu'elle est bien paseo-local");
-    expect(prompt).toContain("fusionne-la localement");
-    expect(prompt).toContain("push de cette branche");
-    expect(prompt).toContain("Ne fais aucun force-push, rebase");
-    expect(prompt).toContain("Si la branche cible réelle est main");
-    expect(prompt).not.toContain("COMMIT_PUSH_SENTINEL");
-    expect(calls.navigate.mock.calls[0][0]).toMatchObject({ target: { kind: "draft" }, pin: true });
-  });
+      const request = calls.submitting.mock.calls[0][0];
+      expect(request).toMatchObject({ provider: "codex", model: "pr", cwd: "/repo" });
+      const prompt = request.text as string;
+      expect(prompt).toContain("https://example.com/pr/8");
+      expect(prompt).toContain("Branche courante : feature");
+      expect(prompt).toContain(`Current branch base: ${baseRef}`);
+      expect(prompt).toContain("toujours ouverte");
+      expect(prompt).toContain("dépôt du workspace");
+      expect(prompt).toContain("branche source correspond à la branche courante");
+      expect(prompt).toContain("Récupère sa branche cible actuelle depuis la PR");
+      expect(prompt).toContain("Cette cible prévaut sur la base locale du workspace");
+      expect(prompt).toContain(
+        "Si la PR ou sa branche cible ne peut pas être vérifiée, arrête-toi et explique le blocage",
+      );
+      expect(prompt).toContain("Préserve tout travail préexistant");
+      expect(prompt).toContain(
+        "Lance les vérifications pertinentes. Si elles passent, crée un commit de résolution et pousse",
+      );
+      expect(prompt).toContain("fusionne-la localement");
+      expect(prompt).toContain("push de cette branche");
+      expect(prompt).toContain("Ne fais aucun force-push, rebase");
+      expect(prompt).toContain("ni fusion distante de la PR");
+      expect(prompt).toContain("Vérifie que le remote et la branche poussés sont ceux de la PR");
+      expect(prompt).not.toContain("vérifie qu'elle est bien paseo-local");
+      expect(prompt).not.toContain("diffère de paseo-local");
+      expect(prompt).not.toContain("Si la branche cible réelle est main");
+      expect(prompt).not.toContain("confirmation explicite");
+      expect(prompt).not.toContain("COMMIT_PUSH_SENTINEL");
+      expect(calls.navigate.mock.calls[0][0]).toMatchObject({
+        target: { kind: "draft" },
+        pin: true,
+      });
+    },
+  );
 
   it.each(["create-pr", "commit-and-push", "repair-checks", "resolve-conflicts"] as const)(
     "enables the advertised Codex Fast tier for %s",
