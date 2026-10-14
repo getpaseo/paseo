@@ -78,6 +78,7 @@ export const ScheduleRunOnceRequestSchema = z.object({
 });
 
 const ScheduleUpdateNewAgentConfigSchema = z.object({
+  featureValues: z.record(z.string(), z.unknown()).optional(),
   provider: z.string().trim().min(1).optional(),
   model: z.string().trim().min(1).nullable().optional(),
   modeId: z.string().trim().min(1).nullable().optional(),

@@ -1759,105 +1759,108 @@ describe("ScheduleService", () => {
     });
   });
 
-  test("forwards stored new-agent session config to the launched scheduled agent", async () => {
-    const createdConfigs: AgentSessionConfig[] = [];
-    const clients = createTestAgentClients();
-    const claudeClient = clients.claude;
-    if (!claudeClient) {
-      throw new Error("Expected Claude test client");
-    }
-    clients.claude = {
-      provider: claudeClient.provider,
-      capabilities: claudeClient.capabilities,
-      createSession: async (...args) => {
-        createdConfigs.push(args[0]);
-        return claudeClient.createSession(...args);
-      },
-      resumeSession: (...args) => claudeClient.resumeSession(...args),
-      fetchCatalog: (...args) => claudeClient.fetchCatalog(...args),
-      isAvailable: () => claudeClient.isAvailable(),
-    } satisfies AgentClient;
-    const manager = new AgentManager({
-      logger: createTestLogger(),
-      clients,
-      providerDefinitions: { claude: TEST_CLAUDE_PROVIDER_DEFINITION },
-      registry: agentStorage,
-    });
-    const service = createScheduleService({
-      paseoHome: tempDir,
-      logger: createTestLogger(),
-      agentManager: manager,
-      agentStorage,
-      providerSnapshotManager: {
-        async resolveCreateConfig(input) {
-          expect(input).toMatchObject({
-            parent: null,
-            unattended: true,
-            requestedMode: "stored-mode",
-          });
-          return {
-            modeId: input.requestedMode,
-            featureValues: { ...input.featureValues, resolved: true },
-          };
+  test.each([true, false])(
+    "forwards stored new-agent session config with Fast %s to the launched scheduled agent",
+    async (fastMode) => {
+      const createdConfigs: AgentSessionConfig[] = [];
+      const clients = createTestAgentClients();
+      const claudeClient = clients.claude;
+      if (!claudeClient) {
+        throw new Error("Expected Claude test client");
+      }
+      clients.claude = {
+        provider: claudeClient.provider,
+        capabilities: claudeClient.capabilities,
+        createSession: async (...args) => {
+          createdConfigs.push(args[0]);
+          return claudeClient.createSession(...args);
         },
-      },
-      now: () => now,
-    });
-
-    await service.create({
-      prompt: "Use the stored launch config",
-      cadence: { type: "every", everyMs: 60_000 },
-      target: {
-        type: "new-agent",
-        config: {
-          provider: "claude",
-          model: "test-model",
-          cwd: tempDir,
-          title: "Stored launch title",
-          modeId: "stored-mode",
-          thinkingOptionId: "think-hard",
-          providerOptions: {
-            allowedTools: ["Read"],
-            sandbox: { enabled: true, network: { allowLocalBinding: true } },
+        resumeSession: (...args) => claudeClient.resumeSession(...args),
+        fetchCatalog: (...args) => claudeClient.fetchCatalog(...args),
+        isAvailable: () => claudeClient.isAvailable(),
+      } satisfies AgentClient;
+      const manager = new AgentManager({
+        logger: createTestLogger(),
+        clients,
+        providerDefinitions: { claude: TEST_CLAUDE_PROVIDER_DEFINITION },
+        registry: agentStorage,
+      });
+      const service = createScheduleService({
+        paseoHome: tempDir,
+        logger: createTestLogger(),
+        agentManager: manager,
+        agentStorage,
+        providerSnapshotManager: {
+          async resolveCreateConfig(input) {
+            expect(input).toMatchObject({
+              parent: null,
+              unattended: true,
+              requestedMode: "stored-mode",
+            });
+            return {
+              modeId: input.requestedMode,
+              featureValues: { ...input.featureValues, resolved: true },
+            };
           },
-          featureValues: { auto_accept: true },
-          systemPrompt: "Stay concise.",
-          mcpServers: {
-            docs: {
-              command: "node",
-              args: ["docs-server.js"],
+        },
+        now: () => now,
+      });
+
+      await service.create({
+        prompt: "Use the stored launch config",
+        cadence: { type: "every", everyMs: 60_000 },
+        target: {
+          type: "new-agent",
+          config: {
+            provider: "claude",
+            model: "test-model",
+            cwd: tempDir,
+            title: "Stored launch title",
+            modeId: "stored-mode",
+            thinkingOptionId: "think-hard",
+            providerOptions: {
+              allowedTools: ["Read"],
+              sandbox: { enabled: true, network: { allowLocalBinding: true } },
+            },
+            featureValues: { auto_accept: true, fast_mode: fastMode },
+            systemPrompt: "Stay concise.",
+            mcpServers: {
+              docs: {
+                command: "node",
+                args: ["docs-server.js"],
+              },
             },
           },
         },
-      },
-      maxRuns: 1,
-    });
+        maxRuns: 1,
+      });
 
-    now = new Date("2026-01-01T00:01:00.000Z");
-    await service.tick();
+      now = new Date("2026-01-01T00:01:00.000Z");
+      await service.tick();
 
-    expect(createdConfigs).toHaveLength(1);
-    expect(createdConfigs[0]).toMatchObject({
-      provider: "claude",
-      cwd: tempDir,
-      title: "Stored launch title",
-      model: "test-model",
-      modeId: "stored-mode",
-      thinkingOptionId: "think-hard",
-      providerOptions: {
-        allowedTools: ["Read"],
-        sandbox: { enabled: true, network: { allowLocalBinding: true } },
-      },
-      featureValues: { auto_accept: true, resolved: true },
-      systemPrompt: "Stay concise.",
-      mcpServers: {
-        docs: {
-          command: "node",
-          args: ["docs-server.js"],
+      expect(createdConfigs).toHaveLength(1);
+      expect(createdConfigs[0]).toMatchObject({
+        provider: "claude",
+        cwd: tempDir,
+        title: "Stored launch title",
+        model: "test-model",
+        modeId: "stored-mode",
+        thinkingOptionId: "think-hard",
+        providerOptions: {
+          allowedTools: ["Read"],
+          sandbox: { enabled: true, network: { allowLocalBinding: true } },
         },
-      },
-    });
-  });
+        featureValues: { auto_accept: true, fast_mode: fastMode, resolved: true },
+        systemPrompt: "Stay concise.",
+        mcpServers: {
+          docs: {
+            command: "node",
+            args: ["docs-server.js"],
+          },
+        },
+      });
+    },
+  );
 
   test("advances stale nextRunAt on daemon restart", async () => {
     const service1 = createScheduleService({
@@ -2322,6 +2325,7 @@ describe("ScheduleService", () => {
         model: "gpt-5",
         modeId: "full-access",
         thinkingOptionId: "deep-thought",
+        featureValues: { fast_mode: false },
         archiveOnFinish: false,
         isolation: "worktree",
         cwd: nextCwd,
@@ -2339,6 +2343,7 @@ describe("ScheduleService", () => {
         model: "gpt-5",
         modeId: "full-access",
         thinkingOptionId: "deep-thought",
+        featureValues: { fast_mode: false },
         archiveOnFinish: false,
         isolation: "worktree",
       },
