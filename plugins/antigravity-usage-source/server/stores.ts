@@ -1,16 +1,26 @@
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { z } from "zod";
 import type { AntigravityUsageInput } from "../shared/input.js";
 import { hashAccountKey, type UsageAccount, type UsageScope } from "@getpaseo/plugin/server/usage";
+
+const execFileAsync = promisify(execFile);
+
+export const ANTIGRAVITY_KEYCHAIN_SERVICE = "gemini";
+export const ANTIGRAVITY_KEYCHAIN_ACCOUNT = "antigravity";
+const KEYCHAIN_BASE64_PREFIX = "go-keyring-base64:";
+const KEYCHAIN_TIMEOUT_MS = 2_000;
 
 export interface StoreLookup {
   home?: string;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   now?: () => number;
+  readKeychainSecret?: (service: string, account: string) => Promise<string | null>;
 }
 
 export interface Auth {
@@ -54,18 +64,7 @@ function parseExpiry(rawExpiry: string | number | undefined): number | undefined
   return undefined;
 }
 
-export async function readAuth(
-  input: AntigravityUsageInput,
-  _lookup: StoreLookup = {},
-): Promise<Auth | null> {
-  const route = input.route;
-  if (route.store !== "antigravity") return null;
-
-  const raw = await readJson(route.path);
-  const parsed = authFileSchema.safeParse(raw);
-  if (!parsed.success) return null;
-
-  const data = parsed.data;
+function parseAuthData(data: z.infer<typeof authFileSchema>): Auth | null {
   const token = data.token?.access_token ?? data.access_token;
   if (!token) return null;
 
@@ -81,6 +80,55 @@ export async function readAuth(
     ...(expires !== undefined ? { expires } : {}),
     ...(idToken ? { idToken } : {}),
   };
+}
+
+async function runSecurityCommand(service: string, account: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      "/usr/bin/security",
+      ["find-generic-password", "-s", service, "-a", account, "-w"],
+      { timeout: KEYCHAIN_TIMEOUT_MS },
+    );
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function readAuth(
+  input: AntigravityUsageInput,
+  lookup: StoreLookup = {},
+): Promise<Auth | null> {
+  const route = input.route;
+  if (route.store === "keychain") {
+    const platform = lookup.platform ?? process.platform;
+    if (platform !== "darwin") return null;
+
+    const service = route.service ?? ANTIGRAVITY_KEYCHAIN_SERVICE;
+    const account = route.account ?? ANTIGRAVITY_KEYCHAIN_ACCOUNT;
+    const reader = lookup.readKeychainSecret ?? runSecurityCommand;
+    const raw = await reader(service, account);
+    if (!raw) return null;
+
+    try {
+      const trimmed = raw.trim();
+      const jsonStr = trimmed.startsWith(KEYCHAIN_BASE64_PREFIX)
+        ? Buffer.from(trimmed.slice(KEYCHAIN_BASE64_PREFIX.length), "base64").toString("utf8")
+        : trimmed;
+      const parsed = authFileSchema.safeParse(JSON.parse(jsonStr));
+      return parsed.success ? parseAuthData(parsed.data) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  if (route.store !== "antigravity") return null;
+
+  const raw = await readJson(route.path);
+  const parsed = authFileSchema.safeParse(raw);
+  if (!parsed.success) return null;
+
+  return parseAuthData(parsed.data);
 }
 
 function globalRoutes(lookup: StoreLookup): AntigravityUsageInput[] {
@@ -138,13 +186,39 @@ export async function discover(
     };
   }
 
-  const candidates = scope.kind === "global" ? globalRoutes(lookup) : sessionRoutes(scope, lookup);
-
+  const platform = lookup.platform ?? process.platform;
   const present: UsageAccount[] = [];
-  for (const input of candidates) {
+  const seenKeys = new Set<string>();
+
+  if (platform === "darwin" && (scope.kind === "global" || scope.provider === "antigravity")) {
+    const keychainInput: AntigravityUsageInput = {
+      route: {
+        store: "keychain",
+        service: ANTIGRAVITY_KEYCHAIN_SERVICE,
+        account: ANTIGRAVITY_KEYCHAIN_ACCOUNT,
+      },
+    };
+    const keychainAuth = await readAuth(keychainInput, lookup);
+    if (keychainAuth) {
+      const identity = accountIdentity(keychainAuth, keychainInput);
+      present.push({
+        ...identity,
+        harness: "Antigravity",
+        input: keychainInput,
+      });
+      seenKeys.add(identity.key);
+    }
+  }
+
+  const fileCandidates = scope.kind === "global" ? globalRoutes(lookup) : sessionRoutes(scope, lookup);
+
+  for (const input of fileCandidates) {
     const auth = await readAuth(input, lookup);
     if (auth) {
       const identity = accountIdentity(auth, input);
+      if (seenKeys.has(identity.key) && platform === "darwin") {
+        continue;
+      }
       present.push({
         ...identity,
         harness: "Antigravity",
