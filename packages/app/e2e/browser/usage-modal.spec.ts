@@ -152,6 +152,48 @@ test.describe("usage modal", () => {
     await expect(group.getByTestId("usage-freshness")).toHaveCount(0);
   });
 
+  for (const width of [1440, 390]) {
+    test(`keeps sidebar and modal provider order across a reversed refresh at width ${width}`, async ({
+      page,
+    }) => {
+      const initial = [weeklyReport("opencode", 31), weeklyReport("openai", 12)];
+      const refreshed = [weeklyReport("openai", 22), weeklyReport("opencode", 41)];
+      const usage = await installUsageReportsFixture(page, {
+        lists: [
+          (request) => {
+            if (request.forceRefresh) {
+              return refreshed;
+            }
+            return initial;
+          },
+        ],
+      });
+      await page.setViewportSize({ width, height: 900 });
+      await gotoAppShell(page);
+      if (width === 390) {
+        await openCompactSidebar(page);
+      }
+      await expectPinnedUsage(page, ["31% Weekly", "12% Weekly"]);
+      await openUsageFromItem(page);
+
+      const group = page.getByTestId(`usage-host-${getServerId()}`);
+      const cards = group.getByTestId(/^usage-report-/);
+      await expect(cards.nth(0)).toHaveAttribute("data-testid", "usage-report-opencode:a");
+      await expect(cards.nth(1)).toHaveAttribute("data-testid", "usage-report-openai:a");
+      await qaScreenshot(page, `usage-order-${width}-before-refresh`);
+
+      const requestCount = usage.listRequests().length;
+      await refreshAllUsage(page);
+      await usage.waitForListRequests(requestCount + 1);
+      await expect(group.getByTestId("usage-report-opencode:a").getByText("41%")).toBeVisible();
+      await expect(page.locator('[data-testid="usage-refresh-all"]:visible')).toBeEnabled();
+      await expect(cards.nth(0)).toHaveAttribute("data-testid", "usage-report-opencode:a");
+      await expect(cards.nth(1)).toHaveAttribute("data-testid", "usage-report-openai:a");
+      await expectPinnedUsage(page, ["41% Weekly", "22% Weekly"]);
+      await qaScreenshot(page, `usage-order-${width}-after-refresh`);
+    });
+  }
+
   test("refreshes one report from its card", async ({ page }) => {
     test.setTimeout(120_000);
     const serverId = getServerId();
