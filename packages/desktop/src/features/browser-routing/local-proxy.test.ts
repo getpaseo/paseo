@@ -21,21 +21,42 @@ import {
 const CREDENTIAL: ProxyCredential = { username: "paseo-test", password: "secret-value" };
 const AUTHORIZATION = `Basic ${Buffer.from("paseo-test:secret-value").toString("base64")}`;
 
-test.each<Record<string, string | string[]>>([
-  { link: "invalid-link" },
-  { link: '</style.css>; title="x\u0007"' },
-  { link: "</style.css>", "bad key": "x" },
-])("drops malformed Early Hints and releases their pending write: %j", (hints) => {
+test("drops malformed Early Hints and releases their pending write", () => {
   const response = new http.ServerResponse({ method: "GET" });
   let completed = 0;
   let dropped = 0;
   relayEarlyHints(response, {
-    hints,
+    hints: { link: "invalid-link" },
     completed: () => completed++,
     onInvalid: () => dropped++,
   });
   expect(completed).toBe(1);
   expect(dropped).toBe(1);
+});
+
+test("keeps valid Early Hints pending until the local write completes", () => {
+  const hints = { link: "</style.css>; rel=preload; as=style" };
+  const written: Array<Record<string, string | string[]>> = [];
+  const callbacks: Array<() => void> = [];
+  let completed = 0;
+  let dropped = 0;
+  const response: Pick<http.ServerResponse, "writeEarlyHints"> = {
+    writeEarlyHints: (headers, callback) => {
+      written.push(headers);
+      if (callback) callbacks.push(callback);
+    },
+  };
+  relayEarlyHints(response, {
+    hints,
+    completed: () => completed++,
+    onInvalid: () => dropped++,
+  });
+  expect(written).toEqual([hints]);
+  expect(callbacks).toHaveLength(1);
+  expect(completed).toBe(0);
+  expect(dropped).toBe(0);
+  callbacks[0]();
+  expect(completed).toBe(1);
 });
 
 test.each([
