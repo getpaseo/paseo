@@ -2782,6 +2782,12 @@ async function verifyBrowserFinalLifecycle({
     ),
     "Legacy layout restore lost browser",
   );
+  // Removing legacy hidden flags exposes every pane accumulated by this scenario.
+  // Maximize the restored pane through its real control before selecting its clipped tab.
+  await deck
+    .getByTestId(`workspace-pane-${agentPane.id}`)
+    .getByTestId("workspace-maximize-pane")
+    .click();
   await deck.getByTestId(`workspace-tab-browser_${tab.browserId}`).click();
   await verifyReloadedBrowser({
     page,

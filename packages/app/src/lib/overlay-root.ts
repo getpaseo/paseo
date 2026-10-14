@@ -368,7 +368,7 @@ export function useWebOverlayRegistration({
   }, [active, syncRegistration]);
 
   useLayoutEffect(() => {
-    if (!active || !autoFocus || typeof window === "undefined") return;
+    if (!active || !autoFocus || !manageFocus || typeof window === "undefined") return;
     const frame = window.requestAnimationFrame(() => {
       const scope = scopeRef.current;
       if (
@@ -379,7 +379,7 @@ export function useWebOverlayRegistration({
         focusFirstElement(scope);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [active, autoFocus]);
+  }, [active, autoFocus, manageFocus]);
 
   return setScope;
 }
