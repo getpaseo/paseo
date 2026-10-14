@@ -30,7 +30,7 @@ const catalogRows = readFixture("catalog-controls");
 const replacements = new Map();
 const counts = new Map();
 const receipts = new Set();
-let pageFailed = false;
+let pageHung = false;
 const lines = createInterface({ input: process.stdin });
 lines.on("line", receive);
 function receive(line) {
@@ -143,9 +143,9 @@ function scriptedResponse(frame) {
     respond(frame, { status: "accepted", commandId: frame.params.commandId });
     return true;
   }
-  return frame.method === "view/page" && rejectedPage(frame);
+  return frame.method === "view/page" && failedPage(frame);
 }
-function rejectedPage(frame) {
+function failedPage(frame) {
   const anchor = frame.params.cursor;
   // Real Muse rejects an anchor from another session's view the same way (live probe, Muse 1.4.7).
   if (
@@ -164,9 +164,9 @@ function rejectedPage(frame) {
     });
     return true;
   }
-  if (process.env.MUSE_TEST_PAGE_FAIL_ONCE && !pageFailed) {
-    pageFailed = true;
-    rpcError(frame, -32603, "internal", "view range read failed");
+  // Never answering lets the plugin's own request timeout fail the repair on the test's fake clock.
+  if (process.env.MUSE_TEST_PAGE_HANG_ONCE && !pageHung) {
+    pageHung = true;
     return true;
   }
   return false;
