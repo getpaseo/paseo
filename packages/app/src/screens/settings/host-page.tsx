@@ -969,6 +969,10 @@ function AgentFinishedNotificationsCard({ serverId }: { serverId: string }) {
     [patchConfig, t],
   );
 
+  // The setting defaults to on, so rendering before the config arrives would flip a
+  // host that has it off from on to off on every visit.
+  if (!config) return null;
+
   return (
     <View style={settingsStyles.card} testID="host-page-agent-finished-notifications-card">
       <View style={settingsStyles.row}>
@@ -981,7 +985,7 @@ function AgentFinishedNotificationsCard({ serverId }: { serverId: string }) {
           </Text>
         </View>
         <Switch
-          value={config?.agentFinishedNotifications !== false}
+          value={config.agentFinishedNotifications}
           onValueChange={handleValueChange}
           accessibilityLabel={t("settings.host.notifications.agentFinished.accessibilityLabel")}
           testID="host-page-agent-finished-notifications-switch"
