@@ -16,6 +16,25 @@ const loadCodeAssistSchema = z.object({
   cloudaicompanionProject: z.union([z.string(), z.object({ id: z.string().optional() })]).nullish(),
 });
 
+const userQuotaBucketSchema = z.object({
+  bucketId: z.string(),
+  displayName: z.string().optional(),
+  window: z.string().optional(),
+  resetTime: z.string().nullish(),
+  description: z.string().optional(),
+  remainingFraction: z.number().nullish(),
+});
+
+const userQuotaGroupSchema = z.object({
+  displayName: z.string().optional(),
+  description: z.string().optional(),
+  buckets: z.array(userQuotaBucketSchema).optional(),
+});
+
+const retrieveUserQuotaSummarySchema = z.object({
+  groups: z.array(userQuotaGroupSchema).optional(),
+});
+
 const modelQuotaSchema = z.object({
   displayName: z.string().optional(),
   model: z.string().optional(),
@@ -33,7 +52,23 @@ const fetchAvailableModelsSchema = z.object({
 
 export const CLOUDCODE_BASE_URL = "https://cloudcode-pa.googleapis.com";
 export const DEFAULT_PROJECT_ID = "aicode-consumers";
-export const DEFAULT_USER_AGENT = "antigravity/1.107.0 linux/amd64";
+
+export function formatPlanLabel(rawTierId?: string): string | undefined {
+  if (!rawTierId) return undefined;
+  const cleaned = rawTierId.replace(/-tier$/i, "").replace(/-/g, " ").trim();
+  if (!cleaned) return undefined;
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}
+
+export function buildUserAgent(
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+): string {
+  const osName = platform === "darwin" ? "darwin" : platform === "win32" ? "windows" : "linux";
+  return `antigravity/1.107.0 ${osName}/${arch}`;
+}
+
+export const DEFAULT_USER_AGENT = buildUserAgent();
 
 interface CodeAssistResult {
   rejectedStatus?: number;
@@ -61,12 +96,15 @@ function parseCodeAssistData(text: string): { planLabel?: string; projectId?: st
 async function resolveCodeAssist(
   fetchApi: typeof fetch,
   headers: Record<string, string>,
+  lookup: StoreLookup = {},
 ): Promise<CodeAssistResult> {
+  const platform = lookup.platform ?? process.platform;
+  const metadataPlatform = platform === "darwin" ? "DARWIN_ARM64" : "LINUX_AMD64";
   const metadata = {
     ideName: "antigravity",
     ideType: "ANTIGRAVITY",
     ideVersion: "1.107.0",
-    platform: "LINUX_AMD64",
+    platform: metadataPlatform,
     pluginType: "GEMINI",
   };
 
@@ -98,6 +136,49 @@ async function resolveCodeAssist(
     projectId: parsed.projectId ?? DEFAULT_PROJECT_ID,
     planLabel: parsed.planLabel,
   };
+}
+
+function buildSummaryWindows(groups: z.infer<typeof userQuotaGroupSchema>[]): UsageWindow[] {
+  const windows: UsageWindow[] = [];
+
+  for (const group of groups) {
+    const isGemini = /gemini/i.test(group.displayName ?? "");
+    const groupPrefix = isGemini ? "Gemini" : "Claude & GPT-OSS";
+    const groupShort = isGemini ? "Gemini" : "Claude/OSS";
+    const idPrefix = isGemini ? "gemini" : "claude-gpt-oss";
+
+    for (const bucket of group.buckets ?? []) {
+      if (bucket.remainingFraction == null) continue;
+
+      const isWeekly =
+        /week/i.test(bucket.window ?? "") ||
+        /week/i.test(bucket.bucketId) ||
+        /week/i.test(bucket.displayName ?? "");
+      const windowId = isWeekly ? `${idPrefix}-weekly` : `${idPrefix}-5h`;
+      const label = `${groupPrefix} \u00b7 ${isWeekly ? "Weekly" : "5h"}`;
+      const shortLabel = `${groupShort} ${isWeekly ? "wk" : "5h"}`;
+      const summary = isWeekly;
+
+      const utilizationPct = Math.max(
+        0,
+        Math.min(100, Math.round((1 - bucket.remainingFraction) * 100)),
+      );
+
+      windows.push(
+        windowFromUsedPct({
+          id: windowId,
+          label,
+          shortLabel,
+          summary,
+          utilizationPct,
+          resetsAt: bucket.resetTime ?? null,
+          tone: toneFromUsedPct(utilizationPct),
+        }),
+      );
+    }
+  }
+
+  return windows;
 }
 
 interface ModelCandidate {
@@ -147,7 +228,6 @@ function buildWindows(models: Record<string, z.infer<typeof modelQuotaSchema>>):
     const members = candidates.filter((c) => bucket.isMember(c.modelId, c.displayName));
     if (members.length === 0) continue;
 
-    // Pick the most constrained quota (lowest remainingFraction, earliest resetTime)
     members.sort((a, b) => {
       if (a.remainingFraction !== b.remainingFraction) {
         return a.remainingFraction - b.remainingFraction;
@@ -199,17 +279,64 @@ export async function fetchUsage(
     });
   }
 
+  const userAgent = buildUserAgent(lookup.platform, process.arch);
   const headers: Record<string, string> = {
     Authorization: `Bearer ${auth.token}`,
     "Content-Type": "application/json",
-    "User-Agent": DEFAULT_USER_AGENT,
+    "User-Agent": userAgent,
   };
 
-  const assistResult = await resolveCodeAssist(fetchApi, headers);
+  const assistResult = await resolveCodeAssist(fetchApi, headers, lookup);
   if (assistResult.rejectedStatus !== undefined) {
     return unavailable({ kind: "rejected", status: assistResult.rejectedStatus, refreshedBy });
   }
 
+  const planLabel = formatPlanLabel(assistResult.planLabel);
+
+  try {
+    const summaryResponse = await fetchApi(
+      `${CLOUDCODE_BASE_URL}/v1internal:retrieveUserQuotaSummary`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({}),
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+
+    if (summaryResponse.status === 401 || summaryResponse.status === 403) {
+      return unavailable({ kind: "rejected", status: summaryResponse.status, refreshedBy });
+    }
+
+    if (summaryResponse.ok) {
+      const summaryText = await summaryResponse.text();
+      if (!summaryText.trim().startsWith("<")) {
+        const parsedSummary = retrieveUserQuotaSummarySchema.safeParse(JSON.parse(summaryText));
+        if (
+          parsedSummary.success &&
+          parsedSummary.data.groups &&
+          parsedSummary.data.groups.length > 0
+        ) {
+          const windows = buildSummaryWindows(parsedSummary.data.groups);
+          if (windows.length > 0) {
+            return {
+              status: "available",
+              planLabel,
+              windows,
+              balances: [],
+              details: [],
+            };
+          }
+        }
+      }
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") {
+      throw error;
+    }
+  }
+
+  // Fallback: fetchAvailableModels
   const modelsResponse = await fetchApi(`${CLOUDCODE_BASE_URL}/v1internal:fetchAvailableModels`, {
     method: "POST",
     headers,
@@ -235,7 +362,7 @@ export async function fetchUsage(
 
   return {
     status: "available",
-    planLabel: assistResult.planLabel,
+    planLabel,
     windows,
     balances: [],
     details: [],
