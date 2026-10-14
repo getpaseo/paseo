@@ -11,7 +11,7 @@ import {
   type UserMessageItem,
 } from "@/types/stream";
 import { transformTimelineItem, type TimelineItemTransform } from "@/plugins/timeline/model";
-import { createStreamPresentation } from "./presentation";
+import { createStreamPresentation, getStreamItemMessageId } from "./presentation";
 import { buildAgentStreamRenderModel } from "./model";
 
 const runtime = {
@@ -29,7 +29,7 @@ const runtime = {
 } as unknown as PluginClientRuntime;
 
 function installProbe(
-  itemType: "assistant_message" | "tool_call" | "reasoning",
+  itemType: "user_message" | "assistant_message" | "tool_call" | "reasoning",
   condition = "true",
 ): InstalledPlugin {
   const clientBundle = `(function() {
@@ -159,6 +159,23 @@ describe("stream presentation through installed plugins", () => {
       expect(rows(harness.source())).toMatchObject([{ kind: "assistant_message", text: fullText }]);
     },
   );
+
+  it("addresses a prompt a plugin replaced by the prompt's own id", () => {
+    const harness = streamHarness(installedTransform(installProbe("user_message")));
+    const rendered = rows(
+      harness.send({
+        type: "timeline",
+        provider: "claude",
+        item: { type: "user_message", messageId: "prompt-1", text: "Earlier prompt" },
+      }),
+    );
+    const source = rows(harness.source());
+
+    expect(source).toMatchObject([{ kind: "user_message", id: "prompt-1" }]);
+    expect(rendered).toMatchObject([{ kind: "plugin", id: "probe-plugin/prompt-1/0" }]);
+    // The chat outline jumps to the source id; the row it lands on is the plugin's.
+    expect(rendered.map(getStreamItemMessageId)).toEqual(["prompt-1"]);
+  });
 
   it("finishes one message before streaming a different message ID", () => {
     const harness = streamHarness(installedTransform(installProbe("assistant_message")));

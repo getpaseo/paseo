@@ -25,7 +25,8 @@
     "verify:electron-cdp": "node ./scripts/verify-electron-cdp.mjs",
     "test": "install-electron && vitest run --exclude \"e2e/**\"",
     "typecheck": "tsgo --noEmit -p tsconfig.json",
-    "test:e2e:lifecycle": "npm run build:main && node ./e2e/daemon-lifecycle.e2e.mjs"
+    "test:e2e:lifecycle": "npm run build:main && node ./e2e/daemon-lifecycle.e2e.mjs",
+    "test:e2e:window-startup": "npm run build:main && node ./e2e/window-startup.e2e.mjs"
   },
   "dependencies": {
     "@getpaseo/cli": "*",
