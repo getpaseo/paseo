@@ -9,6 +9,13 @@ export function WorkspaceShortcutTargetsSubscriber({ enabled }: { enabled: boole
   );
 
   useEffect(() => {
+    useKeyboardShortcutsStore.setState({ sidebarWorkspaceTargets: shortcutModel.workspaceTargets });
+    return () => {
+      useKeyboardShortcutsStore.setState({ sidebarWorkspaceTargets: [] });
+    };
+  }, [shortcutModel.workspaceTargets]);
+
+  useEffect(() => {
     if (!enabled) {
       setSidebarShortcutWorkspaceTargets([]);
       return;
