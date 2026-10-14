@@ -64,6 +64,23 @@ describe("plugin timeline projection", () => {
     ]);
   });
 
+  it("records the kind of row a plugin row replaced", () => {
+    const transform: TimelineItemTransform = ({ sourceId }) => [
+      {
+        type: "plugin" as const,
+        id: `${sourceId}/0`,
+        pluginId: "folding",
+        kind: "row",
+        version: 1,
+        data: null,
+      },
+    ];
+
+    expect(projectPluginTimelineItems([thought("First", "ready")], transform)).toMatchObject([
+      { kind: "plugin", sourceId: "thought-1", sourceKind: "thought" },
+    ]);
+  });
+
   it("memoizes projection on the source row reference", () => {
     const source = thought("Stable");
     const transform: TimelineItemTransform = vi.fn(() => undefined);

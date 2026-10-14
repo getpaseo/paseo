@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { StreamItem } from "@/types/stream";
-import { getAssistantBlockSpacing, isSameAssistantBlockGroup } from "./spacing";
+import { SPACING } from "@/styles/theme";
+import type { PluginTimelineStreamItem, StreamItem } from "@/types/stream";
+import {
+  getAssistantBlockSpacing,
+  getGapBetweenStreamItems,
+  isSameAssistantBlockGroup,
+} from "./spacing";
 
 function assistantBlock(params: {
   id: string;
@@ -33,6 +38,33 @@ function toolCallBlock(id: string): Extract<StreamItem, { kind: "tool_call" }> {
         status: "executing",
       },
     },
+  };
+}
+
+function thoughtBlock(id: string): Extract<StreamItem, { kind: "thought" }> {
+  return {
+    kind: "thought",
+    id,
+    text: "",
+    status: "ready",
+    timestamp: new Date("2026-05-01T00:00:00.000Z"),
+  };
+}
+
+function pluginRow(
+  id: string,
+  sourceKind?: PluginTimelineStreamItem["sourceKind"],
+): PluginTimelineStreamItem {
+  return {
+    kind: "plugin",
+    id,
+    timestamp: new Date("2026-05-01T00:00:00.000Z"),
+    pluginId: "example",
+    pluginItemId: id,
+    itemKind: "row",
+    version: 1,
+    data: null,
+    ...(sourceKind ? { sourceId: `${id}-source`, sourceKind } : {}),
   };
 }
 
@@ -131,5 +163,27 @@ describe("getAssistantBlockSpacing", () => {
     expect(
       getAssistantBlockSpacing({ item: headBlock, aboveItem: tailBlock, belowItem: null }),
     ).toBe("compactTop");
+  });
+});
+
+describe("getGapBetweenStreamItems", () => {
+  it("keeps consecutive tool calls and thoughts flush", () => {
+    expect(getGapBetweenStreamItems(toolCallBlock("tc-1"), thoughtBlock("t-1"))).toBe(0);
+  });
+
+  it("spaces plugin rows that replaced tool calls and thoughts like the rows they replaced", () => {
+    const tool = pluginRow("tc-1", "tool_call");
+    const thought = pluginRow("t-1", "thought");
+    const message = assistantBlock({ id: "a", blockGroupId: "group-1", blockIndex: 0 });
+
+    expect(getGapBetweenStreamItems(tool, thought)).toBe(0);
+    expect(getGapBetweenStreamItems(thought, toolCallBlock("tc-2"))).toBe(0);
+    expect(getGapBetweenStreamItems(thought, message)).toBe(SPACING[1]);
+    expect(getGapBetweenStreamItems(message, tool)).toBe(SPACING[1]);
+  });
+
+  it("keeps the default gap around plugin rows that replaced nothing", () => {
+    expect(getGapBetweenStreamItems(pluginRow("p-1"), pluginRow("p-2"))).toBe(SPACING[4]);
+    expect(getGapBetweenStreamItems(toolCallBlock("tc-1"), pluginRow("p-1"))).toBe(SPACING[4]);
   });
 });

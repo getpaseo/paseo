@@ -5,6 +5,7 @@ import {
   interactWithStreamingCard,
   expectWholeCompletedCard,
   expectBothConsecutiveTools,
+  expectConsecutiveToolCardsFlush,
 } from "../support/helpers/plugin-timeline";
 
 for (const width of [1100, 390]) {
@@ -31,5 +32,16 @@ test("Overview preserves both consecutive tool plugin cards", async ({ page }, i
     await expectBothConsecutiveTools(page);
     await page.reload({ waitUntil: "domcontentloaded" });
     await expectBothConsecutiveTools(page);
+  });
+});
+
+test("Tool plugin cards keep the spacing of the tool calls they replace", async ({
+  page,
+}, info) => {
+  await withTimelinePlugin(page, info, "tools", async (agent) => {
+    await requestPluginTimeline(agent);
+    await agent.client.waitForFinish(agent.agentId, 30_000);
+    await expectBothConsecutiveTools(page);
+    await expectConsecutiveToolCardsFlush(page);
   });
 });

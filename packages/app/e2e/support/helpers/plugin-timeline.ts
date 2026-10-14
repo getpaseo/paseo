@@ -214,6 +214,17 @@ export async function expectBothConsecutiveTools(page: Page): Promise<void> {
   await expect(grep).toBeVisible();
 }
 
+/** Plugin rows that replaced consecutive tool calls sit as close as those tool calls would. */
+export async function expectConsecutiveToolCardsFlush(page: Page): Promise<void> {
+  const card = (name: string) =>
+    page.getByRole("heading", { name, exact: true }).first().locator("..");
+  const read = await card("Tool read complete").boundingBox();
+  const grep = await card("Tool grep complete").boundingBox();
+  expect(read).not.toBeNull();
+  expect(grep).not.toBeNull();
+  expect(Math.round(grep!.y - (read!.y + read!.height))).toBe(0);
+}
+
 /** The row belongs to the virtualized history, not the always-mounted recent window. */
 export async function expectVirtualizedPluginPromptVisible(
   page: Page,

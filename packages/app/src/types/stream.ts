@@ -806,6 +806,8 @@ export interface PluginTimelineStreamItem {
   id: string;
   /** The id of the stream item a timeline transformer replaced; set only by projection. */
   sourceId?: string;
+  /** The kind of that replaced item; set only by projection. The row is spaced like it. */
+  sourceKind?: Exclude<StreamItem["kind"], "plugin">;
   timelineCursor?: TimelinePosition;
   turnId?: string;
   timestamp: Date;
