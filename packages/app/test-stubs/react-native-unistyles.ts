@@ -22,6 +22,7 @@ const testTheme = {
     border: "#e4e4e7",
     borderAccent: "#a1a1aa",
     palette: {
+      zinc: { 600: "#52525b" },
       amber: { 500: "#f59e0b" },
       blue: { 300: "#93c5fd" },
       green: { 500: "#22c55e" },

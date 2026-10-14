@@ -2376,6 +2376,7 @@ function ComposerContentImpl({
                 />
               </RenderProfile>
               <Combobox
+                anchorIsTrigger={false}
                 options={githubSearchOptions}
                 value=""
                 onSelect={noop}

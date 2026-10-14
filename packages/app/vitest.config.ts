@@ -66,7 +66,7 @@ export default defineConfig({
   // Unbundled, the same imports go through the resolver below and land on the web files.
   optimizeDeps: {
     include: ["react/jsx-runtime"],
-    exclude: ["react-native-reanimated"],
+    exclude: ["react-native-reanimated", "@floating-ui/react-native"],
   },
   // The globals a React Native bundler defines, which esbuild is no longer there to supply for
   // the package excluded above.

@@ -1,3 +1,4 @@
+import { usePressDragTarget } from "@/components/ui/press-drag-select-context";
 import { createContext, useCallback, useContext, useMemo, useReducer, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -448,6 +449,14 @@ function ModelBrowserPressable({
   testID,
 }: ModelBrowserPressableProps) {
   const independentScrollGesture = useContext(IndependentScrollGestureContext);
+  const drag = usePressDragTarget({ onSelect: onPress });
+  const dragStyle = useCallback(
+    (state: PressableStateCallbackType & { hovered?: boolean }) =>
+      typeof style === "function"
+        ? style({ ...state, hovered: drag.dragging ? drag.hovered : state.hovered })
+        : style,
+    [style, drag.dragging, drag.hovered],
+  );
   const [pressed, setPressed] = useState(false);
   // Android's scroll handler must keep the pointer stream until release so a
   // fling survives leaving the short viewport. A simultaneous Tap keeps rows
@@ -489,9 +498,10 @@ function ModelBrowserPressable({
   if (!independentScrollGesture) {
     return (
       <Pressable
+        ref={drag.ref}
         onPress={handlePress}
         hitSlop={hitSlop}
-        style={style}
+        style={dragStyle}
         accessibilityRole="button"
         accessibilityLabel={accessibilityLabel}
         accessibilityState={accessibilityState}

@@ -21,6 +21,7 @@ import {
 } from "react-native";
 import { Keyframe, runOnJS } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
+import { usePressDragState, usePressDragSurface } from "../press-drag-select-context";
 import { FloatingScrollView, FloatingSurface } from "@/components/ui/floating";
 import { isWeb } from "@/constants/platform";
 import type { KeyboardFocusScope } from "@/keyboard/actions";
@@ -273,6 +274,9 @@ export function AnchoredSurface({
 }: AnchoredSurfaceProps): ReactElement | null {
   const { t } = useTranslation();
   const surfaceNativeID = useId();
+  const drag = usePressDragState();
+  const dragSurfaceRef = usePressDragSurface();
+  const dragBackdropRef = usePressDragSurface("backdrop");
   const { position, actualPlacement, contentSize, visibleContentSize, onContentLayout } =
     useAnchoredPosition({
       open,
@@ -293,7 +297,8 @@ export function AnchoredSurface({
   });
 
   useEffect(() => {
-    if (!isWeb || !open || !contentSize || typeof document === "undefined") return undefined;
+    if (!isWeb || !open || drag.dragging || !contentSize || typeof document === "undefined")
+      return undefined;
     const frame = requestAnimationFrame(() => {
       document
         .getElementById(surfaceNativeID)
@@ -301,7 +306,7 @@ export function AnchoredSurface({
         ?.focus();
     });
     return () => cancelAnimationFrame(frame);
-  }, [contentSize, open, surfaceNativeID]);
+  }, [contentSize, open, surfaceNativeID, drag.dragging]);
 
   const frameStyle = useMemo<StyleProp<ViewStyle>>(() => {
     const { width: screenWidth } = Dimensions.get("window");
@@ -362,6 +367,7 @@ export function AnchoredSurface({
     <>
       {backdrop ? (
         <Pressable
+          ref={dragBackdropRef}
           {...{ onContextMenu: onClose }}
           accessibilityRole="button"
           accessibilityLabel={t("menu.backdrop")}
@@ -371,6 +377,7 @@ export function AnchoredSurface({
         />
       ) : null}
       <FloatingSurface
+        ref={dragSurfaceRef}
         collapsable={false}
         tabIndex={-1}
         nativeID={surfaceNativeID}
@@ -378,7 +385,7 @@ export function AnchoredSurface({
         dataSet={surfaceDataSet}
         style={styles.content}
         frameStyle={frameStyle}
-        entering={contentEntering}
+        entering={drag.dragging ? undefined : contentEntering}
         exiting={
           isWeb || !onExited
             ? undefined
@@ -424,6 +431,7 @@ export function MenuOverlay({
   children: ReactElement | null;
 }): ReactElement | null {
   const floatingLayer = useOverlayLayer("floating");
+  const drag = usePressDragState();
 
   const handleWebOverlayKeyDown = useCallback(
     (event: KeyboardEvent) => {
@@ -470,6 +478,7 @@ export function MenuOverlay({
   );
   const setWebOverlayScope = useWebOverlayRegistration({
     active: isWeb && visible,
+    autoFocus: !drag.dragging,
     layer: floatingLayer,
     onKeyDown: handleWebOverlayKeyDown,
     restoreFocusRef,
