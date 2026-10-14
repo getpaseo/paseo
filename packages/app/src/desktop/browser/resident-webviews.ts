@@ -476,6 +476,20 @@ function configureBrowserWebview(
   registerBrowserWhenAttached(webview as BrowserWebviewElement, input, browser);
   observeHostNetworkFailures(webview, input.serverId);
 }
+export function recordBrowserNavigationRequest(browserId: string, url: string): void {
+  const id = trimNonEmpty(browserId);
+  if (!id) return;
+  const pending = pendingWebviews.get(id);
+  if (pending && url !== pending.input.url) {
+    pending.url = url;
+    pending.input.url = url;
+  }
+  const input = residentInputs.get(id);
+  if (input) input.url = url;
+  const webview = getResidentBrowserWebview(id);
+  if (webview) pendingNavigationUrls.set(webview, url);
+}
+
 export function ensureResidentBrowserWebview(
   input: ResidentBrowserInput,
 ): Promise<HTMLElement | null> {

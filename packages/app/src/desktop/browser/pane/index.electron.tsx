@@ -74,6 +74,7 @@ import {
   getResidentBrowserWebview,
   subscribeBrowserWebviewReplacement,
   presentBrowserWebview,
+  recordBrowserNavigationRequest,
   rememberBrowserWebviewSize,
   releaseResidentBrowserWebview,
   removeResidentBrowserWebview,
@@ -998,6 +999,7 @@ export function BrowserPane({
         });
         return;
       }
+      recordBrowserNavigationRequest(browserIdRef.current, normalizedUrl);
       if (!webview || !webview.isConnected) {
         setWebviewRevision((revision) => revision + 1);
         return;
