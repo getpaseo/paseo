@@ -347,14 +347,15 @@ function OpenAgentProfileEditModal({
               {state.composerControls
                 .filter(
                   (control): control is Extract<typeof control, { kind: "toggle" | "select" }> =>
-                    control.kind === "toggle" || control.kind === "select",
+                    (control.kind === "toggle" || control.kind === "select") &&
+                    control.visible !== false,
                 )
                 .map((control, index) => (
                   <AgentProfileControlRow
                     key={control.id}
                     control={control}
                     isFirst={state.features.length === 0 && index === 0}
-                    disabled={state.isSubmitting}
+                    disabled={state.isSubmitting || control.disabled === true}
                     size={controlSize}
                     model={model}
                   />

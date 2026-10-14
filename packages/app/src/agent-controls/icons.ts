@@ -1,4 +1,4 @@
-import type { ComponentType } from "react";
+import { createElement, useMemo, type ComponentType } from "react";
 import {
   Bot,
   Brain,
@@ -14,6 +14,8 @@ import {
   Zap,
 } from "lucide-react-native";
 import * as LucideIcons from "lucide-react-native";
+import { withUnistyles } from "react-native-unistyles";
+import type { Theme } from "@/styles/theme";
 import { getModeVisuals, type AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 
 export interface AgentControlIconProps {
@@ -79,8 +81,9 @@ function toPascalCase(name: string): string {
 
 function findLucideIcon(name: string): AgentControlIcon | undefined {
   if (NON_ICON_EXPORTS.has(name)) return undefined;
-  // Accept PascalCase export names ("Bell") and kebab-case ("bell").
-  const candidates = name.includes("-") ? [name, toPascalCase(name)] : [name];
+  // Accept PascalCase export names ("Bell") and kebab-case ("bell",
+  // "shield-check"): try the name as given, then its PascalCase form.
+  const candidates = [...new Set([name, toPascalCase(name)])];
   for (const candidate of candidates) {
     if (NON_ICON_EXPORTS.has(candidate)) continue;
     const resolved: unknown = Reflect.get(LucideIcons, candidate);
@@ -102,4 +105,38 @@ export function getAgentFeatureIcon(icon?: string): AgentControlIcon {
     if (resolved) return resolved;
   }
   return Settings2;
+}
+
+const foregroundIconMapping = (theme: Theme) => ({ color: theme.colors.foreground });
+const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+
+export interface ThemedAgentControlIconProps {
+  icon: AgentControlIcon;
+  size: number;
+  active: boolean;
+}
+
+/** Theme-colored icon for places that render an icon directly (not via a trigger). */
+export function ThemedAgentControlIcon({ icon: Icon, size, active }: ThemedAgentControlIconProps) {
+  const ThemedIcon = useMemo(() => withUnistyles(Icon), [Icon]);
+  return createElement(ThemedIcon, {
+    size,
+    uniProps: active ? foregroundIconMapping : mutedIconMapping,
+  });
+}
+
+/**
+ * Wrap an icon so its color comes from the theme through `withUnistyles`
+ * instead of a `useUnistyles()` read in the parent. The wrapper ignores the
+ * `color` prop callers pass; `active` picks foreground over muted.
+ * Memoize the result at the call site so the component identity is stable.
+ */
+export function themedAgentControlIcon(Icon: AgentControlIcon, active: boolean): AgentControlIcon {
+  const ThemedIcon = withUnistyles(Icon);
+  return function WrappedAgentControlIcon({ size }: AgentControlIconProps) {
+    return createElement(ThemedIcon, {
+      size,
+      uniProps: active ? foregroundIconMapping : mutedIconMapping,
+    });
+  };
 }

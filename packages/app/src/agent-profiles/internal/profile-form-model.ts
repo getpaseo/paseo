@@ -13,6 +13,7 @@ import {
   applyFeatureValues,
   pruneControlValues,
   pruneFeatureValues,
+  serializeControlValues,
 } from "@/hooks/feature-preferences";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
 
@@ -353,6 +354,9 @@ export function buildFeatureRequestKey(request: AgentProfileFeatureRequest | nul
     request.model ?? "",
     request.modeId ?? "",
     request.thinkingOptionId ?? "",
+    // Held values feed the listing (dependent controls), so they are part of
+    // the key; applyFeatures already drops responses for stale keys.
+    serializeControlValues(request.controlValues),
   ].join("|");
 }
 
@@ -520,7 +524,13 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
       showModeField: hasProvider && (modes.length > 0 || Boolean(withOptions.modeId)),
       showThinkingField:
         hasProvider && (thinking.length > 0 || Boolean(withOptions.thinkingOptionId)),
-      showFeaturesField: hasProvider && (features.length > 0 || composerControls.length > 0),
+      showFeaturesField:
+        hasProvider &&
+        (features.length > 0 ||
+          composerControls.some(
+            (control) =>
+              (control.kind === "toggle" || control.kind === "select") && control.visible !== false,
+          )),
     };
     const canSubmit =
       withOptions.name.trim().length > 0 &&

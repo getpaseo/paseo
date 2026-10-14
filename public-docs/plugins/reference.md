@@ -333,7 +333,9 @@ session config.
 
 Provider plugins can also contribute `composerControls` — `action`, `toggle`, and `select`
 descriptors rendered in the composer toolbar only while that provider is selected. Unlike settings,
-Paseo never persists or interprets them; live interactions route to the provider's `onControlEvent`.
+Paseo never interprets them; live interactions route to the provider's `onControlEvent`, and
+live values are never persisted. Draft choices are remembered per provider like draft features,
+and profile choices are stored in the profile, until creation hands them over.
 Control `icon` fields accept any icon name the app's `lucide-react-native` exports
 (PascalCase or kebab-case); unknown names fall back to the default feature icon.
 Requires `server_info.features.providerComposerControls`.

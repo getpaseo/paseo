@@ -24,7 +24,13 @@ import {
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
 import { Settings2 } from "lucide-react-native";
-import { getAgentFeatureIcon, ThinkingIcon, type AgentControlIcon } from "@/agent-controls/icons";
+import {
+  getAgentFeatureIcon,
+  themedAgentControlIcon,
+  ThemedAgentControlIcon,
+  ThinkingIcon,
+  type AgentControlIcon,
+} from "@/agent-controls/icons";
 import { formatThinkingOptionLabel } from "@/agent-controls/labels";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
@@ -1634,12 +1640,15 @@ function DesktopComposerControlItem({
   onActionComplete?: () => void;
   disableActions?: boolean;
 }) {
-  const { theme } = useUnistyles();
   const controlSelector = `control-${control.id}` as AgentControlSelector;
   const controlAnchorRef = useRef<View>(null);
   const ControlIcon = getAgentFeatureIcon(control.icon);
   const isActive =
     control.kind === "toggle" ? control.value : control.kind === "select" && control.value != null;
+  const ThemedControlIcon = useMemo(
+    () => themedAgentControlIcon(ControlIcon, isActive),
+    [ControlIcon, isActive],
+  );
 
   const handleControlOpenChange = useMemo(
     () => handleOpenChange(controlSelector),
@@ -1689,21 +1698,18 @@ function DesktopComposerControlItem({
           active={args.active}
           onPress={args.onPress}
           icon={iconName ? getAgentFeatureIcon(iconName) : undefined}
-          iconColor={theme.colors.foreground}
         />
       );
     },
-    [optionIconNames, theme.colors.foreground],
+    [optionIconNames],
   );
-  const iconColor = isActive ? theme.colors.foreground : theme.colors.foregroundMuted;
 
   if (control.kind === "action") {
     return (
       <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
         <TooltipTrigger asChild triggerRefProp="ref">
           <AgentControlTrigger
-            icon={ControlIcon}
-            iconColor={iconColor}
+            icon={ThemedControlIcon}
             surface="toolbar"
             label={control.label}
             showToolbarLabel={false}
@@ -1725,8 +1731,7 @@ function DesktopComposerControlItem({
       <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
         <TooltipTrigger asChild triggerRefProp="ref">
           <AgentControlTrigger
-            icon={ControlIcon}
-            iconColor={iconColor}
+            icon={ThemedControlIcon}
             surface="toolbar"
             label={control.label}
             showToolbarLabel={false}
@@ -1750,8 +1755,7 @@ function DesktopComposerControlItem({
         <TooltipTrigger asChild triggerRefProp="ref">
           <AgentControlTrigger
             ref={controlAnchorRef}
-            icon={ControlIcon}
-            iconColor={iconColor}
+            icon={ThemedControlIcon}
             surface="toolbar"
             label={control.label}
             value={selectedOption?.label}
@@ -1798,14 +1802,16 @@ function SheetComposerControlItem({
   onInvoke?: (controlId: string, value: unknown) => void;
   disableActions?: boolean;
 }) {
-  const { theme } = useUnistyles();
   const { t } = useTranslation();
   const controlSelector = `control-${control.id}` as AgentControlSelector;
   const controlAnchorRef = useRef<View | null>(null);
   const ControlIcon = getAgentFeatureIcon(control.icon);
   const isActive =
     control.kind === "toggle" ? control.value : control.kind === "select" && control.value != null;
-  const iconColor = isActive ? theme.colors.foreground : theme.colors.foregroundMuted;
+  const ThemedControlIcon = useMemo(
+    () => themedAgentControlIcon(ControlIcon, isActive),
+    [ControlIcon, isActive],
+  );
 
   const handleSelectPress = useCallback(
     () => handleOpenChange(controlSelector)(openSelector !== controlSelector),
@@ -1869,18 +1875,16 @@ function SheetComposerControlItem({
           active={args.active}
           onPress={args.onPress}
           icon={iconName ? getAgentFeatureIcon(iconName) : undefined}
-          iconColor={theme.colors.foreground}
         />
       );
     },
-    [optionIconNames, theme.colors.foreground],
+    [optionIconNames],
   );
 
   if (control.kind === "action") {
     return (
       <AgentControlTrigger
-        icon={ControlIcon}
-        iconColor={iconColor}
+        icon={ThemedControlIcon}
         surface="sheet"
         label={control.label}
         disabled={disabled || control.disabled || disableActions}
@@ -1896,8 +1900,7 @@ function SheetComposerControlItem({
       <>
         <AgentControlTrigger
           ref={controlAnchorRef}
-          icon={ControlIcon}
-          iconColor={iconColor}
+          icon={ThemedControlIcon}
           surface="sheet"
           label={control.label}
           value={control.value ? t("agentControls.features.on") : t("agentControls.features.off")}
@@ -1926,8 +1929,7 @@ function SheetComposerControlItem({
     <>
       <AgentControlTrigger
         ref={controlAnchorRef}
-        icon={ControlIcon}
-        iconColor={iconColor}
+        icon={ThemedControlIcon}
         surface="sheet"
         label={control.label}
         value={selectedOptionLabel}
@@ -1957,19 +1959,17 @@ function ComposerControlComboboxOption({
   selected,
   active,
   onPress,
-  icon: Icon,
-  iconColor,
+  icon,
 }: {
   option: ComboboxOption;
   selected: boolean;
   active: boolean;
   onPress: () => void;
   icon?: AgentControlIcon;
-  iconColor: string;
 }) {
   const leadingSlot = useMemo(
-    () => (Icon ? <Icon size={16} color={iconColor} /> : null),
-    [Icon, iconColor],
+    () => (icon ? <ThemedAgentControlIcon icon={icon} size={16} active={true} /> : null),
+    [icon],
   );
   return (
     <ComboboxItem

@@ -276,10 +276,12 @@ belongs in one of those two places; it is not a dedicated prompt field.
 ## Add composer controls beyond settings
 
 `settings` persist through `featureValues` and apply to the provider session. When the control is
-yours to own — a stateless action, or a value Paseo must never store or interpret — declare
+yours to own — a stateless action, or a value whose meaning is yours alone — declare
 `composerControls` on the registration instead. Paseo renders the descriptors inside the composer
 toolbar whenever your provider is selected, and routes every live interaction to `onControlEvent`.
-It never persists, validates past shape, or interprets the values.
+Live values are never persisted or interpreted; Paseo validates shape only. Draft and profile
+choices are the exception: they follow draft features — held by the host, remembered per provider
+for drafts, stored explicitly in profiles — and handed to you at creation as `controlValues`.
 
 ```ts
 composerControls: {

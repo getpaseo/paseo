@@ -474,8 +474,8 @@ Validate and apply it inside the provider; core does not know your option shape.
 See [provider options](custom-providers.md#provider-options) for configuration and
 merge semantics.
 
-For controls Paseo must not own — a stateless action, or a value it must never persist or
-interpret — declare `composerControls` on the registration. Kinds are `action`, `toggle`, and
+For controls Paseo must not own — a stateless action, or a value whose meaning is the plugin's
+alone — declare `composerControls` on the registration. Kinds are `action`, `toggle`, and
 `select`; Paseo renders them in the composer toolbar only while your provider is selected and
 routes live interactions to `onControlEvent`. Draft and profile value choices are host-held until
 creation; profiles never render actions. See the [composer controls guide](../public-docs/plugins/providers.md#add-composer-controls-beyond-settings).

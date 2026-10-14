@@ -65,16 +65,39 @@ function isValueControl(
   return control.kind === "toggle" || control.kind === "select";
 }
 
+/** Stable serialization for query keys: control ids sorted, values as JSON. */
+export function serializeControlValues(values: Record<string, unknown> | undefined): string {
+  if (!values) return "";
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(values).sort()) sorted[key] = values[key];
+  return JSON.stringify(sorted);
+}
+
+/** A held value only applies when it matches the control kind (and, for
+ * selects, names a current option). Stored values are `unknown`, so check
+ * instead of casting. */
+function isValidControlValue(
+  control: Extract<AgentComposerControl, { kind: "toggle" | "select" }>,
+  value: unknown,
+): boolean {
+  if (control.kind === "toggle") return typeof value === "boolean";
+  if (value === null) return true;
+  return typeof value === "string" && control.options.some((option) => option.id === value);
+}
+
 export function pruneControlValues(
   controlValues: Record<string, unknown>,
   controls: AgentComposerControl[],
 ): Record<string, unknown> {
-  const allowedControlIds = new Set(controls.filter(isValueControl).map((control) => control.id));
+  const valueControls = new Map(
+    controls.filter(isValueControl).map((control) => [control.id, control] as const),
+  );
   let changed = false;
   const next: Record<string, unknown> = {};
 
   for (const [controlId, value] of Object.entries(controlValues)) {
-    if (!allowedControlIds.has(controlId)) {
+    const control = valueControls.get(controlId);
+    if (!control || !isValidControlValue(control, value)) {
       changed = true;
       continue;
     }
@@ -97,10 +120,11 @@ export function applyControlValues(
     if (!Object.prototype.hasOwnProperty.call(controlValues, control.id)) {
       return control;
     }
-    return {
-      ...control,
-      value: controlValues[control.id],
-    } as AgentComposerControl;
+    const value = controlValues[control.id];
+    if (!isValidControlValue(control, value)) return control;
+    return control.kind === "toggle"
+      ? { ...control, value: value as boolean }
+      : { ...control, value: value as string | null };
   });
 }
 
@@ -113,11 +137,17 @@ export function resolveControlValues(args: {
 
   for (const control of args.controls) {
     if (!isValueControl(control)) continue;
-    if (Object.prototype.hasOwnProperty.call(args.localControlValues, control.id)) {
+    if (
+      Object.prototype.hasOwnProperty.call(args.localControlValues, control.id) &&
+      isValidControlValue(control, args.localControlValues[control.id])
+    ) {
       next[control.id] = args.localControlValues[control.id];
       continue;
     }
-    if (Object.prototype.hasOwnProperty.call(args.persistedControlValues, control.id)) {
+    if (
+      Object.prototype.hasOwnProperty.call(args.persistedControlValues, control.id) &&
+      isValidControlValue(control, args.persistedControlValues[control.id])
+    ) {
       next[control.id] = args.persistedControlValues[control.id];
     }
   }

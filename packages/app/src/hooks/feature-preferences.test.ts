@@ -99,4 +99,18 @@ describe("composer control values", () => {
       { kind: "action", id: "send-pony", label: "Send pony" },
     ]);
   });
+
+  it("ignores stored values that do not match the control kind", () => {
+    // A string saved against a toggle (or a retired select option) must not
+    // be cast into the descriptor; the plugin default stands.
+    expect(applyControlValues(controls, { verbose: "yes", tier: "priority" })).toEqual(controls);
+    expect(
+      resolveControlValues({
+        controls,
+        persistedControlValues: { verbose: "yes", tier: "priority" },
+        localControlValues: {},
+      }),
+    ).toEqual({});
+    expect(pruneControlValues({ verbose: "yes" }, controls)).toEqual({});
+  });
 });

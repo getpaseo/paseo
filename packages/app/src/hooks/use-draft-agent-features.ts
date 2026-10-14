@@ -16,6 +16,7 @@ import {
   pruneFeatureValues,
   resolveControlValues,
   resolveFeatureValues,
+  serializeControlValues,
 } from "./feature-preferences";
 
 type DraftFeatureConfig = Pick<
@@ -100,6 +101,10 @@ export function useDraftAgentFeatures(input: {
       modeId ?? null,
       modelId ?? null,
       thinkingOptionId ?? null,
+      // Held control values are part of the listing request: a plugin may
+      // reveal controls or change options based on a toggle, so changing a
+      // value must refetch instead of serving the previous listing.
+      serializeControlValues(draftConfig?.controlValues),
     ],
     enabled: Boolean(serverId && client && isConnected && draftConfig),
     staleTime: 5 * 60 * 1000,

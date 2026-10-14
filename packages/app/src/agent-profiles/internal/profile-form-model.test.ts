@@ -473,10 +473,23 @@ describe("buildFeatureRequestKey", () => {
 
   it("separates the fields so a value cannot bleed across positions", () => {
     expect(buildFeatureRequestKey({ provider: "claude", model: "a|b", surface: "profile" })).toBe(
-      "claude|a|b||",
+      "claude|a|b|||",
     );
     expect(
       buildFeatureRequestKey({ provider: "claude", modeId: "a", surface: "profile" }),
     ).not.toBe(buildFeatureRequestKey({ provider: "claude", model: "a", surface: "profile" }));
+    expect(
+      buildFeatureRequestKey({
+        provider: "claude",
+        surface: "profile",
+        controlValues: { verbose: true },
+      }),
+    ).not.toBe(
+      buildFeatureRequestKey({
+        provider: "claude",
+        surface: "profile",
+        controlValues: { verbose: false },
+      }),
+    );
   });
 });

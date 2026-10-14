@@ -1071,6 +1071,10 @@ class PluginAgentClient implements AgentClient {
         this.rootsBySession.delete(bridge.id);
       },
       this.registration,
+      {
+        cwd: input.config.cwd,
+        ...(input.config.controlValues ? { controlValues: { ...input.config.controlValues } } : {}),
+      },
     );
     this.rootsBySession.set(bridge.id, session);
     this.attachPendingChildren();
@@ -1126,13 +1130,20 @@ class PluginAgentSession implements AgentSession {
   private unsubscribe: (() => void) | null = null;
   private currentTurnId: string | null = null;
   private closed = false;
+  private readonly sessionCwd?: string;
+  private readonly controlValuesState: Record<string, unknown> = {};
 
   constructor(
     readonly provider: string,
     private readonly bridge: ProviderRuntimeSession,
     private readonly onClose: () => void,
     private readonly registration?: ProviderRegistration,
+    sessionContext?: { cwd?: string; controlValues?: Record<string, unknown> },
   ) {
+    this.sessionCwd = sessionContext?.cwd;
+    if (sessionContext?.controlValues) {
+      Object.assign(this.controlValuesState, sessionContext.controlValues);
+    }
     this.subagentIdsBySession.set(bridge.id, null);
     for (const event of bridge.history) this.accept(event, false);
     // Opening notices arrive before the manager subscribes to the session.
@@ -1308,6 +1319,14 @@ class PluginAgentSession implements AgentSession {
     });
   }
 
+  private rememberControlValues(controls: AgentComposerControl[]): void {
+    for (const control of controls) {
+      if (control.kind === "toggle" || control.kind === "select") {
+        this.controlValuesState[control.id] = control.value;
+      }
+    }
+  }
+
   private liveComposerControlContext(agentId?: string): ProviderComposerControlContext {
     const config = this.bridge.config;
     return {
@@ -1316,15 +1335,21 @@ class PluginAgentSession implements AgentSession {
       ...(config.model ? { model: config.model } : {}),
       ...(config.mode ? { mode: config.mode } : {}),
       ...(config.thinkingOption ? { thinkingOption: config.thinkingOption } : {}),
+      ...(this.sessionCwd ? { cwd: this.sessionCwd } : {}),
       ...(agentId ? { agentId } : {}),
+      ...(Object.keys(this.controlValuesState).length > 0
+        ? { controlValues: { ...this.controlValuesState } }
+        : {}),
     };
   }
 
   async listComposerControls(input?: { agentId?: string }): Promise<AgentComposerControl[]> {
-    return resolveComposerControls(
+    const controls = await resolveComposerControls(
       this.registration?.composerControls,
       this.liveComposerControlContext(input?.agentId),
     );
+    this.rememberControlValues(controls);
+    return controls;
   }
 
   async invokeComposerControl(input: {
@@ -1341,7 +1366,9 @@ class PluginAgentSession implements AgentSession {
       context,
     });
     if (!result?.controls) return;
-    return toWireComposerControls(parseProviderComposerControls(result.controls));
+    const refreshed = toWireComposerControls(parseProviderComposerControls(result.controls));
+    this.rememberControlValues(refreshed);
+    return refreshed;
   }
 
   async revertConversation(input: { messageId: string }): Promise<void> {
