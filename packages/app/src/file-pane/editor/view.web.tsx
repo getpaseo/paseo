@@ -165,4 +165,7 @@ const FRAME_STYLE = {
   minHeight: 0,
   minWidth: 0,
 } as const;
-const HOST_STYLE = { flex: 1, minHeight: 0, overflow: "hidden" } as const;
+// CodeMirror's scrollIntoView scrolls every overflowing ancestor and stops at a fixed or sticky
+// one. Sticky (with no offsets it lays out like relative) keeps line reveals inside the editor, so
+// they don't shift the host around it, such as the compact workspace sheet.
+const HOST_STYLE = { flex: 1, minHeight: 0, overflow: "hidden", position: "sticky" } as const;

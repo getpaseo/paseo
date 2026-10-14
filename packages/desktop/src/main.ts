@@ -1,3 +1,6 @@
+import { protectConsoleStreams } from "./diagnostics/console-streams.js";
+protectConsoleStreams();
+
 process.emitWarning = (() => {}) as typeof process.emitWarning;
 
 import log from "electron-log/main";

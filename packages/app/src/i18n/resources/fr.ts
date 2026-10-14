@@ -618,6 +618,9 @@ export const fr: TranslationResources = {
       updateHost: "Mettez à jour l’hôte pour utiliser le rendu natif du terminal.",
       unableToSubscribe: "Impossible de s’abonner au terminal",
     },
+    sheet: {
+      openAsTab: "Ouvrir dans un onglet",
+    },
     tabs: {
       loading: "Chargement…",
       modified: "Modifications non enregistrées",
