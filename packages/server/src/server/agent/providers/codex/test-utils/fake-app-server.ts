@@ -135,7 +135,8 @@ export function createCodexAppServerChildProcess(): CodexAppServerChildProcess {
     signalCode: null,
   }) as CodexAppServerChildProcess;
   child.kill = ((signal?: NodeJS.Signals | number) => {
-    queueMicrotask(() => child.emit("exit", null, signal ?? null));
+    child.signalCode = typeof signal === "string" ? signal : "SIGTERM";
+    queueMicrotask(() => child.emit("exit", null, child.signalCode));
     return true;
   }) as ChildProcessWithoutNullStreams["kill"];
   return child;
@@ -230,7 +231,9 @@ export function createFakeCodexAppServer(
       return;
     }
 
-    Promise.resolve(handler(message.params))
+    new Promise<unknown>((resolve) => {
+      resolve(handler(message.params));
+    })
       .then((result) => {
         const rpcError = toJsonObject(result).__jsonRpcError;
         if (rpcError) {
