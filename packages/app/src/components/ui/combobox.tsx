@@ -990,8 +990,9 @@ function MobileComboboxBody(props: MobileBodyProps): ReactElement {
       enablePanDownToClose
       backgroundComponent={ComboboxSheetBackground}
       handleIndicatorStyle={props.handleIndicatorStyle}
-      keyboardBehavior="extend"
+      keyboardBehavior="interactive"
       keyboardBlurBehavior="none"
+      android_keyboardInputMode="adjustPan"
       presentation={props.presentation}
     >
       <SheetVisibleFrame footer={footerView}>
