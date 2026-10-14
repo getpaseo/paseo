@@ -1,3 +1,4 @@
+import { WorkspaceComposerEditingSessionsProvider } from "@/composer/editing-session";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { getOpenAgentTabLabel } from "@getpaseo/protocol/agent-labels";
@@ -73,6 +74,7 @@ import {
   getFocusedBrowserId,
   FOCUSED_PANE_PLACEMENT,
   selectExplorerSidebarPaneId,
+  selectPaneFocusSuspended,
   type WorkspaceLayout,
   type WorkspaceTabPlacement,
   useWorkspaceLayoutStore,
@@ -160,6 +162,8 @@ import {
   type WorkspacePaneContentModel,
 } from "@/screens/workspace/workspace-pane-content";
 import { useMountedTabSet } from "@/screens/workspace/use-mounted-tab-set";
+import { WorkspaceSheetHost } from "@/screens/workspace/workspace-sheet-host";
+import type { PaneHost } from "@/panels/panel-manifest";
 import { WorkspaceFocusProvider } from "@/workspace/focus";
 import { DiffDocumentWorkspaceCacheProvider } from "@/git/diff-document/workspace-cache";
 import type { NewTabSelection } from "@/workspace-tabs/new-tab";
@@ -758,17 +762,21 @@ function WorkspaceContentProviders({
   );
 }
 
-function WorkspacePanelContent({
+function WorkspacePanelProviders({
   launcher,
-  content,
+  children,
+  tabIds,
+  workspaceKey,
 }: {
+  workspaceKey: string;
   launcher: NewTabLauncher;
-  content: ReactNode;
+  children: ReactNode;
+  tabIds: readonly string[];
 }) {
   return (
-    <NewTabLauncherProvider value={launcher}>
-      <View style={styles.content}>{content}</View>
-    </NewTabLauncherProvider>
+    <WorkspaceComposerEditingSessionsProvider workspaceKey={workspaceKey} tabIds={tabIds}>
+      <NewTabLauncherProvider value={launcher}>{children}</NewTabLauncherProvider>
+    </WorkspaceComposerEditingSessionsProvider>
   );
 }
 
@@ -1272,6 +1280,9 @@ function WorkspaceScreenContent({
   const explorerSidebarPaneId = useWorkspaceLayoutStore((state) =>
     persistenceKey ? selectExplorerSidebarPaneId(state, persistenceKey) : null,
   );
+  const paneFocusSuspended = useWorkspaceLayoutStore((state) =>
+    persistenceKey ? selectPaneFocusSuspended(state, persistenceKey) : false,
+  );
   const lastMainPaneRef = useLastMainPane({
     workspaceKey: persistenceKey,
     layout: workspaceLayout,
@@ -1310,6 +1321,9 @@ function WorkspaceScreenContent({
   const focusWorkspaceTab = useWorkspaceLayoutStore((state) => state.focusTab);
   const selectWorkspaceTabInPane = useWorkspaceLayoutStore((state) => state.selectTabInPane);
   const closeWorkspaceTab = useWorkspaceLayoutStore((state) => state.closeTab);
+  const sheetTab = useWorkspaceLayoutStore((state) =>
+    persistenceKey ? (state.sheetByWorkspace[persistenceKey]?.tab ?? null) : null,
+  );
   const unpinWorkspaceAgent = useWorkspaceLayoutStore((state) => state.unpinAgent);
   const hideWorkspaceAgent = useWorkspaceLayoutStore((state) => state.hideAgent);
   const setWorkspaceTabState = useWorkspaceLayoutStore((state) => state.setTabState);
@@ -1382,6 +1396,7 @@ function WorkspaceScreenContent({
   const visibleAgentIds = useVisibleAgentIds({
     layout: workspaceLayout,
     tabs: uiTabs,
+    sheetTab,
     routeFocused: isRouteFocused,
     focusedPaneOnly: syncFocusedPaneOnly,
   });
@@ -1683,7 +1698,6 @@ function WorkspaceScreenContent({
       }
 
       const tabId = openPreferredWorkspaceTarget({
-        isCompact: isMobile,
         workspaceKey: persistenceKey,
         target: createWorkspaceFileTabTarget(location),
         source: "chatFiles",
@@ -2067,6 +2081,12 @@ function WorkspaceScreenContent({
 
   const handleCloseTabById = useCallback(
     async (tabId: string) => {
+      if (persistenceKey && sheetTab?.tabId === tabId) {
+        if (await confirmDiscardModifiedTab(tabId)) {
+          closeWorkspaceTab(persistenceKey, tabId);
+        }
+        return;
+      }
       const tab = allTabDescriptorsById.get(tabId);
       if (!tab) {
         return;
@@ -2086,10 +2106,13 @@ function WorkspaceScreenContent({
     },
     [
       allTabDescriptorsById,
+      closeWorkspaceTab,
       confirmDiscardModifiedTab,
       handleCloseAgentTab,
       handleClosePassiveTab,
       handleCloseTerminalTab,
+      persistenceKey,
+      sheetTab,
     ],
   );
 
@@ -2923,17 +2946,19 @@ function WorkspaceScreenContent({
       tab: WorkspaceTabDescriptor;
       paneId?: string | null;
       focusPaneBeforeOpen?: boolean;
+      host?: PaneHost;
     }) =>
       buildWorkspacePaneContentModel({
         tab: input.tab,
         normalizedServerId,
         normalizedWorkspaceId,
         host:
-          canRenderDesktopPaneSplits &&
+          input.host ??
+          (canRenderDesktopPaneSplits &&
           input.paneId !== null &&
           input.paneId === explorerSidebarPaneId
             ? "explorer"
-            : "main",
+            : "main"),
         fileNavigationRevision: fileNavigationRevisionByTabId[input.tab.tabId] ?? 0,
         onOpenTab: (target) => {
           if (!persistenceKey) {
@@ -2952,7 +2977,6 @@ function WorkspaceScreenContent({
         onOpenPreferredTarget: (target, source) => {
           if (!persistenceKey) return;
           const tabId = openPreferredWorkspacePreview({
-            isCompact: isMobile,
             workspaceKey: persistenceKey,
             serverId: normalizedServerId,
             workspaceId: normalizedWorkspaceId,
@@ -3014,7 +3038,6 @@ function WorkspaceScreenContent({
       canRenderDesktopPaneSplits,
       openImportSheet,
       openInSidePane,
-      isMobile,
       requestFileNavigation,
       revealWorkspaceChildTab,
       persistenceKey,
@@ -3058,6 +3081,17 @@ function WorkspaceScreenContent({
     },
     [buildPaneContentModel],
   );
+  const buildSheetPaneContentModel = useCallback(
+    function buildSheetPaneContentModel(tab: WorkspaceTabDescriptor) {
+      return buildPaneContentModel({
+        tab,
+        paneId: null,
+        focusPaneBeforeOpen: false,
+        host: "sheet",
+      });
+    },
+    [buildPaneContentModel],
+  );
   const handleFocusPane = useStableEvent(function handleFocusPane(paneId: string) {
     if (!persistenceKey || paneFocusSuppressedRef.current) {
       return;
@@ -3073,7 +3107,8 @@ function WorkspaceScreenContent({
     focusedPaneTabDescriptorMap,
     isRouteFocused,
     focusedPaneId,
-    paneFocusSuspended: Boolean(unfocusedPaneId),
+    // The sheet owns input while it covers the tab.
+    paneFocusSuspended,
     onFocusPane: handleFocusPane,
     buildMobilePaneContentModel,
   });
@@ -3526,26 +3561,42 @@ function WorkspaceScreenContent({
   const desktopContent = desktopSplitContent ?? content;
   const rendersDesktopSplitContent = !isMobile && desktopSplitContent !== null;
 
-  const workspacePanelContent = (
-    <WorkspacePanelContent
-      launcher={newTabLauncher}
-      content={isMobile ? content : desktopContent}
-    />
+  const workspacePanelTabIds = useMemo(
+    () => [...uiTabs.map((tab) => tab.tabId), ...(sheetTab ? [sheetTab.tabId] : [])],
+    [uiTabs, sheetTab],
   );
+  const workspacePanelKey = `${normalizedServerId}:${normalizedWorkspaceId}`;
 
+  // The sheet is the column's last child, so it covers the compact header as a modal.
   const workspaceCenterColumn = isMobile ? (
-    <View style={styles.centerColumn}>
-      <FloatingHeaderLayout
-        header={compactWorkspaceHeader}
-        floating={floatsHeaderOverContent(activeTabDescriptor)}
-      >
-        {(topOverlayInset) => (
-          <StreamTopOverlayProvider value={topOverlayInset}>
-            {workspacePanelContent}
-          </StreamTopOverlayProvider>
-        )}
-      </FloatingHeaderLayout>
-    </View>
+    <WorkspacePanelProviders
+      launcher={newTabLauncher}
+      workspaceKey={workspacePanelKey}
+      tabIds={workspacePanelTabIds}
+    >
+      <View style={styles.centerColumn}>
+        <FloatingHeaderLayout
+          header={compactWorkspaceHeader}
+          floating={floatsHeaderOverContent(activeTabDescriptor)}
+        >
+          {(topOverlayInset) => (
+            <StreamTopOverlayProvider value={topOverlayInset}>
+              <View style={styles.content}>{content}</View>
+            </StreamTopOverlayProvider>
+          )}
+        </FloatingHeaderLayout>
+        <StreamTopOverlayProvider value={0}>
+          <WorkspaceSheetHost
+            workspaceKey={persistenceKey}
+            serverId={normalizedServerId}
+            workspaceId={normalizedWorkspaceId}
+            isWorkspaceFocused={isRouteFocused}
+            buildContent={buildSheetPaneContentModel}
+            onCloseTab={handleCloseTabById}
+          />
+        </StreamTopOverlayProvider>
+      </View>
+    </WorkspacePanelProviders>
   ) : (
     <View style={styles.centerColumn}>
       {rendersDesktopSplitContent ? null : renderWorkspaceScreenHeader()}
@@ -3578,7 +3629,15 @@ function WorkspaceScreenContent({
         </NewTabLauncherProvider>
       ) : null}
 
-      <View style={styles.centerContent}>{workspacePanelContent}</View>
+      <View style={styles.centerContent}>
+        <WorkspacePanelProviders
+          launcher={newTabLauncher}
+          workspaceKey={workspacePanelKey}
+          tabIds={workspacePanelTabIds}
+        >
+          <View style={styles.content}>{desktopContent}</View>
+        </WorkspacePanelProviders>
+      </View>
     </View>
   );
 

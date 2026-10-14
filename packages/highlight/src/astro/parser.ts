@@ -45,10 +45,12 @@ function maskExpressions(text: string): string {
 }
 
 function expressionOverlays(node: SyntaxNodeRef, input: Input): Range[] | null {
-  const overlays = findExpressions(input.read(node.from, node.to)).map(({ from, to }) => ({
-    from: node.from + from + 1,
-    to: node.from + to,
-  }));
+  const overlays = findExpressions(input.read(node.from, node.to))
+    .filter(({ from, to }) => to > from + 1)
+    .map(({ from, to }) => ({
+      from: node.from + from + 1,
+      to: node.from + to,
+    }));
   return overlays.length > 0 ? overlays : null;
 }
 

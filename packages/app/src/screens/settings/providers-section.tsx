@@ -328,7 +328,7 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
   const isConnected = useHostRuntimeIsConnected(serverId);
   const supportsProviderRemoval = useHostFeature(serverId, "providerRemoval");
   const { entries, isLoading, refresh } = useProvidersSnapshot(serverId);
-  const { patchConfig } = useDaemonConfig(serverId);
+  const { config, patchConfig } = useDaemonConfig(serverId);
   const openProviderSettings = useProviderSettingsStore((state) => state.open);
   const [pendingProviderId, setPendingProviderId] = useState<string | null>(null);
   const [removingProviderId, setRemovingProviderId] = useState<string | null>(null);
@@ -337,6 +337,12 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
 
   const providerDefinitions = useMemo(() => buildProviderDefinitions(entries), [entries]);
   const hasServer = serverId.length > 0;
+
+  /** Custom providers are deletable only when config.json holds their `extends` definition. */
+  const isConfigOwnedProvider = useCallback(
+    (providerId: string) => Boolean(config?.providers?.[providerId]?.extends),
+    [config],
+  );
 
   const handleOpenProviderSettings = useCallback(
     (providerId: string) => {
@@ -444,7 +450,11 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
                   enabled={entry.enabled ?? true}
                   isToggling={pendingProviderId === def.id}
                   isRemoving={removingProviderId === def.id}
-                  canRemove={supportsProviderRemoval && entry.source === "custom"}
+                  canRemove={
+                    supportsProviderRemoval &&
+                    entry.source === "custom" &&
+                    isConfigOwnedProvider(def.id)
+                  }
                   isFirst={index === 0}
                   onPress={handleOpenProviderSettings}
                   onToggleEnabled={handleToggleEnabled}

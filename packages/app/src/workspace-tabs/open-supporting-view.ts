@@ -46,7 +46,6 @@ export function openWorkspaceChanges(input: OpenWorkspaceChangesInput): string |
     return null;
   }
   return openPreferredWorkspaceTarget({
-    isCompact: input.isCompact,
     workspaceKey: input.workspaceKey,
     target: { kind: "working_diff" },
     source: "diffs",
@@ -70,7 +69,6 @@ export function openWorkspacePullRequest(input: OpenWorkspacePullRequestInput): 
     return null;
   }
   return openWorkspaceTargetAtLocation({
-    isCompact: input.isCompact,
     workspaceKey: input.workspaceKey,
     target: { kind: "pull_request" },
     location: input.destination,

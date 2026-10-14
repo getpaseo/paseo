@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test, type Page } from "../support/fixtures";
 import {
+  expandFolder,
   openFileExplorer,
   openFileFromExplorer,
   expectFileTabOpen,
@@ -68,6 +69,14 @@ async function selectFileView(page: Page, view: "Preview" | "Source"): Promise<v
   });
   await option.click();
   await expect(option).toHaveAttribute("aria-selected", "true");
+}
+
+async function expectMarkdownImageLoaded(page: Page, name: string): Promise<void> {
+  const image = page.getByRole("img", { name, exact: true });
+  await expect(image).toBeVisible();
+  await expect
+    .poll(() => image.locator("img").evaluate((element: HTMLImageElement) => element.naturalWidth))
+    .toBeGreaterThan(0);
 }
 
 function watchRequestsTo(page: Page, origin: string): string[] {
@@ -682,6 +691,40 @@ test.describe("CodeMirror workspace file editing", () => {
     const initialSource = await image.getAttribute("src");
     await writeFile(imagePath, BLUE_PIXEL);
     await expect.poll(() => image.getAttribute("src")).not.toBe(initialSource);
+  });
+
+  test("renders local relative images inside Markdown preview", async ({ page, withWorkspace }) => {
+    test.setTimeout(90_000);
+    const workspace = await withWorkspace({ prefix: "file-md-relative-image-" });
+    await mkdir(path.join(workspace.repoPath, "docs"), { recursive: true });
+    await mkdir(path.join(workspace.repoPath, "data", "cache"), { recursive: true });
+    await writeFile(path.join(workspace.repoPath, "docs", "sibling.png"), RED_PIXEL);
+    await writeFile(path.join(workspace.repoPath, "data", "cache", "hero.png"), RED_PIXEL);
+    await writeFile(
+      path.join(workspace.repoPath, "docs", "guide.md"),
+      [
+        "# Guide",
+        "",
+        "![sibling](./sibling.png)",
+        "",
+        "![hero](../data/cache/hero.png?v=2#preview)",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await workspace.navigateTo();
+    await openFileExplorer(page);
+    await expandFolder(page, "docs");
+    await openFileFromExplorer(page, "guide.md");
+    await expectFileTabOpen(page, "docs/guide.md");
+
+    const visibleFilePane = page.getByTestId("workspace-file-pane").filter({ visible: true });
+    await expect(visibleFilePane.getByText("Guide", { exact: true })).toBeVisible();
+    await expectMarkdownImageLoaded(page, "sibling");
+    await expectMarkdownImageLoaded(page, "hero");
+    await visibleFilePane.screenshot({
+      path: test.info().outputPath("markdown-relative-images.png"),
+    });
   });
 
   test("previews and refreshes an HTML plan while preserving source access", async ({
