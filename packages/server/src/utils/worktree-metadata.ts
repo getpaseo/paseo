@@ -9,7 +9,7 @@ const ChangeRequestLookupTargetSchema = z.object({
   localBranchName: z.string().min(1).optional(),
 });
 
-// baseRefName is the display name; baseRef is the exact ref the worktree was cut from
+// baseRefName is the display name; baseRef is the checkout's current exact base
 // ("refs/remotes/upstream/main"). baseRef is optional because worktrees written before it
 // existed only have the name — there are no migrations, so readers fall back.
 const PaseoWorktreeMetadataV1Schema = z.object({
@@ -262,6 +262,15 @@ export function writePaseoWorktreeRuntimeMetadata(
   writePaseoWorktreeMetadataFile(worktreeRoot, next);
 }
 
+export function setPaseoWorktreeBaseRef(input: { worktreeRoot: string; baseRef: string }): void {
+  const current = readPaseoWorktreeMetadata(input.worktreeRoot);
+  writePaseoWorktreeMetadataFile(input.worktreeRoot, {
+    ...(current ?? { version: 1 }),
+    baseRefName: branchNameFromRef(input.baseRef),
+    baseRef: input.baseRef,
+  });
+}
+
 export function writePaseoWorktreeFirstAgentBranchAutoNameMetadata(
   worktreeRoot: string,
   options: { placeholderBranchName: string },
@@ -336,7 +345,7 @@ export function readPaseoWorktreeRuntimePort(worktreeRoot: string): number | nul
   return null;
 }
 
-function writePaseoWorktreeMetadataFile(
+export function writePaseoWorktreeMetadataFile(
   worktreeRoot: string,
   metadata: PaseoWorktreeMetadata,
 ): void {
