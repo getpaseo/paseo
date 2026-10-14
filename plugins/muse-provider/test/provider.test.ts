@@ -406,6 +406,39 @@ for (const cursor of [undefined, "v:old:7"]) {
     ).not.toHaveProperty("cursor");
   });
 }
+for (const source of ["agent config", "saved session"] as const) {
+  test(`resume re-applies the ${source} model and approval mode when Muse reports its defaults`, async () => {
+    const h = await harness("resume-without-cursor", {
+      MUSE_TEST_RESUMED_MODEL: "meta/muse-default",
+    });
+    await h.open(
+      { version: 1, data: { sessionId: "saved-session", model: "meta/muse-spark-1.3" } },
+      "allowAll",
+      source === "agent config" ? "meta/muse-spark-1.3" : null,
+    );
+    const frames = await h.recorded();
+    expect(frames.find((f) => f.method === "session/setModel")?.params.model).toMatchObject({
+      modelId: "meta/muse-spark-1.3",
+    });
+    expect(frames.find((f) => f.method === "session/setApprovalMode")?.params.mode).toBe(
+      "allowAll",
+    );
+    expect(h.events.findLast((e) => e.type === "session.config")).toMatchObject({
+      config: { model: "meta/muse-spark-1.3", mode: "allowAll" },
+    });
+    expect(h.events.findLast((e) => e.type === "session.persistence")).toMatchObject({
+      persistence: { data: { model: "meta/muse-spark-1.3" } },
+    });
+  });
+}
+test("resume sends no model or approval change when Muse already matches", async () => {
+  const h = await harness("resume-without-cursor");
+  await h.open({ version: 1, data: { sessionId: "saved-session" } });
+  const frames = await h.recorded();
+  expect(
+    frames.filter((f) => ["session/setModel", "session/setApprovalMode"].includes(f.method)),
+  ).toEqual([]);
+});
 test("steer sends ifBusy steer and joins the running turn", async () => {
   const h = await harness("steer");
   await h.open();
@@ -1173,10 +1206,17 @@ for (const variant of ["tool", "dedicated", "workflow"]) {
           e.item.type === "assistant_message",
       ),
     ).toMatchObject({ item: { text: "SUBAGENT_PHASE0_OK" } });
-    await h.wait((e) => e.type === "session.turn" && e.state === "completed");
+    await h.wait(
+      (e) =>
+        e.type === "session.turn" && e.sessionId === "paseo-session" && e.state === "completed",
+    );
     expect(
       h.events.filter((e) => e.type === "session.opened" && e.sessionId === "fixture-child"),
     ).toHaveLength(1);
+    // A completed subagent_spawn tool call only means the spawn was accepted.
+    expect(
+      h.events.filter((e) => e.type === "session.turn" && e.sessionId === "fixture-child"),
+    ).toHaveLength(variant === "tool" ? 0 : 1);
     expect(
       (await h.recorded())
         .filter((f) => f.method === "session/read")
@@ -1189,6 +1229,38 @@ for (const variant of ["tool", "dedicated", "workflow"]) {
           e.sessionId === "fixture-child" &&
           e.item.type === "assistant_message",
       ),
+    ).toHaveLength(1);
+  });
+}
+for (const outcome of ["ready", "failed"] as const) {
+  test(`a subagent Muse leaves in progress with a ${outcome} result ends its child and its card`, async () => {
+    const h = await harness("subagent", {
+      MUSE_TEST_CHILD: "dedicated",
+      MUSE_TEST_CHILD_OUTCOME: outcome,
+    });
+    await h.open();
+    await h.prompt();
+    const state = outcome === "ready" ? "completed" : "failed";
+    expect(
+      await h.wait((e) => e.type === "session.turn" && e.sessionId === "fixture-child"),
+    ).toMatchObject({
+      state,
+      ...(outcome === "failed" ? { error: { message: "childFailed" } } : {}),
+    });
+    await h.wait(
+      (e) =>
+        e.type === "session.turn" && e.sessionId === "paseo-session" && e.state === "completed",
+    );
+    const cards = h.events.filter(
+      (e) =>
+        e.type === "timeline.item" &&
+        e.sessionId === "paseo-session" &&
+        e.item.type === "tool_call" &&
+        e.item.name === "subagent",
+    );
+    expect(cards.at(-1)).toMatchObject({ item: { status: state } });
+    expect(
+      h.events.filter((e) => e.type === "session.turn" && e.sessionId === "fixture-child"),
     ).toHaveLength(1);
   });
 }
@@ -1219,6 +1291,55 @@ test("silent active turns page after two minutes and stop polling on recovered t
   await h.wait((e) => e.type === "session.turn" && e.state === "completed");
   await vi.advanceTimersByTimeAsync(240000);
   expect((await h.recorded()).filter((f) => f.method === "view/page")).toHaveLength(1);
+});
+test("a subagent approval does not move the parent's silence repair onto the child's cursor", async () => {
+  const h = await harness("text-reasoning", {
+    MUSE_TEST_SILENT: "1",
+    MUSE_TEST_CHILD_APPROVAL: "1",
+  });
+  await h.open(undefined, "allowAll");
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  await h.prompt();
+  await h.wait((e) => e.type === "session.permission_resolved");
+  await vi.advanceTimersByTimeAsync(120000);
+  await h.wait(
+    (e) =>
+      (e.type === "session.turn" && e.state === "completed") || e.type === "session.runtime_failed",
+  );
+  expect(h.events.filter((e) => e.type === "session.runtime_failed")).toEqual([]);
+  const frames = await h.recorded();
+  expect(frames.find((f) => f.method === "approval/decide").params.approvalId).toBe(
+    "fixture-child-approval",
+  );
+  const pages = frames.filter((f) => f.method === "view/page");
+  expect(pages).toHaveLength(1);
+  expect(pages[0].params.cursor.split(":")[1]).toBe(pages[0].params.sessionId);
+});
+test("a failed silence repair keeps the session and retries at the next silence", async () => {
+  const h = await harness("text-reasoning", {
+    MUSE_TEST_SILENT: "1",
+    MUSE_TEST_PAGE_FAIL_ONCE: "1",
+  });
+  await h.open();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  await h.prompt();
+  await h.wait((e) => e.type === "session.prompt_result");
+  await vi.advanceTimersByTimeAsync(120000);
+  const deadline = Date.now() + 5000;
+  while ((await h.recorded()).filter((f) => f.method === "view/page").length === 0) {
+    if (Date.now() > deadline) throw new Error("The first repair never paged");
+    await delay(10);
+  }
+  await delay(50);
+  expect(h.events.filter((e) => e.type === "session.runtime_failed")).toEqual([]);
+  expect(h.events.filter((e) => e.type === "session.turn" && e.state === "completed")).toEqual([]);
+  await vi.advanceTimersByTimeAsync(120000);
+  await h.wait((e) => e.type === "session.turn" && e.state === "completed");
+  expect((await h.recorded()).filter((f) => f.method === "view/page")).toHaveLength(2);
+  expect(h.events.filter((e) => e.type === "session.runtime_failed")).toEqual([]);
+  expect(h.events.filter((e) => e.type === "session.turn" && e.state === "completed")).toHaveLength(
+    1,
+  );
 });
 test("session readiness accepts initialization beyond the old event polling window", async () => {
   const h = await harness("text-reasoning", { MUSE_TEST_INITIALIZE_DELAY_MS: "3500" });
