@@ -410,6 +410,7 @@ interface ResidentBrowserInput extends BrowserWebviewIdentity {
 const residentInputs = new Map<string, ResidentBrowserInput>();
 interface PendingWebview {
   creation: Promise<HTMLElement | null>;
+  input: ResidentBrowserInput;
   /** The latest URL asked for while the partition is prepared; the new guest loads it. */
   url: string;
 }
@@ -478,15 +479,22 @@ function configureBrowserWebview(
 export function ensureResidentBrowserWebview(
   input: ResidentBrowserInput,
 ): Promise<HTMLElement | null> {
+  return prepareResidentBrowserWebview(input, input.url);
+}
+function prepareResidentBrowserWebview(
+  input: ResidentBrowserInput,
+  url: string,
+): Promise<HTMLElement | null> {
   if (input.routingEvents || !input.profileHost) ensureBrowserRoutingListener(input.routingEvents);
   const pending = pendingWebviews.get(input.browserId);
   if (pending) {
     // A navigation submitted while the partition is prepared must not be lost.
-    pending.url = input.url;
+    pending.url = url;
+    pending.input.url = input.url;
     return pending.creation;
   }
-  const entry: PendingWebview = { creation: Promise.resolve(null), url: input.url };
-  entry.creation = createResidentBrowserWebview(input, () => entry.url).finally(() => {
+  const entry: PendingWebview = { creation: Promise.resolve(null), input: { ...input }, url };
+  entry.creation = createResidentBrowserWebview(entry.input, () => entry.url).finally(() => {
     if (pendingWebviews.get(input.browserId) === entry) pendingWebviews.delete(input.browserId);
   });
   pendingWebviews.set(input.browserId, entry);
@@ -562,13 +570,16 @@ export async function recreateHostBrowserWebviews(
       ?.getAttribute("partition")
       ?.startsWith(ROUTED_BROWSER_PARTITION_PREFIX);
     if (webview && isRouted === enabled) continue;
-    const url = webview ? readWebviewUrl(webview, input.url) : input.url;
+    const url = webview
+      ? readWebviewUrl(webview, input.url)
+      : (pendingWebviews.get(browserId)?.url ?? input.url);
     // Stop the old network path immediately, before asynchronous proxy preparation.
     if (webview) retireBrowserWebview(webview);
     residentWebviewsByBrowserId.delete(browserId);
     pendingWebviews.delete(browserId);
+    // A hidden pane can still remember its original URL after the guest navigates itself.
     replacements.push(
-      ensureResidentBrowserWebview({ ...input, url }).finally(() => notifyReplacement(browserId)),
+      prepareResidentBrowserWebview({ ...input }, url).finally(() => notifyReplacement(browserId)),
     );
   }
   await Promise.all(replacements);
