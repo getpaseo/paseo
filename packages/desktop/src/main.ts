@@ -120,7 +120,9 @@ const APP_SCHEME = "paseo";
 const PASEO_DEBUG = process.env.PASEO_DEBUG === "1";
 const DISABLE_SINGLE_INSTANCE_LOCK = process.env.PASEO_DISABLE_SINGLE_INSTANCE_LOCK === "1";
 const DESKTOP_BUILD_INFO = readDesktopBuildInfo(app.getAppPath());
-const LOCAL_BUILD_ID = readLocalBuildId(app.getAppPath());
+const LOCAL_BUILD_ID = DESKTOP_BUILD_INFO.autoUpdateEnabled
+  ? null
+  : readLocalBuildId(app.getAppPath());
 let localUpdate: ReturnType<typeof registerLocalUpdate> | null = null;
 const APP_NAME = process.env.PASEO_TEST_APP_NAME?.trim() || DESKTOP_BUILD_INFO.appName;
 const DESKTOP_WINDOW_CHROME_MODE = resolveDesktopWindowChromeMode({

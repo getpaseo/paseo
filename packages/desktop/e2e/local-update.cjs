@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const assert = require("node:assert/strict");
 const root = process.argv[2];
+const dormant = process.argv[3] === "dormant";
 const desktop = path.resolve(__dirname, "..");
 const state = path.join(root, "local-activation.json");
 const first = !fs.existsSync(path.join(root, "started"));
@@ -49,7 +50,7 @@ app
     });
     window.addEventListener('DOMContentLoaded',()=>{ void ipcRenderer.invoke('paseo:local-update:ready', ${JSON.stringify(active)}); });`,
     );
-    for (let index = 0; index < 3; index++) {
+    for (let index = 0; index < (!first && dormant ? 2 : 3); index++) {
       const win = new BrowserWindow({
         show: false,
         width: 620 + index * 10,

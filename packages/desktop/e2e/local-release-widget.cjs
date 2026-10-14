@@ -78,6 +78,16 @@ app
     );
     assert.equal(colors.body, "rgb(249, 247, 244)");
     assert.equal(colors.header, "rgb(56, 53, 52)");
+    const header = await win.webContents.executeJavaScript(`({
+      color: getComputedStyle(document.querySelector('header')).color,
+      identityDisplay: getComputedStyle(document.querySelector('.header-identity')).display,
+      drag: getComputedStyle(document.querySelector('header')).getPropertyValue('-webkit-app-region'),
+      imagePolicy: document.querySelector('meta[http-equiv="Content-Security-Policy"]').content,
+    })`);
+    assert.equal(header.color, "rgb(249, 247, 244)");
+    assert.equal(header.identityDisplay, "flex");
+    assert.equal(header.drag, "drag");
+    assert.match(header.imagePolicy, /img-src data:/);
     assert.match(colors.text, /Exécuter/);
     assert.match(colors.text, /Relecture/);
     if (process.env.PASEO_LOCAL_RELEASE_ARTIFACTS) {

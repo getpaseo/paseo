@@ -72,12 +72,21 @@ export function registerLocalUpdate(
       if (!entry.window.isDestroyed())
         entry.window.webContents.send("paseo:local-update:status", status);
     }
-    writeJson(statusPath, {
-      ...status,
-      pid: process.pid,
-      verified: startupComplete && !startupFailed,
-      checkedAt: now(),
-    });
+    try {
+      writeJson(statusPath, {
+        ...status,
+        pid: process.pid,
+        verified: startupComplete && !startupFailed && [...windows.values()].every((w) => w.ready),
+        checkedAt: now(),
+      });
+    } catch (error) {
+      startupFailed = true;
+      policy.fail(`Impossible d’enregistrer l’état de mise à jour : ${String(error)}`);
+      for (const entry of windows.values()) {
+        if (!entry.window.isDestroyed())
+          entry.window.webContents.send("paseo:local-update:status", { ...policy.status });
+      }
+    }
   }
   function authorized(event: IpcMainInvokeEvent) {
     return event.senderFrame === event.sender.mainFrame && windows.has(event.sender.id);
@@ -98,9 +107,8 @@ export function registerLocalUpdate(
     const expectedMain = restore?.windows.length ?? 1;
     if (
       !startupFailed &&
-      entries.filter((w) => !w.popup && w.ready).length >= expectedMain &&
-      entries.every((w) => w.ready) &&
-      (!restore?.popup || entries.some((w) => w.popup && w.ready))
+      (startupComplete || entries.filter((w) => !w.popup && w.ready).length >= expectedMain) &&
+      entries.every((w) => w.ready)
     ) {
       startupComplete = true;
       writeJson(statePath, null);
@@ -203,7 +211,13 @@ export function registerLocalUpdate(
   }
   const timer = setInterval(() => {
     if (now() - lastCheck >= 30_000) check();
-    if (!startupComplete || startupFailed || activating) return;
+    if (
+      !startupComplete ||
+      startupFailed ||
+      activating ||
+      [...windows.values()].some((w) => !w.ready)
+    )
+      return;
     policy.tick(now());
     publish();
     if (policy.status.phase === "activating") void activate();
@@ -225,7 +239,14 @@ export function registerLocalUpdate(
     attach(window: BrowserWindow, popup = false) {
       const id = window.webContents.id;
       windows.set(id, { window, popup, ready: false });
-      window.on("focus", check);
+      publish();
+      window.on("focus", () => {
+        policy.activity(now());
+        check();
+      });
+      window.webContents.on("before-mouse-event", () => {
+        policy.activity(now());
+      });
       window.on("closed", () => {
         windows.delete(id);
         policy.activity(now());
