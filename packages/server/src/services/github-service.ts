@@ -136,6 +136,11 @@ const LabelSchema = z.object({
   name: z.string().optional(),
 });
 
+// A merge queue that lands the change itself (Graphite's, for one) leaves the pull request closed
+// rather than merged. Repos label such a pull request so tools can tell it landed; this is the
+// label Linear reads for the same purpose.
+const EXTERNALLY_MERGED_LABEL = "externally-merged";
+
 const GitHubIssueSummarySchema = z.object({
   number: z.number(),
   title: z.string().catch(""),
@@ -343,6 +348,7 @@ const CurrentPullRequestStatusSchema = z.object({
   headRefName: z.string().catch(""),
   headRefOid: z.string().optional(),
   mergedAt: z.string().nullable().optional(),
+  labels: z.array(LabelSchema).optional().catch([]),
   statusCheckRollup: z.unknown().optional(),
   reviewDecision: z.unknown().optional(),
   mergeable: PullRequestMergeableSchema.optional().default("UNKNOWN"),
@@ -520,7 +526,7 @@ query PullRequestCheckoutTarget($owner: String!, $name: String!, $number: Int!) 
 }`;
 
 const CURRENT_PR_STATUS_BASE_FIELDS =
-  "number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,mergedAt,reviewDecision,mergeable,headRepositoryOwner";
+  "number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,mergedAt,labels,reviewDecision,mergeable,headRepositoryOwner";
 const CURRENT_PR_STATUS_FIELDS = `${CURRENT_PR_STATUS_BASE_FIELDS},statusCheckRollup`;
 
 const PULL_REQUEST_STATUS_FACTS_QUERY = `
@@ -637,6 +643,11 @@ const BatchPollPrNodeSchema = z.object({
   headRefName: z.string().catch(""),
   headRefOid: z.string().catch(""),
   mergedAt: z.string().nullable().optional(),
+  labels: z
+    .object({ nodes: z.array(LabelSchema) })
+    .nullable()
+    .optional()
+    .catch(null),
   mergeable: PullRequestMergeableSchema.optional().default("UNKNOWN"),
   reviewDecision: z.unknown().optional(),
   headRepositoryOwner: HeadRepositoryOwnerSchema,
@@ -741,6 +752,11 @@ fragment PaseoPollPullRequest on PullRequest {
   headRefName
   headRefOid
   mergedAt
+  labels(first: 20) {
+    nodes {
+      name
+    }
+  }
   mergeable
   reviewDecision
   headRepositoryOwner {
@@ -3345,6 +3361,7 @@ function toBatchCurrentPullRequestItem(
     headRefName: node.headRefName,
     ...(node.headRefOid ? { headRefOid: node.headRefOid } : {}),
     mergedAt: node.mergedAt ?? null,
+    labels: node.labels?.nodes ?? [],
     ...(statusCheckRollup ? { statusCheckRollup } : {}),
     reviewDecision: node.reviewDecision,
     mergeable: node.mergeable,
@@ -3958,8 +3975,12 @@ function toCurrentPullRequestStatus(
   const repoIdentity = parseGitHubPullRequestRepo(item.url);
   const mergedAt =
     typeof item.mergedAt === "string" && item.mergedAt.trim().length > 0 ? item.mergedAt : null;
+  const isMerged =
+    mergedAt !== null ||
+    (item.state.toUpperCase() === "CLOSED" &&
+      (item.labels ?? []).some((label) => label.name === EXTERNALLY_MERGED_LABEL));
   let state: string;
-  if (mergedAt !== null) {
+  if (isMerged) {
     state = "merged";
   } else if (item.state.trim().length > 0) {
     state = item.state.toLowerCase();
@@ -3975,7 +3996,7 @@ function toCurrentPullRequestStatus(
     state,
     baseRefName: item.baseRefName,
     headRefName: item.headRefName || fallbackHeadRefName,
-    isMerged: mergedAt !== null,
+    isMerged,
     isDraft: item.isDraft ?? false,
     mergeable: item.mergeable,
     checks,

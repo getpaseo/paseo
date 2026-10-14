@@ -23,7 +23,7 @@ const EXPECTED_GITHUB_FAST_POLL_MS = 20_000;
 const EXPECTED_GITHUB_SLOW_POLL_MS = 120_000;
 const EXPECTED_GITHUB_ERROR_BACKOFF_CAP_MS = 300_000;
 const CURRENT_PR_STATUS_BASE_FIELDS =
-  "number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,mergedAt,reviewDecision,mergeable,headRepositoryOwner";
+  "number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,mergedAt,labels,reviewDecision,mergeable,headRepositoryOwner";
 const CURRENT_PR_STATUS_FIELDS = `${CURRENT_PR_STATUS_BASE_FIELDS},statusCheckRollup`;
 const FORK_PR_QUERY = "state=all&per_page=100&head=forkOwner%3Afeature%2Ffork";
 
@@ -1160,6 +1160,44 @@ describe("ForgeService", () => {
 
     subscriptionA?.unsubscribe();
     subscriptionB?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("reads a batch-polled closed PR labelled externally-merged as merged", async () => {
+    const runner = createScriptedRunner([
+      batchPollStatusJson({
+        t0: batchPollRepositoryJson([
+          batchPollPrNodeJson({
+            state: "CLOSED",
+            mergedAt: null,
+            labels: { nodes: [{ name: "externally-merged" }] },
+          }),
+        ]),
+      }),
+      batchPollStatusJson({ t0: batchPollChecksAliasJson([]) }),
+    ]);
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => "acme/widgets",
+    });
+    const statuses: Array<CurrentPullRequestStatus | null> = [];
+
+    const subscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-a",
+      headRef: "feat-a",
+      headSha: "oid-42",
+      onStatus: (status) => statuses.push(status),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+
+    expect(runner.calls[0]?.args[3]).toContain("labels(first: 20)");
+    expect(statuses).toEqual([expect.objectContaining({ state: "merged", isMerged: true })]);
+
+    subscription?.unsubscribe();
     service.dispose?.();
   });
 
@@ -3240,6 +3278,37 @@ describe("ForgeService", () => {
 
     expect(status?.number).toBe(42);
     expect(status?.state).toBe("merged");
+  });
+
+  it("reads a closed PR labelled externally-merged as merged", async () => {
+    const headSha = "2222222222222222222222222222222222222222";
+    const labels = [{ name: "externally-merged" }];
+    const runner = createRunner([
+      currentPullRequestJson({ state: "CLOSED", headRefOid: headSha, labels }),
+      currentPullRequestGithubFactsJson(),
+      // The label goes on when the queue picks the PR up, so an open PR carries it too.
+      currentPullRequestJson({ state: "OPEN", labels }),
+      currentPullRequestGithubFactsJson(),
+    ]);
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+    });
+
+    const landed = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feature/fork",
+      headSha,
+    });
+    const queued = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feature/fork",
+      headSha,
+    });
+
+    expect(landed).toEqual(expect.objectContaining({ state: "merged", isMerged: true }));
+    expect(queued).toEqual(expect.objectContaining({ state: "open", isMerged: false }));
   });
 
   it("does not attach a stale merged PR after a same-name branch advances", async () => {
