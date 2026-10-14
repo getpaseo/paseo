@@ -1,3 +1,4 @@
+import { messageTooLargeError } from "./daemon-client-transport-utils.js";
 import { legacyUsageIcon } from "./legacy-usage-icons.js";
 import { subscribeTimeline, type TimelineMessage } from "./timeline-subscription/index.js";
 import { ProviderSnapshotUpdates } from "./provider-snapshots/index.js";
@@ -1136,20 +1137,14 @@ function getTransportFrameSize(frame: string | Uint8Array | ArrayBuffer): number
 function assertTransportFrameFits(frame: string | Uint8Array | ArrayBuffer): void {
   if (typeof frame !== "string") {
     if (frame.byteLength > MAX_WEBSOCKET_MESSAGE_BYTES)
-      throw messageTooLargeError(frame.byteLength);
+      throw messageTooLargeError(frame.byteLength, MAX_WEBSOCKET_MESSAGE_BYTES);
     return;
   }
   // UTF-8 needs at most three bytes per UTF-16 unit, so only a string near the limit is measured.
   if (frame.length * 3 <= MAX_WEBSOCKET_MESSAGE_BYTES) return;
   const size = new TextEncoder().encode(frame).byteLength;
-  if (size > MAX_WEBSOCKET_MESSAGE_BYTES) throw messageTooLargeError(size);
-}
-
-function messageTooLargeError(size: number): Error {
-  const toMiB = (bytes: number) => (bytes / (1024 * 1024)).toFixed(1);
-  return new Error(
-    `Message is too large to send (${toMiB(size)} MiB). The limit is ${toMiB(MAX_WEBSOCKET_MESSAGE_BYTES)} MiB, so send fewer or smaller attachments.`,
-  );
+  if (size > MAX_WEBSOCKET_MESSAGE_BYTES)
+    throw messageTooLargeError(size, MAX_WEBSOCKET_MESSAGE_BYTES);
 }
 
 function describeInboundTransportFrame(

@@ -1,3 +1,4 @@
+import { MAX_RELAY_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/websocket-message-limit";
 import { resolve, dirname, basename } from "path";
 import { existsSync, realpathSync } from "fs";
 import { open as openFile, readFile, stat as statFile } from "fs/promises";
@@ -2152,13 +2153,13 @@ export async function getCheckoutSnapshotFacts(
 
 const PER_FILE_DIFF_MAX_BYTES = 1024 * 1024; // 1MB
 const TOTAL_DIFF_MAX_BYTES = 2 * 1024 * 1024; // 2MB
-const RELAY_MAX_FRAME_BYTES = 32 * 1024 * 1024;
 const CHECKOUT_DIFF_FRAME_HEADROOM_BYTES = 1024 * 1024;
 // Temporary until diffs load lazily per file. The Paseo relay's 32 MiB frame limit is
 // binding: string frames are encrypted and base64-encoded. Reserve 1 MiB plaintext for
 // the surrounding WebSocket JSON envelope after inverting that exact wire expansion.
 export const CHECKOUT_DIFF_MAX_STRUCTURED_BYTES =
-  maxBase64EncryptedPlaintextByteLength(RELAY_MAX_FRAME_BYTES) - CHECKOUT_DIFF_FRAME_HEADROOM_BYTES;
+  maxBase64EncryptedPlaintextByteLength(MAX_RELAY_WEBSOCKET_MESSAGE_BYTES) -
+  CHECKOUT_DIFF_FRAME_HEADROOM_BYTES;
 
 interface StructuredDiffAccumulator {
   files: ParsedDiffFile[];
