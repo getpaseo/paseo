@@ -785,7 +785,7 @@ async function stopCliDaemon({ appPath, env }) {
   });
 }
 
-async function openSmokeWorkspace({ appPath, env, page, daemonHome }) {
+async function openSmokeWorkspace({ appPath, env, page, daemonHome, openAgent = true }) {
   const projectPath = path.join(daemonHome, "sandbox-smoke-project");
   fs.mkdirSync(projectPath);
   fs.writeFileSync(path.join(projectPath, "README.md"), "Packaged Linux sandbox smoke\n");
@@ -806,8 +806,10 @@ async function openSmokeWorkspace({ appPath, env, page, daemonHome }) {
   });
   await page.getByRole("button", { name: "Sandbox smoke workspace", exact: true }).click();
   await page.waitForURL((url) => url.pathname.endsWith(`/workspace/${workspace.workspaceId}`));
-  await page.getByRole("button", { name: "Agent", exact: true }).click();
-  await page.getByRole("textbox", { name: "Message agent..." }).click();
+  if (openAgent) {
+    await page.getByRole("button", { name: "Agent", exact: true }).click();
+    await page.getByRole("textbox", { name: "Message agent..." }).click();
+  }
   console.log(`Packaged desktop smoke: renderer opened workspace ${workspace.workspaceId}`);
 }
 
@@ -983,7 +985,7 @@ async function smokePackagedDesktopApp({
       await openSmokeWorkspace({ appPath, env, page, daemonHome });
     }
     if (verifyLocalRelease) {
-      await openSmokeWorkspace({ appPath, env, page, daemonHome });
+      await openSmokeWorkspace({ appPath, env, page, daemonHome, openAgent: false });
       await assertLocalRelease({ page, userData });
     }
     await writeSmokeArtifacts({ page, stdout, stderr, userData, daemonHome });
