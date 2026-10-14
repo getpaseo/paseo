@@ -35,6 +35,26 @@ interface AttachedBrowserRegistration {
 }
 
 contextBridge.exposeInMainWorld("paseoDesktop", {
+  localUpdate: {
+    buildId: process.argv.find((arg) => arg.startsWith("--paseo-build-id="))?.slice(17) ?? "",
+    ready: (id: string) => ipcRenderer.invoke("paseo:local-update:ready", id),
+    activity: () => ipcRenderer.invoke("paseo:local-update:activity"),
+    postpone: () => ipcRenderer.invoke("paseo:local-update:postpone"),
+    onStatus: (handler: (value: unknown) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, value: unknown) => handler(value);
+      ipcRenderer.on("paseo:local-update:status", listener);
+      return () => ipcRenderer.removeListener("paseo:local-update:status", listener);
+    },
+    onPrepare: (handler: () => Promise<boolean>) => {
+      const listener = (_event: Electron.IpcRendererEvent, token: string) => {
+        void handler()
+          .then((ok) => ipcRenderer.invoke("paseo:local-update:prepared", token, { ok }))
+          .catch(() => ipcRenderer.invoke("paseo:local-update:prepared", token, { ok: false }));
+      };
+      ipcRenderer.on("paseo:local-update:prepare", listener);
+      return () => ipcRenderer.removeListener("paseo:local-update:prepare", listener);
+    },
+  },
   agentWidget: {
     publish: (snapshot: WidgetSnapshot) =>
       ipcRenderer.invoke("paseo:agent-widget:publish", snapshot),

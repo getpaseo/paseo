@@ -34,7 +34,10 @@ function paths(env) {
     checkout: join(state, "checkout"),
     lock: join(state, "build.lock"),
     marker: join(state, "last-successful-commit"),
-    restartMarker: join(state, "last-successful-daemon-restart-commit"),
+    activeMarker: join(state, "last-active-commit"),
+    desktopStatus:
+      env.PASEO_LOCAL_DESKTOP_STATUS ??
+      join(homedir(), "Library/Application Support/Paseo Local/local-release-status.json"),
     workflowActivationMarker: join(state, "last-successful-workflow-activation-commit"),
     workflowReleases: join(state, "workflow-releases"),
     paseoHome: resolve(env.PASEO_LOCAL_BUILDER_PASEO_HOME ?? join(homedir(), ".paseo")),
@@ -496,7 +499,7 @@ function verifyLaunchd(env) {
 }
 
 function runLocked(env) {
-  const { checkout, marker, paseoHome, restartMarker } = paths(env);
+  const { checkout, marker } = paths(env);
   const commit = syncCheckout(checkout, env);
   const successfulCommit = existsSync(marker) ? readFileSync(marker, "utf8").trim() : "";
   if (successfulCommit !== commit) {
@@ -509,29 +512,25 @@ function runLocked(env) {
     log(`Already built ${commit}`);
   }
 
-  const restartedCommit = existsSync(restartMarker)
-    ? readFileSync(restartMarker, "utf8").trim()
-    : "";
-  let daemon = null;
-  if (restartedCommit !== commit) {
-    const cliArgs = ["run", "--silent", "cli", "--"];
-    daemon = daemonStatus(checkout, paseoHome, env);
-    if (daemon.localDaemon === "running" && daemon.desktopManaged === true) {
-      const restart = JSON.parse(
-        execute("npm", [...cliArgs, "daemon", "restart", "--home", paseoHome, "--json"], {
-          cwd: checkout,
-          env,
-        }),
-      );
-      if (restart.action !== "restarted" || restart.acknowledged !== true) {
-        throw new Error("Paseo Local daemon restart was not acknowledged");
-      }
-      daemon = { ...daemon, localDaemon: "running" };
-      log("Restarted Paseo Local daemon");
+  // Installation does not authorize interrupting agents. The desktop activates its UI at idle.
+  const { activeMarker, desktopStatus } = paths(env);
+  let active = false;
+  try {
+    const status = JSON.parse(readFileSync(desktopStatus, "utf8"));
+    if (status.verified && status.active === commit && Number.isInteger(status.pid)) {
+      process.kill(status.pid, 0);
+      active = true;
     }
-    writeMarker(restartMarker, commit);
+  } catch {
+    /* Closed or unverified desktop: installation is still pending activation. */
   }
-  return syncWorkflowCommit(env, commit, daemon);
+  if (active) {
+    writeMarker(activeMarker, commit);
+    log(`Active ${commit}`);
+  } else {
+    log(`Installed ${commit}; waiting for desktop activation confirmation`);
+  }
+  return syncWorkflowCommit(env, commit, null);
 }
 
 function withLock(command, env, busyExitCode) {

@@ -113,6 +113,7 @@ import {
 } from "@/runtime/host-runtime";
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
 import { usePanelStore } from "@/stores/panel-store";
+import { useLocalUpdate } from "@/desktop/use-local-update";
 import { flushDraftPersistStorage } from "@/stores/draft-store";
 import { getNextThemePreference, ICON_STROKE_WIDTH } from "@/styles/theme";
 import { useSessionStore } from "@/stores/session-store";
@@ -984,6 +985,7 @@ function RootAppTree() {
 }
 
 export default function RootLayout() {
+  useLocalUpdate();
   useEffect(() => installWebScrollbarStyles(), []);
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {

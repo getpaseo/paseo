@@ -4,6 +4,10 @@ Paseo is a mobile app for monitoring and controlling your local AI coding agents
 
 **Supported agents:** Claude Code, Codex, GitHub Copilot, OpenCode, Pi, Antigravity, and Muse Code.
 
+## Local terminology
+
+When Sylvain says **pop-up**, he means the external desktop window shown when a plan awaits his action (validation, revision, or handoff). It does not mean an in-app modal.
+
 ## Repository map
 
 This is an npm workspace monorepo:

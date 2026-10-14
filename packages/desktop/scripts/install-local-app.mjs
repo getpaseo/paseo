@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { access, cp, mkdir, rename as fsRename, rm, stat } from "node:fs/promises";
+import { verifyLocalRelease } from "./verify-local-release.mjs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -51,9 +52,13 @@ if (isMain) {
   }
 
   const desktopDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const source = path.join(desktopDir, ".dev", "release-local", "mac-arm64", "Paseo.app");
+  await verifyLocalRelease(source, process.env.PASEO_LOCAL_RELEASE_COMMIT);
   const installedPath = await replaceAppBundle({
-    source: path.join(desktopDir, ".dev", "release-local", "mac-arm64", "Paseo.app"),
-    target: path.join(os.homedir(), "Applications", "Paseo Local.app"),
+    source,
+    target:
+      process.env.PASEO_LOCAL_INSTALL_TARGET ??
+      path.join(os.homedir(), "Applications", "Paseo Local.app"),
   });
   process.stdout.write(`Installed ${installedPath}\n`);
 }

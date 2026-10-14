@@ -1,3 +1,4 @@
+import { useLocalUpdateBlocker } from "@/desktop/use-local-update-blocker";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   View,
@@ -1433,6 +1434,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       voice,
       voiceServerId,
       voiceAgentId,
+    );
+    useLocalUpdateBlocker(
+      [isDictating, isDictationProcessing, isRealtimeVoiceForCurrentAgent].some(Boolean),
     );
     const showDictationOverlay = computeShouldShowDictationOverlay(
       isDictating,

@@ -1,3 +1,4 @@
+import { useLocalUpdateBlocker } from "@/desktop/use-local-update-blocker";
 import type { ComposerTextSource } from "./text-source";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { useStore } from "zustand";
@@ -2154,6 +2155,7 @@ function ComposerContentImpl({
 
   const isSubmitLoadingVisible =
     isProcessing || isSubmitLoading || isUploadingFile || pendingNativeImagePastes > 0;
+  useLocalUpdateBlocker(isSubmitLoadingVisible);
   const isSubmitDisabled =
     isSubmitLoadingVisible || (waitForForgeAutoAttachOnSubmit && isForgeResolving);
 
@@ -2197,7 +2199,7 @@ function ComposerContentImpl({
         focusMessageInputForKeyboardAction={focusMessageInputForKeyboardAction}
         isMessageInputFocused={isMessageInputFocused}
       />
-      <View style={animatedStaticStyles.container}>
+      <View testID="persisted-composer" style={animatedStaticStyles.container}>
         <AttachmentLightbox source={lightboxSource} onClose={handleLightboxClose} />
         {/* Input area */}
         <View style={inputAreaContainerStyle}>

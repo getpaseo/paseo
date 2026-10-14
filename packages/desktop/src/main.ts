@@ -112,6 +112,7 @@ import {
   isAgentSessionJump,
   resolveAgentSessionJump,
 } from "./agent-session-jump.js";
+import { readLocalBuildId, registerLocalUpdate } from "./features/local-update.js";
 import { readDesktopBuildInfo } from "./desktop-build-info.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
@@ -119,6 +120,8 @@ const APP_SCHEME = "paseo";
 const PASEO_DEBUG = process.env.PASEO_DEBUG === "1";
 const DISABLE_SINGLE_INSTANCE_LOCK = process.env.PASEO_DISABLE_SINGLE_INSTANCE_LOCK === "1";
 const DESKTOP_BUILD_INFO = readDesktopBuildInfo(app.getAppPath());
+const LOCAL_BUILD_ID = readLocalBuildId(app.getAppPath());
+let localUpdate: ReturnType<typeof registerLocalUpdate> | null = null;
 const APP_NAME = process.env.PASEO_TEST_APP_NAME?.trim() || DESKTOP_BUILD_INFO.appName;
 const DESKTOP_WINDOW_CHROME_MODE = resolveDesktopWindowChromeMode({
   platform: process.platform,
@@ -710,7 +713,10 @@ async function createWindow(
     }),
     webPreferences: {
       preload: getPreloadPath(),
-      additionalArguments: [windowChromeModeArgument(DESKTOP_WINDOW_CHROME_MODE)],
+      additionalArguments: [
+        windowChromeModeArgument(DESKTOP_WINDOW_CHROME_MODE),
+        `--paseo-build-id=${LOCAL_BUILD_ID ?? ""}`,
+      ],
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: true,
@@ -718,6 +724,7 @@ async function createWindow(
   });
   applyDesktopWindowChromeMode({ win: mainWindow, mode: DESKTOP_WINDOW_CHROME_MODE });
 
+  localUpdate?.attach(mainWindow);
   agentWidget?.attach(mainWindow);
   const webContentsId = mainWindow.webContents.id;
   options.onCreated?.(webContentsId);
@@ -1004,7 +1011,8 @@ async function bootstrap(): Promise<void> {
   registerWindowManager({ mode: DESKTOP_WINDOW_CHROME_MODE });
   registerDialogHandlers();
   registerNotificationHandlers();
-  agentWidget = registerAgentWidget();
+  localUpdate = LOCAL_BUILD_ID ? registerLocalUpdate(LOCAL_BUILD_ID) : null;
+  agentWidget = registerAgentWidget(localUpdate);
   const openExternalUrl = createExternalUrlOpener({ open: shell.openExternal });
   ipcMain.handle("paseo:opener:openUrl", (_event, value: unknown) => openExternalUrl(value));
   const openDirectory = createDirectoryOpener(shell);
@@ -1030,10 +1038,33 @@ async function bootstrap(): Promise<void> {
   pendingAgentNavigation = null;
   pendingAgentSessionJump = null;
   await desktopWindowOwner.openPrimary({
-    initialRoute: initialAgentNavigation ? buildAgentDeepLinkRoute(initialAgentNavigation) : null,
+    initialRoute: initialAgentNavigation
+      ? buildAgentDeepLinkRoute(initialAgentNavigation)
+      : (localUpdate?.restoreWindows[0]?.route ?? null),
     pendingProjectPath: pendingOpenProjectPath,
   });
   pendingOpenProjectPath = null;
+  const restored = localUpdate?.restoreWindows ?? [];
+  const primary = BrowserWindow.getAllWindows().find((win) => !agentWidget?.isWindow(win));
+  if (primary && restored[0]) {
+    primary.setBounds(
+      clampWindowStateToWorkAreas(
+        { ...restored[0].bounds, isMaximized: restored[0].maximized },
+        getWorkAreasPrimaryFirst(),
+      ),
+    );
+    if (restored[0].maximized) primary.maximize();
+  }
+  for (const saved of restored.slice(1)) {
+    const win = await createWindow({ initialRoute: saved.route });
+    win.setBounds(
+      clampWindowStateToWorkAreas(
+        { ...saved.bounds, isMaximized: saved.maximized },
+        getWorkAreasPrimaryFirst(),
+      ),
+    );
+    if (saved.maximized) win.maximize();
+  }
 
   // Protocol + IPC handlers and the first window now exist: release any
   // second-instance launches that arrived during cold start.

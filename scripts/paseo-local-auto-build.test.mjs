@@ -315,51 +315,16 @@ describe.runIf(process.platform === "darwin")("Paseo Local automatic build", () 
     expect(readFileSync(join(backup, "prompt.txt"), "utf8")).toBe("stale prompt\n");
   });
 
-  it("restarts a running desktop daemon once after a successful build", () => {
+  it("installs without restarting the running desktop daemon", () => {
     const fixture = createFixture();
-    const commit = git(fixture.checkout, "rev-parse", "HEAD");
-    writeFileSync(fixture.daemonStatus, '{"localDaemon":"running","desktopManaged":true}\n');
-
-    const first = run(fixture);
-
-    expect(first.stderr).toBe("");
-    expect(first.status).toBe(0);
-    expect(readFileSync(fixture.daemonLog, "utf8")).toBe(
-      `run --silent cli -- daemon status --home ${fixture.paseoHome} --json\n` +
-        `run --silent cli -- daemon restart --home ${fixture.paseoHome} --json\n` +
-        "run --silent cli -- plugin reload paseo-workflow --host 127.0.0.1:6767 --json\n",
-    );
-    expect(readFileSync(join(fixture.state, "last-successful-daemon-restart-commit"), "utf8")).toBe(
-      `${commit}\n`,
-    );
-
-    writeFileSync(fixture.daemonLog, "");
-    expect(run(fixture).status).toBe(0);
-    expect(readFileSync(fixture.daemonLog, "utf8")).toBe("");
-  });
-
-  it("retries only the daemon restart when its post-build restart fails", () => {
-    const fixture = createFixture();
-    const commit = git(fixture.checkout, "rev-parse", "HEAD");
     writeFileSync(fixture.daemonStatus, '{"localDaemon":"running","desktopManaged":true}\n');
     writeFileSync(fixture.failDaemonRestart, "fail\n");
-
-    const failed = run(fixture);
-
-    expect(failed.status).toBe(1);
-    expect(readFileSync(join(fixture.state, "last-successful-commit"), "utf8")).toBe(`${commit}\n`);
+    const result = run(fixture);
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    expect(readFileSync(fixture.daemonLog, "utf8")).not.toContain("daemon restart");
     expect(existsSync(join(fixture.state, "last-successful-daemon-restart-commit"))).toBe(false);
-    expect(readFileSync(fixture.npmLog, "utf8")).toBe("ci\nrun build\n");
-
-    rmSync(fixture.failDaemonRestart);
-    const retried = run(fixture);
-
-    expect(retried.stderr).toBe("");
-    expect(retried.status).toBe(0);
-    expect(readFileSync(fixture.npmLog, "utf8")).toBe("ci\nrun build\n");
-    expect(readFileSync(join(fixture.state, "last-successful-daemon-restart-commit"), "utf8")).toBe(
-      `${commit}\n`,
-    );
+    expect(result.stdout).toContain("waiting for desktop activation confirmation");
   });
 
   it("does not rebuild a commit that already succeeded", () => {

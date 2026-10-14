@@ -50,10 +50,27 @@ On an Apple Silicon Mac, build and install a repository-local desktop app with:
 npm run build:desktop:local
 ```
 
-The command replaces `~/Applications/Paseo Local.app`. Close and reopen that app after each
-build to run the new bundle. It uses the production `~/.paseo` home and daemon port 6767, but
-keeps separate Electron preferences and never downloads published Paseo updates. Do not run it
-at the same time as another Paseo app that manages port 6767.
+The command installs `~/Applications/Paseo Local.app` only from a clean commit published on
+`origin/paseo-local`. The auto builder follows that same branch. A correction left on another
+checkout is not a release; merge it into this branch before installing. For an isolated candidate
+build, set `PASEO_LOCAL_INSTALL_TARGET` to a temporary `.app` path.
+
+Every local build carries its Git commit into Electron and the renderer. Before installation,
+the packaged smoke checks project hiding/restoration and the external plan pop-up's beige body
+and dark header. A failed check leaves the installed app intact.
+
+Installation and activation are separate. The builder records built, installed, and confirmed
+active commits; an app that is closed or has not acknowledged startup stays pending activation.
+The desktop checks for an installed update every 30 seconds and on focus. After 60 seconds without
+interaction it gives a 10-second warning; input cancels it and **Reporter** defers it for 30 minutes.
+Drafts are flushed and windows restored. Recording, transfers, unsafe forms and unresponsive
+windows defer activation. Failed activation is visible and stops automatic retries for that build.
+
+This relaunch exits only the interface, bypassing the normal quit preference that may stop the
+daemon. The builder never restarts the production daemon. Daemon upgrades require a separate
+explicitly authorized restart. The first installation of this mechanism needs one manual GUI
+relaunch. This Local build uses production `~/.paseo` state and port 6767, with separate Electron
+preferences and no public release auto-updates. Do not run two apps managing that port.
 
 Vibe Island can open a Paseo Local conversation with `paseo-local://focus?session=<id>&cwd=<cwd>`.
 The desktop resolves the provider session from local agent persistence; `cwd` only narrows a

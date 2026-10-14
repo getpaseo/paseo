@@ -39,7 +39,9 @@ export function widgetBounds(area: Electron.Rectangle, reduced: boolean): Electr
   };
 }
 
-export function registerAgentWidget() {
+export function registerAgentWidget(
+  localUpdate?: { active: string; attach(window: BrowserWindow, popup: boolean): void } | null,
+) {
   const publishers = new Map<number, Publisher>();
   const pending = new Map<string, PendingAction>();
   const runningKeys = new Set<string>();
@@ -134,12 +136,14 @@ export function registerAgentWidget() {
         minimizable: false,
         webPreferences: {
           preload: path.join(__dirname, "preload.js"),
+          additionalArguments: [`--paseo-build-id=${localUpdate?.active ?? ""}`],
           sandbox: true,
           contextIsolation: true,
           nodeIntegration: false,
           backgroundThrottling: false,
         },
       });
+      localUpdate?.attach(window, true);
       window.setAlwaysOnTop(true, "floating");
       window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
       window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));

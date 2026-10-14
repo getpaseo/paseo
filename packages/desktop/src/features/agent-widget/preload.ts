@@ -330,3 +330,75 @@ window.addEventListener("DOMContentLoaded", () => {
     return;
   });
 });
+
+// This window has its own preload and drafts; main-window readiness cannot speak for it.
+const localBuildId = process.argv.find((arg) => arg.startsWith("--paseo-build-id="))?.slice(17);
+if (localBuildId) {
+  window.addEventListener("DOMContentLoaded", () => {
+    let lastActivity = 0;
+    for (const event of ["pointermove", "pointerdown", "keydown", "wheel", "input"]) {
+      document.addEventListener(
+        event,
+        () => {
+          if (Date.now() - lastActivity < 250) return;
+          lastActivity = Date.now();
+          void ipcRenderer.invoke("paseo:local-update:activity");
+        },
+        true,
+      );
+    }
+    const banner = document.createElement("aside");
+    banner.setAttribute("role", "status");
+    Object.assign(banner.style, {
+      position: "fixed",
+      bottom: "20px",
+      left: "20px",
+      right: "20px",
+      background: "#383534",
+      color: "#f9f7f4",
+      borderRadius: "8px",
+      padding: "12px",
+      zIndex: "1000",
+      font: "12px system-ui",
+    });
+    const label = document.createElement("span");
+    const postpone = document.createElement("button");
+    postpone.textContent = "Reporter 30 min";
+    postpone.addEventListener("click", () => {
+      void ipcRenderer.invoke("paseo:local-update:postpone");
+    });
+    banner.append(label, postpone);
+    ipcRenderer.on(
+      "paseo:local-update:status",
+      (_event, value: { phase: string; deadline?: number; error?: string }) => {
+        if (value.phase === "current") {
+          banner.remove();
+          return;
+        }
+        label.textContent = "Mise à jour prête — activation au repos ";
+        if (value.phase === "error") label.textContent = value.error ?? "Mise à jour non activée";
+        if (value.phase === "countdown")
+          label.textContent = `Mise à jour dans ${Math.max(0, Math.ceil(((value.deadline ?? 0) - Date.now()) / 1000))} s `;
+        postpone.hidden = value.phase === "error" || value.phase === "activating";
+        if (!banner.isConnected) document.body.append(banner);
+      },
+    );
+    ipcRenderer.on("paseo:local-update:prepare", (_event, token: string) => {
+      void ipcRenderer.invoke("paseo:local-update:prepared", token, {
+        ok: !busy,
+        state: { drafts: [...drafts], selected, reduced },
+      });
+    });
+    void ipcRenderer
+      .invoke("paseo:local-update:popup-state")
+      .then(
+        (value: { drafts?: [string, Draft][]; selected?: string; reduced?: boolean } | null) => {
+          if (value?.drafts) for (const [key, entry] of value.drafts) drafts.set(key, entry);
+          if (value?.selected) selected = value.selected;
+          if (typeof value?.reduced === "boolean") reduced = value.reduced;
+          render();
+          return ipcRenderer.invoke("paseo:local-update:ready", localBuildId);
+        },
+      );
+  });
+}

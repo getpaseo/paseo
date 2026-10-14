@@ -175,6 +175,14 @@ export interface DesktopInvokeBridge {
 }
 
 export interface DesktopHostBridge {
+  localUpdate?: {
+    buildId: string;
+    ready(id: string): Promise<unknown>;
+    activity(): Promise<unknown>;
+    postpone(): Promise<unknown>;
+    onStatus(handler: (value: unknown) => void): () => void;
+    onPrepare(handler: () => Promise<boolean>): () => void;
+  };
   agentWidget?: AgentWidgetBridge;
   platform?: string;
   windowChromeMode?: string;

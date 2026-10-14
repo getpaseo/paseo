@@ -94,7 +94,7 @@
     "dev:desktop": "cross-env PASEO_LISTEN=127.0.0.1:6768 npm run dev --workspace=@getpaseo/desktop",
     "dev:win:desktop": "npm run dev:win --workspace=@getpaseo/desktop",
     "build:desktop": "npm run build:app-deps:clean && cd packages/app && cross-env PASEO_WEB_PLATFORM=electron npx expo export --platform web && cd ../.. && npm run build --workspace=@getpaseo/desktop --",
-    "build:desktop:local": "npm run build:app-deps:clean && cd packages/app && cross-env PASEO_WEB_PLATFORM=electron npx expo export --platform web && cd ../.. && npm run build:local --workspace=@getpaseo/desktop",
+    "build:desktop:local": "node scripts/build-local-release.mjs",
     "paseo-local:auto-build:install": "node scripts/paseo-local-auto-build.mjs install",
     "paseo-local:auto-build:uninstall": "node scripts/paseo-local-auto-build.mjs uninstall",
     "paseo-local:auto-build:run": "node scripts/paseo-local-auto-build.mjs run",
@@ -125,7 +125,8 @@
     "release:promote": "npm run release:check && npm run version:all:promote && npm run release:publish && npm run release:push",
     "release:patch": "npm run release:check && npm run version:all:patch && npm run release:publish && npm run release:push",
     "release:minor": "npm run release:check && npm run version:all:minor && npm run release:publish && npm run release:push",
-    "release:major": "npm run release:check && npm run version:all:major && npm run release:publish && npm run release:push"
+    "release:major": "npm run release:check && npm run version:all:major && npm run release:publish && npm run release:push",
+    "build:desktop:local:bundle": "npm run build:app-deps:clean && cd packages/app && cross-env PASEO_WEB_PLATFORM=electron npx expo export --platform web && cd ../.. && npm run build:local --workspace=@getpaseo/desktop"
   },
   "devDependencies": {
     "@types/ws": "^8.5.14",
