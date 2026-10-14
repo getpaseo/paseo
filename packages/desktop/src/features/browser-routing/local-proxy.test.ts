@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import {
   BROWSER_PROXY_WARMUP_HOST,
   startLocalBrowserProxy,
+  relayEarlyHints,
   TunnelDuplex,
   TunnelStreamError,
   type LocalBrowserProxy,
@@ -19,6 +20,49 @@ import {
 
 const CREDENTIAL: ProxyCredential = { username: "paseo-test", password: "secret-value" };
 const AUTHORIZATION = `Basic ${Buffer.from("paseo-test:secret-value").toString("base64")}`;
+
+test.each<Record<string, string | string[]>>([
+  { link: "invalid-link" },
+  { link: '</style.css>; title="x\u0007"' },
+  { link: "</style.css>", "bad key": "x" },
+])("drops malformed Early Hints and releases their pending write: %j", (hints) => {
+  const response = new http.ServerResponse({ method: "GET" });
+  let completed = 0;
+  let dropped = 0;
+  relayEarlyHints(response, {
+    hints,
+    completed: () => completed++,
+    onInvalid: () => dropped++,
+  });
+  expect(completed).toBe(1);
+  expect(dropped).toBe(1);
+});
+
+test.each([
+  new Error("unexpected response failure"),
+  Object.assign(new TypeError("unrelated validation failure"), { code: "ERR_OTHER" }),
+  Object.assign(new Error("unrelated response failure"), { code: "ERR_INVALID_ARG_VALUE" }),
+])(
+  "surfaces unexpected Early Hints failures without reporting an invalid header: %s",
+  (failure) => {
+    let completed = 0;
+    let dropped = 0;
+    const response: Pick<http.ServerResponse, "writeEarlyHints"> = {
+      writeEarlyHints: () => {
+        throw failure;
+      },
+    };
+    expect(() =>
+      relayEarlyHints(response, {
+        hints: { link: "</style.css>; rel=preload; as=style" },
+        completed: () => completed++,
+        onInvalid: () => dropped++,
+      }),
+    ).toThrow(failure);
+    expect(completed).toBe(1);
+    expect(dropped).toBe(0);
+  },
+);
 
 interface Cleanup {
   (): Promise<void> | void;

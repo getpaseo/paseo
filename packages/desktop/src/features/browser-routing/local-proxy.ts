@@ -469,6 +469,33 @@ export class TunnelDuplex extends Duplex {
   }
 }
 
+interface EarlyHintsWriteOptions {
+  hints: Record<string, string | string[]>;
+  completed: () => void;
+  onInvalid: () => void;
+}
+
+export function relayEarlyHints(
+  response: Pick<ServerResponse, "writeEarlyHints">,
+  options: EarlyHintsWriteOptions,
+): void {
+  try {
+    response.writeEarlyHints(options.hints, options.completed);
+  } catch (error) {
+    options.completed();
+    if (
+      !(error instanceof TypeError) ||
+      !("code" in error) ||
+      (error.code !== "ERR_INVALID_ARG_VALUE" &&
+        error.code !== "ERR_INVALID_CHAR" &&
+        error.code !== "ERR_INVALID_HTTP_TOKEN")
+    ) {
+      throw error;
+    }
+    options.onInvalid();
+  }
+}
+
 function handleHttpRequest(
   input: {
     req: IncomingMessage;
@@ -523,14 +550,11 @@ function handleHttpRequest(
       .map(([name, value]) => `${name}: ${String(value)}\r\n`)
       .join("")}\r\n`;
     const completed = duplex.trackLocalWrite(Buffer.byteLength(head));
-    try {
-      res.writeEarlyHints(hints, completed);
-    } catch (error) {
-      // Node validates the Link header strictly; an upstream hint it rejects is
-      // dropped rather than aborting the request, and nothing was written.
-      completed();
-      log("http.early-hints-dropped", { host: target.host, error: String(error) });
-    }
+    relayEarlyHints(res, {
+      hints,
+      completed,
+      onInvalid: () => log("http.early-hints-dropped", { host: target.host }),
+    });
   });
   upstream.on("response", (upstreamRes) => {
     const headers = stripHopByHopHeaders(upstreamRes);

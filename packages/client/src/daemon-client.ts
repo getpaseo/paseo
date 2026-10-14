@@ -7272,6 +7272,7 @@ export class DaemonClient {
         "Update the host to use network tunneling.",
       );
     }
+    const openingTransport = this.transport;
     let payload: CorrelatedResponsePayload<"network.tunnel.open.response">;
     try {
       payload = await this.sendCorrelatedSessionRequest({
@@ -7283,6 +7284,13 @@ export class DaemonClient {
         throw new NetworkTunnelRpcError("open", error.code ?? "rpc_error", error.message);
       }
       throw error;
+    }
+    if (this.transport !== openingTransport || this.connectionState.status !== "connected") {
+      throw new NetworkTunnelRpcError(
+        "open",
+        "disconnected",
+        "The host connection changed before the network tunnel opened.",
+      );
     }
     if (!payload.ok) {
       throw new NetworkTunnelRpcError("open", payload.error.code, payload.error.message);

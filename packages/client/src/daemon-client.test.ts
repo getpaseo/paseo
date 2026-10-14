@@ -662,6 +662,58 @@ test("asks for its own limits and uses the ones the daemon agreed to", async () 
   await closing;
 });
 
+test.each(["disconnect", "reconnect", "close"] as const)(
+  "rejects a network tunnel reply when %s precedes registration",
+  async (transition) => {
+    const first = createMockTransport();
+    const second = createMockTransport();
+    let attempts = 0;
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "pending_tunnel_open",
+      transportFactory: () => (attempts++ === 0 ? first.transport : second.transport),
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connecting = client.connect();
+    first.triggerOpen({ features: { networkTunnel: true } });
+    await connecting;
+
+    const opening = client.openNetworkTunnel();
+    const rejected = expect(opening).rejects.toMatchObject({
+      operation: "open",
+      code: "disconnected",
+    });
+    const request = parseSentFrame(first.sent.at(-1));
+    first.triggerMessage(
+      wrapSessionMessage({
+        type: "network.tunnel.open.response",
+        payload: {
+          requestId: request.requestId,
+          ok: true,
+          subscriptionId: TUNNEL_SUBSCRIPTION_ID,
+          initialWindowBytes: 4,
+          maxDataBytes: 3,
+          maxStreams: 4,
+          connectTimeoutMs: 500,
+        },
+      }),
+    );
+    if (transition === "close") {
+      await client.close();
+    } else {
+      first.triggerClose();
+      if (transition === "reconnect") {
+        const reconnecting = client.connect();
+        second.triggerOpen({ features: { networkTunnel: true } });
+        await reconnecting;
+      }
+    }
+    await rejected;
+    expect(second.sent).toEqual([]);
+  },
+);
+
 test("refuses limits above the ones it asked for and closes that tunnel at open", async () => {
   const { client, transport, connecting } = createTunnelClient();
   await connecting;

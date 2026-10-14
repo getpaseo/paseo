@@ -23,10 +23,7 @@ interface DesktopSettingsPatch {
   daemon?: Partial<DesktopSettings["daemon"]>;
 }
 
-export interface BrowserRoutingHostSettings {
-  enabled: boolean;
-  partition: string;
-}
+export type BrowserRoutingHostSettings = z.infer<typeof BrowserRoutingHostSchema>;
 
 // Keyed by daemon serverId. Entries are never deleted: a disabled host keeps its
 // partition so "Clear browser data" can still wipe the profile it created.
