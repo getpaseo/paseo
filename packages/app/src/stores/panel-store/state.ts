@@ -145,6 +145,9 @@ export const PanelPersistedStateSchema = z.strictObject({
   diffCollapsedFoldersByWorkspace: z.record(z.string(), z.array(z.string())).optional(),
   collapsedFilePathsByWorkspace: z.record(z.string(), z.array(z.string())).optional(),
   sidebarWidth: z.number().optional(),
+  // null until the owner drags the sidebar's navigation group, which is not the same
+  // as absent: absent means "never seen this install", null means "left at its default".
+  sidebarNavHeight: z.number().nullable().optional(),
   // Accepted only so migration can discard the former docked explorer sidebar width.
   explorerWidth: z.number().optional(),
   explorerSortOption: z.enum(["name", "modified", "size"]).optional(),
@@ -225,6 +228,9 @@ export function migratePanelState(persistedState: unknown, version: number): Mig
   }
   if (version < 6 || typeof state.sidebarWidth !== "number") {
     state.sidebarWidth = DEFAULT_SIDEBAR_WIDTH;
+  }
+  if (typeof state.sidebarNavHeight !== "number") {
+    state.sidebarNavHeight = null;
   }
   if (
     version < 9 ||
