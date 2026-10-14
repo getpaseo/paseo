@@ -2172,7 +2172,7 @@ export const ko: TranslationResources = {
       terminalMacOptionIsMeta: {
         label: "Option 키를 Meta로 사용 (macOS)",
         description:
-          "켜짐: Option+키가 터미널 Meta 단축키를 전송합니다. 꾼짐: Option+키가 키보드 레이아웃의 문자를 입력합니다(예: 독일어에서 Option+L → @).",
+          "켜짐: Option+키가 터미널 Meta 단축키를 전송합니다. 꺼짐: Option+키가 키보드 레이아웃의 문자를 입력합니다(예: 독일어에서 Option+L → @).",
       },
       autoExpandReasoning: {
         label: "추론 항상 펼치기",
