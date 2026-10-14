@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { discover, fetchUsage } from "./usage.js";
 
@@ -43,8 +44,9 @@ async function logins(options: Parameters<typeof discover>[1]) {
 }
 async function database(path: string) {
   await mkdir((await import("node:path")).dirname(path), { recursive: true });
-  const { DatabaseSync } = await import("node:sqlite");
   const db = new DatabaseSync(path);
+  // Create the fixture with one durable commit instead of one per row.
+  db.exec("BEGIN");
   db.exec(
     "CREATE TABLE auth_credentials (id INTEGER PRIMARY KEY, provider TEXT, credential_type TEXT, data TEXT, disabled_cause TEXT)",
   );
@@ -78,6 +80,7 @@ async function database(path: string) {
     null,
   );
   insert.run(5, "anthropic", "oauth", "invalid", null);
+  db.exec("COMMIT");
   db.close();
 }
 
@@ -248,7 +251,6 @@ test("OMP fetch re-reads its row after rotation and skips a newly disabled login
   const path = join(home, ".omp", "agent", "agent.db");
   await database(path);
   const [input] = await logins(lookup());
-  const { DatabaseSync } = await import("node:sqlite");
   const db = new DatabaseSync(path);
   db.prepare("UPDATE auth_credentials SET data = ? WHERE id = 1").run(
     JSON.stringify({ access: "fixture-rotated-omp", accountId: "omp-account", expires: 2000 }),

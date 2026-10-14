@@ -241,6 +241,7 @@ export interface WorkspaceGitService {
     cwdOrRepoRoot: string,
     options?: WorkspaceGitReadOptions,
   ): Promise<WorkspaceGitWorktreeInfo[]>;
+  invalidateWorktrees(): void;
   getProjectSlug(cwd: string, options?: WorkspaceGitReadOptions): Promise<string>;
   resolveRepoRoot(cwd: string, options?: WorkspaceGitReadOptions): Promise<string>;
   resolveDefaultBranch(cwdOrRepoRoot: string, options?: WorkspaceGitReadOptions): Promise<string>;
@@ -764,6 +765,16 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       worktreesRoot: this.worktreesRoot,
       logger: this.logger,
     });
+    const cached = this.peekSnapshot(normalizedCwd);
+    if (cached && cached.git.isGit !== status.isGit) {
+      // A fresh checkout read discovered a repository transition. Keep the
+      // shared snapshot current before exposing the new project capability.
+      await this.getSnapshot(normalizedCwd, {
+        force: true,
+        includeForge: false,
+        reason: "checkout-classification-changed",
+      });
+    }
     if (!status.isGit) {
       return checkoutLiteFromGitSnapshot(normalizedCwd, {
         isGit: false,
@@ -916,6 +927,13 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     return snapshot.git.isPaseoOwnedWorktree
       ? (snapshot.git.mainRepoRoot ?? snapshot.git.repoRoot ?? resolve(cwd))
       : (snapshot.git.repoRoot ?? resolve(cwd));
+  }
+
+  invalidateWorktrees(): void {
+    this.assertNotDisposed();
+    // Checkout paths can cache the same list under different roots, including bare repos.
+    // Detach in-flight reads too, so a pre-mutation result cannot refill the cache.
+    this.worktreeListCache.clear();
   }
 
   async resolveDefaultBranch(

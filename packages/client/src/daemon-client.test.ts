@@ -2801,6 +2801,102 @@ test("readFile drops an old daemon's over-budget binary chunks and reports the r
   await expect(responsePromise).rejects.toThrow("File is too large to display");
 });
 
+async function connectFileClient(clientId: string) {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId,
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+  return { mock, client };
+}
+
+function sendBinaryFile(
+  mock: ReturnType<typeof createMockTransport>,
+  requestId: string,
+  announcedSize: number,
+  chunks: string[],
+) {
+  mock.triggerMessage(
+    encodeFileTransferFrame({
+      opcode: FileTransferOpcode.FileBegin,
+      requestId,
+      metadata: {
+        mime: "application/octet-stream",
+        size: announcedSize,
+        encoding: "binary",
+        modifiedAt: "2026-05-02T00:00:00.000Z",
+      },
+    }),
+  );
+  for (const chunk of chunks) {
+    mock.triggerMessage(
+      encodeFileTransferFrame({
+        opcode: FileTransferOpcode.FileChunk,
+        requestId,
+        payload: new TextEncoder().encode(chunk),
+      }),
+    );
+  }
+}
+
+test("readFile with timeout 0 outlives the default request timeout", async () => {
+  useHeartbeatClock();
+  const { mock, client } = await connectFileClient("clsk_file_no_timeout");
+
+  const responsePromise = client.readFile("/tmp/project", "slow.bin", "req-slow", undefined, 0);
+  await vi.advanceTimersByTimeAsync(60_001);
+
+  sendBinaryFile(mock, "req-slow", 5, ["hello"]);
+  mock.triggerMessage(
+    encodeFileTransferFrame({ opcode: FileTransferOpcode.FileEnd, requestId: "req-slow" }),
+  );
+
+  const result = await responsePromise;
+  expect(result.size).toBe(5);
+  expect(new TextDecoder().decode(result.bytes)).toBe("hello");
+});
+
+test("readFile rejects a binary transfer that ends before the announced size", async () => {
+  const { mock, client } = await connectFileClient("clsk_file_short");
+
+  const responsePromise = client.readFile("/tmp/project", "short.bin", "req-short");
+  sendBinaryFile(mock, "req-short", 10, ["hello"]);
+  mock.triggerMessage(
+    encodeFileTransferFrame({ opcode: FileTransferOpcode.FileEnd, requestId: "req-short" }),
+  );
+
+  await expect(responsePromise).rejects.toThrow(
+    "File transfer incomplete: expected 10 bytes, received 5.",
+  );
+});
+
+test("readFile rejects a binary transfer that exceeds the announced size", async () => {
+  const { mock, client } = await connectFileClient("clsk_file_long");
+
+  const responsePromise = client.readFile("/tmp/project", "long.bin", "req-long");
+  const settled = responsePromise.then(
+    () => null,
+    (error: unknown) => error,
+  );
+  sendBinaryFile(mock, "req-long", 4, ["hello!"]);
+
+  expect(() =>
+    mock.triggerMessage(
+      encodeFileTransferFrame({ opcode: FileTransferOpcode.FileEnd, requestId: "req-long" }),
+    ),
+  ).not.toThrow();
+  expect(await settled).toMatchObject({
+    message: "File transfer incomplete: expected 4 bytes, received 6.",
+  });
+});
+
 test("uploadFile sends metadata request and file bytes as binary chunks", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -3098,6 +3194,162 @@ test("sends worktree target and autoArchive in create_agent_request", async () =
   );
 
   await expect(createPromise).rejects.toThrow("worktree auto archive sentinel");
+});
+
+test("sends internal in create_agent_request when the host advertises internal agents", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { backgroundWorkspaces: true } });
+  await connectPromise;
+
+  const createPromise = client.createAgent({
+    provider: "codex",
+    cwd: "/tmp/project",
+    background: true,
+  });
+
+  expect(mock.sent).toHaveLength(1);
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toEqual(
+    expect.objectContaining({
+      type: "create_agent_request",
+      config: { provider: "codex", cwd: "/tmp/project" },
+      background: true,
+    }),
+  );
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "status",
+      payload: {
+        status: "agent_create_failed",
+        requestId: request.requestId,
+        error: "internal agent sentinel",
+      },
+    }),
+  );
+
+  await expect(createPromise).rejects.toThrow("internal agent sentinel");
+});
+
+test("rejects an internal create before sending when the host predates internal agents", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: {} });
+  await connectPromise;
+
+  await expect(
+    client.createAgent({ provider: "codex", cwd: "/tmp/project", background: true }),
+  ).rejects.toThrow("Update the host to use background workspaces.");
+  expect(mock.sent).toHaveLength(0);
+});
+
+test("sends internal workspace creation and internal listings only to hosts that support them", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  // workspaceMultiplicity keeps the fetch on the real workspace directory RPC.
+  mock.triggerOpen({
+    features: { workspaceMultiplicity: true, backgroundWorkspaces: true },
+  });
+  await connectPromise;
+
+  void client
+    .createWorkspace({ source: { kind: "directory", path: "/tmp/project" }, background: true })
+    .catch(() => undefined);
+  void client.fetchWorkspaces({ filter: { includeBackground: true } }).catch(() => undefined);
+  void client.fetchAgents({ filter: { includeBackground: true } }).catch(() => undefined);
+
+  expect(mock.sent.map((frame) => parseSentFrame(frame))).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ type: "workspace.create.request", background: true }),
+      expect.objectContaining({
+        type: "fetch_workspaces_request",
+        filter: { includeBackground: true },
+      }),
+      expect.objectContaining({
+        type: "fetch_agents_request",
+        filter: { includeBackground: true },
+      }),
+    ]),
+  );
+});
+
+test("rejects internal workspace creation and internal listings before sending on older hosts", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: {} });
+  await connectPromise;
+
+  await expect(
+    client.createWorkspace({
+      source: { kind: "directory", path: "/tmp/project" },
+      background: true,
+    }),
+  ).rejects.toThrow("Update the host to use background workspaces.");
+  await expect(client.fetchWorkspaces({ filter: { includeBackground: true } })).rejects.toThrow(
+    "Update the host to use background workspaces.",
+  );
+  expect(mock.sent).toHaveLength(0);
+
+  // Agent listings gate on the older internalAgents feature.
+  const olderMock = createMockTransport();
+  const olderClient = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => olderMock.transport,
+  });
+  clients.push(olderClient);
+  const olderConnect = olderClient.connect();
+  olderMock.triggerOpen({ features: {} });
+  await olderConnect;
+  await expect(olderClient.fetchAgents({ filter: { includeBackground: true } })).rejects.toThrow(
+    "Update the host to use background workspaces.",
+  );
+  expect(olderMock.sent).toHaveLength(0);
 });
 
 test("sends structured attachments with create_agent_request", async () => {
@@ -7371,3 +7623,29 @@ test.each([false, true])(
     await send;
   },
 );
+
+test("measures an outbound message in UTF-8 bytes against the daemon's message limit", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "message_limit_unit_test",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+  const mib = 1024 * 1024;
+
+  // "é" is one UTF-16 unit but two UTF-8 bytes, so this text is ~98 MiB on the wire.
+  void client.sendMessage("agent-1", "é".repeat(49 * mib)).catch(() => undefined);
+  expect(mock.sent).toHaveLength(1);
+
+  // ~60M characters is under the 100 MiB limit; ~120 MiB of UTF-8 is over it.
+  await expect(client.sendMessage("agent-1", "é".repeat(60 * mib))).rejects.toThrow(
+    "Message is too large to send (120.0 MiB). The limit is 100.0 MiB",
+  );
+  expect(mock.sent).toHaveLength(1);
+  expect(client.getConnectionState().status).toBe("connected");
+});

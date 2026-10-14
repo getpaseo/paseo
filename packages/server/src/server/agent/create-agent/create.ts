@@ -52,6 +52,7 @@ export interface CreateAgentCommandDependencies {
 export type EnsureWorkspaceForCreate = (
   cwd: string,
   firstAgentContext?: FirstAgentContext,
+  context?: { callerWorkspaceId?: string },
 ) => Promise<string>;
 
 export interface CreateAgentFromSessionInput {
@@ -94,7 +95,6 @@ export interface CreateAgentFromMcpInput {
   mode?: string;
   unattended?: boolean;
   promptFailure?: CreateAgentPromptFailureMode;
-  background: boolean;
   notifyOnFinish: boolean;
   internal?: boolean;
   detached?: boolean;
@@ -127,7 +127,6 @@ export type CreateAgentPromptFailureMode = "throw" | "log" | "return-error";
 export interface CreateAgentCommandResult {
   snapshot: ManagedAgent;
   liveSnapshot: ManagedAgent;
-  background: boolean;
   initialPromptStarted: boolean;
   initialPromptError: unknown | null;
   createdWorktree?: CreatePaseoWorktreeWorkflowResult;
@@ -169,7 +168,6 @@ interface ResolvedCreateAgent {
   source?: AgentPromptSource;
   runOptions?: AgentRunOptions;
   setupContinuation?: AgentWorktreeSetupContinuation;
-  background: boolean;
   promptFailure: CreateAgentPromptFailureMode;
   promptLogger?: Logger;
   createdWorktree?: CreatePaseoWorktreeWorkflowResult;
@@ -190,10 +188,6 @@ export async function createAgentCommand(
     resolved.createOptions,
   );
 
-  resolved.setupContinuation?.startAfterAgentCreate({
-    agentId: snapshot.id,
-  });
-
   if (input.kind === "session") await input.onAgentReady?.(snapshot);
 
   let liveSnapshot = snapshot;
@@ -202,28 +196,37 @@ export async function createAgentCommand(
   if (input.kind === "mcp") {
     input.onCreated?.({ agentId: snapshot.id, createdWorktree: resolved.createdWorktree ?? null });
   }
+  const stopNotification =
+    input.kind === "mcp" &&
+    input.notifyOnFinish &&
+    input.callerAgentId &&
+    (resolved.prompt !== undefined || resolved.setupContinuation !== undefined)
+      ? setupFinishNotification({
+          agentManager: dependencies.agentManager,
+          agentStorage: dependencies.agentStorage,
+          childAgentId: snapshot.id,
+          callerAgentId: input.callerAgentId,
+          requireParentOwnership: true,
+          logger: dependencies.logger,
+        })
+      : undefined;
+
+  resolved.setupContinuation?.startAfterAgentCreate({
+    agentId: snapshot.id,
+  });
   if (resolved.prompt !== undefined) {
-    const sendResult = await sendInitialPrompt(dependencies, resolved, snapshot);
+    const sendResult = await sendInitialPrompt(dependencies, resolved, snapshot).catch((error) => {
+      stopNotification?.();
+      throw error;
+    });
     initialPromptStarted = sendResult.started;
     liveSnapshot = sendResult.liveSnapshot;
     initialPromptError = sendResult.error ?? null;
   }
 
-  if (input.kind === "mcp" && input.notifyOnFinish && input.callerAgentId && initialPromptStarted) {
-    setupFinishNotification({
-      agentManager: dependencies.agentManager,
-      agentStorage: dependencies.agentStorage,
-      childAgentId: snapshot.id,
-      callerAgentId: input.callerAgentId,
-      requireParentOwnership: true,
-      logger: dependencies.logger,
-    });
-  }
-
   return {
     snapshot,
     liveSnapshot,
-    background: resolved.background,
     initialPromptStarted,
     initialPromptError,
     ...(resolved.createdWorktree ? { createdWorktree: resolved.createdWorktree } : {}),
@@ -290,6 +293,9 @@ async function resolveSessionCreateAgent(
       initialPrompt: trimmedPrompt,
       env: input.env,
       initialTitle: input.provisionalTitle,
+      // Paseo never persists an internal agent, so nothing could resume its
+      // provider session either. Same as the daemon's own ephemeral helpers.
+      ...(sessionConfig.internal ? { persistSession: false } : {}),
       // A legacy git/worktreeName worktree creates a fresh workspace, so the
       // agent belongs to that workspace, not the source one. createdWorkspaceId
       // is the freshly created worktree's workspace.
@@ -299,8 +305,8 @@ async function resolveSessionCreateAgent(
     source: input.source,
     runOptions,
     setupContinuation,
-    background: true,
-    promptFailure: "throw",
+    // Registration commits creation. First-turn failures belong to the created agent.
+    promptFailure: "return-error",
     promptLogger: dependencies.logger.child({
       clientMessageId: resolveClientMessageId(input.clientMessageId),
     }),
@@ -323,6 +329,7 @@ async function resolveMcpCreateAgent(
       cwd,
       worktree: input.worktree,
       initialPrompt: input.initialPrompt ?? "",
+      callerWorkspaceId: parentAgent?.workspaceId,
     });
   if (createdWorktree) input.onWorktreeCreated?.(createdWorktree);
 
@@ -337,7 +344,12 @@ async function resolveMcpCreateAgent(
     resolveWorkspace: async (workspaceId) => ({ workspaceId, cwd: resolvedCwd }),
     createWorkspace: async () => ({
       workspaceId: requireResolvedWorkspaceId(
-        await ensureWorkspaceForMcpCreate(dependencies, resolvedCwd, input.initialPrompt ?? ""),
+        await ensureWorkspaceForMcpCreate(
+          dependencies,
+          resolvedCwd,
+          input.initialPrompt ?? "",
+          parentAgent?.workspaceId,
+        ),
       ),
       cwd: resolvedCwd,
     }),
@@ -373,7 +385,6 @@ async function resolveMcpCreateAgent(
       : undefined,
     setupContinuation,
     createdWorktree,
-    background: input.background,
     promptFailure: input.promptFailure ?? "log",
   };
 }
@@ -448,11 +459,16 @@ async function ensureWorkspaceForMcpCreate(
   dependencies: CreateAgentCommandDependencies,
   cwd: string,
   initialPrompt: string,
+  callerWorkspaceId?: string,
 ): Promise<string | undefined> {
   if (!dependencies.ensureWorkspaceForCreate) {
     return undefined;
   }
-  return dependencies.ensureWorkspaceForCreate(cwd, { prompt: initialPrompt });
+  return dependencies.ensureWorkspaceForCreate(
+    cwd,
+    { prompt: initialPrompt },
+    { callerWorkspaceId },
+  );
 }
 
 async function sendInitialPrompt(
@@ -481,7 +497,11 @@ async function sendInitialPrompt(
       throw error;
     }
     if (resolved.promptFailure === "return-error") {
-      return { started: false, liveSnapshot: snapshot, error };
+      return {
+        started: false,
+        liveSnapshot: dependencies.agentManager.getAgent(snapshot.id) ?? snapshot,
+        error,
+      };
     }
     dependencies.logger.error({ err: error, agentId: snapshot.id }, "Failed to run initial prompt");
     return { started: false, liveSnapshot: snapshot };
@@ -519,6 +539,7 @@ async function resolveMcpCwd(params: {
   dependencies: CreateAgentCommandDependencies;
   cwd: string;
   initialPrompt: string;
+  callerWorkspaceId?: string;
   worktree: CreateAgentFromMcpInput["worktree"];
 }): Promise<{
   resolvedCwd: string;
@@ -549,6 +570,7 @@ async function resolveMcpCwd(params: {
   const createdWorktree = await createMcpWorktree({
     input: {
       cwd: params.cwd,
+      callerWorkspaceId: params.callerWorkspaceId,
       worktreeSlug: worktree.worktreeName,
       branchName: worktree.branchName,
       refName: worktree.refName,

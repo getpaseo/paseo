@@ -64,6 +64,48 @@ test("workspace.create worktree source forwards action=checkout + refName into t
   }
 }, 180000);
 
+test("existing branch changes remain visible after archive and restore", async () => {
+  const daemon = await createTestPaseoDaemon();
+  const { repoDir, tempRoot } = createGitRepoWithBranch();
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.11.2",
+  });
+  onTestFinished(async () => {
+    await client.close().catch(() => undefined);
+    await daemon.close();
+    rmSync(tempRoot, { recursive: true, force: true });
+  });
+  runGit(repoDir, "switch", "feature/existing-branch");
+  commitFile(repoDir, "feature.txt", "feature change\n");
+  runGit(repoDir, "switch", "main");
+  await client.connect();
+  const created = await client.createWorkspace({
+    source: {
+      kind: "worktree",
+      cwd: repoDir,
+      action: "checkout",
+      refName: "feature/existing-branch",
+    },
+  });
+  expect(created.error).toBeNull();
+  const workspace = created.workspace!;
+  const cwd = workspace.workspaceDirectory;
+  const head = runGit(cwd, "rev-parse", "HEAD");
+  const before = await client.getCheckoutDiff(cwd, { mode: "base" });
+  expect(before.error).toBeNull();
+  expect(before.files.map((file) => file.path)).toEqual(["feature.txt"]);
+  expect((await client.getCheckoutStatus(cwd)).baseRef).toBe("main");
+  expect((await client.archiveWorkspace(workspace.id)).error).toBeNull();
+  expect(existsSync(cwd)).toBe(false);
+  await client.restoreWorkspace(workspace.id);
+  expect(runGit(cwd, "rev-parse", "HEAD")).toBe(head);
+  expect((await client.getCheckoutStatus(cwd)).baseRef).toBe("main");
+  const after = await client.getCheckoutDiff(cwd, { mode: "base" });
+  expect(after.error).toBeNull();
+  expect(after.files.map((file) => file.path)).toEqual(["feature.txt"]);
+}, 180000);
+
 test("workspace.create keeps a branch-off name separate from its worktree slug", async () => {
   const daemon = await createTestPaseoDaemon();
   const { repoDir, tempRoot } = createGitRepoWithBranch();

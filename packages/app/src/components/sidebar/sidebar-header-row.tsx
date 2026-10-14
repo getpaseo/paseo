@@ -1,21 +1,11 @@
-import {
-  useCallback,
-  useMemo,
-  useState,
-  type ComponentType,
-  type ReactNode,
-  type Ref,
-} from "react";
+import { useCallback, useState, type ComponentType, type ReactNode, type Ref } from "react";
 import { Pressable, Text, View } from "react-native";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { StyleSheet } from "react-native-unistyles";
 import { HEADER_INNER_HEIGHT, HEADER_INNER_HEIGHT_MOBILE } from "@/constants/layout";
-import { ICON_SIZE } from "@/styles/theme";
-import type { Theme } from "@/styles/theme";
+import { DensityIcon } from "@/components/ui/density-icon";
 import { Shortcut } from "@/components/ui/shortcut";
+import { density, densityFontSize, densityIconBox } from "@/styles/density";
 import type { ShortcutKey } from "@/utils/format-shortcut";
-
-const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
-const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 type SidebarHeaderRowVariant = "header" | "compact" | "inline";
 
@@ -49,7 +39,7 @@ interface SidebarHeaderRowProps {
 }
 
 export function SidebarHeaderRow({
-  icon: Icon,
+  icon,
   label,
   onPress,
   isActive = false,
@@ -64,9 +54,8 @@ export function SidebarHeaderRow({
   const [isHovered, setIsHovered] = useState(false);
   const handlePointerEnter = useCallback(() => setIsHovered(true), []);
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
-  const ThemedIcon = useMemo(() => (Icon ? withUnistyles(Icon) : null), [Icon]);
   const isHighlighted = isHovered || isActive;
-  const iconSize = variant === "header" ? ICON_SIZE.md : ICON_SIZE.sm;
+  const iconSize = variant === "header" ? "md" : "sm";
 
   let right = trailing ?? null;
   if (right === null && shortcutKeys && isHovered) {
@@ -91,10 +80,11 @@ export function SidebarHeaderRow({
           aria-selected={isActive}
           style={styles.button}
         >
-          {ThemedIcon ? (
-            <ThemedIcon
+          {icon ? (
+            <DensityIcon
+              icon={icon}
               size={iconSize}
-              uniProps={isHighlighted ? foregroundColorMapping : foregroundMutedColorMapping}
+              color={isHighlighted ? "foreground" : "foregroundMuted"}
             />
           ) : (
             <View style={variant === "header" ? styles.iconSpacer : styles.iconSpacerCompact} />
@@ -140,7 +130,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     // Same row geometry as the settings sidebar items. Shorter than the header
     // strip so the hover highlight clears the strip's bottom separator.
-    minHeight: 28,
+    minHeight: density.tightRowHeight,
     borderRadius: theme.borderRadius.lg,
   },
   rowHighlighted: {
@@ -152,17 +142,17 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-    minHeight: 28,
+    minHeight: density.tightRowHeight,
     paddingVertical: theme.spacing[1],
     // Match the project rows' inner padding so the icons align on one vertical
     // edge with the list below.
     paddingHorizontal: theme.spacing[2],
   },
-  iconSpacer: { width: ICON_SIZE.md, height: ICON_SIZE.md },
-  iconSpacerCompact: { width: ICON_SIZE.sm, height: ICON_SIZE.sm },
+  iconSpacer: { width: densityIconBox("md"), height: densityIconBox("md") },
+  iconSpacerCompact: { width: densityIconBox("sm"), height: densityIconBox("sm") },
   label: {
     flexShrink: 1,
-    fontSize: theme.fontSize.base,
+    fontSize: densityFontSize(theme, "base"),
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
   },

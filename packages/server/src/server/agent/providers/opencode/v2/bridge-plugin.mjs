@@ -13,7 +13,16 @@ export default {
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
       if (allowMissing && response.status === 404) return null;
-      if (!response.ok) throw new Error(`Paseo tool bridge returned HTTP ${response.status}`);
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        const message =
+          typeof payload?.error === "string" && payload.error
+            ? payload.error
+            : `Paseo tool bridge returned HTTP ${response.status}`;
+        const error = new Error(message);
+        error.status = response.status;
+        throw error;
+      }
       return response.json();
     }
     async function scope(sessionID) {
