@@ -138,6 +138,15 @@ async function harness(
       .filter(Boolean)
       .map((line) => JSON.parse(line));
   }
+  async function waitForRequests(method: string, count: number) {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const sent = (await recorded()).filter((frame) => frame.method === method);
+      if (sent.length >= count) return sent;
+      await delay(10);
+    }
+    throw new Error(`Muse never received ${count} ${method} request(s)`);
+  }
   return {
     provider,
     launch,
@@ -148,6 +157,7 @@ async function harness(
     open,
     prompt,
     recorded,
+    waitForRequests,
     root,
     usageSource,
   };
@@ -1318,25 +1328,24 @@ test("a subagent approval does not move the parent's silence repair onto the chi
 test("a failed silence repair keeps the session and retries at the next silence", async () => {
   const h = await harness("text-reasoning", {
     MUSE_TEST_SILENT: "1",
-    MUSE_TEST_PAGE_FAIL_ONCE: "1",
+    MUSE_TEST_PAGE_HANG_ONCE: "1",
   });
   await h.open();
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   await h.prompt();
   await h.wait((e) => e.type === "session.prompt_result");
+  // The first repair's page is never answered. The silence, that page's request timeout and the
+  // re-armed watchdog all run on the fake clock, one timer per step, whatever the timeout length.
   await vi.advanceTimersByTimeAsync(120000);
-  const deadline = Date.now() + 5000;
-  while ((await h.recorded()).filter((f) => f.method === "view/page").length === 0) {
-    if (Date.now() > deadline) throw new Error("The first repair never paged");
-    await delay(10);
-  }
-  await delay(50);
+  await h.waitForRequests("view/page", 1);
+  await vi.advanceTimersToNextTimerAsync();
+  await vi.advanceTimersToNextTimerAsync();
+  await h.wait(
+    (e) =>
+      (e.type === "session.turn" && e.state === "completed") || e.type === "session.runtime_failed",
+  );
   expect(h.events.filter((e) => e.type === "session.runtime_failed")).toEqual([]);
-  expect(h.events.filter((e) => e.type === "session.turn" && e.state === "completed")).toEqual([]);
-  await vi.advanceTimersByTimeAsync(120000);
-  await h.wait((e) => e.type === "session.turn" && e.state === "completed");
   expect((await h.recorded()).filter((f) => f.method === "view/page")).toHaveLength(2);
-  expect(h.events.filter((e) => e.type === "session.runtime_failed")).toEqual([]);
   expect(h.events.filter((e) => e.type === "session.turn" && e.state === "completed")).toHaveLength(
     1,
   );
