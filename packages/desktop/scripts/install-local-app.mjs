@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { assertReleaseInventory } from "../../../scripts/local-release-inventory.mjs";
+import { execFileSync } from "node:child_process";
 import { access, cp, mkdir, rename as fsRename, rm, stat } from "node:fs/promises";
 import { verifyLocalRelease } from "./verify-local-release.mjs";
 import os from "node:os";
@@ -54,6 +56,17 @@ if (isMain) {
   const desktopDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const source = path.join(desktopDir, ".dev", "release-local", "mac-arm64", "Paseo.app");
   await verifyLocalRelease(source, process.env.PASEO_LOCAL_RELEASE_COMMIT);
+  const root = path.resolve(desktopDir, "../..");
+  const commit = process.env.PASEO_LOCAL_RELEASE_COMMIT;
+  const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+  git("fetch", "origin", "refs/heads/paseo-local:refs/remotes/origin/paseo-local");
+  if (
+    git("rev-parse", "HEAD") !== commit ||
+    (!process.env.PASEO_LOCAL_INSTALL_TARGET && git("rev-parse", "origin/paseo-local") !== commit)
+  )
+    throw new Error("Install only the exact published commit through build:desktop:local");
+  // Recheck after the long build and smoke tests: new work may have appeared meanwhile.
+  assertReleaseInventory({ root, commit });
   const installedPath = await replaceAppBundle({
     source,
     target:

@@ -120,6 +120,8 @@ and updating `next`, integrating it after a release, and releasing a hotfix from
 
 ## Critical rules
 
+- **Local delivery is complete only after publication, installation, and active-version verification.** Follow the [complete-source gate](docs/paseo-local-auto-build.md#complete-source-gate); a tested commit alone is not a delivery.
+
 - **NEVER restart the main Paseo daemon on port 6767 without permission** — it manages all running agents. If you're an agent, restarting it kills your own process.
 - **NEVER assume a timeout means the service needs restarting** — timeouts can be transient.
 - **NEVER add auth checks to tests** — agent providers handle their own auth.

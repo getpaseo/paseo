@@ -95,3 +95,6 @@ app.json
 *.heapsnapshot
 
 .artifacts/
+
+# Vitest browser attachments
+/packages/app/.vitest-attachments/

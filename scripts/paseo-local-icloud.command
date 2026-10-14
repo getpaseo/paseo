@@ -43,9 +43,13 @@ publish() {
   # Immutable archives let a receiver finish downloading an older build safely.
   /bin/cp "$work/app.zip" "$folder/.$digest.$$.zip"
   /bin/mv "$folder/.$digest.$$.zip" "$folder/$digest.zip"
-  /bin/cp "$self" "$folder/.Install on MacBook.$$.command"
-  /bin/chmod +x "$folder/.Install on MacBook.$$.command"
-  /bin/mv "$folder/.Install on MacBook.$$.command" "$folder/Install on MacBook.command"
+  # macOS can protect existing iCloud .command files from LaunchAgents. The receiver
+  # reads latest.sha256, so publishing a new bundle never requires replacing its installer.
+  if [[ ! -e "$folder/Install on MacBook.command" ]]; then
+    /bin/cp "$self" "$folder/.Install on MacBook.$$.command"
+    /bin/chmod +x "$folder/.Install on MacBook.$$.command"
+    /bin/mv "$folder/.Install on MacBook.$$.command" "$folder/Install on MacBook.command"
+  fi
   print -r -- "$digest" > "$folder/.latest.$$.sha256"
   /bin/mv "$folder/.latest.$$.sha256" "$folder/latest.sha256"
   print -r -- "$signature" > "$state/.published.$$"

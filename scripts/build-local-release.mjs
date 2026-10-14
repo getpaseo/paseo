@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { assertReleaseInventory } from "./local-release-inventory.mjs";
 import { execFileSync } from "node:child_process";
 import { writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
@@ -10,6 +11,7 @@ const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8"
 if (git("status", "--porcelain", "--untracked-files=no"))
   throw new Error("Commit tracked changes before building Paseo Local.");
 const commit = git("rev-parse", "HEAD");
+assertReleaseInventory({ root, commit });
 git("fetch", "origin", "refs/heads/paseo-local:refs/remotes/origin/paseo-local");
 git("merge-base", "--is-ancestor", "origin/paseo-local", commit);
 if (!process.env.PASEO_LOCAL_INSTALL_TARGET && commit !== git("rev-parse", "origin/paseo-local")) {

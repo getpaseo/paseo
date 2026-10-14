@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { assertReleaseInventory } from "./local-release-inventory.mjs";
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
@@ -424,6 +425,19 @@ function installLocked(env) {
     throw new Error("origin/paseo-local does not contain scripts/paseo-local-auto-build.mjs");
   }
 
+  const sourcesPath = join(builderPaths.state, "source-repositories.json");
+  const previous = existsSync(sourcesPath)
+    ? JSON.parse(readFileSync(sourcesPath, "utf8"))
+    : { repositories: [] };
+  const primary = execute("git", ["worktree", "list", "--porcelain"], { cwd: source, env })
+    .split("\n")[0]
+    .slice(9);
+  if (resolve(primary) === resolve(builderPaths.checkout) && previous.repositories.length === 0)
+    throw new Error("Declare the development repository with PASEO_LOCAL_BUILDER_SOURCE first");
+  const repositories = [...new Set([...previous.repositories, primary])];
+  writeFileSync(`${sourcesPath}.tmp`, JSON.stringify({ repositories }, null, 2) + "\n");
+  renameSync(`${sourcesPath}.tmp`, sourcesPath);
+
   const domain = launchDomain();
   launchctl(env, ["bootout", `${domain}/${label}`], true);
   const temporaryPlist = `${builderPaths.plist}.${process.pid}.tmp`;
@@ -501,6 +515,7 @@ function verifyLaunchd(env) {
 function runLocked(env) {
   const { checkout, marker } = paths(env);
   const commit = syncCheckout(checkout, env);
+  assertReleaseInventory({ root: checkout, commit, state: paths(env).state });
   const successfulCommit = existsSync(marker) ? readFileSync(marker, "utf8").trim() : "";
   if (successfulCommit !== commit) {
     log(`Building ${commit}`);

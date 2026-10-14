@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
+import { homedir } from "node:os";
+import { readPublicationWarning } from "./local-publication-status.js";
 import { app, ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from "electron";
 import { LocalUpdatePolicy } from "./local-update-policy.js";
 
@@ -43,6 +45,7 @@ export function registerLocalUpdate(
   const preparations = new Map<string, (result: { ok: boolean; state?: unknown }) => void>();
   let restore: Activation | null = null;
   let lastCheck = 0;
+  let publicationWarning: string | null = null;
   let activating = false;
   let startupComplete = false;
   let startupFailed = false;
@@ -67,7 +70,7 @@ export function registerLocalUpdate(
     renameSync(temporary, file);
   }
   function publish() {
-    const status = { ...policy.status };
+    const status = { ...policy.status, publicationWarning };
     for (const entry of windows.values()) {
       if (!entry.window.isDestroyed())
         entry.window.webContents.send("paseo:local-update:status", status);
@@ -92,6 +95,13 @@ export function registerLocalUpdate(
     return event.senderFrame === event.sender.mainFrame && windows.has(event.sender.id);
   }
   function check() {
+    publicationWarning = readPublicationWarning(
+      path.join(
+        process.env.PASEO_LOCAL_BUILDER_HOME ??
+          path.join(homedir(), "Library/Application Support/Paseo Local Builder"),
+        "source-audit.json",
+      ),
+    );
     try {
       const value = JSON.parse(readFileSync(installedPath, "utf8"));
       if (!startupFailed && typeof value.commit === "string" && /^[a-f0-9]{40}$/.test(value.commit))

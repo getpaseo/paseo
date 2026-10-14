@@ -68,6 +68,23 @@ describe.skipIf(process.platform !== "darwin")("iCloud local app mirror", () => 
     expect(await readlink(path.join(target, "Contents", "Resources", "current"))).toBe("version");
   });
 
+  it("publishes new builds while the existing iCloud installer is protected", async () => {
+    const { source, env, run } = await fixture();
+    expect(run("publish", source).status).toBe(0);
+    const installer = path.join(env.PASEO_LOCAL_MIRROR_FOLDER, "Install on MacBook.command");
+    const original = await readFile(installer, "utf8");
+    execFileSync("/usr/bin/chflags", ["uchg", installer]);
+    try {
+      await writeFile(path.join(source, "Contents", "Resources", "version"), "second build");
+      execFileSync("/usr/bin/codesign", ["--force", "--sign", "-", source]);
+      const result = run("publish", source);
+      expect(result.status, result.stderr).toBe(0);
+      expect(await readFile(installer, "utf8")).toBe(original);
+    } finally {
+      execFileSync("/usr/bin/chflags", ["nouchg", installer]);
+    }
+  });
+
   it("keeps the current app when an archive is incomplete, then retries successfully", async () => {
     const { source, target, env, run } = await fixture();
     expect(run("publish", source).status).toBe(0);

@@ -34,17 +34,23 @@ export function useLocalUpdate(): void {
     banner.append(label, button);
     const offStatus = bridge.onStatus((value) => {
       if (!value || typeof value !== "object") return;
-      const state = value as { phase: string; deadline?: number; error?: string };
-      if (state.phase === "current") {
+      const state = value as {
+        phase: string;
+        deadline?: number;
+        error?: string;
+        publicationWarning?: string;
+      };
+      if (state.phase === "current" && !state.publicationWarning) {
         banner.remove();
         return;
       }
-      label.textContent = "Mise à jour prête — activation au repos";
+      label.textContent = state.publicationWarning ?? "Mise à jour prête — activation au repos";
       if (state.phase === "error") label.textContent = state.error ?? "Mise à jour non activée";
       if (state.phase === "countdown")
         label.textContent = `Mise à jour de l’interface dans ${Math.max(0, Math.ceil(((state.deadline ?? 0) - Date.now()) / 1000))} s`;
       if (state.phase === "activating") label.textContent = "Sauvegarde avant mise à jour…";
-      button.hidden = state.phase === "error" || state.phase === "activating";
+      button.hidden =
+        state.phase === "current" || state.phase === "error" || state.phase === "activating";
       if (!banner.isConnected) document.body.append(banner);
     });
     let lastActivity = 0;

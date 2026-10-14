@@ -4,7 +4,7 @@ Choose the builder below when each Mac should compile `origin/paseo-local`. Use 
 
 Use the macOS LaunchAgent to rebuild `Paseo Local.app` after `origin/paseo-local` advances. It owns a stable checkout under `~/Library/Application Support/Paseo Local Builder/checkout` and updates that checkout with `git merge --ff-only`. It never checks out or fetches another branch.
 
-Each run fetches the exact `paseo-local` ref, acquires a process lock, fast-forwards the clean checkout, and compares the remote commit with `last-successful-commit`. A changed commit runs `npm ci` followed by `npm run build`. The success marker is replaced atomically only after the build installs the app, so a failed build is retried at the next interval.
+Each run fetches the exact `paseo-local` ref, acquires a process lock, fast-forwards the clean checkout, audits the declared development repositories, and compares the remote commit with `last-successful-commit`. A changed commit runs `npm ci` followed by `npm run build`. The success marker is replaced atomically only after the build installs the app, so a failed build is retried at the next interval.
 
 The job never restarts the daemon. Update the daemon separately when interrupting its agents is
 authorized. App installation and interface activation follow the [local release contract](development.md#local-macos-app).
@@ -23,6 +23,29 @@ Failed reloads restore the previous source and retry on the next run.
 The job does not open or close Paseo Local. The running desktop activates a newer installation
 at idle after checkpointing its windows. The first installation of that mechanism requires one
 manual interface relaunch.
+
+## Complete-source gate
+
+Run the installer from the development repository. It records the stable primary checkout in
+`source-repositories.json` under the builder state directory, retaining previously declared
+repositories. Use `PASEO_LOCAL_BUILDER_SOURCE` when installing from elsewhere. Do not register only
+the dedicated builder clone: it cannot see work left on local branches or in linked checkouts.
+
+The `paseo-local` pre-push hook, build wrapper, automatic builder, and final installer check that
+all declared local branches, origin tracking refs, detached worktree heads, and non-ignored working
+files are included in the candidate. Missing repositories or configuration block delivery too.
+Integrate or preserve and explicitly resolve unfinished work; do not reset or delete it to pass.
+The final installer repeats the audit after package tests because work may change during a build.
+
+Read `source-audit.json` for the blocking refs and files. The desktop displays a blocked-publication
+notice when that report contains failures. A later successful audit clears it. Install the Git hooks
+with `npm run prepare` in development repositories; the builder gate remains required even when a
+push came from a checkout with older hooks.
+
+Treat development, publication, installation, and activation as separate states. A passing test or
+commit completes development only. Record the remote commit, installed manifest, and verified
+running desktop identity before marking a delivery complete. A required daemon update stays pending
+until its interruption has been authorized separately.
 
 ## Commands
 
@@ -57,7 +80,7 @@ Enable iCloud Drive on both Macs with the same Apple Account. On the Mac that bu
 npm run paseo-local:icloud:enable
 ```
 
-This publishes the installed `~/Applications/Paseo Local.app` and installs a LaunchAgent that checks for changed builds every five minutes and at login. It observes the installed bundle, so builds from other checkouts and the automatic builder are included. To publish immediately after a build, run `npm run paseo-local:icloud:publish`.
+This publishes the installed `~/Applications/Paseo Local.app` and installs a LaunchAgent that checks for changed builds every five minutes and at login. It observes the installed bundle produced by the gated release circuit. To publish immediately after a build, run `npm run paseo-local:icloud:publish`.
 
 On the receiving Mac, open **iCloud Drive → Paseo Local → Install on MacBook.command** in Terminal once. The installer copies itself outside iCloud and installs a LaunchAgent; Node, npm, and a repository checkout are not required. The receiver checks every five minutes and at login. Uninstall its local auto-builder first if one is installed: both jobs must not replace the same app.
 
@@ -73,4 +96,11 @@ Disable publication with `npm run paseo-local:icloud:disable`. On the receiver, 
 /bin/zsh "$HOME/Library/Application Support/Paseo Local Mirror/mirror.command" uninstall
 ```
 
-Both commands keep the installed app and shared archives. After changing the mirror script, rerun the enable command on the source and the shared installer on the receiver to update their local runtime copies.
+Both commands keep the installed app and shared archives. The publisher creates the shared installer
+once and leaves it in place: macOS can deny LaunchAgents access to an existing iCloud `.command`
+file. New app archives do not require a new installer. To update the receiver script itself, replace
+the shared installer manually from the current `scripts/paseo-local-icloud.command`, then run it on
+the receiver. Rerun the enable command on the source to update its publisher runtime.
+
+Publication to iCloud proves only that the archive and checksum are available on the source Mac.
+Confirm installation and the active build on the receiving Mac separately.

@@ -59,6 +59,10 @@ function createFixture() {
   execFileSync("git", ["clone", "--bare", source, remote]);
   git(source, "remote", "add", "origin", remote);
   mkdirSync(state);
+  writeFileSync(
+    join(state, "source-repositories.json"),
+    JSON.stringify({ repositories: [source] }),
+  );
   execFileSync("git", ["clone", "--branch", "paseo-local", "--single-branch", remote, checkout]);
   mkdirSync(pluginSource, { recursive: true });
   mkdirSync(pluginSettings, { recursive: true });
@@ -588,4 +592,13 @@ describe.runIf(process.platform === "darwin")("Paseo Local automatic build", () 
     expect(calls).toContain("bootout");
     expect(calls).toContain("print");
   });
+});
+
+it("blocks a published candidate before any build when local work is omitted", () => {
+  const fixture = createFixture();
+  writeFileSync(join(fixture.source, "unpublished.txt"), "work");
+  const result = run(fixture);
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("unpublished.txt");
+  expect(existsSync(fixture.npmLog)).toBe(false);
 });

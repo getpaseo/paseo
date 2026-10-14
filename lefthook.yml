@@ -12,3 +12,9 @@ pre-commit:
       run: npm run lint -- {staged_files}
     - name: typecheck
       run: npm run typecheck
+
+pre-push:
+  jobs:
+    - name: local-release-inventory
+      use_stdin: true
+      run: node scripts/check-local-release-push.mjs
