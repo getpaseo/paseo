@@ -109,6 +109,7 @@ interface TerminalEmulatorProps {
   testId?: string;
   xtermTheme?: ITheme;
   scrollbackLines: number;
+  macOptionIsMeta?: boolean;
   fontFamily?: string;
   fontSize?: number;
   keyboardInset?: number;
@@ -174,6 +175,7 @@ export default function TerminalEmulator({
     cursor: "#e6e6e6",
   },
   scrollbackLines,
+  macOptionIsMeta = true,
   fontFamily,
   fontSize,
   swipeGesturesEnabled = false,
@@ -203,6 +205,8 @@ export default function TerminalEmulator({
   const fontSizeRef = useRef(fontSize);
   const scrollbackLinesRef = useRef(scrollbackLines);
   scrollbackLinesRef.current = scrollbackLines;
+  const macOptionIsMetaRef = useRef(macOptionIsMeta);
+  macOptionIsMetaRef.current = macOptionIsMeta;
   fontFamilyRef.current = fontFamily;
   fontSizeRef.current = fontSize;
   const themeKey = useMemo(() => buildXtermThemeKey(xtermTheme), [xtermTheme]);
@@ -343,6 +347,10 @@ export default function TerminalEmulator({
   }, [scrollbackLines]);
 
   useEffect(() => {
+    runtimeRef.current?.setMacOptionIsMeta({ enabled: macOptionIsMeta });
+  }, [macOptionIsMeta]);
+
+  useEffect(() => {
     const root = rootRef.current;
     if (!root || !swipeGesturesEnabled) {
       return () => {};
@@ -479,6 +487,7 @@ export default function TerminalEmulator({
       host,
       initialSnapshot: initialSnapshotRef.current,
       scrollback: scrollbackLinesRef.current,
+      macOptionIsMeta: macOptionIsMetaRef.current,
       theme: mountedThemeRef.current,
       fontFamily: fontFamilyRef.current,
       fontSize: fontSizeRef.current,
