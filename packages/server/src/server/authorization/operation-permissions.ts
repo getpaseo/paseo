@@ -6,6 +6,8 @@ type OutboundOperation = SessionOutboundMessage["type"];
 export type PermissionRequirement = DaemonPermission | readonly DaemonPermission[] | null;
 
 const INBOUND_PERMISSION = {
+  "conversation.ui.get.request": "workspace.read",
+  "conversation.ui.state.update.request": "workspace.write",
   abort_request: "workspace.write",
   "agent.config.apply.request": ["workspace.write", "hub.execute"],
   "agent.detach.request": "workspace.write",
@@ -436,6 +438,8 @@ const OUTBOUND_PERMISSION = {
   "workspace.label.assignment.set.response": "workspace.manage",
   "workspace.label.delete.inspect.response": "workspace.read",
   "workspace.label.delete.response": "workspace.manage",
+  "conversation.ui.get.response": "workspace.read",
+  "conversation.ui.state.update.response": "workspace.write",
   "workspace.todos.get.response": "workspace.read",
   "workspace.todos.changed": "workspace.read",
   "workspace.todos.mutate.response": "workspace.write",

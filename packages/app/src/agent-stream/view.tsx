@@ -1,3 +1,8 @@
+import { styles as interactiveStyles } from "@/interactive-response/styles";
+import { Suspense, lazy } from "react";
+import { InteractiveConversationProvider } from "@/interactive-response/context";
+import { isInteractiveTool } from "@/interactive-response/tool-result";
+import { describeToolCall } from "@/tool-calls/detail-level/grouping";
 import { chatStyles } from "@/styles/chat";
 import { ChatFind, ChatFindExpansion } from "@/agent-stream/chat-find";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -273,6 +278,12 @@ function renderListEmptyComponent(input: {
 // what stops that churn: a row renders again only when its stream item identity, its layout item
 // identity, or the renderer itself changes. Item identity is the revision signal the strategy
 // already uses (`useRevisedHistoryRows` clones items whose content or display state changed).
+const InteractiveResponseCard = lazy(() =>
+  import("@/interactive-response/card").then((module) => ({
+    default: module.InteractiveResponseCard,
+  })),
+);
+
 const HistoryStreamRow = memo(function HistoryStreamRow({
   layoutItem,
   renderStreamItem,
@@ -456,6 +467,20 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const supportsAgentForkContextCursor = useSessionStore(
       (state) =>
         state.sessions[resolvedServerId]?.serverInfo?.features?.agentForkContextCursor === true,
+    );
+    const supportsInteractiveResponses = useSessionStore(
+      (state) =>
+        state.sessions[resolvedServerId]?.serverInfo?.features?.interactiveResponses === true,
+    );
+    const interactiveContext = useMemo(
+      () => ({
+        client,
+        agentId,
+        serverId: resolvedServerId,
+        readOnly,
+        supported: supportsInteractiveResponses,
+      }),
+      [client, agentId, resolvedServerId, readOnly, supportsInteractiveResponses],
     );
     const supportsChatOutline = useSessionStore(
       (state) =>
@@ -930,12 +955,22 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       agentId,
     ]);
 
+    const interactiveLoading = useMemo(
+      () => <Text style={interactiveStyles.muted}>{t("interactive.generating")}</Text>,
+      [t],
+    );
     const renderSingleToolCallItem = useCallback(
       (
         item: Extract<StreamItem, { kind: "tool_call" }>,
         isLastInSequence: boolean,
         maxDetailHeight?: number,
       ) => {
+        if (isInteractiveTool(describeToolCall(item).name))
+          return (
+            <Suspense fallback={interactiveLoading}>
+              <InteractiveResponseCard item={item} />
+            </Suspense>
+          );
         const { payload } = item;
 
         if (payload.source === "agent") {
@@ -985,7 +1020,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           />
         );
       },
-      [context.cwd, setInlineDetailsExpanded, handleToolCallOpenFile, planFootersByRowId],
+      [
+        context.cwd,
+        setInlineDetailsExpanded,
+        handleToolCallOpenFile,
+        planFootersByRowId,
+        interactiveLoading,
+      ],
     );
 
     // Read through a stable event so live group updates do not change the renderer identity
@@ -1320,7 +1361,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       () => [...effectiveStreamItems, ...(effectiveStreamHead ?? [])],
       [effectiveStreamItems, effectiveStreamHead],
     );
-    return (
+    const stream = (
       <ChatFind
         agentId={agentId}
         serverId={resolvedServerId}
@@ -1388,6 +1429,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           </AssistantSelectionCopySurface>
         </ToolCallSheetProvider>
       </ChatFind>
+    );
+    return (
+      <InteractiveConversationProvider value={interactiveContext}>
+        {stream}
+      </InteractiveConversationProvider>
     );
   },
 );

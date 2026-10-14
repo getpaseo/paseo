@@ -53,6 +53,7 @@ $PASEO_HOME/
 ├── agents/
 │   └── {sanitized-cwd}/
 │       └── {agentId}.json               # One file per agent
+├── conversation-ui/                     # Interactive documents, revision states and sent snapshots
 ├── schedules/
 │   └── {scheduleId}.json                # One file per schedule
 ├── projects/
@@ -74,6 +75,13 @@ $PASEO_HOME/
 The `agents/{sanitized-cwd}/` directory name is derived from the agent's `cwd` by stripping the filesystem root and replacing path separators with `-` (Windows drive letters become a `C-` style prefix). Persistent server stores write atomically by writing a temp file in the target directory and then renaming it into place.
 
 ---
+
+## Interactive conversation documents
+
+Keep interactive documents and their current form state under `conversation-ui/`, scoped to the
+owning agent. Revision states let a queued choice retain the values the user selected while another
+client edits the form. Sent snapshots and deepening context remain separate from the editable state;
+reopening or editing a document must never rewrite an earlier decision.
 
 ## 1. Agent Record
 

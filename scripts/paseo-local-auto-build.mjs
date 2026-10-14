@@ -519,7 +519,10 @@ function runLocked(env) {
   const successfulCommit = existsSync(marker) ? readFileSync(marker, "utf8").trim() : "";
   if (successfulCommit !== commit) {
     log(`Building ${commit}`);
-    executeStreaming("npm", ["ci"], { cwd: checkout, env });
+    executeStreaming("npm", ["ci"], {
+      cwd: checkout,
+      env: { ...env, OPENUI_TELEMETRY_DISABLED: "1" },
+    });
     executeStreaming("npm", ["run", "build"], { cwd: checkout, env });
     writeMarker(marker, commit);
     log(`Built ${commit}`);

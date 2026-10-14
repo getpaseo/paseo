@@ -642,8 +642,10 @@ function QueuedMessageRow({
       <Text style={styles.queueText} numberOfLines={2} ellipsizeMode="tail">
         {item.text}
       </Text>
+      {item.error ? <Text accessibilityRole="alert">{item.error}</Text> : null}
       <View style={styles.queueActions}>
         <Pressable
+          disabled={item.preserveMessageId}
           onPress={handleEdit}
           style={styles.queueActionButton}
           accessibilityLabel={editLabel}
@@ -1792,15 +1794,35 @@ function ComposerContentImpl({
         agentId,
         messageId: id,
         queue: queueWriter,
-        submitMessage: ({ text, attachments: queuedAttachments }) =>
-          submitMessage(text, queuedAttachments),
+        submitMessage: ({
+          text,
+          attachments: queuedAttachments,
+          messageId,
+          interactiveReference,
+          deepenReference,
+        }) => {
+          if (messageId && client)
+            return dispatchComposerAgentMessage({
+              client,
+              agentId,
+              text,
+              attachments: queuedAttachments,
+              messageId,
+              interactiveReference,
+              deepenReference,
+              encodeImages,
+              submission: createMessageSubmissionWriter(serverId),
+              activeTurnBehavior: "queue",
+            });
+          return submitMessage(text, queuedAttachments);
+        },
         failedToSendMessage: t("composer.errors.failedToSend"),
       });
       if (result.status === "failed") {
         setSendError(result.errorMessage);
       }
     },
-    [agentId, queueWriter, submitMessage, t],
+    [agentId, queueWriter, submitMessage, t, client, serverId],
   );
 
   const handleQueue = useCallback(

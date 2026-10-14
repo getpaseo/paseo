@@ -1,3 +1,5 @@
+import { isInteractiveResponseToolName } from "@getpaseo/protocol/tool-name-normalization";
+import { describeToolCall } from "@/tool-calls/detail-level/grouping";
 import type { StreamItem } from "@/types/stream";
 
 export interface ResponseFoldHeader {
@@ -64,7 +66,14 @@ export function projectResponseFolding(input: {
     }
     const steps = response
       .slice(0, finalStart)
-      .filter((item) => item.kind !== "notification" && item.kind !== "compaction");
+      .filter(
+        (item) =>
+          item.kind !== "notification" &&
+          item.kind !== "compaction" &&
+          !(
+            item.kind === "tool_call" && isInteractiveResponseToolName(describeToolCall(item).name)
+          ),
+      );
     const host = steps[0];
     if (!host) return;
     const expanded = input.expandedResponseIds.has(responseId);

@@ -1,3 +1,9 @@
+import {
+  InteractiveDocumentSchema,
+  InteractiveStateSchema,
+  InteractiveReferenceSchema,
+  DeepenReferenceSchema,
+} from "./interactive-response-schema.js";
 import { WorkspaceTodosSchema, WorkspaceTodoMutationSchema } from "./workspace-todos.js";
 import {
   MutableStructuredGenerationProviderSchema,
@@ -1040,6 +1046,37 @@ const WorkspaceLabelSyncCursorSchema = z.object({
   afterSeq: z.number().int().nonnegative(),
 });
 
+export const ConversationUiGetRequestSchema = z.object({
+  type: z.literal("conversation.ui.get.request"),
+  requestId: z.string(),
+  agentId: z.string(),
+  documentId: z.string().uuid(),
+});
+export const ConversationUiStateUpdateRequestSchema = z.object({
+  type: z.literal("conversation.ui.state.update.request"),
+  requestId: z.string(),
+  agentId: z.string(),
+  documentId: z.string().uuid(),
+  revision: z.number().int().nonnegative(),
+  state: InteractiveStateSchema,
+});
+export const ConversationUiGetResponseSchema = z.object({
+  type: z.literal("conversation.ui.get.response"),
+  payload: z.object({
+    requestId: z.string(),
+    document: InteractiveDocumentSchema.nullable(),
+    error: z.string().nullable(),
+  }),
+});
+export const ConversationUiStateUpdateResponseSchema = z.object({
+  type: z.literal("conversation.ui.state.update.response"),
+  payload: z.object({
+    requestId: z.string(),
+    document: InteractiveDocumentSchema.nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
 export const WorkspaceTodosGetRequestSchema = z.object({
   type: z.literal("workspace.todos.get.request"),
   requestId: z.string(),
@@ -1284,13 +1321,15 @@ const ImageAttachmentSchema = z.object({
   mimeType: z.string(), // e.g., "image/jpeg", "image/png"
 });
 
-export const ActiveTurnBehaviorSchema = z.enum(["interrupt", "steer"]);
+export const ActiveTurnBehaviorSchema = z.enum(["interrupt", "steer", "queue"]);
 export type ActiveTurnBehavior = z.infer<typeof ActiveTurnBehaviorSchema>;
 
 export const SendAgentMessageSchema = z.object({
   type: z.literal("send_agent_message"),
   agentId: z.string(),
   text: z.string(),
+  interactiveReference: InteractiveReferenceSchema.optional(),
+  deepenReference: DeepenReferenceSchema.optional(),
   messageId: z.string().optional(), // Client-provided ID for deduplication
   activeTurnBehavior: ActiveTurnBehaviorSchema.optional(),
   images: z.array(ImageAttachmentSchema).optional(),
@@ -1444,6 +1483,8 @@ export const SendAgentMessageRequestSchema = z.object({
   /** Accepts full ID, unique prefix, or exact full title (server resolves). */
   agentId: z.string(),
   text: z.string(),
+  interactiveReference: InteractiveReferenceSchema.optional(),
+  deepenReference: DeepenReferenceSchema.optional(),
   messageId: z.string().optional(), // Client-provided ID for deduplication
   activeTurnBehavior: ActiveTurnBehaviorSchema.optional(),
   images: z.array(ImageAttachmentSchema).optional(),
@@ -3337,6 +3378,8 @@ export const SubscriptionReleaseResponseSchema = z.object({
 });
 
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
+  ConversationUiGetRequestSchema,
+  ConversationUiStateUpdateRequestSchema,
   BrowserHostRegisterRequestSchema,
   SubscriptionReleaseRequestSchema,
   SessionEventsSetSubscriptionRequestSchema,
@@ -3746,6 +3789,7 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceLabels: z.boolean().optional(),
         workspaceTodos: z.boolean().optional(),
         workspaceTodoMilestones: z.boolean().optional(),
+        interactiveResponses: z.boolean().optional(),
         // COMPAT(workspaceSetupRun): added in v0.8.0, remove gate after 2027-09-02.
         workspaceSetupRun: z.boolean().optional(),
         // COMPAT(workspaceTerminals): added in v0.8.0, remove gate after 2027-09-05.
@@ -7012,6 +7056,8 @@ export const AgentSkillsImportLegacySelectionResponseSchema = z.object({
 });
 
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
+  ConversationUiGetResponseSchema,
+  ConversationUiStateUpdateResponseSchema,
   BrowserHostRegisterResponseSchema,
   SubscriptionReleaseResponseSchema,
   SessionEventsSetSubscriptionResponseSchema,

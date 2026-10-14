@@ -2,6 +2,30 @@ import type { TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
+  interactive: {
+    deepenPrompt:
+      "Approfondis cette réponse : explique les hypothèses, compare les alternatives et pose une question ciblée si nécessaire.",
+    deepen: "Approfondir",
+    sent: "Envoyé",
+    queued: "En file d’attente",
+    updateHost: "Mettez à jour cet hôte pour utiliser les réponses interactives.",
+    generating: "Génération de la réponse interactive…",
+    generationError: "La génération de la réponse interactive a échoué.",
+    loading: "Chargement de la réponse interactive…",
+    loadError: "Impossible de charger la réponse interactive.",
+    saveError: "Impossible d’enregistrer vos choix.",
+    renderError: "Impossible d’afficher ce visuel. Rechargez-le pour réessayer.",
+    scriptBlocked:
+      "Ce visuel contient du JavaScript. Son exécution reste bloquée sans environnement isolé hors réseau.",
+    artifact: "Visuel HTML",
+    send: "Envoyer à l’agent",
+    expand: "Agrandir",
+    close: "Fermer",
+    retry: "Réessayer",
+    reload: "Recharger",
+    reloadConflict:
+      "Rechargez le document pour résoudre les modifications concurrentes avant l’envoi.",
+  },
   workspaceHistory: {
     title: "Conversations fermées",
     empty: "Aucune conversation fermée",

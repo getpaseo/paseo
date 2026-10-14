@@ -9,6 +9,7 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
 import {
+  startAgentRun,
   formatSystemNotificationPrompt,
   isSystemInjectedEnvelope,
   setupFinishNotification,
@@ -759,6 +760,22 @@ test("waiting for a run start still gives up at the run start budget", async () 
     expect(settled).toBe(true);
   } finally {
     vi.useRealTimers();
+    await scenario.cleanup();
+  }
+});
+
+test("queue intent never replaces an active run even when replacement is requested", async () => {
+  const scenario = await createRunStartScenario(null);
+  try {
+    await scenario.startRun();
+    await expect(
+      startAgentRun(scenario.agentManager, scenario.agentId, "queued choices", createTestLogger(), {
+        activeTurnBehavior: "queue",
+        replaceRunning: true,
+      }),
+    ).rejects.toThrow("already has an active run");
+    expect(scenario.agentManager.hasInFlightRun(scenario.agentId)).toBe(true);
+  } finally {
     await scenario.cleanup();
   }
 });

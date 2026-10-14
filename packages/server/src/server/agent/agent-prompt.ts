@@ -74,7 +74,11 @@ async function startOrReplaceRun(
   iterator: AsyncGenerator<import("./agent-sdk-types.js").AgentStreamEvent>;
   replaced: boolean;
 }> {
-  const replaced = Boolean(options?.replaceRunning && agentManager.hasInFlightRun(agentId));
+  const replaced = Boolean(
+    options?.activeTurnBehavior !== "queue" &&
+    options?.replaceRunning &&
+    agentManager.hasInFlightRun(agentId),
+  );
   const iterator = replaced
     ? await agentManager.replaceAgentRun(agentId, prompt, options?.runOptions)
     : agentManager.streamAgent(agentId, prompt, options?.runOptions);

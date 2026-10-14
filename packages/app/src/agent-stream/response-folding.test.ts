@@ -211,3 +211,29 @@ describe("completed response folding", () => {
     });
   });
 });
+
+it("keeps interactive responses visible outside folded tool steps", () => {
+  const interactive: StreamItem = {
+    kind: "tool_call",
+    id: "ui",
+    timestamp,
+    payload: {
+      source: "orchestrator",
+      data: {
+        toolCallId: "ui",
+        toolName: "mcp__paseo__render_interactive_response",
+        arguments: {},
+        status: "completed",
+      },
+    },
+  };
+  const result = projectResponseFolding({
+    items: [message("user", "user_message"), message("step"), interactive, message("final")],
+    isTurnActive: false,
+    activeTurnId: null,
+    expandedResponseIds: new Set(),
+  });
+  expect([...result.hiddenItemIds]).toEqual([]);
+  expect(result.headersByHostId.has("ui")).toBe(false);
+  expect(result.hiddenMessageResponseIds.has("ui")).toBe(false);
+});

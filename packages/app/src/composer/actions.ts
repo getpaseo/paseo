@@ -23,6 +23,10 @@ export interface QueuedComposerMessage {
   id: string;
   text: string;
   attachments: ComposerAttachment[];
+  interactiveReference?: import("@getpaseo/protocol/messages").SendAgentMessageRequest["interactiveReference"];
+  deepenReference?: import("@getpaseo/protocol/messages").SendAgentMessageRequest["deepenReference"];
+  preserveMessageId?: boolean;
+  error?: string;
 }
 
 export interface AttachmentPersister {
@@ -185,6 +189,9 @@ export function cancelComposerAgent(input: CancelComposerAgentInput): Promise<vo
 }
 
 export interface DispatchComposerAgentMessageInput {
+  deepenReference?: import("@getpaseo/protocol/messages").SendAgentMessageRequest["deepenReference"];
+  messageId?: string;
+  interactiveReference?: import("@getpaseo/protocol/messages").SendAgentMessageRequest["interactiveReference"];
   client: ComposerSendClient;
   agentId: string;
   text: string;
@@ -204,7 +211,7 @@ export async function dispatchComposerAgentMessage(
   const wirePayload = splitComposerAttachmentsForSubmit(input.attachments, {
     format: input.attachmentSubmitFormat,
   });
-  const clientMessageId = generateMessageId();
+  const clientMessageId = input.messageId ?? generateMessageId();
   const userMessage = createUserMessage({
     clientMessageId,
     text: input.text,
@@ -220,6 +227,8 @@ export async function dispatchComposerAgentMessage(
     const imagesData = await input.encodeImages(wirePayload.images);
     await input.client.sendAgentMessage(input.agentId, input.text, {
       messageId: clientMessageId,
+      ...(input.interactiveReference ? { interactiveReference: input.interactiveReference } : {}),
+      ...(input.deepenReference ? { deepenReference: input.deepenReference } : {}),
       ...(input.activeTurnBehavior ? { activeTurnBehavior: input.activeTurnBehavior } : {}),
       images: imagesData ?? [],
       attachments: wirePayload.attachments,
@@ -294,7 +303,13 @@ export interface SendQueuedComposerMessageNowInput {
   agentId: string;
   messageId: string;
   queue: QueueWriter;
-  submitMessage: (input: { text: string; attachments: ComposerAttachment[] }) => Promise<void>;
+  submitMessage: (input: {
+    text: string;
+    attachments: ComposerAttachment[];
+    messageId?: string;
+    interactiveReference?: QueuedComposerMessage["interactiveReference"];
+    deepenReference?: QueuedComposerMessage["deepenReference"];
+  }) => Promise<void>;
   failedToSendMessage?: string;
 }
 
@@ -317,12 +332,26 @@ export async function sendQueuedComposerMessageNow(
     return next;
   });
   try {
-    await input.submitMessage({ text: item.text, attachments: item.attachments });
+    await input.submitMessage({
+      text: item.text,
+      attachments: item.attachments,
+      ...(item.preserveMessageId ? { messageId: item.id } : {}),
+      ...(item.interactiveReference ? { interactiveReference: item.interactiveReference } : {}),
+      ...(item.deepenReference ? { deepenReference: item.deepenReference } : {}),
+    });
     return { status: "submitted" };
   } catch (error) {
     input.queue.write((prev) => {
       const next = new Map(prev);
-      next.set(input.agentId, [item, ...(prev.get(input.agentId) ?? [])]);
+      next.set(input.agentId, [
+        {
+          ...item,
+          ...(item.preserveMessageId
+            ? { error: error instanceof Error ? error.message : String(error) }
+            : {}),
+        },
+        ...(prev.get(input.agentId) ?? []),
+      ]);
       return next;
     });
     return {

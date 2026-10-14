@@ -368,3 +368,32 @@ test.skipIf(process.platform !== "darwin")(
     }
   },
 );
+
+test("unfinished interactive response tools require an explicit experimental opt-in", async () => {
+  const logger = createTestLogger();
+  const manager = new AgentManager({ clients: createTestAgentClients(), logger });
+  const root = await mkdtemp(join(tmpdir(), "paseo-interactive-gate-"));
+  const catalog = () =>
+    createPaseoToolCatalog({
+      agentManager: manager,
+      agentStorage: new AgentStorage(join(root, "agents"), logger),
+      providerSnapshotManager: createProviderSnapshotManagerStub(),
+      logger,
+      callerAgentId: "experimental-caller",
+      paseoHome: root,
+    });
+  try {
+    vi.stubEnv("PASEO_EXPERIMENTAL_INTERACTIVE_RESPONSES", undefined);
+    expect(catalog().tools.has("render_interactive_response")).toBe(false);
+    await expect(catalog().executeTool("render_interactive_response", {})).rejects.toThrow(
+      "Paseo tool not found",
+    );
+    vi.stubEnv("PASEO_EXPERIMENTAL_INTERACTIVE_RESPONSES", "1");
+    expect(catalog().tools.has("render_interactive_response")).toBe(true);
+  } finally {
+    vi.unstubAllEnvs();
+    manager.prepareForShutdown();
+    await manager.flushForShutdown();
+    await rm(root, { recursive: true, force: true });
+  }
+});
