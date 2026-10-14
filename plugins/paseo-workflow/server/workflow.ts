@@ -1,4 +1,3 @@
-import type { AgentMode, AgentFeature } from "@getpaseo/protocol/agent-types";
 import { profileId, type Role } from "../shared/profiles";
 import { decisionJson, routerDecision } from "../shared/decisions";
 import {
@@ -14,6 +13,8 @@ import type {
   AgentPermissionResponse,
   AgentProfile,
   AgentTimelineItem,
+  AgentFeature,
+  AgentMode,
   PaseoAgentConfig,
 } from "./types";
 
