@@ -63,6 +63,27 @@ afterEach(async () => {
   }
 });
 
+test("a fresh checkout read makes a newly initialized repository available to cached readers", async () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-checkout-init-")));
+  const repo = path.join(root, "repo");
+  mkdirSync(repo);
+  const service = new WorkspaceGitServiceImpl({
+    logger: pino({ enabled: false }),
+    paseoHome: path.join(root, "home"),
+  });
+  cleanup.push(async () => {
+    await service.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  expect((await service.getSnapshot(repo, { includeForge: false })).git.isGit).toBe(false);
+  execFileSync("git", ["init", "-b", "main"], { cwd: repo, stdio: "pipe" });
+
+  expect((await service.getCheckout(repo)).isGit).toBe(true);
+  const repoRoot = await service.resolveRepoRoot(repo);
+  expect(realpathSync.native(repoRoot)).toBe(realpathSync.native(repo));
+}, 30_000);
+
 test("recursive observation updates tracked state and prunes ignored storms", async () => {
   const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-git-observation-")));
   const repoDir = path.join(tempDir, "repo");

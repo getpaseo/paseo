@@ -49,29 +49,35 @@ export async function seedParentWithSubagent(
     modeId: "load-test",
     model: "ten-second-stream",
   });
-  const child = await workspace.client.createAgent({
-    provider: "mock",
-    cwd: workspace.repoPath,
-    workspaceId: workspace.workspaceId,
-    title: input.childTitle,
-    modeId: "load-test",
-    model: "ten-second-stream",
-    labels: {
-      [PARENT_AGENT_ID_LABEL]: parent.id,
-    },
-  });
+  const child = await seedSubagent(workspace, { parentId: parent.id, title: input.childTitle });
 
   return {
     parent: {
       id: parent.id,
       title: input.parentTitle,
     },
-    child: {
-      id: child.id,
-      title: input.childTitle,
-    },
+    child,
     workspaceId: workspace.workspaceId,
   };
+}
+
+/** Seeds an idle Paseo subagent of an existing agent in the same workspace. */
+export async function seedSubagent(
+  workspace: Pick<SeededWorkspace, "client" | "repoPath" | "workspaceId">,
+  input: { parentId: string; title: string },
+): Promise<{ id: string; title: string }> {
+  const child = await workspace.client.createAgent({
+    provider: "mock",
+    cwd: workspace.repoPath,
+    workspaceId: workspace.workspaceId,
+    title: input.title,
+    modeId: "load-test",
+    model: "ten-second-stream",
+    labels: {
+      [PARENT_AGENT_ID_LABEL]: input.parentId,
+    },
+  });
+  return { id: child.id, title: input.title };
 }
 
 export async function seedParentWithCrossWorkspaceSubagent(
@@ -139,6 +145,12 @@ export async function openSubagentsTrack(page: Page): Promise<void> {
     await page.getByTestId("subagents-track-header").click();
   }
   await expect(panel).toBeVisible({ timeout: 30_000 });
+}
+
+/** On compact the track opens as a sheet, which closes once a row is chosen. */
+export async function openSubagentFromCompactTrack(page: Page, childId: string): Promise<void> {
+  await page.getByTestId("subagents-track-header").click();
+  await page.getByTestId(`subagents-track-row-${childId}`).click();
 }
 
 export async function expectSubagentRowVisible(page: Page, childId: string): Promise<void> {

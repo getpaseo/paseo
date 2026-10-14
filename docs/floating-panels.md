@@ -304,7 +304,9 @@ track phase.
 
 All sheets use the app-wide Gorhom modal provider through `IsolatedBottomSheetModal`. This
 includes native centered dialogs: separate React Native Modals cannot present a root-owned
-sibling dialog over an existing iOS presenter.
+sibling dialog over an existing iOS presenter. The one exception is the
+[workspace sheet](explorer-sidebar.md#workspace-sheet), an in-tree Gorhom `BottomSheet` that hosts a
+whole workspace panel.
 
 The wrapper must give Gorhom an object ref. Gorhom accepts a callback ref at the React boundary
 but stores it in the modal queue and later reads `.current`; provider dismissal, replacement,

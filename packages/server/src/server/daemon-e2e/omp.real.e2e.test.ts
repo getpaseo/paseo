@@ -131,10 +131,10 @@ async function timeline(client: DaemonClient, agentId: string): Promise<AgentTim
   return result.entries.map((entry) => entry.item);
 }
 
-function compactionFiller(): string {
+function compactionFiller(records = 1200): string {
   const teas = ["assam", "darjeeling", "sencha", "oolong"];
   return Array.from(
-    { length: 1200 },
+    { length: records },
     (_, index) =>
       `Record ${String(index).padStart(5, "0")}: tea=${teas[index % teas.length]} origin=region-${index % 37} notes=lorem ipsum dolor sit amet`,
   ).join("\n");
@@ -234,6 +234,27 @@ afterEach(() => {
   roots.clear();
 });
 
+async function waitForTimelineItem(
+  client: DaemonClient,
+  agentId: string,
+  predicate: (item: AgentTimelineItem) => boolean,
+): Promise<AgentTimelineItem> {
+  const deadline = Date.now() + 60_000;
+  let items: AgentTimelineItem[] = [];
+  while (Date.now() < deadline) {
+    items = await timeline(client, agentId);
+    const item = items.find(predicate);
+    if (item) return item;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`Timed out waiting for OMP timeline item: ${JSON.stringify(items)}`);
+}
+
+async function contextWindowUsedTokens(client: DaemonClient, agentId: string) {
+  const result = await client.fetchAgent(agentId);
+  return result?.agent.lastUsage?.contextWindowUsedTokens;
+}
+
 describe("daemon E2E (real OMP)", () => {
   test(
     "a prompt OMP rejects before its agent runs fails the turn with OMP's error",
@@ -251,6 +272,48 @@ describe("daemon E2E (real OMP)", () => {
         const finish = await harness.client.waitForFinish(agent.id, 60_000);
         expect(finish.status).toBe("error");
         expect(finish.error).toContain("No API key found for anthropic");
+      } finally {
+        await closeHarness(harness);
+      }
+    },
+    TIMEOUT_MS,
+  );
+
+  test(
+    "manual compact shows its progress and refreshes context usage",
+    async () => {
+      const harness = await createHarness();
+      try {
+        const agent = await createAgent(harness, "manual-compact");
+        await promptAndFinish(harness, agent.id, "Reply exactly: ready");
+        await promptAndFinish(
+          harness,
+          agent.id,
+          `${compactionFiller(2500)}\n\nWhich tea is in record 00007? Reply with one word.`,
+        );
+        await promptAndFinish(harness, agent.id, "Reply exactly: after-filler");
+        const usedBefore = await contextWindowUsedTokens(harness.client, agent.id);
+        expect(usedBefore).toBeGreaterThan(20_000);
+
+        await harness.client.sendMessage(agent.id, "/compact");
+        await waitForTimelineItem(
+          harness.client,
+          agent.id,
+          (item) => item.type === "compaction" && item.status === "completed",
+        );
+
+        expect(await timeline(harness.client, agent.id)).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ type: "compaction", status: "loading", trigger: "manual" }),
+            expect.objectContaining({ type: "compaction", status: "completed", trigger: "manual" }),
+          ]),
+        );
+        await harness.client.waitForAgentUpsert(
+          agent.id,
+          (snapshot) =>
+            (snapshot.lastUsage?.contextWindowUsedTokens ?? Infinity) < (usedBefore ?? 0),
+          60_000,
+        );
       } finally {
         await closeHarness(harness);
       }

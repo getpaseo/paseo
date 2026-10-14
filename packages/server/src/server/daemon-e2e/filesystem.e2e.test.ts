@@ -1,7 +1,16 @@
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync, symlinkSync, readdirSync } from "fs";
+import { describe, test, expect, beforeEach, afterEach, onTestFinished } from "vitest";
+import {
+  mkdtempSync,
+  writeFileSync,
+  rmSync,
+  mkdirSync,
+  symlinkSync,
+  readdirSync,
+  readlinkSync,
+} from "fs";
 import { tmpdir } from "os";
 import path from "path";
+import { execFileSync } from "node:child_process";
 import { createDaemonTestContext, type DaemonTestContext } from "../test-utils/index.js";
 
 function tmpCwd(): string {
@@ -387,6 +396,84 @@ describe("file explorer", () => {
     }
   });
 
+  test.skipIf(process.platform === "win32")(
+    "duplicating a folder keeps relative symlinks inside the copy",
+    async () => {
+      const cwd = tmpCwd();
+      try {
+        mkdirSync(path.join(cwd, "template"));
+        writeFileSync(path.join(cwd, "template", "data.txt"), "original payload\n");
+        symlinkSync("data.txt", path.join(cwd, "template", "alias.txt"));
+
+        const duplicated = await ctx.client.duplicateFileEntry({ cwd, path: "template" });
+        expect(duplicated).toMatchObject({
+          duplicatedPath: "template copy",
+          success: true,
+          error: null,
+        });
+        expect(readlinkSync(path.join(cwd, "template copy", "alias.txt"))).toBe("data.txt");
+
+        const copiedTarget = await ctx.client.readFile(cwd, "template copy/data.txt");
+        const targetWrite = await ctx.client.writeFile({
+          cwd,
+          path: "template copy/data.txt",
+          content: "copy payload\n",
+          expectedModifiedAt: copiedTarget.modifiedAt,
+          expectedRevision: copiedTarget.revision,
+        });
+        expect(targetWrite.status).toBe("written");
+        const copiedAlias = await ctx.client.readFile(cwd, "template copy/alias.txt");
+        expect(new TextDecoder().decode(copiedAlias.bytes)).toBe("copy payload\n");
+
+        const aliasWrite = await ctx.client.writeFile({
+          cwd,
+          path: "template copy/alias.txt",
+          content: "edited through copied alias\n",
+          expectedModifiedAt: copiedAlias.modifiedAt,
+          expectedRevision: copiedAlias.revision,
+        });
+        expect(aliasWrite.status).toBe("written");
+        const original = await ctx.client.readFile(cwd, "template/data.txt");
+        expect(new TextDecoder().decode(original.bytes)).toBe("original payload\n");
+        const editedCopy = await ctx.client.readFile(cwd, "template copy/data.txt");
+        expect(new TextDecoder().decode(editedCopy.bytes)).toBe("edited through copied alias\n");
+
+        const deleted = await ctx.client.deleteFileEntry({ cwd, path: "template" });
+        expect(deleted).toMatchObject({ success: true, error: null });
+        const survivingAlias = await ctx.client.readFile(cwd, "template copy/alias.txt");
+        expect(new TextDecoder().decode(survivingAlias.bytes)).toBe(
+          "edited through copied alias\n",
+        );
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "duplicating a file symlink preserves an explicit absolute target",
+    async () => {
+      const cwd = tmpCwd();
+      const targetPath = path.join(cwd, "data.txt");
+      try {
+        writeFileSync(targetPath, "absolute target payload\n");
+        symlinkSync(targetPath, path.join(cwd, "alias.txt"));
+
+        const duplicated = await ctx.client.duplicateFileEntry({ cwd, path: "alias.txt" });
+        expect(duplicated).toMatchObject({
+          duplicatedPath: "alias copy.txt",
+          success: true,
+          error: null,
+        });
+        expect(readlinkSync(path.join(cwd, "alias copy.txt"))).toBe(targetPath);
+        const copy = await ctx.client.readFile(cwd, "alias copy.txt");
+        expect(new TextDecoder().decode(copy.bytes)).toBe("absolute target payload\n");
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+  );
+
   test("lists directory contents", async () => {
     const cwd = tmpCwd();
 
@@ -488,4 +575,64 @@ describe("file explorer", () => {
     await ctx.client.deleteAgent(agent.id);
     rmSync(cwd, { recursive: true, force: true });
   }, 60000); // 1 minute timeout
+});
+
+describe("commit file diffs", () => {
+  test.each([".", "apps/web"])("opens committed files from %s workspaces", async (relativePath) => {
+    const cwd = tmpCwd();
+    onTestFinished(() =>
+      rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }),
+    );
+    const workspace = path.join(cwd, relativePath);
+    const filePath = "apps/web/notes.txt";
+    function git(args: string[]): string {
+      return execFileSync("git", args, { cwd, encoding: "utf8" });
+    }
+    git(["init", "-b", "main"]);
+    git(["config", "user.name", "Test"]);
+    git(["config", "user.email", "test@example.com"]);
+    git(["config", "core.autocrlf", "false"]);
+    mkdirSync(path.join(cwd, "apps", "web"), { recursive: true });
+    writeFileSync(path.join(cwd, filePath), "before\n");
+    writeFileSync(path.join(cwd, "apps/web/untouched.txt"), "unchanged\n");
+    git(["add", "."]);
+    git(["-c", "commit.gpgsign=false", "commit", "-m", "initial"]);
+    git(["checkout", "-b", "feature"]);
+    writeFileSync(path.join(cwd, filePath), "after\n");
+    git(["add", "."]);
+    git(["-c", "commit.gpgsign=false", "commit", "-m", "edit"]);
+    const sha = git(["rev-parse", "HEAD"]).trim();
+
+    const history = await ctx.client.listCheckoutCommits(workspace);
+    const commit = history.commits.find((entry) => entry.sha === sha);
+    expect(commit?.files).toEqual([
+      { path: filePath, additions: 1, deletions: 1, status: "modified" },
+    ]);
+    const result = await ctx.client.getCommitFileDiff(workspace, sha, filePath);
+    expect(result).toEqual({
+      file: {
+        path: filePath,
+        isNew: false,
+        isDeleted: false,
+        additions: 1,
+        deletions: 1,
+        hunks: [
+          {
+            oldStart: 1,
+            oldCount: 1,
+            newStart: 1,
+            newCount: 1,
+            lines: [
+              { type: "header", content: "@@ -1 +1 @@" },
+              { type: "remove", content: "before" },
+              { type: "add", content: "after" },
+            ],
+          },
+        ],
+      },
+    });
+    expect(await ctx.client.getCommitFileDiff(workspace, sha, "apps/web/untouched.txt")).toEqual({
+      file: null,
+    });
+  });
 });
