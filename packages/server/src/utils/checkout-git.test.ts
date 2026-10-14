@@ -32,6 +32,8 @@ import {
   getCheckoutStatus,
   checkoutResolvedBranch,
   listBranchSuggestions,
+  listCheckoutCommits,
+  setCheckoutBaseBranch,
   mergeToBase,
   mergeFromBase,
   MergeConflictError,
@@ -261,6 +263,136 @@ describe("checkout git utilities", () => {
     __resetCheckoutShortstatCacheForTests();
     __resetPullRequestStatusCacheForTests();
     rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("changing the checkout base persists an exact ref without changing HEAD or dirty files", async () => {
+    execFileSync("git", ["checkout", "-b", "release"], { cwd: repoDir });
+    commitFile(repoDir, "release.txt", "release\n", "release change");
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    commitFile(repoDir, "feature.txt", "feature\n", "feature change");
+    execFileSync("git", ["update-ref", "refs/remotes/upstream/release", "main"], { cwd: repoDir });
+    writeFileSync(join(repoDir, "file.txt"), "dirty\n");
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir }).toString();
+
+    expect(await setCheckoutBaseBranch({ cwd: repoDir, baseRef: "refs/heads/release" })).toBe(
+      "refs/heads/release",
+    );
+    const localDiff = await getCheckoutDiff(repoDir, { mode: "base" });
+    expect(localDiff.diff).toContain("feature.txt");
+    expect(localDiff.diff).not.toContain("release.txt");
+    expect((await listCheckoutCommits({ cwd: repoDir })).baseRef).toBe("refs/heads/release");
+    expect(await getCheckoutSnapshotFacts(repoDir)).toMatchObject({
+      storedBaseRef: "refs/heads/release",
+    });
+
+    await setCheckoutBaseBranch({ cwd: repoDir, baseRef: "refs/remotes/upstream/release" });
+    expect((await getCheckoutDiff(repoDir, { mode: "base" })).diff).toContain("release.txt");
+    expect((await listCheckoutCommits({ cwd: repoDir })).baseRef).toBe(
+      "refs/remotes/upstream/release",
+    );
+    await expect(
+      getCheckoutDiff(repoDir, { mode: "base", baseRef: "refs/heads/release" }),
+    ).rejects.toThrow("Base ref mismatch");
+    expect(execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir }).toString()).toBe(head);
+    expect(readTextFile(join(repoDir, "file.txt"))).toBe("dirty\n");
+    expect(await getCurrentBranch(repoDir)).toBe("feature");
+  });
+
+  it("rejects non-branch refs and missing bases without changing the saved base", async () => {
+    await setCheckoutBaseBranch({ cwd: repoDir, baseRef: "main" });
+    const metadata = readFileSync(getPaseoWorktreeMetadataPath(repoDir), "utf8");
+    execFileSync("git", ["tag", "release-tag"], { cwd: repoDir });
+    for (const baseRef of [
+      "missing",
+      "HEAD",
+      "refs/tags/release-tag",
+      "main~1",
+      "--help",
+      "refs/heads/main^{commit}",
+    ]) {
+      await expect(setCheckoutBaseBranch({ cwd: repoDir, baseRef })).rejects.toThrow();
+      expect(readFileSync(getPaseoWorktreeMetadataPath(repoDir), "utf8")).toBe(metadata);
+    }
+  });
+
+  it("changing a managed worktree base preserves its runtime and PR identity", async () => {
+    const worktree = await createLegacyWorktreeForTest({
+      cwd: repoDir,
+      branchName: "feature/base",
+      baseBranch: "main",
+      worktreeSlug: "base",
+      paseoHome,
+      runSetup: false,
+    });
+    const original = readPaseoWorktreeMetadata(worktree.worktreePath);
+    execFileSync("git", ["branch", "release"], { cwd: repoDir });
+    await setCheckoutBaseBranch({ cwd: worktree.worktreePath, baseRef: "release" });
+    expect(readPaseoWorktreeMetadata(worktree.worktreePath)).toEqual({
+      ...original,
+      baseRefName: "release",
+      baseRef: "refs/heads/release",
+    });
+    expect(await getCheckoutSnapshotFacts(worktree.worktreePath, { paseoHome })).toMatchObject({
+      storedBaseRef: "refs/heads/release",
+    });
+  });
+
+  it("lists exact local and all remote refs separately for the base picker", async () => {
+    execFileSync("git", ["branch", "release"], { cwd: repoDir });
+    execFileSync("git", ["update-ref", "refs/remotes/origin/release", "HEAD"], { cwd: repoDir });
+    execFileSync("git", ["update-ref", "refs/remotes/upstream/release", "HEAD"], { cwd: repoDir });
+    const suggestions = await listBranchSuggestions(repoDir, {
+      refMode: "exact",
+      query: "release",
+    });
+    expect(suggestions.map((entry) => entry.name).sort()).toEqual([
+      "refs/heads/release",
+      "refs/remotes/origin/release",
+      "refs/remotes/upstream/release",
+    ]);
+    expect(suggestions.find((entry) => entry.name === "refs/heads/release")).toMatchObject({
+      hasLocal: true,
+      hasRemote: false,
+    });
+  });
+
+  it("merges from and into the selected base without changing the repository default branch", async () => {
+    execFileSync("git", ["branch", "release"], { cwd: repoDir });
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    commitFile(repoDir, "feature.txt", "feature\n", "feature");
+    execFileSync("git", ["checkout", "release"], { cwd: repoDir });
+    commitFile(repoDir, "release.txt", "release\n", "release");
+    execFileSync("git", ["checkout", "feature"], { cwd: repoDir });
+    await setCheckoutBaseBranch({ cwd: repoDir, baseRef: "release" });
+    await mergeFromBase(repoDir);
+    expect(readTextFile(join(repoDir, "release.txt"))).toBe("release\n");
+    const featureHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir }).toString();
+    const mainHead = execFileSync("git", ["rev-parse", "main"], { cwd: repoDir }).toString();
+    await mergeToBase(repoDir);
+    expect(execFileSync("git", ["rev-parse", "release"], { cwd: repoDir }).toString()).toBe(
+      featureHead,
+    );
+    expect(execFileSync("git", ["rev-parse", "main"], { cwd: repoDir }).toString()).toBe(mainHead);
+    await expect(mergeFromBase(repoDir, { baseRef: "main" })).rejects.toThrow("Base ref mismatch");
+  });
+
+  it("creates new pull requests targeting the selected base", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    execFileSync("git", ["branch", "release"], { cwd: repoDir });
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    commitFile(repoDir, "feature.txt", "feature\n", "feature");
+    await setCheckoutBaseBranch({ cwd: repoDir, baseRef: "refs/heads/release" });
+    const targets: string[] = [];
+    const adapter = createGitHubServiceForStatus(null);
+    adapter.createPullRequest = async (input) => {
+      targets.push(input.base);
+      return { url: "https://github.com/acme/repo/pull/1", number: 1 };
+    };
+    await createPullRequest(repoDir, { title: "Feature", body: "Feature" }, adapter);
+    expect(targets).toEqual(["release"]);
+    await expect(
+      createPullRequest(repoDir, { title: "Stale target", body: "", base: "main" }, adapter),
+    ).rejects.toThrow("Base ref mismatch");
   });
 
   it("throws NotGitRepoError for non-git directories", async () => {

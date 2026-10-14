@@ -61,6 +61,7 @@ import { GitActionsSplitButton } from "@/git/actions-split-button";
 import type { GitActions } from "@/git/policy";
 import { BranchSwitcher } from "@/components/branch-switcher";
 import { useGitActions } from "@/git/use-actions";
+import { WorkspaceBaseBranchPicker } from "@/git/workspace-base-branch-picker";
 import { GIT_ACTION_ICONS } from "@/git/action-icons";
 import { buildForgeSignInCommand, getForgePresentation, type Forge } from "@/git/forge";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
@@ -479,6 +480,7 @@ interface ChangesRepositoryToolbarModel {
 }
 
 interface ChangesComparisonToolbarModel {
+  baseBranchPicker: ReactNode;
   committedDescription?: string;
   diffMode: "uncommitted" | "base" | "all";
   mode: ChangesToolbarMode;
@@ -496,6 +498,7 @@ interface ChangesHeaderProps {
 }
 
 interface BuildChangesHeaderModelInput {
+  baseBranchPicker: ReactNode;
   branchName: string | null;
   committedDescription?: string;
   compact: boolean;
@@ -529,6 +532,7 @@ function buildChangesHeaderModel(input: BuildChangesHeaderModelInput): {
       workspaceId: input.workspaceId,
     },
     comparison: {
+      baseBranchPicker: input.baseBranchPicker,
       committedDescription: input.committedDescription,
       diffMode: input.diffMode,
       mode: input.mode,
@@ -753,6 +757,7 @@ function ChangesComparisonToolbar({
           onSelectBase={model.onSelectBase}
           onSelectAll={model.onSelectAll}
         />
+        {model.diffMode === "base" ? model.baseBranchPicker : null}
         {model.selectedDiffStat ? (
           <DiffStat
             additions={model.selectedDiffStat.additions}
@@ -1904,6 +1909,14 @@ export function ChangesSurface({
   const changesHeaderModel = useMemo(
     () =>
       buildChangesHeaderModel({
+        baseBranchPicker: workspaceId ? (
+          <WorkspaceBaseBranchPicker
+            serverId={serverId}
+            workspaceId={workspaceId}
+            cwd={cwd}
+            baseRef={baseRef ?? null}
+          />
+        ) : null,
         branchName: currentBranchName,
         committedDescription: committedDiffDescription,
         compact: isMobile,
@@ -1921,6 +1934,7 @@ export function ChangesSurface({
         workspaceId,
       }),
     [
+      baseRef,
       committedDiffDescription,
       currentBranchName,
       cwd,

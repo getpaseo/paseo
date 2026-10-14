@@ -1,5 +1,5 @@
 import { execFile, execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +8,7 @@ import { afterEach, beforeEach, expect, test } from "vitest";
 
 import { getFullAccessConfig } from "./daemon-e2e/agent-configs.js";
 import { createWorktree } from "../utils/worktree.js";
+import { readPaseoWorktreeMetadata } from "../utils/worktree-metadata.js";
 import {
   createDaemonTestContext,
   DaemonClient,
@@ -275,6 +276,109 @@ test("renaming a workspace updates every subscribed client", async () => {
     titles.stop();
     await observer.close();
   }
+});
+
+test("changing a checkout base updates subscribed clients and shared workspace recovery records", async () => {
+  const repo = createGitRepo();
+  execFileSync("git", ["checkout", "-b", "release"], { cwd: repo });
+  writeFileSync(path.join(repo, "release.txt"), "release\n");
+  execFileSync("git", ["add", "."], { cwd: repo });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "release"], { cwd: repo });
+  execFileSync("git", ["checkout", "-b", "feature"], { cwd: repo });
+  writeFileSync(path.join(repo, "feature.txt"), "feature\n");
+  execFileSync("git", ["add", "."], { cwd: repo });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "feature"], { cwd: repo });
+  const first = await createLocalWorkspace(repo, "First");
+  const second = await createLocalWorkspace(repo, "Second");
+  const observer = new DaemonClient({
+    url: `ws://127.0.0.1:${ctx.daemon.port}/ws`,
+    reconnect: { enabled: false },
+  });
+  await observer.connect();
+  const refs: string[] = [];
+  const stop = observer.on("checkout_status_update", (message) => {
+    if (message.payload.cwd === repo && message.payload.baseRefExact)
+      refs.push(message.payload.baseRefExact);
+  });
+  const events = observer.observeEvents(["checkout_status_update"]);
+  try {
+    await events.ready;
+    await observer.fetchWorkspaces({ subscribe: {} });
+    expect(ctx.client.getLastServerInfoMessage()?.features?.workspaceBaseBranch).toBe(true);
+    await ctx.client.getCheckoutStatus(repo);
+    expect(
+      (await ctx.client.getCheckoutDiff(repo, { mode: "base" })).files.map((file) => file.path),
+    ).toContain("release.txt");
+    await ctx.client.setWorkspaceBaseBranch({ workspaceId: first, baseRef: "refs/heads/release" });
+    await expect.poll(() => refs).toContain("refs/heads/release");
+    const diff = await observer.getCheckoutDiff(repo, { mode: "base" });
+    expect(diff.files.map((file) => file.path)).not.toContain("release.txt");
+    expect(diff.files.map((file) => file.path)).toContain("feature.txt");
+    expect((await observer.listCheckoutCommits(repo)).baseRef).toBe("refs/heads/release");
+    const records = JSON.parse(
+      readFileSync(path.join(ctx.daemon.paseoHome, "projects", "workspaces.json"), "utf8"),
+    );
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ workspaceId: first, baseBranch: "refs/heads/release" }),
+        expect.objectContaining({ workspaceId: second, baseBranch: "refs/heads/release" }),
+      ]),
+    );
+    await expect(
+      ctx.client.setWorkspaceBaseBranch({ workspaceId: first, baseRef: "refs/heads/missing" }),
+    ).rejects.toThrow("Base branch not found");
+    expect((await observer.getCheckoutStatus(repo)).baseRefExact).toBe("refs/heads/release");
+  } finally {
+    stop();
+    await events.release();
+    await observer.close();
+  }
+});
+
+test("a selected checkout base survives a daemon restart", async () => {
+  const repo = createGitRepo();
+  execFileSync("git", ["branch", "release"], { cwd: repo });
+  const id = await createLocalWorkspace(repo, "Restart");
+  await ctx.client.setWorkspaceBaseBranch({ workspaceId: id, baseRef: "refs/heads/release" });
+  const previous = ctx;
+  const paseoHomeRoot = path.dirname(previous.daemon.paseoHome);
+  await previous.client.close();
+  await previous.daemon.daemon.stop();
+  tempRoots.push(previous.daemon.staticDir);
+  ctx = await createDaemonTestContext({ paseoHomeRoot });
+  expect(
+    (await ctx.client.fetchWorkspaces()).entries.some((workspace) => workspace.id === id),
+  ).toBe(true);
+  expect((await ctx.client.getCheckoutStatus(repo)).baseRefExact).toBe("refs/heads/release");
+});
+
+test("a managed workspace restores its changed base after archival removes the checkout", async () => {
+  const repo = createGitRepo();
+  execFileSync("git", ["branch", "release"], { cwd: repo });
+  const created = await ctx.client.createWorkspace({
+    source: { kind: "worktree", cwd: repo, worktreeSlug: "changed-base", baseBranch: "main" },
+  });
+  const workspace = created.workspace;
+  if (!workspace) throw new Error(created.error ?? "Failed to create workspace");
+  await ctx.client.setWorkspaceBaseBranch({
+    workspaceId: workspace.id,
+    baseRef: "refs/heads/release",
+  });
+  const joinedId = await createLocalWorkspace(
+    workspace.workspaceDirectory,
+    "Joined after changing base",
+  );
+  expect((await ctx.client.archiveWorkspace(workspace.id)).error).toBe(null);
+  expect(existsSync(workspace.workspaceDirectory)).toBe(true);
+  expect((await ctx.client.archiveWorkspace(joinedId)).error).toBe(null);
+  expect(existsSync(workspace.workspaceDirectory)).toBe(false);
+  await ctx.client.restoreWorkspace(joinedId);
+  expect(readPaseoWorktreeMetadata(workspace.workspaceDirectory)?.baseRef).toBe(
+    "refs/heads/release",
+  );
+  expect((await ctx.client.getCheckoutStatus(workspace.workspaceDirectory)).baseRefExact).toBe(
+    "refs/heads/release",
+  );
 });
 
 test.each(["worktree", "workspace"] as const)(
