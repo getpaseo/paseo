@@ -283,6 +283,7 @@ export type AgentAttentionCallback = (params: {
 }) => void;
 
 export type AgentArchivedCallback = (agentId: string) => Promise<void> | void;
+export type AgentUnarchivedCallback = (agentId: string) => Promise<void> | void;
 
 export interface ProviderAvailability {
   provider: AgentProvider;
@@ -770,6 +771,7 @@ export class AgentManager {
   private appendSystemPrompt: string;
   private onAgentAttention?: AgentAttentionCallback;
   private onAgentArchived?: AgentArchivedCallback;
+  private onAgentUnarchived?: AgentUnarchivedCallback;
   private onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
@@ -863,6 +865,10 @@ export class AgentManager {
 
   setAgentArchivedCallback(callback: AgentArchivedCallback): void {
     this.onAgentArchived = callback;
+  }
+
+  setAgentUnarchivedCallback(callback: AgentUnarchivedCallback): void {
+    this.onAgentUnarchived = callback;
   }
 
   setMcpBaseUrl(url: string | null): void {
@@ -1976,6 +1982,18 @@ export class AgentManager {
     }
   }
 
+  private async fireAgentUnarchived(agentId: string): Promise<void> {
+    const callback = this.onAgentUnarchived;
+    if (!callback) {
+      return;
+    }
+    try {
+      await callback(agentId);
+    } catch (error) {
+      this.logger.warn({ err: error, agentId }, "onAgentUnarchived callback failed");
+    }
+  }
+
   private dispatchStoredAgentState(record: StoredAgentRecord): void {
     const updatedAt = new Date(record.updatedAt);
     const attention = extractAttention(record);
@@ -2311,9 +2329,13 @@ export class AgentManager {
     agentId: string,
     updates?: { workspaceId?: string; labels?: AgentLabelPatch },
   ): Promise<boolean> {
-    return this.runLifecycleMutation(agentId, () =>
+    const unarchived = await this.runLifecycleMutation(agentId, () =>
       this.unarchiveSnapshotUnlocked(agentId, updates),
     );
+    if (unarchived) {
+      await this.fireAgentUnarchived(agentId);
+    }
+    return unarchived;
   }
 
   private async unarchiveSnapshotUnlocked(

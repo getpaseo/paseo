@@ -8537,6 +8537,35 @@ test("fires onAgentArchived for stored-only snapshot archives", async () => {
   expect(archivedIds).toEqual([storedOnly.id]);
 });
 
+test("fires onAgentUnarchived only when an archived agent is unarchived", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-unarchived-hook-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const unarchivedIds: string[] = [];
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  manager.setAgentUnarchivedCallback((agentId) => {
+    unarchivedIds.push(agentId);
+  });
+
+  const agent = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Restored" },
+    undefined,
+    { workspaceId: undefined },
+  );
+  await manager.closeAgent(agent.id);
+
+  expect(await manager.unarchiveSnapshot(agent.id)).toBe(false);
+  expect(unarchivedIds).toEqual([]);
+
+  await manager.archiveSnapshot(agent.id, new Date().toISOString());
+  expect(await manager.unarchiveSnapshot(agent.id)).toBe(true);
+  expect(unarchivedIds).toEqual([agent.id]);
+});
+
 test("native archive and restore release the loaded session writer", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-native-archive-writer-"));
   class WriterClient extends NativeArchiveRecordingClient {

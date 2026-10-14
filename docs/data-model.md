@@ -400,22 +400,23 @@ Paseo uses these paths under the configured OpenAI base URL:
 
 One file per schedule. ID is 8 hex characters.
 
-| Field       | Type                                  | Description                      |
-| ----------- | ------------------------------------- | -------------------------------- |
-| `id`        | `string`                              | 8-char hex ID                    |
-| `name`      | `string?`                             | Human-readable name              |
-| `prompt`    | `string`                              | The prompt to send               |
-| `cadence`   | `ScheduleCadence`                     | Timing (see below)               |
-| `target`    | `ScheduleTarget`                      | What to run (see below)          |
-| `status`    | `"active" \| "paused" \| "completed"` | Current state                    |
-| `createdAt` | `string` (ISO 8601)                   |                                  |
-| `updatedAt` | `string` (ISO 8601)                   |                                  |
-| `nextRunAt` | `string?` (ISO 8601)                  | Next scheduled execution         |
-| `lastRunAt` | `string?` (ISO 8601)                  | Last execution time              |
-| `pausedAt`  | `string?` (ISO 8601)                  | When paused                      |
-| `expiresAt` | `string?` (ISO 8601)                  | Auto-expire time                 |
-| `maxRuns`   | `number?`                             | Max executions before completing |
-| `runs`      | `ScheduleRun[]`                       | Execution history                |
+| Field         | Type                                  | Description                                           |
+| ------------- | ------------------------------------- | ----------------------------------------------------- |
+| `id`          | `string`                              | 8-char hex ID                                         |
+| `name`        | `string?`                             | Human-readable name                                   |
+| `prompt`      | `string`                              | The prompt to send                                    |
+| `cadence`     | `ScheduleCadence`                     | Timing (see below)                                    |
+| `target`      | `ScheduleTarget`                      | What to run (see below)                               |
+| `status`      | `"active" \| "paused" \| "completed"` | Current state                                         |
+| `createdAt`   | `string` (ISO 8601)                   |                                                       |
+| `updatedAt`   | `string` (ISO 8601)                   |                                                       |
+| `nextRunAt`   | `string?` (ISO 8601)                  | Next scheduled execution                              |
+| `lastRunAt`   | `string?` (ISO 8601)                  | Last execution time                                   |
+| `pausedAt`    | `string?` (ISO 8601)                  | When paused                                           |
+| `pauseReason` | `"agent_archived"?`                   | Why the daemon paused it; absent when the user paused |
+| `expiresAt`   | `string?` (ISO 8601)                  | Auto-expire time                                      |
+| `maxRuns`     | `number?`                             | Max executions before completing                      |
+| `runs`        | `ScheduleRun[]`                       | Execution history                                     |
 
 ### Nested: ScheduleCadence (discriminated union on `type`)
 
