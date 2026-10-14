@@ -1274,31 +1274,28 @@ for (const outcome of ["ready", "failed"] as const) {
     ).toHaveLength(1);
   });
 }
-for (const [read, failure] of [
-  ["view/page", "once"],
-  ["view/page", "always"],
-  ["session/read", "once"],
-] as const) {
-  test(`a child ${read} that fails ${failure} leaves the parent session running`, async () => {
-    const h = await harness("subagent", {
-      MUSE_TEST_CHILD: "dedicated",
-      [read === "view/page" ? "MUSE_TEST_CHILD_PAGE_FAIL" : "MUSE_TEST_CHILD_READ_FAIL"]: failure,
-    });
-    await h.open();
-    await h.prompt();
-    await h.wait(
-      (e) =>
-        (e.type === "session.turn" && e.sessionId === "paseo-session" && e.state !== "started") ||
-        e.type === "session.runtime_failed",
-    );
-    expect(h.events.filter((e) => e.type === "session.runtime_failed")).toEqual([]);
-    expect(
-      h.events.filter((e) => e.type === "session.turn" && e.sessionId === "paseo-session"),
-    ).toContainEqual(expect.objectContaining({ state: "completed" }));
+async function childReadHarness(env: Record<string, string>) {
+  const h = await harness("subagent", { MUSE_TEST_CHILD: "dedicated", ...env });
+  await h.open();
+  await h.prompt();
+  await h.wait(
+    (e) =>
+      (e.type === "session.turn" && e.sessionId === "paseo-session" && e.state !== "started") ||
+      e.type === "session.runtime_failed",
+  );
+  expect(h.events.filter((e) => e.type === "session.runtime_failed")).toEqual([]);
+  expect(
+    h.events.filter((e) => e.type === "session.turn" && e.sessionId === "paseo-session"),
+  ).toContainEqual(expect.objectContaining({ state: "completed" }));
+  return h;
+}
+for (const failure of ["once", "always"] as const) {
+  test(`a child view/page that fails ${failure} leaves the parent session running`, async () => {
+    const h = await childReadHarness({ MUSE_TEST_CHILD_PAGE_FAIL: failure });
     // The next update of the subagent's item reads the child again.
     expect(
       (await h.recorded()).filter(
-        (f) => f.method === read && f.params.sessionId === "fixture-child",
+        (f) => f.method === "view/page" && f.params.sessionId === "fixture-child",
       ).length,
     ).toBeGreaterThan(1);
     expect(
@@ -1318,6 +1315,24 @@ for (const [read, failure] of [
     ).toEqual([expect.objectContaining({ state: "completed" })]);
   });
 }
+test("a child whose session/read always fails still opens, shows its transcript, and ends", async () => {
+  const h = await childReadHarness({ MUSE_TEST_CHILD_READ_FAIL: "always" });
+  // Without its session it opens in the parent's workspace and untitled.
+  expect(
+    h.events.filter((e) => e.type === "session.opened" && e.sessionId === "fixture-child"),
+  ).toEqual([expect.objectContaining({ cwd: h.root, title: undefined })]);
+  expect(
+    h.events.find(
+      (e) =>
+        e.type === "timeline.item" &&
+        e.sessionId === "fixture-child" &&
+        e.item.type === "assistant_message",
+    ),
+  ).toMatchObject({ item: { text: "SUBAGENT_PHASE0_OK" } });
+  expect(
+    h.events.filter((e) => e.type === "session.turn" && e.sessionId === "fixture-child"),
+  ).toEqual([expect.objectContaining({ state: "completed" })]);
+});
 test("gap backfill repairs a missing completion without duplicating item revisions", async () => {
   const h = await harness("text-reasoning", { MUSE_TEST_GAP: "1" });
   await h.open();
