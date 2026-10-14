@@ -5,6 +5,7 @@ import {
   clearResidentBrowserWebviewsForTests,
   ensureResidentBrowserWebview,
   getResidentBrowserWebview,
+  readResidentBrowserUrl,
   prepareBrowserWebview,
   presentBrowserWebview,
   rememberBrowserWebviewSize,
@@ -17,6 +18,8 @@ import {
   setCommandCenterFocusRestoreElement,
   takeCommandCenterFocusRestoreElement,
 } from "../../utils/command-center-focus-restore";
+
+import { useBrowserStore } from "./store";
 
 const RESIDENT_HOST_ID = "paseo-browser-resident-webviews";
 const attachedBrowsers: Array<{
@@ -102,6 +105,33 @@ describe("resident browser webviews", () => {
     clearResidentBrowserWebviewsForTests();
   });
 
+  it("retains a never-presented resident crash through release and clears it on retry or removal", () => {
+    const browserId = useBrowserStore
+      .getState()
+      .createBrowser({ initialUrl: "https://example.com" });
+    const webview = ensureTestBrowser({
+      browserId,
+      workspaceId: "workspace-crash",
+      url: "https://example.com",
+    })!;
+    webview.dispatchEvent(new Event("render-process-gone"));
+    expect(useBrowserStore.getState().browsersById[browserId]).toMatchObject({
+      isLoading: false,
+      lastError: "This page crashed. Reload to try again.",
+    });
+    releaseResidentBrowserWebview(browserId, webview);
+    expect(takeResidentBrowserWebview(browserId)).toBe(webview);
+    expect(useBrowserStore.getState().browsersById[browserId].lastError).toBe(
+      "This page crashed. Reload to try again.",
+    );
+    webview.dispatchEvent(new Event("did-start-loading"));
+    expect(useBrowserStore.getState().browsersById[browserId].lastError).toBeNull();
+    removeResidentBrowserWebview(browserId);
+    webview.dispatchEvent(new Event("render-process-gone"));
+    expect(useBrowserStore.getState().browsersById[browserId].lastError).toBeNull();
+    useBrowserStore.getState().removeBrowser(browserId);
+  });
+
   it("parks a browser webview in the permanent paintable 1x1 host", () => {
     const visibleHost = document.createElement("div");
     const webview = document.createElement("webview");
@@ -163,6 +193,65 @@ describe("resident browser webviews", () => {
     expect(webview.parentElement).toBe(permanentParent);
   });
 
+  it("keeps one connected webview through hide, reveal, maximize and restore", () => {
+    const browserId = "browser-presentation-transitions";
+    const webview = ensureTestBrowser({
+      browserId,
+      workspaceId: "workspace-a",
+      url: "https://example.com",
+    });
+    if (!webview?.parentElement) throw new Error("Expected permanent browser surface");
+    const surface = webview.parentElement;
+    const anchor = document.createElement("div");
+    let bounds = { left: 500, top: 100, width: 500, height: 600 };
+    Object.defineProperty(anchor, "getBoundingClientRect", { value: () => bounds });
+    const mutations: MutationRecord[] = [];
+    const observer = new MutationObserver((records) => mutations.push(...records));
+    observer.observe(residentHost(), { childList: true, subtree: true });
+    const originalSrc = (webview as HTMLElement & { src: string }).src;
+    try {
+      for (const width of [500, 1000, 500]) {
+        bounds.width = width;
+        presentBrowserWebview(browserId, webview, anchor, anchor, { mode: "responsive" });
+        expect(webview.style.width).toBe(`${width}px`);
+        expect(webview.parentElement).toBe(surface);
+        releaseResidentBrowserWebview(browserId, webview);
+        expectParkedSurface(surface);
+        expect(webview.isConnected).toBe(true);
+        expect(takeResidentBrowserWebview(browserId)).toBe(webview);
+        expect((webview as HTMLElement & { src: string }).src).toBe(originalSrc);
+      }
+      expect([...mutations, ...observer.takeRecords()]).toEqual([]);
+    } finally {
+      observer.disconnect();
+    }
+  });
+
+  it("keeps the responsive viewport while a revealed pane has no layout area yet", () => {
+    const browserId = "browser-pending-layout";
+    const webview = ensureTestBrowser({
+      browserId,
+      workspaceId: "workspace-a",
+      url: "https://example.com",
+    });
+    if (!webview?.parentElement) throw new Error("Expected permanent browser surface");
+    const surface = webview.parentElement;
+    rememberBrowserWebviewSize({ browserId, width: 472, height: 692 });
+    releaseResidentBrowserWebview(browserId, webview);
+    const anchor = document.createElement("div");
+    const bounds = { left: 500, top: 100, width: 0, height: 692 };
+    Object.defineProperty(anchor, "getBoundingClientRect", { value: () => bounds });
+    presentBrowserWebview(browserId, webview, anchor, anchor, { mode: "responsive" });
+    expect(webview.style.width).toBe("472px");
+    expect(webview.style.height).toBe("692px");
+    expectParkedSurface(surface);
+    bounds.width = 472;
+    presentBrowserWebview(browserId, webview, anchor, anchor, { mode: "responsive" });
+    expect(webview.style.width).toBe("472px");
+    expect(webview.parentElement).toBe(surface);
+    expect(surface.style.pointerEvents).toBe("auto");
+  });
+
   it("clips an oversized fixed viewport to its pane without resizing the webview", () => {
     const webview = ensureTestBrowser({
       browserId: "browser-oversized",
@@ -202,6 +291,29 @@ describe("resident browser webviews", () => {
     expect(webview.style.top).toBe("-450px");
     expect(webview.parentElement.style.width).toBe("800px");
     expect(webview.parentElement.style.height).toBe("600px");
+  });
+
+  it("reads the ready parked guest URL and destroys its DOM identity on close", () => {
+    const input = {
+      browserId: "closed-guest",
+      workspaceId: "closed-workspace",
+      url: "https://example.com/initial",
+    };
+    const guest = ensureTestBrowser(input)!;
+    expect(readResidentBrowserUrl(input.browserId)).toBeNull();
+    Object.defineProperties(guest, {
+      getWebContentsId: { value: () => 42 },
+      getURL: { value: () => "https://example.com/background-navigation" },
+    });
+    expect(readResidentBrowserUrl(input.browserId)).toBe(
+      "https://example.com/background-navigation",
+    );
+    removeResidentBrowserWebview(input.browserId);
+    expect(guest.isConnected).toBe(false);
+    expect(getResidentBrowserWebview(input.browserId)).toBeNull();
+    expect(readResidentBrowserUrl(input.browserId)).toBeNull();
+    const replacement = ensureTestBrowser(input)!;
+    expect(replacement).not.toBe(guest);
   });
 
   it("creates a resident webview for an agent-created unfocused tab", () => {

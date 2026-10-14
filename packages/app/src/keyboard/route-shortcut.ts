@@ -42,6 +42,10 @@ const PASSTHROUGH_DISPATCH: Record<string, KeyboardActionDefinition> = {
   "agent.interrupt": { id: "agent.interrupt", scope: "global" },
   "workspace.tab.menu.open": { id: "workspace.tab.menu.open", scope: "workspace" },
   "workspace.tab.target.agent": { id: "workspace.tab.target.agent", scope: "workspace" },
+  "workspace.browser.reopen-last-closed": {
+    id: "workspace.browser.reopen-last-closed",
+    scope: "workspace",
+  },
   "workspace.tab.target.browser": { id: "workspace.tab.target.browser", scope: "workspace" },
   "workspace.tab.target.changes": { id: "workspace.tab.target.changes", scope: "workspace" },
   "workspace.tab.target.files": { id: "workspace.tab.target.files", scope: "workspace" },

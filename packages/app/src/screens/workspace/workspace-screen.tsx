@@ -22,12 +22,14 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useRouter, type Href } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, ChevronRight } from "lucide-react-native";
+import { ChevronDown, ChevronRight, Globe } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import invariant from "tiny-invariant";
 import { SidebarMenuToggle } from "@/components/headers/menu-header";
+import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
+import { resolveBrowserPaneId } from "@/stores/workspace-layout-actions";
 import { ScreenHeader } from "@/components/headers/screen-header";
 import { ScreenTitle } from "@/components/headers/screen-title";
 import { HostBadge } from "@/hosts/host-badge";
@@ -117,8 +119,6 @@ import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useStableEvent } from "@/hooks/use-stable-event";
-import { removeResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
-import { createWorkspaceBrowser, useBrowserStore } from "@/desktop/browser/store";
 import { getDesktopHost } from "@/desktop/host";
 import { buildProviderCommand } from "@/utils/provider-command-templates";
 import { generateDraftId } from "@/stores/draft-keys";
@@ -144,7 +144,19 @@ import {
   buildWorkspaceTabMenuEntries,
   type WorkspaceTabMenuLabels,
 } from "@/screens/workspace/workspace-tab-menu";
-import { useDesktopBrowserNewTabRequests } from "@/desktop/browser/new-tab-requests";
+import {
+  closeWorkspaceBrowser,
+  reopenLastWorkspaceBrowser,
+  openWorkspaceBrowser,
+  type OpenWorkspaceBrowserInput,
+} from "@/workspace-tabs/browser";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import {
+  resolveBrowserNewTabPlacement,
+  useDesktopBrowserNewTabRequests,
+  type BrowserNewTabRequest,
+} from "@/desktop/browser/new-tab-requests";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import {
   resolveWorkspaceExplorerToggleOwner,
@@ -256,6 +268,7 @@ function buildWorkspaceFileLocation(
 }
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
+const ThemedGlobe = withUnistyles(Globe);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -1939,6 +1952,26 @@ function WorkspaceScreenContent({
   const explorerSidebarPaneId = useWorkspaceLayoutStore((state) =>
     persistenceKey ? selectExplorerSidebarPaneId(state, persistenceKey) : null,
   );
+  const rememberedBrowserPaneId = useWorkspaceLayoutStore((state) =>
+    persistenceKey ? state.browserPaneIdByWorkspace[persistenceKey] : null,
+  );
+  const browserPaneId = workspaceLayout
+    ? resolveBrowserPaneId(workspaceLayout, rememberedBrowserPaneId, explorerSidebarPaneId)
+    : null;
+  const browserPane = workspaceLayout ? findPaneById(workspaceLayout.root, browserPaneId) : null;
+  const isBrowserShowing = Boolean(browserPane && browserPane.hidden !== true);
+  const canHideBrowser = Boolean(
+    workspaceLayout &&
+    browserPaneId &&
+    canDismissPaneInLayout(workspaceLayout, browserPaneId, explorerSidebarPaneId),
+  );
+  const browserToggleLabel = t(
+    isBrowserShowing ? "workspace.browser.hide" : "workspace.browser.show",
+  );
+  const browserToggleAccessibilityState = useMemo(
+    () => ({ expanded: isBrowserShowing }),
+    [isBrowserShowing],
+  );
   const lastMainPaneRef = useLastMainPane({
     workspaceKey: persistenceKey,
     layout: workspaceLayout,
@@ -2009,6 +2042,7 @@ function WorkspaceScreenContent({
     function closeWorkspaceTabWithCleanup(input: {
       tabId: string;
       target?: WorkspaceTabTarget | null;
+      rememberBrowser?: boolean;
     }) {
       const normalizedTabId = trimNonEmpty(input.tabId);
       if (!normalizedTabId || !persistenceKey) {
@@ -2020,14 +2054,18 @@ function WorkspaceScreenContent({
         hideWorkspaceAgent(persistenceKey, input.target.agentId);
       }
       if (input.target?.kind === "browser") {
-        const { browserId } = input.target;
-        useBrowserStore.getState().removeBrowser(browserId);
-        removeResidentBrowserWebview(browserId);
-        void getDesktopHost()?.browser?.unregisterWorkspaceBrowser?.(browserId);
+        void closeWorkspaceBrowser({
+          workspaceKey: persistenceKey,
+          browserId: input.target.browserId,
+          remember: input.rememberBrowser !== false,
+        }).catch((error) =>
+          toast.error(error instanceof Error ? error.message : t("common.errors.error")),
+        );
+        return;
       }
       closeWorkspaceTab(persistenceKey, normalizedTabId);
     },
-    [closeWorkspaceTab, hideWorkspaceAgent, persistenceKey, unpinWorkspaceAgent],
+    [closeWorkspaceTab, hideWorkspaceAgent, persistenceKey, unpinWorkspaceAgent, toast, t],
   );
 
   const focusedPaneTabState = useMemo(
@@ -2502,13 +2540,6 @@ function WorkspaceScreenContent({
     [tabFallbackLabels, tabs],
   );
 
-  const handleCreateDraftTab = useCallback(
-    (input?: { paneId?: string }) => {
-      openWorkspaceDraftTab({ paneId: input?.paneId });
-    },
-    [openWorkspaceDraftTab],
-  );
-
   const handleCreateTerminal = useStableEvent((input?: { paneId?: string }) => {
     createTerminal({
       destination: input?.paneId ? { kind: "open", paneId: input.paneId } : { kind: "open" },
@@ -2522,19 +2553,70 @@ function WorkspaceScreenContent({
     [createTerminal],
   );
 
+  const [browserOpenError, setBrowserOpenError] = useState<
+    | { kind: "pane"; input: { workspaceKey: string } }
+    | { kind: "reopen"; input: { workspaceKey: string } }
+    | { kind: "browser"; input: OpenWorkspaceBrowserInput }
+    | { kind: "preview"; input: Parameters<typeof openWorkspaceDevPreview>[0] }
+    | null
+  >(null);
+  const showBrowserPane = useCallback((input: { workspaceKey: string }) => {
+    const store = useWorkspaceLayoutStore.getState();
+    const paneId = store.ensureBrowserPane(input.workspaceKey, { reveal: true });
+    if (paneId) store.focusPane(input.workspaceKey, paneId);
+    setBrowserOpenError(paneId ? null : { kind: "pane", input });
+  }, []);
+  const handleToggleBrowserPane = useCallback(() => {
+    if (!persistenceKey || !getIsElectron()) return;
+    if (isBrowserShowing) {
+      const store = useWorkspaceLayoutStore.getState();
+      const layout = store.layoutByWorkspace[persistenceKey];
+      if (
+        !layout ||
+        !resolveBrowserPaneId(
+          layout,
+          store.browserPaneIdByWorkspace[persistenceKey],
+          explorerSidebarPaneId,
+        )
+      )
+        return;
+      store.ensureBrowserPane(persistenceKey, { reveal: false });
+      store.hideBrowserPane(persistenceKey);
+    } else showBrowserPane({ workspaceKey: persistenceKey });
+  }, [explorerSidebarPaneId, isBrowserShowing, persistenceKey, showBrowserPane]);
+  const openManualBrowser = useCallback((input: OpenWorkspaceBrowserInput) => {
+    const result = openWorkspaceBrowser(input);
+    setBrowserOpenError(result.ok ? null : { kind: "browser", input });
+  }, []);
+  const handleReopenBrowserTab = useCallback((input: { workspaceKey: string }) => {
+    if (!getIsElectron()) return;
+    const result = reopenLastWorkspaceBrowser(input.workspaceKey);
+    setBrowserOpenError(result.ok ? null : { kind: "reopen", input });
+  }, []);
   const handleCreateBrowserTab = useCallback(
     (input?: { paneId?: string }) => {
-      if (!persistenceKey || !getIsElectron()) {
-        return;
-      }
-      const { browserId } = createWorkspaceBrowser();
-      openWorkspaceTabFocused(
-        persistenceKey,
-        { kind: "browser", browserId },
-        paneLocalPlacement(input?.paneId),
-      );
+      if (!persistenceKey || !getIsElectron()) return;
+      const layout = useWorkspaceLayoutStore.getState().layoutByWorkspace[persistenceKey];
+      const afterTabId =
+        input?.paneId && layout ? findPaneById(layout.root, input.paneId)?.focusedTabId : null;
+      openManualBrowser({
+        workspaceKey: persistenceKey,
+        url: "about:blank",
+        state: { browserAddressFocusPending: true },
+        intent: "reveal",
+        placement: input?.paneId ? paneLocalPlacement(input.paneId) : undefined,
+        insertionPosition: afterTabId ? { afterTabId } : undefined,
+      });
     },
-    [openWorkspaceTabFocused, persistenceKey],
+    [openManualBrowser, persistenceKey],
+  );
+
+  const handleCreateDraftTab = useCallback(
+    (input?: { paneId?: string; kind?: "browser" }) => {
+      if (input?.kind === "browser") handleCreateBrowserTab(input);
+      else openWorkspaceDraftTab({ paneId: input?.paneId });
+    },
+    [handleCreateBrowserTab, openWorkspaceDraftTab],
   );
 
   const launchWorkspaceTab = useCallback(
@@ -2567,25 +2649,51 @@ function WorkspaceScreenContent({
         });
         return;
       }
-      const { browserId } = createWorkspaceBrowser();
-      openTarget({ kind: "browser", browserId });
+      if (!getIsElectron()) return;
+      openManualBrowser({
+        workspaceKey: persistenceKey,
+        url: "about:blank",
+        state: { browserAddressFocusPending: true },
+        intent: "reveal",
+        replaceTabId: destination.kind === "replace" ? destination.tabId : undefined,
+        placement:
+          destination.kind === "open" && destination.paneId
+            ? paneLocalPlacement(destination.paneId)
+            : undefined,
+      });
     },
-    [createTerminal, createWorkspaceTab, persistenceKey, replaceWorkspaceTabTarget],
+    [
+      createTerminal,
+      createWorkspaceTab,
+      openManualBrowser,
+      persistenceKey,
+      replaceWorkspaceTabTarget,
+    ],
   );
 
   const handleOpenUrlInBrowserTab = useCallback(
     (url: string) => {
-      if (!persistenceKey || !getIsElectron()) {
-        return;
-      }
-      const { browserId } = createWorkspaceBrowser({ initialUrl: url });
-      openWorkspaceTabFocused(
-        persistenceKey,
-        { kind: "browser", browserId },
-        FOCUSED_PANE_PLACEMENT,
-      );
+      if (!persistenceKey || !getIsElectron()) return;
+      openManualBrowser({ workspaceKey: persistenceKey, url, intent: "reveal" });
     },
-    [openWorkspaceTabFocused, persistenceKey],
+    [openManualBrowser, persistenceKey],
+  );
+  const handleBrowserNewTabRequest = useCallback(
+    (request: BrowserNewTabRequest) => {
+      if (!persistenceKey || !getIsElectron()) return;
+      const source = resolveBrowserNewTabPlacement({
+        request,
+        workspaceLayout: useWorkspaceLayoutStore.getState().layoutByWorkspace[persistenceKey],
+      });
+      if (!source) return;
+      openManualBrowser({
+        workspaceKey: persistenceKey,
+        url: request.url,
+        intent: "reveal",
+        ...source,
+      });
+    },
+    [openManualBrowser, persistenceKey],
   );
 
   const handleOpenDevPreview = useCallback(
@@ -2598,14 +2706,27 @@ function WorkspaceScreenContent({
         scriptName: input.scriptName,
         url: input.url,
       });
-      if (!result.ok) {
-        toast.show(t("workspace.scripts.states.previewPlacementUnavailable"), {
-          variant: "error",
-        });
-      }
+      setBrowserOpenError(
+        result.ok ? null : { kind: "preview", input: { workspaceKey: persistenceKey, ...input } },
+      );
     },
-    [persistenceKey, t, toast],
+    [persistenceKey],
   );
+
+  const retryBrowserOpen = useCallback(() => {
+    if (!browserOpenError) return;
+    if (browserOpenError.kind === "browser") openManualBrowser(browserOpenError.input);
+    else if (browserOpenError.kind === "reopen") handleReopenBrowserTab(browserOpenError.input);
+    else if (browserOpenError.kind === "pane") showBrowserPane(browserOpenError.input);
+    else handleOpenDevPreview(browserOpenError.input);
+  }, [
+    browserOpenError,
+    handleOpenDevPreview,
+    handleReopenBrowserTab,
+    openManualBrowser,
+    showBrowserPane,
+  ]);
+  const dismissBrowserOpenError = useCallback(() => setBrowserOpenError(null), []);
 
   // Closing the preview goes through the same cleanup path as any browser tab, which also
   // tears down the webview and its Electron registration. Ordinary browsers never match.
@@ -2621,6 +2742,7 @@ function WorkspaceScreenContent({
       closeWorkspaceTabWithCleanup({
         tabId: existing.tabId,
         target: { kind: "browser", browserId: existing.browserId },
+        rememberBrowser: false,
       });
     },
     [closeWorkspaceTabWithCleanup, persistenceKey],
@@ -2652,7 +2774,7 @@ function WorkspaceScreenContent({
   useDesktopBrowserNewTabRequests({
     enabled: Boolean(persistenceKey),
     workspaceLayout,
-    openUrl: handleOpenUrlInBrowserTab,
+    openUrl: handleBrowserNewTabRequest,
   });
 
   const handleSelectSwitcherTab = useCallback(
@@ -3302,6 +3424,9 @@ function WorkspaceScreenContent({
         case "workspace.terminal.new":
           handleCreateTerminal();
           return true;
+        case "workspace.browser.reopen-last-closed":
+          if (persistenceKey) handleReopenBrowserTab({ workspaceKey: persistenceKey });
+          return true;
         case "workspace.browser.new":
           handleCreateBrowserTab();
           return true;
@@ -3341,6 +3466,8 @@ function WorkspaceScreenContent({
       handleCloseTabById,
       handleCreateDraftTab,
       handleCreateBrowserTab,
+      handleReopenBrowserTab,
+      persistenceKey,
       handleCreateTerminal,
       focusedPaneTabState.pane?.id,
       navigateToTabId,
@@ -3517,6 +3644,7 @@ function WorkspaceScreenContent({
       "workspace.tab.navigate-relative",
       "workspace.terminal.new",
       "workspace.browser.new",
+      "workspace.browser.reopen-last-closed",
       "workspace.tab.menu.open",
     ] as const,
     enabled: workspaceActionsEnabled,
@@ -3941,6 +4069,21 @@ function WorkspaceScreenContent({
   const headerRight = useMemo(
     () => (
       <View style={styles.headerRight}>
+        {getIsElectron() ? (
+          <HeaderToggleButton
+            testID="workspace-browser-toggle"
+            onPress={handleToggleBrowserPane}
+            accessibilityRole="button"
+            accessibilityLabel={browserToggleLabel}
+            accessibilityState={browserToggleAccessibilityState}
+            tooltipLabel={browserToggleLabel}
+            tooltipKeys={[]}
+            tooltipSide="bottom"
+            disabled={isBrowserShowing && !canHideBrowser}
+          >
+            <ThemedGlobe size={18} strokeWidth={1.5} uniProps={extraMutedIconColorMapping} />
+          </HeaderToggleButton>
+        ) : null}
         <PluginHeaderButtons serverId={normalizedServerId} workspaceId={normalizedWorkspaceId} />
         {!isMobile ? <WorkspaceTodosButton hideLabels={hideHeaderActionLabels} /> : null}
         {!isMobile && workspaceDescriptor ? (
@@ -3998,6 +4141,11 @@ function WorkspaceScreenContent({
       </View>
     ),
     [
+      handleToggleBrowserPane,
+      browserToggleLabel,
+      browserToggleAccessibilityState,
+      isBrowserShowing,
+      canHideBrowser,
       hideHeaderActionLabels,
       isMobile,
       workspaceDescriptor,
@@ -4239,6 +4387,20 @@ function WorkspaceScreenContent({
   const workspaceCenterColumn = (
     <View style={styles.centerColumn}>
       {rendersDesktopSplitContent ? null : renderWorkspaceScreenHeader()}
+      {browserOpenError?.input.workspaceKey === persistenceKey ? (
+        <Alert
+          variant="error"
+          description={t("workspace.browser.placementUnavailable")}
+          testID="workspace-browser-open-error"
+        >
+          <Button size="sm" onPress={retryBrowserOpen}>
+            {t("common.actions.retry")}
+          </Button>
+          <Button size="sm" variant="ghost" onPress={dismissBrowserOpenError}>
+            {t("common.actions.dismiss")}
+          </Button>
+        </Alert>
+      ) : null}
 
       {isMobile ? (
         <MobileWorkspaceTabSwitcher

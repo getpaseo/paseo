@@ -1,6 +1,10 @@
+import { lightTheme } from "../src/styles/theme";
+
 const testTheme = {
+  ...lightTheme,
   colorScheme: "light",
   colors: {
+    ...lightTheme.colors,
     foreground: "#111111",
     foregroundMuted: "#666666",
     statusSuccess: "#15803d",
@@ -26,6 +30,7 @@ const testTheme = {
     border: "#e4e4e7",
     borderAccent: "#a1a1aa",
     palette: {
+      ...lightTheme.colors.palette,
       amber: { 500: "#f59e0b" },
       blue: { 300: "#93c5fd" },
       green: { 500: "#22c55e" },

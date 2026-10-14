@@ -609,6 +609,15 @@ export const ptBR: TranslationResources = {
       },
     },
     browser: {
+      tabs: "Abas do navegador",
+      newTab: "Nova aba do navegador",
+      allTabs: "Todas as abas",
+      hide: "Ocultar navegador",
+      show: "Mostrar navegador",
+      reopenLastClosedTab: "Reabrir a última aba fechada",
+      address: "Endereço",
+      placementUnavailable:
+        "Não foi possível abrir o navegador neste layout. Feche um painel e tente novamente.",
       unavailable: {
         title: "O navegador é exclusivo do desktop",
         subtitle: "Abra este workspace no Electron para usar o navegador integrado.",
@@ -642,6 +651,7 @@ export const ptBR: TranslationResources = {
         responsive: "Responsivo",
       },
       errors: {
+        crashed: "Esta página falhou. Recarregue para tentar novamente.",
         failedToLoad: "Falha ao carregar página",
         invalidUrl: "URL de navegador inválida",
         unsupportedProtocol: "URL de navegador sem suporte bloqueada: {{protocol}}",

@@ -26,6 +26,10 @@ export {
 } from "./state";
 
 interface BrowserStoreState extends BrowserIndexState {
+  lastClosedByWorkspace: Record<
+    string,
+    { url: string; viewport: BrowserViewport; paneId: string | null }
+  >;
   createBrowser: (input?: { initialUrl?: string }) => string;
   updateBrowser: (browserId: string, patch: BrowserRecordPatch) => void;
   setBrowserViewport: (browserId: string, viewport: BrowserViewport) => void;
@@ -47,6 +51,7 @@ export const useBrowserStore = create<BrowserStoreState>()(
   persist(
     (set) => ({
       browsersById: {},
+      lastClosedByWorkspace: {},
       createBrowser: (input) => {
         const browserId = createBrowserId();
         const record = createBrowserRecord({

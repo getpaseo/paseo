@@ -609,6 +609,15 @@ export const fr: TranslationResources = {
       },
     },
     browser: {
+      tabs: "Onglets du navigateur",
+      newTab: "Nouvel onglet navigateur",
+      allTabs: "Tous les onglets",
+      hide: "Masquer le navigateur",
+      show: "Afficher le navigateur",
+      reopenLastClosedTab: "Réouvrir le dernier onglet fermé",
+      address: "Adresse",
+      placementUnavailable:
+        "Impossible d’ouvrir le navigateur dans cette disposition. Fermez un panneau et réessayez.",
       unavailable: {
         title: "Le navigateur est réservé à l’application de bureau",
         subtitle: "Ouvrez ce workspace dans Electron pour utiliser le navigateur intégré.",
@@ -642,6 +651,7 @@ export const fr: TranslationResources = {
         responsive: "Adaptatif",
       },
       errors: {
+        crashed: "Cette page a planté. Rechargez-la pour réessayer.",
         failedToLoad: "Impossible de charger la page",
         invalidUrl: "URL du navigateur invalide",
         unsupportedProtocol:

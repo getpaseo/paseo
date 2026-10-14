@@ -443,6 +443,8 @@ const nodeSessionFileSystem: SessionFileSystem = {
 type AgentMcpTransportFactory = () => Promise<unknown>;
 
 export interface SessionOptions {
+  // Only daemon admission supplies a stable principal/client identity across Session expiry.
+  admittedConnectionKey?: string;
   browserToolsBroker?: BrowserToolsBroker | null;
   clientId: string;
   permissions: readonly DaemonPermission[];
@@ -701,6 +703,7 @@ export class Session {
   );
   private readonly browserToolsBroker: SessionOptions["browserToolsBroker"];
   private readonly clientId: string;
+  private readonly admittedConnectionKey: string | undefined;
   private readonly authorization: SessionAuthorization;
   private appVersion: string | null;
   private clientCapabilities: ReadonlySet<ClientCapability>;
@@ -866,6 +869,7 @@ export class Session {
     this.appVersion = appVersion ?? null;
     this.clientCapabilities = parseClientCapabilities(clientCapabilities);
     this.sessionId = uuidv4();
+    this.admittedConnectionKey = options.admittedConnectionKey;
     this.onMessage = onMessage;
     this.onMessageToSource = onMessageToSource ?? null;
     this.onBinaryMessage = onBinaryMessage ?? null;
@@ -2245,6 +2249,9 @@ export class Session {
     try {
       unregister = this.browserToolsBroker.registerClient({
         id: owner.id,
+        reconnectKey: this.admittedConnectionKey
+          ? JSON.stringify(["admitted", this.admittedConnectionKey])
+          : JSON.stringify(["session", this.clientId, this.sessionId]),
         hostKind: request.hostKind,
         supportedCommands: request.supportedCommands,
         sendBrowserAutomationRequest: (message) => owner.emit(message),

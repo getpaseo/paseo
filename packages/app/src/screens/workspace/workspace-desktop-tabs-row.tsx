@@ -1,3 +1,7 @@
+import { useBrowserStore } from "@/desktop/browser/store";
+import { getIsElectron } from "@/constants/platform";
+import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
+import { useKeyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher-context";
 import { WorkspaceNewTabMenuContent } from "@/screens/workspace/workspace-new-tab-menu";
 import { WorkspaceHistoryMenu } from "@/screens/workspace/workspace-history-menu";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -19,6 +23,7 @@ import {
   type ScrollView as NativeScrollView,
 } from "react-native";
 import {
+  ChevronDown,
   CopyX,
   ArrowLeftToLine,
   ArrowRightToLine,
@@ -49,7 +54,12 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
@@ -132,6 +142,7 @@ const TAB_LABEL_LAYOUT_ALLOWANCE = 4;
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedSyncedLoader = withUnistyles(SyncedLoader);
 const ThemedX = withUnistyles(X);
+const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedCopy = withUnistyles(Copy);
 
 const ThemedRotateCw = withUnistyles(RotateCw);
@@ -235,6 +246,7 @@ function TabLabelMeasurement({
 type PanePanelKinds = readonly WorkspaceTabDescriptor["kind"][];
 
 interface WorkspaceNewTabButtonProps {
+  variant?: "workspace" | "browser";
   panePanelKinds: PanePanelKinds;
   host: PaneHost;
   launchPurpose: WorkspaceTabLaunchPurpose;
@@ -246,6 +258,7 @@ interface WorkspaceNewTabButtonProps {
 }
 
 function WorkspaceNewTabButton({
+  variant = "workspace",
   panePanelKinds,
   host,
   launchPurpose,
@@ -256,9 +269,11 @@ function WorkspaceNewTabButton({
   onCreateNewTab,
 }: WorkspaceNewTabButtonProps) {
   const { t } = useTranslation();
-  const tooltipText = t("workspace.tabs.actions.newTab");
+  const tooltipText = t(
+    variant === "browser" ? "workspace.browser.newTab" : "workspace.tabs.actions.newTab",
+  );
   const button =
-    host === "main" ? (
+    host === "main" || variant === "browser" ? (
       <ToolbarButton
         label={tooltipText}
         shortcut={shortcutKeys}
@@ -293,6 +308,7 @@ function WorkspaceNewTabButton({
 }
 
 function WorkspacePaneToolbarActions({
+  variant,
   panePanelKinds,
   host,
   launchPurpose,
@@ -308,6 +324,7 @@ function WorkspacePaneToolbarActions({
   onSplitDown,
   onTogglePaneMaximized,
 }: {
+  variant?: "workspace" | "browser";
   panePanelKinds: PanePanelKinds;
   host: PaneHost;
   launchPurpose: WorkspaceTabLaunchPurpose;
@@ -350,6 +367,7 @@ function WorkspacePaneToolbarActions({
     <ToolbarControls style={styles.paneSplitActions}>
       {showNewTabButton ? (
         <WorkspaceNewTabButton
+          variant={variant}
           panePanelKinds={panePanelKinds}
           host={host}
           launchPurpose={launchPurpose}
@@ -561,6 +579,7 @@ function sameWidths(left: number[], right: number[]): boolean {
 }
 
 export interface WorkspaceDesktopTabsRowProps {
+  variant?: "workspace" | "browser";
   host?: PaneHost;
   launchPurpose?: WorkspaceTabLaunchPurpose;
   paneId?: string;
@@ -581,7 +600,7 @@ export interface WorkspaceDesktopTabsRowProps {
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
-  onCreateNewTab: (input: { paneId?: string }) => void;
+  onCreateNewTab: (input: { paneId?: string; kind?: "browser" }) => void;
   onReorderTabs: (nextTabs: WorkspaceTabDescriptor[]) => void;
   externalDndContext?: boolean;
   activeDragTabId?: string | null;
@@ -786,7 +805,17 @@ function TabHandleContent({
   );
 }
 
+function showTabCloseControl(
+  variant: "workspace" | "browser",
+  hovered: boolean,
+  compact: boolean,
+  closing: boolean,
+) {
+  return variant === "browser" || hovered || isNative || compact || closing;
+}
+
 function TabChip({
+  variant,
   serverId,
   tab,
   isActive,
@@ -806,6 +835,7 @@ function TabChip({
   onCloseTab,
   dragHandleProps,
 }: {
+  variant: "workspace" | "browser";
   serverId: string;
   tab: WorkspaceTabDescriptor;
   isActive: boolean;
@@ -838,7 +868,8 @@ function TabChip({
   const isHovered = hovered || isCloseHovered;
   const isHighlighted = isActiveFocused || isHovered;
   const chipBackdrop: SurfaceBackdrop = resolveChipBackdrop({ isFilled: isHovered });
-  const showCloseControl = showCloseButton && (isHovered || isNative || isCompact || isClosingTab);
+  const showCloseControl =
+    showCloseButton && showTabCloseControl(variant, isHovered, isCompact, isClosingTab);
   const closeButtonDragBlockers = isWeb
     ? ({
         onPointerDown: (event: { stopPropagation?: () => void }) => {
@@ -853,6 +884,7 @@ function TabChip({
   const tabChipStyle = useCallback(
     () => [
       styles.tab,
+      variant === "browser" && styles.browserTab,
       !isActive && isHovered && styles.tabHovered,
       isWeb && isDragging && ({ cursor: "grabbing" } as object),
       {
@@ -861,7 +893,7 @@ function TabChip({
         maxWidth: resolvedTabWidth,
       },
     ],
-    [isActive, isDragging, isHovered, resolvedTabWidth],
+    [variant, isActive, isDragging, isHovered, resolvedTabWidth],
   );
 
   const handleTabPointerEnter = useCallback(() => {
@@ -928,6 +960,7 @@ function TabChip({
               onPressIn={isWeb ? handleNavigateTab : undefined}
               onPress={handleNavigateTab}
               accessibilityRole="button"
+              {...browserTabAccessibility(variant, isActive)}
               accessibilityLabel={accessibilityLabel}
               accessibilityState={tabAccessibilityState}
               aria-selected={isActive}
@@ -1086,7 +1119,121 @@ export function WorkspaceDesktopTabsRow(props: WorkspaceDesktopTabsRowProps) {
   );
 }
 
+function useBrowserTabRow({
+  variant,
+  tabs,
+  viewportWidth,
+  layoutSignature,
+  onNavigateTab,
+  label,
+}: {
+  variant: "workspace" | "browser";
+  tabs: ResolvedWorkspaceDesktopTabRowItem[];
+  viewportWidth: number;
+  layoutSignature: string;
+  onNavigateTab: (tabId: string) => void;
+  label: string;
+}) {
+  const rowRef = useRef<View>(null);
+  const activeBrowserTabId =
+    variant === "browser" ? tabs.find((item) => item.isActive)?.tab.tabId : null;
+  useLayoutEffect(() => {
+    if (!isWeb || !activeBrowserTabId) return;
+    const row = rowRef.current as unknown as HTMLElement | null;
+    const selected = row?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+    const scroller = row?.querySelector<HTMLElement>('[data-testid="workspace-tabs-scroll"]');
+    if (!selected || !scroller) return;
+    const tabBounds = selected.getBoundingClientRect();
+    const scrollBounds = scroller.getBoundingClientRect();
+    if (tabBounds.left < scrollBounds.left)
+      scroller.scrollLeft += tabBounds.left - scrollBounds.left;
+    else if (tabBounds.right > scrollBounds.right)
+      scroller.scrollLeft += tabBounds.right - scrollBounds.right;
+  }, [activeBrowserTabId, viewportWidth, layoutSignature]);
+
+  const handleBrowserRowKeyDown = useCallback(
+    (event: React.KeyboardEvent) => {
+      if (
+        !isWeb ||
+        variant !== "browser" ||
+        !(event.target instanceof HTMLElement) ||
+        event.target.getAttribute("role") !== "tab"
+      )
+        return;
+      const row = rowRef.current as unknown as HTMLElement | null;
+      const elements = Array.from(row?.querySelectorAll<HTMLElement>('[role="tab"]') ?? []);
+      const index = elements.indexOf(event.target);
+      let next: number;
+      switch (event.key) {
+        case "ArrowRight":
+          next = (index + 1) % elements.length;
+          break;
+        case "ArrowLeft":
+          next = (index - 1 + elements.length) % elements.length;
+          break;
+        case "Home":
+          next = 0;
+          break;
+        case "End":
+          next = elements.length - 1;
+          break;
+        default:
+          return;
+      }
+      const tab = tabs[next];
+      if (!tab) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onNavigateTab(tab.tab.tabId);
+      elements[next]?.focus({ preventScroll: true });
+    },
+    [variant, tabs, onNavigateTab],
+  );
+
+  return {
+    ref: rowRef,
+    props:
+      isWeb && variant === "browser"
+        ? {
+            onKeyDown: handleBrowserRowKeyDown,
+            accessibilityRole: "tablist" as const,
+            accessibilityLabel: label,
+          }
+        : {},
+  };
+}
+
+function BrowserTabMenuItem({
+  item,
+  onNavigateTab,
+}: {
+  item: ResolvedWorkspaceDesktopTabRowItem;
+  onNavigateTab: (tabId: string) => void;
+}) {
+  const onSelect = useCallback(
+    () => onNavigateTab(item.tab.tabId),
+    [item.tab.tabId, onNavigateTab],
+  );
+  return (
+    <DropdownMenuItem onSelect={onSelect} selected={item.isActive}>
+      {item.presentation.label}
+    </DropdownMenuItem>
+  );
+}
+
+function browserTabAccessibility(variant: "workspace" | "browser", isActive: boolean) {
+  // React Native Web prefers the sortable handle's raw role over accessibilityRole.
+  return variant === "browser"
+    ? {
+        role: "tab" as const,
+        accessibilityRole: "tab" as const,
+        tabIndex: isActive ? (0 as const) : (-1 as const),
+      }
+    : {};
+}
+
 function ResolvedWorkspaceDesktopTabsRow({
+  variant = "workspace",
   host = "main",
   launchPurpose = "primary",
   paneId,
@@ -1122,6 +1269,19 @@ function ResolvedWorkspaceDesktopTabsRow({
   onExitFocusMode,
 }: ResolvedWorkspaceDesktopTabsRowProps) {
   const { t } = useTranslation();
+  const browserWorkspaceKey = buildWorkspaceTabPersistenceKey({
+    serverId: normalizedServerId,
+    workspaceId: normalizedWorkspaceId,
+  });
+  const canReopenBrowser = useBrowserStore((state) =>
+    Boolean(
+      getIsElectron() && browserWorkspaceKey && state.lastClosedByWorkspace[browserWorkspaceKey],
+    ),
+  );
+  const dispatcher = useKeyboardActionDispatcher();
+  const handleReopenBrowser = useCallback(() => {
+    dispatcher.dispatch({ id: "workspace.browser.reopen-last-closed", scope: "workspace" });
+  }, [dispatcher]);
   const newTabKeys = useShortcutKeys("workspace-tab-new");
   const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
   const [rowHovered, setRowHovered] = useState(false);
@@ -1148,23 +1308,31 @@ function ResolvedWorkspaceDesktopTabsRow({
         0,
         DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH +
           smallIconButtonChromeFrameSize(false) +
+          (variant === "browser" ? smallIconButtonChromeFrameSize(false) : 0) +
           (focusModeEnabled ? exitFocusModeWidth : 0) +
           (showPaneSplitActions ? PANE_SPLIT_ACTIONS_RESERVED_WIDTH : 0) +
           (showPaneMaximizeAction ? PANE_MAXIMIZE_ACTION_RESERVED_WIDTH : 0),
       ),
       rowPaddingHorizontal: TAB_ROW_PADDING_HORIZONTAL,
       tabGap: TAB_CHIP_GAP,
-      fitContent: host === "explorer",
-      minTabWidth: TAB_MIN_WIDTH,
-      maxTabWidth: TAB_MAX_WIDTH,
+      fitContent: host === "explorer" && variant !== "browser",
+      minTabWidth: variant === "browser" ? 120 : TAB_MIN_WIDTH,
+      maxTabWidth: variant === "browser" ? 220 : TAB_MAX_WIDTH,
       // Iconified tabs carry their icon inside their measured label width, so the shared chrome
       // stays icon-free and agent tabs are not billed for a slot they never render.
-      tabIconWidth: 0,
-      tabContentGap: 0,
+      tabIconWidth: variant === "browser" ? TAB_ICON_WIDTH : 0,
+      tabContentGap: variant === "browser" ? TAB_CONTENT_GAP : 0,
       tabHorizontalPadding: TAB_CHIP_HORIZONTAL_PADDING,
-      closeButtonWidth: TAB_CLOSE_BUTTON_RESERVED_WIDTH,
+      closeButtonWidth: variant === "browser" ? 24 : TAB_CLOSE_BUTTON_RESERVED_WIDTH,
     }),
-    [exitFocusModeWidth, focusModeEnabled, host, showPaneMaximizeAction, showPaneSplitActions],
+    [
+      variant,
+      exitFocusModeWidth,
+      focusModeEnabled,
+      host,
+      showPaneMaximizeAction,
+      showPaneSplitActions,
+    ],
   );
 
   const panePanelKinds = useMemo(() => tabs.map(({ tab }) => tab.kind), [tabs]);
@@ -1285,6 +1453,7 @@ function ResolvedWorkspaceDesktopTabsRow({
   );
 
   const displayedTabs = useMemo(() => {
+    if (variant === "browser") return tabs;
     if (!trackSnapshot) {
       return EMPTY_RESOLVED_TAB_ROWS;
     }
@@ -1295,10 +1464,11 @@ function ResolvedWorkspaceDesktopTabsRow({
       const current = currentTabs.get(snapshotTab.tab.key);
       return current?.label === trackSnapshot.labels[index]?.label ? current.tab : snapshotTab;
     });
-  }, [tabLabels, tabs, trackSnapshot]);
+  }, [variant, tabLabels, tabs, trackSnapshot]);
 
   const { layout } = useWorkspaceTabLayout({
-    tabLabelWidths: trackSnapshot?.labelWidths ?? [],
+    variant,
+    tabLabelWidths: variant === "browser" ? tabs.map(() => 0) : (trackSnapshot?.labelWidths ?? []),
     viewportWidthOverride: tabsContainerWidth > 0 ? tabsContainerWidth : null,
     metrics: layoutMetrics,
   });
@@ -1319,7 +1489,10 @@ function ResolvedWorkspaceDesktopTabsRow({
     });
   }, [paneId]);
 
-  const createNewTab = useCallback(() => onCreateNewTab({ paneId }), [onCreateNewTab, paneId]);
+  const createNewTab = useCallback(
+    () => onCreateNewTab({ paneId, kind: variant === "browser" ? "browser" : undefined }),
+    [variant, onCreateNewTab, paneId],
+  );
 
   const handleNewTabKeyboardAction = useCallback(
     (action: KeyboardActionDefinition): boolean => {
@@ -1366,6 +1539,7 @@ function ResolvedWorkspaceDesktopTabsRow({
 
       return (
         <ResolvedDesktopTabChip
+          variant={variant}
           key={`${item.tab.key}:${item.tab.kind}`}
           serverId={normalizedServerId}
           item={item}
@@ -1396,6 +1570,7 @@ function ResolvedWorkspaceDesktopTabsRow({
       );
     },
     [
+      variant,
       activeDragTabId,
       isFocused,
       layout.closeButtonPolicy,
@@ -1461,8 +1636,23 @@ function ResolvedWorkspaceDesktopTabsRow({
     return () => scrollNode.removeEventListener("wheel", handleWheel);
   }, [layout.requiresHorizontalScrollFallback]);
 
+  const browserRow = useBrowserTabRow({
+    variant,
+    tabs: displayedTabs,
+    viewportWidth: tabsContainerWidth,
+    layoutSignature: JSON.stringify([
+      displayedTabs.map(({ tab }) => tab.tabId),
+      layout.items,
+      layoutMetrics.actionsReservedWidth,
+    ]),
+    onNavigateTab,
+    label: t("workspace.browser.tabs"),
+  });
+
   const row = (
     <View
+      ref={browserRow.ref}
+      {...browserRow.props}
       style={styles.tabsContainer}
       testID="workspace-tabs-row"
       {...(isWeb
@@ -1518,6 +1708,7 @@ function ResolvedWorkspaceDesktopTabsRow({
           />
           {!layout.requiresHorizontalScrollFallback ? (
             <WorkspaceNewTabButton
+              variant={variant}
               panePanelKinds={panePanelKinds}
               host={host}
               launchPurpose={launchPurpose}
@@ -1542,7 +1733,28 @@ function ResolvedWorkspaceDesktopTabsRow({
         workspaceId={normalizedWorkspaceId}
         revealed={rowHovered}
       />
+      {variant === "browser" ? (
+        <DropdownMenu>
+          <ToolbarButton kind="menu" label={t("workspace.browser.allTabs")}>
+            <ThemedChevronDown size={14} uniProps={extraMutedColorMapping} />
+          </ToolbarButton>
+          <DropdownMenuContent side="bottom" align="end" width={DROPDOWN_WIDTH}>
+            {displayedTabs.map((item) => (
+              <BrowserTabMenuItem key={item.tab.tabId} item={item} onNavigateTab={onNavigateTab} />
+            ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              testID="workspace-browser-reopen-last-closed"
+              disabled={!canReopenBrowser}
+              onSelect={handleReopenBrowser}
+            >
+              {t("workspace.browser.reopenLastClosedTab")}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
       <WorkspacePaneToolbarActions
+        variant={variant}
         panePanelKinds={panePanelKinds}
         host={host}
         launchPurpose={launchPurpose}
@@ -1564,6 +1776,7 @@ function ResolvedWorkspaceDesktopTabsRow({
   return <RenderProfile id="WorkspaceDesktopTabsRow">{row}</RenderProfile>;
 }
 function ResolvedDesktopTabChip({
+  variant,
   serverId,
   item,
   isFocused,
@@ -1590,6 +1803,7 @@ function ResolvedDesktopTabChip({
   showDropIndicatorBefore,
   showDropIndicatorAfter,
 }: {
+  variant: "workspace" | "browser";
   serverId: string;
   item: ResolvedWorkspaceDesktopTabRowItem;
   isFocused: boolean;
@@ -1670,6 +1884,7 @@ function ResolvedDesktopTabChip({
         <View style={[styles.tabDropIndicator, styles.tabDropIndicatorBefore]} />
       ) : null}
       <TabChip
+        variant={variant}
         serverId={serverId}
         tab={item.tab}
         isActive={item.isActive}
@@ -1755,6 +1970,9 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[1],
     userSelect: "none",
+  },
+  browserTab: {
+    paddingRight: TAB_CHIP_HORIZONTAL_PADDING + 24,
   },
   tabHovered: {
     backgroundColor: theme.colors.surface1,

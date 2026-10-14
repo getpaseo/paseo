@@ -610,6 +610,15 @@ export const es: TranslationResources = {
       },
     },
     browser: {
+      tabs: "Pestañas del navegador",
+      newTab: "Nueva pestaña del navegador",
+      allTabs: "Todas las pestañas",
+      hide: "Ocultar navegador",
+      show: "Mostrar navegador",
+      reopenLastClosedTab: "Reabrir la última pestaña cerrada",
+      address: "Dirección",
+      placementUnavailable:
+        "No se pudo abrir el navegador en esta disposición. Cierra un panel y vuelve a intentarlo.",
       unavailable: {
         title: "El navegador es solo para escritorio",
         subtitle: "Abra este espacio de trabajo en Electron para usar el navegador integrado.",
@@ -643,6 +652,7 @@ export const es: TranslationResources = {
         responsive: "Adaptable",
       },
       errors: {
+        crashed: "Esta página falló. Recárgala para volver a intentarlo.",
         failedToLoad: "No se pudo cargar la página",
         invalidUrl: "Navegador no válidoURL",
         unsupportedProtocol: "Navegador bloqueado no compatibleURL:{{protocol}}",

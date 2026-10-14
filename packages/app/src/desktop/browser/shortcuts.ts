@@ -33,6 +33,7 @@ interface BrowserShortcutPolicyInput {
   chordState?: ChordState;
   isMac: boolean;
   isDesktop: boolean;
+  browserCanReopen?: boolean;
 }
 
 export function shouldPublishBrowserShortcutPolicy(input: {
@@ -152,6 +153,7 @@ function buildBrowserShortcutPrefixes(input: BrowserShortcutPolicyInput): Browse
     isDesktop: input.isDesktop,
     focusScope: "browser" as const,
     commandCenterOpen: false,
+    browserCanReopen: input.browserCanReopen,
   };
 
   const candidates =

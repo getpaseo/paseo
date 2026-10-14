@@ -1,4 +1,5 @@
 import { defineConfig, configDefaults } from "vitest/config";
+import { transformWithEsbuild } from "vite";
 import { playwright } from "@vitest/browser-playwright";
 import path from "path";
 import fs from "fs";
@@ -13,6 +14,17 @@ const resolvePackageEntry = (packageName: string) => {
 };
 
 export default defineConfig({
+  plugins: [
+    {
+      name: "native-jsx",
+      enforce: "pre",
+      async transform(code, id) {
+        if (/node_modules\/(react-native-markdown-display|expo-clipboard)\/.*\.js$/.test(id)) {
+          return transformWithEsbuild(code, id, { loader: "jsx" });
+        }
+      },
+    },
+  ],
   test: {
     environment: "node",
     exclude: [...configDefaults.exclude, "e2e/**"],
@@ -107,6 +119,12 @@ export default defineConfig({
       ".json",
     ],
     alias: [
+      // Its CommonJS build requires native React Native directly, bypassing Vite's web alias.
+      // Image layout is covered by the real Electron harness.
+      {
+        find: /^react-native-fit-image$/,
+        replacement: path.resolve(__dirname, "test-stubs/react-native-fit-image.ts"),
+      },
       {
         find: /^@getpaseo\/relay\/e2ee$/,
         replacement: path.resolve(__dirname, "../relay/src/e2ee.ts"),

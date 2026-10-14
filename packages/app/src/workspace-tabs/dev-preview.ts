@@ -1,5 +1,5 @@
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
-import { createWorkspaceBrowser, useBrowserStore } from "@/desktop/browser/store";
+import { openWorkspaceBrowser } from "@/workspace-tabs/browser";
 import { trimNonEmpty } from "@/desktop/browser/store/state";
 import {
   collectAllTabs,
@@ -151,12 +151,12 @@ export function openWorkspaceDevPreview(input: {
   const store = useWorkspaceLayoutStore.getState();
   const existing = findWorkspaceDevPreview({ workspaceKey, scriptName });
   if (existing) {
-    store.openTab({
+    const result = openWorkspaceBrowser({
       workspaceKey,
-      target: { kind: "browser", browserId: existing.browserId },
+      browserId: existing.browserId,
       intent: "reveal",
     });
-    return { ok: true, tabId: existing.tabId, browserId: existing.browserId, created: false };
+    return result.ok ? result : { ok: false, reason: "no-side-pane" };
   }
 
   const paneId = store.ensureSidePane(workspaceKey);
@@ -174,18 +174,15 @@ export function openWorkspaceDevPreview(input: {
     return { ok: false, reason: "no-full-height-column" };
   }
 
-  const { browserId } = createWorkspaceBrowser({ initialUrl: url });
-  const tabId = store.openTab({
+  const opened = openWorkspaceBrowser({
     workspaceKey,
-    target: { kind: "browser", browserId },
-    intent: "new",
+    url,
+    intent: "reveal",
     placement: { mode: "pane", paneId },
     state: { [DEV_PREVIEW_MARKER_KEY]: scriptName },
   });
-  if (!tabId) {
-    useBrowserStore.getState().removeBrowser(browserId);
-    return { ok: false, reason: "no-side-pane" };
-  }
+  if (!opened.ok) return { ok: false, reason: "no-side-pane" };
+  const { browserId, tabId } = opened;
 
   useWorkspaceLayoutStore.getState().resizeSplit(
     workspaceKey,

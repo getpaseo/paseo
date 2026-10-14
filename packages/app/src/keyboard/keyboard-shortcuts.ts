@@ -21,6 +21,7 @@ export interface KeyboardShortcutContext {
   isDesktop: boolean;
   focusScope: KeyboardFocusScope;
   commandCenterOpen: boolean;
+  browserCanReopen?: boolean;
 }
 
 export interface KeyboardShortcutInput {
@@ -67,6 +68,7 @@ interface KeyboardShortcutPlatformContext {
 }
 
 interface ShortcutWhen {
+  browserCanReopen?: true;
   /** true = mac only, false = non-mac only */
   mac?: boolean;
   /** true = desktop only, false = web only */
@@ -175,6 +177,7 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
     "workspace-tab-target-agent",
     "workspace-terminal-new",
     "workspace-tab-target-browser",
+    "workspace-browser-reopen-last-closed",
     "workspace-tab-target-changes",
     "workspace-tab-target-files",
     "workspace-tab-close-current",
@@ -212,6 +215,7 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "workspace-tab-new": "settings.shortcuts.help.newTab",
   "workspace-tab-target-agent": "workspace.tabs.actions.newAgent",
   "workspace-tab-target-browser": "workspace.tabs.actions.newBrowser",
+  "workspace-browser-reopen-last-closed": "workspace.browser.reopenLastClosedTab",
   "workspace-tab-target-changes": "workspace.tabs.actions.changes",
   "workspace-tab-target-files": "workspace.tabs.actions.files",
   "workspace-tab-close-current": "settings.shortcuts.help.closeCurrentTab",
@@ -428,6 +432,17 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-tab-target-agent",
       section: "tabs-panes",
       label: "New agent",
+    },
+  },
+  {
+    id: "workspace-browser-reopen-last-closed",
+    action: "workspace.browser.reopen-last-closed",
+    combo: "",
+    when: { desktop: true, focusScope: "browser", browserCanReopen: true, commandCenter: false },
+    help: {
+      id: "workspace-browser-reopen-last-closed",
+      section: "tabs-panes",
+      label: "Reopen last closed tab",
     },
   },
   {
@@ -1330,6 +1345,7 @@ export function matchesKeyboardShortcutContext(
   context: KeyboardShortcutContext,
 ): boolean {
   if (!when) return true;
+  if (when.browserCanReopen && !context.browserCanReopen) return false;
   if (when.mac !== undefined && when.mac !== context.isMac) return false;
   if (when.desktop !== undefined && when.desktop !== context.isDesktop) return false;
   if (

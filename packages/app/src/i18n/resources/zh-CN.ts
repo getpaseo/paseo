@@ -604,6 +604,14 @@ export const zhCN: TranslationResources = {
       },
     },
     browser: {
+      tabs: "浏览器标签页",
+      newTab: "新建浏览器标签页",
+      allTabs: "所有标签页",
+      hide: "隐藏浏览器",
+      show: "显示浏览器",
+      reopenLastClosedTab: "重新打开上次关闭的标签页",
+      address: "地址",
+      placementUnavailable: "无法在此布局中打开浏览器。请关闭一个面板后重试。",
       unavailable: {
         title: "浏览器仅桌面端可用",
         subtitle: "在 Electron 中打开此 workspace 以使用内置浏览器。",
@@ -637,6 +645,7 @@ export const zhCN: TranslationResources = {
         responsive: "自适应",
       },
       errors: {
+        crashed: "此页面已崩溃。请重新加载后重试。",
         failedToLoad: "页面加载失败",
         invalidUrl: "浏览器 URL 无效",
         unsupportedProtocol: "已阻止不支持的浏览器 URL：{{protocol}}",

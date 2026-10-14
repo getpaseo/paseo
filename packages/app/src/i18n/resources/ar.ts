@@ -604,6 +604,14 @@ export const ar: TranslationResources = {
       },
     },
     browser: {
+      tabs: "علامات تبويب المتصفح",
+      newTab: "علامة تبويب متصفح جديدة",
+      allTabs: "كل علامات التبويب",
+      hide: "إخفاء المتصفح",
+      show: "إظهار المتصفح",
+      reopenLastClosedTab: "إعادة فتح آخر علامة تبويب مغلقة",
+      address: "العنوان",
+      placementUnavailable: "تعذّر فتح المتصفح في هذا التخطيط. أغلق لوحة وأعد المحاولة.",
       unavailable: {
         title: "المتصفح مخصص لسطح المكتب فقط",
         subtitle: "افتح مساحة العمل هذه في Electron لاستخدام المتصفح المدمج.",
@@ -637,6 +645,7 @@ export const ar: TranslationResources = {
         responsive: "متجاوب",
       },
       errors: {
+        crashed: "تعطلت هذه الصفحة. أعد تحميلها للمحاولة مجددًا.",
         failedToLoad: "فشل تحميل الصفحة",
         invalidUrl: "متصفح غير صالح URL",
         unsupportedProtocol: "متصفح محظور غير مدعوم URL:{{protocol}}",

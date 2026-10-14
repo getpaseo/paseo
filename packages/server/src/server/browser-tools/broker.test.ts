@@ -14,15 +14,18 @@ const SECOND_BROWSER_ID = "22222222-2222-4222-8222-222222222222";
 class FakeBrowserHostClient implements BrowserHostClient {
   public readonly receivedRequests: BrowserAutomationExecuteRequest[] = [];
   public readonly hostKind: string;
+  public readonly reconnectKey?: string;
   public readonly supportedCommands: readonly BrowserAutomationCommandName[];
 
   public constructor(
     public readonly id: string,
     options: {
       hostKind?: string;
+      reconnectKey?: string;
       supportedCommands?: readonly BrowserAutomationCommandName[];
     } = {},
   ) {
+    this.reconnectKey = options.reconnectKey;
     this.hostKind = options.hostKind ?? "desktop app";
     this.supportedCommands = options.supportedCommands ?? [...BROWSER_AUTOMATION_COMMAND_NAMES];
   }
@@ -73,6 +76,28 @@ function createBroker(options: { timeoutMs?: number } = {}): BrowserToolsBroker 
 
 function snapshotCommand(): BrowserAutomationCommand {
   return { command: "snapshot", args: { browserId: BROWSER_ID } };
+}
+
+async function openBrowserOnHost(
+  broker: BrowserToolsBroker,
+  host: FakeBrowserHostClient,
+  browserId = BROWSER_ID,
+): Promise<void> {
+  const opened = broker.execute({
+    command: { command: "new_tab", args: {} },
+    workspaceId: "workspace-1",
+  });
+  host.resolveLatestWith(broker, {
+    requestId: "req-1",
+    ok: true,
+    result: {
+      command: "new_tab",
+      browserId,
+      workspaceId: "workspace-1",
+      url: "https://example.com",
+    },
+  });
+  await expect(opened).resolves.toMatchObject({ ok: true });
 }
 
 describe("BrowserToolsBroker", () => {
@@ -783,6 +808,114 @@ describe("BrowserToolsBroker", () => {
       ok: true,
       result: { command: "snapshot", browserId: BROWSER_ID },
     });
+  });
+
+  test("a sole reconnected subscription reclaims affinity without accepting old-source responses", async () => {
+    const broker = createBroker();
+    const owner = new FakeBrowserHostClient("old-subscription", {
+      reconnectKey: "principal/client",
+    });
+    const unregister = broker.registerClient(owner);
+    await openBrowserOnHost(broker, owner);
+    const interrupted = broker.execute({ command: snapshotCommand(), requestId: "interrupted" });
+    unregister();
+    await expect(interrupted).resolves.toMatchObject({
+      ok: false,
+      error: { code: "browser_no_host" },
+    });
+    const resumed = new FakeBrowserHostClient("new-subscription", {
+      reconnectKey: "principal/client",
+    });
+    broker.registerClient(resumed);
+    unregister();
+    expect(broker.getRegisteredClientCount()).toBe(1);
+    const pending = broker.execute({
+      command: { command: "click", args: { browserId: BROWSER_ID, ref: "@e1" } },
+      requestId: "resumed",
+    });
+    expect(resumed.receivedRequests).toHaveLength(1);
+    const response = {
+      type: "browser.automation.execute.response" as const,
+      payload: {
+        requestId: "resumed",
+        ok: true as const,
+        result: { command: "click" as const, browserId: BROWSER_ID, ref: "@e1" },
+      },
+    };
+    expect(
+      broker.receiveResponse(
+        { ...response, payload: { ...response.payload, requestId: "interrupted" } },
+        [owner.id],
+      ),
+    ).toBe(false);
+    expect(broker.receiveResponse(response, [owner.id])).toBe(false);
+    expect(broker.getPendingRequestCount()).toBe(1);
+    expect(broker.receiveResponse(response, [resumed.id])).toBe(true);
+    await expect(pending).resolves.toMatchObject({ ok: true });
+  });
+
+  test.each(["different-principal/client", "principal/other-client"])(
+    "reconnect key %s cannot reclaim another identity",
+    async (reconnectKey) => {
+      const broker = createBroker();
+      const owner = new FakeBrowserHostClient("old", { reconnectKey: "principal/client" });
+      const unregister = broker.registerClient(owner);
+      await openBrowserOnHost(broker, owner);
+      unregister();
+      const other = new FakeBrowserHostClient("other", { reconnectKey });
+      broker.registerClient(other);
+      await expect(broker.execute({ command: snapshotCommand() })).resolves.toMatchObject({
+        ok: false,
+        error: { code: "browser_no_host" },
+      });
+      expect(other.receivedRequests).toEqual([]);
+    },
+  );
+
+  test("a same-identity sibling cannot take active or stranded owner affinity", async () => {
+    const broker = createBroker();
+    const owner = new FakeBrowserHostClient("owner", { reconnectKey: "principal/client" });
+    const unregister = broker.registerClient(owner);
+    await openBrowserOnHost(broker, owner);
+    const sibling = new FakeBrowserHostClient("sibling", { reconnectKey: "principal/client" });
+    broker.registerClient(sibling);
+    const active = broker.execute({
+      command: { command: "click", args: { browserId: BROWSER_ID, ref: "@e1" } },
+    });
+    expect(owner.receivedRequests).toHaveLength(2);
+    expect(sibling.receivedRequests).toEqual([]);
+    unregister();
+    await expect(active).resolves.toMatchObject({ ok: false });
+    const replacement = new FakeBrowserHostClient("replacement", {
+      reconnectKey: "principal/client",
+    });
+    broker.registerClient(replacement);
+    await expect(broker.execute({ command: snapshotCommand() })).resolves.toMatchObject({
+      ok: false,
+      error: { code: "browser_no_host" },
+    });
+    expect(sibling.receivedRequests).toEqual([]);
+    expect(replacement.receivedRequests).toEqual([]);
+  });
+
+  test("two stranded source owners remain ambiguous after same-identity registration", async () => {
+    const broker = createBroker();
+    const first = new FakeBrowserHostClient("first", { reconnectKey: "principal/client" });
+    const closeFirst = broker.registerClient(first);
+    await openBrowserOnHost(broker, first);
+    const second = new FakeBrowserHostClient("second", { reconnectKey: "principal/client" });
+    const closeSecond = broker.registerClient(second);
+    await openBrowserOnHost(broker, second, SECOND_BROWSER_ID);
+    closeFirst();
+    closeSecond();
+    const resumed = new FakeBrowserHostClient("resumed", { reconnectKey: "principal/client" });
+    broker.registerClient(resumed);
+    for (const browserId of [BROWSER_ID, SECOND_BROWSER_ID]) {
+      await expect(
+        broker.execute({ command: { command: "snapshot", args: { browserId } } }),
+      ).resolves.toMatchObject({ ok: false, error: { code: "browser_no_host" } });
+    }
+    expect(resumed.receivedRequests).toEqual([]);
   });
 
   test("timeout resolves browser_timeout and clears pending state", async () => {

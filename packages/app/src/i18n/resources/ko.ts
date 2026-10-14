@@ -605,6 +605,15 @@ export const ko: TranslationResources = {
       },
     },
     browser: {
+      tabs: "브라우저 탭",
+      newTab: "새 브라우저 탭",
+      allTabs: "모든 탭",
+      hide: "브라우저 숨기기",
+      show: "브라우저 표시",
+      reopenLastClosedTab: "마지막으로 닫은 탭 다시 열기",
+      address: "주소",
+      placementUnavailable:
+        "이 레이아웃에서 브라우저를 열 수 없습니다. 패널을 닫고 다시 시도하세요.",
       unavailable: {
         title: "브라우저는 데스크톱 전용입니다",
         subtitle: "내장 브라우저를 사용하려면 이 워크스페이스를 Electron에서 여세요.",
@@ -638,6 +647,7 @@ export const ko: TranslationResources = {
         responsive: "반응형",
       },
       errors: {
+        crashed: "이 페이지가 비정상적으로 종료되었습니다. 새로고침하여 다시 시도하세요.",
         failedToLoad: "페이지를 불러오지 못했습니다",
         invalidUrl: "잘못된 브라우저 URL",
         unsupportedProtocol: "지원되지 않는 브라우저 URL을 차단했습니다: {{protocol}}",

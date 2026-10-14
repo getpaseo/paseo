@@ -601,6 +601,14 @@ export const en = {
       },
     },
     browser: {
+      tabs: "Browser tabs",
+      newTab: "New browser tab",
+      allTabs: "All tabs",
+      hide: "Hide browser",
+      show: "Show browser",
+      reopenLastClosedTab: "Reopen last closed tab",
+      address: "Address",
+      placementUnavailable: "Couldn't open the browser in this layout. Close a pane and retry.",
       unavailable: {
         title: "Browser is desktop-only",
         subtitle: "Open this workspace in Electron to use the built-in browser.",
@@ -634,6 +642,7 @@ export const en = {
         responsive: "Responsive",
       },
       errors: {
+        crashed: "This page crashed. Reload to try again.",
         failedToLoad: "Failed to load page",
         invalidUrl: "Invalid browser URL",
         unsupportedProtocol: "Blocked unsupported browser URL: {{protocol}}",

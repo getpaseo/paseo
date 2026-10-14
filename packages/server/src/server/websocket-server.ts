@@ -459,6 +459,7 @@ interface PluginSessionConnection extends SessionConnectionBase {
 type SessionConnection = ReconnectableSessionConnection | PluginSessionConnection;
 
 interface SocketSessionOptions {
+  admittedConnectionKey?: string;
   clientId: string;
   appVersion: string | null;
   clientCapabilities: Record<string, unknown> | null;
@@ -1381,6 +1382,10 @@ export class VoiceAssistantWebSocketServer {
     let connection: SessionConnection | null = null;
 
     const session = this.createSocketSession({
+      admittedConnectionKey:
+        lifecycle.kind === "reconnectable"
+          ? sessionConnectionKey(admission.principalId, clientId)
+          : undefined,
       clientId,
       appVersion,
       clientCapabilities,
@@ -1455,6 +1460,7 @@ export class VoiceAssistantWebSocketServer {
   private createSocketSession(options: SocketSessionOptions): Session {
     return new Session({
       browserToolsBroker: this.browserToolsBroker,
+      admittedConnectionKey: options.admittedConnectionKey,
       clientId: options.clientId,
       appVersion: options.appVersion,
       clientCapabilities: options.clientCapabilities,

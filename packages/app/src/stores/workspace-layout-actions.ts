@@ -130,6 +130,7 @@ export interface WorkspaceTabInsertionPosition {
 }
 
 interface OpenTabInLayoutInput {
+  state?: JsonValue;
   insertionPosition?: WorkspaceTabInsertionPosition;
   layout: WorkspaceLayout;
   target: WorkspaceTabTarget;
@@ -141,7 +142,6 @@ interface OpenTabInLayoutInput {
 
 interface CreateTabInLayoutInput extends OpenTabInLayoutInput {
   createTabId: () => string;
-  state?: JsonValue;
 }
 
 interface OpenTabInLayoutResult {
@@ -849,7 +849,15 @@ function insertTabIntoPane(
     invariant(node.kind === "pane", "Expected pane while inserting tab");
     const existingIndex = node.pane.tabs.findIndex((tab) => tab.tabId === input.tab.tabId);
     let nextTabs: WorkspaceTab[];
-    if (input.tab.target.kind !== "new_tab" && isSoleNewTabPane(node.pane)) {
+    const preservesVisibleSelection =
+      input.tab.target.kind === "browser" &&
+      node.pane.hidden !== true &&
+      input.focusTabId === node.pane.focusedTabId;
+    if (
+      input.tab.target.kind !== "new_tab" &&
+      isSoleNewTabPane(node.pane) &&
+      !preservesVisibleSelection
+    ) {
       nextTabs = [input.tab];
     } else if (existingIndex >= 0) {
       nextTabs = node.pane.tabs.map((tab, index) => (index === existingIndex ? input.tab : tab));
@@ -1366,7 +1374,9 @@ function insertNewTabIntoPane(
   };
 
   const currentTab = isSoleNewTabPane(targetPane) ? targetPane.tabs[0] : null;
-  if (currentTab && input.target.kind !== "new_tab") {
+  const mayReplaceLauncher =
+    input.focus || input.target.kind !== "browser" || targetPane.hidden === true;
+  if (currentTab && input.target.kind !== "new_tab" && mayReplaceLauncher) {
     return {
       tabId,
       layout: withNormalizedParentTabMap({
@@ -1524,18 +1534,31 @@ export function closeTabInLayout(input: CloseTabInLayoutInput): WorkspaceLayout 
   if (!pane) {
     return null;
   }
-  const preserveEmptyPaneId =
+  const paneTabs = collectAllTabs({ kind: "pane", pane });
+  const isBrowser = paneTabs.find((tab) => tab.tabId === input.tabId)?.target.kind === "browser";
+  const browserOnly = isBrowser && paneTabs.every((tab) => tab.target.kind === "browser");
+  const otherVisibleOrdinaryPane = collectAllPanes(input.layout.root).some(
+    (candidate) =>
+      candidate.id !== pane.id &&
+      candidate.id !== input.explorerSidebarPaneId &&
+      candidate.hidden !== true,
+  );
+  let preserveEmptyPaneId: string | null = null;
+  if (browserOnly) {
+    if (!otherVisibleOrdinaryPane) preserveEmptyPaneId = pane.id;
+  } else if (
     pane.id === DEFAULT_PANE_ID ||
     pane.id === input.explorerSidebarPaneId ||
     isLastVisibleOrdinaryPane(input.layout, pane.id, input.explorerSidebarPaneId)
-      ? pane.id
-      : null;
+  ) {
+    preserveEmptyPaneId = pane.id;
+  }
 
   const closeSuccessorTabId = getCloseSuccessorTabId({
     pane,
     tabId: input.tabId,
     openTabIds: new Set(collectAllTabs(internalLayout.root).map((tab) => tab.tabId)),
-    parentTabIdByTabId: input.layout.parentTabIdByTabId,
+    parentTabIdByTabId: isBrowser ? undefined : input.layout.parentTabIdByTabId,
   });
   const fallbackPaneId = findNearestSiblingPaneId(internalLayout.root, pane.id);
   const nextRoot = detachTabFromTree(internalLayout.root, {
@@ -1559,6 +1582,16 @@ export function closeTabInLayout(input: CloseTabInLayoutInput): WorkspaceLayout 
   const nextLayoutWithParentMap = parentTabIdByTabId
     ? { ...nextLayout, parentTabIdByTabId }
     : nextLayout;
+
+  if (isBrowser && closeSuccessorTabId) {
+    return {
+      ...nextLayoutWithParentMap,
+      root: updatePaneInTree(nextRoot, {
+        paneId: pane.id,
+        updater: (current) => ({ ...current, focusedTabId: closeSuccessorTabId }),
+      }),
+    };
+  }
 
   if (closeSuccessorTabId && findPaneContainingTab(nextRoot, closeSuccessorTabId)) {
     const focusedLayout =
@@ -2090,6 +2123,33 @@ export function focusPaneInLayout(input: FocusPaneInLayoutInput): WorkspaceLayou
     focusedPaneId: input.paneId,
     parentTabIdByTabId: input.layout.parentTabIdByTabId,
   });
+}
+
+/** Reuses browser-only ordinary panes, including hidden panes, without moving their tabs. */
+export function resolveBrowserPaneId(
+  layout: WorkspaceLayout,
+  rememberedPaneId: string | null | undefined,
+  explorerSidebarPaneId: string | null,
+): string | null {
+  function isBrowserPane(pane: SplitPane, allowLauncher: boolean): boolean {
+    if (pane.id === explorerSidebarPaneId) return false;
+    const tabs = collectAllTabs({ kind: "pane", pane });
+    const browserOnly = tabs.length > 0 && tabs.every((tab) => tab.target.kind === "browser");
+    const launcherOnly = allowLauncher && tabs.length === 1 && tabs[0].target.kind === "new_tab";
+    return browserOnly || launcherOnly;
+  }
+  const rememberedPane = findPaneById(layout.root, rememberedPaneId ?? null);
+  if (rememberedPane && isBrowserPane(rememberedPane, true)) return rememberedPane.id;
+
+  function findBrowserPane(node: SplitNode): string | null {
+    if (node.kind === "pane") return isBrowserPane(node.pane, false) ? node.pane.id : null;
+    for (const child of node.group.children) {
+      const paneId = findBrowserPane(child);
+      if (paneId) return paneId;
+    }
+    return null;
+  }
+  return findBrowserPane(layout.root);
 }
 
 export function setPaneHiddenInLayout(input: {
