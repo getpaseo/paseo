@@ -28,6 +28,7 @@ export interface CreateWorktreeCoreInput {
   firstAgentContext?: FirstAgentContext;
   paseoHome?: string;
   worktreesRoot?: string;
+  worktreesPathScript?: string;
   runSetup?: boolean;
 }
 
@@ -123,6 +124,7 @@ async function createWorktreeCoreWithPriority(
       runSetup: input.runSetup ?? true,
       paseoHome: input.paseoHome,
       worktreesRoot: input.worktreesRoot,
+      pathScript: input.worktreesPathScript,
     }),
     intent,
     repoRoot,

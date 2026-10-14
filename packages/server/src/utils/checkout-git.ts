@@ -36,7 +36,9 @@ import { unquoteGitPath } from "./git-quoted-path.js";
 import { isPaseoOwnedWorktreeCwd, resolvePaseoWorktreesBaseRoot } from "./worktree.js";
 import {
   branchNameFromRef,
+  findPaseoWorktreeRootForCwd,
   getPaseoWorktreeChangeRequestHintForBranch,
+  hasPaseoWorktreeMetadata,
   type PaseoWorktreeMetadata,
   readPaseoWorktreeMetadata,
   rebindPaseoWorktreeChangeRequestHint,
@@ -1131,11 +1133,16 @@ export interface GitWorktreeEntry {
   isBare?: boolean;
 }
 
-/** Check whether a path is under Paseo's worktree root. */
+/** Check whether a path is a Paseo worktree (legacy root shape or marker). */
 export function isPaseoWorktreePath(
   p: string,
   options?: { paseoHome?: string; worktreesRoot?: string },
 ): boolean {
+  // Worktrees placed by worktrees.pathScript live outside the legacy root;
+  // their paseo/worktree.json marker identifies them at any path.
+  if (hasPaseoWorktreeMetadata(p)) {
+    return true;
+  }
   if (options?.worktreesRoot || options?.paseoHome) {
     return isDescendantPath(p, resolvePaseoWorktreesBaseRoot(options));
   }
@@ -1242,8 +1249,11 @@ async function getPaseoWorktreeForCwd(
   cwd: string,
   options: PaseoWorktreeLookupOptions = {},
 ): Promise<PaseoWorktreeForCwd> {
-  // Fast-path reject: non-worktree paths do not need expensive ownership checks.
-  if (!/[\\/]worktrees[\\/]/.test(cwd)) {
+  // Fast-path reject: non-worktree paths do not need expensive ownership
+  // checks. Legacy worktrees contain a "worktrees" path segment;
+  // pathScript-placed ones can live anywhere, so rule them in with a
+  // filesystem-only marker walk instead of path shape.
+  if (!/[\\/]worktrees[\\/]/.test(cwd) && findPaseoWorktreeRootForCwd(cwd) === null) {
     return { isPaseoOwnedWorktree: false };
   }
 

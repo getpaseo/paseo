@@ -2,6 +2,7 @@ import { Command } from "commander";
 import { runLsCommand } from "./ls.js";
 import { runArchiveCommand } from "./archive.js";
 import { runCreateCommand } from "./create.js";
+import { runPathScriptPreviewCommand } from "./path-script-preview.js";
 import { withOutput } from "../../output/index.js";
 import { addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
 
@@ -37,6 +38,21 @@ export function createWorktreeCommand(): Command {
       .argument("<name>", "Worktree name or branch name")
       .option("--cwd <path>", "Repository directory (default: current)"),
   ).action(withOutput(runArchiveCommand));
+
+  addJsonAndDaemonHostOptions(
+    worktree
+      .command("path-script-preview")
+      .description("Print the inputs worktrees.pathScript would receive (never runs the script)")
+      .requiredOption("--branch <name>", "Branch name the worktree would use")
+      .option("--path <repo>", "Repository directory (default: current)")
+      .option("--slug <slug>", "Worktree slug (default: slugified branch)")
+      .option(
+        "--mode <mode>",
+        "Creation mode: branch-off, checkout-branch, checkout-change-request, or checkout-github-pr",
+        "branch-off",
+      )
+      .option("--base-ref <ref>", "Base ref passed to the script", ""),
+  ).action(withOutput(runPathScriptPreviewCommand));
 
   return worktree;
 }

@@ -151,9 +151,12 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       await expect(
         isPaseoOwnedWorktreeCwd(result.worktreePath, { paseoHome, worktreesRoot }),
       ).resolves.toMatchObject({ allowed: true, worktreeRoot: join(worktreesRoot, projectHash) });
+      // Without the configured root the legacy shape doesn't match, but the
+      // paseo/worktree.json marker (verified against git worktree list)
+      // still proves ownership — the same proof pathScript worktrees rely on.
       await expect(
         isPaseoOwnedWorktreeCwd(result.worktreePath, { paseoHome }),
-      ).resolves.toMatchObject({ allowed: false });
+      ).resolves.toMatchObject({ allowed: true, worktreePath: result.worktreePath });
 
       const worktrees = await listPaseoWorktrees({ cwd: repoDir, paseoHome, worktreesRoot });
       expect(worktrees.map((entry) => entry.path)).toContain(result.worktreePath);
@@ -1390,6 +1393,206 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       });
 
       expect(existsSync(join(result.worktreePath, "paseo.json"))).toBe(false);
+    });
+  });
+
+  describe("createWorktree with pathScript", () => {
+    let tempDir: string;
+    let repoDir: string;
+    let paseoHome: string;
+
+    beforeEach(() => {
+      tempDir = realpathSync(mkdtempSync(join(tmpdir(), "worktree-pathscript-test-")));
+      repoDir = join(tempDir, "test-repo");
+      paseoHome = join(tempDir, "paseo-home");
+
+      mkdirSync(repoDir, { recursive: true });
+      execFileSync("git", ["init", "-b", "main"], { cwd: repoDir });
+      execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: repoDir });
+      execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir });
+      writeFileSync(join(repoDir, "file.txt"), "hello\n");
+      execFileSync("git", ["add", "."], { cwd: repoDir });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "initial"], {
+        cwd: repoDir,
+      });
+    });
+
+    afterEach(() => {
+      rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    function writePlaceScript(body: string): string {
+      const scriptPath = join(tempDir, "place-worktree");
+      writeFileSync(scriptPath, `#!/bin/sh\n${body}\n`);
+      chmodSync(scriptPath, 0o755);
+      return scriptPath;
+    }
+
+    it("places, owns, lists, and deletes a worktree outside the legacy root", async () => {
+      // Sibling layout: <repo-parent>/wt-<slug>
+      const script = writePlaceScript(`printf '%s/wt-%s\\n' "$(dirname "$1")" "$6"`);
+
+      const result = await createWorktreePrimitive({
+        cwd: repoDir,
+        worktreeSlug: "sibling-one",
+        source: { kind: "branch-off", baseBranch: "main", branchName: "feature/sibling" },
+        runSetup: false,
+        paseoHome,
+        pathScript: script,
+      });
+
+      expect(result.worktreePath).toBe(join(tempDir, "wt-sibling-one"));
+      expect(existsSync(join(result.worktreePath, "file.txt"))).toBe(true);
+      expect(existsSync(getPaseoWorktreeMetadataPath(result.worktreePath))).toBe(true);
+
+      const ownership = await isPaseoOwnedWorktreeCwd(result.worktreePath, { paseoHome });
+      expect(ownership.allowed).toBe(true);
+      expect(ownership.worktreePath).toBe(result.worktreePath);
+      // A subdirectory of the worktree resolves to the worktree root.
+      mkdirSync(join(result.worktreePath, "sub"), { recursive: true });
+      const nested = await isPaseoOwnedWorktreeCwd(join(result.worktreePath, "sub"), {
+        paseoHome,
+      });
+      expect(nested.worktreePath).toBe(result.worktreePath);
+
+      const listed = await listPaseoWorktrees({ cwd: repoDir, paseoHome });
+      expect(listed.map((entry) => entry.path)).toContain(result.worktreePath);
+
+      await deletePaseoWorktree({ cwd: repoDir, worktreePath: result.worktreePath, paseoHome });
+      expect(existsSync(result.worktreePath)).toBe(false);
+    });
+
+    it("fails creation and creates nothing when the script fails", async () => {
+      const script = writePlaceScript("echo 'boom' >&2\nexit 1");
+
+      await expect(
+        createWorktreePrimitive({
+          cwd: repoDir,
+          worktreeSlug: "doomed",
+          source: { kind: "branch-off", baseBranch: "main", branchName: "feature/doomed" },
+          runSetup: false,
+          paseoHome,
+          pathScript: script,
+        }),
+      ).rejects.toThrow(/boom/);
+
+      const listOutput = execFileSync("git", ["worktree", "list", "--porcelain"], {
+        cwd: repoDir,
+        encoding: "utf8",
+      });
+      expect(listOutput.match(/^worktree /gm)).toHaveLength(1);
+    });
+
+    it("removes branches fetched by the source plan when the script fails", async () => {
+      // A branch that exists only on the remote: resolving a
+      // checkout-branch plan fetches it into a local branch. A script
+      // failure must not leave that branch behind, or the next attempt
+      // would uniquify to a different branch name.
+      const remoteDir = join(tempDir, "remote.git");
+      execFileSync("git", ["clone", "--bare", repoDir, remoteDir], { cwd: tempDir });
+      execFileSync("git", ["remote", "add", "origin", remoteDir], { cwd: repoDir });
+      execFileSync("git", ["push", "origin", "main"], { cwd: repoDir });
+      execFileSync("git", ["branch", "feature/remote-check"], { cwd: repoDir });
+      execFileSync("git", ["push", "origin", "feature/remote-check"], { cwd: repoDir });
+      execFileSync("git", ["branch", "-D", "feature/remote-check"], { cwd: repoDir });
+      execFileSync("git", ["fetch", "origin"], { cwd: repoDir });
+
+      const script = writePlaceScript("echo 'no placement' >&2\nexit 1");
+      await expect(
+        createWorktreePrimitive({
+          cwd: repoDir,
+          worktreeSlug: "remote-check",
+          source: { kind: "checkout-branch", branchName: "feature/remote-check" },
+          runSetup: false,
+          paseoHome,
+          pathScript: script,
+        }),
+      ).rejects.toThrow(/no placement/);
+
+      const localBranches = execFileSync("git", ["branch", "--list", "feature/remote-check"], {
+        cwd: repoDir,
+        encoding: "utf8",
+      });
+      expect(localBranches.trim()).toBe("");
+    });
+
+    it("explicit worktreePath bypasses the script", async () => {
+      const script = writePlaceScript("exit 1");
+      const explicitPath = join(tempDir, "explicit-wt");
+
+      const result = await createWorktreePrimitive({
+        cwd: repoDir,
+        worktreeSlug: "explicit-one",
+        source: { kind: "branch-off", baseBranch: "main", branchName: "feature/explicit" },
+        runSetup: false,
+        paseoHome,
+        pathScript: script,
+        worktreePath: explicitPath,
+      });
+
+      expect(result.worktreePath).toBe(explicitPath);
+      expect(existsSync(join(explicitPath, "file.txt"))).toBe(true);
+    });
+
+    it("restore recreates at the recorded path without invoking the script", async () => {
+      const script = writePlaceScript(`printf '%s/wt-%s\\n' "$(dirname "$1")" "$6"`);
+      const created = await createWorktreePrimitive({
+        cwd: repoDir,
+        worktreeSlug: "restorable",
+        source: { kind: "branch-off", baseBranch: "main", branchName: "feature/restorable" },
+        runSetup: false,
+        paseoHome,
+        pathScript: script,
+      });
+      await deletePaseoWorktree({ cwd: repoDir, worktreePath: created.worktreePath, paseoHome });
+      expect(existsSync(created.worktreePath)).toBe(false);
+
+      const sentinel = join(tempDir, "script-ran");
+      const failingScript = writePlaceScript(`touch "${sentinel}"\nexit 1`);
+      const restored = await createWorktreePrimitive({
+        cwd: repoDir,
+        worktreeSlug: "restorable",
+        source: { kind: "restore", branchName: "feature/restorable", baseRef: "main" },
+        runSetup: false,
+        paseoHome,
+        pathScript: failingScript,
+        worktreePath: created.worktreePath,
+      });
+
+      expect(restored.worktreePath).toBe(created.worktreePath);
+      expect(existsSync(join(restored.worktreePath, "file.txt"))).toBe(true);
+      expect(existsSync(sentinel)).toBe(false);
+    });
+
+    it("does not treat a copied marker in a non-worktree directory as ownership", async () => {
+      const script = writePlaceScript(`printf '%s/wt-%s\\n' "$(dirname "$1")" "$6"`);
+      const created = await createWorktreePrimitive({
+        cwd: repoDir,
+        worktreeSlug: "marker-source",
+        source: { kind: "branch-off", baseBranch: "main", branchName: "feature/marker" },
+        runSetup: false,
+        paseoHome,
+        pathScript: script,
+      });
+      const metadata = readPaseoWorktreeMetadata(created.worktreePath);
+      expect(metadata).not.toBeNull();
+
+      // A plain directory with a .git file pointing at a copied admin dir
+      // that holds a paseo/worktree.json. Git does not list it as a
+      // worktree, so the copied marker must not prove ownership.
+      const fakeDir = join(tempDir, "fake-worktree");
+      const fakeAdmin = join(tempDir, "fake-admin");
+      mkdirSync(join(fakeAdmin, "paseo"), { recursive: true });
+      mkdirSync(fakeDir, { recursive: true });
+      writeFileSync(join(fakeAdmin, "paseo", "worktree.json"), JSON.stringify(metadata));
+      writeFileSync(join(fakeDir, ".git"), `gitdir: ${fakeAdmin}\n`);
+
+      const ownership = await isPaseoOwnedWorktreeCwd(fakeDir, { paseoHome });
+      expect(ownership.allowed).toBe(false);
+      await expect(
+        deletePaseoWorktree({ cwd: repoDir, worktreePath: fakeDir, paseoHome }),
+      ).rejects.toThrow("Refusing to delete non-Paseo worktree");
+      expect(existsSync(fakeDir)).toBe(true);
     });
   });
 

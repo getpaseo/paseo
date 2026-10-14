@@ -166,6 +166,10 @@ export function createWorkspaceRecoveryService(deps: {
     }
 
     let previousWorktreePath = workspace.worktreeRoot;
+    // Only a recorded worktreeRoot or an ownership-proven worktree path may
+    // be recreated verbatim. The pre-v0.1.110 fallback to workspace.cwd can
+    // be a subdirectory inside the worktree, which is not a worktree root.
+    let hasRecordedWorktreePath = Boolean(previousWorktreePath);
     if (!previousWorktreePath) {
       // COMPAT(worktreeRestoreMissingWorktreeRoot): records created before v0.1.110
       // lack durable backing placement; remove filesystem discovery after 2027-01-17.
@@ -176,6 +180,7 @@ export function createWorkspaceRecoveryService(deps: {
       previousWorktreePath = ownership.allowed
         ? (ownership.worktreePath ?? workspace.cwd)
         : workspace.cwd;
+      hasRecordedWorktreePath = ownership.allowed;
     }
 
     let recreatedWorktreePath: string;
@@ -187,6 +192,10 @@ export function createWorkspaceRecoveryService(deps: {
         runSetup: false,
         paseoHome: deps.paseoHome,
         worktreesRoot: deps.worktreesRoot,
+        // Recreate at the recorded path, whatever layout placed it there
+        // originally (legacy root or pathScript); never re-resolve. Without
+        // a recorded path, keep the legacy slug-under-root placement.
+        ...(hasRecordedWorktreePath ? { worktreePath: previousWorktreePath } : {}),
       });
       recreatedWorktreePath = result.worktreePath;
     } catch (error) {
