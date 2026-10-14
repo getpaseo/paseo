@@ -16,6 +16,7 @@ class FakeRoutingDesktop implements RoutingDesktop {
   enabled = false;
   failNextLoad = false;
   failNextSave = false;
+  saveReplyGate: Promise<void> | undefined;
   readonly saved: boolean[] = [];
   private readonly listeners = new Map<string, Set<(payload: unknown) => void>>();
 
@@ -34,6 +35,7 @@ class FakeRoutingDesktop implements RoutingDesktop {
       }
       this.enabled = args.enabled === true;
       this.saved.push(this.enabled);
+      await this.saveReplyGate;
       return { ok: true };
     }
     throw new Error(`Unexpected desktop command: ${command}`);
@@ -130,6 +132,32 @@ describe("host browser routing setting", () => {
     act(() => desktop.changeFromAnotherWindow("remote", false));
     await expectSwitchShows(container, "off");
   });
+
+  it.each([false, true])(
+    "keeps a newer window choice when an older save reply arrives (initially enabled: %s)",
+    async (initiallyEnabled) => {
+      const desktop = new FakeRoutingDesktop();
+      desktop.enabled = initiallyEnabled;
+      let finishSave: () => void = () => {
+        throw new Error("Save reply gate not initialized");
+      };
+      desktop.saveReplyGate = new Promise<void>((resolve) => {
+        finishSave = resolve;
+      });
+      const container = mountSetting(desktop);
+      await vi.waitFor(() => expect(isDisabled(container)).toBe(false));
+
+      press(switchOf(container));
+      await vi.waitFor(() => expect(desktop.saved).toEqual([!initiallyEnabled]));
+      expect(isDisabled(container)).toBe(true);
+
+      act(() => desktop.changeFromAnotherWindow("remote", initiallyEnabled));
+      await act(async () => finishSave());
+      await vi.waitFor(() => expect(isDisabled(container)).toBe(false));
+      expect(isChecked(container)).toBe(String(desktop.enabled));
+      expect(desktop.enabled).toBe(initiallyEnabled);
+    },
+  );
 
   it("shows a save failure and lets the user retry without changing the saved choice", async () => {
     const desktop = new FakeRoutingDesktop();

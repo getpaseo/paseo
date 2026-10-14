@@ -2,7 +2,7 @@ import { useNetworkRoutingStatus } from "@/desktop/browser/network-routing/statu
 import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { useFetchQuery } from "@/data/query";
 import { Button } from "@/components/ui/button";
-import React, { useCallback, useEffect } from "react";
+import React, { useCallback, useEffect, useRef } from "react";
 import { Text, View } from "react-native";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -59,6 +59,7 @@ export function BrowserRoutingSetting({
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const routingEventVersion = useRef(0);
   const permissionDenied = useNetworkRoutingStatus(
     (state) => state.hosts[serverId]?.status === "permission_denied",
   );
@@ -72,14 +73,19 @@ export function BrowserRoutingSetting({
   });
   const mutation = useMutation({
     mutationFn: async (enabled: boolean) => {
+      const eventVersion = routingEventVersion.current;
       requireIpcSuccess(
         ipcAckSchema.parse(
           await desktop.invoke("browser_routing_set_enabled", { serverId, enabled }),
         ),
       );
-      return enabled;
+      return { enabled, eventVersion };
     },
-    onSuccess: (enabled) => queryClient.setQueryData(["browser-routing", serverId], enabled),
+    onSuccess: ({ enabled, eventVersion }) => {
+      // Another window's newer choice can arrive before this save acknowledgement.
+      if (eventVersion === routingEventVersion.current)
+        queryClient.setQueryData(["browser-routing", serverId], enabled);
+    },
   });
   useEffect(() => {
     let disposed = false;
@@ -87,8 +93,10 @@ export function BrowserRoutingSetting({
     void desktop
       .listen("browser_routing_changed", (raw) => {
         const event = routingChangedSchema.parse(raw);
-        if (event.serverId === serverId)
+        if (event.serverId === serverId) {
+          routingEventVersion.current += 1;
           queryClient.setQueryData(["browser-routing", serverId], event.enabled);
+        }
       })
       .then((dispose) => {
         if (disposed) dispose();
