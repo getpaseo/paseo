@@ -12,6 +12,7 @@ import {
 import { compilePlugin } from "../packages/server/dist/server/server/plugins/compiler.js";
 import { readPluginManifest } from "../packages/server/dist/server/server/plugins/manifest.js";
 import { PluginRuntime } from "../packages/server/dist/server/server/plugins/runtime.js";
+import { readPluginProviderIcon } from "../packages/server/dist/server/server/plugins/provider-icon.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packagedRoot = path.join(repoRoot, "packages/server/dist/server/builtin-plugins");
@@ -68,6 +69,11 @@ test("built output compiles and starts every listed built-in", async () => {
       assert.ok(bundles.serverBundle, `${id} must compile a server bundle`);
       await runtime.startBuiltinPlugin({ id, directory });
       assert.ok(runtime.catalog().some((plugin) => plugin.id === id));
+      for (const provider of runtime.getProviderRegistrations(id)) {
+        if (provider.iconPath) {
+          await readPluginProviderIcon(directory, provider.iconPath);
+        }
+      }
       if (id.endsWith("-usage-source")) {
         const sourceId = id.slice(0, -"-usage-source".length);
         assert.ok(

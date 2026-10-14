@@ -13,6 +13,7 @@ export const builtinPlugins = [
   "kimi-usage-source",
   "minimax-usage-source",
   "muse-provider",
+  "ollama-usage-source",
   "opencode-go-usage-source",
   "zai-usage-source",
 ] as const;
