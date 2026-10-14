@@ -210,7 +210,8 @@ export async function discover(
     }
   }
 
-  const fileCandidates = scope.kind === "global" ? globalRoutes(lookup) : sessionRoutes(scope, lookup);
+  const fileCandidates =
+    scope.kind === "global" ? globalRoutes(lookup) : sessionRoutes(scope, lookup);
 
   for (const input of fileCandidates) {
     const auth = await readAuth(input, lookup);
