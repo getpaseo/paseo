@@ -355,6 +355,7 @@ export function createFakeCodexAppServer(
       return toJsonObject(message.params);
     },
     disconnect() {
+      child.signalCode = "SIGTERM";
       child.emit("exit", null, "SIGTERM");
     },
     nextResponse() {

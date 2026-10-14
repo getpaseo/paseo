@@ -828,10 +828,8 @@ describe("Codex app-server provider features", () => {
         "configRequirements/read": () => ({ supportsIndependentSpeedModes: true }),
       });
 
-      // Disconnect through child process exit on the original process
-      initialAppServer.child.kill();
-      // Allow unexpected termination event to be handled
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      // Disconnect through fake app server helper
+      initialAppServer.disconnect();
 
       // Reconnect through public session interface
       await session.connect();
