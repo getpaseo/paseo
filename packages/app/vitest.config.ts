@@ -91,6 +91,7 @@ export default defineConfig({
     ],
     exclude: [
       "react-native-reanimated",
+      "@floating-ui/react-native",
       "react-native-gesture-handler",
       "react-native-keyboard-controller",
     ],

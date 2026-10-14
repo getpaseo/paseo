@@ -8,6 +8,24 @@ directly only when you are building a third trigger shape.
 Do not add a third menu implementation. The two that existed were byte-identical from
 `computePosition` down, and the copies drifted: only one of them ever grew a sheet.
 
+## Press, drag, release
+
+Mouse dropdowns open on the primary button's down event. Keep holding to move into an
+option, then release to select it. Releasing on the opener or a non-action area inside the
+menu leaves it open; releasing outside cancels. Touch, keyboard, and context-menu triggers
+keep their existing activation rules.
+
+Menus and comboboxes share `use-press-drag-select` and its registration context. Register
+custom rows with `usePressDragTarget`, passing the same action and disabled state as their
+normal press. Secondary buttons inside a row remain separate actions. Surfaces register
+with `usePressDragSurface` so the gesture crosses portals without relying on DOM ancestry
+between opener and menu. Keep autofocus deferred while `usePressDragState().dragging` is true.
+
+The controller consumes the browser's trailing click even if selection unmounts the menu.
+Do not add a second release handler at a call site: it can select twice or click content
+behind the closed surface. Invisible surfaces waiting for positioning cannot receive a
+selection, and releasing over the opener must remain an ordinary click-to-open.
+
 ## Two presentations
 
 `MenuRoot` picks one from form factor, never from platform — a tablet in a narrow split view

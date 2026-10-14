@@ -20,6 +20,14 @@ input focused while its scrollable list lives in a Portal. There is no shared
 "floating panel" primitive yet — when a fifth use case shows up we can revisit;
 until then prefer copying the closest file and trimming.
 
+## Combobox triggers
+
+Combobox popovers use the shared [press-drag-release interaction](menus.md#press-drag-release).
+Keep the combobox mounted alongside its trigger so it can observe the initial mouse press.
+Set `anchorIsTrigger={false}` when the anchor only supplies geometry for a picker opened by
+another action, such as choosing an attachment source from the composer's attachment menu.
+An anchor shared by several pickers must not open all of them on the same mouse press.
+
 ## Popover width contract
 
 Combobox desktop popovers are never narrower than their trigger, and they grow

@@ -1,3 +1,4 @@
+import { usePressDragState } from "@/components/ui/press-drag-select-context";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -391,6 +392,7 @@ export function SheetHeaderView({
 }
 
 export function InlineHeaderView({ header }: { header: SheetHeader }) {
+  const drag = usePressDragState();
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const back = header.back;
@@ -440,7 +442,7 @@ export function InlineHeaderView({ header }: { header: SheetHeader }) {
             onBlur={header.search.onBlur}
             autoCapitalize="none"
             autoCorrect={false}
-            autoFocus={header.search.autoFocus}
+            autoFocus={header.search.autoFocus && !drag.dragging}
             testID={header.search.testID}
           />
         </View>

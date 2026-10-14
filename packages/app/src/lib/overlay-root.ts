@@ -87,6 +87,7 @@ interface WebOverlayEntry {
   getLayer: () => number;
   getScope: () => HTMLElement | null;
   getKeyHandler: () => WebOverlayKeyHandler;
+  getAutoFocus: () => boolean;
   restoreFocus: HTMLElement | null;
   manageFocus: boolean;
 }
@@ -135,13 +136,16 @@ function focusFirstElement(scope: HTMLElement): void {
     '[data-menu-item="true"]:not([data-menu-disabled="true"])',
   );
   const first = firstMenuItem ?? getFocusableElements(scope)[0];
+  // Offscreen measuring surfaces remount once placed; focusing them loses the next key.
+  if (first?.closest('[data-overlay-measuring="true"]')) return;
   (first ?? scope).focus();
 }
 
 function handleWebOverlayFocus(event: FocusEvent): void {
   const top = getTopWebOverlay();
   const scope = top?.getScope();
-  if (!top?.manageFocus || !scope || scope.contains(event.target as Node)) return;
+  if (!top?.manageFocus || !top.getAutoFocus() || !scope || scope.contains(event.target as Node))
+    return;
   if (webOverlayFocusCheckQueued) return;
 
   // React can autofocus a child before its parent scope ref attaches. Defer
@@ -152,7 +156,12 @@ function handleWebOverlayFocus(event: FocusEvent): void {
     webOverlayFocusCheckQueued = false;
     const currentTop = getTopWebOverlay();
     const currentScope = currentTop?.getScope();
-    if (!currentTop?.manageFocus || !currentScope || currentScope.contains(document.activeElement))
+    if (
+      !currentTop?.manageFocus ||
+      !currentTop.getAutoFocus() ||
+      !currentScope ||
+      currentScope.contains(document.activeElement)
+    )
       return;
     focusFirstElement(currentScope);
   });
@@ -219,6 +228,7 @@ function addWebOverlay(entry: WebOverlayEntry): (options?: RemoveWebOverlayOptio
     const scope = entry.getScope();
     if (
       entry.manageFocus &&
+      entry.getAutoFocus() &&
       getTopWebOverlay() === entry &&
       scope &&
       !scope.contains(document.activeElement)
@@ -244,6 +254,7 @@ function addWebOverlay(entry: WebOverlayEntry): (options?: RemoveWebOverlayOptio
 }
 
 interface WebOverlayRegistration {
+  autoFocus?: boolean;
   active: boolean;
   layer: number;
   onKeyDown: WebOverlayKeyHandler;
@@ -258,6 +269,7 @@ interface WebOverlayRegistration {
  * there and restored to the opener when it closes; hover surfaces preserve focus instead.
  */
 export function useWebOverlayRegistration({
+  autoFocus = true,
   active,
   layer,
   onKeyDown,
@@ -267,6 +279,8 @@ export function useWebOverlayRegistration({
   const idRef = useRef(Symbol("web-overlay"));
   const scopeRef = useRef<HTMLElement | null>(null);
   const layerRef = useRef(layer);
+  const autoFocusRef = useRef(autoFocus);
+  autoFocusRef.current = autoFocus;
   const keyHandlerRef = useRef(onKeyDown);
   const capturedRestoreFocusRef = useRef<HTMLElement | null>(null);
   const removeEntryRef = useRef<((options?: RemoveWebOverlayOptions) => void) | null>(null);
@@ -316,6 +330,7 @@ export function useWebOverlayRegistration({
       getLayer: () => layerRef.current,
       getScope: () => scopeRef.current,
       getKeyHandler: () => keyHandlerRef.current,
+      getAutoFocus: () => autoFocusRef.current,
       restoreFocus: capturedRestoreFocusRef.current,
       manageFocus,
     };
@@ -351,6 +366,20 @@ export function useWebOverlayRegistration({
       registeredRef.current = false;
     };
   }, [active, syncRegistration]);
+
+  useLayoutEffect(() => {
+    if (!active || !autoFocus || typeof window === "undefined") return;
+    const frame = window.requestAnimationFrame(() => {
+      const scope = scopeRef.current;
+      if (
+        scope &&
+        getTopWebOverlay()?.getScope() === scope &&
+        !scope.contains(document.activeElement)
+      )
+        focusFirstElement(scope);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [active, autoFocus]);
 
   return setScope;
 }

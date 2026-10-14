@@ -1,3 +1,4 @@
+import { usePressDragTarget } from "@/components/ui/press-drag-select-context";
 import { useCallback, useMemo, useState, type ReactElement, type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -233,6 +234,7 @@ export function ComposerTrackRow({
     [closeOnSelect, onPress, selectItem],
   );
 
+  const drag = usePressDragTarget({ onSelect: handleSelect, disabled: disabled || !onPress });
   const renderRow = useCallback(
     (active: boolean) => (
       <View style={active ? styles.rowActive : styles.row}>
@@ -242,8 +244,9 @@ export function ComposerTrackRow({
     [children],
   );
   const renderPressed = useCallback(
-    ({ pressed }: { pressed: boolean }) => renderRow(hovered || pressed),
-    [hovered, renderRow],
+    ({ pressed }: { pressed: boolean }) =>
+      renderRow((drag.dragging ? drag.hovered : hovered) || pressed),
+    [hovered, renderRow, drag.dragging, drag.hovered],
   );
 
   if (!onPress) {
@@ -253,6 +256,7 @@ export function ComposerTrackRow({
   return (
     <View onPointerEnter={handlePointerEnter} onPointerLeave={handlePointerLeave}>
       <Pressable
+        ref={drag.ref}
         accessibilityRole="button"
         accessibilityLabel={accessibilityLabel}
         testID={testID}

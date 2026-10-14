@@ -52,7 +52,7 @@ export function ContextMenu({
   compactMode = "sheet",
   ...props
 }: ComponentProps<typeof MenuRoot>): ReactElement {
-  return <MenuRoot {...props} compactMode={compactMode} />;
+  return <MenuRoot {...props} compactMode={compactMode} pressDrag={false} />;
 }
 
 export function ContextMenuContent(props: MenuSurfaceProps): ReactElement | null {

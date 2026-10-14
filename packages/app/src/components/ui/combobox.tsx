@@ -66,6 +66,13 @@ import {
   useOverlayLayer,
   useWebOverlayRegistration,
 } from "@/lib/overlay-root";
+import { usePressDragSelect } from "./use-press-drag-select";
+import {
+  PressDragSelectionContext,
+  usePressDragState,
+  usePressDragSurface,
+  usePressDragTarget,
+} from "./press-drag-select-context";
 import { buildDesktopFrameStyle } from "./combobox-frame-style";
 
 export { buildDesktopFrameStyle } from "./combobox-frame-style";
@@ -131,6 +138,8 @@ export interface ComboboxProps {
   footer?: ReactNode;
   /** When true, selecting an option does not close the picker (multi-select mode). */
   keepOpenOnSelect?: boolean;
+  /** False when the anchor only positions a picker opened by another action. */
+  anchorIsTrigger?: boolean;
   anchorRef: React.RefObject<View | null>;
   children?: ReactNode;
 }
@@ -193,15 +202,16 @@ export function SearchInput({
 }: SearchInputProps): ReactElement {
   const { theme } = useUnistyles();
   const inputRef = useRef<EditingTextInputHandle>(null);
+  const drag = usePressDragState();
 
   useEffect(() => {
-    if (autoFocus && IS_WEB && inputRef.current) {
+    if (autoFocus && !drag.dragging && IS_WEB && inputRef.current) {
       const timer = setTimeout(() => {
         inputRef.current?.focus();
       }, 50);
       return () => clearTimeout(timer);
     }
-  }, [autoFocus]);
+  }, [autoFocus, drag.dragging]);
 
   return (
     <View style={styles.searchInputContainer}>
@@ -252,6 +262,7 @@ export function ComboboxItem({
   onPress,
   testID,
 }: ComboboxItemProps): ReactElement {
+  const drag = usePressDragTarget({ onSelect: onPress, disabled });
   const { theme } = useUnistyles();
 
   let leadingContent: ReactElement | null = null;
@@ -274,12 +285,13 @@ export function ComboboxItem({
   const itemPressableStyle = useCallback(
     ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.comboboxItem,
-      hovered && (elevated ? styles.comboboxItemHoveredElevated : styles.comboboxItemHovered),
+      (drag.dragging ? drag.hovered : hovered) &&
+        (elevated ? styles.comboboxItemHoveredElevated : styles.comboboxItemHovered),
       pressed && (elevated ? styles.comboboxItemPressedElevated : styles.comboboxItemPressed),
-      active && styles.comboboxItemActive,
+      active && !drag.dragging && styles.comboboxItemActive,
       disabled && styles.comboboxItemDisabled,
     ],
-    [elevated, active, disabled],
+    [elevated, active, disabled, drag.dragging, drag.hovered],
   );
 
   const itemContentStyle = useMemo(
@@ -289,6 +301,7 @@ export function ComboboxItem({
 
   return (
     <Pressable
+      ref={drag.ref}
       testID={testID}
       disabled={disabled}
       onPress={onPress}
@@ -339,8 +352,18 @@ interface OptionRowProps {
 
 function OptionRow({ option, selected, active, onSelect, renderOption }: OptionRowProps) {
   const handlePress = useCallback(() => onSelect(option.id), [onSelect, option.id]);
+  const drag = usePressDragTarget({ onSelect: handlePress });
   if (renderOption) {
-    return <View>{renderOption({ option, selected, active, onPress: handlePress })}</View>;
+    return (
+      <View ref={drag.ref}>
+        {renderOption({
+          option,
+          selected,
+          active: drag.dragging ? drag.hovered : active,
+          onPress: handlePress,
+        })}
+      </View>
+    );
   }
   return (
     <ComboboxItem
@@ -1157,6 +1180,9 @@ function DesktopComboboxOptionsBody(props: {
 }
 
 function DesktopComboboxBody(props: DesktopBodyProps): ReactElement {
+  const drag = usePressDragState();
+  const dragSurfaceRef = usePressDragSurface();
+  const dragBackdropRef = usePressDragSurface("backdrop");
   const handleDesktopKey = props.handleDesktopKey;
   const handleWebOverlayKeyDown = useCallback(
     (event: KeyboardEvent) => {
@@ -1167,15 +1193,17 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement {
   );
   const setWebOverlayScope = useWebOverlayRegistration({
     active: isWeb && props.isOpen,
+    autoFocus: !drag.dragging,
     layer: props.overlayLayer,
     onKeyDown: handleWebOverlayKeyDown,
   });
   const setFloatingRef = useCallback(
     (node: View | null) => {
       props.refs.setFloating(node);
+      dragSurfaceRef(node);
       setWebOverlayScope(node);
     },
-    [props.refs, setWebOverlayScope],
+    [props.refs, setWebOverlayScope, dragSurfaceRef],
   );
 
   const overlay = (
@@ -1189,7 +1217,11 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement {
           isWeb ? { zIndex: props.overlayLayer } : null,
         ]}
       >
-        <Pressable style={styles.desktopBackdrop} onPress={props.handleClose} />
+        <Pressable
+          ref={dragBackdropRef}
+          style={styles.desktopBackdrop}
+          onPress={props.handleClose}
+        />
         <FloatingSurface
           testID="combobox-desktop-container"
           entering={props.shouldUseDesktopFade ? FadeIn.duration(100) : undefined}
@@ -1257,6 +1289,10 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement {
   );
 }
 
+function isComboboxDragEnabled(isMobile: boolean, anchorIsTrigger = true): boolean {
+  return !isMobile && anchorIsTrigger;
+}
+
 export function Combobox({
   options,
   value,
@@ -1289,6 +1325,7 @@ export function Combobox({
   footer,
   keepOpenOnSelect = false,
   anchorRef,
+  anchorIsTrigger,
   children,
 }: ComboboxProps): ReactElement | null {
   const { t } = useTranslation();
@@ -1335,6 +1372,13 @@ export function Combobox({
     setSearchQueryWithCallback("");
     bumpSearchResetKey();
   }, [setOpen, setSearchQueryWithCallback]);
+
+  const dragSelection = usePressDragSelect({
+    anchorRef,
+    open: isOpen,
+    onOpenChange: setOpen,
+    enabled: isComboboxDragEnabled(isMobile, anchorIsTrigger),
+  });
 
   useResetSearchOnOpen(isOpen, setSearchQueryWithCallback, bumpSearchResetKey);
 
@@ -1597,38 +1641,40 @@ export function Combobox({
   if (!isOpen) return null;
 
   return (
-    <DesktopComboboxBody
-      overlayLayer={floatingLayer}
-      isOpen={isOpen}
-      handleClose={handleClose}
-      handleDesktopKey={handleDesktopKey}
-      refs={refs}
-      shouldUseDesktopFade={shouldUseDesktopFade}
-      desktopFrameStyle={desktopFrameStyle}
-      handleDesktopContentLayout={handleDesktopContentLayout}
-      header={header}
-      stickyHeader={stickyHeader}
-      footer={footer}
-      searchable={searchable}
-      searchPlaceholder={effectiveSearchPlaceholder}
-      searchQuery={searchQuery}
-      setSearchQueryWithCallback={setSearchQueryWithCallback}
-      handleSubmitSearch={handleSubmitSearch}
-      effectiveOptionsPosition={effectiveOptionsPosition}
-      desktopOptionsScrollRef={desktopOptionsScrollRef}
-      desktopAboveSearchContentContainerStyle={desktopAboveSearchContentContainerStyle}
-      handleDesktopOptionsContentSizeChange={handleDesktopOptionsContentSizeChange}
-      orderedVisibleOptions={orderedVisibleOptions}
-      value={value}
-      activeIndex={activeIndex}
-      emptyText={resolvedEmptyText}
-      handleSelect={handleSelect}
-      renderOption={renderOption}
-      hasChildren={hasChildren}
-      childrenScrollEnabled={desktopChildrenScrollEnabled}
-    >
-      {children}
-    </DesktopComboboxBody>
+    <PressDragSelectionContext value={dragSelection}>
+      <DesktopComboboxBody
+        overlayLayer={floatingLayer}
+        isOpen={isOpen}
+        handleClose={handleClose}
+        handleDesktopKey={handleDesktopKey}
+        refs={refs}
+        shouldUseDesktopFade={shouldUseDesktopFade}
+        desktopFrameStyle={desktopFrameStyle}
+        handleDesktopContentLayout={handleDesktopContentLayout}
+        header={header}
+        stickyHeader={stickyHeader}
+        footer={footer}
+        searchable={searchable}
+        searchPlaceholder={effectiveSearchPlaceholder}
+        searchQuery={searchQuery}
+        setSearchQueryWithCallback={setSearchQueryWithCallback}
+        handleSubmitSearch={handleSubmitSearch}
+        effectiveOptionsPosition={effectiveOptionsPosition}
+        desktopOptionsScrollRef={desktopOptionsScrollRef}
+        desktopAboveSearchContentContainerStyle={desktopAboveSearchContentContainerStyle}
+        handleDesktopOptionsContentSizeChange={handleDesktopOptionsContentSizeChange}
+        orderedVisibleOptions={orderedVisibleOptions}
+        value={value}
+        activeIndex={activeIndex}
+        emptyText={resolvedEmptyText}
+        handleSelect={handleSelect}
+        renderOption={renderOption}
+        hasChildren={hasChildren}
+        childrenScrollEnabled={desktopChildrenScrollEnabled}
+      >
+        {children}
+      </DesktopComboboxBody>
+    </PressDragSelectionContext>
   );
 }
 

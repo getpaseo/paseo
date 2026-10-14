@@ -310,6 +310,14 @@ export function TooltipTrigger({
   }, [clearOpenTimer, ctx]);
 
   useEffect(() => {
+    if (!isWeb || ctx.openOnPress) return;
+    // Dropdown gestures consume the press before React receives it. Dismiss
+    // hover tooltips (and pending timers) before that capture handler runs.
+    window.addEventListener("pointerdown", close, true);
+    return () => window.removeEventListener("pointerdown", close, true);
+  }, [close, ctx.openOnPress]);
+
+  useEffect(() => {
     return () => {
       clearOpenTimer();
     };
