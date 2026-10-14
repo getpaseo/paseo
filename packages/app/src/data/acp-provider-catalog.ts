@@ -156,6 +156,16 @@ const CATALOG_DATA = [
     command: ["npx", "-y", "dirac-cli@0.4.22", "--acp"],
   },
   {
+    id: "dsh",
+    title: "DeepSeek Harness",
+    description:
+      "DeepSeek's open-source coding agent harness, driven through its automation-only ACP profile.",
+    version: "0.1.2-rc.1",
+    iconId: "dsh",
+    installLink: "https://github.com/deepseek-ai/deepseek-harness",
+    command: ["dsh", "--profile", "acp"],
+  },
+  {
     id: "factory-droid",
     title: "Factory Droid",
     description: "Factory Droid - AI coding agent powered by Factory AI",
