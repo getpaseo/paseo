@@ -58,6 +58,7 @@ test-results/
 
 # Local Claude configuration
 CLAUDE.local.md
+AGENTS.local.md
 
 # Task CLI
 .tasks/
