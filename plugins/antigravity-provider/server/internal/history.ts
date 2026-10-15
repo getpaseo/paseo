@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -32,6 +32,10 @@ function getDatabaseSync(): SqliteDatabaseConstructor | null {
   }
 }
 
+function resolveAntigravityRoot(baseDir?: string): string {
+  return baseDir ?? process.env.AGY_HOME ?? join(homedir(), ".gemini", "antigravity-cli");
+}
+
 export interface ListSessionOptions {
   query?: string;
   cwd?: string;
@@ -51,7 +55,9 @@ function listFromSqlite(
       let sql =
         "SELECT conversation_id, title, created_at, updated_at, primary_workspace_path, preview FROM conversations";
       const params: (string | number)[] = [];
-      const conditions: string[] = [];
+      const conditions: string[] = [
+        "primary_workspace_path IS NOT NULL AND primary_workspace_path != ''",
+      ];
 
       if (options?.cwd) {
         conditions.push("primary_workspace_path = ?");
@@ -61,9 +67,7 @@ function listFromSqlite(
         conditions.push("(title LIKE ? OR preview LIKE ?)");
         params.push(`%${options.query}%`, `%${options.query}%`);
       }
-      if (conditions.length > 0) {
-        sql += ` WHERE ${conditions.join(" AND ")}`;
-      }
+      sql += ` WHERE ${conditions.join(" AND ")}`;
       sql += " ORDER BY updated_at DESC";
       if (options?.limit && options.limit > 0) {
         sql += " LIMIT ?";
@@ -76,7 +80,7 @@ function listFromSqlite(
         title: string | null;
         created_at: string | null;
         updated_at: string | null;
-        primary_workspace_path: string | null;
+        primary_workspace_path: string;
         preview: string | null;
       }>;
 
@@ -85,7 +89,7 @@ function listFromSqlite(
           version: 1,
           data: { conversationId: row.conversation_id },
         },
-        cwd: row.primary_workspace_path || process.cwd(),
+        cwd: row.primary_workspace_path,
         title: row.title ?? undefined,
         description: row.preview ?? undefined,
         updatedAt: row.updated_at ?? row.created_at ?? undefined,
@@ -100,10 +104,12 @@ function listFromSqlite(
 
 function matchesJsonlEntry(entry: Record<string, unknown>, options?: ListSessionOptions): boolean {
   if (
-    options?.cwd &&
-    entry.primary_workspace_path &&
-    entry.primary_workspace_path !== options.cwd
+    typeof entry.primary_workspace_path !== "string" ||
+    entry.primary_workspace_path.length === 0
   ) {
+    return false;
+  }
+  if (options?.cwd && entry.primary_workspace_path !== options.cwd) {
     return false;
   }
   if (options?.query && typeof entry.title === "string" && !entry.title.includes(options.query)) {
@@ -138,7 +144,7 @@ function listFromJsonl(
             version: 1,
             data: { conversationId: convId },
           },
-          cwd: (entry.primary_workspace_path as string) || process.cwd(),
+          cwd: entry.primary_workspace_path as string,
           title: (entry.title as string) ?? undefined,
           description: (entry.preview as string) ?? undefined,
           updatedAt: (entry.updated_at as string) ?? (entry.timestamp as string) ?? undefined,
@@ -155,40 +161,11 @@ function listFromJsonl(
   }
 }
 
-function listFromBrainDir(
-  brainDir: string,
-  options?: ListSessionOptions,
-): ProviderSessionSummary[] {
-  if (!existsSync(brainDir)) return [];
-
-  try {
-    const entries = readdirSync(brainDir, { withFileTypes: true });
-    const results: ProviderSessionSummary[] = [];
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const convId = entry.name;
-      if (convId.startsWith(".")) continue;
-      results.push({
-        persistence: {
-          version: 1,
-          data: { conversationId: convId },
-        },
-        cwd: process.cwd(),
-        title: `Session ${convId.slice(0, 8)}`,
-      });
-      if (options?.limit && results.length >= options.limit) break;
-    }
-    return results;
-  } catch {
-    return [];
-  }
-}
-
 export function listAntigravitySessions(
   options?: ListSessionOptions,
   baseDir?: string,
 ): ProviderSessionSummary[] {
-  const root = baseDir ?? join(homedir(), ".gemini", "antigravity-cli");
+  const root = resolveAntigravityRoot(baseDir);
   const dbPath = join(root, "conversation_summaries.db");
 
   const fromSqlite = listFromSqlite(dbPath, options);
@@ -198,20 +175,38 @@ export function listAntigravitySessions(
   const fromJsonl = listFromJsonl(historyJsonl, options);
   if (fromJsonl !== null) return fromJsonl;
 
-  // Do not fall back to brainDir if cwd filter is requested, because brainDir
-  // directories have no associated workspace metadata and assigning process.cwd()
-  // opens sessions in the daemon's directory.
-  if (options?.cwd) return [];
+  return [];
+}
 
-  const brainDir = join(root, "brain");
-  return listFromBrainDir(brainDir, options);
+function getTitleFromJsonl(historyJsonl: string, conversationId: string): string | null {
+  if (!existsSync(historyJsonl)) return null;
+  try {
+    const content = readFileSync(historyJsonl, "utf8");
+    const lines = content.split("\n").filter((l) => l.trim().length > 0);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const raw = JSON.parse(lines[i]);
+        if (typeof raw !== "object" || raw === null) continue;
+        const entry = raw as Record<string, unknown>;
+        const convId = (entry.conversation_id || entry.id) as string | undefined;
+        if (convId === conversationId && typeof entry.title === "string" && entry.title) {
+          return entry.title;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export function getAntigravitySessionTitle(
   conversationId: string,
   baseDir?: string,
 ): string | null {
-  const root = baseDir ?? join(homedir(), ".gemini", "antigravity-cli");
+  const root = resolveAntigravityRoot(baseDir);
   const dbPath = join(root, "conversation_summaries.db");
   const DatabaseSyncClass = getDatabaseSync();
 
@@ -231,7 +226,9 @@ export function getAntigravitySessionTitle(
       // ignore
     }
   }
-  return null;
+
+  const historyJsonl = join(root, "history.jsonl");
+  return getTitleFromJsonl(historyJsonl, conversationId);
 }
 
 export interface HistoryTurn {
@@ -241,7 +238,7 @@ export interface HistoryTurn {
 }
 
 function resolveTranscriptPath(conversationId: string, baseDir?: string): string | null {
-  const root = baseDir ?? join(homedir(), ".gemini", "antigravity-cli");
+  const root = resolveAntigravityRoot(baseDir);
   const candidates = [
     join(root, "brain", conversationId, ".system_generated", "logs", "transcript_full.jsonl"),
     join(root, "brain", conversationId, ".system_generated", "logs", "transcript.jsonl"),

@@ -54,6 +54,12 @@ describe("history utilities", () => {
     const historyJsonl = path.join(tempDir, "history.jsonl");
     const records = [
       {
+        conversation_id: "conv-unverified",
+        title: "Session without workspace",
+        // No primary_workspace_path: must not be offered
+        updated_at: "2026-10-15T09:00:00Z",
+      },
+      {
         conversation_id: "conv-1",
         title: "Frontend refactoring",
         primary_workspace_path: "/workspace/frontend",
@@ -75,17 +81,18 @@ describe("history utilities", () => {
 
     await writeFile(historyJsonl, records.map((r) => JSON.stringify(r)).join("\n"));
 
-    // 1. List all
+    // 1. List all excludes records without verified workspace
     const all = listAntigravitySessions(undefined, tempDir);
     expect(all).toHaveLength(3);
     expect(all[0].persistence.data.conversationId).toBe("conv-3");
+    expect(all.map((s) => s.persistence.data.conversationId)).not.toContain("conv-unverified");
 
     // 2. Filter by cwd
     const backendOnly = listAntigravitySessions({ cwd: "/workspace/backend" }, tempDir);
     expect(backendOnly).toHaveLength(2);
     expect(backendOnly.map((s) => s.persistence.data.conversationId)).toEqual(["conv-3", "conv-2"]);
 
-    // 3. Filter by cwd with 0 matches returns empty array and does NOT fall through to brainDir
+    // 3. Filter by cwd with 0 matches returns empty array
     const noMatches = listAntigravitySessions({ cwd: "/workspace/nonexistent" }, tempDir);
     expect(noMatches).toEqual([]);
 
@@ -98,6 +105,9 @@ describe("history utilities", () => {
     const limited = listAntigravitySessions({ limit: 1 }, tempDir);
     expect(limited).toHaveLength(1);
     expect(limited[0].persistence.data.conversationId).toBe("conv-3");
+
+    // 6. Title lookup from history.jsonl
+    expect(getAntigravitySessionTitle("conv-1", tempDir)).toBe("Frontend refactoring");
   });
 
   it("recovers valid turns from transcripts containing corrupted or null records", async () => {

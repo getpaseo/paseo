@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +16,7 @@ import {
 import { signalPlan } from "./internal/signals.js";
 import { createAntigravityProvider } from "./provider.js";
 
+const previousAgyHome = process.env.AGY_HOME;
 const temporary: string[] = [];
 const connections: ProviderConnection[] = [];
 const fake = fileURLToPath(new URL("../test/agy.mjs", import.meta.url));
@@ -50,7 +51,147 @@ it("handles sessions request", async () => {
   }
 });
 
+it("lists sessions from AGY_HOME and replays historical transcript items on session open", async () => {
+  const agyHome = await mkdtemp(path.join(os.tmpdir(), "antigravity-home-"));
+  temporary.push(agyHome);
+  process.env.AGY_HOME = agyHome;
+
+  const convId = "conv-hist-replay-1";
+  const historyJsonl = path.join(agyHome, "history.jsonl");
+  const records = [
+    {
+      conversation_id: convId,
+      title: "Historical Debug Session",
+      primary_workspace_path: "/workspace/project",
+      updated_at: "2026-10-15T15:00:00Z",
+      preview: "Fixed race condition in connection pool",
+    },
+    {
+      conversation_id: "conv-other-workspace",
+      title: "Other Project Session",
+      primary_workspace_path: "/workspace/other",
+      updated_at: "2026-10-15T14:00:00Z",
+    },
+    {
+      conversation_id: "conv-invalid",
+      title: "Session without workspace",
+      updated_at: "2026-10-15T13:00:00Z",
+    },
+  ];
+  await writeFile(historyJsonl, records.map((r) => JSON.stringify(r)).join("\n"));
+
+  const logDir = path.join(agyHome, "brain", convId, ".system_generated", "logs");
+  await mkdir(logDir, { recursive: true });
+  const transcriptLines = [
+    JSON.stringify({
+      type: "USER_INPUT",
+      content: "<USER_REQUEST>Investigate memory leak</USER_REQUEST>",
+    }),
+    JSON.stringify({
+      type: "PLANNER_RESPONSE",
+      step_index: 1,
+      thinking: "Analyzing heap snapshot",
+      tool_calls: [{ name: "run_command", args: { CommandLine: "node inspect.js" } }],
+      content: "Found the leaking reference in listener map.",
+      input_tokens: 1200,
+      output_tokens: 150,
+    }),
+  ];
+  await writeFile(path.join(logDir, "transcript_full.jsonl"), transcriptLines.join("\n"));
+
+  const h = await harness();
+
+  const requestId = "req-hist-sessions";
+  await h.connection.send({
+    type: "sessions",
+    requestId,
+    cwd: "/workspace/project",
+  });
+  const sessionsEvent = await h.wait((e) => e.type === "sessions" && e.requestId === requestId);
+  expect(sessionsEvent.type).toBe("sessions");
+  if (sessionsEvent.type === "sessions") {
+    expect(sessionsEvent.sessions).toEqual([
+      {
+        persistence: { version: 1, data: { conversationId: convId } },
+        cwd: "/workspace/project",
+        title: "Historical Debug Session",
+        description: "Fixed race condition in connection pool",
+        updatedAt: "2026-10-15T15:00:00Z",
+      },
+    ]);
+  }
+
+  await h.open({ version: 1, data: { conversationId: convId } });
+
+  const opened = h.events.find((e) => e.type === "session.opened");
+  expect(opened).toMatchObject({
+    type: "session.opened",
+    title: "Historical Debug Session",
+  });
+
+  const items = h.events
+    .filter((e) => e.type === "timeline.item")
+    .map((e) => (e.type === "timeline.item" ? e.item : null));
+  expect(items).toEqual([
+    expect.objectContaining({
+      type: "user_message",
+      text: "Investigate memory leak",
+    }),
+    expect.objectContaining({
+      type: "reasoning",
+      text: "Analyzing heap snapshot",
+    }),
+    expect.objectContaining({
+      type: "tool_call",
+      name: "run_command",
+      detail: { type: "shell", command: "node inspect.js" },
+      status: "completed",
+    }),
+    expect.objectContaining({
+      type: "assistant_message",
+      text: "Found the leaking reference in listener map.",
+    }),
+  ]);
+
+  expect(h.events).toContainEqual(
+    expect.objectContaining({
+      type: "session.turn",
+      turnId: "hist-turn-1",
+      state: "started",
+    }),
+  );
+  expect(h.events).toContainEqual(
+    expect.objectContaining({
+      type: "session.usage",
+      turnId: "hist-turn-1",
+      usage: { inputTokens: 1200, outputTokens: 150, cachedInputTokens: 0 },
+    }),
+  );
+  expect(h.events).toContainEqual(
+    expect.objectContaining({
+      type: "session.turn",
+      turnId: "hist-turn-1",
+      state: "completed",
+    }),
+  );
+
+  const readyIndex = h.events.findIndex((e) => e.type === "session.ready");
+  let lastReplayIndex = -1;
+  for (let i = 0; i < h.events.length; i++) {
+    const e = h.events[i];
+    if (e.type === "timeline.item" || (e.type === "session.turn" && e.turnId === "hist-turn-1")) {
+      lastReplayIndex = i;
+    }
+  }
+  expect(readyIndex).toBeGreaterThan(lastReplayIndex);
+});
+
 afterEach(async () => {
+  if (previousAgyHome !== undefined) {
+    process.env.AGY_HOME = previousAgyHome;
+  } else {
+    delete process.env.AGY_HOME;
+  }
   await Promise.all(connections.splice(0).map((connection) => connection.close()));
   await Promise.all(
     temporary.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
