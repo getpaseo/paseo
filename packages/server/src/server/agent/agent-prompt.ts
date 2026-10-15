@@ -483,6 +483,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
   } = params;
   let hasSeenRunning = false;
   let hasSeenTurn = false;
+  let hasReportedError = false;
   let stopped = false;
   const notifiedPermissionRequestIds = new Set<string>();
   let unsubscribe: (() => void) | null = null;
@@ -564,6 +565,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     if (agent.lifecycle === "running") {
       if (waitForTurnStart && !hasSeenTurn) return;
       hasSeenTurn = true;
+      hasReportedError = false;
       if (agent.pendingPermissions.size === 0) {
         hasSeenRunning = true;
       }
@@ -571,13 +573,22 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     }
     // Prior terminal state is not this task's outcome. A failure before turn start
     // is reported by the dispatch acknowledgement instead of a finish callback.
+    // Some providers retry or start a new turn on their own after a failed turn,
+    // so keep watching: the caller hears the error once, then the later finish.
     if (agent.lifecycle === "error" && hasSeenTurn) {
-      notifySafely("errored");
+      if (hasReportedError) return;
+      hasReportedError = true;
+      hasSeenRunning = false;
+      notifySafely("errored", { terminal: false });
       return;
     }
     // Idle is published before the terminal stream event for both completion
     // and cancellation. Let that event identify the outcome instead.
     if (agent.lifecycle === "closed") {
+      if (hasReportedError) {
+        stop();
+        return;
+      }
       notifySafely("was closed");
       return;
     }
@@ -602,6 +613,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
       if (event.event.type === "turn_started") {
         hasSeenTurn = true;
         hasSeenRunning = true;
+        hasReportedError = false;
         return;
       }
 

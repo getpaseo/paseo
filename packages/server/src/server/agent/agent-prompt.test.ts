@@ -64,6 +64,8 @@ interface FinishNotificationScenario {
   resolveChildPermissionFromState(requestId?: string): void;
   resolveChildPermissionWhileIdle(requestId?: string): void;
   finishChild(): void;
+  failChild(): void;
+  closeChild(): void;
   finishChildAndReadParentPrompt(): Promise<string>;
   closeChildAndReadParentPrompt(): Promise<string>;
   parentPrompts(): string[];
@@ -227,6 +229,18 @@ function createFinishNotificationScenario(
         agentId: "child-agent",
         event: { type: "turn_completed", provider: "codex" },
       });
+    },
+    failChild() {
+      childAgent.lifecycle = "running";
+      subscriber?.({ type: "agent_state", agent: childAgent });
+
+      childAgent.lifecycle = "error";
+      subscriber?.({ type: "agent_state", agent: childAgent });
+      subscriber?.({ type: "agent_state", agent: childAgent });
+    },
+    closeChild() {
+      childAgent.lifecycle = "closed";
+      subscriber?.({ type: "agent_state", agent: childAgent });
     },
     async finishChildAndReadParentPrompt() {
       const parentPrompt = new Promise<string>((resolve) => {
@@ -429,6 +443,48 @@ test("finish notifications survive repeated permission cycles", async () => {
   expect(
     scenario.parentPrompts().map((prompt) => prompt.match(/(needs permission|finished)\./)?.[1]),
   ).toEqual(["needs permission", "needs permission", "finished"]);
+});
+
+test("a finish notifies the caller once", async () => {
+  const scenario = createFinishNotificationScenario();
+
+  scenario.startWatchingChild();
+  scenario.finishChild();
+  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(1));
+  expect(scenario.parentPrompts()[0]).toContain("finished.");
+
+  scenario.finishChild();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(scenario.parentPrompts()).toHaveLength(1);
+});
+
+test("a child that recovers from an error still notifies its finish", async () => {
+  const scenario = createFinishNotificationScenario();
+
+  scenario.startWatchingChild();
+  scenario.failChild();
+  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(1));
+  expect(scenario.parentPrompts()[0]).toContain("errored.");
+
+  scenario.finishChild();
+  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(2));
+  expect(scenario.parentPrompts()[1]).toContain("finished.");
+
+  scenario.finishChild();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(scenario.parentPrompts()).toHaveLength(2);
+});
+
+test("closing a child after it errored does not notify again", async () => {
+  const scenario = createFinishNotificationScenario();
+
+  scenario.startWatchingChild();
+  scenario.failChild();
+  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(1));
+
+  scenario.closeChild();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(scenario.parentPrompts()).toHaveLength(1);
 });
 
 test("detaching a child ends its parent-owned finish notification", async () => {
