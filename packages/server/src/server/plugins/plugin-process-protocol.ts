@@ -1,3 +1,4 @@
+import { UsageScopeSchema, type UsageScope } from "@getpaseo/plugin/server/usage";
 import type {
   ProviderConnectRequest,
   ProviderCatalogOptions,
@@ -13,6 +14,7 @@ import {
 import { z } from "zod";
 
 export interface PluginProviderMetadata {
+  requiresConfiguration?: boolean;
   hasCatalogCacheKey?: boolean;
   hasStatus?: boolean;
   command?: readonly [string, ...string[]];
@@ -52,7 +54,7 @@ export type PluginProcessRequest =
   | { type: "hook"; requestId: string; kind: "event" | "before"; name: string; input: unknown }
   | { type: "hook.cancel"; requestId: string }
   | { type: "usage.fetch"; requestId: string; sourceId: string; input: unknown }
-  | { type: "usage.discover"; requestId: string; sourceId: string }
+  | { type: "usage.discover"; requestId: string; sourceId: string; scope: UsageScope }
   | { type: "invoke"; requestId: string; method: string; input: unknown }
   | {
       type: "provider.connect";
@@ -111,6 +113,7 @@ const providerMetadataSchema = z
     label: z.string().min(1),
     description: z.string().optional(),
     iconPath: z.string().optional(),
+    requiresConfiguration: z.boolean().optional(),
     hasCatalogCacheKey: z.boolean().optional(),
     hasStatus: z.boolean().optional(),
     command: z.tuple([z.string().min(1)], z.string()).optional(),
@@ -199,7 +202,12 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
       })
       .strict(),
     z
-      .object({ type: z.literal("usage.discover"), requestId: z.string(), sourceId: z.string() })
+      .object({
+        type: z.literal("usage.discover"),
+        requestId: z.string(),
+        sourceId: z.string(),
+        scope: UsageScopeSchema,
+      })
       .strict(),
     z
       .object({

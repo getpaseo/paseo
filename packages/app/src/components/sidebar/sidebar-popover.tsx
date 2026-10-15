@@ -6,7 +6,7 @@ import type { SidebarSection } from "@/sidebar-nav/model";
 
 /**
  * The popover a sidebar item opens: anchored to the item on wide layouts, a bottom sheet on
- * compact ones. Plugin items and the built-in Usage item open it the same way:
+ * compact ones. Plugin items open it this way:
  * `SidebarPopoverRoot` around the item, `useSidebarPopoverAnchor` on the element to anchor to,
  * and `SidebarPopoverSurface` for the body.
  */

@@ -52,12 +52,26 @@ The required root manifest is `paseo-plugin.json`:
 }
 ```
 
-| Field          | Required | Behavior                                                               |
-| -------------- | -------- | ---------------------------------------------------------------------- |
-| `id`           | Yes      | Default installation ID.                                               |
-| `description`  | No       | Non-empty summary shown below the plugin ID in **Settings → Plugins**. |
-| `requirements` | No       | Supported Paseo versions, described below.                             |
-| `build`        | No       | Preparation commands, described in the CLI reference.                  |
+| Field          | Required | Behavior                                                                                  |
+| -------------- | -------- | ----------------------------------------------------------------------------------------- |
+| `id`           | Yes      | Default installation ID.                                                                  |
+| `name`         | No       | Non-empty display name for the registry and website; independent of the installation ID.  |
+| `icon`         | No       | Relative path to a PNG inside the plugin package.                                         |
+| `media`        | No       | Array of image or video paths inside the package, or HTTPS URLs. An empty array is valid. |
+| `description`  | No       | Non-empty summary shown below the plugin ID in **Settings → Plugins**.                    |
+| `requirements` | No       | Supported Paseo versions, described below.                                                |
+| `build`        | No       | Preparation commands, described in the CLI reference.                                     |
+
+Paths are relative to `paseo-plugin.json`, use forward slashes, and cannot contain `..`
+segments. Registry listings for visual plugins require an interface image even though `media` is
+optional in the runtime manifest. See [icons and screenshots](/docs/plugins/publishing#icons-and-screenshots)
+for accepted formats and listing requirements.
+Paseo validates the references without opening local assets or fetching URLs.
+
+Unknown top-level fields are ignored. Known fields still validate, and unknown keys inside
+`requirements` are rejected so a misspelled constraint cannot silently skip a compatibility check.
+Manifests using `name`, `icon`, or `media` require Paseo 0.11.0 or later; older daemons reject
+these fields during installation.
 
 ### Requirements
 
@@ -165,6 +179,29 @@ in your browser and crashes on a phone is the most common plugin bug. The rules:
 The scaffold's `tsconfig.json` omits the DOM library. Keep DOM globals out of cross-platform
 components; do not add `/// <reference lib="dom" />` or `"DOM"` to `lib`.
 `layout.platform` carries the same value as React Native's `Platform.OS` for rendering decisions.
+
+### Play audio
+
+Call `client.playAudio({ base64, mimeType }): Promise<void>` to play an audio file on the
+current client (browser, Electron, iOS, or Android). Pass the base64 file returned by your
+plugin RPC; no browser globals or platform checks are needed.
+
+```ts
+const audio = await client.rpc(renderSpeech, { text: "Your agent needs you" });
+// renderSpeech returns { base64: string, mimeType: "audio/wav" }.
+await client.playAudio(audio);
+```
+
+The promise resolves when playback finishes and rejects if the file is invalid, playback
+fails, or the plugin unloads. Calls share Paseo's voice playback queue and play in order.
+Unloading a plugin cancels its active and queued audio. Voice playback controls can also
+interrupt that shared queue. Playback does not request microphone permission.
+
+Use PCM WAV or MP3 for portable files. Other codecs depend on the client's decoder.
+MIME parameters are accepted. Pass a complete audio file; raw PCM samples are not supported.
+Browsers require user interaction before allowing sound; handle rejection and offer a
+play button. The function plays on the device running the plugin client, not on the daemon,
+and does not promise delivery while the app is suspended or closed.
 
 ### External links and workspace browsers
 
@@ -319,15 +356,20 @@ A source implements two calls:
 interface UsageAccount {
   key: string;
   label?: string;
+  harness?: string;
   input: JsonValue;
 }
+
+type UsageScope =
+  | { kind: "global" }
+  | { kind: "session"; provider: string; model?: string; env: Record<string, string> };
 
 interface UsageSourceRegistration {
   id: string;
   label: string;
   icon?: string;
   input: ZodType;
-  discover(): Promise<UsageAccount[]>;
+  discover(scope: UsageScope): Promise<UsageAccount[]>;
   fetch(input: unknown): Promise<UsageReport>;
 }
 
@@ -348,19 +390,45 @@ type UsageProblem =
   | { kind: "no_quota"; detail: string };
 ```
 
-Return every account whose login exists on the machine from `discover()`, including expired
-logins. Return `[]` when none exists. Discovery takes no arguments and must work independently of
-agent sessions and provider names. Inputs name credential stores; never put credentials in inputs
-or reports. Paseo validates each input against your schema before calling `fetch()`.
+Session discovery returns only the login that agent runs on. The agent popover uses only those
+inputs; it never tries logins from global discovery or other agents. For any other provider,
+return `[]`. Global discovery lists every account, including expired logins.
+
+Resolve the session account from that session's launch environment. Return `[]` when no login exists.
+Never scan default stores from session discovery or scan agents from global discovery. Discovery is a query, with no agent
+lifecycle hooks. Closed agents have no session scope until resumed.
+
+Inputs name credential stores; never put credentials in inputs or reports. Paseo validates each
+input against your schema before calling `fetch()`. The same key in any scope is the same report;
+fetches share a five-minute cache only when their ordered login inputs match. Each login fetch
+has a 20-second deadline.
+
+Built-in session routes:
+
+| Source                 | Session                                       | Login store                                                                                    |
+| ---------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Claude                 | `claude`                                      | `CLAUDE_CONFIG_DIR`, or the default; on macOS, the directory's Keychain entry takes precedence |
+| Claude                 | `pi`, `omp` with `anthropic/…` model          | That harness's Anthropic login store                                                           |
+| Codex                  | `codex`                                       | `CODEX_HOME/auth.json`, or the default                                                         |
+| Codex                  | `pi`, `opencode`, `omp` with `openai/…` model | That harness's OpenAI login store                                                              |
+| Muse                   | `muse`                                        | That session's own Muse launch/config                                                          |
+| Other built-in sources | Any                                           | No session discovery                                                                           |
+
+Claude excludes Bedrock, Vertex, and foreign `ANTHROPIC_BASE_URL` sessions. Codex excludes sessions
+with `OPENAI_BASE_URL` set.
 
 Use a stable account key: 1–128 characters from `[A-Za-z0-9._-]`. It identifies the account or
 organization whose quota is metered and survives token rotation. Never use a credential or raw
 email as the key. Use `hashAccountKey()` for sensitive stable identities or a store locator when
 account metadata is unavailable. Labels can name accounts without becoming their identity.
 
-Return logins in preference order. Several entries with the same key become one card, with their
-inputs tried in order until a report is `available`. An unavailable report, error report, or thrown
-fetch falls through to the next input. If none succeeds, the card carries the last report.
+Return logins in preference order and set `harness` to the owning harness's display name, such as
+Codex, OpenCode, Pi, or OMP. The daemon treats inputs as opaque and never derives labels from them.
+
+The host-wide Usage modal groups logins with the same key into one account card and tries them
+concurrently, preferring the discovery order when selecting a result. If any login returns
+`available`, it shows usage with no errors. If all fail, it shows
+every login's error on a separate line with its harness label and its own remedy.
 Discovery failures are logged by the daemon and produce no card.
 
 Window names must come from provider data: an explicit duration, a named API field such as
@@ -440,7 +508,8 @@ metadata or JWT claims. Pi and OMP logins remain discoverable when expired. OMP 
 `usage.list_reports` discovers accounts when called without IDs. With IDs, it refreshes known
 accounts without rediscovering identity. If a store switches accounts, the existing card shows the
 new login's quota until the next discovery. Reports are cached for five minutes; `forceRefresh`
-bypasses that cache. Entries carry `id`, `account.label`, and `fetchedAt`. Clients gate the feature
+bypasses that cache. Entries carry `id`, `account.label`, and `fetchedAt`. Failed accounts also carry optional
+`loginErrors` entries with `harness` and each login's failed `report`. Clients gate the feature
 on `server_info.features.usageSources`. The older `provider.usage.list` RPC maps the same reports
 for 0.10 clients and renders problems into its `error` string.
 
@@ -654,6 +723,7 @@ plans, and mode changes; requesting permission does not end the turn.
 | Name                         | Event fields                             | Trigger                                            |
 | ---------------------------- | ---------------------------------------- | -------------------------------------------------- |
 | `agent.created`              | `agent`                                  | Ordinary creation finishes; excludes import/resume |
+| `agent.closed`               | `agent`                                  | A live agent runtime closes                        |
 | `agent.turn_started`         | `agent`, `turnId`                        | Live turn starts                                   |
 | `agent.turn_ended`           | `agent`, `turnId`, `outcome`, `timeline` | Live turn completes, fails, or is canceled         |
 | `agent.permission_requested` | `agent`, `request`                       | Permission or question becomes pending             |
@@ -662,8 +732,9 @@ plans, and mode changes; requesting permission does not end the turn.
 | `workspace.created`          | `workspace`                              | Record created; directory available                |
 | `workspace.archived`         | `workspace`                              | Archive state is saved                             |
 
-Agent events exclude internal utility agents. Archive events can precede runtime/worktree cleanup;
-`workspace.created` is not a setup barrier before agent startup.
+Agent events exclude the daemon's private disposable helpers. Public background workspaces and
+their ordinary agents run the same lifecycle hooks as other workspaces. Archive events can precede
+runtime/worktree cleanup; observe lifecycle completion separately when cleanup matters.
 
 **Shared payload shapes** (`@getpaseo/plugin/server`):
 
@@ -717,7 +788,6 @@ type PluginTurnOutcome =
 | `providerOptions`                             | Opaque provider-specific options                                           |
 | `mcpServers`, `toolPolicy`                    | MCP configuration and exact-tool preapprovals                              |
 | `cwd`                                         | Cannot change                                                              |
-| `internal`                                    | Daemon-owned; cannot change through this hook                              |
 
 **`agent.session_open` request example:**
 
@@ -2069,7 +2139,7 @@ export default function contribute(server: PluginServerContext) {
 
 Inputs and outputs are validated on both sides. RPC names start with a lowercase letter and contain lowercase letters, numbers, dots, hyphens, or underscores. `useRpc()` returns a typed async function. Use TanStack Query for request state, caching, and mutations.
 
-Backend handlers receive the same `PaseoApi` as `{ paseo }`. Their connection belongs to the subprocess and closes when the plugin stops. It does not subscribe to timelines or catalog events until plugin code subscribes. Follow the [SDK event contract](../../sdk/events.md) for cleanup and timeline replacements. Backend code can use Node APIs and dependencies installed in the plugin directory.
+Backend handlers receive the same `PaseoApi` as `{ paseo }`. Their connection belongs to the subprocess and closes when the plugin stops. It does not subscribe to timelines or catalog events until plugin code subscribes. Follow the [SDK event contract](/docs/sdk/events) for cleanup and timeline replacements. Backend code can use Node APIs and dependencies installed in the plugin directory.
 
 ## Debug backend output
 
@@ -2200,16 +2270,20 @@ failures stay inside the plugin error boundary.
 
 Paste one of these source identifiers into **Settings → Plugins**, or pass it to
 `paseo plugin install`. `paseo plugin add <source>` and `paseo plugin install <source>` are aliases.
-Absolute host paths are recommended because relative paths resolve against the daemon's working
-directory. The app does not expand `~`; your shell may expand it before the CLI runs.
+The CLI resolves relative directory paths from your current working directory and expands `~`
+to your local home directory, preserving any `:plugin/path` suffix. With `--host`, use an absolute
+path that exists on the daemon host; plugin files are read there and are never uploaded by the CLI.
+Paths entered in Settings resolve relative to the daemon's working directory, and `~` expands to
+the daemon's home directory.
 
 | Source                     | Accepted form                                                              | Example                                       |
 | -------------------------- | -------------------------------------------------------------------------- | --------------------------------------------- |
+| Plugin registry            | `owner/slug` or `host/owner/slug`                                          | `acme/review`                                 |
 | Host directory             | Absolute or relative path on the daemon host                               | `/srv/paseo/plugins/review`                   |
-| GitHub repository          | `github:owner/repository` or `owner/repository`                            | `github:acme/paseo-review`                    |
+| GitHub repository          | `git:owner/repository` or `github:owner/repository`                        | `github:acme/paseo-review`                    |
 | Git repository             | `git:<URL or SCP source>`; the prefix is optional for URLs and SCP sources | `git:https://git.example.com/acme/review.git` |
 | npm package                | `npm:<name>[@<version, tag, or range>]`; `npm:` is optional                | `npm:@acme/paseo-review@^1.2.0`               |
-| Plugin below a source root | Append `:relative/plugin/path` to any source                               | `github:acme/monorepo:plugins/review`         |
+| Plugin below a source root | Append `:relative/plugin/path` to a directory, Git, or npm source          | `github:acme/monorepo:plugins/review`         |
 
 Git URLs use `https://`, `http://`, `ssh://`, `git://`, or `file://`. SCP sources use
 `user@host:path`. `file://` selects Git acquisition, not directory installation.
@@ -2225,19 +2299,27 @@ The package registry validates the selected version, tag, or range.
 
 Paseo resolves an identifier in this order:
 
-1. An existing directory matching the complete identifier on the daemon host wins, including a
-   literal directory containing `:`.
+1. A bare `owner/slug` is a registry id; local directory sources are `.` or `..`, or start with `./`, `../`, `.\`, `..\`, `/`, `~`, a Windows drive (`C:\` or `C:/`), or a UNC (`\\server\share`) prefix.
 2. Otherwise, recognize `npm:`, `github:`, or `git:` before interpreting a subdirectory suffix.
    `git://` is a Git URL scheme. An explicit prefix selects acquisition of that kind.
 3. Recognize a final `:relative/plugin/path` only when its suffix contains no empty, `.` or `..`
    segments. A lone `.` selects the source root. Both `/` and `\` separate suffix segments; use `/`
    across hosts. URL ports and the separator in an SCP source stay part of the source. A suffix
    that does not satisfy these rules stays part of the identifier.
-4. Without an explicit prefix, an existing directory matching the remaining source wins.
-5. Resolve Git URLs and SCP sources as Git; expand exact `owner/repository` shorthand to GitHub
-   HTTPS. `github:` requires that shorthand; `git:` accepts it as well as URLs and SCP sources.
-6. Resolve a remaining npm package name with its optional selector through the host's registry.
+4. Resolve bare `owner/slug` through the default plugin registry and `host/owner/slug` through
+   that registry host. Resolve Git URLs and SCP sources as Git. `github:` requires
+   `owner/repository` shorthand; `git:` accepts it as well as URLs and SCP sources.
+5. Resolve a remaining npm package name with its optional selector through the host's registry.
    Reject anything else.
+
+The default registry is `https://plugins.paseo.sh`. Browse [published plugins](https://paseo.sh/plugins)
+and install with `paseo plugin add owner/slug`. Registry records own the revision and plugin path.
+Use `git:owner/repository` for explicit GitHub shorthand or a full Git URL.
+Set `PASEO_PLUGIN_REGISTRY` to use a self-hosted default URL, including a path prefix.
+Private registry credentials use `pluginRegistries: { "host": { "authorization": "Bearer token" } }`
+in daemon config. Restart the daemon after changing these startup settings. Credentials go only
+to that registry, never to artifact hosts or redirects. Installed plugins retain their recorded
+source and registry URL when defaults change.
 
 Directory lookup happens on the daemon host. The app uses the `paseo-plugin.json` ID; the CLI
 accepts `--id <runtime-id>` to override it. An existing installation ID is rejected without changing
@@ -2271,8 +2353,9 @@ keeps the complete dependency tree and `package-lock.json` when activating it. T
 package and lockfile provide its current version and artifact integrity. A version, tag, or range
 chooses content for this installation only.
 
-For package contents, dependencies, preparation, and private registries, see
-[Publish a plugin](/docs/plugins/publishing).
+The installed lockfile records what this installation resolved. Authors submitting npm plugins
+with runtime dependencies must also ship the [publication lock](/docs/plugins/publishing#2-lock-installed-dependencies).
+For package contents, preparation and submission, see [Publish a plugin](/docs/plugins/publishing).
 
 A failed download, dependency installation, manifest check, preparation command, compilation, or
 activation discards the candidate. Other installed plugins keep running. Removing an npm plugin
@@ -2284,9 +2367,10 @@ deletes its managed files; removing a directory plugin keeps your source directo
 paseo plugin init /absolute/path/to/plugin
 paseo plugin install /absolute/path/to/plugin
 paseo plugin install /absolute/path/to/plugin --id another-runtime-id
-paseo plugin add owner/repository
+paseo plugin add owner/slug
+paseo plugin add git:owner/repository
 paseo plugin add https://git.example.com/owner/repository.git --ref main
-paseo plugin add owner/monorepo:plugins/review
+paseo plugin add git:owner/monorepo:plugins/review
 paseo plugin ls [id]
 paseo plugin update <id>
 paseo plugin update --all --check

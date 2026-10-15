@@ -4,6 +4,8 @@ import type { PaseoApi } from "@getpaseo/client";
 import { expect, test } from "vitest";
 import { PluginRegistry } from "./registry";
 
+const audio = { play: async () => 0 };
+
 /** A host client that records open event observations by their first event name. */
 function observingClient() {
   const open = new Set<string>();
@@ -47,6 +49,7 @@ function registry() {
         openScreen: () => {},
         openSurface: () => {},
         openSettings: () => {},
+        playAudio: async () => {},
         openPanel: () => {},
         addComposerPill: () => ({ update() {}, remove() {} }),
         addHeaderButton: () => ({ update() {}, remove() {} }),
@@ -67,7 +70,7 @@ function catalog(id: string, body = "return function() {};") {
 
 test("setup and every surface share the installation's one Paseo client", () => {
   const h = registry();
-  h.plugins.installCatalog("host", [catalog("deploys")], { client: h.client });
+  h.plugins.installCatalog("host", [catalog("deploys")], { client: h.client, audio });
 
   const [installation] = h.plugins.getSnapshot();
   expect(h.setupClients.get("deploys")).toBe(installation.paseo);
@@ -76,11 +79,14 @@ test("setup and every surface share the installation's one Paseo client", () => 
 
 test("teardown ends every subscription the plugin still holds", async () => {
   const h = registry();
-  h.plugins.installCatalog("host", [catalog("disabled"), catalog("kept")], { client: h.client });
+  h.plugins.installCatalog("host", [catalog("disabled"), catalog("kept")], {
+    client: h.client,
+    audio,
+  });
   expect(h.open).toEqual(new Set(["disabled", "kept"]));
 
   // Disabling one plugin removes it from the catalog.
-  h.plugins.installCatalog("host", [catalog("kept")], { client: h.client });
+  h.plugins.installCatalog("host", [catalog("kept")], { client: h.client, audio });
   await expect.poll(() => [...h.open]).toEqual(["kept"]);
 
   h.plugins.removeHost("host");
@@ -89,11 +95,12 @@ test("teardown ends every subscription the plugin still holds", async () => {
 
 test("reloading a plugin ends the old installation's subscriptions", async () => {
   const h = registry();
-  h.plugins.installCatalog("host", [catalog("reloaded")], { client: h.client });
+  h.plugins.installCatalog("host", [catalog("reloaded")], { client: h.client, audio });
   const [first] = h.plugins.getSnapshot();
 
   h.plugins.installCatalog("host", [catalog("reloaded")], {
     client: h.client,
+    audio,
     replacePluginId: "reloaded",
   });
 
@@ -109,6 +116,7 @@ test("failed plugin initialization ends the subscriptions it opened", async () =
   const h = registry();
   h.plugins.installCatalog("host", [catalog("failed", 'throw new Error("setup failed");')], {
     client: h.client,
+    audio,
   });
   await expect.poll(() => h.open.size).toBe(0);
   expect(h.plugins.getSnapshot()).toEqual([]);
@@ -118,8 +126,8 @@ test("unloading ends the subscriptions even when plugin cleanup throws, preservi
   const h = registry();
   const failing = catalog("failing", 'return function() { throw new Error("cleanup failed"); };');
   const surviving = catalog("surviving", "return function() {};");
-  h.plugins.installCatalog("host", [failing, surviving], { client: h.client });
-  h.plugins.installCatalog("host", [surviving], { client: h.client });
+  h.plugins.installCatalog("host", [failing, surviving], { client: h.client, audio });
+  h.plugins.installCatalog("host", [surviving], { client: h.client, audio });
   await expect.poll(() => [...h.open]).toEqual(["surviving"]);
   expect(h.plugins.getSnapshot().map((plugin) => plugin.id)).toEqual(["surviving"]);
   h.plugins.removeHost("host");
@@ -131,7 +139,7 @@ test("an invalid async client entry is disposed and its rejected continuation is
   h.plugins.installCatalog(
     "host",
     [catalog("async-entry", 'return Promise.reject(new Error("asynchronous setup failed"));')],
-    { client: h.client },
+    { client: h.client, audio },
   );
   await expect.poll(() => h.open.size).toBe(0);
   await new Promise((resolve) => setTimeout(resolve, 0));

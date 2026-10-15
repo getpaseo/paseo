@@ -36,8 +36,7 @@ vi.mock("./providers/openai/runtime.js", () => ({
 
 vi.mock("./providers/local/models.js", () => ({
   ensureLocalSpeechModels: ensureLocalSpeechModelsMock,
-  getLocalSpeechModelDir: vi.fn(() => ""),
-  listLocalSpeechModels: vi.fn(() => []),
+  listMissingLocalSpeechModels: vi.fn(async ({ modelIds }: { modelIds: string[] }) => modelIds),
 }));
 
 function createStubStt(id: string): SpeechToTextProvider {

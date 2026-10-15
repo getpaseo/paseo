@@ -6,7 +6,7 @@ import {
 } from "@/stores/navigation-active-workspace-store";
 import {
   resolveUsageHostId,
-  resolveUsageScreenHostId,
+  resolveUsageModalHostId,
   type UsageHost,
   type UsageHostChoice,
 } from "./model";
@@ -35,7 +35,7 @@ export function useUsageHostId(): string | null {
 }
 
 /**
- * The host the Usage screen or the compact usage sheet shows, and the hosts to pick from. A pick
+ * The host the Usage modal shows, and the hosts to pick from. A pick
  * is saved on the device, so the sidebar Usage row and later visits show the same host.
  */
 export function useUsageHostSelection(): {
@@ -55,5 +55,5 @@ export function useUsageHostSelection(): {
     },
     [updateSettings],
   );
-  return { serverId: resolveUsageScreenHostId(choice), connectedHosts, select };
+  return { serverId: resolveUsageModalHostId(choice), connectedHosts, select };
 }

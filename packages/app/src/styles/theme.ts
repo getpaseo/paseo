@@ -267,8 +267,8 @@ export function buildLightSemanticColors(tint: LightThemeConfig) {
     surface4: tint.surface4,
     surfaceDiffEmpty: tint.surfaceDiffEmpty,
     surfaceSidebar: tint.surfaceSidebar,
-    surfaceSidebarHover: tint.surface1,
-    surfaceSidebarSelected: tint.surface3,
+    surfaceSidebarHover: tint.surface3,
+    surfaceSidebarSelected: tint.surface4,
     surfaceWorkspace: tint.surface0,
     interactionHighlight: "rgba(0, 0, 0, 0.06)",
 
@@ -596,6 +596,8 @@ export const ICON_SIZE = {
   md: 16,
   lg: 20,
 } as const;
+
+export const ICON_STROKE_WIDTH = 1.5;
 
 export const FONT_WEIGHT = {
   normal: "normal" as const,

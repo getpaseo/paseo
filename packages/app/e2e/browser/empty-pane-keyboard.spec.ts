@@ -30,7 +30,7 @@ test.describe("New tab keyboard launcher", () => {
       await waitForWorkspaceTabsVisible(page);
 
       const explorer = await openExplorerWithKeyboard(page);
-      await expect(explorer.getByTestId("explorer-sidebar-tab-changes_tree")).toBeVisible();
+      await expect(explorer.getByTestId("workspace-tab-changes_tree")).toBeVisible();
       await expect(explorer.getByTestId("changes-tree-panel")).toBeVisible();
     } finally {
       await workspace.cleanup();

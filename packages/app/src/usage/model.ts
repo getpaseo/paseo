@@ -61,6 +61,47 @@ export function replaceReport(
   return reports.map((report) => (report.id === reportId ? refreshed : report));
 }
 
+/**
+ * The later-fetched of two copies of one report. A list request's copies were fetched when it
+ * started, so a Refresh that lands while it streams is newer than what the request still delivers.
+ */
+function laterFetched(shown: UsageReportEntry, arriving: UsageReportEntry): UsageReportEntry {
+  return Date.parse(shown.fetchedAt) > Date.parse(arriving.fetchedAt) ? shown : arriving;
+}
+
+/**
+ * A report list with one streamed report in place of its previous copy, or appended if new. A
+ * copy fetched after the streamed one stays.
+ */
+export function upsertReport(
+  reports: readonly UsageReportEntry[] | undefined,
+  report: UsageReportEntry,
+): UsageReportEntry[] {
+  if (!reports?.some((entry) => entry.id === report.id)) return [...(reports ?? []), report];
+  return reports.map((entry) => (entry.id === report.id ? laterFetched(entry, report) : entry));
+}
+
+/**
+ * Keep displayed reports in place: the finished list is in fetch-completion order, which can
+ * change on every refresh. Drop missing reports, append new ones, and keep newer fetched copies.
+ */
+export function settleReports(
+  shown: readonly UsageReportEntry[] | undefined,
+  finished: readonly UsageReportEntry[],
+): UsageReportEntry[] {
+  const remaining = new Map(finished.map((report) => [report.id, report]));
+  const settled: UsageReportEntry[] = [];
+  for (const report of shown ?? []) {
+    const arriving = remaining.get(report.id);
+    if (!arriving) {
+      continue;
+    }
+    settled.push(laterFetched(report, arriving));
+    remaining.delete(report.id);
+  }
+  return [...settled, ...remaining.values()];
+}
+
 export interface UsageQueryState {
   data: UsageReportEntry[] | undefined;
   error: unknown;
@@ -86,6 +127,31 @@ export function resolveUsageView(input: {
       kind: "error",
       message: query.error instanceof Error ? query.error.message : String(query.error),
     };
+  }
+  return { kind: "loading" };
+}
+
+/** What a meter popover shows of its agent's usage: nothing while the host cannot say. */
+export type AgentUsageView =
+  | { kind: "none" }
+  | { kind: "loading" }
+  | { kind: "error"; message: string }
+  | { kind: "ready"; reports: UsageReportEntry[] };
+
+export function resolveAgentUsageView(input: {
+  canReport: boolean;
+  query: UsageQueryState;
+}): AgentUsageView {
+  const { canReport, query } = input;
+  if (!canReport) return { kind: "none" };
+  // A failed request keeps the reports from before it, or those that streamed in before it failed;
+  // shown alone they would pass for the agent's complete, current usage.
+  if (query.error) {
+    const reason = query.error instanceof Error ? query.error.message : String(query.error);
+    return { kind: "error", message: usageCopy.agentError(reason) };
+  }
+  if (query.data) {
+    return query.data.length === 0 ? { kind: "none" } : { kind: "ready", reports: query.data };
   }
   return { kind: "loading" };
 }
@@ -117,11 +183,11 @@ export function resolveUsageHostId(choice: UsageHostChoice): string | null {
 }
 
 /**
- * The host the Usage screen shows: the picked host while it is connected, even one that cannot
- * report usage so the screen says to update it; else the sidebar row's host; else the first
+ * The host the Usage modal shows: the picked host while it is connected, even one that cannot
+ * report usage so the modal says to update it; else the sidebar row's host; else the first
  * connected host.
  */
-export function resolveUsageScreenHostId(choice: UsageHostChoice): string | null {
+export function resolveUsageModalHostId(choice: UsageHostChoice): string | null {
   const connected = choice.hosts.filter((host) => host.isConnected);
   const picked = connected.find((host) => host.serverId === choice.pickedServerId);
   return picked?.serverId ?? resolveUsageHostId(choice) ?? connected[0]?.serverId ?? null;

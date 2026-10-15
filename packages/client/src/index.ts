@@ -257,6 +257,8 @@ export interface PaseoAgentCreateOptions {
   git?: CreateAgentRequestMessage["git"];
   worktree?: CreateAgentRequestMessage["worktree"];
   autoArchive?: CreateAgentRequestMessage["autoArchive"];
+  /** Visibility intent for a NEW workspace. Existing targets reject this option. */
+  background?: CreateAgentRequestMessage["background"];
   requestId?: string;
   labels?: Record<string, string>;
 }
@@ -780,9 +782,12 @@ function createWorkspaceHandleFactory(
     const refresh = async (options?: { requestId?: string }) => {
       let cursor: string | undefined;
       let requestId = options?.requestId;
+      // A ref addresses one workspace by id, so a background one resolves too.
+      const filter = daemonClient.supportsBackgroundWorkspaces() ? { includeBackground: true } : {};
       do {
         const result = await daemonClient.fetchWorkspaces({
           requestId,
+          filter,
           page: { limit: 200, ...(cursor ? { cursor } : {}) },
         });
         const match = result.entries.find((entry) => entry.id === id);
@@ -1046,7 +1051,7 @@ async function waitForProvidersReady(
 
   try {
     await observation.ready;
-    signal.throwIfAborted();
+    if (signal.aborted) throw new Error("Paseo API is disposed");
     return await new Promise<PaseoProviderSnapshotResult>((resolve, reject) => {
       let settled = false;
       let requestId: string | null = null;

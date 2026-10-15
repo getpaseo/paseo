@@ -1,4 +1,8 @@
 import { mapOpencodeToolCall } from "../tool-call-mapper.js";
+import {
+  materializeProviderImage,
+  renderProviderImageOutputAsAssistantMarkdown,
+} from "../../provider-image-output.js";
 import type { SessionMessageAssistantTool } from "@opencode/client";
 import { STRUCTURED_OUTPUT_TOOL } from "./structured-output.js";
 import type { SessionMessageInfo } from "@opencode/client";
@@ -6,6 +10,13 @@ import type { AgentStreamEvent, AgentTimelineItem } from "../../../agent-sdk-typ
 
 function textPartKey(messageID: string, part: "text" | "reasoning", ordinal: number): string {
   return `${messageID}:${part}:${ordinal}`;
+}
+
+// A `slice` can share its source's storage, so every streamed chunk kept by the timeline
+// store would hold the whole text it was cut from. Copying the UTF-16 code units makes
+// the chunk independent; UTF-8 would corrupt a surrogate pair split across chunks.
+function detachedSuffix(text: string, start: number): string {
+  return Buffer.from(text.slice(start), "utf16le").toString("utf16le");
 }
 
 // Text and reasoning each number parts from zero, independent of snapshot position.
@@ -36,7 +47,7 @@ export class V2Timeline {
     if (!text.startsWith(emitted))
       throw new Error("OpenCode changed previously emitted message content");
     this.content.set(key, text);
-    const suffix = text.slice(emitted.length);
+    const suffix = detachedSuffix(text, emitted.length);
     const item: AgentTimelineItem =
       event.type === "text"
         ? { type: "assistant_message", text: suffix, messageId: event.assistantMessageID }
@@ -139,7 +150,7 @@ export class V2Timeline {
     if (!part.text.startsWith(previous))
       throw new Error("OpenCode changed previously emitted message content");
     this.content.set(key, part.text);
-    const suffix = part.text.slice(previous.length);
+    const suffix = detachedSuffix(part.text, previous.length);
     if (part.type === "text")
       push({ type: "assistant_message", text: suffix, messageId: messageID });
     else push({ type: "reasoning", text: suffix });
@@ -158,8 +169,21 @@ export class V2Timeline {
     const serialized = JSON.stringify(part);
     if (serialized === this.content.get(key)) return;
     this.content.set(key, serialized);
-    const item = toolFromV2(part);
+    const { output, images } = splitToolContent(part.state);
+    const item = toolFromV2(part, output);
     if (item) push(item);
+    // Images follow their tool call as markdown, as Claude and Codex emit them,
+    // so base64 never reaches the tool output.
+    images.forEach((image, index) => {
+      const imageKey = `${key}:image:${index}`;
+      if (this.content.has(imageKey)) return;
+      this.content.set(imageKey, "");
+      const imageItem = renderProviderImageOutputAsAssistantMarkdown(
+        { url: image.uri, mimeType: image.mime },
+        { materialize: materializeProviderImage },
+      );
+      if (imageItem) push(imageItem);
+    });
   }
 
   private compactionMessage(
@@ -187,12 +211,28 @@ interface TextPartIdentity {
 interface TextPartDelta extends TextPartIdentity {
   delta: string;
 }
-function toolFromV2(tool: SessionMessageAssistantTool): AgentTimelineItem | null {
+function splitToolContent(state: SessionMessageAssistantTool["state"]): {
+  output: string | undefined;
+  images: { uri: string; mime: string }[];
+} {
+  if (!("content" in state) || !state.content) return { output: undefined, images: [] };
+  const images: { uri: string; mime: string }[] = [];
+  const output = state.content
+    .map((part) => {
+      if (part.type === "text") return part.text;
+      if (!part.uri.startsWith("data:image/")) return part.uri;
+      images.push(part);
+      return "[image]";
+    })
+    .join("\n");
+  return { output, images };
+}
+
+function toolFromV2(
+  tool: SessionMessageAssistantTool,
+  output: string | undefined,
+): AgentTimelineItem | null {
   const state = tool.state;
-  const output =
-    "content" in state
-      ? state.content?.map((part) => (part.type === "text" ? part.text : part.uri)).join("\n")
-      : undefined;
   return mapOpencodeToolCall({
     toolName: tool.name,
     callId: tool.id,

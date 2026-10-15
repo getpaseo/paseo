@@ -15,11 +15,13 @@ import {
 } from "@getpaseo/protocol/terminal-input-mode";
 import {
   type PendingTerminalModifiers,
+  hasPendingTerminalModifiers,
   isAppleHandheldPlatform,
   isTerminalModifierDomKey,
   mergeTerminalModifiers,
   normalizeDomTerminalKey,
   normalizeTerminalTransportKey,
+  resolveMacTerminalEditingShortcut,
   shouldInterceptDomTerminalKey,
 } from "@/utils/terminal-keys";
 import { renderTerminalSnapshotToAnsi } from "./terminal-snapshot";
@@ -299,7 +301,12 @@ export class TerminalEmulatorRuntime {
   attachKeyEventHandler(
     terminal: Pick<
       Terminal,
-      "attachCustomKeyEventHandler" | "hasSelection" | "getSelection" | "paste"
+      | "attachCustomKeyEventHandler"
+      | "hasSelection"
+      | "getSelection"
+      | "paste"
+      | "input"
+      | "scrollToBottom"
     >,
   ): void {
     terminal.attachCustomKeyEventHandler((event) => {
@@ -339,6 +346,10 @@ export class TerminalEmulatorRuntime {
         return true;
       }
 
+      if (this.maybeSendMacEditingShortcut(terminal, event)) {
+        return false;
+      }
+
       const normalizedKey = normalizeDomTerminalKey(event.key);
       if (!normalizedKey || isTerminalModifierDomKey(event.key)) {
         return true;
@@ -371,7 +382,7 @@ export class TerminalEmulatorRuntime {
         ...modifiers,
       });
 
-      if (this.pendingModifiers.ctrl || this.pendingModifiers.shift || this.pendingModifiers.alt) {
+      if (hasPendingTerminalModifiers(this.pendingModifiers)) {
         this.callbacks.onPendingModifiersConsumed?.();
       }
 
@@ -424,6 +435,26 @@ export class TerminalEmulatorRuntime {
 
   getInputModeState(): TerminalInputModeState {
     return this.inputModeTracker.getState();
+  }
+
+  private maybeSendMacEditingShortcut(
+    terminal: Pick<Terminal, "input" | "scrollToBottom">,
+    event: KeyboardEvent,
+  ): boolean {
+    if (!this.options.isMac || hasPendingTerminalModifiers(this.pendingModifiers)) {
+      return false;
+    }
+    const editingShortcutData = resolveMacTerminalEditingShortcut(event);
+    if (editingShortcutData === null) {
+      return false;
+    }
+    // Routed through terminal.input() so the data takes the same path as typed
+    // keys: onData -> callbacks.onInput, selection clearing included.
+    terminal.input(editingShortcutData, true);
+    terminal.scrollToBottom();
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
   }
 
   mount(input: TerminalEmulatorRuntimeMountInput): void {

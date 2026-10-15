@@ -1,6 +1,7 @@
 export interface QuestionOption {
   label: string;
   description?: string;
+  preview?: string;
 }
 
 export interface QuestionFormQuestion {
@@ -46,6 +47,7 @@ export function parseQuestionFormQuestions(input: unknown): QuestionFormQuestion
       options.push({
         label: o.label,
         description: typeof o.description === "string" ? o.description : undefined,
+        preview: readOptionalString(o, "preview"),
       });
     }
     questions.push({

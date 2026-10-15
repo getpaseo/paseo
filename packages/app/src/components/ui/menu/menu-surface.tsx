@@ -26,7 +26,7 @@ import { MenuPage } from "./menu-item";
 import { currentPageId, isSubPageOpen } from "./menu-navigation";
 import { AnchoredSurface, MenuOverlay } from "./menu-overlay";
 import { getMenuSheetBottomPadding } from "./menu-sheet-layout";
-import type { Alignment, Placement } from "./menu-anchor";
+import type { Alignment, Placement } from "../anchor";
 import type { KeyboardFocusScope } from "@/keyboard/actions";
 
 const ThemedChevronLeft = withUnistyles(ChevronLeft);
@@ -126,8 +126,14 @@ export interface MenuSurfaceProps {
  * popover (plus one flyout per open submenu) or a bottom sheet showing one page at a time.
  */
 export function MenuSurface(props: MenuSurfaceProps): ReactElement | null {
-  const { presentation } = useMenuContext("MenuSurface");
+  const { presentation, open, setOpen } = useMenuContext("MenuSurface");
   const active = useRetainedPanelActive();
+  // A menu belongs to the panel that opened it. When that panel leaves the screen the menu closes
+  // for good, rather than waiting hidden to reappear with the panel: a row that opened a sheet
+  // and promoted it to a tab, say, would otherwise bring the list back on the next tab switch.
+  useEffect(() => {
+    if (!active && open) setOpen(false);
+  }, [active, open, setOpen]);
   // Portals escape the hidden panel. Remove the surface in its inactive commit,
   // before freezing can suspend an async menu action's closing update.
   if (!active) return null;

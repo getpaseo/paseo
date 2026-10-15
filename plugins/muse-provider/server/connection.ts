@@ -1,5 +1,5 @@
 import type { ProviderLaunch } from "@getpaseo/plugin/server/provider";
-import { spawn } from "node:child_process";
+import { spawnProcess, terminateProcess } from "@getpaseo/plugin/server";
 import { randomBytes } from "node:crypto";
 import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
@@ -35,6 +35,7 @@ export class MspConnection {
   private stderr = "";
   private failure: MuseError | null = null;
   private closing = false;
+  private closeResult: Promise<void> | null = null;
   private readonly exited: Promise<void>;
 
   constructor(
@@ -42,15 +43,20 @@ export class MspConnection {
       launch: ProviderLaunch;
       cwd?: string;
       timeoutMs?: number;
+      startupTimeoutMs?: number;
       serveArgs?: string[];
     },
   ) {
     const { launch, cwd } = options;
-    this.child = spawn(launch.command, [...launch.args, "serve", ...(options.serveArgs ?? [])], {
-      env: launch.env,
-      cwd,
-      stdio: "pipe",
-    });
+    this.child = spawnProcess(
+      launch.command,
+      [...launch.args, "serve", ...(options.serveArgs ?? [])],
+      {
+        env: launch.env,
+        cwd,
+        stdio: "pipe",
+      },
+    );
     this.child.stderr.setEncoding("utf8");
     this.child.stderr.on("data", (chunk: string) => {
       this.stderr = (this.stderr + chunk).slice(-8192);
@@ -62,7 +68,7 @@ export class MspConnection {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.fail(new MuseError("invalidFrame", `Invalid MSP frame: ${message}`));
-        this.child.kill();
+        void this.close().catch(() => {});
       }
     });
     this.child.stdin.on("error", () => {
@@ -89,6 +95,7 @@ export class MspConnection {
         },
       },
       initializedSchema,
+      this.options.startupTimeoutMs ?? 30000,
     );
     if (response.schema.fingerprint !== fingerprint) {
       process.stderr.write(
@@ -123,7 +130,12 @@ export class MspConnection {
       }
     }
   }
-  async request<T>(method: string, params: object, schema: z.ZodType<T>): Promise<T> {
+  async request<T>(
+    method: string,
+    params: object,
+    schema: z.ZodType<T>,
+    timeoutMs = this.options.timeoutMs ?? 10000,
+  ): Promise<T> {
     if (this.failure) throw this.failure;
     if (this.closing) throw new MuseError("closed", "Muse host is closing");
     const id = ++this.sequence;
@@ -131,22 +143,31 @@ export class MspConnection {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new MuseError("timeout", `Muse ${method} timed out`));
-      }, this.options.timeoutMs ?? 10000);
+      }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       this.write({ jsonrpc: "2.0", id, method, params });
     });
     return schema.parse(response);
   }
-  async close(): Promise<void> {
-    if (this.closing) return this.exited;
+  close(): Promise<void> {
+    if (this.closeResult) return this.closeResult;
     this.closing = true;
+    this.closeResult = this.finishClose();
+    return this.closeResult;
+  }
+  private async finishClose(): Promise<void> {
     this.child.stdin.end();
     const drained = await Promise.race([
       this.exited.then(() => true),
-      delay(1000).then(() => false),
+      delay(1000, undefined, { ref: false }).then(() => false),
     ]);
-    if (!drained) this.child.kill("SIGKILL");
-    await this.exited;
+    if (drained) return;
+    await terminateProcess(this.child);
+    const stopped = await Promise.race([
+      this.exited.then(() => true),
+      delay(5000, undefined, { ref: false }).then(() => false),
+    ]);
+    if (!stopped) throw new MuseError("timeout", "Muse host did not close after termination");
   }
   private write(frame: object): void {
     this.child.stdin.write(JSON.stringify(frame) + "\n");
@@ -170,6 +191,12 @@ export class MspConnection {
       return;
     }
     if (frame.id === undefined) throw new MuseError("invalidFrame", "MSP response has no id");
+    if (frame.id === null) {
+      if (!frame.error) throw new MuseError("invalidFrame", "MSP result has a null id");
+      this.fail(new MuseError(frame.error.data?.kind ?? "rpc", frame.error.message));
+      void this.close().catch(() => {});
+      return;
+    }
     const pending = this.pending.get(frame.id);
     if (!pending) return;
     clearTimeout(pending.timer);

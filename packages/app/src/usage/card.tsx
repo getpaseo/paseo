@@ -40,28 +40,49 @@ function reportContent(report: UsageReport) {
   return { windows: [], balances: [], details: [], message };
 }
 
+function reportMessages(entry: UsageReportEntry): string[] {
+  if (entry.report.status === "available") return [];
+  if (entry.loginErrors)
+    return entry.loginErrors.map(
+      (login) => `${login.harness}: ${reportContent(login.report).message}`,
+    );
+  // COMPAT(usageLoginErrors): added in v0.11.0, remove after 2027-04-05 once daemon floor >= v0.11.0.
+  return [
+    entry.report.status === "error" ? entry.report.error : usageCopy.problem(entry.report.problem),
+  ];
+}
+
 const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 
 export function UsageCard({
   serverId,
+  agentId,
   entry,
   display,
+  pinnable,
+  refreshable,
   compact = false,
 }: {
   serverId: string;
+  agentId?: string;
   entry: UsageReportEntry;
   display: UsageDisplay;
+  /** Whether each window row pins the window to the sidebar. */
+  pinnable: boolean;
+  /** Whether the header has a Refresh button. Without one the freshness shows on the card. */
+  refreshable: boolean;
   compact?: boolean;
 }) {
   const isCompact = useIsCompactFormFactor();
-  const { refresh, refreshState } = useReportRefresh(serverId, entry.id);
+  const { refresh, refreshState } = useReportRefresh(serverId, entry.id, agentId);
   // Where there is no hover the freshness is printed on the card; elsewhere the Refresh tooltip.
-  const showsFreshnessInline = isNative || isCompact;
+  const showsFreshnessInline = isNative || isCompact || !refreshable;
   const usage = entry.report;
   const status = statusText(usage);
   const footer = entry.account.label ?? null;
-  const { windows, balances, details, message } = reportContent(usage);
+  const { windows, balances, details } = reportContent(usage);
+  const messages = reportMessages(entry);
 
   const containerStyle = useMemo(
     () => [styles.container, compact ? styles.containerCompact : styles.containerPadded],
@@ -93,25 +114,33 @@ export function UsageCard({
             <Text style={styles.statusLabel}>{status}</Text>
           </View>
         ) : null}
-        <UsageRefreshButton
-          sourceLabel={entry.sourceLabel}
-          fetchedAt={entry.fetchedAt}
-          refreshState={refreshState}
-          onRefresh={refresh}
-          compact={isCompact}
-        />
+        {refreshable ? (
+          <UsageRefreshButton
+            sourceLabel={entry.sourceLabel}
+            fetchedAt={entry.fetchedAt}
+            refreshState={refreshState}
+            onRefresh={refresh}
+            compact={isCompact}
+          />
+        ) : null}
       </View>
 
-      {message ? (
-        <Text style={styles.error} numberOfLines={3}>
-          {message}
+      {messages.length > 0 ? (
+        <Text style={styles.error} testID="usage-login-error">
+          {messages.join("\n")}
         </Text>
       ) : null}
 
       {windows.length > 0 || balances.length > 0 ? (
         <View style={styles.bars}>
           {windows.map((window) => (
-            <PinnableWindowBar key={window.id} entry={entry} window={window} display={display} />
+            <CardWindowBar
+              key={window.id}
+              entry={entry}
+              window={window}
+              display={display}
+              pinnable={pinnable}
+            />
           ))}
           {balances.map((balance) => (
             <UsageBalanceBar key={balance.id} balance={balance} />
@@ -158,14 +187,16 @@ export function UsageCard({
   );
 }
 
-function PinnableWindowBar({
+function CardWindowBar({
   entry,
   window,
   display,
+  pinnable,
 }: {
   entry: UsageReportEntry;
   window: UsageWindow;
   display: UsageDisplay;
+  pinnable: boolean;
 }) {
   const pin = useMemo(
     () => ({ sourceId: entry.sourceId, windowId: window.id }),
@@ -177,6 +208,7 @@ function PinnableWindowBar({
     <UsageWindowBar
       window={window}
       displayAs={display.displayAs}
+      pinnable={pinnable}
       pinned={display.isPinned(pin)}
       onTogglePin={toggle}
       pinLabel={`${usageCopy.pin} ${entry.sourceLabel} ${window.label}`}
