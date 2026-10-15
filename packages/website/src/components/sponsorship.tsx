@@ -285,7 +285,7 @@ export function SponsorsSection({ placement }: SponsorsSectionProps) {
             <a
               href={sponsorHref(sponsor, "website")}
               target="_blank"
-              rel="noopener noreferrer sponsored"
+              rel="noopener noreferrer"
               className={`block ${style.link}`}
             >
               <img
