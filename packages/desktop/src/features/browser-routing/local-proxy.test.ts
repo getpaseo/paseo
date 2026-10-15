@@ -3,6 +3,7 @@ import net, { type AddressInfo, type Socket } from "node:net";
 import { once } from "node:events";
 import { TunnelCloseReason } from "@getpaseo/protocol/binary-frames/tunnel";
 import { afterEach, describe, expect, test } from "vitest";
+import { TunnelBridge, type TunnelBridgeEvent } from "./tunnel-bridge.js";
 import {
   BROWSER_PROXY_WARMUP_HOST,
   startLocalBrowserProxy,
@@ -762,6 +763,138 @@ describe("local browser proxy: credit accounting across 1xx shapes", () => {
 });
 
 describe("local browser proxy: inbound credit", () => {
+  test("normal close stops queued uploads without discarding backpressured response chunks", async () => {
+    const duplex = new TunnelDuplex(undefined);
+    cleanups.push(() => {
+      duplex.destroy();
+    });
+    const uploadCallbacks: Array<(error?: Error | null) => void> = [];
+    const uploadResults: Array<Error | null | undefined> = [];
+    const writes: Array<() => void> = [];
+    const received: string[] = [];
+    const credits: number[] = [];
+    const errors: Error[] = [];
+    const closes: number[] = [];
+    duplex.attach({
+      write: (_data, callback) => uploadCallbacks.push(callback),
+      close: (reason = TunnelCloseReason.Ok) => closes.push(reason),
+    });
+    duplex.on("error", (error) => errors.push(error));
+    duplex.on("data", (chunk: Buffer) => {
+      received.push(chunk.toString());
+      writes.push(duplex.trackLocalWrite(chunk.length));
+    });
+    duplex.write(Buffer.from("first upload"), (error) => uploadResults.push(error));
+    duplex.write(Buffer.from("queued upload"), (error) => uploadResults.push(error));
+    duplex.sink.onData(Buffer.from("first response"), () => credits.push(1));
+    duplex.sink.onData(Buffer.from("second response"), () => credits.push(2));
+    duplex.sink.onClose(TunnelCloseReason.Ok);
+    uploadCallbacks[0](new TunnelStreamError(TunnelCloseReason.Ok));
+
+    await waitFor(() => writes.length === 1);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(duplex.destroyed).toBe(false);
+    expect(duplex.readableEnded).toBe(false);
+    expect(received).toEqual(["first response"]);
+    expect(credits).toEqual([]);
+    expect(uploadCallbacks).toHaveLength(1);
+    expect(uploadResults).toHaveLength(2);
+    expect(uploadResults.every((error) => !error)).toBe(true);
+
+    writes[0]();
+    await waitFor(() => writes.length === 2);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(duplex.readableEnded).toBe(false);
+    const ended = once(duplex, "end");
+    writes[1]();
+    await ended;
+    expect(received).toEqual(["first response", "second response"]);
+    expect(credits).toEqual([1, 2]);
+    expect(errors).toEqual([]);
+    expect(closes).toEqual([]);
+  });
+
+  test.each([
+    TunnelCloseReason.GeneralError,
+    TunnelCloseReason.PolicyDenied,
+    TunnelCloseReason.ProtocolError,
+  ])("still aborts the response and pending upload for close reason %s", async (reason) => {
+    const duplex = new TunnelDuplex(undefined);
+    cleanups.push(() => {
+      duplex.destroy();
+    });
+    const errors: Error[] = [];
+    const callbacks: Array<(error?: Error | null) => void> = [];
+    const results: Array<Error | null | undefined> = [];
+    duplex.on("error", (error) => errors.push(error));
+    duplex.attach({ write: (_data, callback) => callbacks.push(callback), close: () => {} });
+    duplex.write(Buffer.from("upload"), (error) => results.push(error));
+    duplex.sink.onData(Buffer.from("untrusted partial response"), () => {});
+    const closed = new Promise<void>((resolve) => duplex.once("close", resolve));
+    duplex.sink.onClose(reason);
+    callbacks[0](new TunnelStreamError(reason));
+    await closed;
+    expect(duplex.destroyed).toBe(true);
+    expect(duplex.readableEnded).toBe(false);
+    expect(errors).toEqual([expect.objectContaining({ reason })]);
+    expect(results).toEqual([expect.objectContaining({ reason })]);
+  });
+
+  test("delivers an early 413 through the real bridge while upload credit is exhausted", async () => {
+    const events: TunnelBridgeEvent[] = [];
+    const bridge = new TunnelBridge({
+      emit: (_senderId, event) => {
+        events.push(event);
+        return true;
+      },
+    });
+    const registration = bridge.register(1, {
+      serverId: "upload-host",
+      subscriptionId: "upload-subscription",
+      initialWindowBytes: 1024,
+      maxDataBytes: 256,
+      maxStreams: 1,
+      connectTimeoutMs: 1000,
+    });
+    expect(registration.ok).toBe(true);
+    cleanups.push(() => bridge.closeProvider("upload-host", "unregistered"));
+    const proxy = await startProxy((target, sink) =>
+      bridge.openStreamFor("upload-host", target, sink),
+    );
+    const { socket, wire, closed } = await connectRaw(proxy.port);
+    const upload = "x".repeat(128 * 1024);
+    socket.write(
+      `POST http://upload.invalid/large HTTP/1.1\r\nHost: upload.invalid\r\n` +
+        `Proxy-Authorization: ${AUTHORIZATION}\r\nContent-Length: ${upload.length}\r\n\r\n${upload}`,
+    );
+    await waitFor(() => events.length > 0);
+    const opened = events[0];
+    if (opened.name !== "network_tunnel_stream_open") throw new Error("stream not opened");
+    expect(bridge.streamConnected(1, opened.payload)).toEqual({ ok: true });
+    const uploadedBytes = () =>
+      events.reduce(
+        (total, event) =>
+          total + (event.name === "network_tunnel_stream_data" ? event.payload.data.length : 0),
+        0,
+      );
+    await waitFor(() => uploadedBytes() === 1024);
+
+    for (const chunk of [
+      "HTTP/1.1 413 Payload Too Large\r\nContent-Length: 16\r\nConnection: close\r\n\r\n",
+      "upload ",
+      "rejected!",
+    ]) {
+      expect(bridge.streamData(1, opened.payload, Buffer.from(chunk))).toEqual({ ok: true });
+    }
+    expect(bridge.streamClose(1, opened.payload, TunnelCloseReason.Ok)).toEqual({ ok: true });
+    await waitFor(closed);
+    expect(wire()).toContain("HTTP/1.1 413 Payload Too Large");
+    expect(wire()).toContain("upload rejected!");
+    expect(wire()).not.toContain("502");
+    expect(uploadedBytes()).toBe(1024);
+    expect(events.filter((event) => event.name === "network_tunnel_stream_close")).toEqual([]);
+  });
+
   test("a chunk's credit waits for the local write it produced, then returns exactly once", async () => {
     const duplex = new TunnelDuplex(undefined);
     const credits: number[] = [];

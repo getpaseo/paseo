@@ -243,8 +243,7 @@ export class TunnelBridge {
     const stream = this.resolveStream(senderId, ref);
     if (!stream.ok) return stream;
     const state = stream.value;
-    this.detachStream(state, new TunnelStreamError(reason));
-    state.sink.onClose(reason);
+    this.detachStream(state, new TunnelStreamError(reason), { notifySink: true });
     return { ok: true };
   }
 
@@ -322,8 +321,7 @@ export class TunnelBridge {
     const streamReason = providerClosedStreamReason(reason);
     // Map iteration tolerates the deletions detachStream performs.
     for (const state of provider.streams.values()) {
-      this.detachStream(state, new TunnelStreamError(streamReason));
-      state.sink.onClose(streamReason);
+      this.detachStream(state, new TunnelStreamError(streamReason), { notifySink: true });
     }
     if (options.notifyRenderer !== false) {
       this.emit(provider.senderId, {
@@ -447,24 +445,27 @@ export class TunnelBridge {
     options: { notifySink?: boolean } = {},
   ): void {
     const provider = state.provider;
-    this.detachStream(state, new TunnelStreamError(reason));
+    this.detachStream(state, new TunnelStreamError(reason), options);
     if (this.providersByServerId.get(provider.serverId) === provider) {
       this.send(provider, {
         name: "network_tunnel_stream_close",
         payload: { ...this.ref(state), reason },
       });
     }
-    if (options.notifySink) {
-      state.sink.onClose(reason);
-    }
   }
 
-  private detachStream(state: StreamState, error: TunnelStreamError): void {
+  private detachStream(
+    state: StreamState,
+    error: TunnelStreamError,
+    options: { notifySink?: boolean } = {},
+  ): void {
     if (state.phase === "closed") return;
     state.phase = "closed";
     this.cancelTimeout(state.connectTimer);
     state.connectTimer = null;
     state.provider.streams.delete(state.streamId);
+    // The sink must know whether to drain or abort before upload callbacks run.
+    if (options.notifySink) state.sink.onClose(error.reason);
     for (const pending of state.pendingWrites.splice(0)) {
       pending.callback(error);
     }

@@ -362,7 +362,7 @@ export class TunnelDuplex extends Duplex {
   private inflight: InflightChunk | null = null;
   private wantsData = false;
   private inboundEnded = false;
-  private closedByTunnel = false;
+  private tunnelCloseReason: number | null = null;
 
   public constructor(private readonly diagnostics: LocalProxyDiagnostics | undefined) {
     super({ readableHighWaterMark: 16 * 1024, allowHalfOpen: false });
@@ -399,7 +399,7 @@ export class TunnelDuplex extends Duplex {
       this.drainInbound();
     },
     onClose: (reason) => {
-      this.closedByTunnel = true;
+      this.tunnelCloseReason = reason;
       if (reason === TunnelCloseReason.Ok) {
         // Data received before a normal close is delivered in order before EOF.
         this.inboundEnded = true;
@@ -420,11 +420,19 @@ export class TunnelDuplex extends Duplex {
     _encoding: BufferEncoding,
     callback: (error?: Error | null) => void,
   ): void {
+    // A destination can finish its response before accepting the entire upload.
+    // Stop sending, while the readable side drains the response already received.
+    if (this.tunnelCloseReason === TunnelCloseReason.Ok) {
+      callback();
+      return;
+    }
     if (!this.handle) {
       callback(new Error("tunnel stream not attached"));
       return;
     }
-    this.handle.write(chunk, callback);
+    this.handle.write(chunk, (error) => {
+      callback(this.tunnelCloseReason === TunnelCloseReason.Ok ? undefined : error);
+    });
   }
 
   public override _final(callback: (error?: Error | null) => void): void {
@@ -432,7 +440,7 @@ export class TunnelDuplex extends Duplex {
   }
 
   public override _destroy(error: Error | null, callback: (error?: Error | null) => void): void {
-    if (!this.closedByTunnel) {
+    if (this.tunnelCloseReason === null) {
       this.handle?.close(error ? TunnelCloseReason.GeneralError : TunnelCloseReason.Ok);
     }
     callback(error);
