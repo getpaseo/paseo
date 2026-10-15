@@ -253,6 +253,21 @@ jobs:
         if: ${{ runner.os == 'Linux' }}
         run: sudo apt-get update && sudo apt-get install -y xvfb xauth xdotool openbox
 
+      - name: Run desktop browser E2E
+        if: ${{ runner.os == 'Linux' }}
+        run: npm run test:e2e:browser-tabs --workspace=@getpaseo/desktop
+        env:
+          PASEO_DESKTOP_BROWSER_E2E_ARTIFACT_DIR: ${{ runner.temp }}/desktop-browser-e2e
+
+      - name: Upload desktop browser diagnostics
+        uses: actions/upload-artifact@v4
+        if: ${{ failure() && runner.os == 'Linux' }}
+        with:
+          name: desktop-browser-e2e
+          path: ${{ runner.temp }}/desktop-browser-e2e
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Verify Windows daemon process control
         if: ${{ runner.os == 'Windows' }}
         run: npx vitest run packages/cli/src/commands/daemon/lifecycle.e2e.test.ts --bail=1 --maxWorkers=1 -t "Windows unbound|managed two-home"
@@ -279,21 +294,6 @@ jobs:
       - name: Run desktop renderer E2E
         if: ${{ runner.os == 'Linux' }}
         run: npm run test:e2e:renderer --workspace=@getpaseo/desktop
-
-      - name: Run desktop browser E2E
-        if: ${{ runner.os == 'Linux' }}
-        run: npm run test:e2e:browser-tabs --workspace=@getpaseo/desktop
-        env:
-          PASEO_DESKTOP_BROWSER_E2E_ARTIFACT_DIR: ${{ runner.temp }}/desktop-browser-e2e
-
-      - name: Upload desktop browser diagnostics
-        uses: actions/upload-artifact@v4
-        if: ${{ failure() && runner.os == 'Linux' }}
-        with:
-          name: desktop-browser-e2e
-          path: ${{ runner.temp }}/desktop-browser-e2e
-          if-no-files-found: ignore
-          retention-days: 7
 
   desktop-tests-windows:
     name: desktop-tests (windows-latest)

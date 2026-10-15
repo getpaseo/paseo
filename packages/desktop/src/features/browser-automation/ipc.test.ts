@@ -123,12 +123,14 @@ type ConsoleMessageListener = (
 class FakeWebContents {
   public backgroundThrottling = true;
   public throttlingChanges: boolean[] = [];
+  public failThrottleRestore = false;
   public getBackgroundThrottling(): boolean {
     return this.backgroundThrottling;
   }
   public setBackgroundThrottling(allowed: boolean): void {
     if (this.destroyed) throw new Error("Object has been destroyed");
     this.throttlingChanges.push(allowed);
+    if (allowed && this.failThrottleRestore) throw new Error("Throttle restoration failed");
     this.backgroundThrottling = allowed;
   }
   public readonly debugger = new FakeDebugger();
@@ -253,7 +255,7 @@ describe("browser automation IPC adapter", () => {
     ]);
   });
 
-  test("captures viewport pixels through CDP without changing frame production", async () => {
+  test("captures viewport pixels through CDP and restores the frame policy", async () => {
     const contents = new FakeWebContents(20);
     const tab = adaptWebContents(contents);
     const controller = new AbortController();
@@ -270,25 +272,25 @@ describe("browser automation IPC adapter", () => {
     });
 
     expect((await capture).getSize()).toEqual({ width: 640, height: 480 });
-    expect(contents.debugger.commands).toContainEqual({
-      command: "Page.startScreencast",
-      params: { format: "png", maxWidth: 1, maxHeight: 1 },
-    });
-    expect(contents.debugger.commands.at(-1)).toEqual({
-      command: "Page.stopScreencast",
-      params: {},
-    });
     controller.abort();
-    expect(contents.throttlingChanges).toEqual([]);
+    expect(contents.throttlingChanges).toEqual([false, true]);
     expect(contents.destroyedListeners.size).toBe(1);
+  });
+
+  test("preserves an already unthrottled page", async () => {
+    const contents = new FakeWebContents(2501);
+    contents.backgroundThrottling = false;
+    await adaptWebContents(contents).captureFrame(new AbortController().signal);
+    expect(contents.backgroundThrottling).toBe(false);
+    expect(contents.throttlingChanges).toEqual([]);
   });
 
   test("a frame-producer cleanup failure rejects the capture", async () => {
     const contents = new FakeWebContents(2401);
-    contents.debugger.failedCommandNames.add("Page.stopScreencast");
+    contents.failThrottleRestore = true;
     const tab = adaptWebContents(contents);
     await expect(tab.captureFrame(new AbortController().signal)).rejects.toThrow(
-      "Page.stopScreencast failed",
+      "Throttle restoration failed",
     );
   });
 
@@ -302,18 +304,15 @@ describe("browser automation IPC adapter", () => {
       }),
     ).resolves.toEqual({ data: "iVBORw==" });
     expect(contents.debugger.commands.map((command) => command.command)).toEqual([
-      "Page.startScreencast",
       "Page.captureScreenshot",
-      "Page.stopScreencast",
     ]);
   });
 
-  test.each(["Page.startScreencast", "Runtime.evaluate", "Page.captureScreenshot"])(
+  test.each(["Runtime.evaluate", "Page.captureScreenshot"])(
     "cancels pending %s and releases its queue without consuming a late frame",
     async (command) => {
       const contentsIds = {
         "Runtime.evaluate": 2101,
-        "Page.startScreencast": 2201,
         "Page.captureScreenshot": 2001,
       };
       const contents = new FakeWebContents(contentsIds[command]);
@@ -326,11 +325,7 @@ describe("browser automation IPC adapter", () => {
       controller.abort(new Error("capture deadline"));
 
       await failure;
-      expect(contents.debugger.commands.at(-1)).toEqual({
-        command: "Page.stopScreencast",
-        params: {},
-      });
-      expect(contents.throttlingChanges).toEqual([]);
+      expect(contents.throttlingChanges).toEqual([false, true]);
       expect(contents.destroyedListeners.size).toBe(1);
       await expect(tab.sendDebugCommand?.("Page.getLayoutMetrics")).resolves.toEqual({ ok: true });
       contents.debugger.blockedCommandNames.clear();
@@ -459,9 +454,7 @@ describe("browser automation IPC adapter", () => {
     expect(result).toEqual({ data: "iVBORw==" });
     expect(contents.debugger.attachedProtocolVersions).toEqual(["1.3"]);
     expect(contents.debugger.commands).toEqual([
-      { command: "Page.startScreencast", params: { format: "png", maxWidth: 1, maxHeight: 1 } },
       { command: "Page.captureScreenshot", params: { format: "png" } },
-      { command: "Page.stopScreencast", params: {} },
     ]);
   });
 

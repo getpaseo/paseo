@@ -100,6 +100,8 @@ interface BrowserAutomationWebContents extends ConsoleMessageEmitter {
   canGoForward(): boolean;
   isLoading(): boolean;
   isDestroyed(): boolean;
+  getBackgroundThrottling(): boolean;
+  setBackgroundThrottling(allowed: boolean): void;
   executeJavaScript(code: string): Promise<unknown>;
   loadURL(url: string): Promise<void>;
   goBack(): void;
@@ -186,52 +188,40 @@ function withCaptureFrameProduction<T>(
 ): Promise<T> {
   signal.throwIfAborted();
   if (contents.isDestroyed()) return Promise.reject(new BrowserTabClosedError());
+  const wasThrottled = contents.getBackgroundThrottling();
   return new Promise((resolve, reject) => {
     let settled = false;
-    let screencastRequested = false;
-    const stop = async () => {
+    const stop = () => {
       settled = true;
       signal.removeEventListener("abort", abort);
       contents.removeListener("destroyed", destroyed);
-      if (screencastRequested) {
-        screencastRequested = false;
-        await contents.debugger.sendCommand("Page.stopScreencast");
-      }
+      if (wasThrottled && !contents.isDestroyed()) contents.setBackgroundThrottling(true);
     };
-    const fail = async (error: unknown) => {
+    const fail = (error: unknown) => {
       if (settled) return;
       try {
-        await stop();
+        stop();
       } catch {
         /* Preserve the capture or cancellation error. */
       }
       reject(error);
     };
-    const abort = () => {
-      void fail(signal.reason);
-    };
-    const destroyed = () => {
-      void fail(new BrowserTabClosedError());
-    };
+    const abort = () => fail(signal.reason);
+    const destroyed = () => fail(new BrowserTabClosedError());
     signal.addEventListener("abort", abort, { once: true });
     contents.once("destroyed", destroyed);
     try {
       if (!contents.debugger.isAttached()) contents.debugger.attach("1.3");
-      // The CDP video consumer makes hidden Linux surfaces paintable. Stop it on
-      // every exit so captures do not leave the page producing background frames.
-      // Native capture and Electron's throttling setter cannot be canceled safely.
-      screencastRequested = true;
-      void contents.debugger
-        .sendCommand("Page.startScreencast", { format: "png", maxWidth: 1, maxHeight: 1 })
-        .then(() => {
-          if (settled) throw signal.reason ?? new BrowserTabClosedError();
-          signal.throwIfAborted();
-          return capture();
-        })
-        .then(async (result) => {
+      // Electron >=44.5 restores hidden widget visibility when throttling returns.
+      // Older versions kept the page painting after this scope (electron#54311).
+      if (wasThrottled) contents.setBackgroundThrottling(false);
+      if (settled) return;
+      signal.throwIfAborted();
+      void capture()
+        .then((result) => {
           if (settled) return null;
           try {
-            await stop();
+            stop();
             resolve(result);
           } catch (error) {
             reject(error);
@@ -240,7 +230,7 @@ function withCaptureFrameProduction<T>(
         })
         .catch(fail);
     } catch (error) {
-      void fail(error);
+      fail(error);
     }
   });
 }

@@ -113,18 +113,19 @@ plane stays below the overlay plane regardless of body insertion order; menus ke
 layering inside `overlay-root`. Activating a presented browser also focuses its registered guest
 `WebContents` in main so macOS assigns keyboard first-responder ownership to the page.
 
-Automation screenshots use CDP inside the shared serialized queue and five-second budget.
-A transient 1×1 screencast consumer makes hidden compositor surfaces paintable before viewport
-or full-page capture. Stop that consumer on success, cancellation and destruction, including
-when the start command has not replied yet. Viewport capture clips to `innerWidth` and
-`innerHeight`; layout metrics omit the scrollbar gutter.
+Automation screenshots temporarily disable background throttling while CDP paints fresh viewport
+or full-page pixels inside the shared serialized queue and five-second budget. Restore the
+previous throttling policy on success, cancellation and destruction; leave an already unthrottled
+page alone. Viewport capture clips to `innerWidth` and `innerHeight`; layout metrics omit the
+scrollbar gutter.
 
-Do not use Electron 44's throttling setter to wake a page: it can unhide the native widget
-without re-hiding it when the previous policy is restored. A native `capturePage()` cleanup is
-unsafe too: after resize, even a 1×1 surface-copy request can remain pending and retain capture
-ownership. The Electron journey checks fresh pixels, native idle and capture ownership after
-success, cancellation and destruction, with its Playwright observer disconnected during the
-hidden-window samples; an attached host CDP observer itself keeps guests animating.
+Electron must include [the hidden-widget restoration fix](https://github.com/electron/electron/pull/54311),
+released in 44.5.0. Older versions keep a hidden page rendering after throttling is restored; this
+repository pins 44.7.2. Do not substitute a native `capturePage()` cleanup: after resize, even a
+1×1 surface-copy request can remain pending and retain capture ownership. The Electron journey
+checks fresh pixels, native idle and capture ownership after success, cancellation and destruction,
+with its Playwright observer disconnected during the hidden-window samples; an attached host CDP
+observer itself keeps guests animating.
 
 Element capture keeps its existing zoom-scaled native region path. It does not use the automation
 frame-production wrapper. The harness's direct native-copy parking probes remain separate from the
