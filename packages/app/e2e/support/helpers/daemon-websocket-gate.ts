@@ -24,6 +24,7 @@ interface ClientRequest {
   messageId?: unknown;
   text?: unknown;
   activeTurnBehavior?: unknown;
+  requestId?: unknown;
 }
 
 interface ServerMessage {
@@ -148,6 +149,28 @@ function failTimelineResponse(message: string | Buffer, agentId: string | null):
   if (!payload || payload.agentId !== agentId) return message;
   payload.error = TIMELINE_WRITER_CONFLICT_ERROR;
   payload.entries = [];
+  return JSON.stringify(envelope);
+}
+
+// Replaces an import_agent_request's eventual `status` response (success or failure) with the
+// same active-writer conflict the daemon reports when connection-time resume on an already-open
+// Codex thread refuses to hand over the writer. Reuses TIMELINE_WRITER_CONFLICT_ERROR verbatim: it
+// already contains both substrings ("Codex thread", "already has an active writer") the app's
+// getImportErrorMessage() matches on to show the specific guidance banner instead of a generic
+// import failure. The replacement payload only sets the three fields AgentCreateFailedStatusPayloadSchema
+// requires (status/requestId/error) so it parses regardless of schema strictness.
+function failImportResponse(message: string | Buffer, requestId: string | null): string | Buffer {
+  if (!requestId || typeof message !== "string") return message;
+  const envelope = JSON.parse(message) as {
+    message?: { payload?: Record<string, unknown> };
+    payload?: Record<string, unknown>;
+  };
+  const payload = envelope.message?.payload ?? envelope.payload;
+  if (!payload || payload.requestId !== requestId) return message;
+  for (const key of Object.keys(payload)) delete payload[key];
+  payload.status = "agent_create_failed";
+  payload.requestId = requestId;
+  payload.error = TIMELINE_WRITER_CONFLICT_ERROR;
   return JSON.stringify(envelope);
 }
 
@@ -303,6 +326,8 @@ export async function installDaemonWebSocketGate(page: Page) {
   let stripCanonicalSubmittedPromptsFeature = false;
   let shellToolCommandOverride: string | null = null;
   let failingTimelineAgentId: string | null = null;
+  let awaitingImportFailure = false;
+  let failingImportRequestId: string | null = null;
   let holdingTimelineAgentId: string | null = null;
   const heldTimelineResponses: Array<() => void> = [];
   const heldTimelineResponseWaiters = new Set<() => void>();
@@ -445,6 +470,29 @@ export async function installDaemonWebSocketGate(page: Page) {
     return true;
   };
 
+  const captureFailingImportRequestId = (request: ClientRequest | null): void => {
+    if (
+      awaitingImportFailure &&
+      request?.type === "import_agent_request" &&
+      typeof request.requestId === "string"
+    ) {
+      failingImportRequestId = request.requestId;
+      awaitingImportFailure = false;
+    }
+  };
+
+  const applyImportFailureOverride = (
+    serverMessage: ClientRequest | null,
+    outboundMessage: string | Buffer,
+  ): string | Buffer => {
+    if (!failingImportRequestId || serverMessage?.type !== "status") return outboundMessage;
+    const statusPayload = (serverMessage as { payload?: { requestId?: unknown } } | null)?.payload;
+    if (statusPayload?.requestId !== failingImportRequestId) return outboundMessage;
+    const rewritten = failImportResponse(outboundMessage, failingImportRequestId);
+    failingImportRequestId = null;
+    return rewritten;
+  };
+
   await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
     if (!acceptingConnections) {
       blockedConnectionCount += 1;
@@ -471,6 +519,7 @@ export async function installDaemonWebSocketGate(page: Page) {
         }
       }
       const request = readClientRequest(message);
+      captureFailingImportRequestId(request);
       recordClientRequest(request, clientRequestCounts, timelineRequestCounts, directoryStarts);
       if (typeof request?.type === "string") {
         const requests = clientRequests.get(request.type) ?? [];
@@ -519,6 +568,7 @@ export async function installDaemonWebSocketGate(page: Page) {
       if (isTimelineResponse) {
         outboundMessage = failTimelineResponse(outboundMessage, failingTimelineAgentId);
       }
+      outboundMessage = applyImportFailureOverride(serverMessage, outboundMessage);
       const shouldForceTimelineReset =
         forceTimelineEpochReset && serverMessage?.type === "fetch_agent_timeline_response";
       outboundMessage = forceTimelineReset(outboundMessage, shouldForceTimelineReset);
@@ -612,6 +662,10 @@ export async function installDaemonWebSocketGate(page: Page) {
     },
     allowTimelineResponses(): void {
       failingTimelineAgentId = null;
+    },
+    failNextImportRequest(): void {
+      awaitingImportFailure = true;
+      failingImportRequestId = null;
     },
     holdTimelineResponses(agentId: string): void {
       holdingTimelineAgentId = agentId;

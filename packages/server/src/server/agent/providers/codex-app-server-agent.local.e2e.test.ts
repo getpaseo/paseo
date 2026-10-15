@@ -11,7 +11,7 @@ import { AgentStorage } from "../agent-storage.js";
 
 import { CodexAppServerAgentClient } from "./codex-app-server-agent.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
-import type { AgentStreamEvent } from "../agent-sdk-types.js";
+import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../agent-sdk-types.js";
 
 function isCodexInstalled(): boolean {
   try {
@@ -217,6 +217,90 @@ function waitForEvent<TEvent extends AgentStreamEvent>(params: {
 }
 
 describe("Codex app-server provider (local e2e)", () => {
+  test.runIf(isCodexInstalled())(
+    "imports a thread held by another Codex writer and continues it after release",
+    async () => {
+      const cwd = mkdtempSync(path.join(os.tmpdir(), "codex-import-cwd-"));
+      const codexHome = mkdtempSync(path.join(os.tmpdir(), "codex-import-home-"));
+      const mockServer = await startMockResponsesServer([
+        assistantMessageSse("Original reply"),
+        assistantMessageSse("Continued reply"),
+      ]);
+      const logger = createTestLogger();
+      const storage = new AgentStorage(path.join(cwd, "agents"), logger);
+      const client = new CodexAppServerAgentClient(logger);
+      const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+      const config: AgentSessionConfig = {
+        provider: "codex",
+        cwd,
+        modeId: "auto",
+        model: "mock-model",
+      };
+      let ownerAgentId: string | undefined;
+      let importedSession: AgentSession | undefined;
+
+      try {
+        writeMockCodexConfig(codexHome, mockServer.url);
+        vi.stubEnv("CODEX_HOME", codexHome);
+        const owner = await manager.createAgent(config, undefined, { workspaceId: undefined });
+        ownerAgentId = owner.id;
+        await manager.runAgent(owner.id, "Original question");
+        const threadId = manager.getAgent(owner.id)?.persistence?.sessionId;
+        if (!threadId) {
+          throw new Error("The original Codex session did not persist a thread");
+        }
+
+        const imported = await client.importSession(
+          { providerHandleId: threadId, cwd },
+          { config, storedConfig: config },
+        );
+        importedSession = imported.session;
+        expect(imported.timeline.map((entry) => entry.item)).toContainEqual(
+          expect.objectContaining({ type: "assistant_message", text: "Original reply" }),
+        );
+        await expect(importedSession.getRuntimeInfo()).resolves.toMatchObject({
+          sessionId: threadId,
+          extra: { readOnly: true },
+        });
+        await expect(importedSession.startTurn("Continue here")).rejects.toThrow(
+          "Exit the Codex terminal or client",
+        );
+        expect(mockServer.requestBodies).toHaveLength(1);
+
+        await manager.closeAgent(owner.id);
+        ownerAgentId = undefined;
+        const finished = waitForEvent({
+          session: importedSession,
+          timeoutMs: 15_000,
+          label: "continued imported turn",
+          predicate: (
+            event,
+          ): event is Extract<
+            AgentStreamEvent,
+            { type: "turn_completed" | "turn_failed" | "turn_canceled" }
+          > =>
+            event.type === "turn_completed" ||
+            event.type === "turn_failed" ||
+            event.type === "turn_canceled",
+        });
+        await importedSession.startTurn("Continue here");
+        expect((await finished).type).toBe("turn_completed");
+        expect(importedSession.describePersistence()?.sessionId).toBe(threadId);
+        expect((await importedSession.getRuntimeInfo()).extra?.readOnly).not.toBe(true);
+        expect(mockServer.requestBodies).toHaveLength(2);
+      } finally {
+        await importedSession?.close();
+        if (ownerAgentId) await manager.closeAgent(ownerAgentId);
+        await storage.flush();
+        vi.unstubAllEnvs();
+        await mockServer.close();
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(codexHome, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+
   test.runIf(isCodexInstalled())(
     "reloads a persisted idle thread repeatedly without overlapping writers",
     async () => {

@@ -495,7 +495,7 @@ describe("ImportSessionSheet", () => {
     screen.getByText("Make the rows readable and provider opaque");
   });
 
-  it("keeps cached rows visible and revalidates when reopened", async () => {
+  it("reuses fresh cached rows when reopened and refreshes on demand", async () => {
     const fetchRecentProviderSessions = vi.fn(async () => ({
       requestId: "recent-provider-sessions",
       entries: [
@@ -544,6 +544,8 @@ describe("ImportSessionSheet", () => {
     rerender(<TestSheet visible />);
 
     await screen.findByText("Cached importable session");
+    expect(fetchRecentProviderSessions).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("import-session-refresh"));
     await waitFor(() => {
       expect(fetchRecentProviderSessions).toHaveBeenCalledWith({
         cwd: "/repo/paseo",
@@ -618,39 +620,93 @@ describe("ImportSessionSheet", () => {
     expect(fetchRecentProviderSessions).toHaveBeenCalledTimes(1);
   });
 
-  it("shows an import error state without closing when selected session import fails", async () => {
+  it.each([
+    ["claude", "import unavailable", "Could not import selected session."],
+    [
+      "codex",
+      "Failed to resume Codex thread thread-1: thread thread-1 already has an active writer",
+      "This Codex session is in use. Exit the Codex terminal or client that has this session open, then retry importing.",
+    ],
+    ["codex", "  ", "Could not import selected session."],
+  ])(
+    "shows localized import guidance without closing: %s",
+    async (providerId, message, expected) => {
+      const fetchRecentProviderSessions = vi.fn(async () => ({
+        requestId: "recent-provider-sessions",
+        entries: [createProviderSessionEntry({ providerId })],
+      }));
+      const importAgent = vi.fn(async () => {
+        throw new Error(message);
+      });
+      const onClose = vi.fn();
+      const onImportedAgent = vi.fn();
+
+      renderSheet(
+        { fetchRecentProviderSessions, importAgent } as Pick<
+          DaemonClient,
+          "fetchRecentProviderSessions" | "importAgent"
+        >,
+        {
+          onClose,
+          onImportedAgent,
+          snapshot: { supportsSnapshot: true, entries: [createSnapshotEntry(providerId)] },
+        },
+      );
+
+      fireEvent.click(
+        await screen.findByTestId(`import-session-session-${providerId}-provider-thread-1`),
+      );
+
+      await screen.findByText(expected);
+      expect(importAgent).toHaveBeenCalledWith({
+        providerId,
+        providerHandleId: "provider-thread-1",
+        cwd: "/repo/paseo",
+      });
+      expect(onImportedAgent).not.toHaveBeenCalled();
+      expect(onClose).not.toHaveBeenCalled();
+    },
+  );
+
+  it("retries a Codex import after its active writer is released", async () => {
     const fetchRecentProviderSessions = vi.fn(async () => ({
       requestId: "recent-provider-sessions",
-      entries: [createProviderSessionEntry({ providerId: "claude", providerLabel: "Claude Code" })],
+      entries: [createProviderSessionEntry({ providerId: "codex" })],
     }));
+    let writerActive = true;
     const importAgent = vi.fn(async () => {
-      throw new Error("import unavailable");
+      if (writerActive) {
+        throw new Error(
+          "Failed to resume Codex thread thread-1: thread thread-1 already has an active writer",
+        );
+      }
+      return createImportedAgentSnapshot("agent-imported");
     });
     const onClose = vi.fn();
     const onImportedAgent = vi.fn();
-
-    renderSheet(
-      { fetchRecentProviderSessions, importAgent } as Pick<
-        DaemonClient,
-        "fetchRecentProviderSessions" | "importAgent"
-      >,
-      {
-        onClose,
-        onImportedAgent,
-        snapshot: { supportsSnapshot: true, entries: [createSnapshotEntry("claude")] },
-      },
-    );
-
-    fireEvent.click(await screen.findByTestId("import-session-session-claude-provider-thread-1"));
-
-    await screen.findByText("Could not import selected session.");
-    expect(importAgent).toHaveBeenCalledWith({
-      providerId: "claude",
-      providerHandleId: "provider-thread-1",
-      cwd: "/repo/paseo",
+    renderSheet(createRecentSessionsClient(fetchRecentProviderSessions, importAgent), {
+      onClose,
+      onImportedAgent,
+      workspaceId: "ws-current",
+      snapshot: { supportsSnapshot: true, entries: [createSnapshotEntry("codex")] },
     });
-    expect(onImportedAgent).not.toHaveBeenCalled();
+
+    const sessionRow = await screen.findByTestId("import-session-session-codex-provider-thread-1");
+    fireEvent.click(sessionRow);
+    await screen.findByText(
+      "This Codex session is in use. Exit the Codex terminal or client that has this session open, then retry importing.",
+    );
     expect(onClose).not.toHaveBeenCalled();
+    expect(onImportedAgent).not.toHaveBeenCalled();
+
+    writerActive = false;
+    fireEvent.click(sessionRow);
+    await waitFor(() => {
+      expect(onImportedAgent).toHaveBeenCalledWith("agent-imported");
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+    expect(importAgent).toHaveBeenCalledTimes(2);
+    expect(importAgent.mock.calls[0]).toEqual(importAgent.mock.calls[1]);
   });
 
   it("fans out one request per enabled provider when snapshot is supported", async () => {
