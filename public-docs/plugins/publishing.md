@@ -22,9 +22,10 @@ For a private plugin, use [direct Git installation](#share-through-github-or-git
 
 ## Your listing page
 
-Write `OVERVIEW.md` beside `paseo-plugin.json` so you can maintain the listing page with your
-releases. The registry reads it from the published npm package or pinned Git commit, under the
-plugin directory for a monorepo. Include it in the package's `files` list; the scaffold already does.
+You can submit without `OVERVIEW.md`; the reviewer creates a listing page from your README and
+verified behavior. To maintain the page yourself, put `OVERVIEW.md` beside `paseo-plugin.json`
+and include it in the published package. The scaffold already includes it in `files`.
+Your shipped overview replaces the reviewer-written page.
 
 Explain these points in order, using headings only when they help:
 
@@ -36,8 +37,7 @@ Explain these points in order, using headings only when they help:
 Describe where data goes, including prompts and tool results sent to agent providers. Local storage
 does not mean data stays on the host. If the plugin downloads or installs software while running,
 explain what it installs and its source, and require explicit user confirmation before the download.
-Loading the plugin or testing a connection must not silently install missing software. Declining
-confirmation must leave that software uninstalled.
+This applies to activation and connection tests too; declining must leave the software uninstalled.
 
 Use plain factual language and sentence case. Omit marketing, unsupported claims, badges,
 changelogs, contributing and license sections, and implementation details that do not help someone
@@ -45,12 +45,6 @@ choose the plugin. The listing already provides plugin installation instructions
 
 The publication validator rejects `paseo plugin add`, `npm install` and `npm i` anywhere in an
 overview, including development or setup examples. Link to your README for those commands.
-A shipped overview containing them requires a corrected artifact before validation passes.
-
-Every listing needs an overview, but you can submit without shipping one. The reviewer writes a
-registry page from your README and verified behavior when the artifact has none. Updates can keep
-that page until you ship your own, which takes precedence. No release is needed solely to add a
-missing overview. Do not add import credit to your own file.
 
 Also supply a one-sentence description: use `package.json`'s `description` for npm or the manifest's
 `description` for Git. The reviewer can fill in a missing description in the registry.
@@ -85,15 +79,11 @@ These metadata fields require Paseo 0.11.0 or later.
 | `media` | Package-relative paths or public HTTPS URLs. Images: PNG, JPG, JPEG, WebP or GIF. Videos: MP4 or WebM. The first image is the card thumbnail; videos supplement it. |
 
 Public media URLs need a supported file extension, matched case-insensitively, and must return
-HTTP 200 with an image or video content type. Review requires the corresponding content type for
-the asset. SVG and extensionless attachment URLs are not accepted as registry media.
+HTTP 200 with the corresponding image or video content type. SVG and extensionless attachment
+URLs are not accepted as registry media.
 
-`name`, `icon` and `media` are optional manifest fields; the visual-interface image requirement
-applies to the completed listing. The registry reads the pinned manifest and applies its listing
-overrides per field. It does not read `paseo-listing.json`.
-
-If suitable images already exist, include their public URLs in the submission or reply on the
-review PR. The reviewer can add them without a new plugin release.
+Instead of declaring `media`, you can supply suitable public image URLs in the submission or
+review PR. The reviewer can add them to the listing without a new plugin release.
 
 ## Publish on npm
 
@@ -138,6 +128,8 @@ if your plugin installs a separate tree.
 
 ### 3. Check the package and publish
 
+Generate any required files before checking the package; the dry run skips packing scripts.
+
 ```bash
 npm run typecheck
 npm pack --dry-run --ignore-scripts
@@ -148,9 +140,8 @@ module, any overview and assets you declared, and the shrinkwrap when required. 
 and files outside the package do not reach users. The scaffold includes the entries and `client/`,
 `server/` and `shared/`; add other asset directories to `files`.
 
-If you generate files, generate them before this check. The dry run above does not run your package's
-packing scripts. Confirm any declared preparation command succeeds with the Node/npm versions you
-support; an out-of-sync or incompatible lockfile still blocks installation.
+Confirm any declared preparation command succeeds with the Node/npm versions you support;
+an out-of-sync or incompatible lockfile still blocks installation.
 
 Publish the checked version:
 
@@ -215,9 +206,6 @@ plugin code, completes the listing and records the exact approved version or com
 requires the [review policy](https://github.com/getpaseo/plugins/blob/main/REVIEW.md), including
 locked installation inputs and appropriate data access, even when automated validation passes.
 
-Keep filesystem and command actions within the user's selection. For example, a Git action on
-`[ab].txt` must treat that name literally rather than also modifying `a.txt` as a pathspec match.
-
 If a change is requested, reply on the review PR with the corrected version/revision or requested
 image URL. The reviewer updates the pin and listing. Intake service errors retry automatically;
 missing images or an overview do not prevent opening the review PR.
@@ -235,7 +223,6 @@ rules in the [source reference](/docs/plugins/reference#plugin-sources).
 ## Plugins with a build step
 
 Paseo compiles TypeScript, so an ordinary plugin needs no separate publication build.
-If your plugin generates code or assets, generate and include them in the package before publishing.
 Keep generated modules in their runtime directory and host-provided modules external.
 
 Paseo suppresses npm lifecycle scripts during package acquisition. Commands explicitly declared in
