@@ -15,6 +15,8 @@ import { createAgentMcpServer as createAgentMcpServerWithDependencies } from "./
 import { AgentManager, type ManagedAgent } from "./agent-manager.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
+import { OmpAgentClient } from "./providers/omp/agent.js";
+import { FakeOmp } from "./providers/omp/test-utils/fake-omp.js";
 import type {
   AgentClient,
   AgentMode,
@@ -3856,8 +3858,7 @@ class HeldTurnAgentSession implements AgentSession {
   }
 
   tryHandleOutOfBand(prompt: AgentPromptInput) {
-    const text = typeof prompt === "string" ? (parseAgentMessage(prompt)?.text ?? prompt) : null;
-    return text === "/side-command" ? { run: async () => {} } : null;
+    return prompt === "/side-command" ? { run: async () => {} } : null;
   }
 
   async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
@@ -4555,6 +4556,83 @@ describe("send_agent_prompt MCP tool", () => {
       await removeAgentStateDir(agentManager, storage, workdir);
     }
   });
+});
+
+describe("send_agent_prompt MCP tool to an OMP child", () => {
+  const logger = createTestLogger();
+  const existingCwd = process.cwd();
+
+  it.each([
+    { prompt: "/follow-up then summarize the logs", requests: "followUpRequests" },
+    { prompt: "/steer then summarize the logs", requests: "steerRequests" },
+  ] as const)(
+    "delivers $prompt into a turn OMP started on its own, without aborting it",
+    async ({ prompt, requests }) => {
+      const workdir = await mkdtemp(join(tmpdir(), "mcp-omp-child-"));
+      const storage = new AgentStorage(join(workdir, "agents"), logger);
+      const parentClient = new HeldTurnAgentClient("claude", false);
+      const omp = new FakeOmp();
+      const agentManager = new AgentManager({
+        clients: { claude: parentClient, omp: new OmpAgentClient({ logger, runtime: omp }) },
+        registry: storage,
+        logger,
+      });
+      try {
+        const parent = await agentManager.createAgent(
+          { provider: "claude", cwd: existingCwd },
+          undefined,
+          { workspaceId: "wks_parent" },
+        );
+        const child = await agentManager.createAgent(
+          { provider: "omp", cwd: existingCwd, title: "OMP child" },
+          undefined,
+          { workspaceId: "wks_parent" },
+        );
+        const server = await createAgentMcpServer({
+          agentManager,
+          agentStorage: storage,
+          callerAgentId: parent.id,
+          providerSnapshotManager: createOpenCodeManager().manager,
+          logger,
+        });
+        const ompSession = omp.latestSession();
+        ompSession.beginTurn();
+        ompSession.streamAssistantText("background job finished, working on it");
+        await vi.waitFor(() => {
+          expect(agentManager.getAgent(child.id)?.activeTurnId).toMatch(/^autonomous-/);
+        });
+
+        const response = await invokeToolWithParsedInput(
+          registeredTool(server, "send_agent_prompt"),
+          { agentId: child.id, prompt },
+        );
+
+        expect(response.structuredContent).toMatchObject({
+          success: true,
+          disposition: "out_of_band",
+          status: "running",
+        });
+        await vi.waitFor(() => {
+          expect(ompSession[requests]).toEqual([
+            { message: "then summarize the logs", imageCount: 0 },
+          ]);
+        });
+        expect(ompSession.abortRequested).toBe(false);
+        expect(agentManager.getAgent(child.id)?.lifecycle).toBe("running");
+
+        ompSession.finishTurn();
+        await vi.waitFor(() => expect(agentManager.getAgent(child.id)?.lifecycle).toBe("idle"));
+        await vi.waitFor(() => {
+          expect(parentClient.sessions[0]!.prompts).toHaveLength(1);
+          expect(parentClient.sessions[0]!.prompts[0]).toContain(
+            `Agent ${child.id} (OMP child) finished.`,
+          );
+        });
+      } finally {
+        await removeAgentStateDir(agentManager, storage, workdir);
+      }
+    },
+  );
 });
 
 describe("update_agent MCP tool", () => {
