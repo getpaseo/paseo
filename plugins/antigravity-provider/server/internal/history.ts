@@ -32,15 +32,18 @@ function getDatabaseSync(): SqliteDatabaseConstructor | null {
   }
 }
 
-interface ListSessionOptions {
+export interface ListSessionOptions {
   query?: string;
   cwd?: string;
   limit?: number;
 }
 
-function listFromSqlite(dbPath: string, options?: ListSessionOptions): ProviderSessionSummary[] {
+function listFromSqlite(
+  dbPath: string,
+  options?: ListSessionOptions,
+): ProviderSessionSummary[] | null {
   const DatabaseSyncClass = getDatabaseSync();
-  if (!DatabaseSyncClass || !existsSync(dbPath)) return [];
+  if (!DatabaseSyncClass || !existsSync(dbPath)) return null;
 
   try {
     const db = new DatabaseSyncClass(dbPath, { readOnly: true });
@@ -91,7 +94,7 @@ function listFromSqlite(dbPath: string, options?: ListSessionOptions): ProviderS
       db.close();
     }
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -112,8 +115,8 @@ function matchesJsonlEntry(entry: Record<string, unknown>, options?: ListSession
 function listFromJsonl(
   historyJsonl: string,
   options?: ListSessionOptions,
-): ProviderSessionSummary[] {
-  if (!existsSync(historyJsonl)) return [];
+): ProviderSessionSummary[] | null {
+  if (!existsSync(historyJsonl)) return null;
 
   try {
     const content = readFileSync(historyJsonl, "utf8");
@@ -123,7 +126,9 @@ function listFromJsonl(
 
     for (let i = lines.length - 1; i >= 0; i--) {
       try {
-        const entry = JSON.parse(lines[i]) as Record<string, unknown>;
+        const raw = JSON.parse(lines[i]);
+        if (typeof raw !== "object" || raw === null) continue;
+        const entry = raw as Record<string, unknown>;
         const convId = (entry.conversation_id || entry.id) as string | undefined;
         if (!convId || seen.has(convId) || !matchesJsonlEntry(entry, options)) continue;
         seen.add(convId);
@@ -146,7 +151,7 @@ function listFromJsonl(
     }
     return results;
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -179,23 +184,35 @@ function listFromBrainDir(
   }
 }
 
-export function listAntigravitySessions(options?: ListSessionOptions): ProviderSessionSummary[] {
-  const home = homedir();
-  const dbPath = join(home, ".gemini", "antigravity-cli", "conversation_summaries.db");
+export function listAntigravitySessions(
+  options?: ListSessionOptions,
+  baseDir?: string,
+): ProviderSessionSummary[] {
+  const root = baseDir ?? join(homedir(), ".gemini", "antigravity-cli");
+  const dbPath = join(root, "conversation_summaries.db");
+
   const fromSqlite = listFromSqlite(dbPath, options);
-  if (fromSqlite.length > 0) return fromSqlite;
+  if (fromSqlite !== null) return fromSqlite;
 
-  const historyJsonl = join(home, ".gemini", "antigravity-cli", "history.jsonl");
+  const historyJsonl = join(root, "history.jsonl");
   const fromJsonl = listFromJsonl(historyJsonl, options);
-  if (fromJsonl.length > 0) return fromJsonl;
+  if (fromJsonl !== null) return fromJsonl;
 
-  const brainDir = join(home, ".gemini", "antigravity-cli", "brain");
+  // Do not fall back to brainDir if cwd filter is requested, because brainDir
+  // directories have no associated workspace metadata and assigning process.cwd()
+  // opens sessions in the daemon's directory.
+  if (options?.cwd) return [];
+
+  const brainDir = join(root, "brain");
   return listFromBrainDir(brainDir, options);
 }
 
-export function getAntigravitySessionTitle(conversationId: string): string | null {
-  const home = homedir();
-  const dbPath = join(home, ".gemini", "antigravity-cli", "conversation_summaries.db");
+export function getAntigravitySessionTitle(
+  conversationId: string,
+  baseDir?: string,
+): string | null {
+  const root = baseDir ?? join(homedir(), ".gemini", "antigravity-cli");
+  const dbPath = join(root, "conversation_summaries.db");
   const DatabaseSyncClass = getDatabaseSync();
 
   if (DatabaseSyncClass && existsSync(dbPath)) {
@@ -223,30 +240,12 @@ export interface HistoryTurn {
   usage?: Required<Pick<ProviderUsage, "inputTokens" | "outputTokens" | "cachedInputTokens">>;
 }
 
-function resolveTranscriptPath(conversationId: string): string | null {
-  const home = homedir();
+function resolveTranscriptPath(conversationId: string, baseDir?: string): string | null {
+  const root = baseDir ?? join(homedir(), ".gemini", "antigravity-cli");
   const candidates = [
-    join(
-      home,
-      ".gemini",
-      "antigravity-cli",
-      "brain",
-      conversationId,
-      ".system_generated",
-      "logs",
-      "transcript_full.jsonl",
-    ),
-    join(
-      home,
-      ".gemini",
-      "antigravity-cli",
-      "brain",
-      conversationId,
-      ".system_generated",
-      "logs",
-      "transcript.jsonl",
-    ),
-    join(home, ".gemini", "antigravity-cli", "brain", conversationId, "transcript.jsonl"),
+    join(root, "brain", conversationId, ".system_generated", "logs", "transcript_full.jsonl"),
+    join(root, "brain", conversationId, ".system_generated", "logs", "transcript.jsonl"),
+    join(root, "brain", conversationId, "transcript.jsonl"),
   ];
 
   for (const p of candidates) {
@@ -258,7 +257,11 @@ function resolveTranscriptPath(conversationId: string): string | null {
 function parseArgs(raw: unknown): Record<string, unknown> {
   if (typeof raw === "string") {
     try {
-      return JSON.parse(raw) as Record<string, unknown>;
+      const parsed: unknown = JSON.parse(raw);
+      if (typeof parsed === "object" && parsed !== null) {
+        return parsed as Record<string, unknown>;
+      }
+      return { raw };
     } catch {
       return { raw };
     }
@@ -297,10 +300,12 @@ function buildToolCallItems(
 ): ProviderTimelineItem[] {
   const items: ProviderTimelineItem[] = [];
   for (let callIdx = 0; callIdx < toolCalls.length; callIdx++) {
-    const call = toolCalls[callIdx] as Record<string, unknown>;
+    const rawCall = toolCalls[callIdx];
+    if (typeof rawCall !== "object" || rawCall === null) continue;
+    const call = rawCall as Record<string, unknown>;
     const callId = `hist-tool-${turnIndex}-${stepIdx}-${callIdx}`;
     const args = parseArgs(call.args ?? call.parameters);
-    const toolName = (call.name as string) || "Antigravity tool";
+    const toolName = typeof call.name === "string" ? call.name : "Antigravity tool";
     const detail = mapHistoryToolDetail(toolName, args);
 
     items.push({
@@ -334,82 +339,107 @@ function buildTurnUsage(
   };
 }
 
-export function readAntigravityTranscript(conversationId: string): HistoryTurn[] {
-  const transcriptPath = resolveTranscriptPath(conversationId);
+interface TranscriptParserState {
+  currentTurn: HistoryTurn | null;
+  turnIndex: number;
+  turns: HistoryTurn[];
+}
+
+function handleUserInput(step: Record<string, unknown>, state: TranscriptParserState): void {
+  if (state.currentTurn && state.currentTurn.items.length > 0) {
+    state.turns.push(state.currentTurn);
+  }
+  state.turnIndex++;
+  state.currentTurn = {
+    turnId: `hist-turn-${state.turnIndex}`,
+    items: [
+      {
+        type: "user_message",
+        id: `hist-msg-user-${state.turnIndex}`,
+        clientMessageId: `hist-msg-user-${state.turnIndex}`,
+        text: parseUserPromptText(step.content),
+      },
+    ],
+  };
+}
+
+function handlePlannerResponse(step: Record<string, unknown>, state: TranscriptParserState): void {
+  if (!state.currentTurn) {
+    state.turnIndex++;
+    state.currentTurn = { turnId: `hist-turn-${state.turnIndex}`, items: [] };
+  }
+  const turn = state.currentTurn;
+  const turnIndex = state.turnIndex;
+  const stepIdx = typeof step.step_index === "number" ? step.step_index : 0;
+
+  if (typeof step.thinking === "string") {
+    turn.items.push({
+      type: "reasoning",
+      id: `hist-thought-${turnIndex}-${stepIdx}`,
+      text: step.thinking,
+    });
+  }
+
+  if (Array.isArray(step.tool_calls)) {
+    turn.items.push(...buildToolCallItems(step.tool_calls, turnIndex, stepIdx));
+  }
+
+  if (typeof step.content === "string") {
+    turn.items.push({
+      type: "assistant_message",
+      id: `hist-msg-asst-${turnIndex}-${stepIdx}`,
+      messageId: `hist-msg-asst-${turnIndex}-${stepIdx}`,
+      text: step.content,
+    });
+  }
+
+  turn.usage = buildTurnUsage(
+    turn.usage,
+    step.input_tokens,
+    step.output_tokens,
+    step.cache_read_tokens,
+  );
+}
+
+function processTranscriptLine(line: string, state: TranscriptParserState): void {
+  try {
+    const parsed: unknown = JSON.parse(line);
+    if (typeof parsed !== "object" || parsed === null) return;
+    const step = parsed as Record<string, unknown>;
+
+    if (step.type === "USER_INPUT") {
+      handleUserInput(step, state);
+    } else if (step.type === "PLANNER_RESPONSE") {
+      handlePlannerResponse(step, state);
+    }
+  } catch {
+    // Ignore single malformed line without erasing valid turns
+  }
+}
+
+export function readAntigravityTranscript(conversationId: string, baseDir?: string): HistoryTurn[] {
+  const transcriptPath = resolveTranscriptPath(conversationId, baseDir);
   if (!transcriptPath) return [];
+
+  const state: TranscriptParserState = {
+    currentTurn: null,
+    turnIndex: 0,
+    turns: [],
+  };
 
   try {
     const raw = readFileSync(transcriptPath, "utf8");
     const lines = raw.split("\n").filter((l) => l.trim().length > 0);
-    const turns: HistoryTurn[] = [];
-
-    let currentTurn: HistoryTurn | null = null;
-    let turnIndex = 0;
 
     for (const line of lines) {
-      let step: Record<string, unknown>;
-      try {
-        step = JSON.parse(line) as Record<string, unknown>;
-      } catch {
-        continue;
-      }
-
-      const type = step.type;
-      const stepIdx = typeof step.step_index === "number" ? step.step_index : 0;
-
-      if (type === "USER_INPUT") {
-        if (currentTurn && currentTurn.items.length > 0) turns.push(currentTurn);
-        turnIndex++;
-        currentTurn = {
-          turnId: `hist-turn-${turnIndex}`,
-          items: [
-            {
-              type: "user_message",
-              id: `hist-msg-user-${turnIndex}`,
-              clientMessageId: `hist-msg-user-${turnIndex}`,
-              text: parseUserPromptText(step.content),
-            },
-          ],
-        };
-      } else if (type === "PLANNER_RESPONSE") {
-        if (!currentTurn) {
-          turnIndex++;
-          currentTurn = { turnId: `hist-turn-${turnIndex}`, items: [] };
-        }
-
-        if (typeof step.thinking === "string") {
-          currentTurn.items.push({
-            type: "reasoning",
-            id: `hist-thought-${turnIndex}-${stepIdx}`,
-            text: step.thinking,
-          });
-        }
-
-        if (Array.isArray(step.tool_calls)) {
-          currentTurn.items.push(...buildToolCallItems(step.tool_calls, turnIndex, stepIdx));
-        }
-
-        if (typeof step.content === "string") {
-          currentTurn.items.push({
-            type: "assistant_message",
-            id: `hist-msg-asst-${turnIndex}-${stepIdx}`,
-            messageId: `hist-msg-asst-${turnIndex}-${stepIdx}`,
-            text: step.content,
-          });
-        }
-
-        currentTurn.usage = buildTurnUsage(
-          currentTurn.usage,
-          step.input_tokens,
-          step.output_tokens,
-          step.cache_read_tokens,
-        );
-      }
+      processTranscriptLine(line, state);
     }
 
-    if (currentTurn && currentTurn.items.length > 0) turns.push(currentTurn);
-    return turns;
+    if (state.currentTurn && state.currentTurn.items.length > 0) {
+      state.turns.push(state.currentTurn);
+    }
   } catch {
-    return [];
+    // Preserve any turns parsed before reading failure
   }
+  return state.turns;
 }
