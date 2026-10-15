@@ -233,6 +233,38 @@ function isPortOpen(port: number): Promise<boolean> {
 }
 
 describe("BrowserRoutingManager", () => {
+  test("routed guests and popups disable unproxied WebRTC even after routing is disabled", async () => {
+    const h = await createHarness();
+    await h.manager.setEnabled("host-a", true);
+    const session = h.sessions.get(browserRoutingPartitionForServer("host-a"));
+    if (!session) throw new Error("routed session missing");
+    const policies: string[] = [];
+    const guest = {
+      session,
+      setWebRTCIPHandlingPolicy: (policy: string) => policies.push(policy),
+    };
+    h.manager.configureWebRTC(guest);
+    h.manager.configureWebRTC({ ...guest });
+    await h.manager.setEnabled("host-a", false);
+    h.manager.configureWebRTC({ ...guest });
+    expect(policies).toEqual([
+      "disable_non_proxied_udp",
+      "disable_non_proxied_udp",
+      "disable_non_proxied_udp",
+    ]);
+  });
+
+  test("shared browser sessions retain their WebRTC policy", async () => {
+    const h = await createHarness();
+    await h.manager.setEnabled("host-a", true);
+    const policies: string[] = [];
+    h.manager.configureWebRTC({
+      session: {},
+      setWebRTCIPHandlingPolicy: (policy) => policies.push(policy),
+    });
+    expect(policies).toEqual([]);
+  });
+
   test("an older failed enable cannot roll back a newer disable and re-enable", async () => {
     const firstStarted = deferred();
     const firstWarmUp = deferred();

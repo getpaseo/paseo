@@ -277,6 +277,12 @@ const browserRouting = new BrowserRoutingManager({
   log: (level, event, details) => log[level](`[browser-routing] ${event}`, details),
 });
 
+// This fires before a guest or popup loads; attachment/window-created events
+// are too late to constrain the page's first WebRTC connection.
+app.on("web-contents-created", (_event, contents) => {
+  browserRouting.configureWebRTC(contents);
+});
+
 function isPaseoBrowserProfileSession(candidate: object): boolean {
   return (
     candidate === getPaseoBrowserProfileSession(session) ||

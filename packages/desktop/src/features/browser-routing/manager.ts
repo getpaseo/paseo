@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { WebContents } from "electron";
 import type {
   BrowserRoutingHostSettings,
   BrowserRoutingSettings,
@@ -40,6 +41,11 @@ export type ProxyLoginDecision =
 
 export interface RoutedBrowserSession extends BrowserProfileSession {
   setProxy(config: { proxyRules: string; proxyBypassRules: string }): Promise<void>;
+}
+
+interface RoutedBrowserWebContents {
+  session: object;
+  setWebRTCIPHandlingPolicy: WebContents["setWebRTCIPHandlingPolicy"];
 }
 
 export interface BrowserRoutingManagerDependencies {
@@ -210,6 +216,17 @@ export class BrowserRoutingManager {
       }
     }
     return false;
+  }
+
+  public configureWebRTC(contents: RoutedBrowserWebContents): void {
+    for (const route of this.routesByServerId.values()) {
+      if (route.session === contents.session) {
+        // HTTP proxies cannot carry direct WebRTC UDP. Keep parked routes
+        // protected too: existing guests can still open popups after disable.
+        contents.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
+        return;
+      }
+    }
   }
 
   /**
