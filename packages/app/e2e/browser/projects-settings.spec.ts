@@ -5,6 +5,8 @@ import { connectSeedClient, seedWorkspace } from "../support/helpers/seed-client
 import {
   blockPaseoConfigWrites,
   bumpPaseoConfigOnDisk,
+  cancelNewProjectLaunch,
+  cancelProjectLaunchEdit,
   chooseProjectIconImage,
   clickReloadProjectSettings,
   clickRetryProjectSettingsSave,
@@ -21,6 +23,7 @@ import {
   expectProjectEditName,
   expectProjectEditSaved,
   expectProjectEditsSaveDisabled,
+  expectProjectLaunchesSaved,
   expectProjectSettingsError,
   expectProjectSettingsFormHidden,
   expectProjectSettingsFormVisible,
@@ -249,32 +252,16 @@ test.describe("Projects settings", () => {
   }) => {
     await openProjects(page);
     await openProjectSettings(page, editableProject.name);
-
-    const launchRow = page
-      .getByTestId("launches-list")
-      .locator('[data-testid^="launch-row-"]:not([data-testid*="-menu-"])')
-      .filter({ hasText: "dev" });
-    await launchRow.getByText("dev", { exact: true }).click();
-    await page.getByRole("textbox", { name: "Launch name" }).fill("renamed");
-    await page.getByRole("textbox", { name: "Launch command" }).fill("./bin/renamed");
-    await page.getByRole("button", { name: "Cancel", exact: true }).click();
-    await expect(launchRow).toContainText("dev");
-    await expect(launchRow).toContainText("./bin/dev");
-
-    await page.getByRole("button", { name: "Add launch", exact: true }).click();
-    await page.getByRole("textbox", { name: "Launch name" }).fill("partial");
-    await page.getByRole("button", { name: "Cancel", exact: true }).click();
-    await expect(
-      page
-        .getByTestId("launches-list")
-        .locator('[data-testid^="launch-row-"]:not([data-testid*="-menu-"])'),
-    ).toHaveCount(1);
-
+    await cancelProjectLaunchEdit(page, {
+      launchName: "dev",
+      nextName: "renamed",
+      nextCommand: "./bin/renamed",
+      originalCommand: "./bin/dev",
+    });
+    await cancelNewProjectLaunch(page, "partial");
     await editWorktreeSetup(page, updatedSetup);
     await clickSaveProjectSettings(page);
-    await expect
-      .poll(async () => JSON.parse(await readProjectConfigFile(editableProject)).launches)
-      .toEqual(initialPaseoConfig.launches);
+    await expectProjectLaunchesSaved(editableProject.path, initialPaseoConfig.launches);
   });
 
   test("project navigation stays inside the selected host", async ({ page, editableProject }) => {
