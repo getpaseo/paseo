@@ -90,12 +90,13 @@ describe("Codex custom provider import list", () => {
   });
 
   test.each([
-    { providerId: "my-codex", seedLegacy: false },
-    { providerId: "ollama", seedLegacy: false },
-    { providerId: "my-codex", seedLegacy: true },
+    { providerId: "my-codex", seedLegacy: false, seedBuiltin: false },
+    { providerId: "ollama", seedLegacy: false, seedBuiltin: false },
+    { providerId: "my-codex", seedLegacy: true, seedBuiltin: false },
+    { providerId: "ollama", seedLegacy: false, seedBuiltin: true },
   ])(
-    "lists and imports sessions for $providerId (legacy session: $seedLegacy)",
-    async ({ providerId, seedLegacy }) => {
+    "lists and imports sessions for $providerId (legacy: $seedLegacy, native: $seedBuiltin)",
+    async ({ providerId, seedLegacy, seedBuiltin }) => {
       const codexHome = mkdtempSync(path.join(os.tmpdir(), "codex-custom-import-home-"));
       const cwd = mkdtempSync(path.join(os.tmpdir(), "codex-custom-import-cwd-"));
       cleanups.push(() => rmSync(codexHome, { recursive: true, force: true }));
@@ -104,11 +105,12 @@ describe("Codex custom provider import list", () => {
       cleanups.push(() => closeServer(server));
 
       const logger = createTestLogger();
-      if (seedLegacy) {
-        // Recreate the config emitted before namespacing with the real app-server.
+      if (seedLegacy || seedBuiltin) {
+        // Seed an old custom session or a native built-in session with real Codex.
         const environment = {
           ...process.env,
           CODEX_HOME: codexHome,
+          CODEX_OSS_BASE_URL: baseUrl,
           OPENAI_API_KEY: "test-key",
         };
         const legacy = new CodexAppServerAgentSession(
@@ -120,15 +122,17 @@ describe("Codex custom provider import list", () => {
             environment,
             customCodexConfig: {
               model_provider: providerId,
-              model_providers: {
-                [providerId]: {
-                  name: "My Codex",
-                  base_url: baseUrl,
-                  wire_api: "responses",
-                  env_key: "OPENAI_API_KEY",
-                  requires_openai_auth: false,
-                },
-              },
+              model_providers: seedBuiltin
+                ? {}
+                : {
+                    [providerId]: {
+                      name: "My Codex",
+                      base_url: baseUrl,
+                      wire_api: "responses",
+                      env_key: "OPENAI_API_KEY",
+                      requires_openai_auth: false,
+                    },
+                  },
             },
           },
         );

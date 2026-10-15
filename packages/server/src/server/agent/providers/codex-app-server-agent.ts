@@ -151,6 +151,15 @@ function isCodexAlreadyUnarchivedError(error: unknown, threadId: string): boolea
 const TURN_START_TIMEOUT_MS = 90 * 1000;
 const INTERRUPT_TIMEOUT_MS = 2_000;
 const CODEX_PROVIDER = "codex" as const;
+// These native provider identities belong to Codex, not to an older custom
+// Paseo provider. Never include them in a custom provider's legacy import scan.
+const CODEX_BUILTIN_MODEL_PROVIDER_IDS = new Set([
+  "openai",
+  "ollama",
+  "lmstudio",
+  "amazon-bedrock",
+  "amazon-bedrock-runtime",
+]);
 // Codex treats most app-server client names as the model-request originator.
 // This reserved Codex name is non-originating, so requests keep Codex's default
 // CLI identity instead of showing up as Paseo in provider usage logs.
@@ -7382,13 +7391,17 @@ export class CodexAppServerAgentClient implements AgentClient {
       const listLimit = options?.cwd ? Math.max(scanLimit, 50) : scanLimit;
       // Codex records each thread under the model provider that ran it and,
       // unless told otherwise, lists only the provider its own config selects.
-      // Include the original id for sessions created before namespacing.
+      // Include legacy custom ids, but keep Codex built-in sessions separate.
       const customProviderConfig = this.customProviderConfig();
       const allThreads = await readCodexThreadWindow(client, this.logger, {
         limit: listLimit,
         cwd: options?.cwd,
         ...(customProviderConfig && this.deps.customProvider
-          ? { modelProviders: [customProviderConfig.model_provider, this.deps.customProvider.id] }
+          ? {
+              modelProviders: CODEX_BUILTIN_MODEL_PROVIDER_IDS.has(this.deps.customProvider.id)
+                ? [customProviderConfig.model_provider]
+                : [customProviderConfig.model_provider, this.deps.customProvider.id],
+            }
           : {}),
       });
       const threads = filterCodexThreadsByCwd(allThreads, options?.cwd);
