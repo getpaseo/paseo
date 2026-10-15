@@ -1,8 +1,19 @@
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
-import { describe, expect, it } from "vitest";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import { WorkspaceRuntimeEnvironmentService } from "./workspace-runtime-environment.js";
 
 describe("WorkspaceRuntimeEnvironmentService", () => {
+  const tempDirs: string[] = [];
+
+  afterEach(() => {
+    for (const tempDir of tempDirs.splice(0)) {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("shares one stable Compose name and port block across workspace commands", async () => {
     const [firstPort, secondPort] = await getFreePortPair();
     const service = new WorkspaceRuntimeEnvironmentService();
@@ -153,6 +164,36 @@ describe("WorkspaceRuntimeEnvironmentService", () => {
     expect(environment).toMatchObject({ portBase: 42000, portEnd: 42099, portCount: 100 });
     service.release("workspace-ephemeral-retry");
   });
+
+  it("lets portScript override range when allocating a workspace block", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "workspace-runtime-port-script-"));
+    tempDirs.push(tempDir);
+    const port = await getFreePort();
+    const scriptPath = createPortScript(tempDir, port);
+    const service = new WorkspaceRuntimeEnvironmentService();
+
+    const environment = await service.ensure({
+      workspaceId: "workspace-port-script-precedence",
+      cwd: tempDir,
+      branchName: "feature/port-script-precedence",
+      allocation: { range: "1-1", portScript: scriptPath, blockSize: 1 },
+    });
+
+    expect(environment).toMatchObject({ portBase: port, portEnd: port, portCount: 1 });
+    service.release("workspace-port-script-precedence");
+  });
+
+  function createPortScript(tempDir: string, port: number): string {
+    const fileName = process.platform === "win32" ? "portmake.cmd" : "portmake";
+    const scriptPath = join(tempDir, fileName);
+    const contents =
+      process.platform === "win32"
+        ? `@echo off\r\necho ${port}\r\n`
+        : `#!/bin/sh\nprintf '%s\\n' '${port}'\n`;
+    writeFileSync(scriptPath, contents);
+    if (process.platform !== "win32") chmodSync(scriptPath, 0o755);
+    return scriptPath;
+  }
 });
 
 function createDeferred(): { promise: Promise<void>; resolve: () => void } {

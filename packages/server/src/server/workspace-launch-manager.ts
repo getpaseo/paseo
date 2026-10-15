@@ -1,5 +1,3 @@
-import http from "node:http";
-import net from "node:net";
 import pLimit from "p-limit";
 import type { Logger } from "pino";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
@@ -29,6 +27,7 @@ import type {
   WorkspaceRuntimeEnvironment,
   WorkspaceRuntimeEnvironmentService,
 } from "./workspace-runtime-environment.js";
+import { connectToLocalService, requestLocalService } from "./local-service-connection.js";
 
 const LAUNCH_ENDPOINT_SCAN_INTERVAL_MS = 2_000;
 const LAUNCH_ENDPOINT_PROBE_CONCURRENCY = 16;
@@ -95,6 +94,8 @@ export interface WorkspaceLaunchManagerDependencies {
   emitWorkspaceUpdates?: (workspaceIds: Iterable<string>) => Promise<void>;
   /** Injected by tests so listener lifecycle races can be reproduced deterministically. */
   endpointProbe?: WorkspaceLaunchEndpointProbe;
+  /** Injected by tests so HTTP retry schedules can advance without changing the global clock. */
+  now?: () => number;
   logger: Logger;
 }
 
@@ -110,9 +111,11 @@ export class WorkspaceLaunchManager {
   private readonly operationChains = new Map<string, Promise<unknown>>();
   private readonly endpointProbe: WorkspaceLaunchEndpointProbe;
   private readonly endpointProbeLimit = pLimit(LAUNCH_ENDPOINT_PROBE_CONCURRENCY);
+  private readonly now: () => number;
 
   constructor(private readonly deps: WorkspaceLaunchManagerDependencies) {
     this.endpointProbe = deps.endpointProbe ?? { probeTcp, probeHttp };
+    this.now = deps.now ?? Date.now;
   }
 
   buildSnapshot(context: WorkspaceLaunchContext): WorkspaceLaunchPayload[] {
@@ -446,7 +449,7 @@ export class WorkspaceLaunchManager {
             scriptName: null,
             httpRetry: {
               delayMs: HTTP_RETRY_INITIAL_MS,
-              retryAt: Date.now() + HTTP_RETRY_INITIAL_MS,
+              retryAt: this.now() + HTTP_RETRY_INITIAL_MS,
             },
           });
           changed = true;
@@ -530,11 +533,11 @@ export class WorkspaceLaunchManager {
     const retry = existing?.httpRetry;
     // A bound socket may be an HTTP server still starting. Retry classification,
     // but back off so raw TCP services do not receive malformed HTTP every scan.
-    if (retry && Date.now() < retry.retryAt) return false;
+    if (retry && this.now() < retry.retryAt) return false;
     const isHttp = await this.endpointProbe.probeHttp(port);
     if (!isHttp && retry) {
       retry.delayMs = Math.min(retry.delayMs * 2, HTTP_RETRY_MAX_MS);
-      retry.retryAt = Date.now() + retry.delayMs;
+      retry.retryAt = this.now() + retry.delayMs;
     }
     return isHttp;
   }
@@ -723,9 +726,8 @@ async function probeHttp(port: number): Promise<boolean> {
       request.destroy();
       resolve(result);
     };
-    const request = http.request(
+    const request = requestLocalService(
       {
-        host: "127.0.0.1",
         port,
         method: "HEAD",
         path: "/",
@@ -749,7 +751,7 @@ async function probeHttp(port: number): Promise<boolean> {
 async function probeTcp(port: number): Promise<boolean> {
   return await new Promise((resolve) => {
     let settled = false;
-    const socket = net.createConnection({ host: "127.0.0.1", port });
+    const socket = connectToLocalService(port);
     const finish = (result: boolean) => {
       if (settled) return;
       settled = true;

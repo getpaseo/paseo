@@ -23,6 +23,8 @@ export interface AllocateWorkspaceServicePortOptions {
   reservedPorts?: ReadonlySet<number>;
   /** Number of contiguous ports requested by a workspace-level caller. */
   portCount?: number;
+  /** Injectable only to make ephemeral allocation deterministic in tests. */
+  findFreePort?: () => Promise<number>;
 }
 
 export async function allocateWorkspaceServicePort(
@@ -45,12 +47,18 @@ export async function allocateWorkspaceServicePort(
       options.reservedPorts ?? new Set(),
     );
   }
-  return await allocateDefaultPort(options.reservedPorts ?? new Set());
+  return await allocateDefaultPort(
+    options.reservedPorts ?? new Set(),
+    options.findFreePort ?? findFreePort,
+  );
 }
 
-async function allocateDefaultPort(reservedPorts: ReadonlySet<number>): Promise<number> {
+async function allocateDefaultPort(
+  reservedPorts: ReadonlySet<number>,
+  findPort: () => Promise<number>,
+): Promise<number> {
   for (let attempt = 0; attempt < MAX_DEFAULT_PORT_ALLOCATION_ATTEMPTS; attempt += 1) {
-    const port = await findFreePort();
+    const port = await findPort();
     if (!reservedPorts.has(port)) return port;
   }
   throw new Error(

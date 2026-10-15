@@ -337,6 +337,52 @@ describe("WorkspaceLaunchManager", () => {
     }
   });
 
+  it("discovers an HTTP listener bound only to IPv6 loopback", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-ipv6-"));
+    tempDirs.push(directory);
+    const server = http.createServer((_request, response) => response.end("ok"));
+    await listen(server, 0, "::1");
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Failed to obtain IPv6 listener port");
+    }
+    const port = address.port;
+    writeFileSync(
+      join(directory, "paseo.json"),
+      JSON.stringify({
+        worktree: { servicePorts: { range: `${port}-${port}`, blockSize: 1 } },
+        launches: { dev: { command: "./bin/dev" } },
+      }),
+    );
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: createTerminalManager().manager,
+      serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+      workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+      getDaemonTcpPort: () => 6767,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      logger: pino({ level: "silent" }),
+    });
+    const context = {
+      workspaceId: "workspace-launch-ipv6",
+      workspaceDirectory: directory,
+      projectSlug: "example-project",
+      branchName: "feature/ipv6",
+    };
+
+    try {
+      await manager.start(context, "dev");
+      await vi.waitFor(() => {
+        expect(manager.buildSnapshot(context)[0]?.endpoints).toEqual([
+          expect.objectContaining({ port, protocol: "http", proxyUrl: expect.any(String) }),
+        ]);
+      });
+    } finally {
+      await manager.disposeWorkspace(context.workspaceId);
+      await close(server);
+    }
+  });
+
   it("keeps a configured service route when a launch discovers an HTTP listener", async () => {
     const directory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-route-"));
     tempDirs.push(directory);
@@ -813,7 +859,7 @@ describe("WorkspaceLaunchManager", () => {
       }),
     );
     let listening = true;
-    const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    let now = 1_000;
     const probeHttp = vi.fn().mockResolvedValue(false);
     const manager = new WorkspaceLaunchManager({
       terminalManager: createTerminalManager().manager,
@@ -823,6 +869,7 @@ describe("WorkspaceLaunchManager", () => {
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
       endpointProbe: { probeTcp: async () => listening, probeHttp },
+      now: () => now,
       logger: pino({ level: "silent" }),
     });
     const context = {
@@ -846,17 +893,17 @@ describe("WorkspaceLaunchManager", () => {
 
       // Failed classifications retry at 5, 10, 20, 40, then at most 60 seconds.
       for (const [index, retryAt] of [6_000, 16_000, 36_000, 76_000, 136_000].entries()) {
-        clock.mockReturnValue(retryAt - 1);
+        now = retryAt - 1;
         manager.updateWorkspaceBranch(context.workspaceId, context.branchName);
         await flushAsyncWork();
         expect(probeHttp).toHaveBeenCalledTimes(index + 1);
-        clock.mockReturnValue(retryAt);
+        now = retryAt;
         manager.updateWorkspaceBranch(context.workspaceId, context.branchName);
         await flushAsyncWork();
         expect(probeHttp).toHaveBeenCalledTimes(index + 2);
       }
       probeHttp.mockResolvedValue(true);
-      clock.mockReturnValue(196_000);
+      now = 196_000;
       manager.updateWorkspaceBranch(context.workspaceId, context.branchName);
       await flushAsyncWork();
       expect(probeHttp).toHaveBeenCalledTimes(7);
@@ -884,7 +931,6 @@ describe("WorkspaceLaunchManager", () => {
         expect.objectContaining({ port, protocol: "http", proxyUrl: expect.any(String) }),
       ]);
     } finally {
-      clock.mockRestore();
       await manager.disposeWorkspace(context.workspaceId);
     }
   });
@@ -1081,10 +1127,10 @@ async function getFreePortBlock(count: number): Promise<number> {
   throw new Error(`Failed to find ${count} adjacent free ports`);
 }
 
-async function listen(server: net.Server, port: number): Promise<void> {
+async function listen(server: net.Server, port: number, host = "127.0.0.1"): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(port, "127.0.0.1", () => resolve());
+    server.listen(port, host, () => resolve());
   });
 }
 

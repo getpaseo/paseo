@@ -174,7 +174,7 @@ export class WorkspaceRuntimeEnvironmentService {
         reservedPorts: new Set([...this.getReservedPorts(), ...(input.excludedPorts ?? [])]),
         portCount,
       });
-      this.assertValidBlock(base, portCount, allocation.range, input.excludedPorts);
+      this.assertValidBlock(base, portCount, input.excludedPorts);
       if (this.intersectsReservedBlock(base, portCount)) {
         throw new Error(
           `Workspace port script returned an already leased block starting at ${base}`,
@@ -218,18 +218,11 @@ export class WorkspaceRuntimeEnvironmentService {
   private assertValidBlock(
     base: number,
     portCount: number,
-    range: string | undefined,
     excludedPorts: ReadonlySet<number> | undefined,
   ): void {
     const end = base + portCount - 1;
     if (!isValidTcpBlock(base, portCount)) {
       throw new Error(`Workspace port block ${base}-${end} is outside the TCP port range`);
-    }
-    if (range) {
-      const parsed = parseRange(range);
-      if (base < parsed.start || end > parsed.end) {
-        throw new Error(`Workspace port block ${base}-${end} is outside configured range ${range}`);
-      }
     }
     if (intersectsPorts(base, portCount, excludedPorts)) {
       throw new Error(`Workspace port block ${base}-${end} overlaps an explicit service port`);
