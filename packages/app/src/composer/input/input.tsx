@@ -942,6 +942,7 @@ interface SendMessageContext {
   onSubmit: (payload: MessagePayload) => void;
   onMinimizeHeight: () => void;
   preserveHeightOnSubmit: boolean;
+  exitFullscreen: () => void;
 }
 
 function sendMessageImpl(ctx: SendMessageContext): void {
@@ -954,6 +955,7 @@ function sendMessageImpl(ctx: SendMessageContext): void {
   ) {
     return;
   }
+  ctx.exitFullscreen();
   ctx.onSubmit({
     text: trimmed,
     attachments: ctx.attachments,
@@ -974,12 +976,14 @@ interface QueueMessageContext {
   onQueue: ((payload: MessagePayload) => void) | undefined;
   replaceText: (text: string) => void;
   onMinimizeHeight: () => void;
+  exitFullscreen: () => void;
 }
 
 function queueMessageImpl(ctx: QueueMessageContext): void {
   if (!ctx.onQueue) return;
   const trimmed = ctx.value.trim();
   if (!trimmed && ctx.attachments.length === 0) return;
+  ctx.exitFullscreen();
   ctx.onQueue({ text: trimmed, attachments: ctx.attachments, cwd: ctx.cwd });
   ctx.replaceText("");
   ctx.onMinimizeHeight();
@@ -1640,6 +1644,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         onSubmit,
         onMinimizeHeight: minimizeInputHeight,
         preserveHeightOnSubmit,
+        exitFullscreen,
       });
     }, [
       allowEmptySubmit,
@@ -1651,6 +1656,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       minimizeInputHeight,
       preserveHeightOnSubmit,
       updateLiveTextPresence,
+      exitFullscreen,
     ]);
 
     const handleQueueMessage = useCallback(
@@ -1662,8 +1668,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           onQueue,
           replaceText,
           onMinimizeHeight: minimizeInputHeight,
+          exitFullscreen,
         }),
-      [attachments, cwd, onQueue, replaceText, minimizeInputHeight],
+      [attachments, cwd, onQueue, replaceText, minimizeInputHeight, exitFullscreen],
     );
 
     const handleDefaultSendAction = useCallback(() => {

@@ -16,6 +16,7 @@ import {
   mkdirSync,
   rmSync,
   existsSync,
+  readFileSync,
   realpathSync,
   symlinkSync,
   writeFileSync,
@@ -93,6 +94,64 @@ describe("paseo worktree manager", () => {
   afterEach(async () => {
     await rm(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
+
+  it.each([
+    { existing: [], preferred: "main/patch-1", expected: "main-1/patch-1" },
+    { existing: ["main-1"], preferred: "main/patch-1", expected: "main-2/patch-1" },
+    {
+      existing: ["main-1/patch-1"],
+      preferred: "main/patch-1",
+      expected: "main-1/patch-1-2",
+    },
+    {
+      existing: ["bob/patch-1/child"],
+      preferred: "bob/patch-1",
+      expected: "bob/patch-1-1",
+    },
+  ])(
+    "checks out a fork when $preferred conflicts with existing branch paths",
+    async ({ existing, preferred, expected }) => {
+      const git = (...args: string[]) =>
+        execFileSync("git", args, { cwd: repoDir, encoding: "utf8", stdio: "pipe" }).trim();
+      git("config", "core.autocrlf", "false");
+      const baseHead = git("rev-parse", "main");
+      for (const branch of existing) git("branch", branch);
+      git("checkout", "-b", "fixture-pr");
+      writeFileSync(join(repoDir, "file.txt"), "from-pr\n");
+      git("add", "file.txt");
+      git("-c", "commit.gpgsign=false", "commit", "-m", "fork patch");
+      const prHead = git("rev-parse", "HEAD");
+      git("checkout", "main");
+      const remote = join(tempDir, "origin.git");
+      git("clone", "--bare", repoDir, remote);
+      git("remote", "add", "origin", remote);
+      git(`--git-dir=${remote}`, "update-ref", "refs/pull/1/head", prHead);
+      git("pack-refs", "--all");
+
+      const result = await createWorktreePrimitive({
+        cwd: repoDir,
+        paseoHome,
+        worktreeSlug: "fork-review",
+        runSetup: false,
+        source: {
+          kind: "checkout-change-request",
+          forge: "gitea",
+          changeRequestNumber: 1,
+          headRef: "patch-1",
+          localBranchName: preferred,
+          baseRefName: "main",
+          checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/1/head" }],
+        },
+      });
+
+      expect(result.branchName).toBe(expected);
+      expect(git("rev-parse", result.branchName)).toBe(prHead);
+      expect(readFileSync(join(result.worktreePath, "file.txt"), "utf8")).toBe("from-pr\n");
+      for (const branch of ["main", ...existing]) {
+        expect(git("rev-parse", branch)).toBe(baseHead);
+      }
+    },
+  );
 
   it("treats a worktree as paseo-owned even when its .git admin is missing", async () => {
     const created = await createLegacyWorktreeForTest({

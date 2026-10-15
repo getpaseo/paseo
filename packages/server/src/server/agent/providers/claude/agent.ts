@@ -1737,11 +1737,21 @@ export class ClaudeAgentClient implements AgentClient {
   }
 
   async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
+    // Carry a `/rename` onto the imported agent so the name chosen in the CLI
+    // survives the import. Only an explicit rename counts: agents are named
+    // after their first prompt line since #1563, so adopting the generated
+    // `ai-title` here would put that LLM summary back.
+    const renamedTitle = await readClaudeRenamedSessionTitle({
+      cwd: input.cwd,
+      sessionId: input.providerHandleId,
+      configDir: claudeConfigDir(this.buildProviderEnv(context.launchContext?.env)),
+    });
     return importSessionFromPersistence({
       provider: "claude",
       request: input,
       context,
       resumeSession: this.resumeSession.bind(this),
+      ...(renamedTitle ? { config: { title: renamedTitle } } : {}),
     });
   }
 
@@ -1873,30 +1883,22 @@ async function resolveClaudeAuth(
   }
 }
 
-function extractContextWindowSize(modelUsage: unknown): number | undefined {
+function extractContextWindowSize(
+  modelUsage: unknown,
+  modelId: string | null | undefined,
+): number | undefined {
   const usageRecord = toObjectRecord(modelUsage);
   if (!usageRecord) {
     return undefined;
   }
 
-  let maxContextWindow: number | undefined;
-  for (const value of Object.values(usageRecord)) {
-    const valueRecord = toObjectRecord(value);
-    if (!valueRecord) {
-      continue;
-    }
-    const contextWindow = valueRecord.contextWindow;
-    if (
-      typeof contextWindow !== "number" ||
-      !Number.isFinite(contextWindow) ||
-      contextWindow <= 0
-    ) {
-      continue;
-    }
-    maxContextWindow = Math.max(maxContextWindow ?? 0, contextWindow);
-  }
-
-  return maxContextWindow;
+  // modelUsage accumulates every model used in the session, including earlier turns
+  // and subagents. Only the active model describes this turn's context capacity.
+  const modelUsageEntry = modelId ? usageRecord[modelId] : undefined;
+  const contextWindow = toObjectRecord(modelUsageEntry)?.contextWindow;
+  return typeof contextWindow === "number" && Number.isFinite(contextWindow) && contextWindow > 0
+    ? contextWindow
+    : undefined;
 }
 
 interface StreamRequestInputUsage {
@@ -2050,8 +2052,8 @@ class ClaudeContextUsageState {
     this.contextWindowMaxTokens = contextWindowMaxTokens;
   }
 
-  recordModelUsage(modelUsage: unknown): number | undefined {
-    const contextWindowMaxTokens = extractContextWindowSize(modelUsage);
+  recordModelUsage(modelUsage: unknown, modelId: string | null | undefined): number | undefined {
+    const contextWindowMaxTokens = extractContextWindowSize(modelUsage, modelId);
     if (contextWindowMaxTokens !== undefined) {
       this.contextWindowMaxTokens = contextWindowMaxTokens;
     }
@@ -2094,7 +2096,10 @@ class ClaudeContextUsageState {
     return this.createUsageUpdatedEvent(usedTokens);
   }
 
-  buildResultUsage(message: SDKResultMessage, modelUsage: unknown): AgentUsage | undefined {
+  buildResultUsage(
+    message: SDKResultMessage,
+    modelId: string | null | undefined,
+  ): AgentUsage | undefined {
     try {
       if (!message.usage) {
         return undefined;
@@ -2106,7 +2111,7 @@ class ClaudeContextUsageState {
         totalCostUsd: message.total_cost_usd,
       };
 
-      const modelContextWindowMaxTokens = this.recordModelUsage(modelUsage ?? message.modelUsage);
+      const modelContextWindowMaxTokens = this.recordModelUsage(message.modelUsage, modelId);
       if (this.contextWindowMaxTokens !== undefined) {
         usage.contextWindowMaxTokens = this.contextWindowMaxTokens;
       } else if (modelContextWindowMaxTokens !== undefined) {
@@ -4746,7 +4751,7 @@ class ClaudeAgentSession implements AgentSession {
     message: Extract<SDKMessage, { type: "result" }>,
     events: AgentStreamEvent[],
   ): void {
-    const usage = this.convertUsage(message, message.modelUsage);
+    const usage = this.convertUsage(message);
     if (message.subtype === "success") {
       events.push(...this.sidechainTracker.finishAll("completed"));
       // Built-in slash commands (e.g. /voice, /usage, "Unknown command: …")
@@ -4928,8 +4933,8 @@ class ClaudeAgentSession implements AgentSession {
     return null;
   }
 
-  private convertUsage(message: SDKResultMessage, modelUsage?: unknown): AgentUsage | undefined {
-    return this.contextUsage.buildResultUsage(message, modelUsage);
+  private convertUsage(message: SDKResultMessage): AgentUsage | undefined {
+    return this.contextUsage.buildResultUsage(message, this.lastRuntimeModel ?? this.config.model);
   }
 
   private handlePermissionRequest: CanUseTool = async (
@@ -6656,6 +6661,66 @@ async function parseClaudeSessionDescriptor(
 function normalizeClaudeSessionTitle(title: string | null): string | null {
   const normalized = title?.trim();
   return normalized ? normalized : null;
+}
+
+const CLAUDE_CUSTOM_TITLE_TYPE = "custom-title";
+
+/**
+ * The `custom-title` record is re-emitted every time the session is saved, so
+ * the current name is the last usable one in the file. Searching backwards finds it without
+ * walking the transcript, which matters because sessions reach tens of
+ * megabytes.
+ */
+function readLastClaudeCustomTitle(content: string): string | null {
+  const needle = `"${CLAUDE_CUSTOM_TITLE_TYPE}"`;
+  let at = content.lastIndexOf(needle);
+  while (at >= 0) {
+    const lineStart = content.lastIndexOf("\n", at) + 1;
+    const lineEnd = content.indexOf("\n", at);
+    const line = lineEnd === -1 ? content.slice(lineStart) : content.slice(lineStart, lineEnd);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line.trim());
+    } catch {
+      parsed = undefined;
+    }
+    const entry = toObjectRecord(parsed);
+    if (entry && !entry.isSidechain && entry.type === CLAUDE_CUSTOM_TITLE_TYPE) {
+      const title = normalizeClaudeSessionTitle(
+        typeof entry.customTitle === "string" ? entry.customTitle : null,
+      );
+      if (title) {
+        return title;
+      }
+    }
+    // The needle also matches a prompt that quotes it, and a record can carry no
+    // usable name, so keep looking backwards for one that does.
+    at = at <= 0 ? -1 : content.lastIndexOf(needle, at - 1);
+  }
+  return null;
+}
+
+function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
+}
+
+async function readClaudeRenamedSessionTitle(input: {
+  cwd: string;
+  sessionId: string;
+  configDir: string;
+}): Promise<string | null> {
+  let content: string;
+  try {
+    content = await fsPromises.readFile(claudeTranscriptPathSync(input), "utf8");
+  } catch (error) {
+    // A session with no transcript on disk has no rename to carry over. Every
+    // other read failure is a real fault and stays explicit.
+    if (isErrnoException(error) && error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+  return readLastClaudeCustomTitle(content);
 }
 
 function normalizeImportablePromptPreview(text: string): string | null {

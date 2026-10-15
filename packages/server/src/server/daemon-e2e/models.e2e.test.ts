@@ -124,15 +124,12 @@ test("Antigravity creates an agent and answers a prompt with real agy", async ({
   try {
     await client.connect();
     await client.fetchAgents({ subscribe: {} });
-    await expect
-      .poll(
-        async () => {
-          const snapshot = await client.getProvidersSnapshot({ cwd });
-          return snapshot.entries.find((entry) => entry.provider === "antigravity")?.status;
-        },
-        { timeout: 30000 },
-      )
-      .toBe("ready");
+    // Snapshot reads start discovery again; await one refresh before checking readiness.
+    await client.refreshProvidersSnapshot({ cwd, providers: ["antigravity"] });
+    const snapshot = await client.getProvidersSnapshot({ cwd });
+    expect(snapshot.entries.find((entry) => entry.provider === "antigravity")?.status).toBe(
+      "ready",
+    );
     const agent = await client.createAgent({
       provider: "antigravity",
       cwd,
