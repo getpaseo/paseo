@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import { usePaneContext } from "@/panels/pane-context";
+import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 
 export interface PanelInstanceIdentity {
   serverId: string;
@@ -18,8 +19,20 @@ const listenersByPanel = new Map<string, Set<() => void>>();
 const allListeners = new Set<() => void>();
 let attributesRevision = 0;
 
+function buildWorkspacePanelKey(workspaceKey: string, tabId: string): string {
+  return `${workspaceKey}:${tabId}`;
+}
+
 export function buildPanelInstanceKey(identity: PanelInstanceIdentity): string {
-  return `${identity.serverId}:${identity.workspaceId}:${identity.tabId}`;
+  return buildWorkspacePanelKey(buildWorkspaceTabPersistenceKey(identity) ?? "", identity.tabId);
+}
+
+/** Looks a panel up by the workspace key the layout store uses. */
+export function getWorkspacePanelAttributes(
+  workspaceKey: string,
+  tabId: string,
+): PanelInstanceAttributes {
+  return attributesByPanel.get(buildWorkspacePanelKey(workspaceKey, tabId)) ?? DEFAULT_ATTRIBUTES;
 }
 
 export function getPanelInstanceAttributes(

@@ -1,5 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { rename, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import {
+  cp,
+  rename,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -7,6 +18,7 @@ import pino from "pino";
 import { afterEach, describe, expect, it } from "vitest";
 import { DaemonConfigStore } from "../daemon-config-store.js";
 import { PluginService } from "./index.js";
+import { BuiltinPluginLoader } from "./builtin/index.js";
 import { ManagedPluginSources } from "./managed-source.js";
 import {
   startNpmRegistry,
@@ -168,6 +180,78 @@ function createPluginSelectivePausedRuntime(pausedPluginId: string) {
 }
 
 describe("PluginService", () => {
+  it.each([
+    { shadow: false, runtime: "subprocess" },
+    { shadow: true, runtime: "subprocess" },
+    { shadow: false, runtime: "builtin" },
+    { shadow: true, runtime: "builtin" },
+  ])(
+    "publishes status and launch metadata through $runtime despite a configured provider (extends: $shadow)",
+    async ({ shadow, runtime }) => {
+      const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+      roots.push(home);
+      const directory = await createPlugin(
+        "provider-status",
+        `export default function contribute(server) {
+      server.registerProvider({ id: "plugin-agent", label: "Plugin agent", command: ["agent", "serve"],
+        async status({ launch }) { return launch.env.LOGIN === "yes" ? { available: true } : { available: false, diagnostic: "Sign in" }; },
+        async getCatalogCacheKey({ launch }) { return launch.command + ":" + launch.env.LOGIN; },
+        async connect({ launch }) {
+          if (launch.command !== process.execPath || launch.env.LOGIN !== "no") throw new Error("Unexpected launch");
+          return { version: 1, capabilities: [], async send() {}, onEvent() { return () => {}; }, async close() {} };
+        },
+      });
+      return () => {};
+    }`,
+      );
+      const store = createStore(home);
+      await store.patch({
+        providers: {
+          "plugin-agent": shadow
+            ? { extends: "acp", label: "Own provider", command: ["own-agent"] }
+            : { command: ["configured-agent"], enabled: false },
+        },
+      });
+      const builtinRoot = path.join(home, "builtins");
+      if (runtime === "builtin") {
+        await mkdir(builtinRoot);
+        await cp(directory, path.join(builtinRoot, "provider-status"), { recursive: true });
+      }
+      const builtinPlugins = new BuiltinPluginLoader(
+        builtinRoot,
+        runtime === "builtin" ? ["provider-status"] : [],
+      );
+      const service = bindTestSessionHost(
+        new PluginService(pino({ level: "silent" }), store, "0.4.0", { builtinPlugins }),
+      );
+      await service.start();
+      try {
+        if (runtime === "subprocess") await service.installDirectory({ path: directory });
+        const [registration] = service.getProviderRegistrations();
+        expect(registration).toMatchObject({
+          id: "plugin-agent",
+          command: ["agent", "serve"],
+          status: expect.any(Function),
+        });
+        const launch = { command: process.execPath, args: [], env: { LOGIN: "no" } };
+        expect(await registration!.getCatalogCacheKey!({ scope: "global", launch })).toBe(
+          process.execPath + ":no",
+        );
+        expect(await registration!.status!({ launch })).toEqual({
+          available: false,
+          diagnostic: "Sign in",
+        });
+        expect(
+          await registration!.status!({ launch: { ...launch, env: { LOGIN: "yes" } } }),
+        ).toEqual({ available: true });
+        const connection = await registration!.connect({ versions: [1], capabilities: [], launch });
+        await connection.close();
+      } finally {
+        await service.stopAllPlugins();
+      }
+    },
+  );
+
   it("resolves a provider icon path to sanitized inline SVG", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
     roots.push(home);
@@ -335,7 +419,7 @@ describe("PluginService", () => {
     await service.stopAllPlugins();
   }, 20_000);
 
-  it("lists manifest descriptions for running and disabled plugins without hiding malformed entries", async () => {
+  it("lists manifest metadata for running and disabled plugins without hiding malformed entries", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
     roots.push(home);
     const running = await createPlugin("running", "export default () => () => {};");
@@ -343,7 +427,13 @@ describe("PluginService", () => {
     const malformed = await createPlugin("malformed", "export default () => () => {};");
     await writeFile(
       path.join(running, "paseo-plugin.json"),
-      JSON.stringify({ id: "running", description: "Runs checks" }),
+      JSON.stringify({
+        id: "running",
+        description: "Runs checks",
+        name: "Checks",
+        icon: "icon.png",
+        media: ["screenshot.png", "https://example.com/demo.mp4"],
+      }),
     );
     await writeFile(
       path.join(disabled, "paseo-plugin.json"),
@@ -359,16 +449,123 @@ describe("PluginService", () => {
     await service.start();
 
     expect(
-      (await service.listPlugins()).map(({ id, description }) => ({ id, description })),
+      (await service.listPlugins()).map(({ id, description, name, icon, media }) => ({
+        id,
+        description,
+        name,
+        icon,
+        media,
+      })),
     ).toEqual([
       { id: "disabled", description: "Waits until enabled" },
       { id: "malformed", description: undefined },
-      { id: "running", description: "Runs checks" },
+      {
+        id: "running",
+        description: "Runs checks",
+        name: "Checks",
+        icon: "icon.png",
+        media: ["screenshot.png", "https://example.com/demo.mp4"],
+      },
     ]);
     await service.stopAllPlugins();
   });
 
-  it("prefers an existing directory and installs its selected plugin subdirectory", async () => {
+  it("resolves a bare registry id even when a matching directory exists in the daemon cwd", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    const owner = path.join(process.cwd(), `registry-shadow-${randomUUID()}`);
+    await mkdir(owner);
+    roots.push(home, owner);
+    const source = `${path.basename(owner)}/example`;
+    const repository = await createPlugin("registry-example", "export default () => () => {};\n");
+    await mkdir(path.join(owner, "example"));
+    await cp(repository, path.join(owner, "example"), { recursive: true });
+    await runGitCommand(["init", "-b", "main"], { cwd: repository });
+    await runGitCommand(["add", "-A"], { cwd: repository });
+    await runGitCommand(
+      [
+        "-c",
+        "user.name=Paseo Tests",
+        "-c",
+        "user.email=paseo@example.test",
+        "commit",
+        "-m",
+        "fixture",
+      ],
+      { cwd: repository },
+    );
+    const { stdout } = await runGitCommand(["rev-parse", "HEAD"], { cwd: repository });
+    const requests: Array<string | undefined> = [];
+    const server = createServer((request, response) => {
+      requests.push(request.url);
+      response.setHeader("Content-Type", "application/json");
+      response.end(
+        JSON.stringify({
+          id: source,
+          name: "Example",
+          description: "Test",
+          categories: [],
+          author: { github: path.basename(owner) },
+          repository: { url: "https://github.com/fixture/example" },
+          artifact: {
+            kind: "git",
+            remote: pathToFileURL(repository).href,
+            commit: stdout.trim(),
+            pluginPath: ".",
+          },
+          media: [],
+          submittedAt: "2026-10-03",
+          reviewedAt: "2026-10-03",
+          updatedAt: "2026-10-03",
+          publishedAt: "2026-10-03",
+          readme: "# Test",
+        }),
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing registry address");
+    const url = `http://127.0.0.1:${address.port}`;
+    const store = createStore(home);
+    store.patch({ pluginsEnabled: false });
+    const service = bindTestSessionHost(
+      new PluginService(pino({ level: "silent" }), store, "0.4.0", {
+        managedSources: new ManagedPluginSources(home, { defaultUrl: url }),
+      }),
+    );
+    try {
+      await service.start();
+      await expect(service.installSource({ source })).resolves.toMatchObject({
+        id: "registry-example",
+        status: "disabled",
+        installation: {
+          identity: { kind: "git", registry: { url, id: source } },
+          currentRevision: stdout.trim(),
+        },
+      });
+      expect(requests).toEqual([`/plugins/${source}.json`]);
+      await expect(
+        service.installSource({ source: `./${source}`, id: "local-example" }),
+      ).resolves.toMatchObject({
+        installation: { identity: { kind: "directory", path: path.join(owner, "example") } },
+      });
+      expect(requests).toEqual([`/plugins/${source}.json`]);
+    } finally {
+      await service.stopAllPlugins();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }, 30_000);
+
+  it("names a missing explicit directory instead of trying a managed source", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const directory = path.join(home, "missing");
+    const service = createService(home);
+    await expect(service.installSource({ source: directory })).rejects.toThrow(
+      `Plugin directory does not exist: ${directory}`,
+    );
+  });
+
+  it("installs an explicit directory and its selected plugin subdirectory", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
     roots.push(home);
     const repository = await mkdtemp(path.join(tmpdir(), "owner-repository-"));

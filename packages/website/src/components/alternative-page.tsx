@@ -32,7 +32,9 @@ function AlternativePageContent({ slug }: { slug: string }) {
 
   return (
     <SiteShell width="default">
-      <DocsMarkdown>{page.content}</DocsMarkdown>
+      <div className="comparison-prose">
+        <DocsMarkdown>{page.content}</DocsMarkdown>
+      </div>
     </SiteShell>
   );
 }

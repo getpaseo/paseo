@@ -16,6 +16,7 @@ import {
   type WorkspaceTabLaunchItem,
   type WorkspaceTabLaunchPurpose,
 } from "@/workspace-tabs/launcher";
+import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import type { PaneHost } from "@/panels/panel-manifest";
 import type { PanelIconProps } from "@/panels/panel-registry";
 
@@ -84,14 +85,22 @@ export function WorkspaceNewTabMenuContent({
   serverId,
   purpose,
   host,
+  panePanelKinds,
   paneId,
 }: {
   serverId: string;
   purpose: WorkspaceTabLaunchPurpose;
   host: PaneHost;
+  panePanelKinds: readonly WorkspaceTabTarget["kind"][];
   paneId?: string;
 }) {
-  const groups = useWorkspaceTabLaunchCatalog({ serverId, purpose, host });
+  const groups = useWorkspaceTabLaunchCatalog({
+    serverId,
+    purpose,
+    host,
+    surface: "menu",
+    panePanelKinds,
+  });
 
   return (
     <DropdownMenuContent

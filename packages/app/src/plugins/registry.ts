@@ -1,10 +1,12 @@
+import type { AudioEngine } from "@/audio";
 import { useMemo, useSyncExternalStore } from "react";
 import { QueryClient } from "@tanstack/react-query";
+import { createPaseoApi } from "@getpaseo/client";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
 import { resolveAppVersion } from "@/utils/app-version";
 import { createPluginClientRuntime } from "./client-runtime";
-import { runPluginClientBundle, type PluginClientRuntime } from "./evaluate";
+import { runPluginClientBundle } from "./evaluate";
 import type { InstalledPlugin } from "./types";
 
 type CatalogPlugin = Awaited<ReturnType<DaemonClient["getPluginCatalog"]>>[number];
@@ -40,6 +42,7 @@ export class PluginRegistry {
     options: {
       replacePluginId?: string;
       client: DaemonClient;
+      audio: Pick<AudioEngine, "play">;
     },
   ): boolean {
     const previous = this.byHost.get(serverId) ?? [];
@@ -64,8 +67,7 @@ export class PluginRegistry {
     }
     const installed = catalog.flatMap((entry) => {
       const key = `${serverId}/${entry.id}`;
-      let runtime: PluginClientRuntime | undefined;
-      let lifetime: AbortController | undefined;
+      let installation: InstalledPlugin | undefined;
       try {
         if (!entry.clientBundle) return [];
         assertPluginCompatibility({ ...entry, version: this.dependencies.version, runtime: "app" });
@@ -76,9 +78,11 @@ export class PluginRegistry {
           this.evaluationErrors.delete(key);
           return [existing];
         }
-        lifetime = new AbortController();
-        const installation: InstalledPlugin = {
-          lifetime,
+        const client = options.client;
+        installation = {
+          lifetime: new AbortController(),
+          paseo: createPaseoApi(client),
+          invoke: (method, input) => client.invokePluginRpc(entry.id, method, input),
           id: entry.id,
           serverId,
           clientBundle: entry.clientBundle,
@@ -87,7 +91,8 @@ export class PluginRegistry {
           cleanup: () => undefined,
           surfaces: [],
           settingsScreens: [],
-          sidebarItems: [],
+          sidebarItems: { header: [], footer: [] },
+          legacySidebarItems: [],
           workspacePanels: [],
           commandCenterItems: [],
           clientSlashCommands: [],
@@ -96,12 +101,12 @@ export class PluginRegistry {
           timelineTransformers: [],
           timelineRenderers: [],
         };
-        runtime = this.dependencies.createRuntime(installation, options.client);
+        const runtime = this.dependencies.createRuntime(installation, options.audio);
         const evaluated = runPluginClientBundle(entry.id, entry.clientBundle, runtime, () =>
           this.publish(),
         );
         Object.assign(installation, evaluated);
-        const paseo = runtime.paseo;
+        const paseo = installation.paseo;
         installation.cleanup = async () => {
           const results = await Promise.allSettled([paseo.dispose(), evaluated.cleanup()]);
           const failures = results.filter((result) => result.status === "rejected");
@@ -114,8 +119,8 @@ export class PluginRegistry {
         this.evaluationErrors.delete(key);
         return [installation];
       } catch (error) {
-        lifetime?.abort();
-        void runtime?.paseo
+        installation?.lifetime.abort();
+        void installation?.paseo
           .dispose()
           .catch((failure) => console.warn(`[Plugins] API cleanup failed for ${key}`, failure));
         this.evaluationErrors.set(key, error instanceof Error ? error.message : String(error));

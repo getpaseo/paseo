@@ -1,3 +1,7 @@
+import type { AgentClient } from "../agent/agent-sdk-types.js";
+import { validateProviderOptions } from "../agent/provider-options.js";
+import { CodexProviderOptionsSchema } from "../agent/providers/codex/options.js";
+import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import { afterEach, expect, test } from "vitest";
 import { HubRelationshipHarness } from "./test-utils/relationship-harness.js";
 
@@ -8,8 +12,12 @@ afterEach(async () => {
   relationship = null;
 });
 
-async function launchRelationship(): Promise<HubRelationshipHarness> {
-  const launched = await HubRelationshipHarness.start();
+async function launchRelationship(
+  clients?: Record<string, AgentClient>,
+): Promise<HubRelationshipHarness> {
+  const launched = clients
+    ? await HubRelationshipHarness.startWithRealAgentClients(clients)
+    : await HubRelationshipHarness.start();
   await launched.beginConnect().result;
   launched.connectLatestSocket();
   relationship = launched;
@@ -127,8 +135,22 @@ test("Hub can preapprove only tools on MCP servers injected in the same request"
   expect(hub.providerCreations()).toBe(0);
 });
 
-test("Hub returns path-specific structured provider option feedback", async () => {
-  const hub = await launchRelationship();
+test("Hub returns path-specific feedback thrown by the provider", async () => {
+  const clients = createTestAgentClients();
+  const inner = clients.codex;
+  const provider: AgentClient = {
+    provider: inner.provider,
+    capabilities: inner.capabilities,
+    isAvailable: (signal, options) => inner.isAvailable(signal, options),
+    fetchCatalog: (options, context) => inner.fetchCatalog(options, context),
+    async createSession(config, launch, options) {
+      validateProviderOptions("codex", CodexProviderOptionsSchema, config.providerOptions);
+      return inner.createSession(config, launch, options);
+    },
+    resumeSession: (handle, overrides, launch, options) =>
+      inner.resumeSession(handle, overrides, launch, options),
+  };
+  const hub = await launchRelationship({ ...clients, codex: provider });
   hub.beginOwnedCreate("invalid-options", "invalid-options-execution", {
     providerOptions: {
       sandbox_workspace_write: { writable_roots: ["/tmp", 42] },

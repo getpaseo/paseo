@@ -19,7 +19,12 @@ import {
   type OmpProviderIdleScheduler,
 } from "../agent.js";
 import type { OmpUsagePollScheduler } from "../usage-poller.js";
-import type { OmpAgentMessage, OmpRpcSlashCommand, OmpRuntimeEvent } from "../rpc-types.js";
+import type {
+  OmpAgentMessage,
+  OmpRpcSlashCommand,
+  OmpRuntimeEvent,
+  OmpSessionStats,
+} from "../rpc-types.js";
 import { FakeOmp } from "./fake-omp.js";
 
 const CWD = "/tmp/paseo-omp-agent-test";
@@ -169,6 +174,18 @@ export class OmpHarness {
     return events;
   }
 
+  async compact(statsAfter: OmpSessionStats, error?: Error): Promise<AgentStreamEvent[]> {
+    const handler = this.requireSession().tryHandleOutOfBand("/compact");
+    if (!handler) throw new Error("OMP session did not handle /compact out-of-band");
+    const runtime = this.omp.latestSession();
+    const sessionEventCount = this.events.length;
+    const emitted: AgentStreamEvent[] = [];
+    runtime.stats = statsAfter;
+    runtime.compactError = error ?? null;
+    await handler.run({ emit: (event) => emitted.push(event) });
+    return [...emitted, ...this.events.slice(sessionEventCount)];
+  }
+
   async runPrompt(
     input: string,
     output: string,
@@ -294,6 +311,14 @@ export class OmpHarness {
     return await run;
   }
 
+  async runPromptWithoutTurnOnNextRuntime(input: string, requestId: string): Promise<unknown> {
+    const session = this.requireSession();
+    this.omp.queueSessionSetup((runtime) => {
+      runtime.promptAck = { requestId, agentInvoked: false };
+    });
+    return await session.run(input);
+  }
+
   async runPromptWithoutTurn(input: string): Promise<unknown> {
     const session = this.requireSession();
     this.omp.latestSession().promptAck = { agentInvoked: false };
@@ -327,6 +352,31 @@ export class OmpHarness {
       agentInvoked: false,
     });
     return { completed: () => isCompleted, completion };
+  }
+
+  async runPromptRejectedBeforeAgentRuns(
+    input: string,
+    error: string,
+    order: "result after ack" | "result before ack",
+  ): Promise<unknown> {
+    const session = this.requireSession();
+    const runtime = this.omp.latestSession();
+    runtime.promptAck = { requestId: "prompt-rejected" };
+    const rejection = {
+      type: "prompt_result",
+      id: "prompt-rejected",
+      agentInvoked: false,
+      status: "error",
+      sessionSettled: true,
+      error: { message: error, retryable: false },
+    } as const;
+    const promptStarted = runtime.nextPrompt();
+    const run = session.run(input);
+    if (order === "result before ack") runtime.emit(rejection);
+    await promptStarted;
+    await waitForImmediate();
+    if (order === "result after ack") runtime.emit(rejection);
+    return await run;
   }
 
   async runPromptAfterCorrelatedTrueResult(
@@ -540,10 +590,6 @@ export class OmpHarness {
     return this.omp.latestSession();
   }
 
-  async getUsageReference() {
-    return this.requireSession().getUsageReference();
-  }
-
   runningToolCallIds(): string[] {
     const statusByCall = new Map<string, string>();
     for (const item of this.timeline()) {
@@ -568,6 +614,10 @@ export class OmpHarness {
 
   canceledTurnCount(): number {
     return this.events.filter((event) => event.type === "turn_canceled").length;
+  }
+
+  usageSession() {
+    return this.requireSession().usageSession();
   }
 
   async close(): Promise<void> {

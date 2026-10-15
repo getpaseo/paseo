@@ -39,6 +39,45 @@ function row(seq: number, item: AgentTimelineItem): AgentTimelineRow {
 }
 
 describe("curateAgentActivity", () => {
+  it("keeps reasoning before the assistant text that followed it", () => {
+    const timeline: AgentTimelineItem[] = [
+      { type: "reasoning", text: "Check the commands first." },
+      { type: "assistant_message", text: "I will list the commands." },
+      toolCallItem({
+        callId: "shell-order",
+        name: "Bash",
+        detail: {
+          type: "shell",
+          command: "ls packages/cli/src/commands/agent/",
+          output: "",
+          exitCode: 0,
+        },
+      }),
+    ];
+
+    expect(curateAgentActivity(timeline)).toBe(
+      "[Thought] Check the commands first.\nI will list the commands.\n[Shell] ls packages/cli/src/commands/agent/",
+    );
+  });
+
+  it("preserves alternating text kinds, labels, and fragment concatenation", () => {
+    const timeline: AgentTimelineItem[] = [
+      { type: "assistant_message", text: "First message." },
+      { type: "reasoning", text: "First " },
+      { type: "reasoning", text: "thought." },
+      { type: "assistant_message", text: "Second " },
+      { type: "assistant_message", text: "message." },
+      { type: "reasoning", text: "Second thought." },
+    ];
+
+    expect(curateAgentActivity(timeline, { labelAssistantMessages: true })).toBe(
+      "[Assistant] First message.\n[Thought] First thought.\n[Assistant] Second message.\n[Thought] Second thought.",
+    );
+    expect(curateAgentActivity(timeline, { maxItems: 2 })).toBe(
+      "Second message.\n[Thought] Second thought.",
+    );
+  });
+
   it("renders user/assistant/reasoning entries", () => {
     const timeline: AgentTimelineItem[] = [
       { type: "user_message", text: "Hello" },
@@ -437,4 +476,50 @@ second line'`,
       }),
     ).toThrow("Selected assistant message is no longer available.");
   });
+});
+
+it("bounds fork history to 100,000 characters while preserving the newest messages", () => {
+  const result = buildAgentForkContextAttachment({
+    rows: [
+      row(1, { type: "user_message", text: "old-message " + "x".repeat(1_100_000) }),
+      row(2, { type: "assistant_message", messageId: "checkpoint", text: "Latest answer." }),
+      row(3, { type: "user_message", text: "Beyond the selected checkpoint." }),
+    ],
+    boundaryMessageId: "checkpoint",
+  });
+  expect(result.attachment.text.length).toBeLessThanOrEqual(100_000);
+  expect(result.attachment.text).toContain("[Earlier chat history omitted]");
+  expect(result.attachment.text).toContain("[Assistant] Latest answer.");
+  expect(result.attachment.text).not.toContain("old-message");
+  expect(result.attachment.text).not.toContain("Beyond the selected checkpoint.");
+  expect(result.attachment.text).toMatch(/^<chat-history-summary>\n/);
+  expect(result.attachment.text).toMatch(/\n<\/chat-history-summary>$/);
+});
+
+it("bounds one oversized fork message and metadata without losing its beginning and end", () => {
+  const result = buildAgentForkContextAttachment({
+    rows: [
+      row(1, {
+        type: "assistant_message",
+        text: "Beginning. " + "x".repeat(1_100_000) + " The end.",
+      }),
+    ],
+    agentTitle: "T".repeat(200_000),
+    cwd: "/" + "p".repeat(200_000),
+  });
+  expect(result.attachment.text.length).toBe(100_000);
+  expect(result.attachment.text).toContain("[Assistant] Beginning.");
+  expect(result.attachment.text).toContain("[Message truncated]");
+  expect(result.attachment.text).toContain("The end.");
+  expect(result.attachment.text).toMatch(/\n<\/chat-history-summary>$/);
+});
+
+it("preserves every message in fork history below the character budget", () => {
+  const text = "Complete conversation " + "x".repeat(90_000);
+  const result = buildAgentForkContextAttachment({
+    rows: [row(1, { type: "user_message", text })],
+  });
+  expect(result.attachment.text).toBe(
+    `<chat-history-summary>\nChat history from a previous Paseo agent.\n\n[User] ${text}\n</chat-history-summary>`,
+  );
 });

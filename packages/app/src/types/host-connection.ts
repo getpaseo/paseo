@@ -1,6 +1,8 @@
+import type { ConnectionOffer } from "@getpaseo/protocol/connection-offer";
 import {
   normalizeHostPort,
   normalizeLoopbackToLocalhost,
+  shouldUseTlsForDefaultHostedRelay,
 } from "@getpaseo/protocol/daemon-endpoints";
 import {
   DirectTcpHostConnectionSchema,
@@ -352,6 +354,19 @@ export function connectionFromListen(listen: string): HostConnection | null {
   } catch {
     return null;
   }
+}
+
+export function relayConnectionFromOffer(offer: ConnectionOffer): RelayHostConnection {
+  // COMPAT(oldRelayOfferTls): added in v0.1.73, remove after 2026-11-10.
+  const useTls = offer.relay.useTls ?? shouldUseTlsForDefaultHostedRelay(offer.relay.endpoint);
+  const relayEndpoint = normalizeHostPort(offer.relay.endpoint);
+  return {
+    id: useTls ? `relay:wss:${relayEndpoint}` : `relay:${relayEndpoint}`,
+    type: "relay",
+    relayEndpoint,
+    useTls,
+    daemonPublicKeyB64: offer.daemonPublicKeyB64.trim(),
+  };
 }
 
 export function createRemoteSshHostConnection(input: {

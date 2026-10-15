@@ -405,7 +405,10 @@ export class OpenCodeV2Session implements AgentSession {
   }
   async respondToPermission(requestId: string, response: AgentPermissionResponse) {
     await this.reconnectIfExited();
+    const deniesOwnRequest =
+      response.behavior === "deny" && this.permissions.isOwnedBy(requestId, this.id);
     await this.permissions.respondToPermission(requestId, response);
+    if (deniesOwnRequest) this.turns.requestDenied();
   }
   private async reconcileSnapshot() {
     const [info, history] = await Promise.all([

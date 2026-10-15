@@ -7,6 +7,7 @@ const FAILED_STATUS_VOCAB = new Set([
   "errored",
   "rejected",
   "denied",
+  "declined",
 ]);
 const CANCELED_STATUS_VOCAB = new Set(["canceled", "cancelled", "interrupted", "aborted"]);
 const COMPLETED_STATUS_VOCAB = new Set(["completed", "complete", "done", "success", "succeeded"]);

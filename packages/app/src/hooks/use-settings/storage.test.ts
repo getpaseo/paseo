@@ -15,6 +15,7 @@ import {
   parseClampedFontSize,
   parseTerminalScrollbackLines,
   resolveContentMaxWidth,
+  sanitizeFontFamily,
   saveAppSettings,
   type SettingsDeps,
 } from "./storage";
@@ -236,6 +237,98 @@ describe("loadAppSettingsFromStorage", () => {
     const result = await loadAppSettingsFromStorage(deps);
 
     expect(result.sidebarNavItems).toEqual([]);
+  });
+
+  it("loads stored sidebar footer items in order and defaults them to empty", async () => {
+    expect((await loadAppSettingsFromStorage(makeDeps())).sidebarFooterItems).toEqual([]);
+
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          sidebarFooterItems: [
+            // A footer button that was configurable once; the sidebar model skips it.
+            { key: "help", visible: false },
+            { key: "plugin:sync:status", visible: true },
+            { key: "usage", visible: false },
+          ],
+        }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sidebarFooterItems).toEqual([
+      { key: "help", visible: false },
+      { key: "plugin:sync:status", visible: true },
+      { key: "usage", visible: false },
+    ]);
+  });
+
+  it("loads legacy usage pins in order and defaults a fresh device to source defaults", async () => {
+    expect((await loadAppSettingsFromStorage(makeDeps())).usage).toEqual({
+      displayAs: "used",
+      pins: null,
+      serverId: null,
+    });
+
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          usage: {
+            displayAs: "remaining",
+            pinned: [
+              { sourceId: "codex", windowId: "weekly" },
+              { sourceId: "claude", windowId: "five-hour" },
+            ],
+            serverId: "server",
+          },
+        }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).usage).toEqual({
+      displayAs: "remaining",
+      pins: [
+        { sourceId: "codex", windowId: "weekly" },
+        { sourceId: "claude", windowId: "five-hour" },
+      ],
+      serverId: "server",
+    });
+  });
+
+  it("loads an explicitly empty usage selection without restoring defaults", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          usage: { displayAs: "remaining", pins: [], serverId: "server" },
+        }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(deps)).usage).toEqual({
+      displayAs: "remaining",
+      pins: [],
+      serverId: "server",
+    });
+  });
+
+  it("keeps valid usage preferences when one field is malformed", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          usage: {
+            displayAs: "percent",
+            pinned: [{ sourceId: "claude", windowId: "weekly" }],
+            serverId: 42,
+          },
+        }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).usage).toEqual({
+      displayAs: "used",
+      pins: [{ sourceId: "claude", windowId: "weekly" }],
+      serverId: null,
+    });
   });
 
   it("collapses legacy diff destinations into the former Explorer choice", async () => {
@@ -1001,4 +1094,35 @@ describe("content max width", () => {
     expect((await load(10)).contentMaxWidth).toBe(600);
     expect((await load("wide")).contentMaxWidth).toBeNull();
   });
+});
+
+describe("font family CSS safety", () => {
+  it.each(["'foo", '"foo', "Menlo, 'foo", "foo\\", "foo/*", "foo(", "foo["])(
+    "rejects unfinished CSS syntax: %s",
+    (value) => expect(sanitizeFontFamily(value)).toBeNull(),
+  );
+
+  it.each([
+    "Menlo",
+    "'Fira Code', monospace",
+    '"Fira Code", monospace',
+    "'Font\\'s name'",
+    "Font\\ Name",
+    "'Font (Mono)'",
+    "'Font [Mono]'",
+  ])("preserves complete font families: %s", (value) =>
+    expect(sanitizeFontFamily(value)).toBe(value),
+  );
+
+  it.each(["uiFontFamily", "monoFontFamily"])(
+    "recovers a persisted unmatched quote in %s",
+    async (field) => {
+      const deps = makeDeps({
+        storage: createInMemoryKeyValueStorage({
+          [APP_SETTINGS_KEY]: JSON.stringify({ [field]: "'foo" }),
+        }),
+      });
+      expect(await loadAppSettingsFromStorage(deps)).toMatchObject({ [field]: "" });
+    },
+  );
 });

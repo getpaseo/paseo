@@ -18,7 +18,7 @@ import { useTimeAgo } from "@/hooks/use-time-ago";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
 import { Archive, ChevronRight } from "lucide-react-native";
-import { getProviderIcon } from "@/components/provider-icons";
+import { useProviderIcon } from "@/components/provider-icons";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { HighlightedText } from "@/components/ui/highlighted-text";
@@ -186,7 +186,7 @@ function SessionRow({
   const projectName = agent.projectPlacement?.projectName ?? "";
   const branch = agent.projectPlacement?.checkout.currentBranch ?? "";
   const workspaceName = agent.projectPlacement?.workspaceName ?? "";
-  const ProviderIcon = getProviderIcon(agent.provider, agent.serverId);
+  const ProviderIcon = useProviderIcon(agent.provider, agent.serverId);
   const pendingPermissionCount = agent.pendingPermissionCount ?? 0;
   const ranges = useMemo(
     () => ({

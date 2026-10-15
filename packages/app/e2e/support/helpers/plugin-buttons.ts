@@ -34,7 +34,7 @@ function Details({ workspaceId, theme, layout, close }) {
   React.useEffect(() => {
     const owner = paseo.observeEvents(["project.update"]);
     owner.subscribe({ snapshot(value) { setOwnerId(value.subscriptionId); }, update() { setUpdates((n) => n + 1); } });
-    // Deliberately leave this observation to the mounted host scope.
+    return () => { void owner.release(); };
   }, [paseo]);
   const rpc = useRpc(summary);
   const query = useQuery({ queryKey: ["summary"], queryFn: () => rpc({}) });
@@ -200,31 +200,6 @@ async function expectHeaderTextTruncated(page: Page) {
   expect(subtitleBox!.x + subtitleBox!.width).toBeLessThanOrEqual(actionsBox!.x);
   const hostIcon = page.getByLabel("localhost", { exact: true }).locator("svg");
   await expect.poll(async () => (await hostIcon.boundingBox())?.width).toBe(12);
-}
-
-async function holdButton(page: Page, button: Locator) {
-  await button.hover();
-  await page.mouse.down();
-}
-
-async function openCompactOverflowWithHeaderChrome(page: Page) {
-  const hamburger = page.getByRole("button", { name: "Open menu", exact: true });
-  const action = page.getByRole("button", { name: "Deploy application", exact: true });
-  const overflow = page
-    .getByRole("toolbar", { name: "Workspace actions", exact: true })
-    .getByRole("button", { name: "More actions", exact: true });
-  await expect(action).toHaveCSS("border-top-width", "0px");
-  await expect(overflow).toHaveCSS("border-top-width", "0px");
-  await hamburger.hover();
-  const highlight = await hamburger.evaluate(
-    (element) => getComputedStyle(element).backgroundColor,
-  );
-  await action.hover();
-  await expect(action).toHaveCSS("background-color", highlight);
-  await holdButton(page, overflow);
-  await expect(overflow).toHaveCSS("background-color", highlight);
-  await expectSurfaceVisible(page);
-  await page.mouse.up();
 }
 
 export async function withButtonShowcase(
@@ -408,7 +383,7 @@ export async function withButtonShowcase(
           );
         }),
       openCompactSheets: () =>
-        test.step("compact triggers and overflow open sheets with working plugin context", async () => {
+        test.step("compact header omits plugin actions while composer triggers open sheets", async () => {
           await page.setViewportSize(COMPACT);
           await expect(page.getByTestId("plugin-button-chevron")).toHaveCount(0);
           await expect(
@@ -426,39 +401,12 @@ export async function withButtonShowcase(
             "Button showcase with a long workspace title",
           );
           await expectHeaderTextTruncated(page);
-          await expectSurfaceVisible(page);
-          await openCompactOverflowWithHeaderChrome(page);
           await expect(
-            page.getByRole("menuitem", { name: "Production locked", exact: true }),
-          ).toBeDisabled();
-          await expectSurfaceVisible(
-            page,
-            page.getByRole("menuitem", { name: "Production locked", exact: true }),
-          );
-          await choose(page, "Header checks");
-          await expectSurfaceVisible(
-            page,
-            page.getByRole("menuitem", { name: "Run checks", exact: true }),
-          );
-          await choose(page, "Deployment details");
-          await expectDetails(page);
-          await expectSurfaceVisible(
-            page,
-            page.getByRole("button", { name: "Close deployment details", exact: true }),
-          );
-          await press(page, "Close deployment details");
-          await showcase.setTitle("Compact checks");
-          await press(page, "Header checks");
-          await expect(
-            page
-              .getByRole("button", { name: "Header checks", exact: true })
-              .getByTestId("plugin-button-chevron"),
+            page.getByRole("toolbar", { name: "Workspace actions", exact: true }),
           ).toHaveCount(0);
-          await expectSurfaceVisible(
-            page,
-            page.getByRole("menuitem", { name: "Run checks", exact: true }),
-          );
-          await choose(page, "Run checks");
+          await expect(
+            page.getByRole("button", { name: "Open menu", exact: true }),
+          ).toBeInViewport();
           await showcase.setTitle("Button showcase");
           await press(page, "Composer status");
           await expectDetails(page);

@@ -19,7 +19,7 @@ export interface ExternalLinkProps {
 /**
  * Inline "Docs ↗" affordance — muted text + arrow-top-right icon, opens the
  * URL via the platform's external opener. Wrap in a Tooltip when there's a
- * one-line hint worth surfacing on hover/tap.
+ * one-line hint worth surfacing on hover. A native tap opens the URL.
  */
 export function ExternalLink({
   href,
@@ -53,7 +53,7 @@ export function ExternalLink({
   }
 
   return (
-    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile>
+    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
       <TooltipTrigger asChild>{trigger}</TooltipTrigger>
       <TooltipContent side="top" align="end" offset={6}>
         <Text style={styles.tooltipText}>{tooltip}</Text>

@@ -13,7 +13,7 @@ import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-moda
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
-import { getProviderIcon } from "@/components/provider-icons";
+import { useProviderIcon, useProviderIcons } from "@/components/provider-icons";
 import { useTimeAgo } from "@/hooks/use-time-ago";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
@@ -309,7 +309,7 @@ function ImportSessionSheetRow({
   const { t } = useTranslation();
   const title = getSessionTitle(entry);
   const promptPreview = getPromptPreview(entry);
-  const ProviderIcon = getProviderIcon(entry.providerId, serverId);
+  const ProviderIcon = useProviderIcon(entry.providerId, serverId);
   const accessibilityState = useMemo(
     () => (disabled ? DISABLED_ACCESSIBILITY_STATE : undefined),
     [disabled],
@@ -559,15 +559,17 @@ export function ImportSessionSheet({
     setIsFilterOpen(false);
   }, []);
 
+  const getProviderIcon = useProviderIcons(serverId);
+  const SelectedProviderIcon = useProviderIcon(selectedProvider, serverId);
   const filterOptionIcons = useMemo(() => {
     const map = new Map<string, React.ReactNode>();
     map.set(ALL_FILTER_VALUE, <Layers size={14} color={theme.colors.foregroundMuted} />);
     for (const provider of filterProviders) {
-      const ProviderIcon = getProviderIcon(provider, serverId);
+      const ProviderIcon = getProviderIcon(provider);
       map.set(provider, <ProviderIcon size={14} color={theme.colors.foregroundMuted} />);
     }
     return map;
-  }, [filterProviders, serverId, theme.colors.foregroundMuted]);
+  }, [filterProviders, getProviderIcon, theme.colors.foregroundMuted]);
 
   const renderFilterOption = useCallback(
     ({
@@ -746,10 +748,7 @@ export function ImportSessionSheet({
             {selectedProvider === ALL_FILTER_VALUE ? (
               <Layers size={14} color={theme.colors.foregroundMuted} />
             ) : (
-              (() => {
-                const ProviderIcon = getProviderIcon(selectedProvider, serverId);
-                return <ProviderIcon size={14} color={theme.colors.foregroundMuted} />;
-              })()
+              <SelectedProviderIcon size={14} color={theme.colors.foregroundMuted} />
             )}
             <Text style={styles.filterTriggerText} numberOfLines={1}>
               {selectedProviderLabel}

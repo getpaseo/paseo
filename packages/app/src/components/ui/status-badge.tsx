@@ -8,17 +8,20 @@ interface StatusBadgeProps {
   label: string;
   variant?: StatusBadgeVariant;
   leading?: ReactNode;
+  /** `xs` fits beside a line of `sm` text: the same label on tighter padding. */
+  size?: "sm" | "xs";
 }
 
-export function StatusBadge({ label, variant = "muted", leading }: StatusBadgeProps) {
+export function StatusBadge({ label, variant = "muted", leading, size = "sm" }: StatusBadgeProps) {
   const pillStyle = useMemo(
     () => [
       styles.pill,
+      size === "xs" && styles.pillXs,
       variant === "success" && styles.pillSuccess,
       variant === "warning" && styles.pillWarning,
       variant === "error" && styles.pillError,
     ],
-    [variant],
+    [size, variant],
   );
   const textStyle = useMemo(
     () => [
@@ -49,6 +52,10 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface3,
     paddingHorizontal: theme.spacing[2],
     paddingVertical: 3,
+  },
+  pillXs: {
+    paddingHorizontal: theme.spacing[1.5],
+    paddingVertical: 1,
   },
   pillSuccess: {
     backgroundColor: theme.colors.statusSuccessTint,

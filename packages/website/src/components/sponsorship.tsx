@@ -1,14 +1,15 @@
-import { ArrowRight, Check, ExternalLink } from "lucide-react";
+import { ArrowRight, Check, ExternalLink, Heart } from "lucide-react";
 import { BuyMeACoffeeIcon, GitHubIcon, OpenCollectiveIcon } from "~/components/brand-icons";
 import {
   BUY_ME_A_COFFEE_URL,
   GITHUB_SPONSORS_URL,
-  HOMEPAGE_SPONSORS,
-  HOMEPAGE_SPOT_PRICE,
   OPEN_COLLECTIVE_URL,
+  SPONSORS,
   SPONSOR_CONTACT_EMAIL,
   SPONSOR_SPOT_CHECKOUT_URL,
+  SPONSOR_SPOT_PRICE,
   openSpotCount,
+  sponsorHref,
 } from "~/data/sponsors";
 
 function SectionHeading({
@@ -53,9 +54,15 @@ const MAINTAINER_LINK = (
 export function FounderNote() {
   return (
     <div className="max-w-2xl space-y-5 leading-relaxed text-white/70">
+      <p>Paseo is an independent project used by tens of thousands of developers daily.</p>
       <p>
-        I build Paseo on my own. There are no investors, no board and no company behind it, and I
-        have turned down funding offers to keep it that way.
+        It is maintained by one person, full time, and shaped by the community. There are no
+        investors, no board and no company behind it. I have turned down funding offers to keep it
+        that way.
+      </p>
+      <p>
+        The community helps Paseo grow through feedback, testing, bug reports, code contributions
+        and plugins. Your sponsorship helps me keep improving and maintaining it.
       </p>
       <p>
         A tool that sits between you and your code, your keys and your machines has to stay neutral,
@@ -67,7 +74,7 @@ export function FounderNote() {
         <a href="/hub" className="underline hover:text-white/90">
           Paseo Hub
         </a>
-        , an optional hosted service. Your support is what lets me work on Paseo full time.
+        , an optional hosted service. Your support is what lets me keep working on it.
       </p>
       <p className="text-white/50">{MAINTAINER_LINK}, maintainer</p>
     </div>
@@ -79,7 +86,6 @@ interface BackingOption {
   name: string;
   icon: React.ComponentType<{ className?: string }>;
   external: boolean;
-  primary?: boolean;
 }
 
 const BACKING_OPTIONS: ReadonlyArray<BackingOption> = [
@@ -88,7 +94,6 @@ const BACKING_OPTIONS: ReadonlyArray<BackingOption> = [
     name: "GitHub Sponsors",
     icon: GitHubIcon,
     external: true,
-    primary: true,
   },
   {
     href: OPEN_COLLECTIVE_URL,
@@ -127,11 +132,7 @@ export function BackingOptions() {
           key={option.href}
           href={option.href}
           {...(option.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-          className={`flex items-center gap-4 rounded-xl border p-4 transition-colors ${
-            option.primary
-              ? "border-white/25 bg-white/[0.06] hover:border-white/40 hover:bg-white/[0.08]"
-              : "border-white/10 bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.05]"
-          }`}
+          className="flex items-center gap-4 rounded-xl border border-white/10 bg-white/[0.02] p-4 transition-colors hover:border-white/20 hover:bg-white/[0.05]"
         >
           <option.icon className="h-6 w-6 shrink-0 text-white/60" />
           <p className="flex items-center gap-1.5 font-medium text-white">
@@ -148,30 +149,11 @@ export function BackingOptions() {
   );
 }
 
-function SponsorLogoRow() {
-  return (
-    <ul className="grid grid-cols-2 gap-4">
-      {HOMEPAGE_SPONSORS.map((sponsor) => (
-        <li key={sponsor.href}>
-          <a
-            href={sponsor.href}
-            target="_blank"
-            rel="noopener noreferrer sponsored"
-            className="flex h-32 items-center justify-center rounded-xl border border-white/10 bg-white/[0.02] px-6 transition-colors hover:border-white/20 hover:bg-white/[0.05]"
-          >
-            <img src={sponsor.logo} alt={sponsor.name} className="max-h-10 max-w-full opacity-80" />
-          </a>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 const SPOT_FEATURES: ReadonlyArray<string> = [
-  "Your logo on the homepage of paseo.sh, around 70,000 visitors a month",
+  "Your logo on the paseo.sh homepage and docs, around 70,000 visitors a month",
   "Your logo in the GitHub README, around 30,000 visitors a month",
   "An announcement in the Discord, around 2,000 members",
-  "A mention in the changelog",
+  "An announcement from me on X",
 ];
 
 export function SponsorSpotSection() {
@@ -181,11 +163,11 @@ export function SponsorSpotSection() {
       <SectionHeading
         as="h2"
         title="Sponsor as a company"
-        description="If your team relies on Paseo, a monthly sponsorship funds its development directly. As a thank you, your logo goes on the homepage and in the README."
+        description="Support Paseo financially and get visibility for your company"
       />
       <div className="space-y-8">
         <div className="flex items-end gap-2">
-          <span className="text-4xl font-medium tracking-tight">{HOMEPAGE_SPOT_PRICE}</span>
+          <span className="text-4xl font-medium tracking-tight">{SPONSOR_SPOT_PRICE}</span>
           <span className="mb-1 text-sm text-white/45">a month</span>
         </div>
         <ul className="grid max-w-2xl gap-3 text-white/70">
@@ -237,18 +219,19 @@ export function SponsorSection() {
       <SectionHeading as="h2" title="Sponsor Paseo" />
       <div className="space-y-10">
         <div className="max-w-2xl space-y-5 leading-relaxed text-white/70">
+          <p>Paseo is an independent project used by tens of thousands of developers daily.</p>
           <p>
-            I build Paseo on my own, with no investors and no company behind it, and I have turned
-            down funding offers to keep it that way. A tool that sits between you and your code,
-            your keys and your machines has to stay neutral, and funding creates pressure to
-            monetize.
+            It is maintained by one person, full time, and shaped by the community. There are no
+            investors and no company behind it. I have turned down funding to keep it that way. A
+            tool that sits between you and your code, your keys and your machines has to stay
+            neutral, and funding creates pressure to monetize.
           </p>
           <p>
             Paseo is self-funded through sponsorship and{" "}
             <a href="/hub" className="underline hover:text-white/90">
               Paseo Hub
             </a>
-            , and your support is what lets me work on it full time.
+            . Your support is what lets me keep working on it.
           </p>
           <p className="text-white/50">{MAINTAINER_LINK}, maintainer</p>
         </div>
@@ -258,23 +241,78 @@ export function SponsorSection() {
   );
 }
 
-/** Homepage: the companies sponsoring Paseo. Renders nothing until there is one. */
-export function SponsorsSection() {
-  if (HOMEPAGE_SPONSORS.length === 0) return null;
+const SPONSORS_PLACEMENTS = {
+  page: {
+    section: "space-y-10",
+    heading: "gap-2.5 text-3xl font-medium tracking-tight",
+    heart: "size-6",
+    link: "",
+    logo: "h-14",
+    description: "mt-2 text-sm text-white/55",
+    button: "h-12 px-5 text-sm",
+  },
+  footer: {
+    section: "space-y-5 border-t border-white/10 py-8",
+    heading: "gap-1.5 text-sm text-extra-muted-foreground",
+    heart: "size-3",
+    link: "opacity-85 transition-opacity hover:opacity-100",
+    logo: "h-10",
+    description: "mt-1.5 text-xs text-white/45",
+    button: "h-9 px-3.5 text-sm",
+  },
+} as const;
+
+interface SponsorsSectionProps {
+  /** `page` is a homepage section; `footer` is the band above other pages' footers. */
+  placement: keyof typeof SPONSORS_PLACEMENTS;
+}
+
+/**
+ * The companies sponsoring Paseo: one monochrome logo per sponsor and, while
+ * spots are open, a quiet invitation. Every page shows it once.
+ */
+export function SponsorsSection({ placement }: SponsorsSectionProps) {
+  const style = SPONSORS_PLACEMENTS[placement];
+  const open = openSpotCount();
   return (
-    <section>
-      <SectionHeading as="h2" title="Sponsors" />
-      <div className="space-y-4">
-        <SponsorLogoRow />
-        {openSpotCount() > 0 ? (
-          <a
-            href="/sponsor#spot"
-            className="inline-block text-sm text-white/50 underline transition-colors hover:text-white/80"
-          >
-            Become a sponsor
-          </a>
+    <section aria-labelledby="sponsors-heading" className={style.section}>
+      <h2 id="sponsors-heading" className={`flex items-center ${style.heading}`}>
+        <Heart
+          aria-hidden="true"
+          className={`fill-rose-300/80 text-rose-300/80 ${style.heart}`}
+          strokeWidth={1.5}
+        />
+        Sponsors
+      </h2>
+      <ul className="flex flex-wrap items-center gap-x-14 gap-y-8">
+        {SPONSORS.map((sponsor) => (
+          <li key={sponsor.url}>
+            <a
+              href={sponsorHref(sponsor, "website")}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`block ${style.link}`}
+            >
+              <img
+                src={sponsor.logo.onDark}
+                alt={sponsor.name}
+                className={`${style.logo} w-auto`}
+              />
+            </a>
+            <p className={style.description}>{sponsor.description}</p>
+          </li>
+        ))}
+        {open > 0 ? (
+          <li>
+            <a
+              href="/sponsor#spot"
+              className={`inline-flex items-center rounded-md border border-dashed border-white/15 text-white/45 transition-colors hover:border-white/30 hover:text-white/75 ${style.button}`}
+            >
+              Become a sponsor
+            </a>
+          </li>
         ) : null}
-      </div>
+      </ul>
     </section>
   );
 }

@@ -87,10 +87,11 @@ export async function emitSettledAssistantImage(
   client: SeedDaemonClient,
   agent: ArchiveTabAgent,
   image: AssistantImageFixture,
+  destination: string = image.relativePath,
 ): Promise<void> {
   await client.sendAgentMessage(
     agent.id,
-    `Emit settled assistant image Markdown: ![${image.alt}](${image.relativePath})`,
+    `Emit settled assistant image Markdown: ![${image.alt}](${destination})`,
   );
   const result = await client.waitForFinish(agent.id, 30_000);
   if (result.status !== "idle" || result.final?.lastError) {

@@ -1,4 +1,5 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawnProcess, terminateProcess } from "../process.js";
 import { Readable, Writable } from "node:stream";
 import {
   ClientSideConnection,
@@ -40,6 +41,7 @@ import {
   type ProviderConnection,
   type ProviderEvent,
   type ProviderInput,
+  type ProviderLaunch,
   type ProviderPermissionResponse,
   type ProviderPersistence,
   type ProviderSessionConfig,
@@ -69,6 +71,7 @@ export async function createAcpProviderConnection(
   }
   const probe = await AcpRuntime.start({
     options,
+    launch: request.launch,
     boundarySessionId: "capability-probe",
     env: {},
     emit: () => undefined,
@@ -97,6 +100,7 @@ export async function createAcpProviderConnection(
   };
   const state: AcpConnectionState = {
     options,
+    launch: request.launch,
     capabilities,
     sessions,
     emit,
@@ -141,6 +145,7 @@ export async function createAcpProviderConnection(
 }
 
 interface AcpConnectionState {
+  launch?: ProviderLaunch;
   options: RunAcpProviderOptions;
   capabilities: readonly ProviderCapability[];
   sessions: Map<string, AcpBoundarySession>;
@@ -245,6 +250,7 @@ async function discover(
 ): Promise<void> {
   const runtime = await AcpRuntime.start({
     options: state.options,
+    launch: state.launch,
     boundarySessionId: "catalog",
     env: {},
     emit: state.emit,
@@ -269,6 +275,7 @@ async function listSessions(
 ): Promise<void> {
   const runtime = await AcpRuntime.start({
     options: state.options,
+    launch: state.launch,
     boundarySessionId: "sessions",
     env: {},
     emit: state.emit,
@@ -299,6 +306,7 @@ async function openSession(
     throw new Error(`Session already exists: ${input.sessionId}`);
   const runtime = await AcpRuntime.start({
     options: state.options,
+    launch: state.launch,
     boundarySessionId: input.sessionId,
     env: input.config.env,
     emit: state.emit,
@@ -336,6 +344,7 @@ function requireSession(state: AcpConnectionState, sessionId: string): AcpBounda
 }
 
 interface StartRuntimeOptions {
+  launch?: ProviderLaunch;
   options: RunAcpProviderOptions;
   boundarySessionId: string;
   env: Readonly<Record<string, string>>;
@@ -350,6 +359,8 @@ class AcpRuntime {
   private emit: (event: ProviderEvent) => void;
   private readonly messages = new Map<string, string>();
   private readonly toolCalls = new Map<string, AcpToolCallSnapshot>();
+  // Running tool rows published by transformers; the turn's terminal closes any left open.
+  private readonly vendorToolCalls = new Map<string, ToolCallTimelineItem>();
   private readonly pendingCompactions = new Set<string>();
   private readonly permissions = new Map<
     string,
@@ -385,10 +396,16 @@ class AcpRuntime {
     let stream: Stream;
     let closeConnector = async () => {};
     if (options.options.command) {
-      const [executable, ...args] = options.options.command;
-      child = spawn(executable, args, {
-        env: { ...process.env, ...options.env },
-        stdio: ["pipe", "pipe", "pipe"],
+      // COMPAT(pluginProviderLaunch): added in v0.10.0, remove after 2027-03-29 once plugin host floor >= v0.10.0.
+      // Standalone callers and older hosts do not send a daemon-resolved launch.
+      const launch = options.launch ?? {
+        command: options.options.command[0],
+        args: options.options.command.slice(1),
+        env: process.env,
+      };
+      child = spawnProcess(launch.command, launch.args, {
+        env: { ...launch.env, ...options.env },
+        stdio: "pipe",
       });
       spawnFailure = new Promise<never>((_resolve, reject) => child!.once("error", reject));
       child.stderr.on("data", () => undefined);
@@ -530,8 +547,13 @@ class AcpRuntime {
     return sessionCapabilities;
   }
 
-  async discover(cwd = process.cwd()): Promise<ProviderCatalog> {
-    const response = await this.call(this.connection.newSession({ cwd, mcpServers: [] }));
+  async discover(cwd?: string): Promise<ProviderCatalog> {
+    if (cwd === undefined && this.options.options.acpOptions?.workspaceOnlyCatalog) {
+      return { models: [], modes: [] };
+    }
+    const response = await this.call(
+      this.connection.newSession({ cwd: cwd ?? process.cwd(), mcpServers: [] }),
+    );
     this.nativeSessionId = response.sessionId;
     this.modes = response.modes;
     this.configOptions = response.configOptions ?? [];
@@ -580,10 +602,13 @@ class AcpRuntime {
       turnId,
       state: "started",
     });
+    // The SDK dispatches notifications without awaiting them, so the prompt response can resolve
+    // while earlier session updates are still queued. Apply them before the turn ends.
     const settled = this.call(
       this.connection.prompt({ sessionId: this.nativeSessionId, prompt }),
     ).then(
-      (response): void => {
+      async (response): Promise<void> => {
+        await this.drainNotifications();
         const state = response.stopReason === "cancelled" ? "canceled" : "completed";
         this.fallbackChunkIds.clear();
         this.terminalizeTransientItems(state);
@@ -595,7 +620,8 @@ class AcpRuntime {
         });
         return undefined;
       },
-      (error): void => {
+      async (error): Promise<void> => {
+        await this.drainNotifications();
         this.fallbackChunkIds.clear();
         this.terminalizeTransientItems("failed");
         this.emit({
@@ -720,9 +746,9 @@ class AcpRuntime {
     if (!child || this.processFailed) return;
     if (child.exitCode !== null || child.signalCode !== null) return;
     const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
-    child.kill("SIGTERM");
+    await terminateProcess(child, "SIGTERM");
     if (await settlesWithin(closed, 1_000)) return;
-    child.kill("SIGKILL");
+    await terminateProcess(child);
     if (!(await settlesWithin(closed, 1_000))) {
       throw new Error(`ACP provider ${this.options.options.id} did not terminate after SIGKILL`);
     }
@@ -1012,9 +1038,17 @@ class AcpRuntime {
       this.emit({
         type: "timeline.item",
         sessionId: this.options.boundarySessionId,
-        item: toolTimelineItem(completed),
+        item: terminalToolItem(toolTimelineItem(snapshot), state),
       });
     }
+    for (const item of this.vendorToolCalls.values()) {
+      this.emit({
+        type: "timeline.item",
+        sessionId: this.options.boundarySessionId,
+        item: terminalToolItem(item, state),
+      });
+    }
+    this.vendorToolCalls.clear();
     for (const id of this.pendingCompactions) {
       this.emit({
         type: "timeline.item",
@@ -1061,6 +1095,10 @@ class AcpRuntime {
       if (this.configTransaction) this.stagedTransformerConfig = update.config;
       else this.emitConfigSnapshot(update.config);
     } else if (update.type === "timeline") {
+      if (update.item.type === "tool_call") {
+        if (update.item.status === "running") this.vendorToolCalls.set(update.item.id, update.item);
+        else this.vendorToolCalls.delete(update.item.id);
+      }
       this.emit({
         type: "timeline.item",
         sessionId: this.options.boundarySessionId,
@@ -1368,7 +1406,9 @@ function configValues(
   return Object.fromEntries(options.map((option) => [option.id, option.currentValue]));
 }
 
-function toolTimelineItem(snapshot: AcpToolCallSnapshot): ProviderTimelineItem {
+type ToolCallTimelineItem = Extract<ProviderTimelineItem, { type: "tool_call" }>;
+
+function toolTimelineItem(snapshot: AcpToolCallSnapshot): ToolCallTimelineItem {
   const input = jsonRecord(snapshot.input);
   const isEdit = snapshot.kind === "edit" || snapshot.name?.toLowerCase().includes("edit") === true;
   const detail = isEdit
@@ -1394,6 +1434,18 @@ function toolTimelineItem(snapshot: AcpToolCallSnapshot): ProviderTimelineItem {
   };
   if (status === "failed") return { ...base, status, error: snapshot.output };
   return { ...base, status, error: null };
+}
+
+// A row the turn left open ends with the turn. The wire contract requires a non-null error on a
+// failed tool call, so a canceled turn cancels its rows instead of failing them.
+function terminalToolItem(
+  item: ToolCallTimelineItem,
+  state: "completed" | "failed" | "canceled",
+): ToolCallTimelineItem {
+  if (state === "failed") {
+    return { ...item, status: "failed", error: item.error ?? { message: "Turn failed" } };
+  }
+  return { ...item, status: state, error: null };
 }
 
 function jsonValue(value: unknown) {
