@@ -44,7 +44,7 @@ function createFixture() {
   const workflowSettingsFile = join(pluginSettings, "workflows.json");
 
   mkdirSync(source);
-  git(source, "init", "-b", "paseo-local");
+  git(source, "init", "-b", "main");
   git(source, "config", "user.email", "test@example.com");
   git(source, "config", "user.name", "Test");
   writeFileSync(join(source, "version"), "one\n");
@@ -63,7 +63,7 @@ function createFixture() {
     join(state, "source-repositories.json"),
     JSON.stringify({ repositories: [source] }),
   );
-  execFileSync("git", ["clone", "--branch", "paseo-local", "--single-branch", remote, checkout]);
+  execFileSync("git", ["clone", "--branch", "main", "--single-branch", remote, checkout]);
   mkdirSync(pluginSource, { recursive: true });
   mkdirSync(pluginSettings, { recursive: true });
   writeFileSync(join(pluginSource, "prompt.txt"), "stale prompt\n");
@@ -137,7 +137,7 @@ function configureLifecycle(fixture, { publishScript = true } = {}) {
     copyFileSync(script, join(fixture.source, "scripts/paseo-local-auto-build.mjs"));
     git(fixture.source, "add", "scripts/paseo-local-auto-build.mjs");
     git(fixture.source, "commit", "-m", "add auto builder");
-    git(fixture.source, "push", "origin", "paseo-local");
+    git(fixture.source, "push", "origin", "main");
   }
   mkdirSync(launchAgents);
   const fakeLaunchctl = join(fixture.root, "bin", "launchctl");
@@ -231,7 +231,7 @@ describe.runIf(process.platform === "darwin")("Paseo Local automatic build", () 
     writeFileSync(join(fixture.source, "plugins/paseo-workflow/prompt.txt"), "next prompt\n");
     git(fixture.source, "add", "version", "plugins/paseo-workflow/prompt.txt");
     git(fixture.source, "commit", "-m", "two");
-    git(fixture.source, "push", "origin", "paseo-local");
+    git(fixture.source, "push", "origin", "main");
     writeFileSync(fixture.failBuild, "fail\n");
 
     const failed = run(fixture);
@@ -351,7 +351,7 @@ describe.runIf(process.platform === "darwin")("Paseo Local automatic build", () 
     writeFileSync(join(fixture.source, "version"), "two\n");
     git(fixture.source, "add", "version");
     git(fixture.source, "commit", "-m", "two");
-    git(fixture.source, "push", "origin", "paseo-local");
+    git(fixture.source, "push", "origin", "main");
     const secondCommit = git(fixture.source, "rev-parse", "HEAD");
     writeFileSync(fixture.failBuild, "fail\n");
 
@@ -383,7 +383,7 @@ describe.runIf(process.platform === "darwin")("Paseo Local automatic build", () 
     writeFileSync(join(fixture.source, "version"), "two\n");
     git(fixture.source, "add", "version");
     git(fixture.source, "commit", "-m", "two");
-    git(fixture.source, "push", "origin", "paseo-local");
+    git(fixture.source, "push", "origin", "main");
     expect(run(fixture).status).toBe(0);
     const successfulCommit = git(fixture.checkout, "rev-parse", "HEAD");
 
@@ -391,7 +391,7 @@ describe.runIf(process.platform === "darwin")("Paseo Local automatic build", () 
     writeFileSync(join(fixture.source, "version"), "three\n");
     git(fixture.source, "add", "version");
     git(fixture.source, "commit", "-m", "three");
-    git(fixture.source, "push", "--force", "origin", "paseo-local");
+    git(fixture.source, "push", "--force", "origin", "main");
     writeFileSync(fixture.npmLog, "");
 
     const result = run(fixture);
@@ -404,7 +404,18 @@ describe.runIf(process.platform === "darwin")("Paseo Local automatic build", () 
     expect(readFileSync(fixture.npmLog, "utf8")).toBe("");
   });
 
-  it("refuses to build a checkout commit that is ahead of origin/paseo-local", () => {
+  it("refuses a checkout still on the retired release branch", () => {
+    const fixture = createFixture();
+    git(fixture.checkout, "switch", "-c", "paseo-local");
+
+    const result = run(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Dedicated checkout is not on main");
+    expect(existsSync(fixture.npmLog)).toBe(false);
+  });
+
+  it("refuses to build a checkout commit that is ahead of origin/main", () => {
     const fixture = createFixture();
     expect(run(fixture).status).toBe(0);
     const successfulCommit = git(fixture.checkout, "rev-parse", "HEAD");
@@ -496,8 +507,8 @@ describe.runIf(process.platform === "darwin")("Paseo Local automatic build", () 
     expect(firstInstall.status).toBe(0);
     expect(secondInstall.stderr).toBe("");
     expect(secondInstall.status).toBe(0);
-    expect(git(fixture.checkout, "branch", "--show-current")).toBe("paseo-local");
-    expect(git(fixture.checkout, "branch", "-r")).toBe("origin/paseo-local");
+    expect(git(fixture.checkout, "branch", "--show-current")).toBe("main");
+    expect(git(fixture.checkout, "branch", "-r")).toBe("origin/main");
 
     const plistPath = join(launchAgents, "sh.paseo.local-auto-build.plist");
     const plist = readFileSync(plistPath, "utf8");
@@ -554,7 +565,7 @@ describe.runIf(process.platform === "darwin")("Paseo Local automatic build", () 
     expect(existsSync(plist)).toBe(true);
   });
 
-  it("refuses installation when origin/paseo-local does not contain the runtime script", () => {
+  it("refuses installation when origin/main does not contain the runtime script", () => {
     const fixture = createFixture();
     const { launchAgents } = configureLifecycle(fixture, { publishScript: false });
     rmSync(fixture.checkout, { recursive: true });
@@ -562,7 +573,7 @@ describe.runIf(process.platform === "darwin")("Paseo Local automatic build", () 
     const result = run(fixture, "install");
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("origin/paseo-local does not contain");
+    expect(result.stderr).toContain("origin/main does not contain");
     expect(existsSync(join(launchAgents, "sh.paseo.local-auto-build.plist"))).toBe(false);
     expect(existsSync(fixture.checkout)).toBe(false);
   });

@@ -10,7 +10,7 @@ const git = (cwd, ...args) =>
 function fixture() {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-inventory-")));
   temporary.push(root);
-  git(root, "init", "-b", "paseo-local");
+  git(root, "init", "-b", "main");
   git(root, "config", "user.email", "test@example.com");
   git(root, "config", "user.name", "Release test");
   writeFileSync(path.join(root, "feature.txt"), "base");
@@ -27,7 +27,7 @@ test("blocks a candidate that omits a completed local branch, then accepts its m
   writeFileSync(path.join(root, "feature.txt"), "tabs");
   git(root, "commit", "-am", "tabs");
   const missing = git(root, "rev-parse", "HEAD");
-  git(root, "switch", "paseo-local");
+  git(root, "switch", "main");
   expect(auditReleaseSources({ root, commit, repositories: [root] }).blockers).toEqual([
     expect.objectContaining({ kind: "unmerged", ref: "refs/heads/browser-tabs", commit: missing }),
   ]);
@@ -66,7 +66,7 @@ test("audits a separate source repository without moving its branches", () => {
   git(root, "commit", "-m", "source change");
   const sourceHead = git(root, "rev-parse", "HEAD");
   git(builder, "fetch", "origin");
-  git(builder, "merge", "--ff-only", "origin/paseo-local");
+  git(builder, "merge", "--ff-only", "origin/main");
   git(builder, "config", "user.email", "test@example.com");
   git(builder, "config", "user.name", "Test");
   writeFileSync(path.join(builder, "release.txt"), "release");
@@ -101,7 +101,7 @@ test("fails closed without configured sources and writes an actionable audit rep
     assertReleaseInventory({ root, commit: git(root, "rev-parse", "HEAD"), state }),
   ).toThrow("unfinished.txt");
 });
-test("checks only pushes to paseo-local and blocks release branch deletion", async () => {
+test("checks only pushes to main and blocks release branch deletion", async () => {
   const { checkLocalReleasePush } = await import("./local-release-inventory.mjs");
   const { root, commit } = fixture();
   const state = path.join(root, "state");
@@ -112,13 +112,13 @@ test("checks only pushes to paseo-local and blocks release branch deletion", asy
     }),
   ).not.toThrow();
   expect(() =>
-    checkLocalReleasePush(`refs/heads/feature ${commit} refs/heads/paseo-local ${commit}`, {
+    checkLocalReleasePush(`refs/heads/feature ${commit} refs/heads/main ${commit}`, {
       root,
       state,
     }),
   ).toThrow("sources");
   expect(() =>
-    checkLocalReleasePush(`(delete) ${"0".repeat(40)} refs/heads/paseo-local ${commit}`, {
+    checkLocalReleasePush(`(delete) ${"0".repeat(40)} refs/heads/main ${commit}`, {
       root,
       state,
     }),

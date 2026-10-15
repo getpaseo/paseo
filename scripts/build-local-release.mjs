@@ -12,11 +12,11 @@ if (git("status", "--porcelain", "--untracked-files=no"))
   throw new Error("Commit tracked changes before building Paseo Local.");
 const commit = git("rev-parse", "HEAD");
 assertReleaseInventory({ root, commit });
-git("fetch", "origin", "refs/heads/paseo-local:refs/remotes/origin/paseo-local");
-git("merge-base", "--is-ancestor", "origin/paseo-local", commit);
-if (!process.env.PASEO_LOCAL_INSTALL_TARGET && commit !== git("rev-parse", "origin/paseo-local")) {
+git("fetch", "origin", "refs/heads/main:refs/remotes/origin/main");
+git("merge-base", "--is-ancestor", "origin/main", commit);
+if (!process.env.PASEO_LOCAL_INSTALL_TARGET && commit !== git("rev-parse", "origin/main")) {
   throw new Error(
-    "Publish this commit to origin/paseo-local before installing it. Use PASEO_LOCAL_INSTALL_TARGET only for isolated verification.",
+    "Publish this commit to origin/main before installing it. Use PASEO_LOCAL_INSTALL_TARGET only for isolated verification.",
   );
 }
 const env = {

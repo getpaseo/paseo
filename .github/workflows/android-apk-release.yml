@@ -21,6 +21,7 @@ env:
 
 jobs:
   ensure-release:
+    if: ${{ github.repository == 'getpaseo/paseo' }}
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -63,6 +64,7 @@ jobs:
           fi
 
   publish-android-apk:
+    if: ${{ github.repository == 'getpaseo/paseo' }}
     needs: [ensure-release]
     permissions:
       contents: write

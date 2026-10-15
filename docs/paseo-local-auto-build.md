@@ -1,10 +1,10 @@
 # Paseo Local automatic builds
 
-Choose the builder below when each Mac should compile `origin/paseo-local`. Use the [iCloud mirror](#icloud-mirror) when one Mac should distribute its installed build to another Apple Silicon Mac.
+Choose the builder below when each Mac should compile `origin/main`. Use the [iCloud mirror](#icloud-mirror) when one Mac should distribute its installed build to another Apple Silicon Mac.
 
-Use the macOS LaunchAgent to rebuild `Paseo Local.app` after `origin/paseo-local` advances. It owns a stable checkout under `~/Library/Application Support/Paseo Local Builder/checkout` and updates that checkout with `git merge --ff-only`. It never checks out or fetches another branch.
+Use the macOS LaunchAgent to rebuild `Paseo Local.app` after `origin/main` advances. It owns a stable checkout under `~/Library/Application Support/Paseo Local Builder/checkout` and updates that checkout with `git merge --ff-only`. It never checks out or fetches another branch.
 
-Each run fetches the exact `paseo-local` ref, acquires a process lock, fast-forwards the clean checkout, audits the declared development repositories, and compares the remote commit with `last-successful-commit`. A changed commit runs `npm ci` followed by `npm run build`. The success marker is replaced atomically only after the build installs the app, so a failed build is retried at the next interval.
+Each run fetches the exact `main` ref, acquires a process lock, fast-forwards the clean checkout, audits the declared development repositories, and compares the remote commit with `last-successful-commit`. A changed commit runs `npm ci` followed by `npm run build`. The success marker is replaced atomically only after the build installs the app, so a failed build is retried at the next interval.
 
 The job never restarts the daemon. Update the daemon separately when interrupting its agents is
 authorized. App installation and interface activation follow the [local release contract](development.md#local-macos-app).
@@ -31,7 +31,7 @@ Run the installer from the development repository. It records the stable primary
 repositories. Use `PASEO_LOCAL_BUILDER_SOURCE` when installing from elsewhere. Do not register only
 the dedicated builder clone: it cannot see work left on local branches or in linked checkouts.
 
-The `paseo-local` pre-push hook, build wrapper, automatic builder, and final installer check that
+The `main` pre-push hook, build wrapper, automatic builder, and final installer check that
 all declared local branches, origin tracking refs, detached worktree heads, and non-ignored working
 files are included in the candidate. Missing repositories or configuration block delivery too.
 Integrate or preserve and explicitly resolve unfinished work; do not reset or delete it to pass.
@@ -46,6 +46,24 @@ Treat development, publication, installation, and activation as separate states.
 commit completes development only. Record the remote commit, installed manifest, and verified
 running desktop identity before marking a delivery complete. A required daemon update stays pending
 until its interruption has been authorized separately.
+
+## Existing builder migration
+
+Suspend `sh.paseo.local-auto-build` and wait for any build holding `build.lock` to finish before
+changing an existing clone. Keep the state directory, markers, source inventory, and configuration.
+After the migration PR is merged, update the dedicated clone explicitly:
+
+```bash
+cd "$HOME/Library/Application Support/Paseo Local Builder/checkout"
+git remote set-branches origin main
+git fetch origin refs/heads/main:refs/remotes/origin/main
+git switch -c main --track origin/main
+git remote set-head origin main
+```
+
+Run `npm run paseo-local:auto-build:install` from the development repository to reinstall the job.
+The installer refuses an existing clone on any other branch; it never migrates one implicitly.
+Keep the old branch and backup tag until publication, installation, and desktop activation agree.
 
 ## Commands
 
@@ -62,7 +80,7 @@ after the targeted reload reports `running`.
 
 Installation is idempotent and loads `~/Library/LaunchAgents/sh.paseo.local-auto-build.plist`. Uninstallation unloads the job and removes the plist. It keeps the checkout, success marker, and log for a fast reinstall and diagnosis.
 
-Install after this automation has reached `origin/paseo-local`. The installer refuses to load a job when the remote checkout does not contain its runtime script.
+Install after this automation has reached `origin/main`. The installer refuses to load a job when the remote checkout does not contain its runtime script.
 
 The LaunchAgent runs at login and every five minutes. Read the log with:
 

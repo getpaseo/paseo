@@ -129,7 +129,7 @@ export function assertReleaseInventory({ root, commit, state = releaseBuilderSta
 export function checkLocalReleasePush(input, options) {
   for (const line of input.trim().split("\n").filter(Boolean)) {
     const [, commit, remoteRef] = line.split(/\s+/);
-    if (remoteRef !== "refs/heads/paseo-local") continue;
+    if (remoteRef !== "refs/heads/main") continue;
     if (commit === "0".repeat(40)) throw new Error("Cannot delete the local release branch");
     assertReleaseInventory({ ...options, commit });
   }

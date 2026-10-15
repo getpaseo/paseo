@@ -23,6 +23,7 @@ permissions:
 
 jobs:
   update-hash:
+    if: ${{ github.repository == 'getpaseo/paseo' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/create-github-app-token@v1

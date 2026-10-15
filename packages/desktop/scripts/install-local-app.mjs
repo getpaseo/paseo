@@ -59,10 +59,10 @@ if (isMain) {
   const root = path.resolve(desktopDir, "../..");
   const commit = process.env.PASEO_LOCAL_RELEASE_COMMIT;
   const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
-  git("fetch", "origin", "refs/heads/paseo-local:refs/remotes/origin/paseo-local");
+  git("fetch", "origin", "refs/heads/main:refs/remotes/origin/main");
   if (
     git("rev-parse", "HEAD") !== commit ||
-    (!process.env.PASEO_LOCAL_INSTALL_TARGET && git("rev-parse", "origin/paseo-local") !== commit)
+    (!process.env.PASEO_LOCAL_INSTALL_TARGET && git("rev-parse", "origin/main") !== commit)
   )
     throw new Error("Install only the exact published commit through build:desktop:local");
   // Recheck after the long build and smoke tests: new work may have appeared meanwhile.

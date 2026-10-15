@@ -331,25 +331,25 @@ function syncCheckout(checkout, env) {
   if (!existsSync(join(checkout, ".git"))) {
     throw new Error(`Dedicated checkout is missing: ${checkout}. Run the install command first.`);
   }
-  if (execute("git", ["branch", "--show-current"], { cwd: checkout, env }) !== "paseo-local") {
-    throw new Error("Dedicated checkout is not on paseo-local");
+  if (execute("git", ["branch", "--show-current"], { cwd: checkout, env }) !== "main") {
+    throw new Error("Dedicated checkout is not on main");
   }
   if (execute("git", ["status", "--porcelain", "--untracked-files=no"], { cwd: checkout, env })) {
     throw new Error("Dedicated checkout has tracked changes");
   }
 
-  execute("git", ["fetch", "origin", "refs/heads/paseo-local:refs/remotes/origin/paseo-local"], {
+  execute("git", ["fetch", "origin", "refs/heads/main:refs/remotes/origin/main"], {
     cwd: checkout,
     env,
   });
-  const remoteCommit = execute("git", ["rev-parse", "origin/paseo-local"], {
+  const remoteCommit = execute("git", ["rev-parse", "origin/main"], {
     cwd: checkout,
     env,
   });
-  execute("git", ["merge", "--ff-only", "origin/paseo-local"], { cwd: checkout, env });
+  execute("git", ["merge", "--ff-only", "origin/main"], { cwd: checkout, env });
   const commit = execute("git", ["rev-parse", "HEAD"], { cwd: checkout, env });
   if (commit !== remoteCommit) {
-    throw new Error("Dedicated checkout does not exactly match origin/paseo-local");
+    throw new Error("Dedicated checkout does not exactly match origin/main");
   }
   return commit;
 }
@@ -400,7 +400,7 @@ function installLocked(env) {
   if (!existsSync(join(builderPaths.checkout, ".git"))) {
     execute(
       "git",
-      ["clone", "--branch", "paseo-local", "--single-branch", repositoryUrl, builderPaths.checkout],
+      ["clone", "--branch", "main", "--single-branch", repositoryUrl, builderPaths.checkout],
       { env },
     );
     createdCheckout = true;
@@ -413,8 +413,8 @@ function installLocked(env) {
       cwd: builderPaths.checkout,
       env,
     });
-    if (branch !== "paseo-local" || existingUrl !== repositoryUrl) {
-      throw new Error("Existing dedicated checkout does not match origin/paseo-local");
+    if (branch !== "main" || existingUrl !== repositoryUrl) {
+      throw new Error("Existing dedicated checkout does not match origin/main");
     }
   }
 
@@ -422,7 +422,7 @@ function installLocked(env) {
 
   if (!existsSync(join(builderPaths.checkout, "scripts/paseo-local-auto-build.mjs"))) {
     if (createdCheckout) rmSync(builderPaths.checkout, { recursive: true, force: true });
-    throw new Error("origin/paseo-local does not contain scripts/paseo-local-auto-build.mjs");
+    throw new Error("origin/main does not contain scripts/paseo-local-auto-build.mjs");
   }
 
   const sourcesPath = join(builderPaths.state, "source-repositories.json");

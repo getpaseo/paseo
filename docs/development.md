@@ -51,7 +51,7 @@ npm run build:desktop:local
 ```
 
 The command installs `~/Applications/Paseo Local.app` only from a clean commit published on
-`origin/paseo-local`. The auto builder follows that same branch. A correction left on another
+`origin/main`. The auto builder follows that same branch. A correction left on another
 checkout is not a release; merge it into this branch before installing. For an isolated candidate
 build, set `PASEO_LOCAL_INSTALL_TARGET` to a temporary `.app` path.
 

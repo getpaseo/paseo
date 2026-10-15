@@ -26,6 +26,7 @@ concurrency:
 
 jobs:
   sync-release-notes:
+    if: ${{ github.repository == 'getpaseo/paseo' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
