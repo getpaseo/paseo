@@ -140,8 +140,10 @@ test("unsupported host asks for an update without writing Hoplite config", async
     await openSettingsHost(page, outdatedDaemon.serverId);
     await openSettingsHostSection(page, outdatedDaemon.serverId, "providers");
     await openAddProviderArea(page);
-    await installAcpCatalogProvider(page, "Hoplite");
-    await expect(page.getByRole("alert")).toHaveText("Update the host to add Hoplite.");
+    await page.getByRole("button", { name: "Add Hoplite", exact: true }).click();
+    const errorToast = page.getByTestId("app-toast-message");
+    await expect(errorToast).toHaveText("Update the host to add Hoplite.");
+    await expect(errorToast).toBeInViewport();
     expect((await client.getDaemonConfig()).config).toEqual(before.config);
     await expect(
       page.getByRole("button", { name: "Hoplite provider details", exact: true }),

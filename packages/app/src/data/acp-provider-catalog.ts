@@ -246,7 +246,7 @@ const CATALOG_DATA = [
     description: "Cloud coding agent through the local hoplite acp bridge",
     version: "manual",
     iconId: "hoplite",
-    installLink: "https://hoplite.sh/docs/cli/acp",
+    installLink: "https://hoplite.sh/docs/cli#install",
     command: ["hoplite", "acp"],
   },
   {

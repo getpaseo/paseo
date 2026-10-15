@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { useToast } from "@/contexts/toast-context";
 import { settingsStyles } from "@/styles/settings";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useHostFeature } from "@/runtime/host-features";
@@ -326,9 +327,9 @@ export interface ProvidersSectionProps {
 
 export function ProvidersSection({ serverId }: ProvidersSectionProps) {
   const { t } = useTranslation();
+  const toast = useToast();
   const isConnected = useHostRuntimeIsConnected(serverId);
   const supportsHopliteProvider = useHostFeature(serverId, "hopliteProvider");
-  const [installError, setInstallError] = useState<string | null>(null);
   const supportsProviderRemoval = useHostFeature(serverId, "providerRemoval");
   const { entries, isLoading, refresh } = useProvidersSnapshot(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
@@ -413,18 +414,17 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
   const handleInstall = useCallback(
     async (entry: AcpProviderCatalogItem) => {
       if (installingProviderId) return;
-      setInstallError(null);
       setInstallingProviderId(entry.id);
       try {
         await patchConfig(buildAcpProviderConfigPatch(entry, supportsHopliteProvider));
         await refresh([entry.id]);
       } catch (error) {
-        setInstallError(error instanceof Error ? error.message : String(error));
+        toast.error(error instanceof Error ? error.message : String(error));
       } finally {
         setInstallingProviderId((current) => (current === entry.id ? null : current));
       }
     },
-    [installingProviderId, patchConfig, refresh, supportsHopliteProvider],
+    [installingProviderId, patchConfig, refresh, supportsHopliteProvider, toast],
   );
 
   return (
@@ -480,11 +480,6 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
           testID="host-page-add-provider-card"
           style={styles.addProviderSection}
         >
-          {installError ? (
-            <Text accessibilityRole="alert" style={styles.errorText}>
-              {installError}
-            </Text>
-          ) : null}
           <ProviderCatalogList
             serverId={serverId}
             installingProviderId={installingProviderId}

@@ -64,7 +64,7 @@ describe("ACP provider catalog", () => {
     expect(findProvider("hoplite")).toMatchObject({
       title: "Hoplite",
       command: ["hoplite", "acp"],
-      installLink: "https://hoplite.sh/docs/cli/acp",
+      installLink: "https://hoplite.sh/docs/cli#install",
     });
     expect(buildAcpProviderConfigPatch(findProvider("hoplite"), true)).toEqual({
       providers: {
