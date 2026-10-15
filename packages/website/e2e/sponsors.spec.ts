@@ -11,6 +11,7 @@ for (const path of PAGES) {
       "href",
       "https://hoplite.sh/?utm_source=paseo&utm_medium=website&utm_campaign=sponsor",
     );
+    await expect(sponsors.getByText("Cloud coding agents", { exact: true })).toBeVisible();
     await expect(sponsors.getByRole("link", { name: "Become a sponsor" })).toHaveAttribute(
       "href",
       "/sponsor#spot",

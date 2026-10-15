@@ -248,6 +248,7 @@ const SPONSORS_PLACEMENTS = {
     heading: "text-3xl font-medium tracking-tight",
     link: "",
     logo: "h-14",
+    description: "mt-2 text-sm text-white/55",
     button: "h-12 px-5 text-sm",
   },
   footer: {
@@ -256,6 +257,7 @@ const SPONSORS_PLACEMENTS = {
     heading: "text-sm text-extra-muted-foreground",
     link: "opacity-85 transition-opacity hover:opacity-100",
     logo: "h-10",
+    description: "mt-1.5 text-xs text-white/45",
     button: "h-9 px-3.5 text-sm",
   },
 } as const;
@@ -292,6 +294,7 @@ export function SponsorsSection({ placement }: SponsorsSectionProps) {
                 className={`${style.logo} w-auto`}
               />
             </a>
+            <p className={style.description}>{sponsor.description}</p>
           </li>
         ))}
         {open > 0 ? (

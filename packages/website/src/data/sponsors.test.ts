@@ -11,7 +11,12 @@ const SPONSOR_PAGE_URL = "https://paseo.sh/sponsor";
 
 describe("sponsorHref", () => {
   it("tags the link with the placement it is shown in", () => {
-    const sponsor = { name: "Acme", url: "https://acme.dev", logo: { onDark: "", onLight: "" } };
+    const sponsor = {
+      name: "Acme",
+      url: "https://acme.dev",
+      logo: { onDark: "", onLight: "" },
+      description: "",
+    };
 
     expect(sponsorHref(sponsor, "website")).toBe(
       "https://acme.dev/?utm_source=paseo&utm_medium=website&utm_campaign=sponsor",
@@ -27,11 +32,11 @@ function readmeSponsorCells(readme: string) {
   const table = text.slice(text.indexOf("<!-- Sponsors:")).split("</table>")[0];
   return [...table.matchAll(/<td[^>]*>(.*?)<\/td>/g)].map(([, cell]) => {
     const logo = cell.match(
-      /^<a href="([^"]+)"><picture><source media="\(prefers-color-scheme: dark\)" srcset="([^"]+)"><img src="([^"]+)"/,
+      /^<a href="([^"]+)"><picture><source media="\(prefers-color-scheme: dark\)" srcset="([^"]+)"><img src="([^"]+)"[^>]*><\/picture><\/a><br><sub>([^<]+)<\/sub>$/,
     );
     if (logo) {
-      const [, href, onDark, onLight] = logo;
-      return { href, onDark, onLight };
+      const [, href, onDark, onLight, description] = logo;
+      return { href, onDark, onLight, description };
     }
     return { invite: cell.match(/^<a href="([^"]+)">/)?.[1] };
   });
@@ -51,6 +56,7 @@ describe("SPONSORS", () => {
         href: sponsorHref(sponsor, "readme"),
         onDark: `packages/website/public${sponsor.logo.onDark}`,
         onLight: `packages/website/public${sponsor.logo.onLight}`,
+        description: sponsor.description,
       })),
       ...Array.from({ length: openCells }, () => ({ invite: SPONSOR_PAGE_URL })),
     ]);

@@ -8,7 +8,7 @@
  * 1. Add the entry below and drop both logo inks in `public/sponsors/`.
  * 2. In the sponsors table after the intro of `README.md`, `README.zh-CN.md`,
  *    `README.ja.md` and `README.ko.md`, replace a "become a sponsor" cell with
- *    the logo, in this same order, linked to `sponsorHref(sponsor, "readme")`
+ *    the logo and its description, in this same order, linked to `sponsorHref(sponsor, "readme")`
  *    with both inks referenced from `packages/website/public`, so the README
  *    renders from the repository and never waits on a site deploy.
  *    `sponsors.test.ts` fails until they match.
@@ -25,6 +25,8 @@ export interface Sponsor {
   url: string;
   /** Paths under `public/`, one per ground. Use the sponsor's official lockup. */
   logo: { onDark: string; onLight: string };
+  /** What the product is, in a few words from the sponsor's own site. Shown under the logo. */
+  description: string;
 }
 
 export const SPONSORS: ReadonlyArray<Sponsor> = [
@@ -35,6 +37,7 @@ export const SPONSORS: ReadonlyArray<Sponsor> = [
       onDark: "/sponsors/hoplite-on-dark.svg",
       onLight: "/sponsors/hoplite-on-light.svg",
     },
+    description: "Cloud coding agents",
   },
 ];
 
