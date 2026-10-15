@@ -225,6 +225,61 @@ lines.on("line", (line) => {
 });`;
 
 describe("runAcpProvider", () => {
+  it("reads persisted history without opening a provider session", async () => {
+    const harness = connectorHarness({
+      capabilities: { loadSession: {} },
+      handleRequest(instance, request) {
+        if (request.method !== "session/load") return false;
+        instance.respond(request, {
+          sessionId: "saved-session",
+          modes: null,
+          configOptions: [],
+        });
+        setTimeout(
+          () =>
+            instance.notify("session/update", {
+              sessionId: "saved-session",
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                messageId: "history-message",
+                content: { type: "text", text: "archived" },
+              },
+            }),
+          0,
+        );
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "history-acp",
+      label: "History ACP",
+      connector: harness.connector,
+    });
+
+    const history = await registration.readSessionHistory!({
+      persistence: { version: 1, data: { sessionId: "saved-session" } },
+      cwd: "/repo",
+    });
+    expect(history).toEqual({
+      items: [
+        {
+          item: {
+            type: "assistant_message",
+            id: "history-message",
+            messageId: "history-message",
+            text: "archived",
+          },
+        },
+      ],
+      coverage: { kind: "complete" },
+    });
+    expect(harness.instances[0]!.requests.map((request) => request.method)).toEqual([
+      "initialize",
+      "session/load",
+      "session/close",
+    ]);
+  });
+
   it("spawns the daemon-resolved launch for probes, catalogues, listing, and sessions", async () => {
     const executable = await fakeAcp(`
 if (process.env.LAUNCH_TOKEN !== "resolved" || process.env.CLAUDECODE || process.env.PASEO_NODE_ENV) process.exit(1);

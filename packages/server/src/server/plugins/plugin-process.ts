@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import type { ZodType } from "zod";
 import {
   ProviderEventSchema,
+  ProviderHistoryReadResultSchema,
   type ProviderConnection,
   type ProviderRegistration,
   ProviderStatusSchema,
@@ -160,6 +161,7 @@ export function createPluginWorker(options: {
       iconPath: provider.icon,
       hasCatalogCacheKey: provider.getCatalogCacheKey !== undefined,
       hasStatus: provider.status !== undefined,
+      hasHistoryReader: provider.readSessionHistory !== undefined,
       command: provider.command,
     };
   }
@@ -357,6 +359,7 @@ export function createPluginWorker(options: {
   function rejectWhileStopping(message: PluginProcessRequest): void {
     if (
       message.type === "provider.status" ||
+      message.type === "provider.history" ||
       message.type === "provider.catalog_key" ||
       message.type === "usage.fetch" ||
       message.type === "usage.discover"
@@ -377,6 +380,56 @@ export function createPluginWorker(options: {
       });
     } else if (message.type === "provider.close") {
       send({ type: "provider.closed", connectionId: message.connectionId });
+    }
+  }
+
+  function handleProviderMetadataRequest(
+    message: PluginProcessRequest,
+  ): message is Extract<
+    PluginProcessRequest,
+    { type: "provider.status" | "provider.history" | "provider.catalog_key" }
+  > {
+    switch (message.type) {
+      case "provider.status":
+        void (async () => {
+          const provider = providers.get(message.providerId);
+          if (!provider || !provider.status)
+            throw new Error(`Provider has no status capability: ${message.providerId}`);
+          const output = ProviderStatusSchema.parse(await provider.status(message.request));
+          send({ type: "result", requestId: message.requestId, output });
+        })().catch((error) =>
+          send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+        );
+        return true;
+      case "provider.history":
+        void (async () => {
+          const provider = providers.get(message.providerId);
+          if (!provider?.readSessionHistory) {
+            throw new Error(`Provider has no history reader capability: ${message.providerId}`);
+          }
+          return ProviderHistoryReadResultSchema.parse(
+            await provider.readSessionHistory(message.request),
+          );
+        })().then(
+          (output) => send({ type: "result", requestId: message.requestId, output }),
+          (error) =>
+            send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+        );
+        return true;
+      case "provider.catalog_key":
+        void (async () => {
+          const provider = providers.get(message.providerId);
+          if (!provider) throw new Error(`Unknown provider: ${message.providerId}`);
+          const output = await provider.getCatalogCacheKey?.(message.options);
+          if (output !== undefined && typeof output !== "string")
+            throw new Error("Invalid catalogue key");
+          send({ type: "result", requestId: message.requestId, output });
+        })().catch((error) =>
+          send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+        );
+        return true;
+      default:
+        return false;
     }
   }
 
@@ -421,31 +474,7 @@ export function createPluginWorker(options: {
       rejectWhileStopping(message);
       return;
     }
-    if (message.type === "provider.status") {
-      void (async () => {
-        const provider = providers.get(message.providerId);
-        if (!provider || !provider.status)
-          throw new Error(`Provider has no status capability: ${message.providerId}`);
-        const output = ProviderStatusSchema.parse(await provider.status(message.request));
-        send({ type: "result", requestId: message.requestId, output });
-      })().catch((error) =>
-        send({ type: "error", requestId: message.requestId, error: describeError(error) }),
-      );
-      return;
-    }
-    if (message.type === "provider.catalog_key") {
-      void (async () => {
-        const provider = providers.get(message.providerId);
-        if (!provider) throw new Error(`Unknown provider: ${message.providerId}`);
-        const output = await provider.getCatalogCacheKey?.(message.options);
-        if (output !== undefined && typeof output !== "string")
-          throw new Error("Invalid catalogue key");
-        send({ type: "result", requestId: message.requestId, output });
-      })().catch((error) =>
-        send({ type: "error", requestId: message.requestId, error: describeError(error) }),
-      );
-      return;
-    }
+    if (handleProviderMetadataRequest(message)) return;
     if (message.type === "usage.fetch" || message.type === "usage.discover") {
       handleUsageRequest(message);
       return;

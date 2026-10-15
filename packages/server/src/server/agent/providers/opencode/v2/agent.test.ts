@@ -16,6 +16,211 @@ function terminalEvents(events: AgentStreamEvent[]) {
   );
 }
 
+function createChildHistoryHarness(failure?: "children" | "messages" | "status") {
+  const harness = new V2Harness();
+  const child = { ...harness.info, id: "child", parentID: "session", title: "Child task" };
+  const grandchild = {
+    ...harness.info,
+    id: "grandchild",
+    parentID: "child",
+    title: "Nested task",
+    outcome: "interrupted" as const,
+  };
+  const failed = {
+    ...harness.info,
+    id: "failed",
+    parentID: "session",
+    title: "Failed task",
+    outcome: "failed" as const,
+  };
+  const lists: Parameters<V2Api["session"]["list"]>[0][] = [];
+  harness.api.session.list = async (input) => {
+    lists.push(input);
+    if (input?.cursor) {
+      if (failure === "children") throw new Error("child listing unavailable");
+      return { data: [failed], cursor: {} };
+    }
+    if (input?.parentID === "session") {
+      return { data: [child, child], cursor: { next: "next_children" } };
+    }
+    return { data: input?.parentID === "child" ? [grandchild] : [], cursor: {} };
+  };
+  harness.api.session.active = async () => {
+    if (failure === "status") throw new Error("child status unavailable");
+    return { child: { type: "running" } };
+  };
+  harness.api.message.list = async (input) => {
+    if (input.cursor && input.order) throw new Error("cursor cannot be combined with order");
+    if (failure === "messages" && input.sessionID === "grandchild") {
+      throw new Error("grandchild messages unavailable");
+    }
+    if (input.sessionID === "session") return { data: [], cursor: {} };
+    const result: SessionMessageInfo = {
+      id: `msg_${input.sessionID}`,
+      type: "user",
+      text: `${input.sessionID} prompt`,
+      time: { created: 1 },
+    };
+    if (input.cursor) {
+      return {
+        data: [
+          {
+            id: "msg_child_result",
+            type: "assistant",
+            content: [{ type: "text", text: "Child result" }],
+            time: { created: 2 },
+          },
+        ],
+        cursor: {},
+      };
+    }
+    return { data: [result], cursor: input.sessionID === "child" ? { next: "next_messages" } : {} };
+  };
+  const forbidden = () => {
+    throw new Error("Interactive operation during history read");
+  };
+  harness.api.permission.list = forbidden;
+  harness.api.event.subscribe = forbidden;
+  harness.api.session.interrupt = forbidden;
+  const client = new OpenCodeV2AgentClient({
+    logger: createTestLogger(),
+    runtime: harness.runtime,
+  });
+  return {
+    harness,
+    lists,
+    read: () =>
+      client.readSessionHistory({
+        provider: "opencode",
+        sessionId: "session",
+        metadata: { cwd: "/tmp/project" },
+      }),
+  };
+}
+
+describe("OpenCode v2 dedicated history", () => {
+  test("reads paginated children and nested timelines without interactive setup", async () => {
+    const { harness, lists, read } = createChildHistoryHarness();
+
+    const result = await read();
+
+    expect(result).toEqual({
+      events: [
+        {
+          type: "provider_subagent",
+          provider: "opencode",
+          event: {
+            type: "upsert",
+            id: "child",
+            parentSubagentId: null,
+            title: "Child task",
+            status: "running",
+            cwd: "/tmp/project",
+            timestamp: "1970-01-01T00:00:00.001Z",
+          },
+        },
+        {
+          type: "provider_subagent",
+          provider: "opencode",
+          event: {
+            type: "timeline",
+            id: "child",
+            item: { type: "user_message", text: "child prompt", messageId: "msg_child" },
+            timestamp: "1970-01-01T00:00:00.001Z",
+          },
+        },
+        {
+          type: "provider_subagent",
+          provider: "opencode",
+          event: {
+            type: "timeline",
+            id: "child",
+            item: {
+              type: "assistant_message",
+              text: "Child result",
+              messageId: "msg_child_result",
+            },
+            timestamp: "1970-01-01T00:00:00.002Z",
+          },
+        },
+        {
+          type: "provider_subagent",
+          provider: "opencode",
+          event: {
+            type: "upsert",
+            id: "grandchild",
+            parentSubagentId: "child",
+            title: "Nested task",
+            status: "canceled",
+            cwd: "/tmp/project",
+            timestamp: "1970-01-01T00:00:00.001Z",
+          },
+        },
+        {
+          type: "provider_subagent",
+          provider: "opencode",
+          event: {
+            type: "timeline",
+            id: "grandchild",
+            item: { type: "user_message", text: "grandchild prompt", messageId: "msg_grandchild" },
+            timestamp: "1970-01-01T00:00:00.001Z",
+          },
+        },
+        {
+          type: "provider_subagent",
+          provider: "opencode",
+          event: {
+            type: "upsert",
+            id: "failed",
+            parentSubagentId: null,
+            title: "Failed task",
+            status: "failed",
+            cwd: "/tmp/project",
+            timestamp: "1970-01-01T00:00:00.001Z",
+          },
+        },
+        {
+          type: "provider_subagent",
+          provider: "opencode",
+          event: {
+            type: "timeline",
+            id: "failed",
+            item: { type: "user_message", text: "failed prompt", messageId: "msg_failed" },
+            timestamp: "1970-01-01T00:00:00.001Z",
+          },
+        },
+      ],
+      coverage: { kind: "complete" },
+    });
+    expect(lists).toEqual([
+      { parentID: "session", limit: 100 },
+      { parentID: "child", limit: 100 },
+      { parentID: "grandchild", limit: 100 },
+      { cursor: "next_children", limit: 100 },
+      { parentID: "failed", limit: 100 },
+    ]);
+    expect(harness.environments).toEqual([]);
+    expect(harness.mcpAdds).toEqual([]);
+    expect(harness.prompts).toEqual([]);
+    expect(harness.creates).toEqual([]);
+    expect(harness.releases).toBe(1);
+  });
+
+  test.each([
+    ["children", "child listing unavailable"],
+    ["messages", "grandchild messages unavailable"],
+    ["status", "child status unavailable"],
+  ] as const)(
+    "releases the history connection when reading child %s fails",
+    async (failure, message) => {
+      const { harness, read } = createChildHistoryHarness(failure);
+
+      await expect(read()).rejects.toThrow(message);
+      expect(harness.releases).toBe(1);
+    },
+  );
+});
+
 describe("OpenCode v2 session lifecycle", () => {
   test("completes from execution events without a long-lived HTTP wait", async () => {
     const harness = new V2Harness();

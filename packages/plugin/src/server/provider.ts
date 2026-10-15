@@ -31,6 +31,8 @@ export interface ProviderRegistration {
   /** Default executable and arguments; the daemon resolves overrides before status/connect. */
   command?: readonly [string, ...string[]];
   status?(request: ProviderStatusRequest): Promise<ProviderStatus>;
+  /** Read persisted history without opening an interactive provider session. */
+  readSessionHistory?(request: ProviderHistoryReadRequest): Promise<ProviderHistoryReadResult>;
   id: string;
   label: string;
   description?: string;
@@ -548,6 +550,34 @@ export type ProviderTimelineItem =
       version: number;
       data: JsonValue;
     });
+
+export interface ProviderHistoryReadRequest {
+  persistence: ProviderPersistence;
+  cwd: string;
+  env?: Readonly<Record<string, string>>;
+  launch?: ProviderLaunch;
+}
+
+export interface ProviderHistoryItem {
+  item: ProviderTimelineItem;
+  timestamp?: string;
+}
+
+export interface ProviderHistoryChild {
+  sessionId: string;
+  parentSessionId: string | null;
+  toolCallId?: string | null;
+  title?: string | null;
+  description?: string | null;
+  cwd: string;
+  items: ProviderHistoryItem[];
+}
+
+export interface ProviderHistoryReadResult {
+  items: ProviderHistoryItem[];
+  children?: ProviderHistoryChild[];
+  coverage: { kind: "complete" };
+}
 
 export type ProviderEvent =
   | { type: "catalog"; requestId: string; catalog: ProviderCatalog }
@@ -1255,6 +1285,27 @@ const timelineItemSchema: z.ZodType<ProviderTimelineItem> = z.union([
     })
     .strip(),
 ]);
+const historyItemSchema: z.ZodType<ProviderHistoryItem> = z
+  .object({ item: timelineItemSchema, timestamp: z.string().optional() })
+  .strip();
+const historyChildSchema: z.ZodType<ProviderHistoryChild> = z
+  .object({
+    sessionId: idSchema,
+    parentSessionId: idSchema.nullable(),
+    toolCallId: idSchema.nullable().optional(),
+    title: z.string().nullable().optional(),
+    description: z.string().nullable().optional(),
+    cwd: z.string(),
+    items: z.array(historyItemSchema),
+  })
+  .strip();
+export const ProviderHistoryReadResultSchema: z.ZodType<ProviderHistoryReadResult> = z
+  .object({
+    items: z.array(historyItemSchema),
+    children: z.array(historyChildSchema).optional(),
+    coverage: z.object({ kind: z.literal("complete") }).strict(),
+  })
+  .strip();
 const permissionActionSchema = z
   .object({
     id: idSchema,

@@ -283,6 +283,23 @@ without inspecting it.
 When `history` is `"replay"`, publish the native session's existing `timeline.item` snapshots before
 `session.ready`. Use `history: "skip"` to open without replaying old rows.
 
+Archived chats use a separate read-only callback so opening history never calls `session.open`:
+
+```ts
+readSessionHistory: async ({ persistence, cwd, env, launch }) => ({
+  items: await readStoredTimeline({ persistence, cwd, env, launch }),
+  coverage: { kind: "complete" },
+}),
+```
+
+The callback must read persisted data without registering an interactive session. Return complete
+`timeline.item` snapshots in provider order. Providers without this callback do not support
+archived history reads; Paseo does not fall back to `session.open`. If the provider stores child
+sessions, return them in `children` with their direct parent, tool call, metadata, and complete
+timeline snapshots. Use `parentSessionId: null` for children of the managed session and the
+provider child ID for nested children. Paseo turns these records into the normal provider-subagent
+timeline without opening an interactive child session.
+
 Paseo refreshes an agent by closing its current provider session and opening it again with current
 configuration and persistence. Re-read credentials, environment, global configuration, and MCP
 servers during `session.open`. There is no separate reload operation.

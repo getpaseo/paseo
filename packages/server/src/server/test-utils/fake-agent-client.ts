@@ -7,6 +7,8 @@ import type {
   AgentCapabilityFlags,
   AgentClient,
   AgentFeature,
+  AgentHistoryReadContext,
+  AgentHistoryReadResult,
   AgentLaunchContext,
   AgentMode,
   AgentModelDefinition,
@@ -1263,6 +1265,26 @@ class FakeAgentClient implements AgentClient {
       beforeTurnComplete: this.options.beforeTurnComplete,
       historyEvents: this.options.historyEvents,
     });
+  }
+
+  async readSessionHistory(
+    handle: AgentPersistenceHandle,
+    context?: AgentHistoryReadContext,
+  ): Promise<AgentHistoryReadResult> {
+    const session = await this.resumeSession(
+      handle,
+      context ? { cwd: context.cwd } : undefined,
+      context ? { agentId: context.agentId, env: context.env } : undefined,
+    );
+    try {
+      const events: AgentStreamEvent[] = [];
+      for await (const event of session.streamHistory()) {
+        events.push(event);
+      }
+      return { events, coverage: { kind: "complete" } };
+    } finally {
+      await session.close();
+    }
   }
 
   async fetchCatalog(
