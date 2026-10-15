@@ -45,7 +45,10 @@ type Record = z.infer<typeof RecordSchema>;
 /** Owns creation across socket lifetimes. Resource owners perform work; this module commits its milestones. */
 export class CreationService {
   private admission: Promise<unknown> = Promise.resolve();
-  private readonly active = new Map<string, Promise<CreationSnapshot>>();
+  private readonly active = new Map<
+    string,
+    { completion: Promise<CreationSnapshot>; record: Record }
+  >();
   private readonly receiptOperations = new Map<string, Promise<void>>();
   private readonly observers = new Map<string, Set<Observer>>();
   constructor(
@@ -57,6 +60,22 @@ export class CreationService {
     private readonly legacyDirectory?: string,
   ) {}
 
+  isWorkspaceStarting(workspaceId: string): boolean {
+    for (const { record } of this.active.values()) {
+      const snapshot = record.snapshot;
+      if (
+        snapshot.kind === "workspace" &&
+        snapshot.workspaceId === workspaceId &&
+        snapshot.agentId &&
+        snapshot.phase !== "completed" &&
+        snapshot.phase !== "failed" &&
+        snapshot.phase !== "prompt_started"
+      )
+        return true;
+    }
+    return false;
+  }
+
   async create(input: CreationInput, observer?: Observer): Promise<CreationSnapshot> {
     const identity = identityFor(input.kind, input.key);
     const admitted = this.admission.then(async () => {
@@ -67,7 +86,7 @@ export class CreationService {
       if (record && record.fingerprint !== fingerprint)
         throw new Error(`${input.kind}_request_key_conflict`);
       const running = this.active.get(identity);
-      if (running && record) return { completion: running, snapshot: record.snapshot };
+      if (running && record) return { completion: running.completion, snapshot: record.snapshot };
       if (record?.snapshot.phase === "completed") await this.validateCompleted(record.snapshot);
       if (record?.snapshot.phase === "completed" || record?.snapshot.outcomeUnknown) {
         return { completion: Promise.resolve(record.snapshot), snapshot: record.snapshot };
@@ -99,7 +118,7 @@ export class CreationService {
       const snapshot = record.snapshot;
       // Defer the runner until admission has installed the initiating observer.
       const completion = Promise.resolve().then(() => this.run(identity, record, input));
-      this.active.set(identity, completion);
+      this.active.set(identity, { completion, record });
       void completion.finally(() => this.active.delete(identity)).catch(() => undefined);
       return { completion, snapshot };
     });

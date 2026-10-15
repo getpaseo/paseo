@@ -8,6 +8,7 @@ import { openAgentRoute } from "./mock-agent";
 import { connectNewWorkspaceDaemonClient, openGlobalNewWorkspaceComposer } from "./new-workspace";
 import { copyPluginExample } from "./plugin-fixture";
 import { seedWorkspace, type SeededWorkspace } from "./seed-client";
+import { waitForSettledPosition } from "./sheet-layout";
 import { getServerId } from "./server-id";
 import { openSettingsHostSection } from "./settings";
 
@@ -43,10 +44,35 @@ async function expectProviderIcon(surface: Locator, paths: string[]): Promise<vo
 }
 
 async function selectPluginModel(page: Page): Promise<void> {
-  await openModelPicker(page);
-  await page.getByRole("button", { name: "Back", exact: true }).click();
-  await page.getByText("Direct provider example", { exact: true }).click();
-  await page.getByText("Example 1", { exact: true }).click();
+  await page.getByTestId("combined-model-selector").filter({ visible: true }).first().click();
+  await expect(page.getByRole("textbox", { name: /search (?:all )?model/i })).toBeVisible();
+  const compactSheet = page.getByTestId("agent-controls-model-sheet").filter({ visible: true });
+  if (await compactSheet.isVisible()) {
+    const modelControl = page.getByTestId("agent-controls-model").filter({ visible: true });
+    await waitForSettledPosition(modelControl);
+    await modelControl.click();
+    const browserSheet = page
+      .getByTestId("agent-controls-model-browser-sheet")
+      .filter({ visible: true });
+    await expect(browserSheet).toBeVisible();
+    const browserViewport = page
+      .getByTestId("agent-controls-model-browser-viewport")
+      .filter({ visible: true });
+    await waitForSettledPosition(
+      browserViewport.getByText("Direct provider example", { exact: true }),
+    );
+    await browserViewport.getByText("Direct provider example", { exact: true }).click();
+    await browserViewport.getByTestId("model-row-direct-example-example-1").click();
+    await expect(browserSheet).toHaveCount(0);
+    await waitForSettledPosition(compactSheet.getByRole("button", { name: "Close", exact: true }));
+    await compactSheet.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(compactSheet).toHaveCount(0);
+  } else {
+    const back = page.getByRole("button", { name: "Back", exact: true }).filter({ visible: true });
+    if (await back.isVisible()) await back.click();
+    await page.getByText("Direct provider example", { exact: true }).click();
+    await page.getByText("Example 1", { exact: true }).click();
+  }
   await expect(page.getByRole("button", { name: MODEL_LABEL, exact: true })).toBeVisible();
 }
 
@@ -120,17 +146,18 @@ export async function verifyNewWorkspaceModelIcon({
   iconPaths,
   testInfo,
 }: ProviderIconJourney): Promise<void> {
-  await test.step("new workspace keeps the picker icon on its selected model button", async () => {
+  await test.step("new workspace shows the provider icon in the picker and a text-only selection", async () => {
     await openGlobalNewWorkspaceComposer(page);
     await selectPluginModel(page);
     await openModelPicker(page);
     await expectProviderIcon(page.getByTestId("model-row-direct-example-example-1"), iconPaths);
     await capture(page, testInfo, "new-workspace-picker");
     await page.keyboard.press("Escape");
-    await expectProviderIcon(
-      page.getByRole("button", { name: MODEL_LABEL, exact: true }),
-      iconPaths,
-    );
+    const selectedModel = page.getByRole("button", { name: MODEL_LABEL, exact: true });
+    await expect(selectedModel).toBeVisible();
+    await expect
+      .poll(() => selectedModel.locator("svg").evaluateAll(readIconDrawings))
+      .not.toContainEqual(iconPaths);
     await capture(page, testInfo, "new-workspace-selected-model");
   });
 }
@@ -140,12 +167,12 @@ export async function verifyCompactModelIcon({
   iconPaths,
   testInfo,
 }: ProviderIconJourney): Promise<void> {
-  await test.step("compact composer preserves the same provider icon", async () => {
+  await test.step("compact composer shows the selected provider icon", async () => {
     await page.setViewportSize(COMPACT);
-    await expectProviderIcon(
-      page.getByRole("button", { name: MODEL_LABEL, exact: true }),
-      iconPaths,
-    );
+    await selectPluginModel(page);
+    const selectedModel = page.getByRole("button", { name: MODEL_LABEL, exact: true });
+    await expect(selectedModel).toBeVisible();
+    await expectProviderIcon(selectedModel, iconPaths);
     await capture(page, testInfo, "compact-selected-model");
   });
 }
@@ -156,7 +183,7 @@ export async function verifyExistingAgentModelIcon({
   testInfo,
   workspace,
 }: ProviderIconJourney): Promise<void> {
-  await test.step("existing agent composer uses the same icon", async () => {
+  await test.step("existing agent composer preserves the text-only model selection", async () => {
     const agent = await workspace.client.createAgent({
       provider: "direct-example",
       model: "example-1",
@@ -166,10 +193,11 @@ export async function verifyExistingAgentModelIcon({
     });
     await page.setViewportSize(WIDE);
     await openAgentRoute(page, { workspaceId: workspace.workspaceId, agentId: agent.id });
-    await expectProviderIcon(
-      page.getByRole("button", { name: MODEL_LABEL, exact: true }),
-      iconPaths,
-    );
+    const selectedModel = page.getByRole("button", { name: MODEL_LABEL, exact: true });
+    await expect(selectedModel).toBeVisible();
+    await expect
+      .poll(() => selectedModel.locator("svg").evaluateAll(readIconDrawings))
+      .not.toContainEqual(iconPaths);
     await capture(page, testInfo, "agent-selected-model");
   });
 }

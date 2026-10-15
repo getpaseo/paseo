@@ -3,7 +3,7 @@ import { test } from "../support/creation-fixtures";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
 import type { FormPreferences } from "@/create-agent-preferences/preferences";
-import { gotoAppShell } from "../support/helpers/app";
+import { gotoAppShell, selectModel } from "../support/helpers/app";
 import { captureWorkspaceAgentRequest } from "../support/helpers/creation";
 import { openAgentRoute } from "../support/helpers/mock-agent";
 import {
@@ -119,7 +119,7 @@ test.describe("New workspace Codex mode preferences", () => {
     const seeded = await seedWorkspace({ repoPrefix: "codex-mode-preferences-" });
     const createAgentRecorder = await captureWorkspaceAgentRequest(page, { block: false });
     try {
-      await seedCodexDefaultPermissionPreferences(page, seeded.repoPath);
+      const model = await seedCodexDefaultPermissionPreferences(page, seeded.repoPath);
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
       await openGlobalNewWorkspaceComposer(page);
@@ -133,6 +133,7 @@ test.describe("New workspace Codex mode preferences", () => {
       await expect(
         page.getByRole("button", { name: "Select agent mode (Full access)" }),
       ).toBeVisible({ timeout: 30_000 });
+      await selectModel(page, model);
       await expectThinkingOptionsFit(page);
       await selectMode(page, "Default permissions");
       await selectMode(page, "Full access");

@@ -3,6 +3,7 @@ import { expect, test } from "../support/fixtures";
 import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
 import { seedMockAgentWorkspace, openAgentRoute } from "../support/helpers/mock-agent";
 import { createPlanActionPlugin } from "../support/helpers/plan-action-plugin";
+import { readReplicaCache } from "../support/helpers/replica-cache-storage";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 
 const profiles = [
@@ -328,6 +329,15 @@ test("cached plans stay read-only until the reconnected daemon restores a live p
     const card = page.getByTestId("timeline-plan-card");
     const bar = card.getByTestId("plan-actions");
     await expect(bar.getByRole("button", { name: "Approve", exact: true })).toBeVisible();
+    await expect
+      .poll(async () => {
+        const cache = await readReplicaCache(page);
+        const timeline = cache?.hosts
+          ?.flatMap((host) => host.timelines)
+          .find((candidate) => candidate.agentId === session.agentId);
+        return timeline?.items?.some((item) => JSON.stringify(item).includes("my repo")) ?? false;
+      })
+      .toBe(true);
     let offline = true;
     let holdSnapshot = true;
     const releaseSnapshots: Array<() => void> = [];

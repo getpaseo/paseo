@@ -76,7 +76,7 @@ test("intention creates a workspace, starts its Router once and edits explicitly
     await page.getByTestId("workspace-create-submit").click();
     await page.waitForURL((url) => url.pathname.includes("/workspace/"));
     await expect
-      .poll(() => requests.filter((request) => request.type === "create_agent_request").length)
+      .poll(() => requests.filter((request) => request.type === "workspace.create.request").length)
       .toBe(1);
     const created = (await client.fetchWorkspaces()).entries.find(
       (workspace) => workspace.intent === intention,
@@ -94,24 +94,19 @@ test("intention creates a workspace, starts its Router once and edits explicitly
       (entry) => entry.agent.workspaceId === created?.id,
     );
     expect(router).toBeDefined();
-    const createRequest = requests.find((request) => request.type === "create_agent_request");
+    const createWorkspaceRequest = requests.find(
+      (request) => request.type === "workspace.create.request",
+    );
+    const createRequest = createWorkspaceRequest?.agent as Record<string, unknown>;
     expect(createRequest).toMatchObject({
       launchProfileId: "paseo-workflow-router",
       config: { provider: "mock", model: "ten-second-stream" },
     });
-    expect(createRequest).not.toHaveProperty("initialPrompt");
-    expect(createRequest?.idempotencyKey).toEqual(expect.any(String));
-    await expect
-      .poll(
-        () => requests.filter((request) => request.type === "send_agent_message_request").length,
-      )
-      .toBe(1);
-    expect(requests.find((request) => request.type === "send_agent_message_request")).toMatchObject(
-      {
-        text: intention.trim(),
-        messageId: expect.any(String),
-      },
-    );
+    expect(createRequest?.initialPrompt).toBe(intention.trim());
+    expect(createWorkspaceRequest?.idempotencyKey).toEqual(expect.any(String));
+    expect(
+      requests.filter((request) => request.type === "send_agent_message_request"),
+    ).toHaveLength(0);
     await page.reload();
     await waitForSidebarHydration(page);
     await expect(page.getByTestId(`workspace-tab-agent_${router!.agent.id}`)).toBeVisible();
@@ -136,10 +131,12 @@ test("intention creates a workspace, starts its Router once and edits explicitly
             ?.intent,
       )
       .toBe("Calendar for the team");
-    expect(requests.filter((request) => request.type === "create_agent_request")).toHaveLength(1);
+    expect(requests.filter((request) => request.type === "workspace.create.request")).toHaveLength(
+      1,
+    );
     expect(
       requests.filter((request) => request.type === "send_agent_message_request"),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
   } finally {
     await client.close();
     await project.cleanup();

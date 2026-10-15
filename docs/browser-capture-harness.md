@@ -113,13 +113,17 @@ plane stays below the overlay plane regardless of body insertion order; menus ke
 layering inside `overlay-root`. Activating a presented browser also focuses its registered guest
 `WebContents` in main so macOS assigns keyboard first-responder ownership to the page.
 
-Automation screenshots use CDP to paint fresh viewport or full-page pixels inside the shared
-serialized queue and five-second budget. Do not manually enable frame production or wait for
-animation callbacks: a hidden page is supposed to remain idle. Electron 44's throttling setter can
-unhide the native widget without re-hiding it when the previous policy is restored. A native
-`capturePage()` cleanup is unsafe too: after resize, even a 1×1 surface-copy request can remain
-pending and retain capture ownership. The Electron journey checks native idle and capture ownership
-after success, cancellation and destruction, with its Playwright observer disconnected during the
+Automation screenshots use CDP inside the shared serialized queue and five-second budget.
+A transient 1×1 screencast consumer makes hidden compositor surfaces paintable before viewport
+or full-page capture. Stop that consumer on success, cancellation and destruction, including
+when the start command has not replied yet. Viewport capture clips to `innerWidth` and
+`innerHeight`; layout metrics omit the scrollbar gutter.
+
+Do not use Electron 44's throttling setter to wake a page: it can unhide the native widget
+without re-hiding it when the previous policy is restored. A native `capturePage()` cleanup is
+unsafe too: after resize, even a 1×1 surface-copy request can remain pending and retain capture
+ownership. The Electron journey checks fresh pixels, native idle and capture ownership after
+success, cancellation and destruction, with its Playwright observer disconnected during the
 hidden-window samples; an attached host CDP observer itself keeps guests animating.
 
 Element capture keeps its existing zoom-scaled native region path. It does not use the automation

@@ -471,7 +471,7 @@ export interface SessionOptions {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   messageReceipts: Pick<MessageReceipts, "send">;
-  creationService: Pick<CreationService, "create" | "subscribe">;
+  creationService: Pick<CreationService, "create" | "subscribe" | "isWorkspaceStarting">;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
   directorySync?: DirectorySyncService;
@@ -809,7 +809,10 @@ export class Session {
   private readonly workspaceScripts: WorkspaceScriptsService;
   private readonly messageReceipts: Pick<MessageReceipts, "send">;
   private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
-  private readonly creationService: Pick<CreationService, "create" | "subscribe">;
+  private readonly creationService: Pick<
+    CreationService,
+    "create" | "subscribe" | "isWorkspaceStarting"
+  >;
 
   constructor(options: SessionOptions) {
     const {
@@ -1181,6 +1184,7 @@ export class Session {
       listProviderSubagentActivity: async () => this.agentManager.listProviderSubagentActivity(),
       listTerminalActivityContributions: () => this.listTerminalActivityContributions(),
       isProviderVisibleToClient: (provider) => this.isProviderVisibleToClient(provider),
+      isWorkspaceStarting: (workspaceId) => this.creationService.isWorkspaceStarting(workspaceId),
       buildWorkspaceDescriptor: (input) => this.buildWorkspaceDescriptor(input),
     });
 
@@ -4228,7 +4232,7 @@ export class Session {
             );
             const workspace = await this.workspaceRegistry.get(descriptor.id);
             return {
-              workspace: descriptor,
+              workspace: agentInput ? { ...descriptor, status: "running" } : descriptor,
               setupSkippedReason: workspace?.untrustedSource
                 ? formatWorkspaceAutomationBlockedMessage(workspace.untrustedSource)
                 : undefined,
@@ -4284,6 +4288,13 @@ export class Session {
         },
         source,
       );
+      if (creation.workspaceId)
+        void this.emitWorkspaceUpdateForWorkspaceId(creation.workspaceId).catch((error) => {
+          this.sessionLogger.warn(
+            { err: error, workspaceId: creation.workspaceId },
+            "Failed to refresh workspace after creation",
+          );
+        });
     } catch (error) {
       this.emitForSource(
         {

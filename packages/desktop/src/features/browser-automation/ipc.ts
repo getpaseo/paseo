@@ -137,6 +137,10 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
         if (!contents.debugger.isAttached()) {
           contents.debugger.attach("1.3");
         }
+        if (command === "Page.captureScreenshot")
+          return withCaptureFrameProduction(contents, AbortSignal.timeout(5_000), () =>
+            contents.debugger.sendCommand(command, params ?? {}),
+          );
         return contents.debugger.sendCommand(command, params ?? {});
       }),
   };
@@ -146,78 +150,97 @@ function captureViewportFrame(
   contents: BrowserAutomationWebContents,
   signal: AbortSignal,
 ): Promise<TabImage> {
+  return withCaptureFrameProduction(contents, signal, async () => {
+    const result = await contents.debugger.sendCommand("Runtime.evaluate", {
+      expression: "({ x: scrollX, y: scrollY, width: innerWidth, height: innerHeight })",
+      returnByValue: true,
+    });
+    signal.throwIfAborted();
+    if (contents.isDestroyed()) throw new BrowserTabClosedError();
+    const metrics = result as {
+      result?: { value?: { x: number; y: number; width: number; height: number } };
+    };
+    // innerWidth includes the scrollbar gutter; CDP layout metrics omit it.
+    const viewport = metrics.result?.value;
+    if (!viewport || viewport.width <= 0 || viewport.height <= 0)
+      throw new Error("No frame returned by viewport capture");
+    const response = await contents.debugger.sendCommand("Page.captureScreenshot", {
+      format: "png",
+      fromSurface: true,
+      captureBeyondViewport: true,
+      clip: { ...viewport, scale: 1 },
+    });
+    signal.throwIfAborted();
+    const data = (response as { data?: string }).data;
+    if (!data) throw new Error("No frame returned by viewport capture");
+    const image = nativeImage.createFromBuffer(Buffer.from(data, "base64"));
+    if (image.isEmpty()) throw new Error("No frame returned by viewport capture");
+    return image;
+  });
+}
+
+function withCaptureFrameProduction<T>(
+  contents: BrowserAutomationWebContents,
+  signal: AbortSignal,
+  capture: () => Promise<T>,
+): Promise<T> {
   signal.throwIfAborted();
   if (contents.isDestroyed()) return Promise.reject(new BrowserTabClosedError());
   return new Promise((resolve, reject) => {
     let settled = false;
-    const stop = () => {
+    let screencastRequested = false;
+    const stop = async () => {
       settled = true;
       signal.removeEventListener("abort", abort);
       contents.removeListener("destroyed", destroyed);
+      if (screencastRequested) {
+        screencastRequested = false;
+        await contents.debugger.sendCommand("Page.stopScreencast");
+      }
+    };
+    const fail = async (error: unknown) => {
+      if (settled) return;
+      try {
+        await stop();
+      } catch {
+        /* Preserve the capture or cancellation error. */
+      }
+      reject(error);
     };
     const abort = () => {
-      stop();
-      reject(signal.reason);
+      void fail(signal.reason);
     };
     const destroyed = () => {
-      stop();
-      reject(new BrowserTabClosedError());
-    };
-    const failed = (error: unknown) => {
-      if (settled) return;
-      stop();
-      reject(error);
+      void fail(new BrowserTabClosedError());
     };
     signal.addEventListener("abort", abort, { once: true });
     contents.once("destroyed", destroyed);
     try {
       if (!contents.debugger.isAttached()) contents.debugger.attach("1.3");
-      // CDP paints a fresh viewport and restores native visibility itself. Electron
-      // 44's throttling setter cannot re-hide a widget after a manual wake-up.
+      // The CDP video consumer makes hidden Linux surfaces paintable. Stop it on
+      // every exit so captures do not leave the page producing background frames.
+      // Native capture and Electron's throttling setter cannot be canceled safely.
+      screencastRequested = true;
       void contents.debugger
-        .sendCommand("Runtime.evaluate", {
-          expression: "({ x: scrollX, y: scrollY, width: innerWidth, height: innerHeight })",
-          returnByValue: true,
-        })
-        .then((result) => {
-          if (settled) return null;
+        .sendCommand("Page.startScreencast", { format: "png", maxWidth: 1, maxHeight: 1 })
+        .then(() => {
+          if (settled) throw signal.reason ?? new BrowserTabClosedError();
           signal.throwIfAborted();
-          const metrics = result as {
-            result?: { value?: { x: number; y: number; width: number; height: number } };
-          };
-          // innerWidth includes the scrollbar gutter; CDP layout metrics omit it.
-          const viewport = metrics.result?.value;
-          if (!viewport || viewport.width <= 0 || viewport.height <= 0) {
-            throw new Error("No frame returned by viewport capture");
-          }
-          // Explicit clipping keeps viewport semantics while asking Chromium to
-          // paint offscreen content instead of copying a hidden Linux surface.
-          return contents.debugger.sendCommand("Page.captureScreenshot", {
-            format: "png",
-            fromSurface: true,
-            captureBeyondViewport: true,
-            clip: {
-              x: viewport.x,
-              y: viewport.y,
-              width: viewport.width,
-              height: viewport.height,
-              scale: 1,
-            },
-          });
+          return capture();
         })
-        .then((result) => {
+        .then(async (result) => {
           if (settled) return null;
-          const data = (result as { data?: string }).data;
-          if (!data) throw new Error("No frame returned by viewport capture");
-          const image = nativeImage.createFromBuffer(Buffer.from(data, "base64"));
-          if (image.isEmpty()) throw new Error("No frame returned by viewport capture");
-          stop();
-          resolve(image);
+          try {
+            await stop();
+            resolve(result);
+          } catch (error) {
+            reject(error);
+          }
           return null;
         })
-        .catch(failed);
+        .catch(fail);
     } catch (error) {
-      failed(error);
+      void fail(error);
     }
   });
 }

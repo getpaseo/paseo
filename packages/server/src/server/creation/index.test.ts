@@ -108,6 +108,8 @@ test("workspace readiness is observable before provider startup and duplicate re
   const f = await fixture();
   const first = f.service.create(f.input, f.observe);
   await f.ready.promise;
+  expect(f.service.isWorkspaceStarting(workspace.id)).toBe(true);
+  expect(f.service.isWorkspaceStarting("other-workspace")).toBe(false);
   expect(f.calls).toEqual(["workspace"]);
   expect(f.updates.map((s) => s.phase)).toEqual(["accepted", "workspace_ready"]);
   expect(f.updates[0]).toMatchObject({ workspaceId: workspace.id, agentId: agent.id });
@@ -115,6 +117,7 @@ test("workspace readiness is observable before provider startup and duplicate re
   f.provider.resolve();
   expect(await first).toMatchObject({ phase: "completed", error: null, workspace, agent });
   expect(await duplicate).toEqual(await first);
+  expect(f.service.isWorkspaceStarting(workspace.id)).toBe(false);
   expect(f.calls).toEqual(["workspace", "agent", "prompt"]);
   expect(await new CreationService(f.directory, silentLogger).create(f.input)).toEqual(await first);
   expect(f.calls).toEqual(["workspace", "agent", "prompt"]);
@@ -137,6 +140,7 @@ test("a failed agent startup retries only that stage with the reserved IDs", asy
     outcomeUnknown: false,
     workspace,
   });
+  expect(f.service.isWorkspaceStarting(workspace.id)).toBe(false);
   expect(await new CreationService(f.directory, silentLogger).create(f.input)).toMatchObject({
     phase: "completed",
     agent,

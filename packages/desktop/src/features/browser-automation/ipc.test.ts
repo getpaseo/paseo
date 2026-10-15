@@ -270,15 +270,53 @@ describe("browser automation IPC adapter", () => {
     });
 
     expect((await capture).getSize()).toEqual({ width: 640, height: 480 });
+    expect(contents.debugger.commands).toContainEqual({
+      command: "Page.startScreencast",
+      params: { format: "png", maxWidth: 1, maxHeight: 1 },
+    });
+    expect(contents.debugger.commands.at(-1)).toEqual({
+      command: "Page.stopScreencast",
+      params: {},
+    });
     controller.abort();
     expect(contents.throttlingChanges).toEqual([]);
     expect(contents.destroyedListeners.size).toBe(1);
   });
 
-  test.each(["Runtime.evaluate", "Page.captureScreenshot"])(
+  test("a frame-producer cleanup failure rejects the capture", async () => {
+    const contents = new FakeWebContents(2401);
+    contents.debugger.failedCommandNames.add("Page.stopScreencast");
+    const tab = adaptWebContents(contents);
+    await expect(tab.captureFrame(new AbortController().signal)).rejects.toThrow(
+      "Page.stopScreencast failed",
+    );
+  });
+
+  test("full-page CDP captures release the same frame producer", async () => {
+    const contents = new FakeWebContents(2301);
+    const tab = adaptWebContents(contents);
+    await expect(
+      tab.sendDebugCommand?.("Page.captureScreenshot", {
+        format: "png",
+        captureBeyondViewport: true,
+      }),
+    ).resolves.toEqual({ data: "iVBORw==" });
+    expect(contents.debugger.commands.map((command) => command.command)).toEqual([
+      "Page.startScreencast",
+      "Page.captureScreenshot",
+      "Page.stopScreencast",
+    ]);
+  });
+
+  test.each(["Page.startScreencast", "Runtime.evaluate", "Page.captureScreenshot"])(
     "cancels pending %s and releases its queue without consuming a late frame",
     async (command) => {
-      const contents = new FakeWebContents(command === "Runtime.evaluate" ? 2101 : 2001);
+      const contentsIds = {
+        "Runtime.evaluate": 2101,
+        "Page.startScreencast": 2201,
+        "Page.captureScreenshot": 2001,
+      };
+      const contents = new FakeWebContents(contentsIds[command]);
       contents.debugger.blockedCommandNames.add(command);
       const tab = adaptWebContents(contents);
       const controller = new AbortController();
@@ -288,6 +326,10 @@ describe("browser automation IPC adapter", () => {
       controller.abort(new Error("capture deadline"));
 
       await failure;
+      expect(contents.debugger.commands.at(-1)).toEqual({
+        command: "Page.stopScreencast",
+        params: {},
+      });
       expect(contents.throttlingChanges).toEqual([]);
       expect(contents.destroyedListeners.size).toBe(1);
       await expect(tab.sendDebugCommand?.("Page.getLayoutMetrics")).resolves.toEqual({ ok: true });
@@ -417,7 +459,9 @@ describe("browser automation IPC adapter", () => {
     expect(result).toEqual({ data: "iVBORw==" });
     expect(contents.debugger.attachedProtocolVersions).toEqual(["1.3"]);
     expect(contents.debugger.commands).toEqual([
+      { command: "Page.startScreencast", params: { format: "png", maxWidth: 1, maxHeight: 1 } },
       { command: "Page.captureScreenshot", params: { format: "png" } },
+      { command: "Page.stopScreencast", params: {} },
     ]);
   });
 
@@ -427,7 +471,7 @@ describe("browser automation IPC adapter", () => {
     const tab = adaptWebContents(contents);
 
     const first = tab.sendDebugCommand?.("Input.dispatchMouseEvent", { type: "mouseMoved" });
-    const second = tab.sendDebugCommand?.("Page.captureScreenshot", { format: "png" });
+    const second = tab.sendDebugCommand?.("Page.getLayoutMetrics", {});
     await flushMicrotasks();
 
     expect(contents.debugger.commands).toEqual([
@@ -439,12 +483,12 @@ describe("browser automation IPC adapter", () => {
 
     expect(contents.debugger.commands).toEqual([
       { command: "Input.dispatchMouseEvent", params: { type: "mouseMoved" } },
-      { command: "Page.captureScreenshot", params: { format: "png" } },
+      { command: "Page.getLayoutMetrics", params: {} },
     ]);
 
     contents.debugger.finishNextCommand();
     await expect(first).resolves.toEqual({ ok: true });
-    await expect(second).resolves.toEqual({ data: "iVBORw==" });
+    await expect(second).resolves.toEqual({ ok: true });
   });
 
   test("handles JavaScript dialogs through the per-tab CDP queue", async () => {

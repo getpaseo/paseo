@@ -56,6 +56,7 @@ class WorkspaceStatus {
     archivedAt: null,
   };
 
+  initialAgentPending = false;
   private readonly workspaces = [this.workspace];
 
   private readonly agents: AgentSnapshotPayload[] = [];
@@ -73,6 +74,7 @@ class WorkspaceStatus {
     listProviderSubagentActivity: async () => this.providerSubagents,
     listTerminalActivityContributions: async () => this.terminals,
     isProviderVisibleToClient: () => true,
+    isWorkspaceStarting: (id) => this.initialAgentPending && id === this.workspace.workspaceId,
     buildWorkspaceDescriptor: async ({ workspace }) => ({
       id: workspace.workspaceId,
       projectId: workspace.projectId,
@@ -293,6 +295,26 @@ function createAgent(
 }
 
 describe("WorkspaceDirectory", () => {
+  test("initial agent creation contributes running until it settles", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.initialAgentPending = true;
+    await expect(workspace.workspaceStatus()).resolves.toBe("running");
+    workspace.initialAgentPending = false;
+    await expect(workspace.workspaceStatus()).resolves.toBe("done");
+  });
+
+  test("a failed agent takes precedence over pending workspace startup", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.initialAgentPending = true;
+    workspace.hasRootAgent({
+      id: "failed",
+      status: "error",
+      requiresAttention: true,
+      attentionReason: "error",
+    });
+    await expect(workspace.workspaceStatus()).resolves.toBe("failed");
+  });
+
   test("uses root agent activity, not delegated child activity, for workspace status", async () => {
     const workspace = new WorkspaceStatus();
 
@@ -562,6 +584,7 @@ describe("WorkspaceDirectory empty projects", () => {
       listProviderSubagentActivity: async () => [],
       listTerminalActivityContributions: async () => [],
       isProviderVisibleToClient: () => true,
+      isWorkspaceStarting: () => false,
       buildWorkspaceDescriptor: async ({ workspace }) => ({
         id: workspace.workspaceId,
         projectId: workspace.projectId,
@@ -689,6 +712,7 @@ test("Git observation targets exclude archived records without hydrating app des
     listTerminalActivityContributions: unexpectedHydration,
     buildWorkspaceDescriptor: unexpectedHydration,
     isProviderVisibleToClient: () => true,
+    isWorkspaceStarting: () => false,
   });
   expect(await directory.listObservationTargets()).toEqual([
     { id: "observed", workspaceDirectory: "/workspace/observed", workspaceKind: "local_checkout" },

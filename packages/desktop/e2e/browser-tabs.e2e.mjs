@@ -844,7 +844,11 @@ async function verifyBackgroundTypingStaysInGuest({ page, client, serverId, brow
     .first();
   const draft = "draft the user is typing";
   await composer.click();
-  await composer.pressSequentially(draft);
+  await composer.fill(draft);
+  assert(
+    (await composer.inputValue()) === draft,
+    "Composer fixture did not contain its baseline draft",
+  );
   assert(
     await composer.evaluate((element) => element === document.activeElement),
     "Composer did not keep focus while the user typed",

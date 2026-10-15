@@ -82,6 +82,7 @@ export interface WorkspaceDirectoryDeps {
     Array<{ cwd: string; workspaceId?: string; activity: TerminalActivity | null }>
   >;
   isProviderVisibleToClient(provider: string): boolean;
+  isWorkspaceStarting(workspaceId: string): boolean;
   buildWorkspaceDescriptor(input: {
     workspace: PersistedWorkspaceRecord;
     projectRecord?: PersistedProjectRecord | null;
@@ -291,6 +292,10 @@ export class WorkspaceDirectory {
     // on `resolveStatusEnteredAt`).
     const nowIso = new Date().toISOString();
     for (const [workspaceId, descriptor] of descriptorsByWorkspaceId) {
+      // Setup and provider startup can publish an otherwise empty workspace before
+      // its first turn. A failed/awaiting agent still takes precedence.
+      if (descriptor.status === "done" && this.deps.isWorkspaceStarting(workspaceId))
+        descriptor.status = "running";
       const contributingAgents = contributingAgentsByWorkspaceId.get(workspaceId) ?? [];
       const activityEntries = activityEntriesByWorkspaceId.get(workspaceId) ?? [];
       const result = this.resolveStatusEnteredAt({
