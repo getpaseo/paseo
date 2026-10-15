@@ -51,8 +51,8 @@
 <table align="center">
   <tr>
     <td align="center" width="33%"><a href="https://hoplite.sh/?utm_source=paseo&utm_medium=readme&utm_campaign=sponsor"><picture><source media="(prefers-color-scheme: dark)" srcset="packages/website/public/sponsors/hoplite-on-dark.svg"><img src="packages/website/public/sponsors/hoplite-on-light.svg" alt="Hoplite" height="40"></picture></a></td>
-    <td align="center" width="33%"><a href="https://paseo.sh/sponsor">스폰서 되기</a></td>
-    <td align="center" width="33%"><a href="https://paseo.sh/sponsor">스폰서 되기</a></td>
+    <td align="center" width="33%"><a href="https://paseo.sh/sponsor">Paseo 스폰서 되기</a></td>
+    <td align="center" width="33%"><a href="https://paseo.sh/sponsor">Paseo 스폰서 되기</a></td>
   </tr>
 </table>
 
