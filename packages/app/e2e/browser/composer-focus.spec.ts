@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "../support/fixtures";
 import {
-  composerLocator,
   blurComposerInput,
+  composerLocator,
   enterComposerFullscreen,
   exitComposerFullscreen,
   expectComposerDraft,
@@ -58,11 +58,14 @@ test("clicking chat text or background focuses the feed for keyboard paging", as
     await expect
       .poll(async () => (await readScrollMetrics(page)).distanceFromBottom)
       .toBeGreaterThan(beforePaging.viewportHeight / 2);
-    await agent.client.sendAgentMessage(agent.agentId, "emit 1 coalesced agent stream updates");
+    await agent.client.sendAgentMessage(agent.agentId, "emit 2 coalesced agent stream updates");
     await agent.client.waitForFinish(agent.agentId, 15_000);
-    expect((await readScrollMetrics(page)).distanceFromBottom).toBeGreaterThan(
-      beforePaging.viewportHeight / 2,
-    );
+    // The daemon finishing does not mean its response has reached the browser.
+    await expect(feed.getByText(/stress-update-1/)).toHaveCount(1);
+    await waitForAnimationFrames(page, 4);
+    await expect
+      .poll(async () => (await readScrollMetrics(page)).distanceFromBottom)
+      .toBeGreaterThan(beforePaging.viewportHeight / 2);
     await expectComposerDraft(page, "Keep this draft");
   } finally {
     await agent.cleanup();
