@@ -1675,6 +1675,39 @@ test("does not register a session that finishes starting after shutdown begins",
   });
 });
 
+test("counts an agent as registering until it is listed", async () => {
+  const client = new HeldAgentCreationClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000101",
+  });
+  const seen: Array<{ pending: number; listed: number }> = [];
+  manager.subscribeAgentRegistrations(() => {
+    seen.push({
+      pending: manager.pendingAgentRegistrationCount(),
+      listed: manager.listAgents().length,
+    });
+  });
+
+  const creation = manager.createAgent({ provider: "codex", cwd: process.cwd() }, undefined, {
+    workspaceId: undefined,
+  });
+  await client.waitForCreationToStart();
+  expect(manager.pendingAgentRegistrationCount()).toBe(1);
+  expect(manager.listAgents()).toEqual([]);
+
+  client.finishCreating();
+  await creation;
+  await manager.flushForShutdown();
+
+  // No notification shows the agent neither pending nor listed.
+  expect(seen).toEqual([
+    { pending: 1, listed: 0 },
+    { pending: 0, listed: 1 },
+  ]);
+});
+
 test("flush waits for rejected session cleanup that starts after shutdown", async () => {
   const client = new HeldAgentCreationAndCloseClient();
   const manager = new AgentManager({

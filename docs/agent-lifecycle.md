@@ -288,13 +288,14 @@ Closing a subagent's tab on one client doesn't affect other clients' layouts. Th
 
 - an agent is `initializing` or `running` and has no pending permission request (`reason: "running"`)
 - an agent has `backgroundWorkPending` (`reason: "background_work"`)
+- an agent is being created, resumed, imported or reloaded and is not listed yet, for example while its provider process starts (`kind: "agent_registration"`, `reason: "starting"`, with a `count`)
 - a terminal's activity is `working` (`reason: "working"`), which comes from hook reports, see [`docs/terminal-activity.md`](./terminal-activity.md)
 
 The other fields are read when the request arrives and leave the policy to the caller:
 
 - `commands`: terminals whose foreground is not a shell prompt, so a build or a dev server that reports no status still shows. `running` means Paseo's shell integration marked a command start (OSC 633 `C`) with no prompt since; `unknown` means no prompt mark yet, which is permanent in shells without the integration (only zsh has it) and in terminals launched straight into a program. An agent harness waiting at its own prompt also stays listed, because its shell still reports the command as running; use `state` and `waiting` to tell whether it is doing work.
 - `services`: running workspace service scripts from `paseo.json`. They run indefinitely by design, so they are kept out of `commands`.
-- `waiting`: agents with a pending permission and terminals that need input. Waiting on a person never makes `state` busy; the list is for callers that want to notify or hold off.
+- `waiting`: agents with a pending permission and terminals that need input, service terminals included. Waiting on a person never makes `state` busy; the list is for callers that want to notify or hold off.
 - `clients`: connected clients, how many have the app visible, and the latest input time across clients. `present` is true when a visible client had input within the attention policy's presence window (`PRESENCE_THRESHOLD_MS`, 180 s); callers wanting another window use `lastActivityAt`. On desktop, input is OS-wide, so a visible Paseo window keeps `present` true while the user works in other apps.
 
 ## Storage

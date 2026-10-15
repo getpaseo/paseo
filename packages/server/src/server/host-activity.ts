@@ -19,6 +19,10 @@ export interface HostActivityAgentView {
 export interface HostActivityAgentSource {
   subscribe(callback: AgentSubscriber, options?: { includeInternal?: boolean }): () => void;
   listAgents(options?: { includeInternal?: boolean }): HostActivityAgentView[];
+  // Agents being created, resumed, imported or reloaded, which listAgents()
+  // does not include until their provider session exists.
+  pendingAgentRegistrationCount(): number;
+  subscribeAgentRegistrations(listener: () => void): () => void;
 }
 
 export interface HostActivityTerminalSource {
@@ -40,6 +44,7 @@ export type HostActivityState = "busy" | "quiescent";
 
 export type HostActivityBusyEntry =
   | { kind: "agent"; id: string; reason: "running" | "background_work" }
+  | { kind: "agent_registration"; count: number; reason: "starting" }
   | { kind: "terminal"; id: string; reason: "working" };
 
 // A terminal whose foreground is not a shell prompt: `running` after OSC 633 C
@@ -126,6 +131,9 @@ export class HostActivityMonitor {
         },
         { includeInternal: true },
       ),
+      this.agentManager.subscribeAgentRegistrations(() => {
+        this.recomputeAgents();
+      }),
       this.terminalManager.subscribeTerminalActivity((event) => {
         if (event.activity?.state === "working") {
           this.workingTerminalIds.add(event.terminalId);
@@ -169,6 +177,9 @@ export class HostActivityMonitor {
       if (terminal.getExitInfo() !== null) {
         continue;
       }
+      if (deriveTerminalActivityStatusBucket(terminal.getActivity()) === "needs_input") {
+        waiting.push({ kind: "terminal", id: terminal.id, reason: "needs_input" });
+      }
       const service = servicesByTerminal.get(terminal.id);
       if (service) {
         services.push({
@@ -177,9 +188,6 @@ export class HostActivityMonitor {
           scriptName: service.scriptName,
         });
         continue;
-      }
-      if (deriveTerminalActivityStatusBucket(terminal.getActivity()) === "needs_input") {
-        waiting.push({ kind: "terminal", id: terminal.id, reason: "needs_input" });
       }
       const { commandState } = terminal.getForeground();
       if (commandState === "prompt") {
@@ -236,6 +244,10 @@ export class HostActivityMonitor {
 
   private recomputeAgents(): void {
     const entries: HostActivityBusyEntry[] = [];
+    const pendingRegistrations = this.agentManager.pendingAgentRegistrationCount();
+    if (pendingRegistrations > 0) {
+      entries.push({ kind: "agent_registration", count: pendingRegistrations, reason: "starting" });
+    }
     for (const agent of this.agentManager.listAgents({ includeInternal: true })) {
       if (agent.lifecycle === "closed") {
         continue;

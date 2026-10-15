@@ -44,6 +44,8 @@ function agentView(input: {
 class FakeAgentManager implements HostActivityAgentSource {
   agents: HostActivityAgentView[] = [];
   private readonly listeners = new Set<AgentSubscriber>();
+  private readonly registrationListeners = new Set<() => void>();
+  private pendingRegistrations = 0;
 
   subscribe(callback: AgentSubscriber): () => void {
     this.listeners.add(callback);
@@ -57,6 +59,24 @@ class FakeAgentManager implements HostActivityAgentSource {
 
   listAgents(): HostActivityAgentView[] {
     return [...this.agents];
+  }
+
+  pendingAgentRegistrationCount(): number {
+    return this.pendingRegistrations;
+  }
+
+  subscribeAgentRegistrations(listener: () => void): () => void {
+    this.registrationListeners.add(listener);
+    return () => {
+      this.registrationListeners.delete(listener);
+    };
+  }
+
+  setPendingRegistrations(count: number): void {
+    this.pendingRegistrations = count;
+    for (const listener of this.registrationListeners) {
+      listener();
+    }
   }
 
   setAgents(agents: HostActivityAgentView[]): void {
@@ -231,6 +251,30 @@ describe("HostActivityMonitor", () => {
     });
   });
 
+  it("stays busy while an agent starts, before it is listed", () => {
+    const { agents, monitor, advance, nowIso } = setup();
+
+    advance(1000);
+    agents.setPendingRegistrations(1);
+    const startedAt = nowIso();
+    expect(monitor.snapshot()).toMatchObject({
+      state: "busy",
+      since: startedAt,
+      busy: [{ kind: "agent_registration", count: 1, reason: "starting" }],
+    });
+
+    // Registration lists the agent before the pending operation settles, so
+    // the host never reads quiescent in between.
+    advance(1000);
+    agents.setAgents([agentView({ id: "a-1", lifecycle: "initializing" })]);
+    agents.setPendingRegistrations(0);
+    expect(monitor.snapshot()).toMatchObject({
+      state: "busy",
+      since: startedAt,
+      busy: [{ kind: "agent", id: "a-1", reason: "running" }],
+    });
+  });
+
   it("reports an idle agent with pending background work as busy", () => {
     const { agents, monitor, advance, nowIso } = setup();
 
@@ -388,6 +432,29 @@ describe("HostActivityMonitor", () => {
     expect(monitor.snapshot().waiting).toEqual([
       { kind: "terminal", id: "asks", reason: "needs_input" },
     ]);
+  });
+
+  it("lists a service that needs input as waiting", () => {
+    const { terminals, scripts, monitor } = setup();
+    terminals.open(
+      "web",
+      { state: "attention", attentionReason: "needs_input", changedAt: 1 },
+      { commandState: "running" },
+    );
+    scripts.push({
+      workspaceId: "ws",
+      scriptName: "web",
+      type: "service",
+      lifecycle: "running",
+      terminalId: "web",
+      exitCode: null,
+    });
+
+    const snapshot = monitor.snapshot();
+    expect(snapshot.services).toEqual([
+      { terminalId: "web", workspaceId: "ws", scriptName: "web" },
+    ]);
+    expect(snapshot.waiting).toEqual([{ kind: "terminal", id: "web", reason: "needs_input" }]);
   });
 
   describe("clients", () => {
