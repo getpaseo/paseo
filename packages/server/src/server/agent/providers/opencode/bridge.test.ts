@@ -389,6 +389,75 @@ describe("OpenCodeBridge", () => {
     }
   });
 
+  test("v2 plugin forwards field-level bridge validation errors", async () => {
+    const fetchMock = vi.fn(async (input: URL | string, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/_internal/opencode/tools")) {
+        return new Response(
+          JSON.stringify({
+            tools: [
+              {
+                name: "create_agent",
+                description: "Create an agent",
+                inputSchema: { type: "object", properties: {} },
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/sessions/ses_v2/context?tools")) {
+        return new Response(JSON.stringify({ tools: ["create_agent"] }), { status: 200 });
+      }
+      expect(init?.method).toBe("POST");
+      return new Response(
+        JSON.stringify({
+          error: "Invalid tool input",
+          issues: [
+            {
+              path: ["provider"],
+              message: "provider must be provider/model, for example codex/gpt-5.4",
+            },
+          ],
+        }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const module = await import("./v2/bridge-plugin.mjs");
+    const tools = new Map<string, V2TestTool>();
+    const context: V2TestPluginContext = {
+      options: { baseUrl: "http://bridge.test", token: "token" },
+      tool: {
+        transform: async (callback) => {
+          callback({ add: (tool) => tools.set(tool.name, tool) });
+          return { dispose: async () => undefined };
+        },
+      },
+      session: {
+        context: async () => [],
+        get: async () => ({ parentID: "" }),
+        hook: async () => ({ dispose: async () => undefined }),
+      },
+    };
+
+    try {
+      const dispose = await module.default.setup(context);
+      await expect(
+        tools.get("paseo_create_agent")!.execute({ provider: "codex" }, { sessionID: "ses_v2" }),
+      ).rejects.toMatchObject({
+        status: 400,
+        message: expect.stringContaining(
+          "provider: provider must be provider/model, for example codex/gpt-5.4",
+        ),
+      });
+      await dispose();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   test("v2 plugin returns a tool image as OpenCode file content", async () => {
     const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-opencode-v2-image-"));
     temporaryDirectories.push(paseoHome);
