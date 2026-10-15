@@ -127,6 +127,16 @@ export function hasOpenDomPopover(): boolean {
   }
 }
 
+/**
+ * Whether a key belongs to an open popover rather than to the app's shortcuts.
+ * An open popover (a plugin's panel) is the top layer and closes on its own
+ * Escape listener, which runs after the shortcut engine's capture listener:
+ * Escape must not also interrupt the running agent.
+ */
+export function keyBelongsToDomPopover(event: Pick<KeyboardEvent, "key">): boolean {
+  return event.key === "Escape" && hasOpenDomPopover();
+}
+
 function getFocusableElements(scope: HTMLElement): HTMLElement[] {
   const selector = [
     "a[href]",
