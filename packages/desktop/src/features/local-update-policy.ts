@@ -3,13 +3,13 @@ export interface LocalUpdateStatus {
   installed: string;
   phase: "current" | "ready" | "countdown" | "activating" | "error";
   deadline?: number;
+  postponedUntil?: number;
   error?: string;
 }
 
 /** A clock-driven policy; Electron owns persistence and renderer readiness. */
 export class LocalUpdatePolicy {
   private lastActivity: number;
-  private postponedUntil = 0;
   readonly status: LocalUpdateStatus;
 
   constructor(active: string, now: number) {
@@ -32,7 +32,7 @@ export class LocalUpdatePolicy {
   }
   postpone(now: number): void {
     this.activity(now);
-    this.postponedUntil = now + 30 * 60_000;
+    this.status.postponedUntil = now + 30 * 60_000;
   }
   fail(error: string): void {
     this.status.phase = "error";
@@ -42,7 +42,7 @@ export class LocalUpdatePolicy {
   tick(now: number): LocalUpdateStatus {
     if (
       this.status.phase === "ready" &&
-      now >= this.postponedUntil &&
+      now >= (this.status.postponedUntil ?? 0) &&
       now - this.lastActivity >= 60_000
     ) {
       this.status.phase = "countdown";

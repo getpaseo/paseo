@@ -362,6 +362,9 @@ if (localBuildId) {
     const banner = document.createElement("aside");
     banner.setAttribute("role", "status");
     Object.assign(banner.style, {
+      display: "flex",
+      alignItems: "center",
+      boxSizing: "border-box",
       position: "fixed",
       bottom: "20px",
       left: "20px",
@@ -373,16 +376,55 @@ if (localBuildId) {
       zIndex: "1000",
       font: "12px system-ui",
     });
+    const dismissed = new Set<string>();
+    let noticeKey = "";
+    const close = document.createElement("button");
+    close.type = "button";
+    close.textContent = "×";
+    close.setAttribute("aria-label", "Fermer la notification");
+    close.title = "Fermer la notification";
+    Object.assign(close.style, {
+      marginLeft: "12px",
+      padding: "0 6px",
+      border: "0",
+      background: "transparent",
+      color: "inherit",
+      font: "20px system-ui",
+      cursor: "pointer",
+      flexShrink: "0",
+    });
+    close.addEventListener("click", () => {
+      dismissed.add(noticeKey);
+      banner.remove();
+    });
     const label = document.createElement("span");
     const postpone = document.createElement("button");
     postpone.textContent = "Reporter 30 min";
+    Object.assign(postpone.style, { marginLeft: "12px", cursor: "pointer", flexShrink: "0" });
     postpone.addEventListener("click", () => {
       void ipcRenderer.invoke("paseo:local-update:postpone");
     });
-    banner.append(label, postpone);
+    banner.append(label, postpone, close);
     ipcRenderer.on(
       "paseo:local-update:status",
-      (_event, value: { phase: string; deadline?: number; error?: string }) => {
+      (
+        _event,
+        value: {
+          phase: string;
+          installed?: string;
+          deadline?: number;
+          postponedUntil?: number;
+          error?: string;
+        },
+      ) => {
+        noticeKey = JSON.stringify([value.installed, value.phase, value.error]);
+        if (
+          dismissed.has(noticeKey) ||
+          (value.phase === "ready" && Date.now() < (value.postponedUntil ?? 0))
+        ) {
+          banner.remove();
+          return;
+        }
         if (value.phase === "current") {
           banner.remove();
           return;
