@@ -20,6 +20,12 @@ async function completeSubmittedTurn(
   await submitMessage(page, prompt);
   const userMessage = page.getByTestId("user-message").filter({ hasText: prompt });
   await expect(userMessage).toBeVisible();
+  // The optimistic row can render before the daemon receives the prompt.
+  await agent.client.waitForAgentUpsert(
+    agent.agentId,
+    (snapshot) => snapshot.status === "running",
+    30_000,
+  );
 
   const finish = await agent.client.waitForFinish(agent.agentId, 30_000);
   expect(finish.status).toBe("idle");

@@ -2079,6 +2079,23 @@ export const en = {
     addHost: "Add host",
     enableBuiltInDaemon: "Enable built-in daemon",
     projects: "Projects",
+    projectSearch: {
+      title: "Project search directories",
+      description:
+        "Search these directories when adding a project. Paths belong to this host; ~ means its home directory. Saved changes apply immediately.",
+      directory: "Directory {{number}}",
+      removeDirectory: "Remove directory {{number}}",
+      remove: "Remove",
+      add: "Add directory",
+      reset: "Reset to home",
+      save: "Save",
+      saving: "Saving...",
+      saved: "Saved",
+      saveFailed: "Couldn't save search directories. Your changes are kept. Try again.",
+      loading: "Loading search directories...",
+      updateHost: "Update this host to configure project search directories",
+      invalidPath: "Enter an absolute path or a ~/ path",
+    },
     projectList: {
       hostLoadFailed: "Couldn't load projects from host {{hostName}}: {{message}}",
       editProject: "Edit {{projectName}}",

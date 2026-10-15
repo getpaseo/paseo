@@ -36,6 +36,7 @@ function reloadableConfig(
       maxProcessConcurrency: git.maxProcessConcurrency ?? 8,
     },
     app: { baseUrl: "https://app.paseo.sh" },
+    projects: persisted.projects,
     pluginsEnabled: persisted.pluginsEnabled ?? false,
     plugins: persisted.plugins ?? {},
   };
@@ -958,6 +959,29 @@ describe("DaemonConfigStore reload", () => {
   function writeConfig(paseoHome: string, config: unknown): void {
     writeFileSync(path.join(paseoHome, "config.json"), `${JSON.stringify(config, null, 2)}\n`);
   }
+
+  test("patches and reloads project search roots without a restart", () => {
+    const { paseoHome, store, persisted } = createReloadableStore();
+    const projects = { searchRoots: ["~", "/Volumes/macport"] };
+    expect(store.patch({ projects }).projects).toEqual(projects);
+    expect(loadPersistedConfig(paseoHome).projects).toEqual(projects);
+    expect(store.patch({ projects: {} }).projects).toEqual({});
+    expect(loadPersistedConfig(paseoHome).projects).toEqual({});
+    writeConfig(paseoHome, { ...persisted, projects });
+    expect(store.reload()).toEqual({
+      appliedPaths: ["projects.searchRoots"],
+      restartRequiredPaths: [],
+      overrideControlledPaths: [],
+    });
+    expect(store.get().projects).toEqual(projects);
+    writeConfig(paseoHome, persisted);
+    expect(store.reload()).toEqual({
+      appliedPaths: ["projects.searchRoots"],
+      restartRequiredPaths: [],
+      overrideControlledPaths: [],
+    });
+    expect(store.get().projects).toBeUndefined();
+  });
 
   test("applies mutable edits and reports startup-only edits", () => {
     const { paseoHome, store, persisted } = createReloadableStore();
