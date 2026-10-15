@@ -1462,7 +1462,7 @@ function ConfigureServiceSheet({
   const [projectRevision, setProjectRevision] = useState<PaseoConfigRevision | null>(null);
   const [workspaceRevision, setWorkspaceRevision] = useState<PaseoConfigRevision | null>(null);
   const [name, setName] = useState("dev");
-  const [command, setCommand] = useState("");
+  const [command, setCommand] = useState("npm run dev");
   const [port, setPort] = useState("");
   const [selectedService, setSelectedService] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -1490,7 +1490,7 @@ function ConfigureServiceSheet({
       );
       setSelectedService(initial?.[0] ?? "");
       setName(initial?.[0] ?? "dev");
-      setCommand(initial ? scriptCommand(initial[1].command) : "");
+      setCommand(initial ? scriptCommand(initial[1].command) : "npm run dev");
       const initialPort = initial?.[1].port;
       setPort(
         typeof initialPort === "number" || typeof initialPort === "string"
