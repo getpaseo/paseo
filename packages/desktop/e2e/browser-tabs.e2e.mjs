@@ -3505,7 +3505,7 @@ async function main() {
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
     page = await waitForAppPage(browser, expoPort);
     const initialStatus = await waitForDesktopStatus(page);
-    await page.waitForLoadState("load");
+    await page.waitForLoadState("load", { timeout: timeoutMs });
     await page
       .getByTestId(`sidebar-workspace-row-${initialStatus.serverId}:${workspaceIds[0]}`)
       .waitFor({ state: "visible", timeout: timeoutMs });

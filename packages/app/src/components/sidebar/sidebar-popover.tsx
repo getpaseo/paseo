@@ -19,8 +19,9 @@ export function SidebarPopoverRoot({
   onOpenChange: (open: boolean) => void;
   children: ReactNode;
 }) {
+  // Plugins own the press and popover content; their anchor is not a menu trigger.
   return (
-    <MenuRoot compactMode="sheet" open={open} onOpenChange={onOpenChange}>
+    <MenuRoot compactMode="sheet" open={open} onOpenChange={onOpenChange} pressDrag={false}>
       {children}
     </MenuRoot>
   );

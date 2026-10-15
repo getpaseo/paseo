@@ -1,5 +1,5 @@
 import { usePressDragState } from "@/components/ui/press-drag-select-context";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
@@ -34,6 +34,7 @@ import { isWeb } from "@/constants/platform";
 import { useKeyboardVisibility } from "@/hooks/use-keyboard-visibility";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AdaptiveTextInput } from "@/components/adaptive-text-input";
+import type { EditingTextInputHandle } from "@/components/ui/text-input";
 export { AdaptiveTextInput, type AdaptiveTextInputProps } from "@/components/adaptive-text-input";
 
 // Horizontal indent token shared by the sheet header (title, back arrow,
@@ -393,6 +394,15 @@ export function SheetHeaderView({
 
 export function InlineHeaderView({ header }: { header: SheetHeader }) {
   const drag = usePressDragState();
+  const searchRef = useRef<EditingTextInputHandle | null>(null);
+  const autoFocus = Boolean(header.search?.autoFocus && !drag.dragging);
+  const searchResetKey = header.search?.resetKey;
+  useEffect(() => {
+    if (!isWeb || !autoFocus) return;
+    // Press-drag opens with autofocus disabled. Focus the mounted input on release.
+    const frame = requestAnimationFrame(() => searchRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [autoFocus, searchResetKey]);
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const back = header.back;
@@ -433,6 +443,7 @@ export function InlineHeaderView({ header }: { header: SheetHeader }) {
         <View style={styles.inlineSearchRow}>
           <Search size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
           <AdaptiveTextInput
+            ref={searchRef}
             // @ts-expect-error - outlineStyle is web-only
             style={[styles.searchInput, isWeb && { outlineStyle: "none" }]}
             placeholder={header.search.placeholder ?? t("common.actions.search")}
@@ -442,7 +453,7 @@ export function InlineHeaderView({ header }: { header: SheetHeader }) {
             onBlur={header.search.onBlur}
             autoCapitalize="none"
             autoCorrect={false}
-            autoFocus={header.search.autoFocus && !drag.dragging}
+            autoFocus={autoFocus}
             testID={header.search.testID}
           />
         </View>
