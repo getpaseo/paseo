@@ -45,6 +45,7 @@ export interface StreamLayoutInput {
 interface LayoutSegmentInput {
   strategy: StreamStrategy;
   items: StreamItem[];
+  collectionItems: StreamItem[];
   timingByAssistantId: Map<string, TurnTiming>;
   auxiliaryTurnFooter: TurnFooterHost | null;
   hasAuxiliaryFooter: boolean;
@@ -65,15 +66,18 @@ interface AssistantFooterSource {
 
 function createTurnFooterHost(input: {
   item: StreamItem;
-  items: StreamItem[];
-  index: number;
+  collectionItems: StreamItem[];
   timingByAssistantId: Map<string, TurnTiming>;
-}): TurnFooterHost {
+}): TurnFooterHost | null {
+  const startIndex = input.collectionItems.findIndex((item) => item.id === input.item.id);
+  if (startIndex < 0) {
+    return null;
+  }
   return {
     itemId: input.item.id,
-    items: input.items,
+    items: input.collectionItems,
     timing: input.timingByAssistantId.get(input.item.id),
-    startIndex: input.index,
+    startIndex,
   };
 }
 
@@ -120,20 +124,24 @@ function findLatestAssistantInResponse(input: {
   }
 }
 
-function resolveAuxiliaryTurnFooter(input: StreamLayoutInput): TurnFooterHost | null {
+function resolveAuxiliaryTurnFooter(input: {
+  strategy: StreamStrategy;
+  isTurnActive: boolean;
+  collectionItems: StreamItem[];
+  timingByAssistantId: Map<string, TurnTiming>;
+}): TurnFooterHost | null {
   if (input.isTurnActive) {
     return null;
   }
 
-  const footerItems = input.liveHead.length > 0 ? input.liveHead : input.history;
-  const latestIndex = input.strategy.getLatestItemIndex(footerItems);
+  const latestIndex = input.strategy.getLatestItemIndex(input.collectionItems);
   if (latestIndex === null) {
     return null;
   }
 
   const assistant = findLatestAssistantInResponse({
     strategy: input.strategy,
-    items: footerItems,
+    items: input.collectionItems,
     startIndex: latestIndex,
   });
   if (!assistant) {
@@ -142,8 +150,7 @@ function resolveAuxiliaryTurnFooter(input: StreamLayoutInput): TurnFooterHost | 
 
   return createTurnFooterHost({
     item: assistant.item,
-    items: assistant.items,
-    index: assistant.index,
+    collectionItems: input.collectionItems,
     timingByAssistantId: input.timingByAssistantId,
   });
 }
@@ -154,6 +161,7 @@ function resolveCompletedFooter(input: {
   index: number;
   item: StreamItem;
   belowItem: StreamItem | null;
+  collectionItems: StreamItem[];
   timingByAssistantId: Map<string, TurnTiming>;
   auxiliaryTurnFooter: TurnFooterHost | null;
   boundaryAboveItems: StreamItem[] | null;
@@ -175,8 +183,7 @@ function resolveCompletedFooter(input: {
   }
   return createTurnFooterHost({
     item: assistant.item,
-    items: assistant.items,
-    index: assistant.index,
+    collectionItems: input.collectionItems,
     timingByAssistantId: input.timingByAssistantId,
   });
 }
@@ -306,6 +313,7 @@ function layoutSegmentItem(
     index,
     item,
     belowItem,
+    collectionItems: input.collectionItems,
     timingByAssistantId: input.timingByAssistantId,
     auxiliaryTurnFooter: input.auxiliaryTurnFooter,
     boundaryAboveItems: input.boundaryAboveItems,
@@ -342,7 +350,13 @@ function layoutSegmentItem(
 const historyLayoutCache = new WeakMap<StreamItem[], Map<string, StreamLayoutItem[]>>();
 
 export function layoutStream(input: StreamLayoutInput): StreamLayout {
-  const auxiliaryTurnFooter = resolveAuxiliaryTurnFooter(input);
+  const collectionItems = input.strategy.concatStreamSegments(input.history, input.liveHead);
+  const auxiliaryTurnFooter = resolveAuxiliaryTurnFooter({
+    strategy: input.strategy,
+    isTurnActive: input.isTurnActive,
+    collectionItems,
+    timingByAssistantId: input.timingByAssistantId,
+  });
   const hasAuxiliaryFooter = input.isTurnActive || auxiliaryTurnFooter !== null;
   const historyBoundaryIndex = input.strategy.getHistoryLiveBoundaryIndex(input.history);
   const liveHeadBoundaryIndex = input.strategy.getLiveHeadHistoryBoundaryIndex(input.liveHead);
@@ -377,6 +391,7 @@ export function layoutStream(input: StreamLayoutInput): StreamLayout {
       history = layoutSegment({
         strategy: input.strategy,
         items: input.history,
+        collectionItems,
         timingByAssistantId: input.timingByAssistantId,
         auxiliaryTurnFooter,
         hasAuxiliaryFooter,
@@ -397,6 +412,7 @@ export function layoutStream(input: StreamLayoutInput): StreamLayout {
   const liveHead = layoutSegment({
     strategy: input.strategy,
     items: input.liveHead,
+    collectionItems,
     timingByAssistantId: input.timingByAssistantId,
     auxiliaryTurnFooter,
     hasAuxiliaryFooter,

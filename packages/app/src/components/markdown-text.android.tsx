@@ -54,3 +54,12 @@ export function MarkdownParagraphView({ paragraphStyle, children }: MarkdownPara
   const style = useMemo(() => [paragraphStyle, MARKDOWN_PARAGRAPH_RESET], [paragraphStyle]);
   return <View style={style}>{children}</View>;
 }
+
+interface MarkdownSelectableRootProps {
+  style?: StyleProp<TextStyle>;
+  children: ReactNode;
+}
+
+export function MarkdownSelectableRoot({ style, children }: MarkdownSelectableRootProps) {
+  return <View style={style}>{children}</View>;
+}

@@ -71,3 +71,16 @@ export function MarkdownParagraphView({ paragraphStyle, children }: MarkdownPara
     </View>
   );
 }
+
+interface MarkdownSelectableRootProps {
+  style?: StyleProp<TextStyle>;
+  children: ReactNode;
+}
+
+export function MarkdownSelectableRoot({ style, children }: MarkdownSelectableRootProps) {
+  return (
+    <View style={style} dataSet={markdownCopyDataSet.p}>
+      {children}
+    </View>
+  );
+}

@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { Children, Fragment, isValidElement, useMemo, type ReactNode } from "react";
 import {
   Text,
   View,
@@ -108,6 +108,35 @@ export function MarkdownParagraphView({
   return (
     <UITextView uiTextView selectable style={textStyle}>
       {children}
+    </UITextView>
+  );
+}
+
+interface MarkdownSelectableRootProps {
+  style?: StyleProp<TextStyle>;
+  children: ReactNode;
+}
+
+// One native UITextView for a run of consecutive paragraphs so iOS selection
+// handles can drag across blank lines. Nested MarkdownParagraphView spans hoist
+// into this ancestor via TextAncestorContext.
+export function MarkdownSelectableRoot({ style, children }: MarkdownSelectableRootProps) {
+  const textStyle = useMemo(() => resolvePlainMarkdownTextStyle(style), [style]);
+  return (
+    <UITextView uiTextView selectable style={textStyle}>
+      {Children.map(children, (child, index) => {
+        if (index === 0 || !isValidElement(child)) {
+          return child;
+        }
+        return (
+          <Fragment key={child.key}>
+            <UITextView uiTextView selectable>
+              {"\n\n"}
+            </UITextView>
+            {child}
+          </Fragment>
+        );
+      })}
     </UITextView>
   );
 }
