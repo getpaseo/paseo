@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { StateStorage } from "zustand/middleware";
 import {
   createSidebarViewStorage,
@@ -8,14 +8,6 @@ import {
   SIDEBAR_UNLABELLED_LABEL_KEY,
   useSidebarViewStore,
 } from "./sidebar-view-store";
-
-vi.mock("@react-native-async-storage/async-storage", () => ({
-  default: {
-    getItem: vi.fn().mockResolvedValue(null),
-    setItem: vi.fn().mockResolvedValue(undefined),
-    removeItem: vi.fn().mockResolvedValue(undefined),
-  },
-}));
 
 interface MemoryStorage extends StateStorage<Promise<void>> {
   reads: string[];
@@ -41,6 +33,7 @@ function createMemoryStorage(entries: Record<string, string | null>): MemoryStor
 describe("sidebar view store", () => {
   beforeEach(() => {
     useSidebarViewStore.setState({
+      showBackground: false,
       groupMode: "project",
       hostFilters: [],
       hiddenProjectKeys: [],
@@ -93,6 +86,7 @@ describe("sidebar view store", () => {
         },
       }),
     ).toEqual({
+      showBackground: false,
       groupMode: "status",
       hostFilters: [],
       hiddenProjectKeys: [],
@@ -107,6 +101,7 @@ describe("sidebar view store", () => {
         hostFilter: "host-a",
       }),
     ).toEqual({
+      showBackground: false,
       groupMode: "status",
       hostFilters: ["host-a"],
       hiddenProjectKeys: [],
@@ -121,6 +116,7 @@ describe("sidebar view store", () => {
         hostFilters: ["host-a", "host-b"],
       }),
     ).toEqual({
+      showBackground: false,
       groupMode: "status",
       hostFilters: ["host-a", "host-b"],
       hiddenProjectKeys: [],
@@ -231,6 +227,7 @@ describe("sidebar view store", () => {
         hiddenProjectKeys: ["project-a", "project-b"],
       }),
     ).toEqual({
+      showBackground: false,
       groupMode: "project",
       hostFilters: ["host-a"],
       hiddenProjectKeys: ["project-a", "project-b"],
@@ -247,6 +244,7 @@ describe("sidebar view store", () => {
         labelFilter: { labels: ["urgent"] },
       }),
     ).toEqual({
+      showBackground: false,
       groupMode: "status",
       hostFilters: ["host-a"],
       hiddenProjectKeys: [],
@@ -254,42 +252,60 @@ describe("sidebar view store", () => {
     });
   });
 
-  it("hydrates a v6 selection with all projects visible and other preferences intact", async () => {
-    vi.mocked(AsyncStorage.getItem).mockResolvedValueOnce(
-      JSON.stringify({
-        version: 6,
+  it.each([6, 7])(
+    "hydrates a v%i selection with all projects visible and other preferences intact",
+    async (version) => {
+      await AsyncStorage.setItem(
+        "sidebar-view",
+        JSON.stringify({
+          version,
+          state: {
+            showBackground: true,
+            groupMode: "status",
+            hostFilters: ["host-a"],
+            projectFilters: ["project-a"],
+            labelFilter: { labels: ["urgent"] },
+          },
+        }),
+      );
+      await useSidebarViewStore.persist.rehydrate();
+      expect(useSidebarViewStore.getState()).toMatchObject({
+        showBackground: true,
+        groupMode: "status",
+        hostFilters: ["host-a"],
+        hiddenProjectKeys: [],
+        labelFilter: { labels: ["urgent"] },
+      });
+      const persisted = await AsyncStorage.getItem("sidebar-view");
+      if (persisted === null) throw new Error("Sidebar preferences were not persisted");
+      expect(JSON.parse(persisted)).toEqual({
+        version: 8,
         state: {
+          showBackground: true,
           groupMode: "status",
           hostFilters: ["host-a"],
-          projectFilters: ["project-a"],
+          hiddenProjectKeys: [],
           labelFilter: { labels: ["urgent"] },
         },
-      }),
-    );
-    await useSidebarViewStore.persist.rehydrate();
-    expect(useSidebarViewStore.getState()).toMatchObject({
-      groupMode: "status",
-      hostFilters: ["host-a"],
-      hiddenProjectKeys: [],
-      labelFilter: { labels: ["urgent"] },
-    });
-  });
+      });
+    },
+  );
 
   it("persists hidden projects across hydration and host disconnection", async () => {
-    vi.mocked(AsyncStorage.setItem).mockClear();
     useSidebarViewStore.getState().toggleProjectVisibility("project-a");
     useSidebarViewStore.getState().reconcileHostFilters([]);
-    const calls = vi.mocked(AsyncStorage.setItem).mock.calls;
-    const persisted = calls[calls.length - 1][1];
+    const persisted = await AsyncStorage.getItem("sidebar-view");
+    if (persisted === null) throw new Error("Sidebar preferences were not persisted");
     expect(JSON.parse(persisted).state.hiddenProjectKeys).toEqual(["project-a"]);
-    vi.mocked(AsyncStorage.getItem).mockResolvedValueOnce(persisted);
     useSidebarViewStore.setState({ hiddenProjectKeys: [] });
+    await AsyncStorage.setItem("sidebar-view", persisted);
     await useSidebarViewStore.persist.rehydrate();
     expect(useSidebarViewStore.getState().hiddenProjectKeys).toEqual(["project-a"]);
   });
 
   it("never keeps project filters from state the schema rejects", () => {
     expect(migrateSidebarViewState({ hiddenProjectKeys: "project-a" })).toEqual({
+      showBackground: false,
       groupMode: "project",
       hostFilters: [],
       hiddenProjectKeys: [],

@@ -55,9 +55,12 @@ Create a new client after `close()`.
 | `ref(agentOrId)`     | `PaseoAgentHandle`     | Creates a local handle without fetching.                                                                     |
 | `subscribe(handler)` | Unsubscribe function   | Local listener for this API instance. Requires an owned `list({ subscribe: {} })` observation.               |
 
-`list({ subscribe: {} })` also returns a server-issued `subscriptionId` and an owned `subscription`. Its `subscribe({ snapshot, update, error? })` callbacks receive the snapshot before scoped wire updates; `release()` ends that observation. Plain lists create no observation. The same contract applies to workspace lists. See [events](./events.md).
+`list({ subscribe: {} })` also returns a `subscriptionId` and an owned `subscription`. Its `subscribe({ snapshot, update, error? })` callbacks receive the snapshot before scoped wire updates; `release()` ends that observation. Capable daemons assign the ID and keep observations independent. Older daemons use local IDs and their established shared delivery behavior. Plain lists create no observation. The same contract applies to workspace lists. See [events](./events.md).
 
-Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `outputSchema`, `images`, `attachments`, `git`, `worktree`, `autoArchive`, and `labels`.
+Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `outputSchema`, `images`, `attachments`, `git`, `worktree`, `autoArchive`, `background`, and `labels`.
+
+`background` is workspace creation intent. It cannot accompany an existing `workspaceId`.
+See [background workspaces](./workspaces.md) for caller inheritance and inclusive discovery.
 
 `config` accepts:
 
@@ -110,27 +113,32 @@ Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `o
 
 `agent.timeline.refetch(options?)` fetches a page. Options are `direction`, `cursor`, `limit`, `projection`, and `requestId`.
 
-`agent.timeline.subscribe(handler)` establishes network demand for this agent and restores it after reconnect. Its unsubscribe function releases that demand; await `unsubscribe.ready` for initial daemon acknowledgement before starting work. Initial delivery is live-only. Reconnect delivers a bounded projected history snapshot before later updates; a live replacement invalidates the previous epoch. See the callback shapes, paging and failure behavior in [timeline events](./events.md#follow-timeline-events).
+`agent.timeline.subscribe(handler)` establishes network demand for this agent and restores it after reconnect. Its unsubscribe function releases that demand; await `unsubscribe.ready` for initial daemon acknowledgement before starting work. Delivery is live-only. Reconnect emits a local `subscription_restored` event; request missed history explicitly with `refetch()`. A live replacement invalidates the previous epoch. See the callback shapes, paging and failure behavior in [timeline events](./events.md#follow-timeline-events).
 
 ## `client.projects`
 
 | Method               | Result                   | Behavior                                                                                       |
 | -------------------- | ------------------------ | ---------------------------------------------------------------------------------------------- |
 | `list(options?)`     | `PaseoProjectListResult` | Lists every registered project, including projects with no active workspaces.                  |
-| `subscribe(handler)` | Unsubscribe function     | Local listener. Requires `observeEvents(["project.update"])`; `list()` supplies initial state. |
+| `subscribe(handler)` | Unsubscribe function     | Requests future project updates; unsubscribe releases demand. `list()` supplies initial state. |
 
 See [events](./events.md#follow-provider-catalog-changes) for explicit event observation and cleanup.
 
 ## `client.workspaces`
 
-| Method                   | Result                        | Behavior                                                                                       |
-| ------------------------ | ----------------------------- | ---------------------------------------------------------------------------------------------- |
-| `list(options?)`         | `PaseoWorkspaceListResult`    | Lists, filters, pages, or subscribes to the workspace directory.                               |
-| `open(cwd)`              | `PaseoWorkspaceHandle`        | Reuses the active workspace for a directory or creates one.                                    |
-| `create(options)`        | `PaseoWorkspaceHandle`        | Always creates a fresh directory-backed or Paseo-worktree workspace.                           |
-| `ref(workspaceOrId)`     | `PaseoWorkspaceHandle`        | Creates a local handle.                                                                        |
-| `archive(workspaceOrId)` | `PaseoWorkspaceArchiveResult` | Archives without first creating a handle.                                                      |
-| `subscribe(handler)`     | Unsubscribe function          | Local listener for this API instance. Requires an owned `list({ subscribe: {} })` observation. |
+| Method                   | Result                        | Behavior                                                                                                                 |
+| ------------------------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `list(options?)`         | `PaseoWorkspaceListResult`    | Lists, filters, pages, or subscribes to the workspace directory.                                                         |
+| `open(cwd)`              | `PaseoWorkspaceHandle`        | Reuses the active workspace for a directory or creates one.                                                              |
+| `create(options)`        | `PaseoWorkspaceHandle`        | Always creates a fresh directory-backed or Paseo-worktree workspace. `background: true` hides it from default discovery. |
+| `ref(workspaceOrId)`     | `PaseoWorkspaceHandle`        | Creates a local handle.                                                                                                  |
+| `archive(workspaceOrId)` | `PaseoWorkspaceArchiveResult` | Archives without first creating a handle.                                                                                |
+| `subscribe(handler)`     | Unsubscribe function          | Local listener for this API instance. Requires an owned `list({ subscribe: {} })` observation.                           |
+
+`create({ source, agent, background })` creates a workspace and its initial agent together.
+`agent` accepts agent creation options except `worktree`, `git`, `onEvent`, `idempotencyKey`,
+and `requestId`. Set `background` on the workspace options; `agent.background` is rejected.
+See the [combined creation example](./agents.md#run-work-in-a-background-workspace).
 
 A workspace handle exposes `id`, `projectId`, `directory`, `name`, `status`, `current()`, `refresh()`, `setTitle(title)`, `archive()`, and `subscribe()`. Pass `null` to `setTitle` to restore the derived workspace name. Use `workspace.agents.create(options)` to create an agent without repeating the workspace ID or directory.
 
@@ -187,7 +195,7 @@ Use `workspace.terminals.create(options?)` and `workspace.terminals.list(options
 | `listFeatures(draftConfig)`      | Features result               | Discovers features for the current draft provider configuration.                                                                                         |
 | `diagnostic(provider)`           | Diagnostic result             | Returns human-readable setup diagnostics.                                                                                                                |
 | `listUsage(options?)`            | `PaseoProviderUsageResult`    | Returns normalized subscription windows, balances, and provider details. Rejects with an update-host error when unsupported. Options: `requestId`.       |
-| `subscribe(handler)`             | Unsubscribe function          | Local listener. Requires `observeEvents(["providers_snapshot_update"])`.                                                                                 |
+| `subscribe(handler)`             | Unsubscribe function          | Requests future catalog updates; unsubscribe releases demand.                                                                                            |
 
 ## `client.config`
 

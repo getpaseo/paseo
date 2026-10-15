@@ -3,10 +3,12 @@ import type { RefObject } from "react";
 import type { ComposerHeightResult } from "./height.types";
 
 interface ComposerHeightArgs {
-  value: string;
+  getText: () => string;
   textareaRef: RefObject<HTMLElement | null>;
   minHeight: number;
   maxHeight: number;
+  onRenderedLinesChange?: (lines: number) => void;
+  presentationKey?: boolean;
 }
 
 const COPIED_STYLES = [
@@ -32,15 +34,17 @@ const COPIED_STYLES = [
 ] as const;
 
 export function useComposerHeight({
-  value,
+  getText,
   textareaRef,
   minHeight,
   maxHeight,
+  onRenderedLinesChange,
+  presentationKey,
 }: ComposerHeightArgs): ComposerHeightResult {
   const [height, setHeight] = useState(minHeight);
   const heightRef = useRef(minHeight);
-  const paramsRef = useRef({ value, minHeight, maxHeight });
-  paramsRef.current = { value, minHeight, maxHeight };
+  const paramsRef = useRef({ getText, minHeight, maxHeight, onRenderedLinesChange });
+  paramsRef.current = { getText, minHeight, maxHeight, onRenderedLinesChange };
   const mirrorRef = useRef<HTMLTextAreaElement | null>(null);
 
   const setBoundedHeight = useCallback((nextHeight: number) => {
@@ -65,6 +69,13 @@ export function useComposerHeight({
       }
       mirror.style.width = `${sourceWidth}px`;
       mirror.value = text.endsWith("\n") ? `${text} ` : text;
+      const padding =
+        parseFloat(computedStyle.paddingTop) + parseFloat(computedStyle.paddingBottom);
+      const lineHeight = parseFloat(computedStyle.lineHeight);
+      if (lineHeight > 0)
+        paramsRef.current.onRenderedLinesChange?.(
+          Math.round((mirror.scrollHeight - padding) / lineHeight),
+        );
       setBoundedHeight(mirror.scrollHeight);
     },
     [setBoundedHeight, textareaRef],
@@ -92,7 +103,7 @@ export function useComposerHeight({
     });
     document.body.appendChild(mirror);
     mirrorRef.current = mirror;
-    measure(paramsRef.current.value);
+    measure(paramsRef.current.getText());
     return () => {
       mirror.remove();
       mirrorRef.current = null;
@@ -100,8 +111,8 @@ export function useComposerHeight({
   }, [measure]);
 
   useLayoutEffect(() => {
-    measure(value);
-  }, [maxHeight, minHeight, value, measure]);
+    measure(getText());
+  }, [maxHeight, minHeight, getText, measure, presentationKey]);
 
   useEffect(() => {
     const source = textareaRef.current;
@@ -111,11 +122,11 @@ export function useComposerHeight({
       const nextWidth = source.clientWidth;
       if (Math.abs(nextWidth - previousWidth) < 1) return;
       previousWidth = nextWidth;
-      measure(paramsRef.current.value);
+      measure(paramsRef.current.getText());
     });
     observer.observe(source);
     return () => observer.disconnect();
-  }, [measure, textareaRef]);
+  }, [measure, textareaRef, presentationKey]);
 
   const onTextChange = useCallback(
     (_previousText: string, nextText: string) => measure(nextText),

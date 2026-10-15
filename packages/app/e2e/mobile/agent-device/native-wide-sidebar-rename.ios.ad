@@ -1,0 +1,16 @@
+context platform=ios timeout=60000 retries=0
+env APP_ID=sh.paseo.debug
+
+open "${APP_ID}"
+wait "id=\"workspace-tabs-scroll\"" 20000
+wait "id=\"sidebar-workspace-kebab-${WORKSPACE_KEY}\"" 20000
+press "id=\"sidebar-workspace-kebab-${WORKSPACE_KEY}\""
+wait "id=\"sidebar-workspace-menu-rename-${WORKSPACE_KEY}\"" 10000
+press "id=\"sidebar-workspace-menu-rename-${WORKSPACE_KEY}\""
+wait "id=\"sidebar-workspace-rename-modal-${WORKSPACE_KEY}\"" 10000
+press "id=\"sidebar-workspace-rename-modal-${WORKSPACE_KEY}-cancel\""
+press "id=\"sidebar-workspace-rename-modal-${WORKSPACE_KEY}-cancel\""
+wait "id=\"sidebar-workspace-kebab-${WORKSPACE_KEY}\"" 10000
+press "id=\"sidebar-workspace-kebab-${WORKSPACE_KEY}\""
+wait "id=\"sidebar-workspace-menu-rename-${WORKSPACE_KEY}\"" 10000
+close

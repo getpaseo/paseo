@@ -422,13 +422,7 @@ function mergeTimelineWindow(args: {
     return cursor?.epoch !== payload.epoch || cursor.seq < startSeq || cursor.seq > endSeq;
   });
   const retainedHead = projected.head;
-  const reservedItemIds = new Set(
-    [...retainedTail, ...retainedHead].flatMap((item) =>
-      item.kind === "assistant_message" && item.blockGroupId
-        ? [item.id, item.blockGroupId]
-        : [item.id],
-    ),
-  );
+  const reservedItemIds = new Set([...retainedTail, ...retainedHead].map((item) => item.id));
   const hydrated = hydrateStreamState(
     toHydratedEvents(timelineUnits.filter((unit) => !projected.reconciledUnits.has(unit))),
     {
@@ -823,51 +817,31 @@ function reconcileOverlappingProjectedAssistant(params: {
     return { tail: params.tail, head: params.head, reconciled: false };
   }
 
-  const blockGroupId = match.current.blockGroupId;
   const messageId = projectedMessageId ?? match.current.messageId;
   const replacement: AssistantMessageItem = {
     kind: "assistant_message",
-    id: blockGroupId ?? match.current.id,
+    id: match.current.id,
     ...(messageId !== undefined ? { messageId } : {}),
     text: projectedText,
     timestamp: unit.timestamp,
     timelineCursor: { epoch: params.epoch, seq: unit.seqEnd },
   };
-  const belongsToBlockGroup = (item: StreamItem) =>
-    blockGroupId !== undefined &&
-    item.kind === "assistant_message" &&
-    item.blockGroupId === blockGroupId;
-  const removeBlockGroup = (items: StreamItem[]) =>
-    blockGroupId !== undefined ? items.filter((item) => !belongsToBlockGroup(item)) : items;
   const replaceMatch = (items: StreamItem[], index: number) => {
-    if (!blockGroupId) {
-      const next = [...items];
-      next[index] = replacement;
-      return next;
-    }
-    const next: StreamItem[] = [];
-    let inserted = false;
-    for (const item of items) {
-      if (!belongsToBlockGroup(item)) {
-        next.push(item);
-      } else if (!inserted) {
-        next.push(replacement);
-        inserted = true;
-      }
-    }
+    const next = [...items];
+    next[index] = replacement;
     return next;
   };
 
   if (headMatch) {
     return {
-      tail: removeBlockGroup(params.tail),
+      tail: params.tail,
       head: replaceMatch(params.head, headMatch.index),
       reconciled: true,
     };
   }
   return {
     tail: replaceMatch(params.tail, match.index),
-    head: removeBlockGroup(params.head),
+    head: params.head,
     reconciled: true,
   };
 }
@@ -1162,13 +1136,7 @@ function applyAcceptedTimelinePage(input: {
     })),
     {
       source: "canonical",
-      reservedItemIds: new Set(
-        currentTail.flatMap((item) =>
-          item.kind === "assistant_message" && item.blockGroupId
-            ? [item.id, item.blockGroupId]
-            : [item.id],
-        ),
-      ),
+      reservedItemIds: new Set(currentTail.map((item) => item.id)),
     },
   );
   return {

@@ -1,3 +1,4 @@
+import { MAX_RELAY_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/websocket-message-limit";
 import {
   createClientChannel,
   type EncryptedChannel,
@@ -8,7 +9,11 @@ import type {
   DaemonTransportFactory,
   TransportLogger,
 } from "./daemon-client-transport-types.js";
-import { extractRelayMessage, normalizeTransportPayload } from "./daemon-client-transport-utils.js";
+import {
+  extractRelayMessage,
+  normalizeTransportPayload,
+  messageTooLargeError,
+} from "./daemon-client-transport-utils.js";
 
 type OpenHandler = () => void;
 type CloseHandler = (event?: unknown) => void;
@@ -20,10 +25,17 @@ export function createRelayE2eeTransportFactory(args: {
   daemonPublicKeyB64: string;
   logger: TransportLogger;
 }): DaemonTransportFactory {
-  return ({ url, headers }) => {
-    const base = args.baseFactory({ url, headers });
+  return ({ url }) => {
+    const base = args.baseFactory({ url });
     return createEncryptedTransport(base, args.daemonPublicKeyB64, args.logger);
   };
+}
+
+export function createRelayTransportFactory(
+  baseFactory: DaemonTransportFactory,
+): DaemonTransportFactory {
+  // The relay upgrade precedes E2EE. Only the encrypted hello may carry daemon credentials.
+  return ({ url }) => baseFactory({ url });
 }
 
 export function createEncryptedTransport(
@@ -130,7 +142,13 @@ export function createEncryptedTransport(
       if (!channel) {
         throw new Error("Encrypted channel not ready");
       }
-      void channel.send(normalizeTransportPayload(data)).catch((error) => {
+      const payload = normalizeTransportPayload(data);
+      // Reject synchronously so the requesting operation fails without closing the transport.
+      const wireBytes = channel.outboundWireByteLength(payload);
+      if (wireBytes > MAX_RELAY_WEBSOCKET_MESSAGE_BYTES) {
+        throw messageTooLargeError(wireBytes, MAX_RELAY_WEBSOCKET_MESSAGE_BYTES);
+      }
+      void channel.send(payload).catch((error) => {
         emitError(error);
       });
     },

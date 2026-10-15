@@ -6,6 +6,33 @@ describe("create-flow-store", () => {
     useCreateFlowStore.setState({ pendingByDraftId: {} });
   });
 
+  it("accepts a retry after failure while rejecting repeated active or completed submissions", () => {
+    const store = useCreateFlowStore.getState();
+    const submission = {
+      draftId: "draft-retry",
+      serverId: "server-1",
+      workspaceId: "workspace-1",
+      agentId: null,
+      clientMessageId: "draft-retry:initial-message",
+      text: "hello",
+      timestamp: 1,
+    };
+    expect(store.trySetPending(submission)).toBe(true);
+    expect(store.trySetPending(submission)).toBe(false);
+    store.markLifecycle({
+      draftId: submission.draftId,
+      lifecycle: "abandoned",
+      errorMessage: "Disconnected",
+    });
+    expect(store.trySetPending(submission)).toBe(true);
+    expect(useCreateFlowStore.getState().pendingByDraftId[submission.draftId]).toEqual({
+      ...submission,
+      lifecycle: "active",
+    });
+    store.markLifecycle({ draftId: submission.draftId, lifecycle: "sent" });
+    expect(store.trySetPending(submission)).toBe(false);
+  });
+
   it("tracks lifecycle transitions explicitly", () => {
     const store = useCreateFlowStore.getState();
     store.setPending({

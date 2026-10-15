@@ -63,10 +63,10 @@ describe("resolveInlineImageSize", () => {
     });
   });
 
-  it("uses a generic small fallback when no dimensions are known", () => {
+  it("reserves a capped 3:2 placeholder when no dimensions are known", () => {
     expect(resolveInlineImageSize({ explicit: {}, natural: null })).toEqual({
-      width: 16,
-      height: 16,
+      width: 240,
+      height: 160,
     });
   });
 });

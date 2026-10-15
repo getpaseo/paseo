@@ -52,6 +52,11 @@ is another, with its own icons and hover-revealed actions — but both hand the 
 and take `closeOnSelect` to say whether choosing them ends the surface. A row that owns its press
 outright leaves the surface open behind whatever it opened, and skips the iOS wait.
 
+A row whose result opens a sheet passes `closeOnSelect={false}`: the sheet stacks over the menu
+sheet and uncovers it on close, so the menu is where the user lands next. A row that opens a tab
+closes, because the tab replaces the pane the menu belongs to. The subagents track asks the layout
+store which one a row is (`useSubagentOpensInSheet`), since the answer changes with the layout.
+
 ## Pages
 
 A submenu is a page, declared as data on the surface and reached by a `MenuSubTrigger` whose `id`
@@ -179,6 +184,10 @@ its own.
 - **Released height.** Reanimated's web entering animation leaves an inline height snapshot on
   the surface. `AnchoredSurface` clears it, and a `revision` prop re-clears it when content
   identity changes — a pushed page taller than the one it replaced is clipped without that.
+- **Animate only once placed.** The same snapshot carries top/left, and Reanimated writes it back
+  750ms after mount. `AnchoredSurface` remounts the surface when its position resolves so the
+  entering animation never ends at the off-screen measuring position; on a slow machine that
+  write moved the open menu back off-screen.
 - **Sheets size to content.** `enableDynamicSizing`, not fixed snap points. A pushed page is
   rarely the height of the page before it.
 - **The sheet's content is teleported out of the menu's subtree**, so `MenuSheetSurface` rebuilds
@@ -187,7 +196,16 @@ its own.
   [floating-panels.md](floating-panels.md).
 - **One overlay per menu.** Submenus render inside their parent's layer and paint no second
   backdrop, so there is exactly one `Modal` on native no matter how deep the menu goes.
-- Anchoring, flipping, and edge clamping live in `menu-anchor.ts` and are unit-tested. Fix
-  positioning bugs there, not at a call site.
+- **Sheet stacking and backdrop dismissal belong to `IsolatedBottomSheetModal`.** Menus only
+  request a backdrop opacity. See [floating-panels.md](floating-panels.md#gotcha-6--bottom-sheet-refs-are-not-lifecycle-truth).
+- **A menu closes when its panel leaves the screen.** `MenuSurface` closes the menu when its
+  retained panel goes inactive. Hiding the surface alone leaves the open state behind, and the
+  menu would reappear with the panel on the next tab switch.
+- **Retained panels own visibility.** The shared menu surface unmounts when its panel becomes
+  inactive. An async action can navigate before its menu closes; a hidden panel must not leave a
+  portal backdrop blocking the destination. On web the chat suspends one commit after it goes
+  inactive, and that inactive commit is where the surface unmounts.
+- Anchoring, flipping, and edge clamping live in `components/ui/anchor.ts`, shared with the hover
+  card, and are unit-tested. Fix positioning bugs there, not at a call site.
 - Everything else about floating surfaces on Android — Portal/Modal escape, lifecycle gates,
   status-bar offset, the open flash — is in [floating-panels.md](floating-panels.md).

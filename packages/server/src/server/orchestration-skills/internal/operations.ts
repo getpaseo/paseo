@@ -2,7 +2,13 @@ import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { AgentSkillSelection } from "@getpaseo/protocol/messages";
-import { listFilesRecursive, removeSkill, syncSkills } from "./sync.js";
+import {
+  isLegacyCodexCopy,
+  listFilesRecursive,
+  readManagedFilesManifest,
+  removeSkill,
+  syncSkills,
+} from "./sync.js";
 
 export type SkillsState = "not-installed" | "up-to-date" | "drift";
 
@@ -163,11 +169,23 @@ export async function getSkillsStatus(
     hashSkills(targets.claudeDir, names),
     hashSkills(targets.codexDir, names),
   ]);
-  const disks = [agentsDisk, claudeDisk, codexDisk];
-  const ops = diff(bundle, disks, names, resolveDesiredSkills(selection, available));
-  const installed = installedSkillNames(disks, names);
+  const disks = [agentsDisk, claudeDisk];
+  const desired = resolveDesiredSkills(selection, available);
+  const ops = diff(bundle, disks, names, desired);
+  for (const name of codexDisk.keys()) {
+    if (ops.some((op) => op.name === name)) continue;
+    if (!(await isLegacyCodexCopy(name, targets))) continue;
+    if (!desired.has(name)) ops.push({ kind: "delete", name });
+    else if (await readManagedFilesManifest(path.join(targets.codexDir, name))) {
+      ops.push({ kind: "update", name });
+    }
+  }
+  ops.sort((a, b) => compareStrings(a.name, b.name));
+  const allDisks = [...disks, codexDisk];
+  const installed = installedSkillNames(allDisks, names);
 
-  if (!hasInstalledPaseoSkill(disks)) return { state: "not-installed", ops, available, installed };
+  if (!hasInstalledPaseoSkill(allDisks))
+    return { state: "not-installed", ops, available, installed };
   if (ops.length === 0) return { state: "up-to-date", ops, available, installed };
   return { state: "drift", ops, available, installed };
 }

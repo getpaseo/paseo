@@ -1,0 +1,17 @@
+context platform=android timeout=60000 retries=0
+env APP_ID=sh.paseo.debug
+
+open "${APP_ID}"
+wait "id=\"workspace-tabs-scroll\"" 20000
+wait "id=\"context-window-meter\"" 20000
+press "id=\"context-window-meter\""
+wait "id=\"context-window-meter-tooltip\"" 10000
+press "id=\"tooltip-dismiss\""
+wait "id=\"context-window-meter\"" 10000
+press "id=\"context-window-meter\""
+wait "id=\"context-window-meter-tooltip\"" 10000
+press "id=\"tooltip-dismiss\""
+wait "id=\"workspace-tab-agent_${OTHER_AGENT_ID}\"" 10000
+press "id=\"workspace-tab-agent_${OTHER_AGENT_ID}\""
+wait "id=\"agent-chat-scroll\"" 10000
+close

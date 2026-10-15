@@ -10,6 +10,7 @@ import {
   type WorktreeConfig,
 } from "./worktree";
 import { execFileSync } from "child_process";
+import { rm } from "node:fs/promises";
 import {
   mkdtempSync,
   mkdirSync,
@@ -20,6 +21,7 @@ import {
   writeFileSync,
 } from "fs";
 import { join } from "path";
+import { createServer, type AddressInfo, type Socket } from "net";
 import { tmpdir } from "os";
 import { createRealpathAwarePathMatcher } from "./path";
 
@@ -52,6 +54,21 @@ function createLegacyWorktreeForTest(
   });
 }
 
+// A remote that accepts connections and never answers, like a VPN-only host while off the VPN.
+async function startSilentRemote(): Promise<{ url: string; close: () => Promise<void> }> {
+  const connections = new Set<Socket>();
+  const server = createServer((socket) => connections.add(socket));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${port}/repo.git`,
+    close: () => {
+      for (const socket of connections) socket.destroy();
+      return new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
 describe("paseo worktree manager", () => {
   let tempDir: string;
   let repoDir: string;
@@ -73,8 +90,8 @@ describe("paseo worktree manager", () => {
     });
   });
 
-  afterEach(() => {
-    rmSync(tempDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it("treats a worktree as paseo-owned even when its .git admin is missing", async () => {
@@ -262,6 +279,103 @@ describe("paseo worktree manager", () => {
     });
 
     expect(existsSync(created.worktreePath)).toBe(false);
+  });
+
+  describe("branch-off from a remote-tracking base", () => {
+    function git(args: string[], cwd: string): string {
+      return execFileSync("git", ["-c", "commit.gpgsign=false", ...args], {
+        cwd,
+        encoding: "utf8",
+      }).trim();
+    }
+
+    // The repo caches <remote>/main at "initial" while the remote itself moves one commit ahead,
+    // as when nothing has fetched since someone else pushed.
+    function pushPastCachedRemoteRef(remoteName: string): string {
+      const remoteDir = join(tempDir, "remote.git");
+      git(["clone", "--bare", "-q", repoDir, remoteDir], tempDir);
+      git(["remote", "add", remoteName, remoteDir], repoDir);
+      git(["fetch", "-q", remoteName], repoDir);
+
+      const pusherDir = join(tempDir, "pusher");
+      git(["clone", "-q", remoteDir, pusherDir], tempDir);
+      git(["config", "user.email", "test@test.com"], pusherDir);
+      git(["config", "user.name", "Test"], pusherDir);
+      writeFileSync(join(pusherDir, "file.txt"), "pushed after the last fetch\n");
+      git(["commit", "-q", "-am", "remote ahead"], pusherDir);
+      git(["push", "-q", "origin", "HEAD:main"], pusherDir);
+      return git(["rev-parse", "HEAD"], pusherDir);
+    }
+
+    it("starts the new branch at the remote tip, not the cached origin/main", async () => {
+      const remoteTip = pushPastCachedRemoteRef("origin");
+      const fetchRefspecs = git(["config", "--get-all", "remote.origin.fetch"], repoDir);
+
+      const created = await createLegacyWorktreeForTest({
+        branchName: "from-remote-tip",
+        cwd: repoDir,
+        baseBranch: "origin/main",
+        worktreeSlug: "from-remote-tip",
+        paseoHome,
+      });
+
+      expect(git(["rev-parse", "HEAD"], created.worktreePath)).toBe(remoteTip);
+      expect(git(["config", "--get-all", "remote.origin.fetch"], repoDir)).toBe(fetchRefspecs);
+    });
+
+    it("refreshes a base on a remote other than origin", async () => {
+      const remoteTip = pushPastCachedRemoteRef("team/upstream");
+
+      const created = await createLegacyWorktreeForTest({
+        branchName: "from-upstream-tip",
+        cwd: repoDir,
+        baseBranch: "refs/remotes/team/upstream/main",
+        worktreeSlug: "from-upstream-tip",
+        paseoHome,
+      });
+
+      expect(git(["rev-parse", "HEAD"], created.worktreePath)).toBe(remoteTip);
+    });
+
+    it("branches from the cached ref when the remote is unreachable", async () => {
+      pushPastCachedRemoteRef("origin");
+      const cachedTip = git(["rev-parse", "refs/remotes/origin/main"], repoDir);
+      git(["remote", "set-url", "origin", join(tempDir, "missing.git")], repoDir);
+
+      const created = await createLegacyWorktreeForTest({
+        branchName: "from-cached-ref",
+        cwd: repoDir,
+        baseBranch: "origin/main",
+        worktreeSlug: "from-cached-ref",
+        paseoHome,
+      });
+
+      expect(git(["rev-parse", "HEAD"], created.worktreePath)).toBe(cachedTip);
+    });
+
+    it("branches from the cached ref when the remote accepts but never answers", async () => {
+      pushPastCachedRemoteRef("origin");
+      const cachedTip = git(["rev-parse", "refs/remotes/origin/main"], repoDir);
+      const silentRemote = await startSilentRemote();
+      git(["remote", "set-url", "origin", silentRemote.url], repoDir);
+
+      try {
+        const startedAt = Date.now();
+        const created = await createLegacyWorktreeForTest({
+          branchName: "from-silent-remote",
+          cwd: repoDir,
+          baseBranch: "origin/main",
+          worktreeSlug: "from-silent-remote",
+          paseoHome,
+        });
+
+        // Clients give up on a create request after 60s, so the fallback has to land well before.
+        expect(Date.now() - startedAt).toBeLessThan(30_000);
+        expect(git(["rev-parse", "HEAD"], created.worktreePath)).toBe(cachedTip);
+      } finally {
+        await silentRemote.close();
+      }
+    }, 45_000);
   });
 });
 

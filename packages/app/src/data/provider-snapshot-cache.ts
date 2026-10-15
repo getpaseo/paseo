@@ -1,6 +1,9 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Buffer } from "buffer";
-import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
+import {
+  normalizeAgentModelCatalog,
+  type ProviderSnapshotEntry,
+} from "@getpaseo/protocol/agent-types";
 import {
   expandProviderSnapshot,
   type CompactProviderSnapshot,
@@ -75,6 +78,17 @@ export class ProviderSnapshotCacheMissError extends Error {
     super("Daemon returned not-modified without a cached provider snapshot");
     this.name = "ProviderSnapshotCacheMissError";
   }
+}
+
+// COMPAT(duplicateModelCatalog): added in v0.8.1, remove after 2027-03-14 once
+// the daemon floor is v0.8.1 and pre-fix cached catalogs are no longer supported.
+// Keep the original compact body/hash: normalization belongs to its decoded view.
+function normalizeCatalogs(entries: ProviderSnapshotEntry[]): ProviderSnapshotEntry[] {
+  return entries.map((entry) => {
+    if (!entry.models) return entry;
+    const models = normalizeAgentModelCatalog(entry.models);
+    return models === entry.models ? entry : { ...entry, models };
+  });
 }
 
 function cacheKey(serverId: string, cwd: string | null): string {
@@ -303,7 +317,7 @@ export function createProviderSnapshotCache(
       const body = {
         ...stored,
         compactSnapshot: stored.compactSnapshot,
-        entries: expandProviderSnapshot(stored.compactSnapshot),
+        entries: normalizeCatalogs(expandProviderSnapshot(stored.compactSnapshot)),
       };
       bodies.set(key, body);
       return body;
@@ -328,7 +342,7 @@ export function createProviderSnapshotCache(
   return {
     async materialize(serverId, snapshot) {
       const { snapshotHash: hash, compactSnapshot } = snapshot;
-      if (!hash) return snapshot;
+      if (!hash) return { ...snapshot, entries: normalizeCatalogs(snapshot.entries) };
       let body = await safely(async () => {
         const cached = await readBody(serverId, hash);
         if (cached) return cached;
@@ -348,7 +362,7 @@ export function createProviderSnapshotCache(
           hash,
           generatedAt: snapshot.generatedAt,
           compactSnapshot,
-          entries: expandProviderSnapshot(compactSnapshot),
+          entries: normalizeCatalogs(expandProviderSnapshot(compactSnapshot)),
         };
       }
       return {

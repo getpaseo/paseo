@@ -12,7 +12,8 @@ provider deltas (every provider streams incrementally)
   → recordTimeline: one canonical row per flushed item
   → agent_stream ws message
   → reducer queue (app, one commit per frame) → session store
-  → paced reveal (app, per assistant/reasoning item) → markdown blocks → paint
+  → source-item plugin transforms → native Markdown blocks / tool grouping
+  → paced reveal (app, per displayed item) → paint
 ```
 
 Every provider delivers incremental text, so there is no provider that needs special handling: Claude via `includePartialMessages`, Codex via `agent_message_delta`, ACP agents via `agent_message_chunk`, Pi and OMP via `text_delta`.
@@ -28,6 +29,23 @@ So arrival sets a _target_ and the reveal rate is derived from the backlog inste
 - **The coalescer is leading + trailing.** The first delta after an idle window flushes synchronously; only the rest of the burst waits for the trailing timer. Reverting to trailing-only adds a full window to the first character of every turn. Same shape and the same reason as `TerminalOutputCoalescer`.
 - **The leading flush adds a canonical row, and that is fine.** A burst's first chunk lands as its own timeline row. `mergeAssistantChunks` / `mergeReasoningChunks` in `timeline-projection.ts` join contiguous same-turn rows, and clients read the projected timeline, so history is unaffected. Tests that assert on raw rows have to account for the extra row; tests that assert on what a client sees do not.
 - **The store holds the full text; only the rendered slice is paced.** Copy, selection, the chat outline, and scroll geometry all read the same string the user can see. Pacing the store instead would leave the bottom anchor chasing a content height that is ahead of the reveal.
+- **Markdown blocks belong to presentation, and every assistant message is a block group.**
+  `agent-stream/presentation.ts` splits a message into one display row per Markdown block, the same
+  way whether it arrived streaming or as fetched history. Splitting in the reducer instead would
+  discard paragraph separators and expose fragments to plugin callbacks, which need the whole source
+  text. Live-head work stays cheap by parsing only the growing last block during append, retaining
+  completed blocks by object identity, and caching the split per source item so a tail change does
+  not re-split history. History was once left whole to keep cross-block Markdown context; that gave
+  one message two shapes depending on how it arrived, and message-addressed features only worked on
+  one of them.
+- **A row id is never a message id.** Block rows are `${messageId}:block:${n}` with
+  `blockGroupId = messageId`, including single-block messages, so nothing can come to rely on the two
+  being equal. `getStreamItemMessageId` in `presentation.ts` is the only way to go from a row to its
+  message, and web rows carry it as `data-message-id` alongside `data-history-row-id`. Anything
+  addressing a message — chat find, scroll-to-message, history reveal, the find expansion that lifts
+  the render cap — uses the message id and must expect several rows to answer to it. Row ids stay for
+  React keys, virtualizer measurement, scroll anchors, and per-row caches like assistant image
+  occurrence keys.
 - **First sight of a text is revealed whole.** Only growth is paced. This is what makes history hydration, timeline replay, a virtualized row remounting on scroll, and an already-finished message all render complete on first paint without a special case for each.
 - **Leaving `phase: "streaming"` snaps the reveal.** A completed turn must never be left holding characters. `layoutStream` sets the phase, so anything outside the live head with an active turn is already complete.
 - **The reducer queue commits on a frame, with a timer as the ceiling.** A frame callback never fires in a hidden tab, so a timer races it and wins when nothing is painting — the store has to keep advancing either way.

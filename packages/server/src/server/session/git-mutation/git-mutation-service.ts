@@ -118,7 +118,12 @@ export function createGitMutationService(deps: {
       }
 
       await ensureCleanWorkingTree(cwd);
-      await runGitCommand(["checkout", "-b", newBranchName, baseBranch], {
+      // --no-track: a branch we create is not a continuation of its base, so it gets no
+      // upstream. Without it git hands the new branch `origin/<base>` whenever the base is a
+      // remote-tracking ref or branch.autoSetupMerge asks for inheritance, and every later
+      // push then reads that upstream and lands the work on the default branch. The worktree
+      // path makes the same promise with `git worktree add -b <branch> --no-track <base>`.
+      await runGitCommand(["checkout", "-b", newBranchName, "--no-track", baseBranch], {
         cwd,
         timeout: 120_000,
       });

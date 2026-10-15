@@ -11,7 +11,7 @@ canonical files and are trying to add or change one.
 | ---------------------------------------- | ----------------------------------------------------------------- |
 | `components/ui/combobox.tsx`             | Anchored picker with search; mobile falls back to bottom sheet    |
 | `components/ui/tooltip.tsx`              | Non-interactive hover/long-press tooltip                          |
-| `components/workspace-hover-card.tsx`    | Desktop-web hover card with measure + computePosition + Portal    |
+| `components/ui/hover-card.tsx`           | Desktop-web hover card the pointer can move onto; Portal          |
 | `components/ui/autocomplete-popover.tsx` | Slash-command autocomplete anchored to the focused composer input |
 
 Each handles a different mix of concerns: combobox owns input focus, tooltip is
@@ -58,7 +58,10 @@ Android touches sailed straight through to the chat scroll view behind it.
 Two escape hatches in the codebase:
 
 - **`Modal`** (combobox, dropdown menu and tooltip on native) — opens a new Android window, so
-  hit-testing starts fresh in that window. Side effect: a Modal opening on
+  hit-testing starts fresh in that window. If its children use gesture-handler,
+  the Modal owner must wrap its content in a full-height `GestureHandlerRootView`:
+  the app's root does not span Android windows. React context alone does not
+  establish a native gesture root. Side effect: a Modal opening on
   Android can detach the IME from an underlying TextInput. Fine for combobox
   (it has its own input) and tooltip (no input). **Not** fine for autocomplete
   (the composer's input must stay focused so the user keeps typing).
@@ -89,7 +92,7 @@ portal can cover them.
 Painting and keyboard ownership use the same relative layer model. Register
 desktop modal, combobox, and dropdown focus scopes with `useWebOverlayRegistration`; the
 highest painted scope alone receives overlay keys, traps focus, and restores
-focus when it closes. Do not add component-local global Escape listeners: two
+focus when it closes. Hover cards register with `manageFocus={false}`: they claim overlay keys without moving or trapping focus on pointer hover. Do not add component-local global Escape listeners: two
 stacked overlays would both close on one keypress.
 
 If an overlay is rendered by a global host rather than beneath its opener in
@@ -134,13 +137,38 @@ The fix for transforms is Gotcha 3. The fix for context is Gotcha 7.
 
 ## Gotcha 3 — Keyboard layout and portal anchors
 
-`KeyboardTranslateView` owns visual keyboard motion. Android uses the
+`composer/dock` owns the stationary viewport, bottom-anchored surface, composer
+capacity, and keyboard motion for chat, workspace draft tabs, and New workspace.
+Render `<ComposerDock>{contentAbove}{composer}</ComposerDock>` below the header.
+The optional third child is an overlay that moves with the surface. New workspace
+uses `centered` for its existing desktop/tablet form. Hosts never reserve keyboard
+space or translate the composer themselves. Put the dismiss surface behind content
+as a sibling, with `pointerEvents="box-none"` on its content wrapper. A Pressable
+ancestor takes the JS responder on idle Android Fabric and intercepts the stream's
+MOVE events before its native scroll view reaches touch slop. Streaming can hide
+this failure by delaying the responder grant. Native scroll views retain their own
+tap-to-dismiss behavior; unclaimed empty-space taps reach the dismiss sibling.
+On iOS, decorative form containers also need `box-none` (and inert titles/spacers
+need `none`); otherwise their empty padding blocks hit testing of that sibling.
+The shared screen header uses the same dismiss surface. Keep the
+header escape available when a capped draft clips all content above it, since
+iPhone has no system keyboard-dismiss button. Child controls keep their touches,
+and the stream keeps its existing flick-to-dismiss gesture.
+
+The dock's private viewport and capacity model are extracted from chat. The
+app-wide `@/keyboard/shift` module owns shared motion for the dock, portals, streams,
+terminal, explorer, and dialogs. Import only its public entry point: the provider,
+shift hooks, shift style, translate view, settled stream inset, and explorer padding
+policy. Its contexts and reconciliation stay private. Keep `KeyboardShiftProvider`
+at its root mount point outside the portal host when changing dock hosts.
+
+`KeyboardTranslateView` owns visual keyboard motion inside `@/keyboard/shift`. Android uses the
 controller's Reanimated signal. iOS uses its native-driver `Animated.event`
 signal because the stock iOS Reanimated value changes at move start, while
 writing a replacement Reanimated value every frame interrupts UIKit's hide
-animation. Keep this platform choice inside `KeyboardTranslateView`.
+animation. Keep this platform choice inside the keyboard module's private platform-specific translate files.
 
-`KeyboardDock` always keeps the chat surface at full height and wraps it in
+`ComposerDock` always keeps the surface at full height and wraps it in
 `KeyboardTranslateView`. The panel root clips it at the header edge, so rows
 slide under the header on open and out from under it on close. Do not swap the
 dock to keyboard padding at rest. Changing its height creates either a blank
@@ -154,7 +182,74 @@ layout. Preserve the translated dock's history scroll range with a far-end
 content inset on the inverted stream list. Update that inset only when keyboard
 motion settles; never drive it per frame.
 
-Move the stream and composer together through `KeyboardDock`. Do not translate
+The translated dock's height is not the composer's available height. Bound the
+composer against the stationary space below the header inside
+`composer/dock`, including its controls and attachments. Reserve the
+keyboard destination at move start on the UI thread. Waiting for a settled JS
+update lets a long draft disappear behind the header during opening. This is a
+boundary-time layout change, not an animated layout prop. Keep the input's
+native intrinsic sizing and internal scrolling. Keep the editing input's
+`defaultValue` current on every edit: Fabric re-measures the Android input from
+the JS text whenever its frame changed, so a stale prop inflates or collapses
+the input (see `packages/app/src/components/ui/text-input/text-input.native.tsx`).
+
+Closing the keyboard moves the composer; it does not enlarge its capacity. The
+viewport keeps the last keyboard reservation until the next opening replaces
+it, so a capped draft keeps one height through every keyboard transition
+instead of expanding on close and shrinking again on open.
+
+Fullscreen is a layout mode of the dock, not a second editor. `ComposerDock
+fullscreen` fills the stationary viewport with the composer slot over the
+still-mounted content, paints its own surface under the safe areas, and turns
+the surface translation off. The composer's single tree keeps the editing
+surface at the same position in both modes, so the mounted editor, its native
+buffer, selection, and focus survive the toggle and Send's clear always reaches
+the live input. The one remount left is a viewport crossing the compact
+breakpoint: the app shell swaps its gesture wrapper and the workspace screen
+mounts tabs in different trees, so every screen below remounts. The draft owner
+restores the text and the editing session restores the caret and focus intent.
+New workspace keys its sessions by draft in the app-level store for the same
+reason. The centered form honors fullscreen by style alone: no centering, no
+translation, setup fields hidden, slot filling the stationary viewport. The
+global exit action (Escape, hardware back) is registered only for the active
+composer: a retained tab keeps its fullscreen editor mounted while hidden, the
+sheet suspends pane focus, and the composer gives up input from the moment the
+user asks for the compact agent list or explorer, before the panel's motion
+settles. Pane focus itself stays put under those panels: the agent panel reads
+it as "the user is in this chat" for attention clearing, and opening the agent
+list must not clear the attention it shows. Focus restoration follows pane
+focus, not the active composer. The editor keeps its focus intent only across
+a blur that lands while its pane is not the user's (a retained tab hidden, a
+sheet over it) and refocuses when the pane comes back. A blur while the pane is
+theirs drops the intent in every layout mode, and the keyboard the compact
+panels dismiss when they settle is such a blur, so closing the agent list or
+explorer never reopens the keyboard. Keying restoration on the active composer
+made that dismiss look like a hidden-tab blur and refocused on close.
+The band beside the inline editor where the fullscreen glyph sits is the input's
+own right padding, so a tap anywhere in it focuses the editor whether or not the
+glyph shows. On web the slot is a fixed box over the visible viewport, which is
+also what lets a zoomed mobile page pan under it. Inside the slot, `ComposerFullscreenBody` reserves the keyboard
+height as a bottom margin at move start and end (boundary-time, like the
+capacity reservation) while `ComposerFullscreenFooter` rides the keyboard per
+frame with `KeyboardTranslateView`, so Send lands on the keyboard without a gap
+and without animating the editor's height. The screen that owns the chrome
+unmounts it: the workspace screen reads `useComposerTabFullscreen` for the
+active tab and New workspace reads the mounted composer's session. Hosts that
+render the dock pass the same `ComposerEditingSession` to the `Composer` so the
+dock, chrome, and editor agree on one fullscreen state. Escape (web overlay
+registration, focus untouched) and the Android back button leave fullscreen.
+
+Keep setup fields out of the composer's shrink chain. New workspace supplies its
+setup fields as the first dock child so they move up under the header as the draft
+grows. Putting the fields and composer in one bounded, shrinkable column made
+Yoga split the shortage between them: rows vanished behind the composer while
+the input lost lines at the same time. Keep that separation inside the dock,
+shared by every phone host. The centered tablet form caps the complete block
+for header clearance, but reserves the composer's own capped height before
+shrinking the setup scroll view. The form must not take editing space from the
+composer.
+
+Move the stream and composer together through `ComposerDock`. Do not translate
 them independently.
 
 `KeyboardShiftProvider` owns the normalized shift used for settled insets and
@@ -247,6 +342,34 @@ Do not treat `onChange(-1)` as a close by itself. In a stacked
 `BottomSheetModal`, `-1` can also mean the sheet is temporarily hidden under
 another pushed sheet. Close React state from `onDismiss`; use `onChange` only to
 track phase.
+
+All sheets use the app-wide Gorhom modal provider through `IsolatedBottomSheetModal`, with no
+exceptions: one stack means a sheet opened from any sheet lands on top of it and uncovers it on
+close. This includes native centered dialogs: separate React Native Modals cannot present a
+root-owned sibling dialog over an existing iOS presenter. A sheet that must draw inside a subtree
+(the [sheet tabs](explorer-sidebar.md#sheets) draw inside the compact workspace column so their
+panels read the workspace providers) presents from inside a `SheetHostScope`, which moves the
+portal host and container measurement while the sheet still joins the same stack. That export is
+what `patches/@gorhom+bottom-sheet+*.patch` adds.
+
+A sheet whose owner may veto the close (unsaved work) passes `enableDismissOnClose={false}`. Every
+close path then parks the sheet at index -1 with its content mounted; the owner hears
+`onChange(-1)`, runs its guard, and either snaps back to 0 or drops its state, which unmounts the
+sheet and takes it off the stack. Calling `dismiss()` on such a sheet bypasses the guard and
+unmounts it, so its backdrop and Back press call `close()`.
+
+The wrapper must give Gorhom an object ref. Gorhom accepts a callback ref at the React boundary
+but stores it in the modal queue and later reads `.current`; provider dismissal, replacement,
+and restoration then silently do nothing. Callers may use callback refs on the wrapper, which
+forwards commands to the current Gorhom handle.
+
+Request a backdrop with `backdropOpacity`; do not install a caller-owned backdrop. On web,
+Gorhom's default backdrop closes its own sheet, even when another modal is above it. Its animated
+pointer-event changes can expose a lower backdrop during a transition. The shared web backdrop
+keeps its press target until portal teardown and asks the provider to dismiss the top modal
+(a guarded sheet closes itself instead, see above). Gorhom's presentation queue remains the
+authority; backdrop mount order is irrelevant. Native retains Gorhom's gesture backdrop and the
+same push/replace presentation semantics.
 
 ## Gotcha 7 — A sheet cannot read context from its call site
 

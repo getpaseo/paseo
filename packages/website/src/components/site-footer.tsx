@@ -1,19 +1,29 @@
+import { PLUGINS_LINKED } from "~/plugins/launch";
 import { getAlternativePages } from "~/data/alternative-pages";
 import { appStoreUrl, playStoreUrl, webAppUrl } from "~/downloads";
+import { SponsorsSection } from "~/components/sponsorship";
 
 interface SiteFooterProps {
-  width?: "default" | "prose";
+  width?: "default" | "prose" | "wide";
+  /** Pages that show the sponsors in their content turn the footer band off. */
+  sponsors?: boolean;
 }
 
-export function SiteFooter({ width = "default" }: SiteFooterProps) {
-  const widthClasses =
-    width === "prose" ? "max-w-prose p-6 md:p-12 md:pt-0" : "max-w-5xl p-6 md:p-20 md:pt-0";
+const WIDTH_CLASSES: Record<NonNullable<SiteFooterProps["width"]>, string> = {
+  prose: "max-w-prose p-6 md:p-12 md:pt-0",
+  default: "max-w-5xl p-6 md:p-20 md:pt-0",
+  wide: "max-w-7xl p-6 md:p-20 md:pt-0",
+};
+
+export function SiteFooter({ width = "default", sponsors = true }: SiteFooterProps) {
+  const widthClasses = WIDTH_CLASSES[width];
   const alternatives = getAlternativePages();
   return (
-    <footer className={`${widthClasses} mx-auto`}>
+    <footer className={`${widthClasses} mx-auto mt-12 md:mt-16`}>
+      {sponsors ? <SponsorsSection placement="footer" /> : null}
       <div className="border-t border-white/10 pt-8 pb-4 grid grid-cols-2 sm:grid-cols-5 gap-8 text-sm">
         <div className="space-y-3">
-          <p className="text-white/60 font-medium">Product</p>
+          <p className="text-extra-muted-foreground">Product</p>
           <div className="space-y-2">
             <a
               href="/blog"
@@ -27,6 +37,14 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
             >
               Docs
             </a>
+            {PLUGINS_LINKED && (
+              <a
+                href="/plugins"
+                className="block text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Plugins
+              </a>
+            )}
             <a
               href="/changelog"
               className="block text-muted-foreground hover:text-foreground transition-colors"
@@ -66,7 +84,7 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
           </div>
         </div>
         <div className="space-y-3">
-          <p className="text-white/60 font-medium">Agents</p>
+          <p className="text-extra-muted-foreground">Agents</p>
           <div className="space-y-2">
             <a
               href="/claude-code"
@@ -87,6 +105,18 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
               OpenCode
             </a>
             <a
+              href="/antigravity"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Antigravity
+            </a>
+            <a
+              href="/muse-code"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Muse Code
+            </a>
+            <a
               href="/agents"
               className="block text-muted-foreground hover:text-foreground transition-colors"
             >
@@ -95,7 +125,7 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
           </div>
         </div>
         <div className="space-y-3">
-          <p className="text-white/60 font-medium">Alternatives</p>
+          <p className="text-extra-muted-foreground">Alternatives</p>
           <div className="space-y-2">
             {alternatives.map((page) => (
               <a
@@ -109,7 +139,7 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
           </div>
         </div>
         <div className="space-y-3">
-          <p className="text-white/60 font-medium">Community</p>
+          <p className="text-extra-muted-foreground">Community</p>
           <div className="space-y-2">
             <a
               href="https://discord.gg/jz8T2uahpH"
@@ -138,7 +168,7 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
           </div>
         </div>
         <div className="space-y-3">
-          <p className="text-white/60 font-medium">Download</p>
+          <p className="text-extra-muted-foreground">Download</p>
           <div className="space-y-2">
             <a
               href={appStoreUrl}

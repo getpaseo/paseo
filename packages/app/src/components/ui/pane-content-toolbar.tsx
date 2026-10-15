@@ -16,6 +16,7 @@ import type { ShortcutKey } from "@/utils/format-shortcut";
 import {
   iconButtonChromeGlyphSize,
   iconButtonChromeStyle,
+  useIconButtonChromeStyle,
   smallIconButtonChromeFrameSize,
 } from "@/components/ui/icon-button-chrome";
 import { WORKSPACE_PANE_TRAILING_GLYPH_RAIL } from "@/components/tree-primitives";
@@ -56,8 +57,12 @@ interface ToolbarButtonCommonProps extends Omit<
 > {
   children: ReactNode;
   label: string;
+  /** What the tooltip says when it is not the label, e.g. a status. Defaults to the label. */
+  tooltip?: ReactNode;
   selected?: boolean;
   compact?: boolean;
+  /** A circular highlight, for buttons inside a pill-shaped container. */
+  round?: boolean;
   shortcut?: ShortcutKey[][] | null;
   tooltipSide?: "left" | "right" | "top" | "bottom";
   style?: StyleProp<ViewStyle>;
@@ -76,8 +81,10 @@ type ToolbarButtonProps = ToolbarButtonCommonProps &
 export function ToolbarButton({
   children,
   label,
+  tooltip: tooltipBody,
   selected = false,
   compact = false,
+  round = false,
   shortcut,
   tooltipSide = "bottom",
   style,
@@ -87,17 +94,14 @@ export function ToolbarButton({
   testID,
   ...props
 }: ToolbarButtonProps) {
-  const buttonStyle = useMemo(
-    () => (state: { hovered?: boolean; pressed: boolean; open?: boolean }) =>
-      iconButtonChromeStyle({
-        size: "small",
-        compact,
-        state: { ...state, active: selected },
-        disabled: Boolean(disabled),
-        style,
-      }),
-    [compact, disabled, selected, style],
-  );
+  const buttonStyle = useIconButtonChromeStyle({
+    size: "small",
+    compact,
+    active: selected,
+    disabled: Boolean(disabled),
+    round,
+    style,
+  });
   const accessibilityState = useMemo(
     () => ({ disabled: Boolean(disabled), selected }),
     [disabled, selected],
@@ -105,7 +109,7 @@ export function ToolbarButton({
   const tooltip = (
     <TooltipContent side={tooltipSide} align="center" offset={8}>
       <View style={styles.tooltipRow}>
-        <Text style={styles.tooltipText}>{label}</Text>
+        {tooltipBody ?? <Text style={styles.tooltipText}>{label}</Text>}
         {shortcut ? <Shortcut chord={shortcut} /> : null}
       </View>
     </TooltipContent>
@@ -155,8 +159,26 @@ export function paneContentToolbarIconSize(isCompact: boolean): number {
   return iconButtonChromeGlyphSize("small", isCompact);
 }
 
-/** Keeps a toolbar glyph on the same trailing rail as tree-row glyphs. */
-export function paneContentToolbarTrailingPadding(isCompact: boolean): number {
+/**
+ * What the last control in a toolbar row ends with. A `glyph` control paints an icon
+ * inside a larger invisible hitbox; a `framed` control (bordered trigger, split button)
+ * paints its own frame, so the frame is the ink.
+ */
+export type ToolbarTrailingControl = "glyph" | "framed";
+
+/**
+ * Keeps the last control in a toolbar row on the same trailing rail as tree-row glyphs.
+ * A bare glyph's hitbox overhangs its ink, so the row pads by less than the rail and lets
+ * the hitbox run off the edge; a framed control's ink reaches its own edge, so it pads by
+ * the full rail.
+ */
+export function paneContentToolbarTrailingPadding(
+  isCompact: boolean,
+  trailing: ToolbarTrailingControl,
+): number {
+  if (trailing === "framed") {
+    return WORKSPACE_PANE_TRAILING_GLYPH_RAIL;
+  }
   const buttonSize = smallIconButtonChromeFrameSize(isCompact);
   return (
     WORKSPACE_PANE_TRAILING_GLYPH_RAIL - (buttonSize - paneContentToolbarIconSize(isCompact)) / 2

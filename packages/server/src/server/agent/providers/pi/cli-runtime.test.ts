@@ -62,6 +62,15 @@ function onPiCommand(child: PiChild, handler: (command: Record<string, unknown>)
   });
 }
 
+/** Kill the child the moment it receives `type`, so the request is in flight when it dies. */
+function exitOnCommand(child: PiChild, type: string): void {
+  onPiCommand(child, (command) => {
+    if (command.type === type) {
+      child.emit("exit", 1, null);
+    }
+  });
+}
+
 function replyToCommands(
   child: PiChild,
   handler: (command: Record<string, unknown>) => unknown,
@@ -137,7 +146,12 @@ describe("PiCliRuntime", () => {
     const launches: PiRuntimeLaunch[] = [];
     const runtime = createRuntime(child, launches);
 
-    const session = await runtime.startSession({ cwd: "/workspace/project" });
+    const session = await runtime.startSession({
+      cwd: "/workspace/project",
+      env: { HOME: "/fixture/pi-home" },
+    });
+    expect(session.environment).toBe(launches[0]?.env);
+    expect(session.environment?.HOME).toBe("/fixture/pi-home");
 
     await expect(session.getState()).resolves.toMatchObject({
       sessionId: "pi-session-1",
@@ -278,7 +292,10 @@ describe("PiCliRuntime", () => {
 
     const state = session.getState();
     child.stderr.write("boom");
+    const environment = session.environment;
     child.emit("exit", 1, null);
+    expect(session.environment).toBe(environment);
+    expect(environment).toBeDefined();
 
     await expect(state).rejects.toThrow("boom");
   });
@@ -505,5 +522,26 @@ describe("PiCliRuntime", () => {
 
     // Neither RPC returned usable data — should resolve with empty object
     expect(stats).toEqual({});
+  });
+
+  // A dead runtime owns no turn, so interrupting it is already satisfied. Rejecting here
+  // makes AgentManager treat the interrupt as unacknowledged and refuse the stop, which
+  // pins the agent at `running` until the daemon restarts. See issue #3749.
+  test("abort and clearQueue resolve once the Pi process has exited", async () => {
+    const child = createPiChild();
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    child.emit("exit", 1, null);
+
+    await expect(session.clearQueue()).resolves.toBeUndefined();
+    await expect(session.abort()).resolves.toBeUndefined();
+  });
+
+  test("abort resolves when the Pi process exits while the abort is in flight", async () => {
+    const child = createPiChild();
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    exitOnCommand(child, "abort");
+
+    await expect(session.abort()).resolves.toBeUndefined();
   });
 });

@@ -87,10 +87,11 @@ export async function emitSettledAssistantImage(
   client: SeedDaemonClient,
   agent: ArchiveTabAgent,
   image: AssistantImageFixture,
+  destination: string = image.relativePath,
 ): Promise<void> {
   await client.sendAgentMessage(
     agent.id,
-    `Emit settled assistant image Markdown: ![${image.alt}](${image.relativePath})`,
+    `Emit settled assistant image Markdown: ![${image.alt}](${destination})`,
   );
   const result = await client.waitForFinish(agent.id, 30_000);
   if (result.status !== "idle" || result.final?.lastError) {
@@ -186,9 +187,15 @@ export async function userPagesUntilAssistantImageRenders(
     }
     const previous = await rememberTimelineViewport(page);
     await userScrollsTimelineToHistoryStart(page);
+    // Scrolling can bring an already loaded image into the virtualized window
+    // without increasing content height. Its rendering also satisfies this step.
     await expect
-      .poll(async () => (await rememberTimelineViewport(page)).scrollHeight)
-      .toBeGreaterThan(previous.scrollHeight);
+      .poll(
+        async () =>
+          (await rendered.count()) > 0 ||
+          (await rememberTimelineViewport(page)).scrollHeight > previous.scrollHeight,
+      )
+      .toBe(true);
   }
   await expectAssistantImageRendered(page, image);
 }

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, rm, writeFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, extname, join } from "node:path";
 
 import { FileTransferOpcode, type FileTransferFrame } from "@getpaseo/protocol/binary-frames/index";
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
@@ -220,9 +220,26 @@ function buildUploadResponse(upload: PendingUpload, error: string | null): FileU
   };
 }
 
+// Most file systems cap a single file name at 255 bytes.
+const MAX_FILE_NAME_BYTES = 255;
+
+// Keeps the client's file name, replacing only what cannot appear in a single
+// file name on Linux, macOS, or Windows.
 function sanitizeFileName(value: string): string {
   const name = basename(value)
-    .replace(/[^a-zA-Z0-9._ -]/g, "_")
+    .replace(/[\p{Cc}\\/:*?"<>|]/gu, "_")
     .trim();
-  return name.length > 0 && name !== "." && name !== ".." ? name : "upload";
+  return fitFileNameLength(name.length > 0 && name !== "." && name !== ".." ? name : "upload");
+}
+
+function fitFileNameLength(name: string): string {
+  if (Buffer.byteLength(name) <= MAX_FILE_NAME_BYTES) return name;
+  const extension = extname(name);
+  const keptExtension = Buffer.byteLength(extension) < MAX_FILE_NAME_BYTES ? extension : "";
+  let stem = "";
+  for (const char of name.slice(0, name.length - keptExtension.length)) {
+    if (Buffer.byteLength(stem + char + keptExtension) > MAX_FILE_NAME_BYTES) break;
+    stem += char;
+  }
+  return stem + keptExtension;
 }

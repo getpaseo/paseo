@@ -10,13 +10,21 @@ afterEach(async () => {
 
 test("the Hub CLI connects, reports status, and disconnects through the daemon", async () => {
   relationship = await HubRelationshipHarness.start();
-  const connected = await relationship.beginConnect().result;
+  const connected = await relationship.runCli([
+    "hub",
+    "connect",
+    "https://hub.test",
+    "--api-key",
+    "hub-contract-api-key:ceremony-token",
+    "--permission",
+    "hub.execute",
+  ]);
   relationship.connectLatestSocket();
 
-  const status = await relationship.status();
+  const status = await relationship.runCli(["hub", "status"]);
   const enrollment = relationship.enrollmentAttempts()[0];
   const secret = relationship.relationshipFile()?.credential?.secret;
-  const disconnected = await relationship.disconnect();
+  const disconnected = await relationship.runCli(["hub", "disconnect"]);
 
   expect(connected.state).toBe("connecting");
   expect(status.state).toBe("connected");

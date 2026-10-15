@@ -63,6 +63,28 @@ function project(input: {
 }
 
 describe("tool call detail-level projection", () => {
+  it.each(["detailed", "overview"] as const)(
+    "keeps pending approval tools out of %s presentation without removing their canonical position",
+    (level) => {
+      const pending = toolCall(
+        "1",
+        { type: "plan", text: "Ship it" },
+        { name: "ExitPlanMode", status: "running" },
+      );
+      const followUp = {
+        kind: "user_message",
+        id: "question",
+        text: "What about tests?",
+        timestamp: new Date(2),
+      } satisfies StreamItem;
+      const tail = [pending, followUp];
+      expect(project({ level, tail }).tail).toEqual([followUp]);
+      expect(tail).toEqual([pending, followUp]);
+      const rejected = toolCall("1", { type: "plan", text: "Ship it" }, { name: "plan_approval" });
+      expect(project({ level, tail: [rejected, followUp] }).tail).toEqual([rejected, followUp]);
+    },
+  );
+
   it("passes detailed timelines through without grouping work", () => {
     const tail = [toolCall("1", { type: "shell", command: "one" })];
     const head = [toolCall("2", { type: "shell", command: "two" })];

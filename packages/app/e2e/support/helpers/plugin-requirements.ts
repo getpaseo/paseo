@@ -101,14 +101,19 @@ export async function expectAppMismatch(page: Page) {
 
 export async function correctRequirementAndReload(page: Page, directory: string) {
   await writeRequirements(directory, pluginRequirements.paseo);
-  await page.getByRole("button", { name: "Reload", exact: true }).click();
+  await reloadRequirementsPlugin(page);
   await expect(page.getByLabel("requirements-example running", { exact: true })).toBeVisible();
   await expect(page.getByText(/Your app is/)).toHaveCount(0);
 }
 
 export async function rejectDaemonMismatch(page: Page, directory: string) {
   await writeRequirements(directory, ">=100.0.0");
-  await page.getByRole("button", { name: "Reload", exact: true }).click();
+  await reloadRequirementsPlugin(page);
   await expect(page.getByLabel("requirements-example failed", { exact: true })).toBeVisible();
   await expect(page.getByText(/Your daemon is 99.0.0/).first()).toBeVisible();
+}
+
+async function reloadRequirementsPlugin(page: Page) {
+  await page.getByRole("button", { name: "Actions for requirements-example", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Reload", exact: true }).click();
 }

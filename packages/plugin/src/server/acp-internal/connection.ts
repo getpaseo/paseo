@@ -1,4 +1,5 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawnProcess, terminateProcess } from "../process.js";
 import { Readable, Writable } from "node:stream";
 import {
   ClientSideConnection,
@@ -40,6 +41,7 @@ import {
   type ProviderConnection,
   type ProviderEvent,
   type ProviderInput,
+  type ProviderLaunch,
   type ProviderPermissionResponse,
   type ProviderPersistence,
   type ProviderSessionConfig,
@@ -69,6 +71,7 @@ export async function createAcpProviderConnection(
   }
   const probe = await AcpRuntime.start({
     options,
+    launch: request.launch,
     boundarySessionId: "capability-probe",
     env: {},
     emit: () => undefined,
@@ -97,6 +100,7 @@ export async function createAcpProviderConnection(
   };
   const state: AcpConnectionState = {
     options,
+    launch: request.launch,
     capabilities,
     sessions,
     emit,
@@ -141,6 +145,7 @@ export async function createAcpProviderConnection(
 }
 
 interface AcpConnectionState {
+  launch?: ProviderLaunch;
   options: RunAcpProviderOptions;
   capabilities: readonly ProviderCapability[];
   sessions: Map<string, AcpBoundarySession>;
@@ -245,6 +250,7 @@ async function discover(
 ): Promise<void> {
   const runtime = await AcpRuntime.start({
     options: state.options,
+    launch: state.launch,
     boundarySessionId: "catalog",
     env: {},
     emit: state.emit,
@@ -269,6 +275,7 @@ async function listSessions(
 ): Promise<void> {
   const runtime = await AcpRuntime.start({
     options: state.options,
+    launch: state.launch,
     boundarySessionId: "sessions",
     env: {},
     emit: state.emit,
@@ -299,6 +306,7 @@ async function openSession(
     throw new Error(`Session already exists: ${input.sessionId}`);
   const runtime = await AcpRuntime.start({
     options: state.options,
+    launch: state.launch,
     boundarySessionId: input.sessionId,
     env: input.config.env,
     emit: state.emit,
@@ -336,6 +344,7 @@ function requireSession(state: AcpConnectionState, sessionId: string): AcpBounda
 }
 
 interface StartRuntimeOptions {
+  launch?: ProviderLaunch;
   options: RunAcpProviderOptions;
   boundarySessionId: string;
   env: Readonly<Record<string, string>>;
@@ -360,6 +369,16 @@ class AcpRuntime {
   private modes: NewSessionResponse["modes"] = null;
   private commandWaiter: (() => void) | null = null;
   private messageSequence = 0;
+  /**
+   * Fallback ids for streamed chunks that carry no `messageId`, one per
+   * chunk kind. Consecutive chunks of a kind continue the same timeline
+   * item; a chunk of the other kind, a tool call, a plan, a user message,
+   * or a turn boundary ends it (#4699).
+   */
+  private readonly fallbackChunkIds = new Map<
+    "agent_message_chunk" | "agent_thought_chunk",
+    string
+  >();
   private closing = false;
   private processFailed = false;
   private configTransaction = false;
@@ -375,10 +394,16 @@ class AcpRuntime {
     let stream: Stream;
     let closeConnector = async () => {};
     if (options.options.command) {
-      const [executable, ...args] = options.options.command;
-      child = spawn(executable, args, {
-        env: { ...process.env, ...options.env },
-        stdio: ["pipe", "pipe", "pipe"],
+      // COMPAT(pluginProviderLaunch): added in v0.10.0, remove after 2027-03-29 once plugin host floor >= v0.10.0.
+      // Standalone callers and older hosts do not send a daemon-resolved launch.
+      const launch = options.launch ?? {
+        command: options.options.command[0],
+        args: options.options.command.slice(1),
+        env: process.env,
+      };
+      child = spawnProcess(launch.command, launch.args, {
+        env: { ...launch.env, ...options.env },
+        stdio: "pipe",
       });
       spawnFailure = new Promise<never>((_resolve, reject) => child!.once("error", reject));
       child.stderr.on("data", () => undefined);
@@ -544,6 +569,7 @@ class AcpRuntime {
     }
     const prompt = toAcpPrompt(input.prompt);
     const turnId = `acp:${input.prompt.clientMessageId}`;
+    this.fallbackChunkIds.clear();
     this.emit({
       type: "timeline.item",
       sessionId: this.options.boundarySessionId,
@@ -574,6 +600,7 @@ class AcpRuntime {
     ).then(
       (response): void => {
         const state = response.stopReason === "cancelled" ? "canceled" : "completed";
+        this.fallbackChunkIds.clear();
         this.terminalizeTransientItems(state);
         this.emit({
           type: "session.turn",
@@ -584,6 +611,7 @@ class AcpRuntime {
         return undefined;
       },
       (error): void => {
+        this.fallbackChunkIds.clear();
         this.terminalizeTransientItems("failed");
         this.emit({
           type: "session.turn",
@@ -707,9 +735,9 @@ class AcpRuntime {
     if (!child || this.processFailed) return;
     if (child.exitCode !== null || child.signalCode !== null) return;
     const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
-    child.kill("SIGTERM");
+    await terminateProcess(child, "SIGTERM");
     if (await settlesWithin(closed, 1_000)) return;
-    child.kill("SIGKILL");
+    await terminateProcess(child);
     if (!(await settlesWithin(closed, 1_000))) {
       throw new Error(`ACP provider ${this.options.options.id} did not terminate after SIGKILL`);
     }
@@ -868,10 +896,19 @@ class AcpRuntime {
       update.sessionUpdate === "agent_thought_chunk" ||
       update.sessionUpdate === "user_message_chunk"
     ) {
-      if (update.sessionUpdate === "user_message_chunk") return;
+      if (update.sessionUpdate === "user_message_chunk") {
+        this.fallbackChunkIds.clear();
+        return;
+      }
+      // A chunk of one kind ends the other kind's item, whatever its content
+      // or id: reasoning, then text, then reasoning again are three items.
+      this.fallbackChunkIds.delete(
+        update.sessionUpdate === "agent_message_chunk"
+          ? "agent_thought_chunk"
+          : "agent_message_chunk",
+      );
       if (update.content.type !== "text") return;
-      const fallbackId = `${update.sessionUpdate}:${++this.messageSequence}`;
-      const id = update.messageId ?? fallbackId;
+      const id = this.resolveChunkId(update.sessionUpdate, update.messageId);
       const text = `${this.messages.get(id) ?? ""}${update.content.text}`;
       this.messages.set(id, text);
       this.emit({
@@ -889,10 +926,28 @@ class AcpRuntime {
       return;
     }
     if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
+      if (update.sessionUpdate === "tool_call") this.fallbackChunkIds.clear();
       this.reduceToolCall(update);
       return;
     }
+    if (update.sessionUpdate === "plan") this.fallbackChunkIds.clear();
     this.reduceStateUpdate(update);
+  }
+
+  private resolveChunkId(
+    kind: "agent_message_chunk" | "agent_thought_chunk",
+    messageId: string | null | undefined,
+  ): string {
+    if (messageId) {
+      this.fallbackChunkIds.delete(kind);
+      return messageId;
+    }
+    let id = this.fallbackChunkIds.get(kind);
+    if (!id) {
+      id = `${kind}:${++this.messageSequence}`;
+      this.fallbackChunkIds.set(kind, id);
+    }
+    return id;
   }
 
   private reduceStateUpdate(update: SessionUpdate): void {

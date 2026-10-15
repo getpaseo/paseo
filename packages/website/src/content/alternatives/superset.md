@@ -37,7 +37,7 @@ Superset requires a Superset account and GitHub sign-in when opening the app. It
 
 Superset supports many CLI-based coding agents and lets you add custom terminal agents.
 
-Paseo runs Claude Code, Codex, OpenCode, and Pi through native structured harnesses, plus 30+ agents through its ACP catalog and any custom CLI agent. See [all supported providers](/agents).
+Paseo runs Claude Code, Codex, OpenCode, Pi, Antigravity, and Muse Code through native structured harnesses, plus 30+ agents through its ACP catalog and any custom CLI agent. See [all supported providers](/agents).
 
 ## Application plugins
 
@@ -51,7 +51,7 @@ Both tools provide Git worktrees, split panes, terminals, diff review, an in-app
 
 Paseo gives supported providers a structured chat interface with modes, slash commands, tool calls, and file attachments. Superset can run any CLI agent in terminal panes and adds lifecycle status for supported agents.
 
-Paseo also gives each worktree its own service URL, such as `web.fix-auth.my-app.localhost`, so parallel development servers do not compete for ports.
+Paseo also gives each worktree its own service URL, such as `web--fix-auth--my-app.localhost`, so parallel development servers do not compete for ports.
 
 ## Automation
 
@@ -65,23 +65,31 @@ Superset has a free individual tier. Team features, remote access, and integrati
 
 ## Comparison
 
-|                              | Paseo                                    | Superset                               |
-| ---------------------------- | ---------------------------------------- | -------------------------------------- |
-| License                      | Open source (Apache-2.0)                 | Source-available (Elastic License 2.0) |
-| Desktop platforms            | macOS, Linux, Windows                    | macOS, experimental Linux              |
-| Native mobile                | iOS, Android                             | Coming soon                            |
-| Account required             | No                                       | Yes, with GitHub sign-in               |
-| Agent harnesses              | Native, ACP, and custom CLI              | CLI agents                             |
-| Application plugins          | Server code and native client components | No                                     |
-| Split panes and tabs         | Yes                                      | Yes                                    |
-| In-app terminal              | Yes                                      | Yes                                    |
-| In-app browser               | Yes                                      | Yes                                    |
-| GitHub workflow in app       | Commit, push, PR, checks, reviews, merge | Yes                                    |
-| Git worktrees                | Yes                                      | Yes                                    |
-| Per-worktree dev server URLs | Yes                                      | Port detection                         |
-| Automation                   | CLI, SDK, MCP                            | CLI, SDK, MCP                          |
-| Schedules                    | Yes                                      | Yes                                    |
-| Local voice                  | Dictation and realtime voice             | No documented voice support            |
-| Self-hosted daemon           | Yes                                      | Host server                            |
+|                              | Paseo                                                                                              | Superset                                                              |
+| ---------------------------- | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| License                      | Open source (Apache-2.0)                                                                           | Source-available (Elastic License 2.0)                                |
+| Account required             | No                                                                                                 | Yes, with GitHub sign-in                                              |
+| Desktop app                  | Yes (one click install, daemon bundled)                                                            | Yes (macOS, experimental Linux)                                       |
+| Mobile app                   | Yes (native, full parity with desktop)                                                             | Coming soon                                                           |
+| CLI                          | Yes (everything the app does)                                                                      | Yes (plus SDK and MCP server)                                         |
+| Remote machines              | Yes (install the daemon anywhere)                                                                  | Yes (host server, remote access through Superset cloud on paid plans) |
+| Built-in relay               | Yes (opt-in, end-to-end encrypted, no account)                                                     | Superset cloud services (paid plans)                                  |
+| Direct network access        | Yes (LAN, Tailscale, VPN)                                                                          | -                                                                     |
+| SSH access                   | Yes                                                                                                | -                                                                     |
+| Providers                    | Claude Code, Codex, OpenCode, Pi, Antigravity, Muse Code, 30+ more                                 | CLI agents, custom terminal agents                                    |
+| Parallel agents              | Yes (isolated worktrees, across machines)                                                          | Yes (Git worktrees)                                                   |
+| Terminal agents              | Yes (run any agent in a terminal, get notified when it finishes)                                   | Yes (lifecycle status for supported agents)                           |
+| Agent orchestration          | Yes (agents create worktrees and launch other agents, across providers)                            | Yes (CLI, SDK, and MCP server create workspaces and launch agents)    |
+| Editor                       | Yes                                                                                                | -                                                                     |
+| Terminals                    | Yes                                                                                                | Yes                                                                   |
+| Diff review                  | Yes (comments go to the agent)                                                                     | Yes                                                                   |
+| Pull requests in app         | GitHub, GitLab, Gitea, Forgejo, Codeberg                                                           | GitHub                                                                |
+| In-app browser               | Yes (element picker, agent browser tools)                                                          | Yes                                                                   |
+| Per-worktree dev server URLs | Yes (`web--fix-auth--my-app.localhost`)                                                            | Port detection                                                        |
+| Schedules and heartbeats     | Yes                                                                                                | Yes (schedules)                                                       |
+| Plan usage                   | Yes                                                                                                | -                                                                     |
+| Plugins                      | Yes (new screens, panels, agent hooks, and providers, one plugin runs on desktop, web, and mobile) | No                                                                    |
+| Voice                        | Yes (local dictation, realtime voice)                                                              | -                                                                     |
+| Telemetry                    | None                                                                                               | -                                                                     |
 
 See also: [Paseo vs Conductor](/alternatives/conductor), [Paseo vs OpenChamber](/alternatives/openchamber), [Paseo vs Happy Coder](/alternatives/happy-coder).

@@ -145,6 +145,8 @@ describe("workspace-setup-store", () => {
       sourceWorkspaceId: "42",
       displayName: "project",
       creationMethod: "open_project",
+      creationId: expect.any(String),
+      worktreeSlug: expect.any(String),
     });
   });
 

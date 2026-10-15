@@ -1,7 +1,33 @@
 import { describe, expect, it } from "vitest";
-import { applyClearDraftRecord, pruneFinalizedDraftRecords, toDraftInputIfReady } from "./state";
+import {
+  applyClearDraftRecord,
+  pruneFinalizedDraftRecords,
+  toDraftInputIfReady,
+  editDraftRecordText,
+  type DraftRecord,
+} from "./state";
 
 describe("draft-store lifecycle", () => {
+  it("edits text without invalidating attachment subscribers", () => {
+    const draft: DraftRecord = {
+      input: {
+        text: "hello",
+        attachments: [
+          { kind: "workspace_file", path: "README.md", selection: { kind: "whole_file" } },
+        ],
+      },
+      lifecycle: "active",
+      updatedAt: 1,
+      version: 1,
+    };
+    const edited = editDraftRecordText(draft, "hello\n", 2);
+    expect(edited.input.text).toBe("hello\n");
+    expect(edited.input.attachments).toBe(draft.input.attachments);
+    expect(edited.version).toBe(2);
+    expect(editDraftRecordText(edited, "hello\n", 3)).toBe(edited);
+    expect(editDraftRecordText(edited, "", 3).lifecycle).toBe("active");
+    expect(editDraftRecordText(undefined, "", 3).lifecycle).toBe("abandoned");
+  });
   it("prunes finalized tombstones after TTL", () => {
     const nowMs = 1_000_000;
     const drafts = {

@@ -1,7 +1,12 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { AgentSideConnection, PROTOCOL_VERSION, type Agent } from "@agentclientprotocol/sdk";
+import {
+  AgentSideConnection,
+  PROTOCOL_VERSION,
+  type Agent,
+  type SessionUpdate,
+} from "@agentclientprotocol/sdk";
 import type { ProviderConnection, ProviderEvent, ProviderInput } from "./provider.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { runAcpProvider, type AcpStreamMessage } from "./acp.js";
@@ -68,6 +73,7 @@ interface ConnectorInstance {
   closeFromAgent(): void;
   request(method: string, params: unknown): Promise<unknown>;
   respond(request: AcpRequestMessage, result: unknown): void;
+  reject(request: AcpRequestMessage, message: string): void;
   notify(method: string, params: unknown): void;
 }
 
@@ -79,6 +85,8 @@ interface ConnectorResponse {
 interface ConnectorHarnessOptions {
   capabilities?: Record<string, unknown>;
   configOptions?: unknown[];
+  /** Session updates the agent streams for a prompt (keyed by its text) before ending the turn. */
+  promptUpdates?(promptText: string): unknown[];
   handleMessage?(instance: ConnectorInstance, message: AcpStreamMessage): boolean;
   handleRequest?(instance: ConnectorInstance, request: AcpRequestMessage): boolean;
 }
@@ -120,6 +128,11 @@ function respondToConnectorRequest(
       configOptions: options?.configOptions ?? [],
     });
   } else if (request.method === "session/prompt") {
+    const { prompt } = request.params as { prompt: Array<{ type: string; text?: string }> };
+    const promptText = prompt.find((part) => part.type === "text")?.text ?? "";
+    for (const update of options?.promptUpdates?.(promptText) ?? []) {
+      instance.notify("session/update", { sessionId: "connector-session", update });
+    }
     instance.respond(request, { stopReason: "end_turn" });
   } else if (request.method === "session/close") {
     instance.respond(request, {});
@@ -156,6 +169,8 @@ function connectorHarness(options?: ConnectorHarnessOptions) {
         return response;
       },
       respond: (request, result) => controller.enqueue({ jsonrpc: "2.0", id: request.id, result }),
+      reject: (request, message) =>
+        controller.enqueue({ jsonrpc: "2.0", id: request.id, error: { code: -32603, message } }),
       notify: (method, params) => controller.enqueue({ jsonrpc: "2.0", method, params }),
     };
     instances.push(instance);
@@ -210,6 +225,53 @@ lines.on("line", (line) => {
 });`;
 
 describe("runAcpProvider", () => {
+  it("spawns the daemon-resolved launch for probes, catalogues, listing, and sessions", async () => {
+    const executable = await fakeAcp(`
+if (process.env.LAUNCH_TOKEN !== "resolved" || process.env.CLAUDECODE || process.env.PASEO_NODE_ENV) process.exit(1);
+const readline = require("node:readline");
+const lines = readline.createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+lines.on("line", (line) => {
+  const message = JSON.parse(line);
+  let result;
+  if (message.method === "initialize") result = { protocolVersion: message.params.protocolVersion, agentCapabilities: { sessionCapabilities: { list: {} } } };
+  else if (message.method === "session/new") result = { sessionId: "native", configOptions: [{ id: "model", name: "Model", category: "model", type: "select", currentValue: "resolved", options: [{ value: "resolved", name: process.env.SESSION_TOKEN || "probe" }] }] };
+  else if (message.method === "session/list") result = { sessions: [] };
+  else return;
+  send({ jsonrpc: "2.0", id: message.id, result });
+});`);
+    const registration = runAcpProvider({
+      id: "launch-acp",
+      label: "Launch ACP",
+      command: ["missing-default-command"],
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "session.list"],
+      launch: { command: process.execPath, args: [executable], env: { LAUNCH_TOKEN: "resolved" } },
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send({ type: "catalog", requestId: "catalog" });
+      expect(await waitForEvent(events, (event) => event.type === "catalog")).toMatchObject({
+        catalog: { models: [{ id: "resolved", label: "probe" }] },
+      });
+      await connection.send({ type: "sessions", requestId: "list" });
+      expect(await waitForEvent(events, (event) => event.type === "sessions")).toMatchObject({
+        sessions: [],
+      });
+      const input = openInput();
+      input.config.env = { SESSION_TOKEN: "session" };
+      await connection.send(input);
+      expect(await waitForEvent(events, (event) => event.type === "session.config")).toMatchObject({
+        config: { models: [{ id: "resolved", label: "session" }] },
+      });
+    } finally {
+      await connection.close();
+    }
+  });
+
   it("rejects connection cleanly when the ACP executable does not exist", async () => {
     const registration = runAcpProvider({
       id: "missing-acp",
@@ -1002,4 +1064,266 @@ lines.on("line", (line) => {
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(900);
     expect(Date.now() - startedAt).toBeLessThan(2_500);
   });
+});
+
+describe("runAcpProvider streamed chunks without messageId (#4699)", () => {
+  interface Chunk {
+    kind: "agent_message_chunk" | "agent_thought_chunk";
+    text: string;
+    messageId?: string;
+  }
+
+  it("continues one timeline item per turn instead of one per chunk", async () => {
+    const chunksByPrompt: Record<string, Chunk[]> = {
+      first: [
+        { kind: "agent_message_chunk", text: "- **Current tem" },
+        { kind: "agent_message_chunk", text: "perature**: 25°C" },
+      ],
+      second: [{ kind: "agent_message_chunk", text: "next turn" }],
+      // An explicit-id text chunk between two id-less thoughts separates them.
+      third: [
+        { kind: "agent_thought_chunk", text: "think A" },
+        { kind: "agent_message_chunk", text: "say", messageId: "m-explicit" },
+        { kind: "agent_thought_chunk", text: "think B" },
+      ],
+    };
+    const harness = connectorHarness({
+      promptUpdates: (promptText) =>
+        (chunksByPrompt[promptText] ?? []).map((chunk) => {
+          const update: Record<string, unknown> = {
+            sessionUpdate: chunk.kind,
+            content: { type: "text", text: chunk.text },
+          };
+          if (chunk.messageId) update.messageId = chunk.messageId;
+          return update;
+        }),
+    });
+    const registration = runAcpProvider({
+      id: "chunk-acp",
+      label: "Chunk ACP",
+      connector: harness.connector,
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    await connection.send(openInput());
+    await waitForEvent(events, (event) => event.type === "session.ready");
+
+    for (const clientMessageId of ["first", "second", "third"]) {
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId,
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: clientMessageId }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === `acp:${clientMessageId}` &&
+          event.state === "completed",
+      );
+    }
+
+    const items = events.flatMap((event) =>
+      event.type === "timeline.item" &&
+      (event.item.type === "assistant_message" || event.item.type === "reasoning")
+        ? [{ id: event.item.id, text: event.item.text }]
+        : [],
+    );
+    expect(items).toEqual([
+      { id: "agent_message_chunk:1", text: "- **Current tem" },
+      { id: "agent_message_chunk:1", text: "- **Current temperature**: 25°C" },
+      { id: "agent_message_chunk:2", text: "next turn" },
+      { id: "agent_thought_chunk:3", text: "think A" },
+      { id: "m-explicit", text: "say" },
+      { id: "agent_thought_chunk:4", text: "think B" },
+    ]);
+    await connection.close();
+  });
+});
+
+function textChunk(
+  text: string,
+  kind: "agent_message_chunk" | "agent_thought_chunk" = "agent_message_chunk",
+  messageId?: string,
+): SessionUpdate {
+  return {
+    sessionUpdate: kind,
+    content: { type: "text", text },
+    ...(messageId === undefined ? {} : { messageId }),
+  };
+}
+
+async function streamChunkTurns(
+  updates: SessionUpdate[],
+  ending: "completed" | "canceled" | "failed" = "completed",
+) {
+  let promptCount = 0;
+  const harness = connectorHarness({
+    handleRequest(instance, request) {
+      if (request.method !== "session/prompt") return false;
+      promptCount++;
+      for (const update of promptCount === 1 ? updates : [textChunk("Next turn")]) {
+        instance.notify("session/update", { sessionId: "connector-session", update });
+      }
+      if (promptCount === 1 && ending === "failed") instance.reject(request, "Prompt failed");
+      else
+        instance.respond(request, {
+          stopReason: promptCount === 1 && ending === "canceled" ? "cancelled" : "end_turn",
+        });
+      return true;
+    },
+  });
+  const registration = runAcpProvider({
+    id: "chunk-boundaries",
+    label: "Chunk boundaries",
+    connector: harness.connector,
+  });
+  const connection = await registration.connect({
+    versions: [1],
+    capabilities: ["prompt.message"],
+  });
+  const events: ProviderEvent[] = [];
+  connection.onEvent((event) => events.push(event));
+  try {
+    await connection.send(openInput());
+    await waitForEvent(events, (event) => event.type === "session.ready");
+    for (const clientMessageId of ["first", "second"]) {
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId,
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: clientMessageId }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === `acp:${clientMessageId}` &&
+          event.state === (clientMessageId === "first" ? ending : "completed"),
+      );
+    }
+    const messages = new Map<string, { type: string; text: string }>();
+    for (const event of events) {
+      if (
+        event.type === "timeline.item" &&
+        (event.item.type === "assistant_message" || event.item.type === "reasoning")
+      ) {
+        messages.set(event.item.id, { type: event.item.type, text: event.item.text });
+      }
+    }
+    return [...messages.values()];
+  } finally {
+    await connection.close();
+  }
+}
+
+describe("ACP streamed message boundaries", () => {
+  it.each([
+    {
+      name: "tool call",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "tool",
+        title: "Read",
+        kind: "read",
+        status: "in_progress",
+      },
+    },
+    { name: "plan", update: { sessionUpdate: "plan", entries: [] } },
+    {
+      name: "user message",
+      update: { sessionUpdate: "user_message_chunk", content: { type: "text", text: "User" } },
+    },
+  ] satisfies Array<{ name: string; update: SessionUpdate }>)(
+    "starts a new message after a $name",
+    async ({ update }) => {
+      expect(
+        await streamChunkTurns([
+          textChunk("Before"),
+          update,
+          textChunk("After "),
+          textChunk("boundary"),
+        ]),
+      ).toEqual([
+        { type: "assistant_message", text: "Before" },
+        { type: "assistant_message", text: "After boundary" },
+        { type: "assistant_message", text: "Next turn" },
+      ]);
+    },
+  );
+
+  it("continues text while an existing tool receives a status update", async () => {
+    expect(
+      await streamChunkTurns([
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "tool",
+          title: "Read",
+          kind: "read",
+          status: "in_progress",
+        },
+        textChunk("Still "),
+        { sessionUpdate: "tool_call_update", toolCallId: "tool", status: "completed" },
+        textChunk("speaking"),
+      ]),
+    ).toEqual([
+      { type: "assistant_message", text: "Still speaking" },
+      { type: "assistant_message", text: "Next turn" },
+    ]);
+  });
+
+  it("keeps explicit messages separate from neighboring anonymous chunks", async () => {
+    expect(
+      await streamChunkTurns([
+        textChunk("Before"),
+        textChunk("Explicit ", "agent_message_chunk", "message"),
+        textChunk("message", "agent_message_chunk", "message"),
+        textChunk("After"),
+      ]),
+    ).toEqual([
+      { type: "assistant_message", text: "Before" },
+      { type: "assistant_message", text: "Explicit message" },
+      { type: "assistant_message", text: "After" },
+      { type: "assistant_message", text: "Next turn" },
+    ]);
+  });
+
+  it("continues reasoning but starts a new segment after nontext assistant content", async () => {
+    expect(
+      await streamChunkTurns([
+        textChunk("Think ", "agent_thought_chunk"),
+        textChunk("first", "agent_thought_chunk"),
+        {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "image", data: "", mimeType: "image/png" },
+        },
+        textChunk("Then think", "agent_thought_chunk"),
+      ]),
+    ).toEqual([
+      { type: "reasoning", text: "Think first" },
+      { type: "reasoning", text: "Then think" },
+      { type: "assistant_message", text: "Next turn" },
+    ]);
+  });
+
+  it.each(["completed", "canceled", "failed"] as const)(
+    "keeps the next turn separate after a %s prompt",
+    async (ending) => {
+      expect(await streamChunkTurns([textChunk("First "), textChunk("turn")], ending)).toEqual([
+        { type: "assistant_message", text: "First turn" },
+        { type: "assistant_message", text: "Next turn" },
+      ]);
+    },
+  );
 });

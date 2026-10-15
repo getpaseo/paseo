@@ -14,11 +14,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, ChevronRight, Folder, X } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import {
-  BottomSheetBackdrop,
-  BottomSheetFlatList,
-  type BottomSheetFlatListMethods,
-} from "@gorhom/bottom-sheet";
+import { BottomSheetFlatList, type BottomSheetFlatListMethods } from "@gorhom/bottom-sheet";
 import { AgentStatusDot } from "@/components/agent-status-dot";
 import { MaterialFileIcon } from "@/components/material-file-icon";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -718,12 +714,6 @@ export function CommandCenter() {
     layer: modalLayer,
     onKeyDown: handleWebOverlayKeyDown,
   });
-  const backdrop = useCallback(
-    (props: React.ComponentProps<typeof BottomSheetBackdrop>) => (
-      <BottomSheetBackdrop {...props} disappearsOnIndex={-1} appearsOnIndex={0} opacity={0.45} />
-    ),
-    [],
-  );
 
   if (showBottomSheet) {
     return (
@@ -735,7 +725,7 @@ export function CommandCenter() {
         enableDynamicSizing={false}
         onChange={handleSheetChange}
         onDismiss={handleSheetDismiss}
-        backdropComponent={backdrop}
+        backdropOpacity={0.45}
         enablePanDownToClose
         backgroundStyle={styles.sheetBackground}
         handleIndicatorStyle={styles.sheetHandle}

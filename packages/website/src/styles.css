@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "@fontsource-variable/geist";
 
 * {
   scrollbar-color: var(--color-scrollbar-handle) transparent;
@@ -405,6 +406,12 @@
   font-weight: 400;
 }
 
+.docs-prose img {
+  max-width: 100%;
+  border-radius: 0.5rem;
+  border: 1px solid var(--color-border);
+}
+
 .docs-prose p {
   margin-top: 1rem;
   margin-bottom: 1rem;
@@ -497,6 +504,24 @@
   background-color: rgba(255, 255, 255, 0.02);
 }
 
+/* Comparison tables: the browser would size each column by its longest cell,
+   so the two product columns get equal width regardless of content. */
+.comparison-prose table {
+  display: table;
+  table-layout: fixed;
+}
+
+.comparison-prose th,
+.comparison-prose td {
+  overflow-wrap: anywhere;
+  hyphens: auto;
+}
+
+.comparison-prose th:first-child,
+.comparison-prose td:first-child {
+  width: max(22%, 7.5rem);
+}
+
 .docs-prose pre {
   background-color: var(--color-card) !important;
   border: 1px solid var(--color-border);
@@ -534,23 +559,6 @@
   border-color: var(--color-border);
   margin-top: 2rem;
   margin-bottom: 2rem;
-}
-
-.docs-source-footer {
-  border-top: 1px solid var(--color-border);
-  margin-top: 3rem;
-  padding-top: 1.25rem;
-  font-size: 0.875rem;
-}
-
-.docs-source-footer a {
-  color: rgba(255, 255, 255, 0.5);
-  font-weight: 500;
-  text-decoration: none;
-}
-
-.docs-source-footer a:hover {
-  color: var(--color-foreground);
 }
 
 /* Blog post prose styles — adapted from moboudra.com */
@@ -660,6 +668,8 @@
 }
 
 @theme {
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+
   --color-background: #101615;
   --color-foreground: #fafafa;
   --color-muted: #1a1f1e;

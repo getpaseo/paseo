@@ -1,7 +1,11 @@
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { z } from "zod";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 
+import { AgentManager } from "./agent-manager.js";
 import { validateProviderOptions } from "./provider-options.js";
 import { applyClaudeToolPolicy, ClaudeProviderOptionsSchema } from "./providers/claude/options.js";
 import { applyCodexToolPolicy, CodexProviderOptionsSchema } from "./providers/codex/options.js";
@@ -51,6 +55,7 @@ describe("provider-owned option schemas", () => {
       ClaudeProviderOptionsSchema.parse({
         allowedTools: ["Read"],
         disallowedTools: ["Bash(rm *)"],
+        extraArgs: { chrome: null, model: "x" },
         sandbox: {
           enabled: true,
           failIfUnavailable: true,
@@ -63,7 +68,26 @@ describe("provider-owned option schemas", () => {
         },
         settings: { permissions: { ask: ["Bash(*)"], deny: ["Edit(.env)"] } },
       }),
-    ).toMatchObject({ sandbox: { enabled: true, failIfUnavailable: true } });
+    ).toMatchObject({
+      extraArgs: { chrome: null, model: "x" },
+      sandbox: { enabled: true, failIfUnavailable: true },
+    });
+  });
+
+  test.each([true, 42, ["x"]])("rejects invalid Claude extra argument values: %j", (value) => {
+    expect(() =>
+      validateProviderOptions("claude", ClaudeProviderOptionsSchema, {
+        extraArgs: { chrome: value },
+      }),
+    ).toThrow("providerOptions.extraArgs.chrome");
+  });
+
+  test("rejects a raw argument list for the SDK argument map", () => {
+    expect(() =>
+      validateProviderOptions("claude", ClaudeProviderOptionsSchema, {
+        extraArgs: ["--chrome"],
+      }),
+    ).toThrow("providerOptions.extraArgs");
   });
 
   test("reports the exact invalid Claude option path", () => {
@@ -177,5 +201,68 @@ describe("exact MCP preapproval mappings", () => {
       { permission: "hub_finish_execution", pattern: "*", action: "deny" },
       { permission: "bash", pattern: "*", action: "ask" },
     ]);
+  });
+});
+
+describe("configured provider options", () => {
+  test.each(["options", "params"] as const)(
+    "Pi imports read sessionDir from config %s",
+    async (key) => {
+      const dir = mkdtempSync(join(tmpdir(), "provider-options-import-"));
+      try {
+        const file = join(dir, "native.jsonl");
+        writeFileSync(
+          file,
+          JSON.stringify({
+            type: "session",
+            version: 3,
+            id: "native",
+            cwd: "/tmp/options-project",
+          }) + "\n",
+        );
+        const logger = createTestLogger();
+        const registry = buildProviderRegistry(logger, {
+          providerOverrides: { pi: { [key]: { sessionDir: dir } } },
+        });
+        const sessions = await registry.pi.createClient(logger).listImportableSessions!({
+          cwd: "/tmp/options-project",
+        });
+        expect(sessions.map((session) => session.providerHandleId)).toEqual([file]);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test("a provider without option handling ignores the record", async () => {
+    const logger = createTestLogger();
+    const registry = buildProviderRegistry(logger, {
+      isDev: true,
+      providerOverrides: { mock: { options: { arbitrary: { base: true } } } },
+    });
+    const session = await registry.mock
+      .createClient(logger)
+      .createSession({ provider: "mock", cwd: "/tmp", providerOptions: { more: [1] } });
+    expect(session.provider).toBe("mock");
+    await session.close();
+  });
+
+  test("config options reach Claude and provider validation reaches the create caller", async () => {
+    const logger = createTestLogger();
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        claude: { options: { sandbox: { network: { allowLocalBinding: "yes" } } } },
+      },
+    });
+    const manager = new AgentManager({
+      logger,
+      clients: { claude: registry.claude.createClient(logger) },
+      providerDefinitions: { claude: registry.claude },
+    });
+    await expect(
+      manager.createAgent({ provider: "claude", cwd: "/tmp", model: "sonnet" }, undefined, {
+        workspaceId: undefined,
+      }),
+    ).rejects.toThrow("providerOptions.sandbox.network.allowLocalBinding");
   });
 });

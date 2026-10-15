@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawnProcess } from "../../utils/spawn.js";
 import type pino from "pino";
 import type { PluginManifest } from "./manifest.js";
 
@@ -33,14 +33,14 @@ function run(command: string[], directory: string): Promise<CommandResult> {
   return new Promise((resolve) => {
     const executable = command[0]!;
     const arguments_ = command.slice(1);
-    const child = spawn(executable, arguments_, { cwd: directory, shell: false });
+    const child = spawnProcess(executable, arguments_, { cwd: directory });
     let stdout = "";
     let stderr = "";
     let error: Error | undefined;
-    child.stdout.on("data", (chunk: Buffer | string) => {
+    child.stdout?.on("data", (chunk: Buffer | string) => {
       stdout = appendOutput(stdout, chunk.toString());
     });
-    child.stderr.on("data", (chunk: Buffer | string) => {
+    child.stderr?.on("data", (chunk: Buffer | string) => {
       stderr = appendOutput(stderr, chunk.toString());
     });
     child.once("error", (spawnError) => {

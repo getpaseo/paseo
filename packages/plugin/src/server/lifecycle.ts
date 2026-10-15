@@ -60,6 +60,7 @@ export interface PluginLifecycleEvents {
   };
   "agent.archived": { agent: PluginHookAgent; archivedAt: string };
   "agent.created": { agent: PluginHookAgent };
+  "agent.closed": { agent: PluginHookAgent };
   "workspace.created": { workspace: PluginHookWorkspace };
   "workspace.archived": { workspace: PluginHookWorkspace };
 }

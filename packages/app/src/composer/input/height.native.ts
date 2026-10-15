@@ -3,10 +3,12 @@ import type { RefObject } from "react";
 import type { ComposerHeightResult } from "./height.types";
 
 interface ComposerHeightArgs {
-  value: string;
+  getText: () => string;
   textareaRef: RefObject<unknown>;
   minHeight: number;
   maxHeight: number;
+  onRenderedLinesChange?: (lines: number) => void;
+  presentationKey?: boolean;
 }
 
 export function useComposerHeight({
