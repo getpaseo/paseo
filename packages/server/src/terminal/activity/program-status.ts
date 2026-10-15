@@ -17,20 +17,18 @@ export interface ProgramStatusReport {
   msg?: string;
 }
 
-const KNOWN_STATES: Record<string, true> = {
-  idle: true,
-  working: true,
-  done: true,
-  blocked: true,
-  error: true,
-  clear: true,
-};
+// Sets, not object literals: a lookup on an object also finds inherited names
+// such as `constructor`.
+const KNOWN_STATES: ReadonlySet<string> = new Set([
+  "idle",
+  "working",
+  "done",
+  "blocked",
+  "error",
+  "clear",
+]);
 
-const KNOWN_KINDS: Record<string, true> = {
-  permission: true,
-  question: true,
-  auth: true,
-};
+const KNOWN_KINDS: ReadonlySet<string> = new Set(["permission", "question", "auth"]);
 
 // Fixed OSC framing overhead: `ESC ] 7501 ;` (7 bytes) plus ST (up to 2 bytes).
 const SEQUENCE_OVERHEAD_BYTES = 9;
@@ -176,7 +174,7 @@ export function parseProgramStatusReport(body: string): ProgramStatusReport | nu
   }
   const pairs = parsePairs(body);
   const state = pairs?.get("state");
-  if (!pairs || state === undefined || !KNOWN_STATES[state]) {
+  if (!pairs || state === undefined || !KNOWN_STATES.has(state)) {
     return null;
   }
 
@@ -194,7 +192,7 @@ export function parseProgramStatusReport(body: string): ProgramStatusReport | nu
 
   // kind only rides along with blocked; unrecognized values are absent.
   const rawKind = pairs.get("kind");
-  if (report.state === "blocked" && rawKind !== undefined && KNOWN_KINDS[rawKind]) {
+  if (report.state === "blocked" && rawKind !== undefined && KNOWN_KINDS.has(rawKind)) {
     report.kind = rawKind as ProgramStatusBlockedKind;
   }
 

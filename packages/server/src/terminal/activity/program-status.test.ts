@@ -84,6 +84,12 @@ describe("parseProgramStatusReport — ignored reports", () => {
     expect(parseProgramStatusReport("state=sleeping")).toBeNull();
   });
 
+  it("ignores a state named after an Object.prototype property", () => {
+    for (const state of ["constructor", "toString", "hasOwnProperty", "__proto__"]) {
+      expect(parseProgramStatusReport(`state=${state}`)).toBeNull();
+    }
+  });
+
   it("ignores a report with an invalid id instead of falling back to root", () => {
     expect(parseProgramStatusReport("state=working:id=a//b")).toBeNull();
   });
@@ -112,6 +118,14 @@ describe("parseProgramStatusReport — scoped and degraded values", () => {
     const parsed = parseProgramStatusReport("state=blocked:kind=someday");
     expect(parsed).toMatchObject({ state: "blocked" });
     expect(parsed).not.toHaveProperty("kind");
+  });
+
+  it("treats a kind named after an Object.prototype property as absent", () => {
+    for (const kind of ["constructor", "toString", "__proto__"]) {
+      const parsed = parseProgramStatusReport(`state=blocked:kind=${kind}`);
+      expect(parsed).toMatchObject({ state: "blocked" });
+      expect(parsed).not.toHaveProperty("kind");
+    }
   });
 
   it("keeps progress on working", () => {
