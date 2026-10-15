@@ -4,8 +4,9 @@ import { startRunningMockAgent, submitMessage } from "../support/helpers/compose
 import {
   seedLongMockAgentTimeline,
   openAgentTimeline,
-  userScrollsTimelineToHistoryStart,
+  scrollTimelineUntilOlderHistoryIsReachable,
   scrollTimelineToNewestLoadedEdge,
+  expectTimelinePromptVisible,
 } from "../support/helpers/timeline-pagination";
 import {
   sampleStreamFrames,
@@ -118,8 +119,8 @@ agentStreamPerfDescribe("Agent stream smoothness", () => {
     try {
       await openAgentTimeline(page, agent);
       await expect(page.getByRole("textbox", { name: "Message agent..." }).first()).toBeVisible();
-      await userScrollsTimelineToHistoryStart(page);
-      await expect(page.getByTestId("load-older-history-spinner")).toBeHidden();
+      await scrollTimelineUntilOlderHistoryIsReachable(page, agent.oldestPrompt);
+      await expectTimelinePromptVisible(page, agent.oldestPrompt);
       await scrollTimelineToNewestLoadedEdge(page);
       await submitMessage(page, "Stream a long answer after reading older messages.");
       await awaitAssistantMessage(page);
