@@ -636,7 +636,7 @@ export const ptBR: TranslationResources = {
       },
       switcher: {
         trigger: "Alternar abas ({{count}} abertas)",
-        title: "Alternar aba",
+        title: "Abas do workspace",
         searchPlaceholder: "Buscar abas",
       },
       menu: {

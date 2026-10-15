@@ -4,7 +4,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { HEADER_INNER_HEIGHT, HEADER_INNER_HEIGHT_MOBILE } from "@/constants/layout";
 import { DensityIcon } from "@/components/ui/density-icon";
 import { Shortcut } from "@/components/ui/shortcut";
-import { density, densityFontSize, densityIconBox } from "@/styles/density";
+import { density, densityIconBox } from "@/styles/density";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 
 type SidebarHeaderRowVariant = "header" | "compact" | "inline";
@@ -152,7 +152,7 @@ const styles = StyleSheet.create((theme) => ({
   iconSpacerCompact: { width: densityIconBox("sm"), height: densityIconBox("sm") },
   label: {
     flexShrink: 1,
-    fontSize: densityFontSize(theme, "base"),
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
   },

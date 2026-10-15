@@ -1778,13 +1778,30 @@ async function localBranchExists(cwd: string, branchName: string): Promise<boole
 }
 
 async function resolveUniqueLocalBranchName(cwd: string, candidateBranch: string): Promise<string> {
-  let newBranchName = candidateBranch;
+  const { stdout } = await runGitCommand(
+    ["for-each-ref", "--format=%(refname:strip=2)", "refs/heads/"],
+    { cwd, envOverlay: READ_ONLY_GIT_ENV },
+  );
+  const existingBranches = new Set(stdout.trim().split("\n").filter(Boolean));
+  const candidateSegments = candidateBranch.split("/");
+  const segments = [...candidateSegments];
   let suffix = 1;
-  while (await localBranchExists(cwd, newBranchName)) {
-    newBranchName = `${candidateBranch}-${suffix}`;
-    suffix++;
+  while (true) {
+    const branchName = segments.join("/");
+    const parentConflict = segments.findIndex((_, index) =>
+      existingBranches.has(segments.slice(0, index + 1).join("/")),
+    );
+    const childConflict = [...existingBranches].some((branch) =>
+      branch.startsWith(`${branchName}/`),
+    );
+    if (parentConflict === -1 && !childConflict) {
+      return branchName;
+    }
+    // Git refs form a namespace: a branch cannot also be another branch's
+    // parent directory. Rename the conflicting segment, preserving the rest.
+    const conflictIndex = parentConflict === -1 ? segments.length - 1 : parentConflict;
+    segments[conflictIndex] = `${candidateSegments[conflictIndex]}-${suffix++}`;
   }
-  return newBranchName;
 }
 
 async function isBranchCheckedOut(cwd: string, branchName: string): Promise<boolean> {

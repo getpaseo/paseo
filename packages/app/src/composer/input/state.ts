@@ -193,10 +193,38 @@ export async function stopRealtimeVoice(ctx: StopRealtimeVoiceContext): Promise<
   await ctx.voice.stopVoice();
 }
 
+/**
+ * Offset that aligns a glyph's visible ink with the Send arrow's ink when both sit in
+ * equal controls on the same right rail. In Lucide's 24px viewBox ArrowUp ends at
+ * x19 while Maximize2/Minimize2 end at x21, so equal boxes leave the fullscreen
+ * glyphs visibly past the arrow.
+ */
+export function resolveGlyphRailOffset(input: {
+  controlSize: number;
+  sendIconSize: number;
+  glyphIconSize: number;
+}): number {
+  const arrowInkInset =
+    (input.controlSize - input.sendIconSize) / 2 + (5 * input.sendIconSize) / 24;
+  const glyphInkInset =
+    (input.controlSize - input.glyphIconSize) / 2 + (3 * input.glyphIconSize) / 24;
+  return arrowInkInset - glyphInkInset;
+}
+
 export function resolveComposerSurfaceText(
   liveText: string,
   replacement: TextReplacement,
   appliedReplacementKey: string,
 ): string {
   return replacement.key === appliedReplacementKey ? liveText : replacement.text;
+}
+
+/** A retained caret must fit the text the remounted editor shows. */
+export function resolveRetainedSelection(
+  retained: { start: number; end: number },
+  textLength: number,
+): { start: number; end: number } {
+  const end = Math.min(Math.max(retained.end, 0), textLength);
+  const start = Math.min(Math.max(retained.start, 0), end);
+  return { start, end };
 }

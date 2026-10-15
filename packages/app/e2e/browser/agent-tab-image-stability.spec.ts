@@ -16,6 +16,7 @@ import {
 } from "../support/helpers/assistant-images";
 import { expectAgentReadyToInterrupt } from "../support/helpers/agent-stream";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
+import path from "node:path";
 
 const test = base.extend<{ imageWorkspace: SeededWorkspace }>({
   imageWorkspace: async ({ page: _page }, provide) => {
@@ -26,6 +27,42 @@ const test = base.extend<{ imageWorkspace: SeededWorkspace }>({
       await workspace.cleanup();
     }
   },
+});
+
+test("assistant images at paths with spaces, Unicode and literal percent escapes render", async ({
+  imageWorkspace: workspace,
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const image = await createSmallAssistantPng(workspace, {
+    alt: "Angle destination image",
+    fileName: "My image Мои.png",
+  });
+  const agent = await createSettledMockAgent(workspace, "Encoded image paths");
+  await emitSettledAssistantImage(workspace.client, agent, image, `<${image.relativePath}>`);
+  await openAssistantImageTimeline(page, agent);
+  await expectAssistantImageRendered(page, image);
+
+  const encodedImage = { ...image, alt: "Encoded destination image" };
+  await emitSettledAssistantImage(
+    workspace.client,
+    agent,
+    encodedImage,
+    encodeURI(path.join(workspace.repoPath, image.relativePath)),
+  );
+  await expectAssistantImageRendered(page, encodedImage);
+
+  const literalPercentImage = await createSmallAssistantPng(workspace, {
+    alt: "Literal percent filename image",
+    fileName: "literal%20name.png",
+  });
+  await emitSettledAssistantImage(
+    workspace.client,
+    agent,
+    literalPercentImage,
+    encodeURI(literalPercentImage.relativePath),
+  );
+  await expectAssistantImageRendered(page, literalPercentImage);
 });
 
 test("switching between settled agent tabs keeps a real assistant PNG rendered", async ({

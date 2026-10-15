@@ -4,18 +4,23 @@ import { expect, test } from "../support/fixtures";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
-import { openSubagentFromCompactTrack, seedSubagent } from "../support/helpers/subagents";
 import {
-  closeWorkspaceSheet,
+  expectSubagentRowVisible,
+  openSubagentFromCompactTrack,
+  seedSubagent,
+} from "../support/helpers/subagents";
+import {
+  closeSheet,
   expectOpenTabCount,
-  openWorkspaceSheetAsTab,
+  openSheetAsTab,
   expectDeclinedDiscardPrompt,
-  expectWorkspaceSheetAtSnap,
-  replaceWorkspaceSheetFileText,
+  expectSheetAtSnap,
+  replaceSheetFileText,
   selectTabFromSwitcher,
-  tapWorkspaceSheetBackdrop,
-  workspaceSheet,
-} from "../support/helpers/workspace-sheet";
+  sheet,
+  sheetHeader,
+  tapSheetBackdrop,
+} from "../support/helpers/sheet";
 
 const FILE_LINK = "linked.ts:3";
 
@@ -55,47 +60,90 @@ test("compact opens files and subagents in a sheet, leaving the tabs for agents"
       await expect(fileLink).toBeVisible({ timeout: 15_000 });
       await fileLink.click();
 
-      const sheet = workspaceSheet(page, "linked.ts");
-      await expect(sheet).toBeVisible();
-      await expect(sheet.getByText("three")).toBeVisible();
-      await expectWorkspaceSheetAtSnap(page, "linked.ts");
-      await expect(sheet.getByRole("button", { name: "Open as tab" })).toHaveCount(0);
+      const fileSheet = sheet(page, "linked.ts");
+      await expect(fileSheet).toBeVisible();
+      await expect(fileSheet.getByText("three")).toBeVisible();
+      await expectSheetAtSnap(page, "linked.ts");
+      await expect(
+        sheetHeader(page, "linked.ts").getByRole("button", { name: "Open as tab" }),
+      ).toHaveCount(0);
       await expectOpenTabCount(page, 1);
-      await closeWorkspaceSheet(page, "linked.ts");
+      await closeSheet(page, "linked.ts");
     });
 
-    await test.step("a subagent opens in a sheet without its composer", async () => {
+    await test.step("a subagent opens in a sheet over the subagents list", async () => {
       await openSubagentFromCompactTrack(page, child.id);
 
-      const sheet = workspaceSheet(page, child.title);
-      await expect(sheet).toBeVisible();
-      await expectWorkspaceSheetAtSnap(page, child.title);
-      await expect(sheet.getByRole("textbox", { name: "Message agent..." })).toHaveCount(0);
+      const childSheet = sheet(page, child.title);
+      await expect(childSheet).toBeVisible();
+      await expectSheetAtSnap(page, child.title);
+      await expect(childSheet.getByRole("textbox", { name: "Message agent..." })).toHaveCount(0);
+      // The composer's model, thinking, and mode stand in for it, resolved the same way. An idle
+      // seeded agent has no context usage yet.
+      await expect(childSheet.getByTestId("agent-pane-subtitle")).toHaveText(
+        "Ten second stream · Low · Load test",
+      );
       await expectOpenTabCount(page, 1);
     });
 
-    await test.step("Open as tab promotes the subagent to a full tab", async () => {
-      await openWorkspaceSheetAsTab(page, child.title);
+    await test.step("closing the subagent's sheet uncovers the list", async () => {
+      await closeSheet(page, child.title);
+      await expectSubagentRowVisible(page, child.id);
+    });
+
+    await test.step("Open as tab promotes the subagent to a full tab and ends the list", async () => {
+      await page.getByTestId(`subagents-track-row-${child.id}`).click();
+      await expectSheetAtSnap(page, child.title);
+      await openSheetAsTab(page, child.title);
+      await expect(page.getByTestId(`subagents-track-row-${child.id}`)).toHaveCount(0);
       await expectOpenTabCount(page, 2);
       await expectComposerVisible(page);
     });
 
-    await test.step("a sheet with unsaved edits closes only through the guarded close", async () => {
+    await test.step("the list the subagent was opened from closed with its tab", async () => {
       await selectTabFromSwitcher(page, "Sheet parent");
+      await expect(page.getByTestId(`subagents-track-row-${child.id}`)).toHaveCount(0);
+    });
+
+    await test.step("once its tab closes, the subagent reopens in a sheet that keeps the list", async () => {
+      await page
+        .getByRole("button", { name: /Switch tabs/ })
+        .filter({ visible: true })
+        .click();
+      await expect(page.getByText("Workspace tabs", { exact: true })).toBeVisible();
+      const menuBase = `workspace-tab-menu-agent_${child.id}`;
+      await page.getByTestId(`${menuBase}-trigger`).click();
+      await page.getByTestId(`${menuBase}-close`).click();
+      await expectOpenTabCount(page, 1);
+      // Closing a tab keeps the switcher open, with the parent as the tab left. Its backdrop is
+      // tapped once the row menu's own sheet has gone.
+      await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(1);
+      await tapSheetBackdrop(page);
+      await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(0);
+
+      await openSubagentFromCompactTrack(page, child.id);
+      await expectSheetAtSnap(page, child.title);
+      await closeSheet(page, child.title);
+      await expectSubagentRowVisible(page, child.id);
+      await tapSheetBackdrop(page);
+      await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(0);
+    });
+
+    await test.step("a sheet with unsaved edits closes only through the guarded close", async () => {
       await page.getByText(FILE_LINK, { exact: true }).click();
-      const sheet = workspaceSheet(page, "linked.ts");
-      await expect(sheet).toBeVisible();
+      const fileSheet = sheet(page, "linked.ts");
+      await expect(fileSheet).toBeVisible();
       // Hold the autosave so the edit stays unsaved.
       gate.holdNextClientRequest("fs.file.write.request");
-      await replaceWorkspaceSheetFileText(page, "linked.ts", "edited in the sheet");
+      await replaceSheetFileText(page, "linked.ts", "edited in the sheet");
       await gate.waitForHeldClientRequest();
 
-      await expectDeclinedDiscardPrompt(page, () => tapWorkspaceSheetBackdrop(page));
-      await expect(sheet.locator(".cm-content")).toHaveText("edited in the sheet");
+      await expectDeclinedDiscardPrompt(page, () => tapSheetBackdrop(page));
+      await expect(fileSheet.locator(".cm-content")).toHaveText("edited in the sheet");
       await expectDeclinedDiscardPrompt(page, () =>
-        sheet.getByRole("button", { name: "Close" }).click(),
+        sheetHeader(page, "linked.ts").getByRole("button", { name: "Close" }).click(),
       );
-      await expect(sheet.locator(".cm-content")).toHaveText("edited in the sheet");
+      await expect(fileSheet.locator(".cm-content")).toHaveText("edited in the sheet");
 
       gate.releaseHeldClientRequest();
       await expect.poll(() => readFile(linkedPath, "utf8")).toBe("edited in the sheet");

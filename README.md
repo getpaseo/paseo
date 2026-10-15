@@ -52,6 +52,17 @@ Paseo is an open source agentic development environment for desktop, mobile, web
 
 [Run parallel tasks in Paseo](https://paseo.sh/docs/parallel-development): start agents in separate worktrees, review their diffs, run each app, and check it in the built-in browser.
 
+## Sponsors
+
+<!-- Sponsors: one cell per sponsor in the order of packages/website/src/data/sponsors.ts, then "become a sponsor" cells up to three. -->
+<table>
+  <tr>
+    <td align="center" width="33%"><a href="https://hoplite.sh/?utm_source=paseo&utm_medium=readme&utm_campaign=sponsor"><picture><source media="(prefers-color-scheme: dark)" srcset="packages/website/public/sponsors/hoplite-on-dark.svg"><img src="packages/website/public/sponsors/hoplite-on-light.svg" alt="Hoplite" height="40"></picture></a><br><sub>Cloud coding agents</sub></td>
+    <td align="center" width="33%"><a href="https://paseo.sh/sponsor">Become a sponsor</a></td>
+    <td align="center" width="33%"><a href="https://paseo.sh/sponsor">Become a sponsor</a></td>
+  </tr>
+</table>
+
 ## Plugins
 
 Plugins run on the daemon and show up in every client you connect, with the same UI on desktop, web,
@@ -207,11 +218,9 @@ npm run build:server
 npm run typecheck
 ```
 
-## Sponsors
+## Support Paseo
 
-Paseo is an independent project used by tens of thousands of developers daily, built by one person and funded by the people who use it. Support the work on [GitHub Sponsors](https://github.com/sponsors/boudra). Companies can [sponsor Paseo](https://paseo.sh/sponsor#spot) monthly and have their logo shown here and on the paseo.sh homepage.
-
-<!-- Sponsor logos go here, in the same order as packages/website/src/data/sponsors.ts -->
+Paseo is an independent project used by tens of thousands of developers daily, built by one person and funded by the people who use it. Support the work on [GitHub Sponsors](https://github.com/sponsors/boudra). Companies can [sponsor Paseo](https://paseo.sh/sponsor#spot) monthly and have their logo shown at the top of this README and on the paseo.sh homepage and docs.
 
 ## Related projects
 

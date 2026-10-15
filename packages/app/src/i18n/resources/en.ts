@@ -628,7 +628,7 @@ export const en = {
       },
       switcher: {
         trigger: "Switch tabs ({{count}} open)",
-        title: "Switch tab",
+        title: "Workspace tabs",
         searchPlaceholder: "Search tabs",
       },
       menu: {

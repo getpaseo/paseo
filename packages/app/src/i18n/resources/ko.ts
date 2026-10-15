@@ -632,7 +632,7 @@ export const ko: TranslationResources = {
       },
       switcher: {
         trigger: "탭 전환 ({{count}}개 열림)",
-        title: "탭 전환",
+        title: "워크스페이스 탭",
         searchPlaceholder: "탭 검색",
       },
       menu: {
