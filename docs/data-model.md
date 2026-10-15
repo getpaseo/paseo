@@ -596,6 +596,13 @@ bookkeeping may scan opaque row sizes during a deferred write, never during host
 before a requested cache row can paint. The row store is not encrypted. A cached timeline can contain
 source code, prompts, and tool output; encrypted-at-rest storage is a separate security decision.
 
+Deferred writes retry with exponential backoff (1s doubling to a 60s ceiling) and log every failure.
+A persistent store rejection must stay visible and cheap — a fixed 1s retry spun a renderer at a full
+core for days behind a poisoned IndexedDB. On Electron the database can be shared by several
+contexts (a second window, a different app version), so an open connection releases on
+`versionchange` and reconnects on next use; a peer's upgrade or delete is never blocked by this
+handle.
+
 ### Draft Store
 
 **AsyncStorage key:** `paseo-drafts` (version 2)

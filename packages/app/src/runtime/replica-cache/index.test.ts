@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
   normalizeProjectDescriptor,
@@ -31,10 +31,13 @@ class MemoryStorage implements ReplicaRowStore {
   }> = [];
   writes = 0;
   cleanups = 0;
+  nextOpenFailure: Error | null = null;
+  nextReadAllFailure: Error | null = null;
   nextWriteFailure: Error | null = null;
   persistentWriteFailure: Error | null = null;
   readGate: Promise<void> | null = null;
   onRead: (() => void) | null = null;
+  onWrite: (() => void) | null = null;
   /** Throws once a read goes past this count, so a non-terminating read loop fails the test. */
   readLimit: number | null = null;
 
@@ -42,7 +45,13 @@ class MemoryStorage implements ReplicaRowStore {
     return `${row.serverId}:${row.kind}:${row.id}`;
   }
 
-  async open(): Promise<void> {}
+  async open(): Promise<void> {
+    if (this.nextOpenFailure) {
+      const error = this.nextOpenFailure;
+      this.nextOpenFailure = null;
+      throw error;
+    }
+  }
 
   async read(
     serverId: string,
@@ -68,6 +77,11 @@ class MemoryStorage implements ReplicaRowStore {
   }
 
   async readAll(): Promise<ReplicaHostRows[]> {
+    if (this.nextReadAllFailure) {
+      const error = this.nextReadAllFailure;
+      this.nextReadAllFailure = null;
+      throw error;
+    }
     const hosts = new Map<string, ReplicaRow[]>();
     for (const row of this.rows.values()) {
       const rows = hosts.get(row.serverId) ?? [];
@@ -79,6 +93,7 @@ class MemoryStorage implements ReplicaRowStore {
 
   async apply(changes: ReplicaRowChanges): Promise<void> {
     this.writes += 1;
+    this.onWrite?.();
     if (this.persistentWriteFailure) throw this.persistentWriteFailure;
     if (this.nextWriteFailure) {
       const error = this.nextWriteFailure;
@@ -794,6 +809,104 @@ describe("ReplicaCache", () => {
     expect((await cache.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([
       timelineItem("Retry me"),
     ]);
+  });
+
+  it("reopens the store after the first open attempt fails", async () => {
+    const storage = new MemoryStorage();
+    const cache = createCache(storage);
+    storage.nextOpenFailure = new Error("open blocked by another context");
+    cache.commitTimeline(SERVER_ID, "agent-1", timeline("Retry open"));
+
+    await cache.flush();
+    expect(storage.rows.size).toBe(0);
+
+    await cache.flush();
+    expect((await cache.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([
+      timelineItem("Retry open"),
+    ]);
+  });
+
+  it("re-reads the stored index after the first readAll rejects", async () => {
+    const storage = new MemoryStorage();
+    const cache = createCache(storage);
+    storage.nextReadAllFailure = new Error("IndexedDB read failed");
+    cache.commitTimeline(SERVER_ID, "agent-1", timeline("Retry index"));
+
+    await cache.flush();
+    expect(storage.rows.size).toBe(0);
+
+    await cache.flush();
+    expect((await cache.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([
+      timelineItem("Retry index"),
+    ]);
+  });
+
+  it("backs off and logs persistence retries while the store keeps rejecting writes", async () => {
+    vi.useFakeTimers();
+    try {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const storage = new MemoryStorage();
+      const cache = createCache(storage);
+      storage.persistentWriteFailure = new Error("IndexedDB gone");
+      cache.commitTimeline(SERVER_ID, "agent-1", timeline("Stuck"));
+      await cache.flush();
+
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      // A fixed one-second retry loop would have attempted ~60 writes in this
+      // window; exponential backoff lands 5 retries (at 1, 3, 7, 15 and 31s).
+      expect(storage.writes).toBe(6);
+      expect(warn).toHaveBeenCalled();
+
+      storage.persistentWriteFailure = null;
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      // Retries continue at the capped delay, so a store that recovers commits
+      // the queued changes without waiting for a reload.
+      expect((await cache.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([
+        timelineItem("Stuck"),
+      ]);
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("does not let a commit racing a failed write shorten the retry backoff", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const storage = new MemoryStorage();
+      const cache = createCache(storage);
+      storage.persistentWriteFailure = new Error("IndexedDB gone");
+      // A commit landing while a write is in flight arms the 1s debounce timer.
+      // The failure that follows must replace it with the backoff delay —
+      // otherwise streaming commits keep every retry at 1s and the spin returns.
+      let racingCommitArmed = false;
+      storage.onWrite = () => {
+        if (racingCommitArmed || storage.writes !== 2) return;
+        racingCommitArmed = true;
+        cache.commitTimeline(SERVER_ID, "agent-1", timeline("Racing commit"));
+      };
+      cache.commitTimeline(SERVER_ID, "agent-1", timeline("Stuck"));
+      await cache.flush();
+
+      // t=1s: the first retry runs and fails; the racing commit lands inside it.
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(storage.writes).toBe(2);
+
+      // t=2s: backoff (2s) still holds — the racing commit's 1s debounce must
+      // not have survived the failure to claim this slot.
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(storage.writes).toBe(2);
+
+      // t=3s: the backoff retry lands.
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(storage.writes).toBe(3);
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
   });
 
   it("retries a timeline read invalidated by a concurrent directory commit", async () => {

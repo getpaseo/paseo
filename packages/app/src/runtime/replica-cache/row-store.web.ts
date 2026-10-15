@@ -98,17 +98,33 @@ export function createIndexedDbReplicaRowStore(
   }
 
   async function open(): Promise<void> {
+    if (database) return;
     opening ??= (async () => {
       const openedDatabase = await openDatabase(options.databaseName);
-      await runTransaction(openedDatabase, [ROWS_STORE, META_STORE], async (transaction) => {
-        const storedVersion = await requestResult(
-          transaction.objectStore(META_STORE).get(SCHEMA_VERSION_KEY),
-        );
-        if (storedVersion !== options.schemaVersion) {
-          await requestResult(transaction.objectStore(ROWS_STORE).clear());
-          await requestResult(
-            transaction.objectStore(META_STORE).put(options.schemaVersion, SCHEMA_VERSION_KEY),
+      try {
+        await runTransaction(openedDatabase, [ROWS_STORE, META_STORE], async (transaction) => {
+          const storedVersion = await requestResult(
+            transaction.objectStore(META_STORE).get(SCHEMA_VERSION_KEY),
           );
+          if (storedVersion !== options.schemaVersion) {
+            await requestResult(transaction.objectStore(ROWS_STORE).clear());
+            await requestResult(
+              transaction.objectStore(META_STORE).put(options.schemaVersion, SCHEMA_VERSION_KEY),
+            );
+          }
+        });
+      } catch (error) {
+        openedDatabase.close();
+        throw error;
+      }
+      // Another context sharing this database — a second window, or a newer app
+      // version — that upgrades or deletes it cannot proceed while this handle
+      // stays open. Release it; the next open() reconnects to whatever remains.
+      openedDatabase.addEventListener("versionchange", () => {
+        openedDatabase.close();
+        if (database === openedDatabase) {
+          database = null;
+          opening = null;
         }
       });
       database = openedDatabase;
