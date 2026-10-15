@@ -8,6 +8,7 @@ import { buildAgentRoute } from "./mock-agent";
 import { openCommandCenter } from "./command-center";
 import { connectNewWorkspaceDaemonClient } from "./new-workspace";
 import { seedWorkspace } from "./seed-client";
+import { getServerId } from "./server-id";
 import { pluginRequirements } from "./plugin-fixture";
 
 const PLUGIN_ID = "button-showcase";
@@ -289,9 +290,11 @@ export async function withButtonShowcase(
           const recovered = (await observation.textContent())!;
           expect([first, second]).not.toContain(recovered);
           await showcase.setTitle("Healthy app after button failure");
-          await expect(page.getByTestId("workspace-header-title")).toHaveText(
-            "Healthy app after button failure",
-          );
+          await expect(
+            page
+              .getByTestId(`sidebar-workspace-row-${getServerId()}:${workspace.workspaceId}`)
+              .first(),
+          ).toContainText("Healthy app after button failure");
           await press(page, "Close deployment details");
           await expect.poll(() => released.has(recovered)).toBe(true);
           await showcase.setTitle("Button showcase");
@@ -507,9 +510,11 @@ export async function withButtonShowcase(
           );
           await expect(page.getByText("All systems operational", { exact: true })).toHaveCount(0);
           await showcase.setTitle("Healthy app after plugin unload");
-          await expect(page.getByTestId("workspace-header-title")).toHaveText(
-            "Healthy app after plugin unload",
-          );
+          await expect(
+            page
+              .getByTestId(`sidebar-workspace-row-${getServerId()}:${workspace.workspaceId}`)
+              .first(),
+          ).toContainText("Healthy app after plugin unload");
         }),
     });
   } finally {

@@ -20,7 +20,7 @@ import {
   switchBranchFromChangesPanel,
 } from "../support/helpers/branch-switcher";
 import {
-  createIdleAgent,
+  createMockIdleAgent,
   expectSessionRowNotArchived,
   fetchAgentArchivedAt,
   openSessions,
@@ -69,7 +69,7 @@ test.describe("Worktree restore", () => {
     createdWorktreeDirectories.add(worktree.workspaceDirectory);
     const agents = await Promise.all(
       Array.from({ length: options.agentCount ?? 1 }, () =>
-        createIdleAgent(client, {
+        createMockIdleAgent(client, {
           cwd: worktree.workspaceDirectory,
           workspaceId: worktree.workspaceId,
           title: `${prefix}-${randomUUID().slice(0, 8)}`,
@@ -155,7 +155,7 @@ test.describe("Worktree restore", () => {
     createdProjectIds.add(worktree.projectKey);
     createdWorktreeDirectories.add(worktree.workspaceDirectory);
     commitRestorableChange(worktree.workspaceDirectory);
-    const agent = await createIdleAgent(client, {
+    const agent = await createMockIdleAgent(client, {
       cwd: worktree.workspaceDirectory,
       workspaceId: worktree.workspaceId,
       title: "Restore committed changes",
@@ -187,7 +187,7 @@ test.describe("Worktree restore", () => {
     createdProjectIds.add(worktree.projectKey);
     createdWorktreeDirectories.add(worktree.workspaceDirectory);
 
-    const agent = await createIdleAgent(client, {
+    const agent = await createMockIdleAgent(client, {
       cwd: worktree.workspaceDirectory,
       workspaceId: worktree.workspaceId,
       title: `restore-inplace-${randomUUID().slice(0, 8)}`,
@@ -296,7 +296,7 @@ test.describe("Worktree restore", () => {
     });
     await expectWorkspaceBranch(page, switchedBranch);
     await expect(
-      page.getByTestId("workspace-header-title").filter({ visible: true }).first(),
+      page.getByTestId("workspace-header-branch").filter({ visible: true }).first(),
     ).toHaveText(switchedBranch, { timeout: 30_000 });
   });
 
@@ -379,7 +379,7 @@ test.describe("Worktree restore", () => {
       throw new Error(created.error ?? "Could not create the branchless workspace");
     }
     const workspaceId = created.workspace.id;
-    const agent = await createIdleAgent(client, {
+    const agent = await createMockIdleAgent(client, {
       cwd: backingWorktree.workspaceDirectory,
       workspaceId,
       title: "Archived agent",
@@ -471,7 +471,7 @@ test.describe("Worktree restore", () => {
   }) => {
     const project = await openProjectViaDaemon(worktreeClient, tempRepo.path);
     createdProjectIds.add(project.projectKey);
-    const agent = await createIdleAgent(client, {
+    const agent = await createMockIdleAgent(client, {
       cwd: project.workspaceDirectory,
       workspaceId: project.workspaceId,
       title: `unrecoverable-${randomUUID().slice(0, 8)}`,

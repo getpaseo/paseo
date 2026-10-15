@@ -251,7 +251,7 @@ jobs:
 
       - name: Install virtual display
         if: ${{ runner.os == 'Linux' }}
-        run: sudo apt-get update && sudo apt-get install -y xvfb xauth xdotool
+        run: sudo apt-get update && sudo apt-get install -y xvfb xauth xdotool openbox
 
       - name: Verify Windows daemon process control
         if: ${{ runner.os == 'Windows' }}

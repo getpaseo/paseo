@@ -135,8 +135,12 @@ test("loads older history through prompt navigation and finds repeated rendered 
     }
     const jumps = await trackPromptJumpRequests(page, agent.agentId);
     await openAgentRoute(page, agent);
-    await expect(page.getByText("Prompt number 44", { exact: true })).toBeVisible();
-    await expect(page.getByText("Prompt number 0", { exact: true })).toHaveCount(0);
+    await expect(
+      page.getByTestId("user-message").getByText("Prompt number 44", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("user-message").getByText("Prompt number 0", { exact: true }),
+    ).toHaveCount(0);
     await searchChat(page, "hello world");
     await expectHighlight(page, "hello world");
     await expect(status(page)).toHaveText("1 of 90");
@@ -351,8 +355,12 @@ async function openChatWithVirtualizedTallMessage(page: Page): Promise<MockAgent
       await agent.client.waitForFinish(agent.agentId, 15_000);
     }
     await openAgentRoute(page, agent);
-    await expect(page.getByText("Prompt number 5", { exact: true })).toBeVisible();
-    await expect(page.getByText("Prompt number 0", { exact: true })).toHaveCount(0);
+    await expect(
+      page.getByTestId("user-message").getByText("Prompt number 5", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("user-message").getByText("Prompt number 0", { exact: true }),
+    ).toHaveCount(0);
     return agent;
   } catch (error) {
     await agent.cleanup();

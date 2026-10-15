@@ -383,8 +383,8 @@ async function expectSourceHierarchy(page: Page, description: string, source: st
     Number.parseFloat(getComputedStyle(element).fontSize),
   );
   expect(sourceSize).toBeLessThan(descriptionSize);
-  await expect(sourceText).toHaveCSS("color", "rgb(161, 161, 170)");
-  await expect(descriptionText).toHaveCSS("color", "rgb(113, 113, 122)");
+  await expect(sourceText).toHaveCSS("color", "rgb(146, 151, 161)");
+  await expect(descriptionText).toHaveCSS("color", "rgb(104, 109, 120)");
 }
 
 async function installLocalPluginWithStatusExamples(

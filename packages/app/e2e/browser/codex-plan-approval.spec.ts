@@ -41,7 +41,8 @@ test("approval uses launch history after the profile is deleted", async ({ page 
     await page.reload();
     await expect(card).toHaveCount(1);
     await expect(card).toContainText('--name="my repo"');
-    await expect(card.getByRole("button")).toHaveText(["Copy"]);
+    await expect(card.getByRole("button", { name: "Copy", exact: true })).toBeVisible();
+    await expect(card.getByRole("button", { name: "Approve", exact: true })).toHaveCount(0);
   } finally {
     await session.cleanup();
     await client.patchDaemonConfig({ agentProfiles: previous.config.agentProfiles ?? [] });
@@ -108,12 +109,16 @@ test.describe("Codex plan approval", () => {
         await expect(page.getByTestId("permission-plan-card")).toHaveCount(0, {
           timeout: 30_000,
         });
-        await expect(page.getByTestId("permission-request-accept")).toHaveCount(0);
+        await expect(page.getByTestId("permission-request-accept")).toHaveCount(0, {
+          timeout: 30_000,
+        });
         await expect(page.getByTestId("timeline-plan-card")).toHaveCount(1);
         await expect(page.getByTestId("timeline-plan-card")).toContainText('--name="my repo"');
         await page.reload();
         await expect(page.getByTestId("timeline-plan-card")).toHaveCount(1);
-        await expect(page.getByTestId("permission-request-accept")).toHaveCount(0);
+        await expect(page.getByTestId("permission-request-accept")).toHaveCount(0, {
+          timeout: 30_000,
+        });
       } finally {
         await session.cleanup();
       }

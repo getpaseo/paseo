@@ -1390,6 +1390,7 @@ interface ControlledInterruptFixture {
 }
 
 async function createControlledInterruptFixture(options: {
+  interruptSessionMs?: number;
   name: string;
   agentId: string;
   turnId: string;
@@ -1410,7 +1411,7 @@ async function createControlledInterruptFixture(options: {
     clients: { codex: client },
     registry: new AgentStorage(join(workdir, "agents"), logger),
     logger,
-    rescueTimeouts: { interruptSessionMs: 10 },
+    rescueTimeouts: { interruptSessionMs: options.interruptSessionMs ?? 10 },
     idFactory: () => options.agentId,
   });
   const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
@@ -2723,6 +2724,8 @@ test("cancelAgentRun preserves the active turn when the provider rejects the int
 test("cancelAgentRun succeeds when the foreground turn finishes before the provider rejects the interrupt", async () => {
   let fixture!: ControlledInterruptFixture;
   fixture = await createControlledInterruptFixture({
+    // Completion persists a snapshot before settling the run; allow real CI disk latency.
+    interruptSessionMs: 1000,
     name: "interrupt-after-completion",
     agentId: "00000000-0000-4000-8000-000000000305",
     turnId: "naturally-completed-turn",
@@ -2755,6 +2758,7 @@ test("cancelAgentRun succeeds when the foreground turn finishes before the provi
 
 test("cancelAgentRun succeeds when the provider queues completion before rejecting the interrupt", async () => {
   const fixture = await createControlledInterruptFixture({
+    interruptSessionMs: 1000,
     name: "interrupt-queued-completion",
     agentId: "00000000-0000-4000-8000-000000000306",
     turnId: "queued-completion-turn",

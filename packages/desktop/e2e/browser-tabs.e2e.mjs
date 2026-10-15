@@ -3456,7 +3456,16 @@ async function main() {
     const desktopCommand = process.platform === "linux" ? "xvfb-run" : desktopArgs.shift();
     const desktopCommandArgs =
       process.platform === "linux"
-        ? ["-a", "--server-args=-screen 0 1280x800x24", ...desktopArgs]
+        ? [
+            "-a",
+            "--server-args=-screen 0 1280x800x24",
+            // Native minimize/restore needs a window manager, which bare Xvfb does not provide.
+            "sh",
+            "-c",
+            `openbox >/dev/null 2>&1 & wm_pid=$!; trap 'kill "$wm_pid"' EXIT; "$@"`,
+            "paseo-desktop-e2e",
+            ...desktopArgs,
+          ]
         : desktopArgs;
     const desktop = spawnLogged(
       "desktop",

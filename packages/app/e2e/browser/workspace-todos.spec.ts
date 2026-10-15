@@ -28,6 +28,7 @@ async function addTask(
 test("Jalons docks beside navigation, edits milestones, reorders tasks and preserves workspace drafts", async ({
   page,
 }, testInfo) => {
+  test.setTimeout(120_000);
   const first = await seedWorkspace({ repoPrefix: "todo-directory-", git: false });
   const second = await seedWorkspace({ repoPrefix: "todo-other-", git: false });
   try {

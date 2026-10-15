@@ -30,7 +30,7 @@ async function seedPoisonedModelessPreference(page: Page): Promise<void> {
         JSON.stringify({
           provider,
           providerPreferences: {
-            [provider]: { model, mode: "full-access" },
+            [provider]: { model, modelRouting: "manual", mode: "full-access" },
             mock: { model: "ten-second-stream", mode: "load-test" },
           },
         } satisfies FormPreferences),
@@ -107,6 +107,13 @@ test.describe("Agent profiles repair modeless provider preferences", () => {
         projectDisplayName: workspace.projectDisplayName,
       });
 
+      // Select Pi after its catalog has loaded, so applying the profile repairs Pi's stale mode.
+      await openModelPicker(page);
+      await drillIntoProvider(page, MODELESS_PROVIDER);
+      await page.getByRole("button", { name: /Pi profile model/ }).click();
+      await expect
+        .poll(() => readProviderModePreference(page, MODELESS_PROVIDER))
+        .toBe("full-access");
       await openModelPicker(page);
       await applyProfileFromPicker(page, "Approval work");
 

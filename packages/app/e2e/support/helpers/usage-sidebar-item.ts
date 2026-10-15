@@ -147,10 +147,14 @@ export function usageModal(page: Page): Locator {
   return visible(page, "usage-modal-body");
 }
 
-/** Each pinned window as it reads: its percent and short label, "31% 5h". */
+/** Narrow sidebar rows omit the window label while retaining the percentage. */
 export async function expectPinnedUsage(page: Page, windows: string[]): Promise<void> {
   const pinned = usageItem(page).getByTestId("sidebar-usage-pinned-window");
-  await expect(pinned).toHaveText(windows);
+  const labels = windows.map((value) => {
+    const [percent, label] = value.split(" ");
+    return new RegExp(`^${percent}(?: ${label})?$`);
+  });
+  await expect(pinned).toHaveText(labels);
 }
 
 /** Without a summary window with data the footer has no Usage item, only the Usage icon. */

@@ -16,11 +16,7 @@ import { createTempGitRepo } from "../support/helpers/workspace";
 import { getServerId } from "../support/helpers/server-id";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
-// Regression for "the local / worktree selection in the new workspace is not
-// remembered." The isolation choice persists in the create-form preferences
-// (FormPreferences.isolation), so it must survive the create→reopen remount:
-// creating a worktree workspace navigates away from /new and unmounts it, and
-// reopening New Workspace has to still show "New worktree".
+// A new form starts from the project's default; a Local choice applies only to that creation.
 test.describe("New workspace isolation memory", () => {
   let client: Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
   const localWorkspaceIds = new Set<string>();
@@ -84,7 +80,9 @@ test.describe("New workspace isolation memory", () => {
     }
   });
 
-  test("remembers an explicit Local choice after creating a workspace", async ({ page }) => {
+  test("uses Local for the current creation and defaults the next form to a worktree", async ({
+    page,
+  }) => {
     const serverId = getServerId();
     const tempRepo = await createTempGitRepo("isolation-memory-", { branches: ["main", "dev"] });
 
@@ -119,7 +117,7 @@ test.describe("New workspace isolation memory", () => {
         projectKey: openedProject.projectKey,
         projectDisplayName: openedProject.projectDisplayName,
       });
-      await expectWorkspaceIsolationSelected(page, "local");
+      await expectWorkspaceIsolationSelected(page, "worktree");
     } finally {
       await tempRepo.cleanup();
     }

@@ -12,7 +12,7 @@ import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-
 
 const ULTRAWIDE_VIEWPORT = { width: 2560, height: 1080 };
 
-test("widens chat and Markdown files to the chosen content width and resets to the default", async ({
+test("keeps the chat rail fixed while Markdown follows the chosen content width and reset", async ({
   page,
 }, testInfo) => {
   test.setTimeout(120_000);
@@ -44,9 +44,9 @@ test("widens chat and Markdown files to the chosen content width and resets to t
       await page.screenshot({ path: testInfo.outputPath("settings-custom-width.png") });
     });
 
-    await test.step("chat and Markdown files use the custom width", async () => {
+    await test.step("chat keeps its rail and Markdown uses the custom width", async () => {
       await openAgentRoute(page, agent);
-      await expectContentColumnWidth(assistantMessage, { min: 1200, max: 1600 });
+      await expectContentColumnWidth(assistantMessage, { min: 600, max: 760 });
       await page.screenshot({ path: testInfo.outputPath("chat-custom-width.png") });
 
       await openFileExplorer(page);

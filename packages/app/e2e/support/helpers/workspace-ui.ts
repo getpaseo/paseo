@@ -180,6 +180,7 @@ export async function expectMenuButtonVisible(page: Page): Promise<void> {
 
 export async function expectWorkspaceHeaderAbsent(page: Page): Promise<void> {
   await expect(page.getByTestId("workspace-header-title")).toHaveCount(0);
+  await expect(page.getByTestId("workspace-header-branch")).toHaveCount(0);
 }
 
 export function workspaceDeckEntryLocator(page: Page, serverId: string, workspaceId: string) {
