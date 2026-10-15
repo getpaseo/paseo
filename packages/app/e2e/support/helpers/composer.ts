@@ -56,6 +56,12 @@ export async function expectComposerNotFocused(page: Page): Promise<void> {
   await expect(composerInput(page)).not.toBeFocused();
 }
 
+/** Blur the editor without anything else taking focus. */
+export async function blurComposerInput(page: Page): Promise<void> {
+  await composerInput(page).blur();
+  await expectComposerNotFocused(page);
+}
+
 export async function submitMessage(page: Page, text: string): Promise<void> {
   const input = composerInput(page);
   await expect(input).toBeEditable({ timeout: 30_000 });

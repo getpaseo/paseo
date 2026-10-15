@@ -524,8 +524,8 @@ function MessageInputAutoFocus({
   autoFocusKey: string | undefined;
   textInputRef: React.MutableRefObject<ComposerTextInputHandle | null>;
 }) {
-  const { isActiveComposer } = useComposerKeyboardScope();
-  useAutoFocusOnWebEffect(textInputRef, enabled && isActiveComposer, autoFocusKey);
+  const { isPaneFocused } = useComposerKeyboardScope();
+  useAutoFocusOnWebEffect(textInputRef, enabled && isPaneFocused, autoFocusKey);
   return null;
 }
 
@@ -1236,7 +1236,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       textReplacement,
       submitLabel,
     } = resolveMessageInputProps(props);
-    const { isActiveComposer } = useComposerKeyboardScope();
+    const { isPaneFocused } = useComposerKeyboardScope();
     const mode = resolveComposerInputMode(inputMode);
     const { t } = useTranslation();
     const isCompact = useIsCompactFormFactor();
@@ -1264,8 +1264,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const focusIntentRef = useRef(false);
     const valueRef = useRef(value);
     const selectionRef = useRef({ start: value.length, end: value.length });
-    const activeComposerRef = useRef(isActiveComposer);
-    activeComposerRef.current = isActiveComposer;
+    const paneFocusedRef = useRef(isPaneFocused);
+    paneFocusedRef.current = isPaneFocused;
     const [webTextArea, setWebTextArea] = useState<HTMLElement | null>(null);
     const appliedTextReplacementKeyRef = useRef(textReplacement.key);
     const webTextareaRef = useRef<HTMLElement | null>(null);
@@ -1285,9 +1285,13 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       webTextareaRef.current = element;
       setWebTextArea(element);
     }, []);
+    // Focus intent outlives a blur only while the pane is not the user's pane (a retained
+    // tab hidden, a sheet over it); the pane coming back restores focus. A blur while the
+    // pane is theirs drops it, whatever the layout mode: the user dismissed the keyboard,
+    // or a compact overlay panel did on their behalf, and nothing later refocuses.
     useLayoutEffect(() => {
-      if (isActiveComposer && focusIntentRef.current) textInputRef.current?.focus();
-    }, [isActiveComposer]);
+      if (isPaneFocused && focusIntentRef.current) textInputRef.current?.focus();
+    }, [isPaneFocused]);
     // The compact and desktop screens mount the editor in different trees, so a
     // viewport that crosses the breakpoint remounts it. The draft owner brings the
     // text back; the session brings the caret and focus intent back. On web the
@@ -1305,7 +1309,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         textInputRef.current?.setSelection(selection);
         if (retained.focused) {
           focusIntentRef.current = true;
-          if (activeComposerRef.current) textInputRef.current?.focus();
+          if (paneFocusedRef.current) textInputRef.current?.focus();
         }
       }
       return () => {
@@ -1807,13 +1811,11 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     }, [onFocusChange]);
 
     const handleInputBlur = useCallback(() => {
-      // Fullscreen is nothing but the editor, so a blur there (a retained tab being
-      // hidden, the keyboard dismissed) keeps the intent: showing it again refocuses.
-      if (activeComposerRef.current && !isFullscreen) focusIntentRef.current = false;
+      if (paneFocusedRef.current) focusIntentRef.current = false;
       isInputFocusedRef.current = false;
       setIsInputFocused(false);
       onFocusChange?.(false);
-    }, [isFullscreen, onFocusChange]);
+    }, [onFocusChange]);
 
     const handlePasteError = useCallback(
       (message: string) => {

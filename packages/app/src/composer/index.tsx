@@ -1196,11 +1196,16 @@ export function Composer({ isPaneFocused, ...props }: ComposerProps) {
   // A compact overlay panel (agent list, explorer) covers the pane without taking its
   // focus. The composer gives up input from the moment the user asks for the panel,
   // not when its motion settles, so the exit action and autocomplete never race it.
+  // Pane focus stays put, so the keyboard the panel dismisses is a blur in the
+  // user's own pane: closing the panel does not bring focus back.
   const isCompact = useIsCompactFormFactor();
   const overlayPanelRequested = usePanelStore((state) => state.mobilePanel.target !== "agent");
   const coveredByOverlayPanel = isCompact && overlayPanelRequested;
   return (
-    <ComposerKeyboardScopeProvider isActiveComposer={isPaneFocused && !coveredByOverlayPanel}>
+    <ComposerKeyboardScopeProvider
+      isPaneFocused={isPaneFocused}
+      isActiveComposer={isPaneFocused && !coveredByOverlayPanel}
+    >
       <RenderProfile id="ComposerContent">
         <ComposerContent {...props} />
       </RenderProfile>

@@ -217,7 +217,14 @@ sheet suspends pane focus, and the composer gives up input from the moment the
 user asks for the compact agent list or explorer, before the panel's motion
 settles. Pane focus itself stays put under those panels: the agent panel reads
 it as "the user is in this chat" for attention clearing, and opening the agent
-list must not clear the attention it shows.
+list must not clear the attention it shows. Focus restoration follows pane
+focus, not the active composer. The editor keeps its focus intent only across
+a blur that lands while its pane is not the user's (a retained tab hidden, a
+sheet over it) and refocuses when the pane comes back. A blur while the pane is
+theirs drops the intent in every layout mode, and the keyboard the compact
+panels dismiss when they settle is such a blur, so closing the agent list or
+explorer never reopens the keyboard. Keying restoration on the active composer
+made that dismiss look like a hidden-tab blur and refocused on close.
 The band beside the inline editor where the fullscreen glyph sits is the input's
 own right padding, so a tap anywhere in it focuses the editor whether or not the
 glyph shows. On web the slot is a fixed box over the visible viewport, which is

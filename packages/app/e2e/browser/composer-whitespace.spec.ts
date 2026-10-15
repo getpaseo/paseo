@@ -37,6 +37,7 @@ import {
   closeMobileAgentSidebar,
   expectMobileAgentSidebarHidden,
   expectMobileAgentSidebarVisible,
+  swipeOpenMobileAgentSidebar,
 } from "../support/helpers/sidebar";
 
 async function composerHeight(page: Page): Promise<number> {
@@ -164,17 +165,6 @@ test("composer growth keeps a bottom-pinned chat at the bottom", async ({ page }
     await agent.cleanup();
   }
 });
-
-async function swipeOpenMobileAgentSidebar(page: Page): Promise<void> {
-  const viewport = page.viewportSize();
-  if (!viewport) throw new Error("viewport size is required");
-  const y = Math.round(viewport.height / 2);
-  await page.mouse.move(8, y);
-  await page.mouse.down();
-  await page.mouse.move(40, y, { steps: 4 });
-  await page.mouse.move(Math.round(viewport.width * 0.7), y, { steps: 12 });
-  await page.mouse.up();
-}
 
 /** Freeze the page's timers and animation frames until `page.clock.resume()`. */
 async function pausePageClock(page: Page): Promise<void> {
