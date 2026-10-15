@@ -8,6 +8,7 @@ import {
   type ACPConfigFeatureOption,
   DEFAULT_ACP_CAPABILITIES,
   type ACPExtensionCommandsParser,
+  type ACPSessionUsageResolver,
 } from "./acp-agent.js";
 import {
   buildBinaryDiagnosticRows,
@@ -16,7 +17,7 @@ import {
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
 
-interface GenericACPAgentClientOptions {
+export interface GenericACPAgentClientOptions {
   logger: Logger;
   command: [string, ...string[]];
   env?: Record<string, string>;
@@ -28,6 +29,7 @@ interface GenericACPAgentClientOptions {
   clientCapabilityMeta?: ACPClientCapabilityMeta;
   configFeatureOptions?: ACPConfigFeatureOption[];
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  sessionUsageResolver?: ACPSessionUsageResolver;
   catalogModelResolver?: ACPCatalogModelResolver;
   now?: () => number;
 }
@@ -54,6 +56,7 @@ export class GenericACPAgentClient extends ACPAgentClient {
       clientCapabilityMeta: options.clientCapabilityMeta,
       configFeatureOptions: options.configFeatureOptions,
       extensionCommandsParser: options.extensionCommandsParser,
+      sessionUsageResolver: options.sessionUsageResolver,
       catalogModelResolver: options.catalogModelResolver,
       now: options.now,
     });
