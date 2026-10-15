@@ -27,6 +27,7 @@ interface GenericACPAgentClientOptions {
   diagnosticPhaseTimeoutMs?: number;
   clientCapabilityMeta?: ACPClientCapabilityMeta;
   configFeatureOptions?: ACPConfigFeatureOption[];
+  switchModelViaConfigOption?: boolean;
   extensionCommandsParser?: ACPExtensionCommandsParser;
   catalogModelResolver?: ACPCatalogModelResolver;
   now?: () => number;
@@ -53,6 +54,7 @@ export class GenericACPAgentClient extends ACPAgentClient {
       initialCommandsWaitTimeoutMs: options.initialCommandsWaitTimeoutMs,
       clientCapabilityMeta: options.clientCapabilityMeta,
       configFeatureOptions: options.configFeatureOptions,
+      switchModelViaConfigOption: options.switchModelViaConfigOption,
       extensionCommandsParser: options.extensionCommandsParser,
       catalogModelResolver: options.catalogModelResolver,
       now: options.now,

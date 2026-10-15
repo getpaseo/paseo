@@ -224,7 +224,10 @@ describe("CursorACPAgentClient session start", () => {
     session: {
       currentModelId: string;
       configOptions: SessionConfigOption[];
-      setSessionConfigOption?: () => Promise<{ configOptions: SessionConfigOption[] }>;
+      setSessionConfigOption?: (params: {
+        configId: string;
+        value: string;
+      }) => Promise<{ configOptions: SessionConfigOption[] }>;
     } = { currentModelId: "kimi-k3", configOptions: KIMI_K3_CONFIG_OPTIONS },
     logger = createTestLogger(),
   ): ACPAgentSession {
@@ -264,9 +267,63 @@ describe("CursorACPAgentClient session start", () => {
         defaultModes: [],
         capabilities: { supportsStreaming: true, supportsSessionPersistence: true },
         configFeatureOptions: [CURSOR_FAST_FEATURE_OPTION],
+        switchModelViaConfigOption: true,
       },
     );
   }
+
+  test("writes the stored thinking level with the id of the model it switched to", async () => {
+    // Each Cursor model names its thinking option differently (gpt: reasoning, grok: effort),
+    // and only a config-option model write returns the new model's options.
+    const thinking = (id: string, currentValue: string): SessionConfigOption => ({
+      id,
+      name: id,
+      category: "thought_level",
+      type: "select",
+      currentValue,
+      options: [
+        { value: "medium", name: "Medium" },
+        { value: "high", name: "High" },
+      ],
+    });
+    const modelOption = (currentValue: string): SessionConfigOption => ({
+      id: "model",
+      name: "Model",
+      category: "model",
+      type: "select",
+      currentValue,
+      options: [
+        { value: "composer-2.5", name: "Composer 2.5" },
+        { value: "kimi-k3", name: "Kimi K3" },
+      ],
+    });
+    const written: string[] = [];
+    const session = createCursorSession(
+      { model: "kimi-k3", thinkingOptionId: "medium" },
+      {
+        currentModelId: "composer-2.5",
+        configOptions: [modelOption("composer-2.5"), thinking("reasoning", "high")],
+        setSessionConfigOption: async ({ configId, value }) => {
+          written.push(configId);
+          if (configId === "model") {
+            return { configOptions: [modelOption(value), thinking("effort", "high")] };
+          }
+          if (configId !== "effort") {
+            throw Object.assign(new Error("Invalid params"), {
+              code: -32602,
+              data: { message: `Unknown model config option: ${configId}` },
+            });
+          }
+          return { configOptions: [modelOption("kimi-k3"), thinking("effort", value)] };
+        },
+      },
+    );
+
+    await session.initializeNewSession();
+
+    expect(written).toEqual(["model", "effort"]);
+    expect((await session.getRuntimeInfo()).thinkingOptionId).toBe("medium");
+  });
 
   test("starts on a model without a fast variant while Fast is still stored", async () => {
     // The composer stored Fast while a fast-capable model was selected, and it is

@@ -465,6 +465,7 @@ interface ACPAgentClientOptions {
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
   configFeatureOptions?: ACPConfigFeatureOption[];
+  switchModelViaConfigOption?: boolean;
   clientCapabilities?: ACPClientCapabilities;
   clientCapabilityMeta?: ACPClientCapabilityMeta;
   modeIdTransformer?: (modeId: string) => string | null;
@@ -496,6 +497,7 @@ interface ACPAgentSessionOptions {
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
   configFeatureOptions?: ACPConfigFeatureOption[];
+  switchModelViaConfigOption?: boolean;
   clientCapabilities?: ACPClientCapabilities;
   clientCapabilityMeta?: ACPClientCapabilityMeta;
   modeIdTransformer?: (modeId: string) => string | null;
@@ -927,6 +929,7 @@ export class ACPAgentClient implements AgentClient {
     configOptions: SessionConfigOption[],
   ) => SessionConfigOption[];
   private readonly configFeatureOptions: ACPConfigFeatureOption[];
+  private readonly switchModelViaConfigOption: boolean;
   private readonly clientCapabilities?: ACPClientCapabilities;
   private readonly clientCapabilityMeta?: ACPClientCapabilityMeta;
   private readonly modeIdTransformer?: (modeId: string) => string | null;
@@ -965,6 +968,7 @@ export class ACPAgentClient implements AgentClient {
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
     this.configFeatureOptions = options.configFeatureOptions ?? [];
+    this.switchModelViaConfigOption = options.switchModelViaConfigOption ?? false;
     this.clientCapabilities = options.clientCapabilities;
     this.clientCapabilityMeta = options.clientCapabilityMeta;
     this.modeIdTransformer = options.modeIdTransformer;
@@ -997,6 +1001,7 @@ export class ACPAgentClient implements AgentClient {
         sessionResponseTransformer: this.sessionResponseTransformer,
         configOptionsTransformer: this.configOptionsTransformer,
         configFeatureOptions: this.configFeatureOptions,
+        switchModelViaConfigOption: this.switchModelViaConfigOption,
         clientCapabilities: providerOptions.clientCapabilities ?? this.clientCapabilities,
         clientCapabilityMeta: this.clientCapabilityMeta,
         modeIdTransformer: this.modeIdTransformer,
@@ -1054,6 +1059,7 @@ export class ACPAgentClient implements AgentClient {
       sessionResponseTransformer: this.sessionResponseTransformer,
       configOptionsTransformer: this.configOptionsTransformer,
       configFeatureOptions: this.configFeatureOptions,
+      switchModelViaConfigOption: this.switchModelViaConfigOption,
       clientCapabilities: providerOptions.clientCapabilities ?? this.clientCapabilities,
       clientCapabilityMeta: this.clientCapabilityMeta,
       modeIdTransformer: this.modeIdTransformer,
@@ -1697,6 +1703,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     configOptions: SessionConfigOption[],
   ) => SessionConfigOption[];
   private readonly configFeatureOptions: ACPConfigFeatureOption[];
+  private readonly switchModelViaConfigOption: boolean;
   private readonly configuredModelIds: ReadonlySet<string>;
   private readonly clientCapabilities?: ACPClientCapabilities;
   private readonly clientCapabilityMeta?: ACPClientCapabilityMeta;
@@ -1767,6 +1774,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
     this.configFeatureOptions = options.configFeatureOptions ?? [];
+    this.switchModelViaConfigOption = options.switchModelViaConfigOption ?? false;
     this.configuredModelIds = new Set(options.configuredModelIds);
     this.clientCapabilities = options.clientCapabilities;
     this.clientCapabilityMeta = options.clientCapabilityMeta;
@@ -2266,7 +2274,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
 
+    // session/set_model answers empty, so the previous model's config options would stay
+    // current. A config-option write returns the new model's options.
+    const preferConfigOption =
+      this.switchModelViaConfigOption && selection.configOption && selection.configChoice;
     if (
+      !preferConfigOption &&
       selection.availableModel &&
       typeof this.connection.unstable_setSessionModel === "function"
     ) {
