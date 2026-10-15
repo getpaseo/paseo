@@ -179,7 +179,7 @@ const gitIgnoredPathsCache = new Map<string, GitIgnoredPathsCacheEntry>();
 export async function searchDirectoryEntries(
   options: SearchDirectoryEntriesOptions,
 ): Promise<DirectorySuggestionEntry[]> {
-  const query = options.query.trim().replace(/\\/g, "/");
+  const query = options.query.trim().split(path.sep).join("/");
   const isAbsoluteQuery = path.isAbsolute(query);
   const permitsAbsoluteBrowsing = options.absolutePathPolicy === "browse" && isAbsoluteQuery;
   const browsesAbsolutePath =
@@ -784,7 +784,7 @@ function normalizeQueryInput(input: {
   configuredRoot: string;
   aliases: string[];
 }): { typed: string; normalized: string; rooted: boolean; isAbsolute: boolean } | null {
-  const typed = input.query.trim().replace(/\\/g, "/");
+  const typed = input.query.trim().split(path.sep).join("/");
   let normalized = typed;
   let rooted = false;
   let isAbsolute = false;

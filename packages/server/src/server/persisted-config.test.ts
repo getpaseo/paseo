@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
+import { z } from "zod";
 
 import {
   loadPersistedConfig,
@@ -33,6 +34,17 @@ function modeOf(filePath: string): number {
 }
 
 describe("PersistedConfigSchema project search roots", () => {
+  test("publishes project search settings at the top level with the daemon's accepted fields", () => {
+    const published = JSON.parse(
+      readFileSync(
+        new URL("../../../website/public/schemas/paseo.config.v1.json", import.meta.url),
+        "utf8",
+      ),
+    );
+    const generated = z.toJSONSchema(PersistedConfigSchema, { target: "draft-07", io: "input" });
+    expect(published.properties.projects).toEqual(generated.properties?.projects);
+    expect(published.properties.log.properties).not.toHaveProperty("projects");
+  });
   test("preserves forward-compatible project fields accepted by config patches", () => {
     expect(
       PersistedConfigSchema.parse({ projects: { searchRoots: ["~"], futureOption: true } })

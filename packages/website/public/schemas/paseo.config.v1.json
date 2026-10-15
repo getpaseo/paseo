@@ -796,24 +796,24 @@
             }
           },
           "additionalProperties": false
-        },
-        "projects": {
-          "type": "object",
-          "properties": {
-            "searchRoots": {
-              "minItems": 1,
-              "maxItems": 16,
-              "type": "array",
-              "items": {
-                "type": "string",
-                "pattern": "^(?:~(?:[\\\\/]|$)|[\\\\/]|[A-Za-z]:[\\\\/])"
-              }
-            }
-          },
-          "additionalProperties": false
         }
       },
       "additionalProperties": false
+    },
+    "projects": {
+      "type": "object",
+      "properties": {
+        "searchRoots": {
+          "minItems": 1,
+          "maxItems": 16,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(?:~(?:[\\\\/]|$)|[\\\\/]|[A-Za-z]:[\\\\/])"
+          }
+        }
+      },
+      "additionalProperties": {}
     }
   },
   "additionalProperties": false,

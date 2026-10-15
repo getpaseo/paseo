@@ -649,6 +649,22 @@ describe("absolute directory-path configuration", () => {
     expect(results).toEqual([path.join(outsideDir, "outside-match")]);
   });
 
+  it.skipIf(process.platform === "win32")(
+    "preserves literal backslashes when browsing and completing outside paths",
+    async () => {
+      const directory = path.join(outsideDir, "team\\alpha");
+      const child = path.join(directory, "project\\beta");
+      mkdirSync(child, { recursive: true });
+      mkdirSync(path.join(outsideDir, "team", "alpha", "wrong"), { recursive: true });
+      expect(await searchAbsoluteDirectoryPaths({ homeDir, query: `${directory}/` })).toEqual([
+        child,
+      ]);
+      expect(
+        await searchAbsoluteDirectoryPaths({ homeDir, query: path.join(directory, "project\\b") }),
+      ).toEqual([child]);
+    },
+  );
+
   it("completes an absolute directory prefix outside home without descending", async () => {
     mkdirSync(path.join(outsideDir, "nested", "outside-nested"), { recursive: true });
     const results = await searchAbsoluteDirectoryPaths({
