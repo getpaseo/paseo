@@ -1,16 +1,21 @@
 import type { AudioEngine, AudioEngineCallbacks, AudioPlaybackSource } from "./audio-engine-types";
 
+import * as native from "@getpaseo/expo-two-way-audio";
 import { createAudioPlayer, setAudioModeAsync } from "expo-audio";
 import { File, Paths } from "expo-file-system";
 import { createPlaybackQueue } from "./playback";
 import { playFile } from "./file-playback";
 import { playPcm16 } from "./pcm";
+import { createNativeEngineOwners, type NativeEngineOwners } from "./native-engine-owners";
+
+let nativeEngineOwners: NativeEngineOwners | null = null;
 
 export function createAudioEngine(
   callbacks: AudioEngineCallbacks,
   _options?: { traceLabel?: string },
 ): AudioEngine {
-  const native = require("@getpaseo/expo-two-way-audio");
+  nativeEngineOwners ??= createNativeEngineOwners(native);
+  const owners = nativeEngineOwners;
 
   const refs: {
     initialized: boolean;
@@ -60,15 +65,24 @@ export function createAudioEngine(
     },
   );
 
+  let initializing: Promise<void> | null = null;
   async function ensureInitialized(): Promise<void> {
     if (refs.initialized) {
       return;
     }
-    const success = await native.initialize();
-    if (!success) {
-      throw new Error("expo-two-way-audio: native initialize() returned false");
-    }
-    refs.initialized = true;
+    initializing ??= (async () => {
+      try {
+        await owners.acquire();
+        if (refs.destroyed) {
+          owners.release();
+          return;
+        }
+        refs.initialized = true;
+      } finally {
+        initializing = null;
+      }
+    })();
+    await initializing;
   }
 
   /**
@@ -164,8 +178,8 @@ export function createAudioEngine(
       refs.muted = false;
       callbacks.onVolumeLevel(0);
       if (refs.initialized) {
-        native.tearDown();
         refs.initialized = false;
+        owners.release();
       }
       microphoneSubscription.remove();
       volumeSubscription.remove();
@@ -182,9 +196,7 @@ export function createAudioEngine(
         await ensureInitialized();
         const isRecording = native.toggleRecording(true);
         if (!isRecording) {
-          throw new Error(
-            "Microphone capture could not start because Android audio focus is unavailable.",
-          );
+          throw new Error("Microphone capture could not start because another app is using audio.");
         }
         refs.captureActive = true;
       } catch (error) {
