@@ -45,6 +45,13 @@ export class ScheduleNotFoundError extends Error {
   }
 }
 
+export class ScheduleStateConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ScheduleStateConflictError";
+  }
+}
+
 function advanceNextRunAtPast(
   cadence: StoredSchedule["cadence"],
   nextRunAt: Date,
@@ -410,7 +417,7 @@ export class ScheduleService {
   async pause(id: string): Promise<StoredSchedule> {
     const paused = await this.store.update(id, (schedule) => {
       if (schedule.status === "completed") {
-        throw new Error(`Schedule ${id} is already completed`);
+        throw new ScheduleStateConflictError(`Schedule ${id} is already completed`);
       }
       if (schedule.status === "paused") {
         return schedule;
@@ -430,7 +437,7 @@ export class ScheduleService {
   async resume(id: string): Promise<StoredSchedule> {
     const resumed = await this.store.update(id, (schedule) => {
       if (schedule.status === "completed") {
-        throw new Error(`Schedule ${id} is already completed`);
+        throw new ScheduleStateConflictError(`Schedule ${id} is already completed`);
       }
       if (schedule.status === "active") {
         return schedule;
@@ -550,10 +557,10 @@ export class ScheduleService {
   async runOnce(id: string): Promise<StoredSchedule> {
     const schedule = await this.inspect(id);
     if (schedule.status === "completed") {
-      throw new Error(`Schedule ${id} is already completed`);
+      throw new ScheduleStateConflictError(`Schedule ${id} is already completed`);
     }
     if (this.runningScheduleIds.has(id)) {
-      throw new Error(`Schedule ${id} is already running`);
+      throw new ScheduleStateConflictError(`Schedule ${id} is already running`);
     }
     await this.runSchedule(schedule, this.now(), { manual: true });
     return this.inspect(id);

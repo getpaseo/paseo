@@ -14,7 +14,7 @@ import { createPaseoToolCatalog } from "../../tools/paseo-tools.js";
 import { AgentManager } from "../../agent-manager.js";
 import { AgentStorage } from "../../agent-storage.js";
 import { ProviderSnapshotManager } from "../../provider-snapshot-manager.js";
-import { ScheduleNotFoundError } from "../../../schedule/service.js";
+import { ScheduleNotFoundError, ScheduleStateConflictError } from "../../../schedule/service.js";
 import {
   OpenCodeBridge,
   loadOpenCodeBridgePluginArtifact,
@@ -769,6 +769,65 @@ describe("OpenCodeBridge", () => {
       ] as const) {
         const response = await fetch(
           `${plugin.baseUrl}/_internal/opencode/sessions/schedule-errors/tools/${tool}`,
+          { method: "POST", headers, body: JSON.stringify({ id }) },
+        );
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: message });
+      }
+    } finally {
+      await bridge.close();
+      await providerSnapshotManager.shutdown();
+    }
+  });
+
+  test("returns 400 for schedule state conflicts", async () => {
+    const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-opencode-schedule-conflicts-"));
+    temporaryDirectories.push(paseoHome);
+    const logger = createTestLogger();
+    const providerSnapshotManager = new ProviderSnapshotManager({ logger });
+    const scheduleService = {
+      inspect: vi.fn(async () => ({
+        target: { type: "new-agent" },
+      })),
+      pause: vi.fn(async (id: string) => {
+        throw new ScheduleStateConflictError(`Schedule ${id} is already completed`);
+      }),
+      resume: vi.fn(async (id: string) => {
+        throw new ScheduleStateConflictError(`Schedule ${id} is already completed`);
+      }),
+      runOnce: vi.fn(async (id: string) => {
+        if (id === "running-schedule") {
+          throw new ScheduleStateConflictError(`Schedule ${id} is already running`);
+        }
+        throw new ScheduleStateConflictError(`Schedule ${id} is already completed`);
+      }),
+    };
+    const catalog = createPaseoToolCatalog({
+      agentManager: new AgentManager({ logger }),
+      agentStorage: new AgentStorage(paseoHome, logger),
+      providerSnapshotManager,
+      scheduleService: scheduleService as never,
+      logger,
+    });
+    const bridge = new OpenCodeBridge({ paseoHome, logger });
+    bridge.setManifestCatalog(catalog);
+    await bridge.start();
+    bridge.bindSession({ sessionId: "schedule-conflicts", env: {}, tools: catalog });
+
+    try {
+      const plugin = readPluginOptions(bridge.decorateServerEnv({}));
+      const headers = {
+        Authorization: `Bearer ${plugin.token}`,
+        "Content-Type": "application/json",
+      };
+      for (const [tool, id, message] of [
+        ["pause_schedule", "completed-pause", "Schedule completed-pause is already completed"],
+        ["resume_schedule", "completed-resume", "Schedule completed-resume is already completed"],
+        ["run_schedule_once", "completed-run", "Schedule completed-run is already completed"],
+        ["run_schedule_once", "running-schedule", "Schedule running-schedule is already running"],
+      ] as const) {
+        const response = await fetch(
+          `${plugin.baseUrl}/_internal/opencode/sessions/schedule-conflicts/tools/${tool}`,
           { method: "POST", headers, body: JSON.stringify({ id }) },
         );
         expect(response.status).toBe(400);

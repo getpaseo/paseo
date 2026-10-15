@@ -40,7 +40,11 @@ import { everyMsToFiveFieldCron } from "@getpaseo/protocol/schedule/cadence";
 import { expandUserPath, isSameOrDescendantPath, resolvePathFromBase } from "../../path-utils.js";
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
 import type { CreatePaseoWorktreeWorkflowFn } from "../../worktree-session.js";
-import { ScheduleNotFoundError, type ScheduleService } from "../../schedule/service.js";
+import {
+  ScheduleNotFoundError,
+  ScheduleStateConflictError,
+  type ScheduleService,
+} from "../../schedule/service.js";
 import {
   ScheduleRunSchema,
   ScheduleSummarySchema,
@@ -839,6 +843,17 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       );
     }
     return schedule;
+  }
+
+  async function runScheduleAction<T>(action: () => Promise<T>): Promise<T> {
+    try {
+      return await action();
+    } catch (error) {
+      if (error instanceof ScheduleStateConflictError) {
+        throw new PaseoToolInputError(error.message);
+      }
+      throw error;
+    }
   }
 
   async function requireCallerHeartbeat(id: string) {
@@ -2704,7 +2719,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       }
 
       await requireScheduleTarget(id, "new-agent");
-      await scheduleService.pause(id);
+      await runScheduleAction(() => scheduleService.pause(id));
       return {
         content: [],
         structuredContent: ensureValidJson({ success: true }),
@@ -2730,7 +2745,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       }
 
       await requireScheduleTarget(id, "new-agent");
-      await scheduleService.resume(id);
+      await runScheduleAction(() => scheduleService.resume(id));
       return {
         content: [],
         structuredContent: ensureValidJson({ success: true }),
@@ -2875,7 +2890,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         throw new Error("Schedule service is not configured");
       }
       await requireScheduleTarget(id, "new-agent");
-      const schedule = await scheduleService.runOnce(id);
+      const schedule = await runScheduleAction(() => scheduleService.runOnce(id));
       return {
         content: [],
         structuredContent: ensureValidJson(schedule),
