@@ -130,7 +130,7 @@ test("Explorer keeps Files and Changes close actions in the context menu", async
     const main = page.getByTestId("workspace-pane-main");
     const mainTabsBefore = await main.getByTestId("workspace-tabs-row").getByRole("button").count();
     const explorer = await ensureExplorerSidebar(page);
-    await expectTabTitleFits(page, "Files", { min: 180, max: 320 });
+    await expectTabTitleFits(page, "Files", { min: 60, max: 180 });
 
     await test.step("Explorer's + menu excludes Agent and terminal profiles", async () => {
       await explorer.getByRole("button", { name: "New tab", exact: true }).click();

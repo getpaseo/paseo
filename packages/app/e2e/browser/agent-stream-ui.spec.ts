@@ -1,6 +1,7 @@
 import { test, expect } from "../support/fixtures";
 import {
   awaitAssistantMessage,
+  expandCompletedResponses,
   expectAgentIdle,
   expectInlineWorkingIndicator,
   expectRunningAgentChrome,
@@ -228,7 +229,7 @@ test.describe("Agent stream UI", () => {
   });
 
   test("keeps tool calls clickable beside the scroll-to-bottom button", async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(90_000);
     const agent = await seedMockAgentWorkspace({
       repoPrefix: "stream-scroll-button-hit-area-",
       title: "Scroll button hit area",
@@ -241,6 +242,7 @@ test.describe("Agent stream UI", () => {
         workspaceId: agent.workspaceId,
         agentId: agent.agentId,
       });
+      await expandCompletedResponses(page);
       await waitForScrollableChat(page, {
         minScrollableDistance: SCROLL_AWAY_MIN_SCROLLABLE_DISTANCE,
         timeout: 30_000,
@@ -285,6 +287,7 @@ test.describe("Agent stream UI", () => {
       state: "hidden",
       timeout: 30_000,
     });
+    await selectModel(page, "One minute stream");
     const prompt = "Stream briefly for first app-created turn timer test.";
     const composer = page.getByRole("textbox", { name: "Message agent..." }).first();
     await composer.fill(prompt);

@@ -385,6 +385,7 @@ export async function holdAgentOlderTimelinePages(
         (payload.direction === "tail" || payload.direction === "before")
       ) {
         recordOwnedTimelineEntries(payload, ownedEntries);
+        if (payload.direction === "tail") recordRepeatedTimelineEntries(payload, entryKeys);
       }
       if (
         sessionMessage?.type === "fetch_agent_timeline_response" &&

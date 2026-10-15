@@ -51,7 +51,7 @@ test("scroll detector distinguishes entered image growth from a simultaneous vie
         ...after,
         wheelTotal: 1000,
         scrollTop: 0,
-        rows: after.rows.map((row) => ({ ...row, top: row.top + 100 })),
+        rows: after.rows.map((row) => ({ id: row.id, height: row.height, top: row.top + 100 })),
       },
     ]),
   ).toEqual([]);
@@ -128,6 +128,81 @@ test("scroll detector accounts for delayed wheel input and growth below the new 
       {
         ...after,
         rows: after.rows.map((row) => ({ id: row.id, height: row.height, top: row.top + 100 })),
+      },
+    ]),
+  ).toHaveLength(1);
+});
+
+test("scroll detector follows entered images through intrinsic resize and offset compensation", () => {
+  const before: ScrollFrame = {
+    at: 1000,
+    scrollTop: 3605,
+    scrollHeight: 35083,
+    viewportHeight: 477,
+    virtualized: true,
+    loading: false,
+    anchor: "reading",
+    wheelTotal: 0,
+    lastWheelAt: 0,
+    inputFinishedAt: null,
+    imageLoads: 0,
+    mounted: 0,
+    unmounted: 0,
+    rows: [
+      { id: "image", top: -537, height: 481 },
+      { id: "reading", top: -56, height: 130 },
+    ],
+  };
+  const after: ScrollFrame = {
+    ...before,
+    at: 1050,
+    scrollTop: 3306,
+    scrollHeight: 34659,
+    wheelTotal: 160,
+    lastWheelAt: 1049,
+    rows: [
+      { id: "image", top: -377, height: 196 },
+      { id: "reading", top: -181, height: 130 },
+    ],
+  };
+  expect(findScrollJumps([before, after])).toEqual([]);
+  expect(
+    findScrollJumps([before, { ...before, at: 1049, wheelTotal: 160, lastWheelAt: 1049 }, after]),
+  ).toEqual([]);
+  const growingBefore = {
+    ...before,
+    rows: [
+      { id: "image", top: -632, height: 481 },
+      { id: "reading", top: -51, height: 148 },
+    ],
+  };
+  const growingAfter = {
+    ...after,
+    rows: [
+      { id: "image", top: -472, height: 1396 },
+      { id: "reading", top: 1024, height: 148 },
+    ],
+  };
+  expect(findScrollJumps([growingBefore, growingAfter])).toEqual([]);
+  expect(
+    findScrollJumps([
+      before,
+      {
+        ...after,
+        rows: after.rows.map((row) => ({ id: row.id, height: row.height, top: row.top - 100 })),
+      },
+    ]),
+  ).toHaveLength(1);
+  expect(
+    findScrollJumps([
+      growingBefore,
+      {
+        ...growingAfter,
+        rows: growingAfter.rows.map((row) => ({
+          id: row.id,
+          height: row.height,
+          top: row.top + 100,
+        })),
       },
     ]),
   ).toHaveLength(1);

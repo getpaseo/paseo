@@ -261,7 +261,24 @@ function mcpPayload(result, command) {
 }
 
 async function callBrowserTool(client, name, args = {}) {
+  if (name === "browser_screenshot") {
+    return mcpPayload(await captureBrowserScreenshot(client, args), name);
+  }
   return mcpPayload(await client.callTool({ name, args }), name);
+}
+
+async function captureBrowserScreenshot(client, args) {
+  const deadline = Date.now() + 10_000;
+  while (true) {
+    const response = await client.callTool({ name: "browser_screenshot", args });
+    const error = response.structuredContent?.error;
+    if (error?.code === "screenshot_no_frame" && error.retryable && Date.now() < deadline) {
+      await delay(200);
+      continue;
+    }
+    mcpPayload(response, "browser_screenshot");
+    return response;
+  }
 }
 
 async function waitForGuestSelector(client, browserId) {
@@ -703,15 +720,12 @@ async function verifyHiddenBrowserScreenshots({
       browserId,
       function: `() => { document.body.style.background = ${JSON.stringify(color)}; }`,
     });
-    const reference = await client.callTool({ name: "browser_screenshot", args: { browserId } });
+    const reference = await captureBrowserScreenshot(client, { browserId });
     mcpPayload(reference, "browser_screenshot");
     const screenshot = reference.content.find((item) => item.type === "image");
     assert(screenshot, "Visible reference screenshot returned no image");
     referencePixels.push(await readScreenshotPixel(inspectorPort, screenshot));
-    const fullPage = await client.callTool({
-      name: "browser_screenshot",
-      args: { browserId, fullPage: true },
-    });
+    const fullPage = await captureBrowserScreenshot(client, { browserId, fullPage: true });
     mcpPayload(fullPage, "browser_screenshot");
     const fullPageImage = fullPage.content.find((item) => item.type === "image");
     assert(fullPageImage, "Full-page reference returned no image");
@@ -750,7 +764,7 @@ async function verifyHiddenBrowserScreenshots({
       browserId,
       function: "() => { document.body.style.background = 'rgb(0,255,0)'; }",
     });
-    const response = await client.callTool({ name: "browser_screenshot", args: { browserId } });
+    const response = await captureBrowserScreenshot(client, { browserId });
     mcpPayload(response, "browser_screenshot");
     const screenshot = response.content.find((item) => item.type === "image");
     assert(screenshot, "browser_screenshot returned no image");
@@ -778,10 +792,7 @@ async function verifyHiddenBrowserScreenshots({
       browserId,
       function: "() => { document.body.style.background = 'rgb(255,0,0)'; }",
     });
-    const fullPage = await client.callTool({
-      name: "browser_screenshot",
-      args: { browserId, fullPage: true },
-    });
+    const fullPage = await captureBrowserScreenshot(client, { browserId, fullPage: true });
     mcpPayload(fullPage, "browser_screenshot");
     const fullPageImage = fullPage.content.find((item) => item.type === "image");
     assert(fullPageImage, "Hidden full-page capture returned no image");

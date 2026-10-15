@@ -1,4 +1,5 @@
 import { expect, type TestInfo, type Page } from "@playwright/test";
+import { expandCompletedResponses } from "./agent-stream";
 import { buildAgentRoute, seedMockAgentWorkspace, type MockAgentWorkspace } from "./mock-agent";
 import { readReplicaCache } from "./replica-cache-storage";
 import {
@@ -342,7 +343,20 @@ export async function holdOlderHistoryPages(
       const expectedCount = gate.getOwnedEntryCountContaining(text);
       expect(expectedCount).toBeGreaterThan(0);
       const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
-      await expect(timeline.getByText(text, { exact: false })).toHaveCount(expectedCount);
+      // Mount the loaded history together for the ownership assertion. The old
+      // daemon predates Find; normal viewports virtualize and refold unseen steps.
+      const viewport = page.viewportSize()!;
+      await page.setViewportSize({ width: viewport.width, height: 65000 });
+      try {
+        await waitForTimelineGeometryToSettle(page);
+        await expandCompletedResponses(page);
+        await waitForTimelineGeometryToSettle(page);
+        await expect
+          .poll(async () => (await timeline.innerText()).split(text).length - 1)
+          .toBe(expectedCount);
+      } finally {
+        await page.setViewportSize(viewport);
+      }
     },
     releasePage(pageNumber) {
       gate.releasePage(pageNumber);
@@ -517,6 +531,7 @@ export async function scrollTimelineUntilOlderHistoryIsReachable(
   page: Page,
   oldestPrompt: string,
 ): Promise<void> {
+  await expandCompletedResponses(page);
   const scroll = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
   const prompt = scroll.getByText(oldestPrompt, { exact: true });
   for (let attempt = 0; attempt < 10; attempt += 1) {
@@ -527,8 +542,12 @@ export async function scrollTimelineUntilOlderHistoryIsReachable(
     const previousHeight = await readTimelineViewport(page);
     await userScrollsTimelineToHistoryStart(page);
     await expect
-      .poll(async () => (await readTimelineViewport(page)).scrollHeight)
-      .toBeGreaterThan(previousHeight.scrollHeight);
+      .poll(
+        async () =>
+          (await prompt.count()) > 0 ||
+          (await readTimelineViewport(page)).scrollHeight > previousHeight.scrollHeight,
+      )
+      .toBe(true);
     await waitForTimelineGeometryToSettle(page);
   }
   await expect(prompt).toBeVisible();

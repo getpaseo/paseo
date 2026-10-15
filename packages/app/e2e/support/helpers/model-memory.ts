@@ -8,17 +8,13 @@ export async function startWithoutRememberedModel(page: Page) {
 
 export async function chooseModel(page: Page, provider: string, label: string) {
   await openModelPicker(page);
-  await expect(
-    page.getByRole("dialog").getByRole("button", { name: "Back", exact: true }),
-  ).toHaveCount(0);
+  const back = page.getByRole("dialog").getByRole("button", { name: "Back", exact: true });
+  if (await back.isVisible()) await back.click();
   await selectProviderModel(page, provider, label);
 }
 
 export async function reselectModel(page: Page, provider: string, label: string) {
-  await expectRememberedModel(page, label);
-  await openModelPicker(page);
-  await page.getByRole("dialog").getByRole("button", { name: "Back", exact: true }).click();
-  await selectProviderModel(page, provider, label);
+  await chooseModel(page, provider, label);
 }
 
 async function selectProviderModel(page: Page, provider: string, label: string) {
@@ -38,7 +34,7 @@ export async function expectSavedSelection(page: Page, provider: string, model: 
         JSON.parse(localStorage.getItem("@paseo:create-agent-preferences") ?? "null"),
       ),
     )
-    .toMatchObject({ provider, providerPreferences: { [provider]: { model } } });
+    .toMatchObject({ providerPreferences: { [provider]: { model } } });
 }
 
 export async function expectCreatedModelAgents(

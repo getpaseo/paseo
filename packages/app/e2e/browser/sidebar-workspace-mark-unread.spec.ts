@@ -106,7 +106,7 @@ async function expectProjectTitleWeight(
 async function markBackgroundWorkspaceAndReopen(
   page: Page,
   subject: MockAgentWorkspace,
-  readProjectWeight: "500" | "600" = "600",
+  readProjectWeight: "500" | "600" = "500",
 ) {
   await test.step("background workspace gains green dot and clears when clicked", async () => {
     await expectWorkspaceTitleWeight(page, subject.workspaceId, subject.workspaceName, "400");
@@ -263,7 +263,7 @@ test("focused agent tab reads completions without focusing the composer", async 
   const { subject } = workspaces;
   await openAgentRoute(page, subject);
   await expectSelectedAgent(page, subject.agentId);
-  await page.getByTestId(`workspace-tab-agent_${subject.agentId}`).first().click();
+  await page.getByTestId(`workspace-tab-agent_${subject.agentId}`).first().focus();
   await expect(page.getByRole("textbox", { name: "Message agent..." })).not.toBeFocused();
   await subject.client.sendAgentMessage(subject.agentId, "Finish while the tab has focus.");
   await subject.client.waitForFinish(subject.agentId, 20_000);
@@ -273,7 +273,7 @@ test("focused agent tab reads completions without focusing the composer", async 
     10_000,
   );
   await expectWorkspaceTitleWeight(page, subject.workspaceId, subject.workspaceName, "400");
-  await expectProjectTitleWeight(page, subject.projectKey, subject.projectDisplayName, "600");
+  await expectProjectTitleWeight(page, subject.projectKey, subject.projectDisplayName, "500");
   await page.screenshot({ path: testInfo.outputPath("focused-agent-read.png") });
 });
 

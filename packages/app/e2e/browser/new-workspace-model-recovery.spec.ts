@@ -63,7 +63,7 @@ async function setProviderAvailability(client: DaemonClient, cwd: string, availa
   }
 }
 
-test("restores the remembered model when a provider recovers after New workspace opens", async ({
+test("recovers a provider catalog without replacing the default Codex selection", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -80,7 +80,7 @@ test("restores the remembered model when a provider recovers after New workspace
     await gotoWorkspace(page, workspace.workspaceId);
     await waitForSidebarHydration(page);
     await openGlobalNewWorkspaceComposer(page);
-    await expectRememberedModel(page, LABEL);
+    await expectRememberedModel(page, "GPT-6-Astra");
 
     await gotoWorkspace(page, workspace.workspaceId);
     await waitForSidebarHydration(page);
@@ -93,7 +93,7 @@ test("restores the remembered model when a provider recovers after New workspace
     await setProviderAvailability(client, workspace.repoPath, true);
     await expectSavedSelection(page, PROVIDER, MODEL);
     await expectRecoveredModelInPicker(page);
-    await expectRememberedModel(page, LABEL);
+    await expectRememberedModel(page, "GPT-6-Astra");
   } finally {
     await client.close();
     await provider.restore();

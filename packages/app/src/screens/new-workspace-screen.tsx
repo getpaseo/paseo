@@ -1073,17 +1073,9 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
   };
   const agentCreation = {
     result: Promise.resolve().then(() => execute()),
-    retry: (request: CreateAgentRequestOptions) =>
-      execute({
-        ...initialAgent,
-        config: { ...request.config!, cwd },
-        launchProfileId: request.launchProfileId,
-        modelRouting: request.modelRouting,
-        initialPrompt: request.initialPrompt ?? "",
-        clientMessageId: initialAgent.clientMessageId,
-        images: request.images,
-        attachments: request.attachments,
-      }),
+    // The workspace creation receipt is terminal after startup fails. Retry the
+    // agent in the workspace already delivered to the draft, with its own receipt.
+    retry: (request: CreateAgentRequestOptions) => input.resolveClient().createAgent(request),
   };
   await agentCreation.result;
   if (outcome === "background") clearConsumedDraft();

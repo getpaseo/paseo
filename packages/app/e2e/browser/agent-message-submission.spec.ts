@@ -987,7 +987,8 @@ test.describe("Agent message submission", () => {
 
       await submitMessage(page, prompt);
       const submittedPrompt = page.getByTestId("user-message").filter({ hasText: prompt });
-      await expect(submittedPrompt).toHaveAttribute("aria-busy", "false", { timeout: 30_000 });
+      // The fast pre-echo burst can virtualize this prompt before it is acknowledged.
+      // Its canonical row and acknowledgement are checked after loading history below.
       await expectVisibleAgentSurfacesIdle(page);
       await page.reload();
 

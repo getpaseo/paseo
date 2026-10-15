@@ -298,7 +298,13 @@ export function findScrollJumps(frames: ScrollFrame[]) {
     const recent = frames.findLast((frame) => frame.at <= previous.at - 100);
     const wheelBudget = current.wheelTotal - (recent?.wheelTotal ?? 0);
     const frameScroll = Math.max(0, previous.scrollTop - current.scrollTop);
-    const availableScroll = Math.min(frameScroll, wheelBudget, previous.scrollTop);
+    // scrollTop also includes compensation for measured rows above the reader.
+    // The latest wheel event can precede its scroll sample and an image resize.
+    const beforeLatestInput = frames.findLast(
+      (frame) => frame.at <= current.lastWheelAt && frame.wheelTotal < current.wheelTotal,
+    );
+    const frameInput = current.wheelTotal - (beforeLatestInput?.wheelTotal ?? previous.wheelTotal);
+    const availableScroll = Math.min(frameInput || frameScroll, wheelBudget, previous.scrollTop);
     const readingLine = 8 - availableScroll;
     const currentRows = new Map(current.rows.map((row) => [row.id, row]));
     const intendedRow = previous.rows.find((row) => row.top + row.height > readingLine);
@@ -324,17 +330,18 @@ export function findScrollJumps(frames: ScrollFrame[]) {
       intendedRow &&
       currentRows.has(intendedRow.id) &&
       Math.abs(currentRows.get(intendedRow.id)!.top - intendedRow.top - availableScroll) <= 32;
-    const enteredRowGrowth = readerFollowsInput
+    const enteredRowResize = readerFollowsInput
       ? previous.rows.reduce((growth, row) => {
           if (row.top < intendedRow.top || row.top >= before.top) return growth;
           const height = currentRows.get(row.id)?.height ?? row.height;
-          return growth + Math.max(0, height - row.height);
+          return growth + height - row.height;
         }, 0)
       : 0;
-    const excessForward = movement > wheelBudget + enteredRowGrowth + 32;
+    const readingMovement = movement - enteredRowResize;
+    const excessForward = readingMovement > wheelBudget + 32;
     // Upward wheel input moves the same text DOWN the viewport. A negative move
     // is a reversal, independent of legitimate scrollTop compensation on prepend.
-    if (movement >= -8 && (!idle || Math.abs(movement) <= 8) && !excessForward) return [];
+    if (readingMovement >= -8 && (!idle || Math.abs(movement) <= 8) && !excessForward) return [];
     return [
       {
         frame: index,

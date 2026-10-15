@@ -1,5 +1,4 @@
 import { expect, test, type Page } from "../support/fixtures";
-import type { FormPreferences } from "@/create-agent-preferences/preferences";
 import { gotoAppShell } from "../support/helpers/app";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { submitMessage } from "../support/helpers/composer";
@@ -68,28 +67,6 @@ async function recordAgentControlRequests(page: Page): Promise<{
   };
 }
 
-async function seedCodexDefaultPreferences(page: Page): Promise<void> {
-  await page.addInitScript(
-    ({ preferencesKey }) => {
-      localStorage.setItem(
-        preferencesKey,
-        JSON.stringify({
-          provider: "codex",
-          providerPreferences: {
-            codex: {
-              model: "gpt-6-astra",
-              mode: "auto",
-              thinkingByModel: { "gpt-6-astra": "high" },
-            },
-            mock: { model: "ten-second-stream" },
-          },
-        } satisfies FormPreferences),
-      );
-    },
-    { preferencesKey: CREATE_AGENT_PREFERENCES_KEY },
-  );
-}
-
 // Focus the New Workspace composer and cycle the execution mode with the keyboard.
 // Kept out of the test body so the test reads as intent rather than key mechanics.
 async function cycleNewWorkspaceMode(page: Page, presses: number): Promise<void> {
@@ -136,6 +113,17 @@ async function measureComposerGeometry(page: Page): Promise<Record<string, Compo
   return Object.fromEntries(entries);
 }
 
+async function selectAutoModel(page: Page): Promise<void> {
+  await page.getByTestId("combined-model-selector").filter({ visible: true }).first().click();
+  await expect(page.getByRole("textbox", { name: /search (?:all )?model/i })).toBeVisible();
+  const back = page.getByRole("button", { name: "Back", exact: true });
+  if (!(await page.getByTestId("model-routing-jev").isVisible()) && (await back.isVisible()))
+    await back.click();
+  await page.getByTestId("model-routing-jev").click();
+  const sheet = page.getByRole("slider", { name: "Bottom Sheet", exact: true });
+  await expect(sheet).not.toBeVisible();
+}
+
 async function expectAutoModelSelection(page: Page): Promise<void> {
   const selector = page.getByTestId("combined-model-selector").filter({ visible: true });
   await expect(selector).toBeVisible();
@@ -175,15 +163,18 @@ async function expectComposerDensity(page: Page, controlSize: number): Promise<v
   expect(submitBox?.height).toBe(controlSize);
   await expect(page.getByTestId("message-input-surface")).toHaveCSS(
     "background-color",
-    "rgb(250, 250, 249)",
+    "rgb(252, 252, 253)",
   );
   await expect(page.getByTestId("message-input-surface")).toHaveCSS(
     "border-color",
-    "rgb(231, 229, 228)",
+    "rgb(231, 233, 238)",
   );
-  await expect(model.getByText("Auto · JEV", { exact: true })).toHaveCSS("font-size", "12px");
+  await expect(model.getByText("Auto · JEV", { exact: true })).toHaveCSS(
+    "font-size",
+    controlSize === 28 ? "14px" : "12px",
+  );
   await expect(model).toHaveCSS("border-radius", "10px");
-  await expect(submit).toHaveCSS("background-color", "rgb(26, 26, 30)");
+  await expect(submit).toHaveCSS("background-color", "rgb(37, 39, 45)");
 }
 
 // The plan toggle lives in the toolbar on desktop, and behind the model sheet on
@@ -207,9 +198,12 @@ async function setNewWorkspacePlanMode(
     }
     await expect(planToggle).toBeVisible({ timeout: 30_000 });
     await planToggle.click();
+    await expect(planToggle).toHaveAttribute("aria-pressed", String(enabled));
     await page
-      .getByRole("button", { name: enabled ? "On" : "Off", exact: true })
-      .click({ timeout: 10_000 });
+      .getByRole("slider", { name: "Bottom Sheet", exact: true })
+      .getByRole("button", { name: "Close", exact: true })
+      .click();
+    await expect(page.getByRole("slider", { name: "Bottom Sheet", exact: true })).not.toBeVisible();
   }
 
   if (enabled) {
@@ -230,7 +224,6 @@ test.describe("New Workspace mode cycle safety", () => {
     page,
   }, testInfo) => {
     const seeded = await seedWorkspace({ repoPrefix: "mode-cycle-safety-" });
-    await seedCodexDefaultPreferences(page);
     const modeRequests = await recordAgentControlRequests(page);
 
     try {
@@ -376,7 +369,6 @@ test("Auto routing failure preserves the draft for retry and manual selection", 
 }) => {
   test.setTimeout(120_000);
   const seeded = await seedWorkspace({ repoPrefix: "auto-routing-retry-" });
-  await seedCodexDefaultPreferences(page);
   const createRequests: Record<string, unknown>[] = [];
   await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
     const server = ws.connectToServer();
@@ -385,9 +377,14 @@ test("Auto routing failure preserves the draft for retry and manual selection", 
       // The harness has real Codex discovery but no workflow plugin. Only
       // guarded Auto creation may reach it; never send a real provider prompt.
       expect(request?.type).not.toBe("send_agent_message_request");
-      if (request?.type === "create_agent_request") {
-        expect(request.modelRouting).toMatchObject({ strategy: "jev" });
-        createRequests.push(request);
+      let agentRequest: unknown = null;
+      if (request?.type === "workspace.create.request") agentRequest = request.agent;
+      else if (request?.type === "agent.create.request") agentRequest = request;
+      if (agentRequest && typeof agentRequest === "object") {
+        expect((agentRequest as Record<string, unknown>).modelRouting).toMatchObject({
+          strategy: "jev",
+        });
+        createRequests.push(agentRequest as Record<string, unknown>);
       }
       server.send(message);
     });
@@ -398,6 +395,7 @@ test("Auto routing failure preserves the draft for retry and manual selection", 
     await page.setViewportSize({ width: 1280, height: 900 });
     await gotoWorkspace(page, seeded.workspaceId);
     await clickNewChat(page);
+    await selectAutoModel(page);
     await expectAutoModelSelection(page);
     const selector = page.getByTestId("combined-model-selector").filter({ visible: true });
     await selector.click();
@@ -465,7 +463,6 @@ test.describe("Plan background preserves composer geometry", () => {
       // picker is reachable there. Then switch to the measured viewport.
       await page.setViewportSize({ width: 1280, height: 900 });
       const seeded = await seedWorkspace({ repoPrefix: "plan-background-" });
-      await seedCodexDefaultPreferences(page);
 
       try {
         await gotoAppShell(page);
@@ -480,6 +477,8 @@ test.describe("Plan background preserves composer geometry", () => {
         const surface = page.getByTestId("message-input-surface");
         await expect(surface).toBeVisible({ timeout: 30_000 });
         const stripe = page.getByTestId("message-input-plan-stripe");
+        await setNewWorkspacePlanMode(page, { enabled: false, compact });
+        await selectAutoModel(page);
         await expect(stripe).toHaveCount(0);
         await expectAutoModelSelection(page);
         await expectComposerDensity(page, compact ? 28 : 24);
@@ -499,7 +498,7 @@ test.describe("Plan background preserves composer geometry", () => {
         // Turning plan on paints the decoration without moving anything.
         await setNewWorkspacePlanMode(page, { enabled: true, compact });
         await expect(surface).toHaveCSS("background-color", "rgb(245, 239, 237)");
-        await expect(surface).toHaveCSS("border-color", "rgb(220, 164, 128)");
+        await expect(surface).toHaveCSS("border-color", "rgb(226, 219, 214)");
         expectSameGeometry(multilineWithoutPlan, await measureComposerGeometry(page));
         await expect(field).toHaveValue(draft);
         await expectAutoModelSelection(page);

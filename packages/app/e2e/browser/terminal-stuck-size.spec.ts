@@ -137,8 +137,11 @@ test.describe("terminal PTY size claim under lost window focus", () => {
     // The user clicks away...
     await setWindowFocused(page, false);
 
-    // ...opens another terminal while the window is unfocused...
-    await clickNewTerminal(page);
+    // Global shortcuts are inactive while blurred. Use the empty pane launcher
+    // below the current terminal without changing the window-focus signal.
+    await page.getByTestId("workspace-split-pane-menu").filter({ visible: true }).first().click();
+    await page.getByTestId("workspace-split-pane-down").click();
+    await page.getByTestId("workspace-new-tab-terminal").filter({ visible: true }).click();
     const findNewTerminalIds = async () =>
       (await listTerminalIds(harness)).filter((id) => !knownIds.has(id));
     await expect.poll(async () => (await findNewTerminalIds()).length, { timeout: 15_000 }).toBe(1);

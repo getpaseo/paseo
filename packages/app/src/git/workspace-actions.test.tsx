@@ -85,16 +85,19 @@ vi.mock("@/components/ui/button", () => ({
     disabled,
     loading,
     testID,
+    accessibilityLabel,
   }: {
     children?: React.ReactNode;
     onPress?: () => void;
     disabled?: boolean;
     loading?: boolean;
     testID?: string;
+    accessibilityLabel?: string;
   }) => (
     <button
       type="button"
       data-testid={testID}
+      aria-label={accessibilityLabel}
       data-loading={loading ? "true" : "false"}
       disabled={disabled}
       onClick={onPress}
@@ -138,12 +141,14 @@ function useScenario(workflowState: WorkspaceWorkflowState, actions: GitAction[]
   });
 }
 
-function render(): { unmount: () => void } {
+function render(hideLabels = false): { unmount: () => void } {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
   act(() => {
-    root.render(<WorkspaceActions serverId="host" workspaceId="ws" cwd="/repo" />);
+    root.render(
+      <WorkspaceActions serverId="host" workspaceId="ws" cwd="/repo" hideLabels={hideLabels} />,
+    );
   });
   return {
     unmount: () => {
@@ -197,6 +202,13 @@ describe("WorkspaceActions", () => {
     current = render();
 
     expect(primaryCta().textContent).toBe(expected);
+  });
+
+  it("keeps the primary action accessible without its label in narrow headers", () => {
+    useScenario({ action: "create-pr" });
+    current = render(true);
+    expect(primaryCta().textContent).toBe("");
+    expect(primaryCta().getAttribute("aria-label")).toBe("Create PR");
   });
 
   it("launches local check repair and shows View PR beside it", () => {

@@ -15,7 +15,7 @@ import {
   expectTimelinePromptVisible,
   holdOlderHistoryPages,
   openAgentTimeline,
-  scrollThroughOlderHistoryPages,
+  scrollTimelineUntilOlderHistoryIsReachable,
 } from "../support/helpers/timeline-pagination";
 
 test("does not repeat an assistant block when the current app paginates a published 0.2.5 daemon", async ({
@@ -85,6 +85,9 @@ test("does not repeat an assistant block when the current app paginates a publis
     });
     await page.addInitScript(
       ({ seededHost, preferences }) => {
+        // This case exercises remote page ownership; keep the separate local
+        // presentation window from hiding entries in its final count assertion.
+        Reflect.set(globalThis, "__PASEO_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS", 10000);
         localStorage.setItem("@paseo:e2e", "1");
         localStorage.setItem("@paseo:daemon-registry", JSON.stringify([seededHost]));
         localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(preferences));
@@ -98,7 +101,15 @@ test("does not repeat an assistant block when the current app paginates a publis
       page,
       "timeline-pagination-turn-19: emit 1 coalesced agent stream updates",
     );
-    await scrollThroughOlderHistoryPages(page, 3, history);
+    // Overlapping pages can take several traversals. Exercise the full loaded history
+    // instead of assuming one network request for each scroll gesture.
+    for (let pageNumber = 1; pageNumber <= 12; pageNumber++) history.releasePage(pageNumber);
+    await scrollTimelineUntilOlderHistoryIsReachable(
+      page,
+      "timeline-pagination-older-turn-0: emit 1 coalesced agent stream updates",
+    );
+    expect(history.requestCount()).toBeGreaterThan(0);
+    expect(history.requestCount()).toBeLessThanOrEqual(12);
 
     history.expectRepeatedEntries();
     await history.expectOwnedTextRendered("Now I have a clearer picture.");

@@ -355,8 +355,10 @@ export const selectModel = async (page: Page, model: string) => {
     }
   }
 
-  // Wait for the model dropdown to open
-  const searchInput = page.getByRole("textbox", { name: /search model/i });
+  // New conversations open on Codex's provider page; search all providers for fixture models.
+  const back = page.getByRole("dialog").getByRole("button", { name: "Back", exact: true });
+  if (await back.isVisible()) await back.click();
+  const searchInput = page.getByRole("textbox", { name: /search (?:all )?model/i });
   await expect(searchInput).toBeVisible({ timeout: 10000 });
 
   // Type to search/filter models
@@ -370,9 +372,13 @@ export const selectModel = async (page: Page, model: string) => {
   if (exactVisible) {
     await exactOption.click({ force: true });
   } else {
-    // Modern labels include version suffixes (for example "Haiku 4.5"), so
-    // select the first filtered result using keyboard confirm.
-    await searchInput.press("Enter");
+    // An ID such as one-minute-stream differs from its display label. Pick its
+    // filtered row explicitly; Enter in the root search does not select a model.
+    await dialog
+      .getByTestId(/^model-row-/)
+      .filter({ visible: true })
+      .first()
+      .click();
   }
 
   // Wait for dropdown to close

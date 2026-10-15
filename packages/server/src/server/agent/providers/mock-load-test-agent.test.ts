@@ -68,6 +68,29 @@ describe("MockLoadTestAgentClient", () => {
     await session.interrupt();
   });
 
+  test("interrupting a pending plan clears its provider permission", async () => {
+    vi.useFakeTimers();
+    const session = await new MockLoadTestAgentClient().createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    await session.startTurn("Emit synthetic plan approval.");
+    await vi.runAllTimersAsync();
+    const [request] = session.getPendingPermissions();
+    expect(request).toMatchObject({ kind: "plan" });
+    await session.interrupt();
+    expect(session.getPendingPermissions()).toEqual([]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "permission_resolved",
+        requestId: request!.id,
+        resolution: { behavior: "deny" },
+      }),
+    );
+  });
+
   test("preserves the pending plan when a configured permission response fails", async () => {
     vi.useFakeTimers();
     const client = new MockLoadTestAgentClient();

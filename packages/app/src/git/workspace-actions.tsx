@@ -243,13 +243,14 @@ export function WorkspaceActions({
             : styles.prButton
         }
         testID="changes-primary-cta"
+        accessibilityLabel={workflowLabel}
         disabled={workflowDisabled}
         loading={
           launchingAction === workflowState.action || workflowNativeAction?.status === "pending"
         }
         onPress={handlePr}
       >
-        {workflowLabel}
+        {hideLabels ? null : workflowLabel}
       </Button>
     </>
   );
