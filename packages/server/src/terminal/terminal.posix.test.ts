@@ -91,6 +91,21 @@ async function waitForState(
   throw new Error("Timeout waiting for terminal state predicate to match");
 }
 
+async function waitForActivity(
+  session: TerminalSession,
+  predicate: (activity: ReturnType<TerminalSession["getActivity"]>) => boolean,
+  timeoutMs = 5000,
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (predicate(session.getActivity())) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("Timeout waiting for terminal activity predicate to match");
+}
+
 async function waitForTitle(
   session: TerminalSession,
   predicate: (title: string | undefined) => boolean,
@@ -220,6 +235,34 @@ function writeOsc11Helper(prefix: string): string {
   return path;
 }
 
+const OSC7501_HELPER_SCRIPT = `process.stdin.setRawMode(true);
+process.stdin.resume();
+let buf = "";
+const timer = setTimeout(() => {
+  process.stdout.write("OSC7501_TIMEOUT\\n");
+  process.exit(2);
+}, 2500);
+process.stdin.on("data", (chunk) => {
+  buf += chunk.toString("binary");
+  const match = buf.match(/\\x1b\\]7501;\\?\\x1b\\\\/);
+  if (!match) {
+    return;
+  }
+  clearTimeout(timer);
+  process.stdout.write("OSC7501_OK:" + match[0].replace(/\\x1b/g, "ESC") + "\\n");
+  process.exit(0);
+});
+process.stdout.write("\\x1b]7501;?\\x07");
+`;
+
+function writeOsc7501Helper(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  temporaryDirs.push(dir);
+  const path = join(dir, "helper.cjs");
+  writeFileSync(path, OSC7501_HELPER_SCRIPT);
+  return path;
+}
+
 function isDaOkLine(line: string): boolean {
   return line.startsWith("DA_OK:");
 }
@@ -232,6 +275,10 @@ function isOsc11OkLine(line: string): boolean {
   return line.startsWith("OSC11_OK:");
 }
 
+function isOsc7501OkLine(line: string): boolean {
+  return line.startsWith("OSC7501_OK:");
+}
+
 function hasDaOkLine(state: ReturnType<TerminalSession["getState"]>): boolean {
   return getLines(state).some(isDaOkLine);
 }
@@ -242,6 +289,10 @@ function hasDsrOkLine(state: ReturnType<TerminalSession["getState"]>): boolean {
 
 function hasOsc11OkLine(state: ReturnType<TerminalSession["getState"]>): boolean {
   return getLines(state).some(isOsc11OkLine);
+}
+
+function hasOsc7501OkLine(state: ReturnType<TerminalSession["getState"]>): boolean {
+  return getLines(state).some(isOsc7501OkLine);
 }
 
 function lastNonEmptyLineIsPrompt(state: ReturnType<TerminalSession["getState"]>): boolean {
@@ -699,6 +750,248 @@ describe.skipIf(isPlatform("win32"))("terminal POSIX-only", () => {
       expect(getLines(session.getState()).join("\n")).not.toContain("633;D;1");
 
       unsubscribeCommandFinished();
+    });
+  });
+
+  describe("program status", () => {
+    it("maps OSC 7501 reports onto terminal activity and answers feature queries", async () => {
+      const packageRoot = mkdtempSync(join(tmpdir(), "terminal-program-status-"));
+      temporaryDirs.push(packageRoot);
+      const scriptPath = join(packageRoot, "emit-program-status.sh");
+      // The sleep keeps working observable while the test polls for it.
+      writeFileSync(
+        scriptPath,
+        "#!/bin/sh\nprintf '\\033]7501;state=working:app=omp\\007'\nsleep 2\nprintf '\\033]7501;state=done:app=omp\\007'\n",
+      );
+      chmodSync(scriptPath, 0o755);
+      const helperPath = writeOsc7501Helper("terminal-osc7501-helper-");
+
+      const session = trackSession(
+        await createTerminal({
+          workspaceId: "ws-test",
+          cwd: packageRoot,
+          shell: "/bin/sh",
+          env: { PS1: "$ " },
+        }),
+      );
+
+      await waitForLines(session, ["$"]);
+      session.send({ type: "input", data: "./emit-program-status.sh\r" });
+
+      await waitForActivity(session, (activity) => activity?.state === "working");
+      await waitForActivity(
+        session,
+        (activity) => activity?.state === "idle" && activity?.attentionReason === "finished",
+      );
+
+      expect(session.getActivity()).toMatchObject({ state: "idle", attentionReason: "finished" });
+      expect(getLines(session.getState()).join("\n")).not.toContain("7501");
+
+      session.send({ type: "input", data: `${process.execPath} ${helperPath}\r` });
+      await waitForState(session, hasOsc7501OkLine);
+
+      const ack = getLines(session.getState()).find(isOsc7501OkLine) ?? "";
+      expect(ack).toBe("OSC7501_OK:ESC]7501;?ESC\\");
+    });
+
+    it.skipIf(!hasZsh)(
+      "deviation: ignores OSC 133 prompt zones a running program draws, keeping its working status",
+      async () => {
+        const packageRoot = mkdtempSync(join(tmpdir(), "terminal-program-status-"));
+        temporaryDirs.push(packageRoot);
+        const scriptPath = join(packageRoot, "tui-program-status.sh");
+        // Mimics OMP: report working, then draw an OSC 133 prompt zone in its own UI.
+        writeFileSync(
+          scriptPath,
+          "#!/bin/sh\nprintf '\\033]7501;state=working:app=omp\\007'\nprintf '\\033]133;A\\007> \\033]133;B\\007'\necho READY\nsleep 3\n",
+        );
+        chmodSync(scriptPath, 0o755);
+        writeFileSync(join(packageRoot, ".zshrc"), "PS1='$ '\n");
+
+        const session = trackSession(
+          await createTerminal({
+            workspaceId: "ws-test",
+            cwd: packageRoot,
+            shell: "/bin/zsh",
+            env: { HOME: packageRoot, ZDOTDIR: packageRoot },
+          }),
+        );
+
+        await waitForLines(session, ["$"]);
+        session.send({ type: "input", data: "./tui-program-status.sh\r" });
+        await waitForState(session, (state) =>
+          getLines(state).some((line) => line.includes("READY")),
+        );
+
+        session.send({ type: "input", data: "\x1b" });
+
+        // Escape alone would end a hook-driven run; a program with records
+        // reports its own interrupts.
+        expect(session.getActivity()).toMatchObject({ state: "working" });
+      },
+    );
+
+    it.skipIf(!hasZsh)(
+      "ignores hook reports while a program run reports OSC 7501, then applies them after the prompt",
+      async () => {
+        const packageRoot = mkdtempSync(join(tmpdir(), "terminal-program-status-"));
+        temporaryDirs.push(packageRoot);
+        const scriptPath = join(packageRoot, "reporting-harness.sh");
+        writeFileSync(
+          scriptPath,
+          "#!/bin/sh\nprintf '\\033]7501;state=working:app=claude\\007'\necho REPORTING\nsleep 1\nprintf '\\033]7501;state=done:app=claude\\007'\n",
+        );
+        chmodSync(scriptPath, 0o755);
+        writeFileSync(join(packageRoot, ".zshrc"), "PS1='$ '\n");
+        const session = trackSession(
+          await createTerminal({
+            workspaceId: "ws-test",
+            cwd: packageRoot,
+            shell: "/bin/zsh",
+            env: { HOME: packageRoot, ZDOTDIR: packageRoot },
+          }),
+        );
+        await waitForLines(session, ["$"]);
+
+        session.send({ type: "input", data: "./reporting-harness.sh\r" });
+        await waitForState(session, (state) =>
+          getLines(state).some((line) => line.includes("REPORTING")),
+        );
+        session.setActivity("attention");
+        expect(session.getActivity()).toMatchObject({ state: "working" });
+
+        // The done record outlives the run, but the next harness in this shell
+        // may only speak hooks. The next command's output proves the shell
+        // printed the prompt that ends the run.
+        await waitForActivity(session, (activity) => activity?.attentionReason === "finished");
+        session.send({ type: "input", data: "echo NEXT\r" });
+        await waitForState(session, (state) => getLines(state).some((line) => line === "NEXT"));
+        session.setActivity("working");
+        expect(session.getActivity()).toMatchObject({ state: "working" });
+      },
+    );
+
+    it("applies hook reports again once a program clears its records, without prompt marks", async () => {
+      const session = trackSession(
+        await createTerminal({
+          workspaceId: "ws-test",
+          cwd: "/tmp",
+          shell: "/bin/sh",
+          env: { PS1: "$ " },
+        }),
+      );
+      await waitForLines(session, ["$"]);
+
+      session.send({ type: "input", data: "printf '\\033]7501;state=working\\007'; echo RUN\r" });
+      await waitForState(session, (state) => getLines(state).some((line) => line === "RUN"));
+      session.setActivity("attention");
+      expect(session.getActivity()).toMatchObject({ state: "working" });
+
+      session.send({ type: "input", data: "printf '\\033]7501;state=clear\\007'; echo END\r" });
+      await waitForState(session, (state) => getLines(state).some((line) => line === "END"));
+      session.setActivity("working");
+      expect(session.getActivity()).toMatchObject({ state: "working" });
+    });
+
+    it("drops working and blocked on an OSC 133 prompt when no command is known to run", async () => {
+      const session = trackSession(
+        await createTerminal({
+          workspaceId: "ws-test",
+          cwd: "/tmp",
+          shell: "/bin/sh",
+          env: { PS1: "$ " },
+        }),
+      );
+      await waitForLines(session, ["$"]);
+
+      session.send({
+        type: "input",
+        data: "printf '\\033]7501;state=working\\007\\033]7501;state=done:id=x\\007'\r",
+      });
+      await waitForActivity(session, (activity) => activity?.state === "working");
+
+      session.send({ type: "input", data: "printf '\\033]133;A\\007'\r" });
+      await waitForActivity(
+        session,
+        (activity) => activity?.state === "idle" && activity?.attentionReason === "finished",
+      );
+    });
+
+    it("marks a turn finished when it reaches done in either order with idle, without re-raising cleared attention", async () => {
+      const session = trackSession(
+        await createTerminal({
+          workspaceId: "ws-test",
+          cwd: "/tmp",
+          shell: "/bin/sh",
+          env: { PS1: "$ " },
+        }),
+      );
+      await waitForLines(session, ["$"]);
+
+      session.send({
+        type: "input",
+        data: "printf '\\033]7501;state=idle\\007\\033]7501;state=done\\007'; echo DONE\r",
+      });
+      await waitForState(session, (state) => getLines(state).some((line) => line === "DONE"));
+      expect(session.getActivity()).toMatchObject({ state: "idle", attentionReason: "finished" });
+
+      session.clearActivityAttention();
+      session.send({ type: "input", data: "printf '\\033]7501;state=done\\007'; echo AGAIN\r" });
+      await waitForState(session, (state) => getLines(state).some((line) => line === "AGAIN"));
+      expect(session.getActivity()).toMatchObject({ state: "idle" });
+      expect(session.getActivity()).not.toHaveProperty("attentionReason");
+
+      session.send({
+        type: "input",
+        data: "printf '\\033]7501;state=working\\007\\033]7501;state=done\\007\\033]7501;state=idle\\007'; echo REST\r",
+      });
+      await waitForState(session, (state) => getLines(state).some((line) => line === "REST"));
+      expect(session.getActivity()).toMatchObject({ state: "idle", attentionReason: "finished" });
+    });
+
+    it("removes every record on a full reset but not on a soft reset", async () => {
+      const session = trackSession(
+        await createTerminal({
+          workspaceId: "ws-test",
+          cwd: "/tmp",
+          shell: "/bin/sh",
+          env: { PS1: "$ " },
+        }),
+      );
+      await waitForLines(session, ["$"]);
+
+      session.send({
+        type: "input",
+        data: "printf '\\033]7501;state=done\\007\\033[!p'; echo SOFT\r",
+      });
+      await waitForState(session, (state) => getLines(state).some((line) => line === "SOFT"));
+      expect(session.getActivity()).toMatchObject({ state: "idle", attentionReason: "finished" });
+
+      session.send({ type: "input", data: "printf '\\033c'; echo HARD\r" });
+      await waitForState(session, (state) => getLines(state).some((line) => line === "HARD"));
+      expect(session.getActivity()).toBeNull();
+    });
+
+    it("keeps records across alternate screen switches", async () => {
+      const session = trackSession(
+        await createTerminal({
+          workspaceId: "ws-test",
+          cwd: "/tmp",
+          shell: "/bin/sh",
+          env: { PS1: "$ " },
+        }),
+      );
+      await waitForLines(session, ["$"]);
+
+      session.send({
+        type: "input",
+        data: "printf '\\033]7501;state=done\\007\\033[?1049h\\033]7501;state=error:id=alt\\007\\033[?1049l'; echo SWITCHED\r",
+      });
+      await waitForState(session, (state) => getLines(state).some((line) => line === "SWITCHED"));
+
+      // Leaving the alternate screen keeps the records; clearing them would
+      // leave the terminal with no activity.
+      expect(session.getActivity()).toMatchObject({ state: "idle", attentionReason: "finished" });
     });
   });
 
