@@ -230,7 +230,7 @@ function assertOptionsAbsent(
   message: string,
 ): void {
   if (options.some(([, value]) => value !== undefined)) {
-    throw new Error(message);
+    throw new PaseoToolInputError(message);
   }
 }
 
@@ -266,7 +266,7 @@ function resolveWorkspaceWorktreeTarget(input: WorkspaceWorktreeOptions): Worksp
       };
     case "checkout-branch":
       if (!input.branch) {
-        throw new Error("branch is required for checkout-branch mode");
+        throw new PaseoToolInputError("branch is required for checkout-branch mode");
       }
       assertOptionsAbsent(
         [
@@ -280,7 +280,7 @@ function resolveWorkspaceWorktreeTarget(input: WorkspaceWorktreeOptions): Worksp
       return { action: "checkout", refName: input.branch };
     case "checkout-pr":
       if (input.prNumber === undefined) {
-        throw new Error("prNumber is required for checkout-pr mode");
+        throw new PaseoToolInputError("prNumber is required for checkout-pr mode");
       }
       assertOptionsAbsent(
         [
@@ -356,7 +356,7 @@ function resolveScheduleProviderAndModel(params: {
   const provider = providerInput.slice(0, slashIndex).trim();
   const model = providerInput.slice(slashIndex + 1).trim();
   if (!provider || !model) {
-    throw new Error("provider must be <provider> or <provider>/<model>");
+    throw new PaseoToolInputError("provider must be <provider> or <provider>/<model>");
   }
 
   return {
@@ -373,7 +373,7 @@ function resolveScheduleUpdateProviderAndModel(params: {
   const modelInput = typeof params.model === "string" ? params.model.trim() : params.model;
 
   if (params.model !== undefined && modelInput === "") {
-    throw new Error("model cannot be empty");
+    throw new PaseoToolInputError("model cannot be empty");
   }
 
   if (!providerInput) {
@@ -391,13 +391,13 @@ function resolveScheduleUpdateProviderAndModel(params: {
   const provider = providerInput.slice(0, slashIndex).trim();
   const modelFromProvider = providerInput.slice(slashIndex + 1).trim();
   if (!provider || !modelFromProvider) {
-    throw new Error("provider must be <provider> or <provider>/<model>");
+    throw new PaseoToolInputError("provider must be <provider> or <provider>/<model>");
   }
   if (params.model === null) {
-    throw new Error("provider specifies a model but model is null");
+    throw new PaseoToolInputError("provider specifies a model but model is null");
   }
   if (typeof modelInput === "string" && modelInput !== modelFromProvider) {
-    throw new Error("Conflicting model values provided");
+    throw new PaseoToolInputError("Conflicting model values provided");
   }
 
   return {
@@ -445,10 +445,10 @@ function resolveScheduleUpdateCadence(input: ScheduleUpdateToolInput): ScheduleC
   const timeZone = normalizeScheduleTimeZoneArg(input.timezone);
 
   if (every !== undefined && cron !== undefined) {
-    throw new Error("Specify at most one of every or cron");
+    throw new PaseoToolInputError("Specify at most one of every or cron");
   }
   if (timeZone !== undefined && cron === undefined) {
-    throw new Error("timezone can only be used with cron");
+    throw new PaseoToolInputError("timezone can only be used with cron");
   }
   if (every !== undefined) {
     // COMPAT(scheduleEveryInput): accept the old hidden field and canonicalize it before write.
@@ -458,7 +458,7 @@ function resolveScheduleUpdateCadence(input: ScheduleUpdateToolInput): ScheduleC
     if (expression) {
       return { type: "cron", expression };
     }
-    throw new Error(`${every} cannot be represented faithfully by five-field cron`);
+    throw new PaseoToolInputError(`${every} cannot be represented faithfully by five-field cron`);
   }
   if (cron !== undefined) {
     return {
@@ -472,7 +472,7 @@ function resolveScheduleUpdateCadence(input: ScheduleUpdateToolInput): ScheduleC
 
 function resolveScheduleUpdateExpiresAt(input: ScheduleUpdateToolInput): string | null | undefined {
   if (input.expiresIn !== undefined && input.clearExpires) {
-    throw new Error("Specify at most one of expiresIn or clearExpires");
+    throw new PaseoToolInputError("Specify at most one of expiresIn or clearExpires");
   }
   if (input.expiresIn !== undefined) {
     return new Date(Date.now() + parseDurationString(input.expiresIn)).toISOString();
@@ -640,7 +640,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   }): ScheduleCadence => {
     const expression = input.cron?.trim() ?? "";
     if (!expression) {
-      throw new Error("cron is required");
+      throw new PaseoToolInputError("cron is required");
     }
     const timezone = normalizeScheduleTimeZoneArg(input.timezone);
     return {
@@ -708,11 +708,12 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     }
 
     if (!options.ensureWorkspaceForCreate) {
-      throw new Error(
-        callerAgentId
-          ? `Caller agent ${callerAgentId} has no workspace and workspace minting is not configured`
-          : "workspaceId is required outside an agent-scoped session",
-      );
+      if (callerAgentId) {
+        throw new Error(
+          `Caller agent ${callerAgentId} has no workspace and workspace minting is not configured`,
+        );
+      }
+      throw new PaseoToolInputError("workspaceId is required outside an agent-scoped session");
     }
 
     return options.ensureWorkspaceForCreate(resolvedCwd);
@@ -727,11 +728,11 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     if (callerAgentId) {
       const callerAgent = resolveCallerAgent();
       if (!callerAgent?.workspaceId) {
-        throw new Error(`Caller agent ${callerAgentId} has no current workspace`);
+        throw new PaseoToolInputError(`Caller agent ${callerAgentId} has no current workspace`);
       }
       return callerAgent.workspaceId;
     }
-    throw new Error("workspaceId is required outside an agent-scoped session");
+    throw new PaseoToolInputError("workspaceId is required outside an agent-scoped session");
   }
 
   const buildCallerAgentScheduleConfigExtras = (
@@ -801,7 +802,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     }
 
     if (!params?.provider?.trim()) {
-      throw new Error("provider is required when target is new-agent");
+      throw new PaseoToolInputError("provider is required when target is new-agent");
     }
 
     const resolvedProviderModel = resolveScheduleProviderAndModel({
@@ -1194,11 +1195,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       },
       async (args, context) => {
         if (!callerAgentId) {
-          throw new Error("speak is only available to agent-scoped tool sessions");
+          throw new PaseoToolInputError("speak is only available to agent-scoped tool sessions");
         }
         const handler = resolveSpeakHandler?.(callerAgentId) ?? null;
         if (!handler) {
-          throw new Error(`No speak handler registered for your session '${callerAgentId}'`);
+          throw new PaseoToolInputError(
+            `No speak handler registered for your session '${callerAgentId}'`,
+          );
         }
         await handler({
           text: args.text,
@@ -1299,7 +1302,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       if (isolation === "local") {
         const cwd = resolveScopedCwd(path, { required: true });
         if (!(await isExistingDirectory(cwd))) {
-          throw new Error(`Directory not found: ${cwd}`);
+          throw new PaseoToolInputError(`Directory not found: ${cwd}`);
         }
         assertOptionsAbsent(
           [
@@ -1656,7 +1659,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     }
     const caller = resolveCallerAgent();
     if (!caller?.workspaceId) {
-      throw new Error(`Caller agent ${callerAgentId} has no current workspace`);
+      throw new PaseoToolInputError(`Caller agent ${callerAgentId} has no current workspace`);
     }
     return { cwd: undefined, workspaceId: caller.workspaceId };
   }
@@ -1775,11 +1778,11 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   }> {
     if (workspace.kind === "current") {
       if (!callerAgentId) {
-        throw new Error("workspace current requires an agent-scoped tool session");
+        throw new PaseoToolInputError("workspace current requires an agent-scoped tool session");
       }
       const callerAgent = resolveCallerAgent();
       if (!callerAgent?.workspaceId) {
-        throw new Error(`Caller agent ${callerAgentId} has no current workspace`);
+        throw new PaseoToolInputError(`Caller agent ${callerAgentId} has no current workspace`);
       }
       return {
         cwd: workspace.cwd,
@@ -2211,7 +2214,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         throw new PaseoToolInputError(`Workspace ${workspaceId} not found`);
       }
       if (existing.archivedAt) {
-        throw new Error(`Workspace ${workspaceId} is archived`);
+        throw new PaseoToolInputError(`Workspace ${workspaceId} is archived`);
       }
 
       await options.workspaceRegistry.upsert({
@@ -2582,7 +2585,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         throw new Error("Schedule service is not configured");
       }
       if (!callerAgentId) {
-        throw new Error("create_heartbeat requires an agent-scoped session");
+        throw new PaseoToolInputError("create_heartbeat requires an agent-scoped session");
       }
       resolveCallerAgent();
 
@@ -2977,10 +2980,10 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       });
       const summary = toProviderSummary(entry);
       if (!entry.enabled) {
-        throw new Error(`Provider '${providerId}' is disabled`);
+        throw new PaseoToolInputError(`Provider '${providerId}' is disabled`);
       }
       if (entry.status !== "ready") {
-        throw new Error(entry.error ?? `Provider '${providerId}' is unavailable`);
+        throw new PaseoToolInputError(entry.error ?? `Provider '${providerId}' is unavailable`);
       }
       const selectedModel = settings?.model ?? resolvedProviderModel.model;
       const features = await agentManager.listDraftFeatures({

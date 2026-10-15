@@ -373,7 +373,12 @@ describe("OpenCodeBridge", () => {
         expect(payload).toMatchObject({ error: "Invalid tool input", issues: expect.any(Array) });
         await expect(
           tools.get("paseo_create_agent")!.execute(input, { sessionID: "caller" }),
-        ).rejects.toMatchObject({ status: 400 });
+        ).rejects.toMatchObject({
+          status: 400,
+          message: expect.stringContaining(
+            "Invalid tool input: provider: provider must be provider/model, for example codex/gpt-5.4",
+          ),
+        });
       } finally {
         await dispose();
       }
@@ -581,6 +586,17 @@ describe("OpenCodeBridge", () => {
             },
           },
         ],
+        [
+          "internal_error",
+          {
+            name: "internal_error",
+            description: "Throws an internal error.",
+            inputSchema: {},
+            async handler() {
+              throw new Error("secret internal detail");
+            },
+          },
+        ],
       ]),
       getTool(name) {
         return this.tools.get(name);
@@ -636,6 +652,13 @@ describe("OpenCodeBridge", () => {
       );
       expect(expectedError.status).toBe(400);
       expect(await expectedError.json()).toEqual({ error: "Agent not found: missing-agent" });
+
+      const internalError = await fetch(
+        `${plugin.baseUrl}/_internal/opencode/sessions/ses_expected_error/tools/internal_error`,
+        { method: "POST", headers, body: "{}" },
+      );
+      expect(internalError.status).toBe(500);
+      expect(await internalError.json()).toEqual({ error: "Internal OpenCode bridge error" });
     } finally {
       await bridge.close();
     }
