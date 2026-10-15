@@ -22,12 +22,16 @@ import {
 } from "react";
 import {
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   Text,
   View,
+  type LayoutChangeEvent,
   type PressableStateCallbackType,
 } from "react-native";
+import { useAnimatedReaction } from "react-native-reanimated";
+import { scheduleOnRN } from "react-native-worklets";
 import {
   EditingTextInput as TextInput,
   type EditingTextInputHandle,
@@ -72,6 +76,7 @@ import {
 } from "@/components/project-picker-options";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useKeyboardShortcutsAvailable } from "@/keyboard/availability";
+import { useKeyboardShift } from "@/keyboard/shift";
 import { getIsElectronRuntime } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { pickDirectory } from "@/desktop/pick-directory";
@@ -93,7 +98,8 @@ import { useHostFeatureMap } from "@/runtime/host-features";
 import { useSessionStore } from "@/stores/session-store";
 import { useRecommendedProjectPaths } from "@/stores/session-store-hooks";
 import type { AddProjectFlowRequest } from "@/stores/add-project-flow-store";
-import type { Theme } from "@/styles/theme";
+import { SPACING, type Theme } from "@/styles/theme";
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { shortenPath } from "@/utils/shorten-path";
 import { buildNewWorkspaceRoute, buildSettingsAddHostRoute } from "@/utils/host-routes";
 
@@ -140,6 +146,22 @@ const EMPTY_PATHS: string[] = [];
 const NAVIGATION_HINT_KEYS = ["Up", "Down"];
 const SELECT_HINT_KEYS = ["Enter"];
 const ESCAPE_HINT_KEYS = ["Esc"];
+const ADD_PROJECT_PANEL_MAX_HEIGHT_RATIO = 0.8;
+
+interface AddProjectPanelMaxHeightInput {
+  overlayHeight: number;
+  keyboardShift: number;
+  safeAreaBottom: number;
+}
+
+function resolveAddProjectPanelMaxHeight(input: AddProjectPanelMaxHeightInput): number | null {
+  if (input.overlayHeight <= 0) return null;
+  const restingCap = input.overlayHeight * ADD_PROJECT_PANEL_MAX_HEIGHT_RATIO;
+  // keyboardShift is the IME above the safe area, so the home indicator is reserved once.
+  const available = input.overlayHeight - SPACING[12] - input.keyboardShift - input.safeAreaBottom;
+  if (available >= restingCap) return null;
+  return Math.max(0, available);
+}
 
 function FlowBackButton({ onPress }: { onPress: () => void }) {
   return (
@@ -386,6 +408,34 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   const inputRef = useRef<EditingTextInputHandle>(null);
   const submissionInFlightRef = useRef(false);
   const browseInFlightRef = useRef(false);
+  const { layoutShift, bottomInset } = useKeyboardShift();
+  const [overlayHeight, setOverlayHeight] = useState(0);
+  const [keyboardShift, setKeyboardShift] = useState(0);
+  const [safeAreaBottom, setSafeAreaBottom] = useState(0);
+  const publishKeyboardFrame = useCallback((reserve: number, safeBottom: number) => {
+    // Android already shrinks the window with the IME. iOS keeps the full frame.
+    const nextShift = Platform.OS === "ios" ? reserve : 0;
+    setKeyboardShift((current) => (current === nextShift ? current : nextShift));
+    setSafeAreaBottom((current) => (current === safeBottom ? current : safeBottom));
+  }, []);
+  useAnimatedReaction(
+    () => ({ reserve: layoutShift.value, safeBottom: bottomInset.value }),
+    (current, previous) => {
+      if (
+        previous !== null &&
+        current.reserve === previous.reserve &&
+        current.safeBottom === previous.safeBottom
+      ) {
+        return;
+      }
+      scheduleOnRN(publishKeyboardFrame, current.reserve, current.safeBottom);
+    },
+    [bottomInset, layoutShift, publishKeyboardFrame],
+  );
+  const handleOverlayLayout = useCallback((event: LayoutChangeEvent) => {
+    const nextHeight = event.nativeEvent.layout.height;
+    setOverlayHeight((current) => (current === nextHeight ? current : nextHeight));
+  }, []);
   const query = page.kind === "new-directory-name" || page.kind === "method" ? "" : page.query;
   const pageInputValueRef = useRef(page.kind === "method" ? "" : pageInput(page));
   pageInputValueRef.current = page.kind === "method" ? "" : pageInput(page);
@@ -845,14 +895,23 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     page.kind === "new-directory-name" && page.name.trim()
       ? joinDirectoryPath(page.parentPath, page.name.trim())
       : null;
+  const panelMaxHeight = resolveAddProjectPanelMaxHeight({
+    overlayHeight,
+    keyboardShift,
+    safeAreaBottom,
+  });
+  const panelStyle =
+    panelMaxHeight == null
+      ? styles.panel
+      : [styles.panel, inlineUnistylesStyle({ maxHeight: panelMaxHeight })];
 
   const modal = (
     <Modal visible transparent animationType="fade" onRequestClose={isWeb ? undefined : handleBack}>
-      <View style={styles.overlay} testID="add-project-flow">
+      <View style={styles.overlay} testID="add-project-flow" onLayout={handleOverlayLayout}>
         <Pressable style={styles.backdrop} onPress={onClose} testID="add-project-flow-backdrop" />
         <View
           ref={setWebOverlayScope}
-          style={styles.panel}
+          style={panelStyle}
           testID={`add-project-flow-page-${page.kind}`}
           accessibilityLabel={`Add project: ${page.kind}`}
         >
@@ -980,7 +1039,7 @@ const styles = StyleSheet.create((theme) => ({
   panel: {
     width: 640,
     maxWidth: "92%",
-    maxHeight: "80%",
+    maxHeight: `${ADD_PROJECT_PANEL_MAX_HEIGHT_RATIO * 100}%`,
     borderWidth: 1,
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.lg,
