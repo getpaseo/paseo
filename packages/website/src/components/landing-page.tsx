@@ -563,7 +563,7 @@ function ProductLead({
         <div className="space-y-0.5">
           <h3 className="text-xl font-medium text-white/90">{title}</h3>
           {description ? (
-            <p className="max-w-lg text-sm leading-relaxed text-white/50">{description}</p>
+            <p className="text-sm leading-relaxed text-white/50">{description}</p>
           ) : null}
         </div>
       </div>
@@ -898,13 +898,12 @@ const PLUGIN_CAPABILITIES: ReadonlyArray<{
   {
     icon: Workflow,
     title: "Agent lifecycle",
-    description:
-      "Change configuration, environment, and MCP servers. Answer permissions. Follow up when a turn ends",
+    description: "Change config and MCP servers, answer permissions, and follow up",
   },
   {
     icon: Bot,
     title: "Providers",
-    description: "Add a coding agent as a provider, used the same way as the built-in ones",
+    description: "Add a coding agent as a provider, used like the built-in ones",
   },
 ];
 
@@ -932,7 +931,7 @@ const PRINCIPLES: ReadonlyArray<{ icon: LucideIcon; title: string; description: 
   {
     icon: Blocks,
     title: "Composable",
-    description: "Run agents on your laptop or a server, and connect from any device.",
+    description: "Run agents on a laptop or a server, and connect from any device.",
   },
   {
     icon: Puzzle,
