@@ -75,6 +75,8 @@ describe("Sidebar interaction surfaces", () => {
     expect(lightTheme.colors.surfaceSidebarSelected).toBe("#e2e4e9");
     expect(lightTheme.colors.surfaceSidebarSelected).not.toBe(lightTheme.colors.surfaceSidebar);
     expect(lightTheme.colors.surfaceWorkspaceChrome).toBe(lightTheme.colors.surfaceSidebar);
+    expect(lightTheme.colors.surfaceWorkspaceFrame).toBe(lightTheme.colors.surfaceWorkspaceChrome);
+    expect(lightTheme.workspaceTabs).toMatchObject({ height: 28, radius: 8, underlineHeight: 0 });
     expect(lightTheme.workspaceFrame).toMatchObject({ inset: 12, radius: 20, dividerWidth: 0 });
     expect(lightTheme.borderRadius["2xl"]).toBe(22);
     expect(lightTheme.shadow.composer.shadowOpacity).toBe(1);
@@ -83,6 +85,8 @@ describe("Sidebar interaction surfaces", () => {
   it("derives Dark hover and selection from the first two raised surfaces", () => {
     expect(darkTheme.colors.surfaceSidebarHover).toBe(darkTheme.colors.surface1);
     expect(darkTheme.colors.surfaceSidebarSelected).toBe(darkTheme.colors.surface2);
+    expect(darkTheme.colors.surfaceWorkspaceFrame).toBe(darkTheme.colors.surfaceWorkspace);
+    expect(darkTheme.workspaceTabs).toMatchObject({ height: 35, radius: 0, underlineHeight: 2 });
     expect(darkTheme.workspaceFrame).toMatchObject({ inset: 0, radius: 0, dividerWidth: 1 });
     expect(darkTheme.shadow.composer.shadowOpacity).toBe(0);
   });

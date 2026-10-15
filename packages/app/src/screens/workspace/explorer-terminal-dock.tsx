@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Pressable, Text, View, type LayoutChangeEvent } from "react-native";
+import {
+  Pressable,
+  Text,
+  View,
+  type PressableStateCallbackType,
+  type LayoutChangeEvent,
+} from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
@@ -137,6 +143,22 @@ export function ExplorerTerminalDock({
   const shellAccessibilityState = useMemo(() => ({ selected: selected === "shell" }), [selected]);
   const scriptAccessibilityState = useMemo(() => ({ selected: selected === "script" }), [selected]);
 
+  const shellTabStyle = useCallback(
+    ({ hovered }: PressableStateCallbackType) => [
+      styles.tab,
+      hovered && styles.hoveredTab,
+      selected === "shell" && styles.selectedTab,
+    ],
+    [selected],
+  );
+  const scriptTabStyle = useCallback(
+    ({ hovered }: PressableStateCallbackType) => [
+      styles.tab,
+      hovered && styles.hoveredTab,
+      selected === "script" && styles.selectedTab,
+    ],
+    [selected],
+  );
   return (
     <View style={styles.root} onLayout={onLayout}>
       <View style={topStyle}>{children}</View>
@@ -157,7 +179,7 @@ export function ExplorerTerminalDock({
             accessibilityState={shellAccessibilityState}
             testID="explorer-shell-tab"
             onPress={chooseShell}
-            style={[styles.tab, selected === "shell" && styles.selectedTab]}
+            style={shellTabStyle}
           >
             <Text style={styles.tabText}>Shell</Text>
           </Pressable>
@@ -167,7 +189,7 @@ export function ExplorerTerminalDock({
               accessibilityState={scriptAccessibilityState}
               testID="explorer-script-tab"
               onPress={chooseScript}
-              style={[styles.tab, selected === "script" && styles.selectedTab]}
+              style={scriptTabStyle}
             >
               <Text style={styles.tabText}>Script</Text>
             </Pressable>
@@ -210,14 +232,27 @@ const styles = StyleSheet.create((theme) => ({
     borderTopColor: theme.colors.border,
   },
   tabs: {
-    height: 32,
+    height: theme.workspaceTabs.dockRailHeight,
     flexDirection: "row",
-    alignItems: "stretch",
+    alignItems: "center",
+    backgroundColor: theme.workspaceTabs.dockBackground,
     borderBottomWidth: theme.borderWidth[1],
     borderBottomColor: theme.colors.border,
   },
-  tab: { paddingHorizontal: theme.spacing[3], justifyContent: "center" },
-  selectedTab: { borderBottomWidth: 2, borderBottomColor: theme.colors.accent },
+  tab: {
+    paddingHorizontal: theme.spacing[3],
+    justifyContent: "center",
+    height: theme.workspaceTabs.dockTabHeight,
+    borderRadius: theme.workspaceTabs.radius,
+  },
+  hoveredTab: {
+    backgroundColor: theme.workspaceTabs.dockHover,
+  },
+  selectedTab: {
+    borderBottomWidth: theme.workspaceTabs.underlineHeight,
+    borderBottomColor: theme.colors.accent,
+    backgroundColor: theme.workspaceTabs.dockSelected,
+  },
   tabText: { color: theme.colors.foreground, fontSize: theme.fontSize.sm },
   content: { flex: 1, minHeight: 0 },
   empty: { flex: 1, alignItems: "center", justifyContent: "center" },

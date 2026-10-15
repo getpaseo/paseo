@@ -1428,7 +1428,7 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
     minWidth: 240,
     minHeight: 0,
-    backgroundColor: theme.colors.surfaceWorkspace,
+    backgroundColor: theme.colors.surfaceWorkspaceFrame,
   },
   group: {
     flex: 1,
@@ -1451,7 +1451,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
     minHeight: 0,
-    backgroundColor: theme.colors.surface0,
+    backgroundColor: theme.colors.surfaceWorkspaceChrome,
     overflow: "hidden",
   },
   paneTabs: {

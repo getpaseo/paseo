@@ -12,6 +12,9 @@ test("vertical wheel scrolls overflowing workspace tabs horizontally", async ({
 
   try {
     await page.setViewportSize({ width: 1100, height: 760 });
+    await page.addInitScript(() => {
+      localStorage.setItem("@paseo:app-settings", JSON.stringify({ theme: "light" }));
+    });
     for (let index = 0; index < 8; index += 1) {
       await createMockIdleAgent(workspace.client, {
         cwd: workspace.repoPath,

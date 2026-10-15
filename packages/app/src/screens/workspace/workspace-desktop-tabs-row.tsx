@@ -118,9 +118,6 @@ const PANE_MAXIMIZE_ACTION_RESERVED_WIDTH = smallIconButtonChromeFrameSize(false
 // Tab geometry. `layoutMetrics` measures tabs from these same numbers, so a tab that changes
 // shape without changing them mis-measures and drops the row into the overflow-scroll fallback at
 // the wrong width. Keep them together.
-// The adjacent New Tab trigger keeps the shared control-height box; tabs fill the row's inner
-// height (TAB_ROW_INNER_HEIGHT) so the active underline sits flush against the row's bottom edge
-// instead of floating above it. Only their horizontal sizing differs.
 // Agent and provider_subagent tabs show their title alone: their icon allocation lives in the
 // per-tab label widths instead of the shared chrome, so files, terminals and browsers keep icons
 // while conversations gain the space.
@@ -133,9 +130,6 @@ const TAB_DROP_INDICATOR_WIDTH = 4;
 const TAB_MODIFIED_DOT_SIZE = 8;
 const TAB_MIN_WIDTH = 180;
 const TAB_MAX_WIDTH = 320;
-const TAB_ACTIVE_UNDERLINE_HEIGHT = 2;
-// The tab row is the secondary header minus its 1px bottom border; tabs fill that inner box.
-const TAB_ROW_INNER_HEIGHT = WORKSPACE_SECONDARY_HEADER_HEIGHT - 1;
 const TAB_CLOSE_BUTTON_RESERVED_WIDTH = 0;
 const TAB_LABEL_LAYOUT_ALLOWANCE = 4;
 
@@ -866,14 +860,12 @@ function TabChip({
   );
   const isCompact = useIsCompactFormFactor();
   const [hovered, setHovered] = useState(false);
-  // Flat tabs mark the active one with a 2px underline and a foreground label instead of a fill;
-  // a hovered tab keeps a quiet surface so pointer aim still reads.
   const isActiveFocused = isActive && isFocused;
   const isHovered = hovered || isCloseHovered;
   const isHighlighted = isActiveFocused || isHovered;
   const chipBackdrop: SurfaceBackdrop = resolveChipBackdrop({
     isActiveFocused,
-    isFilled: isHovered,
+    isFilled: isHovered || (isActive && !isFocused),
   });
   const showCloseControl =
     showCloseButton && showTabCloseControl(variant, isHovered, isCompact, isClosingTab);
@@ -1972,9 +1964,9 @@ const styles = StyleSheet.create((theme) => ({
     marginRight: PANE_SPLIT_ACTIONS_OUTER_MARGIN,
   },
   tab: {
-    height: TAB_ROW_INNER_HEIGHT,
+    height: theme.workspaceTabs.height,
     paddingHorizontal: TAB_CHIP_HORIZONTAL_PADDING,
-    borderRadius: 0,
+    borderRadius: theme.workspaceTabs.radius,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
@@ -1997,7 +1989,7 @@ const styles = StyleSheet.create((theme) => ({
     left: 0,
     right: 0,
     bottom: 0,
-    height: TAB_ACTIVE_UNDERLINE_HEIGHT,
+    height: theme.workspaceTabs.underlineHeight,
     backgroundColor: theme.colors.workspace.tabAccent,
     pointerEvents: "none",
   },
@@ -2006,7 +1998,7 @@ const styles = StyleSheet.create((theme) => ({
     left: 0,
     right: 0,
     bottom: 0,
-    height: TAB_ACTIVE_UNDERLINE_HEIGHT,
+    height: theme.workspaceTabs.underlineHeight,
     backgroundColor: theme.colors.foregroundExtraMuted,
     pointerEvents: "none",
   },
@@ -2087,6 +2079,8 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
   },
   tabTrailingOverlay: {
+    borderTopRightRadius: theme.workspaceTabs.radius,
+    borderBottomRightRadius: theme.workspaceTabs.radius,
     position: "absolute",
     top: 0,
     right: 0,

@@ -4532,7 +4532,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface0,
   },
   containerWorkspaceBackground: {
-    backgroundColor: theme.colors.surfaceWorkspace,
+    backgroundColor: theme.colors.surfaceWorkspaceFrame,
   },
   threePaneRow: {
     flex: 1,

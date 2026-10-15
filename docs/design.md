@@ -84,7 +84,10 @@ Light mode uses a pearl-gray sidebar and a near-white working surface. Keep row 
 control heights unchanged across themes; the light radius scale supplies the softer corners.
 On wide layouts, the workspace header, tab rails, and Explorer share the sidebar background.
 The focused active tab uses the near-white working surface; inactive tabs blend into the rail,
-with an intermediate fill on hover or when selected in an unfocused pane.
+with an intermediate fill on hover or when selected in an unfocused pane. Light tabs are
+28px pills with an 8px radius, centered in the 36px rail, without an underline.
+`theme.workspaceTabs` owns this geometry for center, Explorer, and Shell / Script tabs;
+dark tabs retain their full-height shape and underline.
 Each main pane owns one inset conversation or document surface through `WorkspaceSurface`;
 keep its composer inside and its tabs outside. Split panes each get the same frame. Compact
 layouts stay edge-to-edge so the frame never takes width from the conversation.
