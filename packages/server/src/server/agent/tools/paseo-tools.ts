@@ -40,7 +40,7 @@ import { everyMsToFiveFieldCron } from "@getpaseo/protocol/schedule/cadence";
 import { expandUserPath, isSameOrDescendantPath, resolvePathFromBase } from "../../path-utils.js";
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
 import type { CreatePaseoWorktreeWorkflowFn } from "../../worktree-session.js";
-import type { ScheduleService } from "../../schedule/service.js";
+import { ScheduleNotFoundError, type ScheduleService } from "../../schedule/service.js";
 import {
   ScheduleRunSchema,
   ScheduleSummarySchema,
@@ -824,7 +824,15 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     if (!scheduleService) {
       throw new Error("Schedule service is not configured");
     }
-    const schedule = await scheduleService.inspect(id);
+    let schedule: Awaited<ReturnType<ScheduleService["inspect"]>>;
+    try {
+      schedule = await scheduleService.inspect(id);
+    } catch (error) {
+      if (error instanceof ScheduleNotFoundError) {
+        throw new PaseoToolInputError(error.message);
+      }
+      throw error;
+    }
     if (schedule.target.type !== type) {
       throw new PaseoToolInputError(
         type === "agent" ? `Heartbeat not found: ${id}` : `Schedule not found: ${id}`,

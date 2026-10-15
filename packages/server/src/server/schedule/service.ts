@@ -38,6 +38,13 @@ export class ScheduleTargetGoneError extends Error {
   }
 }
 
+export class ScheduleNotFoundError extends Error {
+  constructor(id: string) {
+    super(`Schedule not found: ${id}`);
+    this.name = "ScheduleNotFoundError";
+  }
+}
+
 function advanceNextRunAtPast(
   cadence: StoredSchedule["cadence"],
   nextRunAt: Date,
@@ -158,7 +165,7 @@ function shouldCompleteSchedule(schedule: StoredSchedule, now: Date): boolean {
 
 function requireSchedule(schedule: StoredSchedule | null, id: string): StoredSchedule {
   if (!schedule) {
-    throw new Error(`Schedule not found: ${id}`);
+    throw new ScheduleNotFoundError(id);
   }
   return schedule;
 }
@@ -392,10 +399,7 @@ export class ScheduleService {
 
   async inspect(id: string): Promise<StoredSchedule> {
     const schedule = await this.store.get(id);
-    if (!schedule) {
-      throw new Error(`Schedule not found: ${id}`);
-    }
-    return schedule;
+    return requireSchedule(schedule, id);
   }
 
   async logs(id: string): Promise<ScheduleRun[]> {

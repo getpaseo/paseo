@@ -14,6 +14,7 @@ import { createPaseoToolCatalog } from "../../tools/paseo-tools.js";
 import { AgentManager } from "../../agent-manager.js";
 import { AgentStorage } from "../../agent-storage.js";
 import { ProviderSnapshotManager } from "../../provider-snapshot-manager.js";
+import { ScheduleNotFoundError } from "../../../schedule/service.js";
 import {
   OpenCodeBridge,
   loadOpenCodeBridgePluginArtifact,
@@ -730,6 +731,52 @@ describe("OpenCodeBridge", () => {
       expect(await internalError.json()).toEqual({ error: "Internal OpenCode bridge error" });
     } finally {
       await bridge.close();
+    }
+  });
+
+  test("returns 400 for missing schedules and heartbeats", async () => {
+    const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-opencode-schedule-errors-"));
+    temporaryDirectories.push(paseoHome);
+    const logger = createTestLogger();
+    const providerSnapshotManager = new ProviderSnapshotManager({ logger });
+    const scheduleService = {
+      inspect: vi.fn(async (id: string) => {
+        throw new ScheduleNotFoundError(id);
+      }),
+    };
+    const catalog = createPaseoToolCatalog({
+      agentManager: new AgentManager({ logger }),
+      agentStorage: new AgentStorage(paseoHome, logger),
+      providerSnapshotManager,
+      scheduleService: scheduleService as never,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+    const bridge = new OpenCodeBridge({ paseoHome, logger });
+    bridge.setManifestCatalog(catalog);
+    await bridge.start();
+    bridge.bindSession({ sessionId: "schedule-errors", env: {}, tools: catalog });
+
+    try {
+      const plugin = readPluginOptions(bridge.decorateServerEnv({}));
+      const headers = {
+        Authorization: `Bearer ${plugin.token}`,
+        "Content-Type": "application/json",
+      };
+      for (const [tool, id, message] of [
+        ["inspect_schedule", "missing-schedule", "Schedule not found: missing-schedule"],
+        ["delete_heartbeat", "missing-heartbeat", "Schedule not found: missing-heartbeat"],
+      ] as const) {
+        const response = await fetch(
+          `${plugin.baseUrl}/_internal/opencode/sessions/schedule-errors/tools/${tool}`,
+          { method: "POST", headers, body: JSON.stringify({ id }) },
+        );
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: message });
+      }
+    } finally {
+      await bridge.close();
+      await providerSnapshotManager.shutdown();
     }
   });
 
