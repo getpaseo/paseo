@@ -170,7 +170,8 @@ test("composer growth keeps a bottom-pinned chat at the bottom", async ({ page }
 async function pausePageClock(page: Page): Promise<void> {
   const now = Date.now();
   await page.clock.install({ time: now });
-  await page.clock.pauseAt(now);
+  // The installed clock advances between protocol calls; pause at a future time.
+  await page.clock.pauseAt(now + 60_000);
 }
 
 /** The send error shares the footer with Send, so whatever keeps Send visible keeps it visible. */
@@ -206,7 +207,7 @@ test("compact long drafts stop growing before the header", async ({ page }) => {
   }
 });
 
-test("compact fullscreen editing preserves the live draft and selection and stays open after send", async ({
+test("compact fullscreen editing preserves the live draft and selection and returns to chat after send", async ({
   page,
 }) => {
   const agent = await seedMockAgentWorkspace({
@@ -260,7 +261,7 @@ test("compact fullscreen editing preserves the live draft and selection and stay
       await sendComposerWithButton(page);
       await expect(composerLocator(page)).toHaveValue("");
     });
-    await test.step("sending inside fullscreen clears the editor and keeps fullscreen open", async () => {
+    await test.step("sending inside fullscreen returns to chat and clears the editor", async () => {
       await writeCompactDraft(page, "First line\nSecond line\nThird line");
       await enterComposerFullscreen(page);
       await writeCompactDraft(page, "Short draft");
@@ -274,10 +275,12 @@ test("compact fullscreen editing preserves the live draft and selection and stay
       await resizeComposerViewport(page, "portrait");
       await sendComposerWithButton(page);
       await expect(composerLocator(page)).toHaveValue("");
-      await expectComposerFullscreenControls(page);
-      await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+      await expectWorkspaceHeaderVisible(page);
+      await expect(page.getByTestId("composer-fullscreen")).toHaveCount(0);
     });
     await test.step("typing and sending keep working after leaving fullscreen again", async () => {
+      await writeCompactDraft(page, "First line\nSecond line\nThird line");
+      await enterComposerFullscreen(page);
       await writeCompactDraft(page, "Typed inside fullscreen");
       await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();
       await exitComposerFullscreen(page);
@@ -339,16 +342,16 @@ test("fullscreen submit rejection retains the editable draft and supports retry"
     await writeCompactDraft(page, draft);
     await enterComposerFullscreen(page);
     await sendComposerWithButton(page);
-    await expect(page.getByTestId("composer-fullscreen").getByRole("alert")).toHaveText(
-      "Requested mock prompt rejection",
-    );
+    await expectWorkspaceHeaderVisible(page);
+    await expect(page.getByRole("alert")).toHaveText("Requested mock prompt rejection");
+    await enterComposerFullscreen(page);
     await expectFullscreenErrorAboveSend(page);
     await expect(composerLocator(page)).toHaveValue(draft);
     await expect(composerLocator(page)).toBeEditable();
     await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();
     await sendComposerWithButton(page);
     await expect(composerLocator(page)).toHaveValue("");
-    await expectComposerFullscreenControls(page);
+    await expectWorkspaceHeaderVisible(page);
   } finally {
     await agent.cleanup();
   }
@@ -440,8 +443,7 @@ test("fullscreen Send keeps the configured queue behavior while an agent runs", 
     await expectComposerFullscreenControls(page);
     await queueComposerWithButton(page);
     await expect(composerLocator(page)).toHaveValue("");
-    await expectComposerFullscreenControls(page);
-    await exitComposerFullscreen(page);
+    await expectWorkspaceHeaderVisible(page);
     await expectQueuedMessageButton(page);
   } finally {
     await agent.cleanup();
