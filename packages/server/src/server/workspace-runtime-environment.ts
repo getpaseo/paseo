@@ -250,7 +250,7 @@ export class WorkspaceRuntimeEnvironmentService {
     ) {
       return false;
     }
-    this.assertValidBlock(base, portCount, undefined, excludedPorts);
+    this.assertValidBlock(base, portCount, excludedPorts);
     for (let port = base; port < base + portCount; port += 1) {
       if (!(await this.checkPortAvailable(port))) {
         return false;
