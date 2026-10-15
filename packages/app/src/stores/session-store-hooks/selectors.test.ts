@@ -19,6 +19,7 @@ import {
   selectWorkspaceStructureProjects,
   workspaceEqualityFns,
   type SidebarOrderSnapshot,
+  type SessionsSnapshot,
 } from "./selectors";
 import {
   useSessionStore,
@@ -539,6 +540,59 @@ describe("selectWorkspaceKeys", () => {
 });
 
 describe("selectRecommendedProjectPaths", () => {
+  it("orders recently active projects first, deduplicates worktrees, and includes empty projects", () => {
+    const old = createWorkspace({ id: "old", projectId: "old-project", projectRootPath: "/old" });
+    const recent = createWorkspace({
+      id: "recent",
+      projectId: "recent-project",
+      projectRootPath: "/recent",
+    });
+    const empty = projectDescriptorFromTestWorkspace(
+      createWorkspace({
+        id: "empty",
+        projectId: "empty-project",
+        projectRootPath: "/empty",
+      }),
+    );
+    const state: SessionsSnapshot = {
+      agentLastActivity: new Map([["agent-recent", new Date("2026-09-28")]]),
+      sessions: {
+        [SERVER_ID]: {
+          workspaces: new Map([
+            [old.id, old],
+            [recent.id, recent],
+          ]),
+          projects: new Map([[empty.projectId, empty]]),
+          agents: new Map([
+            [
+              "agent-old",
+              {
+                id: "agent-old",
+                cwd: "/old",
+                workspaceId: "old",
+                lastActivityAt: new Date("2026-09-27"),
+              },
+            ],
+            [
+              "agent-recent",
+              {
+                id: "agent-recent",
+                cwd: "/worktrees/recent",
+                workspaceId: "recent",
+                lastActivityAt: new Date("2026-09-26"),
+              },
+            ],
+          ]),
+        },
+        "other-host": {
+          workspaces: new Map(),
+          projects: new Map([["other", { ...empty, projectRootPath: "/other" }]]),
+        },
+      },
+    };
+    expect(selectRecommendedProjectPaths(state, SERVER_ID)).toEqual(["/recent", "/old", "/empty"]);
+  });
+
   it("updates when an existing workspace project root changes", () => {
     const workspace = createWorkspace({ id: "workspace-a", projectRootPath: "/repo/a" });
     initializeWorkspaces([workspace]);
