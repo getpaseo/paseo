@@ -2043,18 +2043,14 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flexShrink: 1,
     flexDirection: "column",
     gap: theme.spacing[3],
-    backgroundColor: theme.colors.composerInputBackground,
+    backgroundColor: theme.colors.surfaceComposer,
+    ...theme.shadow.composer,
     borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.composerInputBorder,
-    borderRadius: { xs: theme.borderRadius.lg, md: theme.borderRadius["2xl"] },
-    paddingTop: {
+    borderColor: theme.colors.borderComposer,
+    borderRadius: theme.borderRadius["2xl"],
+    paddingVertical: {
       xs: theme.spacing[2],
-      md: theme.spacing[3],
-    },
-    // The button row bleeds 6px horizontally, so match its corner inset at the bottom.
-    paddingBottom: {
-      xs: theme.spacing[2],
-      md: theme.spacing[3],
+      md: theme.spacing[4],
     },
     paddingHorizontal: {
       xs: theme.spacing[3],

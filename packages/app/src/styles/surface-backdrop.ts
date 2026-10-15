@@ -16,6 +16,8 @@ export type SurfaceBackdrop =
   | "surface1"
   | "surfaceWorkspace"
   | "surface2"
+  | "surfaceWorkspaceChrome"
+  | "surfaceTabActive"
   | "surfaceSidebar"
   | "surfaceSidebarHover"
   | "surfaceSidebarSelected";

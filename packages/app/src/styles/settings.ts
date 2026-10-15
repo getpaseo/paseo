@@ -27,7 +27,7 @@ export const settingsStyles = StyleSheet.create((theme) => ({
   },
   card: {
     backgroundColor: theme.colors.surface1,
-    borderRadius: theme.borderRadius.lg,
+    borderRadius: theme.borderRadius.card,
     borderWidth: 1,
     borderColor: theme.colors.border,
     overflow: "hidden",

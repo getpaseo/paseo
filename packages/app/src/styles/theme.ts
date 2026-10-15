@@ -282,6 +282,12 @@ export function buildLightSemanticColors(tint: LightThemeConfig) {
     surfaceSidebarHover: tint.surface1,
     surfaceSidebarSelected: tint.surface3,
     surfaceWorkspace: tint.surface0,
+    surfaceWorkspaceChrome: tint.surfaceSidebar,
+    surfaceTabActive: tint.surface0,
+    borderWorkspaceResize: tint.surfaceSidebar,
+    surfaceComposer: tint.surface0,
+    surfaceUserMessage: tint.surface2,
+    borderComposer: tint.border,
     userMessageBackground: "#FAF7F5",
     composerInputBackground: "#FAFAF9",
     composerInputBorder: "#E7E5E4",
@@ -344,18 +350,18 @@ export function buildLightSemanticColors(tint: LightThemeConfig) {
 
 const lightSemanticColors = {
   ...buildLightSemanticColors({
-    surface0: "#ffffff",
-    surface1: "#fafafa",
-    surface2: "#f4f4f5",
-    surface3: "#e4e4e7",
-    surface4: "#d4d4d8",
-    surfaceDiffEmpty: "#f6f6f6",
-    surfaceSidebar: "#f4f4f4",
-    foreground: "#1a1a1e",
-    foregroundMuted: "#71717a",
-    foregroundExtraMuted: "#a1a1aa",
-    border: "#e4e4e7",
-    borderAccent: "#ececf1",
+    surface0: "#fcfcfd",
+    surface1: "#f7f8fa",
+    surface2: "#f0f1f4",
+    surface3: "#e2e4e9",
+    surface4: "#d2d5dc",
+    surfaceDiffEmpty: "#f5f6f8",
+    surfaceSidebar: "#eff0f3",
+    foreground: "#25272d",
+    foregroundMuted: "#686d78",
+    foregroundExtraMuted: "#9297a1",
+    border: "#e7e9ee",
+    borderAccent: "#dce0e7",
     accent: "#cca694",
     accentBright: "#dbb7a6",
     accentForeground: "#1a1a1e",
@@ -366,8 +372,6 @@ const lightSemanticColors = {
     terminalBrightBlack: "#3f3f46",
     ring: "#18181b",
   }),
-  surfaceSidebar: "#f0efef",
-  surfaceSidebarSelected: "#e4e3e3",
   userMessageBackground: "#f9f9f8",
   composerInputBackground: "#f9f9f8",
   composerInputBorder: "#e7e4e2",
@@ -453,6 +457,12 @@ export function buildDarkSemanticColors(tint: DarkThemeConfig) {
     surfaceSidebarHover: tint.surface1,
     surfaceSidebarSelected: tint.surface2,
     surfaceWorkspace: tint.surface1,
+    surfaceWorkspaceChrome: tint.surface0,
+    surfaceTabActive: tint.surface2,
+    borderWorkspaceResize: tint.border,
+    surfaceComposer: tint.surface1,
+    surfaceUserMessage: tint.surface3,
+    borderComposer: tint.borderAccent,
     userMessageBackground: tint.surface3,
     composerInputBackground: tint.surface1,
     composerInputBorder: tint.borderAccent,
@@ -670,12 +680,14 @@ export const FONT_WEIGHT = {
 } as const;
 
 export const BORDER_RADIUS = {
+  card: 8,
   none: 0,
   sm: 2,
   base: 4,
   md: 6,
   lg: 8,
   composerControl: 10,
+  userMessageCorner: 6,
   xl: 12,
   "2xl": 16,
   full: 9999,
@@ -722,7 +734,7 @@ interface CommonTheme {
   contentMaxWidth: number;
   iconSize: typeof ICON_SIZE;
   fontWeight: typeof FONT_WEIGHT;
-  borderRadius: typeof BORDER_RADIUS;
+  borderRadius: Record<keyof typeof BORDER_RADIUS, number>;
   borderWidth: typeof BORDER_WIDTH;
   opacity: typeof OPACITY;
 }
@@ -741,6 +753,13 @@ const commonTheme: CommonTheme = {
 };
 
 const darkShadow = {
+  composer: {
+    shadowColor: "transparent",
+    shadowOpacity: 0,
+    shadowOffset: { width: 0, height: 0 },
+    shadowRadius: 0,
+    elevation: 0,
+  },
   sm: {
     shadowColor: "rgba(0, 0, 0, 0.25)",
     shadowOffset: { width: 0, height: 2 },
@@ -771,6 +790,14 @@ export function buildDarkTheme(semanticColors: ReturnType<typeof buildDarkSemant
     },
     shadow: darkShadow,
     ...commonTheme,
+    workspaceFrame: {
+      inset: 0,
+      topInset: 0,
+      radius: 0,
+      dividerWidth: 1,
+      shadowColor: "transparent",
+      elevation: 0,
+    },
   } as const;
 }
 
@@ -803,21 +830,46 @@ const pureBlackDarkColors = buildDarkSemanticColors({
 
 export const darkPureBlackTheme = buildDarkTheme(pureBlackDarkColors);
 
+// Light surfaces use softer corners without increasing control sizes or row spacing.
+const lightBorderRadius = {
+  card: 14,
+  composerControl: 10,
+  userMessageCorner: 22,
+  none: 0,
+  sm: 4,
+  base: 6,
+  md: 8,
+  lg: 10,
+  xl: 14,
+  "2xl": 22,
+  full: 9999,
+} satisfies CommonTheme["borderRadius"];
+
 const lightShadow = {
+  composer: {
+    shadowColor: "rgba(30, 35, 50, 0.06)",
+    shadowOpacity: 1,
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 16,
+    elevation: 4,
+  },
   sm: {
-    shadowColor: "rgba(0, 0, 0, 0.02)",
+    shadowColor: "rgba(30, 35, 50, 0.045)",
+    shadowOpacity: 1,
     shadowOffset: { width: 0, height: 2 },
     shadowRadius: 8,
     elevation: 2,
   },
   md: {
-    shadowColor: "rgba(0, 0, 0, 0.04)",
+    shadowColor: "rgba(30, 35, 50, 0.06)",
+    shadowOpacity: 1,
     shadowOffset: { width: 0, height: 4 },
     shadowRadius: 16,
     elevation: 4,
   },
   lg: {
-    shadowColor: "rgba(0, 0, 0, 0.08)",
+    shadowColor: "rgba(30, 35, 50, 0.09)",
+    shadowOpacity: 1,
     shadowOffset: { width: 0, height: 8 },
     shadowRadius: 24,
     elevation: 8,
@@ -834,6 +886,15 @@ export function buildLightTheme(semanticColors: ReturnType<typeof buildLightSema
     },
     shadow: lightShadow,
     ...commonTheme,
+    workspaceFrame: {
+      inset: 12,
+      topInset: 6,
+      radius: 20,
+      dividerWidth: 0,
+      shadowColor: "rgba(30, 35, 50, 0.045)",
+      elevation: 1,
+    },
+    borderRadius: lightBorderRadius,
   } as const;
 }
 

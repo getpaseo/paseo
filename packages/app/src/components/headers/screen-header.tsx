@@ -1,9 +1,10 @@
 import { ComposerDockBackground } from "@/composer/dock";
+import { SPACING } from "@/styles/theme";
 import { useMemo, type ReactNode } from "react";
 import type { LayoutChangeEvent } from "react-native";
 import { View, type StyleProp, type ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet } from "react-native-unistyles";
 import {
   HEADER_INNER_HEIGHT,
   HEADER_INNER_HEIGHT_MOBILE,
@@ -14,12 +15,13 @@ import { WindowChromeSafeArea } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 
 interface ScreenHeaderProps {
-  style?: StyleProp<ViewStyle>;
   left?: ReactNode;
   right?: ReactNode;
   leftStyle?: StyleProp<ViewStyle>;
   rightStyle?: StyleProp<ViewStyle>;
   borderless?: boolean;
+  style?: StyleProp<ViewStyle>;
+  variant?: "default" | "workspace";
   onRowLayout?: (event: LayoutChangeEvent) => void;
 }
 
@@ -28,31 +30,41 @@ interface ScreenHeaderProps {
  * and safe-area logic in one place.
  */
 export function ScreenHeader({
-  style,
   left,
   right,
   leftStyle,
   rightStyle,
   borderless,
+  style,
+  variant = "default",
   onRowLayout,
 }: ScreenHeaderProps) {
-  const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const isMobile = useIsCompactFormFactor();
   // Only add extra padding on mobile for better touch targets; on desktop, only use safe area insets
   const topPadding = isMobile ? HEADER_TOP_PADDING_MOBILE : 0;
-  const baseHorizontalPadding = isMobile ? theme.spacing[2] : theme.spacing[3];
+  const baseHorizontalPadding = isMobile ? SPACING[2] : SPACING[3];
 
   const innerStyle = useMemo(
     () => [styles.inner, { paddingTop: insets.top + topPadding }],
     [insets.top, topPadding],
   );
-  const rowStyle = useMemo(() => [styles.row, borderless && styles.borderless], [borderless]);
+  const rowStyle = useMemo(
+    () => [
+      styles.row,
+      variant === "workspace" && styles.workspaceRow,
+      borderless && styles.borderless,
+    ],
+    [borderless, variant],
+  );
   const leftCombinedStyle = useMemo(() => [styles.left, leftStyle], [leftStyle]);
   const rightCombinedStyle = useMemo(() => [styles.right, rightStyle], [rightStyle]);
 
   return (
-    <ComposerDockBackground style={[styles.header, style]} testID="composer-dock-header">
+    <ComposerDockBackground
+      style={[styles.header, style, variant === "workspace" && styles.workspaceHeader]}
+      testID="composer-dock-header"
+    >
       <View style={innerStyle}>
         <WindowChromeSafeArea
           placement="inline"
@@ -72,6 +84,12 @@ export function ScreenHeader({
 const styles = StyleSheet.create((theme) => ({
   header: {
     backgroundColor: theme.colors.surface0,
+  },
+  workspaceHeader: {
+    backgroundColor: { xs: theme.colors.surface0, md: theme.colors.surfaceWorkspaceChrome },
+  },
+  workspaceRow: {
+    borderBottomWidth: { xs: theme.borderWidth[1], md: theme.workspaceFrame.dividerWidth },
   },
   inner: {},
   row: {

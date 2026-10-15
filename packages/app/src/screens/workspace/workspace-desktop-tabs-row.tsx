@@ -724,12 +724,16 @@ function useMiddleClickClose(onClose: () => void) {
   return ref;
 }
 
-/**
- * Flat tabs: only a hover carries a fill, so the backdrop the running-status ring and the
- * close-button scrim knock out of is the surface the tab actually sits on.
- */
-function resolveChipBackdrop({ isFilled }: { isFilled: boolean }): SurfaceBackdrop {
-  return isFilled ? "surface1" : "surface0";
+/** The chip fill the running-status ring has to knock out of. Mirrors `styles.tab*` exactly. */
+function resolveChipBackdrop({
+  isActiveFocused,
+  isFilled,
+}: {
+  isActiveFocused: boolean;
+  isFilled: boolean;
+}): SurfaceBackdrop {
+  if (isActiveFocused) return "surfaceTabActive";
+  return isFilled ? "surface1" : "surfaceWorkspaceChrome";
 }
 
 function TabHandleContent({
@@ -867,7 +871,10 @@ function TabChip({
   const isActiveFocused = isActive && isFocused;
   const isHovered = hovered || isCloseHovered;
   const isHighlighted = isActiveFocused || isHovered;
-  const chipBackdrop: SurfaceBackdrop = resolveChipBackdrop({ isFilled: isHovered });
+  const chipBackdrop: SurfaceBackdrop = resolveChipBackdrop({
+    isActiveFocused,
+    isFilled: isHovered,
+  });
   const showCloseControl =
     showCloseButton && showTabCloseControl(variant, isHovered, isCompact, isClosingTab);
   const closeButtonDragBlockers = isWeb
@@ -886,6 +893,8 @@ function TabChip({
       styles.tab,
       variant === "browser" && styles.browserTab,
       !isActive && isHovered && styles.tabHovered,
+      isActiveFocused && styles.tabActive,
+      isActive && !isFocused && styles.tabActiveUnfocused,
       isWeb && isDragging && ({ cursor: "grabbing" } as object),
       {
         minWidth: resolvedTabWidth,
@@ -893,7 +902,7 @@ function TabChip({
         maxWidth: resolvedTabWidth,
       },
     ],
-    [variant, isActive, isDragging, isHovered, resolvedTabWidth],
+    [variant, isActive, isActiveFocused, isFocused, isDragging, isHovered, resolvedTabWidth],
   );
 
   const handleTabPointerEnter = useCallback(() => {
@@ -1915,9 +1924,9 @@ const styles = StyleSheet.create((theme) => ({
   tabsContainer: {
     minWidth: 0,
     height: WORKSPACE_SECONDARY_HEADER_HEIGHT,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.workspace.border,
-    backgroundColor: theme.colors.workspace.chrome,
+    borderBottomWidth: theme.workspaceFrame.dividerWidth,
+    borderBottomColor: theme.colors.border,
+    backgroundColor: theme.colors.surfaceWorkspaceChrome,
     flexDirection: "row",
     alignItems: "center",
     overflow: "visible",
@@ -1975,6 +1984,12 @@ const styles = StyleSheet.create((theme) => ({
     paddingRight: TAB_CHIP_HORIZONTAL_PADDING + 24,
   },
   tabHovered: {
+    backgroundColor: theme.colors.surface1,
+  },
+  tabActive: {
+    backgroundColor: theme.colors.surfaceTabActive,
+  },
+  tabActiveUnfocused: {
     backgroundColor: theme.colors.surface1,
   },
   tabActiveUnderline: {

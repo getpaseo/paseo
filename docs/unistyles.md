@@ -33,6 +33,11 @@ const styles = StyleSheet.create((theme) => ({
 
 If you are reading a theme value just to feed it back into a `style` prop, you almost certainly want this and not the hook.
 
+On web, string theme values become CSS variables inside the factory, including
+`theme.colorScheme`. Do not compare it with `"light"` or `"dark"` there: both comparisons
+are false. Put theme-specific colors, radii, and elevation in semantic tokens and read them
+directly. Use the concrete theme only outside the style factory when you need its discriminant.
+
 ### 2. Hard-coded constants for genuinely static values
 
 If you only need a number that happens to live on the theme (e.g. a fixed spacing value used to compute a gap or animation distance), use a literal constant or import a static module. Static reads do not need a subscription. See the "Static Theme Imports" section below — importing `baseColors`, theme-name constants, or `type Theme` is fine when the value is intentionally static.

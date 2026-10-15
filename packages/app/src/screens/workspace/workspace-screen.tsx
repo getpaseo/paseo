@@ -4226,6 +4226,7 @@ function WorkspaceScreenContent({
     () =>
       showScreenHeader ? (
         <ScreenHeader
+          variant="workspace"
           style={styles.workspaceHeader}
           onRowLayout={handleHeaderLayout}
           left={

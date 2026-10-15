@@ -70,15 +70,21 @@ describe("Pure black theme", () => {
 
 describe("Sidebar interaction surfaces", () => {
   it("keeps Light selection distinct from the sidebar surface", () => {
-    expect(lightTheme.colors.surfaceSidebar).toBe("#f0efef");
+    expect(lightTheme.colors.surfaceSidebar).toBe("#eff0f3");
     expect(lightTheme.colors.surfaceSidebarHover).toBe(lightTheme.colors.surface1);
-    expect(lightTheme.colors.surfaceSidebarSelected).toBe("#e4e3e3");
+    expect(lightTheme.colors.surfaceSidebarSelected).toBe("#e2e4e9");
     expect(lightTheme.colors.surfaceSidebarSelected).not.toBe(lightTheme.colors.surfaceSidebar);
+    expect(lightTheme.colors.surfaceWorkspaceChrome).toBe(lightTheme.colors.surfaceSidebar);
+    expect(lightTheme.workspaceFrame).toMatchObject({ inset: 12, radius: 20, dividerWidth: 0 });
+    expect(lightTheme.borderRadius["2xl"]).toBe(22);
+    expect(lightTheme.shadow.composer.shadowOpacity).toBe(1);
   });
 
   it("derives Dark hover and selection from the first two raised surfaces", () => {
     expect(darkTheme.colors.surfaceSidebarHover).toBe(darkTheme.colors.surface1);
     expect(darkTheme.colors.surfaceSidebarSelected).toBe(darkTheme.colors.surface2);
+    expect(darkTheme.workspaceFrame).toMatchObject({ inset: 0, radius: 0, dividerWidth: 1 });
+    expect(darkTheme.shadow.composer.shadowOpacity).toBe(0);
   });
 });
 
@@ -87,8 +93,8 @@ describe("Built-in light theme", () => {
     expect(lightTheme.colors).toMatchObject({
       primary: "#18181b",
       primaryForeground: "#fafafa",
-      destructiveForeground: "#ffffff",
-      successForeground: "#ffffff",
+      destructiveForeground: "#fcfcfd",
+      successForeground: "#fcfcfd",
       terminal: {
         black: "#1a1a1e",
         brightBlack: "#3f3f46",
