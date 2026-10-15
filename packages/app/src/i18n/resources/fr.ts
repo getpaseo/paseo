@@ -636,7 +636,7 @@ export const fr: TranslationResources = {
       },
       switcher: {
         trigger: "Changer d’onglet ({{count}} ouverts)",
-        title: "Changer d’onglet",
+        title: "Onglets de l’espace de travail",
         searchPlaceholder: "Rechercher des onglets",
       },
       menu: {

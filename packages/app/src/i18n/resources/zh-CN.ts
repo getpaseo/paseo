@@ -631,7 +631,7 @@ export const zhCN: TranslationResources = {
       },
       switcher: {
         trigger: "切换标签（已打开 {{count}} 个）",
-        title: "切换标签",
+        title: "Workspace 标签",
         searchPlaceholder: "搜索标签",
       },
       menu: {

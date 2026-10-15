@@ -637,7 +637,7 @@ export const ja: TranslationResources = {
       },
       switcher: {
         trigger: "タブを切り替え（{{count}}件開いています）",
-        title: "タブを切り替え",
+        title: "ワークスペースのタブ",
         searchPlaceholder: "タブを検索",
       },
       menu: {

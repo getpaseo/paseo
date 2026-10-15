@@ -56,6 +56,12 @@ export async function expectComposerNotFocused(page: Page): Promise<void> {
   await expect(composerInput(page)).not.toBeFocused();
 }
 
+/** Blur the editor without anything else taking focus. */
+export async function blurComposerInput(page: Page): Promise<void> {
+  await composerInput(page).blur();
+  await expectComposerNotFocused(page);
+}
+
 export async function submitMessage(page: Page, text: string): Promise<void> {
   const input = composerInput(page);
   await expect(input).toBeEditable({ timeout: 30_000 });
@@ -355,6 +361,12 @@ export async function resizeComposerViewport(
     short: { width: 390, height: 390 },
   };
   await page.setViewportSize(sizes[orientation]);
+  // Before the app has loaded there is no layout to wait for.
+  if (page.url() === "about:blank") return;
+  // Crossing the compact breakpoint remounts the shell and the editor. Anything that
+  // follows (a shortcut, a locator) belongs to the layout the new size implies, so
+  // wait for that layout before returning.
+  await expect(page.getByTestId("compact-shell")).toHaveCount(orientation === "landscape" ? 0 : 1);
 }
 export async function selectComposerDraftRange(
   page: Page,
@@ -390,6 +402,33 @@ export async function expectComposerFullscreenControls(page: Page): Promise<void
   await expect(page.getByTestId("composer-fullscreen").getByRole("button")).toHaveCount(2);
   await expect(composerInput(page)).toHaveCount(1);
 }
+/** The fullscreen frame and its submit button sit inside the browser's visible viewport. */
+export async function expectComposerFullscreenFitsVisibleViewport(
+  page: Page,
+  submitLabel = "Send message",
+): Promise<void> {
+  await expect
+    .poll(() =>
+      page.getByTestId("composer-fullscreen").evaluate((element, label) => {
+        const viewport = window.visualViewport!;
+        const frame = element.getBoundingClientRect();
+        const send = element.querySelector(`[aria-label="${label}"]`)!.getBoundingClientRect();
+        return {
+          frameFits:
+            Math.abs(frame.top - viewport.offsetTop) < 1 &&
+            Math.abs(frame.left - viewport.offsetLeft) < 1 &&
+            Math.abs(frame.height - viewport.height) < 1 &&
+            Math.abs(frame.width - viewport.width) < 1,
+          sendFits:
+            send.top >= viewport.offsetTop &&
+            send.bottom <= viewport.offsetTop + viewport.height &&
+            send.left >= viewport.offsetLeft &&
+            send.right <= viewport.offsetLeft + viewport.width,
+        };
+      }, submitLabel),
+    )
+    .toEqual({ frameFits: true, sendFits: true });
+}
 export async function sendComposerWithButton(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Send message", exact: true }).click();
 }
@@ -405,6 +444,22 @@ export async function configureComposerQueueSend(page: Page): Promise<void> {
 /** Drive the real tab chooser's commands even when fullscreen covers its pointer surface.
  * This exercises retained activity changes, not a claim that covered chrome is clickable.
  */
+/** Needs a desktop-width viewport: compact layouts have no keyboard shortcuts. */
+export async function switchComposerTabWithKeyboard(
+  page: Page,
+  direction: "previous" | "next",
+): Promise<void> {
+  await page.keyboard.press(
+    direction === "previous" ? "Alt+Shift+BracketLeft" : "Alt+Shift+BracketRight",
+  );
+}
+export async function expectWorkspaceHeaderHidden(page: Page): Promise<void> {
+  await expect(page.getByTestId("workspace-tab-switcher-trigger")).toHaveCount(0);
+}
+export async function expectWorkspaceHeaderVisible(page: Page): Promise<void> {
+  await expect(page.getByTestId("workspace-tab-switcher-trigger")).toBeVisible();
+}
+
 export async function activateRetainedComposerTab(page: Page, title: string): Promise<void> {
   await page
     .getByTestId("workspace-tab-switcher-trigger")

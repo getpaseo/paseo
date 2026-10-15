@@ -12,6 +12,7 @@ import {
   type ArchiveFinishedStatus,
   useArchiveSubagent,
   useDetachSubagent,
+  useSubagentOpensInSheet,
   type SubagentRow,
 } from "@/subagents";
 import { SubagentsTrack } from "@/subagents/track";
@@ -90,6 +91,7 @@ export const AgentTracks = memo(function AgentTracks({
     },
     [openSubagentTarget],
   );
+  const opensInSheet = useSubagentOpensInSheet(workspaceKey);
   const handleOpenChanges = useCallback(() => {
     if (!workspaceKey) {
       return;
@@ -122,6 +124,7 @@ export const AgentTracks = memo(function AgentTracks({
         rows={subagentRows}
         onOpenSubagent={handleOpenSubagent}
         onOpenProviderSubagent={handleOpenProviderSubagent}
+        opensInSheet={opensInSheet}
         onArchiveSubagent={archiveSubagent}
         onArchiveFinished={onArchiveFinished}
         archiveFinishedStatus={archiveFinishedStatus}
