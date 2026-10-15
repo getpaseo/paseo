@@ -98,6 +98,10 @@ test("applies Light surface tokens on desktop and compact layouts", async ({ pag
     await expect(bubble).toHaveCSS("border-top-right-radius", "22px");
     await expect(inputSurface).toHaveCSS("background-color", "rgb(252, 252, 253)");
     await expect(inputSurface).not.toHaveCSS("box-shadow", "none");
+    await expect(page.getByTestId("left-sidebar-resize-handle").locator("..")).toHaveCSS(
+      "border-right-width",
+      "0px",
+    );
     const surface = page.getByTestId("workspace-surface-main");
     await expect(surface).toHaveCSS("border-radius", "20px");
     await expect(surface).toHaveCSS("margin-bottom", "12px");

@@ -902,7 +902,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surfaceSidebar,
   },
   desktopSidebarBorder: {
-    borderRightWidth: 1,
+    borderRightWidth: theme.workspaceFrame.dividerWidth,
     borderRightColor: theme.colors.border,
     backgroundColor: theme.colors.surfaceSidebar,
   },
