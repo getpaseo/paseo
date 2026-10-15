@@ -37,58 +37,22 @@ describe("sidebar view store", () => {
     useSidebarViewStore.setState({
       groupMode: "project",
       hostFilters: [],
-      projectFilters: [],
       hiddenProjectKeys: [],
       labelFilter: { labels: [] },
     });
   });
 
-  it("persists hidden projects without losing other sidebar preferences", () => {
-    expect(
-      migrateSidebarViewState({
-        groupMode: "status",
-        hostFilters: ["host-a"],
-        hiddenProjectKeys: ["project-a"],
-      }),
-    ).toMatchObject({
-      groupMode: "status",
-      hostFilters: ["host-a"],
-      hiddenProjectKeys: ["project-a"],
-    });
-  });
-
-  it("hides a project durably and restores it into the current selection", async () => {
-    const store = useSidebarViewStore.getState();
-    store.toggleProjectFilter("project-b");
-    store.hideProject("project-a");
-    store.hideProject("project-a");
-    const persisted = await persistedStorage.getItem("sidebar-view");
-    expect(persisted).not.toBeNull();
-    store.clearProjectFilters();
-    await persistedStorage.setItem("sidebar-view", persisted!);
-    await useSidebarViewStore.persist.rehydrate();
-    expect(useSidebarViewStore.getState().hiddenProjectKeys).toEqual(["project-a"]);
-    expect(useSidebarViewStore.getState().projectFilters).toEqual(["project-b"]);
-    store.includeProjectFilter("project-a");
-    expect(useSidebarViewStore.getState().hiddenProjectKeys).toEqual([]);
-    expect(useSidebarViewStore.getState().projectFilters).toEqual(["project-b", "project-a"]);
-    store.hideProject("project-a");
-    store.clearProjectFilters();
-    expect(useSidebarViewStore.getState().hiddenProjectKeys).toEqual([]);
-  });
-
-  it("includes an added project while preserving the current selection and other filters", () => {
+  it("reveals an added project without changing other hidden projects or filters", () => {
     useSidebarViewStore.setState({
-      projectFilters: ["project-a"],
+      hiddenProjectKeys: ["project-a", "project-c"],
       hostFilters: ["host-a"],
       labelFilter: { labels: ["work"] },
     });
-
-    useSidebarViewStore.getState().includeProjectFilter("project-c");
-    useSidebarViewStore.getState().includeProjectFilter("project-c");
-
+    useSidebarViewStore.getState().showProject("project-c");
+    useSidebarViewStore.getState().showProject("project-c");
+    useSidebarViewStore.getState().showProject("new-project");
     expect(useSidebarViewStore.getState()).toMatchObject({
-      projectFilters: ["project-a", "project-c"],
+      hiddenProjectKeys: ["project-a"],
       hostFilters: ["host-a"],
       labelFilter: { labels: ["work"] },
     });
@@ -108,12 +72,6 @@ describe("sidebar view store", () => {
     store.clearHostFilters();
 
     expect(useSidebarViewStore.getState().hostFilters).toEqual([]);
-  });
-
-  it("keeps all projects selected when including an added project without a filter", () => {
-    useSidebarViewStore.getState().includeProjectFilter("project-c");
-
-    expect(useSidebarViewStore.getState().projectFilters).toEqual([]);
   });
 
   it("keeps host filters that still point at available hosts", () => {
@@ -147,7 +105,6 @@ describe("sidebar view store", () => {
     ).toEqual({
       groupMode: "status",
       hostFilters: [],
-      projectFilters: [],
       hiddenProjectKeys: [],
       labelFilter: { labels: [] },
     });
@@ -162,7 +119,6 @@ describe("sidebar view store", () => {
     ).toEqual({
       groupMode: "status",
       hostFilters: ["host-a"],
-      projectFilters: [],
       hiddenProjectKeys: [],
       labelFilter: { labels: [] },
     });
@@ -177,7 +133,6 @@ describe("sidebar view store", () => {
     ).toEqual({
       groupMode: "status",
       hostFilters: ["host-a", "host-b"],
-      projectFilters: [],
       hiddenProjectKeys: [],
       labelFilter: { labels: [] },
     });
@@ -242,36 +197,35 @@ describe("sidebar view store", () => {
     ).toEqual({ labels: ["urgent", "blocked"] });
   });
 
-  it("toggles multiple projects into and out of the filter", () => {
+  it("hides and reveals projects independently", () => {
     const store = useSidebarViewStore.getState();
-    store.toggleProjectFilter("project-a");
-    store.toggleProjectFilter("project-b");
+    store.toggleProjectVisibility("project-a");
+    store.toggleProjectVisibility("project-b");
 
-    expect(useSidebarViewStore.getState().projectFilters).toEqual(["project-a", "project-b"]);
+    expect(useSidebarViewStore.getState().hiddenProjectKeys).toEqual(["project-a", "project-b"]);
 
-    store.toggleProjectFilter("project-a");
+    store.toggleProjectVisibility("project-a");
 
-    expect(useSidebarViewStore.getState().projectFilters).toEqual(["project-b"]);
+    expect(useSidebarViewStore.getState().hiddenProjectKeys).toEqual(["project-b"]);
 
-    store.clearProjectFilters();
+    store.showAllProjects();
 
-    expect(useSidebarViewStore.getState().projectFilters).toEqual([]);
+    expect(useSidebarViewStore.getState().hiddenProjectKeys).toEqual([]);
   });
 
   it("keeps the other facets when the project filter is cleared", () => {
     useSidebarViewStore.setState({
       groupMode: "status",
       hostFilters: ["host-a"],
-      projectFilters: ["project-a"],
+      hiddenProjectKeys: ["project-a"],
       labelFilter: { labels: ["urgent"] },
     });
 
-    useSidebarViewStore.getState().clearProjectFilters();
+    useSidebarViewStore.getState().showAllProjects();
 
     expect(useSidebarViewStore.getState()).toMatchObject({
       groupMode: "status",
       hostFilters: ["host-a"],
-      projectFilters: [],
       hiddenProjectKeys: [],
       labelFilter: { labels: ["urgent"] },
     });
@@ -279,27 +233,89 @@ describe("sidebar view store", () => {
 
   // The persisted schema is a `z.strictObject` behind `createValidatedPersistStorage`, so a key
   // the schema does not list fails the parse and takes every other sidebar setting down with it.
-  it("carries a persisted project filter through the version migration", () => {
+  it("preserves hidden projects through version migration", () => {
     expect(
       migrateSidebarViewState({
         groupMode: "project",
         hostFilters: ["host-a"],
-        projectFilters: ["project-a", "project-b"],
+        hiddenProjectKeys: ["project-a", "project-b"],
       }),
     ).toEqual({
       groupMode: "project",
       hostFilters: ["host-a"],
-      projectFilters: ["project-a", "project-b"],
-      hiddenProjectKeys: [],
+      hiddenProjectKeys: ["project-a", "project-b"],
       labelFilter: { labels: [] },
     });
   });
 
+  it("resets the legacy inclusive filter while preserving other preferences", () => {
+    expect(
+      migrateSidebarViewState({
+        groupMode: "status",
+        hostFilters: ["host-a"],
+        projectFilters: ["project-a"],
+        labelFilter: { labels: ["urgent"] },
+      }),
+    ).toEqual({
+      groupMode: "status",
+      hostFilters: ["host-a"],
+      hiddenProjectKeys: [],
+      labelFilter: { labels: ["urgent"] },
+    });
+  });
+
+  it.each([6, 7])(
+    "hydrates a v%i selection with all projects visible and other preferences intact",
+    async (version) => {
+      await persistedStorage.setItem(
+        "sidebar-view",
+        JSON.stringify({
+          version,
+          state: {
+            groupMode: "status",
+            hostFilters: ["host-a"],
+            projectFilters: ["project-a"],
+            labelFilter: { labels: ["urgent"] },
+          },
+        }),
+      );
+      await useSidebarViewStore.persist.rehydrate();
+      expect(useSidebarViewStore.getState()).toMatchObject({
+        groupMode: "status",
+        hostFilters: ["host-a"],
+        hiddenProjectKeys: [],
+        labelFilter: { labels: ["urgent"] },
+      });
+      const persisted = await persistedStorage.getItem("sidebar-view");
+      if (persisted === null) throw new Error("Sidebar preferences were not persisted");
+      expect(JSON.parse(persisted)).toEqual({
+        version: 8,
+        state: {
+          groupMode: "status",
+          hostFilters: ["host-a"],
+          hiddenProjectKeys: [],
+          labelFilter: { labels: ["urgent"] },
+        },
+      });
+    },
+  );
+
+  it("persists hidden projects across hydration and host disconnection", async () => {
+    useSidebarViewStore.getState().toggleProjectVisibility("project-a");
+    useSidebarViewStore.getState().reconcileHostFilters([]);
+    const persisted = await persistedStorage.getItem("sidebar-view");
+    if (persisted === null) throw new Error("Sidebar preferences were not persisted");
+    expect(JSON.parse(persisted).state.hiddenProjectKeys).toEqual(["project-a"]);
+    useSidebarViewStore.setState({ hiddenProjectKeys: [] });
+    await persistedStorage.setItem("sidebar-view", persisted);
+    await useSidebarViewStore.persist.rehydrate();
+    expect(useSidebarViewStore.getState().hiddenProjectKeys).toEqual(["project-a"]);
+  });
+
   it("never keeps project filters from state the schema rejects", () => {
-    expect(migrateSidebarViewState({ projectFilters: "project-a" })).toEqual({
+    expect(migrateSidebarViewState({ hiddenProjectKeys: "project-a" })).toEqual({
       groupMode: "project",
       hostFilters: [],
-      projectFilters: [],
       hiddenProjectKeys: [],
       labelFilter: { labels: [] },
     });

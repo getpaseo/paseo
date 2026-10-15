@@ -120,11 +120,10 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
   const isCompactLayout = useIsCompactFormFactor();
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
 
-  const hasHiddenProjects = useSidebarViewStore((state) => state.hiddenProjectKeys.length > 0);
   const {
     projects,
     hasProjectsBeforeFilter,
-    resolvedProjectFilters,
+    resolvedHiddenProjectKeys,
     workspaceEntriesByKey,
     isInitialLoad,
     isRevalidating,
@@ -218,7 +217,7 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
     pinnedGroups,
     projects,
     hasProjectsBeforeFilter,
-    hasActiveProjectFilter: resolvedProjectFilters.length > 0 || hasHiddenProjects,
+    hasActiveProjectFilter: resolvedHiddenProjectKeys.length > 0,
     workspaceEntriesByKey,
     isInitialLoad,
     isRevalidating,

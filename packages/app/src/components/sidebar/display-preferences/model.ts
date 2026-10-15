@@ -31,11 +31,9 @@ export interface SidebarDisplayPreferences {
   toggleHostFilter: (serverId: string) => void;
   clearHostFilters: () => void;
   /** Raw stored selection. For anything the user sees, use the model's resolved list instead. */
-  projectFilters: readonly string[];
   hiddenProjectKeys: readonly string[];
-  showProject: (viewKey: string) => void;
-  toggleProjectFilter: (viewKey: string) => void;
-  clearProjectFilters: () => void;
+  toggleProjectVisibility: (viewKey: string) => void;
+  showAllProjects: () => void;
   labelFilter: SidebarLabelFilter;
   toggleLabelFilter: (name: string) => void;
   clearLabelFilter: () => void;
@@ -56,10 +54,8 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
   const toggleHostFilter = useSidebarViewStore((state) => state.toggleHostFilter);
   const clearHostFilters = useSidebarViewStore((state) => state.clearHostFilters);
   const hiddenProjectKeys = useSidebarViewStore((state) => state.hiddenProjectKeys);
-  const showProject = useSidebarViewStore((state) => state.includeProjectFilter);
-  const projectFilters = useSidebarViewStore((state) => state.projectFilters);
-  const toggleProjectFilter = useSidebarViewStore((state) => state.toggleProjectFilter);
-  const clearProjectFilters = useSidebarViewStore((state) => state.clearProjectFilters);
+  const toggleProjectVisibility = useSidebarViewStore((state) => state.toggleProjectVisibility);
+  const showAllProjects = useSidebarViewStore((state) => state.showAllProjects);
   const labelFilter = useSidebarViewStore((state) => state.labelFilter);
   const toggleLabelFilter = useSidebarViewStore((state) => state.toggleLabelFilter);
   const clearLabelFilter = useSidebarViewStore((state) => state.clearLabelFilter);
@@ -121,11 +117,9 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       hostFilters,
       toggleHostFilter,
       clearHostFilters,
-      projectFilters,
       hiddenProjectKeys,
-      showProject,
-      toggleProjectFilter,
-      clearProjectFilters,
+      toggleProjectVisibility,
+      showAllProjects,
       labelFilter,
       toggleLabelFilter,
       clearLabelFilter,
@@ -144,11 +138,9 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       hostFilters,
       toggleHostFilter,
       clearHostFilters,
-      projectFilters,
       hiddenProjectKeys,
-      showProject,
-      toggleProjectFilter,
-      clearProjectFilters,
+      toggleProjectVisibility,
+      showAllProjects,
       labelFilter,
       toggleLabelFilter,
       clearLabelFilter,
