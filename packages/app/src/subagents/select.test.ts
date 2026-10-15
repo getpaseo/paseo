@@ -1,6 +1,10 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { afterEach, describe, expect, it } from "vitest";
-import { selectProviderSubagentsForParent, selectSubagentsForParent } from "./select";
+import {
+  createSubagentsForParentSelector,
+  selectProviderSubagentsForParent,
+  selectSubagentsForParent,
+} from "./select";
 import { useProviderSubagentStore } from "./provider-store";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 
@@ -433,5 +437,112 @@ describe("selectSubagentsForParent", () => {
         EMPTY_PENDING_ARCHIVE_IDS,
       ),
     );
+  });
+});
+
+describe("createSubagentsForParentSelector", () => {
+  class IterationCountingMap<K, V> extends Map<K, V> {
+    iterations = 0;
+    override values() {
+      this.iterations += 1;
+      return super.values();
+    }
+    override entries() {
+      this.iterations += 1;
+      return super.entries();
+    }
+    override [Symbol.iterator]() {
+      this.iterations += 1;
+      return super[Symbol.iterator]();
+    }
+  }
+
+  const params = { serverId: SERVER_ID, parentAgentId: "parent" };
+
+  function streamTick(text: string): void {
+    useSessionStore.getState().setAgentStreamState(SERVER_ID, "parent", {
+      head: [
+        {
+          kind: "assistant_message",
+          id: "message-1",
+          text,
+          timestamp: new Date("2026-03-08T10:05:00.000Z"),
+        },
+      ],
+    });
+  }
+
+  it("returns the cached rows without walking agents when a stream tick leaves them unchanged", () => {
+    const agents = new IterationCountingMap<string, Agent>(
+      [
+        makeAgent({ id: "parent" }),
+        makeAgent({ id: "child", parentAgentId: "parent" }),
+        makeAgent({ id: "unrelated" }),
+      ].map((agent) => [agent.id, agent]),
+    );
+    useSessionStore.getState().initializeSession(SERVER_ID, null as unknown as DaemonClient);
+    useSessionStore.getState().setAgents(SERVER_ID, agents);
+    const select = createSubagentsForParentSelector(params, EMPTY_PENDING_ARCHIVE_IDS);
+    const before = select(useSessionStore.getState());
+    const iterationsAfterFirstSelect = agents.iterations;
+
+    for (let tick = 0; tick < 100; tick += 1) {
+      streamTick(`token ${tick}`);
+      expect(select(useSessionStore.getState())).toBe(before);
+    }
+
+    expect(useSessionStore.getState().sessions[SERVER_ID]?.agents).toBe(agents);
+    expect(agents.iterations).toBe(iterationsAfterFirstSelect);
+    expect(before.map((row) => row.id)).toEqual(["child"]);
+  });
+
+  it("recomputes when the agents map changes", () => {
+    setAgents([makeAgent({ id: "parent" }), makeAgent({ id: "child-a", parentAgentId: "parent" })]);
+    const select = createSubagentsForParentSelector(params, EMPTY_PENDING_ARCHIVE_IDS);
+    const before = select(useSessionStore.getState());
+
+    useSessionStore.getState().setAgents(SERVER_ID, (current) => {
+      const child = makeAgent({
+        id: "child-b",
+        parentAgentId: "parent",
+        createdAt: new Date("2026-03-08T10:01:00.000Z"),
+      });
+      return new Map(current).set(child.id, child);
+    });
+    const after = select(useSessionStore.getState());
+
+    expect(after).not.toBe(before);
+    expect(after.map((row) => row.id)).toEqual(["child-a", "child-b"]);
+  });
+
+  it("keeps the previous rows when a changed agents map yields the same rows", () => {
+    setAgents([
+      makeAgent({ id: "parent" }),
+      makeAgent({ id: "child", parentAgentId: "parent" }),
+      makeAgent({ id: "unrelated" }),
+    ]);
+    const select = createSubagentsForParentSelector(params, EMPTY_PENDING_ARCHIVE_IDS);
+    const before = select(useSessionStore.getState());
+
+    useSessionStore.getState().setAgents(SERVER_ID, (current) => {
+      return new Map(current).set("unrelated", makeAgent({ id: "unrelated", status: "running" }));
+    });
+
+    expect(select(useSessionStore.getState())).toBe(before);
+  });
+
+  it("applies the pending archive ids it was created with", () => {
+    setAgents([
+      makeAgent({ id: "parent" }),
+      makeAgent({ id: "child-a", parentAgentId: "parent" }),
+      makeAgent({ id: "child-b", parentAgentId: "parent" }),
+    ]);
+
+    const rows = createSubagentsForParentSelector(
+      params,
+      new Set(["child-b"]),
+    )(useSessionStore.getState());
+
+    expect(rows.map((row) => row.id)).toEqual(["child-a"]);
   });
 });
