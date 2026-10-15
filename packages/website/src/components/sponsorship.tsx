@@ -163,7 +163,7 @@ export function SponsorSpotSection() {
       <SectionHeading
         as="h2"
         title="Sponsor as a company"
-        description="If your team relies on Paseo, you can support it financially with a monthly sponsorship and get visibility for your company as a thank you."
+        description="Support Paseo financially and get visibility for your company"
       />
       <div className="space-y-8">
         <div className="flex items-end gap-2">
