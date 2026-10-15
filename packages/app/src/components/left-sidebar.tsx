@@ -113,7 +113,7 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
   const {
     projects,
     hasProjectsBeforeFilter,
-    resolvedProjectFilters,
+    resolvedHiddenProjectKeys,
     workspaceEntriesByKey,
     isInitialLoad,
     isRevalidating,
@@ -207,7 +207,7 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
     pinnedGroups,
     projects,
     hasProjectsBeforeFilter,
-    hasActiveProjectFilter: resolvedProjectFilters.length > 0,
+    hasActiveProjectFilter: resolvedHiddenProjectKeys.length > 0,
     workspaceEntriesByKey,
     isInitialLoad,
     isRevalidating,

@@ -1179,6 +1179,7 @@ export const es: TranslationResources = {
         openFolder: "Open in file manager",
         openFolderFailed: "Couldn't open folder",
         remove: "Eliminar proyecto",
+        hide: "Ocultar este proyecto",
         removing: "Eliminando...",
       },
       confirmations: {

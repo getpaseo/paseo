@@ -1154,6 +1154,7 @@ export const en = {
         openFolder: "Open in file manager",
         openFolderFailed: "Couldn't open folder",
         remove: "Remove project",
+        hide: "Hide this project",
         removing: "Removing...",
       },
       confirmations: {

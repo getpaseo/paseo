@@ -1157,6 +1157,7 @@ export const ja: TranslationResources = {
         openFolder: "Open in file manager",
         openFolderFailed: "Couldn't open folder",
         remove: "プロジェクトを削除",
+        hide: "このプロジェクトを非表示",
         removing: "削除中...",
       },
       confirmations: {

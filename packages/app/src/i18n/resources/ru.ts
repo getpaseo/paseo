@@ -1161,6 +1161,7 @@ export const ru: TranslationResources = {
         openFolder: "Открыть в файловом менеджере",
         openFolderFailed: "Не удалось открыть папку",
         remove: "Удалить проект",
+        hide: "Скрыть этот проект",
         removing: "Удаление...",
       },
       confirmations: {

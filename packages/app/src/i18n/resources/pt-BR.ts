@@ -1170,6 +1170,7 @@ export const ptBR: TranslationResources = {
         openFolder: "Open in file manager",
         openFolderFailed: "Couldn't open folder",
         remove: "Remover projeto",
+        hide: "Ocultar este projeto",
         removing: "Removendo...",
       },
       confirmations: {

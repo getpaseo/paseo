@@ -1136,6 +1136,7 @@ export const zhCN: TranslationResources = {
         openFolder: "Open in file manager",
         openFolderFailed: "Couldn't open folder",
         remove: "移除 project",
+        hide: "隐藏此项目",
         removing: "正在移除...",
       },
       confirmations: {

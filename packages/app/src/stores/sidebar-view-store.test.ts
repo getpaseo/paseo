@@ -1,3 +1,4 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { StateStorage } from "zustand/middleware";
 import {
@@ -42,7 +43,7 @@ describe("sidebar view store", () => {
     useSidebarViewStore.setState({
       groupMode: "project",
       hostFilters: [],
-      projectFilters: [],
+      hiddenProjectKeys: [],
       labelFilter: { labels: [] },
     });
   });
@@ -94,7 +95,7 @@ describe("sidebar view store", () => {
     ).toEqual({
       groupMode: "status",
       hostFilters: [],
-      projectFilters: [],
+      hiddenProjectKeys: [],
       labelFilter: { labels: [] },
     });
   });
@@ -108,7 +109,7 @@ describe("sidebar view store", () => {
     ).toEqual({
       groupMode: "status",
       hostFilters: ["host-a"],
-      projectFilters: [],
+      hiddenProjectKeys: [],
       labelFilter: { labels: [] },
     });
   });
@@ -122,7 +123,7 @@ describe("sidebar view store", () => {
     ).toEqual({
       groupMode: "status",
       hostFilters: ["host-a", "host-b"],
-      projectFilters: [],
+      hiddenProjectKeys: [],
       labelFilter: { labels: [] },
     });
   });
@@ -186,62 +187,112 @@ describe("sidebar view store", () => {
     ).toEqual({ labels: ["urgent", "blocked"] });
   });
 
-  it("toggles multiple projects into and out of the filter", () => {
+  it("hides and reveals projects independently", () => {
     const store = useSidebarViewStore.getState();
-    store.toggleProjectFilter("project-a");
-    store.toggleProjectFilter("project-b");
+    store.toggleProjectVisibility("project-a");
+    store.toggleProjectVisibility("project-b");
 
-    expect(useSidebarViewStore.getState().projectFilters).toEqual(["project-a", "project-b"]);
+    expect(useSidebarViewStore.getState().hiddenProjectKeys).toEqual(["project-a", "project-b"]);
 
-    store.toggleProjectFilter("project-a");
+    store.toggleProjectVisibility("project-a");
 
-    expect(useSidebarViewStore.getState().projectFilters).toEqual(["project-b"]);
+    expect(useSidebarViewStore.getState().hiddenProjectKeys).toEqual(["project-b"]);
 
-    store.clearProjectFilters();
+    store.showAllProjects();
 
-    expect(useSidebarViewStore.getState().projectFilters).toEqual([]);
+    expect(useSidebarViewStore.getState().hiddenProjectKeys).toEqual([]);
   });
 
   it("keeps the other facets when the project filter is cleared", () => {
     useSidebarViewStore.setState({
       groupMode: "status",
       hostFilters: ["host-a"],
-      projectFilters: ["project-a"],
+      hiddenProjectKeys: ["project-a"],
       labelFilter: { labels: ["urgent"] },
     });
 
-    useSidebarViewStore.getState().clearProjectFilters();
+    useSidebarViewStore.getState().showAllProjects();
 
     expect(useSidebarViewStore.getState()).toMatchObject({
       groupMode: "status",
       hostFilters: ["host-a"],
-      projectFilters: [],
+      hiddenProjectKeys: [],
       labelFilter: { labels: ["urgent"] },
     });
   });
 
   // The persisted schema is a `z.strictObject` behind `createValidatedPersistStorage`, so a key
   // the schema does not list fails the parse and takes every other sidebar setting down with it.
-  it("carries a persisted project filter through the version migration", () => {
+  it("preserves hidden projects through version migration", () => {
     expect(
       migrateSidebarViewState({
         groupMode: "project",
         hostFilters: ["host-a"],
-        projectFilters: ["project-a", "project-b"],
+        hiddenProjectKeys: ["project-a", "project-b"],
       }),
     ).toEqual({
       groupMode: "project",
       hostFilters: ["host-a"],
-      projectFilters: ["project-a", "project-b"],
+      hiddenProjectKeys: ["project-a", "project-b"],
       labelFilter: { labels: [] },
     });
   });
 
+  it("resets the legacy inclusive filter while preserving other preferences", () => {
+    expect(
+      migrateSidebarViewState({
+        groupMode: "status",
+        hostFilters: ["host-a"],
+        projectFilters: ["project-a"],
+        labelFilter: { labels: ["urgent"] },
+      }),
+    ).toEqual({
+      groupMode: "status",
+      hostFilters: ["host-a"],
+      hiddenProjectKeys: [],
+      labelFilter: { labels: ["urgent"] },
+    });
+  });
+
+  it("hydrates a v6 selection with all projects visible and other preferences intact", async () => {
+    vi.mocked(AsyncStorage.getItem).mockResolvedValueOnce(
+      JSON.stringify({
+        version: 6,
+        state: {
+          groupMode: "status",
+          hostFilters: ["host-a"],
+          projectFilters: ["project-a"],
+          labelFilter: { labels: ["urgent"] },
+        },
+      }),
+    );
+    await useSidebarViewStore.persist.rehydrate();
+    expect(useSidebarViewStore.getState()).toMatchObject({
+      groupMode: "status",
+      hostFilters: ["host-a"],
+      hiddenProjectKeys: [],
+      labelFilter: { labels: ["urgent"] },
+    });
+  });
+
+  it("persists hidden projects across hydration and host disconnection", async () => {
+    vi.mocked(AsyncStorage.setItem).mockClear();
+    useSidebarViewStore.getState().toggleProjectVisibility("project-a");
+    useSidebarViewStore.getState().reconcileHostFilters([]);
+    const calls = vi.mocked(AsyncStorage.setItem).mock.calls;
+    const persisted = calls[calls.length - 1][1];
+    expect(JSON.parse(persisted).state.hiddenProjectKeys).toEqual(["project-a"]);
+    vi.mocked(AsyncStorage.getItem).mockResolvedValueOnce(persisted);
+    useSidebarViewStore.setState({ hiddenProjectKeys: [] });
+    await useSidebarViewStore.persist.rehydrate();
+    expect(useSidebarViewStore.getState().hiddenProjectKeys).toEqual(["project-a"]);
+  });
+
   it("never keeps project filters from state the schema rejects", () => {
-    expect(migrateSidebarViewState({ projectFilters: "project-a" })).toEqual({
+    expect(migrateSidebarViewState({ hiddenProjectKeys: "project-a" })).toEqual({
       groupMode: "project",
       hostFilters: [],
-      projectFilters: [],
+      hiddenProjectKeys: [],
       labelFilter: { labels: [] },
     });
   });

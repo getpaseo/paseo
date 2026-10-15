@@ -1145,6 +1145,7 @@ export const ar: TranslationResources = {
         openFolder: "Open in file manager",
         openFolderFailed: "Couldn't open folder",
         remove: "إزالة المشروع",
+        hide: "إخفاء هذا المشروع",
         removing: "جارٍ الإزالة...",
       },
       confirmations: {

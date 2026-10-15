@@ -542,6 +542,11 @@ function ProjectMenuItems({
 }) {
   const { t } = useTranslation();
   const toast = useToast();
+  const toggleProjectVisibility = useSidebarViewStore((state) => state.toggleProjectVisibility);
+  const hideProject = useCallback(
+    () => toggleProjectVisibility(projectViewKey),
+    [toggleProjectVisibility, projectViewKey],
+  );
   const handleOpenProjectSettings = useCallback(() => {
     if (!settingsTarget) return;
     router.navigate(buildProjectSettingsRoute(settingsTarget.serverId, settingsTarget.projectId));
@@ -585,6 +590,13 @@ function ProjectMenuItems({
         path={projectPath}
         testID={`sidebar-project-menu-open-folder-${projectViewKey}`}
       />
+      <ProjectMenuItem
+        surface={surface}
+        testID={`sidebar-project-menu-hide-${projectViewKey}`}
+        onSelect={hideProject}
+      >
+        {t("sidebar.project.actions.hide")}
+      </ProjectMenuItem>
       <ProjectMenuItem
         surface={surface}
         testID={`sidebar-project-menu-remove-${projectViewKey}`}
@@ -1952,12 +1964,8 @@ export function SidebarWorkspaceList({
   // A filter that matches nothing swaps the list's body and nothing above it. It used to replace
   // this whole subtree, which unmounted the header — and the header is where the display menu's
   // trigger lives, so filtering the last row away closed the menu you were filtering from.
-  //
-  // Only the label filter can get here. The project filter resolves against the projects it can
-  // see and falls back to "all projects" when nothing matches, so it either keeps at least one
-  // project or is not applied at all — it can narrow this list but never empty it.
-  const sidebarFilterEmpty =
-    hasActiveLabelFilter && hasProjectsBeforeFilter && projects.length === 0;
+  const hasActiveFilter = hasActiveLabelFilter || hasActiveProjectFilter;
+  const sidebarFilterEmpty = hasActiveFilter && hasProjectsBeforeFilter && projects.length === 0;
 
   // Project mode is the one that keeps its project headers; every other grouping mode is a flat
   // list of grouped rows, so a new mode lands in the grouped branch rather than silently in this
@@ -2109,7 +2117,7 @@ function ProjectModeList({
   | "isRefreshing"
   | "onRefresh"
 > & {
-  /** Swaps the list body for the label filter's empty state. Never the header above it. */
+  /** Swaps the list body for the filter's empty state. Never the header above it. */
   sidebarFilterEmpty: boolean;
   projectIconByProjectViewKey: ReadonlyMap<string, string | null>;
   pathname: string;

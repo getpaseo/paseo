@@ -1152,6 +1152,7 @@ export const ko: TranslationResources = {
         openFolder: "파일 관리자에서 열기",
         openFolderFailed: "폴더를 열 수 없습니다.",
         remove: "프로젝트 제거",
+        hide: "이 프로젝트 숨기기",
         removing: "제거하는 중...",
       },
       confirmations: {
