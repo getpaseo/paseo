@@ -3205,7 +3205,7 @@ describe("create_agent MCP tool", () => {
     await rm(baseDir, { recursive: true, force: true });
   });
 
-  it("rejects background from caller agents and defaults notify-on-finish on", async () => {
+  it("accepts background from caller agents and keeps the agent-scoped background semantics", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({
       id: "parent-agent",
@@ -3214,6 +3214,14 @@ describe("create_agent MCP tool", () => {
       workspaceId: "wks_parent",
       provider: "codex",
       currentModeId: "full-access",
+    } as ManagedAgent);
+    spies.agentManager.createAgent.mockResolvedValue({
+      id: "child-agent",
+      cwd: existingCwd,
+      lifecycle: "idle",
+      currentModeId: null,
+      availableModes: [],
+      config: { title: "Child" },
     } as ManagedAgent);
 
     const server = await createAgentMcpServer({
@@ -3225,15 +3233,13 @@ describe("create_agent MCP tool", () => {
     });
 
     const tool = registeredTool(server, "create_agent");
-    await expect(
-      tool.handler({
-        ...subagentCurrentWorkspace(),
-        title: "Child",
-        provider: "codex/gpt-5.4",
-        initialPrompt: "Do work",
-        background: false,
-      }),
-    ).rejects.toThrow(/Unrecognized key/);
+    await tool.handler({
+      ...subagentCurrentWorkspace(),
+      title: "Child",
+      provider: "codex/gpt-5.4",
+      initialPrompt: "Do work",
+      background: false,
+    });
 
     const parsed = await tool.inputSchema.safeParseAsync({
       ...subagentCurrentWorkspace(),

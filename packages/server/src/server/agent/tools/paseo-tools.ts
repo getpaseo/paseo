@@ -847,6 +847,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     })
     .refine(
       (value) => {
+        if (!value.includes("/")) {
+          return true;
+        }
         try {
           resolveRequiredProviderModel(value);
           return true;
@@ -1042,6 +1045,11 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   };
   const agentToAgentInputSchema = {
     ...canonicalCreateAgentFields,
+    background: z
+      .boolean()
+      .optional()
+      .default(true)
+      .describe("Accepted for compatibility. Agent-scoped agents always run in the background."),
     notifyOnFinish: z
       .boolean()
       .optional()
@@ -1063,6 +1071,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   const legacyAgentToAgentInputSchema = {
     ...commonCreateAgentFields,
     ...legacyCreateAgentPlacementFields,
+    background: agentToAgentInputSchema.background,
     notifyOnFinish: agentToAgentInputSchema.notifyOnFinish,
   };
   const legacyTopLevelCreateAgentInputSchema = {
