@@ -139,21 +139,26 @@ See [Git worktrees](/docs/worktrees#scripts-and-services) for `paseo.json` confi
 
 Both use the same cron engine, but they have deliberately different interfaces.
 
-| Tool                | Function                                                                     |
-| ------------------- | ---------------------------------------------------------------------------- |
-| `create_schedule`   | Create a cron schedule that starts a new agent for each run.                 |
-| `list_schedules`    | List new-agent schedules managed by the daemon.                              |
-| `inspect_schedule`  | Inspect a schedule and its run history.                                      |
-| `pause_schedule`    | Pause an active schedule.                                                    |
-| `resume_schedule`   | Resume a paused schedule.                                                    |
-| `update_schedule`   | Change a schedule's cron, prompt, agent settings, limits, or other settings. |
-| `schedule_logs`     | Return recent runs and output for a schedule.                                |
-| `run_schedule_once` | Start one new-agent schedule run without changing its cron.                  |
-| `delete_schedule`   | Delete a new-agent schedule permanently.                                     |
-| `create_heartbeat`  | Send a recurring cron-backed prompt into the current agent.                  |
-| `delete_heartbeat`  | Delete one of the current agent's heartbeats.                                |
+| Tool                | Function                                                                        |
+| ------------------- | ------------------------------------------------------------------------------- |
+| `create_schedule`   | Create a cron schedule that starts a new agent for each run.                    |
+| `list_schedules`    | List new-agent schedules managed by the daemon.                                 |
+| `inspect_schedule`  | Inspect a schedule and its run history.                                         |
+| `pause_schedule`    | Pause an active schedule.                                                       |
+| `resume_schedule`   | Resume a paused schedule.                                                       |
+| `update_schedule`   | Change a schedule's cron, prompt, agent settings, limits, or other settings.    |
+| `schedule_logs`     | Return recent runs and output for a schedule.                                   |
+| `run_schedule_once` | Start one new-agent schedule run without changing its cron.                     |
+| `delete_schedule`   | Delete a new-agent schedule permanently.                                        |
+| `create_heartbeat`  | Send a recurring cron-backed prompt into the current agent.                     |
+| `list_heartbeats`   | List the current agent's heartbeats with next wake and latest execution result. |
+| `inspect_heartbeat` | Inspect one of the current agent's heartbeats and its execution history.        |
+| `heartbeat_logs`    | Read one of the current agent's execution histories, oldest first.              |
+| `delete_heartbeat`  | Delete one of the current agent's heartbeats.                                   |
 
-MCP heartbeats are ephemeral: create or delete them. To change one, delete it and create a replacement. Pause, resume, update, inspect, logs, and run-once apply to new-agent schedules only.
+Heartbeat reads require an agent-scoped session and return only that agent's records. `list_heartbeats` includes `nextRunAt` and `latestRun`; `latestRun` is null before the first attempt. A recorded execution result does not prove that the agent completed its task. Failed attempts remain visible in the history.
+
+Schedule tools accept new-agent schedules only. Passing a heartbeat ID reports a target-type mismatch; an absent ID reports a missing record. Use the heartbeat read tools for heartbeat IDs. To change a heartbeat, delete it and create a replacement. Pause, resume, update, and run-once remain new-agent schedule operations.
 
 ### Agent profiles
 

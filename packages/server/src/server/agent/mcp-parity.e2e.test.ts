@@ -14,6 +14,8 @@ import type { AgentClient, AgentProvider, AgentSessionConfig } from "./agent-sdk
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { parseAgentMessage } from "./agent-messages/index.js";
+import { ScheduleStore } from "../schedule/store.js";
+import { createTestLogger } from "../../test-utils/test-logger.js";
 
 interface StructuredContent {
   [key: string]: unknown;
@@ -902,12 +904,15 @@ describe("Suite C: Schedule Tools", () => {
     }
   });
 
-  test("create_heartbeat targets the scoped agent", async () => {
+  test("heartbeat reads preserve ownership, execution history and schedule separation", async () => {
     let scheduleId: string | null = null;
+    let newAgentScheduleId: string | null = null;
+    let otherAgentId: string | null = null;
+    let otherClient: McpClient | null = null;
     try {
       const created = await callToolStructured(agentScopedClient, "create_heartbeat", {
-        prompt: "say hello",
-        cron: "*/5 * * * *",
+        prompt: "private heartbeat prompt",
+        cron: "0 0 1 1 *",
         name: "Parity heartbeat",
       });
       scheduleId = str(created.id);
@@ -915,8 +920,130 @@ describe("Suite C: Schedule Tools", () => {
         type: "agent",
         agentId: parentAgentId,
       });
+      const inspected = await callToolStructured(agentScopedClient, "inspect_heartbeat", {
+        id: scheduleId,
+      });
+      expect(inspected).toMatchObject({ ...created, runs: [] });
+      expect(inspected.nextRunAt).toEqual(expect.any(String));
+      expect(
+        await callToolStructured(agentScopedClient, "heartbeat_logs", { id: scheduleId }),
+      ).toEqual({ runs: [] });
+      const emptyHistory = await callToolStructured(agentScopedClient, "list_heartbeats");
+      expect(recordArr(emptyHistory.heartbeats)).toEqual([
+        expect.objectContaining({ id: scheduleId, latestRun: null }),
+      ]);
+
+      const runs = [
+        {
+          id: "latest-run",
+          scheduledFor: "2026-01-02T00:00:00.000Z",
+          startedAt: "2026-01-02T00:00:00.000Z",
+          endedAt: "2026-01-02T00:00:01.000Z",
+          status: "failed" as const,
+          agentId: null,
+          output: null,
+          error: "private execution failure",
+        },
+        {
+          id: "first-run",
+          scheduledFor: "2026-01-01T00:00:00.000Z",
+          startedAt: "2026-01-01T00:00:00.000Z",
+          endedAt: "2026-01-01T00:00:01.000Z",
+          status: "succeeded" as const,
+          agentId: parentAgentId,
+          output: "private execution output",
+          error: null,
+        },
+      ];
+      const store = new ScheduleStore(
+        path.join(daemonHandle.paseoHome, "schedules"),
+        createTestLogger(),
+      );
+      await store.update(scheduleId, (schedule) => ({ ...schedule, runs }));
+      const listed = await callToolStructured(agentScopedClient, "list_heartbeats");
+      expect(recordArr(listed.heartbeats)).toEqual([
+        expect.objectContaining({
+          id: scheduleId,
+          nextRunAt: created.nextRunAt,
+          latestRun: runs[0],
+        }),
+      ]);
+      expect(
+        await callToolStructured(agentScopedClient, "heartbeat_logs", { id: scheduleId }),
+      ).toEqual({ runs: [runs[1], runs[0]] });
+
+      otherAgentId = await createTopLevelAgent();
+      otherClient = await createMcpClient(
+        `http://127.0.0.1:${daemonHandle.port}/mcp/agents?callerAgentId=${otherAgentId}`,
+      );
+      expect(await callToolStructured(otherClient, "list_heartbeats")).toEqual({ heartbeats: [] });
+      for (const name of ["inspect_heartbeat", "heartbeat_logs"]) {
+        await expectToolError(otherClient, name, { id: scheduleId }, /does not belong to caller/);
+        const rejected = await otherClient.callTool({ name, args: { id: scheduleId } });
+        expect(JSON.stringify(rejected)).not.toMatch(
+          /private heartbeat prompt|private execution output|private execution failure/,
+        );
+        await expectToolError(
+          agentScopedClient,
+          name,
+          { id: "missing-heartbeat" },
+          /Schedule not found/,
+        );
+        await expectToolError(topLevelClient, name, { id: scheduleId }, /agent-scoped session/);
+      }
+      await expectToolError(topLevelClient, "list_heartbeats", {}, /agent-scoped session/);
+      for (const name of ["inspect_schedule", "schedule_logs"]) {
+        await expectToolError(
+          agentScopedClient,
+          name,
+          { id: scheduleId },
+          /is a heartbeat, not a new-agent schedule/,
+        );
+        await expectToolError(
+          agentScopedClient,
+          name,
+          { id: "missing-schedule" },
+          /Schedule not found/,
+        );
+      }
+      const newAgentSchedule = await callToolStructured(topLevelClient, "create_schedule", {
+        prompt: "scheduled work",
+        cron: "0 0 1 1 *",
+        provider: "claude",
+        cwd: parentAgentCwd,
+      });
+      newAgentScheduleId = str(newAgentSchedule.id);
+      for (const name of ["inspect_heartbeat", "heartbeat_logs"]) {
+        await expectToolError(
+          agentScopedClient,
+          name,
+          { id: newAgentScheduleId },
+          /is a new-agent schedule, not a heartbeat/,
+        );
+      }
+      expect(
+        await callToolStructured(topLevelClient, "inspect_schedule", { id: newAgentScheduleId }),
+      ).toMatchObject({ ...newAgentSchedule, runs: [] });
+      expect(
+        await callToolStructured(topLevelClient, "schedule_logs", { id: newAgentScheduleId }),
+      ).toEqual({ runs: [] });
+      const schedules = await callToolStructured(topLevelClient, "list_schedules");
+      expect(recordArr(schedules.schedules).map((s) => s.id)).toContain(newAgentScheduleId);
+      expect(recordArr(schedules.schedules).map((s) => s.id)).not.toContain(scheduleId);
+      await callToolStructured(agentScopedClient, "delete_heartbeat", { id: scheduleId });
+      await expectToolError(
+        agentScopedClient,
+        "inspect_heartbeat",
+        { id: scheduleId },
+        /Schedule not found/,
+      );
+      scheduleId = null;
     } finally {
-      await deleteScheduleIfPresent(scheduleId);
+      if (scheduleId)
+        await callToolStructured(agentScopedClient, "delete_heartbeat", { id: scheduleId });
+      await deleteScheduleIfPresent(newAgentScheduleId);
+      await otherClient?.close();
+      await archiveAgentIfPresent(otherAgentId);
     }
   });
 

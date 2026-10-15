@@ -51,13 +51,17 @@ export function toScheduleCommandError(code: string, action: string, error: unkn
 }
 
 export async function requireNewAgentSchedule(
-  client: ScheduleDaemonClient,
+  client: Pick<ScheduleDaemonClient, "scheduleInspect">,
   id: string,
-): Promise<void> {
+): Promise<ScheduleRecord> {
   const payload = await client.scheduleInspect({ id });
-  if (payload.error || !payload.schedule || payload.schedule.target.type !== "new-agent") {
+  if (payload.error || !payload.schedule) {
     throw new Error(payload.error ?? `Schedule not found: ${id}`);
   }
+  if (payload.schedule.target.type !== "new-agent") {
+    throw new Error(`Record ${id} is a heartbeat, not a new-agent schedule`);
+  }
+  return payload.schedule;
 }
 
 export function formatCadence(cadence: ScheduleCadence): string {
