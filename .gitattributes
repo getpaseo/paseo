@@ -1,0 +1,2 @@
+# Vitest cannot import hashbang modules with CRLF line endings.
+*.mjs text eol=lf

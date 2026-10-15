@@ -447,6 +447,9 @@ test.describe("macOS", () => {
     page,
     withWorkspace,
   }, testInfo) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "platform", { get: () => "MacIntel" });
+    });
     const workspace = await withWorkspace({ prefix: "pane-find-mac-" });
     await writeFile(path.join(workspace.repoPath, "source.txt"), "needle first\nneedle second\n");
     await workspace.navigateTo();
@@ -455,6 +458,7 @@ test.describe("macOS", () => {
     await source(page).focus();
     await source(page).press("Control+f");
     await expect(query(page)).toHaveCount(0);
+    await source(page).press("ArrowLeft");
 
     await source(page).press("Meta+f");
     await expect(query(page)).toBeFocused();

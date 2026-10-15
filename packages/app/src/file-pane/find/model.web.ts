@@ -1,3 +1,4 @@
+import { getShortcutOs } from "@/utils/shortcut-platform";
 import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView, keymap, type Panel, type ViewUpdate } from "@codemirror/view";
 import {
@@ -28,6 +29,7 @@ export class FileFindModel {
   private widgetResize: ResizeObserver | null = null;
   private snapshot = {
     open: false,
+    focusRevision: 0,
     placement: "top" as FindPlacement,
     query: "",
     replacement: "",
@@ -65,11 +67,24 @@ export class FileFindModel {
       if (!multilineSeed) return null;
       return { effects: setSearchQuery.of(getSearchQuery(transaction.startState)) };
     }),
-    keymap.of(searchKeymap.filter((binding) => binding.key !== "Mod-f")),
+    // Editor keystrokes must be handled before pane-level document listeners.
+    keymap.of([
+      {
+        key: getShortcutOs() === "mac" ? "Meta-f" : "Ctrl-f",
+        run: (view) => {
+          this.open(view);
+          return true;
+        },
+      },
+      ...searchKeymap.filter((binding) => binding.key !== "Mod-f"),
+    ]),
   ];
 
   readonly open = (view = this.view) => {
-    if (view) openSearchPanel(view);
+    if (!view) return;
+    openSearchPanel(view);
+    this.snapshot = { ...this.snapshot, focusRevision: this.snapshot.focusRevision + 1 };
+    this.publish();
   };
   readonly close = () => {
     if (this.view) {

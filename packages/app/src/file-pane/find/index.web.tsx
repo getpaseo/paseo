@@ -2,6 +2,7 @@ import {
   useCallback,
   useMemo,
   useEffect,
+  useLayoutEffect,
   useRef,
   useSyncExternalStore,
   type RefObject,
@@ -29,6 +30,9 @@ export function FileFind({
   const { t } = useTranslation();
   const state = useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot);
   const widget = useRef<PaneFindHandle>(null);
+  useLayoutEffect(() => {
+    if (state.open) widget.current?.focus();
+  }, [state.open, state.focusRevision]);
   const { isInteractive } = usePaneFocus();
   const active = useRetainedPanelActive();
   // RN Web hands the underlying DOM element to a View ref; the model measures it.
@@ -44,7 +48,6 @@ export function FileFind({
       if (isFindShortcut(event, findShortcutPlatform())) {
         event.preventDefault();
         model.open(editor.current);
-        widget.current?.focus();
       }
     }
     document.addEventListener("keydown", onKeyDown);

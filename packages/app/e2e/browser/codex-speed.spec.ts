@@ -28,7 +28,7 @@ test.use({
 
 // Rendered light-theme colors: palette yellow 400 for Fast and Ultrafast, muted foreground for Normal.
 const ACTIVE_SPEED_COLOR = "rgb(251, 191, 36)";
-const NORMAL_SPEED_COLOR = "rgb(113, 113, 122)";
+const NORMAL_SPEED_COLOR = "rgb(104, 109, 120)";
 
 async function openSpeedSelector(page: Page): Promise<void> {
   const speed = page.getByRole("button", { name: /^(Select speed|Speed: .+)$/ });
