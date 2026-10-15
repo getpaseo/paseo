@@ -47,6 +47,7 @@ const AGENT_FIELDS = [
   "modeId",
   "background",
   "notifyOnFinish",
+  "internal",
   "settings",
   "labels",
 ] as const;
@@ -196,6 +197,7 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   newMode: "New mode",
   nextRunAt: "Next run",
   notifyOnFinish: "Notify on finish",
+  internal: "Internal",
   prNumber: "Change request",
   projectId: "Project",
   removedDirectory: "Removed directory",

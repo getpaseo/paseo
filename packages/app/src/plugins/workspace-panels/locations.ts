@@ -50,7 +50,7 @@ export function panelTargetSupportsHost(
   target: WorkspaceTabTarget,
   host: PaneHost,
 ): boolean {
-  if (target.kind !== "plugin") return panelSupportsHost(target.kind, host);
+  if (target.kind !== "plugin" || host === "sheet") return panelSupportsHost(target.kind, host);
   const panel = findPluginPanel(serverId, target);
   // Preserve a persisted unavailable panel where the user left it until its plugin loads again.
   if (!panel) return true;

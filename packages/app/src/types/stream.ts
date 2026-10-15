@@ -1,3 +1,4 @@
+import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import type {
   AgentProvider,
   AgentTimelineItem,
@@ -745,6 +746,7 @@ interface OrchestratorToolCallData {
 }
 
 export interface AgentToolCallData {
+  agentMessage?: AgentMessage;
   provider: AgentProvider;
   callId: string;
   name: string;
@@ -802,6 +804,8 @@ export interface CompactionItem {
 export interface PluginTimelineStreamItem {
   kind: "plugin";
   id: string;
+  /** The id of the stream item a timeline transformer replaced; set only by projection. */
+  sourceId?: string;
   timelineCursor?: TimelinePosition;
   turnId?: string;
   timestamp: Date;
@@ -1446,6 +1450,7 @@ function reduceTimelineToolCall(
       error: item.error,
       detail: item.detail,
       metadata: item.metadata,
+      ...(item.agentMessage ? { agentMessage: item.agentMessage } : {}),
     },
     timestamp,
     timelineCursor,

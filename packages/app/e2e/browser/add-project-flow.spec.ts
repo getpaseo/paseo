@@ -223,6 +223,7 @@ test.describe("Add Project command-center flow", () => {
 
     await page.keyboard.press("Enter");
     await expectAddProjectPage(page, "directory-search");
+    await expect(addProjectFlowInput(page)).toBeFocused();
     await page.keyboard.type(projectPickerFixture.fuzzyQuery);
     await expect(addProjectFlow(page)).toContainText(projectPickerFixture.projectName, {
       timeout: 30_000,

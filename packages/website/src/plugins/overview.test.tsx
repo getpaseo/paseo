@@ -1,7 +1,7 @@
 import registry from "../../e2e/registry.fixture.json";
 import { PluginTile } from "./plugin-tile";
 import { PluginCard } from "./plugin-card";
-import type { Plugin } from "./registry";
+import { authorAvatarUrl, getAuthor, type Plugin } from "./registry";
 import React, { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { parseFragment, type DefaultTreeAdapterMap } from "parse5";
@@ -24,6 +24,15 @@ function render(markdown: string) {
 }
 function attribute(element: Element, name: string) {
   return element.attrs.find((attr) => attr.name === name)?.value;
+}
+function imageSources(html: string) {
+  return elements(html)
+    .filter((node) => node.tagName === "img")
+    .map((node) => attribute(node, "src"));
+}
+/** Cards show the author's GitHub avatar beside the plugin's own images. */
+function avatarUrl(plugin: Plugin) {
+  return authorAvatarUrl(getAuthor(plugin));
 }
 const allowedTags = new Set([
   "div",
@@ -118,7 +127,7 @@ describe("registry images", () => {
       createElement(PluginCard, { plugin }),
     ]) {
       expect(
-        elements(renderToStaticMarkup(component)).filter((node) => node.tagName === "img"),
+        imageSources(renderToStaticMarkup(component)).filter((src) => src !== avatarUrl(plugin)),
       ).toEqual([]);
     }
   });
@@ -131,8 +140,8 @@ it("uses the first HTTPS screenshot when an earlier screenshot is rejected", () 
     icon: undefined,
     media: ["data:image/png;base64,AAAA", source],
   } as Plugin;
-  const nodes = elements(renderToStaticMarkup(createElement(PluginCard, { plugin })));
-  expect(
-    nodes.filter((node) => node.tagName === "img").map((node) => attribute(node, "src")),
-  ).toEqual([source]);
+  expect(imageSources(renderToStaticMarkup(createElement(PluginCard, { plugin })))).toEqual([
+    source,
+    avatarUrl(plugin),
+  ]);
 });

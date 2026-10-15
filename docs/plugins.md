@@ -107,6 +107,12 @@ absent from the installed plugin list and source configuration; their client bun
 appear in the plugin catalog. Editing one in development requires a daemon restart.
 Directory, Git, and npm installs cannot use a built-in ID.
 
+A provider registration with `requiresConfiguration: true` participates only while its ID exists
+under `agents.providers`. Hoplite uses this for catalog opt-in. Add writes `{ "enabled": true }`
+without `extends`, so it selects the bundled adapter. Remove deletes the config entry; setting
+`enabled: false` keeps the entry. The bundled JavaScript still loads at startup, but an absent
+provider does not enter executable resolution or catalog discovery.
+
 Provider plugins use separate installation and provider IDs. `muse-provider` registers the
 selectable `muse` provider (Muse Code) and a usage source. Its `status({ launch })` reports
 availability and a diagnostic after the daemon resolves the executable. Configure command,

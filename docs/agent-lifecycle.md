@@ -69,11 +69,11 @@ the marker. Closing a tab sets that client's label to `false`. Any `true` client
 open. Detach clears the parent and every open-tab label. The surviving child therefore becomes a
 normal root agent immediately, and closing its still-open tab archives it.
 
-Runtime ownership is resolved from explicit workspace ID and caller context, never from `cwd`. Workspace creation is a separate operation with `local | worktree` isolation; agent creation only selects an existing workspace.
+Runtime ownership is resolved from explicit workspace ID and caller context, never from `cwd`. Workspace creation is a separate operation with `local | worktree` isolation; agent creation reuses that workspace unless a new workspace is explicitly requested.
 
 Users can also detach an existing subagent from the subagents track. Detach is deliberately a manual lifecycle gesture, not an agent-facing MCP tool. It removes the parent and open-tab lifecycle labels: it does not stop, archive, move, or restart the agent. The agent keeps its current `cwd` and `workspaceId`, leaves the former parent's track, and behaves like a root agent for tab close, workspace activity, and future parent archive.
 
-`notifyOnFinish` defaults to `true` for agent-scoped creation and background prompt follow-ups because most delegated work needs to report back to the creating agent. Set it to `false` only for truly fire-and-forget agents or prompts.
+`notifyOnFinish` defaults to `true` for agent-scoped creation and prompt follow-ups because most delegated work needs to report back to the creating agent. Set it to `false` only for truly fire-and-forget agents or prompts.
 Permission requests are notification checkpoints, not the end of that subscription. The caller is notified again after a permission response when the child finishes, errors, or requests another permission.
 The permission notification includes the normalized request plus the child and request IDs, so the caller can inspect it and respond without fetching agent status.
 A watched child that closes before its finish event also notifies the caller so delegated work cannot disappear silently during archive or workspace teardown.
@@ -83,6 +83,32 @@ A watched child that closes before its finish event also notifies the caller so 
 Some providers can create their own child sessions inside one provider runtime. OMP's task tool reports these with `child_session` events; `AgentManager` imports the live provider handle, stamps `paseo.parent-agent-id`, and surfaces the result as a normal subagent in the parent's subagents track.
 
 The provider still owns the underlying runtime. Paseo keeps an agent record so the child can be opened, tracked, archived, and cascaded with the parent, but prompts and history hydration route through the provider adapter for that native child handle.
+
+## Background workspaces
+
+`workspace.background` controls discovery only. Background workspaces contain ordinary durable
+agents and terminals: provider history, plugin hooks, parentage, archive, and restart recovery
+keep their normal behavior. Visibility is creation-only; selecting an existing workspace cannot
+change it. New workspaces default to false, inherit the caller workspace's value when an agent
+creates one without an override, and accept explicit true or false.
+
+The daemon derives agent discovery from workspace ownership. Default workspace and agent lists,
+including History requests, exclude background work; `filter.includeBackground` includes it.
+Exact-ID operations bypass discovery filtering. The app replicates both kinds and filters only
+its sidebar with **Show background**, so direct navigation and restored tabs remain available.
+
+Sequenced directories keep complete canonical collections. A filtered read must never replace
+those collections with its subset. Inclusive and default observations have distinct cursor
+scopes, so changing scope requires a fresh snapshot rather than reusing an incomplete cache.
+Clients gate creation and inclusive discovery on `features.backgroundWorkspaces`.
+
+### Private daemon helpers
+
+Branch-name and commit-message generators still use private disposable internal runtimes.
+`AgentManager` does not persist them or their provider sessions, excludes them from public
+discovery and plugin hooks, and drops their timelines on archive. An archived helper retains
+its exact-ID result briefly to cover completion before a waiter attaches. This internal
+lifecycle is separate from public workspace visibility and is not a public creation option.
 
 ## Archive
 
@@ -125,11 +151,12 @@ lifecycle queue. Resume chooses its history or interactive purpose from the dura
 entering that queue. Shutdown must finish before the manager releases runtime ownership; a failed
 close retains the runtime for cleanup and blocks replacement through that close operation.
 
-Authoritative timeline catch-up can use a runtime-only `history` resume purpose. For Codex, that
-purpose initializes a temporary app-server, reads the persisted thread and child histories, and
-releases the process before returning. It never loads, resumes, or unarchives a native thread,
-including legacy records whose native archive failed. The retained history session contains only
-the read results. Interactive resume remains responsible for repairing a provider session archived
+Authoritative timeline catch-up can use a runtime-only `history` resume purpose. The retained
+history session contains only the read results and must release its provider process once replay
+finishes. Codex reads the persisted thread and child histories on a temporary app-server and never
+loads, resumes, or unarchives a native thread, including legacy records whose native archive failed.
+ACP providers spawn the CLI, replay the session through `session/load`, and terminate the process
+before returning. Interactive resume remains responsible for repairing a provider session archived
 outside Paseo while its Paseo agent is active.
 
 Provider session connection owns every process it spawns until the session is registered with
@@ -185,7 +212,7 @@ parentAgentId === thisAgent.id  AND  !archivedAt
 
 - **Provider subagents** are child executions owned by Claude, Codex, or OpenCode. They are not inserted into `AgentManager` as managed agents. Providers emit a separate descriptor and timeline stream through `agent.provider_subagents.*`; the client keeps that state outside the normal agent store and merges only the presentation rows into the track. A descriptor's optional `parentSubagentId` identifies its direct provider-subagent parent; an absent value identifies a direct child of the managed agent.
 
-Clicking either kind opens a workspace tab. A Paseo subagent tab is a normal interactive agent pane. A provider subagent tab is a read-only timeline pane with no composer, archive, detach, rewind, or fork actions. It shows its own direct children in a subagents track. Both panes use `AgentStreamView`, so message, reasoning, tool-call, and layout rendering stay identical.
+Clicking either kind opens a workspace tab. On compact layouts it opens in a [sheet](explorer-sidebar.md#sheets) over the subagents list instead; the sheet hides the composer and shows the agent's model and thinking as one line in its place (`PaneSubtitle`, the row provider subagents already use), and a Paseo subagent's sheet offers **Open as tab** (the full-screen glyph in the header) to get the composer back. A Paseo subagent tab is a normal interactive agent pane. A provider subagent tab is a read-only timeline pane with no composer, archive, detach, rewind, or fork actions. It shows its own direct children in a subagents track. Both panes use `AgentStreamView`, so message, reasoning, tool-call, and layout rendering stay identical.
 
 Provider timelines use the same structural timeline item format but deliberately have a separate lifecycle and transport. A provider thread/session identifier is not a Paseo agent identifier, and closing its tab is always layout-only.
 

@@ -1,3 +1,7 @@
+import { createRequire } from "node:module";
+import { runInNewContext } from "node:vm";
+import { fileURLToPath } from "node:url";
+import { build } from "esbuild";
 import { EventEmitter, once } from "node:events";
 import { resolveDaemonVersion } from "../daemon-version.js";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -14,6 +18,59 @@ const roots: string[] = [];
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
+
+test.each(["React Native", "native"])(
+  "provider readiness works with %s AbortController",
+  async (runtime) => {
+    const require = createRequire(import.meta.url);
+    const reactNativeRequire = createRequire(require.resolve("react-native/package.json"));
+    const { AbortController: ReactNativeAbortController } = reactNativeRequire(
+      "abort-controller/dist/abort-controller",
+    );
+    const bundle = await build({
+      entryPoints: [fileURLToPath(new URL("../../../../client/src/index.ts", import.meta.url))],
+      bundle: true,
+      write: false,
+      format: "iife",
+      globalName: "paseoSdk",
+      platform: "browser",
+    });
+    // A separate runtime starts with React Native's real abort implementation.
+    // Node's globals and the daemon's runtime remain unchanged.
+    const sdk: typeof import("@getpaseo/client") = runInNewContext(
+      `${bundle.outputFiles[0]!.text}\npaseoSdk`,
+      {
+        AbortController: runtime === "React Native" ? ReactNativeAbortController : AbortController,
+        setTimeout,
+        clearTimeout,
+        queueMicrotask,
+        TextEncoder,
+        TextDecoder,
+      },
+    );
+    const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
+    const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+    const api = sdk.createPaseoApi(client);
+    try {
+      await client.connect();
+      const snapshot = await api.providers.waitForReady({ cwd: daemon.staticDir });
+      expect(snapshot.entries.length).toBeGreaterThan(0);
+      expect(snapshot.entries.every((entry) => entry.status !== "loading")).toBe(true);
+      const waiting = api.providers.waitForReady({ cwd: daemon.staticDir });
+      const canceled = expect(waiting).rejects.toThrow(/disposed|released/);
+      await api.dispose();
+      await canceled;
+      const { diagnostic } = await client.collectDiagnostics();
+      expect(diagnostic).toContain("Source registrations: 0");
+      expect(diagnostic).toContain("Producer listeners: 0");
+      expect(() => api.providers.waitForReady()).toThrow("disposed");
+    } finally {
+      await api.dispose();
+      await client.close();
+      await daemon.close();
+    }
+  },
+);
 
 test("plugin handlers create workspaces and agents through their Paseo API", async () => {
   const pluginDirectory = await mkdtemp(path.join(tmpdir(), "paseo-api-plugin-"));

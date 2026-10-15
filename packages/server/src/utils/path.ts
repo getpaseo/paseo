@@ -114,10 +114,11 @@ function getRelativePathInsideRoot(root: string, candidate: string): string | nu
   const normalizedCandidate = normalizePathForComparison(candidate, compareAsWindows);
   const comparableRelative = platformPath.relative(normalizedRoot, normalizedCandidate);
 
-  if (
-    comparableRelative !== "" &&
-    (comparableRelative.startsWith("..") || platformPath.isAbsolute(comparableRelative))
-  ) {
+  const isOutsideRoot =
+    comparableRelative === ".." ||
+    comparableRelative.startsWith(`..${platformPath.sep}`) ||
+    platformPath.isAbsolute(comparableRelative);
+  if (isOutsideRoot) {
     return null;
   }
 

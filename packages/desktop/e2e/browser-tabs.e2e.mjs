@@ -287,7 +287,6 @@ async function createCallerAgent(daemonPort, workspaceId = workspaceIds[0]) {
         provider: "mock/ten-second-stream",
         settings: { modeId: "load-test" },
         initialPrompt: "Remain available while the browser bridge regression runs.",
-        background: true,
       },
     });
     const result = response.structuredContent;

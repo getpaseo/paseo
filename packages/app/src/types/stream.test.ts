@@ -2305,3 +2305,28 @@ describe("notification timeline items", () => {
     expect(new Set(state.map((item) => item.id)).size).toBe(state.length);
   });
 });
+
+it("retains agent-message provenance through live delivery and repeated history", () => {
+  const agentMessage = {
+    event: "finished" as const,
+    sender: { id: "remote::worker", title: "Reviewer" },
+    text: "Done",
+  };
+  const event = {
+    type: "timeline",
+    provider: "codex",
+    item: {
+      type: "tool_call",
+      callId: "delivery",
+      name: "agent_message",
+      status: "completed",
+      error: null,
+      detail: { type: "plain_text", text: "Done" },
+      agentMessage,
+    },
+  } satisfies AgentStreamEventPayload;
+  const live = reduceStreamUpdate([], event, new Date(1));
+  const replay = reduceStreamUpdate(live, event, new Date(2));
+  expect(replay).toHaveLength(1);
+  expect(replay[0]).toMatchObject({ payload: { data: { agentMessage } } });
+});
