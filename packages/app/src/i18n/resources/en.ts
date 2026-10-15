@@ -2502,6 +2502,8 @@ export const en = {
         toggleVoiceMode: "Toggle voice mode",
         startStopDictation: "Start/stop dictation",
         interruptAgent: "Interrupt agent",
+        forkChatInNewTab: "Fork chat in new tab",
+        forkChatInNewWorkspace: "Fork chat in new workspace",
         sendMessage: "Send message",
         queueMessage: "Queue message",
         muteUnmuteVoiceMode: "Mute/unmute voice mode",
