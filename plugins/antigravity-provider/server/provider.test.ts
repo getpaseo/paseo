@@ -32,6 +32,24 @@ it("publishes a monochrome, theme-aware provider icon", async () => {
   ]);
 });
 
+it("declares session.list capability", () => {
+  expect(provider.capabilities).toContain("session.list");
+});
+
+it("handles sessions request", async () => {
+  const h = await harness();
+  const requestId = "req-sessions-test";
+  await h.connection.send({
+    type: "sessions",
+    requestId,
+  });
+  const event = await h.wait((e) => e.type === "sessions" && e.requestId === requestId);
+  expect(event.type).toBe("sessions");
+  if (event.type === "sessions") {
+    expect(Array.isArray(event.sessions)).toBe(true);
+  }
+});
+
 afterEach(async () => {
   await Promise.all(connections.splice(0).map((connection) => connection.close()));
   await Promise.all(
@@ -162,6 +180,7 @@ it("streams complete text snapshots, prefixes the system prompt only once and pr
     "prompt.message",
     "prompt.image",
     "session.configure",
+    "session.list",
     "session.persistence",
   ]);
   await h.open();

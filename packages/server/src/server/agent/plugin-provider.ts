@@ -190,7 +190,7 @@ class ProviderRuntime {
   }
 
   get negotiatedCapabilities(): readonly string[] {
-    return this.connection?.capabilities ?? [];
+    return this.connection?.capabilities ?? this.registration.capabilities ?? [];
   }
 
   get isClosed(): boolean {

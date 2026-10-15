@@ -1,6 +1,8 @@
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { z } from "zod";
 
+export type { JsonValue };
+
 export const PROVIDER_PROTOCOL_VERSION = 1 as const;
 
 export const PROVIDER_CAPABILITIES = [
@@ -39,6 +41,8 @@ export interface ProviderRegistration {
   description?: string;
   /** Plugin-directory-relative path to a self-contained SVG file. */
   icon?: string;
+  /** Statically declared capabilities before connection is established. */
+  capabilities?: readonly ProviderCapability[] | readonly string[];
   connect(request: ProviderConnectRequest): Promise<ProviderConnection>;
 }
 
