@@ -243,16 +243,15 @@ jobs:
       - name: Build server stack
         run: npm run build:server
 
+      - name: Install Playwright browser
+        run: npx playwright install chromium
+
       - name: Run desktop tests
         run: npm run test --workspace=@getpaseo/desktop
 
       - name: Install virtual display
         if: ${{ runner.os == 'Linux' }}
         run: sudo apt-get update && sudo apt-get install -y xvfb xauth xdotool
-
-      - name: Install Playwright browser
-        if: ${{ runner.os == 'Linux' }}
-        run: npx playwright install chromium
 
       - name: Verify Windows daemon process control
         if: ${{ runner.os == 'Windows' }}
