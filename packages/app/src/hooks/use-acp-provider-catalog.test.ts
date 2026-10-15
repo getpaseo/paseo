@@ -66,15 +66,9 @@ describe("ACP provider catalog", () => {
       command: ["hoplite", "acp"],
       installLink: "https://hoplite.sh/docs/cli/acp",
     });
-    expect(buildAcpProviderConfigPatch(findProvider("hoplite"))).toEqual({
+    expect(buildAcpProviderConfigPatch(findProvider("hoplite"), true)).toEqual({
       providers: {
-        hoplite: {
-          extends: "acp",
-          label: "Hoplite",
-          description: "Cloud coding agent through the local hoplite acp bridge",
-          command: ["hoplite", "acp"],
-          env: {},
-        },
+        hoplite: { enabled: true },
       },
     });
     const ids = getAcpProviderCatalog().map((entry) => entry.id);
@@ -82,6 +76,15 @@ describe("ACP provider catalog", () => {
     expect(ids.indexOf("hoplite")).toBeLessThan(ids.indexOf("junie"));
     expect(findProvider("hoplite").iconSvg).toContain('fill="currentColor"');
   });
+
+  it.each([undefined, false])(
+    "rejects unsupported bundled Hoplite before producing a patch (%s)",
+    (supported) => {
+      expect(() => buildAcpProviderConfigPatch(findProvider("hoplite"), supported)).toThrow(
+        "Update the host to add Hoplite.",
+      );
+    },
+  );
 
   it("maps a catalog entry to the daemon provider config patch", () => {
     expect(buildAcpProviderConfigPatch(findProvider("amp-acp"))).toEqual({

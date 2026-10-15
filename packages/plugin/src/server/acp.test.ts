@@ -619,6 +619,146 @@ lines.on("line", (line) => {
     await connection.close();
   });
 
+  it.each([
+    ["end_turn", "completed", "completed"],
+    ["cancelled", "canceled", "canceled"],
+  ] as const)(
+    "closes a transformer's running tool row when the turn ends with %s",
+    async (stopReason, turnState, rowStatus) => {
+      const harness = connectorHarness({
+        handleMessage(instance, message) {
+          if (!("method" in message) || !("id" in message)) return false;
+          if (message.method !== "session/prompt") return false;
+          instance.notify("vendor/phase", { id: "phase-1", label: "Preparing" });
+          instance.respond(message as AcpRequestMessage, { stopReason });
+          return true;
+        },
+      });
+      const registration = runAcpProvider({
+        id: "vendor-row-acp",
+        label: "Vendor row ACP",
+        connector: harness.connector,
+        transformers: [
+          {
+            notification(notification) {
+              if (notification.method !== "vendor/phase") return null;
+              return {
+                type: "timeline",
+                item: {
+                  type: "tool_call",
+                  id: "phase-1",
+                  callId: "phase-1",
+                  name: "Vendor phase",
+                  detail: { type: "plain_text", label: "Preparing" },
+                  status: "running",
+                  error: null,
+                },
+              };
+            },
+          },
+        ],
+      });
+      const connection = await registration.connect({
+        versions: [1],
+        capabilities: ["prompt.message"],
+      });
+      const events: ProviderEvent[] = [];
+      connection.onEvent((event) => events.push(event));
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "first",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "first" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) => event.type === "session.turn" && event.state === turnState,
+      );
+
+      const rows = events.flatMap((event) =>
+        event.type === "timeline.item" && event.item.id === "phase-1" ? [event.item] : [],
+      );
+      expect(rows.map((row) => row.type === "tool_call" && row.status)).toEqual([
+        "running",
+        rowStatus,
+      ]);
+      const closed = events.findIndex(
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.id === "phase-1" &&
+          event.item.type === "tool_call" &&
+          event.item.status === rowStatus,
+      );
+      const terminal = events.findIndex(
+        (event) => event.type === "session.turn" && event.state === turnState,
+      );
+      expect(closed).toBeLessThan(terminal);
+      // The wire contract only accepts a failed tool call with a non-null error.
+      expect(rows.at(-1)).toMatchObject({ error: null });
+      await connection.close();
+    },
+  );
+
+  it("cancels an in-progress ACP tool call with the canceled turn instead of failing it without an error", async () => {
+    const harness = connectorHarness({
+      handleMessage(instance, message) {
+        if (!("method" in message) || !("id" in message)) return false;
+        if (message.method !== "session/prompt") return false;
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "tool-1",
+            title: "Run tests",
+            kind: "execute",
+            status: "in_progress",
+          },
+        });
+        instance.respond(message as AcpRequestMessage, { stopReason: "cancelled" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "cancel-tool-acp",
+      label: "Cancel tool ACP",
+      connector: harness.connector,
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    await connection.send(openInput());
+    await waitForEvent(events, (event) => event.type === "session.ready");
+
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "session-1",
+      prompt: {
+        clientMessageId: "first",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "first" }] },
+      },
+    });
+    await waitForEvent(
+      events,
+      (event) => event.type === "session.turn" && event.state === "canceled",
+    );
+
+    const rows = events.flatMap((event) =>
+      event.type === "timeline.item" && event.item.id === "tool-1" ? [event.item] : [],
+    );
+    expect(rows.at(-1)).toMatchObject({ type: "tool_call", status: "canceled", error: null });
+    await connection.close();
+  });
+
   it("serializes configuration mutations", async () => {
     let releaseMutation: (() => void) | null = null;
     const configOptions = [

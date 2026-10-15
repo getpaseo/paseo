@@ -1699,13 +1699,18 @@ export const fr: TranslationResources = {
     title: "Ajouter un fournisseur",
     search: "Rechercher des fournisseurs",
     noProviders: "Aucun fournisseur trouvé",
+    clearSearch: "Effacer la recherche",
     actions: {
       add: "Ajouter",
+      addProvider: "Ajouter {{provider}}",
       adding: "Ajout…",
       installed: "Installé",
       cancel: "Annuler",
       installInstructions: "Instructions d’installation",
       installInstructionsFor: "Instructions d’installation de {{provider}}",
+    },
+    types: {
+      acp: "ACP",
     },
     errors: {
       unableToInstall: "Impossible d’installer le fournisseur",

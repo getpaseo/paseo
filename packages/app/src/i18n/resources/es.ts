@@ -1703,13 +1703,18 @@ export const es: TranslationResources = {
     title: "Agregar proveedor",
     search: "Proveedores de búsqueda",
     noProviders: "No se encontraron proveedores",
+    clearSearch: "Borrar búsqueda",
     actions: {
       add: "Agregar",
+      addProvider: "Añadir {{provider}}",
       adding: "Añadiendo",
       installed: "Instalado",
       cancel: "Cancelar",
       installInstructions: "Instrucciones de instalación",
       installInstructionsFor: "Instrucciones de instalación de{{provider}}",
+    },
+    types: {
+      acp: "ACP",
     },
     errors: {
       unableToInstall: "No se puede instalar el proveedor",
