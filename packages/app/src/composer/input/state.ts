@@ -38,6 +38,91 @@ export function resolveComposerSurfacePresentation(
   return showOverlay ? OVERLAY_PRESENTATION : INPUT_PRESENTATION;
 }
 
+export interface ComposerEnterKeys {
+  shiftKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+}
+
+/** "pass-through" leaves the key to the text input, which inserts a newline. */
+export type ComposerEnterAction = "pass-through" | "default" | "alternate";
+
+interface ComposerEnterContext {
+  submitOnEnter: boolean;
+  isAgentRunning: boolean;
+  canQueue: boolean;
+  isSendBlocked: boolean;
+}
+
+/**
+ * The desktop composer's Enter rules, shared with Android hardware keyboards. Alt is ignored.
+ * Callers run any autocomplete key handling first and skip IME composition.
+ */
+export function resolveComposerEnterAction(
+  keys: ComposerEnterKeys,
+  ctx: ComposerEnterContext,
+): ComposerEnterAction {
+  if (!ctx.submitOnEnter || keys.shiftKey || ctx.isSendBlocked) return "pass-through";
+  if ((keys.metaKey || keys.ctrlKey) && ctx.isAgentRunning && ctx.canQueue) return "alternate";
+  return "default";
+}
+
+/**
+ * How a platform's native hardware-keyboard submit maps to composer actions. iOS submits the send
+ * button action on Enter. Android applies the desktop Enter rules.
+ */
+export type HardwareKeyboardEnterRules = "send-button" | "desktop";
+
+/**
+ * Whether this composer may own native hardware-keyboard submission. Only a focused, editable,
+ * visible composer owns it. With desktop rules it also needs an unblocked send, so every Enter that
+ * native consumes resolves to a send action. Layout never matters: native reports only physical
+ * keyboard Enter, so touch and IME input keep their own behavior at every window width.
+ */
+export function canOwnHardwareKeyboardSubmit(input: {
+  rules: HardwareKeyboardEnterRules;
+  isInputFocused: boolean;
+  isSendButtonDisabled: boolean;
+  readOnly: boolean;
+  isDictating: boolean;
+  showOverlay: boolean;
+  isRealtimeVoiceForCurrentAgent: boolean;
+  isSendBlocked: boolean;
+}): boolean {
+  const canType =
+    input.isInputFocused &&
+    !input.readOnly &&
+    !input.isDictating &&
+    !input.showOverlay &&
+    !input.isRealtimeVoiceForCurrentAgent;
+  if (!canType) return false;
+  if (input.rules === "send-button") return !input.isSendButtonDisabled;
+  return !input.isSendBlocked;
+}
+
+interface HardwareKeyboardEnterContext extends Omit<ComposerEnterContext, "submitOnEnter"> {
+  rules: HardwareKeyboardEnterRules;
+  /** Autocomplete key handling; returns true when it consumed Enter. */
+  handleKeyPress: () => boolean;
+  handleDefaultSendAction: () => void;
+  handleAlternateSendAction: () => void;
+}
+
+/** Runs the composer action for an Enter press that native hardware-keyboard handling consumed. */
+export function runHardwareKeyboardEnter(
+  keys: ComposerEnterKeys,
+  ctx: HardwareKeyboardEnterContext,
+): void {
+  if (ctx.rules === "send-button") {
+    ctx.handleDefaultSendAction();
+    return;
+  }
+  if (ctx.handleKeyPress()) return;
+  const action = resolveComposerEnterAction(keys, { ...ctx, submitOnEnter: true });
+  if (action === "alternate") ctx.handleAlternateSendAction();
+  if (action === "default") ctx.handleDefaultSendAction();
+}
+
 interface StopRealtimeVoiceContext {
   voice: { stopVoice: () => Promise<unknown> } | null | undefined;
   isRealtimeVoiceForCurrentAgent: boolean;

@@ -1,31 +1,41 @@
 import { describe, expect, it } from "vitest";
 import {
   createHardwareKeyboardSubmitController,
+  type HardwareKeyboardEnterKeys,
+  type HardwareKeyboardSubmitHandler,
   type HardwareKeyboardSubmitListenerPort,
 } from "./hardware-keyboard-submit-controller";
 
+const ENTER: HardwareKeyboardEnterKeys = { shiftKey: false, ctrlKey: false, metaKey: false };
+
 interface FakeKeyboard extends HardwareKeyboardSubmitListenerPort {
-  emit(): void;
+  emit(keys?: HardwareKeyboardEnterKeys): void;
+  readonly lastHandler: HardwareKeyboardSubmitHandler | null;
   readonly isEnabled: boolean;
   readonly listenerCount: number;
 }
 
 function createFakeKeyboard(): FakeKeyboard {
-  const handlers = new Set<() => void>();
+  const handlers = new Set<HardwareKeyboardSubmitHandler>();
   let enabled = false;
+  let lastHandler: HardwareKeyboardSubmitHandler | null = null;
   return {
     addListener(handler) {
       handlers.add(handler);
+      lastHandler = handler;
       return { remove: () => handlers.delete(handler) };
     },
     setEnabled(value) {
       enabled = value;
     },
-    emit() {
-      handlers.forEach((handler) => handler());
+    emit(keys = ENTER) {
+      handlers.forEach((handler) => handler(keys));
     },
     get isEnabled() {
       return enabled;
+    },
+    get lastHandler() {
+      return lastHandler;
     },
     get listenerCount() {
       return handlers.size;
@@ -78,6 +88,18 @@ describe("hardware-keyboard-submit-controller", () => {
     expect(keyboard.listenerCount).toBe(0);
   });
 
+  it("passes the native Enter modifiers to onSubmit", () => {
+    const keyboard = createFakeKeyboard();
+    const controller = createHardwareKeyboardSubmitController(keyboard);
+    const received: HardwareKeyboardEnterKeys[] = [];
+    controller.setOnSubmit((keys) => received.push(keys));
+
+    controller.enable();
+    keyboard.emit({ shiftKey: false, ctrlKey: true, metaKey: false });
+
+    expect(received).toEqual([{ shiftKey: false, ctrlKey: true, metaKey: false }]);
+  });
+
   it("dispatches the latest onSubmit handler", () => {
     const keyboard = createFakeKeyboard();
     const controller = createHardwareKeyboardSubmitController(keyboard);
@@ -104,6 +126,42 @@ describe("hardware-keyboard-submit-controller", () => {
     keyboard.emit();
 
     expect(calls).toBe(0);
+  });
+
+  it("does not dispatch a native event that arrives after disable", () => {
+    const keyboard = createFakeKeyboard();
+    const controller = createHardwareKeyboardSubmitController(keyboard);
+    let calls = 0;
+    controller.setOnSubmit(() => {
+      calls += 1;
+    });
+
+    controller.enable();
+    const lateHandler = keyboard.lastHandler;
+    controller.disable();
+    lateHandler?.(ENTER);
+
+    expect(lateHandler).not.toBeNull();
+    expect(calls).toBe(0);
+  });
+
+  it("does not dispatch a late event from an earlier enable after re-enabling", () => {
+    const keyboard = createFakeKeyboard();
+    const controller = createHardwareKeyboardSubmitController(keyboard);
+    let calls = 0;
+    controller.setOnSubmit(() => {
+      calls += 1;
+    });
+
+    controller.enable();
+    const staleHandler = keyboard.lastHandler;
+    controller.disable();
+    controller.enable();
+    staleHandler?.(ENTER);
+    expect(calls).toBe(0);
+
+    keyboard.emit();
+    expect(calls).toBe(1);
   });
 
   it("ignores repeated enable calls", () => {
