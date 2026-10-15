@@ -2,7 +2,91 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
+  interactive: {
+    deepenPrompt:
+      "Explore this response: explain the assumptions, compare alternatives and ask a focused question if needed.",
+    deepen: "Explore further",
+    sent: "Sent",
+    queued: "Queued",
+    updateHost: "Update this host to use interactive responses.",
+    generating: "Generating interactive response…",
+    generationError: "Interactive response generation failed.",
+    loading: "Loading interactive response…",
+    loadError: "Could not load interactive response.",
+    saveError: "Could not save your choices.",
+    renderError: "Could not display this visual. Reload to try again.",
+    scriptBlocked:
+      "This visual contains JavaScript. Execution is blocked until an offline sandbox is available.",
+    artifact: "HTML visual",
+    send: "Send to agent",
+    expand: "Expand",
+    close: "Close",
+    retry: "Retry",
+    reload: "Reload",
+    reloadConflict: "Reload the document to resolve conflicting changes before sending.",
+  },
+  workspaceHistory: {
+    title: "已关闭的对话",
+    empty: "没有已关闭的对话",
+    updateHost: "请更新此主机以使用工作区历史记录。",
+    loadError: "无法加载对话。",
+    reopenError: "无法重新打开此对话。",
+  },
+  workspaceTodos: {
+    milestone: "里程碑",
+    ungrouped: "待整理",
+    milestoneDone: "里程碑已完成",
+    remaining: "剩余 {{count}} 项",
+    completed: "已完成 · {{count}}",
+    progress: "项目进度",
+    headline: "逐个里程碑推进",
+    subtitle: "每个里程碑中的进行中任务。",
+    details: "里程碑和备注",
+
+    title: "待办事项",
+    taskTitle: "任务标题",
+    notes: "备注",
+    todo: "待办",
+    in_progress: "进行中",
+    done: "已完成",
+    add: "添加任务",
+    save: "保存",
+    delete: "删除任务",
+    moveUp: "上移",
+    moveDown: "下移",
+    reorder: "调整任务顺序",
+    taskMenu: "任务操作",
+    close: "关闭待办事项",
+    empty: "暂无任务",
+    unsaved: "未保存的更改",
+    retry: "刷新并重试",
+    updateHost: "请更新此主机以使用工作区共享待办列表。",
+  },
+  paneFind: {
+    connectionFailure: "无法搜索此聊天。请检查主机连接后重试。",
+    historyChangedFailure: "搜索期间聊天已更改。请重新搜索。",
+    revealFailure: "无法显示此匹配项。请重试。",
+    searching: "搜索中…",
+    loading: "加载中…",
+    failed: "失败",
+    retry: "重试",
+
+    title: "查找",
+    placeholder: "在窗格中查找",
+    close: "关闭查找",
+    matches: "查找结果",
+    previous: "上一个匹配项",
+    next: "下一个匹配项",
+    toggleReplace: "切换替换",
+    replaceWith: "替换为",
+    replace: "替换",
+    replaceAll: "全部替换",
+    noMatches: "无匹配项",
+    position: "{{current}} / {{total}}",
+    total: "{{total}} 个匹配项",
+  },
   common: {
+    bottomSheetBackdrop: "底部面板背景",
     back: "返回",
     loading: "加载中...",
     actions: {
@@ -90,6 +174,8 @@ export const zhCN: TranslationResources = {
     },
   },
   composer: {
+    nextAttention: "下一个 ›",
+    nextAttentionAccessibility: "打开下一个需要关注的对话",
     placeholders: {
       desktop: "给 Agent 发消息，标记 @files，或使用 /commands 和 /skills",
       mobile: "发消息，@files，/commands",
@@ -154,7 +240,7 @@ export const zhCN: TranslationResources = {
       initialPromptRequired: "初始 prompt 必填",
       alreadyLoading: "正在加载",
       uploadFailed: "Failed to upload file",
-      noClipboardImage: "剪贴板中没有图片",
+      noClipboardImage: "当前剪贴板中没有图片。请尝试通过键盘粘贴。",
       pasteImageFailed: "无法粘贴图片",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
@@ -204,11 +290,18 @@ export const zhCN: TranslationResources = {
     },
   },
   agentStream: {
+    foldedMessages_one: "{{count}} 条消息",
+    foldedMessages_other: "{{count}} 条消息",
     empty: "开始和这个 Agent 对话...",
     scrollToBottom: "滚动到底部",
     historyLoadFailed: "无法加载智能体历史记录",
     messageCapped: "此消息已被截断（{{bytes}} 字节）。",
     permission: {
+      approve: "批准",
+      rejectedPlan: "已拒绝的计划",
+      approvedPlan: "已批准的计划",
+      canceledPlan: "已取消的计划",
+
       plan: "Plan",
       required: "需要权限",
       deny: "拒绝",
@@ -222,7 +315,8 @@ export const zhCN: TranslationResources = {
     states: {
       notFound: "未找到 Agent",
       failedToLoad: "加载 Agent 失败",
-      reconnecting: "正在重连",
+      reconnecting: "正在重新连接主机",
+      updating: "正在更新消息",
       timelineSyncFailed: "无法刷新代理历史记录。",
       timelineSyncRetrying: "正在重试…",
       archivingTitle: "正在归档 Agent...",
@@ -285,6 +379,11 @@ export const zhCN: TranslationResources = {
     },
   },
   message: {
+    handoff: {
+      planTitle: "已移交的计划",
+      details: "移交详情",
+      copyPlan: "复制计划",
+    },
     diagram: {
       diagram: "图表",
       zoomIn: "放大",
@@ -353,6 +452,9 @@ export const zhCN: TranslationResources = {
         completed: "已完成",
       },
     },
+    turnFooter: {
+      workedFor: "工作了 {{duration}}",
+    },
     compaction: {
       loading: "正在压缩...",
       auto: "上下文已自动压缩",
@@ -411,7 +513,9 @@ export const zhCN: TranslationResources = {
       recovery: {
         archivedTitle: "Workspace 已归档",
         restoreDescription:
-          "{{workspaceName}} 已归档，其 worktree 已移除。恢复分支 {{branch}} 以重新打开。",
+          "恢复 {{workspaceName}} 以返回其中的代理。worktree 将使用分支 {{branch}}。",
+        restoreWithoutBranchDescription:
+          "恢复 {{workspaceName}} 以返回其中的代理。新分支将从保存的基准分支或仓库默认分支创建。",
         unarchiveDescription: "{{workspaceName}} 已归档。取消归档以重新打开。",
         restoreAction: "恢复",
         unarchiveAction: "取消归档",
@@ -533,6 +637,14 @@ export const zhCN: TranslationResources = {
       },
     },
     browser: {
+      tabs: "浏览器标签页",
+      newTab: "新建浏览器标签页",
+      allTabs: "所有标签页",
+      hide: "隐藏浏览器",
+      show: "显示浏览器",
+      reopenLastClosedTab: "重新打开上次关闭的标签页",
+      address: "地址",
+      placementUnavailable: "无法在此布局中打开浏览器。请关闭一个面板后重试。",
       unavailable: {
         title: "浏览器仅桌面端可用",
         subtitle: "在 Electron 中打开此 workspace 以使用内置浏览器。",
@@ -566,6 +678,7 @@ export const zhCN: TranslationResources = {
         responsive: "自适应",
       },
       errors: {
+        crashed: "此页面已崩溃。请重新加载后重试。",
         failedToLoad: "页面加载失败",
         invalidUrl: "浏览器 URL 无效",
         unsupportedProtocol: "已阻止不支持的浏览器 URL：{{protocol}}",
@@ -704,6 +817,12 @@ export const zhCN: TranslationResources = {
     scripts: {
       title: "Scripts",
       actions: {
+        play: "Play",
+        configureService: "Configure service",
+        saveAndLaunch: "Save and launch",
+        reloadConfiguration: "Reload configuration",
+        cancel: "Cancel",
+        retryLaunch: "Retry launch",
         chooseUrl: "选择 URL",
         copyUrl: "复制 URL",
         openService: "查看服务",
@@ -722,6 +841,12 @@ export const zhCN: TranslationResources = {
         copyUrl: "复制 {{scriptName}} 的 URL",
         chooseUrl: "选择 {{scriptName}} 的 URL",
         script: "{{scriptName}} script",
+        startPreview: "启动 {{scriptName}} 并打开预览",
+        stopPreview: "停止 {{scriptName}} 并关闭预览",
+        choosePreviewService: "选择要预览的服务",
+      },
+      preview: {
+        section: "开发预览",
       },
       routes: {
         public: "反向代理",
@@ -729,9 +854,34 @@ export const zhCN: TranslationResources = {
         direct: "直接地址",
       },
       states: {
+        noServiceConfigured: "未配置服务",
+        configureServiceTitle: "Configure a development service",
+        editService: "Edit {{name}}",
+        serviceName: "Name",
+        serviceCommand: "Command",
+        servicePort: "Port",
+        automaticPort: "Automatic",
+        automaticPortHint: "The command must use PASEO_PORT.",
+        configurationLoading: "Loading service configuration…",
+        configurationFailed: "Couldn't read service configuration.",
+        invalidServiceName: "Enter a name.",
+        invalidServiceCommand: "Enter a command.",
+        invalidServicePort: "Enter a port from 1 to 65535, or leave it automatic.",
+        serviceNameCollision: "That name is already used by another script.",
+        configurationConflict: "The configuration changed. Reload it before saving.",
+        partialConfigurationSave:
+          "The project was saved, but this workspace wasn't. Retry to finish saving.",
+        configurationSaveFailed: "Couldn't save the service configuration.",
+        serviceLaunchFailed: "The configuration was saved, but the service didn't start.",
+        updateHostForConfiguration: "Update the host to configure a service from Play.",
+        shellClosed: "Shell 已关闭 — 重新启动",
+        shellCreating: "正在创建 Shell…",
+        scriptStopped: "脚本已停止",
         exitCode: "exit {{code}}",
         startFailed: "启动 {{scriptName}} 失败",
         stopFailed: "停止 {{scriptName}} 失败",
+        previewUnhealthy: "{{scriptName}} 运行异常",
+        previewPlacementUnavailable: "无法在当前布局中打开开发预览",
       },
     },
     tree: {
@@ -739,6 +889,30 @@ export const zhCN: TranslationResources = {
       hideFolderTree: "隐藏文件夹树",
     },
     git: {
+      workflow: {
+        defaultSelection: "默认设置",
+        resetSelection: "重置",
+        title: "Workspace actions",
+        reviewProfile: "Review profile",
+        deliveryProfile: "Delivery profile",
+        selectProfile: "Select a profile",
+        noProfiles: "No agent profiles available",
+        reviewPrompt: "Review prompt",
+        createPrPrompt: "Create PR prompt",
+        commitAndPushPrompt: "Commit and push prompt",
+        edit: "Edit",
+        save: "Save",
+        saving: "Saving...",
+        missingProfile: "Selected profile is missing",
+        saveFailed: "Couldn't save workspace actions",
+        review: "Review",
+        commitAndPush: "Commit & push",
+        resolveConflicts: "解决冲突",
+        merge: "Merge",
+        repairChecks: "解决失败",
+        checking: "Checking status...",
+        unavailable: "Status unavailable",
+      },
       actions: {
         moreOptions: "更多选项",
         moreActions: "更多操作",
@@ -872,6 +1046,9 @@ export const zhCN: TranslationResources = {
         openChangesTab: "打开“更改”标签页",
         openDiffTab: "打开 Diff 标签页",
         closeChangesTab: "关闭“更改”标签页",
+        jumpToFile: {
+          title: "跳转到文件",
+        },
         binaryFile: "二进制文件",
         tooLarge: "Diff 过大，无法显示",
         previewTooLargeTitle: "此 diff 过大，无法预览",
@@ -928,6 +1105,47 @@ export const zhCN: TranslationResources = {
         actions: {
           viewPullRequest: "查看",
           openOn: "在 {{brand}} 上打开",
+          addToChat: "添加到聊天",
+          addAllToChat: "全部添加到聊天",
+          addingToChat: "正在添加...",
+        },
+        checksOverview: {
+          headline: {
+            actionRequired: "部分检查需要你处理",
+            failure: "部分检查未通过",
+            pending: "部分检查尚未完成",
+            success: "所有检查均已通过",
+            none: "没有检查",
+          },
+          count: {
+            actionRequired: "{{count}} 个需处理",
+            warning: "{{count}} 个警告",
+            failure: "{{count}} 个失败",
+            pending: "{{count}} 个进行中",
+            manual: "{{count}} 个手动",
+            success: "{{count}} 个成功",
+            ignored: "{{count}} 个已跳过",
+          },
+          detailOne: "检查：{{parts}}",
+          detailMany: "检查：{{parts}}",
+          groupOne: {
+            actionRequired: "{{count}} 个需处理的检查",
+            warning: "{{count}} 个有警告的检查",
+            failure: "{{count}} 个失败的检查",
+            pending: "{{count}} 个进行中的检查",
+            manual: "{{count}} 个手动检查",
+            success: "{{count}} 个成功的检查",
+            ignored: "{{count}} 个已跳过的检查",
+          },
+          groupMany: {
+            actionRequired: "{{count}} 个需处理的检查",
+            warning: "{{count}} 个有警告的检查",
+            failure: "{{count}} 个失败的检查",
+            pending: "{{count}} 个进行中的检查",
+            manual: "{{count}} 个手动检查",
+            success: "{{count}} 个成功的检查",
+            ignored: "{{count}} 个已跳过的检查",
+          },
         },
         checksSummary: {
           passedLabel: "通过",
@@ -941,17 +1159,21 @@ export const zhCN: TranslationResources = {
           checks: "Checks",
           pipeline: "流水线",
           reviews: "Reviews",
+          activity: "动态",
         },
         empty: {
           noJobs: "无作业",
           loadingPipeline: "正在加载流水线...",
           pipelineJobsLoadFailed: "无法加载流水线作业",
           allowedToFail: "允许失败",
+          noActivity: "暂无动态",
         },
         approvals: "{{given}} / {{required}} 批准",
         accessibility: {
           pullRequest: "Pull request #{{number}}",
           pullRequest_mr: "合并请求 !{{number}}",
+          commentActions: "评论操作",
+          threadActions: "讨论串操作",
           checkStatus: {
             passed: "成功",
             failed: "失败",
@@ -964,22 +1186,24 @@ export const zhCN: TranslationResources = {
           },
         },
         states: {
-          draft: "Draft",
-          merged: "已 merge",
+          draft: "草稿",
+          merged: "已合并",
           closed: "已关闭",
-          open: "Open",
+          open: "开放",
         },
         activity: {
           commented: "已评论",
           approved: "已批准",
           requestedChanges: "请求修改",
-          reviewed: "已 review",
+          reviewed: "已审查",
         },
         time: {
           justNow: "刚刚",
         },
         thread: {
           discussion: "讨论主题",
+          resolved: "已解决",
+          outdated: "已过时",
         },
         errors: {
           statusLoadFailed: "无法加载 Pull Request 状态",
@@ -1046,6 +1270,14 @@ export const zhCN: TranslationResources = {
     },
   },
   sidebar: {
+    statusGroupAccessibility: "{{label}} 分组",
+    statusBucket: {
+      needsInput: "需要输入",
+      failed: "失败",
+      readyToReview: "待查看",
+      working: "运行中",
+      done: "已完成",
+    },
     display: {
       trigger: "显示偏好",
       heading: "显示",
@@ -1082,6 +1314,7 @@ export const zhCN: TranslationResources = {
         all: "所有主机",
       },
       projectFilter: {
+        show: "显示 {{projectName}}",
         label: "项目",
         all: "所有项目",
       },
@@ -1105,6 +1338,9 @@ export const zhCN: TranslationResources = {
       hosts: "Hosts",
       settings: "设置",
       closeSidebar: "关闭侧边栏",
+    },
+    footer: {
+      usage: "使用情况",
     },
     help: {
       trigger: "帮助与支持",
@@ -1130,6 +1366,7 @@ export const zhCN: TranslationResources = {
     project: {
       actions: {
         menu: "Project 操作",
+        hide: "隐藏项目",
         openSettings: "打开 project 设置",
         openNewWindow: "在新窗口中打开",
         openNewWindowFailed: "无法打开新窗口",
@@ -1207,6 +1444,14 @@ export const zhCN: TranslationResources = {
     },
   },
   newWorkspace: {
+    intention: {
+      save: "保存",
+      label: "意图",
+      edit: "编辑意图",
+      required: "请输入意图。",
+      unavailable: "更新主机以使用意图。",
+      profileUnavailable: "请在此主机上配置 Router 配置文件。",
+    },
     title: "新建 workspace",
     create: "创建",
     isolation: {
@@ -1252,6 +1497,15 @@ export const zhCN: TranslationResources = {
     },
   },
   desktop: {
+    agentWidget: {
+      planReady: "计划已就绪",
+      responseNeeded: "等待回复",
+      responseSent: "回复已发送",
+      execute: "执行",
+      sendComment: "发送",
+      handoff: "移交",
+      comment: "添加指示…",
+    },
     windowControls: {
       minimize: "最小化窗口",
       maximize: "最大化窗口",
@@ -1474,6 +1728,8 @@ export const zhCN: TranslationResources = {
     noFiles: "没有找到文件或目录",
     noCommands: "没有找到 commands",
     failedToLoad: "加载失败",
+    chooseProjectForCommands: "选择项目以查看命令",
+    chooseModelForCommands: "选择模型以查看命令",
   },
   loadOlderHistory: {
     failed: "无法加载更早历史",
@@ -1507,6 +1763,8 @@ export const zhCN: TranslationResources = {
   modelSelector: {
     title: "选择 provider",
     selectModel: "选择模型",
+    autoJev: "自动 · JEV",
+    autoJevDescription: "让 JEV 选择模型和推理强度",
     selectedModel: "选择模型（{{model}}）",
     loading: "正在加载...",
     loadingShort: "正在加载",
@@ -1565,6 +1823,20 @@ export const zhCN: TranslationResources = {
     },
   },
   pairing: {
+    hostPassword: {
+      title: "{{host}} 的密码",
+      label: "主机密码",
+    },
+    hostConfirmation: {
+      title: "连接到此主机？",
+      description: "此主机将能在此应用中运行代码，并访问你其他已连接的主机。仅在你认识它时才连接。",
+      descriptionChanged:
+        "此链接会改变你连接此主机的方式。该主机将能在此应用中运行代码，并访问你其他已连接的主机。仅在你认识它时才连接。",
+      hostLabel: "主机",
+      fingerprintLabel: "密钥指纹",
+      relayLabel: "中继",
+      connect: "连接",
+    },
     connectionMethods: {
       title: "添加连接",
       direct: {
@@ -1630,6 +1902,12 @@ export const zhCN: TranslationResources = {
       helper: "连接到远程主机上运行的 Paseo 守护进程。",
       fields: {
         target: "SSH 主机",
+        password: "守护进程密码",
+        optional: "可选",
+      },
+      passwordVisibility: {
+        show: "显示密码",
+        hide: "隐藏密码",
       },
       actions: {
         cancel: "取消",
@@ -1856,6 +2134,8 @@ export const zhCN: TranslationResources = {
     dismiss: "关闭",
   },
   contextWindow: {
+    noData: "暂无上下文数据",
+    accessibilityNoData: "上下文窗口：暂无上下文数据",
     title: "上下文窗口",
     used: "已使用 {{percentage}}%",
     tokens: "{{used}} / {{max}} tokens",
@@ -1897,8 +2177,11 @@ export const zhCN: TranslationResources = {
     groupInfo: "关于 {{title}}",
     sections: {
       general: "通用",
+      chat: "聊天",
       appearance: "外观",
-      layout: en.settings.sections.layout,
+      sidebar: "侧边栏",
+      terminal: "终端",
+      browser: "浏览器",
       editor: "编辑器",
       shortcuts: "快捷键",
       integrations: "集成",
@@ -1956,6 +2239,7 @@ export const zhCN: TranslationResources = {
     },
     general: {
       title: "通用",
+      sending: "发送",
       browserData: {
         title: "浏览器数据",
         siteData: "Cookie 和网站数据",
@@ -1981,8 +2265,6 @@ export const zhCN: TranslationResources = {
         },
       },
       serviceUrls: {
-        label: "服务 URL",
-        description: "运行脚本中的 URL 打开位置",
         options: {
           ask: "询问",
           inApp: "在 Paseo 中",
@@ -2001,7 +2283,6 @@ export const zhCN: TranslationResources = {
       toolCallDetail: {
         label: "工具调用显示",
         description: "工具调用在时间线中的显示方式",
-        accessibilityLabel: "选择工具调用显示方式（{{value}}）",
         options: {
           overview: "摘要",
           detailed: "完整详情",
@@ -2104,8 +2385,14 @@ export const zhCN: TranslationResources = {
         description: "显示用于在提示词之间跳转的大纲",
       },
       sidebar: {
-        title: "侧边栏",
-        description: "选择侧边栏顶部显示的项目及其顺序",
+        header: {
+          title: "顶部",
+          description: "选择侧边栏顶部显示的项目及其顺序",
+        },
+        footer: {
+          title: "底部",
+          description: "选择侧边栏底部显示的行及其顺序。添加项目和图标行始终显示",
+        },
         moveUp: "上移",
         moveDown: "下移",
       },
@@ -2127,6 +2414,14 @@ export const zhCN: TranslationResources = {
         codeSize: "代码字号",
         codeSizeHint: "用于代码、差异和终端输出",
         codeSizeAccessibility: "代码字号",
+      },
+      layout: {
+        title: "布局",
+        contentWidth: "内容宽度",
+        contentWidthHint: "宽屏上聊天和 Markdown 文件的最大宽度",
+        contentWidthAccessibility: "内容宽度（像素）",
+        reset: "重置",
+        resetAccessibility: "将内容宽度重置为默认值",
       },
       syntax: {
         title: "语法",
@@ -2237,6 +2532,9 @@ export const zhCN: TranslationResources = {
       },
     },
     host: {
+      password: {
+        guidance: "移除此主机，然后使用此守护进程要求的密码重新添加。",
+      },
       appearance: {
         title: "外观",
         name: {
@@ -2402,6 +2700,8 @@ export const zhCN: TranslationResources = {
         modelLabel: "Model",
         noModels: "此 Provider 没有可选择的 Model",
         modeLabel: "Mode",
+        postApprovalModeLabel: "计划批准后的模式",
+        nativeApprovalMode: "提供商的批准行为",
         noModes: "此 Provider 没有可选择的 Mode",
         thinkingLabel: "Thinking",
         noThinkingOptions: "此 Model 没有 Thinking 级别",
@@ -2556,6 +2856,7 @@ export const zhCN: TranslationResources = {
         name: "名称",
         nameLabel: "Project 名称",
         icon: "图标",
+        emoji: "表情符号",
         chooseImage: "选择图片",
         useAutomatic: "使用自动",
         imageUrl: "图片或网站 URL",

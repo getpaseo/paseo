@@ -31,6 +31,35 @@ agent catalog during startup, raise the limit in milliseconds:
 The limit applies independently to every provider refresh and covers availability plus the entire
 catalog probe. `PASEO_PROVIDER_REFRESH_TIMEOUT_MS` sets it when the config field is absent.
 
+## Provider options
+
+Set provider defaults in `agents.providers.<id>.options`. At agent creation, use
+`providerOptions` on the wire or `config.options` in the SDK. Both are opaque
+`Record<string, unknown>` values: the provider owns validation and application.
+Claude, Codex, and OpenCode reject unknown keys with a key-specific creation error.
+Providers without option handling ignore the record.
+
+The daemon deep-merges the agent's options over the provider defaults at each
+session launch or resume. Plain objects merge recursively; arrays, scalars, and
+`null` replace the base value. Only the agent's own options are persisted, so edits
+to provider defaults apply on the next launch or resume. A profile inherits its
+base provider's options unless it sets its own options record.
+
+```json
+{
+  "agents": {
+    "providers": {
+      "codex": {
+        "options": { "sandbox_mode": "read-only", "approval_policy": "never" }
+      }
+    }
+  }
+}
+```
+
+See the [SDK provider options guide](../public-docs/sdk/provider-options.md) for
+per-agent examples and provider-specific keys.
+
 ---
 
 ## Table of Contents
@@ -261,6 +290,14 @@ You can create multiple entries that extend the same built-in provider. Each get
 
 "Profile" here means a provider alias, and it is not an **Agent profile** — that is a named bundle of provider, model, mode, thinking option and features, stored under `daemon.agentProfiles`. See [glossary.md](glossary.md) for all four senses of the word.
 
+An Agent profile may set `postApprovalModeId`. Creation captures its value in the agent's immutable
+`launchPostApprovalModeId`; later profile edits or deletion cannot change that conversation.
+Approval persists the captured mode before resuming the same provider conversation; provider,
+model and effort do not change. A superseded permission rolls the transition back in the agent's
+foreground mutation lane. Applying a profile to an active agent never applies this field.
+Agents without a captured value retain the provider's native approval behavior.
+Editing this field requires the host's `agentProfileWorkflows` capability.
+
 Example: two different Anthropic accounts as separate profiles:
 
 ```json
@@ -363,6 +400,8 @@ Override the command used to launch any provider with the `command` field. This 
 
 The `command` array completely replaces the default command for that provider. The binary must exist on the system — Paseo checks for its availability and will mark the provider as unavailable if not found.
 
+The model catalog listed in a provider's settings comes from the binary that is actually launched. Refreshing the catalog spawns a new process of that same binary; it never updates the binary itself. A built-in provider whose binary updates in the background (e.g. Codex, via its own update mechanism) can therefore show a stale catalog — opening the Codex model sheet refetches it when it's more than an hour old.
+
 ### OMP profiles and Pi-compatible forks
 
 OMP ships as a first-class built-in provider option. It is disabled by default; enable it with:
@@ -391,7 +430,7 @@ Custom OMP profiles should extend `omp`. They inherit the OMP adapter's `rpc-ui`
           "XDG_CONFIG_HOME": "~/.config/omp-work",
           "XDG_STATE_HOME": "~/.local/state/omp-work"
         },
-        "params": {
+        "options": {
           "sessionDir": "~/.local/state/omp-work/omp/agent/sessions",
           "rpcTimeoutMs": 60000,
           "smolModel": "openai/gpt-5-mini",
@@ -404,7 +443,7 @@ Custom OMP profiles should extend `omp`. They inherit the OMP adapter's `rpc-ui`
 }
 ```
 
-`params.sessionDir` is used only for importing sessions that were started outside Paseo. If `command` or XDG env vars move OMP's state directory, set `params.sessionDir` to the resulting OMP JSONL session directory; launching and resuming still go through the configured command. OMP waits 20 seconds for its initial `ready` frame and 60 seconds for later control-plane RPCs by default. `params.rpcTimeoutMs` overrides both deadlines.
+`options.sessionDir` is used only for importing sessions that were started outside Paseo. If `command` or XDG env vars move OMP's state directory, set `options.sessionDir` to the resulting OMP JSONL session directory; launching and resuming still go through the configured command. OMP waits 20 seconds for its initial `ready` frame and 60 seconds for later control-plane RPCs by default. `options.rpcTimeoutMs` overrides both deadlines.
 
 For other providers that keep Pi's `--mode rpc` API but write sessions somewhere else, extend `pi`, replace the command, and provide the JSONL session directory:
 
@@ -416,7 +455,7 @@ For other providers that keep Pi's `--mode rpc` API but write sessions somewhere
         "extends": "pi",
         "label": "My Pi Fork",
         "command": ["my-pi-fork"],
-        "params": {
+        "options": {
           "sessionDir": "~/.my-pi-fork/sessions",
           "rpcTimeoutMs": 60000
         }
@@ -426,7 +465,7 @@ For other providers that keep Pi's `--mode rpc` API but write sessions somewhere
 }
 ```
 
-This session directory is also import-only. Launching and resuming still go through the configured command, so this example resumes with `my-pi-fork --mode rpc --session <session-file>`. `params.rpcTimeoutMs` overrides the 60-second Pi control-plane RPC deadline.
+This session directory is also import-only. Launching and resuming still go through the configured command, so this example resumes with `my-pi-fork --mode rpc --session <session-file>`. `options.rpcTimeoutMs` overrides the 60-second Pi control-plane RPC deadline.
 
 ---
 
@@ -484,7 +523,7 @@ Required fields for ACP providers:
 - `label`
 - `command` — the command to spawn the agent process (must support ACP over stdio)
 
-Paseo tools such as subagent creation come from the shared internal tool catalog. ACP providers receive those tools through the MCP fallback by default because ACP exposes `mcpServers`, not Paseo's native tool catalog. Some ACP adapters cannot create sessions when `mcpServers` is non-empty. Disable injected MCP for those providers with `params.supportsMcpServers: false`:
+Paseo tools such as subagent creation come from the shared internal tool catalog. ACP providers receive those tools through the MCP fallback by default because ACP exposes `mcpServers`, not Paseo's native tool catalog. Some ACP adapters cannot create sessions when `mcpServers` is non-empty. Disable injected MCP for those providers with `options.supportsMcpServers: false`:
 
 ```json
 {
@@ -494,7 +533,7 @@ Paseo tools such as subagent creation come from the shared internal tool catalog
         "extends": "acp",
         "label": "My Agent",
         "command": ["my-agent", "acp"],
-        "params": {
+        "options": {
           "supportsMcpServers": false
         }
       }
@@ -505,7 +544,7 @@ Paseo tools such as subagent creation come from the shared internal tool catalog
 
 ACP agents execute filesystem operations in their own environment by default,
 while terminal operations run through Paseo on the host. To customize which
-operations Paseo handles, configure client capabilities in provider params:
+operations Paseo handles, configure client capabilities in provider options:
 
 ```json
 {
@@ -515,7 +554,7 @@ operations Paseo handles, configure client capabilities in provider params:
         "extends": "acp",
         "label": "Container Agent",
         "command": ["container-agent", "acp"],
-        "params": {
+        "options": {
           "clientCapabilities": {
             "fs": {
               "readTextFile": false,
@@ -604,10 +643,9 @@ When you launch an agent with an ACP provider:
 4. Paseo creates a session and sends prompts through the ACP protocol
 5. The agent streams responses, tool calls, and permission requests back over stdout
 
-Every ACP provider exposes an **Auto Accept** toggle. Enable it per session to let Paseo approve
-ACP permission requests without surfacing each prompt. If the provider sends no allow option,
-Paseo leaves the request for you to answer. Unattended agents enable Auto Accept unless you
-explicitly disable it.
+New conversations default to the provider’s native full-access mode, or **Auto Accept** when
+no such mode exists; explicit permission choices and existing conversations stay unchanged.
+If an ACP provider sends no allow option, Paseo leaves the request for you to answer.
 
 Models and modes are discovered dynamically at runtime from the agent process. If you want to override the model list (e.g., to curate which models appear in the UI), use the `models` field:
 
@@ -684,7 +722,7 @@ Every entry under `agents.providers` accepts these fields:
 | `description`      | `string`                  | No                | Short description shown in the UI                                  |
 | `command`          | `string[]`                | Yes (ACP only)    | Command to spawn the agent process                                 |
 | `env`              | `Record<string, string>`  | No                | Environment variables to set for the agent process                 |
-| `params`           | `Record<string, unknown>` | No                | Provider-specific options such as `supportsMcpServers: false`      |
+| `options`          | `Record<string, unknown>` | No                | Provider-specific options such as `supportsMcpServers: false`      |
 | `models`           | `ProviderProfileModel[]`  | No                | Static model list (overrides runtime discovery)                    |
 | `additionalModels` | `ProviderProfileModel[]`  | No                | Static model additions (merged with runtime discovery or `models`) |
 | `disallowedTools`  | `string[]`                | No                | Tool names to disable for this provider (e.g. `["WebSearch"]`)     |
@@ -714,7 +752,7 @@ Each entry in the `models` array:
 
 ### Claude settings.json model discovery
 
-The built-in `claude` provider appends concrete model IDs from `~/.claude/settings.json` to its first-party Claude model list. Paseo reads the top-level `model` field and these `env` keys: `ANTHROPIC_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, and `ANTHROPIC_DEFAULT_HAIKU_MODEL`.
+The built-in `claude` provider appends concrete model IDs from `~/.claude/settings.json` to its first-party Claude model list. Paseo reads the top-level `model` field and these `env` keys: `ANTHROPIC_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`, `ANTHROPIC_DEFAULT_FABLE_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, and `ANTHROPIC_DEFAULT_HAIKU_MODEL`.
 
 This lets users who already configured Claude Code for Bedrock, OpenRouter, ollama, Z.AI, or another Anthropic-compatible gateway select the exact model ID in Paseo. Explicit model IDs are passed unchanged to Claude Code, even when the same string is a compatibility alias for a built-in model. When `agents.providers.claude.models` is set it **replaces** both the hardcoded first-party Claude list and any settings.json-discovered entries; use `agents.providers.claude.additionalModels` to keep the first-party list and append curated entries on top.
 

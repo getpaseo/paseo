@@ -25,15 +25,11 @@ function resolveLink(
 }
 
 describe("resolveWorkspaceScriptLink", () => {
-  it("defaults to the memorable Paseo URL locally and keeps direct as a fallback", () => {
+  it("defaults to the direct service URL on a local daemon connection", () => {
     expect(
       resolveLink({ type: "directTcp", endpoint: "localhost:6767", display: "localhost:6767" }),
     ).toEqual({
-      primary: {
-        kind: "paseo",
-        label: "web--feature--paseo.localhost:6767",
-        url: "http://web--feature--paseo.localhost:6767",
-      },
+      primary: { kind: "direct", label: "localhost:3000", url: "http://localhost:3000" },
       targets: [
         {
           kind: "paseo",
@@ -45,6 +41,15 @@ describe("resolveWorkspaceScriptLink", () => {
     });
   });
 
+  it("defaults to direct service URLs for socket and pipe connections", () => {
+    for (const activeConnection of [
+      { type: "directSocket", endpoint: "/tmp/paseo.sock", display: "socket" },
+      { type: "directPipe", endpoint: "\\\\.\\pipe\\paseo", display: "pipe" },
+    ] as const) {
+      expect(resolveLink(activeConnection).primary?.kind).toBe("direct");
+    }
+  });
+
   it("defaults to an explicitly configured reverse proxy", () => {
     const publicUrl = "https://web--feature--paseo.services.example.com";
     expect(
@@ -53,11 +58,7 @@ describe("resolveWorkspaceScriptLink", () => {
         { ...runningService, publicProxyUrl: publicUrl, proxyUrl: publicUrl },
       ),
     ).toEqual({
-      primary: {
-        kind: "public",
-        label: "web--feature--paseo.services.example.com",
-        url: publicUrl,
-      },
+      primary: { kind: "direct", label: "localhost:3000", url: "http://localhost:3000" },
       targets: [
         {
           kind: "public",

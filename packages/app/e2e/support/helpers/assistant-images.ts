@@ -186,9 +186,15 @@ export async function userPagesUntilAssistantImageRenders(
     }
     const previous = await rememberTimelineViewport(page);
     await userScrollsTimelineToHistoryStart(page);
+    // Scrolling can bring an already loaded image into the virtualized window
+    // without increasing content height. Its rendering also satisfies this step.
     await expect
-      .poll(async () => (await rememberTimelineViewport(page)).scrollHeight)
-      .toBeGreaterThan(previous.scrollHeight);
+      .poll(
+        async () =>
+          (await rendered.count()) > 0 ||
+          (await rememberTimelineViewport(page)).scrollHeight > previous.scrollHeight,
+      )
+      .toBe(true);
   }
   await expectAssistantImageRendered(page, image);
 }

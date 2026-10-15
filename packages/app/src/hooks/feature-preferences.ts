@@ -43,6 +43,7 @@ export function resolveFeatureValues(args: {
   features: AgentFeature[];
   persistedFeatureValues: Record<string, unknown>;
   localFeatureValues: Record<string, unknown>;
+  hasPermissionModes?: boolean;
 }): Record<string, unknown> {
   const next: Record<string, unknown> = {};
 
@@ -53,6 +54,12 @@ export function resolveFeatureValues(args: {
     }
     if (Object.prototype.hasOwnProperty.call(args.persistedFeatureValues, feature.id)) {
       next[feature.id] = args.persistedFeatureValues[feature.id];
+    } else if (
+      feature.id === "auto_accept" &&
+      feature.type === "toggle" &&
+      !args.hasPermissionModes
+    ) {
+      next[feature.id] = true;
     }
   }
 

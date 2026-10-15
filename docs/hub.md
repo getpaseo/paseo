@@ -28,11 +28,14 @@ manage their own relationship or permissions.
 ## Session grants and agent operations
 
 Hub uses the same authenticated, resumable Session protocol as other clients. Its persisted
-`hub.execute` permission authorizes ordinary agent creation, messaging, cancellation, archival,
-agent/workspace observation, timeline subscriptions, and workspace recovery. This authority is
+`hub.execute` permission authorizes ordinary agent creation, workspace titling, messaging,
+cancellation, archival, agent/workspace observation, timeline subscriptions, and workspace recovery. This authority is
 daemon-wide; it is not limited to agents created by that Hub. Daemon configuration, terminals,
 browser control, and permission management still require their own permissions. See
 [permissions.md](permissions.md).
+
+Creating an agent may create a directory workspace. The same `hub.execute` session can title that
+workspace through `workspace.title.set.request` without `workspace.manage`.
 
 Clients using this contract check `server_info.features.hubAgentRpc` and
 `server_info.features.agentRequestReceipts` once. An older host must be upgraded; do not silently
@@ -49,6 +52,10 @@ Provider controls remain provider-native; see [providers.md](providers.md).
 `send_agent_message_request` with a stable `messageId`. Request IDs correlate individual attempts;
 creation keys and message IDs identify the operation across attempts. A creation key is daemon-wide;
 a message ID is scoped to its agent. Reusing either with different arguments is a conflict.
+`workspace.create.request.idempotencyKey` provides the same creation guarantee for directory and
+worktree workspaces; check `server_info.features.workspaceRequestReceipts` before using it.
+Workspace creation keys and agent creation keys have separate namespaces. The app keeps these keys
+for the lifetime of a draft and reuses the first message ID after failures.
 
 The daemon journals the assigned agent ID before creation. Concurrent retries share one operation,
 and a retry after a lost acknowledgement or restart returns the durable agent without creating a

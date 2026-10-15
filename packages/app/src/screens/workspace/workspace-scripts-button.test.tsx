@@ -15,12 +15,26 @@ void testI18n;
 const {
   theme,
   startWorkspaceScriptMock,
+  startWorkspaceScriptWithStatusMock,
+  readWorkspaceScriptConfigurationMock,
+  writeWorkspaceScriptConfigurationMock,
   killTerminalMock,
   setStringAsyncMock,
   copiedToastMock,
+  toastShowMock,
   routePreferenceByServerIdMock,
   routePreferenceListenersMock,
   setPreferredRouteMock,
+  preferredScriptByWorkspaceMock,
+  setPreferredScriptMock,
+  menuOpenChangeRef,
+  menuOpenStateRef,
+  previewActions,
+  onScriptTerminalStartedMock,
+  onPreviewTerminalStartedMock,
+  onPreviewPendingChangeMock,
+  onOpenPreviewMock,
+  onClosePreviewMock,
 } = vi.hoisted(() => {
   const hoistedTheme = {
     spacing: { 1: 4, 1.5: 6, 2: 8, 3: 12 },
@@ -48,9 +62,33 @@ const {
     for (const listener of routePreferenceListeners) listener();
   });
 
+  const preferredScriptByWorkspace: Record<string, string> = {};
+  const setPreferredScript = vi.fn((workspaceKey: string, scriptName: string) => {
+    preferredScriptByWorkspace[workspaceKey] = scriptName;
+    for (const listener of routePreferenceListeners) listener();
+  });
+
+  const onOpenPreview = vi.fn();
+  const onClosePreview = vi.fn();
+  const hoistedPreviewActions = { onOpenPreview, onClosePreview };
+
   return {
     theme: hoistedTheme,
     startWorkspaceScriptMock: vi.fn(async () => ({ terminalId: "terminal-script-1" })),
+    startWorkspaceScriptWithStatusMock: vi.fn(async () => ({ error: null, script: null })),
+    readWorkspaceScriptConfigurationMock: vi.fn(async () => ({
+      error: null,
+      projectConfig: null,
+      workspaceConfig: null,
+      projectRevision: null,
+      workspaceRevision: null,
+    })),
+    writeWorkspaceScriptConfigurationMock: vi.fn(async () => ({
+      error: null,
+      written: "both",
+      projectRevision: { mtimeMs: 1, size: 1 },
+      workspaceRevision: { mtimeMs: 1, size: 1 },
+    })),
     killTerminalMock: vi.fn(async () => ({
       terminalId: "terminal-script-1",
       success: true,
@@ -58,9 +96,20 @@ const {
     })),
     setStringAsyncMock: vi.fn(async () => true),
     copiedToastMock: vi.fn(),
+    toastShowMock: vi.fn(),
     routePreferenceByServerIdMock: routePreferenceByServerId,
     routePreferenceListenersMock: routePreferenceListeners,
     setPreferredRouteMock: setPreferredRoute,
+    preferredScriptByWorkspaceMock: preferredScriptByWorkspace,
+    setPreferredScriptMock: setPreferredScript,
+    menuOpenChangeRef: { current: null as ((open: boolean) => void) | null },
+    menuOpenStateRef: { current: undefined as boolean | undefined },
+    previewActions: hoistedPreviewActions,
+    onScriptTerminalStartedMock: vi.fn(),
+    onPreviewTerminalStartedMock: vi.fn(),
+    onPreviewPendingChangeMock: vi.fn(),
+    onOpenPreviewMock: onOpenPreview,
+    onClosePreviewMock: onClosePreview,
   };
 });
 
@@ -98,7 +147,9 @@ vi.mock("@/workspace-service-routes/store", async () => {
   const ReactModule = await vi.importActual<typeof import("react")>("react");
   const state = {
     byServerId: routePreferenceByServerIdMock,
+    preferredScriptByWorkspace: preferredScriptByWorkspaceMock,
     setPreferredRoute: setPreferredRouteMock,
+    setPreferredScript: setPreferredScriptMock,
   };
   return {
     useWorkspaceServiceRoutePreferencesStore: <T,>(selector: (value: typeof state) => T) =>
@@ -120,6 +171,10 @@ vi.mock("@/stores/session-store", () => ({
         "test-server": {
           client: {
             startWorkspaceScript: startWorkspaceScriptMock,
+            startWorkspaceScriptWithStatus: startWorkspaceScriptWithStatusMock,
+            readWorkspaceScriptConfiguration: readWorkspaceScriptConfigurationMock,
+            writeWorkspaceScriptConfiguration: writeWorkspaceScriptConfigurationMock,
+            getLastServerInfoMessage: () => ({ features: { workspaceScriptConfiguration: true } }),
             killTerminal: killTerminalMock,
           },
         },
@@ -128,7 +183,77 @@ vi.mock("@/stores/session-store", () => ({
 }));
 
 vi.mock("@/contexts/toast-context", () => ({
-  useToast: () => ({ show: vi.fn(), error: vi.fn(), copied: copiedToastMock }),
+  useToast: () => ({ show: toastShowMock, error: vi.fn(), copied: copiedToastMock }),
+}));
+
+vi.mock("@/components/ui/loading-spinner", () => ({
+  LoadingSpinner: (props: Record<string, unknown>) =>
+    React.createElement("span", { "data-testid": "loading-spinner", ...props }),
+}));
+
+vi.mock("@/components/adaptive-modal-sheet", () => ({
+  AdaptiveModalSheet: ({
+    children,
+    visible,
+    testID,
+  }: {
+    children: React.ReactNode;
+    visible: boolean;
+    testID: string;
+  }) => (visible ? <div data-testid={testID}>{children}</div> : null),
+}));
+
+vi.mock("@/components/ui/button", () => ({
+  Button: ({
+    children,
+    onPress,
+    disabled,
+    testID,
+  }: {
+    children: React.ReactNode;
+    onPress: () => void;
+    disabled?: boolean;
+    testID?: string;
+  }) => (
+    <button type="button" data-testid={testID} disabled={disabled} onClick={onPress}>
+      {children}
+    </button>
+  ),
+}));
+
+vi.mock("@/components/ui/alert", () => ({
+  Alert: ({
+    children,
+    title,
+    testID,
+  }: {
+    children?: React.ReactNode;
+    title: string;
+    testID?: string;
+  }) => (
+    <div data-testid={testID}>
+      <span>{title}</span>
+      {children}
+    </div>
+  ),
+}));
+
+vi.mock("@/components/ui/text-input", () => ({
+  EditingTextInput: ({
+    initialValue,
+    onChangeText,
+    testID,
+  }: {
+    initialValue: string;
+    onChangeText: (value: string) => void;
+    testID?: string;
+  }) => {
+    const handleChange = React.useCallback(
+      (event: React.ChangeEvent<HTMLInputElement>) => onChangeText(event.currentTarget.value),
+      [onChangeText],
+    );
+    return <input data-testid={testID} defaultValue={initialValue} onChange={handleChange} />;
+  },
 }));
 
 vi.mock("expo-clipboard", () => ({
@@ -140,11 +265,26 @@ vi.mock("@/utils/open-external-url", () => ({
 }));
 
 vi.mock("@/components/ui/dropdown-menu", () => ({
-  DropdownMenu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DropdownMenu: ({
+    children,
+    open,
+    onOpenChange,
+  }: {
+    children: React.ReactNode;
+    open?: boolean;
+    onOpenChange?: (open: boolean) => void;
+  }) => {
+    menuOpenStateRef.current = open;
+    menuOpenChangeRef.current = onOpenChange ?? null;
+    return <div>{children}</div>;
+  },
   DropdownMenuContent: ({ children, testID }: { children: React.ReactNode; testID?: string }) => (
     <div data-testid={testID}>{children}</div>
   ),
   DropdownMenuSeparator: () => <div role="separator" />,
+  DropdownMenuLabel: ({ children, testID }: { children: React.ReactNode; testID?: string }) => (
+    <div data-testid={testID}>{children}</div>
+  ),
   DropdownMenuItem: ({
     children,
     description,
@@ -236,15 +376,21 @@ const LIVE_TERMINAL_IDS: string[] = ["terminal-script-1"];
 interface RenderScriptsOptions {
   hideLabels?: boolean;
   presentation?: "split" | "ghost";
+  preview?: boolean;
+  workspaceId?: string;
 }
 
 function renderScripts(
   scripts: WorkspaceScriptPayload[],
   options: RenderScriptsOptions = {},
 ): {
-  rerender: (nextScripts: WorkspaceScriptPayload[]) => Promise<void>;
+  rerender: (
+    nextScripts: WorkspaceScriptPayload[],
+    nextOptions?: RenderScriptsOptions,
+  ) => Promise<void>;
   unmount: () => void;
 } {
+  let currentOptions = options;
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -260,11 +406,15 @@ function renderScripts(
       <QueryClientProvider client={queryClient}>
         <WorkspaceScriptsButton
           serverId="test-server"
-          workspaceId="workspace-1"
+          workspaceId={currentOptions.workspaceId ?? "workspace-1"}
           scripts={nextScripts}
           liveTerminalIds={LIVE_TERMINAL_IDS}
-          hideLabels={options.hideLabels}
-          presentation={options.presentation}
+          hideLabels={currentOptions.hideLabels}
+          presentation={currentOptions.presentation}
+          preview={currentOptions.preview ? previewActions : undefined}
+          onScriptTerminalStarted={onScriptTerminalStartedMock}
+          onPreviewTerminalStarted={onPreviewTerminalStartedMock}
+          onPreviewPendingChange={onPreviewPendingChangeMock}
         />
       </QueryClientProvider>
     );
@@ -275,7 +425,10 @@ function renderScripts(
   });
 
   return {
-    rerender: async (nextScripts) => {
+    rerender: async (nextScripts, nextOptions) => {
+      if (nextOptions) {
+        currentOptions = { ...currentOptions, ...nextOptions };
+      }
       await act(async () => {
         root.render(element(nextScripts));
       });
@@ -321,12 +474,27 @@ describe("WorkspaceScriptsButton", () => {
     );
     document.body.innerHTML = "";
     startWorkspaceScriptMock.mockClear();
+    startWorkspaceScriptWithStatusMock.mockClear();
+    readWorkspaceScriptConfigurationMock.mockClear();
+    writeWorkspaceScriptConfigurationMock.mockClear();
     killTerminalMock.mockClear();
     setStringAsyncMock.mockClear();
     copiedToastMock.mockClear();
+    toastShowMock.mockClear();
     setPreferredRouteMock.mockClear();
+    setPreferredScriptMock.mockClear();
+    onScriptTerminalStartedMock.mockClear();
+    onPreviewTerminalStartedMock.mockClear();
+    onPreviewPendingChangeMock.mockClear();
+    onOpenPreviewMock.mockClear();
+    onClosePreviewMock.mockClear();
+    menuOpenChangeRef.current = null;
+    menuOpenStateRef.current = undefined;
     for (const serverId of Object.keys(routePreferenceByServerIdMock)) {
       delete routePreferenceByServerIdMock[serverId];
+    }
+    for (const workspaceKey of Object.keys(preferredScriptByWorkspaceMock)) {
+      delete preferredScriptByWorkspaceMock[workspaceKey];
     }
   });
 
@@ -334,6 +502,57 @@ describe("WorkspaceScriptsButton", () => {
     current?.unmount();
     current = null;
     vi.unstubAllGlobals();
+  });
+
+  it("saves the first service configuration before asking Play to launch it", async () => {
+    current = renderScripts([], { preview: true });
+    fireEvent.click(document.querySelector('[data-testid="workspace-scripts-configure-service"]')!);
+    await act(async () => {});
+
+    expect(readWorkspaceScriptConfigurationMock).toHaveBeenCalledWith("workspace-1");
+    fireEvent.change(document.querySelector('[data-testid="workspace-service-command"]')!, {
+      target: { value: "npm run dev" },
+    });
+    const saveButton = document.querySelector('[data-testid="workspace-service-config-save"]')!;
+    expect((saveButton as HTMLButtonElement).disabled).toBe(false);
+    expect(startWorkspaceScriptMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.click(saveButton);
+    });
+    expect(writeWorkspaceScriptConfigurationMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "workspace-1",
+        scriptName: "dev",
+        command: "npm run dev",
+        port: null,
+        projectRevision: null,
+        workspaceRevision: null,
+      }),
+    );
+    expect(startWorkspaceScriptMock).not.toHaveBeenCalled();
+
+    await current.rerender([script({ scriptName: "dev", type: "service" })]);
+    expect(startWorkspaceScriptMock).toHaveBeenCalledWith("workspace-1", "dev");
+  });
+
+  it("shows invalid port feedback and closes without writing when cancelled", async () => {
+    current = renderScripts([], { preview: true });
+    fireEvent.click(document.querySelector('[data-testid="workspace-scripts-configure-service"]')!);
+    await act(async () => {});
+    fireEvent.change(document.querySelector('[data-testid="workspace-service-command"]')!, {
+      target: { value: "npm run dev" },
+    });
+    fireEvent.change(document.querySelector('[data-testid="workspace-service-port"]')!, {
+      target: { value: "65536" },
+    });
+    expect(
+      document.querySelector('[data-testid="workspace-service-port-error"]')?.textContent,
+    ).toContain("1 to 65535");
+    fireEvent.click(document.querySelector('[data-testid="workspace-service-config-cancel"]')!);
+    expect(document.querySelector('[data-testid="workspace-service-config-sheet"]')).toBeNull();
+    expect(writeWorkspaceScriptConfigurationMock).not.toHaveBeenCalled();
+    expect(startWorkspaceScriptMock).not.toHaveBeenCalled();
   });
 
   it("keeps completed script row icons visible and muted while the menu content stays mounted", async () => {
@@ -616,5 +835,325 @@ describe("WorkspaceScriptsButton", () => {
     await act(async () => {});
 
     expect(startWorkspaceScriptMock).toHaveBeenCalledWith("workspace-1", "dev");
+  });
+
+  function requirePreviewAction(): HTMLElement {
+    const action = document.querySelector('[data-testid="workspace-scripts-preview-action"]');
+    if (!(action instanceof HTMLElement)) {
+      throw new Error("Missing preview action button");
+    }
+    return action;
+  }
+
+  function requirePickerItem(scriptName: string): HTMLElement {
+    const item = document.querySelector(`[data-testid="workspace-scripts-preview-${scriptName}"]`);
+    if (!(item instanceof HTMLElement)) {
+      throw new Error(`Missing preview picker item for ${scriptName}`);
+    }
+    return item;
+  }
+
+  it("presents the service choice on the first preview Play, memorizes it and starts it", async () => {
+    current = renderScripts(
+      [
+        script({ scriptName: "app", type: "service", port: 3000 }),
+        script({ scriptName: "api", type: "service", port: 3001 }),
+        script({ scriptName: "build", type: "script" }),
+      ],
+      { preview: true },
+    );
+
+    expect(startWorkspaceScriptMock).not.toHaveBeenCalled();
+    fireEvent.click(requirePreviewAction());
+    await act(async () => {});
+
+    // The first Play shows the choice instead of guessing a service.
+    expect(startWorkspaceScriptMock).not.toHaveBeenCalled();
+    expect(menuOpenStateRef.current).toBe(true);
+    expect(requirePickerItem("app")).not.toBeNull();
+    expect(document.querySelector('[data-testid="workspace-scripts-preview-build"]')).toBeNull();
+
+    fireEvent.click(requirePickerItem("app"));
+    await act(async () => {});
+
+    expect(setPreferredScriptMock).toHaveBeenCalledWith("test-server:workspace-1", "app");
+    expect(startWorkspaceScriptMock).toHaveBeenCalledTimes(1);
+    expect(startWorkspaceScriptMock).toHaveBeenCalledWith("workspace-1", "app");
+    expect(onScriptTerminalStartedMock).not.toHaveBeenCalled();
+    expect(onOpenPreviewMock).not.toHaveBeenCalled();
+  });
+
+  it("starts the sole service on the first Play", async () => {
+    current = renderScripts([script({ scriptName: "app", type: "service", port: 3000 })], {
+      preview: true,
+    });
+
+    fireEvent.click(requirePreviewAction());
+    await act(async () => {});
+
+    expect(startWorkspaceScriptMock).toHaveBeenCalledOnce();
+    expect(startWorkspaceScriptMock).toHaveBeenCalledWith("workspace-1", "app");
+    expect(menuOpenStateRef.current).toBe(false);
+    expect(onPreviewTerminalStartedMock).toHaveBeenCalledOnce();
+    expect(onPreviewTerminalStartedMock).toHaveBeenCalledWith("terminal-script-1");
+    expect(onPreviewPendingChangeMock.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it("ignores a second Play while the service is starting", async () => {
+    current = renderScripts([script({ scriptName: "app", type: "service", port: 3000 })], {
+      preview: true,
+    });
+
+    fireEvent.click(requirePreviewAction());
+    fireEvent.click(requirePreviewAction());
+    await act(async () => {});
+
+    expect(startWorkspaceScriptMock).toHaveBeenCalledOnce();
+  });
+
+  it("opens the preview once, when the service reports running, healthy and a resolved URL", async () => {
+    preferredScriptByWorkspaceMock["test-server:workspace-1"] = "app";
+    current = renderScripts([script({ scriptName: "app", type: "service", port: 3000 })], {
+      preview: true,
+    });
+
+    fireEvent.click(requirePreviewAction());
+    await act(async () => {});
+    expect(onOpenPreviewMock).not.toHaveBeenCalled();
+
+    await current.rerender([
+      script({
+        scriptName: "app",
+        type: "service",
+        port: 3000,
+        lifecycle: "running",
+        health: null,
+        terminalId: "terminal-app",
+      }),
+    ]);
+    expect(onOpenPreviewMock).not.toHaveBeenCalled();
+
+    await current.rerender([
+      script({
+        scriptName: "app",
+        type: "service",
+        port: 3000,
+        lifecycle: "running",
+        health: "healthy",
+        terminalId: "terminal-app",
+      }),
+    ]);
+    expect(onOpenPreviewMock).toHaveBeenCalledTimes(1);
+    expect(onOpenPreviewMock).toHaveBeenCalledWith({
+      scriptName: "app",
+      url: "http://localhost:3000",
+    });
+
+    await current.rerender([
+      script({
+        scriptName: "app",
+        type: "service",
+        port: 3000,
+        lifecycle: "running",
+        health: "healthy",
+        terminalId: "terminal-app",
+      }),
+    ]);
+    expect(onOpenPreviewMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows Stop during startup once the terminal is known and cancels the pending open", async () => {
+    preferredScriptByWorkspaceMock["test-server:workspace-1"] = "app";
+    current = renderScripts([script({ scriptName: "app", type: "service", port: 3000 })], {
+      preview: true,
+    });
+
+    fireEvent.click(requirePreviewAction());
+    await act(async () => {});
+    expect(startWorkspaceScriptMock).toHaveBeenCalledTimes(1);
+
+    await current.rerender([
+      script({ scriptName: "app", type: "service", port: 3000, terminalId: "terminal-app" }),
+    ]);
+    const action = requirePreviewAction();
+    expect(action.querySelector('[data-icon="Square"]')).not.toBeNull();
+    fireEvent.click(action);
+    await act(async () => {});
+    // The terminal the start request returned is known first and drives the stop.
+    expect(killTerminalMock).toHaveBeenCalledWith("terminal-script-1");
+
+    await current.rerender([
+      script({
+        scriptName: "app",
+        type: "service",
+        port: 3000,
+        lifecycle: "running",
+        health: "healthy",
+        terminalId: "terminal-app",
+      }),
+    ]);
+    expect(onOpenPreviewMock).not.toHaveBeenCalled();
+  });
+
+  it("closes the preview only after the stop succeeds", async () => {
+    preferredScriptByWorkspaceMock["test-server:workspace-1"] = "app";
+    current = renderScripts(
+      [
+        script({
+          scriptName: "app",
+          type: "service",
+          port: 3000,
+          lifecycle: "running",
+          health: "healthy",
+          terminalId: "terminal-app",
+        }),
+      ],
+      { preview: true },
+    );
+
+    killTerminalMock.mockResolvedValueOnce({
+      terminalId: "terminal-app",
+      success: false,
+      requestId: "request-1",
+    });
+    fireEvent.click(requirePreviewAction());
+    await act(async () => {});
+    expect(onClosePreviewMock).not.toHaveBeenCalled();
+
+    fireEvent.click(requirePreviewAction());
+    await act(async () => {});
+    expect(onClosePreviewMock).toHaveBeenCalledTimes(1);
+    expect(onClosePreviewMock).toHaveBeenCalledWith("app");
+  });
+
+  it("surfaces a failed start and keeps the preview closed", async () => {
+    preferredScriptByWorkspaceMock["test-server:workspace-1"] = "app";
+    current = renderScripts([script({ scriptName: "app", type: "service", port: 3000 })], {
+      preview: true,
+    });
+
+    startWorkspaceScriptMock.mockRejectedValueOnce(new Error("boom"));
+    fireEvent.click(requirePreviewAction());
+    await act(async () => {});
+    expect(toastShowMock).toHaveBeenCalledWith("boom", { variant: "error" });
+    expect(onOpenPreviewMock).not.toHaveBeenCalled();
+
+    fireEvent.click(requirePreviewAction());
+    await act(async () => {});
+    expect(startWorkspaceScriptMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports an unhealthy service instead of opening the preview", async () => {
+    preferredScriptByWorkspaceMock["test-server:workspace-1"] = "app";
+    current = renderScripts([script({ scriptName: "app", type: "service", port: 3000 })], {
+      preview: true,
+    });
+
+    fireEvent.click(requirePreviewAction());
+    await act(async () => {});
+
+    await current.rerender([
+      script({
+        scriptName: "app",
+        type: "service",
+        port: 3000,
+        lifecycle: "running",
+        health: "unhealthy",
+        terminalId: "terminal-app",
+      }),
+    ]);
+    expect(onOpenPreviewMock).not.toHaveBeenCalled();
+    expect(toastShowMock).toHaveBeenCalledWith(expect.stringContaining("unhealthy"), {
+      variant: "error",
+    });
+  });
+
+  it("cancels a pending preview open when the workspace changes", async () => {
+    preferredScriptByWorkspaceMock["test-server:workspace-1"] = "app";
+    current = renderScripts([script({ scriptName: "app", type: "service", port: 3000 })], {
+      preview: true,
+    });
+
+    fireEvent.click(requirePreviewAction());
+    await act(async () => {});
+
+    await current.rerender(
+      [
+        script({
+          scriptName: "app",
+          type: "service",
+          port: 3000,
+          lifecycle: "running",
+          health: "healthy",
+          terminalId: "terminal-app",
+        }),
+      ],
+      { workspaceId: "workspace-2" },
+    );
+
+    expect(onOpenPreviewMock).not.toHaveBeenCalled();
+  });
+
+  it("offers service setup while keeping the ordinary menu trigger when only scripts are configured", () => {
+    current = renderScripts([script({ scriptName: "build" })], { preview: true });
+
+    expect(document.querySelector('[data-testid="workspace-scripts-preview-action"]')).toBeNull();
+    expect(document.querySelector('[data-testid="workspace-scripts-button"]')).not.toBeNull();
+    expect(
+      document.querySelector('[data-testid="workspace-scripts-configure-service"]'),
+    ).not.toBeNull();
+    expect(document.querySelector('[data-testid="workspace-scripts-preview-section"]')).toBeNull();
+  });
+
+  it("offers service setup when there are no scripts", () => {
+    current = renderScripts([], { preview: true });
+
+    const button = document.querySelector('[data-testid="workspace-scripts-configure-service"]');
+    expect(button).not.toBeNull();
+    expect(button?.getAttribute("aria-disabled")).toBeNull();
+    expect(button?.textContent).toContain("Play");
+  });
+
+  it("reopens a running service's preview from the menu without relaunching it", async () => {
+    current = renderScripts(
+      [
+        script({
+          scriptName: "app",
+          type: "service",
+          port: 3000,
+          lifecycle: "running",
+          health: "healthy",
+          terminalId: "terminal-app",
+        }),
+      ],
+      { preview: true },
+    );
+
+    fireEvent.click(requirePickerItem("app"));
+    await act(async () => {});
+
+    expect(onOpenPreviewMock).toHaveBeenCalledTimes(1);
+    expect(onOpenPreviewMock).toHaveBeenCalledWith({
+      scriptName: "app",
+      url: "http://localhost:3000",
+    });
+    expect(startWorkspaceScriptMock).not.toHaveBeenCalled();
+  });
+
+  it("asks again when the remembered service is not configured anymore", async () => {
+    preferredScriptByWorkspaceMock["test-server:workspace-1"] = "ghost";
+    current = renderScripts(
+      [
+        script({ scriptName: "app", type: "service", port: 3000 }),
+        script({ scriptName: "api", type: "service", port: 3001 }),
+      ],
+      { preview: true },
+    );
+
+    fireEvent.click(requirePreviewAction());
+    await act(async () => {});
+
+    expect(startWorkspaceScriptMock).not.toHaveBeenCalled();
+    expect(requirePickerItem("app")).not.toBeNull();
   });
 });

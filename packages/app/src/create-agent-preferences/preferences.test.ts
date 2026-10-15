@@ -173,7 +173,12 @@ describe("create agent preferences", () => {
       provider: "mock",
       providerPreferences: {
         pi: { model: "anthropic/sonnet" },
-        mock: { model: "one-minute-stream", mode: "approval-test", featureValues: {} },
+        mock: {
+          model: "one-minute-stream",
+          mode: "approval-test",
+          modelRouting: "manual",
+          featureValues: {},
+        },
       },
     });
   });

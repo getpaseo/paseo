@@ -36,6 +36,12 @@ function createSnapshot(
 }
 
 describe("normalizeAgentSnapshot", () => {
+  it("round-trips immutable launch provenance used by plan actions", () => {
+    const snapshot = { ...createSnapshot(), launchProfileId: "planner" };
+    const agent = normalizeAgentSnapshot(snapshot, "server-1");
+    expect(agent.launchProfileId).toBe("planner");
+    expect(projectAgentSnapshot(agent).launchProfileId).toBe("planner");
+  });
   it("round-trips identified active turns through the canonical snapshot boundary", () => {
     const snapshot = createSnapshot({
       status: "running",

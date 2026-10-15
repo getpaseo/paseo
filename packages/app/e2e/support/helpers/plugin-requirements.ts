@@ -8,7 +8,6 @@ import { connectDaemonClient } from "./daemon-client-loader";
 import { addConnectedHostAndReload } from "./hosts";
 import { gotoAppShell, openSettings } from "./app";
 import { openHostSection, selectSettingsHost } from "./settings";
-import { pluginRequirements } from "./plugin-fixture";
 
 export const test = base.extend<{
   requirementHost: { serverId: string; port: number; directory: string; client: DaemonClient };
@@ -16,7 +15,7 @@ export const test = base.extend<{
   requirementHost: async ({ e2eWorker }, provide) => {
     void e2eWorker;
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-requirement-ui-"));
-    await writeRequirements(directory, "^99.0.0");
+    await writeRequirements(directory, "^0.8.0");
     await writeFile(
       path.join(directory, "index.client.ts"),
       `export default function(client) {
@@ -25,7 +24,7 @@ export const test = base.extend<{
     );
     const daemon = spawnTsx(
       path.resolve(__dirname, "../../../../server/src/server/test-utils/versioned-daemon.ts"),
-      ["99.0.0"],
+      ["0.11.1"],
       { stdio: ["ignore", "pipe", "pipe", "ipc"] },
     );
     const ready = Promise.withResolvers<{ port: number; serverId: string }>();
@@ -92,23 +91,7 @@ export async function openRequirementHost(page: Page, host: { serverId: string; 
   await openHostSection(page, host.serverId, "plugins");
 }
 
-export async function expectAppMismatch(page: Page) {
-  await expect(page.getByLabel("requirements-example failed", { exact: true })).toBeVisible();
-  await expect(
-    page.getByText(/Plugin "requirements-example" requires Paseo \^99.0.0. Your app is/),
-  ).toBeVisible();
-}
-
-export async function correctRequirementAndReload(page: Page, directory: string) {
-  await writeRequirements(directory, pluginRequirements.paseo);
-  await page.getByRole("button", { name: "Reload", exact: true }).click();
+export async function expectPluginRunning(page: Page) {
   await expect(page.getByLabel("requirements-example running", { exact: true })).toBeVisible();
   await expect(page.getByText(/Your app is/)).toHaveCount(0);
-}
-
-export async function rejectDaemonMismatch(page: Page, directory: string) {
-  await writeRequirements(directory, ">=100.0.0");
-  await page.getByRole("button", { name: "Reload", exact: true }).click();
-  await expect(page.getByLabel("requirements-example failed", { exact: true })).toBeVisible();
-  await expect(page.getByText(/Your daemon is 99.0.0/).first()).toBeVisible();
 }

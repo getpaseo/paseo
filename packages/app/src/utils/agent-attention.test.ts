@@ -94,53 +94,19 @@ describe("shouldClearAgentAttention", () => {
     ).toBe(false);
   });
 
-  it("returns false for focus entry when clear was deferred while already focused", () => {
-    expect(
-      shouldClearAgentAttention({
-        agentId: "agent-1",
-        isConnected: true,
-        requiresAttention: true,
-        attentionReason: "finished",
-        trigger: "focus-entry",
-        hasDeferredFocusEntryClear: true,
-      }),
-    ).toBe(false);
-  });
-
-  it("returns true for explicit follow-up entrypoints after deferred focus clear", () => {
-    expect(
-      shouldClearAgentAttention({
-        agentId: "agent-1",
-        isConnected: true,
-        requiresAttention: true,
-        attentionReason: "finished",
-        trigger: "input-focus",
-        hasDeferredFocusEntryClear: true,
-      }),
-    ).toBe(true);
-
-    expect(
-      shouldClearAgentAttention({
-        agentId: "agent-1",
-        isConnected: true,
-        requiresAttention: true,
-        attentionReason: "finished",
-        trigger: "prompt-send",
-        hasDeferredFocusEntryClear: true,
-      }),
-    ).toBe(true);
-
-    expect(
-      shouldClearAgentAttention({
-        agentId: "agent-1",
-        isConnected: true,
-        requiresAttention: true,
-        attentionReason: "finished",
-        trigger: "agent-blur",
-        hasDeferredFocusEntryClear: true,
-      }),
-    ).toBe(true);
-  });
+  it.each(["finished", "error"] as const)(
+    "clears %s attention when the agent is viewed",
+    (attentionReason) => {
+      expect(
+        shouldClearAgentAttention({
+          agentId: "agent-1",
+          isConnected: true,
+          requiresAttention: true,
+          attentionReason,
+        }),
+      ).toBe(true);
+    },
+  );
 });
 
 describe("pickAttentionAgent", () => {

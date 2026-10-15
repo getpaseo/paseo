@@ -2,7 +2,91 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
+  interactive: {
+    deepenPrompt:
+      "Explore this response: explain the assumptions, compare alternatives and ask a focused question if needed.",
+    deepen: "Explore further",
+    sent: "Sent",
+    queued: "Queued",
+    updateHost: "Update this host to use interactive responses.",
+    generating: "Generating interactive response…",
+    generationError: "Interactive response generation failed.",
+    loading: "Loading interactive response…",
+    loadError: "Could not load interactive response.",
+    saveError: "Could not save your choices.",
+    renderError: "Could not display this visual. Reload to try again.",
+    scriptBlocked:
+      "This visual contains JavaScript. Execution is blocked until an offline sandbox is available.",
+    artifact: "HTML visual",
+    send: "Send to agent",
+    expand: "Expand",
+    close: "Close",
+    retry: "Retry",
+    reload: "Reload",
+    reloadConflict: "Reload the document to resolve conflicting changes before sending.",
+  },
+  workspaceHistory: {
+    title: "닫힌 대화",
+    empty: "닫힌 대화가 없습니다",
+    updateHost: "작업 공간 기록을 사용하려면 이 호스트를 업데이트하세요.",
+    loadError: "대화를 불러오지 못했습니다.",
+    reopenError: "이 대화를 다시 열지 못했습니다.",
+  },
+  workspaceTodos: {
+    milestone: "마일스톤",
+    ungrouped: "미분류",
+    milestoneDone: "마일스톤 완료",
+    remaining: "{{count}}개 남음",
+    completed: "완료 · {{count}}",
+    progress: "프로젝트 진행 상황",
+    headline: "마일스톤별로 진행하기",
+    subtitle: "각 마일스톤의 진행 중인 작업.",
+    details: "마일스톤 및 메모",
+
+    title: "To-do",
+    taskTitle: "작업 제목",
+    notes: "메모",
+    todo: "할 일",
+    in_progress: "진행 중",
+    done: "완료",
+    add: "작업 추가",
+    save: "저장",
+    delete: "작업 삭제",
+    moveUp: "위로 이동",
+    moveDown: "아래로 이동",
+    reorder: "작업 순서 변경",
+    taskMenu: "작업 메뉴",
+    close: "To-do 닫기",
+    empty: "아직 작업이 없습니다",
+    unsaved: "저장하지 않은 변경 사항",
+    retry: "새로고침 후 다시 시도",
+    updateHost: "공유 작업 목록을 사용하려면 이 호스트를 업데이트하세요.",
+  },
+  paneFind: {
+    connectionFailure: "이 채팅을 검색할 수 없습니다. 호스트 연결을 확인하고 다시 시도하세요.",
+    historyChangedFailure: "검색 중에 채팅이 변경되었습니다. 다시 검색하세요.",
+    revealFailure: "이 일치 항목을 표시할 수 없습니다. 다시 시도하세요.",
+    searching: "검색 중…",
+    loading: "불러오는 중…",
+    failed: "실패",
+    retry: "다시 시도",
+
+    title: "찾기",
+    placeholder: "패널에서 찾기",
+    close: "찾기 닫기",
+    matches: "검색 결과",
+    previous: "이전 일치 항목",
+    next: "다음 일치 항목",
+    toggleReplace: "바꾸기 표시 전환",
+    replaceWith: "바꿀 내용",
+    replace: "바꾸기",
+    replaceAll: "모두 바꾸기",
+    noMatches: "일치 항목 없음",
+    position: "{{current}} / {{total}}",
+    total: "일치 항목 {{total}}개",
+  },
   common: {
+    bottomSheetBackdrop: "하단 시트 배경",
     back: "뒤로",
     loading: "불러오는 중...",
     actions: {
@@ -90,6 +174,8 @@ export const ko: TranslationResources = {
     },
   },
   composer: {
+    nextAttention: "다음 ›",
+    nextAttentionAccessibility: "확인이 필요한 다음 대화 열기",
     placeholders: {
       desktop: "에이전트에게 메시지를 보내거나 @files 태그, /commands, /skills를 사용하세요",
       mobile: "메시지, @files, /commands",
@@ -154,7 +240,7 @@ export const ko: TranslationResources = {
       initialPromptRequired: "초기 프롬프트가 필요합니다",
       alreadyLoading: "이미 불러오는 중입니다",
       uploadFailed: "파일을 업로드하지 못했습니다",
-      noClipboardImage: "클립보드에 이미지가 없습니다.",
+      noClipboardImage: "현재 클립보드에 이미지가 없습니다. 키보드에서 붙여넣기를 시도해 보세요.",
       pasteImageFailed: "이미지를 붙여넣지 못했습니다.",
       fileTooLarge: "{{fileName}}이(가) 너무 큽니다 (최대 {{size}})",
     },
@@ -204,11 +290,18 @@ export const ko: TranslationResources = {
     },
   },
   agentStream: {
+    foldedMessages_one: "메시지 {{count}}개",
+    foldedMessages_other: "메시지 {{count}}개",
     empty: "이 에이전트와 대화를 시작하세요...",
     scrollToBottom: "맨 아래로 스크롤",
     historyLoadFailed: "에이전트 기록을 로드할 수 없습니다.",
     messageCapped: "이 메시지는 길이 제한으로 잘렸습니다({{bytes}}바이트).",
     permission: {
+      approve: "승인",
+      rejectedPlan: "거부된 계획",
+      approvedPlan: "승인된 계획",
+      canceledPlan: "취소된 계획",
+
       plan: "계획",
       required: "권한 필요",
       deny: "거부",
@@ -222,7 +315,8 @@ export const ko: TranslationResources = {
     states: {
       notFound: "에이전트를 찾을 수 없습니다",
       failedToLoad: "에이전트를 불러오지 못했습니다",
-      reconnecting: "다시 연결하는 중",
+      reconnecting: "호스트에 다시 연결하는 중",
+      updating: "메시지 업데이트 중",
       timelineSyncFailed: "에이전트 기록을 새로고침할 수 없습니다.",
       timelineSyncRetrying: "재시도 중…",
       archivingTitle: "에이전트 보관 중...",
@@ -286,6 +380,11 @@ export const ko: TranslationResources = {
     },
   },
   message: {
+    handoff: {
+      planTitle: "전달된 계획",
+      details: "핸드오프 세부 정보",
+      copyPlan: "계획 복사",
+    },
     diagram: {
       diagram: "다이어그램",
       zoomIn: "확대",
@@ -354,6 +453,9 @@ export const ko: TranslationResources = {
         completed: "완료됨",
       },
     },
+    turnFooter: {
+      workedFor: "작업 시간 {{duration}}",
+    },
     compaction: {
       loading: "압축하는 중...",
       auto: "컨텍스트가 자동으로 압축되었습니다",
@@ -412,7 +514,9 @@ export const ko: TranslationResources = {
       recovery: {
         archivedTitle: "워크스페이스가 보관되었습니다",
         restoreDescription:
-          "{{workspaceName}}가 보관되고 워크트리가 제거되었습니다. 다시 열려면 {{branch}} 브랜치를 복원하세요.",
+          "{{workspaceName}}를 복원하여 에이전트로 돌아갑니다. 워크트리는 {{branch}} 브랜치를 사용합니다.",
+        restoreWithoutBranchDescription:
+          "{{workspaceName}}를 복원하여 에이전트로 돌아갑니다. 저장된 기반 브랜치 또는 저장소 기본 브랜치에서 새 브랜치를 만듭니다.",
         unarchiveDescription: "{{workspaceName}}가 보관되었습니다. 다시 열려면 보관을 취소하세요.",
         restoreAction: "복원",
         unarchiveAction: "보관 취소",
@@ -534,6 +638,15 @@ export const ko: TranslationResources = {
       },
     },
     browser: {
+      tabs: "브라우저 탭",
+      newTab: "새 브라우저 탭",
+      allTabs: "모든 탭",
+      hide: "브라우저 숨기기",
+      show: "브라우저 표시",
+      reopenLastClosedTab: "마지막으로 닫은 탭 다시 열기",
+      address: "주소",
+      placementUnavailable:
+        "이 레이아웃에서 브라우저를 열 수 없습니다. 패널을 닫고 다시 시도하세요.",
       unavailable: {
         title: "브라우저는 데스크톱 전용입니다",
         subtitle: "내장 브라우저를 사용하려면 이 워크스페이스를 Electron에서 여세요.",
@@ -567,6 +680,7 @@ export const ko: TranslationResources = {
         responsive: "반응형",
       },
       errors: {
+        crashed: "이 페이지가 비정상적으로 종료되었습니다. 새로고침하여 다시 시도하세요.",
         failedToLoad: "페이지를 불러오지 못했습니다",
         invalidUrl: "잘못된 브라우저 URL",
         unsupportedProtocol: "지원되지 않는 브라우저 URL을 차단했습니다: {{protocol}}",
@@ -708,6 +822,12 @@ export const ko: TranslationResources = {
     scripts: {
       title: "스크립트",
       actions: {
+        play: "Play",
+        configureService: "Configure service",
+        saveAndLaunch: "Save and launch",
+        reloadConfiguration: "Reload configuration",
+        cancel: "Cancel",
+        retryLaunch: "Retry launch",
         chooseUrl: "URL를 선택하세요",
         copyUrl: "URL 복사",
         openService: "서비스 보기",
@@ -726,6 +846,12 @@ export const ko: TranslationResources = {
         copyUrl: "{{scriptName}} URL 복사",
         chooseUrl: "{{scriptName}}의 URL 선택",
         script: "{{scriptName}} 스크립트",
+        startPreview: "{{scriptName}} 시작 후 미리보기 열기",
+        stopPreview: "{{scriptName}} 중지 후 미리보기 닫기",
+        choosePreviewService: "미리볼 서비스 선택",
+      },
+      preview: {
+        section: "개발 미리보기",
       },
       routes: {
         public: "역방향 프록시",
@@ -733,9 +859,34 @@ export const ko: TranslationResources = {
         direct: "직접",
       },
       states: {
+        noServiceConfigured: "구성된 서비스가 없습니다",
+        configureServiceTitle: "Configure a development service",
+        editService: "Edit {{name}}",
+        serviceName: "Name",
+        serviceCommand: "Command",
+        servicePort: "Port",
+        automaticPort: "Automatic",
+        automaticPortHint: "The command must use PASEO_PORT.",
+        configurationLoading: "Loading service configuration…",
+        configurationFailed: "Couldn't read service configuration.",
+        invalidServiceName: "Enter a name.",
+        invalidServiceCommand: "Enter a command.",
+        invalidServicePort: "Enter a port from 1 to 65535, or leave it automatic.",
+        serviceNameCollision: "That name is already used by another script.",
+        configurationConflict: "The configuration changed. Reload it before saving.",
+        partialConfigurationSave:
+          "The project was saved, but this workspace wasn't. Retry to finish saving.",
+        configurationSaveFailed: "Couldn't save the service configuration.",
+        serviceLaunchFailed: "The configuration was saved, but the service didn't start.",
+        updateHostForConfiguration: "Update the host to configure a service from Play.",
+        shellClosed: "셸이 종료됨 — 다시 시작",
+        shellCreating: "셸 생성 중…",
+        scriptStopped: "스크립트가 중지됨",
         exitCode: "종료 {{code}}",
         startFailed: "{{scriptName}}을(를) 시작하지 못했습니다",
         stopFailed: "{{scriptName}}를 중지하지 못했습니다.",
+        previewUnhealthy: "{{scriptName}}이(가) 비정상 상태입니다",
+        previewPlacementUnavailable: "현재 레이아웃에서는 개발 미리보기를 열 수 없습니다",
       },
     },
     tree: {
@@ -743,6 +894,30 @@ export const ko: TranslationResources = {
       hideFolderTree: "폴더 트리 숨기기",
     },
     git: {
+      workflow: {
+        defaultSelection: "기본 설정",
+        resetSelection: "초기화",
+        title: "Workspace actions",
+        reviewProfile: "Review profile",
+        deliveryProfile: "Delivery profile",
+        selectProfile: "Select a profile",
+        noProfiles: "No agent profiles available",
+        reviewPrompt: "Review prompt",
+        createPrPrompt: "Create PR prompt",
+        commitAndPushPrompt: "Commit and push prompt",
+        edit: "Edit",
+        save: "Save",
+        saving: "Saving...",
+        missingProfile: "Selected profile is missing",
+        saveFailed: "Couldn't save workspace actions",
+        review: "Review",
+        commitAndPush: "Commit & push",
+        resolveConflicts: "충돌 해결",
+        merge: "Merge",
+        repairChecks: "실패 해결",
+        checking: "Checking status...",
+        unavailable: "Status unavailable",
+      },
       actions: {
         moreOptions: "옵션 더 보기",
         moreActions: "작업 더 보기",
@@ -887,6 +1062,9 @@ export const ko: TranslationResources = {
         openChangesTab: "변경사항 탭 열기",
         openDiffTab: "Diff 탭 열기",
         closeChangesTab: "변경사항 탭 닫기",
+        jumpToFile: {
+          title: "파일로 이동",
+        },
         binaryFile: "바이너리 파일",
         tooLarge: "표시하기에 diff가 너무 큽니다",
         previewTooLargeTitle: "Diff가 너무 커서 미리 볼 수 없습니다",
@@ -943,6 +1121,47 @@ export const ko: TranslationResources = {
         actions: {
           viewPullRequest: "보기",
           openOn: "{{brand}}에서 열기",
+          addToChat: "채팅에 추가",
+          addAllToChat: "모두 채팅에 추가",
+          addingToChat: "추가 중...",
+        },
+        checksOverview: {
+          headline: {
+            actionRequired: "확인이 필요한 검사가 있습니다",
+            failure: "실패한 검사가 있습니다",
+            pending: "아직 완료되지 않은 검사가 있습니다",
+            success: "모든 검사를 통과했습니다",
+            none: "검사 없음",
+          },
+          count: {
+            actionRequired: "{{count}}개 조치 필요",
+            warning: "{{count}}개 경고",
+            failure: "{{count}}개 실패",
+            pending: "{{count}}개 진행 중",
+            manual: "{{count}}개 수동",
+            success: "{{count}}개 성공",
+            ignored: "{{count}}개 건너뜀",
+          },
+          detailOne: "검사: {{parts}}",
+          detailMany: "검사: {{parts}}",
+          groupOne: {
+            actionRequired: "조치 필요 검사 {{count}}개",
+            warning: "경고 검사 {{count}}개",
+            failure: "실패한 검사 {{count}}개",
+            pending: "진행 중인 검사 {{count}}개",
+            manual: "수동 검사 {{count}}개",
+            success: "성공한 검사 {{count}}개",
+            ignored: "건너뛴 검사 {{count}}개",
+          },
+          groupMany: {
+            actionRequired: "조치 필요 검사 {{count}}개",
+            warning: "경고 검사 {{count}}개",
+            failure: "실패한 검사 {{count}}개",
+            pending: "진행 중인 검사 {{count}}개",
+            manual: "수동 검사 {{count}}개",
+            success: "성공한 검사 {{count}}개",
+            ignored: "건너뛴 검사 {{count}}개",
+          },
         },
         checksSummary: {
           passedLabel: "통과",
@@ -956,17 +1175,21 @@ export const ko: TranslationResources = {
           checks: "검사",
           pipeline: "파이프라인",
           reviews: "리뷰",
+          activity: "활동",
         },
         empty: {
           noJobs: "작업 없음",
           loadingPipeline: "파이프라인 로드 중…",
           pipelineJobsLoadFailed: "파이프라인 작업을 로드할 수 없습니다.",
           allowedToFail: "실패가 허용됨",
+          noActivity: "아직 활동이 없습니다",
         },
         approvals: "{{required}} 중 {{given}} 승인",
         accessibility: {
           pullRequest: "풀 리퀘스트 #{{number}}",
           pullRequest_mr: "병합 요청 !{{number}}",
+          commentActions: "댓글 작업",
+          threadActions: "스레드 작업",
           checkStatus: {
             passed: "통과",
             failed: "실패",
@@ -995,6 +1218,8 @@ export const ko: TranslationResources = {
         },
         thread: {
           discussion: "토론 스레드",
+          resolved: "해결됨",
+          outdated: "오래됨",
         },
         errors: {
           statusLoadFailed: "풀 리퀘스트 상태를 불러올 수 없습니다",
@@ -1061,6 +1286,14 @@ export const ko: TranslationResources = {
     },
   },
   sidebar: {
+    statusGroupAccessibility: "{{label}} 그룹",
+    statusBucket: {
+      needsInput: "입력 필요",
+      failed: "실패",
+      readyToReview: "검토 대기",
+      working: "실행 중",
+      done: "완료",
+    },
     display: {
       trigger: "표시 설정",
       heading: "표시",
@@ -1097,6 +1330,7 @@ export const ko: TranslationResources = {
         all: "모든 호스트",
       },
       projectFilter: {
+        show: "{{projectName}} 표시",
         label: "프로젝트",
         all: "모든 프로젝트",
       },
@@ -1120,6 +1354,9 @@ export const ko: TranslationResources = {
       hosts: "호스트",
       settings: "설정",
       closeSidebar: "사이드바 닫기",
+    },
+    footer: {
+      usage: "사용량",
     },
     help: {
       trigger: "도움말 및 지원",
@@ -1146,6 +1383,7 @@ export const ko: TranslationResources = {
     project: {
       actions: {
         menu: "프로젝트 작업",
+        hide: "프로젝트 숨기기",
         openSettings: "프로젝트 설정 열기",
         openNewWindow: "새 창에서 열기",
         openNewWindowFailed: "새 창을 열 수 없습니다",
@@ -1225,6 +1463,14 @@ export const ko: TranslationResources = {
     },
   },
   newWorkspace: {
+    intention: {
+      save: "저장",
+      label: "의도",
+      edit: "의도 편집",
+      required: "의도를 입력하세요.",
+      unavailable: "의도를 사용하려면 호스트를 업데이트하세요.",
+      profileUnavailable: "이 호스트에서 Router 프로필을 설정하세요.",
+    },
     title: "새 워크스페이스",
     create: "생성",
     isolation: {
@@ -1270,6 +1516,15 @@ export const ko: TranslationResources = {
     },
   },
   desktop: {
+    agentWidget: {
+      planReady: "계획 준비 완료",
+      responseNeeded: "응답 대기 중",
+      responseSent: "응답을 보냈습니다",
+      execute: "실행",
+      sendComment: "보내기",
+      handoff: "인계",
+      comment: "지시 추가…",
+    },
     windowControls: {
       minimize: "창 최소화",
       maximize: "창 최대화",
@@ -1501,6 +1756,8 @@ export const ko: TranslationResources = {
     noFiles: "파일 또는 디렉터리를 찾을 수 없습니다",
     noCommands: "명령을 찾을 수 없습니다",
     failedToLoad: "불러오지 못했습니다",
+    chooseProjectForCommands: "명령을 보려면 프로젝트를 선택하세요",
+    chooseModelForCommands: "명령을 보려면 모델을 선택하세요",
   },
   loadOlderHistory: {
     failed: "이전 기록을 불러올 수 없습니다",
@@ -1534,6 +1791,8 @@ export const ko: TranslationResources = {
   modelSelector: {
     title: "프로바이더 선택",
     selectModel: "모델 선택",
+    autoJev: "자동 · JEV",
+    autoJevDescription: "JEV가 모델과 추론 수준을 선택하도록 합니다",
     selectedModel: "모델 선택 ({{model}})",
     loading: "불러오는 중...",
     loadingShort: "불러오는 중",
@@ -1592,6 +1851,21 @@ export const ko: TranslationResources = {
     },
   },
   pairing: {
+    hostPassword: {
+      title: "{{host}}의 비밀번호",
+      label: "호스트 비밀번호",
+    },
+    hostConfirmation: {
+      title: "이 호스트에 연결할까요?",
+      description:
+        "이 호스트는 이 앱에서 코드를 실행하고 연결된 다른 호스트에 접근할 수 있게 됩니다. 알고 있는 호스트인 경우에만 연결하세요.",
+      descriptionChanged:
+        "이 링크는 이 호스트에 연결하는 방식을 변경합니다. 호스트는 이 앱에서 코드를 실행하고 연결된 다른 호스트에 접근할 수 있게 됩니다. 알고 있는 호스트인 경우에만 연결하세요.",
+      hostLabel: "호스트",
+      fingerprintLabel: "키 지문",
+      relayLabel: "릴레이",
+      connect: "연결",
+    },
     connectionMethods: {
       title: "연결 추가",
       direct: {
@@ -1657,6 +1931,12 @@ export const ko: TranslationResources = {
       helper: "원격 호스트에서 실행 중인 Paseo 데몬에 연결합니다.",
       fields: {
         target: "SSH 호스트",
+        password: "데몬 비밀번호",
+        optional: "선택 사항",
+      },
+      passwordVisibility: {
+        show: "비밀번호 표시",
+        hide: "비밀번호 숨기기",
       },
       actions: {
         cancel: "취소",
@@ -1887,6 +2167,8 @@ export const ko: TranslationResources = {
     dismiss: "닫기",
   },
   contextWindow: {
+    noData: "컨텍스트 데이터 없음",
+    accessibilityNoData: "컨텍스트 창: 컨텍스트 데이터 없음",
     title: "컨텍스트 윈도우",
     used: "{{percentage}}% 사용됨",
     tokens: "{{used}} / {{max}} 토큰",
@@ -1928,8 +2210,11 @@ export const ko: TranslationResources = {
     groupInfo: "{{title}} 정보",
     sections: {
       general: "일반",
+      chat: "채팅",
       appearance: "모양",
-      layout: en.settings.sections.layout,
+      sidebar: "사이드바",
+      terminal: "터미널",
+      browser: "브라우저",
       editor: "편집기",
       shortcuts: "단축키",
       integrations: "통합",
@@ -1988,6 +2273,7 @@ export const ko: TranslationResources = {
     },
     general: {
       title: "일반",
+      sending: "전송",
       browserData: {
         title: "브라우저 데이터",
         siteData: "쿠키 및 사이트 데이터",
@@ -2016,8 +2302,6 @@ export const ko: TranslationResources = {
         },
       },
       serviceUrls: {
-        label: "서비스 URL",
-        description: "실행 중인 스크립트의 URL을 열 위치",
         options: {
           ask: "물어보기",
           inApp: "Paseo에서",
@@ -2036,7 +2320,6 @@ export const ko: TranslationResources = {
       toolCallDetail: {
         label: "도구 호출 표시",
         description: "타임라인에 도구 호출이 표시되는 방식",
-        accessibilityLabel: "도구 호출 표시 선택({{value}})",
         options: {
           overview: "요약",
           detailed: "전체 세부정보",
@@ -2139,8 +2422,15 @@ export const ko: TranslationResources = {
         description: "프롬프트 사이를 이동하기 위한 개요 표시",
       },
       sidebar: {
-        title: "사이드바",
-        description: "사이드바 상단에 표시할 항목과 순서를 선택하세요",
+        header: {
+          title: "헤더",
+          description: "사이드바 상단에 표시할 항목과 순서를 선택하세요",
+        },
+        footer: {
+          title: "푸터",
+          description:
+            "사이드바 하단에 표시할 행과 순서를 선택하세요. 프로젝트 추가와 아이콘 행은 항상 표시됩니다",
+        },
         moveUp: "위로 이동",
         moveDown: "아래로 이동",
       },
@@ -2163,6 +2453,14 @@ export const ko: TranslationResources = {
         codeSize: "코드 크기",
         codeSizeHint: "코드, diff 및 터미널 출력에 사용됩니다",
         codeSizeAccessibility: "코드 글꼴 크기",
+      },
+      layout: {
+        title: "레이아웃",
+        contentWidth: "콘텐츠 너비",
+        contentWidthHint: "와이드 화면에서 채팅과 Markdown 파일의 최대 너비",
+        contentWidthAccessibility: "콘텐츠 너비(픽셀)",
+        reset: "재설정",
+        resetAccessibility: "콘텐츠 너비를 기본값으로 재설정",
       },
       syntax: {
         title: "구문",
@@ -2273,6 +2571,9 @@ export const ko: TranslationResources = {
       },
     },
     host: {
+      password: {
+        guidance: "이 호스트를 제거한 뒤 이 데몬이 요구하는 비밀번호로 다시 추가하세요.",
+      },
       appearance: {
         title: "모양",
         name: {
@@ -2440,6 +2741,8 @@ export const ko: TranslationResources = {
         modelLabel: "모델",
         noModels: "이 프로바이더에는 선택할 수 있는 모델이 없습니다",
         modeLabel: "모드",
+        postApprovalModeLabel: "계획 승인 후 모드",
+        nativeApprovalMode: "제공자의 승인 동작",
         noModes: "이 프로바이더에는 선택할 수 있는 모드가 없습니다",
         thinkingLabel: "사고",
         noThinkingOptions: "이 모델에는 사고 수준이 없습니다",
@@ -2602,6 +2905,7 @@ export const ko: TranslationResources = {
         name: "이름",
         nameLabel: "프로젝트 이름",
         icon: "아이콘",
+        emoji: "이모지",
         chooseImage: "이미지 선택",
         useAutomatic: "자동 사용",
         imageUrl: "이미지 또는 웹사이트 URL",

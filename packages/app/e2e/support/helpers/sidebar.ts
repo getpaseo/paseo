@@ -53,6 +53,37 @@ export async function showWorkspaceHoverCard(page: Page, workspaceId: string): P
   await expect(page.getByTestId("workspace-hover-card")).toBeVisible();
 }
 
+export async function movePointerAwayFromWorkspaceHoverCard(page: Page): Promise<void> {
+  // Two moves, so the pointer always moves even when it is already parked here.
+  await page.mouse.move(1200, 200, { steps: 5 });
+  await page.mouse.move(1200, 400, { steps: 5 });
+}
+
+export async function focusWorkspaceRowWithKeyboard(
+  page: Page,
+  workspaceId: string,
+): Promise<void> {
+  const row = page.getByTestId(`sidebar-workspace-row-${getServerId()}:${workspaceId}`);
+  await row.focus();
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Tab");
+  await expect(row).toBeFocused();
+}
+
+export async function expectWorkspaceHoverCardOpen(page: Page): Promise<void> {
+  await expect(page.getByTestId("workspace-hover-card")).toBeVisible();
+}
+
+export async function expectWorkspaceHoverCardStaysOpen(page: Page): Promise<void> {
+  // Longer than the hover card's close grace period.
+  await page.waitForTimeout(300);
+  await expectWorkspaceHoverCardOpen(page);
+}
+
+export async function expectWorkspaceHoverCardClosed(page: Page): Promise<void> {
+  await expect(page.getByTestId("workspace-hover-card")).toHaveCount(0);
+}
+
 export async function closeWorkspaceContextMenu(page: Page, workspaceId: string): Promise<void> {
   const workspaceKey = `${getServerId()}:${workspaceId}`;
   await page.getByTestId(`sidebar-workspace-context-menu-${workspaceKey}-backdrop`).click();
@@ -143,6 +174,17 @@ export async function clickArchiveWorkspaceMenuItem(
   await archiveItem.click();
 }
 
+export async function clickArchiveWorkspaceButton(page: Page, workspaceId: string): Promise<void> {
+  const workspaceKey = `${getServerId()}:${workspaceId}`;
+  const row = page.getByTestId(`sidebar-workspace-row-${workspaceKey}`);
+  await expect(row).toBeVisible({ timeout: 30_000 });
+  await row.hover();
+
+  const archiveButton = page.getByTestId(`sidebar-workspace-archive-${workspaceKey}`);
+  await expect(archiveButton).toBeVisible({ timeout: 10_000 });
+  await archiveButton.click();
+}
+
 export async function pinWorkspaceFromSidebar(page: Page, workspaceId: string): Promise<void> {
   const serverId = await openWorkspaceSidebarKebab(page, workspaceId);
   const pinItem = page.getByTestId(`sidebar-workspace-menu-pin-${serverId}:${workspaceId}`);
@@ -154,7 +196,7 @@ export async function archiveWorkspaceFromSidebar(page: Page, workspaceId: strin
   // A clean workspace archives with no prompt. Managed worktree backing may raise
   // a browser confirm for unsynced work, so accept it when present.
   page.once("dialog", (dialog) => void dialog.accept());
-  await clickArchiveWorkspaceMenuItem(page, workspaceId);
+  await clickArchiveWorkspaceButton(page, workspaceId);
 }
 
 export async function expectWorkspaceAbsentFromSidebar(

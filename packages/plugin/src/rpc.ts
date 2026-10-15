@@ -18,7 +18,7 @@ interface RpcDefinition<InputSchema extends ZodType, OutputSchema extends ZodTyp
   output: OutputSchema;
 }
 
-const RPC_NAME = /^[a-z][a-z0-9._-]*$/;
+const RPC_NAME = /^[a-z][a-zA-Z0-9._-]*$/;
 
 export function defineRpc<InputSchema extends ZodType, OutputSchema extends ZodType>(
   definition: RpcDefinition<InputSchema, OutputSchema>,

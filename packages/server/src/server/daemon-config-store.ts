@@ -28,6 +28,7 @@ interface SupportedMutableConfigPatch {
   appendSystemPrompt?: string;
   terminalProfiles?: MutableDaemonConfig["terminalProfiles"];
   agentProfiles?: MutableDaemonConfig["agentProfiles"];
+  workspaceGitWorkflow?: MutableDaemonConfig["workspaceGitWorkflow"];
   skills?: MutableDaemonConfig["skills"];
   pluginsEnabled?: boolean;
   plugins?: MutableDaemonConfig["plugins"];
@@ -183,6 +184,7 @@ const RELOADABLE_PATHS = [
   "daemon.appendSystemPrompt",
   "daemon.terminalProfiles",
   "daemon.agentProfiles",
+  "daemon.workspaceGitWorkflow",
   "app.baseUrl",
   "agents.providers",
   "agents.catalogRefreshTimeoutMs",
@@ -206,6 +208,7 @@ const PERSISTED_TO_MUTABLE_PATH = new Map<string, string>([
   ["daemon.appendSystemPrompt", "appendSystemPrompt"],
   ["daemon.terminalProfiles", "terminalProfiles"],
   ["daemon.agentProfiles", "agentProfiles"],
+  ["daemon.workspaceGitWorkflow", "workspaceGitWorkflow"],
   ["app.baseUrl", "app.baseUrl"],
   ["agents.providers", "providers"],
   ["agents.catalogRefreshTimeoutMs", "catalogRefreshTimeoutMs"],
@@ -274,6 +277,9 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
       : {}),
     ...(patch.terminalProfiles !== undefined ? { terminalProfiles: patch.terminalProfiles } : {}),
     ...(patch.agentProfiles !== undefined ? { agentProfiles: patch.agentProfiles } : {}),
+    ...(patch.workspaceGitWorkflow !== undefined
+      ? { workspaceGitWorkflow: patch.workspaceGitWorkflow }
+      : {}),
     ...(patch.pluginsEnabled !== undefined ? { pluginsEnabled: patch.pluginsEnabled } : {}),
     ...(patch.plugins !== undefined ? { plugins: patch.plugins } : {}),
   };
@@ -347,7 +353,20 @@ export class DaemonConfigStore {
   }
 
   public patch(partial: MutableDaemonConfigPatch): MutableDaemonConfig {
-    const parsedPatch = pickSupportedPatchFields(MutableDaemonConfigPatchSchema.parse(partial));
+    const input = MutableDaemonConfigPatchSchema.parse(partial);
+    const parsedPatch = pickSupportedPatchFields(input);
+    if (input.addAgentProfilesIfMissing !== undefined) {
+      if (input.agentProfiles !== undefined)
+        throw new Error("Cannot replace and add agent profiles in the same patch.");
+      const profiles = [...(this.current.agentProfiles ?? [])];
+      const ids = new Set(profiles.map((profile) => profile.id));
+      for (const profile of input.addAgentProfilesIfMissing) {
+        if (ids.has(profile.id)) continue;
+        profiles.push(profile);
+        ids.add(profile.id);
+      }
+      parsedPatch.agentProfiles = profiles;
+    }
     return this.applySupportedPatch(parsedPatch);
   }
 
@@ -364,6 +383,12 @@ export class DaemonConfigStore {
     const { removeProviders = [], ...configPatch } = parsedPatch;
     const removedProviders = Array.from(new Set(removeProviders));
     const merged = deepMerge(this.current, configPatch);
+    if (parsedPatch.workspaceGitWorkflow !== undefined) {
+      merged.workspaceGitWorkflow = {
+        ...this.current.workspaceGitWorkflow,
+        ...parsedPatch.workspaceGitWorkflow,
+      };
+    }
     if (parsedPatch.skills?.selection !== undefined) {
       merged.skills = { selection: parsedPatch.skills.selection };
     }
@@ -661,5 +686,8 @@ function mergeMutableDaemonPatch(
   if (patch.appendSystemPrompt !== undefined) next.appendSystemPrompt = patch.appendSystemPrompt;
   if (patch.terminalProfiles !== undefined) next.terminalProfiles = patch.terminalProfiles;
   if (patch.agentProfiles !== undefined) next.agentProfiles = patch.agentProfiles;
+  if (patch.workspaceGitWorkflow !== undefined) {
+    next.workspaceGitWorkflow = { ...next.workspaceGitWorkflow, ...patch.workspaceGitWorkflow };
+  }
   return Object.keys(next).length > 0 ? next : undefined;
 }

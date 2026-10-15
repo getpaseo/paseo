@@ -4,11 +4,36 @@ import type {
   ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
 import {
+  resolveModelSelectorLabels,
   resolveInitialModelBrowserView,
   resolveModelBrowserAllView,
   groupProfilesByProviderModel,
   resolveModelBrowserScrolling,
 } from "./model-browser-view";
+
+it.each([true, false, undefined])(
+  "shows the routing choice in both model labels (Auto=%s)",
+  (selected) => {
+    expect(
+      resolveModelSelectorLabels({
+        autoRouting: selected === undefined ? undefined : { selected },
+        selectedModelLabel: "Codex / GPT-6-Astra",
+        triggerLabel: "GPT-6-Astra",
+        autoLabel: "Auto · JEV",
+      }),
+    ).toEqual(
+      selected
+        ? {
+            selectedModelLabel: "Auto · JEV",
+            triggerLabel: "Auto · JEV",
+          }
+        : {
+            selectedModelLabel: "Codex / GPT-6-Astra",
+            triggerLabel: "GPT-6-Astra",
+          },
+    );
+  },
+);
 
 function provider(
   id: string,

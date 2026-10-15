@@ -1,11 +1,13 @@
-import { compare, compareSync, hashSync } from "bcryptjs";
+import { compare, hashSync } from "bcryptjs";
 import { timingSafeEqual } from "node:crypto";
 import type { RequestHandler } from "express";
+import { matchesLocalCredential } from "./local-credential.js";
 
 export const DAEMON_PASSWORD_BCRYPT_COST = 12;
 
 export interface DaemonAuthConfig {
   password?: string;
+  localCredential?: () => string | null;
 }
 
 export interface BearerAuthRejectContext {
@@ -19,10 +21,6 @@ interface BearerValidationInput {
   token: string | null;
 }
 
-export function isBearerTokenValid(input: BearerValidationInput): boolean {
-  return isBearerTokenValidSync(input);
-}
-
 export async function isBearerTokenValidAsync(input: BearerValidationInput): Promise<boolean> {
   if (!input.password) {
     return true;
@@ -32,17 +30,6 @@ export async function isBearerTokenValidAsync(input: BearerValidationInput): Pro
   }
 
   return compare(input.token, input.password);
-}
-
-export function isBearerTokenValidSync(input: BearerValidationInput): boolean {
-  if (!input.password) {
-    return true;
-  }
-  if (input.token === null) {
-    return false;
-  }
-
-  return compareSync(input.token, input.password);
 }
 
 export function hashDaemonPassword(password: string): string {
@@ -101,7 +88,13 @@ export function createRequireBearerMiddleware(
     void (async () => {
       try {
         const token = extractHttpBearerToken(req.header("authorization"));
-        if (!(await isBearerTokenValidAsync({ password, token }))) {
+        const localCredential = req.path === "/api/status" ? auth?.localCredential?.() : null;
+        const isLocal =
+          localCredential !== null &&
+          localCredential !== undefined &&
+          token !== null &&
+          matchesLocalCredential(localCredential, token);
+        if (!isLocal && !(await isBearerTokenValidAsync({ password, token }))) {
           onReject?.({
             path: req.path,
             method: req.method,

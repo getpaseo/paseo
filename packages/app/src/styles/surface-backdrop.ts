@@ -14,6 +14,7 @@
 export type SurfaceBackdrop =
   | "surface0"
   | "surface1"
+  | "surfaceWorkspace"
   | "surface2"
   | "surfaceWorkspaceChrome"
   | "surfaceTabActive"

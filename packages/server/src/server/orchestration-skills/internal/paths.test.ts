@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { resolveBundledSkillsDir, resolveSkillTargets } from "./paths.js";
+import { getSkillsStatus, installSkills } from "./operations.js";
 
 const roots: string[] = [];
 
@@ -14,6 +15,25 @@ afterEach(async () => {
 });
 
 describe("orchestration skill paths", () => {
+  it.each(["paseo-simplify", "paseo-simplify-loop", "paseo-review-loop"])(
+    "discovers and installs the bundled %s skill",
+    async (name) => {
+      const home = await mkdtemp(path.join(os.tmpdir(), "paseo-workflow-skills-"));
+      roots.push(home);
+      const targets = resolveSkillTargets(home);
+      const status = await getSkillsStatus(targets, { mode: "all" });
+
+      expect(status.available).toContain(name);
+      expect(status.ops).toContainEqual({ kind: "add", name });
+
+      await installSkills(targets, { mode: "custom", skills: [name] });
+      const source = await readFile(path.join(targets.sourceDir, name, "SKILL.md"), "utf8");
+      for (const dir of [targets.agentsDir, targets.claudeDir, targets.codexDir]) {
+        expect(await readFile(path.join(dir, name, "SKILL.md"), "utf8")).toBe(source);
+      }
+    },
+  );
+
   it("finds the repository catalog from the source module", () => {
     const repositoryRoot = path.resolve(
       path.dirname(fileURLToPath(import.meta.url)),

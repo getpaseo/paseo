@@ -54,6 +54,7 @@ const CAPABILITIES: AgentCapabilityFlags = {
   supportsMcpServers: false,
   supportsReasoningStream: true,
   supportsToolInvocations: true,
+  supportsNativePaseoTools: true,
   supportsRewindConversation: true,
   supportsRewindFiles: true,
   supportsRewindBoth: true,
@@ -140,6 +141,18 @@ const MODELS: AgentModelDefinition[] = [
       { id: "high", label: "High" },
     ],
     defaultThinkingOptionId: "low",
+    metadata: {
+      durationMs: 10_000,
+      intervalMs: 5,
+    },
+  },
+  {
+    provider: MOCK_LOAD_TEST_PROVIDER_ID,
+    id: "max-only-thinking-stream",
+    label: "Max-only thinking stream",
+    description: "Fast realistic stream with one supported thinking level.",
+    thinkingOptions: [{ id: "max", label: "Max", isDefault: true }],
+    defaultThinkingOptionId: "max",
     metadata: {
       durationMs: 10_000,
       intervalMs: 5,
@@ -656,19 +669,20 @@ export class MockLoadTestAgentClient implements AgentClient {
 
   async createSession(
     config: AgentSessionConfig,
-    _launchContext?: AgentLaunchContext,
+    launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     return new MockLoadTestAgentSession({
       config,
       sessionId: randomUUID(),
       logger: this.logger,
+      paseoTools: launchContext?.paseoTools,
     });
   }
 
   async resumeSession(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
-    _launchContext?: AgentLaunchContext,
+    launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
     return new MockLoadTestAgentSession({
@@ -680,6 +694,7 @@ export class MockLoadTestAgentClient implements AgentClient {
       },
       sessionId: handle.sessionId,
       logger: this.logger,
+      paseoTools: launchContext?.paseoTools,
     });
   }
 
@@ -714,11 +729,20 @@ export class MockLoadTestAgentClient implements AgentClient {
   }
 }
 
+function getConfiguredAssistantResponses(value: unknown): string[] {
+  return Array.isArray(value) && value.every((response) => typeof response === "string")
+    ? [...value]
+    : [];
+}
+
 export class MockLoadTestAgentSession implements AgentSession {
   readonly provider: AgentProvider = MOCK_LOAD_TEST_PROVIDER_ID;
   readonly capabilities = CAPABILITIES;
   readonly features: AgentFeature[] = [];
   readonly id: string;
+  private readonly usageSessionKey = randomUUID();
+  private readonly paseoTools?: AgentLaunchContext["paseoTools"];
+
   private readonly listeners = new Set<(event: AgentStreamEvent) => void>();
   private readonly history: AgentStreamEvent[] = [];
   private readonly logger?: Logger;
@@ -727,21 +751,32 @@ export class MockLoadTestAgentSession implements AgentSession {
   private modeId: string | null;
   private modelId: string | null;
   private readonly assistantResponse: string | null;
+  private readonly assistantResponses: string[];
   private readonly streamingAssistantResponse: string | null;
   private readonly streamingAssistantIntervalMs: number;
   private readonly rewindError: string | null;
   private remainingPromptRejections: number;
   private remainingSteerFailures: number;
+  private remainingPermissionResponseFailures: number;
 
-  constructor(options: { config: AgentSessionConfig; sessionId: string; logger?: Logger }) {
+  constructor(options: {
+    config: AgentSessionConfig;
+    sessionId: string;
+    logger?: Logger;
+    paseoTools?: AgentLaunchContext["paseoTools"];
+  }) {
     this.id = options.sessionId;
     this.logger = options.logger;
+    this.paseoTools = options.paseoTools;
     this.modeId = options.config.modeId ?? MOCK_LOAD_TEST_MODE_ID;
     this.modelId = options.config.model ?? MOCK_LOAD_TEST_DEFAULT_MODEL_ID;
     this.assistantResponse =
       typeof options.config.featureValues?.mockAssistantResponse === "string"
         ? options.config.featureValues.mockAssistantResponse
         : null;
+    this.assistantResponses = getConfiguredAssistantResponses(
+      options.config.featureValues?.mockAssistantResponses,
+    );
     this.streamingAssistantResponse =
       typeof options.config.featureValues?.mockStreamingAssistantResponse === "string"
         ? options.config.featureValues.mockStreamingAssistantResponse
@@ -768,6 +803,18 @@ export class MockLoadTestAgentSession implements AgentSession {
     this.remainingSteerFailures = getPositiveFeatureInteger(
       options.config.featureValues?.mockSteerAmbiguousFailures,
     );
+    this.remainingPermissionResponseFailures = getPositiveFeatureInteger(
+      options.config.featureValues?.mockPermissionResponseFailures,
+    );
+  }
+
+  usageSession() {
+    return {
+      provider: this.provider,
+      model: this.modelId ?? undefined,
+      env: {},
+      sessionKey: this.usageSessionKey,
+    };
   }
 
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
@@ -823,14 +870,32 @@ export class MockLoadTestAgentSession implements AgentSession {
     const settledAssistantImageMarkdown = parseSettledAssistantImageMarkdown(prompt);
     const steeringReplayShape = parseSteeringReplayShape(prompt);
     const scheduleTurn = () => {
-      if (shouldEmitTurnFailure(prompt)) {
+      if (promptToText(prompt).startsWith("Render synthetic interactive response: ")) {
+        turn.timer = setTimeout(() => {
+          void this.renderInteractiveTurn(turn);
+        }, 0);
+      } else if (
+        promptToText(prompt).includes("Interactive response snapshot (user-selected data):\n")
+      ) {
+        const snapshotText = promptToText(prompt)
+          .split("Interactive response snapshot (user-selected data):\n")
+          .at(-1)!;
+        const snapshot = JSON.parse(snapshotText) as { state: unknown };
+        this.scheduleSettledAssistantTurn(
+          turn,
+          `Selection received: ${JSON.stringify(snapshot.state)}`,
+        );
+      } else if (shouldEmitTurnFailure(prompt)) {
         this.scheduleFailedTurn(turn);
       } else if (steeringReplayShape) {
         this.scheduleSteeringReplayTurn(turn, steeringReplayShape);
       } else if (this.streamingAssistantResponse !== null) {
         this.scheduleStreamingAssistantTurn(turn, this.streamingAssistantResponse);
-      } else if (this.assistantResponse !== null) {
-        this.scheduleSettledAssistantTurn(turn, this.assistantResponse);
+      } else if (this.assistantResponses.length > 0 || this.assistantResponse !== null) {
+        this.scheduleSettledAssistantTurn(
+          turn,
+          (this.assistantResponses.shift() ?? this.assistantResponse)!,
+        );
       } else if (structuredBranchName) {
         this.scheduleSettledAssistantTurn(turn, JSON.stringify(structuredBranchName));
       } else if (settledAssistantImageMarkdown) {
@@ -965,9 +1030,28 @@ export class MockLoadTestAgentSession implements AgentSession {
     if (!request) {
       return undefined;
     }
+    if (this.remainingPermissionResponseFailures > 0) {
+      this.remainingPermissionResponseFailures -= 1;
+      throw new Error("Requested mock permission response failure");
+    }
     this.pendingPermissions.delete(requestId);
 
     const turn = this.activeTurn;
+    if (turn && request.kind === "plan" && typeof request.input?.plan === "string") {
+      this.emitTimeline(turn.turnId, {
+        type: "tool_call",
+        name: "plan_approval",
+        callId: request.sourcePlanCallId ?? request.id,
+        status: "completed",
+        error: null,
+        detail: { type: "plan", text: request.input.plan },
+        metadata: {
+          approved: response.behavior === "allow",
+          actionId: response.selectedActionId,
+          resolution: response,
+        },
+      });
+    }
     this.emit({
       type: "permission_resolved",
       provider: this.provider,
@@ -1234,6 +1318,50 @@ export class MockLoadTestAgentSession implements AgentSession {
     turn.timer.unref?.();
   }
 
+  private async renderInteractiveTurn(turn: ActiveTurn): Promise<void> {
+    if (this.activeTurn !== turn) return;
+    const name = "render_interactive_response";
+    const callId = randomUUID();
+    const input = promptToText(turn.prompt).slice("Render synthetic interactive response: ".length);
+    this.emitTurnStarted(turn);
+    this.emitTimeline(
+      turn.turnId,
+      createToolCall({
+        callId,
+        name,
+        status: "running",
+        detail: { type: "unknown", input, output: null },
+      }),
+    );
+    try {
+      if (!this.paseoTools) throw new Error("Paseo tools are unavailable");
+      const result = await this.paseoTools.executeTool(name, JSON.parse(input));
+      if (this.activeTurn !== turn) return;
+      if (result.isError) throw new Error(JSON.stringify(result));
+      this.emitTimeline(
+        turn.turnId,
+        createToolCall({
+          callId,
+          name,
+          status: "completed",
+          detail: { type: "unknown", input, output: JSON.stringify(result) },
+        }),
+      );
+      this.emitSettledAssistantTurn(turn, "Choose an option in the interactive response.");
+    } catch (error) {
+      if (this.activeTurn !== turn) return;
+      this.emitTimeline(turn.turnId, {
+        type: "tool_call",
+        callId,
+        name,
+        status: "failed",
+        error: String(error),
+        detail: { type: "unknown", input, output: String(error) },
+      });
+      this.emitSettledAssistantTurn(turn, String(error));
+    }
+  }
+
   private emitSettledAssistantTurn(turn: ActiveTurn, finalText: string): void {
     if (this.activeTurn !== turn) {
       return;
@@ -1280,6 +1408,7 @@ export class MockLoadTestAgentSession implements AgentSession {
       provider: this.provider,
       name: "MockPlanApproval",
       kind: "plan",
+      sourcePlanCallId: `plan:${turn.turnId}`,
       title: "Plan",
       description: "Review the proposed plan before implementation starts.",
       input: {
@@ -1311,6 +1440,14 @@ export class MockLoadTestAgentSession implements AgentSession {
     };
 
     this.pendingPermissions.set(request.id, request);
+    this.emitTimeline(turn.turnId, {
+      type: "tool_call",
+      name: "plan_approval",
+      callId: request.sourcePlanCallId!,
+      status: "completed",
+      error: null,
+      detail: { type: "plan", text: String(request.input?.plan) },
+    });
     this.emit({
       type: "permission_requested",
       provider: this.provider,

@@ -88,18 +88,12 @@ test.describe("Agent stream UI", () => {
       }
 
       await page.evaluate((block) => {
-        const evidence = {
-          addedNodes: 0,
-          characterDataMutations: 0,
-          removedNodes: 0,
-        };
+        const evidence = { addedNodes: 0, characterDataMutations: 0, removedNodes: 0 };
         const observer = new MutationObserver((records) => {
           for (const record of records) {
             evidence.addedNodes += record.addedNodes.length;
             evidence.removedNodes += record.removedNodes.length;
-            if (record.type === "characterData") {
-              evidence.characterDataMutations += 1;
-            }
+            if (record.type === "characterData") evidence.characterDataMutations += 1;
           }
         });
         observer.observe(block, { characterData: true, childList: true, subtree: true });

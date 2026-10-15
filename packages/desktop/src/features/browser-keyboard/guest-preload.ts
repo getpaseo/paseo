@@ -59,6 +59,7 @@ function matchesCode(prefixCode: string, eventCode: string): boolean {
 }
 
 function stageShortcutForward(event: KeyboardEvent): void {
+  if (event.isComposing || event.keyCode === 229) return;
   if (!event.isTrusted || event.defaultPrevented || !browserId || !matchesPolicy(event)) {
     return;
   }

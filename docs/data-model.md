@@ -48,15 +48,18 @@ $PASEO_HOME/
 ├── server-id                            # Stable daemon identifier (plain text, "srv_<base64url>")
 ├── daemon-keypair.json                  # E2EE keypair for relay (mode 0600)
 ├── paseo.pid                            # Daemon PID lock file
+├── local-credential                     # Per-run local client credential (mode 0600)
 ├── daemon.log                           # Default log file (path configurable)
 ├── agents/
 │   └── {sanitized-cwd}/
 │       └── {agentId}.json               # One file per agent
+├── conversation-ui/                     # Interactive documents, revision states and sent snapshots
 ├── schedules/
 │   └── {scheduleId}.json                # One file per schedule
 ├── projects/
 │   ├── projects.json                    # Project registry
 │   ├── workspaces.json                  # Workspace registry
+│   ├── todos/{hex-workspace-id}.json      # Shared project To-do lists
 │   ├── workspace-labels.json            # Shared host-local label catalog
 │   ├── workspace-labels.transaction.json # Recoverable catalog/assignment compound commit
 │   └── icons/                           # Host-local custom project icon images
@@ -64,14 +67,21 @@ $PASEO_HOME/
 │   └── managed-processes/
 │       └── {recordId}.json              # Helper processes owned by Paseo; reconciled on daemon bootstrap
 ├── plugins/
-│   ├── sources.json                      # Git origin, ref, commit, and managed checkout ownership
-│   └── {pluginId}/{version}/checkout/    # Source checkout for one installed Git commit
+│   ├── sources.json                      # Managed kind and Git acquisition remote
+│   └── {pluginId}/{uuid}/                # Git checkout or npm package/lockfile/dependency tree
 └── push-tokens.json                     # Expo push notification tokens
 ```
 
 The `agents/{sanitized-cwd}/` directory name is derived from the agent's `cwd` by stripping the filesystem root and replacing path separators with `-` (Windows drive letters become a `C-` style prefix). Persistent server stores write atomically by writing a temp file in the target directory and then renaming it into place.
 
 ---
+
+## Interactive conversation documents
+
+Keep interactive documents and their current form state under `conversation-ui/`, scoped to the
+owning agent. Revision states let a queued choice retain the values the user selected while another
+client edits the form. Sent snapshots and deepening context remain separate from the editable state;
+reopening or editing a document must never rewrite an earlier decision.
 
 ## 1. Agent Record
 
@@ -103,6 +113,17 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 | `attentionTimestamp` | `string?` (ISO 8601)                     | When attention was flagged                                                                                                                                                                                                                                                                                                                                                          |
 | `internal`           | `boolean?`                               | Whether this is a system-internal agent                                                                                                                                                                                                                                                                                                                                             |
 | `archivedAt`         | `string?` (ISO 8601)                     | Soft-delete timestamp                                                                                                                                                                                                                                                                                                                                                               |
+
+### Launch history
+
+Launch history is stored with the agent: `launchProfileId` identifies the profile selected at
+creation, and `launchPostApprovalModeId` captures its then-current approval mode. Neither is
+recomputed from today's profile settings on reload. `writePolicy` also belongs to the durable
+launch contract; see [permissions](permissions.md#read-only-agent-launches).
+
+`lastCompletedTurnId` is completion evidence for the current turn, not an ever-increasing counter.
+Starting another turn clears it. Older records without it provide no successful-turn evidence to
+workflow reconciliation.
 
 ### Nested: SerializableConfig
 
@@ -166,6 +187,47 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 
 ---
 
+## Plan persistence
+
+The daemon timeline is an in-memory projection; the provider transcript remains its resume
+authority. Plan revisions are append-only proposals, while settling a permission updates the
+resolution on that proposal's existing call ID. Never persist a second transcript to preserve a
+plan card.
+
+The provider persistence handle supplements facts absent from native history: Codex retains
+synthetic proposals and decisions in `metadata.planHistory`, anchored to native turns; Claude
+retains decisions in `metadata.planResolutions`, keyed by native tool-use ID. Rewind removes
+proposals whose native turn no longer exists. These records preserve reading and decision history,
+not live permission callbacks.
+
+Host-created plan permissions use the agent record's optional private `syntheticPlanDecisions`,
+because a provider cannot persist a decision made outside its permission API. Record the exact
+proposal, source turn when available, resolution and delivery outcome before changing mode or
+resuming. Hydration only restores that decision next to the matching surviving proposal; it never
+recreates a removed plan. A reused call ID with different content is stale, not a new permission.
+The prepared boundary is recorded before any effect. A known mode failure can retry the same
+permission, or reject it, using the original prompt receipt ID. Before delivery can begin, persist
+an unconfirmed outcome; that outcome and older ambiguous pending records stay closed across
+restart. This record supplements plan decisions, not provider conversation history.
+
+Keep provider `turnId` on hydrated timeline rows. Codex supplies native turn IDs; Claude supplies
+message IDs but no host turn ID. The optional private `lastCompletedTurnEvidence` holds only a
+digest of the last completed canonical turn and two prompt correlations, never its content.
+Hydration restores that turn identity only when the surviving native prompt and result match;
+the native provider message IDs must be captured and match for both the prompt and origin.
+A replacement UUID is a different prompt even if its text is identical. Old evidence without
+native IDs still parses but cannot restore correlation; new runs without native echoes capture
+no authorizing evidence. Digests never substitute for native identity. Missing, changed or
+ambiguous history cannot authorize continuation. This bounded record is
+replaced at completion and cleared on a new run. A stored completed-turn ID alone is insufficient.
+
+The request journal retains a final negative plan-revision admission as a completed rejection.
+Reconnection replays the same refusal without rerunning admission. This differs from a known
+pre-acceptance provider failure, which may retry, and an unknown delivery, which may not.
+
+The app replica cache may paint a plan before reconnection finishes. Only a fresh daemon agent
+snapshot can restore its correlated actions; cached permissions never authorize a new operation.
+
 ## Runtime-only Terminal Sessions
 
 Terminals are live daemon state, not persisted JSON records. A terminal carries a `workspaceId` while it is running; workspace-scoped terminal lists include only terminals with the matching `workspaceId`. Legacy live terminals without an owner remain visible to unscoped terminal reads but contribute to no workspace status.
@@ -181,8 +243,10 @@ Terminal activity contributes to the workspace status bucket **per `workspaceId`
 Single file, validated with `PersistedConfigSchema`.
 
 `agents.skills.selection` is the daemon host's orchestration-skill preference. Missing means
-`{ mode: "all" }`. Installed state is not persisted; the daemon derives it from its three managed
-skill directories and keeps config plus filesystem convergence behind one serialized owner.
+`{ mode: "all" }`. Installed state is not persisted; the daemon derives it from the shared
+`~/.agents/skills` and Claude skill directories and keeps config plus filesystem convergence behind
+one serialized owner. Codex discovers the shared directory. Updates retire unchanged files from
+Paseo-managed copies in `~/.codex/skills`, preserving user edits and untracked files.
 
 `paseo reload` reads and validates this file once inside the daemon. That snapshot drives resolution,
 classification, application, and reload bookkeeping. `DaemonConfigStore` owns applying runtime-safe
@@ -254,11 +318,13 @@ snapshot so a mixed edit can apply its live subset and still name the paths that
 
 All fields are optional with sensible defaults.
 
-Git-managed plugins still appear as directory sources in `config.json`. This keeps the plugin
-runtime and protocol config compatible with directory-only clients. `plugins/sources.json` owns the
-Git-specific origin, tracking ref, installed commit, repository subdirectory, and checkout root.
-Paseo writes it atomically. An update creates and validates a new version directory before changing
-the configured directory path; successful activation removes the old version.
+Managed plugins appear as directory sources in `config.json`; it owns the active path and enabled
+state. `plugins/sources.json` is written atomically and stores only managed kind and the Git acquisition
+remote. Installed revision, package/subdirectory identity and ownership root come from retained
+artifacts and the fixed managed layout; [managed source ownership](plugins.md#managed-source-ownership)
+explains their authority. An update prepares a new directory before replacing the active path and
+removing the previous version. Old record fields are accepted at the store boundary and ignored;
+there is no startup migration or persistent update policy.
 
 ### Profile lists
 
@@ -443,24 +509,25 @@ One file per schedule. ID is 8 hex characters.
 
 Array of project records.
 
-| Field                | Type                        | Description                                                                                                                                |
-| -------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `projectId`          | `string`                    | Host-local primary key; new records use opaque `prj_<16 hex>` IDs                                                                          |
-| `projectKey`         | `string \| null`            | Persisted opaque cross-host grouping key; reconciliation backfills absent values                                                           |
-| `rootPath`           | `string`                    | Exact lexically normalized selected root; never realpathed                                                                                 |
-| `kind`               | `"git" \| "non_git"`        | Mutable Git observation about `rootPath`, never a membership key                                                                           |
-| `displayName`        | `string`                    | Selected-root basename, stable across remote and Git changes                                                                               |
-| `customName`         | `string \| null`            | User-set override layered over `displayName`. Null means "use the derived name".                                                           |
-| `customIconRevision` | `string \| null`            | Identifies the host-local custom icon stored under `projects/icons/`. Null means the icon is discovered by scanning the project directory. |
-| `createdAt`          | `string` (ISO 8601)         |                                                                                                                                            |
-| `updatedAt`          | `string` (ISO 8601)         |                                                                                                                                            |
-| `archivedAt`         | `string \| null` (ISO 8601) | Soft-delete timestamp; required nullable                                                                                                   |
+| Field                | Type                        | Description                                                                                                           |
+| -------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `projectId`          | `string`                    | Host-local primary key; new records use opaque `prj_<16 hex>` IDs                                                     |
+| `projectKey`         | `string \| null`            | Persisted opaque cross-host grouping key; reconciliation backfills absent values                                      |
+| `rootPath`           | `string`                    | Exact lexically normalized selected root; never realpathed                                                            |
+| `kind`               | `"git" \| "non_git"`        | Mutable Git observation about `rootPath`, never a membership key                                                      |
+| `displayName`        | `string`                    | Selected-root basename, stable across remote and Git changes                                                          |
+| `customName`         | `string \| null`            | User-set override layered over `displayName`. Null means "use the derived name".                                      |
+| `customIconRevision` | `string \| null`            | Identifies the host-local custom icon selection. Null means the icon is discovered by scanning the project directory. |
+| `customIconEmoji`    | `string \| null`            | The selected emoji, when the custom icon is text rather than an uploaded image.                                       |
+| `createdAt`          | `string` (ISO 8601)         |                                                                                                                       |
+| `updatedAt`          | `string` (ISO 8601)         |                                                                                                                       |
+| `archivedAt`         | `string \| null` (ISO 8601) | Soft-delete timestamp; required nullable                                                                              |
 
 Uploading a file and pasting a website or image URL are two ways of _acquiring_ the same custom
-icon. The client fetches URL imports and sends their bytes through the upload RPC. The daemon never
-receives or fetches the URL; it validates the uploaded bytes, stores them, and records a new
-`customIconRevision`. Going back to automatic deletes the stored image, as does removing the
-project.
+image. The client fetches URL imports and sends their bytes through the upload RPC. The daemon never
+receives or fetches the URL. An emoji is stored directly in the project record. Each custom choice
+gets a new `customIconRevision`; choosing an image, emoji, or automatic icon clears the other modes.
+Removing the project also deletes its stored image.
 
 Active exact roots are idempotent using lexical platform-equivalence semantics. Existing legacy
 remote-shaped and path-shaped IDs remain readable, including duplicate roots; reconciliation never
@@ -488,7 +555,7 @@ Array of workspace records. A workspace is a specific working directory within a
 | `title`                        | `string \| null`                                             | User-set name override layered over `displayName`. Null means "use `displayName`".                                                                                                            |
 | `branch`                       | `string \| null`                                             | The current Git branch for git-backed workspaces. Separate from `displayName`/`title`; a background branch refresh never rewrites the name.                                                   |
 | `worktreeRoot`                 | `string \| null`                                             | Backing checkout/worktree root. May differ from `cwd` for exact subprojects and remains persisted after the worktree is deleted so restore can reproduce the placement.                       |
-| `baseBranch`                   | `string \| null`                                             | Normalized branch the Paseo worktree was created from; null for directories, local checkouts, and checkout-branch worktrees                                                                   |
+| `baseBranch`                   | `string \| null`                                             | Comparison base retained across archive and restore. Branch-off creation stores the resolved ref; legacy and PR-checkout records hold a bare name. Null means no recorded base.               |
 | `isPaseoOwnedWorktree`         | `boolean`                                                    | Whether Paseo owns and may remove/recreate the backing `worktreeRoot`                                                                                                                         |
 | `mainRepoRoot`                 | `string \| null`                                             | Main repository root for worktree checkouts, independent of both exact `cwd` and backing `worktreeRoot`                                                                                       |
 | `createdAt`                    | `string` (ISO 8601)                                          |                                                                                                                                                                                               |
@@ -500,6 +567,13 @@ Array of workspace records. A workspace is a specific working directory within a
 | `untrustedSource`              | `{ kind: "change_request", forge, number, headRepository }?` | Provenance captured when a cross-repository change request creates the workspace. Missing means repository automation is allowed; explicit setup removes the field.                           |
 
 > **Opaque-ID invariant:** `workspaceId` is opaque identity, never a filesystem path. Filesystem and git operations take `cwd`/`workspaceDirectory` only — never the id. A compatibility-only first-materialization bootstrap still groups pre-registry agent records by path and Git remote so existing installs retain their legacy records. That grouping never runs against a live registry, and its keys are not runtime project or workspace identity.
+
+### Workspace intention
+
+`intent` is user-authored workspace context, independent of its name, branch, agents and composer
+drafts. Preserve its text verbatim, including whitespace. An explicit edit can clear it;
+reconciliation and agent creation must not infer or replace it from a prompt. The workspace
+registry and app replica cache retain it across reloads.
 
 ### Workspace label catalog
 
@@ -532,6 +606,16 @@ than treating it as valid.
 
 ---
 
+### Shared project To-do lists
+
+Keep project tasks keyed by `workspaceId`, outside the workspace record. Archiving and restoring a checkout must not erase its project progress. A new workspace gets an empty list even when it shares a path or branch with another workspace.
+
+All sessions and agent tools share one store per daemon home. Its serialized mutations check the caller's read revision before an atomic write; publish only committed lists. The persisted initialization marker survives deleting the last task, so taking over an empty list cannot silently recreate a discarded plan.
+
+Manual title, note and milestone edits protect those fields separately. Agents can still update progress, but cannot rewrite protected text, change a protected assignment or delete a protected task. Agent tools derive workspace ownership from the authenticated caller, while client RPCs require [workspace authority](permissions.md). Agents populate and maintain the list through tools; no plan text is parsed automatically.
+
+Milestone names are shared task metadata, not client-only display groups. Reuse a name to join a milestone; leave it empty to keep the task unassigned. Existing lists need no migration and remain visible under To organize. Renaming or reassigning a task does not change its identity. The Jalons UI requires `workspaceTodoMilestones` so an old daemon cannot silently discard assignments. The desktop dock sits between navigation and workspace content; compact layouts keep the same list in a sheet.
+
 ## 6. Push Token Store
 
 **Path:** `$PASEO_HOME/push-tokens.json`
@@ -555,6 +639,7 @@ These small files are not validated as full Zod schemas but are persisted under 
 | `server-id`           | Plain text, e.g. `srv_<base64url>`                             | Stable per-`$PASEO_HOME` daemon ID. Overridable via `PASEO_SERVER_ID` env.        |
 | `daemon-keypair.json` | `{ v: 2, publicKeyB64, secretKeyB64 }` (libsodium box keypair) | E2EE relay identity. Written with mode `0600`. Regenerated if file is unreadable. |
 | `paseo.pid`           | JSON `{ pid, startedAt, ... }`                                 | PID lock; prevents two daemons sharing one `$PASEO_HOME`.                         |
+| `local-credential`    | 32 random bytes encoded as base64url text                      | Rotated before each listen and deleted on shutdown; mode `0600`.                  |
 | `daemon.log`          | Pino log output                                                | Default location; path/rotation configurable via `log.file` in `config.json`.     |
 
 ---

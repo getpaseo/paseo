@@ -1220,7 +1220,10 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
   return (
     <View style={[styles.treePane, styles.treePaneFill]}>
       <PaneContentToolbar
-        style={[styles.paneHeader, { paddingRight: paneContentToolbarTrailingPadding(isCompact) }]}
+        style={[
+          styles.paneHeader,
+          { paddingRight: paneContentToolbarTrailingPadding(isCompact, "glyph") },
+        ]}
         testID="files-pane-header"
       >
         <Pressable
@@ -1680,7 +1683,7 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: theme.colors.surfaceSidebar,
+    backgroundColor: theme.colors.surfaceWorkspace,
   },
   sortTrigger: {
     flexDirection: "row",

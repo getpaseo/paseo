@@ -4,13 +4,17 @@ import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 const featureValuesSchema = z.record(z.string(), z.union([z.boolean(), z.string(), z.null()]));
 
 export interface ProviderPreferences {
+  modelRouting?: "manual" | "jev";
   model?: string;
   mode?: string;
   thinkingByModel?: Record<string, string>;
   featureValues?: Record<string, unknown>;
 }
 
-export type LaunchTarget = { kind: "chat" } | { kind: "terminal"; profileId: string };
+export type LaunchTarget =
+  | { kind: "chat" }
+  | { kind: "intention" }
+  | { kind: "terminal"; profileId: string };
 
 export interface FormPreferences {
   provider?: string;
@@ -21,6 +25,7 @@ export interface FormPreferences {
 }
 
 const providerPreferencesSchema: z.ZodType<ProviderPreferences> = z.strictObject({
+  modelRouting: z.enum(["manual", "jev"]).optional(),
   model: z.string().optional(),
   mode: z.string().optional(),
   thinkingByModel: z.record(z.string(), z.string()).optional(),
@@ -29,6 +34,7 @@ const providerPreferencesSchema: z.ZodType<ProviderPreferences> = z.strictObject
 
 const launchTargetSchema: z.ZodType<LaunchTarget> = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("chat") }),
+  z.strictObject({ kind: z.literal("intention") }),
   z.strictObject({ kind: z.literal("terminal"), profileId: z.string() }),
 ]);
 
@@ -121,6 +127,9 @@ function applyProviderPreferenceUpdates(
   if (updates.model !== undefined) {
     next.model = updates.model;
   }
+  if (updates.modelRouting !== undefined) {
+    next.modelRouting = updates.modelRouting;
+  }
   if (updates.mode === null) {
     delete next.mode;
   } else if (updates.mode !== undefined) {
@@ -210,6 +219,7 @@ export function applyAgentProfilePreferences(args: {
     preferences: next,
     provider: args.provider,
     updates: {
+      modelRouting: "manual",
       model: args.modelId || undefined,
       mode: args.modeId || null,
       ...(args.modelId && args.thinkingOptionId

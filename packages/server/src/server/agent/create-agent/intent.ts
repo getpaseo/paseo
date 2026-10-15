@@ -12,6 +12,7 @@ export interface CreateAgentPlacement {
 }
 
 export interface CreateAgentIntent {
+  readonly launchProfileId?: string;
   workspaceId: string;
   cwd: string;
   parentAgentId: string | null;
@@ -19,6 +20,7 @@ export interface CreateAgentIntent {
 }
 
 export async function resolveCreateAgentIntent(input: {
+  launchProfileId?: string;
   explicitWorkspaceId?: string;
   caller: CreateAgentCaller | null;
   labels?: Record<string, string>;
@@ -42,7 +44,12 @@ export async function resolveCreateAgentIntent(input: {
     delete labels[PARENT_AGENT_ID_LABEL];
   }
 
-  return { ...placement, parentAgentId, labels };
+  return {
+    ...placement,
+    parentAgentId,
+    labels,
+    ...(input.launchProfileId !== undefined ? { launchProfileId: input.launchProfileId } : {}),
+  };
 }
 
 async function resolvePlacement(input: {

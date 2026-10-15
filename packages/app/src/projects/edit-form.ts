@@ -22,6 +22,8 @@ export interface ProjectEditFormState {
   name: string;
   /** The image the icon tile renders, null for the derived letter fallback. */
   previewDataUri: string | null;
+  previewEmoji: string | null;
+  emoji: string;
   pickedFileName: string | null;
   /** False once the resulting icon is the automatic one — the reset has nothing to do. */
   canUseAutomatic: boolean;
@@ -29,6 +31,7 @@ export interface ProjectEditFormState {
   error: ProjectEditFormError | null;
   /** Bumped only when the model clears the URL box on the user's behalf. */
   urlResetKey: number;
+  emojiResetKey: number;
   submission: ProjectEditSubmission;
 }
 
@@ -37,6 +40,7 @@ export interface ProjectEditFormModel {
   subscribe: (listener: () => void) => () => void;
   setName: (name: string) => void;
   setImageUrl: (url: string) => void;
+  setEmoji: (emoji: string) => void;
   setPickedImage: (image: { fileName: string; mimeType: string; data: string }) => void;
   useAutomaticIcon: () => void;
   setError: (error: ProjectEditFormError | null) => void;
@@ -50,9 +54,10 @@ export interface ProjectEditFormSnapshot {
   hasCustomIcon: boolean;
   /** The icon the project renders today, custom or derived. */
   currentIconDataUri: string | null;
+  currentIconEmoji: string | null;
 }
 
-type IconChoice = "unchanged" | "automatic" | "upload" | "url";
+type IconChoice = "unchanged" | "automatic" | "upload" | "url" | "emoji";
 
 interface PickedImage {
   fileName: string;
@@ -63,10 +68,12 @@ interface PickedImage {
 export function openProjectEditForm(snapshot: ProjectEditFormSnapshot): ProjectEditFormModel {
   let name = snapshot.projectCustomName ?? "";
   let urlText = "";
+  let emojiText = snapshot.currentIconEmoji ?? "";
   let picked: PickedImage | null = null;
   let iconChoice: IconChoice = "unchanged";
   let error: ProjectEditFormError | null = null;
   let urlResetKey = 0;
+  let emojiResetKey = 0;
   const listeners = new Set<() => void>();
 
   function deriveRename(): ProjectEditSubmission["rename"] {
@@ -86,6 +93,9 @@ export function openProjectEditForm(snapshot: ProjectEditFormSnapshot): ProjectE
       const url = urlText.trim();
       return url.length === 0 ? null : { type: "url", url };
     }
+    if (iconChoice === "emoji") {
+      return emojiText === snapshot.currentIconEmoji ? null : { type: "emoji", emoji: emojiText };
+    }
     return null;
   }
 
@@ -99,6 +109,11 @@ export function openProjectEditForm(snapshot: ProjectEditFormSnapshot): ProjectE
     return snapshot.currentIconDataUri;
   }
 
+  function derivePreviewEmoji(): string | null {
+    if (iconChoice === "unchanged") return snapshot.currentIconEmoji;
+    return iconChoice === "emoji" ? emojiText : null;
+  }
+
   function deriveState(): ProjectEditFormState {
     const submission = { rename: deriveRename(), icon: deriveIcon() };
     const willBeCustom = submission.icon
@@ -107,11 +122,14 @@ export function openProjectEditForm(snapshot: ProjectEditFormSnapshot): ProjectE
     return {
       name,
       previewDataUri: derivePreview(),
+      previewEmoji: derivePreviewEmoji(),
+      emoji: emojiText,
       pickedFileName: iconChoice === "upload" ? (picked?.fileName ?? null) : null,
       canUseAutomatic: willBeCustom,
       canSubmit: Boolean(submission.rename || submission.icon),
       error,
       urlResetKey,
+      emojiResetKey,
       submission,
     };
   }
@@ -136,17 +154,36 @@ export function openProjectEditForm(snapshot: ProjectEditFormSnapshot): ProjectE
     },
     setImageUrl: (url) => {
       urlText = url;
-      // Emptying the box withdraws the URL without discarding an earlier pick.
       if (url.trim().length > 0) {
+        picked = null;
+        emojiText = "";
+        emojiResetKey += 1;
         iconChoice = "url";
-      } else {
-        iconChoice = picked ? "upload" : "unchanged";
+      } else if (iconChoice === "url") {
+        iconChoice = snapshot.hasCustomIcon ? "automatic" : "unchanged";
+      }
+      error = null;
+      publish();
+    },
+    setEmoji: (emoji) => {
+      emojiText = emoji.trim();
+      if (emojiText) {
+        picked = null;
+        urlText = "";
+        urlResetKey += 1;
+        iconChoice = "emoji";
+      } else if (iconChoice === "emoji" || snapshot.currentIconEmoji) {
+        iconChoice = snapshot.hasCustomIcon ? "automatic" : "unchanged";
       }
       error = null;
       publish();
     },
     setPickedImage: (image) => {
       picked = image;
+      urlText = "";
+      emojiText = "";
+      urlResetKey += 1;
+      emojiResetKey += 1;
       iconChoice = "upload";
       error = null;
       publish();
@@ -155,6 +192,8 @@ export function openProjectEditForm(snapshot: ProjectEditFormSnapshot): ProjectE
       picked = null;
       urlText = "";
       urlResetKey += 1;
+      emojiText = "";
+      emojiResetKey += 1;
       iconChoice = snapshot.hasCustomIcon ? "automatic" : "unchanged";
       error = null;
       publish();

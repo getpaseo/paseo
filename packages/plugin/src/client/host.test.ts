@@ -10,6 +10,14 @@ const contract = defineRpc({
 });
 
 describe("plugin RPC contracts", () => {
+  it("accepts camelCase RPC operations and rejects invalid method characters", () => {
+    expect(defineRpc({ ...contract, name: "workflow.plan.handoffToProfile.request" }).name).toBe(
+      "workflow.plan.handoffToProfile.request",
+    );
+    for (const name of ["/workflow", "workflow plan", "workflow:plan", ""]) {
+      expect(() => defineRpc({ ...contract, name })).toThrow("Invalid plugin RPC method");
+    }
+  });
   it("derives handler input and output types from a contract", () => {
     expectTypeOf<RpcInput<typeof contract>>().toEqualTypeOf<{ value: number }>();
     expectTypeOf<RpcOutput<typeof contract>>().toEqualTypeOf<{ value: number }>();

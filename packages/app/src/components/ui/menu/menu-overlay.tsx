@@ -21,6 +21,7 @@ import {
 } from "react-native";
 import { Keyframe, runOnJS } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
+import { usePressDragState, usePressDragSurface } from "../press-drag-select-context";
 import { FloatingScrollView, FloatingSurface } from "@/components/ui/floating";
 import { isWeb } from "@/constants/platform";
 import type { KeyboardFocusScope } from "@/keyboard/actions";
@@ -38,7 +39,7 @@ import {
   type Placement,
   type Rect,
   type Size,
-} from "./menu-anchor";
+} from "../anchor";
 
 const SCROLL_CONTENT_STYLE = { flexGrow: 1 } as const;
 const CONTENT_ENTERING_DURATION_MS = 150;
@@ -273,6 +274,9 @@ export function AnchoredSurface({
 }: AnchoredSurfaceProps): ReactElement | null {
   const { t } = useTranslation();
   const surfaceNativeID = useId();
+  const drag = usePressDragState();
+  const dragSurfaceRef = usePressDragSurface();
+  const dragBackdropRef = usePressDragSurface("backdrop");
   const { position, actualPlacement, contentSize, visibleContentSize, onContentLayout } =
     useAnchoredPosition({
       open,
@@ -292,8 +296,21 @@ export function AnchoredSurface({
     revision,
   });
 
+  // The surface is placed once both measurements land. Until then it sits off-screen so it can
+  // be measured, and it must not animate: Reanimated's web entering path snapshots the element's
+  // rect when the animation ends and writes that rect back as inline top/left when it cleans the
+  // keyframe up 750ms later. If the animation ends before placement, the snapshot is the
+  // off-screen rect and the menu jumps back off-screen. Remounting on placement starts the
+  // animation from the final position.
+  const placed = position !== null;
+  const entering = useMemo(
+    () => (placed && !drag.dragging ? contentEntering : undefined),
+    [placed, drag.dragging],
+  );
+
   useEffect(() => {
-    if (!isWeb || !open || !contentSize || typeof document === "undefined") return undefined;
+    if (!isWeb || !open || drag.dragging || !placed || typeof document === "undefined")
+      return undefined;
     const frame = requestAnimationFrame(() => {
       document
         .getElementById(surfaceNativeID)
@@ -301,7 +318,7 @@ export function AnchoredSurface({
         ?.focus();
     });
     return () => cancelAnimationFrame(frame);
-  }, [contentSize, open, surfaceNativeID]);
+  }, [open, placed, drag.dragging, surfaceNativeID]);
 
   const frameStyle = useMemo<StyleProp<ViewStyle>>(() => {
     const { width: screenWidth } = Dimensions.get("window");
@@ -340,9 +357,10 @@ export function AnchoredSurface({
   const surfaceDataSet = useMemo(
     () => ({
       menuSurface: "true",
+      overlayMeasuring: String(!placed),
       ...(keyboardFocusScope ? { keyboardScope: keyboardFocusScope } : null),
     }),
-    [keyboardFocusScope],
+    [keyboardFocusScope, placed],
   );
 
   if (!open) return null;
@@ -362,6 +380,7 @@ export function AnchoredSurface({
     <>
       {backdrop ? (
         <Pressable
+          ref={dragBackdropRef}
           {...{ onContextMenu: onClose }}
           accessibilityRole="button"
           accessibilityLabel={t("menu.backdrop")}
@@ -371,6 +390,8 @@ export function AnchoredSurface({
         />
       ) : null}
       <FloatingSurface
+        key={placed ? "placed" : "measuring"}
+        ref={dragSurfaceRef}
         collapsable={false}
         tabIndex={-1}
         nativeID={surfaceNativeID}
@@ -378,9 +399,9 @@ export function AnchoredSurface({
         dataSet={surfaceDataSet}
         style={styles.content}
         frameStyle={frameStyle}
-        entering={contentEntering}
+        entering={entering}
         exiting={
-          isWeb || !onExited
+          !placed || isWeb || !onExited
             ? undefined
             : contentExiting.withCallback((finished) => {
                 "worklet";
@@ -424,6 +445,7 @@ export function MenuOverlay({
   children: ReactElement | null;
 }): ReactElement | null {
   const floatingLayer = useOverlayLayer("floating");
+  const drag = usePressDragState();
 
   const handleWebOverlayKeyDown = useCallback(
     (event: KeyboardEvent) => {
@@ -470,6 +492,7 @@ export function MenuOverlay({
   );
   const setWebOverlayScope = useWebOverlayRegistration({
     active: isWeb && visible,
+    autoFocus: !drag.dragging,
     layer: floatingLayer,
     onKeyDown: handleWebOverlayKeyDown,
     restoreFocusRef,

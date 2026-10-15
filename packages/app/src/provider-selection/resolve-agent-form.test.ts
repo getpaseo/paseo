@@ -108,6 +108,134 @@ function makeProviderModelsByProvider(
   return new Map(entries);
 }
 
+it("defaults new Codex drafts to JEV on a capable host", () => {
+  const state = resolveAgentForm(makeState(), {
+    type: "INPUTS_CHANGED",
+    serverId: "host",
+    isVisible: true,
+    isCreateFlow: true,
+    isPreferencesLoading: false,
+    hasSnapshot: true,
+    supportsInitialModelRouting: true,
+    initialValues: undefined,
+    preferences: { provider: "codex" },
+    allowedProviderMap: codexProviderMap,
+    providerModelsByProvider: new Map([["codex", CODEX_MODELS]]),
+  });
+  expect(state.form.modelRouting).toBe("jev");
+});
+
+describe("initial model routing", () => {
+  it("preserves saved Auto on an older host so creation reports incompatibility instead of silently running manually", () => {
+    const form = resolveFormState(
+      undefined,
+      { provider: "codex", providerPreferences: { codex: { modelRouting: "jev" } } },
+      CODEX_MODELS,
+      INITIAL_USER_MODIFIED,
+      makeState().form,
+      codexProviderMap,
+      false,
+    );
+    expect(form.modelRouting).toBe("jev");
+  });
+  it.each([
+    { provider: "codex", supported: true, expected: "jev" },
+    { provider: "codex", supported: false, expected: "manual" },
+    { provider: "claude", supported: true, expected: "manual" },
+  ])(
+    "uses $expected for $provider with host support=$supported",
+    ({ provider, supported, expected }) => {
+      const form = resolveFormState(
+        undefined,
+        { provider },
+        null,
+        INITIAL_USER_MODIFIED,
+        makeState().form,
+        bothProviderMap,
+        supported,
+      );
+      expect(form.modelRouting).toBe(expected);
+    },
+  );
+
+  it.each([
+    { initial: undefined, preference: "manual" as const, expected: "manual" },
+    { initial: undefined, preference: "jev" as const, expected: "jev" },
+    { initial: { model: "gpt-5.3-codex" }, preference: "jev" as const, expected: "manual" },
+    {
+      initial: { launchProfileId: "paseo-workflow-planner" },
+      preference: "jev" as const,
+      expected: "manual",
+    },
+    {
+      initial: { modelRouting: "jev" as const, model: "gpt-5.3-codex" },
+      preference: "manual" as const,
+      expected: "jev",
+    },
+  ])(
+    "preserves explicit selections: $initial / $preference",
+    ({ initial, preference, expected }) => {
+      const form = resolveFormState(
+        initial,
+        { provider: "codex", providerPreferences: { codex: { modelRouting: preference } } },
+        CODEX_MODELS,
+        INITIAL_USER_MODIFIED,
+        makeState().form,
+        codexProviderMap,
+        true,
+      );
+      expect(form.modelRouting).toBe(expected);
+    },
+  );
+
+  it("resolves late host capability without losing a user's mode or manual selection", () => {
+    const inputs = {
+      type: "INPUTS_CHANGED" as const,
+      serverId: "host",
+      isVisible: true,
+      isCreateFlow: true,
+      isPreferencesLoading: false,
+      hasSnapshot: true,
+      initialValues: undefined,
+      preferences: { provider: "codex" },
+      allowedProviderMap: codexProviderMap,
+      providerModelsByProvider: new Map([["codex", CODEX_MODELS]]),
+    };
+    let state = resolveAgentForm(makeState(), inputs);
+    state = resolveAgentForm(state, { type: "SET_MODE_FROM_USER", modeId: "plan" });
+    state = resolveAgentForm(state, { ...inputs, supportsInitialModelRouting: true });
+    expect(state.form).toMatchObject({ modelRouting: "jev", modeId: "plan" });
+    state = resolveAgentForm(state, {
+      type: "SET_MODEL_FROM_USER",
+      modelId: "gpt-5.3-codex",
+      availableModels: CODEX_MODELS,
+      providerPrefs: undefined,
+    });
+    state = resolveAgentForm(state, { ...inputs, supportsInitialModelRouting: false });
+    state = resolveAgentForm(state, { ...inputs, supportsInitialModelRouting: true });
+    expect(state.form).toMatchObject({ modelRouting: "manual", modeId: "plan" });
+  });
+
+  it("keeps Auto when toggling mode, but a manual model or effort exits Auto", () => {
+    const state = makeState({ provider: "codex", modelRouting: "jev" });
+    expect(
+      resolveAgentForm(state, { type: "SET_MODE_FROM_USER", modeId: "plan" }).form.modelRouting,
+    ).toBe("jev");
+    expect(
+      resolveAgentForm(state, { type: "SET_THINKING_OPTION_FROM_USER", thinkingOptionId: "high" })
+        .form.modelRouting,
+    ).toBe("manual");
+    expect(
+      resolveAgentForm(state, {
+        type: "SET_MODEL_FROM_USER",
+        modelId: "gpt-5.3-codex",
+        availableModels: CODEX_MODELS,
+        providerPrefs: undefined,
+      }).form.modelRouting,
+    ).toBe("manual");
+  });
+});
+
 describe("resolveDefaultModel", () => {
   it("returns null for empty or null input", () => {
     expect(resolveDefaultModel(null)).toBeNull();
@@ -386,6 +514,52 @@ describe("buildProviderDefinitions", () => {
 });
 
 describe("resolveFormState", () => {
+  it("lets explicit new-conversation values override conflicting saved Codex preferences", () => {
+    const resolved = resolveFormState(
+      {
+        provider: "codex",
+        model: "gpt-6-astra",
+        thinkingOptionId: "high",
+        modeId: "full-access",
+        modelRouting: "manual",
+      },
+      {
+        provider: "claude",
+        providerPreferences: {
+          codex: {
+            model: "gpt-5.3-codex",
+            thinkingByModel: { "gpt-6-astra": "medium" },
+            mode: "plan",
+            modelRouting: "jev",
+          },
+        },
+      },
+      [
+        ...CODEX_MODELS,
+        {
+          provider: "codex",
+          id: "gpt-6-astra",
+          label: "GPT-6 Astra",
+          thinkingOptions: [
+            { id: "medium", label: "Medium" },
+            { id: "high", label: "High" },
+          ],
+        },
+      ],
+      INITIAL_USER_MODIFIED,
+      makeState().form,
+      codexProviderMap,
+    );
+
+    expect(resolved).toMatchObject({
+      provider: "codex",
+      model: "gpt-6-astra",
+      thinkingOptionId: "high",
+      modeId: "full-access",
+      modelRouting: "manual",
+    });
+  });
+
   it("keeps provider, mode, and model unset on first open without preferences or explicit values", () => {
     const resolved = resolveFormState(
       undefined,
@@ -1268,4 +1442,26 @@ it("owns input readiness, reopening and user edits in the reducer", () => {
   expect(state.resolution.status).toBe("pending");
   state = resolveAgentForm(state, { ...inputs, isPreferencesLoading: false, hasSnapshot: true });
   expect(state.form).toMatchObject({ provider: "codex", model: "astra" });
+});
+
+describe("new conversation Full access default", () => {
+  it("prefers the declared unattended mode and preserves explicit saved modes", () => {
+    const provider = {
+      ...TEST_CODEX_DEFINITION,
+      modes: TEST_CODEX_DEFINITION.modes.map((mode) =>
+        Object.assign({}, mode, { isUnattended: mode.id === "full-access" }),
+      ),
+    };
+    const resolve = (mode?: string) =>
+      resolveFormState(
+        undefined,
+        { provider: "codex", providerPreferences: { codex: { mode } } },
+        CODEX_MODELS,
+        INITIAL_USER_MODIFIED,
+        makeState().form,
+        makeProviderMap(provider),
+      );
+    expect(resolve().modeId).toBe("full-access");
+    expect(resolve("auto").modeId).toBe("auto");
+  });
 });

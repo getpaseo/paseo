@@ -24,7 +24,7 @@ import { HostStatusDotSlot } from "@/components/hosts/host-picker";
 import { createControlGeometry, type FieldControlSize } from "@/components/ui/control-geometry";
 import { Field, FormTextInput } from "@/components/ui/form-field";
 import { Switch } from "@/components/ui/switch";
-import { getProviderIcon } from "@/components/provider-icons";
+import { useProviderIcon } from "@/components/provider-icons";
 import { CadenceEditor } from "@/components/schedules/cadence-editor";
 import {
   SelectField,
@@ -33,6 +33,8 @@ import {
   type SelectFieldOption,
   type SelectFieldRenderOptionInput,
 } from "@/components/ui/select-field";
+import { FAST_MODE_FEATURE_ID } from "@/agent-controls/policy";
+import { useScheduleFormFeatures } from "@/schedules/use-schedule-form-features";
 import { formatThinkingOptionLabel } from "@/agent-controls/labels";
 import {
   mergeProviderPreferences,
@@ -266,6 +268,7 @@ function OpenScheduleFormSheet({
   const model = useScheduleFormModel(snapshot);
   const state = useSyncExternalStore(model.subscribe, model.getState, model.getState);
   const providerSnapshot = useScheduleFormProviderSnapshot(model, state);
+  useScheduleFormFeatures(model, state);
   const { agents } = useAggregatedAgents({ includeArchived: true });
   const mutationServerId = state.selectedServerId ?? serverId ?? "";
   const { createSchedule, updateSchedule, isCreating, isUpdating } = useScheduleMutations({
@@ -345,6 +348,7 @@ function OpenScheduleFormSheet({
           model: state.selectedModel || null,
           modeId: state.selectedMode || null,
           thinkingOptionId: state.selectedThinkingOptionId || null,
+          featureValues: state.featureValues,
           cwd,
           ...(state.submitArchiveOnFinish !== undefined
             ? { archiveOnFinish: state.submitArchiveOnFinish }
@@ -368,6 +372,7 @@ function OpenScheduleFormSheet({
           model: state.selectedModel || undefined,
           modeId: state.selectedMode || undefined,
           thinkingOptionId: state.selectedThinkingOptionId || undefined,
+          featureValues: state.featureValues,
           ...(state.submitArchiveOnFinish !== undefined
             ? { archiveOnFinish: state.submitArchiveOnFinish }
             : {}),
@@ -759,6 +764,17 @@ function ScheduleTargetFields({
         </Field>
       ) : null}
 
+      {state.disclosure.showModelField && state.fastModeSupported ? (
+        <Field label="Fast">
+          <Switch
+            value={state.featureValues[FAST_MODE_FEATURE_ID] === true}
+            onValueChange={model.setFastMode}
+            accessibilityLabel="Fast"
+            testID="schedule-fast-mode-switch"
+          />
+        </Field>
+      ) : null}
+
       {state.disclosure.showThinkingField ? (
         <SelectField
           label="Thinking"
@@ -1026,10 +1042,10 @@ function ProviderGlyph({
   provider: string | null;
   serverId: string | null;
 }): ReactElement | null {
+  const Icon = useProviderIcon(provider ?? "", serverId);
   if (!provider) {
     return null;
   }
-  const Icon = getProviderIcon(provider, serverId);
   return <Icon size={16} color={styles.providerIcon.color} />;
 }
 

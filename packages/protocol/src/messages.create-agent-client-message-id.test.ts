@@ -22,6 +22,19 @@ describe("create_agent_request clientMessageId", () => {
     expect(parsed.clientMessageId).toBe("client-msg-1");
   });
 
+  it("accepts optional initial model routing without an initial prompt", () => {
+    const parsed = SessionInboundMessageSchema.parse({
+      type: "create_agent_request",
+      requestId: "req-routing-1",
+      config: { provider: "codex", cwd: "/tmp/project" },
+      modelRouting: { strategy: "jev", prompt: "Fix the regression" },
+    });
+
+    expect(parsed).toMatchObject({
+      modelRouting: { strategy: "jev", prompt: "Fix the regression" },
+    });
+  });
+
   it("accepts explicit titles up to the create-agent limit", () => {
     const parsed = SessionInboundMessageSchema.parse({
       type: "create_agent_request",

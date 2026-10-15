@@ -68,6 +68,30 @@ describe("MockLoadTestAgentClient", () => {
     await session.interrupt();
   });
 
+  test("preserves the pending plan when a configured permission response fails", async () => {
+    vi.useFakeTimers();
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      featureValues: { mockPermissionResponseFailures: 1 },
+    });
+    try {
+      await session.startTurn("Emit synthetic plan approval.");
+      await vi.runAllTimersAsync();
+      const [request] = session.getPendingPermissions();
+      expect(request).toMatchObject({ kind: "plan", sourcePlanCallId: expect.any(String) });
+      await expect(session.respondToPermission(request!.id, { behavior: "allow" })).rejects.toThrow(
+        "Requested mock permission response failure",
+      );
+      expect(session.getPendingPermissions()).toEqual([request]);
+      await session.respondToPermission(request!.id, { behavior: "allow" });
+      expect(session.getPendingPermissions()).toEqual([]);
+    } finally {
+      await session.close();
+    }
+  });
+
   test("streams a configured assistant response through the normal timeline", async () => {
     vi.useFakeTimers();
     const response = [
@@ -447,6 +471,18 @@ describe("MockLoadTestAgentClient", () => {
     ).toEqual([]);
     await session.interrupt();
     unsubscribe();
+  });
+
+  test("emits distinct configured responses across consecutive fixture turns", async () => {
+    const session = await new MockLoadTestAgentClient().createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "e2e-fast-stream",
+      featureValues: { mockAssistantResponses: ["First response", "![Second](second.png)"] },
+    });
+    await session.run("Emit a synthetic turn failure.");
+    expect((await session.run("First prompt")).finalText).toBe("First response");
+    expect((await session.run("Second prompt")).finalText).toBe("![Second](second.png)");
   });
 
   test("emits a settled assistant Markdown image path selected by prompt", async () => {

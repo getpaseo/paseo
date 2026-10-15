@@ -1,5 +1,4 @@
-import type { Rectangle } from "electron";
-import { ipcMain } from "electron";
+import { ipcMain, nativeImage } from "electron";
 import { BrowserAutomationExecuteRequestSchema } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type {
   BrowserAutomationConsoleLogEntry,
@@ -16,7 +15,7 @@ import {
   promptShimInstallScript,
   promptShimRestoreScript,
 } from "./dialog-handling.js";
-import { executeAutomationCommand } from "./service.js";
+import { BrowserTabClosedError, executeAutomationCommand } from "./service.js";
 import { BrowserSnapshotEngine } from "./snapshot-engine.js";
 import {
   listRegisteredPaseoBrowserIds,
@@ -92,6 +91,7 @@ interface ConsoleMessageEmitter {
 }
 
 interface BrowserAutomationWebContents extends ConsoleMessageEmitter {
+  removeListener(event: "destroyed", listener: () => void): void;
   readonly id: number;
   readonly debugger: WebContentsDebugger;
   getURL(): string;
@@ -105,11 +105,8 @@ interface BrowserAutomationWebContents extends ConsoleMessageEmitter {
   goBack(): void;
   goForward(): void;
   reload(): void;
-  capturePage(rect?: Rectangle, options?: { stayHidden?: boolean }): Promise<TabImage>;
-  invalidate(): void;
-  getBackgroundThrottling(): boolean;
-  setBackgroundThrottling(allowed: boolean): void;
   sendInputEvent(event: IsolatedKeyboardInputEvent): void;
+  insertText(text: string): Promise<void>;
 }
 
 export function adaptWebContents(contents: BrowserAutomationWebContents): TabContents {
@@ -130,18 +127,9 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
     goBack: () => contents.goBack(),
     goForward: () => contents.goForward(),
     reload: () => contents.reload(),
-    capturePage: (captureOptions) => contents.capturePage(undefined, captureOptions),
-    invalidate: () => contents.invalidate(),
-    withFrameProduction: async (capture) => {
-      const previous = contents.getBackgroundThrottling();
-      contents.setBackgroundThrottling(false);
-      try {
-        return await capture();
-      } finally {
-        if (!contents.isDestroyed()) contents.setBackgroundThrottling(previous);
-      }
-    },
+    captureFrame: (signal) => cdpQueue.run(() => captureViewportFrame(contents, signal)),
     sendInputEvent: (event) => contents.sendInputEvent(event),
+    insertText: (text) => contents.insertText(text),
     getConsoleMessages: () => consoleMessagesByContentsId.get(contentsId) ?? [],
     captureDialogs: (task) => dialogMonitor.capture(task),
     sendDebugCommand: (command: string, params?: Record<string, unknown>) =>
@@ -152,6 +140,61 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
         return contents.debugger.sendCommand(command, params ?? {});
       }),
   };
+}
+
+function captureViewportFrame(
+  contents: BrowserAutomationWebContents,
+  signal: AbortSignal,
+): Promise<TabImage> {
+  signal.throwIfAborted();
+  if (contents.isDestroyed()) return Promise.reject(new BrowserTabClosedError());
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const stop = () => {
+      settled = true;
+      signal.removeEventListener("abort", abort);
+      contents.removeListener("destroyed", destroyed);
+    };
+    const abort = () => {
+      stop();
+      reject(signal.reason);
+    };
+    const destroyed = () => {
+      stop();
+      reject(new BrowserTabClosedError());
+    };
+    const failed = (error: unknown) => {
+      if (settled) return;
+      stop();
+      reject(error);
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    contents.once("destroyed", destroyed);
+    try {
+      if (!contents.debugger.isAttached()) contents.debugger.attach("1.3");
+      // CDP paints a fresh viewport and restores native visibility itself. Electron
+      // 44's throttling setter cannot re-hide a widget after a manual wake-up.
+      void contents.debugger
+        .sendCommand("Page.captureScreenshot", {
+          format: "png",
+          fromSurface: true,
+          captureBeyondViewport: false,
+        })
+        .then((result) => {
+          if (settled) return null;
+          const data = (result as { data?: string }).data;
+          if (!data) throw new Error("No frame returned by viewport capture");
+          const image = nativeImage.createFromBuffer(Buffer.from(data, "base64"));
+          if (image.isEmpty()) throw new Error("No frame returned by viewport capture");
+          stop();
+          resolve(image);
+          return null;
+        })
+        .catch(failed);
+    } catch (error) {
+      failed(error);
+    }
+  });
 }
 
 function getCdpQueue(contentsId: number): CdpSessionQueue {

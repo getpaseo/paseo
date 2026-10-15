@@ -74,6 +74,45 @@ const untranslatedLocalFallbacks = [
   "Unable to save desktop settings.",
 ] as const;
 
+const pullRequestPanelSources = [
+  "git/pull-request-panel/pane.tsx",
+  "git/pull-request-panel/data.ts",
+  "git/pull-request-panel/checks-section.tsx",
+  "components/sidebar/sidebar-status-list.tsx",
+] as const;
+const untranslatedPullRequestPanelLabels = [
+  "Activity",
+  "No activity yet",
+  "Add all to chat",
+  "Add to chat",
+  "Adding...",
+  "Comment actions",
+  "Thread actions",
+  "Commented",
+  "Approved",
+  "Requested changes",
+  "Reviewed",
+  "Draft",
+  "Merged",
+  "Closed",
+  "Open",
+  "Resolved",
+  "Outdated",
+] as const;
+
+function findUntranslatedPullRequestPanelLabels(): string[] {
+  return pullRequestPanelSources.flatMap((source) => {
+    const contents = readFileSync(join(appSourceRoot, source), "utf8");
+    const matches: string[] = untranslatedPullRequestPanelLabels.filter(
+      (text) => contents.includes(`"${text}"`) || new RegExp(`>\\s*${text}\\s*<`).test(contents),
+    );
+    if (contents.includes("} group`")) {
+      matches.push("group");
+    }
+    return matches.length === 0 ? [] : [`${source}: ${matches.join(", ")}`];
+  });
+}
+
 function collectSourceFiles(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = join(directory, entry.name);
@@ -104,6 +143,57 @@ function findUntranslatedConnectionErrors(): string[] {
 }
 
 describe("translation resources", () => {
+  it("uses reviewed French navigation, Git, and developer action labels", () => {
+    expect(fr.common.back).toBe("Retour");
+    expect(fr.common.actions.back).toBe("Retour");
+    expect(fr.shell.commandCenter.home).toBe("Accueil");
+    expect(fr.workspace.header.toasts.branchNameCopiedLabel).toBe("Nom de la branche");
+    expect(fr.workspace.git.actions.commit.label).toBe("Créer un commit");
+    expect(fr.workspace.git.pr.sections.checks).toBe("Vérifications");
+    expect(fr.panels.pullRequest.label).toBe("PR");
+    expect(fr.composer.attachments.addFile).toBe("Joindre un fichier");
+    expect(fr.composer.input.interruptAgent).toBe("Interrompre l’agent");
+    expect(fr.contextWindow.title).toBe("Fenêtre de contexte");
+    expect(fr.settings.appearance.theme.options.ghostty).toBe("Ghostty");
+    expect(fr.agentControls.provider.select).toBe("Sélectionner le fournisseur d’agent");
+    expect(fr.agentControls.mode.selectWithValue).toBe(
+      "Sélectionner le mode de l’agent ({{value}})",
+    );
+    expect(fr.panels.files.chooseFile).toBe("Choisir un fichier");
+    expect(fr.message.speak.header).toBe("Lu à voix haute");
+    expect(fr.settings.general.autoExpandReasoning.description).toBe(
+      "Afficher entièrement les blocs de réflexion et de chaîne de raisonnement de l’agent par défaut",
+    );
+  });
+
+  it("keeps French interpolation boundaries readable", () => {
+    const joinedWords = Object.entries(flattenStrings(fr)).filter(([, value]) =>
+      /\p{L}\{\{|\}\}\p{L}/u.test(value),
+    );
+    expect(joinedWords).toEqual([]);
+  });
+
+  it("translates French labels that previously used English fallbacks", () => {
+    expect(fr.importSession.chooseHostTitle).toBe("Importer depuis un hôte");
+    expect(fr.desktop.daemon.lifecycle.stopTitle).toBe("Arrêter le daemon local ?");
+    expect(fr.settings.layout.openInSidePane.destinations.main).toBe("Panneau principal");
+    expect(fr.settings.host.skills.openDocs).toBe("Ouvrir la documentation des compétences");
+  });
+
+  it("keeps French bulk confirmations readable without parenthesized plural forms", () => {
+    const messages = [
+      fr.workspace.tabs.confirmations.bulkUnsaved,
+      ...Object.values(fr.workspace.tabs.confirmations.bulk),
+    ];
+    expect(messages.filter((value) => /\((?:s|aux)\)/.test(value))).toEqual([]);
+  });
+
+  it("uses action labels for the French plan toolbar and its overflow", () => {
+    expect(fr.common.actions.copy).toBe("Copier");
+    expect(fr.agentStream.permission.approve).toBe("Approuver");
+    expect(fr.workspace.git.actions.moreActions).toBe("Plus d’actions");
+  });
+
   it("keeps all supported language keys in sync with English", () => {
     const englishKeys = flattenKeys(en).sort();
     expect(flattenKeys(ar).sort()).toEqual(englishKeys);
@@ -183,8 +273,51 @@ describe("translation resources", () => {
     expect(ko.desktop.daemon.status.notRunning).toBe("실행 중이 아님");
   });
 
+  it("uses the French navigation and Git meanings for reported labels", () => {
+    expect(fr.common.back).toBe("Retour");
+    expect(fr.common.actions.back).toBe("Retour");
+    expect(fr.common.actions.copy).toBe("Copier");
+    expect(fr.common.states.starting).toBe("Démarrage…");
+    expect(fr.common.connectionStatus.connecting).toBe("Connexion…");
+    expect(fr.workspace.git.pr.sections.checks).toBe("Vérifications");
+    expect(fr.sidebar.display.show.checks).toBe("Vérifications");
+  });
+
+  it("separates French interpolation placeholders from neighboring words", () => {
+    const glued = Object.entries(flattenStrings(fr)).filter(([, value]) =>
+      /\p{L}\{\{|\}\}\p{L}{2,}/u.test(value),
+    );
+    expect(glued).toEqual([]);
+  });
+
   it("labels the immediate add-to-chat action without an ellipsis", () => {
     expect(en.workspace.fileActions.addToChat).toBe("Add to chat");
+  });
+
+  it("keeps pull request panel and sidebar status group labels translated", () => {
+    expect(findUntranslatedPullRequestPanelLabels()).toEqual([]);
+    for (const resource of [ar, es, fr, ja, ko, ptBR, ru, zhCN]) {
+      const pr = resource.workspace.git.pr;
+      const englishPr = en.workspace.git.pr;
+      expect(pr.sections.activity).not.toBe(englishPr.sections.activity);
+      expect(pr.empty.noActivity).not.toBe(englishPr.empty.noActivity);
+      expect(pr.actions.addToChat).not.toBe(englishPr.actions.addToChat);
+      expect(pr.actions.addAllToChat).not.toBe(englishPr.actions.addAllToChat);
+      expect(pr.actions.addingToChat).not.toBe(englishPr.actions.addingToChat);
+      expect(pr.accessibility.commentActions).not.toBe(englishPr.accessibility.commentActions);
+      expect(pr.accessibility.threadActions).not.toBe(englishPr.accessibility.threadActions);
+      for (const verb of Object.keys(englishPr.activity) as (keyof typeof englishPr.activity)[]) {
+        expect(pr.activity[verb]).not.toBe(englishPr.activity[verb]);
+      }
+      for (const state of Object.keys(englishPr.states) as (keyof typeof englishPr.states)[]) {
+        expect(pr.states[state]).not.toBe(englishPr.states[state]);
+      }
+      expect(pr.thread.resolved).not.toBe(englishPr.thread.resolved);
+      expect(pr.thread.outdated).not.toBe(englishPr.thread.outdated);
+      expect(resource.sidebar.statusGroupAccessibility).not.toBe(
+        en.sidebar.statusGroupAccessibility,
+      );
+    }
   });
 
   it("keeps local connection fallback errors translated", () => {

@@ -14,10 +14,13 @@ const SHORTCUTS_ROW = "show-shortcuts";
  * daemon is left unmanaged so the app talks to the E2E daemon instead of trying
  * to start one of its own.
  */
-async function installDesktopBridge(page: Page): Promise<void> {
-  await page.addInitScript(() => {
+async function installDesktopBridge(
+  page: Page,
+  platform: "darwin" | "win32" = "darwin",
+): Promise<void> {
+  await page.addInitScript((desktopPlatform) => {
     window.paseoDesktop = {
-      platform: "darwin",
+      platform: desktopPlatform,
       events: { on: () => () => {} },
       invoke: async (command: string) => {
         if (command === "get_desktop_settings") {
@@ -29,11 +32,11 @@ async function installDesktopBridge(page: Page): Promise<void> {
         return null;
       },
     };
-  });
+  }, platform);
 }
 
-async function openShortcutsSettings(page: Page) {
-  await installDesktopBridge(page);
+async function openShortcutsSettings(page: Page, platform: "darwin" | "win32" = "darwin") {
+  await installDesktopBridge(page, platform);
   await gotoAppShell(page);
   await openSettings(page);
   await openSettingsSection(page, "shortcuts");
@@ -65,6 +68,38 @@ async function openCheatSheet(page: Page) {
 async function closeRowMenu(page: Page) {
   await page.keyboard.press("Escape");
   await expect(page.getByTestId(`shortcut-bind-${SHORTCUTS_ROW}`)).toHaveCount(0);
+}
+
+async function clearShortcut(page: Page, label: string, action: string) {
+  await page.getByRole("button", { name: `Actions for ${label}` }).click();
+  await page.getByTestId(`shortcut-clear-${action}`).click();
+}
+
+async function captureShortcut(page: Page, label: string, action: string, keys: string) {
+  await page.getByRole("button", { name: `Actions for ${label}` }).click();
+  await page.getByTestId(`shortcut-bind-${action}`).click();
+  await page.keyboard.press(keys);
+}
+
+async function expectInterruptShortcut(page: Page, chord: string) {
+  const row = page.getByText("Interrupt agent", { exact: true }).locator("..");
+  await expect(row.getByText(chord, { exact: true })).toBeVisible();
+}
+
+async function finishInterruptCapture(page: Page, action: "Done" | "Cancel") {
+  const row = page.getByText("Interrupt agent", { exact: true }).locator("..");
+  await row.getByRole("button", { name: action }).click();
+}
+
+async function eraseLastCapturedCombo(page: Page, firstCombo: string, secondCombo: string) {
+  await captureShortcut(page, "Interrupt agent", "agent-interrupt", "Alt+K");
+  await page.keyboard.press("Alt+J");
+  await expectInterruptShortcut(page, firstCombo);
+  await expectInterruptShortcut(page, secondCombo);
+  await page.keyboard.press("Backspace");
+  await expectInterruptShortcut(page, firstCombo);
+  const row = page.getByText("Interrupt agent", { exact: true }).locator("..");
+  await expect(row.getByText(secondCombo, { exact: true })).toHaveCount(0);
 }
 
 test("unassigning a shortcut leaves it inert until it is reset", async ({ page }) => {
@@ -110,6 +145,29 @@ test("unassigning a shortcut leaves it inert until it is reset", async ({ page }
   await page.keyboard.press("Shift+?");
   await expect(dialog).not.toBeVisible({ timeout: 5_000 });
 
+  await test.step("show the cleared shortcut in help, then bind new keys", async () => {
+    const help = await openCheatSheet(page);
+    const row = help.getByTestId(`shortcut-help-row-${SHORTCUTS_ROW}`);
+    await expect(row.getByText("Not set", { exact: true })).toBeVisible();
+    await expect(help.getByText("?", { exact: true })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await openSettings(page);
+    await openSettingsSection(page, "shortcuts");
+
+    await openRowMenu(page);
+    await bind.click();
+    await page.keyboard.press("Alt+Shift+K");
+    await page.getByText("Done", { exact: true }).click();
+    await expect(page.getByText("⌥⇧K", { exact: true })).toBeVisible();
+    const reboundHelp = await openCheatSheet(page);
+    const reboundRow = reboundHelp.getByTestId(`shortcut-help-row-${SHORTCUTS_ROW}`);
+    await expect(reboundRow.getByText("⌥⇧K", { exact: true })).toBeVisible();
+    await expect(reboundRow.getByText("?", { exact: true })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await openSettings(page);
+    await openSettingsSection(page, "shortcuts");
+  });
+
   await openRowMenu(page);
   await page.getByTestId(`shortcut-reset-${SHORTCUTS_ROW}`).click();
   await expect(notSet).toHaveCount(0);
@@ -124,45 +182,34 @@ test("unassigning a shortcut leaves it inert until it is reset", async ({ page }
   await expect(dialog).not.toBeVisible({ timeout: 10_000 });
 });
 
-test("an unassigned shortcut lists no keys in the shortcuts cheat sheet", async ({ page }) => {
-  await openShortcutsSettings(page);
+for (const { platform, keys, label, firstCombo, secondCombo } of [
+  {
+    platform: "darwin",
+    keys: "Meta+Shift+Backspace",
+    label: "⇧⌘⌫",
+    firstCombo: "⌥K",
+    secondCombo: "⌥J",
+  },
+  {
+    platform: "win32",
+    keys: "Control+Shift+Backspace",
+    label: "Ctrl+Shift+⌫",
+    firstCombo: "Alt+K",
+    secondCombo: "Alt+J",
+  },
+] as const) {
+  test(`binds modified Backspace and erases a combo with bare Backspace on ${platform}`, async ({
+    page,
+  }) => {
+    await openShortcutsSettings(page, platform);
+    await clearShortcut(page, "Archive workspace", "archive-workspace");
+    await captureShortcut(page, "Interrupt agent", "agent-interrupt", keys);
+    await expectInterruptShortcut(page, label);
+    await finishInterruptCapture(page, "Done");
+    await expectInterruptShortcut(page, label);
 
-  await openRowMenu(page);
-  await page.getByTestId(`shortcut-clear-${SHORTCUTS_ROW}`).click();
-  await expect(page.getByText("Not set", { exact: true })).toBeVisible();
-
-  const dialog = await openCheatSheet(page);
-
-  // Addressed by testID rather than by filtering on its own text: an anchored
-  // `hasText` matches only the innermost node holding exactly that label, so a
-  // row-scoped assertion about anything *else* in the row finds nothing.
-  const row = dialog.getByTestId(`shortcut-help-row-${SHORTCUTS_ROW}`);
-  await expect(row).toBeVisible();
-  // No badge pill, blank or otherwise, for a shortcut with no keys.
-  await expect(dialog.getByText("?", { exact: true })).toHaveCount(0);
-  // It says so, rather than leaving a silent gap where the keys were. Same words
-  // the settings row uses for the same state.
-  await expect(row.getByText("Not set", { exact: true })).toBeVisible();
-});
-
-test("a rebound shortcut lists its new keys in the shortcuts cheat sheet", async ({ page }) => {
-  await openShortcutsSettings(page);
-
-  const defaultKeys = page.getByText("?", { exact: true });
-  await expect(defaultKeys).toBeVisible();
-
-  await page.getByTestId(`shortcut-actions-${SHORTCUTS_ROW}`).click();
-  await page.getByTestId(`shortcut-bind-${SHORTCUTS_ROW}`).click();
-  await page.keyboard.press("Alt+Shift+K");
-  await page.getByText("Done", { exact: true }).click();
-
-  const reboundKeys = page.getByText("⌥⇧K", { exact: true });
-  await expect(reboundKeys).toBeVisible();
-  await expect(defaultKeys).toHaveCount(0);
-
-  const dialog = await openCheatSheet(page);
-  const row = dialog.getByTestId(`shortcut-help-row-${SHORTCUTS_ROW}`);
-  await expect(row.getByText("⌥⇧K", { exact: true })).toBeVisible();
-  // The whole point: the cheat sheet stops advertising the shipped default.
-  await expect(row.getByText("?", { exact: true })).toHaveCount(0);
-});
+    await eraseLastCapturedCombo(page, firstCombo, secondCombo);
+    await finishInterruptCapture(page, "Cancel");
+    await expectInterruptShortcut(page, label);
+  });
+}

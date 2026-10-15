@@ -1,3 +1,4 @@
+import { registerLocalUpdateGuard } from "@/desktop/local-update-readiness";
 import type { FileVersion, FileWriteResult } from "@getpaseo/protocol/messages";
 
 export type FileEditorStatus = "clean" | "dirty" | "saving" | "conflict" | "error";
@@ -59,6 +60,7 @@ const systemClock: FileEditorClock = {
 };
 
 export class FileEditorModel {
+  private readonly unregisterUpdateGuard: () => void;
   private readonly session: FileEditorSession;
   private readonly clock: FileEditorClock;
   private readonly listeners = new Set<() => void>();
@@ -94,6 +96,9 @@ export class FileEditorModel {
       observedVersion: input.file.version,
       error: null,
     };
+    this.unregisterUpdateGuard = registerLocalUpdateGuard(
+      () => this.snapshot.modified || this.snapshot.status !== "clean",
+    );
   }
 
   subscribe = (listener: () => void): (() => void) => {
@@ -192,6 +197,7 @@ export class FileEditorModel {
   }
 
   dispose(): void {
+    this.unregisterUpdateGuard();
     this.disposed = true;
     this.reloadRequested = false;
     this.saveSequence += 1;

@@ -21,6 +21,8 @@ import {
   useMenuState,
   type MenuCompactMode,
 } from "./menu-context";
+import { usePressDragSelect } from "../use-press-drag-select";
+import { PressDragSelectionContext } from "../press-drag-select-context";
 import { isWeb } from "@/constants/platform";
 
 /**
@@ -35,15 +37,28 @@ export function MenuRoot({
   defaultOpen,
   onOpenChange,
   compactMode,
+  pressDrag = true,
   children,
 }: PropsWithChildren<{
   open?: boolean;
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
   compactMode?: MenuCompactMode;
+  /** Context-menu triggers own their gestures. */
+  pressDrag?: boolean;
 }>): ReactElement {
   const value = useMenuState({ open, defaultOpen, onOpenChange, compactMode });
-  return <MenuContextProvider value={value}>{children}</MenuContextProvider>;
+  const selection = usePressDragSelect({
+    anchorRef: value.triggerRef,
+    open: value.open,
+    onOpenChange: value.setOpen,
+    enabled: pressDrag && value.presentation === "popover",
+  });
+  return (
+    <PressDragSelectionContext value={selection}>
+      <MenuContextProvider value={value}>{children}</MenuContextProvider>
+    </PressDragSelectionContext>
+  );
 }
 
 export interface MenuTriggerState {

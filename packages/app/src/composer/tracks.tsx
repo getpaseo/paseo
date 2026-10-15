@@ -1,3 +1,4 @@
+import { usePressDragTarget } from "@/components/ui/press-drag-select-context";
 import { useCallback, useMemo, useState, type ReactElement, type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -11,7 +12,7 @@ import {
 } from "@/components/ui/menu";
 import { StatusRing } from "@/components/status-ring";
 import { STATUS_RING_HALO_INSET } from "@/components/status-ring/geometry";
-import { MAX_CONTENT_WIDTH } from "@/constants/layout";
+import { chatStyles } from "@/styles/chat";
 import { isWeb } from "@/constants/platform";
 import { getStatusDotColor } from "@/utils/status-dot-color";
 import { STATUS_INDICATOR_FILLED_DOT_SIZE } from "@/utils/status-indicator-geometry";
@@ -33,7 +34,7 @@ import { COMPOSER_PILL_CLEARANCE, composerPillStyles } from "./pill-styles";
 export function ComposerTrackBar({ children }: { children: ReactNode }): ReactElement {
   return (
     <View style={styles.bar} pointerEvents="box-none">
-      <View style={styles.track} pointerEvents="box-none">
+      <View style={[styles.track, chatStyles.rail]} pointerEvents="box-none">
         {children}
       </View>
     </View>
@@ -233,6 +234,7 @@ export function ComposerTrackRow({
     [closeOnSelect, onPress, selectItem],
   );
 
+  const drag = usePressDragTarget({ onSelect: handleSelect, disabled: disabled || !onPress });
   const renderRow = useCallback(
     (active: boolean) => (
       <View style={active ? styles.rowActive : styles.row}>
@@ -242,8 +244,9 @@ export function ComposerTrackRow({
     [children],
   );
   const renderPressed = useCallback(
-    ({ pressed }: { pressed: boolean }) => renderRow(hovered || pressed),
-    [hovered, renderRow],
+    ({ pressed }: { pressed: boolean }) =>
+      renderRow((drag.dragging ? drag.hovered : hovered) || pressed),
+    [hovered, renderRow, drag.dragging, drag.hovered],
   );
 
   if (!onPress) {
@@ -253,6 +256,7 @@ export function ComposerTrackRow({
   return (
     <View onPointerEnter={handlePointerEnter} onPointerLeave={handlePointerLeave}>
       <Pressable
+        ref={drag.ref}
         accessibilityRole="button"
         accessibilityLabel={accessibilityLabel}
         testID={testID}
@@ -320,7 +324,6 @@ const styles = StyleSheet.create((theme) => {
       right: 0,
       bottom: 0,
       alignItems: "center",
-      paddingHorizontal: theme.spacing[4],
       paddingBottom: {
         xs: COMPOSER_PILL_CLEARANCE.compact,
         md: COMPOSER_PILL_CLEARANCE.wide,
@@ -328,7 +331,6 @@ const styles = StyleSheet.create((theme) => {
     },
     track: {
       width: "100%",
-      maxWidth: MAX_CONTENT_WIDTH,
       flexDirection: "row",
       alignItems: "center",
       gap: theme.spacing[1],

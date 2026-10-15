@@ -107,12 +107,9 @@ export const baseColors = {
   },
 } as const;
 
-// Diff colors — the +/- inside a diff view, where the color *is* the signal and has to
-// survive being scanned line by line, so it stays saturated. Light uses muted tones, dark
+// Diff colors — the +/- inside a diff view or stat, where the color *is* the signal and has
+// to survive being scanned line by line, so it stays saturated. Light uses muted tones, dark
 // uses the brighter palette values.
-//
-// A diff *stat* — the "+12 −3" footnote next to a title — is not this. It is a status
-// signal, so it uses statusSuccess/statusDanger below rather than a tier of its own.
 const lightDiffColors = {
   diffAddition: "#15803d", // green-700 — readable on white without screaming
   diffDeletion: "#b91c1c", // red-700
@@ -125,7 +122,7 @@ const darkDiffColors = {
 
 // Status colors — semantic signals for success/danger/warning/merged. There is exactly one
 // token per signal, and every status surface uses it: PR state icons, CI check icons and
-// pies, diff stats, file-change icons, status badges, usage bars. Status *dots* are the
+// pies, file-change icons, status badges, usage bars. Status *dots* are the
 // exception and have their own band below. A surface does not otherwise get a quieter or
 // louder variant of a status color because of where it sits — if a dense list feels loud,
 // that is a density or weight problem, not a color problem.
@@ -158,6 +155,20 @@ const darkStatusColors = {
   statusWarning: "#c09664",
   statusMerged: "#a890d5",
 };
+
+// Status tints — the fill of a status badge. The status color itself at low opacity, so a
+// badge takes its state's hue from the same source as its text and never drifts from it.
+// Dark surfaces swallow more of the tint, so the dark band runs a little stronger.
+function statusTints(colors: typeof lightStatusColors, alphaHex: string) {
+  return {
+    statusSuccessTint: `${colors.statusSuccess}${alphaHex}`,
+    statusDangerTint: `${colors.statusDanger}${alphaHex}`,
+    statusWarningTint: `${colors.statusWarning}${alphaHex}`,
+  };
+}
+
+const lightStatusTints = statusTints(lightStatusColors, "1f"); // 12%
+const darkStatusTints = statusTints(darkStatusColors, "29"); // 16%
 
 // Status *dot* colors — the small filled discs on a sidebar row, and the glyphs that stand in
 // for them. Same four hues and the same generation rule as the status colors above, but its
@@ -246,6 +257,21 @@ const lightTerminalAnsi = {
 
 export function buildLightSemanticColors(tint: LightThemeConfig) {
   return {
+    workspace: {
+      chrome: tint.surface1,
+      foreground: tint.foreground,
+      muted: tint.foregroundMuted,
+      border: tint.border,
+      review: tint.accent,
+      tabAccent: tint.accent,
+    },
+    planCard: {
+      header: "#403d3b",
+      headerForeground: "#faf8f5",
+      background: "#faf8f5",
+      footer: "#efebe7",
+      border: "#ded8d2",
+    },
     surface0: tint.surface0,
     surface1: tint.surface1,
     surface2: tint.surface2,
@@ -262,7 +288,13 @@ export function buildLightSemanticColors(tint: LightThemeConfig) {
     surfaceComposer: tint.surface0,
     surfaceUserMessage: tint.surface2,
     borderComposer: tint.border,
-    interactionHighlight: "rgba(30, 35, 45, 0.055)",
+    userMessageBackground: "#FAF7F5",
+    composerInputBackground: "#FAFAF9",
+    composerInputBorder: "#E7E5E4",
+    composerPlanBackground: "#F5EFED",
+    composerPlanStripe: "#EBDDD8",
+    composerPlanBorder: "#e2dbd6",
+    interactionHighlight: "rgba(0, 0, 0, 0.06)",
 
     foreground: tint.foreground,
     foregroundMuted: tint.foregroundMuted,
@@ -277,8 +309,12 @@ export function buildLightSemanticColors(tint: LightThemeConfig) {
 
     destructive: tint.destructive,
     destructiveForeground: tint.surface0,
-    success: tint.accent,
+    success: lightStatusColors.statusSuccess,
     successForeground: tint.surface0,
+    workspaceActionMerge: "#286b3b",
+    workspaceActionMergeForeground: "#ffffff",
+    workspaceActionArchive: "#63379b",
+    workspaceActionArchiveForeground: "#ffffff",
 
     background: tint.surface0,
     popover: tint.surface0,
@@ -295,6 +331,7 @@ export function buildLightSemanticColors(tint: LightThemeConfig) {
 
     ...lightDiffColors,
     ...lightStatusColors,
+    ...lightStatusTints,
     ...lightStatusDotColors,
 
     terminal: {
@@ -311,29 +348,42 @@ export function buildLightSemanticColors(tint: LightThemeConfig) {
   };
 }
 
-const lightSemanticColors = buildLightSemanticColors({
-  surface0: "#fcfcfd",
-  surface1: "#f7f8fa",
-  surface2: "#f0f1f4",
-  surface3: "#e2e4e9",
-  surface4: "#d2d5dc",
-  surfaceDiffEmpty: "#f5f6f8",
-  surfaceSidebar: "#eff0f3",
-  foreground: "#25272d",
-  foregroundMuted: "#686d78",
-  foregroundExtraMuted: "#9297a1",
-  border: "#e7e9ee",
-  borderAccent: "#dce0e7",
-  accent: "#20744A",
-  accentBright: "#239956",
-  accentForeground: "#ffffff",
-  primary: "#18181b",
-  primaryForeground: "#fafafa",
-  destructive: "#b04138",
-  terminalBlack: "#1a1a1e",
-  terminalBrightBlack: "#3f3f46",
-  ring: "#18181b",
-});
+const lightSemanticColors = {
+  ...buildLightSemanticColors({
+    surface0: "#fcfcfd",
+    surface1: "#f7f8fa",
+    surface2: "#f0f1f4",
+    surface3: "#e2e4e9",
+    surface4: "#d2d5dc",
+    surfaceDiffEmpty: "#f5f6f8",
+    surfaceSidebar: "#eff0f3",
+    foreground: "#25272d",
+    foregroundMuted: "#686d78",
+    foregroundExtraMuted: "#9297a1",
+    border: "#e7e9ee",
+    borderAccent: "#dce0e7",
+    accent: "#cca694",
+    accentBright: "#dbb7a6",
+    accentForeground: "#1a1a1e",
+    primary: "#18181b",
+    primaryForeground: "#fafafa",
+    destructive: "#b04138",
+    terminalBlack: "#1a1a1e",
+    terminalBrightBlack: "#3f3f46",
+    ring: "#18181b",
+  }),
+  userMessageBackground: "#f9f9f8",
+  composerInputBackground: "#f9f9f8",
+  composerInputBorder: "#e7e4e2",
+  workspace: {
+    chrome: "#f9f9f8",
+    foreground: "#423f3e",
+    muted: "#837d7a",
+    border: "#e7e4e2",
+    review: "#a77c70",
+    tabAccent: "#c69b8b",
+  },
+};
 
 // ---------------------------------------------------------------------------
 // Dark theme variant builder
@@ -382,6 +432,21 @@ export function buildDarkSemanticColors(tint: DarkThemeConfig) {
   const foreground = tint.foreground ?? "#fafafa";
   const ring = tint.ring ?? "#d4d4d8";
   return {
+    workspace: {
+      chrome: tint.surface1,
+      foreground,
+      muted: tint.foregroundMuted,
+      border: tint.border,
+      review: tint.accent,
+      tabAccent: tint.accent,
+    },
+    planCard: {
+      header: "#403d3b",
+      headerForeground: "#faf8f5",
+      background: tint.surface1,
+      footer: tint.surface2,
+      border: tint.border,
+    },
     surface0: tint.surface0,
     surface1: tint.surface1,
     surface2: tint.surface2,
@@ -398,6 +463,12 @@ export function buildDarkSemanticColors(tint: DarkThemeConfig) {
     surfaceComposer: tint.surface1,
     surfaceUserMessage: tint.surface3,
     borderComposer: tint.borderAccent,
+    userMessageBackground: tint.surface3,
+    composerInputBackground: tint.surface1,
+    composerInputBorder: tint.borderAccent,
+    composerPlanBackground: "#2B2522",
+    composerPlanStripe: "#413732",
+    composerPlanBorder: "#5A463C",
     interactionHighlight: "rgba(255, 255, 255, 0.08)",
 
     foreground,
@@ -413,8 +484,12 @@ export function buildDarkSemanticColors(tint: DarkThemeConfig) {
 
     destructive: tint.destructive,
     destructiveForeground: "#ffffff",
-    success: tint.accent,
+    success: darkStatusColors.statusSuccess,
     successForeground: "#ffffff",
+    workspaceActionMerge: "#286b3b",
+    workspaceActionMergeForeground: "#ffffff",
+    workspaceActionArchive: "#63379b",
+    workspaceActionArchiveForeground: "#ffffff",
 
     // Legacy aliases (for gradual migration)
     background: tint.surface0,
@@ -432,6 +507,7 @@ export function buildDarkSemanticColors(tint: DarkThemeConfig) {
 
     ...darkDiffColors,
     ...darkStatusColors,
+    ...darkStatusTints,
     ...darkStatusDotColors,
 
     terminal: {
@@ -465,8 +541,9 @@ const paseoDarkColors = buildDarkSemanticColors({
   foregroundExtraMuted: "#717574",
   border: "#252B2A",
   borderAccent: "#2F3534",
-  accent: "#20744A",
-  accentBright: "#7ccba0",
+  accent: "#cca694",
+  accentBright: "#dbb7a6",
+  accentForeground: "#18181b",
   destructive: "#c64f43", // warm red, hue ~7 — reads as red (not pink) against the green tint
   terminalBlack: "#141716",
   terminalBrightBlack: "#434645",
@@ -593,6 +670,8 @@ export const ICON_SIZE = {
   lg: 20,
 } as const;
 
+export const ICON_STROKE_WIDTH = 1.5;
+
 export const FONT_WEIGHT = {
   normal: "normal" as const,
   medium: "500" as const,
@@ -602,12 +681,13 @@ export const FONT_WEIGHT = {
 
 export const BORDER_RADIUS = {
   card: 8,
-  userMessageCorner: 2,
   none: 0,
   sm: 2,
   base: 4,
   md: 6,
   lg: 8,
+  composerControl: 10,
+  userMessageCorner: 6,
   xl: 12,
   "2xl": 16,
   full: 9999,
@@ -625,13 +705,12 @@ export const OPACITY = {
   100: 1,
 } as const;
 
-// Platform default font stacks — copied verbatim from constants/theme.ts `Fonts`
-// (sans -> ui, mono -> mono). These seed the dynamic `fontFamily` theme token and
-// are the fallback an empty user-supplied family resolves to at apply time.
+// Platform default font stacks. These seed the dynamic `fontFamily` theme token
+// and are the fallback an empty user-supplied family resolves to at apply time.
 export const DEFAULT_UI_FONT_STACK: string = Platform.select({
-  ios: "system-ui",
+  ios: "Helvetica Neue",
   default: "normal",
-  web: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+  web: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
 });
 
 export const DEFAULT_MONO_FONT_STACK: string = Platform.select({
@@ -640,7 +719,10 @@ export const DEFAULT_MONO_FONT_STACK: string = Platform.select({
   web: "SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
 });
 
-// `fontSize`, `fontFamily`, and `lineHeight` are deliberately widened to plain
+// Chat and markdown content column; the appearance updater patches the user's width in.
+export const DEFAULT_CONTENT_MAX_WIDTH = 820;
+
+// `fontSize`, `fontFamily`, `lineHeight`, and `contentMaxWidth` are deliberately widened to plain
 // `number`/`string` (not narrowed by `as const`) so the appearance updater can patch
 // them at runtime via `UnistylesRuntime.updateTheme`. The remaining tokens keep their
 // literal types.
@@ -649,6 +731,7 @@ interface CommonTheme {
   fontSize: Record<keyof typeof FONT_SIZE, number>;
   fontFamily: { ui: string; mono: string };
   lineHeight: Record<keyof typeof LINE_HEIGHT, number>;
+  contentMaxWidth: number;
   iconSize: typeof ICON_SIZE;
   fontWeight: typeof FONT_WEIGHT;
   borderRadius: Record<keyof typeof BORDER_RADIUS, number>;
@@ -661,6 +744,7 @@ const commonTheme: CommonTheme = {
   fontSize: FONT_SIZE,
   fontFamily: { ui: DEFAULT_UI_FONT_STACK, mono: DEFAULT_MONO_FONT_STACK },
   lineHeight: LINE_HEIGHT,
+  contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
   iconSize: ICON_SIZE,
   fontWeight: FONT_WEIGHT,
   borderRadius: BORDER_RADIUS,
@@ -705,6 +789,7 @@ export function buildDarkTheme(semanticColors: ReturnType<typeof buildDarkSemant
       syntax: darkHighlightColors,
     },
     shadow: darkShadow,
+    ...commonTheme,
     workspaceFrame: {
       inset: 0,
       topInset: 0,
@@ -713,7 +798,6 @@ export function buildDarkTheme(semanticColors: ReturnType<typeof buildDarkSemant
       shadowColor: "transparent",
       elevation: 0,
     },
-    ...commonTheme,
   } as const;
 }
 
@@ -736,8 +820,9 @@ const pureBlackDarkColors = buildDarkSemanticColors({
   foregroundExtraMuted: "#71717a",
   border: "#1c1c1c",
   borderAccent: "#242424",
-  accent: "#20744A",
-  accentBright: "#7ccba0",
+  accent: "#cca694",
+  accentBright: "#dbb7a6",
+  accentForeground: "#18181b",
   destructive: "#c44a4a",
   terminalBlack: "#595959",
   terminalBrightBlack: "#8a8a8a",
@@ -748,6 +833,7 @@ export const darkPureBlackTheme = buildDarkTheme(pureBlackDarkColors);
 // Light surfaces use softer corners without increasing control sizes or row spacing.
 const lightBorderRadius = {
   card: 14,
+  composerControl: 10,
   userMessageCorner: 22,
   none: 0,
   sm: 4,
@@ -799,6 +885,7 @@ export function buildLightTheme(semanticColors: ReturnType<typeof buildLightSema
       syntax: lightHighlightColors,
     },
     shadow: lightShadow,
+    ...commonTheme,
     workspaceFrame: {
       inset: 12,
       topInset: 6,
@@ -807,7 +894,6 @@ export function buildLightTheme(semanticColors: ReturnType<typeof buildLightSema
       shadowColor: "rgba(30, 35, 50, 0.045)",
       elevation: 1,
     },
-    ...commonTheme,
     borderRadius: lightBorderRadius,
   } as const;
 }

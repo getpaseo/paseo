@@ -85,6 +85,45 @@
   },
   "overrides": [
     {
+      "files": [
+        "plugins/*-provider/server/**/*.ts",
+        "packages/plugin/src/server/acp-internal/**/*.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "node:child_process",
+                "importNames": [
+                  "spawn",
+                  "exec",
+                  "execFile",
+                  "spawnSync",
+                  "execSync",
+                  "execFileSync"
+                ],
+                "message": "Use the plugin server process helpers so Windows command scripts and argv are handled consistently."
+              },
+              {
+                "name": "child_process",
+                "importNames": [
+                  "spawn",
+                  "exec",
+                  "execFile",
+                  "spawnSync",
+                  "execSync",
+                  "execFileSync"
+                ],
+                "message": "Use the plugin server process helpers so Windows command scripts and argv are handled consistently."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
       "files": ["packages/app/src/**/*.{ts,tsx}"],
       "rules": {
         // React Native style arrays must read Unistyles proxies during render. Hoisting them to

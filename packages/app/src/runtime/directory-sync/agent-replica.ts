@@ -6,15 +6,21 @@ import type { Agent } from "@/stores/session-store";
 import { normalizeAgentSnapshot, projectAgentSnapshot } from "@/utils/agent-snapshots";
 import { type AgentDirectoryDelta } from "@/utils/agent-directory-sync";
 import { reconcileAgentDirectory } from "@/utils/agent-directory-reconciliation";
+import { resolveProjectPlacement } from "@/utils/project-placement";
 import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-workspaces";
 import type { DirectoryReplicaMutation } from "@/runtime/replica-cache";
 import type { TurnLivenessTransition } from "@/timeline/turn-liveness";
 import { AgentStoreProjection } from "./internal/agent-store";
 
-function projectAgentDirectoryEntry(agent: Agent): FetchAgentsEntry | null {
-  return agent.projectPlacement
-    ? { agent: projectAgentSnapshot(agent), project: agent.projectPlacement }
-    : null;
+// A member hydrated from its timeline or restored from the replica cache carries
+// no placement. Every other path in this flow derives one from the working
+// directory, so this one does too; returning nothing here would drop the member
+// from the merged directory and delete the conversation on the next catch-up.
+function projectAgentDirectoryEntry(agent: Agent): FetchAgentsEntry {
+  return {
+    agent: projectAgentSnapshot(agent),
+    project: resolveProjectPlacement({ projectPlacement: agent.projectPlacement, cwd: agent.cwd }),
+  };
 }
 
 export interface AgentLifecycleToken {
@@ -134,7 +140,7 @@ export class AgentDirectoryReplica {
       if (!this.members.has(agentId)) this.advance(agentId);
     }
     for (const agentId of previous.keys()) {
-      if (!nextIds.has(agentId)) this.storeProjection.remove(agentId);
+      if (!nextIds.has(agentId)) this.storeProjection.removeFromDirectory(agentId);
     }
     this.members.clear();
     this.pendingCacheReads.clear();
@@ -164,8 +170,7 @@ export class AgentDirectoryReplica {
     const previous = this.storeProjection.snapshot();
     const merged = new Map<string, FetchAgentsEntry>();
     for (const agent of previous.values()) {
-      const entry = projectAgentDirectoryEntry(agent);
-      if (entry) merged.set(agent.id, entry);
+      merged.set(agent.id, projectAgentDirectoryEntry(agent));
     }
     for (const entry of entries) merged.set(entry.agent.id, entry);
     const removalsAsDeltas: AgentDirectoryDelta[] = removals.map(({ id }) => ({

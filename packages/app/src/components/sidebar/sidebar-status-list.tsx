@@ -80,6 +80,7 @@ import type { ToggleSidebarWorkspacePin } from "@/hooks/use-sidebar-workspace-pi
 import { DraggableList, type DraggableRenderItemInfo } from "@/components/draggable-list";
 import type { DraggableListDragHandleProps } from "@/components/draggable-list.types";
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
+import type { ProjectIconRenderData } from "@/projects/icons";
 
 // Themed icon wrappers
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -115,7 +116,7 @@ function statusWorkspaceKeyExtractor(workspace: SidebarWorkspaceEntry): string {
 interface StatusWorkspaceListProps {
   groups: SidebarWorkspaceGroup[];
   pinnedWorkspaces: SidebarWorkspaceEntry[];
-  projectIconByProjectViewKey: ReadonlyMap<string, string | null>;
+  projectIconByProjectViewKey: ReadonlyMap<string, ProjectIconRenderData>;
   shortcutIndexByWorkspaceKey: Map<string, number>;
   showShortcutBadges: boolean;
   onWorkspacePress?: () => void;
@@ -285,7 +286,7 @@ function StatusGroupList({
 }: {
   groups: SidebarWorkspaceGroup[];
   collapsedWorkspaceGroupKeys: ReadonlySet<string>;
-  projectIconByProjectViewKey: ReadonlyMap<string, string | null>;
+  projectIconByProjectViewKey: ReadonlyMap<string, ProjectIconRenderData>;
   shortcutIndex: Map<string, number>;
   showShortcutBadges: boolean;
   onWorkspacePress?: () => void;
@@ -326,7 +327,7 @@ function StatusGroupRows({
 }: {
   group: SidebarWorkspaceGroup;
   collapsed: boolean;
-  projectIconByProjectViewKey: ReadonlyMap<string, string | null>;
+  projectIconByProjectViewKey: ReadonlyMap<string, ProjectIconRenderData>;
   shortcutIndex: Map<string, number>;
   showShortcutBadges: boolean;
   onWorkspacePress?: () => void;
@@ -382,7 +383,7 @@ function StatusGroupRows({
 interface StatusRowProjectPresentation {
   hostBadge: HostBadgeModel | null;
   projectName: string;
-  projectIconDataUri: string | null;
+  projectIcon?: ProjectIconRenderData;
 }
 
 function buildStatusRowProjectPresentation({
@@ -391,13 +392,13 @@ function buildStatusRowProjectPresentation({
   hostBadgeByServerId,
 }: {
   workspace: SidebarWorkspaceEntry;
-  projectIconByProjectViewKey: ReadonlyMap<string, string | null>;
+  projectIconByProjectViewKey: ReadonlyMap<string, ProjectIconRenderData>;
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
 }): StatusRowProjectPresentation {
   return {
     hostBadge: hostBadgeByServerId.get(workspace.serverId) ?? null,
     projectName: workspace.projectName,
-    projectIconDataUri: projectIconByProjectViewKey.get(workspace.projectViewKey) ?? null,
+    projectIcon: projectIconByProjectViewKey.get(workspace.projectViewKey),
   };
 }
 
@@ -408,6 +409,7 @@ function StatusGroupHeader({
   group: SidebarWorkspaceGroup;
   collapsed: boolean;
 }) {
+  const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
   const toggleWorkspaceGroupCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.toggleWorkspaceGroupCollapsed,
@@ -431,7 +433,7 @@ function StatusGroupHeader({
     <View onPointerEnter={handleHoverIn} onPointerLeave={handleHoverOut}>
       <Pressable
         accessibilityRole={platformIsWeb ? undefined : "button"}
-        accessibilityLabel={`${group.label} group`}
+        accessibilityLabel={t("sidebar.statusGroupAccessibility", { label: group.label })}
         accessibilityState={accessibilityState}
         style={rowStyle}
         onPress={handlePress}
@@ -493,7 +495,7 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
   workspace,
   hostBadge,
   projectName,
-  projectIconDataUri,
+  projectIcon,
   shortcutNumber,
   showShortcutBadge,
   canPin,
@@ -508,7 +510,7 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
   workspace: SidebarWorkspaceEntry;
   hostBadge: HostBadgeModel | null;
   projectName: string;
-  projectIconDataUri: string | null;
+  projectIcon?: ProjectIconRenderData;
   shortcutNumber: number | null;
   showShortcutBadge: boolean;
   canPin: boolean;
@@ -540,7 +542,7 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
       workspace={workspace}
       hostBadge={hostBadge}
       projectName={projectName}
-      projectIconDataUri={projectIconDataUri}
+      projectIcon={projectIcon}
       selected={selected}
       shortcutNumber={shortcutNumber}
       showShortcutBadge={showShortcutBadge}
@@ -560,7 +562,7 @@ function StatusWorkspaceRowWithMenu({
   workspace,
   hostBadge,
   projectName,
-  projectIconDataUri,
+  projectIcon,
   selected,
   shortcutNumber,
   showShortcutBadge,
@@ -576,7 +578,7 @@ function StatusWorkspaceRowWithMenu({
   workspace: SidebarWorkspaceEntry;
   hostBadge: HostBadgeModel | null;
   projectName: string;
-  projectIconDataUri: string | null;
+  projectIcon?: ProjectIconRenderData;
   selected: boolean;
   shortcutNumber: number | null;
   showShortcutBadge: boolean;
@@ -675,7 +677,7 @@ function StatusWorkspaceRowWithMenu({
         workspace={workspace}
         hostBadge={hostBadge}
         projectName={projectName}
-        projectIconDataUri={projectIconDataUri}
+        projectIcon={projectIcon}
         selected={selected}
         shortcutNumber={shortcutNumber}
         showShortcutBadge={showShortcutBadge}
@@ -713,7 +715,7 @@ interface StatusWorkspaceRowInnerProps {
   workspace: SidebarWorkspaceEntry;
   hostBadge: HostBadgeModel | null;
   projectName: string;
-  projectIconDataUri: string | null;
+  projectIcon?: ProjectIconRenderData;
   selected: boolean;
   shortcutNumber: number | null;
   showShortcutBadge: boolean;
@@ -760,7 +762,7 @@ function StatusWorkspaceRowInnerContent({
   workspace,
   hostBadge,
   projectName,
-  projectIconDataUri,
+  projectIcon,
   selected,
   shortcutNumber,
   showShortcutBadge,
@@ -894,7 +896,7 @@ function StatusWorkspaceRowInnerContent({
                 workspace={workspace}
                 hostBadge={hostBadge}
                 leadingProjectName={projectName}
-                leadingProjectIconDataUri={projectIconDataUri}
+                leadingProjectIcon={projectIcon}
                 serviceSummary={serviceSummary}
                 backdrop={backdrop}
                 isHovered={isHovered}

@@ -1,6 +1,6 @@
 import {
-  Fragment,
   type ReactElement,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -15,6 +15,7 @@ import {
   type ListRenderItemInfo,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
+  type ViewToken,
   type ViewStyle,
 } from "react-native";
 import { withUnistyles } from "react-native-unistyles";
@@ -22,8 +23,7 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { StreamItem } from "@/types/stream";
 import type { Theme } from "@/styles/theme";
 import { useStableEvent } from "@/hooks/use-stable-event";
-import { useSettledKeyboardShift } from "@/hooks/keyboard-shift-context";
-import { resolveStreamKeyboardInset } from "@/hooks/keyboard-shift-policy";
+import { useKeyboardStreamInset } from "@/keyboard/shift";
 import { useRevisedHistoryRows } from "./history-row-revision";
 import { useBottomAnchorController } from "./bottom-anchor-controller";
 import { useScrollKeyboardDismiss } from "./scroll-keyboard-dismiss/use-scroll-keyboard-dismiss";
@@ -69,6 +69,22 @@ function keyExtractor(item: { id: string }): string {
   return item.id;
 }
 
+function MeasuredLiveRow({
+  itemId,
+  onRowLayout,
+  children,
+}: {
+  itemId: string;
+  onRowLayout: (itemId: string, event: LayoutChangeEvent) => void;
+  children: ReactNode;
+}) {
+  const handleLayout = useCallback(
+    (event: LayoutChangeEvent) => onRowLayout(itemId, event),
+    [itemId, onRowLayout],
+  );
+  return <View onLayout={handleLayout}>{children}</View>;
+}
+
 function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrategy }) {
   const {
     agentId,
@@ -82,6 +98,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     routeBottomAnchorRequest,
     isAuthoritativeHistoryReady,
     onNearBottomChange,
+    onReadingPositionChange,
     onNearHistoryStart,
     isLoadingOlderHistory,
     hasOlderHistory,
@@ -93,6 +110,11 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   } = props;
   const { renderHistoryMountedRow, renderLiveHeadRow, renderLiveAuxiliary } = renderers;
   const flatListRef = useRef<FlatList<StreamItem>>(null);
+  const scrollToIndexRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollToIndexAttemptsRef = useRef(0);
+  const visibleHistoryRowsRef = useRef<ViewToken[]>([]);
+  const liveHeadRowLayoutsRef = useRef(new Map<string, { y: number; height: number }>());
+  const liveHeaderHeightRef = useRef(0);
   const streamViewportMetricsRef = useRef({
     containerKey: "native-virtualized",
     contentHeight: 0,
@@ -105,10 +127,10 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   const scrollOffsetYRef = useRef(0);
   const isUserScrollActiveRef = useRef(false);
   const scrollKeyboardDismiss = useScrollKeyboardDismiss();
-  const settledKeyboardShift = useSettledKeyboardShift();
+  const streamKeyboardInset = useKeyboardStreamInset();
   const userScrollEndFrameIdRef = useRef<number | null>(null);
   const programmaticScrollEventBudgetRef = useRef(0);
-  const [isNativeViewportSettling, setIsNativeViewportSettling] = useState(false);
+  const isNativeViewportSettlingRef = useRef(false);
   const nativeViewportSettlingFrameIdRef = useRef<number | null>(null);
   const historyStartReadyRef = useRef(false);
   const [historyStartPaginationState, setHistoryStartPaginationState] = useState(
@@ -124,6 +146,49 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     return [...segments.historyVirtualized, ...segments.historyMounted];
   }, [segments.historyMounted, segments.historyVirtualized]);
   const historyRows = useRevisedHistoryRows(historyItems, historyRowRevision);
+  const handleScrollToIndexFailed = useStableEvent(
+    ({ index, averageItemLength }: { index: number; averageItemLength: number }) => {
+      if (scrollToIndexAttemptsRef.current >= 3) return;
+      scrollToIndexAttemptsRef.current += 1;
+      flatListRef.current?.scrollToOffset({ offset: index * averageItemLength, animated: false });
+      scrollToIndexRetryRef.current = setTimeout(() => {
+        flatListRef.current?.scrollToIndex({ index, viewPosition: 1 });
+      }, 100);
+    },
+  );
+  const reportReadingPosition = useStableEvent(() => {
+    if (!onReadingPositionChange) return;
+    const { offsetY, viewportHeight } = streamViewportMetricsRef.current;
+    const readingLine = offsetY + viewportHeight - 8;
+    if (readingLine < liveHeaderHeightRef.current) {
+      const liveRow = segments.liveHead.find((item) => {
+        const layout = liveHeadRowLayoutsRef.current.get(item.id);
+        return layout && layout.y <= readingLine && readingLine < layout.y + layout.height;
+      });
+      onReadingPositionChange(liveRow?.id ?? null);
+      return;
+    }
+    const topRow = visibleHistoryRowsRef.current.reduce<ViewToken | null>(
+      (top, row) => (row.index !== null && (top?.index ?? -1) < row.index ? row : top),
+      null,
+    );
+    onReadingPositionChange(topRow?.item?.id ?? null);
+  });
+  const handleViewableItemsChanged = useStableEvent(
+    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
+      visibleHistoryRowsRef.current = viewableItems;
+      reportReadingPosition();
+    },
+  );
+  const handleLiveRowLayout = useStableEvent((itemId: string, event: LayoutChangeEvent) => {
+    const { y, height } = event.nativeEvent.layout;
+    liveHeadRowLayoutsRef.current.set(itemId, { y, height });
+    reportReadingPosition();
+  });
+  const handleLiveHeaderLayout = useStableEvent((event: LayoutChangeEvent) => {
+    liveHeaderHeightRef.current = event.nativeEvent.layout.height;
+    reportReadingPosition();
+  });
   const getHistoryStartPaginationInput = useStableEvent((): HistoryStartPaginationInput => {
     const metrics = streamViewportMetricsRef.current;
     const hasMeasuredViewport =
@@ -210,12 +275,12 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
 
   const markNativeViewportSettling = useCallback(() => {
     clearNativeViewportSettling();
-    setIsNativeViewportSettling(true);
+    isNativeViewportSettlingRef.current = true;
     let remainingFrames = 4;
     const tick = () => {
       if (remainingFrames <= 0) {
         nativeViewportSettlingFrameIdRef.current = null;
-        setIsNativeViewportSettling(false);
+        isNativeViewportSettlingRef.current = false;
         return;
       }
       remainingFrames -= 1;
@@ -224,13 +289,13 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     nativeViewportSettlingFrameIdRef.current = requestAnimationFrame(tick);
   }, [clearNativeViewportSettling]);
 
-  const bottomAnchorTransportBehavior = useMemo(
+  const getBottomAnchorTransportBehavior = useCallback(
     () =>
       resolveBottomAnchorTransportBehavior({
         strategy,
-        isViewportSettling: isNativeViewportSettling,
+        isViewportSettling: isNativeViewportSettlingRef.current,
       }),
-    [isNativeViewportSettling, strategy],
+    [strategy],
   );
 
   const scrollToBottom = useCallback(
@@ -255,7 +320,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     routeRequest: routeBottomAnchorRequest,
     isAuthoritativeHistoryReady,
     renderStrategy: "inverted-stream",
-    transportBehavior: bottomAnchorTransportBehavior,
+    getTransportBehavior: getBottomAnchorTransportBehavior,
     getMeasurementState: () => streamViewportMetricsRef.current,
     isNearBottom: () => {
       const metrics = streamViewportMetricsRef.current;
@@ -275,14 +340,6 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     Platform.OS === "android" && bottomAnchorController.mode === "sticky-bottom"
       ? undefined
       : DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION;
-  const streamKeyboardInset = useMemo(
-    () =>
-      resolveStreamKeyboardInset({
-        platform: Platform.OS === "ios" ? "ios" : "android",
-        settledShift: settledKeyboardShift,
-      }),
-    [settledKeyboardShift],
-  );
   const listContentContainerStyle = useMemo(
     () => [
       baseListContentContainerStyle,
@@ -315,10 +372,16 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       contentMeasuredForKey: null,
     };
     scrollOffsetYRef.current = 0;
+    visibleHistoryRowsRef.current = [];
+    liveHeadRowLayoutsRef.current.clear();
+    liveHeaderHeightRef.current = 0;
+    if (scrollToIndexRetryRef.current) clearTimeout(scrollToIndexRetryRef.current);
+    scrollToIndexRetryRef.current = null;
+    scrollToIndexAttemptsRef.current = 0;
     isUserScrollActiveRef.current = false;
     clearPendingUserScrollEnd();
     clearNativeViewportSettling();
-    setIsNativeViewportSettling(false);
+    isNativeViewportSettlingRef.current = false;
     historyStartReadyRef.current = false;
     const initialHistoryStartState = createHistoryStartPaginationState();
     historyStartPaginationStateRef.current = initialHistoryStartState;
@@ -329,6 +392,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     });
     return () => {
       cancelAnimationFrame(frame);
+      if (scrollToIndexRetryRef.current) clearTimeout(scrollToIndexRetryRef.current);
       clearPendingUserScrollEnd();
       historyStartSettleSchedulerRef.current?.cancel();
       historyStartSettleSchedulerRef.current = null;
@@ -353,6 +417,24 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         bottomAnchorController.prepareForStickyViewportChange();
         markNativeViewportSettling();
       },
+      scrollToMessage: (itemId) => {
+        if (scrollToIndexRetryRef.current) clearTimeout(scrollToIndexRetryRef.current);
+        scrollToIndexRetryRef.current = null;
+        scrollToIndexAttemptsRef.current = 0;
+        const historyIndex = historyItems.findIndex((item) => item.id === itemId);
+        if (historyIndex >= 0) {
+          flatListRef.current?.scrollToIndex({ index: historyIndex, viewPosition: 1 });
+          return;
+        }
+        const layout = liveHeadRowLayoutsRef.current.get(itemId);
+        if (layout) {
+          const offset = Math.max(
+            0,
+            layout.y + layout.height - streamViewportMetricsRef.current.viewportHeight,
+          );
+          flatListRef.current?.scrollToOffset({ offset, animated: true });
+        }
+      },
     };
     viewportRef.current = handle;
     return () => {
@@ -360,7 +442,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         viewportRef.current = null;
       }
     };
-  }, [agentId, bottomAnchorController, markNativeViewportSettling, viewportRef]);
+  }, [agentId, bottomAnchorController, historyItems, markNativeViewportSettling, viewportRef]);
 
   const isScrollEventNearBottom = useStableEvent(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -393,6 +475,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
 
     const nearBottom = isScrollEventNearBottom(event);
     onNearBottomChange(nearBottom);
+    reportReadingPosition();
 
     evaluateHistoryStart();
 
@@ -527,7 +610,9 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     // the memo invoke them again when that state changes.
     void liveHeadRowRevision;
     const liveHeadRows = segments.liveHead.map((item, index) => (
-      <Fragment key={item.id}>{renderLiveHeadRow(item, index, segments.liveHead)}</Fragment>
+      <MeasuredLiveRow key={item.id} itemId={item.id} onRowLayout={handleLiveRowLayout}>
+        {renderLiveHeadRow(item, index, segments.liveHead)}
+      </MeasuredLiveRow>
     ));
     const liveAuxiliary = renderLiveAuxiliary();
     if (
@@ -539,15 +624,17 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       return (listEmptyComponent ?? null) as ReactElement | null;
     }
     return (
-      <Fragment>
+      <View onLayout={handleLiveHeaderLayout}>
         {liveHeadRows}
         {liveAuxiliary}
-      </Fragment>
+      </View>
     );
   }, [
     boundary,
     listEmptyComponent,
     liveHeadRowRevision,
+    handleLiveHeaderLayout,
+    handleLiveRowLayout,
     renderLiveAuxiliary,
     renderLiveHeadRow,
     segments.liveHead,
@@ -584,6 +671,8 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       style={listStyle}
       onLayout={handleListLayout}
       onScroll={handleScroll}
+      onViewableItemsChanged={handleViewableItemsChanged}
+      onScrollToIndexFailed={handleScrollToIndexFailed}
       onScrollBeginDrag={handleScrollBeginDrag}
       onScrollEndDrag={handleScrollEndDrag}
       onMomentumScrollBegin={handleMomentumScrollBegin}

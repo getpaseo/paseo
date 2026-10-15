@@ -17,6 +17,18 @@ function withRecords(records: ReturnType<typeof createBrowserRecord>[]): Browser
 }
 
 describe("normalizeBrowserUrl", () => {
+  it("preserves explicit blank pages without changing the agent default", () => {
+    expect(normalizeBrowserUrl("about:blank")).toBe("about:blank");
+    const record = createBrowserRecord({ browserId: "blank", initialUrl: "about:blank", now: 0 });
+    expect(record.url).toBe("about:blank");
+    expect(
+      normalizeBrowserIndexState(sanitizeBrowsersForPersist(withRecords([record]))).browsersById
+        .blank?.url,
+    ).toBe("about:blank");
+    expect(createBrowserRecord({ browserId: "agent", initialUrl: undefined, now: 0 }).url).toBe(
+      "https://example.com",
+    );
+  });
   it("normalizes local development hosts to http by default", () => {
     expect(normalizeBrowserUrl("localhost:8081")).toBe("http://localhost:8081");
     expect(normalizeBrowserUrl("localhost/path")).toBe("http://localhost/path");

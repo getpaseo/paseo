@@ -991,9 +991,9 @@ const x = 1;
   });
 
   it("does not report local-only no-track worktree commits as ahead of origin", async () => {
-    setupRemoteTrackingMain(repoDir, tempDir);
-    commitFile(repoDir, "second.txt", "second\n", "second commit");
-    execFileSync("git", ["push"], { cwd: repoDir });
+    // This case needs a remote base ref, not a second clone or extra base history.
+    execFileSync("git", ["remote", "add", "origin", repoDir], { cwd: repoDir });
+    execFileSync("git", ["fetch", "origin", "main:refs/remotes/origin/main"], { cwd: repoDir });
 
     const worktree = await createLegacyWorktreeForTest({
       branchName: "fresh-feature",
@@ -1007,6 +1007,7 @@ const x = 1;
     const status = await getCheckoutStatus(worktree.worktreePath, { paseoHome });
     expect(status).toMatchObject({
       isGit: true,
+      hasRemote: true,
       isPaseoOwnedWorktree: true,
       baseRef: "main",
       aheadBehind: { ahead: 1, behind: 0 },
@@ -2988,6 +2989,36 @@ const x = 1;
     expect(lookupTarget).toMatchObject({
       headRef: "topic",
       headRepositoryOwner: "contributor",
+    });
+  });
+
+  it.each([
+    "git@github.com:contributor/paseo.git",
+    "https://github.com/contributor/paseo.git",
+    "ssh://git@github.com/contributor/paseo.git",
+  ])("preserves fork PR identity with branch.remote=%s", async (branchRemote) => {
+    execFileSync("git", ["remote", "add", "origin", "git@github.com:getpaseo/paseo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["checkout", "-b", "topic"], { cwd: repoDir });
+    execFileSync("git", ["config", "branch.topic.remote", branchRemote], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["config", "branch.topic.pushRemote", branchRemote], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["config", "branch.topic.merge", "refs/heads/topic"], {
+      cwd: repoDir,
+    });
+    const headSha = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: repoDir,
+      encoding: "utf8",
+    }).trim();
+
+    expect(await readPullRequestLookupTargetFromFacts(repoDir, paseoHome)).toEqual({
+      headRef: "topic",
+      headRepositoryOwner: "contributor",
+      headSha,
     });
   });
 

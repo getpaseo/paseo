@@ -9,7 +9,7 @@ const metrics = {
   actionsReservedWidth: 120,
   rowPaddingHorizontal: 8,
   tabGap: 4,
-  minTabWidth: 96,
+  minTabWidth: 64,
   maxTabWidth: 160,
   tabIconWidth: 14,
   tabContentGap: 4,
@@ -18,6 +18,18 @@ const metrics = {
 };
 
 describe("computeWorkspaceTabLayout", () => {
+  it("keeps supporting tabs at their content width even in a narrow sidebar", () => {
+    for (const viewportWidth of [180, 1200]) {
+      const result = computeWorkspaceTabLayout({
+        viewportWidth,
+        tabLabelWidths: [45, 95],
+        metrics: { ...metrics, fitContent: true },
+      });
+      expect(result.items.map((item) => item.width)).toEqual([79, 129]);
+      expect(result.requiresHorizontalScrollFallback).toBe(viewportWidth === 180);
+    }
+  });
+
   it("keeps each tab at its natural content width when space is available", () => {
     const result = computeWorkspaceTabLayout({
       viewportWidth: 1200,
@@ -29,7 +41,20 @@ describe("computeWorkspaceTabLayout", () => {
     expect(result.requiresHorizontalScrollFallback).toBe(false);
     expect(result.items).toHaveLength(3);
     expect(result.items.every((item) => item.showLabel)).toBe(true);
-    expect(result.items.map((item) => item.width)).toEqual([96, 104, 96]);
+    expect(result.items.map((item) => item.width)).toEqual([90, 104, 83]);
+  });
+
+  it("lets short labels use their content width below the old 96px floor", () => {
+    const result = computeWorkspaceTabLayout({
+      viewportWidth: 300,
+      tabLabelWidths: [29, 52],
+      metrics: { ...metrics, actionsReservedWidth: 36 },
+    });
+    expect(result.items).toEqual([
+      { width: 64, showLabel: true },
+      { width: 86, showLabel: true },
+    ]);
+    expect(result.requiresHorizontalScrollFallback).toBe(false);
   });
 
   it("sizes a single tab between the minimum and maximum from its content", () => {
@@ -52,7 +77,7 @@ describe("computeWorkspaceTabLayout", () => {
 
     expect(result.closeButtonPolicy).toBe("all");
     expect(result.requiresHorizontalScrollFallback).toBe(false);
-    expect(result.items.map((item) => item.width)).toEqual([117, 103, 96]);
+    expect(result.items.map((item) => item.width)).toEqual([132, 102, 82]);
     expect(result.items.every((item) => item.showLabel)).toBe(true);
   });
 
@@ -75,27 +100,27 @@ describe("computeWorkspaceTabLayout", () => {
 
   it("keeps every tab at the clickable minimum at the exact fit boundary", () => {
     const result = computeWorkspaceTabLayout({
-      viewportWidth: 532,
+      viewportWidth: 404,
       tabLabelWidths: [98, 98, 98, 98],
       metrics,
     });
 
     expect(result.closeButtonPolicy).toBe("all");
     expect(result.requiresHorizontalScrollFallback).toBe(false);
-    expect(result.items.map((item) => item.width)).toEqual([96, 96, 96, 96]);
+    expect(result.items.map((item) => item.width)).toEqual([64, 64, 64, 64]);
     expect(result.items.every((item) => item.showLabel)).toBe(true);
   });
 
   it("uses horizontal scroll rather than shrinking below the clickable minimum", () => {
     const result = computeWorkspaceTabLayout({
-      viewportWidth: 531,
+      viewportWidth: 403,
       tabLabelWidths: [98, 98, 98, 98],
       metrics,
     });
 
     expect(result.closeButtonPolicy).toBe("all");
     expect(result.requiresHorizontalScrollFallback).toBe(true);
-    expect(result.items.map((item) => item.width)).toEqual([96, 96, 96, 96]);
+    expect(result.items.map((item) => item.width)).toEqual([64, 64, 64, 64]);
     expect(result.items.every((item) => item.showLabel)).toBe(true);
   });
 
@@ -129,5 +154,36 @@ describe("retainWorkspaceTabMeasuredWidth", () => {
 
   it("accepts the next usable layout width", () => {
     expect(retainWorkspaceTabMeasuredWidth(720, 640)).toBe(640);
+  });
+});
+
+describe("browser tab layout", () => {
+  const browserMetrics = { ...metrics, minTabWidth: 120, maxTabWidth: 220, closeButtonWidth: 24 };
+  const compute = (viewportWidth: number, tabLabelWidths: number[]) =>
+    computeWorkspaceTabLayout({
+      variant: "browser",
+      viewportWidth,
+      tabLabelWidths,
+      metrics: browserMetrics,
+    });
+  it("keeps ten tabs usable at 360px and expands again in a wide row", () => {
+    const labels = Array.from({ length: 10 }, (_, index) => index * 100);
+    const narrow = compute(360, labels);
+    expect(narrow.items).toEqual(labels.map(() => ({ width: 120, showLabel: true })));
+    expect(narrow.closeButtonPolicy).toBe("all");
+    expect(narrow.requiresHorizontalScrollFallback).toBe(true);
+    const wide = compute(2400, labels);
+    expect(wide.items.map((item) => item.width)).toEqual(labels.map(() => 220));
+    expect(wide.requiresHorizontalScrollFallback).toBe(false);
+  });
+  it("gives five tabs equal widths independent of long or changing titles", () => {
+    const result = compute(1000, [1, 40, 10000, 90, 20]);
+    expect(result.items.map((item) => item.width)).toEqual([170, 170, 170, 170, 170]);
+    expect(result.items.every((item) => item.showLabel)).toBe(true);
+    expect(compute(1000, [10000, 3, 15, 20, 80])).toEqual(result);
+  });
+  it("caps a single browser tab while preserving space for favicon and close", () => {
+    expect(compute(1000, [10000]).items).toEqual([{ width: 220, showLabel: true }]);
+    expect(compute(160, [10000]).items).toEqual([{ width: 120, showLabel: true }]);
   });
 });

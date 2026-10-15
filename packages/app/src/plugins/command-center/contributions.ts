@@ -3,13 +3,11 @@ import type { CommandCenterContribution } from "@/command-center/contributions";
 import { getCommandCenterIcon } from "@/command-center/icon";
 import { resolvePluginIcon } from "../icons";
 import { resolvePluginPanelOpenLocation } from "../workspace-panels/locations";
-import type { PluginSurfaceRuntime } from "../surface-runtime";
 import type { InstalledPlugin } from "../types";
 import { createPluginCapabilities, type PluginNavigation } from "../actions";
 
 export interface PluginCommandCenterSource {
   plugins: readonly InstalledPlugin[];
-  runtime(plugin: InstalledPlugin): PluginSurfaceRuntime;
   state: PluginClientStateSource;
   workspaceId: string | null;
   agentId: string | null;
@@ -26,8 +24,7 @@ export function buildPluginCommandCenterContributions(
       if (item.context === "workspace" && !source.workspaceId) continue;
       if (item.context === "agent" && (!source.workspaceId || !source.agentId)) continue;
       const run = async () => {
-        const runtime = source.runtime(plugin);
-        const common = createPluginCapabilities(plugin, runtime, source.navigation);
+        const common = createPluginCapabilities(plugin, source.navigation);
         try {
           if (item.context === "global") {
             await item.onSelect({ context: "global", ...common });
@@ -73,8 +70,6 @@ export function buildPluginCommandCenterContributions(
           });
         } catch (error) {
           source.reportError(error);
-        } finally {
-          await runtime.paseo.dispose().catch(source.reportError);
         }
       };
       contributions.push({

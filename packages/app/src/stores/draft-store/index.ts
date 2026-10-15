@@ -14,6 +14,7 @@ import { useSessionStore, type SessionState } from "@/stores/session-store";
 import { useWorkspaceAttachmentsStore } from "@/attachments/workspace-attachments-store";
 import {
   applyClearDraftRecord,
+  editDraftRecordText,
   collectReferencedAttachmentIdsFromState,
   DRAFT_STORE_VERSION,
   isAttachmentMetadata,
@@ -42,6 +43,7 @@ interface DraftStoreActions {
   getDraftInput: (draftKey: string) => DraftInput | undefined;
   hydrateDraftInput: (input: { draftKey: string }) => Promise<DraftInput | undefined>;
   saveDraftInput: (input: { draftKey: string; draft: DraftInput }) => void;
+  editDraftText: (input: { draftKey: string; text: string }) => void;
   markDraftLifecycle: (input: { draftKey: string; lifecycle: DraftLifecycleState }) => void;
   clearDraftInput: (input: {
     draftKey: string;
@@ -314,6 +316,14 @@ export const useDraftStore = create<DraftStore>()(
           };
         });
         scheduleAttachmentGc();
+      },
+
+      editDraftText: ({ draftKey, text }) => {
+        set((state) => {
+          const previous = state.drafts[draftKey];
+          const next = editDraftRecordText(previous, text, Date.now());
+          return next === previous ? state : { drafts: { ...state.drafts, [draftKey]: next } };
+        });
       },
 
       markDraftLifecycle: ({ draftKey, lifecycle }) => {

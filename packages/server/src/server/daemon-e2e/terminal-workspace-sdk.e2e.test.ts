@@ -25,7 +25,7 @@ afterEach(async () => {
   await client.close();
   await sdk.close();
   await daemon.close();
-  await rm(cwd, { recursive: true, force: true });
+  await rm(cwd, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 });
 
 test("SDK and workspace handles preserve ownership and actual process directories", async () => {
@@ -192,3 +192,55 @@ test("listing by workspace ID keeps terminals in a shared directory separate", a
     expect.objectContaining({ id: created.terminal?.id, workspaceId: second, cwd }),
   ]);
 });
+
+test("script status started and stopped by one client reaches every subscribed client", async () => {
+  await writeFile(
+    path.join(cwd, "paseo.json"),
+    JSON.stringify({
+      scripts: { sleeper: { type: "script", command: 'node -e "setInterval(() => {}, 60000)"' } },
+    }),
+  );
+  const observer = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  const bystander = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await observer.connect();
+    await bystander.connect();
+    const bystanderEvents: string[] = [];
+    bystander.subscribeRawMessages((message) => bystanderEvents.push(message.type));
+    const opened = await client.openProject(cwd);
+    expect(opened.error).toBeNull();
+    const workspaceId = opened.workspace!.id;
+    const actorSeen = await observeScriptLifecycles(client, "sleeper");
+    const observerSeen = await observeScriptLifecycles(observer, "sleeper");
+
+    expect((await client.startWorkspaceScript(workspaceId, "sleeper")).error).toBeNull();
+    await expect.poll(() => actorSeen.at(-1)).toBe("running");
+    await expect.poll(() => observerSeen.at(-1)).toBe("running");
+
+    expect((await client.stopWorkspaceScript(workspaceId, "sleeper")).error).toBeNull();
+    await expect.poll(() => actorSeen.at(-1)).toBe("stopped");
+    await expect.poll(() => observerSeen.at(-1)).toBe("stopped");
+    expect(bystanderEvents).not.toContain("script_status_update");
+  } finally {
+    await observer.close();
+    await bystander.close();
+  }
+}, 60_000);
+
+async function observeScriptLifecycles(
+  daemonClient: DaemonClient,
+  scriptName: string,
+): Promise<string[]> {
+  const lifecycles: string[] = [];
+  const subscription = daemonClient.observeEvents(["script_status_update"]);
+  subscription.subscribe({
+    snapshot: () => {},
+    update: (message) => {
+      if (message.type !== "script_status_update") return;
+      const script = message.payload.scripts.find((entry) => entry.scriptName === scriptName);
+      if (script) lifecycles.push(script.lifecycle);
+    },
+  });
+  await subscription.ready;
+  return lifecycles;
+}

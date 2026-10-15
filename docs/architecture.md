@@ -54,6 +54,15 @@ The heart of Paseo. A Node.js process that:
 
 All paths are under `packages/server/src/`.
 
+Desktop and CLI import server capabilities through explicit package subpaths such as
+`@getpaseo/server/daemon-control`, `/configuration`, and `/process`. The root export
+loads daemon bootstrap eagerly, even when a caller only uses a path or process helper.
+Keep process-management and configuration dependencies independent of bootstrap and
+WebSocket message schemas. Shared configuration schemas belong in protocol leaf modules;
+`messages` imports and re-exports them. This prevents every supervising process from
+retaining the daemon's runtime and wire-schema allocations. The server export tests guard
+these dependency trees with tree-shaking disabled to match unbundled production imports.
+
 Project identity is daemon-global rather than session-owned. After registry bootstrap, the daemon's
 project Git observer keeps one non-recursive watch on each lexically equivalent active project root
 and listens only for the root `.git` entry, with a slow rescan as a missed-event fallback. It runs
@@ -188,6 +197,15 @@ Electron wrapper for macOS, Linux, and Windows.
 - Native file access for workspace integration
 - Same WebSocket client as mobile app
 
+**Agent request widget.** The floating reading sheet uses the main application's existing host
+connections. Its sandboxed renderer has no daemon credentials or general desktop bridge. Application
+windows publish pending plans and questions through desktop-local IPC; main elects one connected
+publisher per host, so multiple windows do not duplicate the queue. Exclude this auxiliary window
+from application-window navigation and project routing. Comments use the current agent's message
+path. Handoff invokes the installed workflow plan contribution with the exact pending plan and
+selects its executor in the owning application window without focusing that window. The widget
+renews its local IPC timeout while the workflow classifies and starts the executor.
+
 The desktop does not manage agent skills. It retains one compatibility reader for the old
 `skill-selection.json`, imports that preference into its managed local daemon, then deletes the old
 file after the daemon confirms persistence.
@@ -318,6 +336,36 @@ Example: adding a new enum value
 // 3. Keep the shared producer schema strict
 // 4. Gate the new emitted value: session.supports(CLIENT_CAPS.newThing) ? "new_value" : "old_value"
 ```
+
+### Creation ownership
+
+Creation is owned by the daemon across socket lifetimes. A workspace request can include
+its initial agent and prompt. Workspace readiness is published before provider startup;
+the app keeps its existing disk-ready navigation and observes the remaining creation.
+Callbacks do not advance the workflow. Resource reservations in acknowledgement are
+identities, not ready workspace records.
+
+The creation journal (`server/creation/`) owns identity and execution for both legacy and
+modern creation RPCs. Requesting progress never selects a different journal. Existing
+agent receipts are imported at this boundary; message delivery receipts remain separate.
+It keeps cumulative milestones and permanent IDs under an operation kind and idempotency
+key. Reconnect subscribes to that key; retries
+join active work or reuse committed stages. A persisted resource alone cannot prove
+that a provider accepted its initial prompt. Interrupted side effects with no conclusive
+receipt return an unknown outcome instead of being repeated.
+
+`packages/client/src/creation/` owns capability selection and legacy orchestration.
+Callers always pass the initial prompt to agent creation. On an older host, the client
+adapts keyed creation to the legacy create/send sequence; it cannot continue that
+sequence after the client process disappears. Explicitly requested IDs or receipts
+that an old host cannot honor produce an unsupported error. Keep these adapters inside
+the client package, as an exception to the default no-fallback feature policy.
+
+Creation executes through the existing Session capabilities. Connection-owned delivery
+controls observation only: detaching a socket or cleaning up its Session does not cancel
+accepted creation. Updates require an explicit subscription and go only to that socket;
+reconnect uses the shared subscription owner. Legacy consumers, including Hub, keep their
+existing response contract.
 
 ## Agent lifecycle
 

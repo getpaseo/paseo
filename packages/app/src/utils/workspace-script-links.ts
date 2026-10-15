@@ -22,6 +22,17 @@ function isLoopbackHost(host: string): boolean {
   );
 }
 
+function isLocalDaemonConnection(connection: ActiveConnection | null): boolean {
+  if (!connection) return false;
+  if (connection.type === "directSocket" || connection.type === "directPipe") return true;
+  if (connection.type !== "directTcp") return false;
+  try {
+    return isLoopbackHost(parseHostPort(connection.endpoint).host);
+  } catch {
+    return false;
+  }
+}
+
 function isLocalOnlyUrl(url: string | null | undefined): boolean {
   if (!url) return true;
   try {
@@ -88,5 +99,13 @@ export function resolveWorkspaceScriptLink(input: {
   addTarget(targets, "paseo", localProxyUrl);
   addTarget(targets, "direct", buildDirectServiceUrl(activeConnection, script.port));
 
-  return { primary: targets[0] ?? null, targets };
+  return {
+    primary:
+      (isLocalDaemonConnection(activeConnection)
+        ? targets.find((target) => target.kind === "direct")
+        : null) ??
+      targets[0] ??
+      null,
+    targets,
+  };
 }

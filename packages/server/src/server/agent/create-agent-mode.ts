@@ -90,7 +90,7 @@ export function resolveDefaultAgentCreateConfig(
       requestedMode: input.requestedMode,
       targetProvider: input.provider,
       parent: input.parent,
-      unattended: input.unattended,
+      unattended: input.unattended || input.parent === null,
       availableModes: availableModeIds,
       targetUnattendedMode: input.availableModes?.find(isUnattendedMode)?.id,
     }),

@@ -18,12 +18,11 @@ export interface TempDirectory {
 }
 
 /**
- * The temp root for E2E fixtures. On macOS we resolve symlinks (/tmp →
- * /private/tmp) so fixture paths match the daemon's resolved paths; on Windows
- * `/tmp` doesn't exist, so fall back to the OS temp dir.
+ * Honor the OS temp directory (including TMPDIR), resolving symlinks so fixture
+ * paths match the daemon's resolved paths.
  */
 export async function resolveTempRoot(): Promise<string> {
-  return process.platform === "win32" ? tmpdir() : await realpath("/tmp");
+  return await realpath(tmpdir());
 }
 
 async function configureRemote(input: {

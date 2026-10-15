@@ -16,6 +16,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { toErrorMessage } from "@/utils/error-messages";
+import { useSessionStore } from "@/stores/session-store";
 import { AgentProfileAppearanceField } from "./agent-profile-appearance-field";
 import type {
   AgentProfileFormModel,
@@ -140,6 +141,10 @@ function OpenAgentProfileEditModal({
   );
   const model = useAgentProfileFormModel(snapshot);
   const state = useAgentProfileFormState(model);
+  // COMPAT(agentProfileWorkflows): added in v0.8.0; remove gate after 2027-09-13.
+  const supportsApprovalMode = useSessionStore(
+    (store) => store.sessions[serverId]?.serverInfo?.features?.agentProfileWorkflows === true,
+  );
   useAgentProfileFormCatalog({ serverId, model });
   useAgentProfileFormFeatures({ serverId, model, state });
 
@@ -159,6 +164,23 @@ function OpenAgentProfileEditModal({
   );
   const modelOptions = useMemo(() => toSelectOptions(state.modelOptions), [state.modelOptions]);
   const modeOptions = useMemo(() => toSelectOptions(state.modeOptions), [state.modeOptions]);
+  const approvalModeOptions = useMemo(
+    () => [
+      { id: "native", value: "", label: t("settings.host.agentProfiles.nativeApprovalMode") },
+      ...modeOptions,
+    ],
+    [modeOptions, t],
+  );
+  const handleApprovalModeChange = useCallback(
+    (value: string) => model.setPostApprovalMode(value),
+    [model],
+  );
+  const approvalModeDisplay = useMemo(
+    () => ({
+      label: state.postApprovalModeId || t("settings.host.agentProfiles.nativeApprovalMode"),
+    }),
+    [state.postApprovalModeId, t],
+  );
   const thinkingOptions = useMemo(
     () => toSelectOptions(state.thinkingOptions),
     [state.thinkingOptions],
@@ -307,6 +329,22 @@ function OpenAgentProfileEditModal({
             size={controlSize}
             testID="agent-profile-mode-field"
             triggerTestID="agent-profile-mode-trigger"
+          />
+        ) : null}
+
+        {supportsApprovalMode && state.disclosure.showModeField ? (
+          <SelectField
+            label={t("settings.host.agentProfiles.postApprovalModeLabel")}
+            value={state.postApprovalModeId}
+            options={approvalModeOptions}
+            selectedDisplay={approvalModeDisplay}
+            placeholder={t("settings.host.agentProfiles.nativeApprovalMode")}
+            emptyText={t("settings.host.agentProfiles.noModes")}
+            onChange={handleApprovalModeChange}
+            disabled={state.isSubmitting}
+            size={controlSize}
+            testID="agent-profile-post-approval-mode-field"
+            triggerTestID="agent-profile-post-approval-mode-trigger"
           />
         ) : null}
 

@@ -43,6 +43,18 @@ Run the shared browser profile fixture with:
 PASEO_CAPTURE_HARNESS_GROUP=browser-profile npm run capture-harness --workspace=@getpaseo/desktop
 ```
 
+On macOS, test native titlebar dragging after scrolling with:
+
+```bash
+PASEO_CAPTURE_HARNESS_GROUP=titlebar-drag npm run capture-harness --workspace=@getpaseo/desktop
+```
+
+This group needs Xcode Command Line Tools and Accessibility permission for the
+terminal running it. It sends real mouse input to its test window and checks
+window movement, including button clicks and a portal over the titlebar. Leave
+the mouse idle during this group. It reads the app's production CSS and writes
+screenshots and window bounds to the output directory.
+
 The browser profile group runs two Electron processes in sequence. It verifies that each
 renderer-side `did-attach` identity maps to the correct main-process guest, that two live
 tabs share cookies and local storage through one persistent session, and that the data is
@@ -101,8 +113,15 @@ plane stays below the overlay plane regardless of body insertion order; menus ke
 layering inside `overlay-root`. Activating a presented browser also focuses its registered guest
 `WebContents` in main so macOS assigns keyboard first-responder ownership to the page.
 
-There is no renderer prep/restore handshake or lifetime background-throttling override.
-Screenshot capture temporarily enables frame production inside the shared serialized queue,
-restores the previous throttling policy on success or failure, invalidates before each attempt,
-and retries known first-frame failures within the 5-second capture budget. Viewport screenshots use `capturePage({ stayHidden:false })`;
-full-page screenshots use the existing CDP path with layout metrics and screenshot clip.
+Automation screenshots use CDP to paint fresh viewport or full-page pixels inside the shared
+serialized queue and five-second budget. Do not manually enable frame production or wait for
+animation callbacks: a hidden page is supposed to remain idle. Electron 44's throttling setter can
+unhide the native widget without re-hiding it when the previous policy is restored. A native
+`capturePage()` cleanup is unsafe too: after resize, even a 1×1 surface-copy request can remain
+pending and retain capture ownership. The Electron journey checks native idle and capture ownership
+after success, cancellation and destruction, with its Playwright observer disconnected during the
+hidden-window samples; an attached host CDP observer itself keeps guests animating.
+
+Element capture keeps its existing zoom-scaled native region path. It does not use the automation
+frame-production wrapper. The harness's direct native-copy parking probes remain separate from the
+automation screenshot implementation.

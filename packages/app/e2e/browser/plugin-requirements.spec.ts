@@ -1,18 +1,14 @@
 import {
   test,
   openRequirementHost,
-  expectAppMismatch,
-  correctRequirementAndReload,
-  rejectDaemonMismatch,
+  expectPluginRunning,
 } from "../support/helpers/plugin-requirements";
 
-test("shows which runtime is incompatible and recovers after the requirement is corrected", async ({
+test("runs a plugin whose declared Paseo range excludes the app version", async ({
   page,
   requirementHost,
-}) => {
+}, testInfo) => {
   await openRequirementHost(page, requirementHost);
-  await expectAppMismatch(page);
-  await correctRequirementAndReload(page, requirementHost.directory);
-  await rejectDaemonMismatch(page, requirementHost.directory);
-  await correctRequirementAndReload(page, requirementHost.directory);
+  await expectPluginRunning(page);
+  await page.screenshot({ path: testInfo.outputPath("plugin-running.png") });
 });

@@ -70,11 +70,15 @@ test.describe("New workspace metadata row layout", () => {
     await expect(composer).toBeVisible();
     await expect(metadataRow).toBeVisible();
 
-    const [composerBox, controlBoxes] = await Promise.all([
+    const [composerBox, headingBox, controlBoxes] = await Promise.all([
       composer.boundingBox(),
+      page.getByRole("heading", { name: "New workspace", exact: true }).boundingBox(),
       metadataRow.getByRole("button").evaluateAll(measureControlRightEdges),
     ]);
     expect(composerBox).not.toBeNull();
+    expect(headingBox).not.toBeNull();
+    expect(headingBox!.x).toBeCloseTo(composerBox!.x, 0);
+    expect(headingBox!.width).toBeCloseTo(composerBox!.width, 0);
     const composerRightRail = composerBox!.x + composerBox!.width;
 
     for (const control of controlBoxes) {

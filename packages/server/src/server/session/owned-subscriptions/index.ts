@@ -17,7 +17,12 @@ interface DeliveryOwner {
   active: boolean;
 }
 interface RequestOwner extends DeliveryOwner {
+  scope: object;
   request: SessionInboundMessage;
+}
+interface ProjectionOwner {
+  scope: object;
+  source: object;
 }
 interface RetainedOwner extends DeliveryOwner {
   cancellation: AbortController;
@@ -49,13 +54,17 @@ export interface OwnedSubscription {
   release(): Promise<void>;
 }
 
+// One registration per context kind; per-session registrations outlive closed sessions in Node.
+const requests = new AsyncLocalStorage<RequestOwner>();
+const projectionSource = new AsyncLocalStorage<ProjectionOwner>();
+
 /** Source provenance and lifetimes. Domain producers own snapshots, filters and buffering. */
 export class SessionDelivery {
-  private readonly requests = new AsyncLocalStorage<RequestOwner>();
-  private readonly projectionSource = new AsyncLocalStorage<object>();
   private readonly sources = new Map<object, Source>();
   private readonly proofs = new WeakMap<object, DeliveryOwner>();
   private readonly defaultSource = {};
+  private readonly scope = {};
+  private closing?: Promise<void>;
 
   constructor(
     private readonly send: (source: object, message: SessionOutboundMessage) => void,
@@ -71,6 +80,7 @@ export class SessionDelivery {
   ) {}
 
   attach(socket: object, modern: boolean): void {
+    if (this.closing) throw new Error("Session delivery is closed");
     const existing = this.sources.get(socket);
     if (existing) {
       if (existing.modern !== modern)
@@ -89,17 +99,25 @@ export class SessionDelivery {
   }
 
   get currentSource(): object | undefined {
-    return this.projectionSource.getStore() ?? this.requests.getStore()?.source.socket;
+    const projection = projectionSource.getStore();
+    if (projection?.scope === this.scope) return projection.source;
+    return this.currentRequest?.source.socket;
+  }
+
+  private get currentRequest(): RequestOwner | undefined {
+    const owner = requests.getStore();
+    return owner?.scope === this.scope ? owner : undefined;
   }
 
   get requestSignal(): AbortSignal {
-    const request = this.requests.getStore();
+    const request = this.currentRequest;
     if (!request) throw new Error("Operation has no requesting source");
     return request.source.cancellation.signal;
   }
 
   forSource<T>(source: object, project: () => T): T {
-    return this.projectionSource.run(source, project);
+    if (this.closing) throw new Error("Session delivery is closed");
+    return projectionSource.run({ scope: this.scope, source }, project);
   }
 
   hasLegacySources(): boolean {
@@ -159,8 +177,17 @@ export class SessionDelivery {
     this.sources.delete(socket);
   }
 
-  async close(): Promise<void> {
-    await Promise.all([...this.sources.keys()].map((socket) => this.detach(socket)));
+  close(): Promise<void> {
+    this.closing ??= Promise.resolve().then(() => this.dispose());
+    return this.closing;
+  }
+
+  private async dispose(): Promise<void> {
+    const releases = [...this.sources.keys()].map((socket) => this.detach(socket));
+    const releaseResults = await Promise.allSettled(releases);
+    for (const result of releaseResults) {
+      if (result.status === "rejected") throw result.reason;
+    }
   }
 
   async request(
@@ -168,12 +195,13 @@ export class SessionDelivery {
     request: SessionInboundMessage,
     run: () => Promise<void>,
   ): Promise<void> {
+    if (this.closing) throw new Error("Session delivery is closed");
     socket ??= this.defaultSource;
     if (!this.sources.has(socket)) this.attach(socket, false);
     const source = this.sources.get(socket)!;
-    const owner: RequestOwner = { source, request, active: true };
+    const owner: RequestOwner = { scope: this.scope, source, request, active: true };
     try {
-      await this.requests.run(owner, run);
+      await requests.run(owner, run);
     } finally {
       owner.active = false;
     }
@@ -204,15 +232,20 @@ export class SessionDelivery {
 
   authorizeReply(message: SessionOutboundMessage, socket: object): SessionOutboundMessage {
     message = this.project(socket, message);
-    const owner = this.requests.getStore();
-    if (owner?.active && owner.source.socket === socket && isReply(owner.request, message))
+    const owner = this.currentRequest;
+    if (
+      owner?.active &&
+      owner.source.active &&
+      owner.source.socket === socket &&
+      isReply(owner.request, message)
+    )
       this.proofs.set(message, owner);
     return message;
   }
 
   reply(message: SessionOutboundMessage): boolean {
-    const owner = this.requests.getStore();
-    if (!owner?.active) return false;
+    const owner = this.currentRequest;
+    if (!owner) return false;
     if (!isReply(owner.request, message)) {
       if (
         "requestId" in owner.request &&
@@ -224,8 +257,10 @@ export class SessionDelivery {
       }
       return false;
     }
-    const reply = owner.source.modern ? message : legacyMessage(message);
-    this.sendOwned(owner, reply);
+    if (owner.active && owner.source.active) {
+      const reply = owner.source.modern ? message : legacyMessage(message);
+      this.sendOwned(owner, reply);
+    }
     return true;
   }
 
@@ -235,7 +270,7 @@ export class SessionDelivery {
     stop: (id: string) => void | Promise<void>,
     legacySlot = family,
   ): OwnedSubscription {
-    const request = this.requests.getStore();
+    const request = this.currentRequest;
     if (!request?.active || !request.source.active)
       throw new Error("Subscription source is closed");
     const source = request.source;
@@ -295,7 +330,7 @@ export class SessionDelivery {
     accepts: (message: SessionOutboundMessage) => boolean,
     stop: () => void | Promise<void>,
   ): OwnedOperation {
-    const request = this.requests.getStore();
+    const request = this.currentRequest;
     if (!request?.active || !request.source.active) throw new Error("Operation source is closed");
     const source = request.source;
     const owner: RetainedOwner = {
@@ -320,7 +355,7 @@ export class SessionDelivery {
   }
 
   async release(id: string): Promise<void> {
-    const source = this.requests.getStore()?.source;
+    const source = this.currentRequest?.source;
     const owner =
       source?.subscriptions.get(id) ??
       (source && !source.modern
@@ -330,7 +365,7 @@ export class SessionDelivery {
   }
 
   async releaseLegacySlot(slot: string): Promise<void> {
-    const source = this.requests.getStore()?.source;
+    const source = this.currentRequest?.source;
     if (!source) return;
     if (source.modern)
       throw new Error("Release subscriptions using the server-assigned subscription ID");
@@ -341,7 +376,7 @@ export class SessionDelivery {
   }
 
   authorizeFileReply(frame: Uint8Array, socket: object): void {
-    const owner = this.requests.getStore();
+    const owner = this.currentRequest;
     if (
       owner?.active &&
       owner.source.socket === socket &&

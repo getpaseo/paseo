@@ -1,5 +1,5 @@
 import {
-  createAgentTabFromMenu,
+  createAgentTab,
   ensureExplorerSidebar,
   openFilesPanel,
 } from "../support/helpers/workspace-tabs";
@@ -45,7 +45,7 @@ test("applies Light surface tokens on desktop and compact layouts", async ({ pag
     await expect(surface.getByTestId("message-input-root")).toBeVisible();
     const agentTab = page.getByTestId(`workspace-tab-agent_${agent.agentId}`);
     await expect(agentTab).toHaveCSS("background-color", "rgb(252, 252, 253)");
-    await createAgentTabFromMenu(page);
+    await createAgentTab(page);
     const draftTab = page.locator('[data-testid^="workspace-tab-draft"]').filter({ visible: true });
     await expect(draftTab).toHaveCSS("background-color", "rgb(252, 252, 253)");
     await agentTab.click({ position: { x: 12, y: 13 } });

@@ -38,6 +38,7 @@ import { seedWorkspace } from "../support/helpers/seed-client";
 import { hasGithubAuth, createTempGithubRepo } from "../support/helpers/github-fixtures";
 import { getServerId } from "../support/helpers/server-id";
 import { openFileExplorer } from "../support/helpers/file-explorer";
+import { attachFileFromMenu, controlFileUploadCompletion } from "../support/helpers/composer";
 
 const MINIMAL_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
@@ -52,17 +53,29 @@ const TEST_JSON = {
 };
 
 test.describe("Composer attachments", () => {
-  test("Plus menu shows image and GitHub options", async ({ page, withWorkspace }) => {
-    test.setTimeout(60_000);
-    const workspace = await withWorkspace({ prefix: "attach-plus-" });
+  test("selected file shows a loading attachment until upload is acknowledged", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const upload = await controlFileUploadCompletion(page);
+    const workspace = await withWorkspace({ prefix: "attach-upload-pending-" });
     await workspace.navigateTo();
     await clickNewChat(page);
     await expectComposerVisible(page);
 
-    await openAttachmentMenu(page);
+    upload.hold();
+    await attachFileFromMenu(page, TEST_JSON);
+    await upload.waitForUpload();
 
-    await expect(page.getByTestId("message-input-attachment-menu-item-image")).toBeVisible();
-    await expect(page.getByTestId("message-input-attachment-menu-item-github")).toBeVisible();
+    const pending = page.getByTestId("composer-pending-file-attachment");
+    await expect(pending).toContainText(TEST_JSON.name);
+    await expect(pending.getByRole("progressbar")).toBeVisible();
+    await expect(page.getByTestId("composer-file-attachment-pill")).toHaveCount(0);
+
+    upload.complete();
+    await expect(pending).toHaveCount(0);
+    await expect(page.getByTestId("composer-file-attachment-pill")).toContainText(TEST_JSON.name);
+    await expectComposerEditable(page);
   });
 
   test("compact Plus menu aligns attachment rows with its sheet title", async ({
@@ -101,59 +114,27 @@ test.describe("Composer attachments", () => {
     ).toBeVisible({ timeout: 10_000 });
   });
 
-  test("GitHub issue attachment pill visible after search and selection", async ({ page }) => {
+  test("attaches an issue and a pull request from the repository picker", async ({ page }) => {
     test.setTimeout(120_000);
     if (!hasGithubAuth()) {
       test.skip(true, "GitHub auth not available in this environment");
     }
-
     const ghRepo = await createTempGithubRepo({
-      category: "attach-issue",
-      issues: [{ title: "fix: attach-issue-unique-alpha" }],
-      prs: [{ title: "feat: attach-issue-dummy-pr", state: "open" }],
+      category: "attachments",
+      issues: [{ title: "fix: attachment issue" }],
+      prs: [{ title: "feat: attachment pull request", state: "open" }],
     });
     const handle = await openGithubWorkspace(page, ghRepo.prs[0].localPath);
     try {
       await clickNewChat(page);
       await expectComposerVisible(page);
-
-      await selectGithubOption(
-        page,
-        "attach-issue-unique-alpha",
-        `issue:${ghRepo.issues[0].number}`,
-      );
-
-      await expectGithubAttachmentPill(page, {
-        number: ghRepo.issues[0].number,
-        title: ghRepo.issues[0].title,
-      });
-    } finally {
-      await handle.cleanup();
-      await ghRepo.cleanup();
-    }
-  });
-
-  test("GitHub PR attachment pill visible after search and selection", async ({ page }) => {
-    test.setTimeout(120_000);
-    if (!hasGithubAuth()) {
-      test.skip(true, "GitHub auth not available in this environment");
-    }
-
-    const ghRepo = await createTempGithubRepo({
-      category: "attach-pr",
-      prs: [{ title: "feat: attach-pr-unique-beta", state: "open" }],
-    });
-    const handle = await openGithubWorkspace(page, ghRepo.prs[0].localPath);
-    try {
-      await clickNewChat(page);
-      await expectComposerVisible(page);
-
-      await selectGithubOption(page, "attach-pr-unique-beta", `pr:${ghRepo.prs[0].number}`);
-
-      await expectGithubAttachmentPill(page, {
-        number: ghRepo.prs[0].number,
-        title: ghRepo.prs[0].title,
-      });
+      // Choose from the repository list. Newly created repositories are not
+      // necessarily available in GitHub's separate text-search index yet.
+      await selectGithubOption(page, "", `issue:${ghRepo.issues[0].number}`);
+      await expectGithubAttachmentPill(page, ghRepo.issues[0]);
+      await selectGithubOption(page, "", `change_request:${ghRepo.prs[0].number}`);
+      await expectGithubAttachmentPill(page, ghRepo.prs[0]);
+      await expectGithubAttachmentPill(page, ghRepo.issues[0]);
     } finally {
       await handle.cleanup();
       await ghRepo.cleanup();
@@ -168,7 +149,7 @@ test.describe("Composer attachments", () => {
     // needed before this can be exercised end-to-end.
   });
 
-  test("image lightbox opens on pill click and closes on Escape", async ({
+  test("attaches, previews, and removes an image before dropping a file", async ({
     page,
     withWorkspace,
   }) => {
@@ -178,38 +159,25 @@ test.describe("Composer attachments", () => {
     await clickNewChat(page);
     await expectComposerVisible(page);
 
+    await test.step("open the available attachment choices", async () => {
+      await openAttachmentMenu(page);
+      await expect(page.getByTestId("message-input-attachment-menu-item-image")).toBeVisible();
+      await expect(page.getByTestId("message-input-attachment-menu-item-github")).toBeVisible();
+      await page.keyboard.press("Escape");
+    });
+
     await attachImageFromMenu(page, TEST_IMAGE);
     await expectAttachmentPill(page, "composer-image-attachment-pill");
 
     await openImageLightbox(page);
     await closeImageLightbox(page);
-  });
 
-  test("image attachment pill renders after file is selected", async ({ page, withWorkspace }) => {
-    test.setTimeout(60_000);
-    const workspace = await withWorkspace({ prefix: "attach-pill-" });
-    await workspace.navigateTo();
-    await clickNewChat(page);
-    await expectComposerVisible(page);
-
-    await attachImageFromMenu(page, TEST_IMAGE);
-
-    await expectAttachmentPill(page, "composer-image-attachment-pill");
-  });
-
-  test("dropped JSON file renders as a file attachment in active chat", async ({
-    page,
-    withWorkspace,
-  }) => {
-    test.setTimeout(60_000);
-    const workspace = await withWorkspace({ prefix: "attach-drop-json-" });
-    await workspace.navigateTo();
-    await clickNewChat(page);
-    await expectComposerVisible(page);
-
-    await dropFileOnComposer(page, TEST_JSON);
-
-    await expectAttachmentPill(page, "composer-file-attachment-pill");
+    await test.step("remove the image and attach a dropped file", async () => {
+      await removeAttachmentPill(page, "composer-image-attachment-pill", "Remove image attachment");
+      await expect(page.getByTestId("composer-image-attachment-pill")).toHaveCount(0);
+      await dropFileOnComposer(page, TEST_JSON);
+      await expectAttachmentPill(page, "composer-file-attachment-pill");
+    });
   });
 
   test("dropped JSON file renders as a file attachment in New Workspace", async ({ page }) => {
@@ -236,23 +204,6 @@ test.describe("Composer attachments", () => {
     } finally {
       await workspace.cleanup();
     }
-  });
-
-  test("clicking the X on an image pill removes it", async ({ page, withWorkspace }) => {
-    test.setTimeout(60_000);
-    const workspace = await withWorkspace({ prefix: "attach-remove-" });
-    await workspace.navigateTo();
-    await clickNewChat(page);
-    await expectComposerVisible(page);
-
-    await attachImageFromMenu(page, TEST_IMAGE);
-    await expectAttachmentPill(page, "composer-image-attachment-pill");
-
-    await removeAttachmentPill(page, "composer-image-attachment-pill", "Remove image attachment");
-
-    await expect(page.getByTestId("composer-image-attachment-pill")).toHaveCount(0, {
-      timeout: 5_000,
-    });
   });
 
   test("submitting while agent is running queues the message and clears the draft", async ({

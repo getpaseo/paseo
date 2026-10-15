@@ -400,3 +400,23 @@ describe("OpenCode auto_accept feature", () => {
     await session.close();
   });
 });
+
+test("new OpenCode conversations default auto accept without overriding false or Plan", () => {
+  const client = new OpenCodeAgentClient(createTestLogger());
+  const input = {
+    provider: "opencode",
+    requestedMode: "plan",
+    parent: null,
+    unattended: false,
+    featureValues: undefined,
+    availableModes: [{ id: "plan", label: "Plan" }],
+  };
+  expect(client.resolveCreateConfig(input)).toEqual({
+    modeId: "plan",
+    featureValues: { auto_accept: true },
+  });
+  expect(client.resolveCreateConfig({ ...input, featureValues: { auto_accept: false } })).toEqual({
+    modeId: "plan",
+    featureValues: { auto_accept: false },
+  });
+});

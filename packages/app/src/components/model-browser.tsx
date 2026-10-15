@@ -1,3 +1,4 @@
+import { usePressDragTarget } from "@/components/ui/press-drag-select-context";
 import { createContext, useCallback, useContext, useMemo, useReducer, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -39,7 +40,7 @@ import type { SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { getProviderIcon } from "@/components/provider-icons";
+import { useProviderIcon } from "@/components/provider-icons";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import {
@@ -193,6 +194,7 @@ interface ModelBrowserProps {
   rootBrowseContent?: React.ReactNode;
   /** Hide the pinned Profiles section while still using rows for model matching. */
   showProfilesSection?: boolean;
+  autoRouting?: { selected: boolean; onSelect: () => void };
 }
 
 interface ModelBrowserContentProps extends Omit<ModelBrowserProps, "state" | "scrolling"> {
@@ -223,7 +225,7 @@ export function ModelProviderGlyph({
   size: number;
   tone?: ProviderGlyphTone;
 }) {
-  const Icon = getProviderIcon(provider, serverId);
+  const Icon = useProviderIcon(provider, serverId);
   const color =
     tone === "foreground" ? styles.providerIconForeground.color : styles.providerIconMuted.color;
   return <Icon size={size} color={color} />;
@@ -448,6 +450,14 @@ function ModelBrowserPressable({
   testID,
 }: ModelBrowserPressableProps) {
   const independentScrollGesture = useContext(IndependentScrollGestureContext);
+  const drag = usePressDragTarget({ onSelect: onPress });
+  const dragStyle = useCallback(
+    (state: PressableStateCallbackType & { hovered?: boolean }) =>
+      typeof style === "function"
+        ? style({ ...state, hovered: drag.dragging ? drag.hovered : state.hovered })
+        : style,
+    [style, drag.dragging, drag.hovered],
+  );
   const [pressed, setPressed] = useState(false);
   // Android's scroll handler must keep the pointer stream until release so a
   // fling survives leaving the short viewport. A simultaneous Tap keeps rows
@@ -489,9 +499,10 @@ function ModelBrowserPressable({
   if (!independentScrollGesture) {
     return (
       <Pressable
+        ref={drag.ref}
         onPress={handlePress}
         hitSlop={hitSlop}
-        style={style}
+        style={dragStyle}
         accessibilityRole="button"
         accessibilityLabel={accessibilityLabel}
         accessibilityState={accessibilityState}
@@ -625,13 +636,6 @@ function ModelRowProfileAction({
 }) {
   const isCompact = useIsCompactFormFactor();
   const visible = hovered || isNative || isCompact;
-  const handlePress = useCallback(
-    (event: GestureResponderEvent) => {
-      event.stopPropagation();
-      onPress();
-    },
-    [onPress],
-  );
   const pressableStyle = useCallback(
     ({ hovered: buttonHovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.rowIconButton,
@@ -645,7 +649,7 @@ function ModelRowProfileAction({
     <Tooltip delayDuration={250} enabledOnDesktop enabledOnMobile={false}>
       <TooltipTrigger asChild>
         <Pressable
-          onPress={handlePress}
+          onPress={onPress}
           hitSlop={8}
           style={pressableStyle}
           pointerEvents={visible ? "auto" : "none"}
@@ -778,7 +782,6 @@ function ModelRow({
   const pressableStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.browserRow,
-      styles.browserModelRow,
       Boolean(hovered) && styles.browserRowHovered,
       pressed && styles.browserRowPressed,
     ],
@@ -787,7 +790,7 @@ function ModelRow({
 
   return (
     <View
-      style={styles.modelRowHoverBoundary}
+      style={[styles.modelRowHoverBoundary, styles.browserModelRow]}
       onPointerEnter={handlePointerEnter}
       onPointerLeave={handlePointerLeave}
     >
@@ -815,10 +818,17 @@ function ModelRow({
                 <ThemedCheck size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />
               ) : null}
             </View>
-            {profileAction}
+            {profileAction ? <View style={styles.rowIconButton} /> : null}
           </View>
         </View>
       </ModelBrowserPressable>
+      {/* The row renders a <button> on web, so its profile action sits beside it,
+          over the slot reserved above, rather than inside it. */}
+      {profileAction ? (
+        <View style={styles.modelRowProfileActionSlot} pointerEvents="box-none">
+          {profileAction}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -1255,6 +1265,7 @@ function ModelSearchEmptyState() {
 }
 
 function ProviderModelBrowserContent({
+  header,
   serverId,
   view,
   provider,
@@ -1273,6 +1284,7 @@ function ProviderModelBrowserContent({
   isRetryingProvider,
   scrolling,
 }: {
+  header?: React.ReactElement;
   serverId: string | null;
   view: Extract<ModelBrowserView, { kind: "provider" }>;
   provider: ProviderSelectorProvider | null;
@@ -1318,6 +1330,13 @@ function ProviderModelBrowserContent({
       showProfilesSection,
     ],
   );
+  const listHeader =
+    normalizedQuery.length === 0 && (header || profileHeader) ? (
+      <>
+        {header}
+        {profileHeader}
+      </>
+    ) : undefined;
 
   if (!provider) return <ModelSearchEmptyState />;
   const selection = provider.modelSelection;
@@ -1342,7 +1361,7 @@ function ProviderModelBrowserContent({
     );
   }
   if (visibleRows.length === 0) {
-    return profileHeader ?? <ModelSearchEmptyState />;
+    return listHeader ?? <ModelSearchEmptyState />;
   }
   return (
     <ModelRowList
@@ -1351,7 +1370,7 @@ function ProviderModelBrowserContent({
       selectedProvider={selectedProvider}
       selectedModel={selectedModel}
       onSelect={onSelect}
-      header={profileHeader}
+      header={listHeader}
       scrolling={scrolling}
       profiledLookup={profiledLookup}
       onCreateProfile={onCreateProfile}
@@ -1382,6 +1401,7 @@ function ModelBrowserContent({
   searchAllOnFocus,
   rootBrowseContent,
   showProfilesSection = true,
+  autoRouting,
 }: ModelBrowserContentProps) {
   const { t } = useTranslation();
   const normalizedQuery = useMemo(() => normalizeSearchQuery(searchQuery), [searchQuery]);
@@ -1406,10 +1426,26 @@ function ModelBrowserContent({
     [isSearchFocused, normalizedQuery, providers, searchAllOnFocus],
   );
   const hasResults = profiles !== null || providers.length > 0 || rootBrowseContent != null;
+  const autoRoutingGlyph = useMemo(
+    () => <ThemedCheck size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />,
+    [],
+  );
+  const autoRoutingRow = autoRouting ? (
+    <ModelBrowserRow
+      label={t("modelSelector.autoJev")}
+      description={t("modelSelector.autoJevDescription")}
+      leadingSlot={autoRoutingGlyph}
+      selected={autoRouting.selected}
+      selectionIndicator
+      onPress={autoRouting.onSelect}
+      testID="model-routing-jev"
+    />
+  ) : null;
 
   if (view.kind === "provider") {
     return (
       <ProviderModelBrowserContent
+        header={view.providerId === "codex" ? (autoRoutingRow ?? undefined) : undefined}
         serverId={serverId}
         view={view}
         provider={selectedViewProvider}
@@ -1462,6 +1498,7 @@ function ModelBrowserContent({
 
   const allProvidersContent = (
     <View>
+      {autoRoutingRow}
       {showProfilesSection && profiles ? (
         <AgentProfilesPickerContent
           rows={profiles.rows}
@@ -1520,6 +1557,7 @@ export function ModelBrowser({
   searchAllOnFocus = false,
   rootBrowseContent,
   showProfilesSection,
+  autoRouting,
 }: ModelBrowserProps) {
   return (
     <ModelBrowserContent
@@ -1527,7 +1565,7 @@ export function ModelBrowser({
       view={state.view}
       providers={state.providers}
       selectedProvider={state.selectedProvider}
-      selectedModel={state.selectedModel}
+      selectedModel={autoRouting?.selected ? "" : state.selectedModel}
       searchQuery={state.searchQuery}
       isSearchFocused={state.isSearchFocused}
       profiles={state.profiles}
@@ -1543,6 +1581,7 @@ export function ModelBrowser({
       searchAllOnFocus={searchAllOnFocus}
       rootBrowseContent={rootBrowseContent}
       showProfilesSection={showProfilesSection}
+      autoRouting={autoRouting}
     />
   );
 }
@@ -1589,6 +1628,13 @@ const styles = StyleSheet.create((theme) => ({
   },
   modelRowHoverBoundary: {
     position: "relative",
+  },
+  modelRowProfileActionSlot: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    right: isWeb ? theme.spacing[3] : theme.spacing[6],
+    justifyContent: "center",
   },
   browserModelRow: isWeb ? {} : { marginBottom: theme.spacing[1] },
   browserRowHovered: {

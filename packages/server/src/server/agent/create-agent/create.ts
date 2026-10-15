@@ -11,6 +11,7 @@ import type {
   CreatePaseoWorktreeWorkflowResult,
 } from "../../worktree-session.js";
 import type { AgentAttachment, FirstAgentContext, GitSetupOptions } from "../../messages.js";
+import type { CreateAgentRequestMessage } from "@getpaseo/protocol/messages";
 import type { AgentManager, CreateAgentOptions, ManagedAgent } from "../agent-manager.js";
 import type { AgentPromptInput, AgentRunOptions, AgentSessionConfig } from "../agent-sdk-types.js";
 import type { AgentStorage } from "../agent-storage.js";
@@ -26,6 +27,7 @@ import {
   emitLiveTimelineItemIfAgentKnown,
 } from "../timeline-append.js";
 import { resolveCreateAgentIntent } from "./intent.js";
+import { assertWritePolicySupported } from "../write-policy.js";
 
 export interface CreateAgentSessionWorktreeResult {
   sessionConfig: AgentSessionConfig;
@@ -54,12 +56,15 @@ export type EnsureWorkspaceForCreate = (
 ) => Promise<string>;
 
 export interface CreateAgentFromSessionInput {
+  launchProfileId?: string;
   kind: "session";
+  onAgentReady?: (agent: ManagedAgent) => Promise<void>;
   agentId?: string;
   config: AgentSessionConfig;
   workspaceId: string;
   worktreeName?: string;
   initialPrompt?: string;
+  modelRouting?: CreateAgentRequestMessage["modelRouting"];
   clientMessageId?: string;
   outputSchema?: Record<string, unknown>;
   images?: Array<{ data: string; mimeType: string }>;
@@ -68,6 +73,7 @@ export interface CreateAgentFromSessionInput {
   labels: Record<string, string>;
   env?: Record<string, string>;
   provisionalTitle: string | null;
+  titleIsProvisional?: boolean;
   firstAgentContext: FirstAgentContext;
   buildSessionConfig: (
     config: AgentSessionConfig,
@@ -78,6 +84,8 @@ export interface CreateAgentFromSessionInput {
 }
 
 export interface CreateAgentFromMcpInput {
+  writePolicy?: AgentSessionConfig["writePolicy"];
+  launchProfileId?: string;
   kind: "mcp";
   provider: string;
   title: string;
@@ -175,6 +183,14 @@ export async function createAgentCommand(
   dependencies: CreateAgentCommandDependencies,
   input: CreateAgentCommandInput,
 ): Promise<CreateAgentCommandResult> {
+  assertWritePolicySupported(
+    input.kind === "session"
+      ? input.config
+      : {
+          provider: resolveProviderModel(input.provider).provider,
+          writePolicy: input.writePolicy ?? input.config?.writePolicy,
+        },
+  );
   const resolved =
     input.kind === "session"
       ? await resolveSessionCreateAgent(dependencies, input)
@@ -189,6 +205,8 @@ export async function createAgentCommand(
   resolved.setupContinuation?.startAfterAgentCreate({
     agentId: snapshot.id,
   });
+
+  if (input.kind === "session") await input.onAgentReady?.(snapshot);
 
   let liveSnapshot = snapshot;
   let initialPromptStarted = false;
@@ -252,14 +270,20 @@ async function resolveSessionCreateAgent(
   // this for the worktree path via cleanupCreatedWorktreeAfterFailedAgentCreate;
   // this is a pre-existing gap for directory-only workspace creates, not
   // introduced by this validation).
-  const resolvedCreateConfig = await dependencies.providerSnapshotManager.resolveCreateConfig({
-    cwd: builtSessionConfig.cwd,
-    provider: builtSessionConfig.provider,
-    requestedMode: builtSessionConfig.modeId,
-    featureValues: builtSessionConfig.featureValues,
-    parent: null,
-    unattended: false,
-  });
+  const resolvedCreateConfig =
+    builtSessionConfig.writePolicy === "read_only"
+      ? {
+          modeId: builtSessionConfig.modeId,
+          featureValues: builtSessionConfig.featureValues,
+        }
+      : await dependencies.providerSnapshotManager.resolveCreateConfig({
+          cwd: builtSessionConfig.cwd,
+          provider: builtSessionConfig.provider,
+          requestedMode: builtSessionConfig.modeId,
+          featureValues: builtSessionConfig.featureValues,
+          parent: null,
+          unattended: false,
+        });
   const sessionConfig: AgentSessionConfig = {
     ...builtSessionConfig,
     modeId: resolvedCreateConfig.modeId,
@@ -282,12 +306,15 @@ async function resolveSessionCreateAgent(
     createOptions: {
       labels: input.labels,
       initialPrompt: trimmedPrompt,
+      modelRouting: input.modelRouting,
       env: input.env,
       initialTitle: input.provisionalTitle,
+      titleIsProvisional: input.titleIsProvisional,
       // A legacy git/worktreeName worktree creates a fresh workspace, so the
       // agent belongs to that workspace, not the source one. createdWorkspaceId
       // is the freshly created worktree's workspace.
       workspaceId: requireResolvedWorkspaceId(workspaceId),
+      launchProfileId: input.launchProfileId,
     },
     prompt: hasPromptContent ? prompt : undefined,
     runOptions,
@@ -320,6 +347,7 @@ async function resolveMcpCreateAgent(
   if (createdWorktree) input.onWorktreeCreated?.(createdWorktree);
 
   const intent = await resolveCreateAgentIntent({
+    launchProfileId: input.launchProfileId,
     explicitWorkspaceId: setupContinuation ? createdWorkspaceId : input.workspaceId,
     caller: parentAgent
       ? { id: parentAgent.id, cwd: parentAgent.cwd, workspaceId: parentAgent.workspaceId }
@@ -357,6 +385,7 @@ async function resolveMcpCreateAgent(
     createOptions: {
       ...(Object.keys(intent.labels).length > 0 ? { labels: intent.labels } : {}),
       workspaceId: intent.workspaceId,
+      ...(intent.launchProfileId !== undefined ? { launchProfileId: intent.launchProfileId } : {}),
       owner: input.owner,
       env: input.env,
     },
@@ -391,6 +420,12 @@ async function resolveMcpProviderCreateConfig(params: {
   parentAgent: ManagedAgent | null;
 }): Promise<{ modeId?: string; featureValues?: Record<string, unknown> }> {
   const passthroughConfig = params.input.config;
+  if ((params.input.writePolicy ?? passthroughConfig?.writePolicy) === "read_only") {
+    return {
+      modeId: params.input.mode ?? passthroughConfig?.modeId,
+      featureValues: params.input.features ?? passthroughConfig?.featureValues,
+    };
+  }
   return params.dependencies.providerSnapshotManager.resolveCreateConfig({
     cwd: params.resolvedCwd,
     provider: params.provider,
@@ -420,6 +455,7 @@ function buildMcpSessionConfig(params: {
     ...passthroughConfig,
     provider: params.provider,
     cwd: params.resolvedCwd,
+    writePolicy: params.input.writePolicy ?? passthroughConfig?.writePolicy,
     modeId: params.resolvedMode ?? passthroughConfig?.modeId,
     model: params.resolvedProviderModel.model ?? passthroughConfig?.model,
     thinkingOptionId: params.input.thinking ?? passthroughConfig?.thinkingOptionId,

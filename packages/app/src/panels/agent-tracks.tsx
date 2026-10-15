@@ -1,4 +1,6 @@
 import { memo, useCallback, type ReactElement } from "react";
+import { View } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
 import { WorkspaceDiffStatPill } from "@/composer/diff-stat-pill";
 import { useWorkspaceHasDiffStat } from "@/composer/workspace-diff-stat";
 import { AgentTaskList } from "@/composer/task-list";
@@ -8,6 +10,9 @@ import { usePaneContext } from "@/panels/pane-context";
 import { useSettings } from "@/hooks/use-settings";
 import { PluginComposerPills } from "@/plugins";
 import { useSessionStore } from "@/stores/session-store";
+import { Button } from "@/components/ui/button";
+import { useTranslation } from "react-i18next";
+import { getNextAttentionAgent } from "@/hooks/use-next-attention-agent";
 import {
   type ArchiveFinishedStatus,
   useArchiveSubagent,
@@ -38,6 +43,7 @@ export const AgentTracks = memo(function AgentTracks({
   archiveFinishedStatus,
   onArchiveFinished,
   hasPluginComposerPills,
+  hasNextAttentionTarget,
 }: {
   serverId: string;
   workspaceId: string;
@@ -48,7 +54,9 @@ export const AgentTracks = memo(function AgentTracks({
   archiveFinishedStatus: ArchiveFinishedStatus;
   onArchiveFinished: () => void;
   hasPluginComposerPills: boolean;
+  hasNextAttentionTarget: boolean;
 }): ReactElement | null {
+  const { t } = useTranslation();
   const { tabId, openTab } = usePaneContext();
   const hasWorkspaceDiffStat = useWorkspaceHasDiffStat(serverId, workspaceId);
   const isCompact = useIsCompactFormFactor();
@@ -111,9 +119,14 @@ export const AgentTracks = memo(function AgentTracks({
       preferences: openInSidePane,
     });
   }, [cwd, isCompact, openInSidePane, serverId, workspaceKey]);
+  const handleNextAttention = useCallback(() => {
+    const target = getNextAttentionAgent(serverId, agentId);
+    if (target) navigateToAgent({ serverId: target.serverId, agentId: target.id });
+  }, [agentId, serverId]);
 
   if (
     !hasWorkspaceDiffStat &&
+    !hasNextAttentionTarget &&
     !hasAgentTracks({
       subagentRows,
       tasks,
@@ -148,9 +161,26 @@ export const AgentTracks = memo(function AgentTracks({
         workspaceId={workspaceId}
         onPress={handleOpenChanges}
       />
+      {hasNextAttentionTarget ? (
+        <View style={styles.next}>
+          <Button
+            size="sm"
+            variant="ghost"
+            onPress={handleNextAttention}
+            testID="next-attention-agent"
+            accessibilityLabel={t("composer.nextAttentionAccessibility")}
+          >
+            {t("composer.nextAttention")}
+          </Button>
+        </View>
+      ) : null}
     </ComposerTrackBar>
   );
 });
+
+const styles = StyleSheet.create(() => ({
+  next: { marginLeft: "auto" },
+}));
 
 export function hasAgentTracks({
   subagentRows,

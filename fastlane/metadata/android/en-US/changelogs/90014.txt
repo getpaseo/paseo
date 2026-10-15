@@ -1,0 +1,8 @@
+Added
+- Added Opus 5.5 to the Claude catalog as its default model, with a 1M context window and Fast Mode, on Claude Code 2.1.280 and newer
+
+Fixed
+- Fixed the sidebar keeping only recently changed conversations after the app reconnects to a daemon
+- Fixed Import session offering only the newest 100 Codex conversations
+
+Full notes: https://paseo.sh/changelog

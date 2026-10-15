@@ -1,3 +1,4 @@
+import { ComposerDockBackground } from "@/composer/dock";
 import { SPACING } from "@/styles/theme";
 import { useMemo, type ReactNode } from "react";
 import type { LayoutChangeEvent } from "react-native";
@@ -19,6 +20,7 @@ interface ScreenHeaderProps {
   leftStyle?: StyleProp<ViewStyle>;
   rightStyle?: StyleProp<ViewStyle>;
   borderless?: boolean;
+  style?: StyleProp<ViewStyle>;
   variant?: "default" | "workspace";
   onRowLayout?: (event: LayoutChangeEvent) => void;
 }
@@ -33,6 +35,7 @@ export function ScreenHeader({
   leftStyle,
   rightStyle,
   borderless,
+  style,
   variant = "default",
   onRowLayout,
 }: ScreenHeaderProps) {
@@ -58,7 +61,10 @@ export function ScreenHeader({
   const rightCombinedStyle = useMemo(() => [styles.right, rightStyle], [rightStyle]);
 
   return (
-    <View style={[styles.header, variant === "workspace" && styles.workspaceHeader]}>
+    <ComposerDockBackground
+      style={[styles.header, style, variant === "workspace" && styles.workspaceHeader]}
+      testID="composer-dock-header"
+    >
       <View style={innerStyle}>
         <WindowChromeSafeArea
           placement="inline"
@@ -71,7 +77,7 @@ export function ScreenHeader({
           <View style={rightCombinedStyle}>{right}</View>
         </WindowChromeSafeArea>
       </View>
-    </View>
+    </ComposerDockBackground>
   );
 }
 

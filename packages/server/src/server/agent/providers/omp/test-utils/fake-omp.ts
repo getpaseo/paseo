@@ -54,6 +54,11 @@ export class FakeOmp implements OmpRuntime {
   private readonly sessions: FakeOmpSession[] = [];
   private readonly command: [string, ...string[]];
   private readonly queuedCommands: OmpRpcSlashCommand[][] = [];
+  private readonly queuedSessionSetups: Array<(session: FakeOmpSession) => void> = [];
+  private readonly removedModels = new Set<string>();
+  private nextStartError: Error | null = null;
+  private nextSessionId = 0;
+  private readonly sessionIdsByFile = new Map<string, string>();
   private readonly queuedSubagentSubscriptionErrors = new Map<
     FakeOmpSubagentSubscriptionLevel,
     Error
@@ -64,23 +69,47 @@ export class FakeOmp implements OmpRuntime {
   }
 
   async startSession(input: OmpStartSessionInput): Promise<FakeOmpSession> {
+    const startError = this.nextStartError;
+    this.nextStartError = null;
+    if (startError) throw startError;
     const launch = buildOmpLaunch({
       command: this.command,
       session: input,
     });
     this.recordedLaunches.push(launch);
-    const session = new FakeOmpSession(launch);
+    if (launch.model && this.removedModels.has(launch.model)) {
+      throw new Error(`Model "${launch.model}" not found`);
+    }
+    const sessionId =
+      (launch.session ? this.sessionIdsByFile.get(launch.session) : undefined) ??
+      `omp-session-${++this.nextSessionId}`;
+    const session = new FakeOmpSession(launch, sessionId, this.removedModels);
+    if (!launch.noSession) this.sessionIdsByFile.set(session.state.sessionFile, sessionId);
     session.commands = this.queuedCommands.shift() ?? [];
     for (const [level, error] of this.queuedSubagentSubscriptionErrors) {
       session.subagentSubscriptionErrors.set(level, error);
     }
     this.queuedSubagentSubscriptionErrors.clear();
+    this.queuedSessionSetups.shift()?.(session);
     this.sessions.push(session);
     return session;
   }
 
   queueCommands(commands: OmpRpcSlashCommand[]): void {
     this.queuedCommands.push(commands);
+  }
+
+  queueSessionSetup(setup: (session: FakeOmpSession) => void): void {
+    this.queuedSessionSetups.push(setup);
+  }
+
+  // OMP refuses to launch with, or switch to, a model it no longer knows.
+  removeModel(modelId: string): void {
+    this.removedModels.add(modelId);
+  }
+
+  failNextStart(error: Error): void {
+    this.nextStartError = error;
   }
 
   failNextSubagentSubscription(level: FakeOmpSubagentSubscriptionLevel, error: Error): void {
@@ -94,9 +123,16 @@ export class FakeOmp implements OmpRuntime {
     }
     return session;
   }
+
+  allSessions(): FakeOmpSession[] {
+    return [...this.sessions];
+  }
 }
 
 export class FakeOmpSession implements OmpRuntimeSession {
+  readonly environment: Record<string, string>;
+  fastModeResult = { enabled: false, active: false };
+  readonly setFastModeRequests: boolean[] = [];
   readonly prompts: Array<{ message: string; imageCount: number }> = [];
   readonly compactRequests: Array<{ customInstructions?: string }> = [];
   readonly setAutoCompactionRequests: boolean[] = [];
@@ -106,6 +142,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
   readonly setThinkingLevelRequests: OmpThinkingLevel[] = [];
   readonly handoffRequests: Array<{ customInstructions?: string }> = [];
   readonly steerRequests: Array<{ message: string; imageCount: number }> = [];
+  steerError: Error | null = null;
   readonly followUpRequests: Array<{ message: string; imageCount: number }> = [];
   readonly hostToolSetRequests: OmpRpcHostToolDefinition[][] = [];
   readonly hostToolResults: OmpRpcHostToolResult[] = [];
@@ -113,6 +150,8 @@ export class FakeOmpSession implements OmpRuntimeSession {
   getStateRequestCount = 0;
   abortRequested = false;
   abortError: Error | null = null;
+  onAbort: (() => void) | null = null;
+  private heldStateRequests: Array<() => void> | null = null;
   readonly canceledExtensionUiRequests: string[] = [];
   readonly extensionUiResponses: Array<{
     id: string;
@@ -150,15 +189,22 @@ export class FakeOmpSession implements OmpRuntimeSession {
   private activeHeldPrompt: { promise: Promise<void>; reject: (error: Error) => void } | null =
     null;
 
-  constructor(launch: OmpRuntimeLaunch) {
+  constructor(
+    launch: OmpRuntimeLaunch,
+    sessionId = "omp-session-1",
+    private readonly removedModels: ReadonlySet<string> = new Set(),
+  ) {
+    this.environment = launch.env ?? {};
     this.state = {
       model: null,
       thinkingLevel: "medium",
       isStreaming: false,
       isCompacting: false,
       autoCompactionEnabled: true,
+      fastModeEnabled: false,
+      fastModeActive: false,
       sessionFile: launch.session ?? "/tmp/omp-session",
-      sessionId: "omp-session-1",
+      sessionId,
       messageCount: 0,
       queuedMessageCount: 0,
     };
@@ -243,6 +289,8 @@ export class FakeOmpSession implements OmpRuntimeSession {
       throw this.abortError;
     }
     this.abortRequested = true;
+    // OMP can stream a turn's teardown before it answers the abort request.
+    this.onAbort?.();
   }
 
   async getState(): Promise<OmpSessionState> {
@@ -250,6 +298,10 @@ export class FakeOmpSession implements OmpRuntimeSession {
     for (const waiter of this.stateRequestWaiters.splice(0)) {
       if (this.getStateRequestCount >= waiter.count) waiter.resolve();
       else this.stateRequestWaiters.push(waiter);
+    }
+    if (this.heldStateRequests) {
+      const held = this.heldStateRequests;
+      await new Promise<void>((resolve) => held.push(resolve));
     }
     if (this.getStateError) {
       throw this.getStateError;
@@ -259,6 +311,26 @@ export class FakeOmpSession implements OmpRuntimeSession {
       this.state = report;
     }
     return this.state;
+  }
+
+  async setFastMode(enabled: boolean): Promise<{ enabled: boolean; active: boolean }> {
+    this.setFastModeRequests.push(enabled);
+    this.state = {
+      ...this.state,
+      fastModeEnabled: this.fastModeResult.enabled,
+      fastModeActive: this.fastModeResult.active,
+    };
+    return this.fastModeResult;
+  }
+
+  /** Holds every state request until the returned function releases them. */
+  holdStateRequests(): () => void {
+    const held: Array<() => void> = [];
+    this.heldStateRequests = held;
+    return () => {
+      this.heldStateRequests = null;
+      for (const resolve of held.splice(0)) resolve();
+    };
   }
 
   queueStateReports(states: OmpSessionState[]): void {
@@ -280,9 +352,13 @@ export class FakeOmpSession implements OmpRuntimeSession {
 
   async setModel(provider: string, modelId: string): Promise<OmpModel> {
     this.setModelRequests.push({ provider, modelId });
+    if (this.removedModels.has(`${provider}/${modelId}`)) {
+      throw new Error(`Model not found: ${provider}/${modelId}`);
+    }
     if (!this.setModelResult) {
       throw new Error("FakeOmp setModel requires setModelResult to be scripted");
     }
+    this.state = { ...this.state, model: this.setModelResult };
     return this.setModelResult;
   }
 
@@ -332,8 +408,12 @@ export class FakeOmpSession implements OmpRuntimeSession {
     return this.branchMessages;
   }
 
-  steer(message: string, images?: Array<{ type: "image"; data: string; mimeType: string }>): void {
+  async steer(
+    message: string,
+    images?: Array<{ type: "image"; data: string; mimeType: string }>,
+  ): Promise<void> {
     this.steerRequests.push({ message, imageCount: images?.length ?? 0 });
+    if (this.steerError) throw this.steerError;
   }
 
   followUp(

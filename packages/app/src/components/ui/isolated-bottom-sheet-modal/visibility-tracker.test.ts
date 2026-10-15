@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  type BackPressSource,
   type BottomSheetController,
   createBottomSheetVisibilityTracker,
 } from "./visibility-tracker";
@@ -20,19 +21,53 @@ class FakeBottomSheet implements BottomSheetController {
   }
 }
 
+/**
+ * Stands in for Android's `BackHandler`, which offers the press to listeners newest-first and
+ * stops at the first one that claims it.
+ */
+class FakeBackPress implements BackPressSource {
+  private listeners: (() => boolean)[] = [];
+
+  subscribe(onBackPress: () => boolean): () => void {
+    this.listeners.push(onBackPress);
+    return () => {
+      const index = this.listeners.indexOf(onBackPress);
+      if (index >= 0) this.listeners.splice(index, 1);
+    };
+  }
+
+  /** True when a sheet claimed the press, false when it falls through to the navigator. */
+  press(): boolean {
+    for (let index = this.listeners.length - 1; index >= 0; index--) {
+      if (this.listeners[index]?.()) return true;
+    }
+    return false;
+  }
+}
+
 function setup() {
   const sheet = new FakeBottomSheet();
+  const backPress = new FakeBackPress();
   let closeCount = 0;
   const tracker = createBottomSheetVisibilityTracker({
     onClose: () => {
       closeCount += 1;
     },
+    backPress,
   });
   return {
     sheet,
+    backPress,
     tracker,
     closeCount: () => closeCount,
   };
+}
+
+/** Opens a sheet and runs it through the presentation the real sheet reports back. */
+function openSheet(context: ReturnType<typeof setup>) {
+  context.tracker.attachController(context.sheet);
+  context.tracker.syncDesired({ visible: true });
+  context.tracker.handleSheetIndexChange(0);
 }
 
 describe("bottom sheet visibility tracker", () => {
@@ -159,5 +194,54 @@ describe("bottom sheet visibility tracker", () => {
     tracker.syncDesired({ visible: true });
 
     expect(sheet.events).toEqual([{ type: "present" }, { type: "present" }]);
+  });
+
+  it("dismisses the sheet on a Back press instead of letting it reach the navigator", () => {
+    const context = setup();
+    openSheet(context);
+
+    expect(context.backPress.press()).toBe(true);
+    expect(context.sheet.events).toEqual([{ type: "present" }, { type: "dismiss" }]);
+  });
+
+  it("leaves Back to the navigator before the sheet is on screen and after it closes", () => {
+    const context = setup();
+    context.tracker.attachController(context.sheet);
+    context.tracker.syncDesired({ visible: false });
+
+    expect(context.backPress.press()).toBe(false);
+
+    openSheet(context);
+    context.tracker.handleSheetIndexChange(-1);
+    context.tracker.handleSheetDismiss();
+
+    expect(context.backPress.press()).toBe(false);
+  });
+
+  it("gives the Back press to the sheet presented last", () => {
+    const backPress = new FakeBackPress();
+    const sheets = ["below", "above"].map((name) => {
+      const sheet = new FakeBottomSheet();
+      const tracker = createBottomSheetVisibilityTracker({ onClose: () => {}, backPress });
+      tracker.attachController(sheet);
+      tracker.syncDesired({ visible: true });
+      tracker.handleSheetIndexChange(0);
+      return { name, sheet };
+    });
+
+    backPress.press();
+
+    expect(sheets.map((entry) => [entry.name, entry.sheet.events.at(-1)?.type])).toEqual([
+      ["below", "present"],
+      ["above", "dismiss"],
+    ]);
+  });
+
+  it("stops claiming Back once the sheet leaves the tree", () => {
+    const context = setup();
+    openSheet(context);
+    context.tracker.attachController(null);
+
+    expect(context.backPress.press()).toBe(false);
   });
 });

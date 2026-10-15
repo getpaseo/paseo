@@ -1,6 +1,7 @@
 export type WorkspaceTabCloseButtonPolicy = "all";
 
 export interface WorkspaceTabLayoutMetrics {
+  fitContent?: boolean;
   rowHorizontalInset: number;
   actionsReservedWidth: number;
   rowPaddingHorizontal: number;
@@ -14,6 +15,7 @@ export interface WorkspaceTabLayoutMetrics {
 }
 
 export interface WorkspaceTabLayoutInput {
+  variant?: "workspace" | "browser";
   viewportWidth: number;
   tabLabelWidths: number[];
   metrics: WorkspaceTabLayoutMetrics;
@@ -74,6 +76,15 @@ export function computeWorkspaceTabLayout(
     input.metrics.tabContentGap +
     input.metrics.tabHorizontalPadding * 2 +
     input.metrics.closeButtonWidth;
+  if (input.metrics.fitContent) {
+    const widths = input.tabLabelWidths.map((width) => Math.ceil(tabChromeWidth + width));
+    return {
+      items: widths.map((width) => ({ width, showLabel: true })),
+      closeButtonPolicy: "all",
+      requiresHorizontalScrollFallback:
+        widths.reduce((total, width) => total + width, 0) > availableTabsWidth,
+    };
+  }
   const naturalWidths = input.tabLabelWidths.map((labelWidth) =>
     clamp(tabChromeWidth + labelWidth, input.metrics.minTabWidth, input.metrics.maxTabWidth),
   );
@@ -82,7 +93,11 @@ export function computeWorkspaceTabLayout(
   const requiresHorizontalScrollFallback = availableTabsWidth < minimumTotalWidth;
 
   let resolvedWidths = naturalWidths;
-  if (requiresHorizontalScrollFallback) {
+  if (input.variant === "browser") {
+    resolvedWidths = Array.from({ length: tabCount }, () =>
+      clamp(availableTabsWidth / tabCount, input.metrics.minTabWidth, input.metrics.maxTabWidth),
+    );
+  } else if (requiresHorizontalScrollFallback) {
     resolvedWidths = Array.from({ length: tabCount }, () => input.metrics.minTabWidth);
   } else if (naturalTotalWidth > availableTabsWidth) {
     const widthToRemove = naturalTotalWidth - availableTabsWidth;

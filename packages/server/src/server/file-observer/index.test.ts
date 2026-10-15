@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import {
   createFileObserver,
@@ -212,51 +212,59 @@ test("observes a thousand concurrent writes and remains healthy after delete and
   const root = await createRoot();
   const directories = Array.from({ length: 20 }, (_, index) => join(root, `dir-${index}`));
   await Promise.all(directories.map((directory) => mkdir(directory)));
-  const observed = new Map<string, Set<FileChange["type"]>>();
-  const subscription = await subscribeToFileChanges(root, (error, events) => {
-    expect(error).toBeNull();
-    for (const event of events) {
-      const types = observed.get(event.path) ?? new Set();
-      types.add(event.type);
-      observed.set(event.path, types);
-    }
-  });
   const paths = Array.from({ length: 1_000 }, (_, index) =>
     join(directories[index % directories.length], `file-${index}.txt`),
   );
-
   const populatedDirectory = join(root, "populated", "nested");
-  await mkdir(populatedDirectory, { recursive: true });
   const populatedPaths = Array.from({ length: 200 }, (_, index) =>
     join(populatedDirectory, `nested-${index}.txt`),
   );
+  const removedPaths = paths.slice(0, 100);
+  const moves = directories.slice(0, 10).map((from, index) => ({
+    from,
+    to: join(root, `renamed-${index}`),
+  }));
+  const movedPaths = moves.flatMap(({ from, to }) =>
+    paths
+      .slice(100)
+      .filter((path) => dirname(path) === from)
+      .map((path) => join(to, basename(path))),
+  );
+  const sentinel = join(directories[15], "still-observed.txt");
+  const population = expectFileChanges(populatedPaths);
+  const writes = expectFileChanges(paths);
+  const deletions = expectFileChanges(removedPaths, "delete");
+  const movedFiles = expectFileChanges(movedPaths);
+  const recovery = expectFileChanges([sentinel]);
+  const subscription = await subscribeToFileChanges(root, (error, events) => {
+    expect(error).toBeNull();
+    for (const event of events) {
+      population.record(event);
+      writes.record(event);
+      deletions.record(event);
+      movedFiles.record(event);
+      recovery.record(event);
+    }
+  });
+
+  await mkdir(populatedDirectory, { recursive: true });
   await Promise.all(populatedPaths.map((path, index) => writeFile(path, `${index}`)));
-  await expect
-    .poll(() => populatedPaths.filter((path) => !observed.has(path)), { timeout: 10_000 })
-    .toEqual([]);
+  await population.complete;
 
   await Promise.all(paths.map((path, index) => writeFile(path, `${index}`)));
-  await expect
-    .poll(() => paths.filter((path) => !observed.has(path)), { timeout: 60_000 })
-    .toEqual([]);
+  await writes.complete;
 
-  const removedPaths = paths.slice(0, 100);
+  // A native watcher may recover coalesced paths through its safety audit.
+  // Completion comes from the delivered deletions, not an idle diagnostic or
+  // a deadline shorter than that recovery cycle.
   await Promise.all(removedPaths.map((path) => rm(path)));
-  await expect
-    .poll(() => removedPaths.filter((path) => !observed.get(path)?.has("delete")), {
-      timeout: 10_000,
-    })
-    .toEqual([]);
+  await deletions.complete;
 
-  for (let index = 0; index < 10; index += 1) {
-    const from = directories[index];
-    const to = join(root, `renamed-${index}`);
-    await rename(from, to);
-    await rm(to, { recursive: true, force: true });
-  }
-  const sentinel = join(directories[15], "still-observed.txt");
+  await Promise.all(moves.map(({ from, to }) => rename(from, to)));
+  await movedFiles.complete;
+  await Promise.all(moves.map(({ to }) => rm(to, { recursive: true, force: true })));
   await writeFile(sentinel, "alive");
-  await expect.poll(() => observed.has(sentinel)).toBe(true);
+  await recovery.complete;
   await subscription.unsubscribe();
 }, 90_000);
 
@@ -312,6 +320,7 @@ test("closing the observer service releases every subscription and rejects reuse
     nativeTrackedFileCount: 0,
     pendingEventCount: 0,
     pendingReconciliationWorkCount: 0,
+    pendingClassificationCount: 0,
     reconciliationInFlightCount: 0,
     reconciliationCount: 0,
     scopedReconciliationCount: 0,
@@ -359,4 +368,17 @@ async function createRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "paseo-file-observer-"));
   roots.add(root);
   return root;
+}
+
+function expectFileChanges(paths: string[], type?: FileChange["type"]) {
+  const pending = new Set(paths);
+  const { promise: complete, resolve } = Promise.withResolvers<void>();
+  return {
+    complete,
+    record(event: FileChange) {
+      if (type && event.type !== type) return;
+      pending.delete(event.path);
+      if (pending.size === 0) resolve();
+    },
+  };
 }

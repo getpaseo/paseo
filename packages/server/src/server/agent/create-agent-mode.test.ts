@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveAndValidateCreateAgentMode } from "./create-agent-mode.js";
+import {
+  resolveAndValidateCreateAgentMode,
+  resolveDefaultAgentCreateConfig,
+} from "./create-agent-mode.js";
 
 const CLAUDE_MODES = ["default", "acceptEdits", "plan", "bypassPermissions"];
 const OPENCODE_MODES = ["build", "plan"];
@@ -210,4 +213,36 @@ describe("resolveAndValidateCreateAgentMode", () => {
     });
     expect(resolved).toBe("auto");
   });
+});
+
+describe("new conversation permission defaults", () => {
+  it.each(["full-access", "bypassPermissions", "allow-all", "full"])(
+    "uses declared unattended mode %s only when no mode was selected",
+    (modeId) => {
+      const input = {
+        provider: "test-provider",
+        requestedMode: undefined,
+        parent: null,
+        unattended: false,
+        featureValues: { plan_mode: true },
+        availableModes: [
+          { id: "ask", label: "Ask" },
+          { id: modeId, label: "Full", isUnattended: true },
+        ],
+      };
+      expect(resolveDefaultAgentCreateConfig(input)).toEqual({
+        modeId,
+        featureValues: { plan_mode: true },
+      });
+      expect(resolveDefaultAgentCreateConfig({ ...input, requestedMode: "ask" }).modeId).toBe(
+        "ask",
+      );
+      expect(
+        resolveDefaultAgentCreateConfig({
+          ...input,
+          parent: { provider: "test-provider", modeId: "ask", isUnattended: false },
+        }).modeId,
+      ).toBe("ask");
+    },
+  );
 });

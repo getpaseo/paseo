@@ -1,4 +1,7 @@
-import { createAgentRequestsStub } from "./test-utils/session-stubs.js";
+import {
+  createMessageReceiptsStub,
+  createTestCreationService,
+} from "./test-utils/session-stubs.js";
 import { describe, expect, test, vi } from "vitest";
 import path from "node:path";
 import type pino from "pino";
@@ -185,7 +188,8 @@ function createSessionForWorkspaceGitWatchTests(options?: {
   };
 
   const session = new Session({
-    agentRequests: createAgentRequestsStub(),
+    messageReceipts: createMessageReceiptsStub(),
+    creationService: createTestCreationService(),
     clientId: "test-client",
     permissions: OWNER_PERMISSIONS,
     onMessage: (message) => emitted.push(message as { type: string; payload: unknown }),

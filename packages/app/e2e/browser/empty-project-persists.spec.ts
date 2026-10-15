@@ -77,6 +77,27 @@ async function waitForSidebarProjectListReady(page: Page): Promise<void> {
     .waitFor({ state: "visible", timeout: 60_000 });
 }
 
+test("keeps empty sidebar actions inside their card", async ({ page }) => {
+  await gotoAppShell(page);
+  const card = page.getByTestId("sidebar-project-empty-state");
+  await expect(card).toBeVisible();
+  await expect(card.getByRole("button")).toHaveCount(2);
+
+  const cardBox = await card.boundingBox();
+  expect(cardBox).not.toBeNull();
+  const actions = await card.getByRole("button").evaluateAll((buttons) =>
+    buttons.map((button) => {
+      const { left, right, bottom } = button.getBoundingClientRect();
+      return { left, right, bottom };
+    }),
+  );
+  for (const action of actions) {
+    expect(action.left).toBeGreaterThanOrEqual(cardBox!.x);
+    expect(action.right).toBeLessThanOrEqual(cardBox!.x + cardBox!.width);
+    expect(action.bottom).toBeLessThanOrEqual(cardBox!.y + cardBox!.height);
+  }
+});
+
 test.describe("Project picker search", () => {
   test("opens a project from a fuzzy directory-name search", async ({
     page,

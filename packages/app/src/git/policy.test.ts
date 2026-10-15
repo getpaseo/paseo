@@ -2,7 +2,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { CheckoutPrStatusSchema } from "@getpaseo/protocol/messages";
 import { i18n } from "@/i18n/i18next";
 
-import { buildGitActions, type BuildGitActionsInput } from "./policy";
+import {
+  buildGitActions,
+  buildWorkspaceWorkflowState,
+  type BuildGitActionsInput,
+  type BuildWorkspaceWorkflowStateInput,
+} from "./policy";
 import { deriveMergeCapability, type ForgeSpecificStatusFacts } from "./merge-capability";
 
 type GithubMergeFactsFixture = ForgeSpecificStatusFacts & {
@@ -159,6 +164,34 @@ function createInput(
       },
     },
     ...rest,
+  };
+}
+
+function createWorkflowInput(
+  overrides: Partial<BuildWorkspaceWorkflowStateInput> = {},
+): BuildWorkspaceWorkflowStateInput {
+  return {
+    isGit: true,
+    statusKnown: true,
+    statusError: false,
+    pullRequestKnown: true,
+    pullRequestError: false,
+    hasRemote: true,
+    baseRefAvailable: true,
+    currentBranch: "feature/workflow",
+    hasUncommittedChanges: false,
+    aheadCount: 1,
+    aheadOfOrigin: 0,
+    behindOfOrigin: 0,
+    pullRequestUrl: null,
+    pullRequestState: null,
+    pullRequestIsDraft: false,
+    pullRequestIsMerged: false,
+    pullRequestChecksFailed: false,
+    pullRequestMergeable: "UNKNOWN",
+    mergeActionId: "merge-pr-squash",
+    archiveAvailable: true,
+    ...overrides,
   };
 }
 
@@ -1084,5 +1117,268 @@ describe("git-actions-policy", () => {
       "merge-pr-merge",
       "merge-pr-rebase",
     ]);
+  });
+});
+
+describe("workspace workflow policy", () => {
+  it("does not infer a missing PR while its status is unknown", () => {
+    expect(buildWorkspaceWorkflowState(createWorkflowInput({ pullRequestKnown: false }))).toEqual({
+      action: "checking",
+      reason: "status-unavailable",
+    });
+
+    expect(
+      buildWorkspaceWorkflowState(
+        createWorkflowInput({
+          pullRequestKnown: false,
+          pullRequestUrl: "https://example.com/pr/9",
+          pullRequestState: "open",
+          pullRequestMergeable: "CONFLICTING",
+        }),
+      ),
+    ).toEqual({ action: "checking", reason: "status-unavailable" });
+  });
+
+  it("creates a PR from uncommitted work even before a commit exists", () => {
+    expect(
+      buildWorkspaceWorkflowState(
+        createWorkflowInput({ hasUncommittedChanges: true, aheadCount: 0 }),
+      ),
+    ).toEqual({ action: "create-pr" });
+  });
+
+  it("updates an open PR when local work still needs delivery", () => {
+    expect(
+      buildWorkspaceWorkflowState(
+        createWorkflowInput({
+          pullRequestUrl: "https://example.com/pr/1",
+          pullRequestState: "open",
+          aheadOfOrigin: 2,
+        }),
+      ),
+    ).toEqual({ action: "commit-and-push" });
+  });
+
+  it("does not merge while upstream synchronization is unknown", () => {
+    expect(
+      buildWorkspaceWorkflowState(
+        createWorkflowInput({
+          pullRequestUrl: "https://example.com/pr/1",
+          pullRequestState: "open",
+          aheadOfOrigin: null,
+        }),
+      ),
+    ).toEqual({ action: "checking", reason: "synchronization-unknown" });
+  });
+
+  it("resolves a known conflict before local delivery, failed checks, draft, and view actions", () => {
+    expect(
+      buildWorkspaceWorkflowState(
+        createWorkflowInput({
+          pullRequestUrl: "https://example.com/pr/9",
+          pullRequestState: "open",
+          pullRequestIsDraft: true,
+          pullRequestMergeable: "CONFLICTING",
+          pullRequestChecksFailed: true,
+          hasUncommittedChanges: true,
+          aheadOfOrigin: 2,
+        }),
+      ),
+    ).toEqual({ action: "resolve-conflicts" });
+  });
+
+  it.each([
+    ["unknown", "UNKNOWN", "open", false, "merge"],
+    ["closed", "CONFLICTING", "closed", false, "view-pr"],
+    ["merged", "CONFLICTING", "open", true, "archive"],
+  ] as const)(
+    "does not resolve a %s PR as conflicting",
+    (_name, mergeable, state, merged, expected) => {
+      expect(
+        buildWorkspaceWorkflowState(
+          createWorkflowInput({
+            pullRequestUrl: "https://example.com/pr/9",
+            pullRequestState: state,
+            pullRequestMergeable: mergeable,
+            pullRequestIsMerged: merged,
+            ...(merged ? { aheadCount: 0 } : {}),
+          }),
+        ).action,
+      ).toBe(expected);
+    },
+  );
+
+  it("returns to the existing failed-checks action after the conflict disappears", () => {
+    expect(
+      buildWorkspaceWorkflowState(
+        createWorkflowInput({
+          pullRequestUrl: "https://example.com/pr/9",
+          pullRequestState: "open",
+          pullRequestMergeable: "MERGEABLE",
+          pullRequestChecksFailed: true,
+        }),
+      ),
+    ).toEqual({ action: "repair-checks", nativeActionId: "pr" });
+  });
+
+  it("promotes merge only when the open PR is clean and synchronized", () => {
+    expect(
+      buildWorkspaceWorkflowState(
+        createWorkflowInput({
+          pullRequestUrl: "https://example.com/pr/1",
+          pullRequestState: "open",
+          aheadOfOrigin: 0,
+          behindOfOrigin: 0,
+        }),
+      ),
+    ).toEqual({ action: "merge", nativeActionId: "merge-pr-squash" });
+  });
+
+  it("offers archive only after a merged PR with verified clean upstream", () => {
+    expect(
+      buildWorkspaceWorkflowState(
+        createWorkflowInput({
+          pullRequestUrl: "https://example.com/pr/1",
+          pullRequestState: "closed",
+          pullRequestIsMerged: true,
+          aheadCount: 0,
+        }),
+      ),
+    ).toEqual({ action: "archive", nativeActionId: "archive-workspace" });
+  });
+
+  it("does not update an already merged PR with new local work", () => {
+    expect(
+      buildWorkspaceWorkflowState(
+        createWorkflowInput({
+          pullRequestUrl: "https://example.com/pr/1",
+          pullRequestState: "closed",
+          pullRequestIsMerged: true,
+          aheadCount: 1,
+        }),
+      ),
+    ).toEqual({ action: "create-pr" });
+  });
+
+  it("repairs failing checks when the open PR is synchronized and the tree is clean", () => {
+    expect(
+      buildWorkspaceWorkflowState(
+        createWorkflowInput({
+          pullRequestUrl: "https://example.com/pr/1",
+          pullRequestState: "open",
+          pullRequestChecksFailed: true,
+          aheadOfOrigin: 0,
+          behindOfOrigin: 0,
+          mergeActionId: undefined,
+        }),
+      ),
+    ).toEqual({ action: "repair-checks", nativeActionId: "pr" });
+  });
+
+  it("does not repair checks while the PR is still a draft", () => {
+    expect(
+      buildWorkspaceWorkflowState(
+        createWorkflowInput({
+          pullRequestUrl: "https://example.com/pr/1",
+          pullRequestState: "open",
+          pullRequestIsDraft: true,
+          pullRequestChecksFailed: true,
+          aheadOfOrigin: 0,
+          behindOfOrigin: 0,
+          mergeActionId: undefined,
+        }),
+      ),
+    ).toEqual({ action: "view-pr", nativeActionId: "pr", reason: "pull-request-blocked" });
+  });
+
+  it("does not repair checks while the branch is not synchronized with origin", () => {
+    expect(
+      buildWorkspaceWorkflowState(
+        createWorkflowInput({
+          pullRequestUrl: "https://example.com/pr/1",
+          pullRequestState: "open",
+          pullRequestChecksFailed: true,
+          aheadOfOrigin: null,
+          behindOfOrigin: null,
+        }),
+      ),
+    ).toEqual({ action: "checking", reason: "synchronization-unknown" });
+
+    expect(
+      buildWorkspaceWorkflowState(
+        createWorkflowInput({
+          pullRequestUrl: "https://example.com/pr/1",
+          pullRequestState: "open",
+          pullRequestChecksFailed: true,
+          aheadOfOrigin: 0,
+          behindOfOrigin: 2,
+        }),
+      ),
+    ).toEqual({ action: "view-pr", nativeActionId: "pr", reason: "pull-request-blocked" });
+  });
+
+  it("prioritizes local delivery over repairing failing checks", () => {
+    expect(
+      buildWorkspaceWorkflowState(
+        createWorkflowInput({
+          pullRequestUrl: "https://example.com/pr/1",
+          pullRequestState: "open",
+          pullRequestChecksFailed: true,
+          hasUncommittedChanges: true,
+        }),
+      ),
+    ).toEqual({ action: "commit-and-push" });
+  });
+
+  it("does not repair checks for a closed or merged PR", () => {
+    expect(
+      buildWorkspaceWorkflowState(
+        createWorkflowInput({
+          pullRequestUrl: "https://example.com/pr/1",
+          pullRequestState: "closed",
+          pullRequestChecksFailed: true,
+        }),
+      ),
+    ).toEqual({ action: "view-pr", nativeActionId: "pr" });
+
+    expect(
+      buildWorkspaceWorkflowState(
+        createWorkflowInput({
+          pullRequestUrl: "https://example.com/pr/1",
+          pullRequestState: "closed",
+          pullRequestIsMerged: true,
+          pullRequestChecksFailed: true,
+          aheadCount: 0,
+        }),
+      ),
+    ).toEqual({ action: "archive", nativeActionId: "archive-workspace" });
+  });
+
+  it("does not repair checks while the pull request status is unknown", () => {
+    expect(
+      buildWorkspaceWorkflowState(
+        createWorkflowInput({
+          pullRequestUrl: "https://example.com/pr/1",
+          pullRequestState: "open",
+          pullRequestChecksFailed: true,
+          pullRequestKnown: false,
+        }),
+      ),
+    ).toEqual({ action: "checking", reason: "status-unavailable" });
+  });
+
+  it("keeps view-pr when checks are not failing and no merge is available", () => {
+    expect(
+      buildWorkspaceWorkflowState(
+        createWorkflowInput({
+          pullRequestUrl: "https://example.com/pr/1",
+          pullRequestState: "open",
+          pullRequestChecksFailed: false,
+          aheadOfOrigin: 0,
+          behindOfOrigin: 0,
+          mergeActionId: undefined,
+        }),
+      ),
+    ).toEqual({ action: "view-pr", nativeActionId: "pr", reason: "pull-request-blocked" });
   });
 });

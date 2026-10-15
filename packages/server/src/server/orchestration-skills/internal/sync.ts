@@ -51,7 +51,9 @@ export async function listFilesRecursive(rootDir: string): Promise<string[]> {
   return out;
 }
 
-async function readManagedFilesManifest(dstDir: string): Promise<ManagedFilesManifest | null> {
+export async function readManagedFilesManifest(
+  dstDir: string,
+): Promise<ManagedFilesManifest | null> {
   const raw = await fs
     .readFile(path.join(dstDir, MANAGED_FILES_MANIFEST), "utf-8")
     .catch(() => null);
@@ -185,6 +187,50 @@ export async function removeSkill(skillName: string, targets: RemoveSkillTargets
   }
 }
 
+async function isSameDirectory(a: string, b: string): Promise<boolean> {
+  const [realA, realB] = await Promise.all([a, b].map((p) => fs.realpath(p).catch(() => null)));
+  return realA !== null && realA === realB;
+}
+
+/**
+ * Codex also discovers .agents/skills, so its dedicated copy is a leftover. When
+ * the Codex skill directory resolves to the shared or Claude copy, it is that
+ * copy, and retiring it would delete the install.
+ */
+export async function isLegacyCodexCopy(
+  skillName: string,
+  targets: RemoveSkillTargets,
+): Promise<boolean> {
+  const codexSkillDir = path.join(targets.codexDir, skillName);
+  for (const root of [targets.agentsDir, targets.claudeDir]) {
+    if (await isSameDirectory(codexSkillDir, path.join(root, skillName))) return false;
+  }
+  return true;
+}
+
+async function retireManagedSkill(dstDir: string): Promise<number> {
+  const info = await fs.lstat(dstDir).catch(() => null);
+  if (!info?.isDirectory()) return 0;
+  const manifest = await readManagedFilesManifest(dstDir);
+  if (!manifest) return 0;
+  const files = Object.keys(manifest.files);
+  await assertManagedPathsStayInsideSkill(dstDir, [MANAGED_FILES_MANIFEST, ...files]);
+  const removed: string[] = [];
+  for (const [rel, previousHash] of Object.entries(manifest.files)) {
+    const filePath = path.join(dstDir, rel);
+    const currentHash = await hashFile(filePath).catch(() => null);
+    if (currentHash !== previousHash) continue;
+    await fs.rm(filePath);
+    removed.push(rel);
+  }
+  await pruneEmptyParentDirs(dstDir, removed);
+  await fs.rm(path.join(dstDir, MANAGED_FILES_MANIFEST));
+  await fs.rmdir(dstDir).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOTEMPTY" && error.code !== "ENOENT") throw error;
+  });
+  return removed.length + 1;
+}
+
 export async function syncSkills(options: SkillSyncOptions): Promise<SkillSyncResult> {
   let changedFiles = 0;
   let processedSkills = 0;
@@ -206,10 +252,10 @@ export async function syncSkills(options: SkillSyncOptions): Promise<SkillSyncRe
         path.join(options.claudeDir, skillName),
       );
 
-      changedFiles += await syncDirectoryFiles(
-        bundleSkillDir,
-        path.join(options.codexDir, skillName),
-      );
+      // Retain user edits to the old dedicated Codex copy.
+      if (await isLegacyCodexCopy(skillName, options)) {
+        changedFiles += await retireManagedSkill(path.join(options.codexDir, skillName));
+      }
 
       processedSkills++;
     } catch (error) {

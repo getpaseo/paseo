@@ -9,6 +9,17 @@ export type ModelBrowserView =
   | { kind: "all" }
   | { kind: "provider"; providerId: string; providerLabel: string };
 
+export function resolveModelSelectorLabels(input: {
+  autoRouting?: { selected: boolean };
+  selectedModelLabel: string;
+  triggerLabel: string;
+  autoLabel: string;
+}): { selectedModelLabel: string; triggerLabel: string } {
+  return input.autoRouting?.selected
+    ? { selectedModelLabel: input.autoLabel, triggerLabel: input.autoLabel }
+    : { selectedModelLabel: input.selectedModelLabel, triggerLabel: input.triggerLabel };
+}
+
 export function resolveModelBrowserScrolling({
   isNative,
   isCompact,

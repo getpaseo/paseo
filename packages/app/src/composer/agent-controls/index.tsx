@@ -25,6 +25,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
 import { Settings2 } from "lucide-react-native";
 import { getAgentFeatureIcon, ThinkingIcon } from "@/agent-controls/icons";
+import { PLAN_MODE_FEATURE_ID } from "@/agent-controls/policy";
 import { formatThinkingOptionLabel } from "@/agent-controls/labels";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
@@ -55,11 +56,14 @@ import type {
 import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import {
   getFeatureHighlightColor,
+  isFeatureActive,
   getFeatureTooltip,
+  getFeatureToggleValue,
   getAgentControlHintKey,
   resolveAgentModelSelection,
 } from "@/composer/agent-controls/utils";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { isWeb } from "@/constants/platform";
 import { readMeasuredWidth } from "@/hooks/use-container-width";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
@@ -69,6 +73,7 @@ import {
   type AgentControlCommandCenterSource,
 } from "@/command-center/agent-control-registration";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
+import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { isNative } from "@/constants/platform";
 import {
   resolveComposerControlDensity,
@@ -102,6 +107,9 @@ type AgentControlSelector = "provider" | "mode" | "model" | "thinking" | `featur
 const EMPTY_AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [];
 
 interface ControlledAgentControlsProps {
+  modelRouting?: "manual" | "jev";
+  supportsInitialModelRouting?: boolean;
+  onSelectModelRouting?: (modelRouting: "manual" | "jev") => void;
   provider: string;
   providerOptions?: AgentControlOption[];
   selectedProviderId?: string;
@@ -133,6 +141,9 @@ interface ControlledAgentControlsProps {
 }
 
 export interface DraftAgentControlsProps {
+  modelRouting?: "manual" | "jev";
+  supportsInitialModelRouting?: boolean;
+  onSelectModelRouting?: (modelRouting: "manual" | "jev") => void;
   providerDefinitions: AgentProviderDefinition[];
   selectedProvider: AgentProvider | null;
   modeOptions: AgentMode[];
@@ -211,8 +222,7 @@ function getModeProviderDefinitions(modeControl: AgentModeControlValue | null) {
 }
 
 function getFeatureIconColor(
-  featureId: string,
-  enabled: boolean,
+  feature: AgentFeature,
   palette: {
     blue: { 400: string };
     green: { 400: string };
@@ -220,11 +230,11 @@ function getFeatureIconColor(
   },
   foregroundMuted: string,
 ): string {
-  if (!enabled) {
+  if (!isFeatureActive(feature)) {
     return foregroundMuted;
   }
 
-  switch (getFeatureHighlightColor(featureId)) {
+  switch (getFeatureHighlightColor(feature.id)) {
     case "blue":
       return palette.blue[400];
     case "green":
@@ -341,6 +351,17 @@ function makeBadgePressableStyle(
   ];
 }
 
+function isThinkingSelectable(input: {
+  onSelect: ControlledAgentControlsProps["onSelectThinkingOption"];
+  options: ControlledAgentControlsProps["thinkingOptions"];
+  modelRouting: "manual" | "jev";
+}): boolean {
+  return (
+    Boolean(input.onSelect && input.options && input.options.length > 0) &&
+    input.modelRouting !== "jev"
+  );
+}
+
 function pickSheetModel({
   nextProviderId,
   modelId,
@@ -394,6 +415,7 @@ type AgentControlsSlice = {
   runtimeModelId: string | null;
   model: string | null | undefined;
   features: AgentFeature[] | undefined;
+  runtimeThinkingOptionId: string | null;
   thinkingOptionId: string | null | undefined;
   lastUsage: unknown;
 } | null;
@@ -413,6 +435,7 @@ function selectAgentControlsSlice(
     runtimeModelId: currentAgent.runtimeInfo?.model ?? null,
     model: currentAgent.model,
     features: currentAgent.features,
+    runtimeThinkingOptionId: currentAgent.runtimeInfo?.thinkingOptionId ?? null,
     thinkingOptionId: currentAgent.thinkingOptionId,
     lastUsage: currentAgent.lastUsage,
   };
@@ -471,6 +494,19 @@ function buildOpenChangeHandler(
   };
 }
 
+function useAgentProfileShortcut(agentProfiles: AgentProfilePicker | null, disabled: boolean) {
+  const { isActiveComposer } = useComposerKeyboardScope();
+  const handlerId = useRef(`agent-profile:${Math.random().toString(36).slice(2)}`);
+  useKeyboardActionHandler({
+    handlerId: handlerId.current,
+    actions: ["message-input.profile-next"],
+    enabled: isActiveComposer && !disabled && Boolean(agentProfiles?.rows.length),
+    priority: 200,
+    handle: (action) =>
+      action.id === "message-input.profile-next" && (agentProfiles?.applyNextProfile() ?? false),
+  });
+}
+
 function ControlledAgentControls({
   provider,
   providerOptions,
@@ -500,9 +536,13 @@ function ControlledAgentControls({
   modeControl,
   modelSelectorServerId = null,
   isCompactLayout,
+  modelRouting = "manual",
+  supportsInitialModelRouting = false,
+  onSelectModelRouting,
 }: ControlledAgentControlsProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
+  useAgentProfileShortcut(agentProfiles, disabled);
   const isCompactFormFactor = useIsCompactFormFactor();
   const isCompact = isCompactLayout ?? isCompactFormFactor;
   const { fontScale } = useWindowDimensions();
@@ -521,9 +561,11 @@ function ControlledAgentControls({
     onSelectProvider && providerOptions && providerOptions.length > 0,
   );
   const canSelectModel = Boolean(onSelectModel);
-  const canSelectThinking = Boolean(
-    onSelectThinkingOption && thinkingOptions && thinkingOptions.length > 0,
-  );
+  const canSelectThinking = isThinkingSelectable({
+    onSelect: onSelectThinkingOption,
+    options: thinkingOptions,
+    modelRouting,
+  });
 
   const displayProvider = findOptionLabel(
     providerOptions,
@@ -531,8 +573,8 @@ function ControlledAgentControls({
     t("agentControls.provider.fallback"),
   );
   const formattedThinkingOptions = useMemo(
-    () => toThinkingControlOptions(thinkingOptions),
-    [thinkingOptions],
+    () => toThinkingControlOptions(modelRouting === "jev" ? undefined : thinkingOptions),
+    [modelRouting, thinkingOptions],
   );
   const displayThinking = findOptionLabel(
     formattedThinkingOptions,
@@ -735,6 +777,9 @@ function ControlledAgentControls({
         {!isCompact ? (
           <DesktopAgentControlsContent
             provider={provider}
+            modelRouting={modelRouting}
+            supportsInitialModelRouting={supportsInitialModelRouting}
+            onSelectModelRouting={onSelectModelRouting}
             providerOptions={providerOptions}
             selectedProviderId={selectedProviderId}
             modelOptions={modelOptions}
@@ -788,6 +833,9 @@ function ControlledAgentControls({
         ) : (
           <SheetAgentControlsContent
             provider={provider}
+            modelRouting={modelRouting}
+            supportsInitialModelRouting={supportsInitialModelRouting}
+            onSelectModelRouting={onSelectModelRouting}
             selectedModelId={selectedModelId}
             selectedThinkingOptionId={selectedThinkingOptionId}
             features={features}
@@ -829,6 +877,9 @@ function ControlledAgentControls({
 }
 
 interface DesktopAgentControlsContentProps {
+  modelRouting?: "manual" | "jev";
+  supportsInitialModelRouting?: boolean;
+  onSelectModelRouting?: (modelRouting: "manual" | "jev") => void;
   provider: string;
   providerOptions?: AgentControlOption[];
   selectedProviderId?: string;
@@ -893,6 +944,9 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
   const { t } = useTranslation();
   const {
     provider,
+    modelRouting,
+    supportsInitialModelRouting,
+    onSelectModelRouting,
     providerOptions,
     selectedProviderId,
     selectedModelId,
@@ -942,8 +996,18 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
     handleCloseSheet,
     modelSelectorServerId,
   } = props;
+
+  const autoRouting = useMemo(
+    () =>
+      provider === "codex" &&
+      onSelectModelRouting &&
+      (supportsInitialModelRouting || modelRouting === "jev")
+        ? { selected: modelRouting === "jev", onSelect: () => onSelectModelRouting("jev") }
+        : undefined,
+    [modelRouting, onSelectModelRouting, provider, supportsInitialModelRouting],
+  );
   const modelToolbar = useMemo(
-    () => ({ glyphSize, showCaret: presentation.showCarets }),
+    () => ({ glyphSize, showCaret: presentation.showCarets, showGlyph: false }),
     [glyphSize, presentation.showCarets],
   );
   const featuresSheetHeader = useMemo<SheetHeader>(
@@ -1004,6 +1068,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
                 desktopPlacement="top-start"
                 desktopMinWidth={360}
                 toolbar={modelToolbar}
+                autoRouting={autoRouting}
               />
             </View>
           </TooltipTrigger>
@@ -1024,6 +1089,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
                 label={t("agentControls.thinking.title")}
                 value={displayThinking}
                 showToolbarLabel={presentation.showThinkingLabel}
+                showIcon={!presentation.showThinkingLabel}
                 showCaret={presentation.showCarets}
                 open={openSelector === "thinking"}
                 disabled={disabled || !canSelectThinking}
@@ -1105,6 +1171,9 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
 }
 
 interface SheetAgentControlsContentProps {
+  modelRouting?: "manual" | "jev";
+  supportsInitialModelRouting?: boolean;
+  onSelectModelRouting?: (modelRouting: "manual" | "jev") => void;
   provider: string;
   selectedModelId?: string;
   selectedThinkingOptionId?: string;
@@ -1150,6 +1219,9 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
   const { t } = useTranslation();
   const {
     provider,
+    modelRouting,
+    supportsInitialModelRouting,
+    onSelectModelRouting,
     selectedModelId,
     selectedThinkingOptionId,
     features,
@@ -1184,6 +1256,16 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
     modelSelectorServerId,
     canSwitchProvider,
   } = props;
+
+  const autoRouting = useMemo(
+    () =>
+      provider === "codex" &&
+      onSelectModelRouting &&
+      (supportsInitialModelRouting || modelRouting === "jev")
+        ? { selected: modelRouting === "jev", onSelect: () => onSelectModelRouting("jev") }
+        : undefined,
+    [modelRouting, onSelectModelRouting, provider, supportsInitialModelRouting],
+  );
 
   const thinkingAnchorRef = useRef<View | null>(null);
 
@@ -1270,6 +1352,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
       serverId={modelSelectorServerId}
       glyphSize={glyphSize}
       canSwitchProvider={canSwitchProvider}
+      autoRouting={autoRouting}
     >
       {sheetControls}
     </CompactModelSheet>
@@ -1292,6 +1375,11 @@ function DesktopFeatureItem({
   onActionComplete?: () => void;
 }) {
   const { theme } = useUnistyles();
+  const toggleValue = getFeatureToggleValue(feature);
+  const accessibilityState = useMemo(
+    () => ({ checked: isFeatureActive(feature), disabled }),
+    [feature, disabled],
+  );
   const featureSelector: AgentControlSelector = `feature-${feature.id}`;
   const featureAnchorRef = useRef<View>(null);
 
@@ -1305,11 +1393,11 @@ function DesktopFeatureItem({
   );
 
   const handleTogglePress = useCallback(() => {
-    if (feature.type === "toggle") {
-      onSetFeature?.(feature.id, !feature.value);
+    if (toggleValue !== null) {
+      onSetFeature?.(feature.id, toggleValue);
       onActionComplete?.();
     }
-  }, [feature, onActionComplete, onSetFeature]);
+  }, [feature.id, toggleValue, onActionComplete, onSetFeature]);
 
   const handleSelectOption = useCallback(
     (optionId: string) => {
@@ -1325,7 +1413,7 @@ function DesktopFeatureItem({
     [feature],
   );
 
-  if (feature.type === "toggle") {
+  if (toggleValue !== null) {
     const FeatureIcon = getAgentFeatureIcon(feature.icon);
     return (
       <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
@@ -1333,8 +1421,7 @@ function DesktopFeatureItem({
           <AgentControlTrigger
             icon={FeatureIcon}
             iconColor={getFeatureIconColor(
-              feature.id,
-              feature.value,
+              feature,
               theme.colors.palette,
               theme.colors.foregroundMuted,
             )}
@@ -1343,6 +1430,8 @@ function DesktopFeatureItem({
             showToolbarLabel={false}
             disabled={disabled}
             onPress={handleTogglePress}
+            accessibilityState={accessibilityState}
+            aria-pressed={isWeb ? accessibilityState.checked : undefined}
             accessibilityLabel={getFeatureTooltip(feature)}
             testID={`agent-feature-${feature.id}`}
           />
@@ -1357,6 +1446,10 @@ function DesktopFeatureItem({
   if (feature.type === "select") {
     const FeatureIcon = getAgentFeatureIcon(feature.icon);
     const selectedOption = feature.options.find((o) => o.id === feature.value);
+    const iconOnly = feature.desktopTrigger === "icon";
+    const tooltip = iconOnly
+      ? `${feature.label}: ${selectedOption?.label ?? feature.label}`
+      : getFeatureTooltip(feature);
     return (
       <>
         <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
@@ -1364,18 +1457,24 @@ function DesktopFeatureItem({
             <AgentControlTrigger
               ref={featureAnchorRef}
               icon={FeatureIcon}
+              iconColor={getFeatureIconColor(
+                feature,
+                theme.colors.palette,
+                theme.colors.foregroundMuted,
+              )}
               surface="toolbar"
               label={feature.label}
               value={selectedOption?.label ?? feature.label}
+              showToolbarLabel={!iconOnly}
               open={openSelector === featureSelector}
               disabled={disabled}
               onPress={handleSelectPress}
-              accessibilityLabel={getFeatureTooltip(feature)}
+              accessibilityLabel={tooltip}
               testID={`agent-feature-${feature.id}`}
             />
           </TooltipTrigger>
           <TooltipContent side="top" align="center" offset={8}>
-            <Text style={styles.tooltipText}>{getFeatureTooltip(feature)}</Text>
+            <Text style={styles.tooltipText}>{tooltip}</Text>
           </TooltipContent>
         </Tooltip>
         <Combobox
@@ -1438,40 +1537,34 @@ function SheetFeatureItem({
     ];
   }, [feature, t]);
 
-  if (feature.type === "toggle") {
+  const toggleValue = getFeatureToggleValue(feature);
+  const accessibilityState = useMemo(
+    () => ({ checked: isFeatureActive(feature), disabled }),
+    [feature, disabled],
+  );
+  const handleTogglePress = useCallback(() => {
+    if (toggleValue !== null) onSetFeature?.(feature.id, toggleValue);
+  }, [feature.id, onSetFeature, toggleValue]);
+  if (toggleValue !== null) {
     const FeatureIcon = getAgentFeatureIcon(feature.icon);
     return (
-      <>
-        <AgentControlTrigger
-          ref={featureAnchorRef}
-          icon={FeatureIcon}
-          iconColor={getFeatureIconColor(
-            feature.id,
-            feature.value,
-            theme.colors.palette,
-            theme.colors.foregroundMuted,
-          )}
-          surface="sheet"
-          label={feature.label}
-          value={feature.value ? t("agentControls.features.on") : t("agentControls.features.off")}
-          open={openSelector === featureSelector}
-          disabled={disabled}
-          onPress={handleSelectPress}
-          accessibilityLabel={getFeatureTooltip(feature)}
-          testID={`agent-feature-${feature.id}`}
-        />
-        <Combobox
-          options={comboboxOptions}
-          value={String(feature.value)}
-          onSelect={handleSelectOption}
-          open={openSelector === featureSelector}
-          onOpenChange={handleFeatureOpenChange}
-          anchorRef={featureAnchorRef}
-          presentation="push"
-          searchable={false}
-          header={sheetHeader}
-        />
-      </>
+      <AgentControlTrigger
+        icon={FeatureIcon}
+        iconColor={getFeatureIconColor(feature, theme.colors.palette, theme.colors.foregroundMuted)}
+        surface="sheet"
+        label={feature.label}
+        value={
+          isFeatureActive(feature)
+            ? t("agentControls.features.on")
+            : t("agentControls.features.off")
+        }
+        disabled={disabled}
+        onPress={handleTogglePress}
+        accessibilityState={accessibilityState}
+        aria-pressed={isWeb ? accessibilityState.checked : undefined}
+        accessibilityLabel={getFeatureTooltip(feature)}
+        testID={`agent-feature-${feature.id}`}
+      />
     );
   }
 
@@ -1483,6 +1576,11 @@ function SheetFeatureItem({
         <AgentControlTrigger
           ref={featureAnchorRef}
           icon={FeatureIcon}
+          iconColor={getFeatureIconColor(
+            feature,
+            theme.colors.palette,
+            theme.colors.foregroundMuted,
+          )}
           surface="sheet"
           label={feature.label}
           value={selectedOption?.label ?? feature.label}
@@ -1589,6 +1687,7 @@ export const AgentControls = memo(function AgentControls({
     models,
     runtimeModelId: agent?.runtimeModelId,
     configuredModelId: agent?.model,
+    runtimeThinkingOptionId: agent?.runtimeThinkingOptionId,
     explicitThinkingOptionId: agent?.thinkingOptionId,
   });
 
@@ -1788,7 +1887,7 @@ export const AgentControls = memo(function AgentControls({
         onEditAgentProfiles={handleEditAgentProfiles}
         onCreateAgentProfile={profileActions.create}
         onEditAgentProfile={profileActions.edit}
-        thinkingOptions={thinkingOptions.length > 1 ? thinkingOptions : undefined}
+        thinkingOptions={thinkingOptions.length > 0 ? thinkingOptions : undefined}
         selectedThinkingOptionId={modelSelection.selectedThinkingId ?? undefined}
         onSelectThinkingOption={handleSelectThinkingOption}
         features={agent.features}
@@ -1808,6 +1907,9 @@ export const AgentControls = memo(function AgentControls({
 });
 
 export function DraftAgentControls({
+  modelRouting = "manual",
+  supportsInitialModelRouting = false,
+  onSelectModelRouting,
   providerDefinitions,
   selectedProvider,
   modeOptions,
@@ -1877,6 +1979,15 @@ export function DraftAgentControls({
   const profileEditor = useAgentProfileEditor(modelSelectorServerId);
   const profileActions = resolveAgentProfileEditorActions(agentProfiles !== null, profileEditor);
 
+  const planFeature = features?.find(
+    (feature) => feature.id === PLAN_MODE_FEATURE_ID && feature.type === "toggle",
+  );
+  const handleTogglePlan = useCallback(() => {
+    if (planFeature?.type === "toggle") {
+      onSetFeature?.(PLAN_MODE_FEATURE_ID, !planFeature.value);
+    }
+  }, [onSetFeature, planFeature]);
+
   const modeControl = useMemo<AgentModeControlValue | null>(
     () =>
       selectedProvider && modeOptions.length > 0
@@ -1886,10 +1997,21 @@ export function DraftAgentControls({
             modeOptions,
             selectedModeId: selectedMode,
             onSelectMode,
+            onTogglePlan: planFeature && onSetFeature ? handleTogglePlan : undefined,
             disabled,
           }
         : null,
-    [selectedProvider, providerDefinitions, modeOptions, selectedMode, onSelectMode, disabled],
+    [
+      selectedProvider,
+      providerDefinitions,
+      modeOptions,
+      selectedMode,
+      onSelectMode,
+      disabled,
+      planFeature,
+      onSetFeature,
+      handleTogglePlan,
+    ],
   );
 
   return (
@@ -1921,6 +2043,9 @@ export function DraftAgentControls({
         modeControl={modeControl}
         modelSelectorServerId={modelSelectorServerId}
         isCompactLayout={isCompactLayout}
+        modelRouting={modelRouting}
+        supportsInitialModelRouting={supportsInitialModelRouting}
+        onSelectModelRouting={onSelectModelRouting}
       />
     </>
   );
@@ -1937,13 +2062,13 @@ const styles = StyleSheet.create((theme) => ({
     overflow: "hidden",
   },
   modeBadge: {
-    height: 28,
+    height: { xs: 28, md: 24 },
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "transparent",
     gap: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius["2xl"],
+    paddingHorizontal: theme.spacing[1],
+    borderRadius: theme.borderRadius.composerControl,
   },
   modelControl: {
     minWidth: 0,
@@ -1955,14 +2080,14 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   modeIconBadge: {
-    width: 28,
-    height: 28,
+    width: { xs: 28, md: 24 },
+    height: { xs: 28, md: 24 },
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 0,
     flexShrink: 0,
     backgroundColor: "transparent",
-    borderRadius: theme.borderRadius.full,
+    borderRadius: theme.borderRadius.composerControl,
   },
   modeBadgeHovered: {
     backgroundColor: theme.colors.surface2,
@@ -1977,7 +2102,7 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     flexShrink: 1,
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.base,
+    fontSize: { xs: theme.fontSize.base, md: theme.fontSize.sm },
     fontWeight: theme.fontWeight.normal,
   },
   tooltipText: {

@@ -75,11 +75,9 @@ describe("syncSkills", () => {
       "utf-8",
     );
     expect(claudeContent).toBe("new paseo content");
-    const codexContent = await fs.readFile(
-      path.join(sandbox.codexDir, "paseo", "SKILL.md"),
-      "utf-8",
-    );
-    expect(codexContent).toBe("new paseo content");
+    await expect(fs.stat(path.join(sandbox.codexDir, "paseo", "SKILL.md"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("installs new bundled skills, including references/, when not present on disk", async () => {
@@ -105,12 +103,9 @@ describe("syncSkills", () => {
         "utf-8",
       ),
     ).toBe("roles content");
-    expect(
-      await fs.readFile(
-        path.join(sandbox.codexDir, "paseo-committee", "references", "roles.md"),
-        "utf-8",
-      ),
-    ).toBe("roles content");
+    await expect(fs.stat(path.join(sandbox.codexDir, "paseo-committee"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
 
     const claudeSkillDir = path.join(sandbox.claudeDir, "paseo-committee");
     expect((await fs.lstat(claudeSkillDir)).isDirectory()).toBe(true);

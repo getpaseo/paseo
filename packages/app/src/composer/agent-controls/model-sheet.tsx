@@ -2,14 +2,16 @@ import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Keyboard, ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { Bot } from "lucide-react-native";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { AgentProfilePicker, AgentProfileSeed } from "@/agent-profiles";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
-import { getProviderIcon } from "@/components/provider-icons";
+import { useProviderIcon } from "@/components/provider-icons";
 import { ModelBrowser, useModelBrowser } from "@/components/model-browser";
-import { resolveModelBrowserScrolling } from "@/components/model-browser-view";
+import {
+  resolveModelBrowserScrolling,
+  resolveModelSelectorLabels,
+} from "@/components/model-browser-view";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
 import { ComposerToolbarGlyph } from "@/composer/agent-controls/glyph";
 import { resolveModelSheetOpening } from "@/composer/agent-controls/model-sheet-flow";
@@ -45,6 +47,7 @@ interface CompactModelSheetProps {
   glyphSize: number;
   canSwitchProvider: boolean;
   children: ReactNode;
+  autoRouting?: { selected: boolean; onSelect: () => void };
 }
 
 function shortModelLabel(label: string): string {
@@ -97,6 +100,7 @@ export function CompactModelSheet({
   glyphSize,
   canSwitchProvider,
   children,
+  autoRouting,
 }: CompactModelSheetProps) {
   const { t } = useTranslation();
   const usesBottomSheet = useIsCompactFormFactor();
@@ -130,9 +134,14 @@ export function CompactModelSheet({
     profiles,
     serverId,
   });
-  const ProviderIcon =
-    selectedProvider.trim().length > 0 ? getProviderIcon(selectedProvider, serverId) : null;
-  const ModelIcon = ProviderIcon ?? Bot;
+  const { selectedModelLabel, triggerLabel } = resolveModelSelectorLabels({
+    autoRouting,
+    selectedModelLabel: rootBrowser.selectedModelLabel,
+    triggerLabel: shortModelLabel(rootBrowser.triggerLabel),
+    autoLabel: t("modelSelector.autoJev"),
+  });
+  const ModelIcon = useProviderIcon(selectedProvider, serverId);
+  const hasSelectedProvider = selectedProvider.trim().length > 0;
   const rootHeader = useMemo(
     () => ({
       ...rootBrowser.header,
@@ -248,11 +257,11 @@ export function CompactModelSheet({
             icon={ModelIcon}
             surface="sheet"
             label={t("modelSelector.model")}
-            value={rootBrowser.selectedModelLabel}
+            value={selectedModelLabel}
             disabled={disabled}
             onPress={openModelBrowser}
             accessibilityLabel={t("modelSelector.selectedModel", {
-              model: rootBrowser.selectedModelLabel,
+              model: selectedModelLabel,
             })}
             testID="agent-controls-model"
           />
@@ -260,7 +269,33 @@ export function CompactModelSheet({
         </View>
       </View>
     ),
-    [ModelIcon, children, disabled, openModelBrowser, rootBrowser.selectedModelLabel, t],
+    [ModelIcon, children, disabled, openModelBrowser, selectedModelLabel, t],
+  );
+  const rootAutoRouting = useMemo(
+    () =>
+      autoRouting
+        ? {
+            selected: autoRouting.selected,
+            onSelect: () => {
+              autoRouting.onSelect();
+              close();
+            },
+          }
+        : undefined,
+    [autoRouting, close],
+  );
+  const browserAutoRouting = useMemo(
+    () =>
+      autoRouting
+        ? {
+            selected: autoRouting.selected,
+            onSelect: () => {
+              autoRouting.onSelect();
+              closeModelBrowser();
+            },
+          }
+        : undefined,
+    [autoRouting, closeModelBrowser],
   );
 
   return (
@@ -272,19 +307,19 @@ export function CompactModelSheet({
         style={triggerStyle}
         accessibilityRole="button"
         accessibilityLabel={t("modelSelector.selectedModel", {
-          model: rootBrowser.selectedModelLabel,
+          model: selectedModelLabel,
         })}
         testID="combined-model-selector"
         chevron={null}
       >
-        {ProviderIcon ? (
+        {hasSelectedProvider ? (
           <ComposerToolbarGlyph size={glyphSize}>
-            <ProviderIcon size={glyphSize} color={styles.providerIcon.color} />
+            <ModelIcon size={glyphSize} color={styles.providerIcon.color} />
           </ComposerToolbarGlyph>
         ) : null}
         <View style={styles.triggerLabels}>
           <Text style={styles.triggerText} numberOfLines={1}>
-            {shortModelLabel(rootBrowser.triggerLabel)}
+            {triggerLabel}
           </Text>
           {thinkingLabel ? (
             <Text style={styles.triggerThinking} numberOfLines={1}>
@@ -323,6 +358,7 @@ export function CompactModelSheet({
             scrolling={modelBrowserScrolling}
             searchAllOnFocus={usesBottomSheet}
             rootBrowseContent={usesBottomSheet ? mobileRootContent : undefined}
+            autoRouting={rootAutoRouting}
           />
         </View>
         {!usesBottomSheet ? (
@@ -368,6 +404,7 @@ export function CompactModelSheet({
               scrolling={modelBrowserScrolling}
               searchAllOnFocus
               showProfilesSection={false}
+              autoRouting={browserAutoRouting}
             />
           </View>
         </AdaptiveModalSheet>
@@ -378,14 +415,14 @@ export function CompactModelSheet({
 
 const styles = StyleSheet.create((theme) => ({
   trigger: {
-    height: 28,
+    height: { xs: 28, md: 24 },
     minWidth: 0,
     flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius["2xl"],
+    paddingHorizontal: theme.spacing[1],
+    borderRadius: theme.borderRadius.composerControl,
     backgroundColor: "transparent",
   },
   triggerHovered: {
@@ -401,7 +438,7 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     flexShrink: 1,
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.base,
+    fontSize: { xs: theme.fontSize.base, md: theme.fontSize.sm },
     fontWeight: theme.fontWeight.normal,
   },
   triggerLabels: {
@@ -414,7 +451,7 @@ const styles = StyleSheet.create((theme) => ({
   triggerThinking: {
     flexShrink: 0,
     color: theme.colors.foregroundExtraMuted,
-    fontSize: theme.fontSize.base,
+    fontSize: { xs: theme.fontSize.base, md: theme.fontSize.sm },
     fontWeight: theme.fontWeight.normal,
   },
   providerIcon: {

@@ -482,6 +482,50 @@ export async function expectModelRowSelected(
   ).toHaveAttribute("aria-selected", "true", { timeout: 30_000 });
 }
 
+function modelRow(page: Page, input: { provider: string; modelId: string }): Locator {
+  return pickerViewport(page).getByTestId(`model-row-${input.provider}-${input.modelId}`);
+}
+
+/**
+ * A model row's profile action is its own button. On web, a button inside the
+ * row's button is invalid HTML that React reports on every render.
+ */
+export async function expectModelRowProfileActionBesideRow(
+  page: Page,
+  input: { provider: string; modelId: string },
+): Promise<void> {
+  const row = modelRow(page, input);
+  await expect(row).toBeVisible({ timeout: 30_000 });
+  await expect(pickerViewport(page).locator("button button")).toHaveCount(0);
+  await expect(row.getByRole("button")).toHaveCount(0);
+}
+
+/** The hover-revealed plus on an unprofiled model row opens a seeded profile form. */
+export async function expectCreateProfileFromModelRow(
+  page: Page,
+  input: { provider: string; modelId: string; modelLabel: string },
+): Promise<void> {
+  await modelRow(page, input).hover();
+  await pickerViewport(page)
+    .getByTestId(`model-create-profile-${input.provider}-${input.modelId}`)
+    .click();
+  const modal = editModal(page);
+  await expect(modal).toBeVisible({ timeout: 30_000 });
+  await expect(modal.getByRole("textbox", { name: "Name", exact: true })).toHaveValue(
+    input.modelLabel,
+  );
+  await expect(modal.getByRole("button", { name: `Model (${input.modelLabel})` })).toBeVisible();
+  await modal.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(modal).toHaveCount(0, { timeout: 30_000 });
+}
+
+export async function selectModelRow(
+  page: Page,
+  input: { provider: string; modelId: string },
+): Promise<void> {
+  await modelRow(page, input).click();
+}
+
 // ─── Cross-provider model search ───────────────────────────────────────────
 
 export async function searchAllModels(page: Page, query: string): Promise<void> {

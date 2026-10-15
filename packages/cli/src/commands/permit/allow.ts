@@ -16,7 +16,7 @@ export interface PermissionResponseItem {
 export const permitResponseSchema: OutputSchema<PermissionResponseItem> = {
   idField: "requestId",
   columns: [
-    { header: "REQUEST ID", field: "requestId", width: 12 },
+    { header: "REQUEST ID", field: (item) => item.requestId.slice(0, 8), width: 12 },
     { header: "AGENT", field: "agentShortId", width: 10 },
     { header: "TOOL", field: "name", width: 20 },
     {
@@ -31,6 +31,21 @@ export const permitResponseSchema: OutputSchema<PermissionResponseItem> = {
     },
   ],
 };
+
+/** Transform a permission the agent answered to a response item */
+export function toPermissionResponseItem(
+  agentId: string,
+  permission: AgentPermissionRequest,
+  result: "allowed" | "denied",
+): PermissionResponseItem {
+  return {
+    requestId: permission.id,
+    agentId,
+    agentShortId: agentId.slice(0, 7),
+    name: permission.name,
+    result,
+  };
+}
 
 export type PermitAllowResult = ListResult<PermissionResponseItem>;
 
@@ -118,13 +133,7 @@ export async function runAllowCommand(
           behavior: "allow",
           ...(updatedInput ? { updatedInput } : {}),
         });
-        return {
-          requestId: permission.id.slice(0, 8),
-          agentId: resolvedAgentId,
-          agentShortId: resolvedAgentId.slice(0, 7),
-          name: permission.name,
-          result: "allowed",
-        };
+        return toPermissionResponseItem(resolvedAgentId, permission, "allowed");
       }),
     );
 

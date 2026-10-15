@@ -5,7 +5,6 @@ import {
   indentOnInput,
   syntaxHighlighting,
 } from "@codemirror/language";
-import { searchKeymap } from "@codemirror/search";
 import {
   EditorView,
   drawSelection,
@@ -42,7 +41,6 @@ export function editorBaseExtensions(onSave: () => void) {
       indentWithTab,
       ...defaultKeymap,
       ...historyKeymap,
-      ...searchKeymap,
     ]),
   ];
 }
@@ -62,6 +60,13 @@ export function editorTheme(theme: EditorVisualTheme) {
           overflow: "auto",
           fontFamily: theme.monoFont,
           lineHeight: "1.45",
+        },
+        ".cm-panels": { backgroundColor: theme.background, color: theme.foreground },
+        ".cm-panels-top": { borderBottom: "none" },
+        ".cm-searchMatch": { backgroundColor: theme.selection },
+        ".cm-searchMatch-selected": {
+          backgroundColor: theme.selection,
+          outline: `1px solid ${theme.cursor}`,
         },
         ".cm-content": { caretColor: theme.foreground, padding: "16px 0" },
         ".cm-cursor, .cm-dropCursor": { borderLeftColor: theme.cursor },

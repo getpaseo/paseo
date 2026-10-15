@@ -1,12 +1,20 @@
+import { lightTheme } from "../src/styles/theme";
+
 const testTheme = {
+  ...lightTheme,
   colorScheme: "light",
   colors: {
+    ...lightTheme.colors,
     foreground: "#111111",
     foregroundMuted: "#666666",
     statusSuccess: "#15803d",
     statusDanger: "#b91c1c",
     statusWarning: "#d97706",
     statusMerged: "#7c3aed",
+    // Same rule as the real theme: the status color at 12%.
+    statusSuccessTint: "#15803d1f",
+    statusDangerTint: "#b91c1c1f",
+    statusWarningTint: "#d977061f",
     // The light band's values, so a test can name the colour it expects.
     statusDotSuccess: "#299f51",
     statusDotDanger: "#f12e2f",
@@ -22,6 +30,7 @@ const testTheme = {
     border: "#e4e4e7",
     borderAccent: "#a1a1aa",
     palette: {
+      ...lightTheme.colors.palette,
       amber: { 500: "#f59e0b" },
       blue: { 300: "#93c5fd" },
       green: { 500: "#22c55e" },

@@ -586,6 +586,8 @@ export function BrowserPane({
   cwd,
   isInteractive,
   onFocusPane,
+  focusAddressOnOpen,
+  onAddressFocusHandled,
 }: {
   browserId: string;
   serverId: string;
@@ -593,6 +595,8 @@ export function BrowserPane({
   cwd: string | null;
   isInteractive?: boolean;
   onFocusPane?: () => void;
+  focusAddressOnOpen?: boolean;
+  onAddressFocusHandled?: () => void;
 }) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -631,7 +635,9 @@ export function BrowserPane({
   // Screenshot is captured at selection time (overlay already torn down, no
   // scroll drift) and reused when the annotation card is submitted.
   const pendingScreenshotRef = useRef<AttachmentMetadata | undefined>(undefined);
-  const [draftUrl, setDraftUrl] = useState(browser?.url ?? "https://example.com");
+  const [draftUrl, setDraftUrl] = useState(
+    browser?.url === "about:blank" ? "" : (browser?.url ?? "https://example.com"),
+  );
   const workspaceAttachmentScopeKey = useMemo(
     () => buildBrowserAttachmentScopeKey({ cwd, serverId, workspaceId }),
     [cwd, serverId, workspaceId],
@@ -675,7 +681,7 @@ export function BrowserPane({
   browserErrorLabelsRef.current = browserErrorLabels;
 
   useEffect(() => {
-    const nextUrl = browser?.url ?? "https://example.com";
+    const nextUrl = browser?.url === "about:blank" ? "" : (browser?.url ?? "https://example.com");
     urlInputRef.current?.replaceText(nextUrl);
     setDraftUrl((current) => (current === nextUrl ? current : nextUrl));
   }, [browser?.url]);
@@ -697,6 +703,14 @@ export function BrowserPane({
     urlInputRef.current?.focus();
     selectUrlBar();
   }, [selectUrlBar]);
+
+  useEffect(() => {
+    if (!focusAddressOnOpen || !isPresented || !isInteractive || !urlInputRef.current) return;
+    focusUrlBar();
+    if (document.activeElement === getTextInputNativeElement(urlInputRef.current)) {
+      onAddressFocusHandled?.();
+    }
+  }, [focusAddressOnOpen, isPresented, isInteractive, focusUrlBar, onAddressFocusHandled]);
 
   const syncNavigationState = useCallback((input?: { syncUrl?: boolean }) => {
     const webview = webviewRef.current;
@@ -836,6 +850,9 @@ export function BrowserPane({
         lastError: message,
       });
     };
+    const handleRenderProcessGone = () => {
+      selectorControllerRef.current?.stopForWebview(webview);
+    };
     const handleDomReady = () => {
       syncNavigationState();
       // The previous page's overlay is gone after a load; re-apply markers for
@@ -864,6 +881,7 @@ export function BrowserPane({
     webview.addEventListener("page-title-updated", handleTitleUpdated);
     webview.addEventListener("page-favicon-updated", handleFaviconUpdated);
     webview.addEventListener("did-fail-load", handleLoadFailed);
+    webview.addEventListener("render-process-gone", handleRenderProcessGone);
     webview.addEventListener("dom-ready", handleDomReady);
     webview.addEventListener("focus", handleWebviewFocus);
     webview.addEventListener("mousedown", handleWebviewFocus);
@@ -890,6 +908,7 @@ export function BrowserPane({
       webview.removeEventListener("page-title-updated", handleTitleUpdated);
       webview.removeEventListener("page-favicon-updated", handleFaviconUpdated);
       webview.removeEventListener("did-fail-load", handleLoadFailed);
+      webview.removeEventListener("render-process-gone", handleRenderProcessGone);
       webview.removeEventListener("dom-ready", handleDomReady);
       webview.removeEventListener("focus", handleWebviewFocus);
       webview.removeEventListener("mousedown", handleWebviewFocus);
@@ -1051,7 +1070,7 @@ export function BrowserPane({
   }, [focusUrlBar, isInteractive]);
 
   const handleNavigateDraftUrl = useCallback(() => {
-    navigate(draftUrl);
+    if (draftUrl.trim()) navigate(draftUrl);
   }, [draftUrl, navigate]);
 
   const addElementAttachment = useCallback(
@@ -1466,7 +1485,7 @@ export function BrowserPane({
         </View>
         <View style={styles.urlBarWrap}>
           <TextInput
-            accessibilityLabel={t("workspace.browser.controls.browserUrl")}
+            accessibilityLabel={t("workspace.browser.address")}
             autoCapitalize="none"
             autoCorrect={false}
             onChangeText={setDraftUrl}
@@ -1533,6 +1552,9 @@ export function BrowserPane({
           <Text numberOfLines={1} style={errorTextStyle}>
             {browser.lastError}
           </Text>
+          <Button variant="ghost" size="sm" onPress={handleRefresh}>
+            {t("common.actions.retry")}
+          </Button>
         </View>
       ) : null}
       <View
@@ -1746,6 +1768,8 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: 0,
   },
   errorRow: {
+    flexDirection: "row",
+    alignItems: "center",
     paddingHorizontal: theme.spacing[2],
     paddingVertical: theme.spacing[1],
     borderBottomWidth: 1,
@@ -1753,6 +1777,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface0,
   },
   metaError: {
+    flex: 1,
     fontSize: theme.fontSize.sm,
   },
   webviewWrap: {

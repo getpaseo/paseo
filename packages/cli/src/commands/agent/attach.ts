@@ -6,6 +6,7 @@ export function addAttachOptions(cmd: Command): Command {
     .argument("<id>", "Agent ID (or prefix)");
 }
 import { connectToDaemon } from "../../utils/client.js";
+import { waitForStop } from "../../utils/wait-for-stop.js";
 import {
   fetchProjectedTimelineItems,
   LIVE_HISTORY_FETCH_TIMEOUT_MS,
@@ -145,9 +146,8 @@ export async function runAttachCommand(
     const unsubscribe = client.subscribeAgentTimeline(resolvedId, (message) => {
       if (message.type === "agent.timeline.replacement") {
         console.log("\n[Timeline replaced; earlier output is no longer current]");
-      } else if (message.type === "agent.timeline.snapshot") {
-        console.log("\n[Reconnected; current recent history follows]");
-        for (const entry of message.payload.page.entries) printTimelineItem(entry.item);
+      } else if (message.type === "agent.timeline.subscription_restored") {
+        console.log("\n[Reconnected; live output resumed. Events may have been missed.]");
       } else if (message.type === "agent.timeline.error") {
         console.error(`Timeline observation stopped: ${message.payload.error}`);
       } else {
@@ -158,31 +158,10 @@ export async function runAttachCommand(
     await unsubscribe.ready;
     console.log(`Attached to agent ${resolvedId.substring(0, 7)}.`);
 
-    // Handle Ctrl+C to detach gracefully
-    let detached = false;
-    const detach = () => {
-      if (detached) return;
-      detached = true;
-
-      console.log("\n\nDetaching from agent...");
-      unsubscribe();
-      client
-        .close()
-        .then(() => {
-          process.exit(0);
-        })
-        .catch(() => {
-          process.exit(1);
-        });
-    };
-
-    process.on("SIGINT", detach);
-    process.on("SIGTERM", detach);
-
-    // Keep the process alive
-    await new Promise(() => {
-      // Wait indefinitely until interrupted
-    });
+    await waitForStop();
+    console.log("\n\nDetaching from agent...");
+    unsubscribe();
+    await client.close();
   } catch (err) {
     await client.close().catch(() => {});
     const message = err instanceof Error ? err.message : String(err);

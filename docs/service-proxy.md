@@ -6,6 +6,8 @@ Paseo proxies HTTP traffic to services running inside your workspaces. Localhost
 
 When a `paseo.json` script of `"type": "service"` starts, Paseo assigns it a local port and registers a route in the service proxy. Incoming requests whose `Host` header matches the script's generated hostname are forwarded to that port.
 
+When a service does not declare `port`, Paseo watches its terminal output for local `http://localhost:<port>`, `http://127.0.0.1:<port>`, or `http://[::1]:<port>` URLs. It checks announced ports on loopback and switches the proxy route to the first one that accepts a connection. This handles dev servers that ignore the assigned `PORT`; declare `port` when the service's port is known. Detection is limited to HTTP URLs printed by the process and does not inspect processes or discover HTTPS endpoints.
+
 The generated hostname is built from the script name, branch, and project:
 
 ```

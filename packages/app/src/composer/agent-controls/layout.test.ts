@@ -9,7 +9,7 @@ import {
 describe("composer control layout", () => {
   it("removes labels in priority order as the toolbar narrows", () => {
     expect(resolveComposerControlPresentation("full")).toEqual({
-      showCarets: true,
+      showCarets: false,
       showThinkingLabel: true,
       showModeLabel: true,
       aggregateFeatures: false,
@@ -60,21 +60,21 @@ describe("composer control layout", () => {
     ).toBe("condensed");
     expect(
       resolveComposerControlDensity({
-        availableWidth: 280,
+        availableWidth: 270,
         currentDensity: "condensed",
         controls,
       }),
     ).toBe("tight");
     expect(
       resolveComposerControlDensity({
-        availableWidth: 300,
+        availableWidth: 290,
         currentDensity: "tight",
         controls,
       }),
     ).toBe("tight");
     expect(
       resolveComposerControlDensity({
-        availableWidth: 312,
+        availableWidth: 300,
         currentDensity: "tight",
         controls,
       }),
@@ -156,10 +156,10 @@ describe("composer control layout", () => {
 
   it("gives every toolbar control one shell and one platform glyph envelope", () => {
     expect(COMPOSER_TOOLBAR_GEOMETRY).toEqual({
-      controlSize: 28,
+      controlSize: 24,
       controlGap: 4,
       iconLabelGap: 4,
-      labelPadding: 8,
+      labelPadding: 4,
       caretSize: 14,
     });
     expect(resolveComposerToolbarGlyphSize("web")).toBe(16);

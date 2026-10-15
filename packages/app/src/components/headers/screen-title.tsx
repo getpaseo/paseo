@@ -30,7 +30,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     fontWeight: {
       xs: "400",
-      md: "300",
+      md: theme.fontWeight.medium,
     },
     color: theme.colors.foreground,
   },

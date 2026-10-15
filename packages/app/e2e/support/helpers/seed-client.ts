@@ -1,3 +1,4 @@
+import type { WorkspaceTodos, WorkspaceTodoMutation } from "@getpaseo/protocol/workspace-todos";
 import path from "node:path";
 import { readFileSync } from "node:fs";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
@@ -28,6 +29,12 @@ interface SeedProjectDescriptor {
  * prefer those wrappers over reaching for this client directly.
  */
 export interface SeedDaemonClient {
+  getWorkspaceTodos(workspaceId: string): Promise<{ list: WorkspaceTodos }>;
+  mutateWorkspaceTodos(
+    workspaceId: string,
+    revision: number,
+    mutation: WorkspaceTodoMutation,
+  ): Promise<WorkspaceTodos>;
   connect(): Promise<void>;
   close(): Promise<void>;
   addProject(cwd: string): Promise<{
@@ -111,6 +118,7 @@ export interface SeedDaemonClient {
     thinkingOptionId?: string;
     featureValues?: Record<string, unknown>;
     initialPrompt?: string;
+    launchProfileId?: string;
     labels?: Record<string, string>;
   }): Promise<{ id: string; status: string }>;
   fetchAgents(options?: { scope?: "active" }): Promise<{
@@ -143,9 +151,9 @@ export interface SeedDaemonClient {
   setAgentMode(agentId: string, modeId: string): Promise<unknown>;
   waitForAgentUpsert(
     agentId: string,
-    predicate: (snapshot: { status: string }) => boolean,
+    predicate: (snapshot: { status: string; requiresAttention?: boolean }) => boolean,
     timeout?: number,
-  ): Promise<{ status: string }>;
+  ): Promise<{ status: string; requiresAttention?: boolean }>;
   sendAgentMessage(agentId: string, text: string): Promise<void>;
   waitForFinish(
     agentId: string,

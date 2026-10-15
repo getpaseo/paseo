@@ -51,3 +51,32 @@ describe("feature-preferences", () => {
     });
   });
 });
+
+it("defaults only supported auto accept to true and preserves explicit false and Plan", () => {
+  const features = [
+    { id: "auto_accept", label: "Auto Accept", type: "toggle" as const, value: false },
+    { id: "plan_mode", label: "Plan", type: "toggle" as const, value: false },
+  ];
+  expect(
+    resolveFeatureValues({
+      features,
+      persistedFeatureValues: {},
+      localFeatureValues: { plan_mode: true },
+    }),
+  ).toEqual({ auto_accept: true, plan_mode: true });
+  expect(
+    resolveFeatureValues({
+      features,
+      persistedFeatureValues: { auto_accept: false },
+      localFeatureValues: {},
+    }),
+  ).toEqual({ auto_accept: false });
+  expect(
+    resolveFeatureValues({
+      features,
+      persistedFeatureValues: {},
+      localFeatureValues: {},
+      hasPermissionModes: true,
+    }),
+  ).toEqual({});
+});

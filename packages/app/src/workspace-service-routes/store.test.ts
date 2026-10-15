@@ -45,4 +45,36 @@ describe("workspace service route preferences", () => {
     expect(store.getState().byServerId).toEqual({});
     expect(storage.values.has("workspace-service-route-preferences")).toBe(false);
   });
+
+  it("persists the preferred preview script per workspace", async () => {
+    const storage = createMemoryStorage();
+    const first = createWorkspaceServiceRoutePreferencesStore(storage);
+    await first.persist.rehydrate();
+
+    first.getState().setPreferredScript("server-a:ws-1", "app");
+    first.getState().setPreferredScript("server-a:ws-2", "daemon");
+    first.getState().setPreferredScript("server-b:ws-1", "desktop");
+
+    const restored = createWorkspaceServiceRoutePreferencesStore(storage);
+    await restored.persist.rehydrate();
+    expect(restored.getState().preferredScriptByWorkspace).toEqual({
+      "server-a:ws-1": "app",
+      "server-a:ws-2": "daemon",
+      "server-b:ws-1": "desktop",
+    });
+  });
+
+  it("accepts storage written before preview preferences existed", async () => {
+    const storage = createMemoryStorage({
+      "workspace-service-route-preferences": JSON.stringify({
+        state: { byServerId: { desktop: "direct" } },
+        version: 1,
+      }),
+    });
+    const store = createWorkspaceServiceRoutePreferencesStore(storage);
+    await store.persist.rehydrate();
+
+    expect(store.getState().byServerId).toEqual({ desktop: "direct" });
+    expect(store.getState().preferredScriptByWorkspace).toEqual({});
+  });
 });

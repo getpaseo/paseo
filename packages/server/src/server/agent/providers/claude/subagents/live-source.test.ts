@@ -511,6 +511,33 @@ describe("ClaudeTaskProtocolSource", () => {
     expect(source.cancelRunningForegroundTasks()).toEqual([]);
   });
 
+  it("does not cancel a subagent announced as backgrounded at spawn", () => {
+    // Claude sets is_backgrounded on task_started for a child spawned in the background, and
+    // sends no task_updated patch for it.
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted({ is_backgrounded: true }));
+
+    expect(source.cancelRunningForegroundTasks()).toEqual([]);
+  });
+
+  it("does not cancel a resumed subagent, which Claude always runs in the background", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted({ tool_use_id: "toolu_original", is_backgrounded: false }));
+    source.observe(taskUpdated("completed"));
+    source.observe(taskStarted({ tool_use_id: "toolu_resumed", is_backgrounded: true }));
+
+    expect(source.cancelRunningForegroundTasks()).toEqual([]);
+  });
+
+  it("still cancels a subagent announced in the foreground", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted({ is_backgrounded: false }));
+
+    expect(source.cancelRunningForegroundTasks()).toEqual([
+      { kind: "status", id: "toolu_01DgLoPMW9", status: "canceled" },
+    ]);
+  });
+
   it("still routes a backgrounded subagent that settles after the interrupt", () => {
     // The headline case: interrupt, continue, and the child that was told to outlive the turn
     // reports completion later. Wiping the routing table on cancel drops this on the floor and

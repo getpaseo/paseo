@@ -7,6 +7,133 @@ const paseo = createPaseoApi(
   new DaemonClient({ url: "ws://127.0.0.1:1/ws", clientId: "lifecycle-unit" }),
 );
 
+test("agent-create hooks receive launch provenance and can change config and env", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  const input = {
+    config: { provider: "codex", cwd: "/project" },
+    workspaceId: "workspace",
+    launchProfileId: "planner",
+    labels: { "paseo.workflow.role": "executor" },
+  };
+  hooks.before("agent.create", ({ request }) => {
+    expect(request).toEqual(input);
+    return { ...request, config: { ...request.config, model: "gpt-5.4" }, env: { PLAN: "1" } };
+  });
+  expect(await hooks.invoke("create", "before", "agent.create", input, paseo)).toEqual({
+    ...input,
+    config: { ...input.config, model: "gpt-5.4" },
+    env: { PLAN: "1" },
+  });
+});
+
+test.each([undefined, {}, { "paseo.workflow.role": "planner" }])(
+  "agent-create hooks cannot remove or rewrite launch labels (%j)",
+  async (labels) => {
+    const hooks = new PluginHookHandlers(() => {});
+    hooks.before("agent.create", ({ request }) => ({ ...request, labels }));
+    await expect(
+      hooks.invoke(
+        "create",
+        "before",
+        "agent.create",
+        {
+          config: { provider: "codex", cwd: "/project" },
+          labels: { "paseo.workflow.role": "executor" },
+        },
+        paseo,
+      ),
+    ).rejects.toThrow("cannot change labels");
+  },
+);
+
+test("agent-create hooks cannot inject executor provenance", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  hooks.before("agent.create", ({ request }) => ({
+    ...request,
+    labels: { "paseo.workflow.role": "executor" },
+  }));
+  await expect(
+    hooks.invoke(
+      "create",
+      "before",
+      "agent.create",
+      {
+        config: { provider: "codex", cwd: "/project" },
+      },
+      paseo,
+    ),
+  ).rejects.toThrow("cannot change labels");
+});
+
+test("agent-create hooks can only acknowledge unchanged model routing", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  const input = {
+    config: { provider: "codex", cwd: "/project" },
+    modelRouting: { strategy: "jev" as const, prompt: "Route this" },
+  };
+  hooks.before("agent.create", ({ request }) => ({
+    ...request,
+    modelRouting: { ...request.modelRouting!, resolved: true },
+  }));
+  expect(await hooks.invoke("create", "before", "agent.create", input, paseo)).toMatchObject({
+    modelRouting: { strategy: "jev", prompt: "Route this", resolved: true },
+  });
+
+  const mutatingHooks = new PluginHookHandlers(() => {});
+  mutatingHooks.before("agent.create", ({ request }) => ({
+    ...request,
+    modelRouting: { ...request.modelRouting!, prompt: "Changed" },
+  }));
+  await expect(
+    mutatingHooks.invoke("create", "before", "agent.create", input, paseo),
+  ).rejects.toThrow("cannot change model routing context");
+});
+
+test.each(["read_write", undefined])(
+  "creation hooks cannot undo a previous read-only tightening (%s)",
+  async (policy) => {
+    const hooks = new PluginHookHandlers(() => {});
+    hooks.before("agent.create", ({ request }) => ({
+      ...request,
+      config: { ...request.config, writePolicy: "read_only" },
+    }));
+    hooks.before("agent.create", ({ request }) => ({
+      ...request,
+      config: { ...request.config, writePolicy: policy },
+    }));
+    await expect(
+      hooks.invoke(
+        "create",
+        "before",
+        "agent.create",
+        { config: { provider: "codex", cwd: "/project" } },
+        paseo,
+      ),
+    ).rejects.toThrow("read_only");
+  },
+);
+
+test.each(["workspaceId", "launchProfileId"] as const)(
+  "agent-create hooks cannot rewrite %s",
+  async (field) => {
+    const hooks = new PluginHookHandlers(() => {});
+    hooks.before("agent.create", ({ request }) => ({ ...request, [field]: "rewritten" }));
+    await expect(
+      hooks.invoke(
+        "create",
+        "before",
+        "agent.create",
+        {
+          config: { provider: "codex", cwd: "/project" },
+          workspaceId: "workspace",
+          launchProfileId: "planner",
+        },
+        paseo,
+      ),
+    ).rejects.toThrow("agent.create hooks cannot change workspaceId or launchProfileId");
+  },
+);
+
 test("removing an old registration twice preserves a newer registration for the same hook", async () => {
   const hooks = new PluginHookHandlers(() => {});
   const remove = hooks.before("workspace.create", ({ request }) => {

@@ -26,6 +26,7 @@ import type { WorkspaceAutoName } from "./workspace-auto-name.js";
 
 interface BrowserToolsDaemonHarness {
   broker: BrowserToolsBroker;
+  sessionIds(): string[];
   connectBrowserHostClient(
     options?: ConnectBrowserHostClientOptions,
   ): Promise<BrowserHostClientHandle>;
@@ -136,38 +137,66 @@ describe("WebSocketServer browser tools wiring", () => {
     });
   });
 
-  it("keeps browser automation registered when a browser host client resumes", async () => {
-    const harness = await startBrowserToolsDaemonHarness();
-    const clientId = "browser-host-client-1";
-    const originalBrowserHost = await harness.connectBrowserHostClient({
-      clientId,
-      capabilities: browserHostCapabilities(),
-    });
-    await originalBrowserHost.disconnect();
+  it.each([false, true])(
+    "recovers direct tab commands after reconnect (Session expired: %s)",
+    async (expireSession) => {
+      const harness = await startBrowserToolsDaemonHarness();
+      const clientId = "browser-host-client-1";
+      const originalBrowserHost = await harness.connectBrowserHostClient({
+        clientId,
+        capabilities: browserHostCapabilities(),
+      });
+      const opened = harness.broker.execute({
+        command: { command: "new_tab", args: {} },
+        workspaceId: "workspace-1",
+      });
+      const openRequest = await originalBrowserHost.nextBrowserRequest();
+      originalBrowserHost.respondToBrowserRequest({
+        type: "browser.automation.execute.response",
+        payload: {
+          requestId: openRequest.requestId,
+          ok: true,
+          result: {
+            command: "new_tab",
+            browserId: BROWSER_ID,
+            workspaceId: "workspace-1",
+            url: "https://example.com",
+          },
+        },
+      });
+      await expect(opened).resolves.toMatchObject({ ok: true });
+      const [originalSessionId] = harness.sessionIds();
+      await originalBrowserHost.disconnect();
+      if (expireSession) await waitFor(() => harness.sessionIds().length === 0, 95_000);
 
-    const resumedBrowserHost = await harness.connectBrowserHostClient({
-      clientId,
-      capabilities: browserHostCapabilities(),
-    });
+      const resumedBrowserHost = await harness.connectBrowserHostClient({
+        clientId,
+        capabilities: browserHostCapabilities(),
+      });
 
-    const resultPromise = harness.broker.execute({
-      command: { command: "click", args: { browserId: BROWSER_ID, ref: "@e1" } },
-    });
-    const request = await resumedBrowserHost.nextBrowserRequest();
-    resumedBrowserHost.respondToBrowserRequest({
-      type: "browser.automation.execute.response",
-      payload: {
-        requestId: request.requestId,
+      if (expireSession) expect(harness.sessionIds()).not.toContain(originalSessionId);
+      else expect(harness.sessionIds()).toEqual([originalSessionId]);
+
+      const resultPromise = harness.broker.execute({
+        command: { command: "click", args: { browserId: BROWSER_ID, ref: "@e1" } },
+      });
+      const request = await resumedBrowserHost.nextBrowserRequest();
+      resumedBrowserHost.respondToBrowserRequest({
+        type: "browser.automation.execute.response",
+        payload: {
+          requestId: request.requestId,
+          ok: true,
+          result: { command: "click", browserId: BROWSER_ID, ref: "@e1" },
+        },
+      });
+
+      await expect(resultPromise).resolves.toMatchObject({
         ok: true,
         result: { command: "click", browserId: BROWSER_ID, ref: "@e1" },
-      },
-    });
-
-    await expect(resultPromise).resolves.toMatchObject({
-      ok: true,
-      result: { command: "click", browserId: BROWSER_ID, ref: "@e1" },
-    });
-  });
+      });
+    },
+    100_000,
+  );
 
   it("clears pending browser commands when a browser host changes capabilities", async () => {
     const harness = await startBrowserToolsDaemonHarness();
@@ -209,6 +238,7 @@ async function startBrowserToolsDaemonHarness(): Promise<BrowserToolsDaemonHarne
 
   const harness: BrowserToolsDaemonHarness = {
     broker,
+    sessionIds: () => wsServer.listSessions().map((session) => session.getSessionId()),
     async connectBrowserHostClient(options = {}) {
       const clientId = options.clientId;
       const client = new DaemonClient({
@@ -448,10 +478,10 @@ function closeHttpServer(server: HTTPServer): Promise<void> {
   });
 }
 
-async function waitFor(predicate: () => boolean): Promise<void> {
+async function waitFor(predicate: () => boolean, timeoutMs = 500): Promise<void> {
   const startedAt = Date.now();
   while (!predicate()) {
-    if (Date.now() - startedAt > 500) {
+    if (Date.now() - startedAt > timeoutMs) {
       throw new Error("Timed out waiting for browser tools WebSocket state");
     }
     await new Promise((resolve) => setTimeout(resolve, 10));

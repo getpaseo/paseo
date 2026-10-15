@@ -32,12 +32,14 @@ export function projectIconRadius(size: number): number {
 
 export function ProjectIconView({
   iconDataUri,
+  emoji,
   initial,
   projectViewKey,
   size,
   textStyle,
 }: {
   iconDataUri: string | null;
+  emoji?: string | null;
   initial: string;
   projectViewKey: string;
   size: number;
@@ -55,6 +57,10 @@ export function ProjectIconView({
     [box, size, projectViewKey],
   );
   const textStyles = useMemo(() => [textStyle, WHITE_TEXT], [textStyle]);
+  const emojiStyle = useMemo(
+    () => ({ fontSize: Math.round(size * 0.8), lineHeight: size, textAlign: "center" as const }),
+    [size],
+  );
 
   const fallback = useMemo(
     () => (
@@ -64,6 +70,14 @@ export function ProjectIconView({
     ),
     [fallbackStyles, initial, textStyles],
   );
+
+  if (emoji) {
+    return (
+      <View style={[box, FALLBACK_LAYOUT]} testID="project-icon-emoji">
+        <Text style={emojiStyle}>{emoji}</Text>
+      </View>
+    );
+  }
 
   return iconDataUri ? (
     <ProjectIconImage dataUri={iconDataUri} fallback={fallback} style={box} />

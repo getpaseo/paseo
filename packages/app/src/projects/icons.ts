@@ -4,6 +4,7 @@ import { useQueries, useQuery } from "@tanstack/react-query";
 import type { ProjectIcon } from "@getpaseo/protocol/messages";
 import { useHostFeatureAvailabilityMap } from "@/runtime/host-features";
 import { projectIconCache } from "@/projects/icon-cache";
+import type { ProjectIconPresentation } from "@/projects/icon-cache";
 import type { ProjectIconTarget } from "@/projects/icon-target";
 import {
   getHostRuntimeStore,
@@ -35,8 +36,20 @@ function iconDataUri(icon: ProjectIcon | null): string | null {
   return `data:${icon.mimeType};base64,${icon.data}`;
 }
 
-function useStableIconData(data: (string | null)[], signature: string): readonly (string | null)[] {
-  const stableRef = useRef<{ signature: string; data: (string | null)[] } | null>(null);
+export interface ProjectIconRenderData {
+  dataUri: string | null;
+  emoji: string | null;
+}
+
+function renderData(presentation: ProjectIconPresentation): ProjectIconRenderData {
+  return { dataUri: iconDataUri(presentation.icon), emoji: presentation.emoji };
+}
+
+function useStableIconData(
+  data: ProjectIconRenderData[],
+  signature: string,
+): readonly ProjectIconRenderData[] {
+  const stableRef = useRef<{ signature: string; data: ProjectIconRenderData[] } | null>(null);
   if (stableRef.current?.signature !== signature) {
     stableRef.current = { signature, data };
   }
@@ -74,7 +87,7 @@ export function useProjectIcon({ serverId, cwd }: { serverId: string; cwd: strin
 
 export function useProjectIcons(input: {
   projects: readonly ProjectIconTarget[];
-}): Map<string, string | null> {
+}): Map<string, ProjectIconRenderData> {
   const serverIds = useMemo(
     () => [...new Set(input.projects.map((project) => project.serverId))],
     [input.projects],
@@ -98,28 +111,36 @@ export function useProjectIcons(input: {
           () => getHostRuntimeStore().getClient(request.serverId),
           isHostRuntimeConnected(getHostRuntimeStore().getSnapshot(request.serverId)),
         ),
-        select: iconDataUri,
+        select: renderData,
       };
     }),
   });
 
-  const signature = queries.map((query) => query.data ?? "").join("\u0000");
+  const signature = queries
+    .map((query) => `${query.data?.emoji ?? ""}\u0000${query.data?.dataUri ?? ""}`)
+    .join("\u0001");
   const data = useStableIconData(
-    queries.map((query) => query.data ?? null),
+    queries.map((query) => query.data ?? { dataUri: null, emoji: null }),
     signature,
   );
 
   return useMemo(() => {
-    const byTarget = new Map<string, string | null>();
+    const byTarget = new Map<string, ProjectIconRenderData>();
     requests.forEach((request, index) => {
-      byTarget.set(`${request.serverId}:${request.projectId}`, data[index] ?? null);
+      byTarget.set(
+        `${request.serverId}:${request.projectId}`,
+        data[index] ?? { dataUri: null, emoji: null },
+      );
     });
 
-    const byProject = new Map<string, string | null>();
+    const byProject = new Map<string, ProjectIconRenderData>();
     for (const project of input.projects) {
       byProject.set(
         project.projectViewKey,
-        byTarget.get(`${project.serverId}:${project.projectId}`) ?? null,
+        byTarget.get(`${project.serverId}:${project.projectId}`) ?? {
+          dataUri: null,
+          emoji: null,
+        },
       );
     }
     return byProject;

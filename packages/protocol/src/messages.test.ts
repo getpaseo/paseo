@@ -3,6 +3,7 @@ import {
   FileExplorerRequestSchema,
   PaseoWorktreeArchiveRequestSchema,
   parseServerInfoStatusPayload,
+  ProjectIconGetResponseSchema,
   SessionInboundMessageSchema,
   SessionOutboundMessageSchema,
   WorkspaceProjectDescriptorPayloadSchema,
@@ -51,6 +52,37 @@ describe("project icon message security", () => {
     });
 
     expect(parsed.success).toBe(false);
+  });
+
+  test("accepts an emoji selected by the client", () => {
+    const parsed = SessionInboundMessageSchema.parse({
+      type: "project.icon.set.request",
+      projectId: "project-1",
+      source: { type: "emoji", emoji: "🦊" },
+      requestId: "request-1",
+    });
+
+    expect(parsed).toMatchObject({ source: { type: "emoji", emoji: "🦊" } });
+  });
+
+  test("keeps the emoji optional in project icon responses", () => {
+    const legacy = {
+      type: "project.icon.get.response",
+      payload: {
+        projectId: "project-1",
+        icon: null,
+        error: null,
+        requestId: "request-1",
+      },
+    } as const;
+
+    expect(ProjectIconGetResponseSchema.parse(legacy)).toEqual(legacy);
+    expect(
+      ProjectIconGetResponseSchema.parse({
+        ...legacy,
+        payload: { ...legacy.payload, emoji: "🦊" },
+      }),
+    ).toEqual({ ...legacy, payload: { ...legacy.payload, emoji: "🦊" } });
   });
 });
 

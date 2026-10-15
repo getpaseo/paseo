@@ -161,6 +161,7 @@ export function usePluginAttachmentPicker(
     menuItems,
     picker: (
       <Combobox
+        anchorIsTrigger={false}
         options={options}
         value=""
         onSelect={handleSelect}

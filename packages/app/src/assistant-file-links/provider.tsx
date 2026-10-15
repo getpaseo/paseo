@@ -12,6 +12,8 @@ import type { ToastApi } from "@/components/toast-host";
 import type { OpenFileDisposition } from "@/workspace/file-open";
 import type { InlinePathTarget } from "./parse";
 import type { AssistantFileLinkContext, GetDirectorySuggestions } from "./resolver";
+import { getDesktopHost } from "@/desktop/host";
+import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 
 export interface AssistantFileLinkDaemonClient {
   getDirectorySuggestions: GetDirectorySuggestions;
@@ -32,6 +34,7 @@ export interface AssistantFileLinkResolverProviderProps extends AssistantFileLin
 export interface AssistantFileLinkResolverContextValue {
   configRef: MutableRefObject<AssistantFileLinkResolverConfig>;
   getDirectorySuggestions: GetDirectorySuggestions;
+  openDirectory: (path: string) => Promise<boolean>;
 }
 
 const AssistantFileLinkResolverContext =
@@ -45,6 +48,7 @@ export function AssistantFileLinkResolverProvider({
   toast,
   children,
 }: AssistantFileLinkResolverProviderProps) {
+  const localServerId = useLocalDaemonServerId();
   const configRef = useRef<AssistantFileLinkResolverConfig>({
     client,
     serverId,
@@ -64,9 +68,17 @@ export function AssistantFileLinkResolverProvider({
     return { entries: result.entries, error: result.error };
   }, []);
 
+  const openDirectory = useCallback(
+    async (path: string) => {
+      if (!localServerId || configRef.current.serverId !== localServerId) return false;
+      return (await getDesktopHost()?.opener?.openDirectory?.(path)) ?? false;
+    },
+    [localServerId],
+  );
+
   const value = useMemo<AssistantFileLinkResolverContextValue>(
-    () => ({ configRef, getDirectorySuggestions }),
-    [getDirectorySuggestions],
+    () => ({ configRef, getDirectorySuggestions, openDirectory }),
+    [getDirectorySuggestions, openDirectory],
   );
 
   return (

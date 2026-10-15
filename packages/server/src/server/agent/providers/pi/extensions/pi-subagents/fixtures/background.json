@@ -1,0 +1,238 @@
+{
+  "provenance": {
+    "package": "pi-subagents",
+    "version": "0.71.0",
+    "sourceCommit": "4af5e85a427b9f87334585ae8d0eb365d4dd2a1e",
+    "piVersion": "0.84.4",
+    "captureDate": "2026-09-23"
+  },
+  "events": [
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "call_1334451",
+      "toolName": "subagent",
+      "args": {
+        "task": "list files in this empty workspace and report",
+        "agent": "scout",
+        "async": true
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "call_1334451",
+      "toolName": "subagent",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Run fan-out: 1/64 used, 63 remaining\nAsync: scout [005cfec2-1376-4e96-b622-5ad8f4c15cb5]\n\nThe async run is detached and running in the background.\nYou are in an interactive session. Return control to the user now; Pi will wake you through the native completion notification when this subagent completes or needs attention. Do not run sleep/polling loops to wait for this async subagent; it does not need a wait call.\nUse bg_wait only for provider, detached, or other background work that lacks a native completion notification.\nIf the current turn must receive results from work without a native notification before it ends, call blocking bg_wait(); ordinary async subagent runs do not need a wait call because their completion is delivered natively.\nOtherwise, continue any independent work or return control to the user. Use subagent({ action: \"status\", id: \"...\" }) for a one-shot status/result or to inspect a blocked/stale run, never as a wait loop.\nMission: bc1a1172-b106-4b35-9325-9fd304278827 (active)"
+          }
+        ],
+        "details": {
+          "mode": "single",
+          "runId": "005cfec2-1376-4e96-b622-5ad8f4c15cb5",
+          "results": [],
+          "asyncId": "005cfec2-1376-4e96-b622-5ad8f4c15cb5",
+          "asyncDir": "/tmp/pi-subagents-uid-1000/async-subagent-runs/005cfec2-1376-4e96-b622-5ad8f4c15cb5",
+          "launchContractDigest": "d7ed0cb6c99feb265efdaf7294fdac2e9eceacf3560c3cf8fd5a7fa22ea4dac1",
+          "launchResolvedExtensions": {
+            "version": 1,
+            "source": "launch-resolved",
+            "disableAmbientExtensions": false,
+            "runtime": ["sha256:c41552bd9557eaab"],
+            "configured": [],
+            "required": [],
+            "effective": ["sha256:c41552bd9557eaab"],
+            "omitted": {
+              "runtime": 0,
+              "configured": 0,
+              "required": 0,
+              "effective": 0
+            }
+          },
+          "context": "fresh",
+          "timeoutMs": 1800000,
+          "deadlineAt": 1790199499998,
+          "runFanoutBudget": {
+            "used": 1,
+            "limit": 64,
+            "remaining": 63
+          },
+          "missionId": "bc1a1172-b106-4b35-9325-9fd304278827",
+          "missionPath": "/tmp/paseo-pi-extension-phase3/pi-agent/missions/projects/8618955a5c85eb731bdb33d90016edaaf64963be032225b8a26a6936621a378d/bc1a1172-b106-4b35-9325-9fd304278827.json",
+          "mission": {
+            "schemaVersion": 1,
+            "id": "bc1a1172-b106-4b35-9325-9fd304278827",
+            "title": "[prompt redacted]",
+            "objective": "[prompt redacted]",
+            "status": "active",
+            "createdAt": "2026-09-23T21:08:19.994Z",
+            "updatedAt": "2026-09-23T21:08:20.008Z",
+            "runs": [
+              {
+                "runId": "005cfec2-1376-4e96-b622-5ad8f4c15cb5",
+                "mode": "single",
+                "asyncDir": "/tmp/pi-subagents-uid-1000/async-subagent-runs/005cfec2-1376-4e96-b622-5ad8f4c15cb5",
+                "status": "active",
+                "startedAt": "2026-09-23T21:08:20.008Z"
+              }
+            ],
+            "workflowChildren": [],
+            "decisions": [],
+            "artifacts": [
+              {
+                "kind": "status",
+                "path": "/tmp/pi-subagents-uid-1000/async-subagent-runs/005cfec2-1376-4e96-b622-5ad8f4c15cb5/status.json"
+              },
+              {
+                "kind": "other",
+                "path": "/tmp/pi-subagents-uid-1000/async-subagent-runs/005cfec2-1376-4e96-b622-5ad8f4c15cb5/events.jsonl",
+                "description": "Lifecycle events"
+              }
+            ],
+            "receipts": [],
+            "cwd": "/tmp/paseo-pi-extension-phase3/workspace",
+            "ownerSessionId": "/tmp/paseo-pi-extension-phase3/sessions-nico/2026-09-23T21-08-13-722Z_01a0d018-fd1a-7711-9c17-933fd34f0cff.jsonl"
+          }
+        }
+      },
+      "isError": false
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "custom",
+        "customType": "subagent-notify",
+        "content": "Background task completed: **scout**\n\nscout:\n# Code Context\n\n## Files Retrieved\n(No files found; the workspace directory `/tmp/paseo-pi-extension-phase3/workspace` is empty.)\n\n## Key Code\nN/A - Empty repository / workspace.\n\n## Architecture\nN/A - Empty repository / workspace.\n\n## Start Here\nThe workspace is currently empty. Initialize or populate the workspace with source code to begin development.\n\nOutput saved to: /tmp/paseo-pi-extension-phase3/sessions-nico/subagent-artifacts/outputs/005cfec2-1376-4e96-b622-5ad8f4c15cb5/context.md (356 B, 13 lines). Read this file if needed.\n\nRetention-managed async directory: /tmp/pi-subagents-uid-1000/async-subagent-runs/005cfec2-1376-4e96-b622-5ad8f4c15cb5\n\nSession file: /tmp/paseo-pi-extension-phase3/sessions-nico/2026-09-23T21-08-13-722Z_01a0d018-fd1a-7711-9c17-933fd34f0cff/2a37ef22-e1f9-4f75-b9a0-510e82ffd422/run-0/session.jsonl",
+        "display": false,
+        "timestamp": 1790197711046
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "call_1334451",
+          "name": "subagent",
+          "arguments": {
+            "task": "list files in this empty workspace and report",
+            "agent": "scout",
+            "async": true
+          }
+        }
+      ],
+      "api": "openai-completions",
+      "provider": "openrouter",
+      "model": "google/gemini-3.6-flash",
+      "usage": {
+        "input": 3303,
+        "output": 114,
+        "cacheRead": 7053,
+        "cacheWrite": 0,
+        "reasoning": 81,
+        "totalTokens": 10470,
+        "cost": {
+          "input": 0.00247725,
+          "output": 0.00042750000000000004,
+          "cacheRead": 0.000528975,
+          "cacheWrite": 0,
+          "total": 0.003433725
+        }
+      },
+      "stopReason": "toolUse",
+      "timestamp": 1790197697608,
+      "responseId": "gen-1790197697-lxluaTrDkdaxjSXsO957",
+      "rawStopReason": "tool_calls"
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call_1334451",
+      "toolName": "subagent",
+      "content": [
+        {
+          "type": "text",
+          "text": "Run fan-out: 1/64 used, 63 remaining\nAsync: scout [005cfec2-1376-4e96-b622-5ad8f4c15cb5]\n\nThe async run is detached and running in the background.\nYou are in an interactive session. Return control to the user now; Pi will wake you through the native completion notification when this subagent completes or needs attention. Do not run sleep/polling loops to wait for this async subagent; it does not need a wait call.\nUse bg_wait only for provider, detached, or other background work that lacks a native completion notification.\nIf the current turn must receive results from work without a native notification before it ends, call blocking bg_wait(); ordinary async subagent runs do not need a wait call because their completion is delivered natively.\nOtherwise, continue any independent work or return control to the user. Use subagent({ action: \"status\", id: \"...\" }) for a one-shot status/result or to inspect a blocked/stale run, never as a wait loop.\nMission: bc1a1172-b106-4b35-9325-9fd304278827 (active)"
+        }
+      ],
+      "details": {
+        "mode": "single",
+        "runId": "005cfec2-1376-4e96-b622-5ad8f4c15cb5",
+        "results": [],
+        "asyncId": "005cfec2-1376-4e96-b622-5ad8f4c15cb5",
+        "asyncDir": "/tmp/pi-subagents-uid-1000/async-subagent-runs/005cfec2-1376-4e96-b622-5ad8f4c15cb5",
+        "launchContractDigest": "d7ed0cb6c99feb265efdaf7294fdac2e9eceacf3560c3cf8fd5a7fa22ea4dac1",
+        "launchResolvedExtensions": {
+          "version": 1,
+          "source": "launch-resolved",
+          "disableAmbientExtensions": false,
+          "runtime": ["sha256:c41552bd9557eaab"],
+          "configured": [],
+          "required": [],
+          "effective": ["sha256:c41552bd9557eaab"],
+          "omitted": {
+            "runtime": 0,
+            "configured": 0,
+            "required": 0,
+            "effective": 0
+          }
+        },
+        "context": "fresh",
+        "timeoutMs": 1800000,
+        "deadlineAt": 1790199499998,
+        "runFanoutBudget": {
+          "used": 1,
+          "limit": 64,
+          "remaining": 63
+        },
+        "missionId": "bc1a1172-b106-4b35-9325-9fd304278827",
+        "missionPath": "/tmp/paseo-pi-extension-phase3/pi-agent/missions/projects/8618955a5c85eb731bdb33d90016edaaf64963be032225b8a26a6936621a378d/bc1a1172-b106-4b35-9325-9fd304278827.json",
+        "mission": {
+          "schemaVersion": 1,
+          "id": "bc1a1172-b106-4b35-9325-9fd304278827",
+          "title": "[prompt redacted]",
+          "objective": "[prompt redacted]",
+          "status": "active",
+          "createdAt": "2026-09-23T21:08:19.994Z",
+          "updatedAt": "2026-09-23T21:08:20.008Z",
+          "runs": [
+            {
+              "runId": "005cfec2-1376-4e96-b622-5ad8f4c15cb5",
+              "mode": "single",
+              "asyncDir": "/tmp/pi-subagents-uid-1000/async-subagent-runs/005cfec2-1376-4e96-b622-5ad8f4c15cb5",
+              "status": "active",
+              "startedAt": "2026-09-23T21:08:20.008Z"
+            }
+          ],
+          "workflowChildren": [],
+          "decisions": [],
+          "artifacts": [
+            {
+              "kind": "status",
+              "path": "/tmp/pi-subagents-uid-1000/async-subagent-runs/005cfec2-1376-4e96-b622-5ad8f4c15cb5/status.json"
+            },
+            {
+              "kind": "other",
+              "path": "/tmp/pi-subagents-uid-1000/async-subagent-runs/005cfec2-1376-4e96-b622-5ad8f4c15cb5/events.jsonl",
+              "description": "Lifecycle events"
+            }
+          ],
+          "receipts": [],
+          "cwd": "/tmp/paseo-pi-extension-phase3/workspace",
+          "ownerSessionId": "/tmp/paseo-pi-extension-phase3/sessions-nico/2026-09-23T21-08-13-722Z_01a0d018-fd1a-7711-9c17-933fd34f0cff.jsonl"
+        }
+      },
+      "isError": false,
+      "timestamp": 1790197700011
+    },
+    {
+      "role": "custom",
+      "customType": "subagent-notify",
+      "content": "Background task completed: **scout**\n\nscout:\n# Code Context\n\n## Files Retrieved\n(No files found; the workspace directory `/tmp/paseo-pi-extension-phase3/workspace` is empty.)\n\n## Key Code\nN/A - Empty repository / workspace.\n\n## Architecture\nN/A - Empty repository / workspace.\n\n## Start Here\nThe workspace is currently empty. Initialize or populate the workspace with source code to begin development.\n\nOutput saved to: /tmp/paseo-pi-extension-phase3/sessions-nico/subagent-artifacts/outputs/005cfec2-1376-4e96-b622-5ad8f4c15cb5/context.md (356 B, 13 lines). Read this file if needed.\n\nRetention-managed async directory: /tmp/pi-subagents-uid-1000/async-subagent-runs/005cfec2-1376-4e96-b622-5ad8f4c15cb5\n\nSession file: /tmp/paseo-pi-extension-phase3/sessions-nico/2026-09-23T21-08-13-722Z_01a0d018-fd1a-7711-9c17-933fd34f0cff/2a37ef22-e1f9-4f75-b9a0-510e82ffd422/run-0/session.jsonl",
+      "display": false,
+      "timestamp": 1790197711046
+    }
+  ]
+}

@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type { AgentStreamEvent, AgentTimelineItem } from "../../agent/agent-sdk-types.js";
 import { z } from "zod";
 import { CreateAgentRequestMessageSchema } from "@getpaseo/protocol/messages";
@@ -17,6 +18,7 @@ import type { PersistedWorkspaceRecord } from "../../workspace-registry.js";
 
 export const lifecycleEventNames = [
   "agent.created",
+  "agent.closed",
   "agent.turn_started",
   "agent.turn_ended",
   "agent.permission_requested",
@@ -28,7 +30,23 @@ export const lifecycleEventNames = [
 export const beforeHookNames = ["agent.create", "agent.session_open", "workspace.create"] as const;
 
 const beforeSchemas = {
-  "agent.create": CreateAgentRequestMessageSchema.pick({ config: true, env: true }).strict(),
+  "agent.create": CreateAgentRequestMessageSchema.pick({
+    config: true,
+    env: true,
+    workspaceId: true,
+    launchProfileId: true,
+    labels: true,
+  })
+    .extend({
+      modelRouting: z
+        .object({
+          strategy: z.literal("jev"),
+          prompt: z.string(),
+          resolved: z.literal(true).optional(),
+        })
+        .optional(),
+    })
+    .strict(),
   "agent.session_open": z
     .object({
       agentId: z.string(),
@@ -73,6 +91,7 @@ export function describeHookWorkspace(workspace: PersistedWorkspaceRecord): Plug
 
 export function describeHookAgent(agent: {
   id: string;
+  launchProfileId?: string;
   workspaceId?: string;
   provider: string;
   cwd: string;
@@ -81,11 +100,13 @@ export function describeHookAgent(agent: {
 }): PluginHookAgent {
   return {
     id: agent.id,
+    launchProfileId: agent.launchProfileId,
     workspaceId: agent.workspaceId ?? null,
     parentAgentId: agent.labels[PARENT_AGENT_ID_LABEL] ?? null,
     provider: agent.provider,
     cwd: agent.cwd,
     title: agent.title ?? null,
+    labels: agent.labels,
   };
 }
 
@@ -152,11 +173,38 @@ export function validateBeforeResult<Name extends keyof PluginBeforeRequests>(
   if (name === "agent.create") {
     const previous = beforeSchemas["agent.create"].parse(input);
     const next = beforeSchemas["agent.create"].parse(result);
+    if (previous.config.writePolicy === "read_only" && next.config.writePolicy !== "read_only") {
+      throw new Error("agent.create hooks cannot relax read_only write policy");
+    }
+    if (
+      previous.workspaceId !== next.workspaceId ||
+      previous.launchProfileId !== next.launchProfileId
+    ) {
+      throw new Error("agent.create hooks cannot change workspaceId or launchProfileId");
+    }
     if (previous.config.cwd !== next.config.cwd) {
       throw new Error("agent.create hooks cannot change the workspace directory");
     }
+    if (!isDeepStrictEqual(previous.labels, next.labels))
+      throw new Error("agent.create hooks cannot change labels");
+    validateModelRouting(previous, next);
   }
   return result;
+}
+
+function validateModelRouting(
+  previous: PluginBeforeRequests["agent.create"],
+  next: PluginBeforeRequests["agent.create"],
+): void {
+  if (
+    previous.modelRouting?.strategy !== next.modelRouting?.strategy ||
+    previous.modelRouting?.prompt !== next.modelRouting?.prompt
+  ) {
+    throw new Error("agent.create hooks cannot change model routing context");
+  }
+  if (previous.modelRouting === undefined && next.modelRouting !== undefined) {
+    throw new Error("agent.create hooks cannot add model routing context");
+  }
 }
 
 type Handler = (input: unknown, context: PluginHookContext) => unknown;

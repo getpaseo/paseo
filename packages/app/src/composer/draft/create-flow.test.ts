@@ -145,17 +145,20 @@ describe("useDraftAgentCreateFlow", () => {
       failRequest = reject;
     });
     let requestCount = 0;
+    const messageIds: string[] = [];
     const { result, rerender } = renderHook(
       ({ provider }: { provider: string | null }) =>
         useDraftAgentCreateFlow({
           draftId: "draft-manual",
+          clientMessageId: "draft-manual-prompt",
           getPendingServerId: () => "server-1",
           buildDraftAgent: () => {
             if (!provider) throw new Error("Select a model");
             return { provider };
           },
-          createRequest: async () => {
+          createRequest: async ({ attempt }) => {
             requestCount++;
+            messageIds.push(attempt.clientMessageId);
             if (requestCount === 1) return await request;
             return { agentId: "agent-1", result: { id: "agent-1" } };
           },
@@ -190,6 +193,7 @@ describe("useDraftAgentCreateFlow", () => {
     expect(result.current.draftAgent).toEqual({ provider: "claude" });
     expect(result.current.formErrorMessage).toBe("");
     expect(requestCount).toBe(2);
+    expect(messageIds).toEqual(["draft-manual-prompt", "draft-manual-prompt"]);
   });
 
   it("allows retrying an empty prompt when the draft still has context attachments", async () => {

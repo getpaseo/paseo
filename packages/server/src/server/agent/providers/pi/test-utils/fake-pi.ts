@@ -57,6 +57,7 @@ export class FakePi implements PiRuntime {
   private readonly command: [string, ...string[]];
   private readonly queuedCommands: PiRpcSlashCommand[][] = [];
   private readonly queuedSessionSetups: Array<(session: FakePiSession) => void> = [];
+  private readonly removedModels = new Set<string>();
 
   constructor(command: [string, ...string[]] = ["pi"]) {
     this.command = command;
@@ -68,7 +69,10 @@ export class FakePi implements PiRuntime {
       session: input,
     });
     this.recordedLaunches.push(launch);
-    const session = new FakePiSession(launch);
+    if (launch.model && this.removedModels.has(launch.model)) {
+      throw new Error(`Model "${launch.model}" not found`);
+    }
+    const session = new FakePiSession(launch, this.removedModels);
     session.commands = this.queuedCommands.shift() ?? [];
     this.queuedSessionSetups.shift()?.(session);
     this.sessions.push(session);
@@ -83,6 +87,11 @@ export class FakePi implements PiRuntime {
     this.queuedSessionSetups.push(setup);
   }
 
+  // Pi refuses to launch with, or switch to, a model it no longer knows.
+  removeModel(modelId: string): void {
+    this.removedModels.add(modelId);
+  }
+
   latestSession(): FakePiSession {
     const session = this.sessions.at(-1);
     if (!session) {
@@ -93,6 +102,7 @@ export class FakePi implements PiRuntime {
 }
 
 export class FakePiSession implements PiRuntimeSession {
+  readonly environment: Record<string, string>;
   readonly prompts: Array<{ message: string; imageCount: number }> = [];
   readonly steerCalls: Array<{ message: string; imageCount: number }> = [];
   steerError: Error | null = null;
@@ -108,7 +118,10 @@ export class FakePiSession implements PiRuntimeSession {
   readonly handoffRequests: Array<{ customInstructions?: string }> = [];
   readonly sessionNameRequests: string[] = [];
   readonly rawFrames: Array<object & { type: string }> = [];
-  capturedUserEntries: Array<{ id: string; parentId: string | null; text: string }> = [];
+  // Every user entry in the session file, including rewound and compacted ones.
+  treeUserEntries: FakePiUserEntry[] = [];
+  // The user entries on the current branch that getMessages() replays.
+  contextUserEntries: FakePiUserEntry[] = [];
   abortRequested = false;
   readonly canceledExtensionUiRequests: string[] = [];
   readonly extensionUiResponses: Array<{
@@ -141,7 +154,11 @@ export class FakePiSession implements PiRuntimeSession {
   private activeHeldPrompt: { promise: Promise<void>; reject: (error: Error) => void } | null =
     null;
 
-  constructor(launch: PiRuntimeLaunch) {
+  constructor(
+    launch: PiRuntimeLaunch,
+    private readonly removedModels: ReadonlySet<string> = new Set(),
+  ) {
+    this.environment = launch.env ?? {};
     this.state = {
       model: null,
       thinkingLevel: "medium",
@@ -262,9 +279,13 @@ export class FakePiSession implements PiRuntimeSession {
 
   async setModel(provider: string, modelId: string): Promise<PiModel> {
     this.setModelRequests.push({ provider, modelId });
+    if (this.removedModels.has(`${provider}/${modelId}`)) {
+      throw new Error(`Model not found: ${provider}/${modelId}`);
+    }
     if (!this.setModelResult) {
       throw new Error("FakePi setModel requires setModelResult to be scripted");
     }
+    this.state = { ...this.state, model: this.setModelResult };
     return this.setModelResult;
   }
 
@@ -453,7 +474,8 @@ export class FakePiSession implements PiRuntimeSession {
       message: `PASEO_ENTRY_CAPTURE ${JSON.stringify({
         reason,
         requestId,
-        entries: this.capturedUserEntries,
+        treeEntries: this.treeUserEntries,
+        contextEntries: this.contextUserEntries,
       })}`,
     });
   }

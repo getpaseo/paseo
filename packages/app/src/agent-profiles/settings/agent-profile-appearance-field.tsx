@@ -1,3 +1,4 @@
+import { usePressDragTarget } from "@/components/ui/press-drag-select-context";
 import { useCallback, useMemo, useRef, useState, type ReactElement } from "react";
 import { Pressable, View, type PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
@@ -64,18 +65,20 @@ function IconCell({
   onSelect: (iconKey: AgentProfileIconKey | null) => void;
 }) {
   const handlePress = useCallback(() => onSelect(iconKey), [iconKey, onSelect]);
+  const drag = usePressDragTarget({ onSelect: handlePress });
   const accessibilityState = useMemo(() => ({ selected }), [selected]);
   const cellStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.cell,
-      Boolean(hovered) && styles.cellHovered,
+      (drag.dragging ? drag.hovered : Boolean(hovered)) && styles.cellHovered,
       pressed && styles.cellPressed,
       selected && styles.cellSelected,
     ],
-    [selected],
+    [selected, drag.dragging, drag.hovered],
   );
   return (
     <Pressable
+      ref={drag.ref}
       onPress={handlePress}
       style={cellStyle}
       accessibilityRole="button"
@@ -103,17 +106,22 @@ function ColorCell({
 }) {
   const { t } = useTranslation();
   const handlePress = useCallback(() => onSelect(color), [color, onSelect]);
+  const drag = usePressDragTarget({ onSelect: handlePress });
   const accessibilityState = useMemo(() => ({ selected }), [selected]);
   const swatchStyle = useMemo(
     () => [styles.swatch, color === "none" ? styles.swatchNone : identitySwatch(color)],
     [color],
   );
   const cellStyle = useCallback(
-    ({ pressed }: PressableStateCallbackType) => [styles.colorCell, pressed && styles.cellPressed],
-    [],
+    ({ pressed }: PressableStateCallbackType) => [
+      styles.colorCell,
+      (pressed || drag.hovered) && styles.cellPressed,
+    ],
+    [drag.hovered],
   );
   return (
     <Pressable
+      ref={drag.ref}
       onPress={handlePress}
       style={cellStyle}
       accessibilityRole="button"

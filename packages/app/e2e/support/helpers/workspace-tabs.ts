@@ -89,7 +89,7 @@ async function openExplorerView(
 ): Promise<void> {
   const explorer = await ensureExplorerSidebar(page);
   const tab = explorer.getByTestId(view.tabTestId);
-  await tab.click();
+  await selectWorkspaceTab(tab);
   await expect(visibleTestId(page, view.contentTestId).first()).toBeVisible({
     timeout: view.timeout ?? 30_000,
   });
@@ -97,7 +97,7 @@ async function openExplorerView(
 
 export async function openChangesTreePanel(page: Page): Promise<void> {
   await openExplorerView(page, {
-    tabTestId: "explorer-sidebar-tab-changes_tree",
+    tabTestId: "workspace-tab-changes_tree",
     contentTestId: "changes-tree-panel",
   });
 }
@@ -117,7 +117,7 @@ export async function openChangesPanel(page: Page, timeout = 30_000): Promise<vo
 
 export async function openFilesPanel(page: Page): Promise<void> {
   await openExplorerView(page, {
-    tabTestId: "explorer-sidebar-tab-files",
+    tabTestId: "workspace-tab-files",
     contentTestId: "file-explorer-tree-scroll",
   });
 }
@@ -129,8 +129,8 @@ export async function openPullRequestPanel(page: Page): Promise<void> {
     await expect(visibleTestId(page, "pr-pane").first()).toBeVisible({ timeout: 15_000 });
     return;
   }
-  const trigger = visibleTestId(page, "workspace-new-tab-button").first();
-  await trigger.click();
+  const explorer = await ensureExplorerSidebar(page);
+  await explorer.getByTestId("workspace-new-tab-button").click();
   await visibleTestId(page, "workspace-new-tab-menu-pull-request").first().click();
   await expect(visibleTestId(page, "pr-pane").first()).toBeVisible({ timeout: 15_000 });
 }
@@ -144,14 +144,11 @@ export async function waitForWorkspaceTabsVisible(page: Page): Promise<void> {
   });
 }
 
-/** Open the pane-local `+` menu and pick Agent. */
-export async function createAgentTabFromMenu(page: Page): Promise<void> {
+/** Open a chat draft with the conversation pane’s + button. */
+export async function createAgentTab(page: Page): Promise<void> {
   const trigger = visibleTestId(page, "workspace-new-tab-button").first();
   await expect(trigger).toBeVisible({ timeout: 10_000 });
   await trigger.click();
-  const item = visibleTestId(page, "workspace-new-tab-menu-agent").first();
-  await expect(item).toBeVisible({ timeout: 10_000 });
-  await item.click();
 }
 
 export async function getVisibleWorkspaceAgentTabIds(page: Page): Promise<string[]> {

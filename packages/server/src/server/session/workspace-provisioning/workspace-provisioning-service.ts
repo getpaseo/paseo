@@ -1,6 +1,7 @@
 import type { PluginLifecycle } from "../../plugins/lifecycle/index.js";
 import { describeHookWorkspace } from "../../plugins/lifecycle/index.js";
 import { basename, resolve } from "node:path";
+import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
 import type { Logger } from "pino";
 import {
   generateWorkspaceId,
@@ -40,12 +41,14 @@ export interface ImportWorkspaceResult<T> {
 export interface CreateWorktreeWorkspaceInput {
   sourceCwd: string;
   projectId?: string;
+  workspaceId?: string;
   repoRoot: string;
   cwd: string;
   worktreeRoot: string;
   branch: string | null;
   baseBranch: string | null;
   title: string | null;
+  intent?: string;
   expectsInitialAgent?: boolean;
   untrustedSource?: UntrustedWorkspaceSource;
 }
@@ -61,7 +64,7 @@ export interface WorkspaceProvisioningService {
     cwd: string,
     title?: string | null,
     projectId?: string,
-    context?: { expectsInitialAgent?: boolean },
+    context?: { expectsInitialAgent?: boolean; intent?: string; workspaceId?: string },
   ): Promise<PersistedWorkspaceRecord>;
   createWorkspaceForWorktree(
     input: CreateWorktreeWorkspaceInput,
@@ -93,10 +96,26 @@ export function createWorkspaceProvisioningService(deps: {
   workspaceRegistry: WorkspaceRegistry;
   projectRegistry: ProjectRegistry;
   workspaceGitService: Pick<WorkspaceGitService, "getCheckout" | "getSnapshot" | "peekSnapshot">;
+  isDirectory: (path: string) => Promise<boolean>;
   logger: Logger;
   lifecycle?: PluginLifecycle;
 }): WorkspaceProvisioningService {
   const { serverId, workspaceRegistry, projectRegistry, workspaceGitService, logger } = deps;
+
+  /**
+   * Placement facts at a workspace directory, or null when there is nothing
+   * there to read. A git read answers "not a checkout" for a plain directory
+   * and for a directory that is gone, and only the first is evidence that a
+   * worktree stopped being one. That answer therefore counts only while the
+   * directory is there on both sides of the read, so a worktree removed or
+   * unmounted while the read is in flight stays an absence.
+   */
+  async function observeWorkspaceCheckout(cwd: string): Promise<ProjectCheckoutLitePayload | null> {
+    if (!(await deps.isDirectory(cwd))) return null;
+    const checkout = await workspaceGitService.getCheckout(cwd);
+    if (!checkout.isGit && !(await deps.isDirectory(cwd))) return null;
+    return checkout;
+  }
 
   async function runInImportWorkspace<T>(
     input: ImportWorkspaceInput,
@@ -201,7 +220,7 @@ export function createWorkspaceProvisioningService(deps: {
     cwd: string,
     title?: string | null,
     projectId?: string,
-    context?: { expectsInitialAgent?: boolean },
+    context?: { expectsInitialAgent?: boolean; intent?: string; workspaceId?: string },
   ): Promise<PersistedWorkspaceRecord> {
     const normalizedCwd = resolve(cwd);
     const checkout = await workspaceGitService.getCheckout(normalizedCwd);
@@ -211,10 +230,11 @@ export function createWorkspaceProvisioningService(deps: {
         await findOrCreateProjectForDirectory(normalizedCwd);
     const timestamp = new Date().toISOString();
     const workspace = createPersistedWorkspaceRecord({
-      workspaceId: generateWorkspaceId(),
+      workspaceId: context?.workspaceId ?? generateWorkspaceId(),
       projectId: project.projectId,
       ...initialWorkspacePlacement({ source: "checkout", cwd: normalizedCwd, checkout }),
       title: title?.trim() || null,
+      intent: context?.intent,
       createdAt: timestamp,
       updatedAt: timestamp,
     });
@@ -237,7 +257,7 @@ export function createWorkspaceProvisioningService(deps: {
     });
     const timestamp = new Date().toISOString();
     const workspace = createPersistedWorkspaceRecord({
-      workspaceId: generateWorkspaceId(),
+      workspaceId: input.workspaceId ?? generateWorkspaceId(),
       projectId: project.projectId,
       ...initialWorkspacePlacement({
         source: "created_worktree",
@@ -248,6 +268,7 @@ export function createWorkspaceProvisioningService(deps: {
         mainRepoRoot: repoRoot,
       }),
       title: input.title,
+      intent: input.intent,
       createdAt: timestamp,
       updatedAt: timestamp,
       ...(input.untrustedSource ? { untrustedSource: input.untrustedSource } : {}),
@@ -365,12 +386,12 @@ export function createWorkspaceProvisioningService(deps: {
     const timestamp = new Date().toISOString();
     const checkout =
       workspace.archivedAt || project.archivedAt
-        ? await workspaceGitService.getCheckout(workspace.cwd)
+        ? await observeWorkspaceCheckout(workspace.cwd)
         : null;
     const autoArchivedChangeRequestUrl =
       await resolveRestoredAutoArchiveChangeRequestUrl(workspace);
     let next: PersistedWorkspaceRecord | null = null;
-    if (workspace.archivedAt && checkout) {
+    if (workspace.archivedAt) {
       const placementUpdate = reconcileWorkspacePlacement({
         workspace,
         checkout,
@@ -383,10 +404,11 @@ export function createWorkspaceProvisioningService(deps: {
         updatedAt: timestamp,
       };
     }
-    if (checkout && (project.archivedAt || workspace.archivedAt)) {
-      const projectCheckout = areEquivalentPaths(project.rootPath, workspace.cwd)
-        ? checkout
-        : await workspaceGitService.getCheckout(project.rootPath);
+    if (project.archivedAt || workspace.archivedAt) {
+      const projectCheckout =
+        checkout && areEquivalentPaths(project.rootPath, workspace.cwd)
+          ? checkout
+          : await workspaceGitService.getCheckout(project.rootPath);
       const kind = projectCheckout.isGit ? "git" : "non_git";
       const projectKey = deriveProjectKey({
         rootPath: project.rootPath,
@@ -413,10 +435,10 @@ export function createWorkspaceProvisioningService(deps: {
   async function refreshWorkspaceRecord(
     workspace: PersistedWorkspaceRecord,
   ): Promise<PersistedWorkspaceRecord> {
-    const checkout = await workspaceGitService.getCheckout(workspace.cwd);
+    const checkout = await observeWorkspaceCheckout(workspace.cwd);
     const project = await projectRegistry.get(workspace.projectId);
     if (project && !project.archivedAt) {
-      await refreshProjectKind(project, workspace.cwd, checkout);
+      await refreshProjectKind(project, workspace.cwd, checkout ?? undefined);
     }
     const update = reconcileWorkspacePlacement({
       workspace,

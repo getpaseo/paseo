@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
+import net from "node:net";
 import type { Logger } from "pino";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { TerminalSession } from "../terminal/terminal.js";
@@ -741,6 +742,134 @@ export interface SpawnWorkspaceScriptOptions {
   onLifecycleChanged?: () => void;
 }
 
+const SERVICE_PORT_OUTPUT_BUFFER_BYTES = 16 * 1024;
+
+function appendServiceOutput(output: string, chunk: string): string {
+  const chunkBuffer = Buffer.from(chunk);
+  const previousBuffer = Buffer.from(output);
+  return Buffer.concat([previousBuffer, chunkBuffer])
+    .subarray(-SERVICE_PORT_OUTPUT_BUFFER_BYTES)
+    .toString("utf8");
+}
+
+export function extractLocalHttpServicePorts(...chunks: string[]): number[] {
+  const output = chunks.reduce(appendServiceOutput, "");
+  // CSI color sequences contain ESC, which is a control byte by definition.
+  // oxlint-disable-next-line no-control-regex
+  const plainOutput = output.replace(/\u{001B}\[[0-?]*[ -/]*[@-~]/gu, "");
+  const ports = new Set<number>();
+  const urls = plainOutput.matchAll(
+    /http:\/\/(?:localhost|127\.0\.0\.1|\[::1\]|::1):(\d{1,5})\b/gi,
+  );
+  for (const match of urls) {
+    const port = Number(match[1]);
+    if (port > 0 && port <= 65_535) ports.add(port);
+  }
+  return [...ports];
+}
+
+function probeLocalServicePort(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host: "127.0.0.1", port });
+    let settled = false;
+    const finish = (healthy: boolean) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(healthy);
+    };
+    socket.setTimeout(500);
+    socket.once("connect", () => finish(true));
+    socket.once("timeout", () => finish(false));
+    socket.once("error", () => finish(false));
+  });
+}
+
+function observeServicePort(params: {
+  terminal: TerminalSession;
+  terminalId: string;
+  initialPort: number;
+  workspaceId: string;
+  projectSlug: string;
+  branchName: string | null;
+  scriptName: string;
+  publicBaseUrl: string | null | undefined;
+  serviceProxy: ServiceProxySubsystem;
+  runtimeStore: WorkspaceScriptRuntimeStore;
+  onPortChanged?: () => void;
+}): () => void {
+  let output = "";
+  let stopped = false;
+  let checking = false;
+  let retryTimer: NodeJS.Timeout | null = null;
+  const candidates: number[] = [];
+  const seenCandidates = new Set<number>();
+  const unsubscribe = params.terminal.subscribe(
+    (message) => {
+      if (stopped || message.type !== "output") return;
+      output = appendServiceOutput(output, message.data);
+      for (const port of extractLocalHttpServicePorts(output)) {
+        if (seenCandidates.has(port)) continue;
+        seenCandidates.add(port);
+        candidates.push(port);
+      }
+      if (candidates.length > 0) void checkCandidates();
+    },
+    { initialSnapshot: "ready" },
+  );
+
+  const dispose = () => {
+    stopped = true;
+    unsubscribe();
+    if (retryTimer) clearTimeout(retryTimer);
+    retryTimer = null;
+  };
+
+  const checkCandidates = async () => {
+    if (checking || stopped) return;
+    checking = true;
+    try {
+      for (const port of candidates) {
+        // The service proxy forwards to IPv4 loopback, so IPv6-only listeners are not usable routes.
+        if (await probeLocalServicePort(port)) {
+          if (stopped) return;
+          const runtime = params.runtimeStore.get({
+            workspaceId: params.workspaceId,
+            scriptName: params.scriptName,
+          });
+          if (runtime?.lifecycle !== "running" || runtime.terminalId !== params.terminalId) {
+            dispose();
+            return;
+          }
+          if (port !== params.initialPort) {
+            params.serviceProxy.registerWorkspaceService({
+              port,
+              workspaceId: params.workspaceId,
+              projectSlug: params.projectSlug,
+              branchName: params.branchName,
+              scriptName: params.scriptName,
+              publicBaseUrl: params.publicBaseUrl ?? null,
+            });
+            params.onPortChanged?.();
+          }
+          dispose();
+          return;
+        }
+      }
+    } finally {
+      checking = false;
+      if (!stopped && candidates.length > 0) {
+        retryTimer = setTimeout(() => {
+          retryTimer = null;
+          void checkCandidates();
+        }, 1_000);
+      }
+    }
+  };
+
+  return dispose;
+}
+
 interface ServiceScriptSetupResult {
   hostname: string;
   port: number;
@@ -884,6 +1013,7 @@ async function acquireWorkspaceScriptTerminal(params: {
   return { terminal, reusableTerminal };
 }
 
+// oxlint-disable-next-line eslint(complexity) -- lifecycle setup, rollback, and terminal ownership stay together here.
 export async function spawnWorkspaceScript(
   options: SpawnWorkspaceScriptOptions,
 ): Promise<WorktreeScriptResult> {
@@ -920,6 +1050,7 @@ export async function spawnWorkspaceScript(
   let runtimeRegistered = false;
   let routeRegistered = false;
   let disposeLifecycleListeners: (() => void) | null = null;
+  let disposePortDetection: (() => void) | null = null;
 
   try {
     if (runtimeStore.isRunning({ workspaceId, scriptName })) {
@@ -978,6 +1109,8 @@ export async function spawnWorkspaceScript(
 
       disposeLifecycleListeners?.();
       disposeLifecycleListeners = null;
+      disposePortDetection?.();
+      disposePortDetection = null;
 
       if (input.removeRoute && hostname) {
         serviceProxy.removeWorkspaceService({ workspaceId, scriptName });
@@ -1003,12 +1136,8 @@ export async function spawnWorkspaceScript(
     };
 
     const unsubscribeExit = terminal.onExit((info) => {
-      stopRuntimeIfCurrent({
-        exitCode: info.exitCode,
-        removeRoute: true,
-      });
+      stopRuntimeIfCurrent({ exitCode: info.exitCode, removeRoute: true });
     });
-
     let unsubscribeCommandFinished: (() => void) | null = null;
     if (!serviceScript) {
       unsubscribeCommandFinished = terminal.onCommandFinished((info) => {
@@ -1019,6 +1148,22 @@ export async function spawnWorkspaceScript(
       unsubscribeExit();
       unsubscribeCommandFinished?.();
     };
+
+    if (serviceScript && config.port === undefined && hostname && port !== null) {
+      disposePortDetection = observeServicePort({
+        terminal,
+        terminalId: terminal.id,
+        initialPort: port,
+        workspaceId,
+        projectSlug,
+        branchName,
+        scriptName,
+        publicBaseUrl: serviceProxyPublicBaseUrl,
+        serviceProxy,
+        runtimeStore,
+        onPortChanged: onLifecycleChanged,
+      });
+    }
 
     if (!reusableTerminal) {
       await waitForTerminalBootstrapReadiness(terminal);
@@ -1047,6 +1192,7 @@ export async function spawnWorkspaceScript(
     };
   } catch (error) {
     disposeLifecycleListeners?.();
+    disposePortDetection?.();
     if (routeRegistered && hostname) {
       serviceProxy.removeServiceRoutesByHostnames([hostname]);
     }

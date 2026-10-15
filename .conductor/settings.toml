@@ -1,0 +1,10 @@
+"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
+
+[prompts]
+general = """
+Use `paseo-local` as the repository base branch and pull-request target.
+Never create, retarget, merge, or push a pull request or commit to `main` unless the user explicitly confirms that exact action in the current conversation. If an action would affect `main`, stop and ask for confirmation.
+"""
+create_pr = """
+Create the pull request against `paseo-local`. If the only suitable target is `main`, stop and ask the user for explicit confirmation before creating or retargeting the pull request.
+"""

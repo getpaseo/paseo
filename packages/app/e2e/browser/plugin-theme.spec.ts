@@ -2,6 +2,7 @@ import { pluginRequirements } from "../support/helpers/plugin-fixture";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { Page } from "@playwright/test";
 import { expect, test } from "../support/fixtures";
 import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
 import { openSettingsSection } from "../support/helpers/settings";
@@ -113,6 +114,78 @@ test("applies a contributed theme and falls back when its plugin is gone", async
     });
   } finally {
     await client.removePlugin(PLUGIN_ID).catch(() => undefined);
+    await client
+      .patchDaemonConfig({ pluginsEnabled: previousConfig.config.pluginsEnabled ?? false })
+      .catch(() => undefined);
+    await client.close().catch(() => undefined);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+const MANY_THEMES_PLUGIN_ID = "plugin-theme-many-e2e";
+const MANY_THEMES_COUNT = 40;
+const LAST_THEME_NAME = `Pack theme ${MANY_THEMES_COUNT}`;
+
+const MANY_THEMES_SOURCE = `export default function contribute(plugin) {
+  for (let index = 1; index <= ${MANY_THEMES_COUNT}; index += 1) {
+    plugin.addTheme({
+      id: "pack-" + index,
+      name: "Pack theme " + index,
+      appearance: "dark",
+      colors: {
+        background: "#1e1e2e",
+        foreground: "#cdd6f4",
+        raised: "#313244",
+        control: "#45475a",
+        border: "#45475a",
+        accent: "#cba6f7",
+        mutedForeground: "#a6adc8",
+        ring: "#6c7086",
+      },
+    });
+  }
+  return () => {};
+}`;
+
+async function scrollThemeMenuToLastTheme(page: Page) {
+  const firstTheme = page.getByText("Pack theme 1", { exact: true });
+  await expect(firstTheme).toBeVisible({ timeout: 30_000 });
+  await firstTheme.hover();
+  await page.mouse.wheel(0, 4000);
+  await expect(page.getByText(LAST_THEME_NAME, { exact: true })).toBeInViewport({ ratio: 1 });
+}
+
+test("scrolls to the last theme when a plugin contributes more themes than fit", async ({
+  page,
+}, testInfo) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-theme-many-e2e-"));
+  const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+  const previousConfig = await client.getDaemonConfig();
+  await writeFile(
+    path.join(directory, "paseo-plugin.json"),
+    JSON.stringify({ id: MANY_THEMES_PLUGIN_ID, requirements: pluginRequirements }),
+  );
+  await writeFile(path.join(directory, "index.client.ts"), MANY_THEMES_SOURCE);
+
+  try {
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(directory);
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.goto("/settings");
+    await expect(page.getByTestId("settings-sidebar")).toBeVisible();
+    await openSettingsSection(page, "appearance");
+
+    await page.getByLabel("Theme: System", { exact: true }).click();
+    await scrollThemeMenuToLastTheme(page);
+    await page.screenshot({
+      path: testInfo.outputPath("plugin-theme-picker-scrolled.png"),
+      animations: "disabled",
+    });
+
+    await page.getByText(LAST_THEME_NAME, { exact: true }).click();
+    await expect(page.getByLabel(`Theme: ${LAST_THEME_NAME}`, { exact: true })).toBeVisible();
+  } finally {
+    await client.removePlugin(MANY_THEMES_PLUGIN_ID).catch(() => undefined);
     await client
       .patchDaemonConfig({ pluginsEnabled: previousConfig.config.pluginsEnabled ?? false })
       .catch(() => undefined);

@@ -125,23 +125,6 @@ export function buildBranchPickerItems(details: readonly BranchPickerDetail[]): 
   return items;
 }
 
-export interface BaseRefCheckoutStatus {
-  currentBranch: string | null;
-  upstreamRef?: string | null;
-}
-
-// Display only. The exact ref is what every request carries; this is just how a ref reads in
-// a row label, so "refs/remotes/origin/other-name" shows as "other-name".
-function branchNameFromRef(refName: string): string {
-  if (refName.startsWith("refs/heads/")) return refName.slice("refs/heads/".length);
-  if (refName.startsWith(REMOTE_TRACKING_PREFIX)) {
-    const remainder = refName.slice(REMOTE_TRACKING_PREFIX.length);
-    const separator = remainder.indexOf("/");
-    return separator === -1 ? remainder : remainder.slice(separator + 1);
-  }
-  return refName;
-}
-
 // Where a ref lives, for disambiguating two rows that would otherwise read the same.
 function refQualifier(refName: string): string | null {
   if (refName.startsWith("refs/heads/")) return "local";
@@ -153,29 +136,9 @@ function refQualifier(refName: string): string | null {
   return null;
 }
 
-// The one owner of "what do we branch off when the user picked nothing". The checkmarked
-// row, the trigger label, and the created ref all read this; computing it twice is how the
-// picker once showed local main while branching off something else.
-//
-// The upstream wins when the branch has one, because branching off the local ref silently
-// carries unpushed commits into the new workspace. The daemon sends the resolved ref rather
-// than a remote name, so a fork tracking upstream/main branches from upstream/main.
-export function defaultBasePickerItem(status: BaseRefCheckoutStatus): PickerItem | null {
-  const currentBranch = status.currentBranch;
-  if (!currentBranch) return null;
-  // COMPAT(checkoutUpstreamRef): added in v0.2.6, remove after 2027-02-01 once the daemon
-  // floor sends upstreamRef. Daemons that predate it omit the field, which lands on the
-  // local ref — the base those daemons always used.
-  const refName = status.upstreamRef ?? `refs/heads/${currentBranch}`;
-  // The upstream branch can be named differently from the local one, so the row reads the
-  // ref rather than the branch the user happens to be on.
-  const name = branchNameFromRef(refName);
-  return {
-    kind: "branch",
-    name,
-    refName,
-    accessibilityLabel: status.upstreamRef ? `${name}, upstream branch` : `${name}, local branch`,
-  };
+export function defaultBasePickerItem(): PickerItem {
+  // Bare main resolves to local main, or origin/main when only the remote ref exists.
+  return { kind: "branch", name: "main", refName: "main", accessibilityLabel: "main, branch" };
 }
 
 export function pickerItemToCheckoutRequest(
@@ -273,7 +236,14 @@ export function buildPickerOptionData(input: {
     return { options: timedOptions.map((t) => t.option), itemById, selectedOptionId: "" };
   }
 
-  const selectedOptionId = pickerOptionId(baseItem);
+  // Match the bare creation default to the same ref the daemon resolves, without a duplicate row.
+  const resolvedBaseItem =
+    baseItem.kind === "branch" && baseItem.refName === "main"
+      ? (itemById.get(branchPickerOptionId("refs/heads/main")) ??
+        itemById.get(branchPickerOptionId("refs/remotes/origin/main")) ??
+        baseItem)
+      : baseItem;
+  const selectedOptionId = pickerOptionId(resolvedBaseItem);
   if (!itemById.has(selectedOptionId)) {
     // The label lives on the item, so the row and the trigger read it from the same place.
     const labeledItem = disambiguate(baseItem, timedOptions);

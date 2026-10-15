@@ -4,7 +4,6 @@ const http = require("node:http");
 const path = require("node:path");
 const { isDeepStrictEqual } = require("node:util");
 const { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, session } = require("electron");
-const { adaptWebContents } = require("../dist/features/browser-automation/ipc.js");
 
 const ROOT = __dirname;
 const OUT_DIR = process.env.PASEO_CAPTURE_HARNESS_OUT_DIR || path.join(ROOT, "out");
@@ -443,10 +442,7 @@ async function readGuestMetrics(contents) {
 }
 
 async function capturePageSequence(contents) {
-  return adaptWebContents(contents).withFrameProduction(async () => {
-    contents.invalidate();
-    return await withTimeout(contents.capturePage(undefined, { stayHidden: false }), "capturePage");
-  });
+  return withTimeout(contents.capturePage(undefined, { stayHidden: false }), "capturePage");
 }
 
 async function captureFullPage(contents) {
@@ -488,10 +484,7 @@ async function captureFullPage(contents) {
 }
 
 async function captureFullPageSequence(contents) {
-  return adaptWebContents(contents).withFrameProduction(async () => {
-    contents.invalidate();
-    return await captureFullPage(contents);
-  });
+  return captureFullPage(contents);
 }
 
 function installHarnessWebviewGuards(win, options = {}) {
@@ -1574,9 +1567,8 @@ async function automationDrag(guest, sourceRef, targetRef) {
 }
 
 async function automationType(guest, refEntry, text) {
-  const send = await attachAutomationDebugger(guest);
   await automationClick(guest, refEntry);
-  await send("Input.insertText", { text });
+  await guest.insertText(text);
 }
 
 function sendContainedEnter(guest) {
@@ -2641,11 +2633,31 @@ async function runBrowserProfileGroup() {
 async function main() {
   ensureDirSync(OUT_DIR);
   if (
-    !["all", "existing", "permanent-parking", "automation", "browser-profile"].includes(
-      HARNESS_GROUP,
-    )
+    ![
+      "all",
+      "existing",
+      "permanent-parking",
+      "automation",
+      "browser-profile",
+      "titlebar-drag",
+      "agent-widget",
+    ].includes(HARNESS_GROUP)
   ) {
     fail(`unknown harness group ${HARNESS_GROUP}`);
+  }
+
+  if (HARNESS_GROUP === "agent-widget") {
+    const { runAgentWidgetGroup } = require("./agent-widget.js");
+    await runAgentWidgetGroup(OUT_DIR);
+    pass(`capture harness agent-widget complete output=${OUT_DIR}`);
+    return;
+  }
+
+  if (HARNESS_GROUP === "titlebar-drag") {
+    const { runTitlebarDragGroup } = require("./titlebar-drag.js");
+    await runTitlebarDragGroup(OUT_DIR);
+    pass(`capture harness titlebar-drag complete output=${OUT_DIR}`);
+    return;
   }
 
   if (HARNESS_GROUP === "browser-profile") {

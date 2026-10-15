@@ -13,19 +13,19 @@ describe("workspace archive warning for worktree backing", () => {
         workspaceName: "feature",
         isDirty: false,
         aheadOfOrigin: 0,
-        diffStat: null,
+        diffStat: { additions: 107, deletions: 23 },
       }),
     ).toBeNull();
   });
 
-  it("explains uncommitted line changes", () => {
+  it("warns about uncommitted changes without counting committed branch changes", () => {
     expect(
       buildWorktreeArchiveRiskReasons({
         isDirty: true,
         aheadOfOrigin: 0,
-        diffStat: { additions: 12, deletions: 1 },
+        diffStat: { additions: 148, deletions: 166 },
       }),
-    ).toEqual(["Uncommitted changes (12 added lines, 1 deleted line)"]);
+    ).toEqual(["Uncommitted changes"]);
   });
 
   it("treats nonzero diff stats as dirty when dirty state is missing", () => {
@@ -35,7 +35,7 @@ describe("workspace archive warning for worktree backing", () => {
         aheadOfOrigin: 0,
         diffStat: { additions: 4, deletions: 0 },
       }),
-    ).toEqual(["Uncommitted changes (4 added lines)"]);
+    ).toEqual(["Uncommitted changes"]);
   });
 
   it("explains unpushed commits", () => {
@@ -56,7 +56,7 @@ describe("workspace archive warning for worktree backing", () => {
         aheadOfOrigin: 1,
         diffStat: { additions: 1, deletions: 3 },
       }),
-    ).toBe("Uncommitted changes (1 added line, 3 deleted lines)\n1 unpushed commit");
+    ).toBe("Uncommitted changes\n1 unpushed commit");
   });
 
   it("maps archive workspace fields into the shared worktree risk shape", () => {

@@ -41,6 +41,9 @@ export type PiAgentMessage =
   | {
       role: "custom";
       content: string | Array<PiTextContent | PiImageContent>;
+      customType?: string;
+      details?: unknown;
+      display?: boolean;
     }
   | {
       role: "assistant";
@@ -74,6 +77,7 @@ export interface PiModel {
   id: string;
   name?: string;
   reasoning?: boolean;
+  thinkingLevelMap?: Record<string, string | null>;
   contextWindow?: number;
   maxTokens?: number;
   api?: string;

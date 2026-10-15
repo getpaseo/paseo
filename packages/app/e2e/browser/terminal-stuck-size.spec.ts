@@ -2,6 +2,7 @@ import { test, expect, type Page } from "../support/fixtures";
 import { TerminalE2EHarness, withTerminalInApp } from "../support/helpers/terminal-dsl";
 import { getTerminalBufferText } from "../support/helpers/terminal-perf";
 import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
+import { clickNewTerminal } from "../support/helpers/launcher";
 import { getServerId } from "../support/helpers/server-id";
 
 /**
@@ -53,18 +54,6 @@ async function readRenderedTerminalSize(page: Page): Promise<RenderedTerminalSiz
       .__paseoTerminal;
     return terminal ? { rows: terminal.rows, cols: terminal.cols } : null;
   });
-}
-
-async function createTerminalViaMenu(page: Page): Promise<void> {
-  // Workspaces always render a hidden explorer companion pane alongside the
-  // main pane, so an unscoped testid locator matches both; scope to the
-  // visible one.
-  await page.getByTestId("workspace-new-tab-button").filter({ visible: true }).click();
-  await page
-    .getByTestId("workspace-new-tab-menu-terminal")
-    .filter({ visible: true })
-    .first()
-    .click();
 }
 
 async function listTerminalIds(harness: TerminalE2EHarness): Promise<string[]> {
@@ -139,7 +128,7 @@ test.describe("terminal PTY size claim under lost window focus", () => {
 
     // Wait for the daemon to know about the first terminal rather than sleeping: if it were
     // missing from this snapshot it would be misread as "new" below.
-    await createTerminalViaMenu(page);
+    await clickNewTerminal(page);
     await expect(harness.terminalSurface(page).first()).toBeVisible({ timeout: 30_000 });
     const countTerminals = async () => (await listTerminalIds(harness)).length;
     await expect.poll(countTerminals, { timeout: 15_000 }).toBe(1);
@@ -149,7 +138,7 @@ test.describe("terminal PTY size claim under lost window focus", () => {
     await setWindowFocused(page, false);
 
     // ...opens another terminal while the window is unfocused...
-    await createTerminalViaMenu(page);
+    await clickNewTerminal(page);
     const findNewTerminalIds = async () =>
       (await listTerminalIds(harness)).filter((id) => !knownIds.has(id));
     await expect.poll(async () => (await findNewTerminalIds()).length, { timeout: 15_000 }).toBe(1);

@@ -1,10 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AppState } from "react-native";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import {
-  shouldClearAgentAttention,
-  type AgentAttentionClearTrigger,
-} from "@/utils/agent-attention";
+import { shouldClearAgentAttention } from "@/utils/agent-attention";
 import { getIsAppActivelyVisible } from "@/utils/app-visibility";
 import { isWeb } from "@/constants/platform";
 
@@ -34,35 +31,23 @@ export function useAgentAttentionClear({
   isScreenFocused,
 }: UseAgentAttentionClearParams): AgentAttentionClearController {
   const [isAppVisible, setIsAppVisible] = useState<boolean>(() => getIsAppActivelyVisible());
-  const deferredFocusEntryClearRef = useRef(false);
-  const prevRequiresAttentionRef = useRef(Boolean(requiresAttention));
-  const prevActivelyViewedRef = useRef(isScreenFocused && getIsAppActivelyVisible());
-  const prevScreenFocusedRef = useRef(false);
-  const prevAppVisibleRef = useRef(getIsAppActivelyVisible());
-
-  const clearAttention = useCallback(
-    (trigger: AgentAttentionClearTrigger) => {
-      const resolvedAgentId = agentId?.trim();
-      if (!client || !resolvedAgentId) {
-        return;
-      }
-      if (
-        !shouldClearAgentAttention({
-          agentId: resolvedAgentId,
-          isConnected,
-          requiresAttention,
-          attentionReason,
-          trigger,
-          hasDeferredFocusEntryClear: deferredFocusEntryClearRef.current,
-        })
-      ) {
-        return;
-      }
-      deferredFocusEntryClearRef.current = false;
-      client.clearAgentAttention(resolvedAgentId).catch(() => {});
-    },
-    [agentId, attentionReason, client, isConnected, requiresAttention],
-  );
+  const clearAttention = useCallback(() => {
+    const resolvedAgentId = agentId?.trim();
+    if (!client || !resolvedAgentId) {
+      return;
+    }
+    if (
+      !shouldClearAgentAttention({
+        agentId: resolvedAgentId,
+        isConnected,
+        requiresAttention,
+        attentionReason,
+      })
+    ) {
+      return;
+    }
+    client.clearAgentAttention(resolvedAgentId).catch(() => {});
+  }, [agentId, attentionReason, client, isConnected, requiresAttention]);
 
   useEffect(() => {
     const updateVisibility = () => {
@@ -90,46 +75,14 @@ export function useAgentAttentionClear({
   }, []);
 
   useEffect(() => {
-    if (!requiresAttention) {
-      deferredFocusEntryClearRef.current = false;
+    if (isScreenFocused && isAppVisible) {
+      clearAttention();
     }
-  }, [requiresAttention]);
-
-  useEffect(() => {
-    const isActivelyViewed = isScreenFocused && isAppVisible;
-    if (
-      !prevRequiresAttentionRef.current &&
-      Boolean(requiresAttention) &&
-      prevActivelyViewedRef.current &&
-      isActivelyViewed
-    ) {
-      deferredFocusEntryClearRef.current = true;
-    }
-    prevRequiresAttentionRef.current = Boolean(requiresAttention);
-    prevActivelyViewedRef.current = isActivelyViewed;
-  }, [isAppVisible, isScreenFocused, requiresAttention]);
-
-  useEffect(() => {
-    const enteredScreenFocus = !prevScreenFocusedRef.current && isScreenFocused && isAppVisible;
-    const resumedIntoFocusedAgent = !prevAppVisibleRef.current && isAppVisible && isScreenFocused;
-
-    if (enteredScreenFocus || resumedIntoFocusedAgent) {
-      clearAttention("focus-entry");
-    }
-
-    prevScreenFocusedRef.current = isScreenFocused;
-    prevAppVisibleRef.current = isAppVisible;
   }, [clearAttention, isAppVisible, isScreenFocused]);
 
   return {
-    clearOnInputFocus: useCallback(() => {
-      clearAttention("input-focus");
-    }, [clearAttention]),
-    clearOnPromptSend: useCallback(() => {
-      clearAttention("prompt-send");
-    }, [clearAttention]),
-    clearOnAgentBlur: useCallback(() => {
-      clearAttention("agent-blur");
-    }, [clearAttention]),
+    clearOnInputFocus: clearAttention,
+    clearOnPromptSend: clearAttention,
+    clearOnAgentBlur: clearAttention,
   };
 }
