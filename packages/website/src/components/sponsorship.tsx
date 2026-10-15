@@ -253,9 +253,7 @@ const SPONSORS_PLACEMENTS = {
   },
   footer: {
     section: "space-y-5 border-t border-white/10 py-8",
-    // From sm up the heart hangs in the margin so the word lines up with the
-    // logos below. Phones have too little margin to hang it.
-    heading: "gap-1.5 text-sm text-extra-muted-foreground sm:-ml-[18px]",
+    heading: "gap-1.5 text-sm text-extra-muted-foreground",
     heart: "size-3",
     link: "opacity-85 transition-opacity hover:opacity-100",
     logo: "h-10",
