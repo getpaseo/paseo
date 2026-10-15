@@ -396,7 +396,15 @@ export const pluginSettings = {
     },
   },
   "zh-CN": {
-    ...shared,
+    logs: {
+      action: "日志",
+      title: "日志：{{id}}",
+      loading: "正在加载日志…",
+      refresh: "刷新",
+      refreshing: "正在刷新…",
+      errorTitle: "无法加载插件日志",
+      empty: "暂无插件输出",
+    },
     screens: {
       open: "打开",
       offline: "连接到此主机以打开插件设置。",

@@ -428,7 +428,7 @@ describe("combined model selector data", () => {
           workspaceDirectory: "/repo",
           hasClient: true,
         }),
-      ).toEqual({ ok: false, reason: "初始 prompt 必填" });
+      ).toEqual({ ok: false, reason: "初始提示词必填" });
     } finally {
       await i18n.changeLanguage("en");
     }

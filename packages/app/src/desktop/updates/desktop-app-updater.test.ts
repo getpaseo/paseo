@@ -474,7 +474,7 @@ describe("formatStatusText", () => {
           formatVersion,
           formatLastCheckedAt,
         }),
-      ).toBe("正在检查 app 更新...");
+      ).toBe("正在检查应用更新...");
       expect(
         formatStatusText({
           status: "available",
