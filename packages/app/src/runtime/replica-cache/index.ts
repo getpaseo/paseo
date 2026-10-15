@@ -880,9 +880,24 @@ function directoryEntityForRow(row: ReplicaRow): keyof DirectoryCheckpoint | und
   return undefined;
 }
 
+interface ReplicaRead {
+  serverId: string;
+  kinds: readonly ReplicaRowKind[];
+  ids?: readonly string[];
+  invalidated: boolean;
+}
+
+function matchesReplicaRead(read: ReplicaRead, row: ReplicaRowKey): boolean {
+  return (
+    read.serverId === row.serverId &&
+    read.kinds.includes(row.kind) &&
+    (!read.ids || read.ids.includes(row.id))
+  );
+}
+
 export class ReplicaCache {
   private readonly activeServerIds = new Set<string>();
-  private readonly hostRevisions = new Map<string, number>();
+  private readonly activeReads = new Set<ReplicaRead>();
   private readonly storedRows = new Map<string, Map<string, ReplicaRow>>();
   private readonly hostBytes = new Map<string, number>();
   private readonly hostWriteOrder = new Map<string, true>();
@@ -1004,10 +1019,22 @@ export class ReplicaCache {
         // accepted commits to land. A store that rejects them will keep rejecting them: fail closed
         // rather than re-attempt the write on every pass. A write rejected for another host leaves
         // this host's stored rows readable.
-        if (!(await this.syncPending()) && this.hasPendingHostChanges(serverId)) return [];
-        const revision = this.hostRevisions.get(serverId) ?? 0;
-        const rows = await this.rowStore.read(serverId, kinds, ids);
-        if (this.canReadHostRevision(serverId, revision)) return rows;
+        const read: ReplicaRead = { serverId, kinds, ids, invalidated: false };
+        this.activeReads.add(read);
+        try {
+          if (!(await this.syncPending()) && this.hasPendingHostChanges(serverId)) return [];
+          if (read.invalidated || this.hasPendingReadChanges(read)) continue;
+          const rows = await this.rowStore.read(serverId, kinds, ids);
+          if (
+            this.activeServerIds.has(serverId) &&
+            !read.invalidated &&
+            !this.hasPendingReadChanges(read)
+          ) {
+            return rows;
+          }
+        } finally {
+          this.activeReads.delete(read);
+        }
       }
       return [];
     } catch {
@@ -1092,7 +1119,6 @@ export class ReplicaCache {
   ): void {
     if (!this.activeServerIds.has(serverId)) return;
     if (this.invalidatedHosts.has(serverId)) return;
-    this.advanceHostRevision(serverId);
     for (const mutation of mutations) {
       if (mutation.type === "delete") {
         this.queueEntityDelete(serverId, mutation.kind, mutation.id);
@@ -1118,7 +1144,7 @@ export class ReplicaCache {
 
   replaceDirectoryBaseline(serverId: string, directory: CachedDirectory): void {
     if (!this.activeServerIds.has(serverId)) return;
-    this.advanceHostRevision(serverId);
+    this.invalidateHostReads(serverId, ["agent", "workspace", "project", "checkpoint"]);
     // Replacing the directory must not discard independently accepted timeline changes.
     for (const [key, row] of this.pendingUpserts) {
       if (row.serverId === serverId && row.kind !== "timeline") this.pendingUpserts.delete(key);
@@ -1150,7 +1176,6 @@ export class ReplicaCache {
   commitTimeline(serverId: string, agentId: string, timeline: CachedTimeline): void {
     if (!this.activeServerIds.has(serverId)) return;
     if (timeline.agentId !== agentId) throw new Error("Timeline cache key does not match payload");
-    this.advanceHostRevision(serverId);
     this.queueUpsert({ serverId, kind: "timeline", id: agentId, value: timeline });
     this.schedulePersist();
   }
@@ -1159,7 +1184,7 @@ export class ReplicaCache {
     const next = new Set(serverIds);
     const removed = [...this.activeServerIds].filter((serverId) => !next.has(serverId));
     const added = [...next].filter((serverId) => !this.activeServerIds.has(serverId));
-    for (const serverId of [...removed, ...added]) this.advanceHostRevision(serverId);
+    for (const serverId of [...removed, ...added]) this.invalidateHostReads(serverId);
     this.activeServerIds.clear();
     for (const serverId of next) this.activeServerIds.add(serverId);
     for (const serverId of removed) {
@@ -1171,8 +1196,8 @@ export class ReplicaCache {
   }
 
   reconcileServerId(oldServerId: string, newServerId: string): void {
-    this.advanceHostRevision(oldServerId);
-    this.advanceHostRevision(newServerId);
+    this.invalidateHostReads(oldServerId);
+    this.invalidateHostReads(newServerId);
     const rows = this.storedRows.get(oldServerId);
     if (rows) {
       const newRows = this.storedRows.get(newServerId) ?? new Map<string, ReplicaRow>();
@@ -1250,12 +1275,14 @@ export class ReplicaCache {
   }
 
   private queueUpsert(row: StructuredReplicaUpsert): void {
+    this.invalidateRowReads(row);
     const key = pendingRowKey(row);
     this.pendingDeletes.delete(key);
     this.pendingUpserts.set(key, row);
   }
 
   private queueDelete(key: ReplicaRowKey): void {
+    this.invalidateRowReads(key);
     const pendingKey = pendingRowKey(key);
     this.pendingUpserts.delete(pendingKey);
     this.pendingDeletes.set(pendingKey, key);
@@ -1267,12 +1294,34 @@ export class ReplicaCache {
     );
   }
 
-  private canReadHostRevision(serverId: string, revision: number): boolean {
+  private hasPendingReadChanges(read: ReplicaRead): boolean {
+    if (
+      this.pendingBaselines.has(read.serverId) &&
+      read.kinds.some((kind) => kind !== "timeline")
+    ) {
+      return true;
+    }
     return (
-      this.activeServerIds.has(serverId) &&
-      (this.hostRevisions.get(serverId) ?? 0) === revision &&
-      !this.hasPendingHostChanges(serverId)
+      [...this.pendingUpserts.values()].some((row) => matchesReplicaRead(read, row)) ||
+      [...this.pendingDeletes.values()].some((row) => matchesReplicaRead(read, row))
     );
+  }
+
+  private invalidateRowReads(row: ReplicaRowKey): void {
+    for (const read of this.activeReads) {
+      if (matchesReplicaRead(read, row)) read.invalidated = true;
+    }
+  }
+
+  private invalidateHostReads(serverId: string, kinds?: readonly ReplicaRowKind[]): void {
+    for (const read of this.activeReads) {
+      if (
+        read.serverId === serverId &&
+        (!kinds || kinds.some((kind) => read.kinds.includes(kind)))
+      ) {
+        read.invalidated = true;
+      }
+    }
   }
 
   private hasPendingHostChanges(serverId: string): boolean {
@@ -1284,10 +1333,6 @@ export class ReplicaCache {
       if (row.serverId === serverId) return true;
     }
     return false;
-  }
-
-  private advanceHostRevision(serverId: string): void {
-    this.hostRevisions.set(serverId, (this.hostRevisions.get(serverId) ?? 0) + 1);
   }
 
   private drainPendingChanges(): PendingReplicaChanges {
