@@ -4564,50 +4564,77 @@ describe("send_agent_prompt MCP tool to an OMP child", () => {
   const logger = createTestLogger();
   const existingCwd = process.cwd();
 
+  async function setupOmpChild() {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-omp-child-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const parentClient = new HeldTurnAgentClient("claude", false);
+    const omp = new FakeOmp();
+    const agentManager = new AgentManager({
+      clients: { claude: parentClient, omp: new OmpAgentClient({ logger, runtime: omp }) },
+      registry: storage,
+      logger,
+    });
+    const parent = await agentManager.createAgent(
+      { provider: "claude", cwd: existingCwd },
+      undefined,
+      { workspaceId: "wks_parent" },
+    );
+    const child = await agentManager.createAgent(
+      { provider: "omp", cwd: existingCwd, title: "OMP child" },
+      undefined,
+      { workspaceId: "wks_parent" },
+    );
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage: storage,
+      callerAgentId: parent.id,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
+    return {
+      agentManager,
+      storage,
+      workdir,
+      parentClient,
+      ompSession: omp.latestSession(),
+      childId: child.id,
+      tool: registeredTool(server, "send_agent_prompt"),
+    };
+  }
+
+  async function expectOneFinishNotification(
+    agentManager: AgentManager,
+    parentClient: HeldTurnAgentClient,
+    childId: string,
+  ) {
+    await vi.waitFor(() => expect(agentManager.getAgent(childId)?.lifecycle).toBe("idle"));
+    await vi.waitFor(() => {
+      expect(parentClient.sessions[0]!.prompts).toHaveLength(1);
+      expect(parentClient.sessions[0]!.prompts[0]).toContain(
+        `Agent ${childId} (OMP child) finished.`,
+      );
+    });
+  }
+
   it.each([
-    { prompt: "/follow-up then summarize the logs", requests: "followUpRequests" },
-    { prompt: "/steer then summarize the logs", requests: "steerRequests" },
+    { command: "follow-up", streamingBehavior: "followUp" },
+    { command: "steer", streamingBehavior: "steer" },
   ] as const)(
-    "delivers $prompt into a turn OMP started on its own, without aborting it",
-    async ({ prompt, requests }) => {
-      const workdir = await mkdtemp(join(tmpdir(), "mcp-omp-child-"));
-      const storage = new AgentStorage(join(workdir, "agents"), logger);
-      const parentClient = new HeldTurnAgentClient("claude", false);
-      const omp = new FakeOmp();
-      const agentManager = new AgentManager({
-        clients: { claude: parentClient, omp: new OmpAgentClient({ logger, runtime: omp }) },
-        registry: storage,
-        logger,
-      });
+    "delivers /$command into a turn OMP started on its own, without aborting it",
+    async ({ command, streamingBehavior }) => {
+      const { agentManager, storage, workdir, parentClient, ompSession, childId, tool } =
+        await setupOmpChild();
       try {
-        const parent = await agentManager.createAgent(
-          { provider: "claude", cwd: existingCwd },
-          undefined,
-          { workspaceId: "wks_parent" },
-        );
-        const child = await agentManager.createAgent(
-          { provider: "omp", cwd: existingCwd, title: "OMP child" },
-          undefined,
-          { workspaceId: "wks_parent" },
-        );
-        const server = await createAgentMcpServer({
-          agentManager,
-          agentStorage: storage,
-          callerAgentId: parent.id,
-          providerSnapshotManager: createOpenCodeManager().manager,
-          logger,
-        });
-        const ompSession = omp.latestSession();
         ompSession.beginTurn();
         ompSession.streamAssistantText("background job finished, working on it");
         await vi.waitFor(() => {
-          expect(agentManager.getAgent(child.id)?.activeTurnId).toMatch(/^autonomous-/);
+          expect(agentManager.getAgent(childId)?.activeTurnId).toMatch(/^autonomous-/);
         });
 
-        const response = await invokeToolWithParsedInput(
-          registeredTool(server, "send_agent_prompt"),
-          { agentId: child.id, prompt },
-        );
+        const response = await invokeToolWithParsedInput(tool, {
+          agentId: childId,
+          prompt: `/${command} then summarize the logs`,
+        });
 
         expect(response.structuredContent).toMatchObject({
           success: true,
@@ -4615,26 +4642,50 @@ describe("send_agent_prompt MCP tool to an OMP child", () => {
           status: "running",
         });
         await vi.waitFor(() => {
-          expect(ompSession[requests]).toEqual([
-            { message: "then summarize the logs", imageCount: 0 },
+          expect(ompSession.prompts).toEqual([
+            { message: "then summarize the logs", imageCount: 0, streamingBehavior },
           ]);
         });
         expect(ompSession.abortRequested).toBe(false);
-        expect(agentManager.getAgent(child.id)?.lifecycle).toBe("running");
+        expect(agentManager.getAgent(childId)?.lifecycle).toBe("running");
 
         ompSession.finishTurn();
-        await vi.waitFor(() => expect(agentManager.getAgent(child.id)?.lifecycle).toBe("idle"));
-        await vi.waitFor(() => {
-          expect(parentClient.sessions[0]!.prompts).toHaveLength(1);
-          expect(parentClient.sessions[0]!.prompts[0]).toContain(
-            `Agent ${child.id} (OMP child) finished.`,
-          );
-        });
+        await expectOneFinishNotification(agentManager, parentClient, childId);
       } finally {
         await removeAgentStateDir(agentManager, storage, workdir);
       }
     },
   );
+
+  it("lets an idle child start a run with the follow-up", async () => {
+    const { agentManager, storage, workdir, parentClient, ompSession, childId, tool } =
+      await setupOmpChild();
+    try {
+      const response = await invokeToolWithParsedInput(tool, {
+        agentId: childId,
+        prompt: "/follow-up check the build",
+      });
+
+      expect(response.structuredContent).toMatchObject({
+        success: true,
+        disposition: "out_of_band",
+        status: "idle",
+      });
+      await vi.waitFor(() => {
+        expect(ompSession.prompts).toEqual([
+          { message: "check the build", imageCount: 0, streamingBehavior: "followUp" },
+        ]);
+      });
+
+      ompSession.beginTurn();
+      ompSession.streamAssistantText("Build is green");
+      await vi.waitFor(() => expect(agentManager.getAgent(childId)?.lifecycle).toBe("running"));
+      ompSession.finishTurn();
+      await expectOneFinishNotification(agentManager, parentClient, childId);
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
 });
 
 describe("send_agent_prompt MCP tool to a Pi child", () => {

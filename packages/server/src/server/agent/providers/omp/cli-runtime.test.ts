@@ -143,6 +143,30 @@ describe("OMP CLI runtime", () => {
     await expect(result).rejects.toThrow("rejected");
     await session.close();
   });
+  test("sends the prompt streamingBehavior only when one is given", async () => {
+    const child = createOmpChild();
+    const session = await createRuntime(child, []).startSession({ cwd: "/workspace/project" });
+
+    for (const streamingBehavior of ["followUp", undefined] as const) {
+      const pending = capturePendingCommand(child, "prompt");
+      const result = session.prompt(
+        "after this, update the docs",
+        undefined,
+        streamingBehavior ? { streamingBehavior } : undefined,
+      );
+      const command = await pending;
+      expect(withoutRequestId(command)).toEqual({
+        type: "prompt",
+        message: "after this, update the docs",
+        ...(streamingBehavior ? { streamingBehavior } : {}),
+      });
+      child.stdout.write(
+        `${JSON.stringify({ id: command.id, type: "response", command: "prompt", success: true })}\n`,
+      );
+      await result;
+    }
+    await session.close();
+  });
   test("uses the configured RPC timeout and attributes the pending phase", async () => {
     vi.useFakeTimers();
     const child = createOmpChild();

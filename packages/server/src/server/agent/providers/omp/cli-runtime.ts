@@ -145,11 +145,13 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   async prompt(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
+    options?: { streamingBehavior?: "steer" | "followUp" },
   ): Promise<OmpPromptAck> {
     const { id: requestId, promise } = this.process.startRequest({
       type: "prompt",
       message,
       ...(images?.length ? { images } : {}),
+      ...(options?.streamingBehavior ? { streamingBehavior: options.streamingBehavior } : {}),
     });
     const ack = OmpPromptAckSchema.parse(await promise) ?? {};
     return { requestId, ...ack };
@@ -280,13 +282,6 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): Promise<void> {
     await this.request({ type: "steer", message, ...(images?.length ? { images } : {}) });
-  }
-
-  followUp(
-    message: string,
-    images?: Array<{ type: "image"; data: string; mimeType: string }>,
-  ): void {
-    this.process.send({ type: "follow_up", message, ...(images?.length ? { images } : {}) });
   }
 
   async handoff(customInstructions?: string): Promise<void> {

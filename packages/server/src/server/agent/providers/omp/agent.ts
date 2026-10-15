@@ -1235,13 +1235,10 @@ export class OmpAgentSession implements AgentSession {
       if (!message) {
         return null;
       }
+      const streamingBehavior = commandName === "steer" ? "steer" : "followUp";
       return {
         run: async () => {
-          if (commandName === "steer") {
-            this.runtimeSession.steer(message);
-          } else {
-            this.runtimeSession.followUp(message);
-          }
+          await this.runtimeSession.prompt(message, undefined, { streamingBehavior });
         },
       };
     }
