@@ -3,6 +3,71 @@ import { describe, expect, it } from "vitest";
 import { normalizeHtmlishMarkdown, splitHtmlishMarkdown } from "./html-ish";
 
 describe("splitHtmlishMarkdown", () => {
+  it("renders heading text beside a linked picture without literal heading tags", () => {
+    const source =
+      '<h2><a href="https://example.com/r"><picture><source srcset="https://example.com/d.svg"><img alt="Retrigger" src="https://example.com/l.svg"></picture></a>Confidence Score: 5/5</h2>';
+
+    expect(splitHtmlishMarkdown(source)).toEqual([
+      {
+        kind: "inlineImage",
+        alt: "Retrigger",
+        src: "https://example.com/l.svg",
+        href: "https://example.com/r",
+        flowsWithText: true,
+      },
+      { kind: "markdown", text: "Confidence Score: 5/5" },
+    ]);
+  });
+
+  it.each(["h1", "h2", "h3", "h4", "h5", "h6"])(
+    "keeps a mixed %s heading together after preceding markdown",
+    (heading) => {
+      const source = `Intro\n\n<${heading}><img alt="Icon" src="https://example.com/icon.svg">Caption</${heading}>\n\nOutro`;
+
+      expect(splitHtmlishMarkdown(source)).toEqual([
+        { kind: "markdown", text: "Intro\n\n" },
+        {
+          kind: "inlineImage",
+          alt: "Icon",
+          src: "https://example.com/icon.svg",
+          flowsWithText: true,
+        },
+        { kind: "markdown", text: "Caption\n\nOutro" },
+      ]);
+    },
+  );
+
+  it("preserves formatted text before and after images in a details heading", () => {
+    const source =
+      '<details><summary>More</summary><h2><strong>Before</strong><img alt="Icon" src="https://example.com/icon.svg"><em>After</em></h2></details>';
+
+    expect(splitHtmlishMarkdown(source)).toEqual([
+      {
+        kind: "details",
+        summary: "More",
+        body: "**Before***After*",
+        bodyParts: [
+          { kind: "markdown", text: "**Before**" },
+          { kind: "inlineImage", alt: "Icon", src: "https://example.com/icon.svg" },
+          { kind: "markdown", text: "*After*" },
+        ],
+      },
+    ]);
+  });
+
+  it("keeps mixed HTML headings literal in code examples", () => {
+    const heading = '<h2><img src="https://example.com/icon.svg">Caption</h2>';
+    const source = `Use \`${heading}\`\n\n\`\`\`html\n${heading}\n\`\`\``;
+
+    expect(splitHtmlishMarkdown(source)).toEqual([{ kind: "markdown", text: source }]);
+  });
+
+  it("preserves unknown wrappers around text-only headings", () => {
+    expect(splitHtmlishMarkdown("<section><h2>Heading</h2></section>")).toEqual([
+      { kind: "markdown", text: "<section>Heading</section>" },
+    ]);
+  });
+
   const inlineImageBody = [
     '<a href="#"><img alt="Priority" src="https://example.com/assets/priority.svg?v=9" align="top"></a> Spoofed browser User-Agent allows access control bypass',
     "",
@@ -109,6 +174,85 @@ describe("splitHtmlishMarkdown", () => {
         alt: "Small",
         src: "https://example.com/small.svg",
         href: "https://example.com/details",
+      },
+    ]);
+  });
+
+  it("renders a linked picture inside a heading without exposing its HTML", () => {
+    const source = [
+      '<h2><a href="https://example.com/retrigger?id=73851569"><picture>',
+      '<source media="(prefers-color-scheme: dark)" srcset="https://example.com/dark.svg">',
+      '<source media="(prefers-color-scheme: light)" srcset="https://example.com/light.svg">',
+      '<img alt="Retrigger" src="https://example.com/default.svg" width="85" height="24">',
+      "</picture></a></h2>",
+      "",
+      "Confidence Score: 5/5",
+      "",
+      "<details><summary>Summary</summary>No outstanding findings.</details>",
+    ].join("\n");
+
+    expect(splitHtmlishMarkdown(source)).toEqual([
+      {
+        kind: "inlineImage",
+        alt: "Retrigger",
+        src: "https://example.com/default.svg",
+        href: "https://example.com/retrigger?id=73851569",
+        width: 85,
+        height: 24,
+      },
+      { kind: "markdown", text: "\n\nConfidence Score: 5/5\n\n" },
+      { kind: "details", summary: "Summary", body: "No outstanding findings." },
+    ]);
+  });
+
+  it.each([
+    ["", ""],
+    ["<h3>", "</h3>"],
+    ['<a href="javascript:alert(1)">', "</a>"],
+  ])("uses the picture fallback without activating unsafe links (%s)", (wrapper, closing) => {
+    const picture =
+      '<picture><source srcset="https://example.com/alternate.svg"/><img src="https://example.com/default.svg" alt="Image"></picture>';
+
+    expect(splitHtmlishMarkdown(`${wrapper}${picture}${closing}`)).toEqual([
+      { kind: "inlineImage", src: "https://example.com/default.svg", alt: "Image" },
+    ]);
+  });
+
+  it("keeps picture examples literal inside inline and fenced code", () => {
+    const picture =
+      '<picture><source srcset="https://example.com/alternate.svg"><img src="https://example.com/default.svg"></picture>';
+    const source = `Use \`${picture}\`\n\n\`\`\`html\n${picture}\n\`\`\``;
+    expect(splitHtmlishMarkdown(source)).toEqual([{ kind: "markdown", text: source }]);
+  });
+
+  it.each(["p", "div"])("renders a linked picture inside %s", (wrapper) => {
+    const source = `<${wrapper}><a href="https://example.com/page"><picture><source srcset="https://example.com/dark.svg"><img src="https://example.com/default.svg" alt="Image"></picture></a></${wrapper}>`;
+    expect(splitHtmlishMarkdown(source)).toEqual([
+      {
+        kind: "inlineImage",
+        src: "https://example.com/default.svg",
+        alt: "Image",
+        href: "https://example.com/page",
+      },
+    ]);
+  });
+
+  it.each(["h2", "p", "div"])("keeps text after an image-only %s on a separate row", (wrapper) => {
+    const source = `<${wrapper}><img src="https://example.com/image.svg" alt="Image"></${wrapper}>Next section`;
+    expect(splitHtmlishMarkdown(source)).toEqual([
+      { kind: "inlineImage", src: "https://example.com/image.svg", alt: "Image" },
+      { kind: "markdown", text: "Next section" },
+    ]);
+  });
+
+  it("handles deeply nested image wrappers without exhausting the stack", () => {
+    const source = `${"<div>".repeat(10000)}<a href="https://example.com/page"><picture><img src="https://example.com/image.svg" alt="Image"></picture></a>${"</div>".repeat(10000)}`;
+    expect(splitHtmlishMarkdown(source)).toEqual([
+      {
+        kind: "inlineImage",
+        src: "https://example.com/image.svg",
+        alt: "Image",
+        href: "https://example.com/page",
       },
     ]);
   });
@@ -309,6 +453,43 @@ describe("splitHtmlishMarkdown", () => {
   it("leaves complex code tags inert instead of parsing HTML", () => {
     expect(normalizeHtmlishMarkdown('<code onclick="evil()"><script>x</script></code>')).toBe(
       '<code onclick="evil()"><script>x</script></code>',
+    );
+  });
+
+  it("keeps table rows after a comparison that only looks like a tag", () => {
+    const source = [
+      "| ID | Note | Status |",
+      "|---|---|---|",
+      "| a-1 | accepts 1<size<2 only | open |",
+      "| a-2 | second row | open |",
+      "",
+      "Later x -> y.",
+    ].join("\n");
+
+    expect(splitHtmlishMarkdown(source)).toEqual([{ kind: "markdown", text: source }]);
+  });
+
+  it.each(["See <https://example.com/docs> for more.", "Stop when a<b", "Keep </ b> and a <b"])(
+    "keeps %j literal because it is not HTML",
+    (source) => {
+      expect(normalizeHtmlishMarkdown(source)).toBe(source);
+    },
+  );
+
+  it.each([
+    "Call As<Integer>() before limits<DWORD>::max()",
+    "<Kbd Data-Key='K'>Ctrl</Kbd> then <Foo/>",
+  ])("echoes unknown tags in %j as written", (source) => {
+    expect(normalizeHtmlishMarkdown(source)).toBe(source);
+  });
+
+  it("rebuilds an unknown tag that a code span splits", () => {
+    expect(normalizeHtmlishMarkdown('<Tip title="`x`">hi</Tip>')).toBe("`x`<tip title>hi</Tip>");
+  });
+
+  it("still reads tags and comments next to literal angle brackets", () => {
+    expect(normalizeHtmlishMarkdown("1<n<2 <b>bold</b><!-- hidden --> 3<4")).toBe(
+      "1<n<2 **bold** 3<4",
     );
   });
 

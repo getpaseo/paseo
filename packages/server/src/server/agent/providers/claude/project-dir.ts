@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -28,6 +28,46 @@ export function claudeProjectDirSync(cwd: string, options?: ClaudeProjectDirOpti
   const canonical = canonicalizeSync(cwd);
   const projectsRoot = join(resolveConfigDir(options), "projects");
   return join(projectsRoot, encode(canonical));
+}
+
+// Claude Code resumes a session by id from any working directory and keeps appending to the
+// transcript in the project folder where the session started. That folder differs from the
+// one `cwd` encodes to when the project moved, the daemon migrated, or Claude Code sees the
+// cwd under another name (a Windows binary under WSL). Returns the expected path when no
+// transcript exists anywhere.
+export function claudeTranscriptPathSync(input: {
+  cwd: string;
+  sessionId: string;
+  configDir?: string;
+}): string {
+  const options = { configDir: input.configDir };
+  const fileName = `${input.sessionId}.jsonl`;
+  const expected = join(claudeProjectDirSync(input.cwd, options), fileName);
+  if (existsSync(expected)) {
+    return expected;
+  }
+  const projectsRoot = join(resolveConfigDir(options), "projects");
+  let projectDirs: string[];
+  try {
+    projectDirs = readdirSync(projectsRoot);
+  } catch (error) {
+    if (isMissingDirectoryError(error)) {
+      return expected;
+    }
+    throw error;
+  }
+  for (const projectDir of projectDirs) {
+    const candidate = join(projectsRoot, projectDir, fileName);
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return expected;
+}
+
+function isMissingDirectoryError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === "ENOENT" || code === "ENOTDIR";
 }
 
 async function canonicalize(input: string): Promise<string> {

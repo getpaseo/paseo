@@ -158,6 +158,7 @@ export function createPluginWorker(options: {
       label: provider.label,
       description: provider.description,
       iconPath: provider.icon,
+      requiresConfiguration: provider.requiresConfiguration,
       hasCatalogCacheKey: provider.getCatalogCacheKey !== undefined,
       hasStatus: provider.status !== undefined,
       command: provider.command,
@@ -344,7 +345,8 @@ export function createPluginWorker(options: {
     void (async () => {
       const source = usageSources.get(message.sourceId);
       if (!source) throw new Error(`Unknown usage source: ${message.sourceId}`);
-      if (message.type === "usage.discover") return jsonTransportValue(await source.discover());
+      if (message.type === "usage.discover")
+        return jsonTransportValue(await source.discover(message.scope));
       const input = await source.input.parseAsync(message.input);
       return jsonTransportValue(await source.fetch(input));
     })().then(

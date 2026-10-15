@@ -12,6 +12,8 @@ import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import type { AgentClient, AgentProvider, AgentSessionConfig } from "./agent-sdk-types.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
+import { DaemonClient } from "../test-utils/daemon-client.js";
+import { parseAgentMessage } from "./agent-messages/index.js";
 
 interface StructuredContent {
   [key: string]: unknown;
@@ -215,7 +217,6 @@ async function createTopLevelAgent(args?: Partial<StructuredContent>): Promise<s
     provider: "claude/claude-test-model",
     initialPrompt: "say done and stop",
     settings: { modeId: "bypassPermissions" },
-    background: true,
     ...rest,
   });
   return str(payload.agentId);
@@ -267,28 +268,6 @@ async function killTerminalIfPresent(terminalId: string | null | undefined): Pro
   }
 }
 
-async function archiveWorktreeIfPresent(params: {
-  cwd: string;
-  worktreePath?: string | null;
-  worktreeSlug?: string | null;
-}): Promise<void> {
-  if (!params.worktreePath && !params.worktreeSlug) {
-    return;
-  }
-  try {
-    await topLevelClient.callTool({
-      name: "archive_worktree",
-      args: {
-        cwd: params.cwd,
-        ...(params.worktreePath ? { worktreePath: params.worktreePath } : {}),
-        ...(params.worktreeSlug ? { worktreeSlug: params.worktreeSlug } : {}),
-      },
-    });
-  } catch {
-    // ignore cleanup errors
-  }
-}
-
 beforeAll(async () => {
   tempRoot = await mkdtemp(path.join(os.tmpdir(), "mcp-parity-e2e-"));
   parentAgentCwd = await makeCwd("parent-agent-cwd");
@@ -307,7 +286,6 @@ beforeAll(async () => {
     provider: "claude/claude-test-model",
     initialPrompt: "say done and stop",
     settings: { modeId: "bypassPermissions" },
-    background: true,
   });
   parentAgentId = str(parentPayload.agentId);
 
@@ -335,6 +313,167 @@ afterAll(async () => {
 });
 
 describe("Suite A: Core Fixes", () => {
+  test.each([
+    ["Stop", "cancelAgent"],
+    ["Reload", "refreshAgent"],
+  ] as const)(
+    "%s tells the parent that a watched child was canceled",
+    async (_action, method) => {
+      let releaseChild!: () => void;
+      let childReachedGate!: () => void;
+      const heldTurn = new Promise<void>((resolve) => {
+        releaseChild = resolve;
+      });
+      const childAtGate = new Promise<void>((resolve) => {
+        childReachedGate = resolve;
+      });
+      const parentPrompts: string[] = [];
+      const daemon = await createTestPaseoDaemon({
+        agentClients: createTestAgentClients({
+          onStartTurn(prompt, config) {
+            if (config.title === "Watching parent" && typeof prompt === "string")
+              parentPrompts.push(prompt);
+          },
+          async beforeTurnComplete(prompt) {
+            if (
+              typeof prompt === "string" &&
+              parseAgentMessage(prompt).text === "Hold this child turn"
+            ) {
+              childReachedGate();
+              await heldTurn;
+            }
+          },
+        }),
+      });
+      const client = new DaemonClient({
+        url: `ws://127.0.0.1:${daemon.port}/ws`,
+        appVersion: "0.11.2",
+      });
+      let mcp: McpClient | undefined;
+      let unsubscribe: (() => void) | undefined;
+      try {
+        await client.connect();
+        await client.fetchAgents({ subscribe: {} });
+        const parent = await client.createAgent({
+          provider: "claude",
+          cwd: daemon.paseoHome,
+          title: "Watching parent",
+          modeId: "bypassPermissions",
+        });
+        mcp = await createMcpClient(
+          buildExpectedAgentMcpUrl({ host: "127.0.0.1", port: daemon.port, agentId: parent.id }),
+        );
+        const created = await callToolStructured(mcp, "create_agent", {
+          relationship: { kind: "subagent" },
+          workspace: { kind: "current" },
+          title: "Watched child",
+          provider: "codex/gpt-5.4",
+          initialPrompt: "Hold this child turn",
+          notifyOnFinish: true,
+          settings: { modeId: "full-access" },
+        });
+        const childId = str(created.agentId);
+        await childAtGate;
+        expect(daemon.daemon.agentManager.getAgent(childId)?.lifecycle).toBe("running");
+        const terminalEvents: string[] = [];
+        unsubscribe = daemon.daemon.agentManager.subscribe(
+          (event) => {
+            if (
+              event.type === "agent_stream" &&
+              event.agentId === childId &&
+              (event.event.type === "turn_completed" || event.event.type === "turn_canceled")
+            )
+              terminalEvents.push(event.event.type);
+          },
+          { agentId: childId, replayState: false },
+        );
+
+        await client[method](childId);
+        await waitFor({
+          timeoutMs: 10000,
+          label: "parent cancellation notification",
+          check: () => (parentPrompts.length === 1 ? true : null),
+        });
+        const notification = parseAgentMessage(parentPrompts[0]);
+        expect(terminalEvents).toEqual(["turn_canceled"]);
+        expect(notification.source).toEqual({
+          kind: "agent-notification",
+          agentId: childId,
+          title: "Watched child",
+          event: "errored",
+        });
+        expect(notification.text).toContain(`Agent ${childId} (Watched child) was canceled.`);
+        expect(notification.text).not.toContain("finished.");
+        await waitFor({
+          timeoutMs: 10000,
+          label: "parent notification turn drained",
+          check: () =>
+            daemon.daemon.agentManager.getAgent(parent.id)?.lifecycle === "idle" ? true : null,
+        });
+        expect(parentPrompts).toHaveLength(1);
+      } finally {
+        releaseChild();
+        unsubscribe?.();
+        await mcp?.close();
+        await client.close();
+        await daemon.close();
+      }
+    },
+    30000,
+  );
+
+  test.each([
+    { outcome: "finished", prompt: "say done and stop", status: "idle" },
+    { outcome: "errored", prompt: "Emit a turn failure", status: "error" },
+  ])(
+    "a watched child still reports $outcome after send_agent_prompt",
+    async ({ outcome, prompt, status }) => {
+      const childId = await createChildAgent({
+        title: "Follow-up child",
+        settings: { modeId: "bypassPermissions" },
+      });
+      try {
+        await waitFor({
+          timeoutMs: 10000,
+          label: "initial child turn completed",
+          check: () =>
+            daemonHandle.daemon.agentManager.getAgent(childId)?.lifecycle === "idle" ? true : null,
+        });
+        await callToolStructured(agentScopedClient, "send_agent_prompt", {
+          agentId: childId,
+          prompt,
+          notifyOnFinish: true,
+        });
+        const notifications = await waitFor({
+          timeoutMs: 10000,
+          label: `${outcome} notification`,
+          check: () => {
+            const items = daemonHandle.daemon.agentManager
+              .getTimeline(parentAgentId)
+              .filter(
+                (item) => item.type === "tool_call" && item.agentMessage?.sender.id === childId,
+              );
+            return items.length > 0 ? items : null;
+          },
+        });
+        expect(notifications).toEqual([
+          expect.objectContaining({
+            type: "tool_call",
+            agentMessage: {
+              event: outcome,
+              sender: { id: childId, title: "Follow-up child" },
+              text: expect.stringContaining(`(Follow-up child) ${outcome}.`),
+            },
+          }),
+        ]);
+        expect(daemonHandle.daemon.agentManager.getAgent(childId)?.lifecycle).toBe(status);
+      } finally {
+        await archiveAgentIfPresent(childId);
+      }
+    },
+    30000,
+  );
+
   test("AGENT_WAIT_TIMEOUT_MS is 30000", () => {
     expect(AGENT_WAIT_TIMEOUT_MS).toBe(30_000);
   });
@@ -845,117 +984,107 @@ describe("Suite D: Provider Tools", () => {
   });
 });
 
-describe("Suite E: Worktree Tools", () => {
-  test("list_worktrees on empty repo", async () => {
-    const payload = await callToolStructured(topLevelClient, "list_worktrees", {
-      cwd: worktreeRepoCwd,
+describe("Suite E: Workspace Tools", () => {
+  test("background worktree creation, discovery and archive use ordinary workspace ownership", async () => {
+    const created = await callToolStructured(topLevelClient, "create_workspace", {
+      isolation: "worktree",
+      path: worktreeRepoCwd,
+      baseBranch: "main",
+      branchName: `parity-background-${Date.now()}`,
+      background: true,
     });
-    expect(payload.worktrees).toEqual([]);
-  });
-
-  test("create_worktree and list_worktrees", async () => {
-    let worktreePath: string | null = null;
-    const branchName = `parity-create-${Date.now()}`;
+    const workspaceId = str(created.workspaceId);
     try {
-      const created = await callToolStructured(topLevelClient, "create_worktree", {
-        cwd: worktreeRepoCwd,
-        target: {
-          kind: "branch-off",
-          worktreeSlug: branchName,
-          baseBranch: "main",
-        },
+      expect(created.background).toBe(true);
+      const ordinary = await callToolStructured(topLevelClient, "list_workspaces", {});
+      expect(
+        recordArr(ordinary.workspaces).map((workspace) => workspace.workspaceId),
+      ).not.toContain(workspaceId);
+      const inclusive = await callToolStructured(topLevelClient, "list_workspaces", {
+        includeBackground: true,
       });
-      worktreePath = str(created.worktreePath);
-
-      const listed = await callToolStructured(topLevelClient, "list_worktrees", {
-        cwd: worktreeRepoCwd,
-      });
-      const worktrees = recordArr(listed.worktrees);
-      expect(worktrees).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            path: worktreePath,
-            branchName,
-          }),
-        ]),
+      expect(recordArr(inclusive.workspaces)).toContainEqual(
+        expect.objectContaining({ workspaceId, background: true }),
       );
+      const child = await callToolStructured(topLevelClient, "create_agent", {
+        workspaceId,
+        title: "Background worker",
+        provider: "claude/claude-test-model",
+        initialPrompt: "Say done.",
+      });
+      const agentId = str(child.agentId);
+      const workerClient = await createMcpClient(
+        `http://127.0.0.1:${daemonHandle.port}/mcp/agents?callerAgentId=${agentId}`,
+      );
+      let terminalId: string;
+      try {
+        const terminal = await callToolStructured(workerClient, "create_terminal", {
+          name: "Background terminal",
+        });
+        terminalId = str(terminal.id);
+        expect(terminal.cwd).toBe(created.cwd);
+      } finally {
+        await workerClient.close();
+      }
+      const status = await callToolStructured(topLevelClient, "get_agent_status", { agentId });
+      expect((status.snapshot as StructuredContent).workspaceId).toBe(workspaceId);
+      const archived = await callToolStructured(topLevelClient, "archive_workspace", {
+        workspaceId,
+      });
+      expect(archived.archivedAgentIds).toContain(agentId);
+      const terminals = await callToolStructured(topLevelClient, "list_terminals", { all: true });
+      expect(recordArr(terminals.terminals).map((terminal) => terminal.id)).not.toContain(
+        terminalId,
+      );
+      const remaining = await callToolStructured(topLevelClient, "list_workspaces", {
+        includeBackground: true,
+      });
+      expect(
+        recordArr(remaining.workspaces).map((workspace) => workspace.workspaceId),
+      ).not.toContain(workspaceId);
     } finally {
-      await archiveWorktreeIfPresent({ cwd: worktreeRepoCwd, worktreePath });
+      await topLevelClient
+        .callTool({ name: "archive_workspace", args: { workspaceId } })
+        .catch(() => undefined);
     }
   });
 
-  test("archive_worktree removes worktree", async () => {
-    let worktreePath: string | null = null;
-    const branchName = `parity-archive-${Date.now()}`;
+  test("agent-scoped workspace creation inherits visibility and permits an explicit false override", async () => {
+    const parentWorkspace = await callToolStructured(topLevelClient, "create_workspace", {
+      isolation: "local",
+      path: worktreeRepoCwd,
+      background: true,
+    });
+    const parentWorkspaceId = str(parentWorkspace.workspaceId);
+    let scoped: McpClient | null = null;
+    const ownedWorkspaces: string[] = [parentWorkspaceId];
     try {
-      const created = await callToolStructured(topLevelClient, "create_worktree", {
-        cwd: worktreeRepoCwd,
-        target: {
-          kind: "branch-off",
-          worktreeSlug: branchName,
-          baseBranch: "main",
-        },
+      const parent = await callToolStructured(topLevelClient, "create_agent", {
+        workspaceId: parentWorkspaceId,
+        title: "Background parent",
+        provider: "claude/claude-test-model",
+        initialPrompt: "Say done.",
       });
-      worktreePath = str(created.worktreePath);
-
-      await callToolStructured(topLevelClient, "archive_worktree", {
-        cwd: worktreeRepoCwd,
-        worktreePath,
-      });
-      worktreePath = null;
-
-      const listed = await callToolStructured(topLevelClient, "list_worktrees", {
-        cwd: worktreeRepoCwd,
-      });
-      const worktrees = recordArr(listed.worktrees);
-      expect(worktrees.some((worktree) => worktree.path === created.worktreePath)).toBe(false);
-    } finally {
-      await archiveWorktreeIfPresent({ cwd: worktreeRepoCwd, worktreePath });
-    }
-  });
-
-  test("archive_worktree succeeds when caller cwd is inside the archived worktree", async () => {
-    let worktreePath: string | null = null;
-    let worktreeAgentId: string | null = null;
-    let worktreeScopedClient: McpClient | null = null;
-    const branchName = `parity-archive-self-cwd-${Date.now()}`;
-
-    try {
-      const created = await callToolStructured(topLevelClient, "create_worktree", {
-        cwd: worktreeRepoCwd,
-        target: {
-          kind: "branch-off",
-          worktreeSlug: branchName,
-          baseBranch: "main",
-        },
-      });
-      worktreePath = str(created.worktreePath);
-      worktreeAgentId = await createTopLevelAgent({
-        cwd: worktreePath,
-        title: "Worktree scoped parity agent",
-      });
-      worktreeScopedClient = await createMcpClient(
-        `http://127.0.0.1:${daemonHandle.port}/mcp/agents?callerAgentId=${encodeURIComponent(
-          worktreeAgentId,
-        )}`,
+      scoped = await createMcpClient(
+        `http://127.0.0.1:${daemonHandle.port}/mcp/agents?callerAgentId=${str(parent.agentId)}`,
       );
-
-      const archived = await callToolStructured(worktreeScopedClient, "archive_worktree", {
-        worktreePath,
+      const inherited = await callToolStructured(scoped, "create_workspace", {
+        isolation: "local",
       });
-      expect(archived).toEqual({ success: true });
-      worktreePath = null;
-      worktreeAgentId = null;
-
-      const listed = await callToolStructured(topLevelClient, "list_worktrees", {
-        cwd: worktreeRepoCwd,
+      ownedWorkspaces.push(str(inherited.workspaceId));
+      expect(inherited.background).toBe(true);
+      const visible = await callToolStructured(scoped, "create_workspace", {
+        isolation: "local",
+        background: false,
       });
-      const worktrees = recordArr(listed.worktrees);
-      expect(worktrees.map((worktree) => worktree.path)).not.toContain(created.worktreePath);
+      ownedWorkspaces.push(str(visible.workspaceId));
+      expect(visible.background).toBe(false);
     } finally {
-      await worktreeScopedClient?.close();
-      await archiveAgentIfPresent(worktreeAgentId);
-      await archiveWorktreeIfPresent({ cwd: worktreeRepoCwd, worktreePath });
+      await scoped?.close();
+      for (const workspaceId of ownedWorkspaces.toReversed())
+        await topLevelClient
+          .callTool({ name: "archive_workspace", args: { workspaceId } })
+          .catch(() => undefined);
     }
   });
 });

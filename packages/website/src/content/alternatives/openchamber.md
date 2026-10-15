@@ -51,26 +51,35 @@ OpenChamber's CLI runs and manages its server, remote access, and updates. Its A
 
 ## Mobile and voice
 
-Both tools provide iOS and Android clients and support dictation and spoken replies. Paseo uses a React Native mobile interface. OpenChamber packages its web interface with Capacitor and adds native integrations around the WebView.
+Both tools provide iOS and Android clients and support dictation and spoken replies. The mobile app is the full app, native on iOS and Android, with full feature parity with desktop. OpenChamber packages its web interface with Capacitor and adds native integrations around the WebView.
 
 ## Comparison
 
-|                              | Paseo                                                                                   | OpenChamber                      |
-| ---------------------------- | --------------------------------------------------------------------------------------- | -------------------------------- |
-| License                      | Open source (Apache-2.0)                                                                | Open source (MIT)                |
-| Desktop platforms            | macOS, Linux, Windows                                                                   | macOS, Linux, Windows            |
-| Mobile implementation        | React Native                                                                            | Capacitor WebView                |
-| Agent harnesses              | Claude Code, Codex, OpenCode, Pi, Antigravity, Muse Code + 30+ via ACP catalog + custom | OpenCode                         |
-| Application plugins          | Server code and native client components                                                | No                               |
-| Split panes and tabs         | Yes                                                                                     | Workspace views                  |
-| In-app terminal              | Yes                                                                                     | Yes                              |
-| In-app browser               | Yes                                                                                     | Yes                              |
-| GitHub workflow in app       | Commit, push, PR, checks, reviews, merge                                                | Issue, PR, checks, review, merge |
-| Git worktrees                | Yes                                                                                     | Yes                              |
-| Per-worktree dev server URLs | Yes                                                                                     | Preview and port detection       |
-| Automation                   | CLI, SDK, MCP                                                                           | Server CLI, Agent Control Tool   |
-| Schedules                    | Yes                                                                                     | Yes                              |
-| Voice                        | Local dictation and realtime voice                                                      | Dictation and spoken replies     |
-| Self-hosted daemon           | Yes                                                                                     | Yes                              |
+|                              | Paseo                                                                                              | OpenChamber                                    |
+| ---------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| License                      | Open source (Apache-2.0)                                                                           | Open source (MIT)                              |
+| Account required             | No                                                                                                 | -                                              |
+| Desktop app                  | Yes (one click install, daemon bundled)                                                            | Yes (macOS, Linux, Windows)                    |
+| Mobile app                   | Yes (native, full parity with desktop)                                                             | Yes (Capacitor WebView)                        |
+| CLI                          | Yes (everything the app does)                                                                      | Yes (runs and manages the server)              |
+| Remote machines              | Yes (install the daemon anywhere)                                                                  | Yes (server on another machine)                |
+| Built-in relay               | Yes (opt-in, end-to-end encrypted, no account)                                                     | -                                              |
+| Direct network access        | Yes (LAN, Tailscale, VPN)                                                                          | -                                              |
+| SSH access                   | Yes                                                                                                | -                                              |
+| Providers                    | Claude Code, Codex, OpenCode, Pi, Antigravity, Muse Code, 30+ more                                 | OpenCode                                       |
+| Parallel agents              | Yes (isolated worktrees, across machines)                                                          | Yes (Git worktrees, multi-run comparisons)     |
+| Terminal agents              | Yes (run any agent in a terminal, get notified when it finishes)                                   | -                                              |
+| Agent orchestration          | Yes (agents create worktrees and launch other agents, across providers)                            | Yes (Agent Control Tool, OpenCode agents only) |
+| Editor                       | Yes                                                                                                | -                                              |
+| Terminals                    | Yes                                                                                                | Yes                                            |
+| Diff review                  | Yes (comments go to the agent)                                                                     | Yes                                            |
+| Pull requests in app         | GitHub, GitLab, Gitea, Forgejo, Codeberg                                                           | GitHub (issue, PR, checks, review, merge)      |
+| In-app browser               | Yes (element picker, agent browser tools)                                                          | Yes (previews)                                 |
+| Per-worktree dev server URLs | Yes (`web--fix-auth--my-app.localhost`)                                                            | Preview and port detection                     |
+| Schedules and heartbeats     | Yes                                                                                                | Yes (schedules)                                |
+| Plan usage                   | Yes                                                                                                | -                                              |
+| Plugins                      | Yes (new screens, panels, agent hooks, and providers, one plugin runs on desktop, web, and mobile) | No                                             |
+| Voice                        | Yes (local dictation, realtime voice)                                                              | Dictation and spoken replies                   |
+| Telemetry                    | None                                                                                               | -                                              |
 
 See also: [Paseo vs Conductor](/alternatives/conductor), [Paseo vs Superset](/alternatives/superset), [Paseo vs Happy Coder](/alternatives/happy-coder).

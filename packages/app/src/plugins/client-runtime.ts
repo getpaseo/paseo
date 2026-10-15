@@ -1,3 +1,4 @@
+import { createPlayAudio, type AudioEngine } from "@/audio";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { createPluginHosts } from "./hosts";
 import type { PluginClientOpenPanelOptions } from "@getpaseo/plugin/client";
@@ -12,7 +13,10 @@ import { createPluginNavigation } from "./navigation";
 import { pluginButtonStore } from "./buttons";
 import type { InstalledPlugin } from "./types";
 
-export function createPluginClientRuntime(installation: InstalledPlugin): PluginClientRuntime {
+export function createPluginClientRuntime(
+  installation: InstalledPlugin,
+  audio: Pick<AudioEngine, "play">,
+): PluginClientRuntime {
   const state = createPluginClientStateSource(installation.serverId);
   const capabilities = createPluginCapabilities(
     installation,
@@ -20,6 +24,7 @@ export function createPluginClientRuntime(installation: InstalledPlugin): Plugin
   );
   return {
     ...capabilities,
+    playAudio: createPlayAudio(audio, installation.lifetime.signal),
     hosts: createPluginHosts(getHostRuntimeStore(), installation.lifetime.signal),
     addComposerPill(contribution) {
       return pluginButtonStore.addComposerPill(installation, contribution);

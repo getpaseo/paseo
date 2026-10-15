@@ -52,6 +52,9 @@ it("requests the managed connection credential through desktop main without a we
 });
 
 class FakeDaemonClient {
+  supportsBackgroundWorkspaces(): boolean {
+    return false;
+  }
   private state: ConnectionState = { status: "idle" };
   private listeners = new Set<(status: ConnectionState) => void>();
   private error: string | null = null;
@@ -3047,6 +3050,34 @@ describe("HostRuntimeStore", () => {
     useSessionStore.getState().clearSession(host.serverId);
   });
 
+  it("drains a queued message as a steer so a turn the agent just started is not interrupted", async () => {
+    const host = makeHost({ serverId: "srv_steer_queue_drain" });
+    const fakeClient = new FakeDaemonClient();
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async () => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: null,
+        }),
+        getClientId: async () => "cid_steer_queue_drain",
+      },
+    });
+    const sessionStore = useSessionStore.getState();
+    sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    sessionStore.setQueuedMessages(
+      host.serverId,
+      new Map([["agent", [{ id: "queued", text: "next task", attachments: [] }]]]),
+    );
+
+    store.drainQueuedAgentMessage(host.serverId, "agent");
+    await fakeClient.waitForSentMessages(1);
+
+    expect(fakeClient.sentAgentMessages[0]?.[2]?.activeTurnBehavior).toBe("steer");
+    sessionStore.clearSession(host.serverId);
+  });
+
   it("uses legacy GitHub attachments when draining a queue for an old daemon", async () => {
     const host = makeHost({ serverId: "srv_legacy_queue_attachment" });
     const fakeClient = new FakeDaemonClient();
@@ -3916,6 +3947,53 @@ describe("HostRuntimeStore", () => {
       "srv_localhost:6767",
       "srv_10.0.0.5:6767",
     ]);
+    store.syncHosts([]);
+  });
+
+  it("authenticates Remote SSH probes with the entered daemon password and stores it verbatim", async () => {
+    const store = createPairingStore({
+      password: " s3cret ",
+      serverIdForHost: (host) => (host.connections[0]?.type === "remoteSsh" ? "srv_ssh" : ""),
+    });
+    answerHostConfirmations(store, false);
+
+    await store.boot();
+    await store.probeAndUpsertRemoteSshConnection({
+      host: "deploy@example.com",
+      password: " s3cret ",
+    });
+
+    const host = store.getHosts().find((entry) => entry.serverId === "srv_ssh");
+    expect(host?.password).toBe(" s3cret ");
+    expect(host?.connections[0]).toMatchObject({
+      type: "remoteSsh",
+      host: "deploy@example.com",
+    });
+
+    // The fix promises the saved password is sent on every connection: a later
+    // cycle must authenticate from the stored profile alone.
+    await store.runProbeCycleNow("srv_ssh");
+    await waitForHostOnline(store, "srv_ssh");
+    store.syncHosts([]);
+  });
+
+  it("rejects Remote SSH probes without the daemon password, the way the daemon does", async () => {
+    const store = createPairingStore({
+      password: "s3cret",
+      serverIdForHost: (host) => (host.connections[0]?.type === "remoteSsh" ? "srv_ssh" : ""),
+    });
+    answerHostConfirmations(store, false);
+
+    await store.boot();
+    const failure = await store
+      .probeAndUpsertRemoteSshConnection({ host: "deploy@example.com" })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+    expect(failure).toBeInstanceOf(DaemonAuthenticationError);
+    expect((failure as DaemonAuthenticationError).reason).toBe("password_required");
+    expect(store.getHosts().find((entry) => entry.serverId === "srv_ssh")).toBeUndefined();
     store.syncHosts([]);
   });
 

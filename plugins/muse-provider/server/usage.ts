@@ -16,6 +16,13 @@ import { usageSchema } from "./wire.js";
 
 const inputSchema = z.object({ account: z.string() }).strict();
 type Observation = z.infer<typeof usageSchema>;
+
+function accountKey(env: ProviderLaunch["env"]): string {
+  // MSP 1.4.1 has no stable account ID; swapping accounts in one config directory shares a report ID.
+  const configHome = env.XDG_CONFIG_HOME ?? path.join(env.HOME ?? homedir(), ".config");
+  return hashAccountKey(path.resolve(configHome, "muse"));
+}
+
 export class Usage {
   private readonly launches = new Map<string, ProviderLaunch>();
   private readonly sessions = new Map<
@@ -23,10 +30,7 @@ export class Usage {
     { account: string; read: () => Promise<Observation> }
   >();
   remember(launch: ProviderLaunch): { account: string } {
-    // MSP 1.4.1 has no stable account ID; swapping accounts in one config directory shares a report ID.
-    const configHome =
-      launch.env.XDG_CONFIG_HOME ?? path.join(launch.env.HOME ?? homedir(), ".config");
-    const key = hashAccountKey(path.resolve(configHome, "muse"));
+    const key = accountKey(launch.env);
     this.launches.set(key, launch);
     return { account: key };
   }
@@ -60,12 +64,21 @@ export class Usage {
       label: "Muse Code",
       icon: "icon.svg",
       input: inputSchema,
-      discover: async () =>
-        [...this.launches.keys()].map((account) => ({
+      discover: async (scope) => {
+        let accounts: string[];
+        if (scope.kind === "global") {
+          accounts = [...this.launches.keys()];
+        } else {
+          if (scope.provider !== "muse") return [];
+          const account = accountKey(scope.env);
+          accounts = this.launches.has(account) ? [account] : [];
+        }
+        return accounts.map((account) => ({
           key: account,
           label: "Muse Code",
           input: { account },
-        })),
+        }));
+      },
       fetch: async (input) => {
         const { account } = inputSchema.parse(input);
         const launch = this.launches.get(account);

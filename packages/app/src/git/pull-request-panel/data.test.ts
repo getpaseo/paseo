@@ -9,12 +9,13 @@ import {
   isPipelineActiveStatus,
   mapPipelineStatus,
 } from "@/git/forges/gitlab";
+import { i18n } from "@/i18n/i18next";
 import { IDENTITY_COLOR_NAMES, identityColor } from "@/styles/identity-colors";
 import {
   deriveAvatarColor,
   formatAge,
-  getActivityVerb,
-  getStateLabel,
+  getActivityVerbKey,
+  getStateLabelKey,
   mapPrPaneData,
 } from "./data";
 
@@ -779,37 +780,34 @@ describe("formatAge", () => {
   });
 });
 
-describe("getStateLabel", () => {
+const english = i18n.getFixedT("en");
+const french = i18n.getFixedT("fr");
+
+describe("getStateLabelKey", () => {
   it.each([
-    ["open", "Open"],
-    ["draft", "Draft"],
-    ["merged", "Merged"],
-    ["closed", "Closed"],
-  ] as const)("maps %s → %s", (state, expected) => {
-    expect(getStateLabel(state)).toBe(expected);
+    ["open", "Open", "Ouverte"],
+    ["draft", "Draft", "Brouillon"],
+    ["merged", "Merged", "Fusionnée"],
+    ["closed", "Closed", "Fermée"],
+  ] as const)("labels %s as %s, and %s in French", (state, englishLabel, frenchLabel) => {
+    expect(english(getStateLabelKey(state))).toBe(englishLabel);
+    expect(french(getStateLabelKey(state))).toBe(frenchLabel);
   });
 });
 
-describe("getActivityVerb", () => {
-  it("returns Commented for comment kind", () => {
-    expect(getActivityVerb({ kind: "comment" })).toBe("Commented");
-  });
-
-  it("returns Approved for approved review", () => {
-    expect(getActivityVerb({ kind: "review", reviewState: "approved" })).toBe("Approved");
-  });
-
-  it("returns Requested changes for changes_requested review", () => {
-    expect(getActivityVerb({ kind: "review", reviewState: "changes_requested" })).toBe(
+describe("getActivityVerbKey", () => {
+  it.each([
+    [{ kind: "comment" }, "Commented", "A commenté"],
+    [{ kind: "review", reviewState: "approved" }, "Approved", "A approuvé"],
+    [
+      { kind: "review", reviewState: "changes_requested" },
       "Requested changes",
-    );
-  });
-
-  it("returns Reviewed for a commented review with body (generic case)", () => {
-    expect(getActivityVerb({ kind: "review", reviewState: "commented" })).toBe("Reviewed");
-  });
-
-  it("returns Reviewed when reviewState is undefined", () => {
-    expect(getActivityVerb({ kind: "review" })).toBe("Reviewed");
+      "A demandé des modifications",
+    ],
+    [{ kind: "review", reviewState: "commented" }, "Reviewed", "A relu"],
+    [{ kind: "review" }, "Reviewed", "A relu"],
+  ] as const)("labels %o as %s, and %s in French", (item, englishVerb, frenchVerb) => {
+    expect(english(getActivityVerbKey(item))).toBe(englishVerb);
+    expect(french(getActivityVerbKey(item))).toBe(frenchVerb);
   });
 });

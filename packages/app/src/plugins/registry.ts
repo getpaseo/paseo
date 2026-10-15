@@ -1,3 +1,4 @@
+import type { AudioEngine } from "@/audio";
 import { useMemo, useSyncExternalStore } from "react";
 import { QueryClient } from "@tanstack/react-query";
 import { createPaseoApi } from "@getpaseo/client";
@@ -41,6 +42,7 @@ export class PluginRegistry {
     options: {
       replacePluginId?: string;
       client: DaemonClient;
+      audio: Pick<AudioEngine, "play">;
     },
   ): boolean {
     const previous = this.byHost.get(serverId) ?? [];
@@ -99,7 +101,7 @@ export class PluginRegistry {
           timelineTransformers: [],
           timelineRenderers: [],
         };
-        const runtime = this.dependencies.createRuntime(installation);
+        const runtime = this.dependencies.createRuntime(installation, options.audio);
         const evaluated = runPluginClientBundle(entry.id, entry.clientBundle, runtime, () =>
           this.publish(),
         );

@@ -73,7 +73,8 @@ export async function runRestartCommand(options: CommandOptions, _command: Comma
       try {
         if (replacement.getLastServerInfoMessage()?.serverId !== serverId)
           throw new Error("Connected peer identity changed");
-        const status = await replacement.getDaemonStatus({ timeout: Math.min(1_000, remaining()) });
+        // Status probes every provider, so it can take seconds on a healthy worker.
+        const status = await replacement.getDaemonStatus({ timeout: remaining() });
         if (status.pid !== workerPid) {
           await checkSupervisor();
           return {

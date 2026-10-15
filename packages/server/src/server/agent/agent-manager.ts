@@ -55,6 +55,7 @@ import {
   type ListImportableSessionsOptions,
 } from "./agent-sdk-types.js";
 import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agent-archive.js";
+import { toStoredAgentRecord } from "./agent-projections.js";
 import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
 import type { AgentOwner } from "./agent-owner.js";
 import {
@@ -78,7 +79,7 @@ import {
   type PendingForegroundRun,
 } from "./agent-run-state.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
-import { isSystemInjectedEnvelope } from "./agent-prompt.js";
+import { projectAgentMessage } from "./agent-messages/index.js";
 import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
@@ -190,10 +191,13 @@ function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
     provider: record.provider,
     cwd: record.cwd,
   };
+  // lastModeId is the last live mode — it also covers provider-side switches
+  // that never reach record.config.modeId.
+  const modeId = record.lastModeId ?? record.config?.modeId;
+  if (modeId != null) config.modeId = modeId;
   if (!record.config) {
     return config;
   }
-  if (record.config.modeId != null) config.modeId = record.config.modeId;
   if (record.config.model != null) config.model = record.config.model;
   if (record.config.thinkingOptionId != null) {
     config.thinkingOptionId = record.config.thinkingOptionId;
@@ -240,6 +244,8 @@ export type AgentSubscriber = (event: AgentManagerEvent) => void;
 export interface SubscribeOptions {
   agentId?: string;
   replayState?: boolean;
+  /** Receive events for internal agents too. Off by default for global subscribers. */
+  includeInternal?: boolean;
 }
 
 interface HydrateTimelineOptions {
@@ -313,6 +319,7 @@ export interface CreateAgentOptions {
 
 export interface AgentManagerOptions {
   pluginLifecycle?: PluginLifecycle;
+  /** An internal workspace makes every agent created inside it internal. */
   clients?: ProviderClientMap;
   providerDefinitions?: ProviderEnabledMap;
   idFactory?: () => string;
@@ -565,6 +572,7 @@ function attachPersistenceCwd(
 interface SubscriptionRecord {
   callback: AgentSubscriber;
   agentId: string | null;
+  includeInternal: boolean;
 }
 
 interface SteerEventBarrier {
@@ -649,13 +657,12 @@ function buildExplicitTimelineSeedForRegister(
 function buildImportedTimelineRows(entries: readonly ImportedTimelineEntry[]): AgentTimelineRow[] {
   const rows: AgentTimelineRow[] = [];
   for (const entry of entries) {
-    if (entry.item.type === "user_message" && isSystemInjectedEnvelope(entry.item.text)) {
-      continue;
-    }
+    const item = projectAgentMessage(entry.item);
+    if (!item) continue;
     rows.push({
       seq: rows.length + 1,
       timestamp: entry.timestamp ?? new Date().toISOString(),
-      item: limitAgentTimelineItemContent(entry.item),
+      item: limitAgentTimelineItemContent(item),
     });
   }
   return rows;
@@ -691,7 +698,7 @@ function getFirstUserMessageTextFromRows(rows: readonly AgentTimelineRow[]): str
 }
 
 function shouldDetachFromArchivedParent(
-  parent: StoredAgentRecord,
+  parent: Pick<StoredAgentRecord, "workspaceId">,
   child: StoredAgentRecord,
 ): boolean {
   const isCrossWorkspace =
@@ -711,8 +718,25 @@ function detachedAgentLabelPatch(labels: Record<string, string>): AgentLabelPatc
   return patch;
 }
 
+/**
+ * How long an archived internal agent stays readable by id. Storage plays this
+ * role for public agents; internal agents never reach it, and a one-shot helper
+ * can finish and auto-archive before its creator's `waitForFinish` arrives.
+ */
+const RETIRED_INTERNAL_AGENT_TTL_MS = 10 * 60 * 1000;
+const RETIRED_INTERNAL_AGENT_LIMIT = 500;
+
+export interface RetiredInternalAgent {
+  record: ArchivedStoredAgentRecord;
+  lastMessage: string | null;
+}
+
 export class AgentManager {
   private readonly pluginLifecycle: PluginLifecycle | undefined;
+  private readonly retiredInternalAgents = new Map<
+    string,
+    RetiredInternalAgent & { expiresAt: number }
+  >();
   private readonly clients = new Map<AgentProvider, AgentClient>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
   private readonly providerDefinitions = new Map<AgentProvider, ProviderEnabledFlag>();
@@ -968,6 +992,7 @@ export class AgentManager {
     const record: SubscriptionRecord = {
       callback,
       agentId: targetAgentId,
+      includeInternal: options?.includeInternal === true,
     };
     this.subscribers.add(record);
 
@@ -981,9 +1006,9 @@ export class AgentManager {
           });
         }
       } else {
-        // For global subscribers, skip internal agents during replay
+        // Global subscribers skip internal agents unless they opted in.
         for (const agent of this.agents.values()) {
-          if (agent.internal) {
+          if (agent.internal && !record.includeInternal) {
             continue;
           }
           callback({
@@ -1003,10 +1028,24 @@ export class AgentManager {
     return this.subscribers.size;
   }
 
-  listAgents(): ManagedAgent[] {
+  listAgents(options?: { includeInternal?: boolean }): ManagedAgent[] {
     return Array.from(this.agents.values())
-      .filter((agent) => !agent.internal)
+      .filter((agent) => options?.includeInternal === true || !agent.internal)
       .map((agent) => Object.assign({}, agent));
+  }
+
+  /** Archived internal agents still readable by id; see getRetiredInternalAgent. */
+  listRetiredInternalAgents(): RetiredInternalAgent[] {
+    const now = Date.now();
+    const retired: RetiredInternalAgent[] = [];
+    for (const [agentId, entry] of this.retiredInternalAgents) {
+      if (entry.expiresAt <= now) {
+        this.retiredInternalAgents.delete(agentId);
+        continue;
+      }
+      retired.push({ record: entry.record, lastMessage: entry.lastMessage });
+    }
+    return retired;
   }
 
   async listImportableSessions(
@@ -1177,6 +1216,11 @@ export class AgentManager {
         );
       }
     }
+  }
+
+  usageSession(id: string) {
+    const agent = this.agents.get(id);
+    return agent?.session?.usageSession?.() ?? null;
   }
 
   getAgent(id: string): ManagedAgent | null {
@@ -1687,6 +1731,42 @@ export class AgentManager {
     }
   }
 
+  /**
+   * The archived snapshot of an internal agent, for a while after archive.
+   * Null once it has expired or was never an internal agent.
+   */
+  getRetiredInternalAgent(agentId: string): RetiredInternalAgent | null {
+    const entry = this.retiredInternalAgents.get(agentId);
+    if (!entry) {
+      return null;
+    }
+    if (entry.expiresAt <= Date.now()) {
+      this.retiredInternalAgents.delete(agentId);
+      return null;
+    }
+    return { record: entry.record, lastMessage: entry.lastMessage };
+  }
+
+  private retireInternalAgent(entry: RetiredInternalAgent): void {
+    const now = Date.now();
+    for (const [agentId, retired] of this.retiredInternalAgents) {
+      if (retired.expiresAt <= now) {
+        this.retiredInternalAgents.delete(agentId);
+      }
+    }
+    while (this.retiredInternalAgents.size >= RETIRED_INTERNAL_AGENT_LIMIT) {
+      const oldest = this.retiredInternalAgents.keys().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      this.retiredInternalAgents.delete(oldest);
+    }
+    this.retiredInternalAgents.set(entry.record.id, {
+      ...entry,
+      expiresAt: now + RETIRED_INTERNAL_AGENT_TTL_MS,
+    });
+  }
+
   closeAgent(agentId: string): Promise<void> {
     const existing = this.inFlightAgentCloses.get(agentId);
     if (existing) {
@@ -1772,6 +1852,23 @@ export class AgentManager {
     requestedArchivedAt?: string,
   ): Promise<{ archivedAt: string }> {
     const agent = this.requireAgent(agentId);
+    if (agent.internal) {
+      // Nothing about an internal agent is on disk, and archiving must not put
+      // it there. Its final snapshot is kept in memory for a while (see
+      // getRetiredInternalAgent); the runtime is closed and the committed
+      // timeline dropped, so `getAgent` returns null from here on.
+      const archivedAt = requestedArchivedAt ?? new Date().toISOString();
+      const lastMessage = await this.getLastAssistantMessage(agentId);
+      const record = buildArchivedAgentRecord(
+        toStoredAgentRecord(agent, { title: agent.config.title ?? null, internal: true }),
+        { archivedAt, updatedAt: archivedAt },
+      );
+      await this.closeAgentRuntime(agentId);
+      await this.deleteAgentState(agentId);
+      this.retireInternalAgent({ record, lastMessage });
+      await this.cascadeArchiveChildren(record);
+      return { archivedAt };
+    }
     if (!this.registry) {
       throw new Error("Agent storage is not configured");
     }
@@ -1790,7 +1887,7 @@ export class AgentManager {
     await this.syncNativeArchiveState(stored.provider, stored.persistence, "archive");
     this.discardRetainedAgentState(agentId);
 
-    await this.cascadeArchiveChildren(agentId);
+    await this.cascadeArchiveChildren(stored);
 
     return { archivedAt };
   }
@@ -1799,16 +1896,15 @@ export class AgentManager {
   // label pointing back at the caller. Archiving the parent cascades to those
   // children so subagent fleets don't outlive their orchestrator. Detached
   // handoff agents omit this label, so they stand outside the cascade.
-  private async cascadeArchiveChildren(parentAgentId: string): Promise<void> {
+  private async cascadeArchiveChildren(
+    parent: Pick<StoredAgentRecord, "id" | "workspaceId">,
+  ): Promise<void> {
     const registry = this.registry;
     if (!registry) {
       return;
     }
+    const parentAgentId = parent.id;
     const records = await registry.list();
-    const parent = records.find((record) => record.id === parentAgentId);
-    if (!parent) {
-      throw new Error(`Archived parent ${parentAgentId} not found in storage`);
-    }
     for (const record of records) {
       if (record.archivedAt) {
         continue;
@@ -1836,6 +1932,21 @@ export class AgentManager {
         } else {
           await this.archiveSnapshotUnlocked(currentChild.id, new Date().toISOString());
         }
+      });
+    }
+    // Internal children never reach storage, so the scan above cannot see them.
+    // They have no tab to keep open and no listing to detach into, so they
+    // always archive with the parent.
+    for (const child of Array.from(this.agents.values())) {
+      if (!child.internal || getParentAgentIdFromLabels(child.labels) !== parentAgentId) {
+        continue;
+      }
+      await this.runLifecycleMutation(child.id, async () => {
+        const current = this.agents.get(child.id);
+        if (!current || getParentAgentIdFromLabels(current.labels) !== parentAgentId) {
+          return;
+        }
+        await this.archiveAgentUnlocked(current.id);
       });
     }
   }
@@ -2213,7 +2324,7 @@ export class AgentManager {
     if (!nextRecord.internal) this.dispatchStoredAgentState(nextRecord);
 
     await this.fireAgentArchived(agentId);
-    await this.cascadeArchiveChildren(agentId);
+    await this.cascadeArchiveChildren(record);
 
     return nextRecord;
   }
@@ -2375,7 +2486,7 @@ export class AgentManager {
       return false;
     }
     if (options?.clientMessageId) {
-      this.recordSubmittedPrompt(agent, prompt, options.clientMessageId);
+      this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "accepted");
       this.emitState(agent);
     }
     const dispatch = (event: AgentStreamEvent): void => {
@@ -2471,6 +2582,12 @@ export class AgentManager {
       agent.pendingReplacement = false;
       const errorMsg = error instanceof Error ? error.message : "Failed to start turn";
       pendingRun.start = { status: "failed", error: errorMsg };
+      // A terminal rejection belongs after the submitted prompt even though no provider turn exists.
+      if (options?.clientMessageId) {
+        this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "rejected", {
+          messageId: options.clientMessageId,
+        });
+      }
       await this.handleStreamEvent(agent, {
         type: "turn_failed",
         provider: agent.provider,
@@ -2570,7 +2687,7 @@ export class AgentManager {
           )
         : undefined;
       if (options?.clientMessageId) {
-        this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, {
+        this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "accepted", {
           messageId: options.clientMessageId,
           turnId,
           providerMessageId:
@@ -2885,7 +3002,7 @@ export class AgentManager {
     if (!clientMessageId) {
       return;
     }
-    this.recordSubmittedPrompt(agent, prompt, clientMessageId, {
+    this.recordSubmittedPrompt(agent, prompt, clientMessageId, "accepted", {
       messageId: clientMessageId,
       turnId: expectedTurnId,
     });
@@ -3544,7 +3661,7 @@ export class AgentManager {
           // Legacy/imported chats need their existing history before startup rows.
           await this.primeTimelineFromLegacyProviderHistory(managed, false, startupHistory);
         } else {
-          for (const entry of session.initialTimeline) {
+          for (const entry of buildImportedTimelineRows(session.initialTimeline)) {
             this.recordTimeline(managed.id, entry.item, { timestamp: entry.timestamp });
           }
         }
@@ -3771,6 +3888,11 @@ export class AgentManager {
 
   private emitClosedAgent(agent: ManagedAgentClosed, options?: { persist?: boolean }): void {
     this.emitState(agent, options);
+    if (!agent.internal) {
+      this.pluginLifecycle?.emit("agent.closed", {
+        agent: describeHookAgent({ ...agent, title: agent.config.title }),
+      });
+    }
   }
   private subscribeToSession(agent: ActiveManagedAgent): void {
     if (agent.unsubscribeSession) {
@@ -3945,6 +4067,19 @@ export class AgentManager {
     return this.registry;
   }
 
+  /**
+   * Provider-side mode switches (ACP current_mode_update, in-session
+   * commands, permission-driven transitions) must land in config.modeId too —
+   * reloadAgentSession and the persisted record derive the resumed session's
+   * mode from it, so leaving it stale silently downgrades the mode on resume.
+   */
+  private applyObservedMode(agent: ActiveManagedAgent, modeId: string | null): void {
+    agent.currentModeId = modeId;
+    if (modeId != null) {
+      agent.config.modeId = modeId;
+    }
+  }
+
   private async refreshSessionState(
     agent: ActiveManagedAgent,
     options?: { emit?: boolean },
@@ -3957,7 +4092,7 @@ export class AgentManager {
     }
 
     try {
-      agent.currentModeId = await agent.session.getCurrentMode();
+      this.applyObservedMode(agent, await agent.session.getCurrentMode());
     } catch {
       agent.currentModeId = null;
     }
@@ -4033,10 +4168,9 @@ export class AgentManager {
     for await (const rawEvent of agent.session.streamHistory()) {
       const event = limitAgentStreamEventContent(rawEvent);
       if (event.type === "timeline") {
-        if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
-          continue;
-        }
-        historyEvents.push(event);
+        const item = projectAgentMessage(event.item);
+        if (!item) continue;
+        historyEvents.push({ ...event, item });
       } else if (event.type === "provider_subagent") {
         providerSubagentEvents.push(event);
       }
@@ -4101,10 +4235,9 @@ export class AgentManager {
         if (event.type !== "timeline") {
           continue;
         }
-        if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
-          continue;
-        }
-        historyEvents.push(event);
+        const item = projectAgentMessage(event.item);
+        if (!item) continue;
+        historyEvents.push({ ...event, item });
       }
     } catch (error) {
       this.logger.warn({ err: error, agentId: agent.id }, "Failed to hydrate provider history");
@@ -4337,7 +4470,7 @@ export class AgentManager {
         this.emitState(agent);
         return undefined;
       case "mode_changed":
-        agent.currentModeId = event.currentModeId;
+        this.applyObservedMode(agent, event.currentModeId);
         agent.availableModes = event.availableModes;
         if (agent.runtimeInfo) {
           agent.runtimeInfo = { ...agent.runtimeInfo, modeId: event.currentModeId };
@@ -4353,7 +4486,7 @@ export class AgentManager {
             agent.cwd,
           );
         }
-        agent.currentModeId = event.runtimeInfo.modeId ?? agent.currentModeId;
+        this.applyObservedMode(agent, event.runtimeInfo.modeId ?? agent.currentModeId);
         flags.shouldDispatchEvent = false;
         this.emitState(agent);
         return undefined;
@@ -4436,12 +4569,14 @@ export class AgentManager {
   }): Promise<void> {
     const { agent, event, options, flags } = params;
 
-    if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
+    const item = projectAgentMessage(event.item);
+    if (!item) {
       flags.shouldDispatchEvent = false;
       flags.shouldNotifyWaiters = false;
       return;
     }
 
+    event.item = item;
     if (
       event.item.type === "user_message" &&
       event.item.clientMessageId &&
@@ -4712,19 +4847,34 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     prompt: AgentPromptInput,
     clientMessageId: string,
+    outcome: "accepted" | "rejected",
     options?: { messageId?: string; providerMessageId?: string; turnId?: string },
   ): void {
-    if (this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId)) {
-      return;
-    }
-    this.touchUpdatedAt(agent);
-    agent.lastUserMessageAt = new Date();
-    const item: AgentTimelineItem = {
+    const item = projectAgentMessage({
       type: "user_message",
       text: submittedPromptText(prompt),
       clientMessageId,
       ...(options?.messageId ? { messageId: options.messageId } : {}),
-    };
+    });
+    if (!item) return;
+    // Human attempts stay in history on rejection; delivery notifications require acceptance.
+    if (outcome === "rejected" && item.type !== "user_message") return;
+    this.recordSubmittedPromptItem(agent, item, options);
+  }
+
+  private recordSubmittedPromptItem(
+    agent: ActiveManagedAgent,
+    item: AgentTimelineItem,
+    options?: { providerMessageId?: string; turnId?: string },
+  ): void {
+    if (
+      item.type === "user_message" &&
+      item.clientMessageId &&
+      this.timelineStore.getSubmittedUserMessage(agent.id, item.clientMessageId)
+    )
+      return;
+    this.touchUpdatedAt(agent);
+    if (item.type === "user_message") agent.lastUserMessageAt = new Date();
     this.recordAndDispatchTimelineItem(agent.id, item, agent.provider, options?.turnId, options);
   }
 
@@ -4737,11 +4887,14 @@ export class AgentManager {
     if (!clientMessageId) return null;
     let existing = this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId);
     if (!existing) {
-      this.recordSubmittedPrompt(agent, item.text, clientMessageId, {
-        messageId: clientMessageId,
-        ...(messageId ? { providerMessageId: messageId } : {}),
-        ...(turnId ? { turnId } : {}),
-      });
+      this.recordSubmittedPromptItem(
+        agent,
+        { ...item, messageId: clientMessageId },
+        {
+          ...(messageId ? { providerMessageId: messageId } : {}),
+          ...(turnId ? { turnId } : {}),
+        },
+      );
       existing = this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId);
     }
     if (!existing || existing.item.type !== "user_message") return null;
@@ -5076,8 +5229,12 @@ export class AgentManager {
       ) {
         continue;
       }
-      // Skip internal agents for global subscribers (those without a specific agentId)
-      if (!subscriber.agentId && this.eventBelongsToInternalAgent(event)) {
+      // Global subscribers (no agentId) skip internal agents unless they opted in.
+      if (
+        !subscriber.agentId &&
+        !subscriber.includeInternal &&
+        this.eventBelongsToInternalAgent(event)
+      ) {
         continue;
       }
       subscriber.callback(event);

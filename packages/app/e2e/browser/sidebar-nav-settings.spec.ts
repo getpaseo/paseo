@@ -34,7 +34,10 @@ import {
 test("fixed footer line keeps its five icons, Help and Settings at the end", async ({ page }) => {
   test.setTimeout(120_000);
   await installUsageReportsFixture(page, { lists: [() => claudeAndCodexReports()] });
-  await seedSidebarFooterPreferences(page, [{ key: "add-project", visible: false }]);
+  await seedSidebarFooterPreferences(page, [
+    { key: "add-project", visible: false },
+    { key: "usage", visible: true },
+  ]);
   await page.setViewportSize({ width: 1440, height: 900 });
   await gotoAppShell(page);
   await expectPinnedUsage(page, ["31% 5h", "54% wk", "7% 5h", "12% wk"]);
@@ -188,6 +191,7 @@ test.describe("Sidebar footer rows in Appearance settings", () => {
     await installUsageReportsFixture(page, { lists: [() => claudeAndCodexReports()] });
     // Keys for the fixed footer icon buttons are ignored.
     await seedSidebarFooterPreferences(page, [
+      { key: "usage", visible: true },
       { key: "help", visible: false },
       { key: "hosts", visible: false },
       { key: "import", visible: false },

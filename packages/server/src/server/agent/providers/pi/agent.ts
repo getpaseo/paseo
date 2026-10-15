@@ -1,3 +1,4 @@
+import { mapCustomMessageToToolCall } from "../custom-message.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -495,7 +496,6 @@ function buildResumeStartInput(input: {
     cwd: input.resumeConfig.cwd,
     env: input.launchContext?.env,
     session: input.sessionFile,
-    model: input.resumeConfig.model,
     thinkingOptionId: normalizePiThinkingOption(input.resumeConfig.thinkingOptionId) ?? undefined,
     mcpConfigPath: input.mcpConfigFile?.path,
     extensionPaths: input.paseoExtension ? [input.paseoExtension.path] : undefined,
@@ -1005,6 +1005,8 @@ function isProcessExitEvent(
 
 function isPiAgentSessionEvent(event: PiRuntimeEvent): event is PiAgentSessionEvent {
   switch (event.type) {
+    case "thinking_level_changed":
+      return typeof event.level === "string" && normalizePiThinkingOption(event.level) !== null;
     case "agent_start":
     case "turn_start":
     case "message_start":
@@ -1201,6 +1203,19 @@ export class PiRpcAgentSession implements AgentSession {
   // Pi publishes the terminal before acknowledging abort. Autonomous runs have no
   // turn ID; retain their errors too until the cancellation request settles.
   private interruptingTurn: { turnId: string | undefined; error: string | null } | null = null;
+
+  private readonly usageSessionKey = randomUUID();
+
+  usageSession() {
+    const env = this.runtimeSession.environment;
+    if (this.closed) return null;
+    return {
+      provider: "pi",
+      model: modelToId(this.state.model) ?? undefined,
+      env,
+      sessionKey: this.usageSessionKey,
+    };
+  }
 
   constructor(options: PiRpcAgentSessionOptions) {
     this.runtimeSession = options.runtimeSession;
@@ -2123,6 +2138,15 @@ export class PiRpcAgentSession implements AgentSession {
     }
 
     switch (event.type) {
+      case "thinking_level_changed":
+        this.state = { ...this.state, thinkingLevel: event.level };
+        this.config.thinkingOptionId = event.level;
+        this.emit({
+          type: "thinking_option_changed",
+          provider: this.provider,
+          thinkingOptionId: event.level,
+        });
+        return;
       case "agent_start":
         this.activeTurnStarted = true;
         this.clearNoTurnBuffers();
@@ -2356,12 +2380,16 @@ export class PiRpcAgentSession implements AgentSession {
       const customMapping = this.extensionHost.mapCustomMessage(event.message);
       this.emitExtensionOutput(customMapping, turnId);
       const text = getUserMessageText(event.message.content);
-      if (text) {
+      if (event.message.display !== false && text) {
         this.emit({
           type: "timeline",
           provider: this.provider,
           turnId,
-          item: { type: "assistant_message", text },
+          item: mapCustomMessageToToolCall(
+            event.message,
+            text,
+            `${this.provider}-custom-${randomUUID()}`,
+          ),
         });
       }
       if (!this.activeTurnStarted) {
@@ -2577,10 +2605,14 @@ export class PiRpcAgentClient implements AgentClient {
       throw error;
     }
     try {
+      const initialState = await this.applyResumeModel(runtimeSession, resumeConfig.model);
       return new PiRpcAgentSession({
         runtimeSession,
-        config: resumeConfig.config,
-        initialState: await runtimeSession.getState(),
+        config: {
+          ...resumeConfig.config,
+          model: modelToId(initialState.model) ?? resumeConfig.config.model,
+        },
+        initialState,
         capabilities: capabilitiesForSession(mcp !== null),
         cleanup: combineCleanup([mcpConfigFile?.cleanup, paseoExtension?.cleanup]),
         extensionTimeoutMs: providerOptions.extensionTimeoutMs,
@@ -2593,6 +2625,35 @@ export class PiRpcAgentClient implements AgentClient {
       paseoExtension?.cleanup();
       throw error;
     }
+  }
+
+  // Pi resumes a session on the model it recorded, or on its default when that model
+  // is gone. Switching afterwards keeps a removed model from blocking the resume.
+  private async applyResumeModel(
+    runtimeSession: PiRuntimeSession,
+    requestedModel: string | undefined,
+  ): Promise<PiSessionState> {
+    const state = await runtimeSession.getState();
+    const reference = parseModelReference(requestedModel ?? null);
+    if (!reference?.provider) {
+      return state;
+    }
+    const { provider, id } = reference;
+    const isRequested = (model: PiModel | null | undefined) =>
+      model?.provider === provider && model.id === id;
+    if (isRequested(state.model)) {
+      return state;
+    }
+    const availableModels = await runtimeSession.getAvailableModels();
+    if (!availableModels.some(isRequested)) {
+      this.logger.warn(
+        { requestedModel, sessionModel: modelToId(state.model) },
+        "Pi resumed on the session's model because the requested model is unavailable",
+      );
+      return state;
+    }
+    await runtimeSession.setModel(provider, id);
+    return runtimeSession.getState();
   }
 
   async fetchCatalog(

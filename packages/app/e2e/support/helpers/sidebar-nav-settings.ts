@@ -197,16 +197,27 @@ export async function moveFooterItemUp(page: Page, key: string): Promise<void> {
     .click();
 }
 
+function footerItemSwitch(page: Page, key: string): Locator {
+  return page.getByTestId("sidebar-nav-section-footer").getByTestId(`sidebar-nav-toggle-${key}`);
+}
+
 export async function setFooterItemVisible(
   page: Page,
   key: string,
   visible: boolean,
 ): Promise<void> {
-  const toggle = page
-    .getByTestId("sidebar-nav-section-footer")
-    .getByTestId(`sidebar-nav-toggle-${key}`);
+  const toggle = footerItemSwitch(page, key);
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-checked", String(visible));
+}
+
+/** Whether Settings > Sidebar shows a footer item as on. */
+export async function expectFooterItemSetting(
+  page: Page,
+  key: string,
+  visible: boolean,
+): Promise<void> {
+  await expect(footerItemSwitch(page, key)).toHaveAttribute("aria-checked", String(visible));
 }
 
 export async function expectFooterOrder(page: Page, keys: string[]): Promise<void> {
@@ -233,13 +244,16 @@ const FOOTER_GEOMETRY_TOLERANCE = 0.01;
  * Settings together at the end.
  */
 export async function expectFooterIconRow(page: Page): Promise<void> {
-  const boxes = (
-    await Promise.all(
-      FOOTER_ICON_TEST_IDS.map((testID) =>
-        page.locator(`[data-testid="${testID}"]:visible`).first().boundingBox(),
-      ),
-    )
-  ).map((box) => box!);
+  // Read one browser-frame snapshot: the compact drawer can translate between separate RPCs.
+  const boxes = await page
+    .locator(FOOTER_ICON_TEST_IDS.map((testID) => `[data-testid="${testID}"]:visible`).join(","))
+    .evaluateAll((elements) =>
+      elements.map((element) => {
+        const { x, y, width, height } = element.getBoundingClientRect();
+        return { testID: element.getAttribute("data-testid"), x, y, width, height };
+      }),
+    );
+  expect(boxes.map((box) => box.testID)).toEqual(FOOTER_ICON_TEST_IDS);
   const [first] = boxes;
   for (const box of boxes) {
     expect(Math.abs(box.y + box.height / 2 - first!.y - first!.height / 2)).toBeLessThan(2);

@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { discover, fetchUsage } from "./usage.js";
 
@@ -29,22 +30,23 @@ async function accountIdentity(
   input: Parameters<typeof fetchUsage>[0],
   env: NodeJS.ProcessEnv = {},
 ) {
-  const accounts = await discover(lookup(env), profile);
+  const accounts = await discover({ kind: "global" }, lookup(env), profile);
   const account = accounts.find(
     (candidate) => JSON.stringify(candidate.input) === JSON.stringify(input),
   );
   if (!account) throw new Error("Expected discovered login");
   return { key: account.key, ...(account.label ? { label: account.label } : {}) };
 }
-async function logins(options: Parameters<typeof discover>[0]) {
-  return (await discover(options, profile)).map(
+async function logins(options: Parameters<typeof discover>[1]) {
+  return (await discover({ kind: "global" }, options, profile)).map(
     (account) => account.input as Parameters<typeof fetchUsage>[0],
   );
 }
 async function database(path: string) {
   await mkdir((await import("node:path")).dirname(path), { recursive: true });
-  const { DatabaseSync } = await import("node:sqlite");
   const db = new DatabaseSync(path);
+  // Create the fixture with one durable commit instead of one per row.
+  db.exec("BEGIN");
   db.exec(
     "CREATE TABLE auth_credentials (id INTEGER PRIMARY KEY, provider TEXT, credential_type TEXT, data TEXT, disabled_cause TEXT)",
   );
@@ -78,6 +80,7 @@ async function database(path: string) {
     null,
   );
   insert.run(5, "anthropic", "oauth", "invalid", null);
+  db.exec("COMMIT");
   db.close();
 }
 
@@ -204,9 +207,12 @@ test("Claude Keychain login replaces the fallback file", async () => {
   const inputs = await logins({
     ...lookup(),
     platform: "darwin",
+    env: { USER: "fixture-user" },
     readKeychainCredentials: async () => ({ claudeAiOauth: { accessToken: "fixture-keychain" } }),
   });
-  expect(inputs).toEqual([{ route: { store: "keychain" } }]);
+  expect(inputs).toEqual([
+    { route: { store: "keychain", service: "Claude Code-credentials", account: "fixture-user" } },
+  ]);
 });
 
 test("Claude account metadata alone does not discover a login", async () => {
@@ -221,23 +227,30 @@ test("keychain identity belongs to its token even when Claude Code metadata name
     oauthAccount: { accountUuid: "stale", organizationUuid: "stale-org" },
   });
   const [identity] = await discover(
+    { kind: "global" },
     {
       ...lookup(),
       platform: "darwin",
+      env: { USER: "fixture-user" },
       readKeychainCredentials: async () => ({
         claudeAiOauth: { accessToken: "fixture-keychain-other" },
       }),
     },
     profile,
   );
-  expect(identity).toEqual({ key: "pi-account.pi-org", input: { route: { store: "keychain" } } });
+  expect(identity).toEqual({
+    key: "pi-account.pi-org",
+    harness: "Claude",
+    input: {
+      route: { store: "keychain", service: "Claude Code-credentials", account: "fixture-user" },
+    },
+  });
 });
 
 test("OMP fetch re-reads its row after rotation and skips a newly disabled login", async () => {
   const path = join(home, ".omp", "agent", "agent.db");
   await database(path);
   const [input] = await logins(lookup());
-  const { DatabaseSync } = await import("node:sqlite");
   const db = new DatabaseSync(path);
   db.prepare("UPDATE auth_credentials SET data = ? WHERE id = 1").run(
     JSON.stringify({ access: "fixture-rotated-omp", accountId: "omp-account", expires: 2000 }),

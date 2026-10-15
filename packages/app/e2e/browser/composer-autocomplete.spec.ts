@@ -9,7 +9,12 @@ import { expectWorkspaceTabVisible, openSessions } from "../support/helpers/arch
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { getServerId } from "../support/helpers/server-id";
 import { switchWorkspaceViaSidebar } from "../support/helpers/workspace-ui";
-import { expectMobileAgentSidebarVisible } from "../support/helpers/sidebar";
+import {
+  closeMobileAgentSidebar,
+  expectMobileAgentSidebarHidden,
+  expectMobileAgentSidebarVisible,
+  openMobileAgentSidebar,
+} from "../support/helpers/sidebar";
 import { expectNewWorkspaceProjectSelected } from "../support/helpers/new-workspace";
 
 const TEST_COMMANDS = [
@@ -94,16 +99,6 @@ interface PopoverFrame {
 interface PopoverFrameRecorderWindow extends Window {
   __composerAutocompleteFrames?: PopoverFrame[];
   __stopComposerAutocompleteFrameRecorder?: () => void;
-}
-
-async function getTopTestIdAtPoint(page: Page, x: number, y: number) {
-  return page.evaluate(
-    ([pointX, pointY]) => {
-      const element = document.elementFromPoint(pointX, pointY);
-      return element?.closest("[data-testid]")?.getAttribute("data-testid") ?? null;
-    },
-    [x, y],
-  );
 }
 
 async function installListCommandsStub(page: Page): Promise<void> {
@@ -701,19 +696,15 @@ test.describe("Composer autocomplete", () => {
           timeout: 30_000,
         });
 
-        await page.getByRole("button", { name: "Open menu" }).click();
+        // The sidebar covers the composer, so the composer gives up its popover while the
+        // sidebar is open and brings it back once the sidebar closes.
+        await openMobileAgentSidebar(page);
         await expectMobileAgentSidebarVisible(page);
+        await expect(popover).toHaveCount(0);
 
-        const popoverBox = await popover.boundingBox();
-        expect(popoverBox).not.toBeNull();
-
-        const topTestId = await getTopTestIdAtPoint(
-          page,
-          popoverBox!.x + popoverBox!.width / 2,
-          popoverBox!.y + popoverBox!.height / 2,
-        );
-
-        expect(topTestId).not.toBe("composer-autocomplete-popover");
+        await closeMobileAgentSidebar(page);
+        await expectMobileAgentSidebarHidden(page);
+        await expect(popover.getByText("/help", { exact: true }).first()).toBeVisible();
       } finally {
         await agent.cleanup();
       }

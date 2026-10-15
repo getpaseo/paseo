@@ -1,5 +1,14 @@
 import { test, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, existsSync, rmSync, readFileSync, realpathSync } from "fs";
+import {
+  mkdtempSync,
+  writeFileSync,
+  existsSync,
+  rmSync,
+  readFileSync,
+  realpathSync,
+  mkdirSync,
+} from "fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "os";
 import path from "path";
 import { createDaemonTestContext, type DaemonTestContext } from "../test-utils/index.js";
@@ -151,6 +160,78 @@ afterEach(async () => {
   collector.unsubscribe();
   await ctx.cleanup();
 }, 60000);
+
+interface GitCommandOptions {
+  cwd: string;
+  args: string[];
+}
+
+async function mergeFeatureIntoBaseWorktree(baseName: string): Promise<void> {
+  const directory = realpathSync(tmpCwd());
+  const base = path.join(directory, baseName);
+  const feature = path.join(directory, "feature");
+  function git({ cwd, args }: GitCommandOptions): string {
+    return execFileSync("git", args, { cwd, encoding: "utf8", stdio: "pipe" });
+  }
+  try {
+    mkdirSync(base);
+    git({ cwd: base, args: ["init", "-b", "main"] });
+    git({ cwd: base, args: ["config", "user.name", "Paseo Test"] });
+    git({ cwd: base, args: ["config", "user.email", "test@paseo.local"] });
+    git({ cwd: base, args: ["config", "commit.gpgsign", "false"] });
+    git({ cwd: base, args: ["config", "core.autocrlf", "false"] });
+    git({ cwd: base, args: ["commit", "--allow-empty", "-m", "base"] });
+    git({ cwd: base, args: ["worktree", "add", "-b", "feature", feature] });
+    writeFileSync(path.join(feature, "feature.txt"), "feature payload\n");
+    git({ cwd: feature, args: ["add", "feature.txt"] });
+    git({ cwd: feature, args: ["commit", "-m", "feature"] });
+    const featureCommit = git({ cwd: feature, args: ["rev-parse", "HEAD"] }).trim();
+
+    const merged = await ctx.client.checkoutMerge(feature, { baseRef: "main" });
+    expect(merged).toMatchObject({ success: true, error: null });
+    expect(git({ cwd: base, args: ["rev-parse", "HEAD"] }).trim()).toBe(featureCommit);
+    expect(readFileSync(path.join(base, "feature.txt"), "utf8")).toBe("feature payload\n");
+    expect(git({ cwd: feature, args: ["symbolic-ref", "--short", "HEAD"] }).trim()).toBe("feature");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+test.skipIf(isPlatform("win32")).each(["base\ncheckout", "base "])(
+  "merges into a base worktree whose path preserves %j",
+  mergeFeatureIntoBaseWorktree,
+);
+
+test.each(["base checkout", "中文 checkout"])(
+  "merges into a base worktree named %j",
+  mergeFeatureIntoBaseWorktree,
+);
+
+test("merges into a local base branch without another worktree", async () => {
+  const cwd = realpathSync(tmpCwd());
+  function git(args: string[]): string {
+    return execFileSync("git", args, { cwd, encoding: "utf8", stdio: "pipe" });
+  }
+  try {
+    git(["init", "-b", "main"]);
+    git(["config", "user.name", "Paseo Test"]);
+    git(["config", "user.email", "test@paseo.local"]);
+    git(["config", "commit.gpgsign", "false"]);
+    git(["commit", "--allow-empty", "-m", "base"]);
+    git(["checkout", "-b", "feature"]);
+    writeFileSync(path.join(cwd, "feature.txt"), "feature payload\n");
+    git(["add", "feature.txt"]);
+    git(["commit", "-m", "feature"]);
+    const featureCommit = git(["rev-parse", "HEAD"]).trim();
+
+    const merged = await ctx.client.checkoutMerge(cwd, { baseRef: "main" });
+    expect(merged).toMatchObject({ success: true, error: null });
+    expect(git(["rev-parse", "main"]).trim()).toBe(featureCommit);
+    expect(git(["symbolic-ref", "--short", "HEAD"]).trim()).toBe("feature");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
 
 test("returns diff for modified file in git repo", async () => {
   const cwd = tmpCwd();
