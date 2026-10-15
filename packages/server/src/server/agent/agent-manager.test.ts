@@ -5136,6 +5136,61 @@ test("session config drift events update state through the stream channel", asyn
   expect(persisted?.config?.modeId).toBe("build");
 });
 
+test("background work changes update state without dispatching to stream subscribers", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-background-work-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let capturedSession: TestAgentSession | null = null;
+  class BackgroundWorkClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      capturedSession = new TestAgentSession(config);
+      return capturedSession;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: {
+      codex: new BackgroundWorkClient(),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000001134",
+  });
+
+  const snapshot = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      modeId: "plan",
+      model: "gpt-5.2-codex",
+      thinkingOptionId: "low",
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+  const streams: AgentStreamEvent[] = [];
+  manager.subscribe(
+    (event) => {
+      if (event.type === "agent_stream") {
+        streams.push(event.event);
+      }
+    },
+    { agentId: snapshot.id, replayState: false },
+  );
+
+  expect(manager.getAgent(snapshot.id)?.backgroundWorkPending).toBe(false);
+  capturedSession?.pushEvent({ type: "background_work_changed", provider: "codex", pending: true });
+  await manager.flush();
+  expect(manager.getAgent(snapshot.id)?.backgroundWorkPending).toBe(true);
+  capturedSession?.pushEvent({
+    type: "background_work_changed",
+    provider: "codex",
+    pending: false,
+  });
+  await manager.flush();
+  expect(manager.getAgent(snapshot.id)?.backgroundWorkPending).toBe(false);
+  expect(streams.map((event) => event.type)).toEqual([]);
+});
+
 test("setLabels merges and persists labels", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-set-labels-"));
   const storagePath = join(workdir, "agents");

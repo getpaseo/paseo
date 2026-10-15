@@ -13,6 +13,7 @@ import type {
 import {
   resolvePaseoCliBinDir,
   resolvePaseoCliExecutablePath,
+  type TerminalForeground,
   type TerminalSession,
 } from "./terminal.js";
 import type { TerminalState } from "@getpaseo/protocol/messages";
@@ -696,6 +697,45 @@ it("surfaces worker activity changes via getActivity, onActivityChange, and term
     },
   ]);
   expect(terminalsChangedCwds).toContain("/workspace");
+});
+
+it("seeds the foreground from terminalCreated and follows terminalForegroundChange", () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 50,
+    forkWorker: () => worker,
+  });
+
+  // A prompt drawn while the worker was still creating the terminal arrives
+  // only in this snapshot.
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal: {
+      id: "terminal-a",
+      name: "Shell",
+      cwd: "/workspace",
+      workspaceId: "ws-test",
+      activity: null,
+      foreground: { commandState: "prompt" },
+    },
+    state: createTerminalState(),
+  });
+  const [session] = manager.listTerminals();
+  expect(session.getForeground()).toEqual({ commandState: "prompt" });
+
+  const seen: TerminalForeground[] = [];
+  session.onForegroundChange((foreground) => {
+    seen.push(foreground);
+  });
+  const running: TerminalForeground = { commandState: "running" };
+  worker.emitWorkerMessage({
+    type: "terminalForegroundChange",
+    terminalId: "terminal-a",
+    foreground: running,
+  });
+
+  expect(session.getForeground()).toEqual(running);
+  expect(seen).toEqual([running]);
 });
 
 it("sets terminal activity through a worker request", async () => {
