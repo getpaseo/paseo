@@ -1,13 +1,5 @@
 import { DeviceEventEmitter } from "react-native";
+import { createHardwareKeyboardSubmitBridge } from "./android-hardware-keyboard-bridge";
 
-let enabled = false;
-
-export function setHardwareKeyboardSubmitEnabled(nextEnabled: boolean) {
-  enabled = nextEnabled;
-}
-
-export function addHardwareKeyboardSubmitListener(handler: () => void) {
-  return DeviceEventEmitter.addListener("paseoHardwareKeyboardSubmit", () => {
-    if (enabled) handler();
-  });
-}
+export const { setHardwareKeyboardSubmitEnabled, addHardwareKeyboardSubmitListener } =
+  createHardwareKeyboardSubmitBridge(DeviceEventEmitter);
