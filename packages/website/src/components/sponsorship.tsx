@@ -150,10 +150,10 @@ export function BackingOptions() {
 }
 
 const SPOT_FEATURES: ReadonlyArray<string> = [
-  "Your logo on every page of paseo.sh, around 70,000 visitors a month",
+  "Your logo on the paseo.sh homepage and docs, around 70,000 visitors a month",
   "Your logo in the GitHub README, around 30,000 visitors a month",
   "An announcement in the Discord, around 2,000 members",
-  "A mention in the changelog",
+  "An announcement from me on X",
 ];
 
 export function SponsorSpotSection() {
@@ -163,7 +163,7 @@ export function SponsorSpotSection() {
       <SectionHeading
         as="h2"
         title="Sponsor as a company"
-        description="If your team relies on Paseo, a monthly sponsorship funds its development directly. As a thank you, your logo goes on every page of paseo.sh and in the README."
+        description="If your team relies on Paseo, you can support it financially with a monthly sponsorship and get visibility for your company as a thank you."
       />
       <div className="space-y-8">
         <div className="flex items-end gap-2">
