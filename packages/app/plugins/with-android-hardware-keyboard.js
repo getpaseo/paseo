@@ -30,14 +30,10 @@ const KEYBOARD_HANDLER = `
     }
     val context = input.context as? com.facebook.react.bridge.ReactContext
       ?: return super.dispatchKeyEvent(event)
-    var ancestor: android.view.View? = input
-    while (ancestor != null) {
-      if (ancestor.getTag(com.facebook.react.R.id.react_test_id) == "message-input-root") {
-        paseoEnterConsumed = true
-        context.emitDeviceEvent("paseoHardwareKeyboardSubmit")
-        return true
-      }
-      ancestor = ancestor.parent as? android.view.View
+    if (input.getTag(com.facebook.react.R.id.react_test_id) == "paseo-composer-input") {
+      paseoEnterConsumed = true
+      context.emitDeviceEvent("paseoHardwareKeyboardSubmit")
+      return true
     }
     return super.dispatchKeyEvent(event)
   }
