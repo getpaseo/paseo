@@ -3,6 +3,7 @@ import { expect, test, type Page } from "../support/fixtures";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { scrollChatAwayFromBottom } from "../support/helpers/agent-bottom-anchor";
+import { expandCompletedResponses } from "../support/helpers/agent-stream";
 import {
   composerLocator,
   expectComposerDraft,
@@ -198,6 +199,7 @@ test.describe("Rewind sheet", () => {
       await expect(page.getByText("Cycle 1", { exact: true })).toBeVisible();
       await expectUserMessageCount(page, 2);
       await session.client.waitForFinish(session.agentId);
+      await expandCompletedResponses(page);
 
       await scrollChatAwayFromBottom(page, {
         deltaY: -900,
