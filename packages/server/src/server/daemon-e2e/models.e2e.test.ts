@@ -165,3 +165,52 @@ test("Antigravity creates an agent and answers a prompt with real agy", async ({
     await rm(cwd, { recursive: true, force: true });
   }
 }, 120000);
+
+// Hoplite selects its project from the GitHub repository of the session directory, so this test
+// needs a checkout of a repository linked to a Hoplite project.
+test("Hoplite creates an agent and answers a prompt with real hoplite acp", async ({ skip }) => {
+  const command = await findExecutable(process.env.HOPLITE_COMMAND ?? "hoplite");
+  const cwd = process.env.HOPLITE_E2E_CWD;
+  if (command === null || !cwd) {
+    skip("hoplite is not resolvable or HOPLITE_E2E_CWD is unset");
+    return;
+  }
+  const daemon = await createTestPaseoDaemon({
+    agentClients: {},
+    mcpEnabled: false,
+    builtinPlugins: new BuiltinPluginLoader(undefined, ["hoplite-provider"]),
+    providerOverrides: { hoplite: { command: [command, "acp"], paseoTools: { enabled: false } } },
+  });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.11.0",
+  });
+  try {
+    await client.connect();
+    await client.fetchAgents({ subscribe: {} });
+    await expect
+      .poll(
+        async () => {
+          const snapshot = await client.getProvidersSnapshot({ cwd });
+          return snapshot.entries.find((entry) => entry.provider === "hoplite")?.status;
+        },
+        { timeout: 60000 },
+      )
+      .toBe("ready");
+    const agent = await client.createAgent({ provider: "hoplite", cwd, title: "Hoplite E2E" });
+    await client.sendMessage(agent.id, "Reply with exactly HOPLITE_E2E_OK. No tools.");
+    const result = await client.waitForFinish(agent.id, 180000);
+    expect(result.status).toBe("idle");
+    const items = (await client.fetchAgentTimeline(agent.id, { limit: 100 })).entries.map(
+      (entry) => entry.item,
+    );
+    expect(
+      items.some(
+        (item) => item.type === "assistant_message" && item.text.includes("HOPLITE_E2E_OK"),
+      ),
+    ).toBe(true);
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+}, 240000);
