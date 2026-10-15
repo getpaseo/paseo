@@ -1,3 +1,4 @@
+import { WorkspaceSurface } from "@/components/workspace-surface";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { getOpenAgentTabLabel } from "@getpaseo/protocol/agent-labels";
@@ -3882,6 +3883,7 @@ function WorkspaceScreenContent({
     () =>
       showScreenHeader ? (
         <ScreenHeader
+          variant="workspace"
           left={
             <>
               <SidebarMenuToggle />
@@ -4090,7 +4092,9 @@ function WorkspaceScreenContent({
         </NewTabLauncherProvider>
       ) : null}
 
-      <View style={styles.centerContent}>{workspacePanelContent}</View>
+      <WorkspaceSurface framed={!rendersDesktopSplitContent}>
+        {workspacePanelContent}
+      </WorkspaceSurface>
     </View>
   );
 
@@ -4144,7 +4148,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface0,
   },
   containerWorkspaceBackground: {
-    backgroundColor: theme.colors.surfaceWorkspace,
+    backgroundColor: { xs: theme.colors.surfaceWorkspace, md: theme.colors.surfaceWorkspaceChrome },
   },
   threePaneRow: {
     flex: 1,

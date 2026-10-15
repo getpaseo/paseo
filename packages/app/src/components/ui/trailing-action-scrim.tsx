@@ -28,6 +28,8 @@ function TrailingActionScrimSvg({ gradientId, color }: { gradientId: string; col
 const ThemedTrailingActionScrimSvg = withUnistyles(TrailingActionScrimSvg);
 
 const backdropColorMappings: Record<SurfaceBackdrop, (theme: Theme) => { color: string }> = {
+  surfaceTabActive: (theme) => ({ color: theme.colors.surfaceTabActive }),
+  surfaceWorkspaceChrome: (theme) => ({ color: theme.colors.surfaceWorkspaceChrome }),
   surface0: (theme) => ({ color: theme.colors.surface0 }),
   surface1: (theme) => ({ color: theme.colors.surface1 }),
   surface2: (theme) => ({ color: theme.colors.surface2 }),

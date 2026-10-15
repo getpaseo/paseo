@@ -647,8 +647,8 @@ function resolveChipBackdrop({
   isActiveFocused: boolean;
   isFilled: boolean;
 }): SurfaceBackdrop {
-  if (isActiveFocused) return "surface2";
-  return isFilled ? "surface1" : "surface0";
+  if (isActiveFocused) return "surfaceTabActive";
+  return isFilled ? "surface1" : "surfaceWorkspaceChrome";
 }
 
 function TabHandleContent({
@@ -1533,9 +1533,9 @@ const styles = StyleSheet.create((theme) => ({
   tabsContainer: {
     minWidth: 0,
     height: WORKSPACE_SECONDARY_HEADER_HEIGHT,
-    borderBottomWidth: 1,
+    borderBottomWidth: theme.workspaceFrame.dividerWidth,
     borderBottomColor: theme.colors.border,
-    backgroundColor: theme.colors.surface0,
+    backgroundColor: theme.colors.surfaceWorkspaceChrome,
     flexDirection: "row",
     alignItems: "center",
     overflow: "visible",
@@ -1593,7 +1593,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface1,
   },
   tabActive: {
-    backgroundColor: theme.colors.surface2,
+    backgroundColor: theme.colors.surfaceTabActive,
   },
   tabActiveUnfocused: {
     backgroundColor: theme.colors.surface1,

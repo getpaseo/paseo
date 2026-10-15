@@ -139,7 +139,7 @@ const styles = StyleSheet.create((theme) => ({
     right: 0,
     bottom: 0,
     left: 0,
-    height: theme.borderWidth[1],
+    height: theme.workspaceFrame.dividerWidth,
     backgroundColor: theme.colors.border,
   },
   content: {

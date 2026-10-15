@@ -82,8 +82,15 @@ Borders group, separate, or rarely emphasize.
 
 Light mode uses a pearl-gray sidebar and a near-white working surface. Keep row density and
 control heights unchanged across themes; the light radius scale supplies the softer corners.
-Reserve subtle elevation for the composer and floating surfaces. Settings groups use a quiet
-tonal fill and one hairline boundary. Messages have a soft fill, with no border or shadow.
+On wide layouts, the workspace header, tab rails, and Explorer share the sidebar background.
+The focused active tab uses the near-white working surface; inactive tabs blend into the rail,
+with an intermediate fill on hover or when selected in an unfocused pane.
+Each main pane owns one inset conversation or document surface through `WorkspaceSurface`;
+keep its composer inside and its tabs outside. Split panes each get the same frame. Compact
+layouts stay edge-to-edge so the frame never takes width from the conversation.
+Reserve subtle elevation for these main surfaces, the composer, and floating surfaces. Settings
+groups use a quiet tonal fill and one hairline boundary. Messages have a soft fill, with no border
+or shadow.
 
 A logical block of related rows lives inside a card — one border around the whole group. The card primitive is `settingsStyles.card`; the keyboard-shortcuts dialog uses the same shape inline (`packages/app/src/components/keyboard-shortcuts-dialog.tsx:68-73`). The border defines what belongs together.
 
@@ -91,7 +98,7 @@ Rows after the first inside a card carry `settingsStyles.rowBorder` — a single
 
 A list that is itself the page content — sidebar items in `sidebar-workspace-list.tsx`, the workspace list, the agent list (`packages/app/src/components/agent-list.tsx`) — uses spacing and surface, not borders, to separate items. Rows-in-a-card is an interior pattern; lists-as-pages are not.
 
-Pane chrome — the workspace pane header, the file-explorer header, the diff pane header — uses a single bottom border to separate the header from the content (`packages/app/src/components/git-diff-pane.tsx:2328-2331`). One border, no shadow.
+Pane toolbars use a single bottom border to separate controls from content. The outer workspace header and tab rails omit that divider in light mode: the inset surface already defines the content boundary.
 
 `borderAccent` is reserved for the outline button. Inputs use `border`. Single-thing borders are wrong; a single bordered element is either a card with one row (use the card) or it does not need a border.
 

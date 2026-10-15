@@ -1,3 +1,4 @@
+import { WorkspaceSurface } from "@/components/workspace-surface";
 import {
   Fragment,
   useCallback,
@@ -1296,7 +1297,7 @@ function SplitPaneView({
           />
         </WindowChromeSafeArea>
 
-        <View style={styles.paneContent}>
+        <WorkspaceSurface testID={`workspace-surface-${pane.id}`}>
           <WorkspacePanelHost
             paneId={pane.id}
             tabs={paneTabs}
@@ -1309,7 +1310,7 @@ function SplitPaneView({
             buildPaneContentModel={buildPaneContentModel}
           />
           <SplitDropZone paneId={pane.id} active={showDropZones} preview={dropPreview} />
-        </View>
+        </WorkspaceSurface>
       </View>
     </RenderProfile>
   );
@@ -1421,18 +1422,12 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
     minHeight: 0,
-    backgroundColor: theme.colors.surface0,
+    backgroundColor: theme.colors.surfaceWorkspaceChrome,
     overflow: "hidden",
   },
   paneTabs: {
     position: "relative",
     minWidth: 0,
-  },
-  paneContent: {
-    position: "relative",
-    flex: 1,
-    minWidth: 0,
-    minHeight: 0,
   },
   dragOverlayChip: {
     flexDirection: "row",
