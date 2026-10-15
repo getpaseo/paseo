@@ -127,7 +127,7 @@ function inspectChatDragExclusions(scroll: Element) {
   const headerRect = header.getBoundingClientRect();
   const headerY = headerRect.top + headerRect.height / 2;
   const content = scroll.firstElementChild;
-  const focusScope = scroll.closest("[tabindex]");
+  const focusScope = scroll.closest("[data-window-content]")?.parentElement?.closest("[tabindex]");
   if (!content || !focusScope) throw new Error("Expected chat content and its focus scope");
   const contentRect = content.getBoundingClientRect();
   const chatX = (contentRect.left + contentRect.right) / 2;
