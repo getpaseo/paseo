@@ -162,7 +162,7 @@ npm run typecheck
 
 ## 赞助
 
-Paseo 由一个人开发，靠使用它的人来资助。你可以通过 [GitHub Sponsors](https://github.com/sponsors/boudra) 支持这项工作。公司也可以按月[赞助 Paseo](https://paseo.sh/sponsor#spot)，logo 会展示在本 README 顶部和 paseo.sh 的每个页面上。
+Paseo 由一个人开发，靠使用它的人来资助。你可以通过 [GitHub Sponsors](https://github.com/sponsors/boudra) 支持这项工作。公司也可以按月[赞助 Paseo](https://paseo.sh/sponsor#spot)，logo 会展示在本 README 顶部，以及 paseo.sh 的首页和文档中。
 
 ## 相关项目
 
