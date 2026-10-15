@@ -2584,6 +2584,8 @@ export const ptBR: TranslationResources = {
           hint: "Desative para ser notificado só quando um agente precisar de permissão ou de uma resposta",
           accessibilityLabel: "Notificar quando um agente terminar",
           updateFailed: "Não foi possível atualizar as notificações",
+          saving: "Salvando…",
+          loadFailed: "Não foi possível carregar a configuração de notificações deste host",
         },
       },
       workspaces: {

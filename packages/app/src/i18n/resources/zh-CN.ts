@@ -2518,6 +2518,8 @@ export const zhCN: TranslationResources = {
           hint: "关闭后，仅在代理需要权限或输入时通知",
           accessibilityLabel: "代理完成时通知",
           updateFailed: "无法更新通知",
+          saving: "正在保存…",
+          loadFailed: "无法加载此主机的通知设置",
         },
       },
       workspaces: {

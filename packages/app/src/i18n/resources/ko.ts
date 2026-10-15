@@ -2557,6 +2557,8 @@ export const ko: TranslationResources = {
           hint: "끄면 에이전트에 권한이나 입력이 필요할 때만 알립니다",
           accessibilityLabel: "에이전트가 완료되면 알림",
           updateFailed: "알림을 업데이트할 수 없습니다",
+          saving: "저장 중…",
+          loadFailed: "이 호스트의 알림 설정을 불러올 수 없습니다",
         },
       },
       workspaces: {

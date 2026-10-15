@@ -2546,6 +2546,8 @@ export const ar: TranslationResources = {
           hint: "أوقف هذا الخيار لتلقي الإشعارات فقط عندما يحتاج الوكيل إلى إذن أو إدخال",
           accessibilityLabel: "الإشعار عند انتهاء الوكيل",
           updateFailed: "تعذر تحديث الإشعارات",
+          saving: "جارٍ الحفظ…",
+          loadFailed: "تعذر تحميل إعداد الإشعارات لهذا المضيف",
         },
       },
       workspaces: {

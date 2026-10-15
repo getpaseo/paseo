@@ -2673,6 +2673,8 @@ export const en = {
           hint: "Turn off to notify only when an agent needs permission or input",
           accessibilityLabel: "Notify when an agent finishes",
           updateFailed: "Unable to update notifications",
+          saving: "Saving…",
+          loadFailed: "Couldn't load this host's notification setting",
         },
       },
       workspaces: {

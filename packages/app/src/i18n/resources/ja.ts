@@ -2571,6 +2571,8 @@ export const ja: TranslationResources = {
           hint: "オフにすると、エージェントが許可や入力を必要とするときだけ通知します",
           accessibilityLabel: "エージェントの完了時に通知",
           updateFailed: "通知を更新できません",
+          saving: "保存中…",
+          loadFailed: "このホストの通知設定を読み込めません",
         },
       },
       workspaces: {

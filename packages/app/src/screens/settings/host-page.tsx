@@ -13,6 +13,7 @@ import {
 } from "lucide-react-native";
 import type { TFunction } from "i18next";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Alert, Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
@@ -954,24 +955,29 @@ function AutoArchiveMergedWorkspacesCard({ serverId }: { serverId: string }) {
 
 function AgentFinishedNotificationsCard({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
-  const { config, patchConfig } = useDaemonConfig(serverId);
+  const { config, loadError, reload, patchConfig } = useDaemonConfig(serverId);
+  const mutation = useMutation({
+    mutationFn: async (next: boolean) => {
+      const result = await patchConfig({ agentFinishedNotifications: next });
+      if (!result) {
+        throw new Error(t("workspace.terminal.hostDisconnected"));
+      }
+      return result;
+    },
+  });
 
   const handleValueChange = useCallback(
     (next: boolean) => {
-      void patchConfig({ agentFinishedNotifications: next }).catch((error) => {
-        console.error("[HostPage] Failed to update finished notifications", error);
-        Alert.alert(
-          t("settings.host.notifications.agentFinished.updateFailed"),
-          error instanceof Error ? error.message : String(error),
-        );
-      });
+      mutation.mutate(next);
     },
-    [patchConfig, t],
+    [mutation],
   );
 
-  // The setting defaults to on, so rendering before the config arrives would flip a
-  // host that has it off from on to off on every visit.
-  if (!config) return null;
+  const saveError = mutation.error
+    ? `${t("settings.host.notifications.agentFinished.updateFailed")}: ${
+        mutation.error instanceof Error ? mutation.error.message : String(mutation.error)
+      }`
+    : null;
 
   return (
     <View style={settingsStyles.card} testID="host-page-agent-finished-notifications-card">
@@ -983,13 +989,60 @@ function AgentFinishedNotificationsCard({ serverId }: { serverId: string }) {
           <Text style={settingsStyles.rowHint}>
             {t("settings.host.notifications.agentFinished.hint")}
           </Text>
+          {!config && !loadError ? (
+            <Text
+              style={settingsStyles.rowHint}
+              testID="host-page-agent-finished-notifications-loading"
+            >
+              {t("common.loading")}
+            </Text>
+          ) : null}
+          {!config && loadError ? (
+            <Text
+              style={settingsStyles.rowError}
+              testID="host-page-agent-finished-notifications-load-error"
+            >
+              {t("settings.host.notifications.agentFinished.loadFailed")}
+            </Text>
+          ) : null}
+          {mutation.isPending ? (
+            <Text
+              style={settingsStyles.rowHint}
+              testID="host-page-agent-finished-notifications-saving"
+            >
+              {t("settings.host.notifications.agentFinished.saving")}
+            </Text>
+          ) : null}
+          {saveError ? (
+            <Text
+              style={settingsStyles.rowError}
+              testID="host-page-agent-finished-notifications-error"
+            >
+              {saveError}
+            </Text>
+          ) : null}
         </View>
-        <Switch
-          value={config.agentFinishedNotifications}
-          onValueChange={handleValueChange}
-          accessibilityLabel={t("settings.host.notifications.agentFinished.accessibilityLabel")}
-          testID="host-page-agent-finished-notifications-switch"
-        />
+        {config ? (
+          // The switch waits for the config: the setting defaults to on, so rendering it
+          // early would flip a host that has it off from on to off on every visit.
+          <Switch
+            value={config.agentFinishedNotifications}
+            onValueChange={handleValueChange}
+            disabled={mutation.isPending}
+            accessibilityLabel={t("settings.host.notifications.agentFinished.accessibilityLabel")}
+            testID="host-page-agent-finished-notifications-switch"
+          />
+        ) : null}
+        {!config && loadError ? (
+          <Button
+            variant="secondary"
+            size="sm"
+            onPress={reload}
+            testID="host-page-agent-finished-notifications-retry"
+          >
+            {t("common.actions.retry")}
+          </Button>
+        ) : null}
       </View>
     </View>
   );

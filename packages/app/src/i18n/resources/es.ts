@@ -2602,6 +2602,8 @@ export const es: TranslationResources = {
           hint: "Desactívalo para recibir avisos solo cuando un agente necesite permiso o una respuesta",
           accessibilityLabel: "Notificar cuando un agente termine",
           updateFailed: "No se pudieron actualizar las notificaciones",
+          saving: "Guardando…",
+          loadFailed: "No se pudo cargar la configuración de notificaciones de este host",
         },
       },
       workspaces: {

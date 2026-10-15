@@ -2603,6 +2603,8 @@ export const fr: TranslationResources = {
           hint: "Désactivez pour être notifié uniquement quand un agent a besoin d'une autorisation ou d'une réponse",
           accessibilityLabel: "Notifier quand un agent termine",
           updateFailed: "Impossible de mettre à jour les notifications",
+          saving: "Enregistrement…",
+          loadFailed: "Impossible de charger le réglage des notifications de cet hôte",
         },
       },
       workspaces: {
