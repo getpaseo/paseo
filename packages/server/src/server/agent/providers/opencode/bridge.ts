@@ -12,7 +12,7 @@ import {
   addModelVisibleStructuredContent,
   serializePaseoToolInputParameters,
 } from "../../tools/paseo-tool-serialization.js";
-import type { PaseoToolCatalog } from "../../tools/types.js";
+import { PaseoToolInputError, type PaseoToolCatalog } from "../../tools/types.js";
 
 const INTERNAL_PREFIX = "/_internal/opencode";
 const MAX_REQUEST_BYTES = 1024 * 1024;
@@ -207,6 +207,8 @@ export class OpenCodeBridge {
           });
         } else if (error instanceof ZodError) {
           sendJson(response, 400, { error: "Invalid tool input", issues: error.issues });
+        } else if (error instanceof PaseoToolInputError) {
+          sendJson(response, error.status, { error: error.message });
         } else {
           sendJson(response, 500, { error: "Internal OpenCode bridge error" });
         }

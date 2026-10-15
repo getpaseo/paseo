@@ -9,6 +9,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
+import { PaseoToolInputError } from "../../tools/types.js";
 import { createPaseoToolCatalog } from "../../tools/paseo-tools.js";
 import { AgentManager } from "../../agent-manager.js";
 import { AgentStorage } from "../../agent-storage.js";
@@ -36,7 +37,10 @@ function createCatalog(): PaseoToolCatalog {
     description: "Returns the supplied value.",
     inputSchema: { value: z.string() },
     async handler(input: unknown) {
-      const parsed = z.object({ value: z.string() }).strict().parse(input);
+      const parsed = z
+        .object({ value: z.string().min(2, "value must be at least 2 characters") })
+        .strict()
+        .parse(input);
       return { content: [{ type: "text", text: parsed.value }] };
     },
   };
@@ -193,6 +197,13 @@ describe("OpenCodeBridge", () => {
       expect(asked).toEqual([
         { permission: "paseo_echo_context", patterns: ["*"], always: ["*"], metadata: {} },
       ]);
+      asked.length = 0;
+      await expect(
+        hooks.tool.paseo_echo_context.execute(
+          { value: "x" },
+          { sessionID: "ses_one", ask: async () => undefined },
+        ),
+      ).rejects.toThrow("value: value must be at least 2 characters");
 
       executedInputs.length = 0;
       await expect(
@@ -557,6 +568,30 @@ describe("OpenCodeBridge", () => {
     await bridge.start();
     const catalog = createCatalog();
     bridge.bindSession({ sessionId: "ses_errors", env: {}, tools: catalog });
+    const expectedErrorCatalog: PaseoToolCatalog = {
+      tools: new Map([
+        [
+          "expected_error",
+          {
+            name: "expected_error",
+            description: "Throws an expected tool error.",
+            inputSchema: {},
+            async handler() {
+              throw new PaseoToolInputError("Agent not found: missing-agent");
+            },
+          },
+        ],
+      ]),
+      getTool(name) {
+        return this.tools.get(name);
+      },
+      async executeTool(name, input, context) {
+        const tool = this.tools.get(name);
+        if (!tool) throw new Error(`Unknown tool: ${name}`);
+        return tool.handler(input, context ?? {});
+      },
+    };
+    bridge.bindSession({ sessionId: "ses_expected_error", env: {}, tools: expectedErrorCatalog });
 
     try {
       const plugin = readPluginOptions(bridge.decorateServerEnv({}));
@@ -594,6 +629,13 @@ describe("OpenCodeBridge", () => {
       );
       expect(malformedBody.status).toBe(400);
       expect(await malformedBody.json()).toEqual({ error: "Malformed JSON request body" });
+
+      const expectedError = await fetch(
+        `${plugin.baseUrl}/_internal/opencode/sessions/ses_expected_error/tools/expected_error`,
+        { method: "POST", headers, body: "{}" },
+      );
+      expect(expectedError.status).toBe(400);
+      expect(await expectedError.json()).toEqual({ error: "Agent not found: missing-agent" });
     } finally {
       await bridge.close();
     }

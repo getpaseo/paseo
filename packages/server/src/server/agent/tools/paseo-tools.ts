@@ -91,12 +91,13 @@ import {
 } from "../../worktree/commands.js";
 import { registerBrowserTools } from "../../browser-tools/tools.js";
 import type { BrowserToolsBroker } from "../../browser-tools/broker.js";
-import type {
-  PaseoToolCatalog,
-  PaseoToolConfig,
-  PaseoToolDefinition,
-  PaseoToolExecutionContext,
-  PaseoToolResult,
+import {
+  PaseoToolInputError,
+  type PaseoToolCatalog,
+  type PaseoToolConfig,
+  type PaseoToolDefinition,
+  type PaseoToolExecutionContext,
+  type PaseoToolResult,
 } from "./types.js";
 import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
 import { isPaseoToolEnabled } from "../paseo-tool-policy.js";
@@ -627,7 +628,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     ): Promise<PaseoToolResult> {
       const tool = tools.get(name);
       if (!tool) {
-        throw new Error(`Paseo tool not found: ${name}`);
+        throw new PaseoToolInputError(`Paseo tool not found: ${name}`);
       }
       return tool.handler(await parseToolInput(tool, input), context);
     },
@@ -661,7 +662,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     }
     const parentAgent = agentManager.getAgent(callerAgentId);
     if (!parentAgent) {
-      throw new Error(`Parent agent ${callerAgentId} not found`);
+      throw new PaseoToolInputError(`Parent agent ${callerAgentId} not found`);
     }
     return parentAgent;
   };
@@ -690,9 +691,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     const trimmedCwd = requestedCwd?.trim();
     if (!trimmedCwd) {
       if (opts?.required) {
-        throw new Error("cwd is required");
+        throw new PaseoToolInputError("cwd is required");
       }
-      throw new Error("cwd is required outside an agent-scoped session");
+      throw new PaseoToolInputError("cwd is required outside an agent-scoped session");
     }
 
     return expandUserPath(trimmedCwd);
@@ -824,7 +825,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     }
     const schedule = await scheduleService.inspect(id);
     if (schedule.target.type !== type) {
-      throw new Error(
+      throw new PaseoToolInputError(
         type === "agent" ? `Heartbeat not found: ${id}` : `Schedule not found: ${id}`,
       );
     }
@@ -833,11 +834,11 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
 
   async function requireCallerHeartbeat(id: string) {
     if (!callerAgentId) {
-      throw new Error("Heartbeat operations require an agent-scoped session");
+      throw new PaseoToolInputError("Heartbeat operations require an agent-scoped session");
     }
     const schedule = await requireScheduleTarget(id, "agent");
     if (schedule.target.type !== "agent" || schedule.target.agentId !== callerAgentId) {
-      throw new Error(`Heartbeat ${id} does not belong to caller ${callerAgentId}`);
+      throw new PaseoToolInputError(`Heartbeat ${id} does not belong to caller ${callerAgentId}`);
     }
     return schedule;
   }
@@ -1575,10 +1576,12 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         legacyTopLevelCreateAgentArgsSchema.parse(args),
       );
       if (parsedArgs.relationship?.kind === "subagent") {
-        throw new Error("relationship subagent requires an agent-scoped tool session");
+        throw new PaseoToolInputError(
+          "relationship subagent requires an agent-scoped tool session",
+        );
       }
       if (!parsedArgs.workspace) {
-        throw new Error("Legacy create_agent placement could not be resolved");
+        throw new PaseoToolInputError("Legacy create_agent placement could not be resolved");
       }
       const { cwd, workspaceId, worktree } = await resolveCreateAgentWorkspace(
         parsedArgs.workspace,
@@ -1688,11 +1691,11 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     }
 
     if (canonicalCandidate.relationship || canonicalCandidate.workspace) {
-      throw new Error("relationship and workspace must be provided together");
+      throw new PaseoToolInputError("relationship and workspace must be provided together");
     }
 
     if (!cwd?.trim()) {
-      throw new Error("cwd is required for legacy top-level create_agent calls");
+      throw new PaseoToolInputError("cwd is required for legacy top-level create_agent calls");
     }
 
     const legacyWorktreeTarget = resolveLegacyCreateAgentWorktreeTarget({
@@ -1793,14 +1796,16 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         (candidate) => candidate.workspaceId === workspace.workspaceId,
       );
       if (!existingWorkspace) {
-        throw new Error(`Workspace ${workspace.workspaceId} not found`);
+        throw new PaseoToolInputError(`Workspace ${workspace.workspaceId} not found`);
       }
       const cwd = workspace.cwd
         ? resolveScopedCwd(workspace.cwd, { required: true })
         : existingWorkspace.cwd;
       const lockedCwd = callerContext?.lockedCwd?.trim();
       if (lockedCwd && !isSameOrDescendantPath(expandUserPath(lockedCwd), cwd)) {
-        throw new Error(`Workspace ${workspace.workspaceId} is outside the allowed cwd`);
+        throw new PaseoToolInputError(
+          `Workspace ${workspace.workspaceId} is outside the allowed cwd`,
+        );
       }
       return {
         cwd,
@@ -1965,7 +1970,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
 
       const record = await agentStorage.get(agentId);
       if (!record || record.internal) {
-        throw new Error(`Agent ${agentId} not found`);
+        throw new PaseoToolInputError(`Agent ${agentId} not found`);
       }
 
       const structuredSnapshot = buildStoredAgentPayload(
@@ -2203,7 +2208,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       const workspaceId = resolveWorkspaceIdForRename(requestedWorkspaceId);
       const existing = await options.workspaceRegistry.get(workspaceId);
       if (!existing) {
-        throw new Error(`Workspace ${workspaceId} not found`);
+        throw new PaseoToolInputError(`Workspace ${workspaceId} not found`);
       }
       if (existing.archivedAt) {
         throw new Error(`Workspace ${workspaceId} is archived`);
@@ -2410,7 +2415,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
 
       const terminal = terminalManager.getTerminal(terminalId);
       if (!terminal) {
-        throw new Error(`Terminal ${terminalId} not found`);
+        throw new PaseoToolInputError(`Terminal ${terminalId} not found`);
       }
 
       terminal.kill();
@@ -2446,7 +2451,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       }
 
       if (!terminalManager.getTerminal(terminalId)) {
-        throw new Error(`Terminal ${terminalId} not found`);
+        throw new PaseoToolInputError(`Terminal ${terminalId} not found`);
       }
 
       const capture = await terminalManager.captureTerminal(terminalId, {
@@ -2487,7 +2492,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
 
       const terminal = terminalManager.getTerminal(terminalId);
       if (!terminal) {
-        throw new Error(`Terminal ${terminalId} not found`);
+        throw new PaseoToolInputError(`Terminal ${terminalId} not found`);
       }
 
       terminal.send({
