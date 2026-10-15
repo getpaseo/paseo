@@ -28,7 +28,9 @@ import {
 import { readScrollMetrics } from "../support/helpers/agent-bottom-anchor";
 import { seedLongMockAgentTimeline } from "../support/helpers/timeline-pagination";
 
-test("clicking chat text or background focuses the feed for keyboard paging", async ({ page }) => {
+test("clicking chat text or background focuses the feed for keyboard paging", async ({
+  page,
+}, testInfo) => {
   const agent = await seedLongMockAgentTimeline({ turns: 8 });
 
   try {
@@ -45,6 +47,7 @@ test("clicking chat text or background focuses the feed for keyboard paging", as
     await expect
       .poll(async () => (await readScrollMetrics(page)).offsetY)
       .toBeLessThan(beforePaging.offsetY - beforePaging.viewportHeight / 2);
+    await page.screenshot({ path: testInfo.outputPath("chat-keyboard-paging.png") });
     await page.keyboard.press("PageDown");
     await expect
       .poll(async () => (await readScrollMetrics(page)).distanceFromBottom)
