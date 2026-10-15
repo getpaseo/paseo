@@ -1,11 +1,14 @@
-import { execFileSync } from "node:child_process";
+import assert from "node:assert/strict";
+import { execFile, execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { expect, onTestFinished, test } from "vitest";
 
 import { DaemonClient } from "./test-utils/index.js";
-import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
+import { createTestPaseoDaemon, type TestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 
 // The reshaped workspace.create.request forwards its worktree `source`
 // (action/refName/branchName/githubPrNumber/worktreeSlug) into createWorktreeCore.
@@ -32,6 +35,102 @@ function createGitRepoWithBranch(): { repoDir: string; tempRoot: string } {
   return { repoDir, tempRoot };
 }
 
+interface CliCommand {
+  daemon: TestPaseoDaemon;
+  cwd: string;
+  args: string[];
+}
+
+async function runCli({ daemon, cwd, args }: CliCommand): Promise<string> {
+  const result = await promisify(execFile)(
+    process.execPath,
+    [
+      "--conditions=source",
+      "--import",
+      import.meta.resolve("tsx"),
+      fileURLToPath(new URL("../../../cli/src/index.ts", import.meta.url)),
+      "--host",
+      `127.0.0.1:${daemon.port}`,
+      ...args,
+    ],
+    {
+      cwd,
+      env: {
+        ...Object.fromEntries(
+          Object.entries(process.env).filter(([key]) => !key.startsWith("PASEO_")),
+        ),
+        PASEO_HOME: daemon.paseoHome,
+      },
+      timeout: 20_000,
+    },
+  );
+  return result.stdout;
+}
+
+test.each([
+  {
+    command: "worktree",
+    directoryField: "worktreePath",
+    args: [
+      "worktree",
+      "create",
+      "--mode",
+      "branch-off",
+      "--new-branch",
+      "listed-after-create",
+      "--base",
+      "main",
+      "--json",
+    ],
+  },
+  {
+    command: "workspace",
+    directoryField: "cwd",
+    args: [
+      "workspace",
+      "create",
+      "--isolation",
+      "worktree",
+      "--new-branch",
+      "listed-after-create",
+      "--worktree-slug",
+      "listed-after-create",
+      "--base",
+      "main",
+      "--json",
+    ],
+  },
+])(
+  "paseo $command create makes a new worktree visible in a warm listing",
+  async ({ args, directoryField }) => {
+    const daemon = await createTestPaseoDaemon();
+    const { repoDir, tempRoot } = createGitRepoWithBranch();
+    try {
+      expect(
+        JSON.parse(await runCli({ daemon, cwd: repoDir, args: ["worktree", "ls", "--json"] })),
+      ).toEqual([]);
+      const created = JSON.parse(await runCli({ daemon, cwd: repoDir, args }));
+      expect(created.name).toBe("listed-after-create");
+      const worktreePath = created[directoryField];
+      expect(existsSync(worktreePath)).toBe(true);
+      expect(runGit(worktreePath, "branch", "--show-current")).toBe("listed-after-create");
+      expect(
+        JSON.parse(await runCli({ daemon, cwd: repoDir, args: ["worktree", "ls", "--json"] })),
+      ).toMatchObject([
+        {
+          name: "listed-after-create",
+          branch: "listed-after-create",
+          agent: "-",
+        },
+      ]);
+    } finally {
+      await daemon.close();
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  },
+  180_000,
+);
+
 test("workspace.create worktree source forwards action=checkout + refName into the real worktree", async () => {
   const daemon = await createTestPaseoDaemon();
   const { repoDir, tempRoot } = createGitRepoWithBranch();
@@ -42,6 +141,9 @@ test("workspace.create worktree source forwards action=checkout + refName into t
 
   try {
     await client.connect();
+    expect(
+      JSON.parse(await runCli({ daemon, cwd: repoDir, args: ["worktree", "ls", "--json"] })),
+    ).toEqual([]);
 
     const result = await client.createWorkspace({
       source: {
@@ -53,10 +155,20 @@ test("workspace.create worktree source forwards action=checkout + refName into t
     });
 
     expect(result.error).toBeNull();
+    assert(result.workspace);
     // If action/refName were dropped, the daemon would branch-off a generated
     // slug instead of checking out the named branch. The created worktree being
     // on feature/existing-branch is the observable proof both fields forwarded.
     expect(result.workspace?.gitRuntime?.currentBranch).toBe("feature/existing-branch");
+    expect(
+      JSON.parse(await runCli({ daemon, cwd: repoDir, args: ["worktree", "ls", "--json"] })),
+    ).toMatchObject([
+      {
+        name: path.basename(result.workspace.workspaceDirectory),
+        branch: "feature/existing-branch",
+        agent: "-",
+      },
+    ]);
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();
