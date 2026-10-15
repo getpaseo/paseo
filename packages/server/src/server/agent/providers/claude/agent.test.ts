@@ -1466,6 +1466,36 @@ describe("normalizeClaudeAskUserQuestionUpdatedInput", () => {
     });
   });
 
+  test("drops Paseo selectedOptionIndexes before handing answers to Claude", () => {
+    expect(
+      normalizeClaudeAskUserQuestionUpdatedInput(
+        {
+          questions: [
+            {
+              question: "Which provider should I use?",
+              header: "Provider",
+              options: [],
+              multiSelect: false,
+            },
+          ],
+          answers: { Provider: "Claude" },
+          selectedOptionIndexes: { Provider: [0] },
+        },
+        undefined,
+      ),
+    ).toEqual({
+      questions: [
+        {
+          question: "Which provider should I use?",
+          header: "Provider",
+          options: [],
+          multiSelect: false,
+        },
+      ],
+      answers: { "Which provider should I use?": "Claude" },
+    });
+  });
+
   test("uses fallback request questions when response only includes answers", () => {
     expect(
       normalizeClaudeAskUserQuestionUpdatedInput(

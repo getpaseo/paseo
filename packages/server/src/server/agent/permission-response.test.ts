@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type {
@@ -6,13 +6,17 @@ import type {
   AgentPermissionResult,
   AgentRunOptions,
   AgentPermissionResponse,
+  AgentStreamEvent,
 } from "./agent-sdk-types.js";
-import type { AgentStreamEvent } from "../messages.js";
-import { respondToAgentPermission } from "./permission-response.js";
+import type { AgentManagerEvent } from "./agent-manager.js";
+import {
+  PlanningTurnFollowUpTimeoutError,
+  respondToAgentPermission,
+} from "./permission-response.js";
 
 class FakePermissionAgentManager {
   permissionResult: AgentPermissionResult | void;
-  hasRunInFlight = false;
+  activeForegroundTurnId: string | null = null;
   outOfBandHandled = false;
   permissionResponses: Array<{
     agentId: string;
@@ -22,6 +26,7 @@ class FakePermissionAgentManager {
   streamRuns: Array<{ agentId: string; prompt: AgentPromptInput; options?: AgentRunOptions }> = [];
   replacementRuns: Array<{ agentId: string; prompt: AgentPromptInput; options?: AgentRunOptions }> =
     [];
+  private readonly subscribers = new Set<(event: AgentManagerEvent) => void>();
 
   async respondToPermission(
     agentId: string,
@@ -37,11 +42,32 @@ class FakePermissionAgentManager {
   }
 
   getAgent() {
-    return undefined;
+    if (this.activeForegroundTurnId === null) {
+      return undefined;
+    }
+    return { activeForegroundTurnId: this.activeForegroundTurnId };
   }
 
   hasInFlightRun(): boolean {
-    return this.hasRunInFlight;
+    return this.activeForegroundTurnId !== null;
+  }
+
+  subscribe(callback: (event: AgentManagerEvent) => void): () => void {
+    this.subscribers.add(callback);
+    return () => {
+      this.subscribers.delete(callback);
+    };
+  }
+
+  emitStreamEvent(agentId: string, event: AgentStreamEvent): void {
+    const managerEvent: AgentManagerEvent = {
+      type: "agent_stream",
+      agentId,
+      event,
+    };
+    for (const subscriber of this.subscribers) {
+      subscriber(managerEvent);
+    }
   }
 
   streamAgent(
@@ -118,9 +144,9 @@ describe("respondToAgentPermission", () => {
     expect(agentManager.replacementRuns).toEqual([]);
   });
 
-  test("replaces an in-flight run for follow-up prompts", async () => {
+  test("replaces an in-flight run for follow-up prompts by default", async () => {
     const agentManager = new FakePermissionAgentManager();
-    agentManager.hasRunInFlight = true;
+    agentManager.activeForegroundTurnId = "turn-1";
     agentManager.permissionResult = { followUpPrompt: "continue after approval" };
 
     await respondToAgentPermission({
@@ -138,5 +164,123 @@ describe("respondToAgentPermission", () => {
         prompt: "continue after approval",
       },
     ]);
+  });
+
+  test("waits for planning turn_completed then starts without replacing when replaceRunning is false", async () => {
+    const agentManager = new FakePermissionAgentManager();
+    agentManager.activeForegroundTurnId = "plan-turn";
+    agentManager.permissionResult = {
+      followUpPrompt: "implement after CreatePlan settles",
+      replaceRunning: false,
+    };
+
+    const pending = respondToAgentPermission({
+      agentManager,
+      agentId: "agent-1",
+      requestId: "permission-1",
+      response: { behavior: "allow" },
+      logger,
+    });
+
+    await Promise.resolve();
+    agentManager.emitStreamEvent("agent-1", {
+      type: "turn_completed",
+      provider: "cursor",
+      turnId: "plan-turn",
+    });
+    await pending;
+
+    expect(agentManager.replacementRuns).toEqual([]);
+    expect(agentManager.streamRuns).toEqual([
+      {
+        agentId: "agent-1",
+        prompt: "implement after CreatePlan settles",
+      },
+    ]);
+  });
+
+  test("skips follow-up when the planning turn is canceled (Stop)", async () => {
+    const agentManager = new FakePermissionAgentManager();
+    agentManager.activeForegroundTurnId = "plan-turn";
+    agentManager.permissionResult = {
+      followUpPrompt: "implement after CreatePlan settles",
+      replaceRunning: false,
+    };
+
+    const pending = respondToAgentPermission({
+      agentManager,
+      agentId: "agent-1",
+      requestId: "permission-1",
+      response: { behavior: "allow" },
+      logger,
+    });
+
+    await Promise.resolve();
+    agentManager.emitStreamEvent("agent-1", {
+      type: "turn_canceled",
+      provider: "cursor",
+      reason: "Interrupted",
+      turnId: "plan-turn",
+    });
+    await pending;
+
+    expect(agentManager.streamRuns).toEqual([]);
+    expect(agentManager.replacementRuns).toEqual([]);
+  });
+
+  test("skips follow-up when replaceRunning is false and no planning turn is active", async () => {
+    const agentManager = new FakePermissionAgentManager();
+    agentManager.permissionResult = {
+      followUpPrompt: "implement after CreatePlan settles",
+      replaceRunning: false,
+    };
+
+    await respondToAgentPermission({
+      agentManager,
+      agentId: "agent-1",
+      requestId: "permission-1",
+      response: { behavior: "allow" },
+      logger,
+    });
+
+    expect(agentManager.streamRuns).toEqual([]);
+    expect(agentManager.replacementRuns).toEqual([]);
+  });
+
+  test("times out when replaceRunning is false and the turn never settles", async () => {
+    vi.useFakeTimers();
+    const agentManager = new FakePermissionAgentManager();
+    agentManager.activeForegroundTurnId = "plan-turn";
+    agentManager.permissionResult = {
+      followUpPrompt: "never starts",
+      replaceRunning: false,
+    };
+
+    const pending = respondToAgentPermission({
+      agentManager,
+      agentId: "agent-1",
+      requestId: "permission-1",
+      response: { behavior: "allow" },
+      logger,
+    });
+    let caught: unknown;
+    const pendingSettled = pending.catch((error: unknown) => {
+      caught = error;
+      throw error;
+    });
+    const expectation = expect(pendingSettled).rejects.toBeInstanceOf(
+      PlanningTurnFollowUpTimeoutError,
+    );
+    await vi.advanceTimersByTimeAsync(30_000);
+    await expectation;
+
+    expect(caught).toMatchObject({
+      agentId: "agent-1",
+      turnId: "plan-turn",
+      timeoutMs: 30_000,
+    });
+    expect(agentManager.streamRuns).toEqual([]);
+    expect(agentManager.replacementRuns).toEqual([]);
+    vi.useRealTimers();
   });
 });
