@@ -40,7 +40,7 @@ import {
   navigateToLastWorkspace,
   useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
-import { dispatchTopWebOverlayKeyDown } from "@/lib/overlay-root";
+import { dispatchTopWebOverlayKeyDown, hasOpenDomPopover } from "@/lib/overlay-root";
 
 export function useKeyboardShortcuts({
   enabled,
@@ -318,6 +318,13 @@ export function useKeyboardShortcuts({
     }
 
     if (dispatchTopWebOverlayKeyDown(event)) {
+      return;
+    }
+
+    // An open popover (a plugin's panel) is the top layer and closes on its
+    // own Escape listener, which runs after this one. Escape is not an app
+    // shortcut then: it must not also interrupt the running agent.
+    if (event.key === "Escape" && hasOpenDomPopover()) {
       return;
     }
 

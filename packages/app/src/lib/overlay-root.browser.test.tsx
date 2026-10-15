@@ -2,7 +2,7 @@ import React, { type RefCallback } from "react";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { useWebOverlayRegistration } from "./overlay-root";
+import { hasOpenDomPopover, useWebOverlayRegistration } from "./overlay-root";
 
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
@@ -66,5 +66,22 @@ describe("useWebOverlayRegistration in the browser", () => {
     await renderHarness(false, false);
 
     expect(openerFocusCalls).toBe(1);
+  });
+});
+
+describe("hasOpenDomPopover", () => {
+  afterEach(() => {
+    document.body.replaceChildren();
+  });
+
+  it("is true only while a popover is shown", () => {
+    const panel = document.createElement("div");
+    panel.setAttribute("popover", "manual");
+    document.body.append(panel);
+    expect(hasOpenDomPopover()).toBe(false);
+    panel.showPopover();
+    expect(hasOpenDomPopover()).toBe(true);
+    panel.hidePopover();
+    expect(hasOpenDomPopover()).toBe(false);
   });
 });

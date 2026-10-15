@@ -112,6 +112,21 @@ export function hasActiveWebOverlay(): boolean {
   return getTopWebOverlay() !== undefined;
 }
 
+/**
+ * True while an element shown with the Popover API is open. Such a layer
+ * floats above the app like a registered overlay but lives outside the
+ * registry: plugins draw their panels this way, since they cannot register.
+ */
+export function hasOpenDomPopover(): boolean {
+  if (typeof document === "undefined") return false;
+  try {
+    return document.querySelector(":popover-open") !== null;
+  } catch {
+    // An engine without the Popover API rejects the selector, and has none open.
+    return false;
+  }
+}
+
 function getFocusableElements(scope: HTMLElement): HTMLElement[] {
   const selector = [
     "a[href]",
