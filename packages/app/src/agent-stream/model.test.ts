@@ -240,4 +240,47 @@ describe("buildAgentStreamRenderModel", () => {
 
     expect(model.turnTiming.byAssistantId.size).toBe(0);
   });
+
+  it.each(["web", "native"] as const)(
+    "reuses rendered history and timing across live-head updates inside a history window on %s",
+    (platform) => {
+      const at = (seed: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, seed));
+      const tail: StreamItem[] = [];
+      for (let index = 0; index < 40; index += 1) {
+        tail.push(
+          { ...userMessage(`u${index}`, 0), timestamp: at(index * 2) },
+          { ...assistantMessage(`a${index}`, 0), timestamp: at(index * 2 + 1) },
+        );
+      }
+      const live = (text: string): StreamItem => ({
+        kind: "assistant_message",
+        id: "live",
+        text,
+        timestamp: at(81),
+      });
+      const build = (head: StreamItem[]) =>
+        buildAgentStreamRenderModel({
+          isTurnActive: true,
+          activeTurnStartedAt: tail.at(-2)?.timestamp ?? null,
+          tail,
+          head,
+          platform,
+          isMobileBreakpoint: false,
+          historyStart: 60,
+        });
+
+      const first = build([live("live")]);
+      const second = build([live("live grows")]);
+
+      expect(second.history).toBe(first.history);
+      expect(second.segments.historyMounted).toBe(first.segments.historyMounted);
+      expect(second.turnTiming.byAssistantId).toBe(first.turnTiming.byAssistantId);
+      expect(first.history).toHaveLength(20);
+      expect(first.turnTiming.byAssistantId.has("a29")).toBe(false);
+      expect(first.turnTiming.byAssistantId.get("a38")).toEqual({
+        completedAt: tail[77]?.timestamp,
+        durationMs: 1000,
+      });
+    },
+  );
 });
