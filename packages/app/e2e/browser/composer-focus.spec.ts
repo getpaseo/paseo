@@ -26,7 +26,12 @@ import {
   swipeOpenMobileExplorer,
 } from "../support/helpers/sidebar";
 import { readScrollMetrics } from "../support/helpers/agent-bottom-anchor";
-import { seedLongMockAgentTimeline } from "../support/helpers/timeline-pagination";
+import {
+  expectTimelinePromptPositionPreserved,
+  rememberTimelinePromptPosition,
+  seedLongMockAgentTimeline,
+  waitForTimelineGeometryToSettle,
+} from "../support/helpers/timeline-pagination";
 
 test("clicking chat text or background focuses the feed for keyboard paging", async ({
   page,
@@ -61,14 +66,16 @@ test("clicking chat text or background focuses the feed for keyboard paging", as
     await expect
       .poll(async () => (await readScrollMetrics(page)).distanceFromBottom)
       .toBeGreaterThan(beforePaging.viewportHeight / 2);
+    await waitForTimelineGeometryToSettle(page);
+    const readingPrompt = agent.prompts[4];
+    await expect(feed.getByText(readingPrompt, { exact: true })).toBeInViewport();
+    const readingPosition = await rememberTimelinePromptPosition(page, readingPrompt);
     await agent.client.sendAgentMessage(agent.agentId, "emit 2 coalesced agent stream updates");
     await agent.client.waitForFinish(agent.agentId, 15_000);
     // The daemon finishing does not mean its response has reached the browser.
     await expect(feed.getByText(/stress-update-1/)).toHaveCount(1);
-    await waitForAnimationFrames(page, 4);
-    await expect
-      .poll(async () => (await readScrollMetrics(page)).distanceFromBottom)
-      .toBeGreaterThan(beforePaging.viewportHeight / 2);
+    await waitForTimelineGeometryToSettle(page);
+    await expectTimelinePromptPositionPreserved(page, readingPosition);
     await expectComposerDraft(page, "Keep this draft");
   } finally {
     await agent.cleanup();
