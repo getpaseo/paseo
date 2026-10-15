@@ -175,10 +175,35 @@ function captureViewportFrame(
       // CDP paints a fresh viewport and restores native visibility itself. Electron
       // 44's throttling setter cannot re-hide a widget after a manual wake-up.
       void contents.debugger
-        .sendCommand("Page.captureScreenshot", {
-          format: "png",
-          fromSurface: true,
-          captureBeyondViewport: false,
+        .sendCommand("Runtime.evaluate", {
+          expression: "({ x: scrollX, y: scrollY, width: innerWidth, height: innerHeight })",
+          returnByValue: true,
+        })
+        .then((result) => {
+          if (settled) return null;
+          signal.throwIfAborted();
+          const metrics = result as {
+            result?: { value?: { x: number; y: number; width: number; height: number } };
+          };
+          // innerWidth includes the scrollbar gutter; CDP layout metrics omit it.
+          const viewport = metrics.result?.value;
+          if (!viewport || viewport.width <= 0 || viewport.height <= 0) {
+            throw new Error("No frame returned by viewport capture");
+          }
+          // Explicit clipping keeps viewport semantics while asking Chromium to
+          // paint offscreen content instead of copying a hidden Linux surface.
+          return contents.debugger.sendCommand("Page.captureScreenshot", {
+            format: "png",
+            fromSurface: true,
+            captureBeyondViewport: true,
+            clip: {
+              x: viewport.x,
+              y: viewport.y,
+              width: viewport.width,
+              height: viewport.height,
+              scale: 1,
+            },
+          });
         })
         .then((result) => {
           if (settled) return null;

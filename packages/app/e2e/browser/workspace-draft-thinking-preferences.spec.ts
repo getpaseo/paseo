@@ -116,6 +116,7 @@ test.describe("Workspace draft thinking preferences", () => {
       await submitDraftAgent(page, "Remember medium thinking for this model");
 
       await openNewAgentTab(page);
+      await selectModel(page, "Five minute stream");
       await expectThinkingSelected(page, "Medium");
       await chooseDraftControl(
         page,
@@ -157,8 +158,17 @@ test.describe("Workspace draft thinking preferences", () => {
       await submitDraftAgent(page, "Remember this permission mode");
 
       await openNewAgentTab(page);
+      await selectModel(page, "Five minute stream");
       await expectModeSelected(page, "Approval test");
-      await selectModel(page, "gpt-5.4-mini");
+      await page.getByTestId("combined-model-selector").filter({ visible: true }).first().click();
+      const dialog = page.getByRole("dialog");
+      const back = dialog.getByRole("button", { name: "Back", exact: true });
+      if (await back.isVisible()) await back.click();
+      await dialog.getByRole("textbox", { name: /search (?:all )?model/i }).fill("codex");
+      await dialog
+        .getByTestId(/^model-row-codex-/)
+        .first()
+        .click();
 
       await openNewAgentTab(page);
       await reloadWithPersistedPreferences(page);
@@ -180,6 +190,7 @@ test.describe("Workspace draft thinking preferences", () => {
       await openNewAgentTab(page);
       await seedLegacyModelPreference(page);
       await reloadWithPersistedPreferences(page);
+      await selectModel(page, "Five minute stream");
 
       await expect(
         page.getByRole("button", { name: "Select model (Five minute stream)" }),

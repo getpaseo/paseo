@@ -71,6 +71,8 @@ class FakeDebugger {
         }
         return { result: { value: this.promptDialogs.splice(0) } };
       }
+      if (params.expression.includes("width: innerWidth"))
+        return { result: { value: { x: 12, y: 240, width: 640, height: 480 } } };
       return { result: { value: true } };
     }
     return command === "Page.captureScreenshot" ? { data: "iVBORw==" } : { ok: true };
@@ -259,7 +261,12 @@ describe("browser automation IPC adapter", () => {
     await flushMicrotasks();
     expect(contents.debugger.commands).toContainEqual({
       command: "Page.captureScreenshot",
-      params: { format: "png", fromSurface: true, captureBeyondViewport: false },
+      params: {
+        format: "png",
+        fromSurface: true,
+        captureBeyondViewport: true,
+        clip: { x: 12, y: 240, width: 640, height: 480, scale: 1 },
+      },
     });
 
     expect((await capture).getSize()).toEqual({ width: 640, height: 480 });
@@ -268,26 +275,29 @@ describe("browser automation IPC adapter", () => {
     expect(contents.destroyedListeners.size).toBe(1);
   });
 
-  test("cancels a pending CDP capture and releases its queue without consuming a late frame", async () => {
-    const contents = new FakeWebContents(2001);
-    contents.debugger.blockedCommandNames.add("Page.captureScreenshot");
-    const tab = adaptWebContents(contents);
-    const controller = new AbortController();
-    const capture = tab.captureFrame(controller.signal);
-    const failure = expect(capture).rejects.toThrow("capture deadline");
-    await flushMicrotasks();
-    controller.abort(new Error("capture deadline"));
+  test.each(["Runtime.evaluate", "Page.captureScreenshot"])(
+    "cancels pending %s and releases its queue without consuming a late frame",
+    async (command) => {
+      const contents = new FakeWebContents(command === "Runtime.evaluate" ? 2101 : 2001);
+      contents.debugger.blockedCommandNames.add(command);
+      const tab = adaptWebContents(contents);
+      const controller = new AbortController();
+      const capture = tab.captureFrame(controller.signal);
+      const failure = expect(capture).rejects.toThrow("capture deadline");
+      await flushMicrotasks();
+      controller.abort(new Error("capture deadline"));
 
-    await failure;
-    expect(contents.throttlingChanges).toEqual([]);
-    expect(contents.destroyedListeners.size).toBe(1);
-    await expect(
-      tab.sendDebugCommand?.("Runtime.evaluate", { expression: "true" }),
-    ).resolves.toEqual({ result: { value: true } });
-    contents.debugger.blockedCommandNames.clear();
-    contents.debugger.finishNextCommand();
-    await expect(tab.captureFrame(new AbortController().signal)).resolves.toBeInstanceOf(FakeImage);
-  });
+      await failure;
+      expect(contents.throttlingChanges).toEqual([]);
+      expect(contents.destroyedListeners.size).toBe(1);
+      await expect(tab.sendDebugCommand?.("Page.getLayoutMetrics")).resolves.toEqual({ ok: true });
+      contents.debugger.blockedCommandNames.clear();
+      contents.debugger.finishNextCommand();
+      await expect(tab.captureFrame(new AbortController().signal)).resolves.toBeInstanceOf(
+        FakeImage,
+      );
+    },
+  );
 
   test("closing a guest settles its screenshot and releases the next queued capture", async () => {
     vi.useFakeTimers();

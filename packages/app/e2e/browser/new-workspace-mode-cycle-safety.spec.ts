@@ -399,7 +399,12 @@ test("Auto routing failure preserves the draft for retry and manual selection", 
     await expectAutoModelSelection(page);
     const selector = page.getByTestId("combined-model-selector").filter({ visible: true });
     await selector.click();
-    await expect(page.getByTestId("model-row-codex-gpt-6-astra")).toBeVisible();
+    const manualModel = page
+      .getByTestId(/^model-row-codex-/)
+      .filter({ visible: true })
+      .first();
+    await expect(manualModel).toBeVisible();
+    const manualModelTestId = (await manualModel.getAttribute("data-testid"))!;
     await page.keyboard.press("Escape");
 
     const draft = "Keep this request intact when Auto routing fails.";
@@ -425,9 +430,8 @@ test("Auto routing failure preserves the draft for retry and manual selection", 
     }
 
     await selector.click();
-    await page.getByTestId("model-row-codex-gpt-6-astra").click();
+    await page.getByTestId(manualModelTestId).click();
     await expect(selector).not.toContainText("Auto · JEV");
-    await expect(selector).toContainText("GPT-6-Astra");
     await expect(selector).not.toHaveAttribute("aria-label", /Auto · JEV/);
     await expect(page.getByTestId("agent-thinking-selector")).toBeVisible();
     await expect(field).toHaveValue(draft);
@@ -439,6 +443,14 @@ test("Auto routing failure preserves the draft for retry and manual selection", 
         }, CREATE_AGENT_PREFERENCES_KEY),
       )
       .toBe("manual");
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (key) => JSON.parse(localStorage.getItem(key) ?? "{}").providerPreferences?.codex?.model,
+          CREATE_AGENT_PREFERENCES_KEY,
+        ),
+      )
+      .toBe(manualModelTestId.slice("model-row-codex-".length));
     expect(createRequests).toHaveLength(2);
   } finally {
     await seeded.cleanup();

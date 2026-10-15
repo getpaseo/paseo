@@ -781,7 +781,7 @@ test("Changes keeps review navigation and controls inside its workspace tab", as
   );
   await expect(visiblePanel.getByTestId("changes-primary-cta")).toHaveCount(0);
   await expect(page.getByTestId("changes-primary-cta")).toHaveCount(1);
-  await expect(page.getByTestId("changes-primary-cta")).toContainText("Commit");
+  await expect(page.getByTestId("workspace-git-commit")).toHaveAccessibleName("Commit");
   await expect(visiblePanel.getByTestId("diff-file-0-body")).toBeVisible();
   await visiblePanel.getByTestId("diff-file-0-toggle").click();
   await expect(visiblePanel.getByTestId("diff-file-0-body")).not.toBeVisible();

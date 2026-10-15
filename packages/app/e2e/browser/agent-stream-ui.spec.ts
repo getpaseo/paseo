@@ -242,6 +242,9 @@ test.describe("Agent stream UI", () => {
         workspaceId: agent.workspaceId,
         agentId: agent.agentId,
       });
+      await expect(
+        page.getByTestId("response-fold-toggle").filter({ visible: true }).first(),
+      ).toBeVisible();
       await expandCompletedResponses(page);
       await waitForScrollableChat(page, {
         minScrollableDistance: SCROLL_AWAY_MIN_SCROLLABLE_DISTANCE,

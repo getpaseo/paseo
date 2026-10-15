@@ -1,3 +1,4 @@
+import { selectModel } from "../support/helpers/app";
 import { test, expect } from "../support/fixtures";
 import { expectWorkspaceTabVisible } from "../support/helpers/archive-tab";
 import {
@@ -100,7 +101,7 @@ async function expectWorkspaceTitleWeight(
 
 async function expectProjectTitleWeight(
   page: import("@playwright/test").Page,
-  input: { projectKey: string; title: string; weight: "400" | "700" },
+  input: { projectKey: string; title: string; weight: "500" | "700" },
 ) {
   await expect(
     page
@@ -224,7 +225,7 @@ test.describe("Workspace model regressions", () => {
     }
   });
 
-  test("new agent tab in a same-directory workspace picks a default model for the saved provider", async ({
+  test("new agent tab in a same-directory workspace uses Codex defaults before manual selection", async ({
     page,
   }) => {
     const seeded: SeededWorkspace = await seedWorkspace({
@@ -257,6 +258,10 @@ test.describe("Workspace model regressions", () => {
 
       await expectComposerVisible(page);
       await expectComposerEditable(page);
+      await expect(
+        page.getByTestId("combined-model-selector").filter({ visible: true }),
+      ).toHaveAttribute("aria-label", /Select model \(GPT-6-Astra\)/i);
+      await selectModel(page, "Five minute stream");
       const prompt = `Create agent default model ${Date.now()}`;
       await submitMessage(page, prompt);
       await expect(page.getByText("No model is available for the selected provider")).toHaveCount(
@@ -379,7 +384,7 @@ test.describe("Workspace model regressions", () => {
       await expectProjectTitleWeight(page, {
         projectKey: seeded.projectKey,
         title: seeded.projectDisplayName,
-        weight: "400",
+        weight: "500",
       });
       await expectWorkspaceTitleWeight(page, {
         rowTestId: firstRowTestId,
@@ -553,7 +558,7 @@ test.describe("Workspace model regressions", () => {
       await expectProjectTitleWeight(page, {
         projectKey: seeded.projectKey,
         title: seeded.projectDisplayName,
-        weight: "400",
+        weight: "500",
       });
       await expectWorkspaceTitleWeight(page, {
         rowTestId: firstRowTestId,

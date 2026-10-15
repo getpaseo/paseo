@@ -1084,8 +1084,19 @@ export class MockLoadTestAgentSession implements AgentSession {
 
   async interrupt(): Promise<void> {
     const turn = this.activeTurn;
-    for (const requestId of this.pendingPermissions.keys()) {
+    for (const [requestId, request] of this.pendingPermissions) {
       this.pendingPermissions.delete(requestId);
+      if (turn && request.kind === "plan" && typeof request.input?.plan === "string") {
+        this.emitTimeline(turn.turnId, {
+          type: "tool_call",
+          name: "plan_approval",
+          callId: request.sourcePlanCallId ?? request.id,
+          status: "completed",
+          error: null,
+          detail: { type: "plan", text: request.input.plan },
+          metadata: { approved: false, resolution: { behavior: "deny" } },
+        });
+      }
       this.emit({
         type: "permission_resolved",
         provider: this.provider,

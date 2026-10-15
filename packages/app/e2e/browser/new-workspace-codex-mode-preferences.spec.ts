@@ -128,10 +128,13 @@ test.describe("New workspace Codex mode preferences", () => {
         projectDisplayName: seeded.projectDisplayName,
       });
 
+      // New conversations start with Full access; the saved provider mode is
+      // retained for explicit selection rather than overriding that default.
       await expect(
-        page.getByRole("button", { name: "Select agent mode (Default permissions)" }),
+        page.getByRole("button", { name: "Select agent mode (Full access)" }),
       ).toBeVisible({ timeout: 30_000 });
       await expectThinkingOptionsFit(page);
+      await selectMode(page, "Default permissions");
       await selectMode(page, "Full access");
       await expect(
         page.getByRole("button", { name: "Select agent mode (Full access)" }),

@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "../fixtures";
 import { readFile } from "node:fs/promises";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
-import { gotoAppShell } from "./app";
+import { gotoAppShell, selectModel } from "./app";
 import { scrollTimelineToOldestLoadedEdge } from "./timeline-pagination";
 import {
   archiveLocalWorkspaceFromDaemon,
@@ -75,6 +75,7 @@ export async function verifyDelayedWorkspaceCreation(
       await openNewWorkspaceComposer(page, project);
       await selectWorkspaceIsolation(page, isolation);
       if (launch === "chat") {
+        await selectModel(page, "ten-second-stream");
         await dropFileOnComposer(page, CONTEXT);
         await expectAttachmentPill(page, "composer-file-attachment-pill");
         await submitNewWorkspacePrompt(page, PROMPT);

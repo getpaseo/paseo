@@ -1,22 +1,13 @@
 import type { Locator } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
-import { createIdleAgent } from "../support/helpers/archive-tab";
+import { createMockIdleAgent } from "../support/helpers/archive-tab";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
 import { waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
 import { buildHostAgentDetailRoute } from "@/utils/host-routes";
 
-const TITLE_MAX_LENGTH = 80;
-
 function normalizedTitle(title: string): string {
   return title.replace(/\s+/g, " ").trim();
-}
-
-function expectedTooltipTitle(title: string): string {
-  const singleLineTitle = normalizedTitle(title);
-  return singleLineTitle.length <= TITLE_MAX_LENGTH
-    ? singleLineTitle
-    : `${singleLineTitle.slice(0, TITLE_MAX_LENGTH - 1).trimEnd()}…`;
 }
 
 async function openAgent(page: Page, agent: { id: string; workspaceId: string }): Promise<void> {
@@ -39,7 +30,7 @@ async function expectTwoRowAgentSummary(
   tooltip: Locator,
   input: { title: string; agentId: string },
 ): Promise<void> {
-  const title = tooltip.getByText(expectedTooltipTitle(input.title), { exact: true });
+  const title = tooltip.getByText(normalizedTitle(input.title), { exact: true });
   const id = tooltip.getByText(input.agentId.slice(0, 7), { exact: true });
   const activity = tooltip.getByText(/^(just now|\d+[mhd] ago|[A-Z][a-z]{2} \d{1,2})$/);
 
@@ -51,16 +42,18 @@ async function expectTwoRowAgentSummary(
 }
 
 test.describe("Workspace agent tab tooltip", () => {
-  test("summarizes a multiline agent title above its ID and last activity", async ({ page }) => {
+  test("shows a complete multiline agent title above its ID and last activity", async ({
+    page,
+  }) => {
     test.setTimeout(120_000);
     const workspace = await seedWorkspace({ repoPrefix: "workspace-agent-tooltip-" });
 
     try {
       const title = [
         "Short first line",
-        "followed by a much longer continuation that should be joined before the complete title is truncated to a useful tooltip length",
+        "followed by a much longer continuation that should be joined in the complete tooltip title",
       ].join("\n");
-      const agent = await createIdleAgent(workspace.client, {
+      const agent = await createMockIdleAgent(workspace.client, {
         cwd: workspace.repoPath,
         workspaceId: workspace.workspaceId,
         title,

@@ -210,9 +210,14 @@ test.describe("Tab creation", () => {
 
     await expectTerminalSurfaceVisible(page);
 
-    const tabsAfter = await getTabTestIds(page);
-    const terminalTabs = tabsAfter.filter((id) => id.includes("terminal"));
-    expect(terminalTabs.length).toBeGreaterThanOrEqual(1);
+    await expect
+      .poll(async () => {
+        const tabs = await getTabTestIds(page);
+        let count = 0;
+        for (const id of tabs) if (id.includes("terminal")) count += 1;
+        return count;
+      })
+      .toBeGreaterThanOrEqual(1);
   });
 
   test("launching a profile from the empty pane launcher drops its empty prompt argument", async ({

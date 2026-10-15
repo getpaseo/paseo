@@ -113,12 +113,23 @@ test.describe("Codex plan approval", () => {
           timeout: 30_000,
         });
         await expect(page.getByTestId("timeline-plan-card")).toHaveCount(1);
+        if (behavior === "follow-up") {
+          const rejected = page.getByRole("button", { name: "Rejected plan", exact: true });
+          await expect(rejected).toHaveAttribute("aria-expanded", "false");
+          await rejected.click();
+        }
         await expect(page.getByTestId("timeline-plan-card")).toContainText('--name="my repo"');
         await page.reload();
         await expect(page.getByTestId("timeline-plan-card")).toHaveCount(1);
         await expect(page.getByTestId("permission-request-accept")).toHaveCount(0, {
           timeout: 30_000,
         });
+        if (behavior === "follow-up") {
+          const rejected = page.getByRole("button", { name: "Rejected plan", exact: true });
+          await expect(rejected).toHaveAttribute("aria-expanded", "false");
+          await rejected.click();
+          await expect(page.getByTestId("timeline-plan-card")).toContainText('--name="my repo"');
+        }
       } finally {
         await session.cleanup();
       }

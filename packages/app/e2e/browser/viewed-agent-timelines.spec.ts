@@ -432,7 +432,9 @@ test.describe("Viewed agent timelines", () => {
       ).toBeVisible();
       await expect(page.getByRole("textbox", { name: "Message agent..." })).toHaveCount(2);
       await commitMessage(scenario, scenario.firstAgentId, "First visible pane update.");
-      await expect(page.getByText("First visible pane update.", { exact: true })).toBeVisible();
+      await expect(
+        page.getByTestId("user-message").getByText("First visible pane update.", { exact: true }),
+      ).toBeVisible();
       await expect(
         page.getByRole("button", { name: "Second viewed chat", exact: true }),
       ).toBeVisible();

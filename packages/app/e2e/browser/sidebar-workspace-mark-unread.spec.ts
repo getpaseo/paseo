@@ -263,6 +263,7 @@ test("focused agent tab reads completions without focusing the composer", async 
   const { subject } = workspaces;
   await openAgentRoute(page, subject);
   await expectSelectedAgent(page, subject.agentId);
+  await expect(page.getByRole("textbox", { name: "Message agent..." })).toBeFocused();
   await page.getByTestId(`workspace-tab-agent_${subject.agentId}`).first().focus();
   await expect(page.getByRole("textbox", { name: "Message agent..." })).not.toBeFocused();
   await subject.client.sendAgentMessage(subject.agentId, "Finish while the tab has focus.");

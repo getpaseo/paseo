@@ -160,6 +160,7 @@ export async function createCreationScenario(page: Page) {
       await selectModel(page, "ten-second-stream");
     },
     async submitPrompt(prompt: string, button = "Send message") {
+      if (button === "Retry") await selectModel(page, "ten-second-stream");
       await fillComposerDraft(page, prompt);
       await page.getByRole("button", { name: button, exact: true }).click();
     },

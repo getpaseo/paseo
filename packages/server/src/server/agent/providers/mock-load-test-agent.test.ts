@@ -84,6 +84,15 @@ describe("MockLoadTestAgentClient", () => {
     expect(session.getPendingPermissions()).toEqual([]);
     expect(events).toContainEqual(
       expect.objectContaining({
+        type: "timeline",
+        item: expect.objectContaining({
+          callId: request!.sourcePlanCallId,
+          metadata: expect.objectContaining({ approved: false, resolution: { behavior: "deny" } }),
+        }),
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
         type: "permission_resolved",
         requestId: request!.id,
         resolution: { behavior: "deny" },
