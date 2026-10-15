@@ -44,6 +44,14 @@ export interface SettingsActionProps extends SettingsRowProps {
   onPress(): void;
   disabled?: boolean;
 }
+export interface PlanCardProps {
+  title?: string;
+  text: string;
+  disableOuterSpacing?: boolean;
+  testID?: string;
+}
+/** Render Markdown using the same expandable plan card as native plan actions. */
+export declare const PlanCard: ComponentType<PlanCardProps>;
 export declare const SettingsGroup: ComponentType<SettingsSectionProps>;
 export declare const SettingsSection: ComponentType<SettingsSectionProps>;
 export declare const SettingsCard: ComponentType<{ children: ReactNode; testID?: string }>;
@@ -54,3 +62,45 @@ export declare function SettingsSelect<Value extends string>(
 ): ReactNode;
 export declare const SettingsInput: ComponentType<SettingsInputProps>;
 export declare const SettingsAction: ComponentType<SettingsActionProps>;
+
+export interface ExternalLinkProps {
+  href: string;
+  children: ReactNode;
+  accessibilityLabel?: string;
+  testID?: string;
+  onError?: (error: unknown) => void;
+}
+export declare const ExternalLink: ComponentType<ExternalLinkProps>;
+
+export type SidebarIcon = string | ComponentType<{ size: number; color: string }>;
+export interface SidebarRowProps {
+  /**
+   * Tells rows of one item apart when the item renders several: "bot-2". Unique within the item.
+   * Omit it when the item renders one row.
+   */
+  id?: string;
+  /** A Lucide icon name or a component. */
+  icon?: SidebarIcon;
+  /** Defaults to the item's registered title. */
+  label?: string;
+  onPress(): void;
+  active?: boolean;
+  /** Right slot. Renders beside the row's pressable, so a button here presses on its own. */
+  trailing?: ReactNode;
+}
+/** A sidebar navigation row. Render it from a sidebar item's `Component`. */
+export declare const SidebarRow: ComponentType<SidebarRowProps>;
+/** A line between groups of rows. Render it from a sidebar item's `Component`. */
+export declare const SidebarSeparator: ComponentType;
+
+/** The host's secondary action button. */
+export declare const Button: ComponentType<{
+  children: ReactNode;
+  onPress(): void;
+  variant?: "secondary";
+  size?: "sm" | "md";
+  disabled?: boolean;
+  loading?: boolean;
+  accessibilityLabel?: string;
+  testID?: string;
+}>;

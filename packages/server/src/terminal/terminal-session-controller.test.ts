@@ -1143,7 +1143,7 @@ describe("terminal output before natural exit", () => {
 });
 
 describe("terminal snapshot failure", () => {
-  test.each(["initial", "legacy initial", "backpressure"])(
+  test.each(["initial", "backpressure"])(
     "releases only the failed observer after %s rejection",
     async (phase) => {
       vi.useFakeTimers();
@@ -1155,17 +1155,13 @@ describe("terminal snapshot failure", () => {
       }, phase === "backpressure");
       try {
         const source = {};
-        const failed = await f.subscribe(source, phase !== "legacy initial", "failed");
+        const failed = await f.subscribe(source, true, "failed");
         await vi.advanceTimersByTimeAsync(0);
         if (phase === "backpressure") {
           f.output("x".repeat(300 * 1024), 1);
           await vi.advanceTimersByTimeAsync(5);
         }
-        const healthy = await f.subscribe(
-          phase === "legacy initial" ? {} : source,
-          phase !== "legacy initial",
-          "healthy",
-        );
+        const healthy = await f.subscribe(source, true, "healthy");
         await vi.advanceTimersByTimeAsync(0);
         f.output("SIBLING-ALIVE", 2);
         await vi.advanceTimersByTimeAsync(5);
@@ -1182,7 +1178,7 @@ describe("terminal snapshot failure", () => {
             type: "terminal_stream_exit",
             payload: {
               terminalId: "exit-terminal",
-              ...(phase === "legacy initial" ? {} : { subscriptionId: failed.id }),
+              subscriptionId: failed.id,
               error: "Terminal worker request timed out: getTerminalState",
             },
           },
@@ -1201,7 +1197,7 @@ describe("terminal snapshot failure", () => {
           type: "terminal_stream_exit",
           payload: {
             terminalId: "exit-terminal",
-            ...(phase === "legacy initial" ? {} : { subscriptionId: healthy.id }),
+            subscriptionId: healthy.id,
           },
         });
         expect(f.delivery.registrationCount).toBe(0);
@@ -1238,3 +1234,45 @@ describe("terminal snapshot failure", () => {
     }
   });
 });
+
+test.each([false, true])(
+  "legacy snapshot failure retries without reporting a live PTY exited (backpressure=%s)",
+  async (backpressure) => {
+    vi.useFakeTimers();
+    let reads = 0;
+    const f = exitFixture(async () => {
+      if (++reads === (backpressure ? 2 : 1)) throw new Error("Snapshot unavailable");
+      return { state: terminalState("recovered"), revision: 0 };
+    }, backpressure);
+    try {
+      await f.subscribe({}, false, "legacy-recovery");
+      await vi.advanceTimersByTimeAsync(0);
+      if (backpressure) {
+        f.output("x".repeat(300 * 1024), 1);
+        await vi.advanceTimersByTimeAsync(5);
+      }
+      expect(f.frames.filter((row) => row.message?.type === "terminal_stream_exit")).toEqual([]);
+      f.output("RECOVERED-OUTPUT", 2);
+      for (const listener of f.outputs) listener({ type: "snapshotReady", revision: 2 });
+      await vi.advanceTimersByTimeAsync(5);
+      expect(reads).toBe(backpressure ? 3 : 2);
+      expect(f.frames.some((row) => row.binary?.opcode === TerminalStreamOpcode.Snapshot)).toBe(
+        true,
+      );
+      f.exit();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(f.frames.filter((row) => row.message?.type === "terminal_stream_exit")).toHaveLength(
+        1,
+      );
+      expect(f.frames.at(-1)?.message).toEqual({
+        type: "terminal_stream_exit",
+        payload: { terminalId: "exit-terminal" },
+      });
+      expect(f.delivery.registrationCount).toBe(0);
+      expect(f.outputs.size + f.exits.size).toBe(0);
+    } finally {
+      await f.delivery.close();
+      vi.useRealTimers();
+    }
+  },
+);

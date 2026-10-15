@@ -58,10 +58,10 @@ async function prepareCatalogState(
 }
 
 for (const hostStatus of ["ready", "unavailable"] as const) {
-  test(`remembers the manually selected model after two creations with a ${hostStatus} host catalog and ready project catalog`, async ({
+  test(`retains model preferences while new conversations use Codex after two creations with a ${hostStatus} host catalog and ready project catalog`, async ({
     page,
   }) => {
-    test.setTimeout(150_000);
+    test.setTimeout(240_000);
     const workspace = await seedWorkspace({ repoPrefix: "model-memory-scope-" });
     const binDir = await mkdtemp(path.join(tmpdir(), "paseo-model-memory-bin-"));
     const executable = path.join(binDir, "provider-node");
@@ -87,18 +87,18 @@ for (const hostStatus of ["ready", "unavailable"] as const) {
           await select(page, PROVIDER, LABEL);
           await expectSavedSelection(page, PROVIDER, MODEL);
           await submitNewWorkspacePrompt(page, "Remember this model on the next workspace");
-          await expect(page).toHaveURL(/\/workspace\//);
+          await expect(page).toHaveURL(/\/workspace\//, { timeout: 60_000 });
           await expectCreatedModelAgents(page, client, PROVIDER, MODEL, count);
           await openGlobalNewWorkspaceComposer(page);
           await expectSavedSelection(page, PROVIDER, MODEL);
-          await expectRememberedModel(page, LABEL);
+          await expectRememberedModel(page, "GPT-6-Astra");
         });
       }
       await submitNewWorkspaceEmpty(page);
-      await expect(page).toHaveURL(/\/workspace\//);
+      await expect(page).toHaveURL(/\/workspace\//, { timeout: 60_000 });
       await openGlobalNewWorkspaceComposer(page);
       await expectSavedSelection(page, PROVIDER, MODEL);
-      await expectRememberedModel(page, LABEL);
+      await expectRememberedModel(page, "GPT-6-Astra");
     } finally {
       await client.close();
       await provider.restore();

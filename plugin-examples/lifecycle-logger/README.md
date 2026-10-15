@@ -15,7 +15,7 @@ The same entries appear in the target daemon's `daemon.log`. The plugin log view
 tail; use the daemon log for longer captures. Log lines are capped at 16 KiB, so a large timeline can
 be truncated.
 
-See the [lifecycle reference](../../public-docs/plugins/v0.8/reference.md#lifecycle-hooks) for callback
+See the [lifecycle reference](../../public-docs/plugins/reference.md#lifecycle-hooks) for callback
 shapes and delivery rules. The real-provider test in
 `packages/server/src/server/plugins/lifecycle.real.e2e.test.ts` runs both examples on an isolated daemon
 and saves evidence under `.dev/lifecycle-proof/`.

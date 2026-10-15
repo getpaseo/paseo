@@ -2,7 +2,91 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ar: TranslationResources = {
+  interactive: {
+    deepenPrompt:
+      "Explore this response: explain the assumptions, compare alternatives and ask a focused question if needed.",
+    deepen: "Explore further",
+    sent: "Sent",
+    queued: "Queued",
+    updateHost: "Update this host to use interactive responses.",
+    generating: "Generating interactive response…",
+    generationError: "Interactive response generation failed.",
+    loading: "Loading interactive response…",
+    loadError: "Could not load interactive response.",
+    saveError: "Could not save your choices.",
+    renderError: "Could not display this visual. Reload to try again.",
+    scriptBlocked:
+      "This visual contains JavaScript. Execution is blocked until an offline sandbox is available.",
+    artifact: "HTML visual",
+    send: "Send to agent",
+    expand: "Expand",
+    close: "Close",
+    retry: "Retry",
+    reload: "Reload",
+    reloadConflict: "Reload the document to resolve conflicting changes before sending.",
+  },
+  workspaceHistory: {
+    title: "المحادثات المغلقة",
+    empty: "لا توجد محادثات مغلقة",
+    updateHost: "حدّث هذا المضيف لاستخدام سجل مساحة العمل.",
+    loadError: "تعذّر تحميل المحادثات.",
+    reopenError: "تعذّرت إعادة فتح هذه المحادثة.",
+  },
+  workspaceTodos: {
+    milestone: "مرحلة",
+    ungrouped: "للتنظيم",
+    milestoneDone: "اكتملت المرحلة",
+    remaining: "المتبقي: {{count}}",
+    completed: "مكتملة · {{count}}",
+    progress: "تقدم المشروع",
+    headline: "التقدم مرحلة بمرحلة",
+    subtitle: "المهام النشطة في كل مرحلة.",
+    details: "المرحلة والملاحظات",
+
+    title: "المهام",
+    taskTitle: "عنوان المهمة",
+    notes: "ملاحظات",
+    todo: "لم تبدأ",
+    in_progress: "قيد التنفيذ",
+    done: "مكتملة",
+    add: "إضافة مهمة",
+    save: "حفظ",
+    delete: "حذف المهمة",
+    moveUp: "نقل لأعلى",
+    moveDown: "نقل لأسفل",
+    reorder: "ترتيب المهمة",
+    taskMenu: "إجراءات المهمة",
+    close: "إغلاق المهام",
+    empty: "لا توجد مهام بعد",
+    unsaved: "تغييرات غير محفوظة",
+    retry: "تحديث وإعادة المحاولة",
+    updateHost: "حدّث هذا المضيف لاستخدام قوائم المهام المشتركة لمساحة العمل.",
+  },
+  paneFind: {
+    connectionFailure: "تعذر البحث في هذه المحادثة. تحقق من الاتصال بالمضيف وأعد المحاولة.",
+    historyChangedFailure: "تغيّرت المحادثة أثناء البحث. أعد البحث.",
+    revealFailure: "تعذر عرض هذا التطابق. أعد المحاولة.",
+    searching: "جارٍ البحث…",
+    loading: "جارٍ التحميل…",
+    failed: "فشل",
+    retry: "إعادة المحاولة",
+
+    title: "بحث",
+    placeholder: "بحث في اللوحة",
+    close: "إغلاق البحث",
+    matches: "نتائج البحث",
+    previous: "التطابق السابق",
+    next: "التطابق التالي",
+    toggleReplace: "إظهار الاستبدال",
+    replaceWith: "استبدال بـ",
+    replace: "استبدال",
+    replaceAll: "استبدال الكل",
+    noMatches: "لا توجد تطابقات",
+    position: "{{current}} من {{total}}",
+    total: "{{total}} تطابقات",
+  },
   common: {
+    bottomSheetBackdrop: "خلفية اللوحة السفلية",
     back: "خلف",
     loading: "تحميل...",
     actions: {
@@ -90,6 +174,8 @@ export const ar: TranslationResources = {
     },
   },
   composer: {
+    nextAttention: "التالي ›",
+    nextAttentionAccessibility: "افتح المحادثة التالية التي تتطلب الانتباه",
     placeholders: {
       desktop: "أرسل رسالة إلى الوكيل أو ضع علامة على @files أو استخدم /commands و /skills",
       mobile: "الرسالة، @files ، /commands",
@@ -154,7 +240,7 @@ export const ar: TranslationResources = {
       initialPromptRequired: "مطلوب موجه الأولي",
       alreadyLoading: "جارٍ التحميل بالفعل",
       uploadFailed: "Failed to upload file",
-      noClipboardImage: "لا توجد صورة في الحافظة",
+      noClipboardImage: "لا توجد صورة في الحافظة الحالية. جرّب اللصق من لوحة المفاتيح.",
       pasteImageFailed: "تعذر لصق الصورة",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
@@ -204,11 +290,18 @@ export const ar: TranslationResources = {
     },
   },
   agentStream: {
+    foldedMessages_one: "{{count}} رسالة",
+    foldedMessages_other: "{{count}} رسائل",
     empty: "ابدأ الدردشة مع هذا الوكيل...",
     scrollToBottom: "قم بالتمرير إلى الأسفل",
     historyLoadFailed: "تعذر تحميل سجل الوكيل",
     messageCapped: "تم اقتطاع هذه الرسالة ({{bytes}} بايت).",
     permission: {
+      approve: "الموافقة",
+      rejectedPlan: "خطة مرفوضة",
+      approvedPlan: "خطة معتمدة",
+      canceledPlan: "خطة ملغاة",
+
       plan: "يخطط",
       required: "الإذن مطلوب",
       deny: "ينكر",
@@ -222,7 +315,8 @@ export const ar: TranslationResources = {
     states: {
       notFound: "لم يتم العثور على Agent",
       failedToLoad: "فشل تحميل الوكيل",
-      reconnecting: "جارٍ إعادة الاتصال",
+      reconnecting: "جارٍ إعادة الاتصال بالمضيف",
+      updating: "جارٍ تحديث الرسائل",
       timelineSyncFailed: "تعذر تحديث سجل الوكيل.",
       timelineSyncRetrying: "جارٍ إعادة المحاولة…",
       archivingTitle: "وكيل الارشيف...",
@@ -285,6 +379,11 @@ export const ar: TranslationResources = {
     },
   },
   message: {
+    handoff: {
+      planTitle: "الخطة المنقولة",
+      details: "تفاصيل التسليم",
+      copyPlan: "نسخ الخطة",
+    },
     diagram: {
       diagram: "مخطط",
       zoomIn: "تكبير",
@@ -353,6 +452,9 @@ export const ar: TranslationResources = {
         completed: "اكتملت",
       },
     },
+    turnFooter: {
+      workedFor: "عمل لمدة {{duration}}",
+    },
     compaction: {
       loading: "الضغط...",
       auto: "يتم ضغط السياق تلقائيًا",
@@ -411,7 +513,9 @@ export const ar: TranslationResources = {
       recovery: {
         archivedTitle: "مساحة العمل مؤرشفة",
         restoreDescription:
-          "تمت أرشفة {{workspaceName}} وإزالة شجرة العمل الخاصة بها. استعد الفرع {{branch}} لفتحها مجددًا.",
+          "استعد {{workspaceName}} للعودة إلى وكلائها. ستستخدم شجرة العمل الفرع {{branch}}.",
+        restoreWithoutBranchDescription:
+          "استعد {{workspaceName}} للعودة إلى وكلائها. سيبدأ فرع جديد من الفرع الأساسي المحفوظ أو الفرع الافتراضي للمستودع.",
         unarchiveDescription: "{{workspaceName}} مؤرشفة. ألغِ أرشفتها لفتحها مجددًا.",
         restoreAction: "استعادة",
         unarchiveAction: "إلغاء الأرشفة",
@@ -533,6 +637,14 @@ export const ar: TranslationResources = {
       },
     },
     browser: {
+      tabs: "علامات تبويب المتصفح",
+      newTab: "علامة تبويب متصفح جديدة",
+      allTabs: "كل علامات التبويب",
+      hide: "إخفاء المتصفح",
+      show: "إظهار المتصفح",
+      reopenLastClosedTab: "إعادة فتح آخر علامة تبويب مغلقة",
+      address: "العنوان",
+      placementUnavailable: "تعذّر فتح المتصفح في هذا التخطيط. أغلق لوحة وأعد المحاولة.",
       unavailable: {
         title: "المتصفح مخصص لسطح المكتب فقط",
         subtitle: "افتح مساحة العمل هذه في Electron لاستخدام المتصفح المدمج.",
@@ -566,6 +678,7 @@ export const ar: TranslationResources = {
         responsive: "متجاوب",
       },
       errors: {
+        crashed: "تعطلت هذه الصفحة. أعد تحميلها للمحاولة مجددًا.",
         failedToLoad: "فشل تحميل الصفحة",
         invalidUrl: "متصفح غير صالح URL",
         unsupportedProtocol: "متصفح محظور غير مدعوم URL:{{protocol}}",
@@ -708,6 +821,12 @@ export const ar: TranslationResources = {
     scripts: {
       title: "البرامج النصية",
       actions: {
+        play: "Play",
+        configureService: "Configure service",
+        saveAndLaunch: "Save and launch",
+        reloadConfiguration: "Reload configuration",
+        cancel: "Cancel",
+        retryLaunch: "Retry launch",
         chooseUrl: "اختيار الرابط",
         copyUrl: "نسخ الرابط",
         openService: "عرض الخدمة",
@@ -726,6 +845,12 @@ export const ar: TranslationResources = {
         copyUrl: "نسخ عنوان URL لـ{{scriptName}}",
         chooseUrl: "اختيار رابط {{scriptName}}",
         script: "البرنامج النصي{{scriptName}}",
+        startPreview: "ابدأ {{scriptName}} وافتح المعاينة",
+        stopPreview: "أوقف {{scriptName}} وأغلق المعاينة",
+        choosePreviewService: "اختر خدمة للمعاينة",
+      },
+      preview: {
+        section: "معاينة التطوير",
       },
       routes: {
         public: "الوكيل العكسي",
@@ -733,9 +858,34 @@ export const ar: TranslationResources = {
         direct: "مباشر",
       },
       states: {
+        noServiceConfigured: "لم تتم تهيئة أي خدمة",
+        configureServiceTitle: "Configure a development service",
+        editService: "Edit {{name}}",
+        serviceName: "Name",
+        serviceCommand: "Command",
+        servicePort: "Port",
+        automaticPort: "Automatic",
+        automaticPortHint: "The command must use PASEO_PORT.",
+        configurationLoading: "Loading service configuration…",
+        configurationFailed: "Couldn't read service configuration.",
+        invalidServiceName: "Enter a name.",
+        invalidServiceCommand: "Enter a command.",
+        invalidServicePort: "Enter a port from 1 to 65535, or leave it automatic.",
+        serviceNameCollision: "That name is already used by another script.",
+        configurationConflict: "The configuration changed. Reload it before saving.",
+        partialConfigurationSave:
+          "The project was saved, but this workspace wasn't. Retry to finish saving.",
+        configurationSaveFailed: "Couldn't save the service configuration.",
+        serviceLaunchFailed: "The configuration was saved, but the service didn't start.",
+        updateHostForConfiguration: "Update the host to configure a service from Play.",
+        shellClosed: "Shell مغلق — أعد تشغيله",
+        shellCreating: "جارٍ إنشاء Shell…",
+        scriptStopped: "تم إيقاف السكربت",
         exitCode: "الخروج من{{code}}",
         startFailed: "فشل بدء تشغيل{{scriptName}}",
         stopFailed: "فشل إيقاف{{scriptName}}",
+        previewUnhealthy: "{{scriptName}} غير سليم",
+        previewPlacementUnavailable: "تعذر فتح معاينة التطوير في التخطيط الحالي",
       },
     },
     tree: {
@@ -743,6 +893,30 @@ export const ar: TranslationResources = {
       hideFolderTree: "إخفاء شجرة المجلدات",
     },
     git: {
+      workflow: {
+        defaultSelection: "الإعدادات الافتراضية",
+        resetSelection: "إعادة تعيين",
+        title: "Workspace actions",
+        reviewProfile: "Review profile",
+        deliveryProfile: "Delivery profile",
+        selectProfile: "Select a profile",
+        noProfiles: "No agent profiles available",
+        reviewPrompt: "Review prompt",
+        createPrPrompt: "Create PR prompt",
+        commitAndPushPrompt: "Commit and push prompt",
+        edit: "Edit",
+        save: "Save",
+        saving: "Saving...",
+        missingProfile: "Selected profile is missing",
+        saveFailed: "Couldn't save workspace actions",
+        review: "Review",
+        commitAndPush: "Commit & push",
+        resolveConflicts: "حل التعارضات",
+        merge: "Merge",
+        repairChecks: "حل حالات الفشل",
+        checking: "Checking status...",
+        unavailable: "Status unavailable",
+      },
       actions: {
         moreOptions: "المزيد من الخيارات",
         moreActions: "المزيد من الإجراءات",
@@ -880,6 +1054,9 @@ export const ar: TranslationResources = {
         openChangesTab: "فتح علامة تبويب التغييرات",
         openDiffTab: "فتح علامة تبويب الفرق",
         closeChangesTab: "إغلاق علامة تبويب التغييرات",
+        jumpToFile: {
+          title: "الانتقال إلى ملف",
+        },
         binaryFile: "ملف ثنائي",
         tooLarge: "الفرق كبير جدًا بحيث لا يمكن عرضه",
         previewTooLargeTitle: "هذا الفرق كبير جدًا بحيث لا يمكن معاينته",
@@ -936,6 +1113,47 @@ export const ar: TranslationResources = {
         actions: {
           viewPullRequest: "عرض",
           openOn: "فتح على {{brand}}",
+          addToChat: "إضافة إلى الدردشة",
+          addAllToChat: "إضافة الكل إلى الدردشة",
+          addingToChat: "جارٍ الإضافة...",
+        },
+        checksOverview: {
+          headline: {
+            actionRequired: "بعض الفحوصات تحتاج إلى انتباهك",
+            failure: "بعض الفحوصات لم تنجح",
+            pending: "بعض الفحوصات لم تكتمل بعد",
+            success: "نجحت جميع الفحوصات",
+            none: "لا توجد فحوصات",
+          },
+          count: {
+            actionRequired: "{{count}} تحتاج إجراءً",
+            warning: "{{count}} مع تحذير",
+            failure: "{{count}} فاشلة",
+            pending: "{{count}} قيد التشغيل",
+            manual: "{{count}} يدوية",
+            success: "{{count}} ناجحة",
+            ignored: "{{count}} متخطاة",
+          },
+          detailOne: "الفحص: {{parts}}",
+          detailMany: "الفحوصات: {{parts}}",
+          groupOne: {
+            actionRequired: "{{count}} فحص يحتاج إجراءً",
+            warning: "{{count}} فحص مع تحذير",
+            failure: "{{count}} فحص فاشل",
+            pending: "{{count}} فحص قيد التشغيل",
+            manual: "{{count}} فحص يدوي",
+            success: "{{count}} فحص ناجح",
+            ignored: "{{count}} فحص متخطى",
+          },
+          groupMany: {
+            actionRequired: "{{count}} فحوصات تحتاج إجراءً",
+            warning: "{{count}} فحوصات مع تحذير",
+            failure: "{{count}} فحوصات فاشلة",
+            pending: "{{count}} فحوصات قيد التشغيل",
+            manual: "{{count}} فحوصات يدوية",
+            success: "{{count}} فحوصات ناجحة",
+            ignored: "{{count}} فحوصات متخطاة",
+          },
         },
         checksSummary: {
           passedLabel: "نجح",
@@ -949,17 +1167,21 @@ export const ar: TranslationResources = {
           checks: "الشيكات",
           pipeline: "خط المعالجة",
           reviews: "التعليقات",
+          activity: "النشاط",
         },
         empty: {
           noJobs: "لا توجد مهام",
           loadingPipeline: "جارٍ تحميل خط المعالجة...",
           pipelineJobsLoadFailed: "تعذر تحميل مهام خط المعالجة",
           allowedToFail: "مسموح بالفشل",
+          noActivity: "لا يوجد نشاط بعد",
         },
         approvals: "{{given}} من {{required}} موافقات",
         accessibility: {
           pullRequest: "سحب الطلب #{{number}}",
           pullRequest_mr: "طلب دمج !{{number}}",
+          commentActions: "إجراءات التعليق",
+          threadActions: "إجراءات سلسلة النقاش",
           checkStatus: {
             passed: "ناجح",
             failed: "فاشل",
@@ -988,6 +1210,8 @@ export const ar: TranslationResources = {
         },
         thread: {
           discussion: "سلسلة المناقشة",
+          resolved: "تم الحل",
+          outdated: "قديم",
         },
         errors: {
           statusLoadFailed: "غير قادر على تحميل حالة طلب السحب",
@@ -1054,6 +1278,14 @@ export const ar: TranslationResources = {
     },
   },
   sidebar: {
+    statusGroupAccessibility: "مجموعة {{label}}",
+    statusBucket: {
+      needsInput: "تحتاج إدخالاً",
+      failed: "فشل",
+      readyToReview: "جاهزة للمراجعة",
+      working: "قيد العمل",
+      done: "تم",
+    },
     display: {
       trigger: "تفضيلات العرض",
       heading: "العرض",
@@ -1090,6 +1322,7 @@ export const ar: TranslationResources = {
         all: "كل المضيفين",
       },
       projectFilter: {
+        show: "إظهار {{projectName}}",
         label: "المشروع",
         all: "كل المشاريع",
       },
@@ -1113,6 +1346,9 @@ export const ar: TranslationResources = {
       hosts: "المضيفون",
       settings: "إعدادات",
       closeSidebar: "إغلاق الشريط الجانبي",
+    },
+    footer: {
+      usage: "الاستخدام",
     },
     help: {
       trigger: "المساعدة والدعم",
@@ -1139,6 +1375,7 @@ export const ar: TranslationResources = {
     project: {
       actions: {
         menu: "إجراءات المشروع",
+        hide: "إخفاء المشروع",
         openSettings: "افتح إعدادات المشروع",
         openNewWindow: "Open in new window",
         openNewWindowFailed: "Couldn't open a new window",
@@ -1218,6 +1455,14 @@ export const ar: TranslationResources = {
     },
   },
   newWorkspace: {
+    intention: {
+      save: "حفظ",
+      label: "النية",
+      edit: "تعديل النية",
+      required: "أدخل نية.",
+      unavailable: "حدّث المضيف لاستخدام النوايا.",
+      profileUnavailable: "اضبط ملف Router على هذا المضيف.",
+    },
     title: "مساحة عمل جديدة",
     create: "يخلق",
     isolation: {
@@ -1263,6 +1508,15 @@ export const ar: TranslationResources = {
     },
   },
   desktop: {
+    agentWidget: {
+      planReady: "الخطة جاهزة",
+      responseNeeded: "بانتظار الرد",
+      responseSent: "تم إرسال الرد",
+      execute: "تنفيذ",
+      sendComment: "إرسال",
+      handoff: "تسليم",
+      comment: "أضف تعليمات…",
+    },
     windowControls: {
       minimize: "تصغير النافذة",
       maximize: "تكبير النافذة",
@@ -1491,6 +1745,8 @@ export const ar: TranslationResources = {
     noFiles: "لم يتم العثور على ملفات أو أدلة",
     noCommands: "لم يتم العثور على أي أوامر",
     failedToLoad: "فشل التحميل",
+    chooseProjectForCommands: "اختر مشروعًا لعرض الأوامر",
+    chooseModelForCommands: "اختر نموذجًا لعرض الأوامر",
   },
   loadOlderHistory: {
     failed: "تعذر تحميل السجل الأقدم",
@@ -1524,6 +1780,8 @@ export const ar: TranslationResources = {
   modelSelector: {
     title: "حدد المزود",
     selectModel: "حدد النموذج",
+    autoJev: "تلقائي · JEV",
+    autoJevDescription: "دع JEV يختار النموذج والجهد",
     selectedModel: "اختر الموديل ({{model}})",
     loading: "تحميل...",
     loadingShort: "تحميل",
@@ -1582,6 +1840,21 @@ export const ar: TranslationResources = {
     },
   },
   pairing: {
+    hostPassword: {
+      title: "كلمة المرور لـ {{host}}",
+      label: "كلمة مرور المضيف",
+    },
+    hostConfirmation: {
+      title: "الاتصال بهذا المضيف؟",
+      description:
+        "سيتمكن هذا المضيف من تشغيل تعليمات برمجية في هذا التطبيق والوصول إلى مضيفيك الآخرين المتصلين. اتصل فقط إذا كنت تعرفه.",
+      descriptionChanged:
+        "يغيّر هذا الرابط طريقة اتصالك بهذا المضيف. سيتمكن المضيف من تشغيل تعليمات برمجية في هذا التطبيق والوصول إلى مضيفيك الآخرين المتصلين. اتصل فقط إذا كنت تعرفه.",
+      hostLabel: "المضيف",
+      fingerprintLabel: "بصمة المفتاح",
+      relayLabel: "المُرحّل",
+      connect: "اتصال",
+    },
     connectionMethods: {
       title: "إضافة اتصال",
       direct: {
@@ -1649,6 +1922,12 @@ export const ar: TranslationResources = {
       helper: "الاتصال بخادم Paseo يعمل على المضيف البعيد.",
       fields: {
         target: "مضيف SSH",
+        password: "كلمة مرور الدايمون",
+        optional: "خياري",
+      },
+      passwordVisibility: {
+        show: "إظهار كلمة المرور",
+        hide: "إخفاء كلمة المرور",
       },
       actions: {
         cancel: "إلغاء",
@@ -1877,6 +2156,8 @@ export const ar: TranslationResources = {
     dismiss: "رفض",
   },
   contextWindow: {
+    noData: "لا توجد بيانات للسياق",
+    accessibilityNoData: "نافذة السياق: لا توجد بيانات للسياق",
     title: "نافذة السياق",
     used: "تم استخدام{{percentage}}%",
     tokens: "رموز{{used}}/{{max}}",
@@ -1918,8 +2199,11 @@ export const ar: TranslationResources = {
     groupInfo: "حول{{title}}",
     sections: {
       general: "عام",
+      chat: "الدردشة",
       appearance: "مظهر",
-      layout: en.settings.sections.layout,
+      sidebar: "الشريط الجانبي",
+      terminal: "الطرفية",
+      browser: "المتصفح",
       editor: "المحرر",
       shortcuts: "الاختصارات",
       integrations: "التكامل",
@@ -1978,6 +2262,7 @@ export const ar: TranslationResources = {
     },
     general: {
       title: "عام",
+      sending: "الإرسال",
       browserData: {
         title: "بيانات المتصفح",
         siteData: "ملفات تعريف الارتباط وبيانات المواقع",
@@ -2005,8 +2290,6 @@ export const ar: TranslationResources = {
         },
       },
       serviceUrls: {
-        label: "عناوين URL للخدمة",
-        description: "مكان فتح عناوين URL من تشغيل البرامج النصية",
         options: {
           ask: "بسأل",
           inApp: "في Paseo",
@@ -2025,7 +2308,6 @@ export const ar: TranslationResources = {
       toolCallDetail: {
         label: "عرض استدعاءات الأدوات",
         description: "كيفية ظهور استدعاءات الأدوات في المخطط الزمني",
-        accessibilityLabel: "حدد عرض استدعاءات الأدوات ({{value}})",
         options: {
           overview: "ملخص",
           detailed: "التفاصيل الكاملة",
@@ -2128,8 +2410,15 @@ export const ar: TranslationResources = {
         description: "عرض مخطط للتنقل بين المطالبات",
       },
       sidebar: {
-        title: "الشريط الجانبي",
-        description: "اختر العناصر التي تظهر أعلى الشريط الجانبي وترتيبها",
+        header: {
+          title: "الرأس",
+          description: "اختر العناصر التي تظهر أعلى الشريط الجانبي وترتيبها",
+        },
+        footer: {
+          title: "التذييل",
+          description:
+            "اختر الصفوف التي تظهر أسفل الشريط الجانبي وترتيبها. يظهر «إضافة مشروع» وصف الأيقونات دائمًا",
+        },
         moveUp: "نقل لأعلى",
         moveDown: "نقل لأسفل",
       },
@@ -2152,6 +2441,14 @@ export const ar: TranslationResources = {
         codeSize: "حجم الكود",
         codeSizeHint: "يُستخدم للكود والفروقات ومخرجات الطرفية",
         codeSizeAccessibility: "حجم خط الكود",
+      },
+      layout: {
+        title: "التخطيط",
+        contentWidth: "عرض المحتوى",
+        contentWidthHint: "أقصى عرض للمحادثة وملفات Markdown على الشاشات العريضة",
+        contentWidthAccessibility: "عرض المحتوى بالبكسل",
+        reset: "إعادة تعيين",
+        resetAccessibility: "إعادة عرض المحتوى إلى الافتراضي",
       },
       syntax: {
         title: "بناء الجملة",
@@ -2263,6 +2560,9 @@ export const ar: TranslationResources = {
       },
     },
     host: {
+      password: {
+        guidance: "أزل هذا المضيف ثم أضفه مرة أخرى بكلمة المرور التي يطلبها هذا الخادم.",
+      },
       appearance: {
         title: "المظهر",
         name: {
@@ -2428,6 +2728,8 @@ export const ar: TranslationResources = {
         modelLabel: "النموذج",
         noModels: "لا توجد نماذج يمكن الاختيار من بينها لهذا المزود",
         modeLabel: "الوضع",
+        postApprovalModeLabel: "الوضع بعد الموافقة على الخطة",
+        nativeApprovalMode: "سلوك موافقة المزوّد",
         noModes: "لا توجد أوضاع يمكن الاختيار من بينها لهذا المزود",
         thinkingLabel: "التفكير",
         noThinkingOptions: "لا توجد مستويات تفكير لهذا النموذج",
@@ -2587,6 +2889,7 @@ export const ar: TranslationResources = {
         name: "الاسم",
         nameLabel: "اسم المشروع",
         icon: "الأيقونة",
+        emoji: "رمز تعبيري",
         chooseImage: "اختيار صورة",
         useAutomatic: "استخدام التلقائي",
         imageUrl: "رابط صورة أو موقع",

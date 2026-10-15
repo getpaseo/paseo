@@ -199,6 +199,39 @@ describe("ScriptHealthMonitor", () => {
     ]);
   });
 
+  it("resets health when a service route moves to a different port", async () => {
+    vi.useFakeTimers();
+    const healthy = await startTcpServer();
+    servers.add(healthy.server);
+    const routeStore = new ScriptRouteStore();
+    routeStore.registerRoute({
+      hostname: "route-b.example.localhost",
+      port: healthy.port,
+      workspaceId: "workspace-a",
+      projectSlug: "repo",
+      scriptName: "api",
+    });
+    const monitor = new ScriptHealthMonitor({
+      serviceProxy: routeStore,
+      onChange: () => {},
+      pollIntervalMs: 1_000,
+      graceMs: 0,
+    });
+    monitor.start();
+    await advancePoll(1_000);
+    expect(monitor.getHealthForHostname("route-b.example.localhost")).toBe("healthy");
+
+    routeStore.registerRoute({
+      hostname: "route-b.example.localhost",
+      port: await findFreePort(),
+      workspaceId: "workspace-a",
+      projectSlug: "repo",
+      scriptName: "api",
+    });
+    expect(monitor.getHealthForHostname("route-b.example.localhost")).toBe("pending");
+    monitor.stop();
+  });
+
   it("transitions pending services to unhealthy after the grace period and required failures", async () => {
     vi.useFakeTimers();
 

@@ -1,13 +1,14 @@
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type pino from "pino";
+import pino from "pino";
 import { afterEach, expect, test, vi } from "vitest";
 import type { CheckoutSnapshotFacts, CheckoutStatusGit } from "../utils/checkout-git.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { createFileObserver } from "./file-observer/index.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
-import type { FileChange, SubscribeToFileChanges } from "./file-observer/index.js";
+import type { FileChange, FileObserver, SubscribeToFileChanges } from "./file-observer/index.js";
 
 function createLogger(): pino.Logger {
   const logger = {
@@ -413,3 +414,90 @@ test("recursive observation updates tracked state and prunes ignored storms", as
   expect(getCheckoutDiff).not.toHaveBeenCalled();
   expect(service.getMetrics().workspaceRefreshQueuedCount).toBe(0);
 }, 30_000);
+
+test("a late Git-ignored tree is pruned while tracked changes still notify consumers", async () => {
+  const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-real-ignore-")));
+  const repoDir = path.join(tempDir, "repo");
+  mkdirSync(repoDir);
+  const git = (...args: string[]) =>
+    execFileSync("git", args, { cwd: repoDir, encoding: "utf8" }).trim();
+  git("init", "-q");
+  writeFileSync(path.join(repoDir, ".gitignore"), "node_modules/\n");
+  const trackedPath = path.join(repoDir, "tracked.txt");
+  writeFileSync(trackedPath, "before\n");
+  git("add", ".gitignore", "tracked.txt");
+  git("-c", "user.name=Test", "-c", "user.email=test@localhost", "commit", "-qm", "fixture");
+
+  const observer = createFileObserver();
+  const ignoredDir = path.join(repoDir, "node_modules");
+  const completedIgnoreUpdates: string[][] = [];
+  let notifications = 0;
+  let expectTrackedEdit = false;
+  let trackedBatchReachedConsumer = false;
+  // Observe the real subscription without replacing Git, filesystem, or watcher behavior.
+  const fileObserver: FileObserver = {
+    subscribe: async (directory, callback, options) => {
+      const realSubscription = await observer.subscribe(
+        directory,
+        (error, events) => {
+          const includesTrackedEdit =
+            expectTrackedEdit && events.some((e) => e.path === trackedPath);
+          const before = notifications;
+          callback(error, events);
+          if (includesTrackedEdit && notifications > before) trackedBatchReachedConsumer = true;
+        },
+        options,
+      );
+      return {
+        updateIgnore: async (paths) => {
+          await realSubscription.updateIgnore(paths);
+          completedIgnoreUpdates.push([...paths]);
+        },
+        unsubscribe: () => realSubscription.unsubscribe(),
+      };
+    },
+    getDiagnostics: () => observer.getDiagnostics(),
+    close: () => observer.close(),
+  };
+  const service = new WorkspaceGitServiceImpl({
+    logger: pino({ enabled: false }),
+    paseoHome: path.join(tempDir, "home"),
+    fileObserver,
+  });
+  let subscription: Awaited<ReturnType<typeof service.requestWorkingTreeWatch>> | undefined;
+  try {
+    subscription = await service.requestWorkingTreeWatch(repoDir, () => {
+      notifications += 1;
+    });
+    for (let index = 0; index < 20; index += 1) {
+      const directory = path.join(ignoredDir, `dependency-${index}`);
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(path.join(directory, "index.js"), "first");
+    }
+    expect(git("ls-files", "-o", "-i", "--directory", "--exclude-standard")).toBe("node_modules/");
+    await expect
+      .poll(() => completedIgnoreUpdates.some((paths) => paths.includes(ignoredDir)), {
+        timeout: 5_000,
+      })
+      .toBe(true);
+
+    const atIgnoreBoundary = observer.getDiagnostics();
+    for (let index = 0; index < 20; index += 1) {
+      writeFileSync(path.join(ignoredDir, `dependency-${index}`, "second.js"), "second");
+    }
+    expectTrackedEdit = true;
+    writeFileSync(trackedPath, "after\n");
+    await expect.poll(() => trackedBatchReachedConsumer, { timeout: 5_000 }).toBe(true);
+    const afterTrackedEdit = observer.getDiagnostics();
+    expect(afterTrackedEdit.nativeHandleCount).toBe(atIgnoreBoundary.nativeHandleCount);
+    expect(afterTrackedEdit.nativeTrackedFileCount).toBe(atIgnoreBoundary.nativeTrackedFileCount);
+    expect(
+      afterTrackedEdit.nativeClassificationCount - atIgnoreBoundary.nativeClassificationCount,
+    ).toBeLessThanOrEqual(1);
+  } finally {
+    subscription?.unsubscribe();
+    await service.dispose();
+    await observer.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}, 15_000);

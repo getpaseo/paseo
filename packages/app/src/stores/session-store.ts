@@ -22,7 +22,6 @@ import {
   type MessageSubmissionRejectionOutcome,
 } from "@/composer/submission/model";
 import type { PendingPermission } from "@/types/shared";
-import type { ComposerAttachment } from "@/attachments/types";
 import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
 import type {
   AgentPermissionRequest,
@@ -71,6 +70,7 @@ export interface AgentRuntimeInfo {
 
 export interface Agent {
   serverId: string;
+  launchProfileId?: string;
   id: string;
   provider: AgentProvider;
   status: AgentLifecycleStatus;
@@ -115,6 +115,7 @@ export interface WorkspaceDescriptor {
   workspaceKind: WorkspaceDescriptorPayload["workspaceKind"];
   name: string;
   title?: string | null;
+  intent?: string;
   pinnedAt?: string | null;
   labels?: string[];
   status: WorkspaceDescriptorPayload["status"];
@@ -152,6 +153,7 @@ export function normalizeWorkspaceDescriptor(
     workspaceKind: payload.workspaceKind,
     name: payload.name,
     title: payload.title ?? null,
+    intent: payload.intent,
     pinnedAt: payload.pinnedAt ?? null,
     // COMPAT(workspaceLabels): old daemons omit assignments.
     labels: payload.labels ?? [],
@@ -283,6 +285,19 @@ export interface DaemonServerInfo {
   desktopManaged?: boolean;
   capabilities?: ServerCapabilities;
   features?: ServerInfoStatusPayload["features"];
+}
+
+export function toDaemonServerInfo(serverInfo: ServerInfoStatusPayload): DaemonServerInfo {
+  return {
+    serverId: serverInfo.serverId,
+    hostname: serverInfo.hostname ?? null,
+    version: serverInfo.version ?? null,
+    ...(serverInfo.desktopManaged !== undefined
+      ? { desktopManaged: serverInfo.desktopManaged }
+      : {}),
+    ...(serverInfo.capabilities ? { capabilities: serverInfo.capabilities } : {}),
+    ...(serverInfo.features ? { features: serverInfo.features } : {}),
+  };
 }
 
 export interface AgentTimelineCursorState {
@@ -417,10 +432,7 @@ export interface SessionState {
   fileExplorer: Map<string, AgentFileExplorerState>;
 
   // Queued messages
-  queuedMessages: Map<
-    string,
-    Array<{ id: string; text: string; attachments: ComposerAttachment[] }>
-  >;
+  queuedMessages: Map<string, import("@/composer/actions").QueuedComposerMessage[]>;
 }
 
 // Global store state
@@ -595,10 +607,10 @@ interface SessionStoreActions {
   setQueuedMessages: (
     serverId: string,
     value:
-      | Map<string, Array<{ id: string; text: string; attachments: ComposerAttachment[] }>>
+      | Map<string, import("@/composer/actions").QueuedComposerMessage[]>
       | ((
-          prev: Map<string, Array<{ id: string; text: string; attachments: ComposerAttachment[] }>>,
-        ) => Map<string, Array<{ id: string; text: string; attachments: ComposerAttachment[] }>>),
+          prev: Map<string, import("@/composer/actions").QueuedComposerMessage[]>,
+        ) => Map<string, import("@/composer/actions").QueuedComposerMessage[]>),
   ) => void;
 
   // Hydration

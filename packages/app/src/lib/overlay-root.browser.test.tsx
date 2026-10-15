@@ -1,7 +1,9 @@
 import React, { type RefCallback } from "react";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { page, userEvent } from "vitest/browser";
+import { HoverCard, HoverCardTrigger } from "@/components/ui/hover-card";
 import { useWebOverlayRegistration } from "./overlay-root";
 
 function nextFrame(): Promise<void> {
@@ -23,6 +25,7 @@ describe("useWebOverlayRegistration in the browser", () => {
   let opener: HTMLButtonElement;
 
   beforeEach(() => {
+    vi.stubGlobal("React", React);
     container = document.createElement("div");
     opener = document.createElement("button");
     opener.textContent = "Open";
@@ -34,6 +37,7 @@ describe("useWebOverlayRegistration in the browser", () => {
   afterEach(() => {
     root.unmount();
     document.body.replaceChildren();
+    vi.unstubAllGlobals();
   });
 
   async function renderHarness(active: boolean, showScope: boolean): Promise<void> {
@@ -42,6 +46,29 @@ describe("useWebOverlayRegistration in the browser", () => {
     });
     await nextFrame();
   }
+
+  it("keeps a focused composer input when a hover card opens", async () => {
+    flushSync(() =>
+      root.render(
+        <>
+          <input data-testid="composer" />
+          <HoverCard>
+            <HoverCardTrigger>
+              <button type="button" data-testid="hover-trigger">
+                Workspace
+              </button>
+            </HoverCardTrigger>
+          </HoverCard>
+        </>,
+      ),
+    );
+    const input = document.querySelector<HTMLInputElement>('[data-testid="composer"]')!;
+    input.focus();
+    await userEvent.hover(page.getByTestId("hover-trigger"));
+    await nextFrame();
+    await nextFrame();
+    expect(document.activeElement).toBe(input);
+  });
 
   it("skips focus restoration for active scope detach but restores focus when closing", async () => {
     await renderHarness(true, true);

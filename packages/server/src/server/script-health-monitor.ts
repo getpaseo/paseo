@@ -12,6 +12,7 @@ export interface ScriptHealthEntry {
 
 interface RouteHealthState {
   workspaceId: string;
+  port: number;
   health: ScriptHealthState;
   consecutiveFailures: number;
   registeredAt: number;
@@ -106,6 +107,12 @@ export class ScriptHealthMonitor {
       );
       for (let i = 0; i < probeTargets.length; i += 1) {
         const { route, state } = probeTargets[i];
+        if (
+          this.serviceProxy.getHealthTargetForHostname(route.hostname)?.port !== route.port ||
+          this.routeStates.get(route.hostname) !== state
+        ) {
+          continue;
+        }
         const isHealthy = healthResults[i];
         const previousHealth = state.health;
 
@@ -142,16 +149,17 @@ export class ScriptHealthMonitor {
   }
 
   private getOrCreateState(
-    route: Pick<ServiceProxyHealthTarget, "hostname" | "workspaceId">,
+    route: Pick<ServiceProxyHealthTarget, "hostname" | "workspaceId" | "port">,
     registeredAt: number,
   ): RouteHealthState {
     const existing = this.routeStates.get(route.hostname);
-    if (existing) {
+    if (existing && existing.port === route.port) {
       return existing;
     }
 
     const state: RouteHealthState = {
       workspaceId: route.workspaceId,
+      port: route.port,
       health: "pending",
       consecutiveFailures: 0,
       registeredAt,
@@ -181,11 +189,6 @@ export class ScriptHealthMonitor {
   }
 
   getHealthForHostname(hostname: string): ScriptHealthState | null {
-    const state = this.routeStates.get(hostname);
-    if (state) {
-      return state.health;
-    }
-
     const route = this.serviceProxy.getHealthTargetForHostname(hostname);
     if (!route) {
       return null;

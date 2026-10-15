@@ -29,6 +29,9 @@ export function buildDraftAgentControls(input: {
   return {
     providerDefinitions: formState.providerDefinitions,
     selectedProvider: formState.selectedProvider,
+    modelRouting: formState.modelRouting,
+    supportsInitialModelRouting: formState.supportsInitialModelRouting,
+    onSelectModelRouting: formState.setModelRoutingFromUser,
     modeOptions: formState.modeOptions,
     selectedMode: formState.selectedMode,
     onSelectMode: formState.setModeFromUser,

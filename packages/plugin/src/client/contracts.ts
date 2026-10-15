@@ -33,12 +33,64 @@ export interface PluginHostProps {
 interface PluginNavigableHostProps extends PluginHostProps {
   /** Client-owned navigation. Undefined on older hosts; hide dependent affordances when absent. */
   readonly navigation?: {
-    readonly openAgent: (input: { readonly agentId: string }) => void;
-    readonly openWorkspace: (input: { readonly workspaceId: string }) => void;
+    /** Present only on Electron. The browser runs locally; serverId selects workspace ownership. */
+    readonly openBrowser?: (input: {
+      readonly url: string;
+      readonly workspaceId: string;
+      readonly serverId?: string;
+    }) => void;
+    readonly openAgent: (input: { readonly agentId: string; readonly serverId?: string }) => void;
+    /** Replace the current agent tab. Undefined on hosts that predate agent-tab replacement. */
+    readonly replaceAgent?: (input: {
+      readonly agentId: string;
+      readonly serverId?: string;
+    }) => void;
+    readonly openWorkspace: (input: {
+      readonly workspaceId: string;
+      readonly serverId?: string;
+    }) => void;
   };
 }
 
+/** String keys and values: params travel in the screen's URL. */
+export type PluginScreenParams = Record<string, string>;
+
+export interface PluginOpenScreenInput {
+  screenId: string;
+  params?: PluginScreenParams;
+}
+
+export interface PluginScreenLocation {
+  screenId: string;
+  params: PluginScreenParams;
+}
+
 export interface PluginSurfaceProps extends PluginNavigableHostProps {}
+
+export interface PluginScreenProps extends PluginSurfaceProps {
+  /** The params the screen was opened with; `{}` when none. */
+  params: PluginScreenParams;
+}
+
+export interface PluginPopoverProps extends PluginHostProps {
+  close(): void;
+  openScreen(input: PluginOpenScreenInput): void;
+}
+
+export interface PluginSidebarItemProps extends PluginHostProps {
+  /** This plugin's screen open on this item's host, with its params, else null. */
+  currentScreen: PluginScreenLocation | null;
+  openScreen(input: PluginOpenScreenInput): void;
+  /** Anchored to the item on wide layouts; a bottom sheet on compact layouts. */
+  openPopover(Content: ComponentType<PluginPopoverProps>): void;
+}
+
+export interface PluginSidebarItemContribution {
+  id: string;
+  /** Settings row label, accessibility label, and default label for SidebarRow. */
+  title: string;
+  Component: ComponentType<PluginSidebarItemProps>;
+}
 
 export interface PluginIconProps {
   name: string;
@@ -75,15 +127,27 @@ export interface PluginClientOpenPanelOptions extends PluginOpenPanelOptions {
   agentId?: string;
 }
 
-export interface PluginClientContext extends PluginCommandCapabilities {
-  addSettingsScreen(contribution: PluginSettingsScreenContribution): PluginCleanup;
+// COMPAT(pluginSidebarAliases): added in v0.11.0, remove after 2027-03-29
+interface PluginClientContextAliases {
+  /** @deprecated Use `addScreen`. */
   addSurface(id: string, Component: ComponentType<PluginSurfaceProps>): PluginCleanup;
+  /** @deprecated Use `addSidebarHeaderItem`. */
   addSidebarItem(contribution: PluginSidebarContribution): PluginCleanup;
+}
+
+export interface PluginClientContext extends PluginCommandCapabilities, PluginClientContextAliases {
+  /** Play a base64-encoded audio file on this client; resolves when playback ends. */
+  playAudio(source: { base64: string; mimeType: string }): Promise<void>;
+  addSettingsScreen(contribution: PluginSettingsScreenContribution): PluginCleanup;
+  addScreen(contribution: PluginScreenContribution): PluginCleanup;
+  addSidebarHeaderItem(contribution: PluginSidebarItemContribution): PluginCleanup;
+  addSidebarFooterItem(contribution: PluginSidebarItemContribution): PluginCleanup;
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution): PluginCleanup;
   addCommandCenterItem(contribution: PluginCommandCenterItemContribution): PluginCleanup;
   addSlashCommand(contribution: PluginClientSlashCommandContribution): PluginCleanup;
   addHeaderButton(contribution: PluginHeaderButtonContribution): PluginButtonRegistration;
   addComposerPill(contribution: PluginComposerPillContribution): PluginButtonRegistration;
+  addPlanAction(contribution: PluginPlanActionContribution): PluginCleanup;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): PluginCleanup;
   addTheme(contribution: PluginThemeContribution): PluginCleanup;
   addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(
@@ -114,11 +178,21 @@ export interface PluginSettingsScreenContribution {
   Component: ComponentType<PluginSurfaceProps>;
 }
 
+/** The screen header's title: fixed, or derived from the params the screen was opened with. */
+export type PluginScreenTitle = string | ((params: PluginScreenParams) => string);
+
+export interface PluginScreenContribution {
+  id: string;
+  title: PluginScreenTitle;
+  Component: ComponentType<PluginScreenProps>;
+}
+
 export interface PluginSurfaceContribution {
   id: string;
   Component: ComponentType<PluginSurfaceProps>;
 }
 
+/** @deprecated Use `PluginSidebarItemContribution` with `addSidebarHeaderItem`. */
 export interface PluginSidebarContribution {
   id: string;
   title: string;
@@ -165,6 +239,8 @@ export interface PluginCommandCapabilities {
     contract: PluginRpcContract<InputSchema, OutputSchema>,
     input: ZodInput<InputSchema>,
   ): Promise<ZodOutput<OutputSchema>>;
+  openScreen(input: PluginOpenScreenInput): void;
+  /** @deprecated Use `openScreen`. */
   openSurface(id: string): void;
   openSettings(id: string): void;
 }
@@ -183,7 +259,41 @@ export interface PluginAgentCommandContext extends PluginCommandCapabilities {
   context: "agent";
   workspace: PluginWorkspaceSnapshot;
   agent: PluginAgentSnapshot;
+  navigation?: Pick<
+    NonNullable<PluginNavigableHostProps["navigation"]>,
+    "openAgent" | "replaceAgent"
+  >;
   openPanel(id: string, options?: PluginOpenPanelOptions): void;
+}
+
+export interface PluginPlanActionContext extends PluginAgentCommandContext {
+  profileId?: string;
+  signal: AbortSignal;
+  plan: {
+    callId: string;
+    text: string;
+    turnId?: string;
+    permissionRequestId: string;
+  };
+}
+
+export interface PluginPlanActionAvailableContext extends PluginAgentCommandContext {
+  signal: AbortSignal;
+  plan: Omit<PluginPlanActionContext["plan"], "permissionRequestId"> & {
+    permissionRequestId?: string;
+  };
+}
+
+/** Business actions on a live, pending plan. The host owns rendering and approval. */
+export interface PluginPlanActionContribution {
+  id: string;
+  title: string;
+  order?: number;
+  query?: { launchProfileId?: string };
+  disabledReason?: string;
+  requiresAgentProfile?: boolean;
+  onAvailable?(context: PluginPlanActionAvailableContext): void | Promise<void>;
+  onPress(context: PluginPlanActionContext): void | Promise<void>;
 }
 
 interface PluginCommandCenterItemBase {

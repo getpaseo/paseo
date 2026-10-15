@@ -376,10 +376,10 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
     minWidth: 0,
     zIndex: 2,
-    elevation: 2,
     userSelect: "none",
   },
   documentHeader: {
+    elevation: 2,
     height: 28,
     paddingLeft: 0,
     paddingRight: 0,

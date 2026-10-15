@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { mergeCreateAgentSelectionPreferences } from "@/create-agent-preferences/preferences";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
@@ -42,6 +42,7 @@ export interface AgentProfilePickerRow {
 export interface AgentProfilePicker {
   rows: AgentProfilePickerRow[];
   applyProfile: (profileId: string) => void;
+  applyNextProfile: () => boolean;
 }
 
 export interface UseAgentProfilePickerInput {
@@ -75,6 +76,7 @@ export function useAgentProfilePicker(
   const { updatePreferences } = useFormPreferences();
   const client = useSessionStore((state) => state.sessions[serverId ?? ""]?.client ?? null);
   const toast = useToast();
+  const lastAppliedProfileIdRef = useRef<string | null>(null);
 
   const applicableProfiles = useMemo(() => {
     if (!isSupported || !profiles) {
@@ -138,6 +140,7 @@ export function useAgentProfilePicker(
 
       if (target.kind === "draft") {
         target.controls.applyProfile(resolved);
+        lastAppliedProfileIdRef.current = profileId;
         return;
       }
 
@@ -149,6 +152,7 @@ export function useAgentProfilePicker(
       if (!client) {
         return;
       }
+      lastAppliedProfileIdRef.current = profileId;
       void client
         .applyAgentConfig(target.agentId, toAgentConfigApply(reconciled))
         .then((notice) => showProviderNoticeToast(toast, notice))
@@ -160,8 +164,18 @@ export function useAgentProfilePicker(
     [applicableProfiles, client, persistSelection, target, toast],
   );
 
+  const applyNextProfile = useCallback(() => {
+    if (applicableProfiles.length === 0) return false;
+    if (target.kind === "agent" && (!client || target.availableModeIds === null)) return false;
+    const currentIndex = applicableProfiles.findIndex(
+      (profile) => profile.id === lastAppliedProfileIdRef.current,
+    );
+    applyProfile(applicableProfiles[(currentIndex + 1) % applicableProfiles.length].id);
+    return true;
+  }, [applicableProfiles, applyProfile, client, target]);
+
   return useMemo(
-    () => (isSupported && profiles !== null ? { rows, applyProfile } : null),
-    [applyProfile, isSupported, profiles, rows],
+    () => (isSupported && profiles !== null ? { rows, applyProfile, applyNextProfile } : null),
+    [applyNextProfile, applyProfile, isSupported, profiles, rows],
   );
 }

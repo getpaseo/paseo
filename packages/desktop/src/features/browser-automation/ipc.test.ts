@@ -1,10 +1,21 @@
-import type { Rectangle } from "electron";
 import { describe, expect, test, vi } from "vitest";
-import type { TabImage } from "./service.js";
+import { executeAutomationCommand, type BrowserRegistry, type TabImage } from "./service.js";
 import { adaptWebContents, HostSnapshotEngineRegistry } from "./ipc.js";
 import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
 
+vi.mock("electron", () => ({
+  nativeImage: {
+    createFromBuffer: (buffer: Buffer) => {
+      expect([...buffer]).toEqual([137, 80, 78, 71]);
+      return new FakeImage();
+    },
+  },
+}));
+
 class FakeImage implements TabImage {
+  public isEmpty(): boolean {
+    return false;
+  }
   public toPNG(): Uint8Array {
     return new Uint8Array([137, 80, 78, 71]);
   }
@@ -60,9 +71,11 @@ class FakeDebugger {
         }
         return { result: { value: this.promptDialogs.splice(0) } };
       }
+      if (params.expression.includes("width: innerWidth"))
+        return { result: { value: { x: 12, y: 240, width: 640, height: 480 } } };
       return { result: { value: true } };
     }
-    return { ok: true };
+    return command === "Page.captureScreenshot" ? { data: "iVBORw==" } : { ok: true };
   }
 
   public on(
@@ -109,23 +122,22 @@ type ConsoleMessageListener = (
 
 class FakeWebContents {
   public backgroundThrottling = true;
+  public throttlingChanges: boolean[] = [];
+  public failThrottleRestore = false;
   public getBackgroundThrottling(): boolean {
     return this.backgroundThrottling;
   }
   public setBackgroundThrottling(allowed: boolean): void {
     if (this.destroyed) throw new Error("Object has been destroyed");
+    this.throttlingChanges.push(allowed);
+    if (allowed && this.failThrottleRestore) throw new Error("Throttle restoration failed");
     this.backgroundThrottling = allowed;
   }
   public readonly debugger = new FakeDebugger();
   public readonly inputEvents: IsolatedKeyboardInputEvent[] = [];
   public readonly loadedUrls: string[] = [];
-  public readonly captures: Array<{
-    rect: Rectangle | undefined;
-    options: { stayHidden?: boolean } | undefined;
-  }> = [];
-  public readonly invalidations: string[] = [];
   private consoleMessageListener: ConsoleMessageListener | null = null;
-  private destroyedListener: (() => void) | null = null;
+  public readonly destroyedListeners = new Set<() => void>();
   public destroyed = false;
 
   public constructor(private readonly webContentsId: number) {}
@@ -175,21 +187,11 @@ class FakeWebContents {
 
   public reload(): void {}
 
-  public async capturePage(
-    rect?: Rectangle,
-    options?: { stayHidden?: boolean },
-  ): Promise<TabImage> {
-    this.captures.push({ rect, options });
-    return new FakeImage();
-  }
-
-  public invalidate(): void {
-    this.invalidations.push("invalidate");
-  }
-
   public sendInputEvent(event: IsolatedKeyboardInputEvent): void {
     this.inputEvents.push(event);
   }
+
+  public async insertText(_text: string): Promise<void> {}
 
   public on(event: "console-message", listener: ConsoleMessageListener): void {
     expect(event).toBe("console-message");
@@ -198,7 +200,12 @@ class FakeWebContents {
 
   public once(event: "destroyed", listener: () => void): void {
     expect(event).toBe("destroyed");
-    this.destroyedListener = listener;
+    this.destroyedListeners.add(listener);
+  }
+
+  public removeListener(event: "destroyed", listener: () => void): void {
+    expect(event).toBe("destroyed");
+    this.destroyedListeners.delete(listener);
   }
 
   public emitConsoleMessage(input: {
@@ -216,7 +223,10 @@ class FakeWebContents {
   public destroy(): void {
     this.destroyed = true;
     this.debugger.emitDetach();
-    this.destroyedListener?.();
+    for (const listener of this.destroyedListeners) {
+      this.destroyedListeners.delete(listener);
+      listener();
+    }
   }
 }
 
@@ -245,16 +255,166 @@ describe("browser automation IPC adapter", () => {
     ]);
   });
 
-  test("delegates viewport capture to the guest without a renderer prep bridge", async () => {
+  test("captures viewport pixels through CDP and restores the frame policy", async () => {
     const contents = new FakeWebContents(20);
     const tab = adaptWebContents(contents);
+    const controller = new AbortController();
+    const capture = tab.captureFrame(controller.signal);
+    await flushMicrotasks();
+    expect(contents.debugger.commands).toContainEqual({
+      command: "Page.captureScreenshot",
+      params: {
+        format: "png",
+        fromSurface: true,
+        captureBeyondViewport: true,
+        clip: { x: 12, y: 240, width: 640, height: 480, scale: 1 },
+      },
+    });
 
-    const image = await tab.capturePage({ stayHidden: false });
-    tab.invalidate();
+    expect((await capture).getSize()).toEqual({ width: 640, height: 480 });
+    controller.abort();
+    expect(contents.throttlingChanges).toEqual([false, true]);
+    expect(contents.destroyedListeners.size).toBe(1);
+  });
 
-    expect(image.getSize()).toEqual({ width: 640, height: 480 });
-    expect(contents.captures).toEqual([{ rect: undefined, options: { stayHidden: false } }]);
-    expect(contents.invalidations).toEqual(["invalidate"]);
+  test("preserves an already unthrottled page", async () => {
+    const contents = new FakeWebContents(2501);
+    contents.backgroundThrottling = false;
+    await adaptWebContents(contents).captureFrame(new AbortController().signal);
+    expect(contents.backgroundThrottling).toBe(false);
+    expect(contents.throttlingChanges).toEqual([]);
+  });
+
+  test("a frame-producer cleanup failure rejects the capture", async () => {
+    const contents = new FakeWebContents(2401);
+    contents.failThrottleRestore = true;
+    const tab = adaptWebContents(contents);
+    await expect(tab.captureFrame(new AbortController().signal)).rejects.toThrow(
+      "Throttle restoration failed",
+    );
+  });
+
+  test("full-page CDP captures release the same frame producer", async () => {
+    const contents = new FakeWebContents(2301);
+    const tab = adaptWebContents(contents);
+    await expect(
+      tab.sendDebugCommand?.("Page.captureScreenshot", {
+        format: "png",
+        captureBeyondViewport: true,
+      }),
+    ).resolves.toEqual({ data: "iVBORw==" });
+    expect(contents.debugger.commands.map((command) => command.command)).toEqual([
+      "Page.captureScreenshot",
+    ]);
+  });
+
+  test.each(["Runtime.evaluate", "Page.captureScreenshot"])(
+    "cancels pending %s and releases its queue without consuming a late frame",
+    async (command) => {
+      const contentsIds = {
+        "Runtime.evaluate": 2101,
+        "Page.captureScreenshot": 2001,
+      };
+      const contents = new FakeWebContents(contentsIds[command]);
+      contents.debugger.blockedCommandNames.add(command);
+      const tab = adaptWebContents(contents);
+      const controller = new AbortController();
+      const capture = tab.captureFrame(controller.signal);
+      const failure = expect(capture).rejects.toThrow("capture deadline");
+      await flushMicrotasks();
+      controller.abort(new Error("capture deadline"));
+
+      await failure;
+      expect(contents.throttlingChanges).toEqual([false, true]);
+      expect(contents.destroyedListeners.size).toBe(1);
+      await expect(tab.sendDebugCommand?.("Page.getLayoutMetrics")).resolves.toEqual({ ok: true });
+      contents.debugger.blockedCommandNames.clear();
+      contents.debugger.finishNextCommand();
+      await expect(tab.captureFrame(new AbortController().signal)).resolves.toBeInstanceOf(
+        FakeImage,
+      );
+    },
+  );
+
+  test("closing a guest settles its screenshot and releases the next queued capture", async () => {
+    vi.useFakeTimers();
+    try {
+      const closing = new FakeWebContents(2002);
+      const next = new FakeWebContents(2003);
+      closing.debugger.blockedCommandNames.add("Page.captureScreenshot");
+      next.debugger.blockedCommandNames.add("Page.captureScreenshot");
+      const tabs = new Map([
+        ["closing", adaptWebContents(closing)],
+        ["next", adaptWebContents(next)],
+      ]);
+      const registry: BrowserRegistry = {
+        listRegisteredBrowserIds: () => [...tabs.keys()],
+        listRegisteredBrowserIdsForWorkspace: () => [...tabs.keys()],
+        getTabContents: (id) => tabs.get(id) ?? null,
+        getBrowserWorkspaceId: () => null,
+        getWorkspaceActiveBrowserId: () => null,
+      };
+      const capture = (browserId: string) =>
+        executeAutomationCommand(
+          {
+            type: "browser.automation.execute.request",
+            requestId: browserId,
+            command: { command: "screenshot", args: { browserId, fullPage: false } },
+          },
+          registry,
+        );
+      let closedResult: unknown;
+      const closedCapture = Promise.resolve(capture("closing")).then((result) => {
+        closedResult = result;
+        return result;
+      });
+      const nextCapture = capture("next");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(
+        closing.debugger.commands.some(({ command }) => command === "Page.captureScreenshot"),
+      ).toBe(true);
+      closing.destroy();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(closedResult).toEqual({
+        requestId: "closing",
+        ok: false,
+        error: {
+          code: "browser_tab_closed",
+          message: "Browser tab closing has been closed",
+          retryable: false,
+        },
+      });
+      expect(closing.destroyedListeners.size).toBe(0);
+      expect(
+        next.debugger.commands.some(({ command }) => command === "Page.captureScreenshot"),
+      ).toBe(true);
+      next.debugger.finishNextCommand();
+      await expect(nextCapture).resolves.toMatchObject({ ok: true });
+      await closedCapture;
+      expect(next.destroyedListeners.size).toBe(1);
+    } finally {
+      await vi.runAllTimersAsync();
+      vi.useRealTimers();
+    }
+  });
+
+  test("destruction drops the guest queue while its native command remains unresolved", async () => {
+    const contents = new FakeWebContents(2020);
+    contents.debugger.blockCommands = true;
+    const pending = adaptWebContents(contents).sendDebugCommand?.("Runtime.evaluate", {
+      expression: "true",
+    });
+    await flushMicrotasks();
+    expect(contents.debugger.commands).toHaveLength(1);
+    contents.destroy();
+
+    const replacement = new FakeWebContents(2020);
+    await expect(
+      adaptWebContents(replacement).sendDebugCommand?.("Runtime.evaluate", { expression: "true" }),
+    ).resolves.toEqual({ result: { value: true } });
+    contents.debugger.finishNextCommand();
+    await pending;
+    replacement.destroy();
   });
 
   test("collects console messages until the guest is destroyed", () => {
@@ -291,7 +451,7 @@ describe("browser automation IPC adapter", () => {
       format: "png",
     });
 
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ data: "iVBORw==" });
     expect(contents.debugger.attachedProtocolVersions).toEqual(["1.3"]);
     expect(contents.debugger.commands).toEqual([
       { command: "Page.captureScreenshot", params: { format: "png" } },
@@ -304,7 +464,7 @@ describe("browser automation IPC adapter", () => {
     const tab = adaptWebContents(contents);
 
     const first = tab.sendDebugCommand?.("Input.dispatchMouseEvent", { type: "mouseMoved" });
-    const second = tab.sendDebugCommand?.("Page.captureScreenshot", { format: "png" });
+    const second = tab.sendDebugCommand?.("Page.getLayoutMetrics", {});
     await flushMicrotasks();
 
     expect(contents.debugger.commands).toEqual([
@@ -316,7 +476,7 @@ describe("browser automation IPC adapter", () => {
 
     expect(contents.debugger.commands).toEqual([
       { command: "Input.dispatchMouseEvent", params: { type: "mouseMoved" } },
-      { command: "Page.captureScreenshot", params: { format: "png" } },
+      { command: "Page.getLayoutMetrics", params: {} },
     ]);
 
     contents.debugger.finishNextCommand();
@@ -680,38 +840,3 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-
-describe("pixel capture frame production", () => {
-  test.each([true, false])(
-    "restores the prior throttling policy (%s) after capture or failure",
-    async (previous) => {
-      const contents = new FakeWebContents(8001);
-      contents.backgroundThrottling = previous;
-      const tab = adaptWebContents(contents);
-      expect(
-        await tab.withFrameProduction(async () => {
-          expect(contents.backgroundThrottling).toBe(false);
-          return "pixels";
-        }),
-      ).toBe("pixels");
-      expect(contents.backgroundThrottling).toBe(previous);
-      await expect(
-        tab.withFrameProduction(async () => {
-          throw new Error("capture failed");
-        }),
-      ).rejects.toThrow("capture failed");
-      expect(contents.backgroundThrottling).toBe(previous);
-    },
-  );
-
-  test("does not touch a guest destroyed during capture", async () => {
-    const contents = new FakeWebContents(8002);
-    const tab = adaptWebContents(contents);
-    await expect(
-      tab.withFrameProduction(async () => {
-        contents.destroyed = true;
-        throw new Error("capture closed");
-      }),
-    ).rejects.toThrow("capture closed");
-  });
-});

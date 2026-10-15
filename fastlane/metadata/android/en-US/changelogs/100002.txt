@@ -1,0 +1,7 @@
+Added
+- Added OpenCode v2 support, selected automatically from the installed opencode version
+- Added task lists from rpiv-todo, pi-goal-x, and Pi's example todo extension to Pi chats
+- Added subagent runs from pi-subagents, Tintinweb pi-subagents, and Gotgenes pi-subagents to the Subagents track
+- Added rpiv-ask-user-question dialogs to Pi chats as one question form
+
+Full notes: https://paseo.sh/changelog

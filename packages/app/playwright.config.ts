@@ -24,6 +24,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: Number(process.env.E2E_WORKERS ?? (process.env.CI ? "2" : "1")),
   retries: process.env.CI ? 1 : 0,
+  maxFailures: process.env.CI ? 5 : 0,
   reporter: [["list"]],
   use: {
     baseURL,

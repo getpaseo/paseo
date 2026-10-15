@@ -1,4 +1,7 @@
-import { clampToSafeRevealBoundary, isTextRevealPacingSupported } from "@/agent-stream/text-reveal";
+const graphemeSegmenter =
+  typeof Intl.Segmenter === "function"
+    ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+    : null;
 
 export const ASSISTANT_MESSAGE_RENDER_CHARACTER_LIMIT = 32_000;
 
@@ -39,8 +42,8 @@ export function capAssistantMessageForRender(message: string): CappedAssistantMe
   }
 
   let end = ASSISTANT_MESSAGE_RENDER_CHARACTER_LIMIT;
-  if (isTextRevealPacingSupported()) {
-    end = clampToSafeRevealBoundary(message, end);
+  if (graphemeSegmenter) {
+    end = graphemeSegmenter.segment(message).containing(end)!.index;
   } else {
     const finalCodeUnit = message.charCodeAt(end - 1);
     if (finalCodeUnit >= 0xd800 && finalCodeUnit <= 0xdbff) {

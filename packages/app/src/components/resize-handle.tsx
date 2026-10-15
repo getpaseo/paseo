@@ -198,9 +198,9 @@ export function ResizeHandle({
     () => [
       styles.handle,
       direction === "horizontal" ? styles.handleHorizontal : styles.handleVertical,
-      { backgroundColor: theme.colors.border },
+      { backgroundColor: theme.colors.borderWorkspaceResize },
     ],
-    [direction, theme.colors.border],
+    [direction, theme.colors.borderWorkspaceResize],
   );
   const highlightStyle = useMemo(
     () => [

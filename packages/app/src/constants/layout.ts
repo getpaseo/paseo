@@ -11,8 +11,6 @@ export const HEADER_INNER_HEIGHT_MOBILE = 56;
 export const WORKSPACE_SECONDARY_HEADER_HEIGHT = 36;
 export const HEADER_TOP_PADDING_MOBILE = 8;
 
-// Max width for chat content (stream view, input area, new agent form)
-export const MAX_CONTENT_WIDTH = 820;
 export const COMPACT_FORM_FACTOR_WIDTH = 500;
 
 // Settings uses the canonical desktop list + detail layout. Its sidebar and

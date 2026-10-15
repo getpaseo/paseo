@@ -138,6 +138,29 @@ const SourceSchema = z.object({
     );
   });
 
+  it.each([undefined, "canonical-plan-call"])(
+    "accepts plan permissions with optional correlation %s",
+    (sourcePlanCallId) => {
+      const request = {
+        id: "permission-plan",
+        provider: "codex",
+        name: "CodexPlanApproval",
+        kind: "plan",
+        ...(sourcePlanCallId ? { sourcePlanCallId } : {}),
+        input: { plan: 'Exact --name="my repo" (c)\n---buzz' },
+      };
+      expect(
+        GeneratedWSOutboundMessageSchema.safeParse({
+          type: "session",
+          message: {
+            type: "agent_permission_request",
+            payload: { agentId: "plan-agent", request },
+          },
+        }),
+      ).toMatchObject({ success: true, data: { message: { payload: { request } } } });
+    },
+  );
+
   it("accepts project config responses with and without setup commit status", () => {
     const payload = {
       requestId: "project-config-read",

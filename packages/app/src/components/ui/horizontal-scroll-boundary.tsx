@@ -36,7 +36,13 @@ function ScrollBoundaryShadeSvg({ side, color }: { side: "left" | "right"; color
 
 const ThemedScrollBoundaryShadeSvg = withUnistyles(ScrollBoundaryShadeSvg);
 const surfaceColorMapping = (theme: Theme) => ({ color: theme.colors.surface0 });
+const workspaceColorMapping = (theme: Theme) => ({ color: theme.colors.surfaceWorkspace });
 const sidebarColorMapping = (theme: Theme) => ({ color: theme.colors.surfaceSidebar });
+const colorMappings = {
+  surface: surfaceColorMapping,
+  sidebar: sidebarColorMapping,
+  workspace: workspaceColorMapping,
+};
 
 export function useHorizontalScrollBoundary() {
   const offset = useSharedValue(0);
@@ -76,13 +82,13 @@ export function HorizontalScrollBoundaryShades({
   testIDPrefix = "horizontal-scroll-boundary",
 }: {
   visible: boolean;
-  backdrop: "surface" | "sidebar";
+  backdrop: "surface" | "sidebar" | "workspace";
   leftStyle: AnimatedStyle<{ opacity: number }>;
   rightStyle: AnimatedStyle<{ opacity: number }>;
   testIDPrefix?: string;
 }) {
   if (!visible) return null;
-  const colorMapping = backdrop === "sidebar" ? sidebarColorMapping : surfaceColorMapping;
+  const colorMapping = colorMappings[backdrop];
   return (
     <>
       <Animated.View

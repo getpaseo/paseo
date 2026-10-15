@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "../fixtures";
 import { readFile } from "node:fs/promises";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
-import { gotoAppShell } from "./app";
+import { gotoAppShell, selectModel } from "./app";
 import { scrollTimelineToOldestLoadedEdge } from "./timeline-pagination";
 import {
   archiveLocalWorkspaceFromDaemon,
@@ -75,6 +75,7 @@ export async function verifyDelayedWorkspaceCreation(
       await openNewWorkspaceComposer(page, project);
       await selectWorkspaceIsolation(page, isolation);
       if (launch === "chat") {
+        await selectModel(page, "ten-second-stream");
         await dropFileOnComposer(page, CONTEXT);
         await expectAttachmentPill(page, "composer-file-attachment-pill");
         await submitNewWorkspacePrompt(page, PROMPT);
@@ -134,15 +135,20 @@ export async function verifyDelayedWorkspaceCreation(
         );
         if (!upload) throw new Error("The create request did not contain the submitted file");
         expect(await readFile(upload.path)).toEqual(CONTEXT.buffer);
+        const agents = await client.fetchAgents();
+        expect(
+          agents.entries.find((entry) => entry.agent.workspaceId === created.id)?.agent,
+        ).toMatchObject({
+          cwd: created.workspaceDirectory,
+        });
         expect(delay.agentRequests[0]).toMatchObject({
-          workspaceId: created.id,
           initialPrompt: PROMPT,
           config: {
             provider: "mock",
             model: "ten-second-stream",
             modeId: "load-test",
             thinkingOptionId: "low",
-            cwd: created.workspaceDirectory,
+            cwd: repo.path,
           },
           attachments: [
             expect.objectContaining({

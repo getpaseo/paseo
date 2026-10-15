@@ -4,7 +4,11 @@ import { z } from "zod";
 import type { Logger } from "pino";
 
 import { writeJsonFileAtomic } from "../atomic-file.js";
-import { AgentFeatureSchema, AgentStatusSchema } from "../messages.js";
+import {
+  AgentFeatureSchema,
+  AgentStatusSchema,
+  AgentPermissionResponseSchema,
+} from "../messages.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
@@ -12,11 +16,12 @@ import { AgentOwnerSchema, daemonExecutionKey, type DaemonAgentOwner } from "./a
 
 const SERIALIZABLE_CONFIG_SCHEMA = z
   .object({
+    writePolicy: z.enum(["read_write", "read_only"]).optional(),
     modeId: z.string().nullable().optional(),
     model: z.string().nullable().optional(),
     thinkingOptionId: z.string().nullable().optional(),
     featureValues: z.record(z.string(), z.unknown()).nullable().optional(),
-    providerOptions: z.record(z.string(), z.json()).nullable().optional(),
+    providerOptions: z.record(z.string(), z.unknown()).nullable().optional(),
     toolPolicy: z
       .object({
         preapproved: z.array(
@@ -44,6 +49,44 @@ const PERSISTENCE_HANDLE_SCHEMA = z
 
 const STORED_AGENT_SCHEMA = z.object({
   id: z.string(),
+  launchProfileId: z.string().optional(),
+  launchPostApprovalModeId: z.string().optional(),
+  lastCompletedTurnId: z.string().optional(),
+  lastCompletedTurnEvidence: z
+    .object({
+      turnId: z.string(),
+      signature: z.string(),
+      prompt: z.object({
+        digest: z.string(),
+        clientMessageId: z.string().optional(),
+        messageId: z.string().optional(),
+        providerMessageId: z.string().optional(),
+      }),
+      origin: z
+        .object({
+          digest: z.string(),
+          clientMessageId: z.string().optional(),
+          messageId: z.string().optional(),
+          providerMessageId: z.string().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
+  planReviewClaims: z.record(z.string(), z.string()).optional(),
+  syntheticPlanDecisions: z
+    .record(
+      z.string(),
+      z.object({
+        text: z.string(),
+        permissionId: z.string(),
+        sourceTurnId: z.string().optional(),
+        previousModeId: z.string().optional(),
+        prepared: z.literal(true).optional(),
+        resolution: AgentPermissionResponseSchema,
+        outcome: z.enum(["pending", "completed", "outcome_unknown"]),
+      }),
+    )
+    .optional(),
   provider: z.string(),
   cwd: z.string(),
   workspaceId: z.string().optional(),
@@ -80,6 +123,7 @@ const STORED_AGENT_SCHEMA = z.object({
 export type SerializableAgentConfig = Pick<
   AgentSessionConfig,
   | "modeId"
+  | "writePolicy"
   | "model"
   | "thinkingOptionId"
   | "featureValues"

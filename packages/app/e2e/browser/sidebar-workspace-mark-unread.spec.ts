@@ -7,6 +7,7 @@ import {
   type MockAgentWorkspace,
 } from "../support/helpers/mock-agent";
 import { getServerId } from "../support/helpers/server-id";
+import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
 import { closeMobileAgentSidebar, openMobileAgentSidebar } from "../support/helpers/sidebar";
 
 interface FinishedWorkspaces {
@@ -43,6 +44,10 @@ function workspaceRow(page: Page, workspaceId: string) {
   return page.getByTestId(`sidebar-workspace-row-${getServerId()}:${workspaceId}`);
 }
 
+function projectRow(page: Page, projectKey: string) {
+  return page.getByTestId(`sidebar-project-row-${projectEquivalenceViewKey(projectKey)}`);
+}
+
 async function openWorkspace(page: Page, workspaceId: string) {
   await workspaceRow(page, workspaceId).click();
   await expect(page).toHaveURL(new RegExp(`/workspace/${workspaceId}`));
@@ -72,11 +77,57 @@ async function expectStatus(page: Page, workspaceId: string, status: "done" | "a
   ).toBeVisible();
 }
 
-async function markBackgroundWorkspaceAndReopen(page: Page, workspaceId: string) {
+async function expectWorkspaceTitleWeight(
+  page: Page,
+  workspaceId: string,
+  title: string,
+  weight: "400" | "700",
+) {
+  // The title leads the row and the meta line below it can repeat the same text (a branch-named
+  // workspace shows its name twice), so the first match is the title the weight belongs to.
+  await expect(workspaceRow(page, workspaceId).getByText(title, { exact: true }).first()).toHaveCSS(
+    "font-weight",
+    weight,
+  );
+}
+
+async function expectProjectTitleWeight(
+  page: Page,
+  projectKey: string,
+  title: string,
+  weight: "500" | "600" | "700",
+) {
+  await expect(projectRow(page, projectKey).getByText(title, { exact: true })).toHaveCSS(
+    "font-weight",
+    weight,
+  );
+}
+
+async function markBackgroundWorkspaceAndReopen(
+  page: Page,
+  subject: MockAgentWorkspace,
+  readProjectWeight: "500" | "600" = "500",
+) {
   await test.step("background workspace gains green dot and clears when clicked", async () => {
-    await markAsUnread(page, workspaceId);
-    await openWorkspace(page, workspaceId);
-    await expectStatus(page, workspaceId, "done");
+    await expectWorkspaceTitleWeight(page, subject.workspaceId, subject.workspaceName, "400");
+    await expectProjectTitleWeight(
+      page,
+      subject.projectKey,
+      subject.projectDisplayName,
+      readProjectWeight,
+    );
+    await markAsUnread(page, subject.workspaceId);
+    await expectWorkspaceTitleWeight(page, subject.workspaceId, subject.workspaceName, "700");
+    await expectProjectTitleWeight(page, subject.projectKey, subject.projectDisplayName, "700");
+    await openWorkspace(page, subject.workspaceId);
+    await expectStatus(page, subject.workspaceId, "done");
+    await expectWorkspaceTitleWeight(page, subject.workspaceId, subject.workspaceName, "400");
+    await expectProjectTitleWeight(
+      page,
+      subject.projectKey,
+      subject.projectDisplayName,
+      readProjectWeight,
+    );
   });
 }
 
@@ -100,10 +151,10 @@ async function leaveMarkedWorkspaceAndReopen(page: Page, { subject, other }: Fin
 }
 
 async function completeTurnAndLeave(page: Page, { subject, other }: FinishedWorkspaces) {
-  await test.step("ordinary completion still clears on departure", async () => {
+  await test.step("ordinary completion clears while the agent tab is focused", async () => {
     await subject.client.sendAgentMessage(subject.agentId, "Finish another turn.");
     await subject.client.waitForFinish(subject.agentId, 20_000);
-    await expectStatus(page, subject.workspaceId, "attention");
+    await expectStatus(page, subject.workspaceId, "done");
     await openWorkspace(page, other.workspaceId);
     await expectStatus(page, subject.workspaceId, "done");
   });
@@ -140,12 +191,12 @@ async function leaveMarkedWorkspaceAndReopenOnCompact(
 }
 
 async function completeTurnAndLeaveOnCompact(page: Page, { subject, other }: FinishedWorkspaces) {
-  await test.step("ordinary completion still clears on departure", async () => {
+  await test.step("ordinary completion clears while the agent tab is focused", async () => {
     await closeMobileAgentSidebar(page);
     await subject.client.sendAgentMessage(subject.agentId, "Finish another turn.");
     await subject.client.waitForFinish(subject.agentId, 20_000);
     await openMobileAgentSidebar(page);
-    await expectStatus(page, subject.workspaceId, "attention");
+    await expectStatus(page, subject.workspaceId, "done");
     await openWorkspaceOnCompact(page, other.workspaceId);
     await expectStatus(page, subject.workspaceId, "done");
   });
@@ -198,11 +249,33 @@ test("manual unread survives departure and clears on reopening without changing 
 }) => {
   await gotoAppShell(page);
   await openWorkspace(page, workspaces.other.workspaceId);
-  await markBackgroundWorkspaceAndReopen(page, workspaces.subject.workspaceId);
+  await markBackgroundWorkspaceAndReopen(page, workspaces.subject);
   await leaveMarkedWorkspaceAndRead(page, workspaces);
   await leaveMarkedWorkspaceAndReopen(page, workspaces);
   await completeTurnAndLeave(page, workspaces);
   await markBackgroundWorkspaceAndRead(page, workspaces.subject.workspaceId);
+});
+
+test("focused agent tab reads completions without focusing the composer", async ({
+  page,
+  workspaces,
+}, testInfo) => {
+  const { subject } = workspaces;
+  await openAgentRoute(page, subject);
+  await expectSelectedAgent(page, subject.agentId);
+  await expect(page.getByRole("textbox", { name: "Message agent..." })).toBeFocused();
+  await page.getByTestId(`workspace-tab-agent_${subject.agentId}`).first().focus();
+  await expect(page.getByRole("textbox", { name: "Message agent..." })).not.toBeFocused();
+  await subject.client.sendAgentMessage(subject.agentId, "Finish while the tab has focus.");
+  await subject.client.waitForFinish(subject.agentId, 20_000);
+  await subject.client.waitForAgentUpsert(
+    subject.agentId,
+    (agent) => agent.requiresAttention === false,
+    10_000,
+  );
+  await expectWorkspaceTitleWeight(page, subject.workspaceId, subject.workspaceName, "400");
+  await expectProjectTitleWeight(page, subject.projectKey, subject.projectDisplayName, "500");
+  await page.screenshot({ path: testInfo.outputPath("focused-agent-read.png") });
 });
 
 test("clicking a multi-agent workspace reveals and clears its marked agent", async ({
@@ -213,7 +286,7 @@ test("clicking a multi-agent workspace reveals and clears its marked agent", asy
   await expectSelectedAgent(page, workspaces.subject.agentId);
   await openWorkspace(page, workspaces.other.workspaceId);
   const newest = await addFinishedAgent(workspaces.subject);
-  await markBackgroundWorkspaceAndReopen(page, workspaces.subject.workspaceId);
+  await markBackgroundWorkspaceAndReopen(page, workspaces.subject, "500");
   await expectSelectedAgent(page, newest.id);
 });
 

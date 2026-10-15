@@ -24,7 +24,7 @@ test.describe("Plan card markdown", () => {
       await openAgentRoute(page, session);
       await waitForPermissionPrompt(page, 120_000);
 
-      const planCard = page.getByTestId("permission-plan-card");
+      const planCard = page.getByTestId("timeline-plan-card");
       await expect(planCard).toContainText("(c)");
       await expect(planCard).toContainText('--name="my repo"');
       await expect(planCard).toContainText("---buzz");

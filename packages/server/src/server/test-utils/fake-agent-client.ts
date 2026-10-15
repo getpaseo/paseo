@@ -62,6 +62,7 @@ interface FakeAgentSessionOptions {
 }
 
 export interface TestAgentClientOptions {
+  beforeCreateSession?: () => Promise<void>;
   closeSession?: () => Promise<void>;
   onStartTurn?: (prompt: AgentPromptInput) => void;
   supportsMcpServers?: boolean;
@@ -1212,6 +1213,7 @@ class FakeAgentClient implements AgentClient {
     config: AgentSessionConfig,
     _launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
+    await this.options.beforeCreateSession?.();
     return new FakeAgentSession({
       providerName: this.provider,
       config: { ...config },

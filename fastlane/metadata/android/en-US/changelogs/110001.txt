@@ -1,0 +1,7 @@
+Added
+- Added Muse Code as a provider, with model, approval mode, and reasoning effort controls
+- Added Antigravity as a provider that drives the installed agy CLI, always in Full access
+- Added Usage, opened from the sidebar footer as a dialog on desktop and a sheet on mobile, showing each subscription account's quota windows with Refresh
+- Added an opt-in Usage summary to the sidebar footer that shows the windows you pin
+
+Full notes: https://paseo.sh/changelog

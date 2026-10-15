@@ -230,12 +230,12 @@ function selectForkContextRows(input: {
   boundaryCursor: { epoch: string; seq: number } | null;
   boundaryMessageId: string | null;
 } {
+  const projectedRows = projectTimelineRows({ rows: input.rows, mode: "projected" });
   const boundaryCursor = input.cursorBoundary?.cursor ?? null;
   const boundaryMessageId = input.boundaryMessageId?.trim() || null;
   if (!boundaryCursor && !boundaryMessageId) {
-    const projected = projectTimelineRows({ rows: input.rows, mode: "projected" });
     return {
-      items: projected.map((entry) => entry.item),
+      items: projectedRows.map((entry) => entry.item),
       boundaryCursor: null,
       boundaryMessageId: null,
     };
@@ -248,8 +248,8 @@ function selectForkContextRows(input: {
     throw new Error("Selected timeline position is no longer available.");
   }
   const boundaryIndex = boundaryCursor
-    ? input.rows.findIndex((row) => row.seq === boundaryCursor.seq)
-    : input.rows.findLastIndex(
+    ? projectedRows.findIndex((row) => row.seqEnd === boundaryCursor.seq)
+    : projectedRows.findLastIndex(
         (row) => row.item.type === "assistant_message" && row.item.messageId === boundaryMessageId,
       );
   if (boundaryIndex < 0) {
@@ -259,8 +259,13 @@ function selectForkContextRows(input: {
         : "Selected assistant message is no longer available.",
     );
   }
-  const selectedRows = input.rows.slice(0, boundaryIndex + 1);
-  const projected = projectTimelineRows({ rows: selectedRows, mode: "projected" });
+  const boundarySeq = projectedRows[boundaryIndex].seqEnd;
+  if (projectedRows.some((row) => row.seqStart <= boundarySeq && row.seqEnd > boundarySeq)) {
+    throw new Error(
+      "This checkpoint changed after it was created. Fork from a later completed response instead.",
+    );
+  }
+  const projected = projectedRows.filter((row) => row.seqEnd <= boundarySeq);
 
   return {
     items: projected.map((entry) => entry.item),

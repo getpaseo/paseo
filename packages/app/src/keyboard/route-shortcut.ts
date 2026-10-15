@@ -42,6 +42,10 @@ const PASSTHROUGH_DISPATCH: Record<string, KeyboardActionDefinition> = {
   "agent.interrupt": { id: "agent.interrupt", scope: "global" },
   "workspace.tab.menu.open": { id: "workspace.tab.menu.open", scope: "workspace" },
   "workspace.tab.target.agent": { id: "workspace.tab.target.agent", scope: "workspace" },
+  "workspace.browser.reopen-last-closed": {
+    id: "workspace.browser.reopen-last-closed",
+    scope: "workspace",
+  },
   "workspace.tab.target.browser": { id: "workspace.tab.target.browser", scope: "workspace" },
   "workspace.tab.target.changes": { id: "workspace.tab.target.changes", scope: "workspace" },
   "workspace.tab.target.files": { id: "workspace.tab.target.files", scope: "workspace" },
@@ -85,6 +89,7 @@ const MESSAGE_INPUT_DISPATCH: Record<
   "voice-toggle": { id: "message-input.voice-toggle", scope: "message-input" },
   "voice-mute-toggle": { id: "message-input.voice-mute-toggle", scope: "message-input" },
   "mode-cycle": { id: "message-input.mode-cycle", scope: "message-input" },
+  "profile-next": { id: "message-input.profile-next", scope: "message-input" },
 };
 
 function hasPayloadKey<K extends "index" | "delta" | "kind">(

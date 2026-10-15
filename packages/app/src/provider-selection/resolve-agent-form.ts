@@ -12,6 +12,8 @@ import {
 import { findModelByReference } from "./model-catalog";
 
 export interface FormInitialValues {
+  modelRouting?: "manual" | "jev";
+  launchProfileId?: string;
   provider?: AgentProvider;
   modeId?: string | null;
   model?: string | null;
@@ -19,6 +21,8 @@ export interface FormInitialValues {
 }
 
 export interface FormState {
+  modelRouting?: "manual" | "jev";
+  launchProfileId?: string;
   provider: AgentProvider | null;
   modeId: string;
   model: string;
@@ -26,6 +30,7 @@ export interface FormState {
 }
 
 export interface UserModifiedFields {
+  modelRouting?: boolean;
   provider: boolean;
   modeId: boolean;
   model: boolean;
@@ -44,10 +49,12 @@ export interface AgentFormReducerState {
     serverId: string | null;
     initialValues: FormInitialValues | undefined;
     active: boolean;
+    supportsInitialModelRouting?: boolean;
   };
 }
 
 export const INITIAL_USER_MODIFIED: UserModifiedFields = {
+  modelRouting: false,
   provider: false,
   modeId: false,
   model: false,
@@ -72,6 +79,7 @@ interface AgentFormInputs {
   isCreateFlow: boolean;
   isPreferencesLoading: boolean;
   hasSnapshot: boolean;
+  supportsInitialModelRouting?: boolean;
   initialValues: FormInitialValues | undefined;
   preferences: FormPreferences | null;
   providerModelsByProvider: ProviderModelsByProvider;
@@ -83,6 +91,7 @@ export type AgentFormAction =
   | { type: "REQUEST_RESOLUTION" }
   | {
       type: "COMPLETE_RESOLUTION";
+      supportsInitialModelRouting?: boolean;
       initialValues: FormInitialValues | undefined;
       preferences: FormPreferences | null;
       providerModelsByProvider: ProviderModelsByProvider;
@@ -98,6 +107,7 @@ export type AgentFormAction =
     }
   | {
       type: "APPLY_PROFILE_FROM_USER";
+      launchProfileId?: string;
       provider: AgentProvider;
       modelId: string;
       modeId: string;
@@ -107,6 +117,7 @@ export type AgentFormAction =
       providerPrefs?: ProviderPrefs | undefined;
     }
   | { type: "SET_MODE_FROM_USER"; modeId: string }
+  | { type: "SET_MODEL_ROUTING_FROM_USER"; modelRouting: "manual" | "jev" }
   | {
       type: "SET_MODEL_FROM_USER";
       modelId: string;
@@ -202,8 +213,9 @@ function resolvePreferredModeId(input: {
   const preferredModeId = normalizeSelectedModeId(input.preferredModeId);
   if (preferredModeId) return preferredModeId;
 
-  const defaultModeId = input.providerDef?.defaultModeId;
   const modes = input.providerDef?.modes ?? [];
+  const defaultModeId =
+    modes.find((mode) => mode.isUnattended)?.id ?? input.providerDef?.defaultModeId;
   if (defaultModeId && (modes.length === 0 || modes.some((mode) => mode.id === defaultModeId))) {
     return defaultModeId;
   }
@@ -224,10 +236,29 @@ export function mergeSelectedComposerPreferences(args: {
 
 export function hasFormStateChanged(prev: FormState, next: FormState): boolean {
   return (
+    prev.modelRouting !== next.modelRouting ||
+    prev.launchProfileId !== next.launchProfileId ||
     prev.provider !== next.provider ||
     prev.modeId !== next.modeId ||
     prev.model !== next.model ||
     prev.thinkingOptionId !== next.thinkingOptionId
+  );
+}
+
+function resolveModelRouting(input: {
+  provider: AgentProvider | null;
+  supportsInitialModelRouting: boolean;
+  current: "manual" | "jev" | undefined;
+  userModified: boolean;
+  initialValues: FormInitialValues | undefined;
+  providerPrefs: ProviderPrefs | undefined;
+}): "manual" | "jev" {
+  if (input.provider !== "codex") return "manual";
+  if (input.userModified) return input.current ?? "manual";
+  if (input.initialValues?.modelRouting) return input.initialValues.modelRouting;
+  if (input.initialValues?.launchProfileId || input.initialValues?.model) return "manual";
+  return (
+    input.providerPrefs?.modelRouting ?? (input.supportsInitialModelRouting ? "jev" : "manual")
   );
 }
 
@@ -365,8 +396,10 @@ export function resolveFormState(
   userModified: UserModifiedFields,
   currentState: FormState,
   allowedProviderMap: Map<AgentProvider, AgentProviderDefinition>,
+  supportsInitialModelRouting = false,
 ): FormState {
   const result = { ...currentState };
+  if (!userModified.provider) result.launchProfileId = initialValues?.launchProfileId;
 
   result.provider = resolveProvider({
     currentProvider: result.provider,
@@ -379,6 +412,14 @@ export function resolveFormState(
   const providerPrefs = result.provider
     ? preferences?.providerPreferences?.[result.provider]
     : undefined;
+  result.modelRouting = resolveModelRouting({
+    provider: result.provider,
+    supportsInitialModelRouting,
+    current: result.modelRouting,
+    userModified: userModified.modelRouting === true,
+    initialValues,
+    providerPrefs,
+  });
 
   result.modeId = resolveModeId({
     provider: result.provider,
@@ -426,6 +467,7 @@ export function resolveFormStateFromProviderModels(
   userModified: UserModifiedFields,
   currentState: FormState,
   allowedProviderMap: Map<AgentProvider, AgentProviderDefinition>,
+  supportsInitialModelRouting = false,
 ): FormState {
   const providerResolved = resolveFormState(
     initialValues,
@@ -434,6 +476,7 @@ export function resolveFormStateFromProviderModels(
     userModified,
     currentState,
     allowedProviderMap,
+    supportsInitialModelRouting,
   );
   const availableModels = providerResolved.provider
     ? (providerModelsByProvider.get(providerResolved.provider) ?? null)
@@ -446,6 +489,7 @@ export function resolveFormStateFromProviderModels(
     userModified,
     currentState,
     allowedProviderMap,
+    supportsInitialModelRouting,
   );
 }
 
@@ -531,6 +575,7 @@ function completeResolution(
     state.userModified,
     state.form,
     action.allowedProviderMap,
+    action.supportsInitialModelRouting,
   );
   const nextState = { ...state, resolution: { status: "completed" } as const };
   if (!hasFormStateChanged(state.form, resolved)) return nextState;
@@ -543,7 +588,7 @@ function applyProfile(state: AgentFormReducerState, action: ApplyProfileAction) 
   const nextModelId = normalizedModelId || resolveDefaultModelId(action.providerModels);
   const availableModeIds = new Set(action.providerDef?.modes.map((mode) => mode.id) ?? []);
   const preferredModeId = action.modeId || action.providerPrefs?.mode || "";
-  const defaultModeId = action.providerDef?.defaultModeId ?? "";
+  const defaultModeId = resolvePreferredModeId({ providerDef: action.providerDef });
   let nextModeId = "";
   if (availableModeIds.has(preferredModeId)) {
     nextModeId = preferredModeId;
@@ -561,6 +606,8 @@ function applyProfile(state: AgentFormReducerState, action: ApplyProfileAction) 
     ...state,
     form: {
       ...state.form,
+      launchProfileId: action.launchProfileId,
+      modelRouting: "manual" as const,
       provider: action.provider,
       model: nextModelId,
       modeId: nextModeId,
@@ -568,6 +615,7 @@ function applyProfile(state: AgentFormReducerState, action: ApplyProfileAction) 
     },
     userModified: {
       ...state.userModified,
+      modelRouting: true,
       provider: true,
       model: true,
       modeId: true,
@@ -578,6 +626,8 @@ function applyProfile(state: AgentFormReducerState, action: ApplyProfileAction) 
 
 function sameInitialValues(left: FormInitialValues = {}, right: FormInitialValues = {}): boolean {
   return (
+    left.launchProfileId === right.launchProfileId &&
+    left.modelRouting === right.modelRouting &&
     left.provider === right.provider &&
     left.model === right.model &&
     left.modeId === right.modeId &&
@@ -600,7 +650,18 @@ function receiveInputs(
   if (changed) {
     next = {
       ...resolveAgentForm(state, { type: action.isVisible ? "REQUEST_RESOLUTION" : "RESET" }),
-      inputs: { serverId: action.serverId, initialValues: initial, active },
+      inputs: {
+        serverId: action.serverId,
+        initialValues: initial,
+        active,
+        supportsInitialModelRouting: action.supportsInitialModelRouting,
+      },
+    };
+  } else if (previous?.supportsInitialModelRouting !== action.supportsInitialModelRouting) {
+    next = {
+      ...state,
+      resolution: PENDING_AGENT_FORM_RESOLUTION,
+      inputs: { ...previous, supportsInitialModelRouting: action.supportsInitialModelRouting },
     };
   }
   if (!active || action.isPreferencesLoading || !action.serverId || !action.hasSnapshot)
@@ -648,11 +709,12 @@ export function resolveAgentForm(
         form: {
           ...state.form,
           provider: action.provider,
+          modelRouting: "manual",
           model: nextModelId,
           modeId: nextModeId,
           thinkingOptionId: nextThinkingOptionId,
         },
-        userModified: { ...state.userModified, provider: true, model: true },
+        userModified: { ...state.userModified, modelRouting: true, provider: true, model: true },
       };
     }
 
@@ -665,6 +727,13 @@ export function resolveAgentForm(
         ...state,
         form: { ...state.form, modeId: action.modeId },
         userModified: { ...state.userModified, modeId: true },
+      };
+
+    case "SET_MODEL_ROUTING_FROM_USER":
+      return {
+        ...state,
+        form: { ...state.form, launchProfileId: undefined, modelRouting: action.modelRouting },
+        userModified: { ...state.userModified, modelRouting: true },
       };
 
     case "SET_MODEL_FROM_USER": {
@@ -683,9 +752,10 @@ export function resolveAgentForm(
         form: {
           ...state.form,
           model: nextModelId,
+          modelRouting: "manual",
           thinkingOptionId: nextThinkingOptionId,
         },
-        userModified: { ...state.userModified, model: true },
+        userModified: { ...state.userModified, modelRouting: true, model: true },
       };
     }
 
@@ -695,12 +765,14 @@ export function resolveAgentForm(
         form: {
           ...state.form,
           provider: null,
+          modelRouting: "manual",
           model: "",
           modeId: "",
           thinkingOptionId: "",
         },
         userModified: {
           ...state.userModified,
+          modelRouting: true,
           provider: true,
           model: true,
           modeId: true,
@@ -711,8 +783,12 @@ export function resolveAgentForm(
     case "SET_THINKING_OPTION_FROM_USER":
       return {
         ...state,
-        form: { ...state.form, thinkingOptionId: action.thinkingOptionId },
-        userModified: { ...state.userModified, thinkingOptionId: true },
+        form: {
+          ...state.form,
+          modelRouting: "manual",
+          thinkingOptionId: action.thinkingOptionId,
+        },
+        userModified: { ...state.userModified, modelRouting: true, thinkingOptionId: true },
       };
 
     case "RESET":

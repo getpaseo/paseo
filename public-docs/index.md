@@ -8,7 +8,7 @@ category: Getting started
 
 # Getting started
 
-Paseo runs your coding agents on your machine and gives you a mobile, desktop, web, and CLI client to drive them from anywhere. Three common ways to install.
+Paseo is an agentic development environment for running coding agents, editing files, reviewing changes, and testing your work. Agents run on your machines; desktop, mobile, web, and CLI clients let you work from anywhere. Choose how to install it below.
 
 ## Desktop app (recommended)
 
@@ -71,6 +71,7 @@ The image runs the daemon and serves the bundled web UI. It does not bundle agen
 
 ## Where next
 
+- [Run parallel tasks](/docs/parallel-development), use separate worktrees, review diffs, and test changes in the desktop app.
 - [Connectivity](/docs/connectivity), connect through the relay or Tailscale.
 - [Docker](/docs/docker), run the daemon and bundled web UI in a container.
 - [Workspaces](/docs/workspaces), the project, workspace, and session model Paseo is built around.

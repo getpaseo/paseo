@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
-import { filterWorkspacesByProjects, resolveActiveProjectFilters } from "./sidebar-project-filter";
+import { filterWorkspacesByProjects, resolveHiddenProjectKeys } from "./sidebar-project-filter";
 
 function workspace(workspaceId: string, projectViewKey: string): SidebarWorkspaceEntry {
   return {
@@ -31,26 +31,28 @@ function workspace(workspaceId: string, projectViewKey: string): SidebarWorkspac
   };
 }
 
-describe("resolveActiveProjectFilters", () => {
+describe("resolveHiddenProjectKeys", () => {
   test("reads an empty stored filter as every project", () => {
-    expect(resolveActiveProjectFilters([], new Set(["alpha", "beta"]))).toEqual([]);
+    expect(resolveHiddenProjectKeys([], new Set(["alpha", "beta"]))).toEqual([]);
   });
 
   test("keeps only the keys that still name a project it can see", () => {
-    expect(resolveActiveProjectFilters(["alpha", "gone"], new Set(["alpha", "beta"]))).toEqual([
+    expect(resolveHiddenProjectKeys(["alpha", "gone"], new Set(["alpha", "beta"]))).toEqual([
       "alpha",
     ]);
-    expect(resolveActiveProjectFilters(["alpha", "beta"], new Set(["alpha", "beta"]))).toEqual([
+    expect(resolveHiddenProjectKeys(["alpha", "beta"], new Set(["alpha", "beta"]))).toEqual([
       "alpha",
       "beta",
     ]);
   });
 
-  // Nothing deletes the stored keys, so a filter naming only projects on a host that has not
-  // connected yet must go inert rather than blank the sidebar. It comes back with the host.
-  test("goes inert instead of matching nothing", () => {
-    expect(resolveActiveProjectFilters(["alpha"], new Set(["beta"]))).toEqual([]);
-    expect(resolveActiveProjectFilters(["alpha"], new Set())).toEqual([]);
+  test("resolves hidden keys again when the host returns without changing stored preferences", () => {
+    const stored = ["alpha"];
+    expect(resolveHiddenProjectKeys(stored, new Set())).toEqual([]);
+    expect(resolveHiddenProjectKeys(stored, new Set(["alpha", "beta"]))).toEqual(["alpha"]);
+    expect(stored).toEqual(["alpha"]);
+    expect(resolveHiddenProjectKeys(["alpha"], new Set(["beta"]))).toEqual([]);
+    expect(resolveHiddenProjectKeys(["alpha"], new Set())).toEqual([]);
   });
 });
 
@@ -61,23 +63,23 @@ describe("filterWorkspacesByProjects", () => {
     workspace("three", "beta"),
   ];
 
-  function filtered(projectFilters: string[]) {
-    return filterWorkspacesByProjects({ workspaces, projectFilters }).map(
+  function filtered(hiddenProjectKeys: string[]) {
+    return filterWorkspacesByProjects({ workspaces, hiddenProjectKeys }).map(
       (entry) => entry.workspaceId,
     );
   }
 
-  test("keeps every workspace when nothing is pinned", () => {
+  test("keeps every workspace by default", () => {
     expect(filtered([])).toEqual(["one", "two", "three"]);
   });
 
-  test("keeps the workspaces of the pinned projects", () => {
-    expect(filtered(["alpha"])).toEqual(["one", "two"]);
-    expect(filtered(["beta"])).toEqual(["three"]);
-    expect(filtered(["alpha", "beta"])).toEqual(["one", "two", "three"]);
+  test("excludes only hidden projects", () => {
+    expect(filtered(["alpha"])).toEqual(["three"]);
+    expect(filtered(["beta"])).toEqual(["one", "two"]);
+    expect(filtered(["alpha", "beta"])).toEqual([]);
   });
 
-  test("keeps nothing for a project with no workspaces", () => {
-    expect(filtered(["gamma"])).toEqual([]);
+  test("shows new projects even with stale hidden keys", () => {
+    expect(filtered(["gamma"])).toEqual(["one", "two", "three"]);
   });
 });

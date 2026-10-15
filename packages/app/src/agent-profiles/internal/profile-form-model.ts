@@ -85,6 +85,7 @@ export interface AgentProfileFormState {
   provider: string;
   modelId: string;
   modeId: string;
+  postApprovalModeId: string;
   thinkingOptionId: string;
   featureValues: Record<string, unknown>;
 
@@ -127,6 +128,7 @@ export interface AgentProfileFormModel {
   setProvider: (providerId: string, display: AgentProfileFormDisplay) => void;
   setModel: (modelId: string, display: AgentProfileFormDisplay | null) => void;
   setMode: (modeId: string, display: AgentProfileFormDisplay | null) => void;
+  setPostApprovalMode: (modeId: string) => void;
   setThinking: (thinkingOptionId: string, display: AgentProfileFormDisplay | null) => void;
   setFeatureValue: (featureId: string, value: unknown) => void;
   setSubmitting: (value: boolean) => void;
@@ -351,6 +353,9 @@ function buildSubmitValue(state: AgentProfileFormState): AgentProfileValue | nul
     ...(state.modeId ? { modeId: state.modeId } : {}),
     ...(state.thinkingOptionId ? { thinkingOptionId: state.thinkingOptionId } : {}),
     ...(Object.keys(state.featureValues).length > 0 ? { featureValues: state.featureValues } : {}),
+    ...(state.postApprovalModeId.trim()
+      ? { postApprovalModeId: state.postApprovalModeId.trim() }
+      : {}),
     ...(notes ? { notes } : {}),
   };
 }
@@ -391,6 +396,7 @@ function buildInitialState(snapshot: AgentProfileFormSnapshot): AgentProfileForm
     provider,
     modelId,
     modeId: profile.modeId ?? "",
+    postApprovalModeId: profile.postApprovalModeId ?? "",
     thinkingOptionId: profile.thinkingOptionId ?? "",
     featureValues: { ...profile.featureValues },
     providerOptions: [],
@@ -569,6 +575,7 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
           modelId: "",
           modelDisplay: null,
           modeId: "",
+          postApprovalModeId: "",
           modeDisplay: null,
           thinkingOptionId: "",
           thinkingDisplay: null,
@@ -596,6 +603,8 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
       }),
     setMode: (modeId, display) =>
       publish((current) => ({ ...current, modeId, modeDisplay: display })),
+    setPostApprovalMode: (postApprovalModeId) =>
+      publish((current) => ({ ...current, postApprovalModeId })),
     setThinking: (thinkingOptionId, display) =>
       publish((current) => ({ ...current, thinkingOptionId, thinkingDisplay: display })),
     setFeatureValue: (featureId, value) =>

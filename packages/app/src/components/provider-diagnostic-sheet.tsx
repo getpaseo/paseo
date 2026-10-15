@@ -19,10 +19,10 @@ import { useToast } from "@/contexts/toast-context";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
-import { useHostRuntimeClient } from "@/runtime/host-runtime";
+import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useTimeAgo } from "@/hooks/use-time-ago";
 import { settingsStyles } from "@/styles/settings";
 import { resolveProviderLabel } from "@/utils/provider-definitions";
-import { formatTimeAgo } from "@/utils/time";
 import { compareMatchScores, scoreTextFields } from "@getpaseo/protocol/search/text-match";
 import type { AgentModelDefinition, AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { ProviderProfileModel } from "@getpaseo/protocol/provider-config";
@@ -36,6 +36,18 @@ interface ProviderDiagnosticSheetProps {
   visible: boolean;
   onClose: () => void;
   serverId: string;
+}
+
+/** A login agent updates the Codex binary daily; past this age the sheet refreshes the catalog on open. */
+const CODEX_CATALOG_STALE_MS = 60 * 60 * 1000;
+const CODEX_AUTO_REFRESH_PROVIDER = "codex";
+
+function isCodexCatalogStale(fetchedAt: string | undefined, now: number): boolean {
+  if (!fetchedAt) return true;
+  const timestamp = Date.parse(fetchedAt);
+  if (Number.isNaN(timestamp)) return true;
+  if (timestamp > now) return true;
+  return now - timestamp >= CODEX_CATALOG_STALE_MS;
 }
 
 function rankModels<T>(items: T[], query: string, fields: (item: T) => string[]): T[] {
@@ -409,7 +421,7 @@ interface ProviderModalBodyProps {
 }
 
 interface ProviderSheetFooterInput {
-  fetchedAtLabel: string | null;
+  fetchedAt: string | null;
   isCompact: boolean;
   modelsRefreshing: boolean;
   t: TFunction;
@@ -419,7 +431,7 @@ interface ProviderSheetFooterInput {
 }
 
 function renderProviderSheetFooter({
-  fetchedAtLabel,
+  fetchedAt,
   isCompact,
   modelsRefreshing,
   t,
@@ -430,16 +442,10 @@ function renderProviderSheetFooter({
   const contentStyle = isCompact ? sheetStyles.compactFooterContent : sheetStyles.footerContent;
   const actionsStyle = isCompact ? sheetStyles.compactFooterActions : sheetStyles.footerActions;
   const buttonStyle = isCompact ? sheetStyles.compactFooterButton : null;
-  const metaStyle = isCompact
-    ? [sheetStyles.footerMeta, sheetStyles.compactFooterMeta]
-    : sheetStyles.footerMeta;
-
   return (
     <View style={contentStyle}>
-      {fetchedAtLabel || !isCompact ? (
-        <Text style={metaStyle} numberOfLines={1}>
-          {fetchedAtLabel ? t("settings.providers.models.updated", { time: fetchedAtLabel }) : ""}
-        </Text>
+      {fetchedAt || !isCompact ? (
+        <ProviderUpdatedLabel fetchedAt={fetchedAt} isCompact={isCompact} />
       ) : null}
       <View style={actionsStyle}>
         <Button
@@ -474,6 +480,25 @@ function renderProviderSheetFooter({
         </Button>
       </View>
     </View>
+  );
+}
+
+function ProviderUpdatedLabel({
+  fetchedAt,
+  isCompact,
+}: {
+  fetchedAt: string | null;
+  isCompact: boolean;
+}) {
+  const { t } = useTranslation();
+  const label = useTimeAgo(fetchedAt ? new Date(fetchedAt) : null);
+  const style = isCompact
+    ? [sheetStyles.footerMeta, sheetStyles.compactFooterMeta]
+    : sheetStyles.footerMeta;
+  return (
+    <Text style={style} numberOfLines={1}>
+      {fetchedAt ? t("settings.providers.models.updated", { time: label }) : ""}
+    </Text>
   );
 }
 
@@ -575,12 +600,20 @@ export function ProviderDiagnosticSheet({
   const { t } = useTranslation();
   const { theme } = useUnistyles();
   const isCompact = useIsCompactFormFactor();
-  const { entries: snapshotEntries, refresh, isRefreshing } = useProvidersSnapshot(serverId);
+  const {
+    entries: snapshotEntries,
+    refresh,
+    isRefreshing,
+    supportsSnapshot,
+  } = useProvidersSnapshot(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
   const [query, setQuery] = useState("");
   const [addSheetOpen, setAddSheetOpen] = useState(false);
   const [diagSheetOpen, setDiagSheetOpen] = useState(false);
   const [deletingModelId, setDeletingModelId] = useState<string | null>(null);
+  const [refreshRequestError, setRefreshRequestError] = useState<string | null>(null);
+  const autoRefreshEvaluatedRef = useRef<string | null>(null);
+  const isConnected = useHostRuntimeIsConnected(serverId);
 
   const providerLabel = resolveProviderLabel(provider, snapshotEntries);
   const providerEntry = useMemo(
@@ -609,23 +642,13 @@ export function ProviderDiagnosticSheet({
   });
   stableDiscoveredRef.current = nextDiscoveredCache;
 
-  const [clockTick, setClockTick] = useState(0);
-  useEffect(() => {
-    if (!visible) return;
-    const id = setInterval(() => setClockTick((tick) => tick + 1), 10_000);
-    return () => clearInterval(id);
-  }, [visible]);
-  const fetchedAtLabel = useMemo(() => {
-    if (!providerEntry?.fetchedAt) return null;
-    void clockTick;
-    return formatTimeAgo(new Date(providerEntry.fetchedAt));
-  }, [providerEntry?.fetchedAt, clockTick]);
-
   useEffect(() => {
     if (!visible) {
       setQuery("");
       setAddSheetOpen(false);
       setDiagSheetOpen(false);
+      setRefreshRequestError(null);
+      autoRefreshEvaluatedRef.current = null;
     }
   }, [visible]);
 
@@ -640,8 +663,43 @@ export function ProviderDiagnosticSheet({
   );
 
   const handleRefreshModels = useCallback(() => {
-    void refresh([provider]);
-  }, [provider, refresh]);
+    setRefreshRequestError(null);
+    refresh([provider]).catch((err) => {
+      setRefreshRequestError(
+        err instanceof Error && err.message
+          ? err.message
+          : t("settings.providers.updateErrorTitle"),
+      );
+    });
+  }, [provider, refresh, t]);
+
+  // Codex model catalogs come from the launched binary, which a login agent updates in the
+  // background, so the catalog can be stale when the sheet opens. Refresh once per open when
+  // the entry is past the staleness threshold; a fresh catalog still consumes the evaluation
+  // so later rerenders, pushes, and clock ticks never re-check.
+  useEffect(() => {
+    if (provider !== CODEX_AUTO_REFRESH_PROVIDER) return;
+    if (!visible) return;
+    const evaluatedKey = `${serverId}:${provider}`;
+    if (autoRefreshEvaluatedRef.current === evaluatedKey) return;
+    if (!isConnected) return;
+    if (!supportsSnapshot) return;
+    if (!providerEntry || !providerEntry.enabled) return;
+    if (modelsRefreshing) return;
+    if (providerEntry.status !== "ready" && providerEntry.status !== "error") return;
+    autoRefreshEvaluatedRef.current = evaluatedKey;
+    if (!isCodexCatalogStale(providerEntry.fetchedAt, Date.now())) return;
+    handleRefreshModels();
+  }, [
+    handleRefreshModels,
+    isConnected,
+    modelsRefreshing,
+    provider,
+    providerEntry,
+    serverId,
+    supportsSnapshot,
+    visible,
+  ]);
 
   const handleOpenAddSheet = useCallback(() => setAddSheetOpen(true), []);
   const handleCloseAddSheet = useCallback(() => setAddSheetOpen(false), []);
@@ -686,7 +744,7 @@ export function ProviderDiagnosticSheet({
         onClose={onClose}
         testID="provider-settings-sheet"
         footer={renderProviderSheetFooter({
-          fetchedAtLabel,
+          fetchedAt: providerEntry?.fetchedAt ?? null,
           isCompact,
           modelsRefreshing,
           t,
@@ -696,6 +754,11 @@ export function ProviderDiagnosticSheet({
         })}
         snapPoints={MAIN_SNAP_POINTS}
       >
+        {refreshRequestError ? (
+          <Text style={sheetStyles.errorText} testID="provider-settings-refresh-error">
+            {refreshRequestError}
+          </Text>
+        ) : null}
         <ProviderModalBody
           discoveredCount={discoveredModels.length}
           additionalCount={additionalModels.length}

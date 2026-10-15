@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { WorkspaceGitWorkflowConfig } from "@getpaseo/protocol/messages";
 import {
   StructuredAgentFallbackError,
   StructuredAgentResponseError,
@@ -44,6 +45,7 @@ export interface StructuredTextGeneration {
 }
 
 export interface StructuredTextGenerationRequest<T> {
+  purpose: "commit" | "pull-request";
   cwd: string;
   prompt: string;
   schema: z.ZodType<T>;
@@ -128,6 +130,7 @@ export function createGitMetadataGenerator(deps: {
           cwd,
           prompt,
           schema: COMMIT_MESSAGE_SCHEMA,
+          purpose: "commit",
           schemaName: "CommitMessage",
           agentTitle: "Commit generator",
         });
@@ -155,6 +158,7 @@ export function createGitMetadataGenerator(deps: {
           cwd,
           prompt,
           schema: PULL_REQUEST_SCHEMA,
+          purpose: "pull-request",
           schemaName: "PullRequest",
           agentTitle: "PR generator",
         });
@@ -176,19 +180,28 @@ export function createGitMetadataGenerator(deps: {
 export function createAgentStructuredTextGeneration(deps: {
   agentManager: AgentManager;
   providerSnapshotManager: Pick<ProviderSnapshotManager, "listProviders">;
-  readDaemonConfig: () => StructuredGenerationDaemonConfig;
+  readDaemonConfig: () => StructuredGenerationDaemonConfig & {
+    workspaceGitWorkflow?: WorkspaceGitWorkflowConfig;
+  };
   getFocusedSelection: (
     cwd: string,
   ) => ResolveStructuredGenerationProvidersOptions["currentSelection"];
 }): StructuredTextGeneration {
   return {
-    async generate({ cwd, prompt, schema, schemaName, agentTitle }) {
-      const providers = await resolveStructuredGenerationProviders({
-        cwd,
-        providerSnapshotManager: deps.providerSnapshotManager,
-        daemonConfig: deps.readDaemonConfig(),
-        currentSelection: deps.getFocusedSelection(cwd),
-      });
+    async generate({ cwd, prompt, schema, schemaName, agentTitle, purpose }) {
+      const daemonConfig = deps.readDaemonConfig();
+      const selection =
+        purpose === "commit"
+          ? daemonConfig.workspaceGitWorkflow?.commitModel
+          : daemonConfig.workspaceGitWorkflow?.prModel;
+      const providers = selection
+        ? [selection]
+        : await resolveStructuredGenerationProviders({
+            cwd,
+            providerSnapshotManager: deps.providerSnapshotManager,
+            daemonConfig,
+            currentSelection: deps.getFocusedSelection(cwd),
+          });
       return generateStructuredAgentResponseWithFallback({
         manager: deps.agentManager,
         cwd,

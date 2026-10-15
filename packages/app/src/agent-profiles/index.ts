@@ -15,6 +15,7 @@
  */
 export type { AgentProfile } from "@getpaseo/protocol/messages";
 export type { MaterializedAgentProfile } from "./internal/materialize-profile";
+export { materializeAgentProfile } from "./internal/materialize-profile";
 export type { AgentProfileSeed } from "./internal/profile-form-model";
 export { useAgentProfileEditor, type AgentProfileEditorControls } from "./agent-profile-editor";
 export { useAgentProfiles } from "./internal/use-agent-profiles";

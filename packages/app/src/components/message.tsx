@@ -1,4 +1,6 @@
+import { ASSISTANT_IMAGE_DEFAULT_ASPECT_RATIO } from "@/utils/assistant-image-metadata";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { Button } from "@/components/ui/button";
 import { TaskListRow } from "@/components/task-list-row";
 import {
   View,
@@ -73,12 +75,14 @@ import { useRevealedText } from "@/hooks/use-revealed-text";
 import { colorMarkdownLinkChildren } from "@/components/markdown/link-children";
 import { createAssistantMarkdownParser } from "@/utils/assistant-markdown-parser";
 import { formatDuration, formatMessageTimestamp } from "@/utils/time";
+import { getTurnDurationLabel } from "./assistant-turn-footer-label";
 import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
 import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-default-environment";
 import { setAssistantMarkdownBlockHeight } from "@/utils/assistant-message-height-estimate";
 import { isRenderProfileEnabled } from "@/utils/render-profiler";
 import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
 import { PlanCard } from "./plan-card";
+import { parseHandoffMessage } from "./handoff-message";
 import { useToolCallSheet } from "./tool-call-sheet";
 import { ToolCallDetailsContent } from "./tool-call-details";
 import {
@@ -107,6 +111,7 @@ import { AssistantForkMenu, type AssistantForkTarget } from "@/components/assist
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import {
   markdownCopyDataSet,
+  markdownCopyImageDataSet,
   markdownCopyOrderedListDataSet,
   markdownCopyTableCellDataSet,
   type MarkdownCopyInlineTag,
@@ -333,8 +338,13 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   },
   content: {
     alignItems: "flex-end",
-    maxWidth: "100%",
+    maxWidth: { xs: "100%", md: "90%" },
     cursor: "auto",
+  },
+  handoffContent: {
+    alignItems: "stretch",
+    maxWidth: "100%",
+    width: "100%",
   },
   containerSpacing: {
     marginBottom: theme.spacing[1],
@@ -346,16 +356,54 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[4],
   },
   bubble: {
-    backgroundColor: theme.colors.surface3,
+    backgroundColor: theme.colors.surfaceUserMessage,
     borderRadius: theme.borderRadius["2xl"],
-    borderTopRightRadius: theme.borderRadius.sm,
+    borderTopRightRadius: theme.borderRadius.userMessageCorner,
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[4],
     minWidth: 0,
     flexShrink: 1,
   },
+  handoffPresentation: {
+    backgroundColor: "transparent",
+    borderWidth: 0,
+    borderRadius: 0,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+  },
+  handoffCopyButton: {
+    alignSelf: "flex-start",
+  },
+  handoffDetails: {
+    gap: theme.spacing[2],
+  },
+  handoffDetailsHeader: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    minHeight: 24,
+  },
+  handoffDetailsChevron: {},
+  handoffDetailsChevronExpanded: {
+    transform: [{ rotate: "90deg" }],
+  },
+  handoffDetailsTitle: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.base,
+  },
+  handoffDetailsBody: {
+    gap: theme.spacing[2],
+  },
+  handoffDetailsText: {
+    color: theme.colors.foregroundMuted,
+    fontFamily: theme.fontFamily.mono,
+    fontSize: theme.fontSize.sm,
+    lineHeight: Math.round(theme.fontSize.sm * 1.4),
+    ...(isWeb ? { overflowWrap: "anywhere" as const } : {}),
+  },
   text: {
-    color: theme.colors.foreground,
+    color: theme.colors.workspace.foreground,
     fontSize: theme.fontSize.content,
     ...(isWeb
       ? {
@@ -421,6 +469,106 @@ function UserMessageImagePill({ image, onOpen, accessibilityLabel }: UserMessage
   );
 }
 
+const MESSAGE_TEXT_DATASET = { messageText: "true" };
+
+function HandoffCopyButton({
+  text,
+  label,
+  testID,
+}: {
+  text: string;
+  label: string;
+  testID?: string;
+}) {
+  const { t } = useTranslation();
+  const [copied, setCopied] = useState(false);
+  const handleCopy = useCallback(async () => {
+    await writeMarkdownToRichClipboard(text, getDefaultMarkdownClipboardEnvironment());
+    setCopied(true);
+  }, [text]);
+
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      leftIcon={copied ? Check : Copy}
+      onPress={handleCopy}
+      accessibilityLabel={copied ? t("message.actions.copied") : label}
+      style={userMessageStylesheet.handoffCopyButton}
+      testID={testID}
+    >
+      {copied ? t("message.actions.copied") : label}
+    </Button>
+  );
+}
+
+function HandoffMessage({ plan, message }: { plan: string; message: string }) {
+  const { t } = useTranslation();
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
+  const accessibilityState = useMemo(() => ({ expanded: detailsExpanded }), [detailsExpanded]);
+  const webExpandedState = useMemo(
+    () => (isWeb ? ({ "aria-expanded": detailsExpanded } as const) : null),
+    [detailsExpanded],
+  );
+  const chevronStyle = useMemo(
+    () => [
+      userMessageStylesheet.handoffDetailsChevron,
+      detailsExpanded && userMessageStylesheet.handoffDetailsChevronExpanded,
+    ],
+    [detailsExpanded],
+  );
+  const toggleDetails = useCallback(() => setDetailsExpanded((value) => !value), []);
+  const copyPlanButton = useMemo(
+    () => <HandoffCopyButton text={plan} label={t("message.handoff.copyPlan")} />,
+    [plan, t],
+  );
+
+  return (
+    <>
+      <PlanCard
+        title={t("message.handoff.planTitle")}
+        text={plan}
+        testID="handoff-plan-card"
+        disableOuterSpacing
+        footer={copyPlanButton}
+      />
+      <View style={userMessageStylesheet.handoffDetails}>
+        <Pressable
+          {...webExpandedState}
+          accessibilityRole="button"
+          accessibilityLabel={t("message.handoff.details")}
+          accessibilityState={accessibilityState}
+          onPress={toggleDetails}
+          style={userMessageStylesheet.handoffDetailsHeader}
+        >
+          <View style={chevronStyle}>
+            <ThemedChevronRightIcon size={16} uniProps={foregroundMutedColorMapping} />
+          </View>
+          <Text style={userMessageStylesheet.handoffDetailsTitle}>
+            {t("message.handoff.details")}
+          </Text>
+        </Pressable>
+        {detailsExpanded ? (
+          <View style={userMessageStylesheet.handoffDetailsBody}>
+            <Text
+              selectable
+              style={userMessageStylesheet.handoffDetailsText}
+              dataSet={MESSAGE_TEXT_DATASET}
+            >
+              {message}
+            </Text>
+            <HandoffCopyButton
+              text={message}
+              label={t("message.actions.copyMessage")}
+              testID="handoff-copy-message"
+            />
+          </View>
+        ) : null}
+      </View>
+    </>
+  );
+}
+
 export const UserMessage = memo(function UserMessage({
   serverId,
   agentId,
@@ -455,6 +603,7 @@ export const UserMessage = memo(function UserMessage({
     [timestamp],
   );
   const rewindMutation = useRewindAgentMutation({ serverId, agentId, client, messageId });
+  const handoff = useMemo(() => parseHandoffMessage(message), [message]);
 
   const handlePointerEnter = useCallback(() => setIsHovered(true), []);
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
@@ -476,6 +625,14 @@ export const UserMessage = memo(function UserMessage({
       ],
     ],
     [resolvedDisableOuterSpacing, isFirstInGroup, isLastInGroup],
+  );
+  const contentStyle = useMemo(
+    () => [userMessageStylesheet.content, handoff && userMessageStylesheet.handoffContent],
+    [handoff],
+  );
+  const bubbleStyle = useMemo(
+    () => [userMessageStylesheet.bubble, handoff && userMessageStylesheet.handoffPresentation],
+    [handoff],
   );
   const imagePreviewContainerStyle = useMemo(
     () => [
@@ -500,15 +657,25 @@ export const UserMessage = memo(function UserMessage({
     ],
     [showTrailingRow],
   );
+  let messageContent: ReactNode = null;
+  if (handoff) {
+    messageContent = <HandoffMessage plan={handoff.plan} message={message} />;
+  } else if (hasText) {
+    messageContent = (
+      <Text selectable style={userMessageStylesheet.text} dataSet={MESSAGE_TEXT_DATASET}>
+        {message}
+      </Text>
+    );
+  }
 
   return (
     <View style={containerStyle} testID="user-message" aria-busy={isPending}>
       <View
-        style={userMessageStylesheet.content}
+        style={contentStyle}
         onPointerEnter={handlePointerEnter}
         onPointerLeave={handlePointerLeave}
       >
-        <View style={userMessageStylesheet.bubble}>
+        <View style={bubbleStyle}>
           {hasImages ? (
             <View style={imagePreviewContainerStyle}>
               {images.map((image) => (
@@ -539,11 +706,7 @@ export const UserMessage = memo(function UserMessage({
               })}
             </View>
           ) : null}
-          {hasText ? (
-            <Text selectable style={userMessageStylesheet.text}>
-              {message}
-            </Text>
-          ) : null}
+          {messageContent}
         </View>
         {hasText ? (
           <View
@@ -625,6 +788,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   durationMs,
   onFork,
 }: AssistantTurnFooterProps) {
+  const { t } = useTranslation();
   const [hovered, setHovered] = useState(false);
   const [pressedReveal, setPressedReveal] = useState(false);
   const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -640,10 +804,8 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
 
   const durationLabel = useMemo(
     () =>
-      durationMs !== undefined && durationMs !== null
-        ? `Worked for ${formatDuration(durationMs)}`
-        : "",
-    [durationMs],
+      durationMs !== undefined && durationMs !== null ? getTurnDurationLabel(durationMs, t) : "",
+    [durationMs, t],
   );
   const timestampLabel = useMemo(
     () => (completedAt ? formatMessageTimestamp(completedAt) : ""),
@@ -746,6 +908,7 @@ export const LiveElapsed = memo(function LiveElapsed({
 });
 
 interface AssistantMessageProps {
+  renderFullContent?: boolean;
   occurrenceKey: string;
   message: string;
   timestamp: number;
@@ -811,8 +974,6 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   },
 }));
 
-const ASSISTANT_IMAGE_MIN_HEIGHT = 160;
-
 function AssistantMarkdownImage({
   source,
   occurrenceKey,
@@ -857,11 +1018,9 @@ function AssistantMarkdownImage({
     [containerStyle],
   );
   const imageSizeStyle = useMemo<ViewStyle>(() => {
-    if (aspectRatio) {
-      return { aspectRatio };
-    }
-    return { height: ASSISTANT_IMAGE_MIN_HEIGHT };
-  }, [aspectRatio]);
+    if (image.status === "failed") return { height: 160 };
+    return { aspectRatio: aspectRatio ?? ASSISTANT_IMAGE_DEFAULT_ASPECT_RATIO };
+  }, [aspectRatio, image.status]);
   const surfaceStyle = useMemo<StyleProp<ViewStyle>>(
     () => [assistantMessageStylesheet.imageSurface, imageSizeStyle],
     [imageSizeStyle],
@@ -879,15 +1038,16 @@ function AssistantMarkdownImage({
     () => [
       assistantMessageStylesheet.imageFrame,
       containerStyle,
-      { height: ASSISTANT_IMAGE_MIN_HEIGHT },
+      imageSizeStyle,
       assistantMessageStylesheet.imageState,
     ],
-    [containerStyle],
+    [containerStyle, imageSizeStyle],
   );
+  const copyDataSet = useMemo(() => markdownCopyImageDataSet(source, alt), [source, alt]);
 
   if (image.status === "failed") {
     return (
-      <View style={stateFrameStyle}>
+      <View style={stateFrameStyle} dataSet={copyDataSet}>
         <Text style={assistantMessageStylesheet.imageErrorText}>{image.message}</Text>
       </View>
     );
@@ -895,14 +1055,14 @@ function AssistantMarkdownImage({
 
   if (!binding) {
     return (
-      <View style={stateFrameStyle}>
+      <View style={stateFrameStyle} dataSet={copyDataSet}>
         <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
       </View>
     );
   }
 
   return (
-    <View style={frameStyle}>
+    <View style={frameStyle} dataSet={copyDataSet}>
       <Pressable
         accessibilityLabel={t("composer.attachments.openImage")}
         accessibilityRole="button"
@@ -1019,7 +1179,7 @@ const turnCopyButtonStylesheet = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
   },
   iconHoveredColor: {
-    color: theme.colors.foreground,
+    color: theme.colors.workspace.foreground,
   },
 }));
 
@@ -1144,10 +1304,10 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   labelActive: {
-    color: theme.colors.foreground,
+    color: theme.colors.workspace.foreground,
   },
   labelLoading: {
-    color: theme.colors.foreground,
+    color: theme.colors.workspace.foreground,
     opacity: 0.72,
   },
   secondaryLabel: {
@@ -1159,7 +1319,7 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
     marginLeft: theme.spacing[2],
   },
   secondaryLabelActive: {
-    color: theme.colors.foreground,
+    color: theme.colors.workspace.foreground,
   },
   shimmerText: {
     color: "transparent",
@@ -1401,6 +1561,7 @@ const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
 }: MemoizedMarkdownBlockProps) {
   return (
     <MarkdownRenderer
+      conversation
       text={text}
       enableHtmlish={false}
       rules={rules}
@@ -1490,6 +1651,7 @@ function MarkdownListView({
 }
 
 export const AssistantMessage = memo(function AssistantMessage({
+  renderFullContent = false,
   occurrenceKey,
   message,
   timestamp: _timestamp,
@@ -1501,10 +1663,17 @@ export const AssistantMessage = memo(function AssistantMessage({
 }: AssistantMessageProps) {
   const { t } = useTranslation();
   const markdownParser = useMemo(createAssistantMarkdownParser, []);
-  const renderedMessage = useMemo(() => capAssistantMessageForRender(message), [message]);
-  // Paint a paced prefix while the turn is streaming so text arrives at a steady
-  // rate instead of in whatever lumps the daemon's coalescing window produced.
-  const revealedMessage = useRevealedText(renderedMessage.text, phase);
+  const streamingMarkdownParser = useMemo(
+    () => createAssistantMarkdownParser({ streaming: true }),
+    [],
+  );
+  const renderedMessage = useMemo(
+    () =>
+      renderFullContent ? { text: message, capped: false } : capAssistantMessageForRender(message),
+    [message, renderFullContent],
+  );
+  const revealedText = useRevealedText(renderedMessage.text, phase);
+  const revealedMessage = renderFullContent ? renderedMessage.text : revealedText;
   const fullMessageByteLength = useMemo(
     () => (renderedMessage.capped && phase === "complete" ? getUtf8ByteLength(message) : null),
     [message, phase, renderedMessage.capped],
@@ -1966,8 +2135,12 @@ export const AssistantMessage = memo(function AssistantMessage({
   const revealDataSet = useMemo(
     () =>
       isRenderProfileEnabled()
-        ? { revealKey: occurrenceKey, revealLength: String(revealedMessage.length) }
-        : undefined,
+        ? {
+            ...MESSAGE_TEXT_DATASET,
+            revealKey: occurrenceKey,
+            revealLength: String(revealedMessage.length),
+          }
+        : MESSAGE_TEXT_DATASET,
     [occurrenceKey, revealedMessage.length],
   );
 
@@ -1982,7 +2155,11 @@ export const AssistantMessage = memo(function AssistantMessage({
           <MemoizedMarkdownBlock
             text={block}
             rules={markdownRules}
-            parser={markdownParser}
+            parser={
+              phase === "streaming" && index === keyedBlocks.length - 1
+                ? streamingMarkdownParser
+                : markdownParser
+            }
             onLinkPress={handleMarkdownLinkPress}
           />
         </AssistantMessageBlockContainer>
@@ -2028,7 +2205,7 @@ const speakMessageStylesheet = StyleSheet.create((theme) => ({
     fontFamily: theme.fontFamily.ui,
     fontSize: theme.fontSize.content,
     lineHeight: Math.round(theme.fontSize.content * 1.4),
-    color: theme.colors.foreground,
+    color: theme.colors.workspace.foreground,
   },
 }));
 
@@ -2099,7 +2276,7 @@ const notificationStylesheet = StyleSheet.create((theme) => ({
     flex: 1,
   },
   messageText: {
-    color: theme.colors.foreground,
+    color: theme.colors.workspace.foreground,
     fontSize: theme.fontSize.base,
     lineHeight: 20,
   },
@@ -3004,6 +3181,7 @@ function areExpandableBadgePropsEqual(previous: ExpandableBadgeProps, next: Expa
 }
 
 interface ToolCallProps {
+  planActions?: ReactNode;
   toolName: string;
   args?: unknown;
   result?: unknown;
@@ -3023,6 +3201,7 @@ interface ToolCallProps {
 }
 
 export const ToolCall = memo(function ToolCall({
+  planActions,
   toolName,
   args,
   result,
@@ -3159,6 +3338,8 @@ export const ToolCall = memo(function ToolCall({
     return (
       <PlanCard
         text={effectiveDetail.text}
+        footer={planActions}
+        outcome={presentation.planOutcome}
         testID="timeline-plan-card"
         disableOuterSpacing={disableOuterSpacing}
       />
@@ -3185,6 +3366,7 @@ export const ToolCall = memo(function ToolCall({
 }, areToolCallPropsEqual);
 
 function areToolCallPropsEqual(previous: ToolCallProps, next: ToolCallProps) {
+  if (previous.planActions !== next.planActions) return false;
   if (previous.toolName !== next.toolName) return false;
   if (previous.args !== next.args) return false;
   if (previous.result !== next.result) return false;

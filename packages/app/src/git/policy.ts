@@ -43,6 +43,160 @@ export interface GitActions {
   menu: GitAction[];
 }
 
+export type WorkspaceWorkflowAction =
+  | "create-pr"
+  | "commit-and-push"
+  | "resolve-conflicts"
+  | "repair-checks"
+  | "merge"
+  | "archive"
+  | "view-pr"
+  | "checking"
+  | "unavailable";
+
+/** The header's delivery CTA. This is intentionally separate from the Changes policy. */
+export interface WorkspaceWorkflowState {
+  action: WorkspaceWorkflowAction;
+  /** A native action used for Merge, Archive, or opening the existing change request. */
+  nativeActionId?: Extract<
+    GitActionId,
+    "pr" | "merge-pr-squash" | "merge-pr-merge" | "merge-pr-rebase" | "archive-workspace"
+  >;
+  reason?:
+    | "not-git"
+    | "status-unavailable"
+    | "base-unavailable"
+    | "branch-unavailable"
+    | "remote-unavailable"
+    | "nothing-to-deliver"
+    | "synchronization-unknown"
+    | "pull-request-blocked";
+}
+
+export interface BuildWorkspaceWorkflowStateInput {
+  isGit: boolean;
+  statusKnown: boolean;
+  statusError: boolean;
+  pullRequestKnown: boolean;
+  pullRequestError: boolean;
+  hasRemote: boolean;
+  baseRefAvailable: boolean;
+  currentBranch: string | null | undefined;
+  hasUncommittedChanges: boolean;
+  aheadCount: number;
+  aheadOfOrigin: number | null;
+  behindOfOrigin: number | null;
+  pullRequestUrl: string | null;
+  pullRequestState: "open" | "closed" | null;
+  pullRequestIsDraft: boolean;
+  pullRequestIsMerged: boolean;
+  /** True when the forge reports an aggregated failing checks status for the PR. */
+  pullRequestChecksFailed: boolean;
+  pullRequestMergeable: PullRequestMergeable;
+  mergeActionId: WorkspaceWorkflowState["nativeActionId"];
+  archiveAvailable: boolean;
+}
+
+export function buildWorkspaceWorkflowState(
+  input: BuildWorkspaceWorkflowStateInput,
+): WorkspaceWorkflowState {
+  if (!input.isGit) return { action: "unavailable", reason: "not-git" };
+  if (!input.statusKnown || input.statusError || input.pullRequestError) {
+    return { action: "checking", reason: "status-unavailable" };
+  }
+  if (!input.pullRequestKnown) return { action: "checking", reason: "status-unavailable" };
+
+  if (
+    input.pullRequestUrl &&
+    input.pullRequestState === "open" &&
+    !input.pullRequestIsMerged &&
+    input.pullRequestMergeable === "CONFLICTING"
+  ) {
+    return { action: "resolve-conflicts" };
+  }
+
+  const hasPullRequest = input.pullRequestUrl !== null;
+  return resolveDeliveredPullRequestState(input, hasPullRequest);
+}
+
+function resolveDeliveredPullRequestState(
+  input: BuildWorkspaceWorkflowStateInput,
+  hasPullRequest: boolean,
+): WorkspaceWorkflowState {
+  if (hasPullRequest && input.pullRequestIsMerged) return resolveMergedPullRequestState(input);
+  if (hasPullRequest && input.pullRequestState === "closed") {
+    return { action: "view-pr", nativeActionId: "pr" };
+  }
+  if (!hasPullRequest) return resolveNoPullRequestState(input);
+  return resolveOpenPullRequestState(input);
+}
+
+function resolveMergedPullRequestState(
+  input: BuildWorkspaceWorkflowStateInput,
+): WorkspaceWorkflowState {
+  if (input.hasUncommittedChanges || input.aheadCount > 0) return { action: "create-pr" };
+  if (input.aheadOfOrigin !== 0) return { action: "checking", reason: "synchronization-unknown" };
+  return input.archiveAvailable
+    ? { action: "archive", nativeActionId: "archive-workspace" }
+    : { action: "unavailable", reason: "pull-request-blocked" };
+}
+
+function resolveNoPullRequestState(
+  input: BuildWorkspaceWorkflowStateInput,
+): WorkspaceWorkflowState {
+  if (!input.baseRefAvailable) return { action: "unavailable", reason: "base-unavailable" };
+  if (!input.currentBranch || input.currentBranch === "HEAD") {
+    return { action: "unavailable", reason: "branch-unavailable" };
+  }
+  if (!input.hasRemote) return { action: "unavailable", reason: "remote-unavailable" };
+  return input.hasUncommittedChanges || input.aheadCount > 0
+    ? { action: "create-pr" }
+    : { action: "unavailable", reason: "nothing-to-deliver" };
+}
+
+function resolveOpenPullRequestState(
+  input: BuildWorkspaceWorkflowStateInput,
+): WorkspaceWorkflowState {
+  if (!input.baseRefAvailable) return { action: "unavailable", reason: "base-unavailable" };
+  if (!input.currentBranch || input.currentBranch === "HEAD") {
+    return { action: "unavailable", reason: "branch-unavailable" };
+  }
+  if (!input.hasRemote) return { action: "unavailable", reason: "remote-unavailable" };
+  if (input.hasUncommittedChanges || (input.aheadOfOrigin !== null && input.aheadOfOrigin > 0)) {
+    return { action: "commit-and-push" };
+  }
+  if (input.aheadOfOrigin === null || input.behindOfOrigin === null) {
+    return { action: "checking", reason: "synchronization-unknown" };
+  }
+  // Failing checks are only actionable on a clean, synchronized branch. Local
+  // work to deliver and unknown synchronization are resolved above, and a ready
+  // merge is impossible while checks fail, so this only fires for blocked PRs.
+  if (isRepairChecksActionable(input)) {
+    return { action: "repair-checks", nativeActionId: "pr" };
+  }
+  if (
+    input.aheadOfOrigin === 0 &&
+    input.behindOfOrigin === 0 &&
+    !input.pullRequestIsDraft &&
+    input.pullRequestState === "open" &&
+    input.mergeActionId &&
+    input.mergeActionId !== "pr"
+  ) {
+    return { action: "merge", nativeActionId: input.mergeActionId };
+  }
+  return { action: "view-pr", nativeActionId: "pr", reason: "pull-request-blocked" };
+}
+
+function isRepairChecksActionable(input: BuildWorkspaceWorkflowStateInput): boolean {
+  return (
+    input.aheadOfOrigin === 0 &&
+    input.behindOfOrigin === 0 &&
+    !input.pullRequestIsDraft &&
+    input.pullRequestState === "open" &&
+    input.pullRequestChecksFailed
+  );
+}
+
 interface GitActionRuntimeState {
   disabled: boolean;
   status: ActionStatus;

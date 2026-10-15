@@ -11,6 +11,7 @@ import { browserToolsFailure, type BrowserToolsResponsePayload } from "./errors.
 
 export interface BrowserHostClient {
   id: string;
+  reconnectKey?: string;
   hostKind: string;
   supportedCommands: readonly BrowserAutomationCommandName[];
   sendBrowserAutomationRequest(request: BrowserAutomationExecuteRequest): void | Promise<void>;
@@ -51,7 +52,10 @@ export class BrowserToolsBroker {
   private readonly clients = new Map<string, RegisteredBrowserHost>();
   private readonly pending = new Map<string, PendingBrowserToolsRequest>();
   private readonly browserHostByBrowserId = new Map<string, string>();
-  private readonly strandedBrowserHostByBrowserId = new Map<string, string>();
+  private readonly strandedBrowserHostByBrowserId = new Map<
+    string,
+    { ownerId: string; reconnectKey?: string }
+  >();
   private registrationSequence = 0;
 
   public constructor(options: BrowserToolsBrokerOptions) {
@@ -61,6 +65,21 @@ export class BrowserToolsBroker {
 
   public registerClient(client: BrowserHostClient): () => void {
     this.unregisterClient(client.id);
+    // Delivery remains source-owned; only an unambiguous admitted identity can reclaim affinity.
+    if (
+      client.reconnectKey &&
+      ![...this.clients.values()].some((host) => host.client.reconnectKey === client.reconnectKey)
+    ) {
+      const stranded = [...this.strandedBrowserHostByBrowserId].filter(
+        ([, owner]) => owner.reconnectKey === client.reconnectKey,
+      );
+      if (new Set(stranded.map(([, owner]) => owner.ownerId)).size === 1) {
+        for (const [browserId] of stranded) {
+          this.browserHostByBrowserId.set(browserId, client.id);
+          this.strandedBrowserHostByBrowserId.delete(browserId);
+        }
+      }
+    }
     const registeredAt = ++this.registrationSequence;
     this.clients.set(client.id, {
       client,
@@ -82,7 +101,10 @@ export class BrowserToolsBroker {
         continue;
       }
       this.browserHostByBrowserId.delete(browserId);
-      this.strandedBrowserHostByBrowserId.set(browserId, clientId);
+      this.strandedBrowserHostByBrowserId.set(browserId, {
+        ownerId: clientId,
+        reconnectKey: current.client.reconnectKey,
+      });
     }
 
     for (const [requestId, pending] of this.pending) {
@@ -297,7 +319,7 @@ export class BrowserToolsBroker {
       };
     }
 
-    const strandedOwnerClientId = this.strandedBrowserHostByBrowserId.get(browserId);
+    const strandedOwnerClientId = this.strandedBrowserHostByBrowserId.get(browserId)?.ownerId;
     if (strandedOwnerClientId) {
       const reconnectedHost = this.clients.get(strandedOwnerClientId);
       if (reconnectedHost) {

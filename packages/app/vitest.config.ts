@@ -1,4 +1,5 @@
 import { defineConfig, configDefaults } from "vitest/config";
+import { transformWithEsbuild } from "vite";
 import { playwright } from "@vitest/browser-playwright";
 import path from "path";
 import fs from "fs";
@@ -13,6 +14,17 @@ const resolvePackageEntry = (packageName: string) => {
 };
 
 export default defineConfig({
+  plugins: [
+    {
+      name: "native-jsx",
+      enforce: "pre",
+      async transform(code, id) {
+        if (/node_modules\/(react-native-markdown-display|expo-clipboard)\/.*\.js$/.test(id)) {
+          return transformWithEsbuild(code, id, { loader: "jsx" });
+        }
+      },
+    },
+  ],
   test: {
     environment: "node",
     exclude: [...configDefaults.exclude, "e2e/**"],
@@ -56,17 +68,34 @@ export default defineConfig({
     server: {
       deps: {
         fallbackCJS: true,
-        inline: ["zustand", "@tanstack/react-query", "react-native-web"],
+        inline: [
+          "zustand",
+          "@tanstack/react-query",
+          "react-native-web",
+          "react-native-gesture-handler",
+          "react-native-keyboard-controller",
+        ],
       },
     },
   },
-  // Reanimated ships one file per platform and picks between them by extension
-  // (`findHostInstance.web.js`). Vite's dependency optimizer does not apply `resolve.extensions`,
+  // Reanimated and gesture-handler pick platform files by extension
+  // (e.g. `GestureHandlerRootView.web.js`). Vite's optimizer does not apply `resolve.extensions`,
   // so it scans the native files and dies on imports react-native-web has no answer for.
   // Unbundled, the same imports go through the resolver below and land on the web files.
   optimizeDeps: {
-    include: ["react/jsx-runtime"],
-    exclude: ["react-native-reanimated"],
+    // Bundle the CJS dependencies of the excluded gesture-handler package for the browser.
+    include: [
+      "react/jsx-runtime",
+      "@gorhom/portal",
+      "react-native-gesture-handler > hoist-non-react-statics",
+      "react-native-gesture-handler > invariant",
+    ],
+    exclude: [
+      "react-native-reanimated",
+      "@floating-ui/react-native",
+      "react-native-gesture-handler",
+      "react-native-keyboard-controller",
+    ],
   },
   // The globals a React Native bundler defines, which esbuild is no longer there to supply for
   // the package excluded above.
@@ -92,6 +121,12 @@ export default defineConfig({
       ".json",
     ],
     alias: [
+      // Its CommonJS build requires native React Native directly, bypassing Vite's web alias.
+      // Image layout is covered by the real Electron harness.
+      {
+        find: /^react-native-fit-image$/,
+        replacement: path.resolve(__dirname, "test-stubs/react-native-fit-image.ts"),
+      },
       {
         find: /^@getpaseo\/relay\/e2ee$/,
         replacement: path.resolve(__dirname, "../relay/src/e2ee.ts"),
@@ -101,6 +136,22 @@ export default defineConfig({
         replacement: path.resolve(__dirname, "../relay/src/index.ts"),
       },
       { find: "@", replacement: path.resolve(__dirname, "src") },
+      // Keep keyboard-controller's imports in Vite so native aliases and platform extensions apply.
+      {
+        find: /^react-native-keyboard-controller$/,
+        replacement: path.resolve(
+          resolvePackageEntry("react-native-keyboard-controller"),
+          "lib/module/index.js",
+        ),
+      },
+      // The CJS entry bypasses Vite's React Native alias and web-extension resolution.
+      {
+        find: /^react-native-gesture-handler$/,
+        replacement: path.resolve(
+          rootNodeModules,
+          "react-native-gesture-handler/lib/module/index.js",
+        ),
+      },
       // Must precede the `react-native` alias: a string `find` matches by prefix, so this subpath
       // would otherwise resolve inside a react-native-web *file* and break the dependency scan.
       // Reanimated only imports it on the native path, which no test takes.
@@ -153,6 +204,12 @@ export default defineConfig({
       {
         find: /^expo-linking$/,
         replacement: path.resolve(__dirname, "test-stubs/expo-linking.ts"),
+      },
+      // No Node implementation: every call on the real module rejects, so a test
+      // touching a persisted store drowns in unhandled rejections.
+      {
+        find: /^@react-native-async-storage\/async-storage$/,
+        replacement: path.resolve(__dirname, "test-stubs/async-storage.ts"),
       },
       {
         find: /^lucide-react-native$/,

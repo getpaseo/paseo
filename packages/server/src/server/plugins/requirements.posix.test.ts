@@ -57,47 +57,48 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-it("rejects incompatible installs without persisting them, then accepts the corrected manifest", async () => {
+it("installs plugins whose declared range excludes the daemon version", async () => {
   const root = await directory();
-  await writePlugin(root, ">=0.9.0");
-  const { service, store } = await host();
-  await expect(service.installDirectory({ path: root })).rejects.toThrow("Your daemon is 0.8.0");
-  expect(store.get().plugins).toEqual({});
-  expect(service.catalog()).toEqual([]);
   await writePlugin(root, "^0.8.0");
+  const { service, store } = await host("0.11.1");
   await expect(service.installDirectory({ path: root })).resolves.toMatchObject({
     status: "running",
   });
-  expect(service.catalog()).toEqual([
-    { id: "example", requirements: { paseo: "^0.8.0" }, clientBundle: expect.any(String) },
-  ]);
+  expect(store.get().plugins.example?.enabled).toBe(true);
+  expect(service.catalog()).toHaveLength(1);
 });
 
-it("marks pre-0.8 plugins failed on startup and recovers after migration and reload", async () => {
+it("starts, activates, and reloads plugins with missing or future requirements", async () => {
   const root = await directory();
   await writePlugin(root);
-  const { service } = await host("0.8.0", root);
-  expect(service.listPlugins()).toEqual([
-    expect.objectContaining({
-      status: "failed",
-      error: expect.stringContaining("https://paseo.sh/docs/plugins/v0.8/migration"),
-    }),
-  ]);
-  await writePlugin(root, ">=0.8.0");
+  const { service } = await host("0.11.1", root);
+  expect(await service.listPlugins()).toEqual([expect.objectContaining({ status: "running" })]);
+  await writePlugin(root, ">=99.0.0-beta.1");
   await expect(service.reloadPlugin("example")).resolves.toMatchObject({ status: "running" });
-  await writePlugin(root, ">=0.9.0");
-  await expect(service.reloadPlugin("example")).rejects.toThrow("requires Paseo >=0.9.0");
+  await service.disablePlugin("example");
+  await expect(service.enablePlugin("example")).resolves.toMatchObject({ status: "running" });
+  expect(service.catalog()).toHaveLength(1);
+});
+
+it("rejects malformed requirements without persisting an installation", async () => {
+  const root = await directory();
+  await writePlugin(root, "not-semver");
+  const { service, store } = await host("0.11.1");
+  await expect(service.installDirectory({ path: root })).rejects.toThrow(
+    "Invalid requirements.paseo",
+  );
+  expect(store.get().plugins).toEqual({});
   expect(service.catalog()).toEqual([]);
 });
 
-it("still requires entry migration when an old plugin adds a compatible requirement", async () => {
+it("still rejects legacy plugins without a runtime entry", async () => {
   const root = await directory();
-  await writePlugin(root, ">=0.8.0");
+  await writePlugin(root, "^0.8.0");
   await rm(path.join(root, "index.client.ts"));
   await writeFile(path.join(root, "index.ts"), "export default () => () => {};");
-  const { service } = await host();
+  const { service } = await host("0.11.1");
   await expect(service.installDirectory({ path: root })).rejects.toThrow(
-    "https://paseo.sh/docs/plugins/v0.8/migration",
+    "cannot run on Paseo v0.8",
   );
 });
 
@@ -116,18 +117,18 @@ it("rejects Git install and update before build commands, preserving the running
   const source = pathToFileURL(repository).href;
   const installed = await service.installSource({ source });
   const marker = path.join(home, "build-executed");
-  await writePlugin(repository, ">=0.9.0", [
-    [process.execPath, "-e", 'require("node:fs").writeFileSync(process.argv[1], "ran")', marker],
-  ]);
+  await writePlugin(repository, ">=99.0.0", [[process.execPath, "-e", "process.exit(1)"]]);
   await commit();
-  await expect(service.updateSources("example")).rejects.toThrow("requires Paseo >=0.9.0");
-  expect(service.listPlugins()).toEqual([installed]);
+  const [preview] = await service.previewUpdates({ pluginId: "example" });
+  expect(preview).toMatchObject({ outcome: "update" });
+  await expect(service.applyUpdates([preview!.proposal!])).resolves.toMatchObject([
+    { id: "example", outcome: "error" },
+  ]);
+  expect(await service.listPlugins()).toEqual([installed]);
   expect(service.catalog()).toHaveLength(1);
   expect(await readdir(path.join(home, "plugins", ".staging"))).toEqual([]);
   await expect(readFile(marker)).rejects.toMatchObject({ code: "ENOENT" });
-  await expect(service.installSource({ source, id: "second" })).rejects.toThrow(
-    "requires Paseo >=0.9.0",
-  );
+  await expect(service.installSource({ source, id: "second" })).rejects.toThrow();
   await expect(readFile(marker)).rejects.toMatchObject({ code: "ENOENT" });
-  expect(service.listPlugins()).toEqual([installed]);
+  expect(await service.listPlugins()).toEqual([installed]);
 });

@@ -71,6 +71,7 @@ export function buildDraftAgentSetup(agent: Agent): WorkspaceDraftTabSetup {
   }
 
   return {
+    modelRouting: "manual",
     provider: agent.provider,
     cwd: agent.cwd,
     modeId: agent.currentModeId ?? agent.runtimeInfo?.modeId ?? null,

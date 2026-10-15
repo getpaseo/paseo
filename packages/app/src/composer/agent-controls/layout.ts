@@ -18,10 +18,10 @@ export interface ComposerControlPresentation {
 }
 
 export const COMPOSER_TOOLBAR_GEOMETRY = {
-  controlSize: 28,
+  controlSize: 24,
   controlGap: 4,
   iconLabelGap: 4,
-  labelPadding: 8,
+  labelPadding: 4,
   caretSize: 14,
 } as const;
 
@@ -107,7 +107,7 @@ export function resolveComposerControlPresentation(
 ): ComposerControlPresentation {
   if (density === "full") {
     return {
-      showCarets: true,
+      showCarets: false,
       showThinkingLabel: true,
       showModeLabel: true,
       aggregateFeatures: false,

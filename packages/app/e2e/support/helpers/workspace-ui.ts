@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { expect, type Page } from "@playwright/test";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { gotoHome } from "./app";
@@ -78,12 +79,21 @@ export async function waitForWorkspaceInSidebar(
 
 export async function expectWorkspaceHeader(
   page: Page,
-  input: { title: string; subtitle: string },
+  input: { title: string; subtitle: string; directory: string },
 ): Promise<void> {
-  const titleLocator = page.getByTestId("workspace-header-title").filter({ visible: true });
+  const git = spawnSync("git", ["branch", "--show-current"], {
+    cwd: input.directory,
+    encoding: "utf8",
+  });
+  const branch = git.status === 0 ? git.stdout.trim() : "";
+  const isWide = (page.viewportSize()?.width ?? 1280) >= 720;
+  const showsBranch = isWide && branch.length > 0;
+  const titleId = showsBranch ? "workspace-header-branch" : "workspace-header-title";
+  const title = showsBranch ? branch : input.title;
+  const titleLocator = page.getByTestId(titleId).filter({ visible: true });
   const subtitleLocator = page.getByTestId("workspace-header-subtitle").filter({ visible: true });
 
-  await expect(titleLocator.first()).toHaveText(input.title, {
+  await expect(titleLocator.first()).toHaveText(title, {
     timeout: 30_000,
   });
   await expect(subtitleLocator.first()).toHaveText(input.subtitle, {
@@ -95,21 +105,64 @@ export async function expectReconnectingToastVisible(
   page: Page,
   options?: { timeout?: number },
 ): Promise<void> {
-  const toast = page.getByTestId("agent-reconnecting-toast");
+  const toast = page.getByRole("alert").filter({ hasText: "Reconnecting to host" });
   await expect(toast).toBeVisible({
     timeout: options?.timeout ?? 30_000,
   });
-  await expect(toast).toHaveText("Reconnecting");
-  await expect(toast.getByTestId("agent-reconnecting-status-dot")).toBeVisible();
+  await expect(toast).toHaveText("Reconnecting to host");
 }
 
 export async function expectReconnectingToastGone(
   page: Page,
   options?: { timeout?: number },
 ): Promise<void> {
-  await expect(page.getByTestId("agent-reconnecting-toast")).toHaveCount(0, {
+  await expect(page.getByRole("alert").filter({ hasText: "Reconnecting to host" })).toHaveCount(0, {
     timeout: options?.timeout ?? 30_000,
   });
+}
+
+declare global {
+  interface Window {
+    __shownPanelToasts?: string[];
+  }
+}
+
+export interface PanelToastLog {
+  /** Test ids of every toast that entered the DOM since recording started, in order. */
+  shown(): Promise<string[]>;
+  expectNeverShown(testId: string): Promise<void>;
+}
+
+/**
+ * Record every toast that enters the DOM from the next navigation onward. A toast can appear
+ * and disappear within a few frames, so a settled `toHaveCount(0)` cannot prove one never showed.
+ */
+export async function recordPanelToasts(page: Page): Promise<PanelToastLog> {
+  await page.addInitScript(() => {
+    const shown: string[] = [];
+    window.__shownPanelToasts = shown;
+    const record = (node: Element) => {
+      if (node.getAttribute("role") !== "alert") return;
+      shown.push(node.getAttribute("data-testid") ?? "");
+    };
+    new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          if (!(node instanceof Element)) continue;
+          record(node);
+          for (const descendant of node.querySelectorAll('[role="alert"]')) record(descendant);
+        }
+      }
+    }).observe(document, { childList: true, subtree: true });
+  });
+
+  const shown = () => page.evaluate(() => window.__shownPanelToasts ?? []);
+  return {
+    shown,
+    async expectNeverShown(testId: string): Promise<void> {
+      expect(await shown()).not.toContain(testId);
+    },
+  };
 }
 
 export async function expectHostConnectingOrOffline(
@@ -127,6 +180,7 @@ export async function expectMenuButtonVisible(page: Page): Promise<void> {
 
 export async function expectWorkspaceHeaderAbsent(page: Page): Promise<void> {
   await expect(page.getByTestId("workspace-header-title")).toHaveCount(0);
+  await expect(page.getByTestId("workspace-header-branch")).toHaveCount(0);
 }
 
 export function workspaceDeckEntryLocator(page: Page, serverId: string, workspaceId: string) {

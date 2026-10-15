@@ -90,6 +90,38 @@ async function extractTarArchive(
   });
 }
 
+interface SherpaOnnxModelPaths {
+  modelDir: string;
+  archivePath: string;
+  extractionDir: string;
+}
+
+function getSherpaOnnxModelPaths(
+  modelsDir: string,
+  modelId: SherpaOnnxModelId,
+): SherpaOnnxModelPaths {
+  const spec = getSherpaOnnxModelSpec(modelId);
+  const downloadsDir = path.join(modelsDir, ".downloads");
+  return {
+    modelDir: path.join(modelsDir, spec.extractedDir),
+    archivePath: path.join(downloadsDir, path.basename(new URL(spec.archiveUrl).pathname)),
+    extractionDir: path.join(downloadsDir, `${spec.extractedDir}.extracting`),
+  };
+}
+
+// The archive is removed only as its model moves into place, so a model whose archive is
+// still in .downloads did not finish installing and may hold truncated files.
+export async function isSherpaOnnxModelInstalled(
+  modelsDir: string,
+  modelId: SherpaOnnxModelId,
+): Promise<boolean> {
+  const spec = getSherpaOnnxModelSpec(modelId);
+  const { modelDir, archivePath } = getSherpaOnnxModelPaths(modelsDir, modelId);
+  return (
+    !(await isNonEmptyFile(archivePath)) && (await hasRequiredFiles(modelDir, spec.requiredFiles))
+  );
+}
+
 async function isNonEmptyFile(filePath: string): Promise<boolean> {
   try {
     const s = await stat(filePath);
@@ -110,18 +142,17 @@ export async function ensureSherpaOnnxModel(
   });
 
   const spec = getSherpaOnnxModelSpec(options.modelId);
-  const modelDir = path.join(options.modelsDir, spec.extractedDir);
-  if (await hasRequiredFiles(modelDir, spec.requiredFiles)) {
+  const { modelDir, archivePath, extractionDir } = getSherpaOnnxModelPaths(
+    options.modelsDir,
+    options.modelId,
+  );
+  if (await isSherpaOnnxModelInstalled(options.modelsDir, options.modelId)) {
     return modelDir;
   }
 
   logger.info({ modelsDir: options.modelsDir }, "Starting model download");
 
   try {
-    const downloadsDir = path.join(options.modelsDir, ".downloads");
-    const archiveFilename = path.basename(new URL(spec.archiveUrl).pathname);
-    const archivePath = path.join(downloadsDir, archiveFilename);
-
     if (!(await isNonEmptyFile(archivePath))) {
       await downloadToFile({
         url: spec.archiveUrl,
@@ -138,32 +169,40 @@ export async function ensureSherpaOnnxModel(
       },
       "Extracting model archive",
     );
-    await extractTarArchive(archivePath, options.modelsDir, options.signal);
-
-    logger.info(
-      {
-        modelId: options.modelId,
-        modelDir,
-      },
-      "Verifying downloaded model files",
-    );
-    if (!(await hasRequiredFiles(modelDir, spec.requiredFiles))) {
-      throw new Error(
-        `Downloaded and extracted ${archiveFilename}, but required files are still missing in ${modelDir}.`,
-      );
-    }
-
-    logger.info(
-      {
-        modelId: options.modelId,
-        archivePath,
-      },
-      "Finalizing model artifacts",
-    );
+    // Extract beside the archive and move into place once complete, so an interrupted
+    // extraction never leaves partial files at modelDir.
+    await rm(extractionDir, { recursive: true, force: true });
     try {
-      await rm(archivePath, { force: true });
-    } catch {
-      // ignore
+      await extractTarArchive(archivePath, extractionDir, options.signal);
+      const extractedModelDir = path.join(extractionDir, spec.extractedDir);
+
+      logger.info(
+        {
+          modelId: options.modelId,
+          modelDir,
+        },
+        "Verifying downloaded model files",
+      );
+      if (!(await hasRequiredFiles(extractedModelDir, spec.requiredFiles))) {
+        throw new Error(
+          `Downloaded and extracted ${path.basename(archivePath)}, but required files are missing.`,
+        );
+      }
+
+      logger.info(
+        {
+          modelId: options.modelId,
+          archivePath,
+        },
+        "Finalizing model artifacts",
+      );
+      // A retained archive marks the model as not installed, so remove it before the model
+      // is moved into place. If removal fails, nothing at modelDir looks installed.
+      await rm(modelDir, { recursive: true, force: true });
+      await rm(archivePath, { force: true, maxRetries: 3 });
+      await rename(extractedModelDir, modelDir);
+    } finally {
+      await rm(extractionDir, { recursive: true, force: true });
     }
 
     logger.info({ modelDir }, "Model download completed");

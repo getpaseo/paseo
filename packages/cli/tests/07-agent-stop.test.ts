@@ -19,6 +19,7 @@
 
 import assert from "node:assert";
 import { getAvailablePort } from "./helpers/network.ts";
+import { runPaseoCli, startTestDaemon } from "./helpers/test-daemon.ts";
 import { $ } from "zx";
 import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
@@ -128,6 +129,28 @@ try {
     assert(!output.includes("unknown option"), "should accept -q flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
     console.log("✓ -q (quiet) flag is accepted with stop\n");
+  }
+
+  {
+    console.log("Test 9: stop reports AGENT_NOT_FOUND for an unknown ID");
+    const daemon = await startTestDaemon();
+    try {
+      const result = await runPaseoCli(daemon, [
+        "agent",
+        "stop",
+        "does-not-exist",
+        "--host",
+        `127.0.0.1:${daemon.port}`,
+        "--json",
+      ]);
+      assert.notStrictEqual(result.exitCode, 0, "stop should fail for an unknown ID");
+      const { error } = JSON.parse(result.stderr);
+      assert.strictEqual(error.code, "AGENT_NOT_FOUND", result.stderr);
+      assert.match(error.details, /paseo ls/);
+    } finally {
+      await daemon.stop();
+    }
+    console.log("✓ stop reports AGENT_NOT_FOUND for an unknown ID\n");
   }
 } finally {
   // Clean up temp directory

@@ -1,3 +1,4 @@
+import { registerAgentWidget } from "./features/agent-widget/index.js";
 process.emitWarning = (() => {}) as typeof process.emitWarning;
 
 import log from "electron-log/main";
@@ -49,7 +50,7 @@ import {
   registerNotificationHandlers,
   ensureNotificationCenterRegistration,
 } from "./features/notifications.js";
-import { createExternalUrlOpener } from "./features/opener.js";
+import { createDirectoryOpener, createExternalUrlOpener } from "./features/opener.js";
 import { createBrowserCaptureService } from "./features/browser-capture.js";
 import { registerEditorTargetHandlers } from "./features/editor-targets/ipc.js";
 import { resolveAppIconPath } from "./features/stamped-icon.js";
@@ -106,18 +107,31 @@ import {
   type AgentDeepLinkTarget,
 } from "@getpaseo/protocol/agent-deep-link";
 import { AgentNavigationInbox, parseAgentDeepLinkFromArgv } from "./agent-navigation.js";
+import {
+  findAgentSessionJumpInArgv,
+  isAgentSessionJump,
+  resolveAgentSessionJump,
+} from "./agent-session-jump.js";
+import { readLocalBuildId, registerLocalUpdate } from "./features/local-update.js";
+import { readDesktopBuildInfo } from "./desktop-build-info.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "paseo";
 const PASEO_DEBUG = process.env.PASEO_DEBUG === "1";
 const DISABLE_SINGLE_INSTANCE_LOCK = process.env.PASEO_DISABLE_SINGLE_INSTANCE_LOCK === "1";
-const APP_NAME = process.env.PASEO_TEST_APP_NAME?.trim() || "Paseo";
+const DESKTOP_BUILD_INFO = readDesktopBuildInfo(app.getAppPath());
+const LOCAL_BUILD_ID = DESKTOP_BUILD_INFO.autoUpdateEnabled
+  ? null
+  : readLocalBuildId(app.getAppPath());
+let localUpdate: ReturnType<typeof registerLocalUpdate> | null = null;
+const APP_NAME = process.env.PASEO_TEST_APP_NAME?.trim() || DESKTOP_BUILD_INFO.appName;
 const DESKTOP_WINDOW_CHROME_MODE = resolveDesktopWindowChromeMode({
   platform: process.platform,
   override: process.env.PASEO_DESKTOP_WINDOW_CONTROLS,
   isPackaged: app.isPackaged,
 });
 const UPDATE_QUIT_DEADLINE_MS = 5_000;
+let agentWidget: ReturnType<typeof registerAgentWidget> | null = null;
 const pendingBrowserWindowOpenRequests = new PendingBrowserWindowOpenRequests();
 const agentNavigationInbox = new AgentNavigationInbox();
 
@@ -357,6 +371,8 @@ let pendingOpenProjectPath = parseOpenProjectPathFromArgv({
   isDefaultApp: process.defaultApp,
 });
 let pendingAgentNavigation = parseAgentDeepLinkFromArgv(process.argv);
+let pendingAgentSessionJump = findAgentSessionJumpInArgv(process.argv);
+let agentSessionJumpSequence = 0;
 
 // Each window pulls its own pending open-project path on mount, keyed by
 // webContents id, so deep-linked windows (second-instance launches, the
@@ -699,7 +715,10 @@ async function createWindow(
     }),
     webPreferences: {
       preload: getPreloadPath(),
-      additionalArguments: [windowChromeModeArgument(DESKTOP_WINDOW_CHROME_MODE)],
+      additionalArguments: [
+        windowChromeModeArgument(DESKTOP_WINDOW_CHROME_MODE),
+        `--paseo-build-id=${LOCAL_BUILD_ID ?? ""}`,
+      ],
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: true,
@@ -707,6 +726,8 @@ async function createWindow(
   });
   applyDesktopWindowChromeMode({ win: mainWindow, mode: DESKTOP_WINDOW_CHROME_MODE });
 
+  localUpdate?.attach(mainWindow);
+  agentWidget?.attach(mainWindow);
   const webContentsId = mainWindow.webContents.id;
   options.onCreated?.(webContentsId);
   mainWindow.webContents.on("did-start-navigation", (_event, _url, isSameDocument, isMainFrame) => {
@@ -814,10 +835,13 @@ desktopWindowOwner = createDesktopWindowOwner<AgentDeepLinkTarget>({
     });
     return ownedDesktopWindow(win);
   },
-  windows: () => BrowserWindow.getAllWindows().map(ownedDesktopWindow),
+  windows: () =>
+    BrowserWindow.getAllWindows()
+      .filter((win) => !agentWidget?.isWindow(win))
+      .map(ownedDesktopWindow),
   focusedWindow: () => {
     const win = BrowserWindow.getFocusedWindow();
-    if (!win) return null;
+    if (!win || agentWidget?.isWindow(win)) return null;
     return ownedDesktopWindow(win);
   },
   agentRoute: buildAgentDeepLinkRoute,
@@ -829,12 +853,7 @@ desktopWindowOwner = createDesktopWindowOwner<AgentDeepLinkTarget>({
 // App lifecycle
 // ---------------------------------------------------------------------------
 
-function receiveAgentDeepLink(input: string): void {
-  const target = parseAgentDeepLink(input);
-  if (!target) {
-    return;
-  }
-
+function receiveAgentNavigation(target: AgentDeepLinkTarget): void {
   if (bootstrapIsComplete) {
     void desktopWindowOwner
       .openOrFocusAgent(target)
@@ -853,6 +872,28 @@ function receiveAgentDeepLink(input: string): void {
       .catch((error) => log.error("[window] failed to route queued agent link", error));
     return undefined;
   });
+}
+
+function receiveAgentDeepLink(input: string): void {
+  const target = parseAgentDeepLink(input);
+  if (target) {
+    agentSessionJumpSequence += 1;
+    receiveAgentNavigation(target);
+    return;
+  }
+  if (!isAgentSessionJump(input)) return;
+
+  const sequence = ++agentSessionJumpSequence;
+  void resolveAgentSessionJump(input)
+    .then((sessionTarget) => {
+      if (!sessionTarget || sequence !== agentSessionJumpSequence) return undefined;
+      receiveAgentNavigation(sessionTarget);
+      return undefined;
+    })
+    .catch((error) => {
+      log.error("[window] failed to resolve agent session link", error);
+      return undefined;
+    });
 }
 
 app.on("open-url", (event, url) => {
@@ -875,9 +916,16 @@ function setupSingleInstanceLock(): boolean {
   app.on("second-instance", (_event, commandLine) => {
     const agentTarget = parseAgentDeepLinkFromArgv(commandLine);
     if (agentTarget) {
+      agentSessionJumpSequence += 1;
       void bootstrapComplete
-        .then(() => desktopWindowOwner.openOrFocusAgent(agentTarget))
+        .then(() => receiveAgentNavigation(agentTarget))
         .catch((error) => log.error("[window] failed to route second-instance agent link", error));
+      return;
+    }
+
+    const sessionJump = findAgentSessionJumpInArgv(commandLine);
+    if (sessionJump) {
+      void bootstrapComplete.then(() => receiveAgentDeepLink(sessionJump));
       return;
     }
 
@@ -965,8 +1013,12 @@ async function bootstrap(): Promise<void> {
   registerWindowManager({ mode: DESKTOP_WINDOW_CHROME_MODE });
   registerDialogHandlers();
   registerNotificationHandlers();
+  localUpdate = LOCAL_BUILD_ID ? registerLocalUpdate(LOCAL_BUILD_ID) : null;
+  agentWidget = registerAgentWidget(localUpdate);
   const openExternalUrl = createExternalUrlOpener({ open: shell.openExternal });
   ipcMain.handle("paseo:opener:openUrl", (_event, value: unknown) => openExternalUrl(value));
+  const openDirectory = createDirectoryOpener(shell);
+  ipcMain.handle("paseo:opener:openDirectory", (_event, value: unknown) => openDirectory(value));
   registerEditorTargetHandlers();
   registerBrowserAutomationIpc();
 
@@ -984,12 +1036,37 @@ async function bootstrap(): Promise<void> {
 
   // The first window of the session restores and persists saved geometry.
   const initialAgentNavigation = pendingAgentNavigation;
+  const initialAgentSessionJump = pendingAgentSessionJump;
   pendingAgentNavigation = null;
+  pendingAgentSessionJump = null;
   await desktopWindowOwner.openPrimary({
-    initialRoute: initialAgentNavigation ? buildAgentDeepLinkRoute(initialAgentNavigation) : null,
+    initialRoute: initialAgentNavigation
+      ? buildAgentDeepLinkRoute(initialAgentNavigation)
+      : (localUpdate?.restoreWindows[0]?.route ?? null),
     pendingProjectPath: pendingOpenProjectPath,
   });
   pendingOpenProjectPath = null;
+  const restored = localUpdate?.restoreWindows ?? [];
+  const primary = BrowserWindow.getAllWindows().find((win) => !agentWidget?.isWindow(win));
+  if (primary && restored[0]) {
+    primary.setBounds(
+      clampWindowStateToWorkAreas(
+        { ...restored[0].bounds, isMaximized: restored[0].maximized },
+        getWorkAreasPrimaryFirst(),
+      ),
+    );
+    if (restored[0].maximized) primary.maximize();
+  }
+  for (const saved of restored.slice(1)) {
+    const win = await createWindow({ initialRoute: saved.route });
+    win.setBounds(
+      clampWindowStateToWorkAreas(
+        { ...saved.bounds, isMaximized: saved.maximized },
+        getWorkAreasPrimaryFirst(),
+      ),
+    );
+    if (saved.maximized) win.maximize();
+  }
 
   // Protocol + IPC handlers and the first window now exist: release any
   // second-instance launches that arrived during cold start.
@@ -1001,6 +1078,9 @@ async function bootstrap(): Promise<void> {
     pendingAgentNavigation = null;
     await desktopWindowOwner.openOrFocusAgent(target);
   }
+  if (initialAgentSessionJump) {
+    receiveAgentDeepLink(initialAgentSessionJump);
+  }
 
   app.on("activate", () => {
     void desktopWindowOwner.restoreWhenActivated().catch((error) => {
@@ -1010,7 +1090,9 @@ async function bootstrap(): Promise<void> {
 }
 
 void runDesktopStartup({
-  hasPendingGuiLaunchRequest: Boolean(pendingOpenProjectPath || pendingAgentNavigation),
+  hasPendingGuiLaunchRequest: Boolean(
+    pendingOpenProjectPath || pendingAgentNavigation || pendingAgentSessionJump,
+  ),
   runCliPassthroughIfRequested,
   inheritLoginShellEnv,
   bootstrapGui: bootstrap,

@@ -1,5 +1,4 @@
-import type { Rectangle } from "electron";
-import { ipcMain } from "electron";
+import { ipcMain, nativeImage } from "electron";
 import { BrowserAutomationExecuteRequestSchema } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type {
   BrowserAutomationConsoleLogEntry,
@@ -16,7 +15,7 @@ import {
   promptShimInstallScript,
   promptShimRestoreScript,
 } from "./dialog-handling.js";
-import { executeAutomationCommand } from "./service.js";
+import { BrowserTabClosedError, executeAutomationCommand } from "./service.js";
 import { BrowserSnapshotEngine } from "./snapshot-engine.js";
 import {
   listRegisteredPaseoBrowserIds,
@@ -92,6 +91,7 @@ interface ConsoleMessageEmitter {
 }
 
 interface BrowserAutomationWebContents extends ConsoleMessageEmitter {
+  removeListener(event: "destroyed", listener: () => void): void;
   readonly id: number;
   readonly debugger: WebContentsDebugger;
   getURL(): string;
@@ -100,16 +100,15 @@ interface BrowserAutomationWebContents extends ConsoleMessageEmitter {
   canGoForward(): boolean;
   isLoading(): boolean;
   isDestroyed(): boolean;
+  getBackgroundThrottling(): boolean;
+  setBackgroundThrottling(allowed: boolean): void;
   executeJavaScript(code: string): Promise<unknown>;
   loadURL(url: string): Promise<void>;
   goBack(): void;
   goForward(): void;
   reload(): void;
-  capturePage(rect?: Rectangle, options?: { stayHidden?: boolean }): Promise<TabImage>;
-  invalidate(): void;
-  getBackgroundThrottling(): boolean;
-  setBackgroundThrottling(allowed: boolean): void;
   sendInputEvent(event: IsolatedKeyboardInputEvent): void;
+  insertText(text: string): Promise<void>;
 }
 
 export function adaptWebContents(contents: BrowserAutomationWebContents): TabContents {
@@ -130,18 +129,9 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
     goBack: () => contents.goBack(),
     goForward: () => contents.goForward(),
     reload: () => contents.reload(),
-    capturePage: (captureOptions) => contents.capturePage(undefined, captureOptions),
-    invalidate: () => contents.invalidate(),
-    withFrameProduction: async (capture) => {
-      const previous = contents.getBackgroundThrottling();
-      contents.setBackgroundThrottling(false);
-      try {
-        return await capture();
-      } finally {
-        if (!contents.isDestroyed()) contents.setBackgroundThrottling(previous);
-      }
-    },
+    captureFrame: (signal) => cdpQueue.run(() => captureViewportFrame(contents, signal)),
     sendInputEvent: (event) => contents.sendInputEvent(event),
+    insertText: (text) => contents.insertText(text),
     getConsoleMessages: () => consoleMessagesByContentsId.get(contentsId) ?? [],
     captureDialogs: (task) => dialogMonitor.capture(task),
     sendDebugCommand: (command: string, params?: Record<string, unknown>) =>
@@ -149,9 +139,100 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
         if (!contents.debugger.isAttached()) {
           contents.debugger.attach("1.3");
         }
+        if (command === "Page.captureScreenshot")
+          return withCaptureFrameProduction(contents, AbortSignal.timeout(5_000), () =>
+            contents.debugger.sendCommand(command, params ?? {}),
+          );
         return contents.debugger.sendCommand(command, params ?? {});
       }),
   };
+}
+
+function captureViewportFrame(
+  contents: BrowserAutomationWebContents,
+  signal: AbortSignal,
+): Promise<TabImage> {
+  return withCaptureFrameProduction(contents, signal, async () => {
+    const result = await contents.debugger.sendCommand("Runtime.evaluate", {
+      expression: "({ x: scrollX, y: scrollY, width: innerWidth, height: innerHeight })",
+      returnByValue: true,
+    });
+    signal.throwIfAborted();
+    if (contents.isDestroyed()) throw new BrowserTabClosedError();
+    const metrics = result as {
+      result?: { value?: { x: number; y: number; width: number; height: number } };
+    };
+    // innerWidth includes the scrollbar gutter; CDP layout metrics omit it.
+    const viewport = metrics.result?.value;
+    if (!viewport || viewport.width <= 0 || viewport.height <= 0)
+      throw new Error("No frame returned by viewport capture");
+    const response = await contents.debugger.sendCommand("Page.captureScreenshot", {
+      format: "png",
+      fromSurface: true,
+      captureBeyondViewport: true,
+      clip: { ...viewport, scale: 1 },
+    });
+    signal.throwIfAborted();
+    const data = (response as { data?: string }).data;
+    if (!data) throw new Error("No frame returned by viewport capture");
+    const image = nativeImage.createFromBuffer(Buffer.from(data, "base64"));
+    if (image.isEmpty()) throw new Error("No frame returned by viewport capture");
+    return image;
+  });
+}
+
+function withCaptureFrameProduction<T>(
+  contents: BrowserAutomationWebContents,
+  signal: AbortSignal,
+  capture: () => Promise<T>,
+): Promise<T> {
+  signal.throwIfAborted();
+  if (contents.isDestroyed()) return Promise.reject(new BrowserTabClosedError());
+  const wasThrottled = contents.getBackgroundThrottling();
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const stop = () => {
+      settled = true;
+      signal.removeEventListener("abort", abort);
+      contents.removeListener("destroyed", destroyed);
+      if (wasThrottled && !contents.isDestroyed()) contents.setBackgroundThrottling(true);
+    };
+    const fail = (error: unknown) => {
+      if (settled) return;
+      try {
+        stop();
+      } catch {
+        /* Preserve the capture or cancellation error. */
+      }
+      reject(error);
+    };
+    const abort = () => fail(signal.reason);
+    const destroyed = () => fail(new BrowserTabClosedError());
+    signal.addEventListener("abort", abort, { once: true });
+    contents.once("destroyed", destroyed);
+    try {
+      if (!contents.debugger.isAttached()) contents.debugger.attach("1.3");
+      // Electron >=44.5 restores hidden widget visibility when throttling returns.
+      // Older versions kept the page painting after this scope (electron#54311).
+      if (wasThrottled) contents.setBackgroundThrottling(false);
+      if (settled) return;
+      signal.throwIfAborted();
+      void capture()
+        .then((result) => {
+          if (settled) return null;
+          try {
+            stop();
+            resolve(result);
+          } catch (error) {
+            reject(error);
+          }
+          return null;
+        })
+        .catch(fail);
+    } catch (error) {
+      fail(error);
+    }
+  });
 }
 
 function getCdpQueue(contentsId: number): CdpSessionQueue {

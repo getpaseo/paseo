@@ -7,6 +7,37 @@ import {
 import { buildEffectiveBindings, resolveKeyboardShortcut } from "../../keyboard/keyboard-shortcuts";
 
 describe("buildBrowserKeyboardPolicy", () => {
+  it("publishes a configured reopen binding only when the workspace has a closed browser", () => {
+    const bindings = buildEffectiveBindings({
+      "workspace-browser-reopen-last-closed": "Ctrl+Shift+Y",
+    });
+    const prefix = { alt: false, code: "KeyY", control: true, key: "y", meta: false, shift: true };
+    expect(
+      buildBrowserKeyboardPolicy({
+        bindings,
+        isMac: false,
+        isDesktop: true,
+        browserCanReopen: true,
+      }).prefixes,
+    ).toContainEqual(prefix);
+    expect(
+      buildBrowserKeyboardPolicy({
+        bindings,
+        isMac: false,
+        isDesktop: true,
+        browserCanReopen: false,
+      }).prefixes,
+    ).not.toContainEqual(prefix);
+    expect(
+      buildBrowserKeyboardPolicy({
+        bindings,
+        isMac: false,
+        isDesktop: false,
+        browserCanReopen: true,
+      }).prefixes,
+    ).not.toContainEqual(prefix);
+  });
+
   it("publishes only chord starts while no browser chord is pending", () => {
     const bindings = buildEffectiveBindings({
       "workspace-tab-new-ctrl-t-non-mac": "Ctrl+Y",

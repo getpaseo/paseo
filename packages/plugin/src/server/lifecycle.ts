@@ -22,11 +22,13 @@ export interface PluginHookWorkspace {
 
 export interface PluginHookAgent {
   id: string;
+  readonly launchProfileId?: string;
   workspaceId: string | null;
   parentAgentId: string | null;
   provider: string;
   cwd: string;
   title: string | null;
+  labels: Record<string, string>;
 }
 
 export interface PluginSessionOpenRequest {
@@ -60,12 +62,24 @@ export interface PluginLifecycleEvents {
   };
   "agent.archived": { agent: PluginHookAgent; archivedAt: string };
   "agent.created": { agent: PluginHookAgent };
+  "agent.closed": { agent: PluginHookAgent };
   "workspace.created": { workspace: PluginHookWorkspace };
   "workspace.archived": { workspace: PluginHookWorkspace };
 }
 
 export interface PluginBeforeRequests {
-  "agent.create": { config: AgentSessionConfig; env?: Record<string, string> };
+  "agent.create": {
+    config: AgentSessionConfig;
+    env?: Record<string, string>;
+    readonly workspaceId?: string;
+    readonly launchProfileId?: string;
+    readonly labels?: Readonly<Record<string, string>>;
+    modelRouting?: {
+      readonly strategy: "jev";
+      readonly prompt: string;
+      resolved?: true;
+    };
+  };
   "agent.session_open": PluginSessionOpenRequest;
   "workspace.create": Omit<WorkspaceCreateRequest, "type" | "requestId">;
 }

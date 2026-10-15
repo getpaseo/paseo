@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import React, { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
 import {
   useSidebarWorkspacesList,
@@ -18,7 +19,7 @@ import type { SidebarShortcutModel } from "@/utils/sidebar-shortcuts";
 import { buildSidebarProjection } from "./sidebar-projection";
 import type { SidebarProjectIconTarget } from "@/utils/sidebar-project-row-model";
 import { filterWorkspacesByLabels, type SidebarWorkspaceGroup } from "./sidebar-labels";
-import { filterWorkspacesByProjects, resolveActiveProjectFilters } from "./sidebar-project-filter";
+import { filterWorkspacesByProjects, resolveHiddenProjectKeys } from "./sidebar-project-filter";
 import {
   hasAuthoritativeWorkspaceLabelCatalog,
   useWorkspaceLabelProjection,
@@ -33,8 +34,8 @@ interface SidebarModel extends SidebarWorkspacesListResult {
    * narrowing the filter deletes the rows that would undo it.
    */
   allProjects: SidebarProjectEntry[];
-  /** The project filter as it is actually being applied — see `resolveActiveProjectFilters`. */
-  resolvedProjectFilters: readonly string[];
+  /** The project filter as it is actually being applied — see `resolveHiddenProjectKeys`. */
+  resolvedHiddenProjectKeys: readonly string[];
   hasProjectsBeforeFilter: boolean;
   groupMode: SidebarGroupMode;
   workspaceGroups: SidebarWorkspaceGroup[];
@@ -54,10 +55,11 @@ export function SidebarModelProvider({
   active?: boolean;
   children: ReactNode;
 }) {
+  const { t } = useTranslation();
   const list = useSidebarWorkspacesList({ enabled: active });
   const groupMode = useSidebarViewStore((state) => state.groupMode);
   const labelFilter = useSidebarViewStore((state) => state.labelFilter);
-  const projectFilters = useSidebarViewStore((state) => state.projectFilters);
+  const hiddenProjectKeys = useSidebarViewStore((state) => state.hiddenProjectKeys);
   const reconcileLabelFilter = useSidebarViewStore((state) => state.reconcileLabelFilter);
   const { hosts: labelHosts } = useWorkspaceLabelProjection();
   const collapsedProjectKeys = useSidebarCollapsedSectionsStore(
@@ -81,15 +83,15 @@ export function SidebarModelProvider({
     reconcileLabelFilter(availableLabelNames);
   }, [availableLabelNames, hasAuthoritativeLabelCatalog, reconcileLabelFilter]);
   const hasActiveLabelFilter = hasActiveSidebarLabelFilter(labelFilter);
-  const resolvedProjectFilters = useMemo(
+  const resolvedHiddenProjectKeys = useMemo(
     () =>
-      resolveActiveProjectFilters(
-        projectFilters,
+      resolveHiddenProjectKeys(
+        hiddenProjectKeys,
         new Set(list.projects.map((project) => project.viewKey)),
       ),
-    [projectFilters, list.projects],
+    [hiddenProjectKeys, list.projects],
   );
-  const hasActiveProjectFilter = resolvedProjectFilters.length > 0;
+  const hasActiveProjectFilter = resolvedHiddenProjectKeys.length > 0;
   // The project filter is deliberately absent from this gate. It reads `projectViewKey`, which
   // lives on the project and the placement, so it can narrow the project list without hydrating
   // anything; the label filter reads `labels`, which only exists on an entry. Hydration opens a
@@ -103,24 +105,20 @@ export function SidebarModelProvider({
   const filteredWorkspaceEntriesByKey = useMemo(() => {
     const byProject = filterWorkspacesByProjects({
       workspaces: [...workspaceEntriesByKey.values()],
-      projectFilters: resolvedProjectFilters,
+      hiddenProjectKeys: resolvedHiddenProjectKeys,
     });
     const filtered = filterWorkspacesByLabels({ workspaces: byProject, ...labelFilter });
     return new Map(filtered.map((workspace) => [workspace.workspaceKey, workspace]));
-  }, [labelFilter, resolvedProjectFilters, workspaceEntriesByKey]);
+  }, [labelFilter, resolvedHiddenProjectKeys, workspaceEntriesByKey]);
   const visibleWorkspaceKeys = useMemo(
     () => new Set(filteredWorkspaceEntriesByKey.keys()),
     [filteredWorkspaceEntriesByKey],
   );
-  // The two filters prune differently on purpose. The project filter is a membership test on the
-  // project itself, so a project you filtered TO survives even with no workspaces — it still owns
-  // a header row you can create your first workspace under. The label filter can only ask about
-  // workspaces, so a project it empties has nothing left to show.
   const filteredProjects = useMemo(() => {
     let projects = list.projects;
     if (hasActiveProjectFilter) {
-      const included = new Set(resolvedProjectFilters);
-      projects = projects.filter((project) => included.has(project.viewKey));
+      const hidden = new Set(resolvedHiddenProjectKeys);
+      projects = projects.filter((project) => !hidden.has(project.viewKey));
     }
     if (hasActiveLabelFilter) {
       projects = projects.flatMap((project) => {
@@ -134,7 +132,7 @@ export function SidebarModelProvider({
   }, [
     hasActiveLabelFilter,
     hasActiveProjectFilter,
-    resolvedProjectFilters,
+    resolvedHiddenProjectKeys,
     list.projects,
     visibleWorkspaceKeys,
   ]);
@@ -150,6 +148,7 @@ export function SidebarModelProvider({
       pinnedCollapsed,
       collapsedProjectKeys,
       collapsedWorkspaceGroupKeys,
+      t,
     }),
     [
       collapsedProjectKeys,
@@ -161,6 +160,7 @@ export function SidebarModelProvider({
       pinnedKeys,
       pinnedWorkspaceOrder,
       filteredWorkspaceEntriesByKey,
+      t,
     ],
   );
   const projection = useMemo(() => buildSidebarProjection(projectionInput), [projectionInput]);
@@ -169,7 +169,7 @@ export function SidebarModelProvider({
       ...list,
       projects: filteredProjects,
       allProjects: list.projects,
-      resolvedProjectFilters,
+      resolvedHiddenProjectKeys,
       hasProjectsBeforeFilter: list.projects.length > 0,
       workspaceEntriesByKey: filteredWorkspaceEntriesByKey,
       groupMode,
@@ -181,7 +181,7 @@ export function SidebarModelProvider({
       shortcutModel: projection.shortcutModel,
     }),
     [
-      resolvedProjectFilters,
+      resolvedHiddenProjectKeys,
       collapsedProjectKeys,
       groupMode,
       list,

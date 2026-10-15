@@ -8,6 +8,24 @@ directly only when you are building a third trigger shape.
 Do not add a third menu implementation. The two that existed were byte-identical from
 `computePosition` down, and the copies drifted: only one of them ever grew a sheet.
 
+## Press, drag, release
+
+Mouse dropdowns open on the primary button's down event. Keep holding to move into an
+option, then release to select it. Releasing on the opener or a non-action area inside the
+menu leaves it open; releasing outside cancels. Touch, keyboard, and context-menu triggers
+keep their existing activation rules.
+
+Menus and comboboxes share `use-press-drag-select` and its registration context. Register
+custom rows with `usePressDragTarget`, passing the same action and disabled state as their
+normal press. Secondary buttons inside a row remain separate actions. Surfaces register
+with `usePressDragSurface` so the gesture crosses portals without relying on DOM ancestry
+between opener and menu. Keep autofocus deferred while `usePressDragState().dragging` is true.
+
+The controller consumes the browser's trailing click even if selection unmounts the menu.
+Do not add a second release handler at a call site: it can select twice or click content
+behind the closed surface. Invisible surfaces waiting for positioning cannot receive a
+selection, and releasing over the opener must remain an ordinary click-to-open.
+
 ## Two presentations
 
 `MenuRoot` picks one from form factor, never from platform — a tablet in a narrow split view
@@ -179,6 +197,10 @@ its own.
 - **Released height.** Reanimated's web entering animation leaves an inline height snapshot on
   the surface. `AnchoredSurface` clears it, and a `revision` prop re-clears it when content
   identity changes — a pushed page taller than the one it replaced is clipped without that.
+- **Animate only once placed.** The same snapshot carries top/left, and Reanimated writes it back
+  750ms after mount. `AnchoredSurface` remounts the surface when its position resolves so the
+  entering animation never ends at the off-screen measuring position; on a slow machine that
+  write moved the open menu back off-screen.
 - **Sheets size to content.** `enableDynamicSizing`, not fixed snap points. A pushed page is
   rarely the height of the page before it.
 - **The sheet's content is teleported out of the menu's subtree**, so `MenuSheetSurface` rebuilds
@@ -187,7 +209,13 @@ its own.
   [floating-panels.md](floating-panels.md).
 - **One overlay per menu.** Submenus render inside their parent's layer and paint no second
   backdrop, so there is exactly one `Modal` on native no matter how deep the menu goes.
-- Anchoring, flipping, and edge clamping live in `menu-anchor.ts` and are unit-tested. Fix
-  positioning bugs there, not at a call site.
+- **Sheet stacking and backdrop dismissal belong to `IsolatedBottomSheetModal`.** Menus only
+  request a backdrop opacity. See [floating-panels.md](floating-panels.md#gotcha-6--bottom-sheet-refs-are-not-lifecycle-truth).
+- **Retained panels own visibility.** The shared menu surface unmounts when its panel becomes
+  inactive. An async action can navigate before its menu closes; a hidden panel must not leave a
+  portal backdrop blocking the destination. On web the chat suspends one commit after it goes
+  inactive, and that inactive commit is where the surface unmounts.
+- Anchoring, flipping, and edge clamping live in `components/ui/anchor.ts`, shared with the hover
+  card, and are unit-tested. Fix positioning bugs there, not at a call site.
 - Everything else about floating surfaces on Android — Portal/Modal escape, lifecycle gates,
   status-bar offset, the open flash — is in [floating-panels.md](floating-panels.md).

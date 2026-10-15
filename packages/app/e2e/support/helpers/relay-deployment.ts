@@ -92,7 +92,7 @@ export async function measureRelayRestartDuringStream(input: {
   agentTitle: string;
 }): Promise<RelayDeploymentMeasurements> {
   const { page, relay, agentTitle } = input;
-  const toast = page.getByTestId("agent-reconnecting-toast");
+  const toast = page.getByRole("alert").filter({ hasText: "Reconnecting to host" });
   const beforeOutage = await latestAssistantText(page);
   await waitForAssistantTextToGrow(page, beforeOutage);
 

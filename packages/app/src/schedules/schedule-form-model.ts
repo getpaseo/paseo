@@ -1,4 +1,5 @@
 import type {
+  AgentFeature,
   AgentMode,
   AgentModelDefinition,
   AgentProvider,
@@ -6,6 +7,7 @@ import type {
 } from "@getpaseo/protocol/agent-types";
 import type { ScheduleCadence, ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 import type { FormPreferences } from "@/create-agent-preferences/preferences";
+import { FAST_MODE_FEATURE_ID } from "@/agent-controls/policy";
 import { formatThinkingOptionLabel } from "@/agent-controls/labels";
 import {
   buildSelectableProviderSelectorProviders,
@@ -54,6 +56,14 @@ export interface ScheduleFormSnapshot {
 
 export interface ScheduleFormProviderSnapshot {
   entries: ProviderSnapshotEntry[];
+}
+
+export interface ScheduleFormFeatureSnapshot {
+  serverId: string;
+  provider: AgentProvider;
+  cwd: string;
+  modelId: string;
+  features: AgentFeature[];
 }
 
 export interface ScheduleDisclosureState {
@@ -105,6 +115,8 @@ export interface ScheduleFormState {
   modelSelectorProviders: ProviderSelectorProvider[];
   modeOptions: AgentMode[];
   availableThinkingOptions: NonNullable<AgentModelDefinition["thinkingOptions"]>;
+  featureValues: Record<string, unknown>;
+  fastModeSupported: boolean;
   archiveOnFinish: boolean;
   isolation: "local" | "worktree";
   effectiveIsolation: "local" | "worktree";
@@ -126,6 +138,8 @@ export interface ScheduleFormModel {
   applyProjectTargets: (targets: readonly ScheduleProjectTarget[]) => void;
   applyPreferences: (preferences: FormPreferences | undefined) => void;
   applyProviderSnapshot: (serverId: string, snapshot: ScheduleFormProviderSnapshot) => void;
+  applyFeatureSnapshot: (snapshot: ScheduleFormFeatureSnapshot) => void;
+  setFastMode: (value: boolean) => void;
   setHost: (serverId: string | null) => void;
   setProject: (optionId: string, display: ScheduleFormDisplay) => void;
   setModel: (provider: AgentProvider, modelId: string) => void;
@@ -629,6 +643,10 @@ function updateDerivedState(input: {
   return { ...nextState, disclosure, canSubmit: resolveCanSubmit({ ...nextState, disclosure }) };
 }
 
+function initialFeatureValues(snapshot: ScheduleFormSnapshot): Record<string, unknown> {
+  return { ...newAgentConfig(snapshot.schedule)?.featureValues };
+}
+
 function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
   const selectedServerId = resolveInitialServerId(snapshot);
   const config = newAgentConfig(snapshot.schedule);
@@ -679,6 +697,8 @@ function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
     modelSelectorProviders: [],
     modeOptions: [],
     availableThinkingOptions: [],
+    featureValues: initialFeatureValues(snapshot),
+    fastModeSupported: false,
     archiveOnFinish: config?.archiveOnFinish ?? true,
     isolation: resolveInitialIsolation({ config, preferences: snapshot.defaults.preferences }),
     effectiveIsolation: "local",
@@ -866,6 +886,16 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
     if (closed) {
       return;
     }
+    const featureScopeChanged =
+      state.selectedServerId !== nextState.selectedServerId ||
+      state.selectedProvider !== nextState.selectedProvider ||
+      state.selectedModel !== nextState.selectedModel ||
+      state.workingDir !== nextState.workingDir;
+    if (featureScopeChanged && state.fastModeSupported) {
+      const featureValues = { ...nextState.featureValues };
+      delete featureValues[FAST_MODE_FEATURE_ID];
+      nextState = { ...nextState, featureValues, fastModeSupported: false };
+    }
     state = updateDerivedState({
       state: nextState,
       hosts,
@@ -900,6 +930,8 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
     providerEntries = [];
     return {
       ...nextState,
+      featureValues: {},
+      fastModeSupported: false,
       selectedProvider: null,
       selectedModel: "",
       selectedMode: "",
@@ -1005,6 +1037,36 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
         providerSnapshotRequest: isPendingResolution ? null : state.providerSnapshotRequest,
       });
     },
+    applyFeatureSnapshot(featureSnapshot) {
+      const matchesSelection =
+        featureSnapshot.serverId === state.selectedServerId &&
+        featureSnapshot.provider === state.selectedProvider &&
+        featureSnapshot.cwd === state.workingDir &&
+        featureSnapshot.modelId === state.selectedModel;
+      if (closed || !matchesSelection) {
+        return;
+      }
+      const fastFeature = featureSnapshot.features.find(
+        (feature) => feature.id === FAST_MODE_FEATURE_ID && feature.type === "toggle",
+      );
+      const featureValues = { ...state.featureValues };
+      if (fastFeature?.type === "toggle") {
+        featureValues[FAST_MODE_FEATURE_ID] =
+          featureValues[FAST_MODE_FEATURE_ID] ?? fastFeature.value;
+      } else {
+        delete featureValues[FAST_MODE_FEATURE_ID];
+      }
+      publish({ ...state, featureValues, fastModeSupported: Boolean(fastFeature) });
+    },
+    setFastMode(value) {
+      if (closed || !state.fastModeSupported) {
+        return;
+      }
+      publish({
+        ...state,
+        featureValues: { ...state.featureValues, [FAST_MODE_FEATURE_ID]: value },
+      });
+    },
     setHost(serverId) {
       if (closed || state.selectedServerId === serverId) {
         return;
@@ -1068,8 +1130,16 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
         modeId: true,
         thinkingOptionId: true,
       };
+      const selectionChanged =
+        state.selectedProvider !== provider || state.selectedModel !== selectedModel;
+      const featureValues = { ...state.featureValues };
+      if (selectionChanged) {
+        delete featureValues[FAST_MODE_FEATURE_ID];
+      }
       publish({
         ...state,
+        featureValues,
+        fastModeSupported: !selectionChanged && state.fastModeSupported,
         selectedProvider: provider,
         selectedModel,
         selectedMode: pickModeForProvider({

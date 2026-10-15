@@ -1,6 +1,6 @@
 {
   "name": "paseo",
-  "version": "0.8.0",
+  "version": "0.11.1",
   "private": true,
   "description": "Paseo: voice-controlled development environment for local AI coding agents",
   "keywords": [
@@ -21,6 +21,7 @@
     "url": "https://github.com/getpaseo/paseo.git"
   },
   "workspaces": [
+    "plugins",
     "packages/expo-two-way-audio",
     "packages/highlight",
     "packages/plugin",
@@ -45,7 +46,8 @@
     "dev:website": "npm run dev --workspace=@getpaseo/website",
     "postinstall": "node scripts/postinstall-patches.mjs",
     "prepare": "lefthook install --force",
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build:desktop:local",
+    "build:all": "npm run build --workspaces --if-present",
     "build:highlight": "npm run build --workspace=@getpaseo/highlight",
     "build:highlight:clean": "npm run build:clean --workspace=@getpaseo/highlight",
     "build:plugin": "npm run build --workspace=@getpaseo/plugin",
@@ -66,7 +68,7 @@
     "watch:protocol": "npm run watch --workspace=@getpaseo/protocol",
     "watch:client": "tsc -p packages/client/tsconfig.json --watch --preserveWatchOutput",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "typecheck:server": "npm run typecheck --workspace=@getpaseo/relay && npm run typecheck --workspace=@getpaseo/protocol && npm run typecheck --workspace=@getpaseo/client && npm run typecheck --workspace=@getpaseo/server && npm run typecheck --workspace=@getpaseo/cli",
+    "typecheck:server": "npm run typecheck --workspace=@getpaseo/relay && npm run typecheck --workspace=@getpaseo/protocol && npm run typecheck --workspace=@getpaseo/client && npm run typecheck --workspace=@getpaseo/builtin-plugins && npm run typecheck --workspace=@getpaseo/server && npm run typecheck --workspace=@getpaseo/cli",
     "test": "npm run test --workspaces --if-present",
     "format": "oxfmt .",
     "format:files": "oxfmt",
@@ -92,6 +94,14 @@
     "dev:desktop": "cross-env PASEO_LISTEN=127.0.0.1:6768 npm run dev --workspace=@getpaseo/desktop",
     "dev:win:desktop": "npm run dev:win --workspace=@getpaseo/desktop",
     "build:desktop": "npm run build:app-deps:clean && cd packages/app && cross-env PASEO_WEB_PLATFORM=electron npx expo export --platform web && cd ../.. && npm run build --workspace=@getpaseo/desktop --",
+    "build:desktop:local": "node scripts/build-local-release.mjs",
+    "paseo-local:auto-build:install": "node scripts/paseo-local-auto-build.mjs install",
+    "paseo-local:auto-build:uninstall": "node scripts/paseo-local-auto-build.mjs uninstall",
+    "paseo-local:auto-build:run": "node scripts/paseo-local-auto-build.mjs run",
+    "paseo-local:auto-build:verify-launchd": "node scripts/paseo-local-auto-build.mjs verify-launchd",
+    "paseo-local:icloud:enable": "/bin/zsh scripts/paseo-local-icloud.command enable-publisher",
+    "paseo-local:icloud:disable": "/bin/zsh scripts/paseo-local-icloud.command disable-publisher",
+    "paseo-local:icloud:publish": "/bin/zsh scripts/paseo-local-icloud.command publish-if-enabled",
     "db:query": "npm run db:query --workspace=@getpaseo/server --",
     "cli": "./scripts/dev-home.sh npx tsx packages/cli/src/index.js",
     "version": "npm run version:sync-internal && npm run fdroid:changelogs && npm run release:prepare && git add -A",
@@ -118,7 +128,8 @@
     "release:promote": "npm run release:check && npm run version:all:promote && npm run release:publish && npm run release:push",
     "release:patch": "npm run release:check && npm run version:all:patch && npm run release:publish && npm run release:push",
     "release:minor": "npm run release:check && npm run version:all:minor && npm run release:publish && npm run release:push",
-    "release:major": "npm run release:check && npm run version:all:major && npm run release:publish && npm run release:push"
+    "release:major": "npm run release:check && npm run version:all:major && npm run release:publish && npm run release:push",
+    "build:desktop:local:bundle": "npm run build:app-deps:clean && cd packages/app && cross-env PASEO_WEB_PLATFORM=electron npx expo export --platform web --clear && cd ../.. && npm run build:local --workspace=@getpaseo/desktop"
   },
   "devDependencies": {
     "@types/ws": "^8.5.14",
@@ -126,7 +137,7 @@
     "@vercel/nft": "^1.5.0",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
-    "electron": "44.2.0",
+    "electron": "44.7.2",
     "get-port-cli": "^3.0.0",
     "js-yaml": "^4.1.1",
     "knip": "^5.82.1",

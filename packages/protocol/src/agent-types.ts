@@ -67,6 +67,7 @@ export interface AgentMode {
   description?: string;
   icon?: string;
   colorTier?: string;
+  isUnattended?: boolean;
 }
 
 export type ProviderStatus = "ready" | "loading" | "error" | "unavailable";
@@ -102,6 +103,17 @@ export function normalizeAgentModelDefinition(model: AgentModelDefinition): Agen
   return { ...model, defaultThinkingOptionId };
 }
 
+/** A provider addresses models by ID; repeated rows retain the first definition. */
+export function normalizeAgentModelCatalog(models: AgentModelDefinition[]): AgentModelDefinition[] {
+  const ids = new Set<string>();
+  const unique = models.filter((model) => {
+    if (ids.has(model.id)) return false;
+    ids.add(model.id);
+    return true;
+  });
+  return unique.length === models.length ? models : unique;
+}
+
 export interface ProviderSnapshotEntry {
   provider: AgentProvider;
   status: ProviderStatus;
@@ -134,6 +146,8 @@ export interface AgentFeatureSelect {
   description?: string;
   tooltip?: string;
   icon?: string;
+  /** Desktop toolbar presentation; omitted means labeled. Mobile selectors stay labeled. */
+  desktopTrigger?: "icon" | "label";
   value: string | null;
   options: AgentSelectOption[];
 }
@@ -446,6 +460,7 @@ export interface AgentPermissionRequest {
   provider: AgentProvider;
   name: string;
   kind: AgentPermissionRequestKind;
+  sourcePlanCallId?: string;
   title?: string;
   description?: string;
   input?: AgentMetadata;
@@ -485,7 +500,7 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-export type ProviderOptions = Record<string, JsonValue>;
+export type ProviderOptions = Record<string, unknown>;
 
 export interface McpToolRef {
   kind: "mcp";
@@ -500,6 +515,7 @@ export interface ToolPolicy {
 export interface AgentSessionConfig {
   provider: AgentProvider;
   cwd: string;
+  writePolicy?: "read_write" | "read_only";
   /**
    * Provider-agnostic system/developer instruction string.
    * Mapped by each provider to its native instruction field.

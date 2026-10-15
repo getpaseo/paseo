@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useProjects, type ProjectHostError } from "@/hooks/use-projects";
-import { useProjectIcons } from "@/projects/icons";
+import { useProjectIcons, type ProjectIconRenderData } from "@/projects/icons";
 import { createProjectIconTarget } from "@/projects/icon-target";
 import { settingsStyles } from "@/styles/settings";
 import { openProjectSettings } from "@/navigation/settings-navigation";
@@ -75,7 +75,7 @@ export default function ProjectsScreen({ serverId }: ProjectsScreenProps) {
             project={project}
             host={host}
             isFirst={index === 0}
-            iconDataUri={iconDataByProjectViewKey.get(project.viewKey) ?? null}
+            icon={iconDataByProjectViewKey.get(project.viewKey)}
           />
         ))}
       </View>
@@ -103,10 +103,10 @@ interface ProjectRowProps {
   project: ProjectSummary;
   host: ProjectHostEntry;
   isFirst: boolean;
-  iconDataUri: string | null;
+  icon?: ProjectIconRenderData;
 }
 
-function ProjectRow({ project, host, isFirst, iconDataUri }: ProjectRowProps) {
+function ProjectRow({ project, host, isFirst, icon }: ProjectRowProps) {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
   const { viewKey } = project;
@@ -136,11 +136,7 @@ function ProjectRow({ project, host, isFirst, iconDataUri }: ProjectRowProps) {
     >
       <View style={styles.rowMain}>
         <View style={styles.leading}>
-          <ProjectRowIcon
-            iconDataUri={iconDataUri}
-            projectName={projectName}
-            projectViewKey={viewKey}
-          />
+          <ProjectRowIcon icon={icon} projectName={projectName} projectViewKey={viewKey} />
         </View>
         <Text style={settingsStyles.rowTitle} numberOfLines={1}>
           {projectName}
@@ -152,18 +148,19 @@ function ProjectRow({ project, host, isFirst, iconDataUri }: ProjectRowProps) {
 }
 
 function ProjectRowIcon({
-  iconDataUri,
+  icon,
   projectName,
   projectViewKey,
 }: {
-  iconDataUri: string | null;
+  icon?: ProjectIconRenderData;
   projectName: string;
   projectViewKey: string;
 }) {
   const initial = projectName.trim().charAt(0).toUpperCase() || "?";
   return (
     <ProjectIconView
-      iconDataUri={iconDataUri}
+      iconDataUri={icon?.dataUri ?? null}
+      emoji={icon?.emoji}
       initial={initial}
       projectViewKey={projectViewKey}
       size={16}

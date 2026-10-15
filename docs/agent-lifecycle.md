@@ -12,6 +12,27 @@ initializing → idle → running → idle (or error → closed)
 
 Each live agent in `AgentManager` carries a `lastStatus` of `initializing`, `idle`, `running`, or `error`. `closed` is the persisted, resumable state for an agent record that has no live provider runtime. State transitions persist to disk and stream to subscribed clients via WebSocket.
 
+## Plans and launch history
+
+Submitting a workspace intention creates the workspace and sends that intention to its configured
+Router in one action. The created conversation owns retry and delivery state. Editing the workspace
+intention later does not rewrite an agent conversation; [data-model.md](data-model.md#workspace-intention)
+owns its persistence.
+
+A launch profile records provenance, not a live binding to settings. Applying another profile
+to an active agent does not change its launch history. The post-approval mode is captured at
+creation, so editing or removing the profile cannot change what approval of that agent means.
+Historical agents without that snapshot retain their provider's native approval behavior.
+
+A plan proposal has one canonical timeline identity, shared with its live permission. Approval,
+clarification, cancellation and handoff settle that proposal without deleting it. A revision
+adds a proposal; it must not overwrite the user's earlier decision. A restored timeline alone
+does not restore permission authority. See [plan persistence](data-model.md#plan-persistence).
+
+The [workflow plugin](plugins.md#first-party-plan-workflow) consumes lifecycle events and
+reconciles interrupted work. Idle or finished attention alone cannot prove successful completion:
+canceling a turn can produce both. Use the completed-turn marker and that turn's canonical output.
+
 ## Runtime residency
 
 An unarchived agent may be `closed` without being deleted or archived. Closing releases its provider
@@ -34,8 +55,8 @@ workflows all live in the CLI process, and the completion notification that woul
 agent never arrives. A runtime that dies mid-turn is reported by whatever is draining its stream, but
 between turns nothing is watching, so the agent sits at `idle` looking healthy while its background
 work is gone. Report that exit as a turn failure so the agent lands in `error` with a timeline entry.
-Only the Claude provider does this today; the others still report a death only when a turn happens to
-be in flight.
+Claude and OMP report exits between turns. OMP relaunches from its session file on the next prompt;
+the unfinished turn is lost.
 
 ### Cancellation
 
@@ -109,16 +130,30 @@ archived workspace. History navigation must not infer workspace lifecycle from `
 or mutate either lifecycle. The workspace route asks the daemon for authoritative recovery state;
 only the route's explicit Unarchive or Restore action changes the archived workspace.
 
-History navigation preserves the selected agent as an explicit recovery target. If both that agent
-and its workspace are archived, the workspace recovery action restores the workspace and unarchives
-the selected agent as one user action. Other archived agents in the restored workspace remain
-recoverable from History. Opening one pins its tab and renders the archived-agent callout. Authoritative
-timeline catch-up may load provider history with a runtime-only `history` resume purpose, which must
-leave both Paseo's `archivedAt` and the provider's native archive state unchanged. **Unarchive** remains
-the only transition back to an interactive runtime: it runs the provider's native unarchive hook
-(including Codex `thread/unarchive`) before the normal agent resume and timeline hydration flow. A
-provider session can be archived outside Paseo while its Paseo agent remains active. Interactive
-resume repairs that drift through the provider's native unarchive hook; history resume does not.
+Global History navigation opens the selected agent without changing either archive state. The
+workspace tab strip's closed-conversation menu explicitly unarchives the selected agent before
+opening it, so a single action resumes the conversation. Workspace
+**Restore** recovers only the workspace; the selected archived agent stays open with its callout.
+The agent's **Unarchive** runs the provider's native unarchive hook before interactive resume and
+history hydration. Other archived agents stay archived.
+
+Opening an agent is a navigation choice, independent of whether its details are cached. The
+layout retains that choice across reload while the panel fetches the agent from the daemon.
+Once the daemon reports the agent active, its tab follows normal archive propagation again.
+An empty active list cannot cancel an explicit History selection. Agent-detail loading does
+not own selection or release the explicit open.
+
+Persisted resume, native restore, and both live and stored-only archive enter the same per-agent
+lifecycle queue. Resume chooses its history or interactive purpose from the durable record after
+entering that queue. Shutdown must finish before the manager releases runtime ownership; a failed
+close retains the runtime for cleanup and blocks replacement through that close operation.
+
+Authoritative timeline catch-up can use a runtime-only `history` resume purpose. For Codex, that
+purpose initializes a temporary app-server, reads the persisted thread and child histories, and
+releases the process before returning. It never loads, resumes, or unarchives a native thread,
+including legacy records whose native archive failed. The retained history session contains only
+the read results. Interactive resume remains responsible for repairing a provider session archived
+outside Paseo while its Paseo agent is active.
 
 Provider session connection owns every process it spawns until the session is registered with
 `AgentManager`. If initialization, persisted-session resume, or initial history hydration fails,
@@ -152,6 +187,13 @@ A finished workspace can be marked unread after it has been reviewed. The daemon
 `finished` attention on its newest eligible workspace-root agent without sending a new completion
 notification. Opening the workspace clears that attention through the normal focus flow.
 
+Attention is set by the agent finishing or failing and cleared by the client's
+`workspace.clear_attention`, which fires when the user reads the chat. Loading an agent's runtime is
+neither, so resuming carries the stored attention and the stored last-activity time through
+untouched. Forging either makes a background resume look like the user read a workspace and like the
+agent worked in it just now, which rewrites the sidebar timestamp permanently — persisted
+`updatedAt` is what workspace `statusEnteredAt` is re-derived from on the next daemon start.
+
 ## The subagents track
 
 The track is a pill at the foot of an agent's pane (`packages/app/src/subagents/track.tsx`): a count you can read at a glance, and a panel behind it — a popover on wide screens, a sheet on compact ones — holding the rows. It floats over the transcript rather than sitting in a band above the composer, so the timeline scrolls underneath it; `packages/app/src/panels/agent-tracks.tsx` owns that placement, and the pill frame is shared with the task list in `packages/app/src/composer/tracks.tsx`.
@@ -178,10 +220,11 @@ Claude Code announces subagent lifecycle on the SDK stream (`task_started` / `ta
 
 - **Not every announced task belongs in the track.** Task subagents announce as `local_agent` and workflows as `local_workflow`; a backgrounded shell announces as `local_bash` with the same `tool_use_id` shape, and ambient housekeeping sets `skip_transcript`. The Claude provider normalizes a workflow to a generic provider-subagent descriptor titled `Workflow`, using Claude's summary as its description and timeline opener. Shared storage, protocol, and UI do not distinguish it from another provider subagent.
 - **A task that was never declared gets no descriptor, by any route.** Filtered tasks still emit `task_notification`s carrying a `tool_use_id`, and still emit frames carrying `parent_tool_use_id`. Attributing either produces a descriptor with no identity and a defaulted `running` status — a nameless row that never finishes. Status, presentation updates, and sidechain frames all route through the declaration table.
-- **Task ids are session-scoped, not turn-scoped.** Cancelling a turn must not clear the routing table: a backgrounded child settles after the interrupt and needs its descriptor to still exist. Cancellation instead terminalizes the declared children that were running in the foreground, and a later `task_notification` is free to correct that guess. Backgrounded children are identified by `task_updated.patch.is_backgrounded`.
+- **Task ids are session-scoped, not turn-scoped.** Cancelling a turn must not clear the routing table: a backgrounded child settles after the interrupt and needs its descriptor to still exist. Cancellation instead terminalizes the declared children that were running in the foreground, and a later `task_notification` is free to correct that guess. Backgrounded children are identified by `is_backgrounded` on `task_started` (set at spawn; a resumed subagent is always background) or, when moved there later, on `task_updated.patch`.
 - **A resumed task can be announced again with a new `tool_use_id`.** The first Task tool id remains the canonical descriptor and later ids are routing aliases for the same session-scoped task. The resumed prompt is added to that child timeline.
 - **Effort is only reachable through hooks.** It appears nowhere on the message stream at any depth, and the level Paseo requests is not necessarily the level that runs — a model that does not support it is silently downgraded. A hook firing inside a subagent reports the active post-downgrade level next to its `agent_id`, which is the same id `task_started` calls `task_id`.
 - **Backgrounded subagents emit no frames carrying `parent_tool_use_id` at all.** Everything keyed off that field sees nothing for one; they are visible only because the task protocol announces them.
+- **Only `system/init` and `result` bracket a main-session turn.** Background subagents emit neither on the main stream, while their task frames, their own background jobs' `task_notification`, and `rate_limit_event` arrive with no `parent_tool_use_id`, the same shape as main-session work. `session_state_changed` stays `running` for as long as any background subagent lives (Claude Code 2.1.280), so it cannot open a turn; its `idle` can close one.
 - **Nested ownership comes from the launching sidechain, not `spawn_depth` alone.** A sidechain's Agent or Bash tool call records the direct owner of that `tool_use_id`; the following `task_started` inherits it. This routes a grandchild descriptor and child-owned background notifications without relying on labels or flattening them into the managed parent.
 - **On replay, `<session>/subagents/` holds every descendant beside the root.** Resolve the tree one proven generation at a time: the root transcript admits direct children, then each admitted sidechain transcript admits its children by `toolUseId`. `spawnDepth` orders candidates but does not establish ownership. Unresolved sidecars remain excluded as ambient or unrelated work.
 - **Replay `totalTokens` is a context-size reading, not cumulative spend.** Claude Code finalizes a subagent by summing the _last_ assistant message's usage block and shipping that as `usage.total_tokens`. Summing per-entry usage instead multiplies the cached prefix by the turn count and reports a number several times larger than the live path.

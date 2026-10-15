@@ -25,9 +25,9 @@ const target = createProjectIconTarget({
 if (!target) throw new Error("Expected project icon target");
 const icon = { data: "aWNvbg==", mimeType: "image/png" };
 
-function clientWith(iconResult: typeof icon | null) {
+function clientWith(iconResult: typeof icon | null, emoji?: string) {
   return {
-    getProjectIcon: async () => ({ requestId: "icon", icon: iconResult }),
+    getProjectIcon: async () => ({ requestId: "icon", icon: iconResult, emoji }),
   } as unknown as DaemonClient;
 }
 
@@ -36,7 +36,7 @@ describe("ProjectIconCache", () => {
     const cache = new ProjectIconCache(new MemoryStorage());
 
     expect(cache.query(target, true, () => null, false).queryKey).toEqual([
-      "projectIcon",
+      "projectIconPresentation",
       "host-a",
       "project-a",
       "revision-a",
@@ -54,7 +54,10 @@ describe("ProjectIconCache", () => {
     reader.setHosts([target.serverId]);
     await reader.restore();
 
-    expect(reader.query(target, true, () => null, false).initialData).toEqual(icon);
+    expect(reader.query(target, true, () => null, false).initialData).toEqual({
+      icon,
+      emoji: null,
+    });
   });
 
   it("persists an explicit no-icon result", async () => {
@@ -67,7 +70,27 @@ describe("ProjectIconCache", () => {
     const reader = new ProjectIconCache(storage);
     reader.setHosts([target.serverId]);
     await reader.restore();
-    expect(reader.query(target, true, () => null, false)).toHaveProperty("initialData", null);
+    expect(reader.query(target, true, () => null, false)).toHaveProperty("initialData", {
+      icon: null,
+      emoji: null,
+    });
+  });
+
+  it("persists an emoji presentation", async () => {
+    const storage = new MemoryStorage();
+    const writer = new ProjectIconCache(storage);
+    writer.setHosts([target.serverId]);
+    await writer.query(target, true, () => clientWith(null, "🦊"), true).queryFn();
+    await writer.flush();
+
+    const reader = new ProjectIconCache(storage);
+    reader.setHosts([target.serverId]);
+    await reader.restore();
+
+    expect(reader.query(target, true, () => null, false).initialData).toEqual({
+      icon: null,
+      emoji: "🦊",
+    });
   });
 
   it("misses only the project whose revision changed", async () => {
@@ -79,6 +102,9 @@ describe("ProjectIconCache", () => {
     expect(
       cache.query({ ...target, iconRevision: "revision-b" }, true, () => null, false),
     ).not.toHaveProperty("initialData");
-    expect(cache.query(other, true, () => null, false)).toHaveProperty("initialData", null);
+    expect(cache.query(other, true, () => null, false)).toHaveProperty("initialData", {
+      icon: null,
+      emoji: null,
+    });
   });
 });

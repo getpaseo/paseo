@@ -558,6 +558,28 @@ describe("normalizeWorkspaceDescriptor", () => {
     expect(workspace.scripts).toEqual([]);
   });
 
+  it("projects workspace intention and leaves legacy descriptors without one", () => {
+    const payload = {
+      id: "1",
+      projectId: "1",
+      projectDisplayName: "Project 1",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "checkout",
+      name: "main",
+      status: "done",
+      activityAt: null,
+      diffStat: null,
+      scripts: [],
+    } as unknown as WorkspaceDescriptorPayload;
+
+    expect(normalizeWorkspaceDescriptor(payload).intent).toBeUndefined();
+    expect(normalizeWorkspaceDescriptor({ ...payload, intent: "Ship the plan" }).intent).toBe(
+      "Ship the plan",
+    );
+  });
+
   it("defaults missing archivingAt to null", () => {
     const payload = {
       id: "1",

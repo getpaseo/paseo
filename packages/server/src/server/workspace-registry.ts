@@ -43,6 +43,11 @@ const PersistedProjectRecordSchema = z.object({
     .nullable()
     .optional()
     .transform((value) => value ?? null),
+  customIconEmoji: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((value) => value ?? null),
   createdAt: z.string(),
   updatedAt: z.string(),
   archivedAt: z.string().nullable(),
@@ -62,6 +67,7 @@ const PersistedWorkspaceRecordSchema = z.object({
     .nullable()
     .optional()
     .transform((value) => value ?? null),
+  intent: z.string().optional(),
   // The worktree's git branch. Decoupled from displayName/title by construction:
   // displayName holds the human name (title), branch holds the git branch. Only
   // worktree workspaces carry a branch; directory/local_checkout leave it null.
@@ -75,9 +81,9 @@ const PersistedWorkspaceRecordSchema = z.object({
   // archive and recovery do not need the directory to still exist in order to
   // recover placement.
   worktreeRoot: z.string().nullable().default(null),
-  // The base branch the worktree was created from (normalized like worktree.json's
-  // baseRefName). Only worktree workspaces carry a base branch; checkout-branch
-  // worktrees and directory/local_checkout workspaces leave it null.
+  // Comparison base preserved across worktree deletion and restore. New branch-off
+  // workspaces store the resolved ref (e.g. refs/remotes/upstream/main); legacy and
+  // PR checkout records may contain a bare branch name. Ordinary checkouts use null.
   baseBranch: z
     .string()
     .nullable()
@@ -648,6 +654,7 @@ export function createPersistedProjectRecord(input: {
   customName?: string | null;
   projectKey?: string | null;
   customIconRevision?: string | null;
+  customIconEmoji?: string | null;
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
@@ -657,6 +664,7 @@ export function createPersistedProjectRecord(input: {
     customName: input.customName ?? null,
     projectKey: input.projectKey ?? null,
     customIconRevision: input.customIconRevision ?? null,
+    customIconEmoji: input.customIconEmoji ?? null,
     archivedAt: input.archivedAt ?? null,
   });
 }
@@ -672,6 +680,7 @@ export function createPersistedWorkspaceRecord(input: {
   kind: PersistedWorkspaceKind;
   displayName: string;
   title?: string | null;
+  intent?: string;
   branch?: string | null;
   worktreeRoot?: string | null;
   baseBranch?: string | null;

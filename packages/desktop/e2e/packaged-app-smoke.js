@@ -6,6 +6,8 @@ const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
 const { chromium } = require("playwright");
 const { extractFile } = require("@electron/asar");
+const { WebSocket } = require("ws");
+const assert = require("node:assert/strict");
 
 const EXECUTABLE_NAME = "Paseo";
 const SMOKE_TIMEOUT_MS = 60_000;
@@ -29,6 +31,29 @@ const REQUIRED_DESKTOP_BRIDGE_KEYS = [
 
 function createTempDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+}
+
+async function assertBuiltinPluginsStarted(listen) {
+  const { DaemonClient } = await import("@getpaseo/client/internal/daemon-client");
+  const { builtinPlugins } =
+    await import("../../server/dist/server/server/plugins/builtin/index.js");
+  const client = new DaemonClient({
+    url: `ws://${listen}/ws`,
+    clientId: "packaged-builtin-smoke",
+    webSocketFactory: (url, options) =>
+      new WebSocket(url, options?.protocols, { headers: options?.headers }),
+  });
+  try {
+    await client.connect();
+    const catalog = await client.getPluginCatalog();
+    assert.deepEqual(
+      catalog.map(({ id }) => id).sort(),
+      [...builtinPlugins].sort(),
+      "Every built-in plugin must start in the packaged desktop daemon",
+    );
+  } finally {
+    await client.close();
+  }
 }
 
 function assertExecutable(filePath, label) {
@@ -760,7 +785,7 @@ async function stopCliDaemon({ appPath, env }) {
   });
 }
 
-async function openSmokeWorkspace({ appPath, env, page, daemonHome }) {
+async function openSmokeWorkspace({ appPath, env, page, daemonHome, openAgent = true }) {
   const projectPath = path.join(daemonHome, "sandbox-smoke-project");
   fs.mkdirSync(projectPath);
   fs.writeFileSync(path.join(projectPath, "README.md"), "Packaged Linux sandbox smoke\n");
@@ -781,7 +806,10 @@ async function openSmokeWorkspace({ appPath, env, page, daemonHome }) {
   });
   await page.getByRole("button", { name: "Sandbox smoke workspace", exact: true }).click();
   await page.waitForURL((url) => url.pathname.endsWith(`/workspace/${workspace.workspaceId}`));
-  await page.getByRole("textbox", { name: "Message agent..." }).click();
+  if (openAgent) {
+    await page.getByRole("button", { name: "Agent", exact: true }).click();
+    await page.getByRole("textbox", { name: "Message agent..." }).click();
+  }
   console.log(`Packaged desktop smoke: renderer opened workspace ${workspace.workspaceId}`);
 }
 
@@ -833,11 +861,45 @@ function assertLinuxDesktopIdentity(appPath) {
   }
 }
 
+async function assertLocalRelease({ page, userData }) {
+  const { expect } = require("@playwright/test");
+  const row = page.locator('[data-testid^="sidebar-project-row-"]').first();
+  await expect(row).toBeVisible();
+  const rowId = await row.getAttribute("data-testid");
+  await row.click({ button: "right" });
+  const hide = page.locator('[data-testid^="sidebar-project-menu-hide-"]');
+  await expect(hide).toBeVisible();
+  const artifacts = process.env.PASEO_LOCAL_RELEASE_ARTIFACTS;
+  if (artifacts) {
+    fs.mkdirSync(artifacts, { recursive: true });
+    await page.screenshot({ path: path.join(artifacts, "hide-project-menu.png") });
+  }
+  await hide.click();
+  await expect(page.getByTestId(rowId)).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByTestId("sidebar-display-preferences-menu")).toBeVisible();
+  await expect(page.getByTestId(rowId)).toHaveCount(0);
+  await page.getByTestId("sidebar-display-preferences-menu").click();
+  await page.getByTestId("sidebar-display-project-filter").click();
+  await page.getByTestId("sidebar-project-filter-all").click();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId(rowId)).toBeVisible();
+  if (artifacts) await page.screenshot({ path: path.join(artifacts, "project-restored.png") });
+  await expect
+    .poll(
+      () =>
+        JSON.parse(fs.readFileSync(path.join(userData, "local-release-status.json"), "utf8"))
+          .verified,
+    )
+    .toBe(true);
+}
+
 async function smokePackagedDesktopApp({
   appPath,
   executablePath = getExecutablePath(appPath),
   launchArgs = [],
   expectedSandbox,
+  verifyLocalRelease = false,
 }) {
   assertExecutable(executablePath, "Packaged app executable");
   assertLinuxDesktopIdentity(appPath);
@@ -914,11 +976,17 @@ async function smokePackagedDesktopApp({
       deadline,
     });
     console.log("Packaged desktop smoke: renderer-started desktop daemon reported running");
+    await assertBuiltinPluginsStarted(listen);
+    console.log("Packaged desktop smoke: every built-in plugin started");
     await smokeCliShim({ appPath, env });
     await smokeCliTerminal({ appPath, env });
     if (expectedSandbox !== undefined) {
       await assertSandboxState({ browser, page, expectedSandbox, stdout, stderr });
       await openSmokeWorkspace({ appPath, env, page, daemonHome });
+    }
+    if (verifyLocalRelease) {
+      await openSmokeWorkspace({ appPath, env, page, daemonHome, openAgent: false });
+      await assertLocalRelease({ page, userData });
     }
     await writeSmokeArtifacts({ page, stdout, stderr, userData, daemonHome });
     await stopDaemonForCleanup();

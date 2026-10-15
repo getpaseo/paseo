@@ -1,3 +1,4 @@
+import { selectModel } from "../support/helpers/app";
 import { test, expect } from "../support/fixtures";
 import { expectWorkspaceTabVisible } from "../support/helpers/archive-tab";
 import {
@@ -16,7 +17,8 @@ import {
   submitNewWorkspacePrompt,
 } from "../support/helpers/new-workspace";
 import { getServerId } from "../support/helpers/server-id";
-import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
+import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
+import { pinWorkspaceFromSidebar, selectSidebarStatusGrouping } from "../support/helpers/sidebar";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 import {
   expectSubagentRowVisible,
@@ -80,6 +82,32 @@ async function fetchWorkspaceStatuses(
 async function fetchAgentStatus(seeded: SeededWorkspace, agentId: string): Promise<string | null> {
   const result = await seeded.client.fetchAgents({ scope: "active" });
   return result.entries.find((entry) => entry.agent.id === agentId)?.agent.status ?? null;
+}
+
+function workspaceRow(page: import("@playwright/test").Page, rowTestId: string) {
+  return page.getByTestId(rowTestId);
+}
+
+async function expectWorkspaceTitleWeight(
+  page: import("@playwright/test").Page,
+  input: { rowTestId: string; title: string; weight: "400" | "700" },
+) {
+  // The meta line under the title repeats the workspace name when it is branch-derived, so the
+  // first match is the title the weight belongs to.
+  await expect(
+    workspaceRow(page, input.rowTestId).getByText(input.title, { exact: true }).first(),
+  ).toHaveCSS("font-weight", input.weight);
+}
+
+async function expectProjectTitleWeight(
+  page: import("@playwright/test").Page,
+  input: { projectKey: string; title: string; weight: "500" | "700" },
+) {
+  await expect(
+    page
+      .getByTestId(`sidebar-project-row-${projectEquivalenceViewKey(input.projectKey)}`)
+      .getByText(input.title, { exact: true }),
+  ).toHaveCSS("font-weight", input.weight);
 }
 
 async function switchSidebarToStatusGrouping(page: import("@playwright/test").Page) {
@@ -197,7 +225,7 @@ test.describe("Workspace model regressions", () => {
     }
   });
 
-  test("new agent tab in a same-directory workspace picks a default model for the saved provider", async ({
+  test("new agent tab in a same-directory workspace uses Codex defaults before manual selection", async ({
     page,
   }) => {
     const seeded: SeededWorkspace = await seedWorkspace({
@@ -230,6 +258,10 @@ test.describe("Workspace model regressions", () => {
 
       await expectComposerVisible(page);
       await expectComposerEditable(page);
+      await expect(
+        page.getByTestId("combined-model-selector").filter({ visible: true }),
+      ).toHaveAttribute("aria-label", /Select model \(GPT-6-Astra\)/i);
+      await selectModel(page, "Five minute stream");
       const prompt = `Create agent default model ${Date.now()}`;
       await submitMessage(page, prompt);
       await expect(page.getByText("No model is available for the selected provider")).toHaveCount(
@@ -291,6 +323,7 @@ test.describe("Workspace model regressions", () => {
         .toBe("Fix login bug");
       await expectWorkspaceHeader(page, {
         title: "Fix login bug",
+        directory: seeded.workspaceDirectory,
         subtitle: seeded.projectDisplayName,
       });
       await expect(createdRow).toContainText("Fix login bug", { timeout: 30_000 });
@@ -345,6 +378,19 @@ test.describe("Workspace model regressions", () => {
 
       const firstRowTestId = `sidebar-workspace-row-${serverId}:${seeded.workspaceId}`;
       const secondRowTestId = `sidebar-workspace-row-${serverId}:${secondWorkspaceId}`;
+      const runningName = await fetchWorkspaceName(client, seeded.workspaceId);
+      if (!runningName) throw new Error("Missing running workspace name");
+      // A running child is not an awaiting one, so neither it nor its project header is bold.
+      await expectProjectTitleWeight(page, {
+        projectKey: seeded.projectKey,
+        title: seeded.projectDisplayName,
+        weight: "500",
+      });
+      await expectWorkspaceTitleWeight(page, {
+        rowTestId: firstRowTestId,
+        title: runningName,
+        weight: "400",
+      });
       await expectWorkspaceRowHasOnlyIndicator(page, {
         rowTestId: firstRowTestId,
         indicator: "running",
@@ -461,6 +507,41 @@ test.describe("Workspace model regressions", () => {
 
       const firstRowTestId = `sidebar-workspace-row-${serverId}:${seeded.workspaceId}`;
       const secondRowTestId = `sidebar-workspace-row-${serverId}:${secondWorkspaceId}`;
+      const firstWorkspaceName = await fetchWorkspaceName(client, seeded.workspaceId);
+      const secondWorkspaceName = await fetchWorkspaceName(client, secondWorkspaceId);
+      if (!firstWorkspaceName || !secondWorkspaceName) {
+        throw new Error("Missing workspace names for the permission project");
+      }
+      // The header is bold because one child awaits input; only that child's title is bold.
+      await expectProjectTitleWeight(page, {
+        projectKey: seeded.projectKey,
+        title: seeded.projectDisplayName,
+        weight: "700",
+      });
+      await expectWorkspaceTitleWeight(page, {
+        rowTestId: firstRowTestId,
+        title: firstWorkspaceName,
+        weight: "700",
+      });
+      await expectWorkspaceTitleWeight(page, {
+        rowTestId: secondRowTestId,
+        title: secondWorkspaceName,
+        weight: "400",
+      });
+
+      // The header keeps its weight while collapsed, when the child rows it derives it from
+      // are hidden.
+      const projectRowTestId = `sidebar-project-row-${projectEquivalenceViewKey(seeded.projectKey)}`;
+      await page.getByTestId(projectRowTestId).click();
+      await expect(workspaceRow(page, firstRowTestId)).toHaveCount(0, { timeout: 10_000 });
+      await expectProjectTitleWeight(page, {
+        projectKey: seeded.projectKey,
+        title: seeded.projectDisplayName,
+        weight: "700",
+      });
+      await page.getByTestId(projectRowTestId).click();
+      await expect(workspaceRow(page, firstRowTestId)).toBeVisible({ timeout: 30_000 });
+
       await expectWorkspaceRowHasOnlyIndicator(page, {
         rowTestId: firstRowTestId,
         indicator: "needs_input",
@@ -469,6 +550,23 @@ test.describe("Workspace model regressions", () => {
         rowTestId: secondRowTestId,
         indicator: "needs_input",
       });
+
+      // Pinning the only awaiting child out of the group drops the weight from its former
+      // header, while the pinned row keeps its own bold title.
+      await pinWorkspaceFromSidebar(page, seeded.workspaceId);
+      await expect(page.getByTestId("sidebar-pinned-section")).toBeVisible({ timeout: 30_000 });
+      await expectProjectTitleWeight(page, {
+        projectKey: seeded.projectKey,
+        title: seeded.projectDisplayName,
+        weight: "500",
+      });
+      await expectWorkspaceTitleWeight(page, {
+        rowTestId: firstRowTestId,
+        title: firstWorkspaceName,
+        weight: "700",
+      });
+      await pinWorkspaceFromSidebar(page, seeded.workspaceId);
+      await expect(page.getByTestId("sidebar-pinned-section")).toHaveCount(0, { timeout: 30_000 });
 
       await openGlobalNewWorkspaceComposer(page);
       await expectNewWorkspaceProjectSelected(page, seeded.projectDisplayName);

@@ -42,6 +42,44 @@ Linux produces the `paseo-desktop` launcher and desktop entry. macOS produces
 Electron runtime and the checkout's built daemon, client, and renderer rather
 than downloading a published desktop release.
 
+## Local macOS app
+
+On an Apple Silicon Mac, build and install a repository-local desktop app with:
+
+```bash
+npm run build:desktop:local
+```
+
+The command installs `~/Applications/Paseo Local.app` only from a clean commit published on
+`origin/main`. The auto builder follows that same branch. A correction left on another
+checkout is not a release; merge it into this branch before installing. For an isolated candidate
+build, set `PASEO_LOCAL_INSTALL_TARGET` to a temporary `.app` path.
+
+Every local build carries its Git commit into Electron and the renderer. Before installation,
+the packaged smoke checks project hiding/restoration and the external plan pop-up's beige body
+and dark header. A failed check leaves the installed app intact.
+
+Installation and activation are separate. The builder records built, installed, and confirmed
+active commits; an app that is closed or has not acknowledged startup stays pending activation.
+The desktop checks for an installed update every 30 seconds and on focus. After 60 seconds without
+interaction it gives a 10-second warning; input cancels it and **Reporter** defers it for 30 minutes.
+Drafts are flushed and windows restored. Recording, transfers, unsafe forms and unresponsive
+windows defer activation. Failed activation is visible and stops automatic retries for that build.
+
+This relaunch exits only the interface, bypassing the normal quit preference that may stop the
+daemon. The builder never restarts the production daemon. Daemon upgrades require a separate
+explicitly authorized restart. The first installation of this mechanism needs one manual GUI
+relaunch. This Local build uses production `~/.paseo` state and port 6767, with separate Electron
+preferences and no public release auto-updates. Do not run two apps managing that port.
+
+To distribute this installed build to another Apple Silicon Mac, use the [iCloud mirror](paseo-local-auto-build.md#icloud-mirror).
+
+Vibe Island can open a Paseo Local conversation with `paseo-local://focus?session=<id>&cwd=<cwd>`.
+The desktop resolves the provider session from local agent persistence; `cwd` only narrows a
+session match. Configure the provider environment with `__CFBundleIdentifier=sh.paseo.desktop.local`
+and `TERM_PROGRAM=Paseo`, reload the `~/.paseo` daemon configuration, then restart Vibe Island after
+installing the Local build. An unknown or ambiguous session leaves the current conversation selected.
+
 ### PASEO_HOME
 
 `PASEO_HOME` is the directory that holds runtime state (agents, worktrees, workspace config, sockets, daemon log). Resolution rules:
@@ -358,9 +396,14 @@ for machine-readable output.
 
 ## Worktree starting refs
 
-A new worktree starts from the current branch's upstream, or the local branch when it has no
-upstream. This keeps unpushed local commits out of new workspaces by default. The picker collapses
-identical refs; divergent local or non-origin refs remain explicit, qualified choices.
+The New workspace form defaults to a new worktree from `main`, regardless of the source
+checkout's current branch or the last isolation choice. Bare `main` resolves to local `main`,
+or `origin/main` when no local main exists. PARA, SeO Compagnon, and debug default to local
+workspaces; their host-local project IDs keep those exceptions stable across renames.
+Non-Git projects remain local. You can change the mode and base for a single creation.
+
+The picker collapses identical refs; divergent local or non-origin refs remain explicit,
+qualified choices.
 
 The daemon sends the exact upstream ref because the remote and branch names cannot be inferred.
 Worktrees retain that ref for comparisons and updates from base while exposing its branch name to

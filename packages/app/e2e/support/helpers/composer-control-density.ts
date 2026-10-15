@@ -1,14 +1,12 @@
 import { expect, type Page } from "@playwright/test";
 
 /**
- * The composer toolbar collapses its controls by measured width. A collapsed
- * frame is observable from the DOM: the mode trigger drops its label and
- * shrinks to the icon-only box, so a visible trigger with no text is a
- * collapsed paint.
+ * Mode controls intentionally use icon-only triggers. Their accessible mode label and
+ * minimum target height must survive tab switches on every painted frame.
  */
 interface ToolbarFrame {
   atMs: number;
-  labels: string[];
+  controls: Array<{ label: string; height: number }>;
 }
 
 declare global {
@@ -27,10 +25,13 @@ export async function recordComposerToolbarFrames(page: Page): Promise<void> {
     let running = true;
     const tick = () => {
       if (!running) return;
-      const labels = Array.from(document.querySelectorAll('[data-testid="mode-control"]'))
+      const controls = Array.from(document.querySelectorAll('[data-testid="mode-control"]'))
         .filter((node) => node.getClientRects().length > 0)
-        .map((node) => (node.textContent ?? "").trim());
-      frames.push({ atMs: Math.round(performance.now() - start), labels });
+        .map((node) => ({
+          label: node.getAttribute("aria-label") ?? "",
+          height: node.getBoundingClientRect().height,
+        }));
+      frames.push({ atMs: Math.round(performance.now() - start), controls });
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
@@ -50,6 +51,8 @@ async function readComposerToolbarFrames(page: Page): Promise<ToolbarFrame[]> {
 export async function expectNoCollapsedComposerToolbarFrame(page: Page): Promise<void> {
   const frames = await readComposerToolbarFrames(page);
   expect(frames.length).toBeGreaterThan(0);
-  const collapsed = frames.filter((frame) => frame.labels.some((label) => label === ""));
+  const collapsed = frames.filter((frame) =>
+    frame.controls.some((control) => !control.label || control.height < 24),
+  );
   expect(collapsed, `collapsed toolbar frames: ${JSON.stringify(collapsed)}`).toEqual([]);
 }

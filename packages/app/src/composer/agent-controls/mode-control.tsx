@@ -13,7 +13,7 @@ import { getAgentControlHintKey } from "@/composer/agent-controls/utils";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
-import { resolveNextAgentModeId } from "@/composer/agent-controls/mode";
+import { PLAN_MODE_FEATURE_ID, resolvePlanModeTarget } from "@/agent-controls/policy";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { useComposerControlLayout } from "@/composer/agent-controls/layout-context";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
@@ -68,6 +68,7 @@ export interface AgentModeControlValue {
   modeOptions: AgentMode[];
   selectedModeId: string | null | undefined;
   onSelectMode: (modeId: string) => void;
+  onTogglePlan?: () => void;
   disabled?: boolean;
 }
 
@@ -81,6 +82,7 @@ export function AgentModeControl({
   modeOptions,
   selectedModeId,
   onSelectMode,
+  onTogglePlan,
   disabled = false,
   surface = "toolbar",
   onClose,
@@ -141,18 +143,25 @@ export function AgentModeControl({
     (action: KeyboardActionDefinition): boolean => {
       if (action.id !== "message-input.mode-cycle") return false;
       if (disabled || !isActiveComposer) return false;
-      const nextModeId = resolveNextAgentModeId({ modeOptions, selectedMode: selectedModeId });
+      if (onTogglePlan) {
+        onTogglePlan();
+        return true;
+      }
+      const nextModeId = resolvePlanModeTarget(modeOptions, selectedModeId);
       if (!nextModeId) return false;
       onSelectMode(nextModeId);
       return true;
     },
-    [disabled, isActiveComposer, modeOptions, onSelectMode, selectedModeId],
+    [disabled, isActiveComposer, modeOptions, onSelectMode, onTogglePlan, selectedModeId],
   );
 
   useKeyboardActionHandler({
     handlerId: keyboardHandlerIdRef.current,
     actions: ["message-input.mode-cycle"],
-    enabled: isActiveComposer && !disabled && modeOptions.length > 1,
+    enabled:
+      isActiveComposer &&
+      !disabled &&
+      Boolean(onTogglePlan || resolvePlanModeTarget(modeOptions, selectedModeId)),
     priority: 200,
     handle: handleKeyboardAction,
   });
@@ -202,7 +211,7 @@ export function AgentModeControl({
             surface={surface}
             label={t("agentControls.mode.title")}
             value={selectedModeLabel}
-            showToolbarLabel={presentation.showModeLabel}
+            showToolbarLabel={false}
             showCaret={surface === "toolbar" && presentation.showCarets}
             open={open}
             disabled={disabled}
@@ -254,6 +263,7 @@ export function useLiveAgentModeControl(
         provider: agent.provider,
         cwd: agent.cwd,
         currentModeId: agent.currentModeId,
+        features: agent.features,
       };
     }),
   );
@@ -296,6 +306,27 @@ export function useLiveAgentModeControl(
     [agentId, client, slice?.provider, toast, updatePreferences],
   );
 
+  const planFeature = slice?.features?.find(
+    (feature) => feature.id === PLAN_MODE_FEATURE_ID && feature.type === "toggle",
+  );
+  const handleTogglePlan = useCallback(() => {
+    if (!client || !slice?.provider || !planFeature || planFeature.type !== "toggle") return;
+    const value = !planFeature.value;
+    void updatePreferences((current) =>
+      mergeProviderPreferences({
+        preferences: current,
+        provider: slice.provider,
+        updates: { featureValues: { [PLAN_MODE_FEATURE_ID]: value } },
+      }),
+    ).catch((error) => {
+      console.warn("[AgentModeControl] persist plan preference failed", error);
+    });
+    void client.setAgentFeature(agentId, PLAN_MODE_FEATURE_ID, value).catch((error) => {
+      console.warn("[AgentModeControl] setAgentFeature failed", error);
+      toast.error(toErrorMessage(error));
+    });
+  }, [agentId, client, planFeature, slice?.provider, toast, updatePreferences]);
+
   return useMemo(() => {
     if (!slice || availableModes.length === 0) return null;
     return {
@@ -304,9 +335,18 @@ export function useLiveAgentModeControl(
       modeOptions: availableModes,
       selectedModeId: slice.currentModeId,
       onSelectMode: handleSelectMode,
+      onTogglePlan: planFeature ? handleTogglePlan : undefined,
       disabled: !client,
     };
-  }, [availableModes, client, handleSelectMode, providerDefinitions, slice]);
+  }, [
+    availableModes,
+    client,
+    handleSelectMode,
+    handleTogglePlan,
+    planFeature,
+    providerDefinitions,
+    slice,
+  ]);
 }
 
 const styles = StyleSheet.create((theme) => ({

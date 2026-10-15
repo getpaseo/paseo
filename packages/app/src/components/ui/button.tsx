@@ -25,7 +25,14 @@ import {
 } from "@/components/ui/control-geometry";
 import type { Theme } from "@/styles/theme";
 
-type ButtonVariant = "default" | "secondary" | "outline" | "ghost" | "destructive";
+type ButtonVariant =
+  | "default"
+  | "secondary"
+  | "outline"
+  | "ghost"
+  | "destructive"
+  | "merge"
+  | "archive";
 type ButtonSize = ButtonControlSize;
 
 type LeftIcon =
@@ -84,6 +91,12 @@ const accentForegroundIconMapping = (theme: Theme) => ({
 const destructiveForegroundIconMapping = (theme: Theme) => ({
   iconColor: theme.colors.destructiveForeground,
 });
+const mergeForegroundIconMapping = (theme: Theme) => ({
+  iconColor: theme.colors.workspaceActionMergeForeground,
+});
+const archiveForegroundIconMapping = (theme: Theme) => ({
+  iconColor: theme.colors.workspaceActionArchiveForeground,
+});
 
 const styles = StyleSheet.create((theme) => {
   const geometry = createControlGeometry(theme);
@@ -130,6 +143,14 @@ const styles = StyleSheet.create((theme) => {
       backgroundColor: theme.colors.destructive,
       borderColor: theme.colors.destructive,
     },
+    merge: {
+      backgroundColor: theme.colors.workspaceActionMerge,
+      borderColor: theme.colors.workspaceActionMerge,
+    },
+    archive: {
+      backgroundColor: theme.colors.workspaceActionArchive,
+      borderColor: theme.colors.workspaceActionArchive,
+    },
     pressed: {
       opacity: 0.85,
     },
@@ -150,6 +171,8 @@ const styles = StyleSheet.create((theme) => {
     textDestructive: {
       color: theme.colors.destructiveForeground,
     },
+    textMerge: { color: theme.colors.workspaceActionMergeForeground },
+    textArchive: { color: theme.colors.workspaceActionArchiveForeground },
     textGhost: {
       color: theme.colors.foregroundMuted,
     },
@@ -195,6 +218,10 @@ export function Button({
     variantStyle = styles.outline;
   } else if (variant === "ghost") {
     variantStyle = styles.ghost;
+  } else if (variant === "merge") {
+    variantStyle = styles.merge;
+  } else if (variant === "archive") {
+    variantStyle = styles.archive;
   } else {
     variantStyle = styles.destructive;
   }
@@ -232,6 +259,8 @@ export function Button({
       size === "xs" ? styles.textXs : null,
       variant === "default" ? styles.textDefault : null,
       variant === "destructive" ? styles.textDestructive : null,
+      variant === "merge" ? styles.textMerge : null,
+      variant === "archive" ? styles.textArchive : null,
       variant === "ghost" ? styles.textGhost : null,
       textStyle,
       isGhostHovered ? styles.textGhostHovered : null,
@@ -247,6 +276,12 @@ export function Button({
   function resolveIconMapping() {
     if (variant === "default") {
       return accentForegroundIconMapping;
+    }
+    if (variant === "merge") {
+      return mergeForegroundIconMapping;
+    }
+    if (variant === "archive") {
+      return archiveForegroundIconMapping;
     }
     if (variant === "destructive") {
       return destructiveForegroundIconMapping;

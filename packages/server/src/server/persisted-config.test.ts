@@ -6,6 +6,7 @@ import { describe, expect, test } from "vitest";
 import {
   loadPersistedConfig,
   PersistedConfigSchema,
+  readPersistedConfig,
   savePersistedConfig,
 } from "./persisted-config.js";
 import { PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE } from "./private-files.js";
@@ -43,6 +44,43 @@ describe("PersistedConfigSchema daemon append system prompt config", () => {
     });
 
     expect(parsed.daemon?.appendSystemPrompt).toBe("Prefer terse replies.");
+  });
+});
+
+describe("PersistedConfigSchema workspace Git workflow config", () => {
+  test("accepts independent manual models and explicit automatic selection", () => {
+    const workspaceGitWorkflow = {
+      reviewModel: { provider: "codex", model: "review-model", thinkingOptionId: "high" },
+      commitModel: { provider: "claude", model: "commit-model" },
+      prModel: null,
+    };
+    const parsed = PersistedConfigSchema.parse({ daemon: { workspaceGitWorkflow } });
+    expect(parsed.daemon?.workspaceGitWorkflow).toEqual(workspaceGitWorkflow);
+    expect(
+      PersistedConfigSchema.safeParse({
+        daemon: {
+          workspaceGitWorkflow: {
+            commitModel: { provider: "", model: "commit-model" },
+          },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  test("accepts optional workflow profiles and prompts", () => {
+    const parsed = PersistedConfigSchema.parse({
+      daemon: {
+        workspaceGitWorkflow: {
+          reviewProfileId: "review",
+          deliveryProfileId: "delivery",
+          reviewPrompt: "Review this workspace.",
+          createPrPrompt: "Create the PR.",
+          commitAndPushPrompt: "Commit and push the branch.",
+        },
+      },
+    });
+
+    expect(parsed.daemon?.workspaceGitWorkflow?.deliveryProfileId).toBe("delivery");
   });
 });
 
@@ -412,19 +450,23 @@ describe("provider overrides (new format)", () => {
     expect(parsed.agents?.providers?.claude?.order).toBe(1);
   });
 
-  test("new provider without extends → error", () => {
-    const result = PersistedConfigSchema.safeParse({
-      agents: {
-        providers: {
-          zai: {
-            label: "ZAI",
-          },
-        },
-      },
+  test("accepts a plugin override before plugin registration", () => {
+    const override = { enabled: false, command: ["/opt/agent"], env: { LOGIN: "yes" } };
+    const parsed = PersistedConfigSchema.parse({
+      agents: { providers: { "plugin-agent": override } },
     });
-
-    expect(result.success).toBe(false);
+    expect(parsed.agents?.providers?.["plugin-agent"]).toEqual(override);
   });
+
+  test.each(["plugin.agent", "plugin_agent"])(
+    "keeps %s outside the config provider ID alphabet",
+    (id) => {
+      expect(
+        PersistedConfigSchema.safeParse({ agents: { providers: { [id]: { enabled: false } } } })
+          .success,
+      ).toBe(false);
+    },
+  );
 
   test("new provider without label → error", () => {
     const result = PersistedConfigSchema.safeParse({
@@ -730,6 +772,62 @@ describe("loadPersistedConfig", () => {
       expect((config.providers?.openai as Record<string, unknown>)?.voice).toBeUndefined();
       expect(config.providers?.openai?.stt).toBeUndefined();
       expect(config.providers?.openai?.tts).toBeUndefined();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("config.json saved with a UTF-8 byte order mark", () => {
+  // Windows Notepad writes this shape: a BOM, then CRLF line endings.
+  const notepadConfig =
+    '﻿{\r\n  "version": 1,\r\n  "daemon": { "listen": "127.0.0.1:6767" }\r\n}\r\n';
+
+  test("loadPersistedConfig reads it", () => {
+    const home = createTempHome();
+    try {
+      writeFileSync(path.join(home, "config.json"), notepadConfig);
+
+      expect(loadPersistedConfig(home).daemon?.listen).toBe("127.0.0.1:6767");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("readPersistedConfig reads it", () => {
+    const home = createTempHome();
+    try {
+      writeFileSync(path.join(home, "config.json"), notepadConfig);
+
+      expect(readPersistedConfig(home).daemon?.listen).toBe("127.0.0.1:6767");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("readPersistedConfig with an unreadable config.json", () => {
+  test("names the file when it is not valid JSON", () => {
+    const home = createTempHome();
+    const configPath = path.join(home, "config.json");
+    try {
+      writeFileSync(configPath, '{"version":1,');
+
+      expect(() => readPersistedConfig(home)).toThrow(`[Config] Invalid JSON in ${configPath}: `);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("names the file and the field when it does not match the schema", () => {
+    const home = createTempHome();
+    const configPath = path.join(home, "config.json");
+    try {
+      writeFileSync(configPath, '{"daemon":{"listen":5}}');
+
+      expect(() => readPersistedConfig(home)).toThrow(
+        `[Config] Invalid config in ${configPath}:\n  - daemon.listen: `,
+      );
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

@@ -15,6 +15,7 @@ describe("schedule RPC schemas", () => {
             provider: "claude",
             cwd: "/tmp/project",
             thinkingOptionId: "think-hard",
+            featureValues: { fast_mode: false },
             archiveOnFinish: false,
             isolation: "worktree",
           },
@@ -31,6 +32,7 @@ describe("schedule RPC schemas", () => {
           provider: "claude",
           cwd: "/tmp/project",
           thinkingOptionId: "think-hard",
+          featureValues: { fast_mode: false },
           archiveOnFinish: false,
           isolation: "worktree",
         },
@@ -46,6 +48,7 @@ describe("schedule RPC schemas", () => {
         scheduleId: "schedule-1",
         newAgentConfig: {
           thinkingOptionId: "think-hard",
+          featureValues: { fast_mode: false },
           archiveOnFinish: false,
           isolation: "worktree",
         },
@@ -56,6 +59,7 @@ describe("schedule RPC schemas", () => {
       scheduleId: "schedule-1",
       newAgentConfig: {
         thinkingOptionId: "think-hard",
+        featureValues: { fast_mode: false },
         archiveOnFinish: false,
         isolation: "worktree",
       },

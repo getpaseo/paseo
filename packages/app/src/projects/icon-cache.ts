@@ -4,7 +4,7 @@ import { projectIconCacheStorage } from "./icon-cache-storage";
 import type { ProjectIconTarget } from "./icon-target";
 
 const STORAGE_KEY = "@paseo:project-icon-cache";
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 2;
 const PERSIST_DELAY_MS = 250;
 const MAX_ENTRIES = 512;
 
@@ -19,10 +19,15 @@ interface ProjectIconIdentity {
   revision: string;
 }
 
-type ProjectIconCacheRead = { hit: true; icon: ProjectIcon | null } | { hit: false };
+export interface ProjectIconPresentation {
+  icon: ProjectIcon | null;
+  emoji: string | null;
+}
+
+type ProjectIconCacheRead = { hit: true; presentation: ProjectIconPresentation } | { hit: false };
 
 interface StoredIcon extends ProjectIconIdentity {
-  icon: ProjectIcon | null;
+  presentation: ProjectIconPresentation;
 }
 
 function keyOf(identity: ProjectIconIdentity): string {
@@ -39,22 +44,22 @@ function parseStoredIcon(value: unknown): StoredIcon | null {
   ) {
     return null;
   }
-  if (entry.icon === null) {
-    return {
-      serverId: entry.serverId,
-      projectId: entry.projectId,
-      revision: entry.revision,
-      icon: null,
-    };
-  }
-  if (!entry.icon || typeof entry.icon !== "object") return null;
-  const icon = entry.icon as Record<string, unknown>;
-  if (typeof icon.data !== "string" || typeof icon.mimeType !== "string") return null;
+  if (!entry.presentation || typeof entry.presentation !== "object") return null;
+  const presentation = entry.presentation as Record<string, unknown>;
+  const emoji = presentation.emoji;
+  if (emoji !== null && typeof emoji !== "string") return null;
+  const rawIcon = presentation.icon;
+  if (rawIcon !== null && typeof rawIcon !== "object") return null;
+  const icon = rawIcon as Record<string, unknown> | null;
+  if (icon && (typeof icon.data !== "string" || typeof icon.mimeType !== "string")) return null;
   return {
     serverId: entry.serverId,
     projectId: entry.projectId,
     revision: entry.revision,
-    icon: { data: icon.data, mimeType: icon.mimeType },
+    presentation: {
+      icon: icon ? { data: icon.data as string, mimeType: icon.mimeType as string } : null,
+      emoji,
+    },
   };
 }
 
@@ -103,13 +108,13 @@ export class ProjectIconCache {
 
   private read(identity: ProjectIconIdentity): ProjectIconCacheRead {
     const entry = this.entries.get(keyOf(identity));
-    return entry ? { hit: true, icon: entry.icon } : { hit: false };
+    return entry ? { hit: true, presentation: entry.presentation } : { hit: false };
   }
 
-  private write(identity: ProjectIconIdentity, icon: ProjectIcon | null): void {
+  private write(identity: ProjectIconIdentity, presentation: ProjectIconPresentation): void {
     const key = keyOf(identity);
     this.entries.delete(key);
-    this.entries.set(key, { ...identity, icon });
+    this.entries.set(key, { ...identity, presentation });
     while (this.entries.size > MAX_ENTRIES) {
       const oldest = this.entries.keys().next().value;
       if (oldest === undefined) break;
@@ -134,25 +139,30 @@ export class ProjectIconCache {
     const lookup = resolveLookup(target, supportsCustomIcons);
     let queryKey: readonly string[];
     if (!lookup) {
-      queryKey = ["projectIcon", target.serverId, "pending", target.projectId];
+      queryKey = ["projectIconPresentation", target.serverId, "pending", target.projectId];
     } else if (lookup.kind === "project") {
-      queryKey = ["projectIcon", target.serverId, target.projectId, revision];
+      queryKey = ["projectIconPresentation", target.serverId, target.projectId, revision];
     } else {
-      queryKey = ["projectIcon", target.serverId, "legacy", lookup.cwd];
+      queryKey = ["projectIconPresentation", target.serverId, "legacy", lookup.cwd];
     }
     return {
       queryKey,
       queryFn: async () => {
-        if (!lookup) return null;
+        if (!lookup) return { icon: null, emoji: null };
         const client = getClient();
-        if (!client) return null;
-        const result =
-          lookup.kind === "project"
-            ? await client.getProjectIcon(lookup.projectId)
-            : await client.requestProjectIcon(lookup.cwd);
-        if (result.error) throw new Error(result.error);
-        if (identity) this.write(identity, result.icon);
-        return result.icon;
+        if (!client) return { icon: null, emoji: null };
+        let presentation: ProjectIconPresentation;
+        if (lookup.kind === "project") {
+          const result = await client.getProjectIcon(lookup.projectId);
+          if (result.error) throw new Error(result.error);
+          presentation = { icon: result.icon, emoji: result.emoji ?? null };
+        } else {
+          const result = await client.requestProjectIcon(lookup.cwd);
+          if (result.error) throw new Error(result.error);
+          presentation = { icon: result.icon, emoji: null };
+        }
+        if (identity) this.write(identity, presentation);
+        return presentation;
       },
       enabled: Boolean(lookup && getClient() && connected),
       staleTime: Infinity,
@@ -160,7 +170,7 @@ export class ProjectIconCache {
       refetchOnMount: false as const,
       refetchOnWindowFocus: false as const,
       refetchOnReconnect: false as const,
-      ...(cached.hit ? { initialData: cached.icon } : {}),
+      ...(cached.hit ? { initialData: cached.presentation } : {}),
     };
   }
 

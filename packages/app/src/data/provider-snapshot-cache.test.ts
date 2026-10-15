@@ -130,6 +130,43 @@ function writeSnapshot(
 }
 
 describe("provider snapshot cache", () => {
+  it("normalizes duplicate model identities in live, legacy and persisted catalogs", async () => {
+    const storage = createStorage();
+    const entries = snapshotEntries("shared");
+    const first = entries[0].models![0];
+    entries[0].models!.push({ ...first, label: "Duplicate" });
+    const compactSnapshot = compactProviderSnapshot(entries);
+    const payload = { requestId: "catalog", generatedAt: "2026-09-01T00:00:00.000Z", entries };
+    const cache = createProviderSnapshotCache(storage);
+    const legacy = await cache.materialize("server-1", payload);
+    expect(legacy.entries[0].models).toEqual([first]);
+    const live = await cache.materialize("server-1", {
+      ...payload,
+      snapshotHash: "old-hash",
+      compactSnapshot,
+    });
+    expect(live.entries[0].models).toEqual([first]);
+    expect(live.compactSnapshot).toEqual(compactSnapshot);
+    await cache.write({
+      serverId: "server-1",
+      cwd: "/repo",
+      hash: "old-hash",
+      generatedAt: payload.generatedAt,
+      compactSnapshot,
+    });
+    const restarted = createProviderSnapshotCache(storage);
+    const saved = await restarted.read("server-1", "/repo");
+    expect(saved?.entries[0].models).toEqual([first]);
+    const unchanged = await restarted.materialize("server-1", {
+      ...payload,
+      entries: [],
+      snapshotHash: "old-hash",
+      notModified: true,
+    });
+    expect(unchanged.entries[0].models).toEqual([first]);
+    expect(unchanged.snapshotHash).toBe("old-hash");
+  });
+
   it("removes externally lost body references and retains independent orphan bodies on reconciliation", async () => {
     const storage = createStorage();
     const cache = createProviderSnapshotCache(storage);

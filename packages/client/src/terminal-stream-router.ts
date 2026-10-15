@@ -14,11 +14,11 @@ export type TerminalStreamEvent = { terminalId: string; subscriptionId: string }
 export class TerminalStreamRouter {
   private readonly slots = new Map<
     number,
-    {
+    Set<{
       subscriptionId: string;
       terminalId: string;
       receive: (event: TerminalStreamEvent) => void;
-    }
+    }>
   >();
   private readonly listeners = new Set<(event: TerminalStreamEvent) => void>();
 
@@ -37,9 +37,12 @@ export class TerminalStreamRouter {
     receive: (event: TerminalStreamEvent) => void,
   ): () => void {
     const registration = { subscriptionId, terminalId, receive };
-    this.slots.set(slot, registration);
+    const registrations = this.slots.get(slot) ?? new Set();
+    registrations.add(registration);
+    this.slots.set(slot, registrations);
     return () => {
-      if (this.slots.get(slot) === registration) this.slots.delete(slot);
+      registrations.delete(registration);
+      if (registrations.size === 0) this.slots.delete(slot);
     };
   }
 
@@ -48,28 +51,30 @@ export class TerminalStreamRouter {
   }
 
   handleFrame(frame: TerminalStreamFrame): void {
-    const registration = this.slots.get(frame.slot);
-    if (!registration) return;
-    const identity = {
-      subscriptionId: registration.subscriptionId,
-      terminalId: registration.terminalId,
-    };
-    let event: TerminalStreamEvent;
-    if (frame.opcode === TerminalStreamOpcode.Output)
-      event = { ...identity, type: "output", data: frame.payload };
-    else if (frame.opcode === TerminalStreamOpcode.Restore)
-      event = { ...identity, type: "restore", data: frame.payload };
-    else if (frame.opcode === TerminalStreamOpcode.Snapshot) {
-      const state = decodeTerminalSnapshotPayload(frame.payload);
-      if (!state) return;
-      event = { ...identity, type: "snapshot", state };
-    } else return;
-    registration.receive(event);
-    for (const listener of this.listeners) {
-      try {
-        listener(event);
-      } catch {
-        /* Passive diagnostics cannot interrupt delivery. */
+    const registrations = this.slots.get(frame.slot);
+    if (!registrations) return;
+    for (const registration of registrations) {
+      const identity = {
+        subscriptionId: registration.subscriptionId,
+        terminalId: registration.terminalId,
+      };
+      let event: TerminalStreamEvent;
+      if (frame.opcode === TerminalStreamOpcode.Output)
+        event = { ...identity, type: "output", data: frame.payload };
+      else if (frame.opcode === TerminalStreamOpcode.Restore)
+        event = { ...identity, type: "restore", data: frame.payload };
+      else if (frame.opcode === TerminalStreamOpcode.Snapshot) {
+        const state = decodeTerminalSnapshotPayload(frame.payload);
+        if (!state) return;
+        event = { ...identity, type: "snapshot", state };
+      } else return;
+      registration.receive(event);
+      for (const listener of this.listeners) {
+        try {
+          listener(event);
+        } catch {
+          /* Passive diagnostics cannot interrupt delivery. */
+        }
       }
     }
   }

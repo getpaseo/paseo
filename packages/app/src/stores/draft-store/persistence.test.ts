@@ -107,3 +107,21 @@ describe("draft persistence", () => {
     expect(drafts.text()).toBe("pending checkpoint");
   });
 });
+
+it("reports a failed checkpoint to callers and retains the draft for retry", async () => {
+  let fail = true;
+  let saved: unknown;
+  const store = createDraftPersistStorage<DraftState>({
+    getItem: () => null,
+    setItem: (_key, value) => {
+      if (fail) throw new Error("disk full");
+      saved = value;
+    },
+    removeItem: () => {},
+  });
+  await store.setItem("drafts", { state: { text: "Keep this" } });
+  await expect(store.flush()).rejects.toThrow("disk full");
+  fail = false;
+  await store.flush();
+  expect(saved).toEqual({ state: { text: "Keep this" } });
+});

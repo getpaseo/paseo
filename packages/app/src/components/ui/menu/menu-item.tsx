@@ -20,6 +20,7 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Theme } from "@/styles/theme";
 import { MenuDepthProvider, useMenuContext } from "./menu-context";
+import { usePressDragTarget } from "../press-drag-select-context";
 import { MENU_ITEM_HEIGHT } from "./menu-geometry";
 
 const ThemedCheck = withUnistyles(Check);
@@ -295,6 +296,8 @@ export function MenuItem({
     selectItem(onSelect, closeOnSelect);
   }, [isDisabled, selectItem, onSelect, closeOnSelect]);
 
+  const drag = usePressDragTarget({ onSelect: handleItemPress, disabled: Boolean(isDisabled) });
+
   // A row that draws a check has to say so as well: a multi-select page is a list of things that
   // are on or off, and the check is the only thing telling a sighted user which. Rows that answer
   // no such question stay plain buttons.
@@ -313,11 +316,13 @@ export function MenuItem({
       active ? styles.itemActive : null,
       isDisabled ? styles.itemDisabled : null,
       muted && !isDisabled ? styles.itemMuted : null,
-      hovered && !pressed && !isDisabled ? styles.itemHovered : null,
-      focused && !isDisabled ? styles.itemHovered : null,
+      (drag.dragging ? drag.hovered : hovered) && !pressed && !isDisabled
+        ? styles.itemHovered
+        : null,
+      focused && !drag.dragging && !isDisabled ? styles.itemHovered : null,
       pressed && !isDisabled ? styles.itemPressed : null,
     ],
-    [active, isDisabled, muted],
+    [active, isDisabled, muted, drag.dragging, drag.hovered],
   );
 
   const itemTextStyle = useMemo(
@@ -336,6 +341,7 @@ export function MenuItem({
 
   const content = (
     <Pressable
+      ref={drag.ref}
       testID={testID}
       accessibilityRole="menuitem"
       accessibilityState={accessibilityState}

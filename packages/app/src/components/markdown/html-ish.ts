@@ -29,7 +29,7 @@ const FENCE_LINE_RE = /^ {0,3}([`~]{3,})[^\n\r]*(?:\r?\n|$)/gm;
 const BACKTICK_RUN_RE = /`+/g;
 const SAFE_IMAGE_SRC_RE = /^(https?:\/\/|data:image\/(?:png|gif|jpe?g);base64,)/i;
 const SAFE_LINK_HREF_RE = /^(https?:\/\/|#(?:$|[\w-]))/i;
-const VOID_HTML_TAGS = new Set(["br", "img"]);
+const VOID_HTML_TAGS = new Set(["br", "img", "source"]);
 const MARKDOWN_TAG_WRAPPERS: Readonly<Record<string, readonly [string, string]>> = {
   b: ["**", "**"],
   del: ["~~", "~~"],
@@ -140,25 +140,73 @@ function parseInlineImageAt(tokens: HtmlToken[], start: number): InlineImagePars
     return image ? { part: image, end: start + 1 } : null;
   }
 
-  if (token.name !== "a") {
+  if (token.name !== "a" && token.name !== "picture" && !isImageBlockWrapper(token)) {
     return null;
   }
 
-  const closeIndex = findMatchingClose(tokens, start, "a");
-  if (closeIndex === null) {
-    return null;
-  }
+  return parseWrappedImageAt(tokens, start);
+}
 
-  const image = getSingleImageChild(tokens.slice(start + 1, closeIndex));
-  if (!image) {
-    return null;
-  }
+function parseWrappedImageAt(tokens: HtmlToken[], start: number): InlineImageParseResult | null {
+  // Walk an image-only wrapper chain once. Recursing over copied child slices
+  // makes deeply nested review HTML quadratic and can exhaust the JS stack.
+  const wrappers: string[] = [];
+  let image: MarkdownInlineImagePart | null = null;
+  let href: string | undefined;
+  let hasLink = false;
 
-  const inlineImage = imageTokenToInlineImage(image, safeHref(token.attributes.href));
-  return inlineImage ? { part: inlineImage, end: closeIndex + 1 } : null;
+  for (let index = start; index < tokens.length; index += 1) {
+    const child = tokens[index];
+    if (child.kind === "comment" || isWhitespaceText(child)) {
+      continue;
+    }
+    if (child.kind !== "tag") {
+      return null;
+    }
+    if (child.closing) {
+      if (!image || wrappers.pop() !== child.name) {
+        return null;
+      }
+      if (wrappers.length === 0) {
+        return { part: image, end: index + 1 };
+      }
+      continue;
+    }
+    // Pictures use their img fallback, not responsive source selection.
+    if (child.name === "source" && wrappers.at(-1) === "picture") {
+      continue;
+    }
+    if (image) {
+      return null;
+    }
+    if (child.name === "img") {
+      image = imageTokenToInlineImage(child, href);
+      if (!image) {
+        return null;
+      }
+      continue;
+    }
+    if (child.name !== "a" && child.name !== "picture" && !isImageBlockWrapper(child)) {
+      return null;
+    }
+    if (child.name === "a" && !hasLink) {
+      href = safeHref(child.attributes.href);
+      hasLink = true;
+    }
+    wrappers.push(child.name);
+  }
+  return null;
+}
+
+function isImageBlockWrapper(token: HtmlToken | undefined): boolean {
+  return isHeadingTag(token) || isOpenTag(token, "p") || isOpenTag(token, "div");
 }
 
 function flowsWithFollowingText(tokens: HtmlToken[], start: number, end: number): boolean {
+  if (isImageBlockWrapper(tokens[start])) {
+    return false;
+  }
+
   const previous = tokens[start - 1];
   // At line start if nothing precedes this image, or the preceding token ends with only
   // whitespace since the last newline (covers a bare space between two images on the same line).
@@ -191,6 +239,9 @@ function flowsWithFollowingText(tokens: HtmlToken[], start: number, end: number)
     }
     // An inline image tag — skip over it (the image itself and its possible wrapping close tag).
     if (token.kind === "tag") {
+      if (isImageBlockWrapper(token)) {
+        return false;
+      }
       const imageResult = parseInlineImageAt(tokens, cursor);
       if (imageResult) {
         cursor = imageResult.end;

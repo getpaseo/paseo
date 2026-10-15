@@ -1,8 +1,9 @@
 import { ActivityIndicator, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronRight, CircleAlert } from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
-import { STATUS_BUCKET_LABELS } from "@/hooks/sidebar-status-view-model";
+import { getStatusBucketLabel } from "@/hooks/sidebar-status-view-model";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import {
@@ -56,6 +57,7 @@ const needsInputColorMapping = (theme: Theme) => ({
 export function ProjectLeadingVisual({
   displayName,
   iconDataUri,
+  emoji,
   statusBucket,
   projectViewKey,
   backdrop,
@@ -65,6 +67,7 @@ export function ProjectLeadingVisual({
 }: {
   displayName: string;
   iconDataUri: string | null;
+  emoji?: string | null;
   /** Aggregate status of the project's workspaces; null when it shouldn't be surfaced. */
   statusBucket: SidebarStateBucket | null;
   projectViewKey: string;
@@ -93,6 +96,7 @@ export function ProjectLeadingVisual({
   return (
     <ProjectStatusIndicator
       iconDataUri={iconDataUri}
+      emoji={emoji}
       displayName={displayName}
       projectViewKey={projectViewKey}
       statusBucket={statusBucket}
@@ -108,6 +112,7 @@ export function ProjectLeadingVisual({
 // only its contents change.
 export function ProjectStatusIndicator({
   iconDataUri,
+  emoji,
   displayName,
   projectViewKey,
   statusBucket,
@@ -116,6 +121,7 @@ export function ProjectStatusIndicator({
   testID,
 }: {
   iconDataUri: string | null;
+  emoji?: string | null;
   displayName: string;
   projectViewKey: string;
   statusBucket: SidebarStateBucket | null;
@@ -146,6 +152,7 @@ export function ProjectStatusIndicator({
       <View style={styles.projectIconBox}>
         <ProjectIcon
           iconDataUri={iconDataUri}
+          emoji={emoji}
           placeholderInitial={placeholderInitial}
           projectViewKey={projectViewKey}
         />
@@ -170,6 +177,7 @@ function ProjectStatusBadge({
   statusBucket: SidebarStateBucket;
   backdrop: SidebarSurfaceBackdrop;
 }) {
+  const { t } = useTranslation();
   // Running skips the shell. The ring is wider than the 12pt shell and carries its own knockout,
   // so nesting it inside would clip it against the very thing that was meant to separate it from
   // the icon. It anchors to the same corner instead, growing around the centre the dot had.
@@ -177,7 +185,7 @@ function ProjectStatusBadge({
     return (
       <View
         role="status"
-        accessibilityLabel={STATUS_BUCKET_LABELS[statusBucket]}
+        accessibilityLabel={getStatusBucketLabel(statusBucket, t)}
         style={styles.statusRingAnchor}
         testID="project-status-badge"
       >
@@ -188,7 +196,7 @@ function ProjectStatusBadge({
   return (
     <View
       role="status"
-      accessibilityLabel={STATUS_BUCKET_LABELS[statusBucket]}
+      accessibilityLabel={getStatusBucketLabel(statusBucket, t)}
       style={[styles.statusBadge, getStatusBadgeBackdropStyle(backdrop)]}
       testID="project-status-badge"
     >
@@ -220,16 +228,19 @@ function ProjectStatusDot({ bucket }: { bucket: ProjectStatusBadgeDotBucket }) {
 
 function ProjectIcon({
   iconDataUri,
+  emoji,
   placeholderInitial,
   projectViewKey,
 }: {
   iconDataUri: string | null;
+  emoji?: string | null;
   placeholderInitial: string;
   projectViewKey: string;
 }) {
   return (
     <ProjectIconView
       iconDataUri={iconDataUri}
+      emoji={emoji}
       initial={placeholderInitial}
       projectViewKey={projectViewKey}
       size={ICON_SIZE.md}

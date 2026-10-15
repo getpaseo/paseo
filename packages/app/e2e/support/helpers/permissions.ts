@@ -1,7 +1,12 @@
 import { expect, type Page } from "@playwright/test";
 
 export async function waitForPermissionPrompt(page: Page, timeout = 30_000): Promise<void> {
-  await expect(page.getByTestId("permission-request-question").first()).toBeVisible({ timeout });
+  await expect(
+    page
+      .getByTestId("permission-request-question")
+      .or(page.getByTestId("permission-request-accept"))
+      .first(),
+  ).toBeVisible({ timeout });
 }
 
 export async function allowPermission(page: Page): Promise<void> {

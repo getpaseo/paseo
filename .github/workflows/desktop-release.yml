@@ -56,7 +56,7 @@ env:
 
 jobs:
   create-release:
-    if: ${{ (github.event_name == 'push' && !startsWith(github.ref_name, 'desktop-macos-v') && !startsWith(github.ref_name, 'desktop-linux-v') && !startsWith(github.ref_name, 'desktop-windows-v')) || (github.event_name == 'workflow_dispatch' && github.event.inputs.platform == 'all' && github.event.inputs.publish != 'false') }}
+    if: ${{ github.repository == 'getpaseo/paseo' && ((github.event_name == 'push' && !startsWith(github.ref_name, 'desktop-macos-v') && !startsWith(github.ref_name, 'desktop-linux-v') && !startsWith(github.ref_name, 'desktop-windows-v')) || (github.event_name == 'workflow_dispatch' && github.event.inputs.platform == 'all' && github.event.inputs.publish != 'false')) }}
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -95,15 +95,17 @@ jobs:
 
   publish-macos:
     needs: [create-release]
-    if: ${{ always() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') && ((github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'macos')) || (github.event_name == 'push' && (startsWith(github.ref_name, 'v') || startsWith(github.ref_name, 'desktop-v') || startsWith(github.ref_name, 'desktop-macos-v')))) }}
+    if: ${{ github.repository == 'getpaseo/paseo' && (always() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') && ((github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'macos')) || (github.event_name == 'push' && (startsWith(github.ref_name, 'v') || startsWith(github.ref_name, 'desktop-v') || startsWith(github.ref_name, 'desktop-macos-v'))))) }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - runner: macos-14
             electron_arch: arm64
+            node_heap_mb: 4096
           - runner: macos-15-intel
             electron_arch: x64
+            node_heap_mb: 8192
     permissions:
       contents: write
       packages: read
@@ -161,6 +163,10 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           PASEO_DESKTOP_SMOKE: "1"
           PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke
+          # Metro's jest workers OOM on the generated ws-outbound.aot.js validator,
+          # the last module in the web bundle. Node's default heap is sized from
+          # runner RAM, which is not enough on the Intel runner.
+          NODE_OPTIONS: --max-old-space-size=${{ matrix.node_heap_mb }}
         run: |
           set -euo pipefail
           build_args=(-- --publish never --mac --${{ matrix.electron_arch }})
@@ -185,16 +191,8 @@ jobs:
         run: |
           set -euo pipefail
           release_dir="${DESKTOP_PACKAGE_PATH}/release"
-          files=()
-          while IFS= read -r -d '' f; do
-            files+=("$f")
-          done < <(find "$release_dir" -maxdepth 1 -type f ! -name '*.yml' -print0 | sort -z)
-          if (( ${#files[@]} == 0 )); then
-            echo "::error::No release artifacts found in $release_dir"
-            exit 1
-          fi
           release_lookup="$(node scripts/github-release.mjs --repo "${{ github.repository }}" --tag "$RELEASE_TAG")"
-          gh release upload "$release_lookup" "${files[@]}" --clobber --repo "${{ github.repository }}"
+          node scripts/upload-release-assets.mjs "$release_lookup" "$release_dir" "${{ github.repository }}"
 
       - name: Upload desktop artifacts to workflow
         if: env.SHOULD_PUBLISH != 'true'
@@ -214,7 +212,7 @@ jobs:
 
   publish-linux:
     needs: [create-release]
-    if: ${{ always() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') && ((github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'linux')) || (github.event_name == 'push' && (startsWith(github.ref_name, 'v') || startsWith(github.ref_name, 'desktop-v') || startsWith(github.ref_name, 'desktop-linux-v')))) }}
+    if: ${{ github.repository == 'getpaseo/paseo' && (always() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') && ((github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'linux')) || (github.event_name == 'push' && (startsWith(github.ref_name, 'v') || startsWith(github.ref_name, 'desktop-v') || startsWith(github.ref_name, 'desktop-linux-v'))))) }}
     permissions:
       contents: write
       packages: read
@@ -294,16 +292,8 @@ jobs:
         run: |
           set -euo pipefail
           release_dir="${DESKTOP_PACKAGE_PATH}/release"
-          files=()
-          while IFS= read -r -d '' f; do
-            files+=("$f")
-          done < <(find "$release_dir" -maxdepth 1 -type f ! -name '*.yml' -print0 | sort -z)
-          if (( ${#files[@]} == 0 )); then
-            echo "::error::No release artifacts found in $release_dir"
-            exit 1
-          fi
           release_lookup="$(node scripts/github-release.mjs --repo "${{ github.repository }}" --tag "$RELEASE_TAG")"
-          gh release upload "$release_lookup" "${files[@]}" --clobber --repo "${{ github.repository }}"
+          node scripts/upload-release-assets.mjs "$release_lookup" "$release_dir" "${{ github.repository }}"
 
       - name: Upload desktop artifacts to workflow
         if: env.SHOULD_PUBLISH != 'true'
@@ -323,7 +313,7 @@ jobs:
 
   publish-windows:
     needs: [create-release]
-    if: ${{ always() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') && ((github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'windows')) || (github.event_name == 'push' && (startsWith(github.ref_name, 'v') || startsWith(github.ref_name, 'desktop-v') || startsWith(github.ref_name, 'desktop-windows-v')))) }}
+    if: ${{ github.repository == 'getpaseo/paseo' && (always() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') && ((github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'windows')) || (github.event_name == 'push' && (startsWith(github.ref_name, 'v') || startsWith(github.ref_name, 'desktop-v') || startsWith(github.ref_name, 'desktop-windows-v'))))) }}
     permissions:
       contents: write
       packages: read
@@ -400,16 +390,8 @@ jobs:
         run: |
           set -euo pipefail
           release_dir="${DESKTOP_PACKAGE_PATH}/release"
-          files=()
-          while IFS= read -r -d '' f; do
-            files+=("$f")
-          done < <(find "$release_dir" -maxdepth 1 -type f ! -name '*.yml' -print0 | sort -z)
-          if (( ${#files[@]} == 0 )); then
-            echo "::error::No release artifacts found in $release_dir"
-            exit 1
-          fi
           release_lookup="$(node scripts/github-release.mjs --repo "${{ github.repository }}" --tag "$RELEASE_TAG")"
-          gh release upload "$release_lookup" "${files[@]}" --clobber --repo "${{ github.repository }}"
+          node scripts/upload-release-assets.mjs "$release_lookup" "$release_dir" "${{ github.repository }}"
 
       - name: Upload desktop artifacts to workflow
         if: env.SHOULD_PUBLISH != 'true'
@@ -429,7 +411,7 @@ jobs:
 
   finalize-rollout:
     needs: [publish-macos, publish-linux, publish-windows]
-    if: ${{ always() && (github.event_name != 'workflow_dispatch' || github.event.inputs.publish != 'false') }}
+    if: ${{ github.repository == 'getpaseo/paseo' && (always() && (github.event_name != 'workflow_dispatch' || github.event.inputs.publish != 'false')) }}
     permissions:
       contents: write
     runs-on: ubuntu-latest

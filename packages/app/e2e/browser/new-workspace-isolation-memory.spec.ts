@@ -10,17 +10,13 @@ import {
   openProjectViaDaemon,
   openStartingRefPicker,
   selectBranchInPicker,
+  selectWorkspaceIsolation,
 } from "../support/helpers/new-workspace";
-import { expectNoTruncation } from "../support/helpers/no-truncation";
 import { createTempGitRepo } from "../support/helpers/workspace";
 import { getServerId } from "../support/helpers/server-id";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
-// Regression for "the local / worktree selection in the new workspace is not
-// remembered." The isolation choice persists in the create-form preferences
-// (FormPreferences.isolation), so it must survive the create→reopen remount:
-// creating a worktree workspace navigates away from /new and unmounts it, and
-// reopening New Workspace has to still show "New worktree".
+// A new form starts from the project's default; a Local choice applies only to that creation.
 test.describe("New workspace isolation memory", () => {
   let client: Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
   const localWorkspaceIds = new Set<string>();
@@ -46,7 +42,7 @@ test.describe("New workspace isolation memory", () => {
     await client?.close().catch(() => undefined);
   });
 
-  test("remembers the worktree isolation choice after creating a workspace", async ({ page }) => {
+  test("creates a worktree when no isolation preference exists", async ({ page }) => {
     const serverId = getServerId();
     const tempRepo = await createTempGitRepo("isolation-memory-", { branches: ["main", "dev"] });
 
@@ -57,17 +53,10 @@ test.describe("New workspace isolation memory", () => {
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
 
-      // First visit: the screen opens on Local, switch it to New worktree and create.
       await openNewWorkspaceComposer(page, {
         projectKey: openedProject.projectKey,
         projectDisplayName: openedProject.projectDisplayName,
       });
-      await expectWorkspaceIsolationSelected(page, "local");
-      await page.getByTestId("workspace-create-isolation-trigger").click();
-      const isolationPopup = page.getByTestId("combobox-desktop-container").last();
-      await expect(isolationPopup).toBeVisible({ timeout: 30_000 });
-      await expectNoTruncation(isolationPopup);
-      await page.getByTestId("workspace-create-isolation-worktree").click();
       await expectWorkspaceIsolationSelected(page, "worktree");
 
       await openStartingRefPicker(page);
@@ -86,8 +75,44 @@ test.describe("New workspace isolation memory", () => {
         projectDisplayName: openedProject.projectDisplayName,
       });
       createdWorktreeDirectories.add(createdWorkspace.workspaceDirectory);
+    } finally {
+      await tempRepo.cleanup();
+    }
+  });
 
-      // Second visit (fresh mount of /new): the worktree choice must stick.
+  test("uses Local for the current creation and defaults the next form to a worktree", async ({
+    page,
+  }) => {
+    const serverId = getServerId();
+    const tempRepo = await createTempGitRepo("isolation-memory-", { branches: ["main", "dev"] });
+
+    try {
+      const openedProject = await openProjectViaDaemon(client, tempRepo.path);
+      localWorkspaceIds.add(openedProject.workspaceId);
+
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openNewWorkspaceComposer(page, {
+        projectKey: openedProject.projectKey,
+        projectDisplayName: openedProject.projectDisplayName,
+      });
+      await selectWorkspaceIsolation(page, "local");
+      await expectWorkspaceIsolationSelected(page, "local");
+
+      const createButton = page
+        .getByTestId("message-input-root")
+        .getByRole("button", { name: "Create" });
+      await expect(createButton).toBeVisible({ timeout: 30_000 });
+      await createButton.click();
+
+      const createdWorkspace = await assertNewWorkspaceSidebarAndHeader(page, {
+        serverId,
+        client,
+        previousWorkspaceId: openedProject.workspaceId,
+        projectDisplayName: openedProject.projectDisplayName,
+      });
+      localWorkspaceIds.add(createdWorkspace.workspaceId);
+
       await openNewWorkspaceComposer(page, {
         projectKey: openedProject.projectKey,
         projectDisplayName: openedProject.projectDisplayName,

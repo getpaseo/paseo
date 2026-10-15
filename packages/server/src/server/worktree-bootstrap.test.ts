@@ -3,9 +3,14 @@ import { execFileSync } from "child_process";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
+import net from "node:net";
 
 import type { AgentTimelineItem } from "./agent/agent-sdk-types.js";
-import { runAsyncWorktreeBootstrap, spawnWorkspaceScript } from "./worktree-bootstrap.js";
+import {
+  extractLocalHttpServicePorts,
+  runAsyncWorktreeBootstrap,
+  spawnWorkspaceScript,
+} from "./worktree-bootstrap.js";
 import { ensureWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { ScriptRouteStore } from "./script-proxy.js";
 import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js";
@@ -90,6 +95,20 @@ describe("runAsyncWorktreeBootstrap", () => {
   afterEach(async () => {
     await Promise.all(realTerminalManagers.map(cleanupTerminalManager));
     rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("extracts local HTTP ports from fragmented ANSI terminal output", () => {
+    expect(
+      extractLocalHttpServicePorts(
+        "\u001b[32mLocal: http://local",
+        "host:3042/\u001b[0m\nNetwork: http://192.168.1.2:3042\nLocal: http://[::1]:3043\nhttps://localhost:3000",
+      ),
+    ).toEqual([3042, 3043]);
+    expect(
+      extractLocalHttpServicePorts(
+        "Network: http://192.168.1.2:3042 http://localhost:0 http://localhost:65536 https://localhost:3000",
+      ),
+    ).toEqual([]);
   });
 
   it("does not fail setup when live timeline emission throws", async () => {
@@ -316,6 +335,7 @@ describe("runAsyncWorktreeBootstrap", () => {
     id: string;
     triggerExit: (exitCode: number) => void;
     triggerCommandFinished: (exitCode: number) => void;
+    triggerOutput: (data: string) => void;
     sentInputs: string[];
   }
 
@@ -336,12 +356,16 @@ describe("runAsyncWorktreeBootstrap", () => {
         const terminalId = `term-${terminalCounter}`;
         let exitHandler: ((info: { exitCode: number | null }) => void) | null = null;
         let commandFinishedHandler: ((info: { exitCode: number | null }) => void) | null = null;
+        const outputListeners = new Set<(data: string) => void>();
         const sentInputs: string[] = [];
         terminalRecords.push({
           id: terminalId,
           sentInputs,
           triggerCommandFinished: (exitCode) => {
             commandFinishedHandler?.({ exitCode });
+          },
+          triggerOutput: (data) => {
+            for (const listener of outputListeners) listener(data);
           },
           triggerExit: (exitCode) => {
             if (exitHandler) {
@@ -359,7 +383,15 @@ describe("runAsyncWorktreeBootstrap", () => {
               sentInputs.push(message.data);
             }
           },
-          subscribe: () => () => {},
+          subscribe: (listener) => {
+            const outputListener = (message: { type: string; data?: string }) => {
+              if (message.type === "output" && message.data !== undefined) {
+                listener({ type: "output", data: message.data });
+              }
+            };
+            outputListeners.add((data) => outputListener({ type: "output", data }));
+            return () => outputListeners.clear();
+          },
           onExit: (handler) => {
             exitHandler = handler;
             return () => {
@@ -835,6 +867,124 @@ describe("runAsyncWorktreeBootstrap", () => {
       lifecycle: "running",
       exitCode: null,
     });
+  });
+
+  it("updates an undeclared service port from its local terminal announcement", async () => {
+    commitPaseoScripts({
+      api: { type: "service", command: "npm run api" },
+      fixed: { type: "service", command: "npm run fixed", port: 4040 },
+    });
+    const server = net.createServer((socket) => socket.end());
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected a TCP server address");
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+
+    try {
+      const routeStore = new ScriptRouteStore();
+      const runtimeStore = new WorkspaceScriptRuntimeStore();
+      const terminalRecords: StubTerminalRecord[] = [];
+      const fixedTerminalRecords: StubTerminalRecord[] = [];
+      await spawnWorkspaceScript({
+        repoRoot: repoDir,
+        workspaceId: repoDir,
+        projectSlug: "repo",
+        branchName: null,
+        scriptName: "api",
+        daemonPort: null,
+        serviceProxy: routeStore,
+        runtimeStore,
+        terminalManager: createStubTerminalManager([], terminalRecords),
+      });
+      await spawnWorkspaceScript({
+        repoRoot: repoDir,
+        workspaceId: repoDir,
+        projectSlug: "repo",
+        branchName: null,
+        scriptName: "fixed",
+        daemonPort: null,
+        serviceProxy: routeStore,
+        runtimeStore,
+        terminalManager: createStubTerminalManager([], fixedTerminalRecords),
+      });
+
+      terminalRecords[0]?.triggerOutput(`Local: http://localhost:${address.port}\n`);
+      fixedTerminalRecords[0]?.triggerOutput(`Local: http://localhost:${address.port}\n`);
+      await new Promise((resolve) => setTimeout(resolve, 75));
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(address.port, "127.0.0.1", resolve);
+      });
+      await new Promise((resolve) => setTimeout(resolve, 1_100));
+
+      expect(routeStore.listRoutes().find((route) => route.scriptName === "api")?.port).toBe(
+        address.port,
+      );
+      expect(routeStore.listRoutes().find((route) => route.scriptName === "fixed")?.port).toBe(
+        4040,
+      );
+      expect(runtimeStore.get({ workspaceId: repoDir, scriptName: "api" })).toMatchObject({
+        lifecycle: "running",
+        terminalId: "term-1",
+      });
+    } finally {
+      if (server.listening) {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    }
+  });
+
+  it("does not update an announced port after the service terminal exits", async () => {
+    commitPaseoScripts({ api: { type: "service", command: "npm run api" } });
+    const server = net.createServer((socket) => socket.end());
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected a TCP server address");
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+
+    try {
+      const routeStore = new ScriptRouteStore();
+      const runtimeStore = new WorkspaceScriptRuntimeStore();
+      const terminalRecords: StubTerminalRecord[] = [];
+      await spawnWorkspaceScript({
+        repoRoot: repoDir,
+        workspaceId: repoDir,
+        projectSlug: "repo",
+        branchName: null,
+        scriptName: "api",
+        daemonPort: null,
+        serviceProxy: routeStore,
+        runtimeStore,
+        terminalManager: createStubTerminalManager([], terminalRecords),
+      });
+
+      terminalRecords[0]?.triggerOutput(`Local: http://localhost:${address.port}\n`);
+      await new Promise((resolve) => setTimeout(resolve, 75));
+      terminalRecords[0]?.triggerExit(0);
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(address.port, "127.0.0.1", resolve);
+      });
+      await new Promise((resolve) => setTimeout(resolve, 1_100));
+
+      expect(routeStore.listRoutes().find((route) => route.scriptName === "api")?.port).not.toBe(
+        address.port,
+      );
+      expect(runtimeStore.get({ workspaceId: repoDir, scriptName: "api" })).toMatchObject({
+        lifecycle: "stopped",
+        exitCode: 0,
+      });
+    } finally {
+      if (server.listening) {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    }
   });
 
   it("spawns services with public aliases and public service URLs", async () => {

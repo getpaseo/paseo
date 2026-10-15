@@ -3,6 +3,7 @@ import { expect, test, type Page } from "../support/fixtures";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { scrollChatAwayFromBottom } from "../support/helpers/agent-bottom-anchor";
+import { expandCompletedResponses } from "../support/helpers/agent-stream";
 import {
   composerLocator,
   expectComposerDraft,
@@ -24,6 +25,13 @@ function userMessage(page: Page, text: string): Locator {
 
 async function expectUserMessageVisible(page: Page, text: string): Promise<void> {
   await expect(userMessage(page, text)).toBeVisible();
+}
+
+async function selectRewindOption(page: Page, name: string): Promise<void> {
+  const option = page.getByRole("menuitem", { name, exact: true });
+  // Menus mount offscreen while their anchor and content are measured.
+  await expect(option).toBeInViewport({ ratio: 1 });
+  await option.click();
 }
 
 async function rewriteCachedMessageAsLegacyRow(
@@ -190,6 +198,8 @@ test.describe("Rewind sheet", () => {
       await expectUserMessageVisible(page, secondPrompt);
       await expect(page.getByText("Cycle 1", { exact: true })).toBeVisible();
       await expectUserMessageCount(page, 2);
+      await session.client.waitForFinish(session.agentId);
+      await expandCompletedResponses(page);
 
       await scrollChatAwayFromBottom(page, {
         deltaY: -900,
@@ -202,7 +212,7 @@ test.describe("Rewind sheet", () => {
       await expect(
         rewindSheet.getByText("This action cannot be undone", { exact: true }),
       ).toBeVisible();
-      await page.getByTestId("rewind-menu-conversation").click();
+      await selectRewindOption(page, "Rewind conversation");
 
       await expect(page.getByTestId("rewind-menu-content")).toHaveCount(0);
       await expect(userMessage(page, secondPrompt)).toHaveCount(0);
@@ -221,7 +231,7 @@ test.describe("Rewind sheet", () => {
       await userMessage(page, replacementPrompt).hover();
       await page.getByTestId("rewind-menu-trigger").last().click();
       await expect(page.getByTestId("rewind-menu-content")).toBeVisible();
-      await page.getByTestId("rewind-menu-files").click();
+      await selectRewindOption(page, "Rewind files");
       await expect(page.getByTestId("rewind-menu-content")).toHaveCount(0);
       await expectComposerDraft(page, "");
       await expectUserMessageCount(page, 2);
@@ -232,7 +242,7 @@ test.describe("Rewind sheet", () => {
       await userMessage(page, replacementPrompt).hover();
       await page.getByTestId("rewind-menu-trigger").last().click();
       await expect(page.getByTestId("rewind-menu-content")).toBeVisible();
-      await page.getByTestId("rewind-menu-files").click();
+      await selectRewindOption(page, "Rewind files");
       await expect(page.getByTestId("rewind-menu-content")).toHaveCount(0);
       await expectComposerDraft(page, preservedDraft);
       await expectUserMessageCount(page, 2);
@@ -242,7 +252,7 @@ test.describe("Rewind sheet", () => {
       await userMessage(page, replacementPrompt).hover();
       await page.getByTestId("rewind-menu-trigger").last().click();
       await expect(page.getByTestId("rewind-menu-content")).toBeVisible();
-      await page.getByTestId("rewind-menu-both").click();
+      await selectRewindOption(page, "Rewind conversation and files");
       await expect(page.getByTestId("rewind-menu-content")).toHaveCount(0);
       await expectComposerDraft(page, replacementPrompt);
       await expectUserMessageCount(page, 1);

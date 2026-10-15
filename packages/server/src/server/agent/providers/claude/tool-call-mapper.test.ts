@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  mapClaudeCanceledToolCall,
   mapClaudeCompletedToolCall,
   mapClaudeFailedToolCall,
   mapClaudeRunningToolCall,
@@ -15,6 +16,63 @@ function expectMapped<T>(item: T | null): T {
 }
 
 describe("claude tool-call mapper", () => {
+  it("replays native plan tools with their original identity, text and decision", () => {
+    const input = { plan: 'Ship (c) with --name="my repo".\n\nKeep ---buzz.' };
+    expect(
+      mapClaudeCompletedToolCall({ name: "ExitPlanMode", callId: "plan-1", input }),
+    ).toMatchObject({
+      callId: "plan-1",
+      detail: { type: "plan", text: input.plan },
+      metadata: { approved: true },
+    });
+    expect(
+      mapClaudeFailedToolCall({
+        name: "ExitPlanMode",
+        callId: "plan-2",
+        input,
+        error: { message: "Denied" },
+      }),
+    ).toMatchObject({
+      callId: "plan-2",
+      detail: { type: "plan", text: input.plan },
+      metadata: { approved: false },
+    });
+  });
+
+  it("preserves a plan's original tool identity and outcome for live and replayed results", () => {
+    const proposal = { name: "ExitPlanMode", callId: "plan-tool-1", input: { plan: "Ship it" } };
+    const pending = expectMapped(mapClaudeRunningToolCall(proposal));
+    const rejected = expectMapped(
+      mapClaudeFailedToolCall({ ...proposal, error: "Denied by user" }),
+    );
+    const approved = expectMapped(mapClaudeCompletedToolCall(proposal));
+    const canceled = expectMapped(mapClaudeCanceledToolCall(proposal));
+    expect(canceled).toMatchObject({
+      callId: proposal.callId,
+      name: "plan_approval",
+      status: "canceled",
+      detail: { type: "plan", text: "Ship it" },
+    });
+    expect(pending).toMatchObject({
+      callId: "plan-tool-1",
+      detail: { type: "plan", text: "Ship it" },
+    });
+    expect(rejected).toMatchObject({
+      callId: pending.callId,
+      name: "plan_approval",
+      status: "completed",
+      error: null,
+      detail: pending.detail,
+      metadata: { approved: false },
+    });
+    expect(approved).toMatchObject({
+      callId: pending.callId,
+      name: "plan_approval",
+      status: "completed",
+      detail: pending.detail,
+      metadata: { approved: true },
+    });
+  });
   it("maps running shell calls with canonical fields", () => {
     const item = expectMapped(
       mapClaudeRunningToolCall({

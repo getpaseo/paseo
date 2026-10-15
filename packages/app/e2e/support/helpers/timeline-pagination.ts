@@ -1,4 +1,5 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type TestInfo, type Page } from "@playwright/test";
+import { expandCompletedResponses } from "./agent-stream";
 import { buildAgentRoute, seedMockAgentWorkspace, type MockAgentWorkspace } from "./mock-agent";
 import { readReplicaCache } from "./replica-cache-storage";
 import {
@@ -15,6 +16,8 @@ export { holdDaemonHydration };
 
 interface LongTimelineAgentOptions {
   turns: number;
+  /** Live turns stream for ten seconds unless a test needs one that outlasts it. */
+  liveTurns?: "ten-second-stream" | "thirty-minute-stream";
 }
 
 export interface LongTimelineAgent extends MockAgentWorkspace {
@@ -23,6 +26,8 @@ export interface LongTimelineAgent extends MockAgentWorkspace {
   firstOlderPagePrompt: string;
   initialTailAnchorPrompt: string;
   initialTailOldestPrompt: string;
+  /** The newest prompt on the first older page, adjacent to the initial tail. */
+  newestOlderPagePrompt: string;
   oldestPrompt: string;
   newestPrompt: string;
 }
@@ -40,12 +45,6 @@ interface TimelineViewportSnapshot {
   scrollTop: number;
 }
 
-interface PersistedCanonicalTimelineRange {
-  epoch: string;
-  startSeq: number;
-  endSeq: number;
-}
-
 export interface TimelinePresentationSnapshot {
   marker: string;
   position: TimelinePromptPositionSnapshot;
@@ -55,11 +54,6 @@ export interface TimelinePresentationSnapshot {
 interface TimelinePromptPositionSnapshot {
   prompt: string;
   top: number;
-}
-
-interface OlderHistoryLoadingOperation {
-  animationStartTime: number | null;
-  marker: string;
 }
 
 interface OlderHistoryPages {
@@ -82,7 +76,7 @@ export async function seedLongMockAgentTimeline(
   const agent = await seedMockAgentWorkspace({
     repoPrefix: "timeline-pagination-",
     title: "Timeline pagination regression",
-    model: "ten-second-stream",
+    model: options.liveTurns ?? "ten-second-stream",
   });
 
   for (let index = 0; index < options.turns; index += 1) {
@@ -96,6 +90,7 @@ export async function seedLongMockAgentTimeline(
     firstOlderPagePrompt: promptForTurn(Math.max(0, options.turns - 40)),
     initialTailAnchorPrompt: promptForTurn(Math.max(0, options.turns - 5)),
     initialTailOldestPrompt: promptForTurn(Math.max(0, options.turns - 20)),
+    newestOlderPagePrompt: promptForTurn(Math.max(0, options.turns - 21)),
     oldestPrompt: promptForTurn(0),
     newestPrompt: promptForTurn(options.turns - 1),
   };
@@ -304,34 +299,6 @@ export async function reloadAgentTimelineFromPersistedReplica(
   await expectTimelinePromptVisible(page, agent.newestPrompt);
 }
 
-export async function waitForPersistedCanonicalTimelineRange(
-  page: Page,
-  agentId: string,
-): Promise<PersistedCanonicalTimelineRange> {
-  const readRange = async () => {
-    const cache = await readReplicaCache(page);
-    if (cache?.version !== 6) return null;
-    const range = cache.hosts
-      ?.flatMap((host) => host.timelines)
-      .find((timeline) => timeline.agentId === agentId)?.range;
-    if (
-      typeof range?.epoch !== "string" ||
-      typeof range.startSeq !== "number" ||
-      typeof range.endSeq !== "number"
-    ) {
-      return null;
-    }
-    return { epoch: range.epoch, startSeq: range.startSeq, endSeq: range.endSeq };
-  };
-
-  await expect.poll(readRange).not.toBeNull();
-  const range = await readRange();
-  if (!range) {
-    throw new Error(`Persisted canonical timeline range is missing for ${agentId}`);
-  }
-  return range;
-}
-
 export async function holdNextOlderTimelinePage(
   page: Page,
   agent: LongTimelineAgent,
@@ -376,7 +343,20 @@ export async function holdOlderHistoryPages(
       const expectedCount = gate.getOwnedEntryCountContaining(text);
       expect(expectedCount).toBeGreaterThan(0);
       const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
-      await expect(timeline.getByText(text, { exact: false })).toHaveCount(expectedCount);
+      // Mount the loaded history together for the ownership assertion. The old
+      // daemon predates Find; normal viewports virtualize and refold unseen steps.
+      const viewport = page.viewportSize()!;
+      await page.setViewportSize({ width: viewport.width, height: 65000 });
+      try {
+        await waitForTimelineGeometryToSettle(page);
+        await expandCompletedResponses(page);
+        await waitForTimelineGeometryToSettle(page);
+        await expect
+          .poll(async () => (await timeline.innerText()).split(text).length - 1)
+          .toBe(expectedCount);
+      } finally {
+        await page.setViewportSize(viewport);
+      }
     },
     releasePage(pageNumber) {
       gate.releasePage(pageNumber);
@@ -402,8 +382,15 @@ export async function expectStableHistoryStartGutter(page: Page): Promise<void> 
 export async function scrollTimelinePromptIntoView(page: Page, prompt: string): Promise<void> {
   const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
   const row = timeline.getByTestId("user-message").filter({ hasText: prompt });
-  await row.scrollIntoViewIfNeeded();
-  await expect(row).toBeVisible();
+  const [viewport, target] = await Promise.all([timeline.boundingBox(), row.boundingBox()]);
+  if (!viewport || !target) {
+    throw new Error(`Expected a rendered timeline prompt for ${prompt}`);
+  }
+  // Programmatic scrolling does not express the user's intent to stop following output.
+  await timeline.hover();
+  await page.mouse.wheel(0, target.y - viewport.y - (viewport.height - target.height) / 2);
+  await expect(row).toBeInViewport({ ratio: 1 });
+  await waitForTimelineGeometryToSettle(page);
   await expect
     .poll(async () => (await readTimelineViewport(page)).scrollTop)
     .toBeGreaterThan(HISTORY_START_THRESHOLD_PX);
@@ -448,49 +435,6 @@ export async function expectTimelineViewportAnchoredAfterPrepend(
   const contentGrowth = after.scrollHeight - before.scrollHeight;
   const scrollAdjustment = after.scrollTop - before.scrollTop;
   expect(Math.abs(contentGrowth - scrollAdjustment)).toBeLessThanOrEqual(2);
-}
-
-export async function rememberOlderHistoryLoadingOperation(
-  page: Page,
-): Promise<OlderHistoryLoadingOperation> {
-  const slot = page.getByTestId("load-older-history-spinner");
-  await expect(slot).toBeVisible();
-  const marker = `older-history-loading-${Date.now()}`;
-  await slot.evaluate((element, operationMarker) => {
-    const candidates = [element, ...Array.from(element.querySelectorAll("*"))];
-    const animated = candidates.find(
-      (candidate) => getComputedStyle(candidate).animationName !== "none",
-    );
-    if (!(animated instanceof HTMLElement)) {
-      throw new Error("Expected the older-history loader to contain an animated element");
-    }
-    animated.dataset.olderHistoryLoadingOperation = operationMarker;
-  }, marker);
-  const animated = page.locator(`[data-older-history-loading-operation="${marker}"]`);
-  await expect
-    .poll(async () => {
-      const startTime = await animated.evaluate((element) => element.getAnimations()[0]?.startTime);
-      return typeof startTime === "number" ? startTime : null;
-    })
-    .not.toBeNull();
-  const animationStartTime = await animated.evaluate((element) => {
-    const startTime = element.getAnimations()[0]?.startTime;
-    return typeof startTime === "number" ? startTime : null;
-  });
-  return { animationStartTime, marker };
-}
-
-export async function expectSameOlderHistoryLoadingOperation(
-  page: Page,
-  operation: OlderHistoryLoadingOperation,
-): Promise<void> {
-  const animated = page.locator(`[data-older-history-loading-operation="${operation.marker}"]`);
-  await expect(animated).toBeVisible();
-  const animationStartTime = await animated.evaluate((element) => {
-    const startTime = element.getAnimations()[0]?.startTime;
-    return typeof startTime === "number" ? startTime : null;
-  });
-  expect(animationStartTime).toBe(operation.animationStartTime);
 }
 
 export async function expectTimelineAtHistoryStart(page: Page): Promise<void> {
@@ -587,6 +531,7 @@ export async function scrollTimelineUntilOlderHistoryIsReachable(
   page: Page,
   oldestPrompt: string,
 ): Promise<void> {
+  await expandCompletedResponses(page);
   const scroll = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
   const prompt = scroll.getByText(oldestPrompt, { exact: true });
   for (let attempt = 0; attempt < 10; attempt += 1) {
@@ -597,8 +542,12 @@ export async function scrollTimelineUntilOlderHistoryIsReachable(
     const previousHeight = await readTimelineViewport(page);
     await userScrollsTimelineToHistoryStart(page);
     await expect
-      .poll(async () => (await readTimelineViewport(page)).scrollHeight)
-      .toBeGreaterThan(previousHeight.scrollHeight);
+      .poll(
+        async () =>
+          (await prompt.count()) > 0 ||
+          (await readTimelineViewport(page)).scrollHeight > previousHeight.scrollHeight,
+      )
+      .toBe(true);
     await waitForTimelineGeometryToSettle(page);
   }
   await expect(prompt).toBeVisible();
@@ -643,4 +592,59 @@ async function waitForTimelineGeometryToSettle(page: Page): Promise<void> {
         requestAnimationFrame(sample);
       }),
   );
+}
+
+function spokenTimelinePrompt(text: string): string {
+  return `<spoken-input>\n${text}\n</spoken-input>\n<instruction>This message was spoken by the user. Respond using the speak tool only, not normal messages, because the user may not be looking at the chat.</instruction>`;
+}
+
+export async function expectSpokenTimelinePrompt(page: Page, text: string): Promise<void> {
+  await expectTimelinePromptVisible(page, text);
+  const row = page.getByTestId("user-message").filter({ hasText: text });
+  await expect(row).not.toContainText("<spoken-input>");
+  await expect(row).not.toContainText("<instruction>");
+  await expect(row).not.toContainText("This message was spoken by the user.");
+}
+
+export async function sendSpokenTimelinePrompt(
+  agent: MockAgentWorkspace,
+  text: string,
+): Promise<void> {
+  await agent.client.sendAgentMessage(agent.agentId, spokenTimelinePrompt(text));
+  await agent.client.waitForFinish(agent.agentId, 15_000);
+}
+
+export async function withSpokenTimeline(
+  historyText: string,
+  run: (agent: MockAgentWorkspace) => Promise<void>,
+): Promise<void> {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "spoken-timeline-",
+    title: "Spoken timeline presentation",
+    initialPrompt: spokenTimelinePrompt(historyText),
+  });
+  try {
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+    await run(agent);
+  } finally {
+    await agent.cleanup();
+  }
+}
+
+export async function reloadSpokenTimeline(page: Page): Promise<void> {
+  await page.reload();
+}
+
+export async function captureSpokenTimeline(
+  page: Page,
+  testInfo: TestInfo,
+  size: "desktop" | "compact",
+): Promise<void> {
+  await page.setViewportSize(
+    size === "compact" ? { width: 390, height: 844 } : { width: 1280, height: 900 },
+  );
+  await testInfo.attach(`spoken-${size}-web`, {
+    body: await page.screenshot({ path: testInfo.outputPath(`spoken-${size}-web.png`) }),
+    contentType: "image/png",
+  });
 }

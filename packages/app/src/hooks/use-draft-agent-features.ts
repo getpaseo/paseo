@@ -23,6 +23,7 @@ export function useDraftAgentFeatures(input: {
   modelId: string | null | undefined;
   thinkingOptionId: string | null | undefined;
   initialFeatureValues?: Record<string, unknown>;
+  hasPermissionModes: boolean;
 }) {
   const { t } = useTranslation();
   const { serverId, provider, cwd, modeId, modelId, thinkingOptionId, initialFeatureValues } =
@@ -84,10 +85,11 @@ export function useDraftAgentFeatures(input: {
     () =>
       resolveFeatureValues({
         features: availableFeatures,
+        hasPermissionModes: input.hasPermissionModes,
         persistedFeatureValues,
         localFeatureValues,
       }),
-    [availableFeatures, localFeatureValues, persistedFeatureValues],
+    [availableFeatures, localFeatureValues, persistedFeatureValues, input.hasPermissionModes],
   );
 
   const features = useMemo(() => {

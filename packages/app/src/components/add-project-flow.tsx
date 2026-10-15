@@ -6,7 +6,6 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
-  Github,
   HardDrive,
   Plus,
   Search,
@@ -34,6 +33,7 @@ import {
   type EditingTextInputHandle,
 } from "@/components/ui/text-input";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { GitHubIcon } from "@/components/icons/github-icon";
 import {
   applyAvailableAddProjectHosts,
   backAddProjectPage,
@@ -92,6 +92,8 @@ import {
 import { useHostFeatureMap } from "@/runtime/host-features";
 import { useSessionStore } from "@/stores/session-store";
 import { useRecommendedProjectPaths } from "@/stores/session-store-hooks";
+import { selectWorkspaceStructureProjects } from "@/stores/session-store-hooks/selectors";
+import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import type { AddProjectFlowRequest } from "@/stores/add-project-flow-store";
 import type { Theme } from "@/styles/theme";
 import { shortenPath } from "@/utils/shorten-path";
@@ -162,7 +164,7 @@ function FlowBackButton({ onPress }: { onPress: () => void }) {
 }
 
 function methodIcon(method: AddProjectMethodId): FlowRowOption["icon"] {
-  if (method === "github") return Github;
+  if (method === "github") return GitHubIcon;
   if (method === "browse") return FolderOpen;
   if (method === "new-directory") return FolderPlus;
   return Search;
@@ -458,6 +460,17 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
 
   const openNewWorkspaceForProject = useCallback(
     (serverId: string, project: WorkspaceProjectDescriptorPayload) => {
+      const sidebarView = useSidebarViewStore.getState();
+      if (sidebarView.hiddenProjectKeys.length > 0) {
+        const projects = selectWorkspaceStructureProjects(useSessionStore.getState(), hostIds);
+        const addedProject = projects.find((candidate) =>
+          candidate.hosts.some(
+            (placement) =>
+              placement.serverId === serverId && placement.projectId === project.projectId,
+          ),
+        );
+        if (addedProject) sidebarView.showProject(addedProject.viewKey);
+      }
       onClose();
       router.push(
         buildNewWorkspaceRoute({
@@ -468,7 +481,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         }),
       );
     },
-    [onClose],
+    [hostIds, onClose],
   );
 
   const openAddedProject = useCallback(
@@ -656,7 +669,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
           ? `${repository.nameWithOwner} via ${repository.cloneProtocol.toUpperCase()}`
           : repository.nameWithOwner,
         subtitle: repository.description,
-        icon: Github,
+        icon: GitHubIcon,
         testID: `add-project-flow-repository-${repository.id}`,
         select: () =>
           setState((current) => openGithubLocationPage(current, page.hostId, repository)),

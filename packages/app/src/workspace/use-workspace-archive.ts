@@ -8,15 +8,34 @@ import {
   type WorktreeArchiveWarningLabels,
 } from "@/git/worktree-archive-warning";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
-import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import type { DesktopBrowserBridge } from "@/desktop/host";
+import { closeWorkspaceBrowser } from "@/workspace-tabs/browser";
+import { collectAllTabs, useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { archiveWorkspaceOptimistically } from "@/workspace/workspace-archive";
 
-function purgeArchivedWorkspaceState(input: { serverId: string; workspaceId: string }): void {
+export async function purgeArchivedWorkspaceState(
+  input: { serverId: string; workspaceId: string },
+  ...bridgeOverride: [DesktopBrowserBridge | undefined] | []
+): Promise<void> {
   const workspaceKey = buildWorkspaceTabPersistenceKey(input);
-  if (workspaceKey) {
-    useWorkspaceLayoutStore.getState().purgeWorkspace(workspaceKey);
-  }
+  if (!workspaceKey) return;
+  const store = useWorkspaceLayoutStore.getState();
+  const layout = store.layoutByWorkspace[workspaceKey];
+  const browserIds = layout
+    ? collectAllTabs(layout.root).flatMap((tab) =>
+        tab.target.kind === "browser" ? [tab.target.browserId] : [],
+      )
+    : [];
+  const closing = browserIds.map((browserId) =>
+    closeWorkspaceBrowser({ workspaceKey, browserId, remember: false }, ...bridgeOverride),
+  );
+  store.purgeWorkspace(workspaceKey);
+  const results = await Promise.allSettled(closing);
+  const failed = results.find(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
+  );
+  if (failed) throw failed.reason;
 }
 
 export interface ArchiveWorkspaceInput {
@@ -68,7 +87,7 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
           workspaceId,
         },
       });
-      purgeArchivedWorkspaceState({ serverId, workspaceId });
+      await purgeArchivedWorkspaceState({ serverId, workspaceId });
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : t("sidebar.workspace.toasts.archiveFailed"),

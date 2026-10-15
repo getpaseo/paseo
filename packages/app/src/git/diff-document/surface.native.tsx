@@ -20,7 +20,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { InlineReviewThread } from "@/review";
-import { useKeyboardShift } from "@/hooks/keyboard-shift-context";
+import { useKeyboardShift } from "@/keyboard/shift";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { DocumentFileHeader } from "./document-file-header";
 import {
@@ -256,9 +256,13 @@ export function DiffSurface(props: DiffSurfaceProps) {
       consumedFocusRef.current = requestKey;
     }
   }, [collapsedFilePaths, mode, model.files, onToggleFile, scrollTop]);
+  const contentInsetBottom = props.contentInsetBottom ?? 0;
   const contentStyle = useMemo(
-    () => ({ minHeight: Math.max(model.height, viewport.height), backgroundColor: "transparent" }),
-    [model.height, viewport.height],
+    () => ({
+      minHeight: Math.max(model.height, viewport.height) + contentInsetBottom,
+      backgroundColor: "transparent",
+    }),
+    [contentInsetBottom, model.height, viewport.height],
   );
   return (
     <View style={[styles.root, { backgroundColor: props.palette.surface }]} onLayout={layout}>

@@ -39,6 +39,7 @@ import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-run
 import { useHostFeature } from "@/runtime/host-features";
 import { useToast } from "@/contexts/toast-context";
 import { confirmDialog } from "@/utils/confirm-dialog";
+import { validateWorkspaceScriptDraft } from "@/utils/workspace-script-form";
 import {
   applyDraftToConfig,
   configToDraft,
@@ -230,6 +231,7 @@ function ProjectSettingsBody({
 
   const data = readQuery.data;
   const supportsCustomIcon = useHostFeature(selectedHost.serverId, "projectCustomIcon");
+  const supportsEmojiIcon = useHostFeature(selectedHost.serverId, "projectEmojiIcon");
   const customIconRevision = selectedHost.customIconRevision ?? null;
   const projectIconTargets = useMemo(() => {
     const target = createProjectIconTarget({
@@ -239,20 +241,16 @@ function ProjectSettingsBody({
     return target ? [target] : [];
   }, [project.viewKey, selectedHost]);
   const projectIcons = useProjectIcons({ projects: projectIconTargets });
-  const projectIconDataUri = projectIcons.get(project.viewKey) ?? null;
+  const projectIcon = projectIcons.get(project.viewKey);
   const editSnapshot = useMemo<ProjectEditFormSnapshot>(
     () => ({
       projectName: selectedHost.projectName,
       projectCustomName: selectedHost.projectCustomName,
       hasCustomIcon: customIconRevision !== null,
-      currentIconDataUri: projectIconDataUri,
+      currentIconDataUri: projectIcon?.dataUri ?? null,
+      currentIconEmoji: projectIcon?.emoji ?? null,
     }),
-    [
-      customIconRevision,
-      projectIconDataUri,
-      selectedHost.projectCustomName,
-      selectedHost.projectName,
-    ],
+    [customIconRevision, projectIcon, selectedHost.projectCustomName, selectedHost.projectName],
   );
   const loadedConfig: PaseoConfigRaw | null = data?.ok ? (data.config ?? {}) : null;
   const loadedRevision: PaseoConfigRevision | null = data?.ok ? data.revision : null;
@@ -269,9 +267,10 @@ function ProjectSettingsBody({
       {showBackToProjects ? <BackToProjectsButton onPress={onBackToProjects} /> : null}
 
       <View style={styles.headerBlock}>
-        <View style={styles.titleRow}>
+        <View style={styles.titleRow} testID="project-settings-header">
           <ProjectTitleIcon
-            iconDataUri={projectIconDataUri}
+            iconDataUri={projectIcon?.dataUri ?? null}
+            emoji={projectIcon?.emoji}
             projectName={selectedHost.projectName}
             projectViewKey={project.viewKey}
           />
@@ -301,6 +300,7 @@ function ProjectSettingsBody({
         projectViewKey={project.viewKey}
         client={client}
         supportsCustomIcon={supportsCustomIcon}
+        supportsEmojiIcon={supportsEmojiIcon}
         snapshot={editSnapshot}
       />
 
@@ -419,7 +419,7 @@ function ReadFailureCallout({ kind, error, onReload }: ReadFailureCalloutProps) 
   });
   return (
     <View style={styles.errorBlock}>
-      <Alert testID={testID} variant="error" title={title} description={description}>
+      <Alert size="md" testID={testID} variant="error" title={title} description={description}>
         <Button testID={`${testID}-action-0`} onPress={onReload} variant="outline" size="sm">
           {t("settings.project.actions.reload")}
         </Button>
@@ -639,9 +639,23 @@ function ProjectConfigForm({
   }, []);
 
   const editingScript = draft.scripts.find((entry) => entry.id === editingScriptId);
+  const editingScriptNames = draft.scripts
+    .filter((entry) => entry.id !== editingScriptId)
+    .map((entry) => entry.name.trim())
+    .filter(Boolean);
 
   const hasInvalidScripts = useMemo(
-    () => draft.scripts.some((script) => validateScript(script, t).hasErrors),
+    () =>
+      draft.scripts.some(
+        (script) =>
+          validateScript(
+            script,
+            t,
+            draft.scripts
+              .filter((candidate) => candidate.id !== script.id)
+              .map((candidate) => candidate.name.trim()),
+          ).hasErrors,
+      ),
     [draft.scripts, t],
   );
 
@@ -702,6 +716,7 @@ function ProjectConfigForm({
         >
           {hasUncommittedWorktreeSetupChanges ? (
             <Alert
+              size="sm"
               variant="warning"
               title={t("settings.project.worktree.uncommittedTitle")}
               description={t("settings.project.worktree.uncommittedDescription")}
@@ -776,6 +791,7 @@ function ProjectConfigForm({
       {isStale ? (
         <View style={styles.calloutWrap}>
           <Alert
+            size="sm"
             testID="stale-callout"
             variant="error"
             title={t("settings.project.writeFailures.staleTitle")}
@@ -796,6 +812,7 @@ function ProjectConfigForm({
       {isWriteFailed ? (
         <View style={styles.calloutWrap}>
           <Alert
+            size="sm"
             testID="write-failed-callout"
             variant="error"
             title={t("settings.project.writeFailures.failedTitle")}
@@ -840,6 +857,7 @@ function ProjectConfigForm({
       {editingScript ? (
         <ScriptEditModal
           script={editingScript}
+          existingNames={editingScriptNames}
           onChange={handleEditingDraftChange}
           onCancel={handleCancelEditing}
           onSave={handleSaveEditing}
@@ -855,10 +873,12 @@ function ResolveSpinnerColor(): string {
 
 function ProjectTitleIcon({
   iconDataUri,
+  emoji,
   projectName,
   projectViewKey,
 }: {
   iconDataUri: string | null;
+  emoji?: string | null;
   projectName: string;
   projectViewKey: string;
 }) {
@@ -866,6 +886,7 @@ function ProjectTitleIcon({
   return (
     <ProjectIconView
       iconDataUri={iconDataUri}
+      emoji={emoji}
       initial={initial}
       projectViewKey={projectViewKey}
       size={28}
@@ -962,22 +983,40 @@ interface ScriptValidation {
   hasErrors: boolean;
   nameError: string | null;
   commandError: string | null;
+  portError: string | null;
+  collisionError: string | null;
 }
 
-function validateScript(script: ProjectScriptDraft, t: TFunction): ScriptValidation {
-  const nameError =
-    script.name.trim().length === 0 ? t("settings.project.scripts.nameRequired") : null;
+function validateScript(
+  script: ProjectScriptDraft,
+  t: TFunction,
+  existingNames: readonly string[] = [],
+): ScriptValidation {
+  const error = validateWorkspaceScriptDraft({
+    name: script.name,
+    command: script.commandText,
+    port: script.portText,
+    collides: existingNames.includes(script.name.trim()),
+  });
+  const nameError = error === "name_required" ? t("settings.project.scripts.nameRequired") : null;
   const commandError =
-    script.commandText.trim().length === 0 ? t("settings.project.scripts.commandRequired") : null;
+    error === "command_required" ? t("settings.project.scripts.commandRequired") : null;
+  const portError =
+    error === "port_invalid" ? t("workspace.scripts.states.invalidServicePort") : null;
+  const collisionError =
+    error === "name_collision" ? t("workspace.scripts.states.serviceNameCollision") : null;
   return {
-    hasErrors: Boolean(nameError || commandError),
+    hasErrors: Boolean(nameError || commandError || portError || collisionError),
     nameError,
     commandError,
+    portError,
+    collisionError,
   };
 }
 
 interface ScriptEditModalProps {
   script: ProjectScriptDraft;
+  existingNames: readonly string[];
   onChange: (next: ProjectScriptDraft) => void;
   onCancel: () => void;
   onSave: () => void;
@@ -991,7 +1030,13 @@ interface ScriptFieldsTouched {
 const ALL_TOUCHED: ScriptFieldsTouched = { name: true, command: true };
 const NONE_TOUCHED: ScriptFieldsTouched = { name: false, command: false };
 
-function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModalProps) {
+function ScriptEditModal({
+  script,
+  existingNames,
+  onChange,
+  onCancel,
+  onSave,
+}: ScriptEditModalProps) {
   const { t } = useTranslation();
   const [touched, setTouched] = useState<ScriptFieldsTouched>(NONE_TOUCHED);
 
@@ -1011,6 +1056,10 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
     (text: string) => onChange({ ...script, commandText: text }),
     [onChange, script],
   );
+  const handlePortChange = useCallback(
+    (portText: string) => onChange({ ...script, portText }),
+    [onChange, script],
+  );
   const handleServiceToggle = useCallback(
     (next: boolean) => onChange({ ...script, type: next ? SCRIPT_SERVICE_TYPE : "" }),
     [onChange, script],
@@ -1019,7 +1068,7 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
   const handleNameBlur = useCallback(() => markTouched("name"), [markTouched]);
   const handleCommandBlur = useCallback(() => markTouched("command"), [markTouched]);
 
-  const validation = validateScript(script, t);
+  const validation = validateScript(script, t, existingNames);
 
   const handleSavePress = useCallback(() => {
     if (validation.hasErrors) {
@@ -1031,6 +1080,7 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
 
   const showNameError = touched.name && validation.nameError;
   const showCommandError = touched.command && validation.commandError;
+  const showCollisionError = touched.name && validation.collisionError;
   const isService = script.type === SCRIPT_SERVICE_TYPE;
   const sheetHeader = useMemo<SheetHeader>(
     () => ({
@@ -1066,7 +1116,34 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
             {validation.nameError}
           </Text>
         ) : null}
+        {showCollisionError ? (
+          <Text testID="script-edit-name-collision" style={styles.fieldError}>
+            {validation.collisionError}
+          </Text>
+        ) : null}
       </View>
+      {isService ? (
+        <View style={styles.modalSection}>
+          <Text style={styles.modalLabel}>{t("workspace.scripts.states.servicePort")}</Text>
+          <TextInput
+            testID="script-edit-port"
+            accessibilityLabel={t("workspace.scripts.states.servicePort")}
+            initialValue={script.portText}
+            onChangeText={handlePortChange}
+            placeholder={t("workspace.scripts.states.automaticPort")}
+            placeholderTextColor={styles.placeholderColor.color}
+            style={styles.modalInput}
+          />
+          {validation.portError ? (
+            <Text testID="script-edit-port-error" style={styles.fieldError}>
+              {validation.portError}
+            </Text>
+          ) : null}
+          {!script.portText.trim() ? (
+            <Text style={styles.modalHint}>{t("workspace.scripts.states.automaticPortHint")}</Text>
+          ) : null}
+        </View>
+      ) : null}
       <View style={styles.modalSection}>
         <Text style={styles.modalLabel}>{t("settings.project.scripts.command")}</Text>
         <TextInput

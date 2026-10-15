@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test } from "vitest";
+import { expect, onTestFinished, test } from "vitest";
 
 import { parsePcm16MonoWav, wordSimilarity } from "../../../test-utils/dictation-e2e.js";
 import { ensureSherpaOnnxModels } from "./sherpa/model-downloader.js";
@@ -30,7 +30,7 @@ function hasParakeetModel(dir: string): boolean {
 }
 
 function fixturePath(fileName: string): string {
-  return path.resolve(process.cwd(), "..", "app", "e2e", "fixtures", fileName);
+  return path.resolve(process.cwd(), "..", "app", "e2e", "support", "fixtures", fileName);
 }
 
 function resolveWorkerUrl(): URL {
@@ -68,6 +68,10 @@ function forkWorker(): ChildProcess {
     stdio: ["ignore", "ignore", "pipe", "ipc"],
   });
   worker.setMaxListeners(100);
+  onTestFinished(() => {
+    if (worker.connected) worker.disconnect();
+    if (!worker.killed) worker.kill();
+  });
   return worker;
 }
 
@@ -92,74 +96,132 @@ workerSpeechTest(
       messages.push(message);
     });
 
-    try {
-      const config: LocalSpeechWorkerConfig = {
-        modelsDir,
-        voiceSttModel: "parakeet-tdt-0.6b-v2-int8",
-        dictationSttModel: "parakeet-tdt-0.6b-v2-int8",
-        voiceTtsModel: "kokoro-en-v0_19",
-      };
-      const sessionId = randomUUID();
+    const config: LocalSpeechWorkerConfig = {
+      modelsDir,
+      voiceSttModel: "parakeet-tdt-0.6b-v2-int8",
+      dictationSttModel: "parakeet-tdt-0.6b-v2-int8",
+      voiceTtsModel: "kokoro-en-v0_19",
+    };
+    const sessionId = randomUUID();
 
-      await sendRequest(
-        worker,
-        messages,
-        {
-          type: "session.create",
-          config,
-          sessionId,
-          kind: "dictationStt",
-        },
-        () => stderr,
+    await sendRequest(
+      worker,
+      messages,
+      {
+        type: "session.create",
+        config,
+        sessionId,
+        kind: "dictationStt",
+      },
+      () => stderr,
+    );
+
+    const wav = await readFile(fixturePath("recording.wav"));
+    const { sampleRate, pcm16 } = parsePcm16MonoWav(wav);
+    expect(sampleRate).toBe(16000);
+
+    const chunkBytes = 3200;
+    const appendPromises: Promise<unknown>[] = [];
+    for (let offset = 0; offset < pcm16.length; offset += chunkBytes) {
+      const audio = pcm16.subarray(offset, Math.min(pcm16.length, offset + chunkBytes));
+      appendPromises.push(
+        sendRequest(
+          worker,
+          messages,
+          {
+            type: "session.append",
+            sessionId,
+            audio: bufferToWorkerBytes(audio),
+          },
+          () => stderr,
+        ),
       );
-
-      const wav = await readFile(fixturePath("recording.wav"));
-      const { sampleRate, pcm16 } = parsePcm16MonoWav(wav);
-      expect(sampleRate).toBe(16000);
-
-      const chunkBytes = 3200;
-      const appendPromises: Promise<unknown>[] = [];
-      for (let offset = 0; offset < pcm16.length; offset += chunkBytes) {
-        const audio = pcm16.subarray(offset, Math.min(pcm16.length, offset + chunkBytes));
-        appendPromises.push(
-          sendRequest(
-            worker,
-            messages,
-            {
-              type: "session.append",
-              sessionId,
-              audio: bufferToWorkerBytes(audio),
-            },
-            () => stderr,
-          ),
-        );
-      }
-      await Promise.all(appendPromises);
-
-      await sendRequest(
-        worker,
-        messages,
-        {
-          type: "session.commit",
-          sessionId,
-        },
-        () => stderr,
-      );
-
-      const finalTranscript = await waitForFinalTranscript(worker, messages, sessionId, stderr);
-      const baseline = await readFile(fixturePath("recording.baseline.txt"), "utf8");
-      expect(wordSimilarity(finalTranscript, baseline)).toBeGreaterThan(0.45);
-    } finally {
-      if (worker.connected) {
-        worker.disconnect();
-      }
-      if (!worker.killed) {
-        worker.kill();
-      }
     }
+    await Promise.all(appendPromises);
+
+    await sendRequest(
+      worker,
+      messages,
+      {
+        type: "session.commit",
+        sessionId,
+      },
+      () => stderr,
+    );
+
+    const finalTranscript = await waitForFinalTranscript(worker, messages, sessionId, stderr);
+    const baseline = await readFile(fixturePath("recording.baseline.txt"), "utf8");
+    expect(wordSimilarity(finalTranscript, baseline)).toBeGreaterThan(0.45);
   },
   120_000,
 );
+
+test("delivers audio and serves control requests while later TTS is synthesizing", async () => {
+  const worker = forkWorker();
+  const messages: LocalSpeechWorkerToParentMessage[] = [];
+  let stderr = "";
+  worker.stderr?.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  worker.on("message", (message: LocalSpeechWorkerToParentMessage) => messages.push(message));
+  const config: LocalSpeechWorkerConfig = {
+    modelsDir,
+    voiceSttModel: "parakeet-tdt-0.6b-v2-int8",
+    dictationSttModel: "parakeet-tdt-0.6b-v2-int8",
+    voiceTtsModel: "kokoro-en-v0_19",
+  };
+  await sendRequest(
+    worker,
+    messages,
+    { type: "tts.synthesize", config, text: "Ready." },
+    () => stderr,
+  );
+  const completed: string[] = [];
+  const first = sendRequest(
+    worker,
+    messages,
+    {
+      type: "tts.synthesize",
+      config,
+      text: "I found the issue.",
+    },
+    () => stderr,
+  ).then(() => completed.push("first"));
+  const second = sendRequest(
+    worker,
+    messages,
+    {
+      type: "tts.synthesize",
+      config,
+      text: "The voice feature is slow because it waits for the whole sentence to finish generating before sending any audio to your phone, so I am checking whether we can start playback earlier while the rest is still being synthesized.",
+    },
+    () => stderr,
+  ).then(() => completed.push("second"));
+  await sendRequest(
+    worker,
+    messages,
+    {
+      type: "session.close",
+      sessionId: "responsiveness-probe",
+    },
+    () => stderr,
+  );
+  expect(completed).toEqual([]);
+  await first;
+  expect(completed).toEqual(["first"]);
+  await sendRequest(
+    worker,
+    messages,
+    {
+      type: "session.close",
+      sessionId: "responsiveness-probe",
+    },
+    () => stderr,
+  );
+  expect(completed).toEqual(["first"]);
+  await second;
+  expect(completed).toEqual(["first", "second"]);
+}, 120_000);
 
 type RequestInput = LocalSpeechWorkerRequest extends infer Request
   ? Request extends LocalSpeechWorkerRequest

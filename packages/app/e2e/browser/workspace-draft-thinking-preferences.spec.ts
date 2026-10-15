@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "../support/fixtures";
-import { clickNewChat, gotoWorkspace } from "../support/helpers/launcher";
+import { gotoWorkspace } from "../support/helpers/launcher";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import {
   chooseCommandCenterAgentControl,
@@ -7,13 +7,15 @@ import {
   waitForDraftComposer,
 } from "../support/helpers/command-center-agent-controls";
 import { openCommandCenter } from "../support/helpers/command-center";
+import { runWorkspaceActionFromCommandCenter } from "../support/helpers/command-center-workspace-actions";
 import { selectModel } from "../support/helpers/app";
 
 const DISABLE_DEFAULT_SEED_ONCE_KEY = "@paseo:e2e-disable-default-seed-once";
 const SEED_NONCE_KEY = "@paseo:e2e-seed-nonce";
 
 async function openNewAgentTab(page: Page): Promise<void> {
-  await clickNewChat(page);
+  // Preference persistence does not depend on the animated tab-creation menu.
+  await runWorkspaceActionFromCommandCenter(page, "New agent");
   await waitForDraftComposer(page);
 }
 
@@ -114,6 +116,7 @@ test.describe("Workspace draft thinking preferences", () => {
       await submitDraftAgent(page, "Remember medium thinking for this model");
 
       await openNewAgentTab(page);
+      await selectModel(page, "Five minute stream");
       await expectThinkingSelected(page, "Medium");
       await chooseDraftControl(
         page,
@@ -155,8 +158,17 @@ test.describe("Workspace draft thinking preferences", () => {
       await submitDraftAgent(page, "Remember this permission mode");
 
       await openNewAgentTab(page);
+      await selectModel(page, "Five minute stream");
       await expectModeSelected(page, "Approval test");
-      await selectModel(page, "gpt-5.4-mini");
+      await page.getByTestId("combined-model-selector").filter({ visible: true }).first().click();
+      const dialog = page.getByRole("dialog");
+      const back = dialog.getByRole("button", { name: "Back", exact: true });
+      if (await back.isVisible()) await back.click();
+      await dialog.getByRole("textbox", { name: /search (?:all )?model/i }).fill("codex");
+      await dialog
+        .getByTestId(/^model-row-codex-/)
+        .first()
+        .click();
 
       await openNewAgentTab(page);
       await reloadWithPersistedPreferences(page);
@@ -178,6 +190,7 @@ test.describe("Workspace draft thinking preferences", () => {
       await openNewAgentTab(page);
       await seedLegacyModelPreference(page);
       await reloadWithPersistedPreferences(page);
+      await selectModel(page, "Five minute stream");
 
       await expect(
         page.getByRole("button", { name: "Select model (Five minute stream)" }),

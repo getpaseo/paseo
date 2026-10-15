@@ -40,6 +40,13 @@ export function observeTimelineSubscriptions(page: Page) {
   });
 
   return {
+    /**
+     * Forget what the daemon acknowledged so far. Use this before a reload, so a wait that
+     * follows can only be satisfied by a subscription the reloaded app actually sent.
+     */
+    reset(): void {
+      acknowledgedAgentIds = null;
+    },
     async waitForSubscribedAgents(
       agentIds: string[],
       options: TimelineSubscriptionWaitOptions = {},

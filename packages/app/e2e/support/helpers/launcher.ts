@@ -2,7 +2,7 @@ import { expect, type Page } from "@playwright/test";
 import { buildHostWorkspaceRoute } from "../../../src/utils/host-routes";
 import { createTempGitRepo } from "./workspace";
 import { getServerId } from "./server-id";
-import { createAgentTabFromMenu } from "./workspace-tabs";
+import { createAgentTab } from "./workspace-tabs";
 
 // ─── Navigation ────────────────────────────────────────────────────────────
 
@@ -27,7 +27,7 @@ export async function waitForTabBar(page: Page): Promise<void> {
 /** Return all tab test IDs currently in the tab bar. */
 export async function getTabTestIds(page: Page): Promise<string[]> {
   const tabs = page
-    .locator('[data-testid^="workspace-tab-"]:not([data-testid^="workspace-tab-context-"])')
+    .locator('[data-testid^="workspace-tab-"][role="button"][aria-selected]')
     .filter({ visible: true });
   const count = await tabs.count();
   const ids: string[] = [];
@@ -68,8 +68,11 @@ export async function pressNewTabShortcut(page: Page): Promise<void> {
   await page.keyboard.press(`${modifier}+t`);
 }
 
-export async function openNewTabMenuWithShortcut(page: Page): Promise<void> {
-  await pressNewTabShortcut(page);
+/** Use an empty pane, splitting one off when the current pane already has content. */
+export async function openEmptyPaneLauncher(page: Page): Promise<void> {
+  if (await page.getByTestId("workspace-new-tab-panel").filter({ visible: true }).count()) return;
+  await page.getByTestId("workspace-split-pane-menu").filter({ visible: true }).first().click();
+  await page.getByTestId("workspace-split-pane-right").click();
   await expect(page.getByTestId("workspace-new-tab-panel").filter({ visible: true })).toBeVisible();
 }
 
@@ -96,22 +99,14 @@ export async function assertNewTabMenuTriggerVisible(page: Page): Promise<void> 
 
 // ─── Tab creation actions ─────────────────────────────────────────────────
 
-/** Choose Agent from the pane-local `+` menu. */
+/** Open a chat draft with the conversation pane’s + button. */
 export async function clickNewChat(page: Page): Promise<void> {
-  await createAgentTabFromMenu(page);
+  await createAgentTab(page);
 }
 
-/** Choose Terminal from the pane-local `+` menu. */
+/** Create a terminal in the focused conversation pane. */
 export async function clickNewTerminal(page: Page): Promise<void> {
-  const trigger = page.getByTestId("workspace-new-tab-button").filter({ visible: true }).first();
-  await expect(trigger).toBeVisible({ timeout: 10_000 });
-  await trigger.click();
-  const item = page
-    .getByTestId("workspace-new-tab-menu-terminal")
-    .filter({ visible: true })
-    .first();
-  await expect(item).toBeVisible({ timeout: 10_000 });
-  await item.click();
+  await pressDirectNewTabShortcut(page, "t");
 }
 
 // ─── Tab title assertions ──────────────────────────────────────────────────

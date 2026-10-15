@@ -5,14 +5,13 @@ import {
   useEffect,
   useMemo,
   useRef,
-  type ComponentProps,
   type ReactElement,
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, Text, View, useWindowDimensions } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { BottomSheetBackdrop, BottomSheetScrollView } from "@gorhom/bottom-sheet";
+import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import { ChevronLeft } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
@@ -21,12 +20,13 @@ import {
   type ContextBridge,
 } from "@/components/ui/isolated-bottom-sheet-modal";
 import { SPACING, type Theme } from "@/styles/theme";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useMenuContext, MenuContextProvider } from "./menu-context";
 import { MenuPage } from "./menu-item";
 import { currentPageId, isSubPageOpen } from "./menu-navigation";
 import { AnchoredSurface, MenuOverlay } from "./menu-overlay";
 import { getMenuSheetBottomPadding } from "./menu-sheet-layout";
-import type { Alignment, Placement } from "./menu-anchor";
+import type { Alignment, Placement } from "../anchor";
 import type { KeyboardFocusScope } from "@/keyboard/actions";
 
 const ThemedChevronLeft = withUnistyles(ChevronLeft);
@@ -104,6 +104,8 @@ export interface MenuSurfaceProps {
   pages?: readonly MenuPageDefinition[];
   /** Title shown on the sheet's root page. Sheets always have a header; popovers never do. */
   sheetTitle?: string;
+  /** Controls on the right of the sheet's root title. */
+  sheetTrailing?: ReactNode;
   side?: Placement;
   align?: Alignment;
   offset?: number;
@@ -125,6 +127,10 @@ export interface MenuSurfaceProps {
  */
 export function MenuSurface(props: MenuSurfaceProps): ReactElement | null {
   const { presentation } = useMenuContext("MenuSurface");
+  const active = useRetainedPanelActive();
+  // Portals escape the hidden panel. Remove the surface in its inactive commit,
+  // before freezing can suspend an async menu action's closing update.
+  if (!active) return null;
   if (presentation === "sheet") {
     return <MenuSheetSurface {...props} />;
   }
@@ -334,9 +340,11 @@ function MenuSheetSurface({
   children,
   pages = [],
   sheetTitle,
+  sheetTrailing,
   testID,
   keyboardFocusScope,
 }: MenuSurfaceProps): ReactElement | null {
+  const { height: windowHeight } = useWindowDimensions();
   const menu = useMenuContext("MenuSurface");
   const { value: surfaceValue } = useSubAnchors();
   const safeAreaInsets = useSafeAreaInsets();
@@ -362,18 +370,6 @@ function MenuSheetSurface({
     onClose: handleClose,
   });
 
-  const renderBackdrop = useCallback(
-    (backdropProps: ComponentProps<typeof BottomSheetBackdrop>) => (
-      <BottomSheetBackdrop
-        {...backdropProps}
-        appearsOnIndex={0}
-        disappearsOnIndex={-1}
-        opacity={0.45}
-      />
-    ),
-    [],
-  );
-
   const openPageId = currentPageId(menu.path);
   const openPage = openPageId ? pages.find((page) => page.id === openPageId) : null;
   const depth = menu.path.length;
@@ -397,9 +393,10 @@ function MenuSheetSurface({
       // Content-sized rather than fixed snap points: a pushed page is rarely the same height
       // as the page it replaced, and a fixed sheet would either clip it or leave dead space.
       enableDynamicSizing
+      maxDynamicContentSize={windowHeight * 0.8}
       onChange={handleSheetChange}
       onDismiss={handleSheetDismiss}
-      backdropComponent={renderBackdrop}
+      backdropOpacity={0.45}
       enablePanDownToClose
       // `interactive` rather than `extend`, which is what every other sheet in the app uses.
       // `extend` grows the sheet to its largest snap point, and with `enableDynamicSizing` that
@@ -423,7 +420,9 @@ function MenuSheetSurface({
           </>
         ) : (
           <>
-            {sheetTitle ? <MenuSheetHeader title={sheetTitle} onBack={null} /> : null}
+            {sheetTitle ? (
+              <MenuSheetHeader title={sheetTitle} onBack={null} trailing={sheetTrailing} />
+            ) : null}
             <MenuPage depth={0}>{children}</MenuPage>
           </>
         )}
@@ -435,9 +434,11 @@ function MenuSheetSurface({
 function MenuSheetHeader({
   title,
   onBack,
+  trailing = null,
 }: {
   title: string;
   onBack: (() => void) | null;
+  trailing?: ReactNode;
 }): ReactElement {
   const { t } = useTranslation();
   return (
@@ -457,6 +458,7 @@ function MenuSheetHeader({
       <Text style={styles.sheetTitle} numberOfLines={1}>
         {title}
       </Text>
+      {trailing ? <View style={styles.sheetTrailing}>{trailing}</View> : null}
     </View>
   );
 }
@@ -469,6 +471,11 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[3],
     paddingTop: theme.spacing[1],
     paddingBottom: theme.spacing[3],
+  },
+  sheetTrailing: {
+    flex: 1,
+    flexDirection: "row",
+    justifyContent: "flex-end",
   },
   sheetBackButton: {
     width: 24,

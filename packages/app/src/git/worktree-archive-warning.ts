@@ -22,9 +22,6 @@ export interface WorktreeArchiveWarningLabels {
   confirm: string;
   cancel: string;
   uncommittedChanges: string;
-  uncommittedChangesWithDiff: (diffStat: string) => string;
-  addedLine: (count: number) => string;
-  deletedLine: (count: number) => string;
   unpushedCommit: (count: number) => string;
 }
 
@@ -33,16 +30,6 @@ export const DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS: WorktreeArchiveWarningLabe
   confirm: i18n.t("workspace.git.actions.archiveWarning.confirm"),
   cancel: i18n.t("workspace.git.actions.archiveWarning.cancel"),
   uncommittedChanges: i18n.t("workspace.git.actions.archiveWarning.uncommittedChanges"),
-  uncommittedChangesWithDiff: (diffStat) =>
-    i18n.t("workspace.git.actions.archiveWarning.uncommittedChangesWithDiff", { diffStat }),
-  addedLine: (count) =>
-    count === 1
-      ? i18n.t("workspace.git.actions.archiveWarning.addedLine", { count })
-      : i18n.t("workspace.git.actions.archiveWarning.addedLines", { count }),
-  deletedLine: (count) =>
-    count === 1
-      ? i18n.t("workspace.git.actions.archiveWarning.deletedLine", { count })
-      : i18n.t("workspace.git.actions.archiveWarning.deletedLines", { count }),
   unpushedCommit: (count) =>
     count === 1
       ? i18n.t("workspace.git.actions.archiveWarning.unpushedCommit", { count })
@@ -57,25 +44,6 @@ export function toWorktreeArchiveRisk(input: WorktreeArchiveRiskInput): Worktree
   };
 }
 
-function formatDiffStat(
-  diffStat: WorktreeArchiveRisk["diffStat"],
-  labels: WorktreeArchiveWarningLabels,
-): string | null {
-  if (!diffStat) {
-    return null;
-  }
-
-  const parts: string[] = [];
-  if (diffStat.additions > 0) {
-    parts.push(labels.addedLine(diffStat.additions));
-  }
-  if (diffStat.deletions > 0) {
-    parts.push(labels.deletedLine(diffStat.deletions));
-  }
-
-  return parts.length > 0 ? parts.join(", ") : null;
-}
-
 export function buildWorktreeArchiveRiskReasons(
   input: WorktreeArchiveRisk,
   labels: WorktreeArchiveWarningLabels = DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS,
@@ -87,10 +55,8 @@ export function buildWorktreeArchiveRiskReasons(
     input.isDirty === true || (input.isDirty == null && hasDiffStatChanges);
 
   if (hasUncommittedChanges) {
-    const diffStatLabel = formatDiffStat(diffStat, labels);
-    reasons.push(
-      diffStatLabel ? labels.uncommittedChangesWithDiff(diffStatLabel) : labels.uncommittedChanges,
-    );
+    // Workspace diff stats include committed branch changes, not just unsaved work.
+    reasons.push(labels.uncommittedChanges);
   }
 
   if ((input.aheadOfOrigin ?? 0) > 0) {

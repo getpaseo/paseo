@@ -6,6 +6,8 @@ import type { UserMessageImageAttachment } from "@/types/stream";
 
 export interface WorkspaceDraftAgentRequest {
   workspaceId: string;
+  launchProfileId?: string;
+  modelRouting?: "manual" | "jev";
   config: AgentSessionConfig;
   text: string;
   clientMessageId: string;
@@ -22,14 +24,21 @@ export async function requestWorkspaceDraftAgent(
   request: WorkspaceDraftAgentRequest,
 ): Promise<AgentSnapshotPayload> {
   const images = await encodeImages(request.images);
-  return await client.createAgent({
+  const agent = await client.createAgent({
     config: request.config,
     workspaceId: request.workspaceId,
-    clientMessageId: request.clientMessageId,
-    ...(request.text ? { initialPrompt: request.text } : {}),
+    ...(request.launchProfileId ? { launchProfileId: request.launchProfileId } : {}),
+    ...(request.modelRouting === "jev"
+      ? { modelRouting: { strategy: "jev" as const, prompt: request.text } }
+      : {}),
+    idempotencyKey: `${request.clientMessageId}:agent`,
+  });
+  await client.sendMessage(agent.id, request.text, {
+    messageId: request.clientMessageId,
     ...(images && images.length > 0 ? { images } : {}),
     ...(request.attachments && request.attachments.length > 0
       ? { attachments: request.attachments }
       : {}),
   });
+  return agent;
 }

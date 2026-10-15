@@ -7,6 +7,12 @@ export interface MockAgentWorkspace {
   agentId: string;
   workspaceId: string;
   cwd: string;
+  /** The name the sidebar row shows for this workspace (branch or directory basename). */
+  workspaceName: string;
+  /** Opaque cross-host key of the project the workspace belongs to. */
+  projectKey: string;
+  /** Project label the UI shows. */
+  projectDisplayName: string;
   client: SeedDaemonClient;
   cleanup(): Promise<void>;
 }
@@ -18,8 +24,10 @@ export interface MockAgentOptions {
   port?: number;
   initialPrompt?: string;
   model?: string;
+  thinkingOptionId?: string;
   modeId?: string;
   featureValues?: Record<string, unknown>;
+  launchProfileId?: string;
 }
 
 /**
@@ -43,13 +51,18 @@ export async function seedMockAgentWorkspace(
       title: options.title,
       modeId: options.modeId ?? "load-test",
       model: options.model ?? "e2e-fast-stream",
+      thinkingOptionId: options.thinkingOptionId,
       initialPrompt: options.initialPrompt,
       featureValues: options.featureValues,
+      launchProfileId: options.launchProfileId,
     });
     return {
       agentId: agent.id,
       workspaceId: workspace.workspaceId,
       cwd: workspace.repoPath,
+      workspaceName: workspace.workspaceName,
+      projectKey: workspace.projectKey,
+      projectDisplayName: workspace.projectDisplayName,
       client: workspace.client,
       cleanup: workspace.cleanup,
     };

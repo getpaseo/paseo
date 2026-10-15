@@ -1,5 +1,6 @@
 import type pino from "pino";
 import type {
+  ScriptStatusUpdateMessage,
   SessionOutboundMessage,
   StartWorkspaceScriptRequest,
   WorkspaceDescriptorPayload,
@@ -26,12 +27,17 @@ import {
 } from "../../script-status-projection.js";
 import { deriveProjectServiceSlug, deriveProjectSlug } from "../../workspace-git-metadata.js";
 import type { PaseoServicePortAllocation } from "@getpaseo/protocol/paseo-config-schema";
+import type { PaseoConfigRevision } from "@getpaseo/protocol/messages";
+import {
+  readWorkspaceScriptConfiguration,
+  writeWorkspaceScriptConfiguration,
+} from "./workspace-script-configuration.js";
 
 type WorkspaceScriptsPayload = WorkspaceDescriptorPayload["scripts"];
 
 /**
  * The service-proxy-backed scripts a workspace exposes: build the scripts payload
- * snapshot, emit a script_status_update to clients, and start a script.
+ * snapshot, publish a script_status_update to every client, and start a script.
  *
  * The workspace descriptor builder, the script-status emission path, and the
  * start-script RPC all funnel through one assembly of buildWorkspaceScriptPayloads'
@@ -47,6 +53,17 @@ export interface WorkspaceScriptsService {
   list(workspaceId: string): Promise<WorkspaceScriptPayload[]>;
   launch(input: { workspaceId: string; scriptName: string }): Promise<WorkspaceScriptPayload>;
   stop(input: { workspaceId: string; scriptName: string }): Promise<WorkspaceScriptPayload>;
+  readConfiguration(
+    workspaceId: string,
+  ): Promise<ReturnType<typeof readWorkspaceScriptConfiguration>>;
+  writeConfiguration(input: {
+    workspaceId: string;
+    scriptName: string;
+    command: string;
+    port: number | null;
+    projectRevision: PaseoConfigRevision | null;
+    workspaceRevision: PaseoConfigRevision | null;
+  }): Promise<ReturnType<typeof writeWorkspaceScriptConfiguration>>;
   start(request: StartWorkspaceScriptRequest): Promise<void>;
 }
 
@@ -66,7 +83,8 @@ export function createWorkspaceScriptsService(deps: {
   globalServicePorts?: PaseoServicePortAllocation;
   logger: pino.Logger;
   emit: (message: SessionOutboundMessage) => void;
-  wantsStatusUpdates?: () => boolean;
+  // Script status is daemon state, so it reaches every client, not only the requester.
+  publishStatusUpdate: (message: ScriptStatusUpdateMessage) => void;
   spawnWorkspaceScript: (options: SpawnWorkspaceScriptOptions) => Promise<WorktreeScriptResult>;
   assertAutomationAllowed: (workspaceId: string) => Promise<void>;
 }): WorkspaceScriptsService {
@@ -84,6 +102,7 @@ export function createWorkspaceScriptsService(deps: {
     globalServicePorts,
     logger,
     emit,
+    publishStatusUpdate,
     spawnWorkspaceScript,
     assertAutomationAllowed,
   } = deps;
@@ -130,12 +149,11 @@ export function createWorkspaceScriptsService(deps: {
   }
 
   async function emitStatusUpdate(workspaceId: string, _workspaceDirectory: string): Promise<void> {
-    if (deps.wantsStatusUpdates && !deps.wantsStatusUpdates()) return;
     try {
       const workspace = await workspaceRegistry.get(workspaceId);
       if (!workspace) return;
       const project = await projectRegistry.get(workspace.projectId);
-      emit({
+      publishStatusUpdate({
         type: "script_status_update",
         payload: { workspaceId, scripts: buildSnapshot(workspace, project) },
       });
@@ -168,6 +186,38 @@ export function createWorkspaceScriptsService(deps: {
     const workspace = await getWorkspace(workspaceId);
     const project = await projectRegistry.get(workspace.projectId);
     return buildSnapshot(workspace, project);
+  }
+
+  async function readConfiguration(workspaceId: string) {
+    const workspace = await getWorkspace(workspaceId);
+    const project = await projectRegistry.get(workspace.projectId);
+    if (!project) throw new Error(`Project not found for workspace: ${workspaceId}`);
+    return readWorkspaceScriptConfiguration({
+      projectDirectory: project.rootPath,
+      workspaceDirectory: workspace.cwd,
+    });
+  }
+
+  async function writeConfiguration(input: {
+    workspaceId: string;
+    scriptName: string;
+    command: string;
+    port: number | null;
+    projectRevision: PaseoConfigRevision | null;
+    workspaceRevision: PaseoConfigRevision | null;
+  }) {
+    const workspace = await getWorkspace(input.workspaceId);
+    const project = await projectRegistry.get(workspace.projectId);
+    if (!project) throw new Error(`Project not found for workspace: ${input.workspaceId}`);
+    return writeWorkspaceScriptConfiguration({
+      projectDirectory: project.rootPath,
+      workspaceDirectory: workspace.cwd,
+      scriptName: input.scriptName,
+      command: input.command,
+      port: input.port,
+      projectRevision: input.projectRevision,
+      workspaceRevision: input.workspaceRevision,
+    });
   }
 
   async function launchProcess(input: { workspaceId: string; scriptName: string }) {
@@ -273,5 +323,14 @@ export function createWorkspaceScriptsService(deps: {
     }
   }
 
-  return { buildSnapshot, emitStatusUpdate, list, launch, stop, start };
+  return {
+    buildSnapshot,
+    emitStatusUpdate,
+    list,
+    launch,
+    stop,
+    start,
+    readConfiguration,
+    writeConfiguration,
+  };
 }

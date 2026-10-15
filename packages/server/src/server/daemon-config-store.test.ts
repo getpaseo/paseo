@@ -682,6 +682,70 @@ describe("DaemonConfigStore", () => {
     expect(persisted.daemon?.appendSystemPrompt).toBe("Prefer terse replies.");
   });
 
+  test("patch merges and persists workspace Git workflow settings", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    writeFileSync(
+      path.join(paseoHome, "config.json"),
+      JSON.stringify({
+        daemon: {
+          workspaceGitWorkflow: { reviewProfileId: "review", reviewPrompt: "Review." },
+        },
+      }),
+    );
+    const store = new DaemonConfigStore(paseoHome, {
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+      workspaceGitWorkflow: { reviewProfileId: "review", reviewPrompt: "Review." },
+    });
+
+    store.patch({ workspaceGitWorkflow: { deliveryProfileId: "delivery" } });
+
+    expect(store.get().workspaceGitWorkflow).toEqual({
+      reviewProfileId: "review",
+      reviewPrompt: "Review.",
+      deliveryProfileId: "delivery",
+    });
+    expect(loadPersistedConfig(paseoHome).daemon?.workspaceGitWorkflow).toEqual(
+      store.get().workspaceGitWorkflow,
+    );
+    const reviewModel = { provider: "codex", model: "review-model" };
+    const commitModel = { provider: "claude", model: "commit-model" };
+    const prModel = { provider: "codex", model: "pr-model" };
+    store.patch({ workspaceGitWorkflow: { reviewModel, commitModel, prModel } });
+    for (const key of ["reviewModel", "commitModel", "prModel"] as const) {
+      store.patch({
+        workspaceGitWorkflow: {
+          [key]: { provider: "codex", model: "old-model", thinkingOptionId: "high" },
+        },
+      });
+      const replacement = { provider: "claude", model: "new-model" };
+      store.patch({ workspaceGitWorkflow: { [key]: replacement } });
+      expect(store.get().workspaceGitWorkflow?.[key]).toEqual(replacement);
+      expect(loadPersistedConfig(paseoHome).daemon?.workspaceGitWorkflow?.[key]).toEqual(
+        replacement,
+      );
+    }
+    store.patch({ workspaceGitWorkflow: { reviewModel, commitModel, prModel } });
+    store.patch({ workspaceGitWorkflow: { commitModel: null } });
+    expect(store.get().workspaceGitWorkflow).toEqual({
+      reviewProfileId: "review",
+      reviewPrompt: "Review.",
+      deliveryProfileId: "delivery",
+      reviewModel,
+      commitModel: null,
+      prModel,
+    });
+    expect(loadPersistedConfig(paseoHome).daemon?.workspaceGitWorkflow).toEqual(
+      store.get().workspaceGitWorkflow,
+    );
+  });
+
   test("patch persists browser tools opt-in into config.json", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);

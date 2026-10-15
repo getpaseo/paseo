@@ -26,6 +26,10 @@ Evidence is something someone else can look at:
 
 Redact what you need to, keep the technical details. If an agent did the work, submit its raw output. A summary drops the details someone else needs to check it.
 
+Give concurrent Playwright invocations in one checkout distinct `--output` directories. Dynamic
+daemon and Metro ports isolate services, but Playwright clears its output directory at startup;
+sharing it can delete another run's traces before they are attached.
+
 ## Does it work well
 
 A feature that works but stutters, shifts the layout, or misaligns by two pixels is not done.

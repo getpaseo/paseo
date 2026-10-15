@@ -10,6 +10,8 @@ Two contracts follow from it.
 
 A schema change must not break parsing in either direction. An old app still parses messages from a new daemon. A new daemon still parses messages from an old app.
 
+`hello` carries an optional credential. The daemon accepts a client protocol version from its minimum through newer client versions, selects the lower of client and daemon maximum, and reports it as optional `server_info.protocolVersion`. A `hello.rejected` frame precedes an auth close only when the client sent `hello.auth` or advertised `hello_rejection`; older clients receive the existing WebSocket close code and reason. This avoids sending them a new top-level message their validator does not recognize.
+
 - New fields are `.optional()` with a sensible default.
 - Never flip optional to required, remove a field, or narrow a type. `string` to `enum` and nullable to non-null are both narrowing.
 - A field you stop sending stays accepted. You stop writing it, you don't stop reading it.
@@ -46,15 +48,26 @@ The app, CLI, and plugins inherit those defaults; they supply only host resource
 automation, or explicit overrides. A schema accepting a message does not establish support for
 its delivery semantics.
 
-Connecting creates no timeline or event demand. Client subscriptions own their network membership,
+On capable daemons, connecting creates no timeline or event demand. Client subscriptions own their network membership,
 release it on unsubscribe, and restore it after reconnect. Raw message observers inspect traffic
 without requesting streams. Application caches and which agents are visible remain caller-owned.
 
 ## Owned observations
 
-`owned_subscriptions` and `server_info.features.ownedSubscriptions` negotiate the entire source-owned
-contract described in [architecture](architecture.md#websocket-protocol). The client gates observation
-once and tells users to update an older host. It does not emulate independent handles over legacy slots.
+`owned_subscriptions` and `server_info.features.ownedSubscriptions` negotiate the source-owned
+contract described in [architecture](architecture.md#websocket-protocol). The client selects delivery
+behavior once at its connection boundary. App workflows use the same observation interface on both.
+
+With an older daemon, the client uses the existing connection and legacy RPCs. Directory subscriptions
+remain shared and last-query-wins. Local handle IDs identify listeners; they do not promise independent
+server filters. Timeline and event membership retain their existing shared behavior. Releasing a handle
+detaches its listener and uses the old unsubscribe operation where one exists. Broadcast-only hosts keep
+broadcasting; readiness there means local attachment, not a daemon acknowledgement. No extra sockets
+or multiplexing emulation are introduced.
+
+Preserve established workflows when changing delivery internals. Independent filters and quiet
+connections require a capable daemon; opening the app, reading history and using terminals do not.
+Pre-registry workspace grouping and legacy event normalization belong inside the client boundary.
 
 Old clients keep their existing wire shapes and slot behavior at the daemon's source boundary.
 The adapter keys legacy slots by physical socket, so an old connection cannot replace a modern

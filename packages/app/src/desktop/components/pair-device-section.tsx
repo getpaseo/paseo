@@ -169,7 +169,7 @@ function PairDeviceBody(props: PairDeviceBodyProps) {
 function OfferLoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
   const { t } = useTranslation();
   return (
-    <Alert variant="error" description={message}>
+    <Alert size="sm" variant="error" description={message}>
       <Button variant="outline" size="sm" leftIcon={RotateCw} onPress={onRetry}>
         {t("pairing.device.retry")}
       </Button>
@@ -197,9 +197,11 @@ function RelayConsent(props: PairDeviceBodyProps) {
           accessibilityLabel={t("pairing.device.relayDocsAccessibility")}
         />
       </View>
-      {props.enableError ? <Alert variant="error" description={props.enableError.message} /> : null}
+      {props.enableError ? (
+        <Alert size="sm" variant="error" description={props.enableError.message} />
+      ) : null}
       {!props.canConfigureRelay ? (
-        <Alert variant="warning" description={t("pairing.device.updateRequired")} />
+        <Alert size="sm" variant="warning" description={t("pairing.device.updateRequired")} />
       ) : null}
       <View style={styles.actions}>
         <Button variant="secondary" style={FLEX_ONE_STYLE} onPress={props.onClose}>
@@ -262,7 +264,7 @@ function PairingOffer(props: PairDeviceBodyProps & { offer: { url: string } }) {
           {props.copied ? t("pairing.device.copied") : t("pairing.device.copy")}
         </Button>
       </View>
-      <Alert variant="warning" description={t("pairing.device.securityWarning")} />
+      <Alert size="sm" variant="warning" description={t("pairing.device.securityWarning")} />
     </View>
   );
 }

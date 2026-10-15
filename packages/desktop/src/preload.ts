@@ -1,3 +1,8 @@
+import type {
+  WidgetSnapshot,
+  WidgetActionResult,
+  WidgetActionDelivery,
+} from "@getpaseo/protocol/desktop-agent-widget";
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { BrowserKeyboardPolicy } from "./features/browser-keyboard/index.js";
 import type { DesktopWindowChromeMode } from "./window/chrome.js";
@@ -30,6 +35,39 @@ interface AttachedBrowserRegistration {
 }
 
 contextBridge.exposeInMainWorld("paseoDesktop", {
+  localUpdate: {
+    buildId: process.argv.find((arg) => arg.startsWith("--paseo-build-id="))?.slice(17) ?? "",
+    ready: (id: string) => ipcRenderer.invoke("paseo:local-update:ready", id),
+    activity: () => ipcRenderer.invoke("paseo:local-update:activity"),
+    postpone: () => ipcRenderer.invoke("paseo:local-update:postpone"),
+    onStatus: (handler: (value: unknown) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, value: unknown) => handler(value);
+      ipcRenderer.on("paseo:local-update:status", listener);
+      return () => ipcRenderer.removeListener("paseo:local-update:status", listener);
+    },
+    onPrepare: (handler: () => Promise<boolean>) => {
+      const listener = (_event: Electron.IpcRendererEvent, token: string) => {
+        void handler()
+          .then((ok) => ipcRenderer.invoke("paseo:local-update:prepared", token, { ok }))
+          .catch(() => ipcRenderer.invoke("paseo:local-update:prepared", token, { ok: false }));
+      };
+      ipcRenderer.on("paseo:local-update:prepare", listener);
+      return () => ipcRenderer.removeListener("paseo:local-update:prepare", listener);
+    },
+  },
+  agentWidget: {
+    publish: (snapshot: WidgetSnapshot) =>
+      ipcRenderer.invoke("paseo:agent-widget:publish", snapshot),
+    result: (result: WidgetActionResult) => ipcRenderer.invoke("paseo:agent-widget:result", result),
+    progress: (operationId: string) =>
+      ipcRenderer.invoke("paseo:agent-widget:progress", { operationId }),
+    onAction: (handler: (delivery: WidgetActionDelivery) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, delivery: WidgetActionDelivery) =>
+        handler(delivery);
+      ipcRenderer.on("paseo:agent-widget:action", listener);
+      return () => ipcRenderer.removeListener("paseo:agent-widget:action", listener);
+    },
+  },
   platform: process.platform,
   windowChromeMode: readWindowChromeMode(),
   invoke: (command: string, args?: Record<string, unknown>) =>
@@ -93,6 +131,7 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
   },
   opener: {
     openUrl: (url: string) => ipcRenderer.invoke("paseo:opener:openUrl", url),
+    openDirectory: (path: string) => ipcRenderer.invoke("paseo:opener:openDirectory", path),
   },
   editor: {
     listTargets: () => ipcRenderer.invoke("paseo:editor:listTargets"),

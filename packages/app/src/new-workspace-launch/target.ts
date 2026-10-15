@@ -38,7 +38,9 @@ export function resolveLaunchProfile(
 export function resolveLaunchTarget(
   target: LaunchTarget | undefined,
   profiles: readonly TerminalProfile[],
+  supportsWorkspaceIntent = false,
 ): LaunchTarget {
+  if (target?.kind === "intention" && supportsWorkspaceIntent) return target;
   if (!target || target.kind === "chat") {
     return CHAT_LAUNCH_TARGET;
   }

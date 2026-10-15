@@ -221,6 +221,15 @@ function deriveOpencodeTaskDetail(
   };
 }
 
+function toOpencodeEditInput(value: { filePath: string; oldString?: string; newString?: string }) {
+  return {
+    filePath: value.filePath,
+    oldString: nonEmptyString(value.oldString),
+    newString: nonEmptyString(value.newString),
+    unifiedDiff: undefined,
+  };
+}
+
 const OpencodeEditInputSchema = z.union([
   z
     .object({
@@ -229,12 +238,12 @@ const OpencodeEditInputSchema = z.union([
       newString: z.string().optional(),
     })
     .passthrough()
-    .transform((value) => ({
-      filePath: value.filePath,
-      oldString: nonEmptyString(value.oldString),
-      newString: nonEmptyString(value.newString),
-      unifiedDiff: undefined,
-    })),
+    .transform(toOpencodeEditInput),
+  // OpenCode v2's edit tool names the file `path`.
+  z
+    .object({ path: z.string(), oldString: z.string(), newString: z.string() })
+    .passthrough()
+    .transform((value) => toOpencodeEditInput({ ...value, filePath: value.path })),
   ToolEditInputSchema,
 ]);
 
@@ -302,6 +311,10 @@ const OpencodeKnownToolDetailSchema = z.union([
     OpencodeApplyPatchTextInputSchema,
     z.unknown(),
     (input) => toEditToolDetail(input, null),
+  ),
+  // OpenCode v2 reports apply_patch as `patch`.
+  toolDetailBranchByToolName("patch", OpencodeApplyPatchTextInputSchema, z.unknown(), (input) =>
+    toEditToolDetail(input, null),
   ),
   toolDetailBranchByToolName(
     "apply_diff",

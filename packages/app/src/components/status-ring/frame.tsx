@@ -42,10 +42,16 @@ export function StatusRingFrame({ backdrop, children }: StatusRingProps & { chil
 
 function getBackdropStyle(backdrop: SurfaceBackdrop | null | undefined) {
   switch (backdrop) {
+    case "surfaceTabActive":
+      return styles.backdropTabActive;
+    case "surfaceWorkspaceChrome":
+      return styles.backdropWorkspaceChrome;
     case "surface0":
       return styles.backdropSurface0;
     case "surface1":
       return styles.backdropSurface1;
+    case "surfaceWorkspace":
+      return styles.backdropSurfaceWorkspace;
     case "surfaceSidebar":
       return styles.backdropSurfaceSidebar;
     case "surfaceSidebarHover":
@@ -89,8 +95,11 @@ export const styles = StyleSheet.create((theme) => {
       alignItems: "center",
       justifyContent: "center",
     },
+    backdropWorkspaceChrome: { backgroundColor: theme.colors.surfaceWorkspaceChrome },
+    backdropTabActive: { backgroundColor: theme.colors.surfaceTabActive },
     backdropSurface0: { backgroundColor: theme.colors.surface0 },
     backdropSurface1: { backgroundColor: theme.colors.surface1 },
+    backdropSurfaceWorkspace: { backgroundColor: theme.colors.surfaceWorkspace },
     backdropSurfaceSidebar: { backgroundColor: theme.colors.surfaceSidebar },
     backdropSurfaceSidebarHover: { backgroundColor: theme.colors.surfaceSidebarHover },
     backdropSurfaceSidebarSelected: { backgroundColor: theme.colors.surfaceSidebarSelected },

@@ -123,7 +123,7 @@ See [Docker](/docs/docker) for Compose and reverse proxy examples.
 
 ## Agent authentication
 
-Paseo wraps agent CLIs (Claude Code, Codex, OpenCode) but does not manage their authentication. Each agent provider handles its own credentials:
+Paseo wraps agent CLIs (Claude Code, Codex, OpenCode, Muse Code) but does not manage their authentication. Each agent provider handles its own credentials:
 
 - **Claude Code**, authenticates via Anthropic's OAuth flow, stored in `~/.claude/`
 - **Codex**, uses your OpenAI API key or OAuth session

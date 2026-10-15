@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -8,7 +8,10 @@ import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Combobox, type ComboboxOption, type ComboboxProps } from "@/components/ui/combobox";
 import { ModelBrowser, ModelProviderGlyph, useModelBrowser } from "@/components/model-browser";
-import { resolveModelBrowserScrolling } from "@/components/model-browser-view";
+import {
+  resolveModelBrowserScrolling,
+  resolveModelSelectorLabels,
+} from "@/components/model-browser-view";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
@@ -22,6 +25,13 @@ const foregroundMutedMapping = (theme: Theme) => ({
 });
 
 function noop() {}
+
+function shouldShowToolbarGlyph(
+  toolbar: CombinedModelSelectorProps["toolbar"],
+  selectedProvider: string,
+): boolean {
+  return toolbar?.showGlyph !== false && selectedProvider.trim().length > 0;
+}
 
 interface CombinedModelSelectorProps {
   providers: ProviderSelectorProvider[];
@@ -62,7 +72,9 @@ interface CombinedModelSelectorProps {
   toolbar?: {
     glyphSize: number;
     showCaret: boolean;
+    showGlyph?: boolean;
   };
+  autoRouting?: { selected: boolean; onSelect: () => void };
 }
 
 export function CombinedModelSelector({
@@ -87,6 +99,7 @@ export function CombinedModelSelector({
   desktopMinWidth,
   triggerFill = false,
   toolbar,
+  autoRouting,
 }: CombinedModelSelectorProps) {
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
@@ -103,6 +116,12 @@ export function CombinedModelSelector({
     serverId,
   });
   const { prepareToOpen, reset } = browser;
+  const { selectedModelLabel, triggerLabel } = resolveModelSelectorLabels({
+    autoRouting,
+    selectedModelLabel: browser.selectedModelLabel,
+    triggerLabel: browser.triggerLabel,
+    autoLabel: t("modelSelector.autoJev"),
+  });
 
   const handleOpenChange = useCallback(
     (open: boolean) => {
@@ -191,6 +210,19 @@ export function CombinedModelSelector({
     },
     [handleOpenChange, onEditProfile],
   );
+  const dismissableAutoRouting = useMemo(
+    () =>
+      autoRouting
+        ? {
+            selected: autoRouting.selected,
+            onSelect: () => {
+              autoRouting.onSelect();
+              handleOpenChange(false);
+            },
+          }
+        : undefined,
+    [autoRouting, handleOpenChange],
+  );
 
   const selectorBody = isContentReady ? (
     <ModelBrowser
@@ -203,6 +235,7 @@ export function CombinedModelSelector({
       onRetryProvider={onRetryProvider}
       isRetryingProvider={isRetryingProvider}
       scrolling={modelBrowserScrolling}
+      autoRouting={dismissableAutoRouting}
     />
   ) : (
     <View style={styles.sheetLoadingState}>
@@ -222,13 +255,13 @@ export function CombinedModelSelector({
           style={triggerStyle}
           accessibilityRole="button"
           accessibilityLabel={t("modelSelector.selectedModel", {
-            model: browser.selectedModelLabel,
+            model: selectedModelLabel,
           })}
           testID="combined-model-selector"
         >
           {({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) =>
             renderTrigger({
-              selectedModelLabel: browser.triggerLabel,
+              selectedModelLabel: triggerLabel,
               onPress: handleTriggerPress,
               disabled,
               isOpen,
@@ -246,12 +279,12 @@ export function CombinedModelSelector({
           style={triggerStyle}
           accessibilityRole="button"
           accessibilityLabel={t("modelSelector.selectedModel", {
-            model: browser.selectedModelLabel,
+            model: selectedModelLabel,
           })}
           testID="combined-model-selector"
           chevron={toolbar?.showCaret === false ? null : undefined}
         >
-          {selectedProvider.trim().length > 0 ? (
+          {shouldShowToolbarGlyph(toolbar, selectedProvider) ? (
             <View style={toolbar?.glyphSize === 20 ? styles.toolbarGlyph20 : styles.toolbarGlyph16}>
               <ModelProviderGlyph
                 provider={selectedProvider}
@@ -261,7 +294,7 @@ export function CombinedModelSelector({
             </View>
           ) : null}
           <Text style={styles.triggerText} numberOfLines={1} ellipsizeMode="tail">
-            {browser.triggerLabel}
+            {triggerLabel}
           </Text>
         </ComboboxTrigger>
       )}
@@ -292,15 +325,15 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: 0,
   },
   trigger: {
-    height: 28,
+    height: { xs: 28, md: 24 },
     minWidth: 0,
     flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "transparent",
     gap: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius["2xl"],
+    paddingHorizontal: theme.spacing[1],
+    borderRadius: theme.borderRadius.composerControl,
   },
   triggerHovered: {
     backgroundColor: theme.colors.surface2,
@@ -325,7 +358,7 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     flexShrink: 1,
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.base,
+    fontSize: { xs: theme.fontSize.base, md: theme.fontSize.sm },
     fontWeight: theme.fontWeight.normal,
   },
   customTriggerWrapper: {

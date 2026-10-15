@@ -12,10 +12,12 @@ import { type CheckoutStatusPayload, useCheckoutStatusQuery } from "@/git/use-st
 import { type CheckoutPrStatusPayload, useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 import {
   buildGitActions,
+  buildWorkspaceWorkflowState,
   narrowPullRequestState,
   type BuildGitActionsInput,
   type GitAction,
   type GitActions,
+  type WorkspaceWorkflowState,
 } from "@/git/policy";
 import { deriveMergeCapability } from "@/git/merge-capability";
 import type { CheckoutPrMergeMethod } from "@getpaseo/protocol/messages";
@@ -32,7 +34,7 @@ import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 import { readValidatedString } from "@/storage/validated-storage";
 
-export type { GitActionId, GitAction, GitActions } from "@/git/policy";
+export type { GitActionId, GitAction, GitActions, WorkspaceWorkflowState } from "@/git/policy";
 
 const forgeMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const ThemedInfo = withUnistyles(Info, (theme) => ({ color: theme.colors.foreground }));
@@ -203,6 +205,14 @@ interface UseGitActionsInput {
 
 interface UseGitActionsResult {
   gitActions: GitActions;
+  commitAction: GitAction;
+  workflowState: WorkspaceWorkflowState;
+  workflowContext: {
+    cwd: string;
+    baseRef: string | null;
+    branch: string | null;
+    pullRequestUrl: string | null;
+  };
   branchLabel: string;
   isGit: boolean;
 }
@@ -331,6 +341,8 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     status: prStatus,
     githubFeaturesEnabled,
     forge,
+    isLoading: isPrStatusLoading,
+    isError: isPrStatusError,
   } = useCheckoutPrStatusQuery({
     serverId,
     cwd,
@@ -865,7 +877,171 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     [gitActionsInput, baseRefLabel, hasPullRequest, forge, t],
   );
 
-  return { gitActions, branchLabel, isGit };
+  const { commitAction, workflowState } = useWorkspaceWorkflowActions({
+    gitActions,
+    commitRuntime: gitActionsInput.runtime.commit,
+    commitLabels: {
+      label: t("workspace.git.actions.commit.label"),
+      pendingLabel: t("workspace.git.actions.commit.pending"),
+      successLabel: t("workspace.git.actions.commit.success"),
+    },
+    hasUncommittedChanges,
+    isGit,
+    status,
+    isStatusLoading,
+    prStatus,
+    isPrStatusLoading,
+    isPrStatusError,
+    hasRemote,
+    baseRef,
+    currentBranch: gitStatus?.currentBranch,
+    aheadCount,
+    aheadOfOrigin,
+    behindOfOrigin,
+    archiveController,
+  });
+
+  return {
+    gitActions,
+    commitAction,
+    workflowState,
+    workflowContext: buildWorkspaceWorkflowContext({
+      cwd,
+      baseRef,
+      gitStatus,
+      prStatus,
+    }),
+    branchLabel,
+    isGit,
+  };
+}
+
+function buildWorkspaceWorkflowContext(input: {
+  cwd: string;
+  baseRef: string | null | undefined;
+  gitStatus: CheckoutStatusPayload | null;
+  prStatus: NonNullable<CheckoutPrStatusPayload["status"]> | null | undefined;
+}): { cwd: string; baseRef: string | null; branch: string | null; pullRequestUrl: string | null } {
+  return {
+    cwd: input.cwd,
+    baseRef: input.baseRef ?? null,
+    branch: input.gitStatus?.currentBranch ?? null,
+    pullRequestUrl: input.prStatus?.url ?? null,
+  };
+}
+
+function isDirectMergeAction(
+  id: GitAction["id"] | undefined,
+): id is Extract<GitAction["id"], "merge-pr-squash" | "merge-pr-merge" | "merge-pr-rebase"> {
+  return id === "merge-pr-squash" || id === "merge-pr-merge" || id === "merge-pr-rebase";
+}
+
+function useWorkspaceWorkflowActions(input: {
+  gitActions: GitActions;
+  commitRuntime: BuildGitActionsInput["runtime"]["commit"];
+  commitLabels: Pick<GitAction, "label" | "pendingLabel" | "successLabel">;
+  hasUncommittedChanges: boolean;
+  isGit: boolean;
+  status: CheckoutStatusPayload | null | undefined;
+  isStatusLoading: boolean;
+  prStatus: NonNullable<CheckoutPrStatusPayload["status"]> | null | undefined;
+  isPrStatusLoading: boolean;
+  isPrStatusError: boolean;
+  hasRemote: boolean;
+  baseRef: string | null | undefined;
+  currentBranch: string | null | undefined;
+  aheadCount: number;
+  aheadOfOrigin: number | null;
+  behindOfOrigin: number | null;
+  archiveController: Pick<
+    ReturnType<typeof useWorkspaceScreenArchiveController>,
+    "canArchive" | "isArchiving"
+  >;
+}): { commitAction: GitAction; workflowState: WorkspaceWorkflowState } {
+  const {
+    gitActions,
+    commitRuntime,
+    commitLabels,
+    hasUncommittedChanges,
+    isGit,
+    status,
+    isStatusLoading,
+    prStatus,
+    isPrStatusLoading,
+    isPrStatusError,
+    hasRemote,
+    baseRef,
+    currentBranch,
+    aheadCount,
+    aheadOfOrigin,
+    behindOfOrigin,
+    archiveController,
+  } = input;
+  const commitAction = useMemo<GitAction>(
+    () => ({
+      id: "commit",
+      label: commitLabels.label,
+      pendingLabel: commitLabels.pendingLabel,
+      successLabel: commitLabels.successLabel,
+      disabled: commitRuntime.disabled || !hasUncommittedChanges,
+      status: commitRuntime.status,
+      icon: commitRuntime.icon,
+      startsGroup: false,
+      handler: commitRuntime.handler,
+    }),
+    [
+      commitRuntime,
+      commitLabels.label,
+      commitLabels.pendingLabel,
+      commitLabels.successLabel,
+      hasUncommittedChanges,
+    ],
+  );
+  const workflowState = useMemo(() => {
+    const actions = [gitActions.primary, ...gitActions.secondary, ...gitActions.menu];
+    const mergeAction = actions.find((action) => isDirectMergeAction(action?.id));
+    const mergeActionId = isDirectMergeAction(mergeAction?.id) ? mergeAction.id : undefined;
+    return buildWorkspaceWorkflowState({
+      isGit,
+      statusKnown: status !== null && status !== undefined && !isStatusLoading,
+      statusError: Boolean(status?.error),
+      pullRequestKnown: !isPrStatusLoading && !isPrStatusError,
+      pullRequestError: isPrStatusError,
+      hasRemote,
+      baseRefAvailable: Boolean(baseRef),
+      currentBranch,
+      hasUncommittedChanges,
+      aheadCount,
+      aheadOfOrigin,
+      behindOfOrigin,
+      pullRequestUrl: prStatus?.url ?? null,
+      pullRequestState: narrowPullRequestState(prStatus?.state),
+      pullRequestIsDraft: prStatus?.isDraft ?? false,
+      pullRequestIsMerged: prStatus?.isMerged ?? false,
+      pullRequestChecksFailed: prStatus?.checksStatus === "failure",
+      pullRequestMergeable: prStatus?.mergeable ?? "UNKNOWN",
+      mergeActionId,
+      archiveAvailable: archiveController.canArchive && !archiveController.isArchiving,
+    });
+  }, [
+    gitActions,
+    isGit,
+    status,
+    isStatusLoading,
+    isPrStatusLoading,
+    isPrStatusError,
+    hasRemote,
+    baseRef,
+    currentBranch,
+    hasUncommittedChanges,
+    aheadCount,
+    aheadOfOrigin,
+    behindOfOrigin,
+    prStatus,
+    archiveController.canArchive,
+    archiveController.isArchiving,
+  ]);
+  return { commitAction, workflowState };
 }
 
 function translateGitActions(
@@ -1101,22 +1277,6 @@ function getWorktreeArchiveWarningLabels(
     confirm: t("workspace.git.actions.archiveWarning.confirm"),
     cancel: t("workspace.git.actions.archiveWarning.cancel"),
     uncommittedChanges: t("workspace.git.actions.archiveWarning.uncommittedChanges"),
-    uncommittedChangesWithDiff: (diffStat) =>
-      t("workspace.git.actions.archiveWarning.uncommittedChangesWithDiff", { diffStat }),
-    addedLine: (count) =>
-      t(
-        count === 1
-          ? "workspace.git.actions.archiveWarning.addedLine"
-          : "workspace.git.actions.archiveWarning.addedLines",
-        { count },
-      ),
-    deletedLine: (count) =>
-      t(
-        count === 1
-          ? "workspace.git.actions.archiveWarning.deletedLine"
-          : "workspace.git.actions.archiveWarning.deletedLines",
-        { count },
-      ),
     unpushedCommit: (count) =>
       t(
         count === 1

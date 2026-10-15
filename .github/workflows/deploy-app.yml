@@ -11,6 +11,7 @@ on:
 
 jobs:
   deploy:
+    if: ${{ github.repository == 'getpaseo/paseo' }}
     runs-on: ubuntu-latest
 
     steps:

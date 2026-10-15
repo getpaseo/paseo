@@ -10,6 +10,8 @@ import { createWorkspaceFileAttachment } from "@/attachments/workspace-file";
 const { asyncStorage } = vi.hoisted(() => ({
   asyncStorage: new Map<string, string>(),
 }));
+const { useAgentFormStateMock } = vi.hoisted(() => ({ useAgentFormStateMock: vi.fn() }));
+const CLAUDE_INITIAL_VALUES = { provider: "claude" as const };
 
 vi.hoisted(() => {
   (globalThis as unknown as { __DEV__: boolean }).__DEV__ = false;
@@ -32,7 +34,7 @@ vi.mock("@/attachments/service", () => ({
 }));
 
 vi.mock("@/hooks/use-agent-form-state", () => ({
-  useAgentFormState: () => ({
+  useAgentFormState: useAgentFormStateMock.mockReturnValue({
     selectedServerId: "host-1",
     selectedProvider: "codex",
     setProviderFromUser: () => undefined,
@@ -127,6 +129,8 @@ afterEach(async () => {
 });
 
 let useAgentInputDraft: typeof import("./input-draft").useAgentInputDraft;
+let useAgentFormState: typeof import("@/hooks/use-agent-form-state").useAgentFormState;
+let resolveDefaultNewConversationSetup: typeof import("./input-draft").__private__.resolveDefaultNewConversationSetup;
 type DraftRecordForTest = ReturnType<typeof useDraftStore.getState>["drafts"][string];
 
 beforeAll(async () => {
@@ -135,11 +139,16 @@ beforeAll(async () => {
     configurable: true,
   });
 
-  ({ useAgentInputDraft } = await import("./input-draft"));
+  ({
+    useAgentInputDraft,
+    __private__: { resolveDefaultNewConversationSetup },
+  } = await import("./input-draft"));
+  ({ useAgentFormState } = await import("@/hooks/use-agent-form-state"));
 });
 
 describe("useAgentInputDraft live contract", () => {
   beforeEach(() => {
+    vi.mocked(useAgentFormState).mockClear();
     asyncStorage.clear();
     document.body.innerHTML = "<div id='root'></div>";
     localStorage.clear();
@@ -149,6 +158,68 @@ describe("useAgentInputDraft live contract", () => {
       createModalDraft: null,
       attachmentFocusRequestByDraftKey: {},
     });
+  });
+
+  it("passes the new-conversation defaults to form resolution", async () => {
+    function Probe() {
+      useAgentInputDraft({
+        draftKey: "draft:defaults",
+        composer: {
+          initialServerId: "host-1",
+          isVisible: true,
+          lockedWorkingDir: "/repo",
+        },
+      });
+      return null;
+    }
+
+    const queryClient = new QueryClient();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing root container");
+    let root: Root | null = createTestRoot(container);
+    await act(async () => {
+      root!.render(
+        <QueryClientProvider client={queryClient}>
+          <Probe />
+        </QueryClientProvider>,
+      );
+    });
+    expect(vi.mocked(useAgentFormState).mock.calls.at(-1)?.[0]).toMatchObject({
+      initialValues: {
+        provider: "codex",
+        model: "gpt-6-astra",
+        thinkingOptionId: "high",
+        modeId: "full-access",
+        modelRouting: "manual",
+      },
+    });
+    await act(async () => {
+      root!.unmount();
+    });
+  });
+
+  it("includes Plan mode in the one-time default setup and skips defaults for explicit configurations", () => {
+    expect(
+      resolveDefaultNewConversationSetup({
+        initialServerId: "host-1",
+      }),
+    ).toEqual({
+      initialValues: {
+        provider: "codex",
+        model: "gpt-6-astra",
+        thinkingOptionId: "high",
+        modeId: "full-access",
+        modelRouting: "manual",
+      },
+      initialFeatureValues: { plan_mode: true },
+    });
+    expect(
+      resolveDefaultNewConversationSetup({
+        initialServerId: "host-1",
+        initialValues: CLAUDE_INITIAL_VALUES,
+        initialFeatureValues: { plan_mode: false },
+      }),
+    ).toBeNull();
   });
 
   it("hydrates persisted text and attachments and returns draft-mode composer state for a caller-provided key", async () => {
@@ -198,12 +269,15 @@ describe("useAgentInputDraft live contract", () => {
     });
 
     expect(getLatest().composerState?.agentControls.selectedProvider).toBe("codex");
-    expect(getLatest().composerState?.commandDraftConfig).toEqual({
-      provider: "codex",
-      cwd: "/repo",
-      modeId: "auto",
-      model: "gpt-5.4",
-      thinkingOptionId: "high",
+    expect(getLatest().composerState?.commandDraft).toEqual({
+      status: "ready",
+      config: {
+        provider: "codex",
+        cwd: "/repo",
+        modeId: "auto",
+        model: "gpt-5.4",
+        thinkingOptionId: "high",
+      },
     });
 
     const hydratedTextReplacement = getLatest().textReplacement;
@@ -239,7 +313,7 @@ describe("useAgentInputDraft live contract", () => {
       );
     });
 
-    expect(getLatest().text).toBe("hello world");
+    expect(getLatest().textSource.getSnapshot()).toBe("hello world");
     expect(getLatest().attachments).toEqual([{ kind: "image", metadata: image }]);
   });
 
@@ -297,7 +371,7 @@ describe("useAgentInputDraft live contract", () => {
       );
     });
 
-    expect(getLatest().text).toBe("legacy text");
+    expect(getLatest().textSource.getSnapshot()).toBe("legacy text");
     expect(getLatest().attachments).toEqual([{ kind: "image", metadata: image }]);
     expect(useDraftStore.getState().drafts["draft:legacy"]?.input).toEqual({
       text: "legacy text",
@@ -363,7 +437,7 @@ describe("useAgentInputDraft live contract", () => {
       );
     });
 
-    expect(getLatest().text).toBe("new text");
+    expect(getLatest().textSource.getSnapshot()).toBe("new text");
     expect(getLatest().attachments).toEqual([githubIssue]);
 
     await act(async () => {
@@ -394,7 +468,9 @@ describe("useAgentInputDraft live contract", () => {
       return latest;
     }
 
+    let renders = 0;
     function Probe() {
+      renders += 1;
       latest = useAgentInputDraft({ draftKey: "draft:attachments" });
       return null;
     }
@@ -428,6 +504,22 @@ describe("useAgentInputDraft live contract", () => {
         attachments: [{ kind: "image", metadata: image }],
       });
     });
+    const settledRenders = renders;
+    const attached = getLatest().attachments;
+    const source = getLatest().textSource;
+    let textNotifications = 0;
+    const unsubscribe = source.subscribe(() => {
+      textNotifications += 1;
+    });
+    await act(async () => {
+      getLatest().editText("with attachment\n");
+      await expect.poll(source.getSnapshot).toBe("with attachment\n");
+    });
+    expect(renders).toBe(settledRenders);
+    expect(getLatest().attachments).toBe(attached);
+    expect(getLatest().textSource).toBe(source);
+    expect(textNotifications).toBe(1);
+    unsubscribe();
     await act(async () => {
       root.unmount();
     });
@@ -512,7 +604,7 @@ describe("useAgentInputDraft live contract", () => {
       getLatest().clear("sent");
     });
 
-    expect(getLatest().text).toBe("");
+    expect(getLatest().textSource.getSnapshot()).toBe("");
     expect(getLatest().attachments).toEqual([]);
     expect(useDraftStore.getState().drafts["draft:clear"]?.input).toEqual({
       text: "",
@@ -566,7 +658,7 @@ describe("useAgentInputDraft live contract", () => {
       getLatest().clear("sent");
     });
 
-    expect(getLatest().text).toBe("");
+    expect(getLatest().textSource.getSnapshot()).toBe("");
     expect(getLatest().attachments).toEqual([]);
     expect(useDraftStore.getState().drafts["draft:lifecycle"]).toMatchObject({
       lifecycle: "sent",

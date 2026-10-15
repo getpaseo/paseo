@@ -13,6 +13,7 @@ export type KeyboardActionId =
   | "message-input.voice-toggle"
   | "message-input.voice-mute-toggle"
   | "message-input.mode-cycle"
+  | "message-input.profile-next"
   | "workspace.agent.new"
   | "workspace.tab.menu.open"
   | "workspace.tab.target.agent"
@@ -45,6 +46,7 @@ export type KeyboardActionId =
   | "workspace.focus.toggle"
   | "workspace.terminal.new"
   | "workspace.browser.new"
+  | "workspace.browser.reopen-last-closed"
   | "sidebar.toggle.right"
   | "sidebar.toggle.both"
   | "workspace.new"
@@ -66,6 +68,7 @@ export type KeyboardActionDefinition =
   | { id: "message-input.voice-toggle"; scope: KeyboardActionScope }
   | { id: "message-input.voice-mute-toggle"; scope: KeyboardActionScope }
   | { id: "message-input.mode-cycle"; scope: KeyboardActionScope }
+  | { id: "message-input.profile-next"; scope: KeyboardActionScope }
   | { id: "workspace.agent.new"; scope: KeyboardActionScope }
   | { id: "workspace.tab.menu.open"; scope: KeyboardActionScope }
   | { id: "workspace.tab.target.agent"; scope: KeyboardActionScope }
@@ -103,6 +106,7 @@ export type KeyboardActionDefinition =
   | { id: "workspace.focus.toggle"; scope: KeyboardActionScope }
   | { id: "workspace.terminal.new"; scope: KeyboardActionScope }
   | { id: "workspace.browser.new"; scope: KeyboardActionScope }
+  | { id: "workspace.browser.reopen-last-closed"; scope: KeyboardActionScope }
   | { id: "sidebar.toggle.right"; scope: KeyboardActionScope }
   | { id: "sidebar.toggle.both"; scope: KeyboardActionScope }
   | { id: "workspace.new"; scope: KeyboardActionScope }

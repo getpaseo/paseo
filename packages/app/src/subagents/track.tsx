@@ -1,9 +1,9 @@
-import { useCallback, useMemo, type ReactElement } from "react";
+import { useCallback, type ReactElement } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { Archive, Unlink } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { getProviderIcon } from "@/components/provider-icons";
+import { useProviderIcon } from "@/components/provider-icons";
 import { ComposerTrackActions, ComposerTrackPill, ComposerTrackRow } from "@/composer/tracks";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -13,6 +13,7 @@ import {
   type WorkspaceTabPresentation,
 } from "@/screens/workspace/workspace-tab-presentation";
 import type { Theme } from "@/styles/theme";
+import { getPanelManifest } from "@/panels/panel-manifest";
 import type { SubagentRow } from "./select";
 import type { ArchiveFinishedStatus } from "./use-archive-finished";
 import {
@@ -45,13 +46,15 @@ const IDLE_ARCHIVE_FINISHED_STATUS: ArchiveFinishedStatus = { kind: "idle" };
 /** Leading and action glyphs share one size so rows keep a single icon column. */
 const ROW_ICON_SIZE = 14;
 
-function buildRowPresentation(row: SubagentRow, serverId: string): WorkspaceTabPresentation {
+function useRowPresentation(row: SubagentRow, serverId: string): WorkspaceTabPresentation {
+  const icon = useProviderIcon(row.provider, serverId);
   const data = buildSubagentRowPresentationData(row);
   return {
     ...data,
     tooltip: data.label,
     modified: false,
-    icon: getProviderIcon(row.provider, serverId),
+    showCloseButton: getPanelManifest(data.kind).showCloseButton,
+    icon,
   };
 }
 
@@ -185,7 +188,7 @@ function SubagentsTrackRow({
 }: SubagentsTrackRowProps): ReactElement {
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
-  const presentation = useMemo(() => buildRowPresentation(row, serverId), [row, serverId]);
+  const presentation = useRowPresentation(row, serverId);
   const displayLabel =
     presentation.titleState === "loading" ? t("common.states.loading") : presentation.label;
   const handlePress = useCallback(() => {

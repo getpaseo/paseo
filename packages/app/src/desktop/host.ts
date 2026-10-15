@@ -1,3 +1,4 @@
+import type { AgentWidgetBridge } from "@getpaseo/protocol/desktop-agent-widget";
 import { Platform } from "react-native";
 import { getElectronHost } from "@/desktop/electron/host";
 import type { BrowserKeyboardPolicy } from "@/desktop/browser/shortcuts";
@@ -62,6 +63,7 @@ export interface DesktopNotificationBridge {
 
 export interface DesktopOpenerBridge {
   openUrl?: (url: string) => Promise<void>;
+  openDirectory?: (path: string) => Promise<boolean>;
 }
 
 export interface DesktopEditorTargetDescriptor {
@@ -173,6 +175,15 @@ export interface DesktopInvokeBridge {
 }
 
 export interface DesktopHostBridge {
+  localUpdate?: {
+    buildId: string;
+    ready(id: string): Promise<unknown>;
+    activity(): Promise<unknown>;
+    postpone(): Promise<unknown>;
+    onStatus(handler: (value: unknown) => void): () => void;
+    onPrepare(handler: () => Promise<boolean>): () => void;
+  };
+  agentWidget?: AgentWidgetBridge;
   platform?: string;
   windowChromeMode?: string;
   invoke?: DesktopInvokeBridge["invoke"];

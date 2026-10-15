@@ -111,3 +111,15 @@ test("accepts a bodyless announcement with separate discovery freshness", async 
   const result = validateWSOutboundMessage({ type: "session", message });
   expect(result.success).toBe(true);
 });
+
+describe("permission metadata on provider modes", () => {
+  test("preserves Full access capability while accepting older modes without it", () => {
+    const modes = [
+      { id: "full-access", label: "Full access", isUnattended: true },
+      { id: "ask", label: "Ask" },
+    ];
+    expect(
+      ProviderSnapshotEntrySchema.parse({ provider: "codex", status: "ready", modes }).modes,
+    ).toEqual(modes);
+  });
+});

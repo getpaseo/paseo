@@ -102,9 +102,9 @@ async function connectClient(
     ownedSubscriptions: true,
   },
 ): Promise<{ client: PaseoClient; ws: FakeWebSocket }> {
-  vi.stubGlobal("WebSocket", FakeWebSocket);
   const client = createPaseoClient({
     url: "ws://daemon.test",
+    webSocketFactory: (url) => new FakeWebSocket(url),
     reconnect: { enabled: false },
   });
 
@@ -278,18 +278,28 @@ test("createPaseoApi borrows daemon capabilities without exposing connection own
   expect("skills" in paseo.agents).toBe(false);
 });
 
-test("agent handles send permission responses for their agent", async () => {
+test("agent handles await their correlated permission acknowledgement", async () => {
   const { client, ws } = await connectClient();
 
-  await client.agents.ref("agent_sdk").respondToPermission({
-    requestId: "permission-request",
-    response: {
-      behavior: "deny",
-      selectedActionId: "deny-once",
-      message: "Not approved",
-      interrupt: true,
-    },
-  });
+  let acknowledged = false;
+  const pending = client.agents
+    .ref("agent_sdk")
+    .respondToPermission({
+      requestId: "permission-request",
+      response: {
+        behavior: "deny",
+        selectedActionId: "deny-once",
+        message: "Not approved",
+        interrupt: true,
+      },
+    })
+    .then(() => {
+      acknowledged = true;
+      return undefined;
+    });
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(acknowledged).toBe(false);
 
   expect(parseSentFrame(ws.sent.at(-1))).toEqual({
     type: "session",
@@ -305,6 +315,19 @@ test("agent handles send permission responses for their agent", async () => {
       },
     },
   });
+
+  ws.message(
+    sessionMessage({
+      type: "agent_permission_resolved",
+      payload: {
+        agentId: "agent_sdk",
+        requestId: "permission-request",
+        resolution: { behavior: "deny" },
+      },
+    }),
+  );
+  await pending;
+  expect(acknowledged).toBe(true);
 
   await client.close();
 });
@@ -377,13 +400,15 @@ test("project actions list registered projects through the existing RPC", async 
 
 test("project actions subscribe to existing project updates", async () => {
   const { client, ws } = await connectClient();
-  const observation = client.observeEvents(["project.update"]);
-  acknowledgeObservation(ws, "projects-sdk");
-  await observation.ready;
   const updates: string[] = [];
   const unsubscribe = client.projects.subscribe((update) => {
     updates.push(update.kind === "upsert" ? update.project.projectDisplayName : update.projectId);
   });
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "session.events.set_subscription.request",
+    events: ["project.update"],
+  });
+  acknowledgeObservation(ws, "projects-sdk");
 
   ws.message(
     sessionMessage({
@@ -605,6 +630,27 @@ test("workspace handles keep identity and refresh snapshots through existing dri
   );
   await expect(titlePromise).resolves.toEqual({ title: "SDK review" });
 
+  const intentPromise = workspace.setIntent("  goal  ", "workspace-intent-request");
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "workspace.intent.set.request",
+    requestId: "workspace-intent-request",
+    workspaceId: "workspace_sdk",
+    intent: "  goal  ",
+  });
+  ws.message(
+    sessionMessage({
+      type: "workspace.intent.set.response",
+      payload: {
+        requestId: "workspace-intent-request",
+        workspaceId: "workspace_sdk",
+        accepted: true,
+        intent: "goal",
+        error: null,
+      },
+    }),
+  );
+  await expect(intentPromise).resolves.toEqual({ intent: "goal" });
+
   unsubscribe();
   ws.message(
     sessionMessage({
@@ -633,6 +679,7 @@ test("plugin-shaped PR workspace create and agent create use the existing daemon
       checkoutSource: { kind: "change_request", forge: "github", number: 42 },
     },
     title: "Issue 42",
+    intent: "Implement the issue without unrelated changes",
   });
   const workspaceRequest = parseSentSessionMessage(ws.sent.at(-1));
   expect(workspaceRequest).toMatchObject({
@@ -644,6 +691,7 @@ test("plugin-shaped PR workspace create and agent create use the existing daemon
       checkoutSource: { kind: "change_request", forge: "github", number: 42 },
     },
     title: "Issue 42",
+    intent: "Implement the issue without unrelated changes",
   });
   ws.message(
     sessionMessage({
@@ -691,12 +739,13 @@ test("plugin-shaped PR workspace create and agent create use the existing daemon
 
 test("agent handles delegate create, send, timeline refetch, archive, and local updates", async () => {
   const { client, ws } = await connectClient();
-  const createdAgent = createAgent();
+  const createdAgent = createAgent({ launchProfileId: "planner" });
 
   const createPromise = client.agents.create({
     config: { provider: "codex/gpt-5.4" },
     cwd: "/repo/sdk",
     prompt: "ship it",
+    launchProfileId: "planner",
   });
   const createRequest = parseSentSessionMessage(ws.sent.at(-1));
   expect(createRequest).toMatchObject({
@@ -707,6 +756,7 @@ test("agent handles delegate create, send, timeline refetch, archive, and local 
       cwd: "/repo/sdk",
     },
     initialPrompt: "ship it",
+    launchProfileId: "planner",
   });
 
   ws.message(
@@ -724,6 +774,8 @@ test("agent handles delegate create, send, timeline refetch, archive, and local 
   const agent = await createPromise;
   expect(agent.id).toBe("agent_sdk");
   expect(agent.current()).toEqual(createdAgent);
+  expect(agent.launchProfileId).toBe("planner");
+  expect(createRequest.config).not.toHaveProperty("launchProfileId");
 
   await observeAgents(client, ws);
   const updatedAgents: string[] = [];
@@ -742,13 +794,17 @@ test("agent handles delegate create, send, timeline refetch, archive, and local 
   expect(updatedAgents).toEqual(["Updated"]);
   expect(agent.current()).toEqual(updatedAgent);
 
-  const sendPromise = agent.send("hello", { messageId: "message-sdk" });
+  const sendPromise = agent.send("hello", {
+    messageId: "message-sdk",
+    activeTurnBehavior: "steer",
+  });
   const sendRequest = parseSentSessionMessage(ws.sent.at(-1));
   expect(sendRequest).toMatchObject({
     type: "send_agent_message_request",
     agentId: "agent_sdk",
     text: "hello",
     messageId: "message-sdk",
+    activeTurnBehavior: "steer",
   });
 
   ws.message(
@@ -766,6 +822,7 @@ test("agent handles delegate create, send, timeline refetch, archive, and local 
 
   const runPromise = agent.run("finish the task", {
     messageId: "run-message-sdk",
+    activeTurnBehavior: "interrupt",
     timeoutMs: 30_000,
   });
   const runSendRequest = parseSentSessionMessage(ws.sent.at(-1));
@@ -774,6 +831,7 @@ test("agent handles delegate create, send, timeline refetch, archive, and local 
     agentId: "agent_sdk",
     text: "finish the task",
     messageId: "run-message-sdk",
+    activeTurnBehavior: "interrupt",
   });
   ws.message(
     sessionMessage({
@@ -1367,15 +1425,17 @@ test("provider actions delegate to existing provider RPCs and local snapshot upd
     ],
   });
 
-  const observation = client.observeEvents(["providers_snapshot_update"]);
-  acknowledgeObservation(ws, "provider-updates");
-  await observation.ready;
   const snapshotUpdates: string[] = [];
   const snapshotModelDefaults: Array<string | undefined> = [];
   const unsubscribe = client.providers.subscribe((update) => {
     snapshotUpdates.push(update.generatedAt);
     snapshotModelDefaults.push(update.entries[0]?.models?.[0]?.defaultThinkingOptionId);
   });
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "session.events.set_subscription.request",
+    events: ["providers_snapshot_update"],
+  });
+  acknowledgeObservation(ws, "provider-updates");
   ws.message(
     sessionMessage({
       type: "providers_snapshot_update",
@@ -1408,15 +1468,25 @@ test("provider actions delegate to existing provider RPCs and local snapshot upd
   await client.close();
 });
 
-test("waitForReady requires owned subscriptions from the host", async () => {
+test("waitForReady reads an older host on the existing connection", async () => {
   const { client, ws } = await connectClient({});
-  const sentBeforeWait = ws.sent.length;
-
-  await expect(client.providers.waitForReady({ cwd: "/repo/./sdk" })).rejects.toThrow(
-    "Update the host to use independent subscriptions.",
+  const waiting = client.providers.waitForReady({ cwd: "/repo/./sdk" });
+  await expect
+    .poll(() => parseSentSessionMessage(ws.sent.at(-1)).type)
+    .toBe("get_providers_snapshot_request");
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "get_providers_snapshot_response",
+      payload: {
+        requestId: request.requestId,
+        entries: [],
+        generatedAt: "2026-09-11T00:00:00.000Z",
+      },
+    }),
   );
-  expect(ws.sent).toHaveLength(sentBeforeWait);
-
+  await expect(waiting).resolves.toMatchObject({ entries: [] });
+  expect(FakeWebSocket.instances).toHaveLength(1);
   await client.close();
 });
 

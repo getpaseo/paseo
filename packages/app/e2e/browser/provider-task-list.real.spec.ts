@@ -101,10 +101,10 @@ test.describe("real provider composer task lists", () => {
         "Produce a concise implementation plan with exactly these steps: Inspect genuine plan boundary; Implement genuine plan boundary; Verify genuine plan boundary. Do not implement it.",
       );
 
-      const planCard = page.getByTestId("permission-plan-card");
+      const planCard = page.getByTestId("timeline-plan-card");
       await expect(planCard).toBeVisible({ timeout: 120_000 });
       await expect(planCard).toContainText("Inspect genuine plan boundary");
-      await expect(page.getByTestId("timeline-plan-card")).toHaveCount(0);
+      await expect(page.getByTestId("permission-plan-card")).toHaveCount(0);
 
       const screenshot = testInfo.outputPath("codex-genuine-plan.png");
       await page.screenshot({ path: screenshot });

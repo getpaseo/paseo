@@ -13,7 +13,7 @@ import {
 } from "../support/helpers/new-workspace";
 import { getServerId } from "../support/helpers/server-id";
 import {
-  clickArchiveWorkspaceMenuItem,
+  clickArchiveWorkspaceButton,
   expectWorkspaceAbsentFromSidebar,
 } from "../support/helpers/sidebar";
 import { createTempGitRepo } from "../support/helpers/workspace";
@@ -75,7 +75,7 @@ async function clickArchiveAndAnswerWarning(
     warning = dialog;
     void (answer === "accept" ? dialog.accept() : dialog.dismiss());
   });
-  await clickArchiveWorkspaceMenuItem(page, workspaceId);
+  await clickArchiveWorkspaceButton(page, workspaceId);
   if (!warning) {
     throw new Error("Expected an archive confirmation dialog, but none was shown.");
   }

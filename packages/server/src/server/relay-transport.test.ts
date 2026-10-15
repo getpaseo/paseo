@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import type pino from "pino";
+import pino from "pino";
 import { createClientChannel, type Transport } from "@getpaseo/relay/e2ee";
 import { exportPublicKey, generateKeyPair } from "@getpaseo/relay";
 import { startRelayTransport } from "./relay-transport";
@@ -144,6 +144,37 @@ describe("relay-transport control lifecycle", () => {
     await Promise.all(controllers.map((controller) => controller.stop()));
     controllers.length = 0;
     vi.useRealTimers();
+  });
+
+  test("releases a stalled encrypted data connection without restarting control", async () => {
+    vi.useFakeTimers();
+    let attachments = 0;
+    controllers.push(
+      startRelayTransport({
+        logger: pino({ level: "silent" }),
+        attachSocket: async () => {
+          attachments += 1;
+        },
+        relayEndpoint: "relay.paseo.sh:443",
+        relayUseTls: true,
+        serverId: "srv_test",
+        daemonKeyPair: generateKeyPair(),
+        createWebSocket: relay.createWebSocket,
+      }),
+    );
+    const control = relay.sockets[0];
+    control.open();
+    const connected = JSON.stringify({ type: "connected", connectionId: "stalled" });
+    control.message(connected);
+    const stalled = relay.sockets[1];
+    stalled.open();
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(stalled.terminateCalls).toBe(1);
+    expect(attachments).toBe(0);
+    expect(control.terminateCalls).toBe(0);
+    control.message(connected);
+    expect(relay.sockets).toHaveLength(3);
+    expect(relay.sockets[2].url).toBe(stalled.url);
   });
 
   test("logs relay_control_connected only after first valid control message", () => {

@@ -6,7 +6,7 @@ import { expect, test, vi } from "vitest";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { createTestAgentClients } from "../../test-utils/fake-agent-client.js";
 import { createProviderSnapshotManagerStub } from "../../test-utils/session-stubs.js";
-import { AgentManager } from "../agent-manager.js";
+import { AgentManager, type AgentManagerOptions } from "../agent-manager.js";
 import { AgentStorage } from "../agent-storage.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
 import { createAgentCommand } from "./create.js";
@@ -14,10 +14,14 @@ import type { ManagedAgent } from "../agent-manager.js";
 
 const logger = createTestLogger();
 
-function createRealAgentManager(storage: AgentStorage): AgentManager {
+function createRealAgentManager(
+  storage: AgentStorage,
+  options: Pick<AgentManagerOptions, "generateAgentTitle"> = {},
+): AgentManager {
   return new AgentManager({
     clients: createTestAgentClients(),
     registry: storage,
+    ...options,
     logger,
   });
 }
@@ -84,6 +88,7 @@ test("session create forwards clientMessageId to the initial prompt run options"
     workspaceId: "ws-create-test",
     initialPrompt: "hello from create",
     clientMessageId: "msg-create-1",
+    launchProfileId: "planner",
     labels: {},
     provisionalTitle: null,
     firstAgentContext: { attachments: [] },
@@ -93,6 +98,11 @@ test("session create forwards clientMessageId to the initial prompt run options"
   expect(streamAgent).toHaveBeenCalledWith("agent-1", "hello from create", {
     clientMessageId: "msg-create-1",
   });
+  expect(dependencies.agentManager.createAgent).toHaveBeenCalledWith(
+    expect.not.objectContaining({ launchProfileId: "planner" }),
+    undefined,
+    expect.objectContaining({ launchProfileId: "planner" }),
+  );
 });
 
 test("session create validates the requested mode against the provider's modes", async () => {
@@ -396,10 +406,11 @@ test("mcp create exposes the created worktree before dispatching the initial pro
   }
 });
 
-test("session create keeps the prompt title after the initial prompt settles", async () => {
+test("session create generates a title after the initial prompt settles", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "create-agent-title-test-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
-  const agentManager = createRealAgentManager(storage);
+  const generateAgentTitle = vi.fn(async () => "Generated conversation title");
+  const agentManager = createRealAgentManager(storage, { generateAgentTitle });
   const title = "Implement auth retries with backoff";
 
   try {
@@ -417,6 +428,8 @@ test("session create keeps the prompt title after the initial prompt settles", a
         initialPrompt: `${title}\n\ninclude tests`,
         labels: {},
         provisionalTitle: title,
+        titleIsProvisional: true,
+        clientMessageId: "initial-title-prompt",
         firstAgentContext: { attachments: [] },
         buildSessionConfig: async (config) => ({ sessionConfig: config }),
       },
@@ -426,9 +439,11 @@ test("session create keeps the prompt title after the initial prompt settles", a
     expect(created?.title).toBe(title);
 
     await agentManager.waitForAgentEvent(snapshot.id, { waitForActive: true });
+    await agentManager.flush();
 
     const settled = await storage.get(snapshot.id);
-    expect(settled?.title).toBe(title);
+    expect(settled?.title).toBe("Generated conversation title");
+    expect(generateAgentTitle).toHaveBeenCalledTimes(1);
   } finally {
     await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
   }
@@ -437,7 +452,8 @@ test("session create keeps the prompt title after the initial prompt settles", a
 test("session create keeps an explicit title after the initial prompt settles", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "create-agent-explicit-title-test-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
-  const agentManager = createRealAgentManager(storage);
+  const generateAgentTitle = vi.fn(async () => "Generated title");
+  const agentManager = createRealAgentManager(storage, { generateAgentTitle });
   const title = "Explicit override";
 
   try {
@@ -467,6 +483,7 @@ test("session create keeps an explicit title after the initial prompt settles", 
 
     const settled = await storage.get(snapshot.id);
     expect(settled?.title).toBe(title);
+    expect(generateAgentTitle).not.toHaveBeenCalled();
   } finally {
     await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
   }

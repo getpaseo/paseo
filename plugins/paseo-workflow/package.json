@@ -1,0 +1,11 @@
+{
+  "name": "paseo-workflow",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@getpaseo/plugin": "^0.8.0"
+  }
+}

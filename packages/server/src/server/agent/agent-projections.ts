@@ -19,7 +19,11 @@ import type {
 } from "./agent-sdk-types.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { JsonValue } from "../json-utils.js";
-import { isStoredAgentProviderAvailable, toAgentPersistenceHandle } from "../persistence-hooks.js";
+import {
+  isStoredAgentProviderAvailable,
+  resolveStoredAgentUpdatedAt,
+  toAgentPersistenceHandle,
+} from "../persistence-hooks.js";
 export type { ManagedAgent };
 
 interface ProjectionOptions {
@@ -74,6 +78,12 @@ export function toStoredAgentRecord(
     provider: agent.provider,
     cwd: agent.cwd,
     workspaceId: agent.workspaceId,
+    launchProfileId: agent.launchProfileId,
+    launchPostApprovalModeId: agent.launchPostApprovalModeId,
+    lastCompletedTurnId: agent.lastCompletedTurnId,
+    lastCompletedTurnEvidence: agent.lastCompletedTurnEvidence,
+    planReviewClaims: agent.planReviewClaims,
+    syntheticPlanDecisions: agent.syntheticPlanDecisions,
     createdAt,
     updatedAt: agent.updatedAt.toISOString(),
     lastActivityAt: agent.updatedAt.toISOString(),
@@ -113,6 +123,13 @@ export function toAgentPayload(
     provider: agent.provider,
     cwd: agent.cwd,
     ...(agent.workspaceId ? { workspaceId: agent.workspaceId } : {}),
+    ...(agent.launchProfileId !== undefined ? { launchProfileId: agent.launchProfileId } : {}),
+    ...(agent.launchPostApprovalModeId !== undefined
+      ? { launchPostApprovalModeId: agent.launchPostApprovalModeId }
+      : {}),
+    ...(agent.lastCompletedTurnId !== undefined
+      ? { lastCompletedTurnId: agent.lastCompletedTurnId }
+      : {}),
     model: agent.config.model ?? null,
     thinkingOptionId,
     effectiveThinkingOptionId,
@@ -208,7 +225,7 @@ export function buildStoredAgentPayload(
   } as const;
 
   const createdAt = new Date(record.createdAt);
-  const updatedAt = new Date(resolveStoredAgentPayloadUpdatedAt(record));
+  const updatedAt = new Date(resolveStoredAgentUpdatedAt(record));
   const lastUserMessageAt = record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null;
 
   const runtimeInfo = buildStoredRuntimeInfo(record);
@@ -222,6 +239,9 @@ export function buildStoredAgentPayload(
     provider: record.provider,
     cwd: record.cwd,
     ...(record.workspaceId ? { workspaceId: record.workspaceId } : {}),
+    ...(record.launchProfileId !== undefined ? { launchProfileId: record.launchProfileId } : {}),
+    launchPostApprovalModeId: record.launchPostApprovalModeId,
+    lastCompletedTurnId: record.lastCompletedTurnId,
     model: record.config?.model ?? null,
     thinkingOptionId: record.config?.thinkingOptionId ?? null,
     effectiveThinkingOptionId: resolveEffectiveThinkingOptionId({
@@ -287,25 +307,9 @@ export function toRecentProviderSessionDescriptorPayload(
   };
 }
 
-export function resolveStoredAgentPayloadUpdatedAt(record: StoredAgentRecord): string {
-  const timestamps = [record.updatedAt, record.lastActivityAt]
-    .filter((value): value is string => typeof value === "string" && value.length > 0)
-    .map((value) => ({
-      raw: value,
-      parsed: Date.parse(value),
-    }))
-    .filter((value) => !Number.isNaN(value.parsed));
-
-  if (timestamps.length === 0) {
-    return record.updatedAt;
-  }
-
-  timestamps.sort((a, b) => b.parsed - a.parsed);
-  return timestamps[0].raw;
-}
-
 function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentConfig | null {
   const serializable: SerializableAgentConfig = {};
+  if (config.writePolicy !== undefined) serializable.writePolicy = config.writePolicy;
   if (config.modeId) {
     serializable.modeId = config.modeId;
   }

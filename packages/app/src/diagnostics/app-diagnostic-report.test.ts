@@ -11,6 +11,7 @@ import { defaultHostAppearance } from "@/hosts/appearance";
 function makeHost(): HostProfile {
   return {
     serverId: "srv-secret",
+    password: "tcp-password",
     label: "Secret host",
     appearance: defaultHostAppearance(),
     lifecycle: {},
@@ -23,7 +24,6 @@ function makeHost(): HostProfile {
         type: "directTcp",
         endpoint: "secret.example.test:6767",
         useTls: true,
-        password: "tcp-password",
       },
       {
         id: "relay:relay.secret.test:443",

@@ -44,23 +44,18 @@ describe("planWorkspaceOpenTargets", () => {
     });
   });
 
-  it("plans file-manager targets with active-file absolute path and reveal mode", () => {
+  it("opens the worktree folder in Finder even when a file outside it is active", () => {
     const targets = planWorkspaceOpenTargets({
-      workspaceDirectory: "/repo",
-      activeFile: { path: "src/app.ts" },
+      workspaceDirectory: "/home/user/.paseo/worktrees/project/branch",
+      activeFile: { path: "/repo/src/app.ts" },
       desktopTargets,
       canUseDesktopBridge: true,
       isLocalExecution: true,
     });
 
-    expect(targets[1]).toMatchObject({
-      source: "desktop",
-      id: "finder",
-      openInput: {
-        editorId: "finder",
-        workspacePath: "/repo",
-        filePath: "/repo/src/app.ts",
-      },
+    expect(targets[1]).toHaveProperty("openInput", {
+      editorId: "finder",
+      workspacePath: "/home/user/.paseo/worktrees/project/branch",
     });
   });
 

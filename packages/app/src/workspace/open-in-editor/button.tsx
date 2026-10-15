@@ -40,6 +40,7 @@ interface WorkspaceOpenInEditorButtonProps {
 interface OpenTarget {
   id: string;
   label: string;
+  fileName: string | null;
   icon: ReactElement;
   onOpen: () => Promise<void> | void;
 }
@@ -135,6 +136,7 @@ export function WorkspaceOpenInEditorButton({
           return {
             id: target.id,
             label: target.label,
+            fileName: activeFileName,
             icon: renderForgeOpenTargetIcon(presentation.icon),
             onOpen: () => openExternalUrl(target.url),
           };
@@ -142,6 +144,7 @@ export function WorkspaceOpenInEditorButton({
         return {
           id: target.id,
           label: target.label,
+          fileName: target.openInput.filePath ? activeFileName : null,
           icon: (
             <ThemedEditorTargetIcon icon={target.icon} size={16} uniProps={mutedColorMapping} />
           ),
@@ -150,6 +153,7 @@ export function WorkspaceOpenInEditorButton({
       }),
     [
       activeFile,
+      activeFileName,
       checkoutStatus,
       cwd,
       desktopOpenTargets,
@@ -227,9 +231,9 @@ export function WorkspaceOpenInEditorButton({
           disabled={openMutation.isPending}
           accessibilityRole="button"
           accessibilityLabel={
-            activeFileName
+            primaryOption.fileName
               ? t("workspace.git.openInEditor.openFileIn", {
-                  fileName: activeFileName,
+                  fileName: primaryOption.fileName,
                   target: primaryOption.label,
                 })
               : t("workspace.git.openInEditor.openIn", {
@@ -247,7 +251,9 @@ export function WorkspaceOpenInEditorButton({
             <View style={styles.splitButtonContent}>
               {primaryOption.icon}
               {!hideLabels && (
-                <Text style={styles.splitButtonText}>{t("workspace.git.openInEditor.open")}</Text>
+                <Text style={styles.splitButtonText} numberOfLines={1}>
+                  {primaryOption.label}
+                </Text>
               )}
             </View>
           )}
@@ -300,7 +306,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "stretch",
     borderRadius: theme.borderRadius.md,
     borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.borderAccent,
+    borderColor: "transparent",
     overflow: "hidden",
   },
   splitButtonPrimary: {
@@ -321,13 +327,14 @@ const styles = StyleSheet.create((theme) => ({
     position: "relative",
   },
   splitButtonPrimaryHovered: {
-    backgroundColor: theme.colors.surface2,
+    backgroundColor: theme.colors.interactionHighlight,
   },
   splitButtonPrimaryDisabled: {
     opacity: 0.6,
   },
   splitButtonText: {
-    fontSize: theme.fontSize.base,
+    maxWidth: 120,
+    fontSize: theme.fontSize.sm,
     lineHeight: theme.fontSize.base * 1.5,
     color: theme.colors.foreground,
     fontWeight: theme.fontWeight.normal,
@@ -350,9 +357,9 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     borderLeftWidth: theme.borderWidth[1],
-    borderLeftColor: theme.colors.borderAccent,
+    borderLeftColor: "transparent",
   },
   splitButtonCaretHovered: {
-    backgroundColor: theme.colors.surface2,
+    backgroundColor: theme.colors.interactionHighlight,
   },
 }));

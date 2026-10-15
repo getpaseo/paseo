@@ -15,6 +15,7 @@ type AgentControlTriggerProps = Omit<
   surface: "toolbar" | "sheet";
   label: string;
   value?: string;
+  showIcon?: boolean;
   showToolbarLabel?: boolean;
   showCaret?: boolean;
   open?: boolean;
@@ -30,6 +31,7 @@ export const AgentControlTrigger = forwardRef<View, AgentControlTriggerProps>(
       surface,
       label,
       value,
+      showIcon = true,
       showToolbarLabel = true,
       showCaret = false,
       open = false,
@@ -46,6 +48,20 @@ export const AgentControlTrigger = forwardRef<View, AgentControlTriggerProps>(
     const resolvedGlyphSize = isSheet ? 16 : glyphSize;
     const resolvedIconColor = iconColor ?? styles.iconColor.color;
     const showValue = isSheet || showToolbarLabel;
+    let iconContent = null;
+    if (isSheet) {
+      iconContent = (
+        <View style={styles.sheetGlyph}>
+          <Icon size={resolvedGlyphSize} color={resolvedIconColor} />
+        </View>
+      );
+    } else if (showIcon) {
+      iconContent = (
+        <ComposerToolbarGlyph size={resolvedGlyphSize}>
+          <Icon size={resolvedGlyphSize} color={resolvedIconColor} />
+        </ComposerToolbarGlyph>
+      );
+    }
     const triggerStyle = useCallback(
       ({ pressed, hovered }: PressableStateCallbackType) => [
         isSheet ? styles.sheetRow : styles.toolbarControl,
@@ -70,15 +86,7 @@ export const AgentControlTrigger = forwardRef<View, AgentControlTriggerProps>(
         testID={testID}
         chevron={showCaret ? undefined : null}
       >
-        {isSheet ? (
-          <View style={styles.sheetGlyph}>
-            <Icon size={resolvedGlyphSize} color={resolvedIconColor} />
-          </View>
-        ) : (
-          <ComposerToolbarGlyph size={resolvedGlyphSize}>
-            <Icon size={resolvedGlyphSize} color={resolvedIconColor} />
-          </ComposerToolbarGlyph>
-        )}
+        {iconContent}
         {isSheet ? (
           <Text style={styles.sheetLabel} numberOfLines={1}>
             {label}
@@ -96,18 +104,18 @@ export const AgentControlTrigger = forwardRef<View, AgentControlTriggerProps>(
 
 const styles = StyleSheet.create((theme) => ({
   toolbarControl: {
-    height: 28,
+    height: { xs: 28, md: 24 },
     minWidth: 0,
     flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius["2xl"],
+    paddingHorizontal: theme.spacing[1],
+    borderRadius: theme.borderRadius.md,
     backgroundColor: "transparent",
   },
   toolbarIconOnly: {
-    width: 28,
+    width: { xs: 28, md: 24 },
     flexShrink: 0,
     paddingHorizontal: 0,
     justifyContent: "center",
@@ -156,10 +164,10 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.normal,
   },
   hovered: {
-    backgroundColor: theme.colors.surface2,
+    backgroundColor: theme.colors.interactionHighlight,
   },
   pressed: {
-    backgroundColor: theme.colors.surface0,
+    backgroundColor: theme.colors.interactionHighlight,
   },
   disabled: {
     opacity: 0.5,

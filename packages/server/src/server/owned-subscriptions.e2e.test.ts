@@ -1,4 +1,5 @@
 import { MockLoadTestAgentClient } from "./agent/providers/mock-load-test-agent.js";
+import { createPaseoApi } from "@getpaseo/client";
 import { execFileSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -952,7 +953,7 @@ test("browser capability advertisement is passive and explicit hosts own command
   }
 });
 
-test("adding public SDK listeners does not create server observation demand", async () => {
+test("adding raw client listeners does not create server observation demand", async () => {
   const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
   const client = new DaemonClient({
     url: `ws://127.0.0.1:${daemon.port}/ws`,
@@ -1669,6 +1670,86 @@ test("mark unread replies remain source-owned while directory observers receive 
   } finally {
     for (const peer of peers) peer.close();
     await admin.close();
+    await daemon.close();
+  }
+});
+
+test("legacy event subscribers retain notifications without the new notifications flag", async () => {
+  const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
+  const admin = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
+  let legacy: SubscriptionPeer | undefined;
+  try {
+    await admin.connect();
+    const workspace = (
+      await admin.createWorkspace({ source: { kind: "directory", path: daemon.staticDir } })
+    ).workspace!;
+    const agent = await admin.createAgent({
+      provider: "codex",
+      cwd: daemon.staticDir,
+      workspaceId: workspace.id,
+    });
+    legacy = await SubscriptionPeer.connect(daemon.port, "legacy-notifications", {
+      owned_subscriptions: false,
+      selective_agent_timeline: true,
+      explicit_event_subscriptions: true,
+    });
+    await legacy.request({
+      type: "fetch_agents_request",
+      requestId: "directory",
+      subscribe: { subscriptionId: "directory" },
+    });
+    await legacy.request({
+      type: "session.events.set_subscription.request",
+      requestId: "events",
+      events: ["agent_attention_required"],
+    });
+    legacy.send({
+      type: "client_heartbeat",
+      deviceType: "web",
+      focusedAgentId: null,
+      lastActivityAt: new Date().toISOString(),
+      appVisible: true,
+    });
+    await legacy.request({ type: "ping", requestId: "barrier", clientSentAt: 1 });
+    const peer = legacy;
+    await admin.sendMessage(agent.id, "Finish a legacy notification turn");
+    await expect
+      .poll(
+        () =>
+          peer.frames.flatMap((frame) =>
+            frame.type === "session" && frame.message.type === "agent_attention_required"
+              ? [frame.message.payload.shouldNotify]
+              : [],
+          ),
+        { timeout: 10_000 },
+      )
+      .toEqual([true]);
+  } finally {
+    legacy?.close();
+    await admin.close();
+    await daemon.close();
+  }
+});
+
+test("public project subscriptions request updates and release their producer demand", async () => {
+  const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  const api = createPaseoApi(client);
+  try {
+    await client.connect();
+    const updates: unknown[] = [];
+    const unsubscribe = api.projects.subscribe((update) => updates.push(update));
+    await client.createWorkspace({ source: { kind: "directory", path: daemon.staticDir } });
+    await expect
+      .poll(() => updates)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ kind: "upsert" })]));
+    unsubscribe();
+    await expect
+      .poll(async () => (await client.collectDiagnostics()).diagnostic)
+      .toContain("Registrations: 0");
+  } finally {
+    await api.dispose();
+    await client.close();
     await daemon.close();
   }
 });

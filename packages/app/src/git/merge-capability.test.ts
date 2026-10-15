@@ -119,6 +119,9 @@ describe("deriveMergeCapability", () => {
     expect(deriveMergeCapability(facts({ mergeStateStatus: "BLOCKED" }))?.directMergeReady).toBe(
       false,
     );
+    expect(deriveMergeCapability(facts({ mergeStateStatus: "UNSTABLE" }))?.directMergeReady).toBe(
+      false,
+    );
     expect(deriveMergeCapability(facts({ mergeStateStatus: null }))?.directMergeReady).toBe(false);
   });
 

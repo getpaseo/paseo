@@ -160,6 +160,23 @@ export function createCli(): Command {
   // Added in v0.2.0; remove after 2027-01-17.
   program.addCommand(createWorktreeCommand(), { hidden: true });
 
+  // Stop root parsing at the command so `plugin update --version` belongs to update.
+  // Keep global options available after a command, as they were before positional parsing.
+  program.enablePositionalOptions();
+  for (const command of program.commands) {
+    for (const option of program.options) {
+      if (option.long === "--version") continue;
+      if (!command.options.some((local) => local.long === option.long)) command.addOption(option);
+      if (option.long === "--home" || option.long === "--host") continue;
+      command.on(`option:${option.name()}`, () => {
+        const key = option.attributeName();
+        program.setOptionValueWithSource(key, command.opts()[key], "cli");
+      });
+    }
+    if (command.name() !== "plugin")
+      command.version(VERSION, "-v, --version", "output the version number");
+  }
+
   const enforceSelectorDuplicates = (command: Command) => {
     for (const option of command.options) {
       if (option.long !== "--home" && option.long !== "--host") continue;

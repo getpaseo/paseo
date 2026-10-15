@@ -2,6 +2,8 @@ import type { normalizeWorkspaceDescriptor } from "@/stores/session-store";
 import type { MessagePayload } from "@/composer/types";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 
+export const ROUTER_LAUNCH_PROFILE_ID = "paseo-workflow-router";
+
 export function isEmptyWorkspaceSubmission(payload: MessagePayload): boolean {
   return !payload.text.trim() && payload.attachments.length === 0;
 }
@@ -13,6 +15,7 @@ export interface CreateEmptyWorkspaceInput {
     prompt: string;
     attachments: AgentAttachment[];
     withInitialAgent: boolean;
+    intent?: string;
   }) => Promise<ReturnType<typeof normalizeWorkspaceDescriptor>>;
   serverId: string;
   navigate: (serverId: string, workspaceId: string) => void;
