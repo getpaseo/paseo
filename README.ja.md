@@ -53,8 +53,10 @@
 - **クロスデバイス:** iOS、Android、デスクトップ、Web、CLI に対応。机で作業を始め、スマートフォンで確認し、ターミナルから自動化できます。
 - **プライバシー優先:** Paseo にはテレメトリー・トラッキング・強制ログインは一切ありません。
 
+## スポンサー
+
 <!-- Sponsors: one cell per sponsor in the order of packages/website/src/data/sponsors.ts, then "become a sponsor" cells up to three. -->
-<table align="center">
+<table>
   <tr>
     <td align="center" width="33%"><a href="https://hoplite.sh/?utm_source=paseo&utm_medium=readme&utm_campaign=sponsor"><picture><source media="(prefers-color-scheme: dark)" srcset="packages/website/public/sponsors/hoplite-on-dark.svg"><img src="packages/website/public/sponsors/hoplite-on-light.svg" alt="Hoplite" height="40"></picture></a></td>
     <td align="center" width="33%"><a href="https://paseo.sh/sponsor">Paseo のスポンサーになる</a></td>
@@ -160,7 +162,7 @@ npm run build:server
 npm run typecheck
 ```
 
-## スポンサー
+## Paseo を支援する
 
 Paseo は一人で開発しており、使ってくれる人たちの支援で成り立っています。[GitHub Sponsors](https://github.com/sponsors/boudra) で支援できます。企業として毎月[スポンサー](https://paseo.sh/sponsor#spot)になっていただくと、ロゴをこの README の冒頭と、paseo.sh のトップページおよびドキュメントに掲載します。
 
