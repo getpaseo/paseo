@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { expect, type Page } from "@playwright/test";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { gotoHome } from "./app";
@@ -78,12 +79,21 @@ export async function waitForWorkspaceInSidebar(
 
 export async function expectWorkspaceHeader(
   page: Page,
-  input: { title: string; subtitle: string },
+  input: { title: string; subtitle: string; directory: string },
 ): Promise<void> {
-  const titleLocator = page.getByTestId("workspace-header-title").filter({ visible: true });
+  const git = spawnSync("git", ["branch", "--show-current"], {
+    cwd: input.directory,
+    encoding: "utf8",
+  });
+  const branch = git.status === 0 ? git.stdout.trim() : "";
+  const isWide = (page.viewportSize()?.width ?? 1280) >= 720;
+  const showsBranch = isWide && branch.length > 0;
+  const titleId = showsBranch ? "workspace-header-branch" : "workspace-header-title";
+  const title = showsBranch ? branch : input.title;
+  const titleLocator = page.getByTestId(titleId).filter({ visible: true });
   const subtitleLocator = page.getByTestId("workspace-header-subtitle").filter({ visible: true });
 
-  await expect(titleLocator.first()).toHaveText(input.title, {
+  await expect(titleLocator.first()).toHaveText(title, {
     timeout: 30_000,
   });
   await expect(subtitleLocator.first()).toHaveText(input.subtitle, {

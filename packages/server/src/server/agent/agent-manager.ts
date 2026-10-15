@@ -4754,7 +4754,7 @@ export class AgentManager {
     this.traceHandleStreamEventStart(agent, event, eventTurnId, isForegroundEvent);
     if (
       eventTurnId &&
-      isTurnTerminalEvent(event) &&
+      (isTurnTerminalEvent(event) || event.type === "turn_started") &&
       this.runs.hasFinalizedTurn(agent, eventTurnId)
     ) {
       return false;

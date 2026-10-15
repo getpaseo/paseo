@@ -64,6 +64,7 @@ git remote set-head origin main
 Run `npm run paseo-local:auto-build:install` from the development repository to reinstall the job.
 The installer refuses an existing clone on any other branch; it never migrates one implicitly.
 Keep the old branch and backup tag until publication, installation, and desktop activation agree.
+Remove `paseo-local` only after Sylvain explicitly approves its deletion.
 
 ## Commands
 

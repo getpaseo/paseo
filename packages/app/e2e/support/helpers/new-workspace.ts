@@ -515,6 +515,7 @@ export async function assertNewWorkspaceSidebarAndHeader(
   if (input.assertHeader !== false) {
     await expectWorkspaceHeader(page, {
       title: workspace.name,
+      directory: workspace.workspaceDirectory,
       subtitle: input.projectDisplayName,
     });
   }

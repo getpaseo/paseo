@@ -318,6 +318,7 @@ test.describe("New workspace flow", () => {
       });
       await expectWorkspaceHeader(page, {
         title: firstWorkspace.workspaceName,
+        directory: firstWorkspace.workspaceDirectory,
         subtitle: firstWorkspace.projectDisplayName,
       });
 
@@ -332,6 +333,7 @@ test.describe("New workspace flow", () => {
       });
       await expectWorkspaceHeader(page, {
         title: secondWorkspace.workspaceName,
+        directory: secondWorkspace.workspaceDirectory,
         subtitle: secondWorkspace.projectDisplayName,
       });
 
@@ -342,6 +344,7 @@ test.describe("New workspace flow", () => {
       });
       await expectWorkspaceHeader(page, {
         title: firstWorkspace.workspaceName,
+        directory: firstWorkspace.workspaceDirectory,
         subtitle: firstWorkspace.projectDisplayName,
       });
     } finally {
@@ -374,6 +377,7 @@ test.describe("New workspace flow", () => {
       });
       await expectWorkspaceHeader(page, {
         title: rootWorkspace.workspaceName,
+        directory: rootWorkspace.workspaceDirectory,
         subtitle: rootWorkspace.projectDisplayName,
       });
       await expectSidebarWorkspaceSelected({
@@ -389,6 +393,7 @@ test.describe("New workspace flow", () => {
       });
       await expectWorkspaceHeader(page, {
         title: worktreeWorkspace.workspaceName,
+        directory: worktreeWorkspace.workspaceDirectory,
         subtitle: worktreeWorkspace.projectDisplayName,
       });
       await expectSidebarWorkspaceSelected({
@@ -410,6 +415,7 @@ test.describe("New workspace flow", () => {
       });
       await expectWorkspaceHeader(page, {
         title: rootWorkspace.workspaceName,
+        directory: rootWorkspace.workspaceDirectory,
         subtitle: rootWorkspace.projectDisplayName,
       });
       await expectSidebarWorkspaceSelected({
@@ -449,6 +455,7 @@ test.describe("New workspace flow", () => {
       });
       await expectWorkspaceHeader(page, {
         title: openedProject.workspaceName,
+        directory: openedProject.workspaceDirectory,
         subtitle: openedProject.projectDisplayName,
       });
 
@@ -481,6 +488,7 @@ test.describe("New workspace flow", () => {
 
       await expectWorkspaceHeader(page, {
         title: createdWorkspace.workspaceName,
+        directory: createdWorkspace.workspaceDirectory,
         subtitle: openedProject.projectDisplayName,
       });
 
@@ -524,6 +532,7 @@ test.describe("New workspace flow", () => {
       });
       await expectWorkspaceHeader(page, {
         title: openedProject.workspaceName,
+        directory: openedProject.workspaceDirectory,
         subtitle: openedProject.projectDisplayName,
       });
 
@@ -604,6 +613,7 @@ test.describe("New workspace flow", () => {
       });
       await expectWorkspaceHeader(page, {
         title: openedProject.workspaceName,
+        directory: openedProject.workspaceDirectory,
         subtitle: openedProject.projectDisplayName,
       });
 
@@ -657,6 +667,7 @@ test.describe("New workspace flow", () => {
       });
       await expectWorkspaceHeader(page, {
         title: openedProject.workspaceName,
+        directory: openedProject.workspaceDirectory,
         subtitle: openedProject.projectDisplayName,
       });
 
@@ -716,6 +727,7 @@ test.describe("New workspace flow", () => {
       });
       await expectWorkspaceHeader(page, {
         title: openedProject.workspaceName,
+        directory: openedProject.workspaceDirectory,
         subtitle: openedProject.projectDisplayName,
       });
 

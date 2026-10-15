@@ -75,7 +75,7 @@ async function withPendingPlan(
           item: expect.objectContaining({
             type: "tool_call",
             name: "plan_approval",
-            callId: request?.id,
+            callId: request?.sourcePlanCallId,
             status: "canceled",
             detail: { type: "plan", text: "- Inspect README" },
           }),

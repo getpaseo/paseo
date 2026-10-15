@@ -108,7 +108,8 @@ test("unassigning a shortcut leaves it inert until it is reset", async ({ page }
   const clear = page.getByTestId(`shortcut-clear-${SHORTCUTS_ROW}`);
   const reset = page.getByTestId(`shortcut-reset-${SHORTCUTS_ROW}`);
   const bind = page.getByTestId(`shortcut-bind-${SHORTCUTS_ROW}`);
-  const notSet = page.getByText("Not set", { exact: true });
+  const shortcutRow = page.getByText("Show keyboard shortcuts", { exact: true }).locator("..");
+  const notSet = shortcutRow.getByText("Not set", { exact: true });
   const dialog = page.getByTestId("keyboard-shortcuts-dialog");
 
   // The shortcut fires before it is cleared, so the assertion after clearing

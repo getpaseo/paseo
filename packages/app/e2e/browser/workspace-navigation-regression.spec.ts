@@ -181,6 +181,7 @@ test.describe("Workspace navigation regression", () => {
       );
       await expectWorkspaceHeader(page, {
         title: workspace.workspaceName,
+        directory: workspace.workspaceDirectory,
         subtitle: workspace.projectDisplayName,
       });
       await waitForWorkspaceTabsVisible(page);
@@ -194,6 +195,7 @@ test.describe("Workspace navigation regression", () => {
       await expectReconnectingToastVisible(page);
       await expectWorkspaceHeader(page, {
         title: workspace.workspaceName,
+        directory: workspace.workspaceDirectory,
         subtitle: workspace.projectDisplayName,
       });
       await waitForWorkspaceTabsVisible(page);
@@ -208,6 +210,7 @@ test.describe("Workspace navigation regression", () => {
       await monitorReconnect;
       await expectWorkspaceHeader(page, {
         title: workspace.workspaceName,
+        directory: workspace.workspaceDirectory,
         subtitle: workspace.projectDisplayName,
       });
       await waitForWorkspaceTabsVisible(page);
@@ -374,6 +377,7 @@ test.describe("Workspace navigation regression", () => {
       });
       await expectWorkspaceHeader(page, {
         title: firstWorkspace.workspaceName,
+        directory: firstWorkspace.workspaceDirectory,
         subtitle: firstWorkspace.projectDisplayName,
       });
       await expectWorkspaceTabVisible(page, firstAgent.id);
@@ -406,6 +410,7 @@ test.describe("Workspace navigation regression", () => {
       });
       await expectWorkspaceHeader(page, {
         title: secondWorkspace.workspaceName,
+        directory: secondWorkspace.workspaceDirectory,
         subtitle: secondWorkspace.projectDisplayName,
       });
       await expectWorkspaceTabVisible(page, secondAgent.id);
@@ -476,6 +481,7 @@ test.describe("Workspace navigation regression", () => {
       });
       await expectWorkspaceHeader(page, {
         title: firstWorkspace.workspaceName,
+        directory: firstWorkspace.workspaceDirectory,
         subtitle: firstWorkspace.projectDisplayName,
       });
       await expectWorkspaceTabVisible(page, firstAgent.id);

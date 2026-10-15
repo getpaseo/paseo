@@ -318,6 +318,7 @@ test.describe("Workspace model regressions", () => {
         .toBe("Fix login bug");
       await expectWorkspaceHeader(page, {
         title: "Fix login bug",
+        directory: seeded.workspaceDirectory,
         subtitle: seeded.projectDisplayName,
       });
       await expect(createdRow).toContainText("Fix login bug", { timeout: 30_000 });

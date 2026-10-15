@@ -109,6 +109,7 @@ describe("resolveClientSlashCommand", () => {
 describe("buildDraftAgentSetup", () => {
   it("builds draft setup from the active agent snapshot", () => {
     expect(buildDraftAgentSetup(createAgent())).toEqual({
+      modelRouting: "manual",
       provider: "codex",
       cwd: "/repo",
       modeId: "mode-current",

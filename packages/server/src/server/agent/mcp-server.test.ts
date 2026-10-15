@@ -4301,8 +4301,13 @@ describe("send_agent_prompt MCP tool", () => {
         },
       );
       unsubscribe();
-      expect(response.structuredContent).toMatchObject({ success: true, status: "idle" });
+      expect(response.structuredContent).toMatchObject({
+        success: true,
+        lastMessage: null,
+        permission: null,
+      });
       await vi.waitFor(() => {
+        expect(agentManager.getAgent(child.id)?.lifecycle).toBe("idle");
         const parentPrompts = parentClient.sessions[0]!.prompts;
         expect(parentPrompts).toHaveLength(1);
         expect(parentPrompts[0]).toContain(child.id);

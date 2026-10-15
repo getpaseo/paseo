@@ -371,6 +371,7 @@ test.describe("Sidebar workspace list", () => {
 
       await expectWorkspaceHeader(page, {
         title: workspace.workspaceName,
+        directory: workspace.workspaceDirectory,
         subtitle: projectName,
       });
     } finally {

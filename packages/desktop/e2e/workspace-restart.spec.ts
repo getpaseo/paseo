@@ -71,6 +71,7 @@ async function expectWorkspaceLocation(
   });
   await expectWorkspaceHeader(page, {
     title: input.workspace.workspaceName,
+    directory: input.workspace.workspaceDirectory,
     subtitle: input.workspace.projectDisplayName,
   });
 }

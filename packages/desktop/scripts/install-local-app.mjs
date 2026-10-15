@@ -3,7 +3,6 @@
 import { assertReleaseInventory } from "../../../scripts/local-release-inventory.mjs";
 import { execFileSync } from "node:child_process";
 import { access, cp, mkdir, rename as fsRename, rm, stat } from "node:fs/promises";
-import { verifyLocalRelease } from "./verify-local-release.mjs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -55,6 +54,7 @@ if (isMain) {
 
   const desktopDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const source = path.join(desktopDir, ".dev", "release-local", "mac-arm64", "Paseo.app");
+  const { verifyLocalRelease } = await import("./verify-local-release.mjs");
   await verifyLocalRelease(source, process.env.PASEO_LOCAL_RELEASE_COMMIT);
   const root = path.resolve(desktopDir, "../..");
   const commit = process.env.PASEO_LOCAL_RELEASE_COMMIT;

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -28,9 +28,12 @@ describe("orchestration skill paths", () => {
 
       await installSkills(targets, { mode: "custom", skills: [name] });
       const source = await readFile(path.join(targets.sourceDir, name, "SKILL.md"), "utf8");
-      for (const dir of [targets.agentsDir, targets.claudeDir, targets.codexDir]) {
+      for (const dir of [targets.agentsDir, targets.claudeDir]) {
         expect(await readFile(path.join(dir, name, "SKILL.md"), "utf8")).toBe(source);
       }
+      await expect(access(path.join(targets.codexDir, name))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     },
   );
 

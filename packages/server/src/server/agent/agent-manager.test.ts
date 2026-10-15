@@ -2856,6 +2856,7 @@ test("createAgent passes daemon launch env through the provider launch context",
     provider: "codex",
     cwd: workdir,
     model: "gpt-5.4",
+    daemonAppendSystemPrompt: expect.stringContaining("read_workspace_todos"),
   });
   expect(client.lastLaunchContext).toEqual({
     agentId: snapshot.id,
@@ -7542,15 +7543,9 @@ test("subscribe error isolation: throwing subscriber does not break event flow",
   const settled = new Promise<void>((resolve) => {
     manager.subscribe(
       (event) => {
-        if (
-          event.type === "agent_state" &&
-          event.agent.id === snapshot.id &&
-          event.agent.lifecycle === "idle"
-        ) {
-          resolve();
-        }
         if (event.type === "agent_stream" && event.agentId === snapshot.id) {
           receivedEvents.push(event.event.type);
+          if (event.event.type === "turn_completed") resolve();
         }
       },
       { agentId: snapshot.id, replayState: false },
