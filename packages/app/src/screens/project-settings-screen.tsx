@@ -507,6 +507,7 @@ function ProjectConfigForm({
   const [writeError, setWriteError] = useState<ProjectConfigRpcError | null>(null);
   const [editingScriptId, setEditingScriptId] = useState<string | null>(null);
   const [editingLaunchId, setEditingLaunchId] = useState<string | null>(null);
+  const [launchBeforeEditing, setLaunchBeforeEditing] = useState<ProjectLaunchDraft | null>(null);
 
   const saveMutation = useMutation({
     mutationFn: async (input: {
@@ -676,11 +677,13 @@ function ProjectConfigForm({
   );
 
   const handleEditLaunch = useCallback((launch: ProjectLaunchDraft) => {
+    setLaunchBeforeEditing({ ...launch });
     setEditingLaunchId(launch.id);
   }, []);
 
   const handleAddLaunch = useCallback(() => {
     const id = `launch-draft-new-${Date.now()}`;
+    setLaunchBeforeEditing(null);
     updateDraft((d) => ({
       ...d,
       launches: [
@@ -711,17 +714,23 @@ function ProjectConfigForm({
       return;
     }
     updateDraft((d) => {
-      const entry = d.launches.find((row) => row.id === editingLaunchId);
-      if (!entry) return d;
-      const isEmpty = entry.name.trim().length === 0 && entry.commandText.trim().length === 0;
-      if (!isEmpty) return d;
+      if (launchBeforeEditing?.id === editingLaunchId) {
+        return {
+          ...d,
+          launches: d.launches.map((row) =>
+            row.id === editingLaunchId ? launchBeforeEditing : row,
+          ),
+        };
+      }
       return { ...d, launches: d.launches.filter((row) => row.id !== editingLaunchId) };
     });
     setEditingLaunchId(null);
-  }, [editingLaunchId, updateDraft]);
+    setLaunchBeforeEditing(null);
+  }, [editingLaunchId, launchBeforeEditing, updateDraft]);
 
   const handleSaveEditingLaunch = useCallback(() => {
     setEditingLaunchId(null);
+    setLaunchBeforeEditing(null);
   }, []);
 
   const editingScript = draft.scripts.find((entry) => entry.id === editingScriptId);

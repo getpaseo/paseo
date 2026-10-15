@@ -91,6 +91,11 @@ const initialPaseoConfig = {
       customScriptField: "preserved",
     },
   },
+  launches: {
+    dev: {
+      command: "./bin/dev",
+    },
+  },
   customTopLevelField: "preserved",
 };
 
@@ -236,6 +241,40 @@ test.describe("Projects settings", () => {
     await returnToProjectsList(page);
     await openProjectSettings(page, editableProject.name);
     await expectNoUncommittedSetupWarning(page);
+  });
+
+  test("canceling launch edits discards them before a later project save", async ({
+    page,
+    editableProject,
+  }) => {
+    await openProjects(page);
+    await openProjectSettings(page, editableProject.name);
+
+    const launchRow = page
+      .getByTestId("launches-list")
+      .locator('[data-testid^="launch-row-"]:not([data-testid*="-menu-"])')
+      .filter({ hasText: "dev" });
+    await launchRow.getByText("dev", { exact: true }).click();
+    await page.getByRole("textbox", { name: "Launch name" }).fill("renamed");
+    await page.getByRole("textbox", { name: "Launch command" }).fill("./bin/renamed");
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(launchRow).toContainText("dev");
+    await expect(launchRow).toContainText("./bin/dev");
+
+    await page.getByRole("button", { name: "Add launch", exact: true }).click();
+    await page.getByRole("textbox", { name: "Launch name" }).fill("partial");
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(
+      page
+        .getByTestId("launches-list")
+        .locator('[data-testid^="launch-row-"]:not([data-testid*="-menu-"])'),
+    ).toHaveCount(1);
+
+    await editWorktreeSetup(page, updatedSetup);
+    await clickSaveProjectSettings(page);
+    await expect
+      .poll(async () => JSON.parse(await readProjectConfigFile(editableProject)).launches)
+      .toEqual(initialPaseoConfig.launches);
   });
 
   test("project navigation stays inside the selected host", async ({ page, editableProject }) => {

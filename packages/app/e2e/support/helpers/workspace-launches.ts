@@ -94,9 +94,8 @@ async function createLaunchWorkspace(
 async function openWorkspaceRunMenu(page: Page, workspaceId: string): Promise<void> {
   await page.goto(buildHostWorkspaceRoute(getServerId(), workspaceId));
   await waitForWorkspaceTabsVisible(page);
-  const runButton = page.getByTestId("workspace-scripts-button");
+  const runButton = page.getByRole("button", { name: "Run workspace commands", exact: true });
   await expect(runButton).toBeVisible({ timeout: 30_000 });
-  await expect(runButton).toHaveAccessibleName("Run workspace commands");
   await runButton.click();
 }
 
@@ -107,20 +106,25 @@ async function expectConfiguredLaunchMenu(page: Page): Promise<void> {
   await expect(page.getByTestId("workspace-scripts-services-section")).toBeVisible();
   await expect(page.getByTestId("workspace-scripts-scripts-section")).toBeVisible();
   await expect(page.getByTestId("workspace-launches-item-dev")).toBeVisible();
-  await expect(page.getByTestId("workspace-launches-start-dev")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start dev", exact: true })).toBeVisible();
 }
 
-async function startLaunch(page: Page, launchName: string): Promise<void> {
-  await page.getByTestId(`workspace-launches-start-${launchName}`).click();
-  await expect(page.getByTestId(`workspace-launches-stop-${launchName}`)).toBeVisible({
+async function startLaunch(
+  page: Page,
+  launchName: string,
+  accessibleName = `Start ${launchName}`,
+): Promise<void> {
+  await page.getByRole("button", { name: accessibleName, exact: true }).click();
+  await expect(page.getByRole("button", { name: `Stop ${launchName}`, exact: true })).toBeVisible({
     timeout: 30_000,
   });
 }
 
 async function stopLaunch(page: Page, launchName: string): Promise<void> {
-  await page.getByTestId(`workspace-launches-stop-${launchName}`).click();
-  await expect(page.getByTestId(`workspace-launches-stop-${launchName}`)).toHaveCount(0);
-  await expect(page.getByTestId(`workspace-launches-start-${launchName}`)).toBeVisible({
+  const stopButton = page.getByRole("button", { name: `Stop ${launchName}`, exact: true });
+  await stopButton.click();
+  await expect(stopButton).toHaveCount(0);
+  await expect(page.getByRole("button", { name: `Start ${launchName}`, exact: true })).toBeVisible({
     timeout: 30_000,
   });
 }
@@ -128,10 +132,9 @@ async function stopLaunch(page: Page, launchName: string): Promise<void> {
 async function expectRunningDevLaunch(page: Page): Promise<number> {
   await expect(page.getByTestId("workspace-launches-status-dev")).toHaveText("Running");
   await expect(page.getByTestId("workspace-launches-view-dev")).toHaveText("Output");
-  await expect(page.getByTestId("workspace-launches-start-worker")).toHaveText("Switch");
-  await expect(page.getByTestId("workspace-launches-start-worker")).toHaveAccessibleName(
-    "Stop dev and start worker",
-  );
+  await expect(
+    page.getByRole("button", { name: "Stop dev and start worker", exact: true }),
+  ).toHaveText("Switch");
   return readLaunchPortBase(page);
 }
 
@@ -163,8 +166,8 @@ async function expectDevLaunchEndpoints(page: Page, portBase: number): Promise<v
 }
 
 async function switchToWorkerLaunch(page: Page, portBase: number): Promise<void> {
-  await startLaunch(page, "worker");
-  await expect(page.getByTestId("workspace-launches-stop-dev")).toHaveCount(0);
+  await startLaunch(page, "worker", "Stop dev and start worker");
+  await expect(page.getByRole("button", { name: "Stop dev", exact: true })).toHaveCount(0);
   await expect(page.getByTestId("workspace-launches-open-dev-dev:p0")).toHaveCount(0);
   await expect(page.getByTestId("workspace-launches-item-worker")).toContainText(
     "No listening ports detected yet",
@@ -175,7 +178,7 @@ async function switchToWorkerLaunch(page: Page, portBase: number): Promise<void>
 }
 
 async function expectLaunchError(page: Page): Promise<void> {
-  await page.getByTestId("workspace-launches-start-dev").click();
+  await page.getByRole("button", { name: "Start dev", exact: true }).click();
   await expect(page.getByTestId("workspace-launches-error-dev")).toContainText(
     "Workspace port block size 2 does not fit in configured range 41000-41000",
     { timeout: 30_000 },
@@ -183,18 +186,24 @@ async function expectLaunchError(page: Page): Promise<void> {
 }
 
 async function dismissLaunchErrorAfterMenuReopen(page: Page): Promise<void> {
-  const runButton = page.getByTestId("workspace-scripts-button");
+  const runButton = page.getByRole("button", { name: "Run workspace commands", exact: true });
   await runButton.click();
   await expect(page.getByTestId("workspace-scripts-menu")).toBeHidden({ timeout: 30_000 });
   await runButton.click();
   await expect(page.getByTestId("workspace-launches-error-dev")).toBeVisible({ timeout: 30_000 });
-  await page.getByTestId("workspace-launches-dismiss-error-dev").click();
+  await page
+    .getByTestId("workspace-launches-error-dev")
+    .getByRole("button", { name: "Dismiss", exact: true })
+    .click();
   await expect(page.getByTestId("workspace-launches-error-dev")).toHaveCount(0);
 }
 
 async function retryLaunch(page: Page, launchName: string): Promise<void> {
-  await page.getByTestId(`workspace-launches-retry-${launchName}`).click();
-  await expect(page.getByTestId(`workspace-launches-stop-${launchName}`)).toBeVisible({
+  await page
+    .getByTestId(`workspace-launches-error-${launchName}`)
+    .getByRole("button", { name: "Retry", exact: true })
+    .click();
+  await expect(page.getByRole("button", { name: `Stop ${launchName}`, exact: true })).toBeVisible({
     timeout: 30_000,
   });
   await expect(page.getByTestId(`workspace-launches-error-${launchName}`)).toHaveCount(0);
