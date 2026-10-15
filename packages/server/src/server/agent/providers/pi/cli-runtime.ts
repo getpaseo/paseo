@@ -24,6 +24,7 @@ import type {
   PiRuntimeEvent,
   PiSessionState,
   PiSessionStats,
+  PiStreamingBehavior,
 } from "./rpc-types.js";
 
 const DEFAULT_PI_COMMAND: [string, ...string[]] = [
@@ -112,11 +113,13 @@ class PiCliRuntimeSession implements PiRuntimeSession {
   async prompt(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
+    options?: { streamingBehavior?: PiStreamingBehavior },
   ): Promise<PiPromptAck> {
     const { id: requestId, promise } = this.process.startRequest({
       type: "prompt",
       message,
       ...(images?.length ? { images } : {}),
+      ...(options?.streamingBehavior ? { streamingBehavior: options.streamingBehavior } : {}),
     });
     const data = await promise;
     if (typeof data === "object" && data !== null && !Array.isArray(data)) {

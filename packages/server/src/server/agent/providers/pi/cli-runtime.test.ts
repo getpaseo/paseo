@@ -415,6 +415,28 @@ describe("PiCliRuntime", () => {
     expect(command.images).toBeUndefined();
   });
 
+  test("sends the prompt streamingBehavior only when one is given", async () => {
+    const child = createPiChild();
+    replyToCommands(child, () => ({}));
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    const queuedCommand = capturePendingCommand(child, "prompt");
+    await session.prompt("after this, update the docs", undefined, {
+      streamingBehavior: "followUp",
+    });
+    expect(await queuedCommand).toMatchObject({
+      type: "prompt",
+      message: "after this, update the docs",
+      streamingBehavior: "followUp",
+    });
+
+    const plainCommand = capturePendingCommand(child, "prompt");
+    await session.prompt("start fresh");
+    const command = await plainCommand;
+    expect(command).toMatchObject({ type: "prompt", message: "start fresh" });
+    expect(command.streamingBehavior).toBeUndefined();
+  });
+
   test("sends the clear_queue RPC frame", async () => {
     const child = createPiChild();
     replyToCommands(child, () => ({}));

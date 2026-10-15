@@ -130,8 +130,16 @@ export interface PiRpcSlashCommand {
   input?: { hint?: string };
 }
 
+export type PiStreamingBehavior = "steer" | "followUp";
+
 export type PiRpcCommand =
-  | { id?: string; type: "prompt"; message: string; images?: PiImageContent[] }
+  | {
+      id?: string;
+      type: "prompt";
+      message: string;
+      images?: PiImageContent[];
+      streamingBehavior?: PiStreamingBehavior;
+    }
   | { id?: string; type: "steer"; message: string; images?: PiImageContent[] }
   | { id?: string; type: "clear_queue" }
   | { id?: string; type: "compact"; customInstructions?: string }

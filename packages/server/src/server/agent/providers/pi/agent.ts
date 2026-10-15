@@ -127,6 +127,18 @@ const PI_HANDLED_BUILTIN_SLASH_COMMANDS: AgentSlashCommand[] = [
     argumentHint: "[on|off|toggle]",
     kind: "command",
   },
+  {
+    name: "steer",
+    description: "Steer the active Pi run",
+    argumentHint: "<message>",
+    kind: "command",
+  },
+  {
+    name: "follow-up",
+    description: "Queue a follow-up message for Pi",
+    argumentHint: "<message>",
+    kind: "command",
+  },
 ];
 
 function mapPiCommandKind(source: PiRpcSlashCommand["source"]): AgentSlashCommandKind {
@@ -1629,6 +1641,18 @@ export class PiRpcAgentSession implements AgentSession {
       return {
         run: async ({ emit }) => {
           await this.executeAutoCompactCommand(parsed.args, emit);
+        },
+      };
+    }
+    if (commandName === "steer" || commandName === "follow-up") {
+      const message = parsed.args;
+      if (!message) {
+        return null;
+      }
+      const streamingBehavior = commandName === "steer" ? "steer" : "followUp";
+      return {
+        run: async () => {
+          await this.runtimeSession.prompt(message, undefined, { streamingBehavior });
         },
       };
     }
