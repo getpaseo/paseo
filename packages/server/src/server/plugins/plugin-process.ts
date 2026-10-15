@@ -158,6 +158,7 @@ export function createPluginWorker(options: {
       label: provider.label,
       description: provider.description,
       iconPath: provider.icon,
+      requiresConfiguration: provider.requiresConfiguration,
       hasCatalogCacheKey: provider.getCatalogCacheKey !== undefined,
       hasStatus: provider.status !== undefined,
       command: provider.command,

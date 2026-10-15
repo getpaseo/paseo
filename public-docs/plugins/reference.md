@@ -63,7 +63,9 @@ The required root manifest is `paseo-plugin.json`:
 | `build`        | No       | Preparation commands, described in the CLI reference.                                     |
 
 Paths are relative to `paseo-plugin.json`, use forward slashes, and cannot contain `..`
-segments. See [icons and screenshots](/docs/plugins/publishing#icons-and-screenshots) for an example.
+segments. Registry listings for visual plugins require an interface image even though `media` is
+optional in the runtime manifest. See [icons and screenshots](/docs/plugins/publishing#icons-and-screenshots)
+for accepted formats and listing requirements.
 Paseo validates the references without opening local assets or fetching URLs.
 
 Unknown top-level fields are ignored. Known fields still validate, and unknown keys inside
@@ -2137,7 +2139,7 @@ export default function contribute(server: PluginServerContext) {
 
 Inputs and outputs are validated on both sides. RPC names start with a lowercase letter and contain lowercase letters, numbers, dots, hyphens, or underscores. `useRpc()` returns a typed async function. Use TanStack Query for request state, caching, and mutations.
 
-Backend handlers receive the same `PaseoApi` as `{ paseo }`. Their connection belongs to the subprocess and closes when the plugin stops. It does not subscribe to timelines or catalog events until plugin code subscribes. Follow the [SDK event contract](../../sdk/events.md) for cleanup and timeline replacements. Backend code can use Node APIs and dependencies installed in the plugin directory.
+Backend handlers receive the same `PaseoApi` as `{ paseo }`. Their connection belongs to the subprocess and closes when the plugin stops. It does not subscribe to timelines or catalog events until plugin code subscribes. Follow the [SDK event contract](/docs/sdk/events) for cleanup and timeline replacements. Backend code can use Node APIs and dependencies installed in the plugin directory.
 
 ## Debug backend output
 
@@ -2351,8 +2353,9 @@ keeps the complete dependency tree and `package-lock.json` when activating it. T
 package and lockfile provide its current version and artifact integrity. A version, tag, or range
 chooses content for this installation only.
 
-For package contents, dependencies, preparation, and private registries, see
-[Publish a plugin](/docs/plugins/publishing).
+The installed lockfile records what this installation resolved. Authors submitting npm plugins
+with runtime dependencies must also ship the [publication lock](/docs/plugins/publishing#2-lock-installed-dependencies).
+For package contents, preparation and submission, see [Publish a plugin](/docs/plugins/publishing).
 
 A failed download, dependency installation, manifest check, preparation command, compilation, or
 activation discards the candidate. Other installed plugins keep running. Removing an npm plugin

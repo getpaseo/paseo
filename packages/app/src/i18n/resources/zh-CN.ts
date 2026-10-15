@@ -1640,13 +1640,18 @@ export const zhCN: TranslationResources = {
     title: "添加 provider",
     search: "搜索 providers",
     noProviders: "未找到 providers",
+    clearSearch: "清除搜索",
     actions: {
       add: "添加",
+      addProvider: "添加 {{provider}}",
       adding: "正在添加",
       installed: "已安装",
       cancel: "取消",
       installInstructions: "安装说明",
       installInstructionsFor: "{{provider}} 安装说明",
+    },
+    types: {
+      acp: "ACP",
     },
     errors: {
       unableToInstall: "无法安装 provider",

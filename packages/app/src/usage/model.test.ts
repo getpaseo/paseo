@@ -257,6 +257,22 @@ describe("settleReports", () => {
     expect(settleReports([refreshed, beta], [alpha, beta])).toEqual([refreshed, beta]);
   });
 
+  it("keeps the displayed order when providers finish a refresh in reverse order", () => {
+    const refreshed = entry({ sourceId: "alpha", planLabel: "New" });
+    const streamed = upsertReport(upsertReport([alpha, beta], beta), refreshed);
+    expect(settleReports(streamed, [beta, refreshed])).toEqual([refreshed, beta]);
+  });
+
+  it("drops missing reports and appends new ones without moving surviving reports", () => {
+    const gamma = entry({ sourceId: "gamma" });
+    const delta = entry({ sourceId: "delta" });
+    expect(settleReports([alpha, beta, gamma], [delta, gamma, alpha])).toEqual([
+      alpha,
+      gamma,
+      delta,
+    ]);
+  });
+
   it("takes the finished list as is when nothing was shown yet", () => {
     expect(settleReports(undefined, [alpha, beta])).toEqual([alpha, beta]);
   });
