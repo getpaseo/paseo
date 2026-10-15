@@ -714,6 +714,38 @@ test.each(["disconnect", "reconnect", "close"] as const)(
   },
 );
 
+test.each([
+  ["revoked", "closed"],
+  ["protocol_error", "protocol_error"],
+  ["resource_limit", "closed"],
+  ["internal_error", "closed"],
+] as const)(
+  "preserves %s closure delivered with the open reply",
+  async (reason, expectedReason) => {
+    const { client, transport, connecting } = createTunnelClient();
+    await connecting;
+    const opening = openTunnel(client, transport);
+    transport.triggerMessage(
+      wrapSessionMessage({
+        type: "network.tunnel.closed",
+        payload: { subscriptionId: TUNNEL_SUBSCRIPTION_ID, reason },
+      }),
+    );
+
+    const tunnel = await opening;
+    const closed = vi.fn();
+    tunnel.onClosed(closed);
+    await Promise.resolve();
+    expect(closed).toHaveBeenCalledExactlyOnceWith(expectedReason);
+    const sentBeforeOpen = transport.sent.length;
+    expect(() =>
+      tunnel.openStream({ host: "localhost", port: 80 }, createTunnelHandlers()),
+    ).toThrow("Network tunnel is closed");
+    await tunnel.close();
+    expect(transport.sent).toHaveLength(sentBeforeOpen);
+  },
+);
+
 test("refuses limits above the ones it asked for and closes that tunnel at open", async () => {
   const { client, transport, connecting } = createTunnelClient();
   await connecting;
