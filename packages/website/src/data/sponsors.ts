@@ -6,10 +6,12 @@
  * not deliver:
  *
  * 1. Add the entry below and drop both logo inks in `public/sponsors/`.
- * 2. Add the logo under the `## Sponsors` marker in `README.md`,
- *    `README.zh-CN.md`, `README.ja.md` and `README.ko.md`, in this same order,
- *    linked to `sponsorHref(sponsor, "readme")` with both inks served from
- *    paseo.sh. `sponsors.test.ts` fails until they match.
+ * 2. In the sponsors table after the intro of `README.md`, `README.zh-CN.md`,
+ *    `README.ja.md` and `README.ko.md`, replace a "become a sponsor" cell with
+ *    the logo, in this same order, linked to `sponsorHref(sponsor, "readme")`
+ *    with both inks referenced from `packages/website/public`, so the README
+ *    renders from the repository and never waits on a site deploy.
+ *    `sponsors.test.ts` fails until they match.
  * 3. Remove all of it when the subscription ends.
  *
  * The Stripe payment link caps itself at `SPONSOR_SPOT_COUNT` completed

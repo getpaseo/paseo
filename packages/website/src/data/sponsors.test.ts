@@ -6,6 +6,8 @@ import { SPONSORS, sponsorHref } from "./sponsors";
 const REPO_ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
 const WEBSITE_PUBLIC = fileURLToPath(new URL("../../public", import.meta.url));
 const READMES = ["README.md", "README.zh-CN.md", "README.ja.md", "README.ko.md"];
+const README_SPONSOR_CELLS = 3;
+const SPONSOR_PAGE_URL = "https://paseo.sh/sponsor";
 
 describe("sponsorHref", () => {
   it("tags the link with the placement it is shown in", () => {
@@ -20,29 +22,37 @@ describe("sponsorHref", () => {
   });
 });
 
+function readmeSponsorCells(readme: string) {
+  const text = readFileSync(`${REPO_ROOT}${readme}`, "utf8");
+  const table = text.slice(text.indexOf("<!-- Sponsors:")).split("</table>")[0];
+  return [...table.matchAll(/<td[^>]*>(.*?)<\/td>/g)].map(([, cell]) => {
+    const logo = cell.match(
+      /^<a href="([^"]+)"><picture><source media="\(prefers-color-scheme: dark\)" srcset="([^"]+)"><img src="([^"]+)"/,
+    );
+    if (logo) {
+      const [, href, onDark, onLight] = logo;
+      return { href, onDark, onLight };
+    }
+    return { invite: cell.match(/^<a href="([^"]+)">/)?.[1] };
+  });
+}
+
 describe("SPONSORS", () => {
   it.each(SPONSORS)("ships both logo inks for $name", (sponsor) => {
     expect(existsSync(`${WEBSITE_PUBLIC}${sponsor.logo.onDark}`)).toBe(true);
     expect(existsSync(`${WEBSITE_PUBLIC}${sponsor.logo.onLight}`)).toBe(true);
   });
 
-  it.each(READMES)("are linked from %s in the same order", (readme) => {
-    const text = readFileSync(`${REPO_ROOT}${readme}`, "utf8");
-    const sponsorsSection = text
-      .slice(text.indexOf("<!-- Sponsor logos go here"))
-      .split("\n## ")[0];
-    const entries = [
-      ...sponsorsSection.matchAll(
-        /<a href="([^"]+)"><picture><source media="\(prefers-color-scheme: dark\)" srcset="([^"]+)"><img src="([^"]+)"/g,
-      ),
-    ].map(([, href, onDark, onLight]) => ({ href, onDark, onLight }));
+  it.each(READMES)("fill the sponsors table in %s, followed by invitations", (readme) => {
+    const openCells = Math.max(0, README_SPONSOR_CELLS - SPONSORS.length);
 
-    expect(entries).toEqual(
-      SPONSORS.map((sponsor) => ({
+    expect(readmeSponsorCells(readme)).toEqual([
+      ...SPONSORS.map((sponsor) => ({
         href: sponsorHref(sponsor, "readme"),
-        onDark: `https://paseo.sh${sponsor.logo.onDark}`,
-        onLight: `https://paseo.sh${sponsor.logo.onLight}`,
+        onDark: `packages/website/public${sponsor.logo.onDark}`,
+        onLight: `packages/website/public${sponsor.logo.onLight}`,
       })),
-    );
+      ...Array.from({ length: openCells }, () => ({ invite: SPONSOR_PAGE_URL })),
+    ]);
   });
 });
