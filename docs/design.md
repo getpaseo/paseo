@@ -80,6 +80,11 @@ A `<Pressable>` wrapping a `<Text>` is a sixth variant. It is wrong. `<Button>` 
 
 Borders group, separate, or rarely emphasize.
 
+Light mode uses a pearl-gray sidebar and a near-white working surface. Keep row density and
+control heights unchanged across themes; the light radius scale supplies the softer corners.
+Reserve subtle elevation for the composer and floating surfaces. Settings groups use a quiet
+tonal fill and one hairline boundary. Messages have a soft fill, with no border or shadow.
+
 A logical block of related rows lives inside a card — one border around the whole group. The card primitive is `settingsStyles.card`; the keyboard-shortcuts dialog uses the same shape inline (`packages/app/src/components/keyboard-shortcuts-dialog.tsx:68-73`). The border defines what belongs together.
 
 Rows after the first inside a card carry `settingsStyles.rowBorder` — a single top border. The first row never has one. The same divider pattern appears in the keyboard-shortcuts dialog rows (`packages/app/src/components/keyboard-shortcuts-dialog.tsx:74-83`). Rows do not need their own background to feel separated.

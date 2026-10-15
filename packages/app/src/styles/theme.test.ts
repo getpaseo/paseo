@@ -85,8 +85,8 @@ describe("Built-in light theme", () => {
     expect(lightTheme.colors).toMatchObject({
       primary: "#18181b",
       primaryForeground: "#fafafa",
-      destructiveForeground: "#ffffff",
-      successForeground: "#ffffff",
+      destructiveForeground: "#fcfcfd",
+      successForeground: "#fcfcfd",
       terminal: {
         black: "#1a1a1e",
         brightBlack: "#3f3f46",
