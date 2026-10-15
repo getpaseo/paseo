@@ -52,6 +52,7 @@ interface Deferred<T> {
 }
 
 interface FakeAgentSessionOptions {
+  turnFailure?: TestAgentClientOptions["turnFailure"];
   providerName: string;
   config: AgentSessionConfig;
   supportsMcpServers?: boolean;
@@ -64,6 +65,10 @@ interface FakeAgentSessionOptions {
 }
 
 export interface TestAgentClientOptions {
+  turnFailure?: Pick<
+    Extract<AgentStreamEvent, { type: "turn_failed" }>,
+    "error" | "code" | "diagnostic"
+  >;
   beforeCreateSession?: (config: AgentSessionConfig) => Promise<void>;
   closeSession?: () => Promise<void>;
   onStartTurn?: (prompt: AgentPromptInput, config: AgentSessionConfig) => void;
@@ -343,6 +348,7 @@ class FakeAgentSession implements AgentSession {
   private readonly closeSession: (() => Promise<void>) | undefined;
   private readonly onStartTurn: TestAgentClientOptions["onStartTurn"];
   private readonly beforeTurnComplete: ((prompt: AgentPromptInput) => Promise<void>) | undefined;
+  private readonly turnFailure: TestAgentClientOptions["turnFailure"];
   private readonly historyEvents: readonly AgentStreamEvent[] | undefined;
 
   constructor(options: FakeAgentSessionOptions) {
@@ -358,6 +364,7 @@ class FakeAgentSession implements AgentSession {
     this.onStartTurn = options.onStartTurn;
     this.beforeTurnComplete = options.beforeTurnComplete;
     this.historyEvents = options.historyEvents;
+    this.turnFailure = options.turnFailure;
     this.historyPath = path.join(
       tmpdir(),
       "paseo-fake-provider-history",
@@ -761,6 +768,7 @@ class FakeAgentSession implements AgentSession {
           type: "turn_failed",
           provider: this.providerName,
           error: "Requested fake provider failure",
+          ...this.turnFailure,
         };
         await this.appendHistoryEvent(failed);
         this.notifySubscribers(failed);
@@ -1235,6 +1243,7 @@ class FakeAgentClient implements AgentClient {
       onStartTurn: this.options.onStartTurn,
       beforeTurnComplete: this.options.beforeTurnComplete,
       historyEvents: this.options.historyEvents,
+      turnFailure: this.options.turnFailure,
     });
   }
 
@@ -1262,6 +1271,7 @@ class FakeAgentClient implements AgentClient {
       onStartTurn: this.options.onStartTurn,
       beforeTurnComplete: this.options.beforeTurnComplete,
       historyEvents: this.options.historyEvents,
+      turnFailure: this.options.turnFailure,
     });
   }
 

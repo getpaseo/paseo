@@ -22,6 +22,31 @@ function assistant(id: string, timestamp: Date): StreamItem {
 }
 
 describe("deriveStreamTurnTiming", () => {
+  it("retains completed timing for a failed response with or without assistant text", () => {
+    const userAt = new Date("2026-05-15T00:00:00.000Z");
+    const failedAt = new Date("2026-05-15T00:00:07.000Z");
+    const error: StreamItem = {
+      kind: "notification",
+      sourceType: "error",
+      level: "error",
+      id: "error-1",
+      message: "Provider failed",
+      timestamp: failedAt,
+    };
+    for (const replies of [[], [assistant("assistant-1", new Date("2026-05-15T00:00:03.000Z"))]]) {
+      const timing = deriveStreamTurnTiming({
+        isTurnActive: false,
+        activeTurnStartedAt: null,
+        tail: [user("user-1", userAt), ...replies, error],
+        head: [],
+      });
+      assert.deepEqual(timing.byResponseItemId.get(error.id), {
+        completedAt: failedAt,
+        durationMs: 7000,
+      });
+    }
+  });
+
   it("starts elapsed time from the submitted prompt", () => {
     const submittedAt = new Date("2026-05-15T00:00:00.000Z");
 
@@ -51,7 +76,7 @@ describe("deriveStreamTurnTiming", () => {
     });
 
     assert.equal(timing.runningStartedAt, secondUserAt);
-    assert.equal(timing.byAssistantId.has("a2"), false);
+    assert.equal(timing.byResponseItemId.has("a2"), false);
   });
 
   it("derives completed turn timing from user and assistant item timestamps", () => {
@@ -69,7 +94,7 @@ describe("deriveStreamTurnTiming", () => {
       head: [],
     });
 
-    assert.deepEqual(timing.byAssistantId.get("a1"), {
+    assert.deepEqual(timing.byResponseItemId.get("a1"), {
       completedAt: assistantAt,
       durationMs: 7000,
     });
@@ -95,8 +120,8 @@ describe("deriveStreamTurnTiming", () => {
       completedAt: lastAssistantAt,
       durationMs: 7000,
     };
-    assert.deepEqual(timing.byAssistantId.get("a1"), expected);
-    assert.deepEqual(timing.byAssistantId.get("a2"), expected);
+    assert.deepEqual(timing.byResponseItemId.get("a1"), expected);
+    assert.deepEqual(timing.byResponseItemId.get("a2"), expected);
   });
 
   it("preserves the completion timestamp when a canonical turn has no visible prompt", () => {
@@ -120,7 +145,7 @@ describe("deriveStreamTurnTiming", () => {
       head: [],
     });
 
-    assert.deepEqual(timing.byAssistantId.get("hidden-prompt-a2"), {
+    assert.deepEqual(timing.byResponseItemId.get("hidden-prompt-a2"), {
       completedAt: hiddenPromptTurnAt,
       durationMs: null,
     });

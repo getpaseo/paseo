@@ -1776,6 +1776,57 @@ describe("ScheduleService", () => {
     expect(storedAgent?.archivedAt).toBeTruthy();
   });
 
+  test.each(["new-agent", "agent"] as const)(
+    "scheduled %s failures preserve the provider reason",
+    async (targetType) => {
+      const manager = new AgentManager({
+        logger: createTestLogger(),
+        clients: createTestAgentClients({
+          turnFailure: {
+            error: "Requested fake provider failure",
+            code: "126",
+            diagnostic: "Provider executable failed",
+          },
+        }),
+        registry: agentStorage,
+      });
+      const service = createScheduleService({
+        paseoHome: tempDir,
+        logger: createTestLogger(),
+        agentManager: manager,
+        agentStorage,
+        providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+        now: () => now,
+      });
+      const agent = await manager.createAgent(
+        { provider: "claude", cwd: tempDir, modeId: "bypassPermissions" },
+        undefined,
+        { workspaceId: undefined },
+      );
+      await manager.runAgent(agent.id, "Earlier successful request");
+      const earlierReply = await manager.getLastAssistantMessage(agent.id);
+      expect(earlierReply).toBeTruthy();
+      const schedule = await service.create({
+        prompt: "Emit a turn failure",
+        cadence: { type: "every", everyMs: 60_000 },
+        target:
+          targetType === "agent"
+            ? { type: "agent", agentId: agent.id }
+            : {
+                type: "new-agent",
+                config: { provider: "claude", cwd: tempDir, archiveOnFinish: false },
+              },
+        maxRuns: 1,
+      });
+      await service.runOnce(schedule.id);
+      expect((await service.inspect(schedule.id)).runs[0]).toMatchObject({
+        status: "failed",
+        error: "Requested fake provider failure\n\ncode: 126\n\nProvider executable failed",
+      });
+      await manager.closeAgent(agent.id);
+    },
+  );
+
   test("records prompt-start failures as failed and archives the scheduled agent", async () => {
     class StartFailureScheduleSession implements AgentSession {
       readonly provider = "claude";

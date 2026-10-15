@@ -912,6 +912,12 @@ export class ScheduleService {
     requireSchedule(updatedSchedule, params.scheduleId);
   }
 
+  private scheduledAgentFailure(agentId: string): Error {
+    return new Error(
+      this.agentManager.getAgent(agentId)?.lastError ?? `Scheduled agent ${agentId} failed`,
+    );
+  }
+
   private async executeSchedule(
     schedule: StoredSchedule,
     runId: string,
@@ -945,7 +951,7 @@ export class ScheduleService {
         throw new Error(`Scheduled agent ${agent.id} is waiting for permission`);
       }
       if (waitResult.status === "error") {
-        throw new Error(waitResult.lastMessage ?? `Scheduled agent ${agent.id} failed`);
+        throw this.scheduledAgentFailure(agent.id);
       }
       return {
         agentId: agent.id,
@@ -1013,7 +1019,7 @@ export class ScheduleService {
         throw new Error(`Scheduled agent ${agent.id} is waiting for permission`);
       }
       if (waitResult.status === "error") {
-        throw new Error(waitResult.lastMessage ?? `Scheduled agent ${agent.id} failed`);
+        throw this.scheduledAgentFailure(agent.id);
       }
       const timelineText = curateAgentActivity(result.timeline);
       return {

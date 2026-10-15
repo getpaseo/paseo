@@ -2162,7 +2162,7 @@ export const Notification = memo(function Notification({
     [resolvedDisableOuterSpacing, config.bg],
   );
   return (
-    <View style={containerStyle}>
+    <View style={containerStyle} testID="timeline-notification">
       <View style={notificationStylesheet.content}>
         <View style={notificationStylesheet.row}>
           <View style={notificationStylesheet.iconContainer}>

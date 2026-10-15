@@ -7,7 +7,7 @@ export interface TurnTiming {
 }
 
 export interface StreamTurnTiming {
-  byAssistantId: Map<string, TurnTiming>;
+  byResponseItemId: Map<string, TurnTiming>;
   runningStartedAt: Date | null;
 }
 
@@ -17,14 +17,14 @@ export function deriveStreamTurnTiming(params: {
   tail: StreamItem[];
   head: StreamItem[];
 }): StreamTurnTiming {
-  const byAssistantId = new Map<string, TurnTiming>();
+  const byResponseItemId = new Map<string, TurnTiming>();
   let currentUserAt: Date | null = null;
   let currentLastItemAt: Date | null = null;
-  let currentAssistantIds: string[] = [];
+  let currentResponseItemIds: string[] = [];
   let previousItem: StreamItem | null = null;
 
   const flushCompletedTurn = () => {
-    if (!currentLastItemAt || currentAssistantIds.length === 0) {
+    if (!currentLastItemAt || currentResponseItemIds.length === 0) {
       return;
     }
     const timing: TurnTiming = {
@@ -33,8 +33,8 @@ export function deriveStreamTurnTiming(params: {
         ? Math.max(0, currentLastItemAt.getTime() - currentUserAt.getTime())
         : null,
     };
-    for (const id of currentAssistantIds) {
-      byAssistantId.set(id, timing);
+    for (const id of currentResponseItemIds) {
+      byResponseItemId.set(id, timing);
     }
   };
 
@@ -43,11 +43,14 @@ export function deriveStreamTurnTiming(params: {
       flushCompletedTurn();
       currentUserAt = item.kind === "user_message" ? item.timestamp : null;
       currentLastItemAt = null;
-      currentAssistantIds = [];
+      currentResponseItemIds = [];
     }
     currentLastItemAt = item.timestamp;
-    if (item.kind === "assistant_message") {
-      currentAssistantIds.push(item.id);
+    if (
+      item.kind === "assistant_message" ||
+      (item.kind === "notification" && item.sourceType === "error")
+    ) {
+      currentResponseItemIds.push(item.id);
     }
     previousItem = item;
   };
@@ -65,7 +68,7 @@ export function deriveStreamTurnTiming(params: {
   }
 
   return {
-    byAssistantId,
+    byResponseItemId,
     runningStartedAt,
   };
 }

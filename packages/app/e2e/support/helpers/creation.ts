@@ -186,8 +186,9 @@ export async function createCreationScenario(page: Page) {
       await requests.settled();
       await expect(
         page
-          .getByTestId("assistant-message")
-          .filter({ hasText: "[System Error] Requested mock prompt rejection", visible: true }),
+          .getByTestId("timeline-notification")
+          .filter({ hasText: "Requested mock prompt rejection" })
+          .filter({ visible: true }),
       ).toBeVisible();
       await expect(
         page
@@ -203,11 +204,15 @@ export async function createCreationScenario(page: Page) {
     async expectPromptBeforeError(prompt: string) {
       const messages = page
         .getByTestId("user-message")
-        .or(page.getByTestId("assistant-message"))
+        .or(
+          page
+            .getByTestId("timeline-notification")
+            .filter({ hasText: "Requested mock prompt rejection" }),
+        )
         .filter({ visible: true });
       await expect(messages).toHaveCount(2);
       await expect(messages.nth(0)).toContainText(prompt);
-      await expect(messages.nth(1)).toContainText("[System Error]");
+      await expect(messages.nth(1)).toHaveText("Requested mock prompt rejection");
       await expect(messages.nth(1)).toBeInViewport();
     },
     async reloadAgent() {
@@ -217,10 +222,7 @@ export async function createCreationScenario(page: Page) {
     },
     async expectAssistantReply() {
       await expect(
-        page
-          .getByTestId("assistant-message")
-          .filter({ visible: true, hasNotText: "[System Error]" })
-          .first(),
+        page.getByTestId("assistant-message").filter({ visible: true }).first(),
       ).toBeVisible();
     },
     async expectStartupFailure() {

@@ -69,8 +69,8 @@ describe("buildAgentStreamRenderModel", () => {
       historyStart: 2,
     });
 
-    expect(model.turnTiming.byAssistantId.has("hidden-a")).toBe(false);
-    expect(model.turnTiming.byAssistantId.get("visible-a")).toEqual({
+    expect(model.turnTiming.byResponseItemId.has("hidden-a")).toBe(false);
+    expect(model.turnTiming.byResponseItemId.get("visible-a")).toEqual({
       completedAt: tail[3]?.timestamp,
       durationMs: 1000,
     });
@@ -184,7 +184,7 @@ describe("buildAgentStreamRenderModel", () => {
     });
 
     expect(model.turnTiming.runningStartedAt).toBe(tail[0]?.timestamp);
-    expect(model.turnTiming.byAssistantId.has("live-a")).toBe(false);
+    expect(model.turnTiming.byResponseItemId.has("live-a")).toBe(false);
   });
 
   it("maps completed turn timing to assistant ids across committed history and live head", () => {
@@ -201,7 +201,7 @@ describe("buildAgentStreamRenderModel", () => {
     });
 
     expect(model.turnTiming.runningStartedAt).toBe(null);
-    expect(model.turnTiming.byAssistantId.get("live-a")).toEqual({
+    expect(model.turnTiming.byResponseItemId.get("live-a")).toEqual({
       completedAt: head[0]?.timestamp,
       durationMs: 3000,
     });
@@ -220,7 +220,7 @@ describe("buildAgentStreamRenderModel", () => {
     });
 
     expect(model.segments.historyMounted.map((item) => item.id)).toEqual(["a1", "u1"]);
-    expect(model.turnTiming.byAssistantId.get("a1")).toEqual({
+    expect(model.turnTiming.byResponseItemId.get("a1")).toEqual({
       completedAt: tail[1]?.timestamp,
       durationMs: 3000,
     });
@@ -238,6 +238,6 @@ describe("buildAgentStreamRenderModel", () => {
       isMobileBreakpoint: false,
     });
 
-    expect(model.turnTiming.byAssistantId.size).toBe(0);
+    expect(model.turnTiming.byResponseItemId.size).toBe(0);
   });
 });

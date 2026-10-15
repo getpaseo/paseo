@@ -10,6 +10,11 @@ export function resolveAssistantTurnForkBoundary(input: {
   supportsTimelineCursor: boolean;
 }): AssistantTurnForkBoundary | undefined {
   const item = input.items[input.startIndex];
+  if (item?.kind === "notification" && item.sourceType === "error") {
+    return input.supportsTimelineCursor && item.timelineCursor
+      ? { boundaryCursor: item.timelineCursor }
+      : undefined;
+  }
   if (item?.kind !== "assistant_message") {
     return undefined;
   }

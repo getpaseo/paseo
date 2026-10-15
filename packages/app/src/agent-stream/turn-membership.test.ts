@@ -53,7 +53,7 @@ function layoutFor(items: StreamItem[], isTurnActive: boolean) {
       isTurnActive,
       history: model.segments.historyMounted,
       liveHead: model.segments.liveHead,
-      timingByAssistantId: model.turnTiming.byAssistantId,
+      timingByResponseItemId: model.turnTiming.byResponseItemId,
     }),
   };
 }
@@ -123,7 +123,7 @@ describe("canonical turn membership", () => {
     const completedItems = [...build(turnId), assistant("done", 9, turnId)];
     const completed = layoutFor(completedItems, false);
     expect(completedFooterIds(completed.layout)).toEqual(["done"]);
-    expect(completed.model.turnTiming.byAssistantId.get("done")).toMatchObject({
+    expect(completed.model.turnTiming.byResponseItemId.get("done")).toMatchObject({
       completedAt: at(9),
       durationMs: 8000,
     });

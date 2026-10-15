@@ -303,10 +303,12 @@ async function retryRestoredSubmission(page: Page, prompt: string): Promise<void
 }
 
 async function expectRejectedPromptBeforeError(page: Page, prompt: string, errorMessage: string) {
-  const messages = page.getByTestId("user-message").or(page.getByTestId("assistant-message"));
+  const messages = page
+    .getByTestId("user-message")
+    .or(page.getByTestId("timeline-notification").filter({ hasText: errorMessage }));
   await expect(messages).toHaveCount(2);
   await expect(messages.nth(0)).toContainText(prompt);
-  await expect(messages.nth(1)).toContainText(`[System Error] ${errorMessage}`);
+  await expect(messages.nth(1)).toHaveText(errorMessage);
 }
 
 async function configureSteerInSettings(page: Page): Promise<void> {
