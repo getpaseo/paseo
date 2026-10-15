@@ -260,9 +260,9 @@ Paseo passes those variables through to the Codex app-server process **and** map
 Under the hood, for each custom Codex provider Paseo injects this into Codex's config:
 
 ```toml
-model_provider = "my-codex"
+model_provider = "paseo:my-codex"
 
-[model_providers.my-codex]
+[model_providers."paseo:my-codex"]
 name = "My Codex"
 base_url = "https://custom-relay.example.com/v1"
 wire_api = "responses"

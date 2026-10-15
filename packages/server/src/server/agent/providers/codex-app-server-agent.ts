@@ -7393,16 +7393,17 @@ export class CodexAppServerAgentClient implements AgentClient {
       // unless told otherwise, lists only the provider its own config selects.
       // Include legacy custom ids, but keep Codex built-in sessions separate.
       const customProviderConfig = this.customProviderConfig();
+      let modelProviders: string[] | undefined;
+      if (customProviderConfig && this.deps.customProvider) {
+        modelProviders = [customProviderConfig.model_provider];
+        if (!CODEX_BUILTIN_MODEL_PROVIDER_IDS.has(this.deps.customProvider.id)) {
+          modelProviders.push(this.deps.customProvider.id);
+        }
+      }
       const allThreads = await readCodexThreadWindow(client, this.logger, {
         limit: listLimit,
         cwd: options?.cwd,
-        ...(customProviderConfig && this.deps.customProvider
-          ? {
-              modelProviders: CODEX_BUILTIN_MODEL_PROVIDER_IDS.has(this.deps.customProvider.id)
-                ? [customProviderConfig.model_provider]
-                : [customProviderConfig.model_provider, this.deps.customProvider.id],
-            }
-          : {}),
+        ...(modelProviders ? { modelProviders } : {}),
       });
       const threads = filterCodexThreadsByCwd(allThreads, options?.cwd);
       return threads.slice(0, limit).map((thread) => {
