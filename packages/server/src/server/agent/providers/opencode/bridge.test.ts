@@ -839,6 +839,77 @@ describe("OpenCodeBridge", () => {
     }
   });
 
+  test("returns field-level 400s for invalid schedule input", async () => {
+    const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-opencode-schedule-input-"));
+    temporaryDirectories.push(paseoHome);
+    const logger = createTestLogger();
+    const providerSnapshotManager = new ProviderSnapshotManager({ logger });
+    const catalog = createPaseoToolCatalog({
+      agentManager: new AgentManager({ logger }),
+      agentStorage: new AgentStorage(paseoHome, logger),
+      providerSnapshotManager,
+      scheduleService: { inspect: vi.fn() } as never,
+      logger,
+    });
+    const bridge = new OpenCodeBridge({ paseoHome, logger });
+    bridge.setManifestCatalog(catalog);
+    await bridge.start();
+    bridge.bindSession({ sessionId: "schedule-input", env: {}, tools: catalog });
+
+    try {
+      const plugin = readPluginOptions(bridge.decorateServerEnv({}));
+      const headers = {
+        Authorization: `Bearer ${plugin.token}`,
+        "Content-Type": "application/json",
+      };
+      for (const [tool, input, issuePath, message] of [
+        [
+          "create_schedule",
+          { prompt: "Test", cron: "not-a-cron", provider: "codex" },
+          ["cron"],
+          "Cron expressions must have 5 fields",
+        ],
+        [
+          "create_schedule",
+          { prompt: "Test", cron: "0 0 * * *", timezone: "Mars/Phobos", provider: "codex" },
+          ["timezone"],
+          "Invalid cron time zone: Mars/Phobos",
+        ],
+        [
+          "update_schedule",
+          { id: "schedule", name: "" },
+          ["name"],
+          "Too small: expected string to have >=1 characters",
+        ],
+        [
+          "update_schedule",
+          { id: "schedule", cron: "0 0 30 2 *" },
+          ["cron"],
+          "Unable to compute next run time for cron expression: 0 0 30 2 *",
+        ],
+        [
+          "update_schedule",
+          { id: "schedule", expiresIn: "not-a-duration" },
+          ["expiresIn"],
+          "Invalid duration format: not-a-duration. Use formats like: 5m, 30s, 1h, 2h30m",
+        ],
+      ] as const) {
+        const response = await fetch(
+          `${plugin.baseUrl}/_internal/opencode/sessions/schedule-input/tools/${tool}`,
+          { method: "POST", headers, body: JSON.stringify(input) },
+        );
+        expect(response.status).toBe(400);
+        expect(await response.json()).toMatchObject({
+          error: "Invalid tool input",
+          issues: expect.arrayContaining([expect.objectContaining({ path: issuePath, message })]),
+        });
+      }
+    } finally {
+      await bridge.close();
+      await providerSnapshotManager.shutdown();
+    }
+  });
+
   test("preserves user OpenCode config while installing one content-addressed plugin", async () => {
     const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-opencode-bridge-config-"));
     temporaryDirectories.push(paseoHome);

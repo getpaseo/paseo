@@ -40,6 +40,7 @@ import { everyMsToFiveFieldCron } from "@getpaseo/protocol/schedule/cadence";
 import { expandUserPath, isSameOrDescendantPath, resolvePathFromBase } from "../../path-utils.js";
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
 import type { CreatePaseoWorktreeWorkflowFn } from "../../worktree-session.js";
+import { computeNextRunAt, validateScheduleCadence } from "../../schedule/cron.js";
 import {
   ScheduleNotFoundError,
   ScheduleStateConflictError,
@@ -442,6 +443,59 @@ function normalizeScheduleCadenceArg(value: string | undefined): string | undefi
 function normalizeScheduleTimeZoneArg(value: string | undefined): string | undefined {
   return normalizeScheduleCadenceArg(value);
 }
+
+function addScheduleCadenceIssue(
+  input: { cron?: string; timezone?: string },
+  context: z.RefinementCtx,
+): void {
+  const expression = input.cron?.trim();
+  if (!expression) {
+    return;
+  }
+  const cadence: ScheduleCadence = {
+    type: "cron",
+    expression,
+    ...(input.timezone !== undefined ? { timezone: input.timezone.trim() } : {}),
+  };
+  try {
+    validateScheduleCadence(cadence);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    context.addIssue({
+      code: "custom",
+      path: [message.startsWith("Invalid cron time zone:") ? "timezone" : "cron"],
+      message,
+    });
+    return;
+  }
+  try {
+    computeNextRunAt(cadence, new Date());
+  } catch (error) {
+    context.addIssue({
+      code: "custom",
+      path: ["cron"],
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function addScheduleDurationIssue(value: string, context: z.RefinementCtx): void {
+  try {
+    parseDurationString(value);
+  } catch (error) {
+    context.addIssue({
+      code: "custom",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+const scheduleDurationInputSchema = z.string().superRefine(addScheduleDurationIssue);
+const scheduleEveryInputSchema = z.string().superRefine((value, context) => {
+  if (value.trim()) {
+    addScheduleDurationIssue(value, context);
+  }
+});
 
 function resolveScheduleUpdateCadence(input: ScheduleUpdateToolInput): ScheduleCadence | undefined {
   const every = normalizeScheduleCadenceArg(input.every);
@@ -2538,24 +2592,26 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     {
       title: "Create schedule",
       description: "Create a recurring schedule that starts a new agent on a cron cadence.",
-      inputSchema: {
-        prompt: z.string().trim().min(1, "prompt is required"),
-        cron: z.string().trim().min(1, "cron is required"),
-        timezone: z
-          .string()
-          .trim()
-          .min(1)
-          .optional()
-          .describe("IANA time zone for the cron cadence. For example: America/New_York."),
-        name: z.string().optional(),
-        provider: (callerAgentId ? AgentProviderEnum.optional() : AgentProviderEnum).describe(
-          "Provider, or provider/model (for example: codex or codex/gpt-5.4). Defaults to the caller's provider in an agent-scoped session.",
-        ),
-        cwd: z.string().optional(),
-        isolation: z.enum(["local", "worktree"]).optional(),
-        maxRuns: z.number().int().positive().optional(),
-        expiresIn: z.string().optional(),
-      },
+      inputSchema: z
+        .object({
+          prompt: z.string().trim().min(1, "prompt is required"),
+          cron: z.string().trim().min(1, "cron is required"),
+          timezone: z
+            .string()
+            .trim()
+            .min(1)
+            .optional()
+            .describe("IANA time zone for the cron cadence. For example: America/New_York."),
+          name: z.string().optional(),
+          provider: (callerAgentId ? AgentProviderEnum.optional() : AgentProviderEnum).describe(
+            "Provider, or provider/model (for example: codex or codex/gpt-5.4). Defaults to the caller's provider in an agent-scoped session.",
+          ),
+          cwd: z.string().optional(),
+          isolation: z.enum(["local", "worktree"]).optional(),
+          maxRuns: z.number().int().positive().optional(),
+          expiresIn: scheduleDurationInputSchema.optional(),
+        })
+        .superRefine(addScheduleCadenceIssue),
       outputSchema: ScheduleSummarySchema.shape,
     },
     async ({ prompt, cron, timezone, name, provider, cwd, isolation, maxRuns, expiresIn }) => {
@@ -2588,19 +2644,21 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     {
       title: "Create heartbeat",
       description: "Create a recurring heartbeat that sends you a prompt on a cron cadence.",
-      inputSchema: {
-        prompt: z.string().trim().min(1, "prompt is required"),
-        cron: z.string().trim().min(1, "cron is required"),
-        timezone: z
-          .string()
-          .trim()
-          .min(1)
-          .optional()
-          .describe("IANA time zone for the cron cadence. For example: America/New_York."),
-        name: z.string().optional(),
-        maxRuns: z.number().int().positive().optional(),
-        expiresIn: z.string().optional(),
-      },
+      inputSchema: z
+        .object({
+          prompt: z.string().trim().min(1, "prompt is required"),
+          cron: z.string().trim().min(1, "cron is required"),
+          timezone: z
+            .string()
+            .trim()
+            .min(1)
+            .optional()
+            .describe("IANA time zone for the cron cadence. For example: America/New_York."),
+          name: z.string().optional(),
+          maxRuns: z.number().int().positive().optional(),
+          expiresIn: scheduleDurationInputSchema.optional(),
+        })
+        .superRefine(addScheduleCadenceIssue),
       outputSchema: ScheduleSummarySchema.shape,
     },
     async ({ prompt, cron, timezone, name, maxRuns, expiresIn }) => {
@@ -2788,6 +2846,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       inputSchema: z
         .object({
           id: z.string(),
+          every: scheduleEveryInputSchema.optional(),
           cron: z.string().optional().describe("New cron expression."),
           timezone: z
             .string()
@@ -2797,7 +2856,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
             .describe(
               "IANA time zone for cron cadence; requires cron. For example: America/New_York.",
             ),
-          name: z.string().nullable().optional().describe("New name (null to clear)."),
+          name: z
+            .string()
+            .trim()
+            .min(1)
+            .nullable()
+            .optional()
+            .describe("New name (null to clear)."),
           prompt: z.string().trim().min(1).optional().describe("New prompt text."),
           maxRuns: z
             .number()
@@ -2827,13 +2892,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
             .optional()
             .describe("New mode for new-agent target (null to clear)."),
           cwd: z.string().trim().min(1).optional().describe("New cwd for new-agent target."),
-          expiresIn: z
-            .string()
+          expiresIn: scheduleDurationInputSchema
             .optional()
             .describe("New relative expiry duration (for example: 1h, 2d)."),
           clearExpires: z.boolean().optional().describe("Clear any schedule expiry."),
         })
-        .passthrough(),
+        .passthrough()
+        .superRefine(addScheduleCadenceIssue),
       outputSchema: StoredScheduleSchema.shape,
     },
     async (input) => {
