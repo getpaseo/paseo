@@ -2,7 +2,11 @@ import React, { type RefCallback } from "react";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { hasOpenDomPopover, useWebOverlayRegistration } from "./overlay-root";
+import {
+  hasOpenDomPopover,
+  keyBelongsToDomPopover,
+  useWebOverlayRegistration,
+} from "./overlay-root";
 
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
@@ -83,5 +87,53 @@ describe("hasOpenDomPopover", () => {
     expect(hasOpenDomPopover()).toBe(true);
     panel.hidePopover();
     expect(hasOpenDomPopover()).toBe(false);
+  });
+});
+
+describe("Escape with a plugin popover open", () => {
+  afterEach(() => {
+    document.body.replaceChildren();
+  });
+
+  it("closes the popover first, and interrupts only on the next press", () => {
+    // A plugin's panel: shown with the Popover API, closed by its own Escape listener.
+    const panel = document.createElement("div");
+    panel.setAttribute("popover", "manual");
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && panel.matches(":popover-open")) panel.hidePopover();
+    });
+    const composer = document.createElement("textarea");
+    document.body.append(composer, panel);
+    // The shortcut engine: a window capture listener that interrupts on Escape.
+    let interrupts = 0;
+    const shortcuts = (event: KeyboardEvent) => {
+      if (keyBelongsToDomPopover(event)) return;
+      if (event.key === "Escape") interrupts += 1;
+    };
+    window.addEventListener("keydown", shortcuts, true);
+    try {
+      composer.focus();
+      panel.showPopover();
+      const escape = () =>
+        composer.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+
+      escape();
+      expect(panel.matches(":popover-open")).toBe(false);
+      expect(interrupts).toBe(0);
+
+      escape();
+      expect(interrupts).toBe(1);
+    } finally {
+      window.removeEventListener("keydown", shortcuts, true);
+    }
+  });
+
+  it("leaves other keys to the shortcuts while a popover is open", () => {
+    const panel = document.createElement("div");
+    panel.setAttribute("popover", "manual");
+    document.body.append(panel);
+    panel.showPopover();
+    expect(keyBelongsToDomPopover({ key: "Enter" })).toBe(false);
+    expect(keyBelongsToDomPopover({ key: "Escape" })).toBe(true);
   });
 });
