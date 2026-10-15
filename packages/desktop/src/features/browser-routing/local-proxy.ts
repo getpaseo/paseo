@@ -633,13 +633,17 @@ function handleConnect(
   let connected = false;
   let handle: TunnelStreamHandle | null = null;
   let pendingWriteBytes = 0;
+  let tunnelCloseReason: number | null = null;
   const handleClosed = (reason: number) => {
+    tunnelCloseReason = reason;
     if (!connected) {
       const status = httpStatusForTunnelCloseReason(reason);
       log("connect.failed", { host: target.host, port: target.port, reason, status });
       writeRawResponse(socket, status, titleForStatus(status));
       return;
     }
+    // Discard remaining upload bytes so the readable side can also reach EOF.
+    socket.resume();
     socket.end();
   };
   handle = openStream(target, {
@@ -668,15 +672,25 @@ function handleConnect(
   socket.pause();
 
   function forward(chunk: Buffer): void {
+    if (tunnelCloseReason !== null) return;
     pendingWriteBytes += chunk.length;
     if (pendingWriteBytes >= MAX_PENDING_SOCKET_WRITE_BYTES) socket.pause();
     stream.write(chunk, (error) => {
       pendingWriteBytes -= chunk.length;
+      // A normal remote close ends uploads while socket.end() drains the response.
+      // The bridge releases pending upload callbacks after notifying this sink.
+      if (tunnelCloseReason === TunnelCloseReason.Ok) return;
       if (error) {
         socket.destroy();
         return;
       }
-      if (pendingWriteBytes < MAX_PENDING_SOCKET_WRITE_BYTES && !socket.destroyed) socket.resume();
+      if (
+        tunnelCloseReason === null &&
+        pendingWriteBytes < MAX_PENDING_SOCKET_WRITE_BYTES &&
+        !socket.destroyed
+      ) {
+        socket.resume();
+      }
     });
   }
   socket.once("close", () => {

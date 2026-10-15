@@ -442,6 +442,71 @@ describe("local browser proxy: CONNECT", () => {
     ]);
   });
 
+  test("drains a backpressured CONNECT response when upload credit is exhausted", async () => {
+    const events: TunnelBridgeEvent[] = [];
+    const bridge = new TunnelBridge({
+      emit: (_senderId, event) => {
+        events.push(event);
+        return true;
+      },
+    });
+    expect(
+      bridge.register(1, {
+        serverId: "connect-upload-host",
+        subscriptionId: "connect-upload-subscription",
+        initialWindowBytes: 256 * 1024,
+        maxDataBytes: 64 * 1024,
+        maxStreams: 1,
+        connectTimeoutMs: 1000,
+      }).ok,
+    ).toBe(true);
+    cleanups.push(() => bridge.closeProvider("connect-upload-host", "unregistered"));
+    const proxy = await startProxy((target, sink) =>
+      bridge.openStreamFor("connect-upload-host", target, sink),
+    );
+    const { socket, wire, closed } = await connectRaw(proxy.port);
+    socket.write(
+      `CONNECT upload.invalid:443 HTTP/1.1\r\nProxy-Authorization: ${AUTHORIZATION}\r\n\r\n`,
+    );
+    await waitFor(() => events.length > 0);
+    const opened = events[0];
+    if (opened.name !== "network_tunnel_stream_open") throw new Error("stream not opened");
+    expect(bridge.streamConnected(1, opened.payload)).toEqual({ ok: true });
+    await waitFor(() => wire().includes("200 Connection Established"));
+    socket.write(Buffer.alloc(1024 * 1024, "x"));
+    const uploadedBytes = () =>
+      events.reduce(
+        (total, event) =>
+          total + (event.name === "network_tunnel_stream_data" ? event.payload.data.length : 0),
+        0,
+      );
+    await waitFor(() => uploadedBytes() === 256 * 1024);
+    socket.pause();
+    const chunk = Buffer.alloc(64 * 1024, "r");
+    let responseBytes = 0;
+    const returnedCredit = () =>
+      events.reduce(
+        (total, event) =>
+          total + (event.name === "network_tunnel_stream_credit" ? event.payload.credit : 0),
+        0,
+      );
+    while (responseBytes < 16 * 1024 * 1024 && responseBytes - returnedCredit() < 256 * 1024) {
+      expect(bridge.streamData(1, opened.payload, chunk)).toEqual({ ok: true });
+      responseBytes += chunk.length;
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    expect(responseBytes - returnedCredit()).toBe(256 * 1024);
+    expect(bridge.streamClose(1, opened.payload, TunnelCloseReason.Ok)).toEqual({ ok: true });
+    socket.resume();
+    await waitFor(closed);
+    expect(wire().length).toBe(
+      "HTTP/1.1 200 Connection Established\r\n\r\n".length + responseBytes,
+    );
+    expect(wire()).toBe(`HTTP/1.1 200 Connection Established\r\n\r\n${"r".repeat(responseBytes)}`);
+    expect(uploadedBytes()).toBe(256 * 1024);
+    expect(events.filter((event) => event.name === "network_tunnel_stream_close")).toEqual([]);
+  });
+
   test.each([
     [TunnelCloseReason.PolicyDenied, 403],
     [TunnelCloseReason.HostNotFound, 502],
