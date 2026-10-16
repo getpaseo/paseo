@@ -9,6 +9,9 @@ import {
 } from "@getpaseo/protocol/network-tunnel/rpc-schemas";
 import type { ProxyTarget, TunnelStreamHandle, TunnelStreamSink } from "./local-proxy.js";
 import { TunnelStreamError } from "./local-proxy.js";
+import type { TunnelStreamRef } from "./ipc-contract.js";
+
+export type { TunnelStreamRef } from "./ipc-contract.js";
 
 // Extra time main waits for Connected beyond the daemon's own connect timeout, so a
 // renderer that stops relaying never leaves a CONNECT hanging without an answer.
@@ -37,12 +40,6 @@ export type TunnelInvokeResult<T extends object = Record<never, never>> =
 export interface TunnelProviderRegistration extends NetworkTunnelLimits {
   serverId: string;
   subscriptionId: string;
-}
-
-export interface TunnelStreamRef {
-  serverId: string;
-  providerId: string;
-  streamId: string;
 }
 
 export type TunnelBridgeEvent =

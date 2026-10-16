@@ -7,6 +7,7 @@ import { i18n } from "@/i18n/i18next";
 import type { RoutingDesktop } from "@/desktop/browser/network-routing/contract";
 import { useNetworkRoutingStatus } from "@/desktop/browser/network-routing/status";
 import { BrowserRoutingSetting } from "./browser-routing-card";
+import { DesktopEventUnavailableError } from "@/desktop/electron/events";
 
 /**
  * In-memory adapter for the desktop port: it keeps the choice the desktop main process would
@@ -18,6 +19,9 @@ class FakeRoutingDesktop implements RoutingDesktop {
   failNextSave = false;
   saveReplyGate: Promise<void> | undefined;
   readReplyGate: Promise<void> | undefined;
+  listenReplyGate: Promise<void> | undefined;
+  listenFailure: { error: unknown } | undefined;
+  listenCalls = 0;
   readonly reads: boolean[] = [];
   readonly saved: boolean[] = [];
   private readonly listeners = new Map<string, Set<(payload: unknown) => void>>();
@@ -47,10 +51,17 @@ class FakeRoutingDesktop implements RoutingDesktop {
   }
 
   async listen(event: string, handler: (payload: unknown) => void): Promise<() => void> {
+    this.listenCalls += 1;
+    await this.listenReplyGate;
+    if (this.listenFailure) throw this.listenFailure.error;
     const handlers = this.listeners.get(event) ?? new Set();
     handlers.add(handler);
     this.listeners.set(event, handlers);
     return () => handlers.delete(handler);
+  }
+
+  get listenerCount(): number {
+    return this.listeners.get("browser_routing_changed")?.size ?? 0;
   }
 
   changeFromAnotherWindow(serverId: string, enabled: boolean): void {
@@ -67,23 +78,44 @@ interface Mounted {
 }
 const mounted: Mounted[] = [];
 
+class SettingErrorBoundary extends React.Component<React.PropsWithChildren, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    return this.state.failed ? <div>Unexpected listener error</div> : this.props.children;
+  }
+}
+
+interface MountOptions {
+  available?: boolean;
+  queryClient?: QueryClient;
+  onCaughtError?: (error: unknown) => void;
+}
+
 function mountSetting(
   desktop: RoutingDesktop,
   {
     available = true,
+    onCaughtError,
     queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     }),
-  } = {},
+  }: MountOptions = {},
 ): HTMLDivElement {
   const container = document.createElement("div");
   document.body.appendChild(container);
-  const root = createRoot(container);
+  const root = createRoot(container, { onCaughtError: (error) => onCaughtError?.(error) });
   act(() =>
     root.render(
       <I18nextProvider i18n={i18n}>
         <QueryClientProvider client={queryClient}>
-          <BrowserRoutingSetting serverId="remote" available={available} desktop={desktop} />
+          <SettingErrorBoundary>
+            <BrowserRoutingSetting serverId="remote" available={available} desktop={desktop} />
+          </SettingErrorBoundary>
         </QueryClientProvider>
       </I18nextProvider>,
     ),
@@ -123,6 +155,64 @@ afterEach(() => {
 });
 
 describe("host browser routing setting", () => {
+  it("keeps a failed subscription visible and retries it before allowing changes", async () => {
+    const desktop = new FakeRoutingDesktop();
+    desktop.listenFailure = { error: new DesktopEventUnavailableError() };
+    const container = mountSetting(desktop);
+    await vi.waitFor(() =>
+      expect(container.textContent).toContain("Could not save or load this setting"),
+    );
+    expect(desktop.reads).toEqual([false]);
+    expect(isDisabled(container)).toBe(true);
+    expect(desktop.listenerCount).toBe(0);
+
+    desktop.listenFailure = undefined;
+    const retry = Array.from(container.querySelectorAll<HTMLElement>('[role="button"]')).find(
+      (button) => button.textContent === "Retry",
+    );
+    if (!retry) throw new Error("Expected subscription retry action");
+    press(retry);
+    await vi.waitFor(() => expect(isDisabled(container)).toBe(false));
+    expect(desktop.listenCalls).toBe(2);
+    expect(desktop.listenerCount).toBe(1);
+    expect(container.querySelector('[data-testid="host-page-browser-routing-error"]')).toBeNull();
+    act(() => desktop.changeFromAnotherWindow("remote", true));
+    await expectSwitchShows(container, "on");
+  });
+
+  it.each([
+    new Error("unexpected listener failure"),
+    new TypeError("bad listener"),
+    "rejected",
+    null,
+  ])("propagates an unexpected listener failure unchanged: %s", async (error) => {
+    const desktop = new FakeRoutingDesktop();
+    desktop.listenFailure = { error };
+    const onCaughtError = vi.fn();
+    const container = mountSetting(desktop, { onCaughtError });
+    await vi.waitFor(() => expect(onCaughtError).toHaveBeenCalledWith(error));
+    expect(container.textContent).toBe("Unexpected listener error");
+  });
+
+  it("waits for subscription readiness and disposes a late listener after unmount", async () => {
+    const desktop = new FakeRoutingDesktop();
+    let finishListen: () => void = () => {
+      throw new Error("Listener gate not initialized");
+    };
+    desktop.listenReplyGate = new Promise<void>((resolve) => {
+      finishListen = resolve;
+    });
+    const container = mountSetting(desktop);
+    await vi.waitFor(() => expect(desktop.reads).toEqual([false]));
+    expect(isDisabled(container)).toBe(true);
+    const entry = mounted.pop();
+    if (!entry) throw new Error("Expected mounted setting");
+    act(() => entry.root.unmount());
+    entry.container.remove();
+    await act(async () => finishListen());
+    expect(desktop.listenerCount).toBe(0);
+  });
+
   it("explains that an unsupported host must be updated", async () => {
     const container = mountSetting(new FakeRoutingDesktop(), { available: false });
     await vi.waitFor(() => expect(container.textContent).toContain("Update this host"));

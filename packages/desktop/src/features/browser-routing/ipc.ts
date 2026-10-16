@@ -2,9 +2,8 @@ import { z } from "zod";
 import type { DesktopCommandHandler } from "../../settings/desktop-settings-commands.js";
 import type { BrowserRoutingManager } from "./manager.js";
 import type { TunnelInvokeResult } from "./tunnel-bridge.js";
+import { IdSchema, ProviderRefSchema, ServerIdSchema, StreamRefSchema } from "./ipc-contract.js";
 
-const ServerIdSchema = z.string().trim().min(1).max(512);
-const IdSchema = z.string().min(1).max(255);
 const PositiveIntSchema = z.number().int().positive();
 
 const RoutingTargetSchema = z.object({ serverId: ServerIdSchema });
@@ -18,8 +17,6 @@ const ProviderRegisterSchema = z.object({
   maxStreams: PositiveIntSchema,
   connectTimeoutMs: PositiveIntSchema,
 });
-const ProviderRefSchema = z.object({ serverId: ServerIdSchema, providerId: IdSchema });
-const StreamRefSchema = ProviderRefSchema.extend({ streamId: IdSchema });
 const StreamDataSchema = StreamRefSchema.extend({ data: z.instanceof(Uint8Array) });
 const StreamCreditSchema = StreamRefSchema.extend({ credit: PositiveIntSchema.max(0xffffffff) });
 const StreamCloseSchema = StreamRefSchema.extend({ reason: z.number().int().min(0).max(255) });
