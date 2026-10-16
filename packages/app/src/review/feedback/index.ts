@@ -23,8 +23,7 @@ export type FeedbackPhase =
   | { kind: "idle" }
   | { kind: "choosing" }
   | { kind: "sending"; recipient: FeedbackRecipient; commentCount: number }
-  | { kind: "failed"; message: string }
-  | { kind: "sent"; recipient: FeedbackRecipient };
+  | { kind: "failed"; message: string };
 export interface ReviewFeedbackState {
   phase: FeedbackPhase;
   commentCount: number;
@@ -115,7 +114,7 @@ function createFeedbackView(
     try {
       await ports.send(recipient, attachment);
       ports.clearSent(sentComments);
-      workflow.changePhase({ kind: "sent", recipient });
+      workflow.changePhase({ kind: "idle" });
     } catch (error) {
       workflow.changePhase({
         kind: "failed",

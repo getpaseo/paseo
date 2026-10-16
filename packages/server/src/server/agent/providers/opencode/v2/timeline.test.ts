@@ -92,7 +92,7 @@ test("a tool's image output is shown as an image, not as base64 in the tool outp
     },
     {
       type: "assistant_message",
-      text: expect.stringMatching(/^!\[Image\]\(file:\/\/.*paseo-attachments.*\.png\)$/),
+      text: expect.stringMatching(/^\n\n!\[Image\]\(file:\/\/.*paseo-attachments.*\.png\)\n\n$/),
     },
   ]);
   expect(timeline.messages([screenshot])).toEqual([]);
