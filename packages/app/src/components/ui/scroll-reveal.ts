@@ -34,6 +34,7 @@ export function getScrollOffsetToRevealItem(args: {
 
 export interface RevealActiveItemHandlers {
   activeItemRef: RefObject<View | null>;
+  contentRef: RefObject<View | null>;
   onItemLayout: () => void;
   onViewportLayout: (event: LayoutChangeEvent) => void;
   onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
@@ -53,6 +54,7 @@ export function useRevealActiveItem(options: {
 }): RevealActiveItemHandlers {
   const { activeIndex, listKey, scrollRef } = options;
   const activeItemRef = useRef<View | null>(null);
+  const contentRef = useRef<View | null>(null);
   const viewportHeightRef = useRef(0);
   const offsetRef = useRef(0);
   const measurementRef = useRef(0);
@@ -61,7 +63,7 @@ export function useRevealActiveItem(options: {
     const request = ++measurementRef.current;
     const item = activeItemRef.current;
     const scroll = scrollRef.current;
-    const content = scroll?.getInnerViewNode();
+    const content = contentRef.current;
     if (!item || !scroll || !content) return;
 
     item.measureLayout(content, (_left, top, _width, height) => {
@@ -104,5 +106,5 @@ export function useRevealActiveItem(options: {
     offsetRef.current = event.nativeEvent.contentOffset.y;
   }, []);
 
-  return { activeItemRef, onItemLayout: reveal, onViewportLayout, onScroll };
+  return { activeItemRef, contentRef, onItemLayout: reveal, onViewportLayout, onScroll };
 }

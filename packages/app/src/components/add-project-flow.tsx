@@ -731,11 +731,12 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
 
   const activeIndex = rows.length === 0 ? 0 : Math.min(page.activeIndex, rows.length - 1);
   const rowListKey = useMemo(() => rows.map((row) => row.id).join("\u0000"), [rows]);
-  const { activeItemRef, onItemLayout, onViewportLayout, onScroll } = useRevealActiveItem({
-    activeIndex,
-    listKey: rowListKey,
-    scrollRef: resultsRef,
-  });
+  const { activeItemRef, contentRef, onItemLayout, onViewportLayout, onScroll } =
+    useRevealActiveItem({
+      activeIndex,
+      listKey: rowListKey,
+      scrollRef: resultsRef,
+    });
   const createDirectory = useCallback(async () => {
     if (page.kind !== "new-directory-name" || !client) return;
     const name = page.name.trim();
@@ -928,7 +929,6 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
           <ScrollView
             ref={resultsRef}
             style={styles.results}
-            contentContainerStyle={styles.resultsContent}
             keyboardShouldPersistTaps="always"
             onLayout={onViewportLayout}
             onScroll={onScroll}
@@ -936,53 +936,55 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
             showsVerticalScrollIndicator={false}
             testID="add-project-flow-results"
           >
-            {preview ? (
-              <Text style={styles.preview} testID="add-project-flow-path-preview">
-                {shortenPath(preview)}
-              </Text>
-            ) : null}
-            {isSubmitting ? (
-              <Text style={styles.stateText} testID="add-project-flow-progress">
-                {progressText(page)}
-              </Text>
-            ) : null}
-            {!isSubmitting && page.error ? (
-              <Text style={styles.errorText} testID="add-project-flow-error">
-                {page.error}
-              </Text>
-            ) : null}
-            {!isSubmitting && queryError ? (
-              <Text style={styles.errorText} testID="add-project-flow-query-error">
-                {queryError}
-              </Text>
-            ) : null}
-            {!isSubmitting && loading ? (
-              <Text style={styles.stateText} testID="add-project-flow-loading">
-                Loading...
-              </Text>
-            ) : null}
-            {!isSubmitting &&
-            (!loading || page.kind === "github-search") &&
-            (!queryError || page.kind === "github-search")
-              ? rows.map((option, index) => (
-                  <FlowRow
-                    key={option.id}
-                    option={option}
-                    activeItemRef={activeItemRef}
-                    active={index === activeIndex}
-                    onRowLayout={onItemLayout}
-                  />
-                ))
-              : null}
-            {!isSubmitting &&
-            !loading &&
-            !queryError &&
-            rows.length === 0 &&
-            page.kind !== "new-directory-name" ? (
-              <Text style={styles.stateText} testID="add-project-flow-empty">
-                {emptyText(page, host ?? null)}
-              </Text>
-            ) : null}
+            <View ref={contentRef} collapsable={false} style={styles.resultsContent}>
+              {preview ? (
+                <Text style={styles.preview} testID="add-project-flow-path-preview">
+                  {shortenPath(preview)}
+                </Text>
+              ) : null}
+              {isSubmitting ? (
+                <Text style={styles.stateText} testID="add-project-flow-progress">
+                  {progressText(page)}
+                </Text>
+              ) : null}
+              {!isSubmitting && page.error ? (
+                <Text style={styles.errorText} testID="add-project-flow-error">
+                  {page.error}
+                </Text>
+              ) : null}
+              {!isSubmitting && queryError ? (
+                <Text style={styles.errorText} testID="add-project-flow-query-error">
+                  {queryError}
+                </Text>
+              ) : null}
+              {!isSubmitting && loading ? (
+                <Text style={styles.stateText} testID="add-project-flow-loading">
+                  Loading...
+                </Text>
+              ) : null}
+              {!isSubmitting &&
+              (!loading || page.kind === "github-search") &&
+              (!queryError || page.kind === "github-search")
+                ? rows.map((option, index) => (
+                    <FlowRow
+                      key={option.id}
+                      option={option}
+                      activeItemRef={activeItemRef}
+                      active={index === activeIndex}
+                      onRowLayout={onItemLayout}
+                    />
+                  ))
+                : null}
+              {!isSubmitting &&
+              !loading &&
+              !queryError &&
+              rows.length === 0 &&
+              page.kind !== "new-directory-name" ? (
+                <Text style={styles.stateText} testID="add-project-flow-empty">
+                  {emptyText(page, host ?? null)}
+                </Text>
+              ) : null}
+            </View>
           </ScrollView>
           <View style={styles.footer} testID="add-project-flow-footer">
             <FlowHint keys={NAVIGATION_HINT_KEYS} action="Navigate" />
