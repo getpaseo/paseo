@@ -40,10 +40,9 @@ index 0a1c6c2..5935112 100644
  
    struct OnLinkLongPress {
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdown.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdown.kt
-index c12937c..5f288b3 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdown.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdown.kt
-@@ -95,7 +95,7 @@ class EnrichedMarkdown(
+@@ -95,7 +95,7 @@
    private var accessibilityLabels = AccessibilityLabels()
    private var textBreakStrategy: String = BreakStrategyUtils.DEFAULT_STRATEGY
  
@@ -52,13 +51,52 @@ index c12937c..5f288b3 100644
    private var onLinkLongPressCallback: ((String) -> Unit)? = null
    private var onTaskListItemPressCallback: ((Int, Boolean, String) -> Unit)? = null
    private var onLatexErrorCallback: LatexErrorReporter? = null
-@@ -296,7 +296,7 @@ class EnrichedMarkdown(
+@@ -296,7 +296,7 @@
      }
    }
  
 -  fun setOnLinkPressCallback(callback: (String) -> Unit) {
 +  fun setOnLinkPressCallback(callback: (String, String) -> Unit) {
      onLinkPressCallback = callback
+   }
+ 
+@@ -405,7 +405,7 @@
+     val codeLinkRegex = inlineCodeLinkRegex
+     val renderId = ++currentRenderId
+ 
+-    executor.execute {
++    dispatchMarkdownRender(segmentViews.isNotEmpty(), executor) {
+       try {
+         val filtered =
+           if (isStreaming) {
+@@ -418,13 +418,13 @@
+ 
+         if (renderableMarkdown.isEmpty()) {
+           postToMain(renderId) { applyRenderedSegments(emptyList(), false) }
+-          return@execute
++          return@dispatchMarkdownRender
+         }
+ 
+         val ast =
+           parser.parseMarkdown(renderableMarkdown, md4cFlags, isGFM, textLinkRegex, codeLinkRegex) ?: run {
+             postToMain(renderId) { applyRenderedSegments(emptyList(), false) }
+-            return@execute
++            return@dispatchMarkdownRender
+           }
+ 
+         val segments = splitASTIntoSegments(ast)
+@@ -646,8 +646,12 @@
+     renderId: Long,
+     action: () -> Unit,
+   ) {
+-    mainHandler.post {
++    if (Looper.myLooper() == Looper.getMainLooper()) {
+       if (renderId == currentRenderId) action()
++    } else {
++      mainHandler.post {
++        if (renderId == currentRenderId) action()
++      }
+     }
    }
  
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownManager.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownManager.kt
@@ -2823,5 +2861,70 @@ index 0000000..b3394c4
 +    assertEquals(4L, cache.get(key("other")))
 +    cache.clear()
 +    assertNull(cache.get(key("other")))
++  }
++}
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/MarkdownRenderDispatch.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/MarkdownRenderDispatch.kt
+new file mode 100644
+--- /dev/null
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/MarkdownRenderDispatch.kt
+@@ -0,0 +1,9 @@
++package com.swmansion.enriched.markdown
++
++import java.util.concurrent.Executor
++
++// Keep populated views in step with Fabric geometry when streaming blocks move or collapse.
++// First mounts retain worker preparation so large history rows do not parse on the UI thread.
++internal fun dispatchMarkdownRender(hasContent: Boolean, executor: Executor, render: () -> Unit) {
++  if (hasContent) render() else executor.execute(render)
++}
+diff --git a/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/MarkdownRenderDispatchTest.kt b/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/MarkdownRenderDispatchTest.kt
+new file mode 100644
+--- /dev/null
++++ b/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/MarkdownRenderDispatchTest.kt
+@@ -0,0 +1,46 @@
++package com.swmansion.enriched.markdown
++
++import java.util.concurrent.CountDownLatch
++import java.util.concurrent.Executors
++import java.util.concurrent.TimeUnit
++import org.junit.Assert.*
++import org.junit.Test
++
++class MarkdownRenderDispatchTest {
++  @Test fun populatedViewUpdatesBeforeReturningEvenWithBusyWorker() {
++    val executor = Executors.newSingleThreadExecutor()
++    val release = CountDownLatch(1)
++    val started = CountDownLatch(1)
++    try {
++      executor.execute { started.countDown(); release.await() }
++      assertTrue(started.await(5, TimeUnit.SECONDS))
++      val caller = Thread.currentThread()
++      var rendered = false
++      dispatchMarkdownRender(true, executor) {
++        assertSame(caller, Thread.currentThread())
++        rendered = true
++      }
++      assertTrue(rendered)
++    } finally {
++      release.countDown()
++      executor.shutdownNow()
++    }
++  }
++
++  @Test fun firstMountPreparesOnWorker() {
++    val executor = Executors.newSingleThreadExecutor()
++    val finished = CountDownLatch(1)
++    val caller = Thread.currentThread()
++    var worker: Thread? = null
++    try {
++      dispatchMarkdownRender(false, executor) {
++        worker = Thread.currentThread()
++        finished.countDown()
++      }
++      assertTrue(finished.await(5, TimeUnit.SECONDS))
++      assertNotSame(caller, worker)
++    } finally {
++      executor.shutdownNow()
++    }
 +  }
 +}
