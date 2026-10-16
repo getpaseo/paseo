@@ -1,3 +1,4 @@
+import { sharedOrdering } from "@/ordering";
 import type { OwnedSubscription } from "@getpaseo/client";
 import type {
   DaemonClient,
@@ -190,6 +191,7 @@ export class DirectorySync {
     this.flushAbortedTransactions();
     this.releaseSubscriptions();
     workspaceLabels.disconnect(this.serverId);
+    sharedOrdering.disconnect(this.serverId);
     this.connection = connection;
     this.abortPendingSessionWaits();
     if (!connection.client || connection.status !== "online") return true;
@@ -233,6 +235,7 @@ export class DirectorySync {
     this.fullDemandSources.clear();
     this.routeDemandIds.clear();
     workspaceLabels.disconnect(this.serverId);
+    sharedOrdering.disconnect(this.serverId);
   }
 
   private releaseSubscriptions(): void {
@@ -589,6 +592,11 @@ export class DirectorySync {
   async connectWorkspaceLabels(): Promise<void> {
     const { client } = this.requireOnline();
     const serverInfo = client.getLastServerInfoMessage();
+    await sharedOrdering.connect({
+      serverId: this.serverId,
+      client,
+      supported: serverInfo?.features?.sharedOrdering === true,
+    });
     await workspaceLabels.connect({
       serverId: this.serverId,
       client,

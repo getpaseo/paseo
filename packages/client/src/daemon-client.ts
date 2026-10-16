@@ -2517,6 +2517,31 @@ export class DaemonClient {
     });
   }
 
+  listOrders() {
+    return this.sendNamespacedCorrelatedSessionRequest<"ui.order.list.response">({
+      message: { type: "ui.order.list.request" },
+    });
+  }
+
+  observeOrders(options?: { signal?: AbortSignal }) {
+    return this.observe(
+      "ui.order.list.response",
+      { type: "ui.order.list.request", subscribe: {} },
+      options,
+    );
+  }
+
+  setOrder(
+    input: Omit<
+      Extract<SessionInboundMessage, { type: "ui.order.set.request" }>,
+      "type" | "requestId"
+    >,
+  ) {
+    return this.sendNamespacedCorrelatedSessionRequest<"ui.order.set.response">({
+      message: { type: "ui.order.set.request", ...input },
+    });
+  }
+
   listWorkspaceLabels(
     options: {
       sync?: { generation: string; afterSeq: number };

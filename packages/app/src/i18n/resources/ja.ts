@@ -2,6 +2,12 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
+  sharedOrdering: {
+    unsupported:
+      "ワークスペースとタブの順序をデバイス間で同期するには、このホストを更新してください。",
+    failed: "順序を同期できませんでした。",
+    conflict: "別のデバイスが順序を変更しました。共有の順序を復元しました。",
+  },
   paneFind: {
     connectionFailure:
       "このチャットを検索できませんでした。ホストへの接続を確認して再試行してください。",

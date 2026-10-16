@@ -1,3 +1,4 @@
+import { observeOrderErrors } from "@/ordering/intents";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   View,
@@ -1902,6 +1903,19 @@ export function SidebarWorkspaceList({
   parentGestureRef,
   dragGestureHostActive,
 }: SidebarWorkspaceListProps) {
+  const toast = useToast();
+  const { t } = useTranslation();
+  useEffect(
+    () =>
+      observeOrderErrors((error) => {
+        toast.error(
+          error.detail
+            ? `${t(`sharedOrdering.${error.kind}`)}: ${error.detail}`
+            : t(`sharedOrdering.${error.kind}`),
+        );
+      }),
+    [toast, t],
+  );
   const pathname = usePathname();
   const hosts = useHosts();
   const rowItems = useSidebarRowItems();
@@ -1936,6 +1950,7 @@ export function SidebarWorkspaceList({
           currentOrder,
           reorderedVisibleKeys: reorderedWorkspaceKeys,
         }),
+        { userInitiated: true },
       );
     },
     [getPinnedWorkspaceOrder, setPinnedWorkspaceOrder],
@@ -2245,6 +2260,7 @@ function ProjectModeList({
           currentOrder: currentWorkspaceOrder,
           reorderedVisibleKeys: reorderedWorkspaceKeys,
         }),
+        { userInitiated: true },
       );
     },
     [getWorkspaceOrder, setWorkspaceOrder],

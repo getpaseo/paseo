@@ -37,6 +37,18 @@ That matters because real development rarely fits into one long chat. You might 
 
 In Paseo, the workspace is the stable container. The sessions are what you run inside it.
 
+## Ordering across devices
+
+Drag a workspace or tab to publish its order to the connected daemon. Other clients
+connected to that daemon apply the shared order and restore it after reconnecting.
+Pinned workspaces share their order too. Both the app and daemon must support shared
+ordering; update older installations to use it.
+
+The first drag establishes the shared order. Each device keeps its open tabs, split
+panes, and focus. Shared tabs keep the same relative order within each pane; ordering
+does not open or close tabs on another device. Orders belong to one daemon, so the
+relative placement of items from different hosts remains local.
+
 ## Choose the isolation
 
 Every workspace has an isolation mode:

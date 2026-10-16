@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
+  sharedOrdering: {
+    unsupported: "请更新此主机，以跨设备同步 workspace 和 tab 排序。",
+    failed: "无法同步排序。",
+    conflict: "另一台设备已修改排序，已恢复共享顺序。",
+  },
   paneFind: {
     connectionFailure: "无法搜索此聊天。请检查主机连接后重试。",
     historyChangedFailure: "搜索期间聊天已更改。请重新搜索。",

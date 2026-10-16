@@ -2,6 +2,12 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ru: TranslationResources = {
+  sharedOrdering: {
+    unsupported:
+      "Обновите этот хост, чтобы синхронизировать порядок рабочих пространств и вкладок между устройствами.",
+    failed: "Не удалось синхронизировать порядок.",
+    conflict: "Другое устройство изменило порядок. Общий порядок восстановлен.",
+  },
   paneFind: {
     connectionFailure:
       "Не удалось выполнить поиск в чате. Проверьте подключение к хосту и повторите попытку.",

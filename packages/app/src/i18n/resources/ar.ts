@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ar: TranslationResources = {
+  sharedOrdering: {
+    unsupported: "حدّث هذا المضيف لمزامنة ترتيب مساحات العمل وعلامات التبويب بين الأجهزة.",
+    failed: "تعذّرت مزامنة الترتيب.",
+    conflict: "غيّر جهاز آخر الترتيب. تمت استعادة الترتيب المشترك.",
+  },
   paneFind: {
     connectionFailure: "تعذر البحث في هذه المحادثة. تحقق من الاتصال بالمضيف وأعد المحاولة.",
     historyChangedFailure: "تغيّرت المحادثة أثناء البحث. أعد البحث.",

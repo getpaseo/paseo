@@ -2,6 +2,12 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
+  sharedOrdering: {
+    unsupported:
+      "Mettez à jour cet hôte pour synchroniser l’ordre des espaces de travail et des onglets entre appareils.",
+    failed: "Impossible de synchroniser l’ordre.",
+    conflict: "Un autre appareil a modifié l’ordre. L’ordre partagé a été restauré.",
+  },
   paneFind: {
     connectionFailure:
       "Impossible de rechercher dans cette conversation. Vérifiez la connexion à l’hôte et réessayez.",

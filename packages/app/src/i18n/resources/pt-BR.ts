@@ -2,6 +2,12 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ptBR: TranslationResources = {
+  sharedOrdering: {
+    unsupported:
+      "Atualize este host para sincronizar a ordem dos espaços de trabalho e das abas entre dispositivos.",
+    failed: "Não foi possível sincronizar a ordem.",
+    conflict: "Outro dispositivo alterou a ordem. A ordem compartilhada foi restaurada.",
+  },
   paneFind: {
     connectionFailure:
       "Não foi possível pesquisar nesta conversa. Verifique a conexão com o host e tente novamente.",
