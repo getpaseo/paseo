@@ -17,16 +17,21 @@ const loadCodeAssistSchema = z.object({
 });
 
 const userQuotaBucketSchema = z.object({
-  bucketId: z.string(),
+  bucketId: z.string().optional(),
+  id: z.string().optional(),
   displayName: z.string().optional(),
+  name: z.string().optional(),
   window: z.string().optional(),
   resetTime: z.string().nullish(),
+  reset_time: z.string().nullish(),
   description: z.string().optional(),
   remainingFraction: z.number().nullish(),
+  remaining_fraction: z.number().nullish(),
 });
 
 const userQuotaGroupSchema = z.object({
   displayName: z.string().optional(),
+  name: z.string().optional(),
   description: z.string().optional(),
   buckets: z.array(userQuotaBucketSchema).optional(),
 });
@@ -146,31 +151,54 @@ async function resolveCodeAssist(
   };
 }
 
+function getGroupInfo(displayName?: string): { prefix: string; short: string; id: string } {
+  const name = displayName ?? "";
+  if (/argon/i.test(name)) {
+    return {
+      prefix: "Gemini 4 Argon",
+      short: "Argon",
+      id: "gemini-argon",
+    };
+  }
+  if (/gemini/i.test(name)) {
+    return {
+      prefix: "Gemini",
+      short: "Gemini",
+      id: "gemini",
+    };
+  }
+  return {
+    prefix: "Claude & GPT-OSS",
+    short: "Claude/OSS",
+    id: "claude-gpt-oss",
+  };
+}
+
 function buildSummaryWindows(groups: z.infer<typeof userQuotaGroupSchema>[]): UsageWindow[] {
   const windows: UsageWindow[] = [];
 
   for (const group of groups) {
-    const isGemini = /gemini/i.test(group.displayName ?? "");
-    const groupPrefix = isGemini ? "Gemini" : "Claude & GPT-OSS";
-    const groupShort = isGemini ? "Gemini" : "Claude/OSS";
-    const idPrefix = isGemini ? "gemini" : "claude-gpt-oss";
+    const groupName = group.displayName ?? group.name ?? "";
+    const { prefix: groupPrefix, short: groupShort, id: idPrefix } = getGroupInfo(groupName);
 
     for (const bucket of group.buckets ?? []) {
-      if (bucket.remainingFraction == null) continue;
+      const remainingFraction = bucket.remainingFraction ?? bucket.remaining_fraction;
+      if (remainingFraction == null) continue;
+
+      const bucketId = bucket.bucketId ?? bucket.id ?? "";
+      const bucketName = bucket.displayName ?? bucket.name ?? "";
+      const windowStr = bucket.window ?? "";
 
       const isWeekly =
-        /week/i.test(bucket.window ?? "") ||
-        /week/i.test(bucket.bucketId) ||
-        /week/i.test(bucket.displayName ?? "");
+        /week/i.test(windowStr) || /week/i.test(bucketId) || /week/i.test(bucketName);
       const windowId = isWeekly ? `${idPrefix}-weekly` : `${idPrefix}-5h`;
       const label = `${groupPrefix} \u00b7 ${isWeekly ? "Weekly" : "5h"}`;
       const shortLabel = `${groupShort} ${isWeekly ? "wk" : "5h"}`;
       const summary = isWeekly;
 
-      const utilizationPct = Math.max(
-        0,
-        Math.min(100, Math.round((1 - bucket.remainingFraction) * 100)),
-      );
+      const utilizationPct = Math.max(0, Math.min(100, Math.round((1 - remainingFraction) * 100)));
+
+      const resetTime = bucket.resetTime ?? bucket.reset_time ?? null;
 
       windows.push(
         windowFromUsedPct({
@@ -179,7 +207,7 @@ function buildSummaryWindows(groups: z.infer<typeof userQuotaGroupSchema>[]): Us
           shortLabel,
           summary,
           utilizationPct,
-          resetsAt: bucket.resetTime ?? null,
+          resetsAt: resetTime,
           tone: toneFromUsedPct(utilizationPct),
         }),
       );
@@ -202,7 +230,17 @@ const BUCKET_DEFS = [
     label: "Gemini (all models)",
     shortLabel: "Gemini",
     isMember: (modelId: string, displayName: string) =>
-      modelId.toLowerCase().startsWith("gemini") || displayName.toLowerCase().startsWith("gemini"),
+      !/argon/i.test(modelId) &&
+      !/argon/i.test(displayName) &&
+      (modelId.toLowerCase().startsWith("gemini") ||
+        displayName.toLowerCase().startsWith("gemini")),
+  },
+  {
+    id: "gemini-argon",
+    label: "Gemini 4 Argon (all models)",
+    shortLabel: "Argon",
+    isMember: (modelId: string, displayName: string) =>
+      /argon/i.test(modelId) || /argon/i.test(displayName),
   },
   {
     id: "claude-gpt-oss",
