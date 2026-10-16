@@ -28,6 +28,7 @@ import { useTranslation } from "react-i18next";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { ArrowUp, Mic, MicOff, CornerDownLeft, Plus, Square } from "lucide-react-native";
 import { useDictation } from "@/hooks/use-dictation";
+import { hasFinePointer } from "@/hooks/use-fine-pointer";
 import { DictationOverlay } from "@/components/dictation-controls";
 import { RealtimeVoiceOverlay } from "@/components/realtime-voice-overlay";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -1289,12 +1290,14 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       webTextareaRef.current = element;
       setWebTextArea(element);
     }, []);
-    // Focus intent outlives a blur only while the pane is not the user's pane (a retained
-    // tab hidden, a sheet over it); the pane coming back restores focus. A blur while the
-    // pane is theirs drops it, whatever the layout mode: the user dismissed the keyboard,
-    // or a compact overlay panel did on their behalf, and nothing later refocuses.
+    // Only mouse-driven UIs restore editing focus on navigation. Touch users return
+    // to the conversation; replaying old focus would reopen their software keyboard.
+    // Read pointer capability when restoring, without making a pointer change itself
+    // a focus trigger.
     useLayoutEffect(() => {
-      if (isPaneFocused && focusIntentRef.current) textInputRef.current?.focus();
+      if (isPaneFocused && focusIntentRef.current && hasFinePointer()) {
+        textInputRef.current?.focus();
+      }
     }, [isPaneFocused]);
     // The compact and desktop screens mount the editor in different trees, so a
     // viewport that crosses the breakpoint remounts it. The draft owner brings the
@@ -1311,7 +1314,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         retainedSelectionRef.current = retained.selection;
         selectionRef.current = selection;
         textInputRef.current?.setSelection(selection);
-        if (retained.focused) {
+        if (retained.focused && hasFinePointer()) {
           focusIntentRef.current = true;
           if (paneFocusedRef.current) textInputRef.current?.focus();
         }
@@ -1818,6 +1821,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     }, [onFocusChange]);
 
     const handleInputBlur = useCallback(() => {
+      // A blur in the active pane is a dismissal; only hiding the pane preserves intent.
       if (paneFocusedRef.current) focusIntentRef.current = false;
       isInputFocusedRef.current = false;
       setIsInputFocused(false);
