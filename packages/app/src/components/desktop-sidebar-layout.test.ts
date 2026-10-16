@@ -78,8 +78,24 @@ describe("desktop sidebar layout", () => {
     expect(resolveDesktopSidebarWidth({ requestedWidth: 600, viewportWidth: 1440 })).toBe(600);
   });
 
+  it.each([
+    { viewportWidth: 600, sidebarWidth: 200 },
+    { viewportWidth: 698, sidebarWidth: 298 },
+  ])(
+    "preserves the center pane on a $viewportWidth dp tablet",
+    ({ viewportWidth, sidebarWidth }) => {
+      const visibleWidth = resolveDesktopSidebarWidth({ requestedWidth: 600, viewportWidth });
+      expect(visibleWidth).toBe(sidebarWidth);
+      expect(viewportWidth - visibleWidth).toBe(400);
+    },
+  );
+
   it("yields app navigation when settings needs the shell width", () => {
-    const settingsMinimum = resolveDesktopAppContentMinimum({ isSettingsRoute: true });
+    const settingsMinimum = resolveDesktopAppContentMinimum({
+      isSettingsRoute: true,
+      requestedSidebarWidth: 320,
+      viewportWidth: 751,
+    });
     expect(settingsMinimum).toBe(720);
     expect(
       canDesktopAppSidebarShare({
@@ -90,11 +106,38 @@ describe("desktop sidebar layout", () => {
     ).toBe(false);
   });
 
+  it.each([
+    { viewportWidth: 698, requestedSidebarWidth: 240, settingsMinimum: 640, canShare: false },
+    { viewportWidth: 879, requestedSidebarWidth: 240, settingsMinimum: 640, canShare: false },
+    { viewportWidth: 880, requestedSidebarWidth: 240, settingsMinimum: 640, canShare: true },
+    { viewportWidth: 1500, requestedSidebarWidth: 600, settingsMinimum: 1000, canShare: false },
+    { viewportWidth: 1600, requestedSidebarWidth: 600, settingsMinimum: 1000, canShare: true },
+  ])(
+    "reserves the shared sidebar width and settings detail at $viewportWidth px",
+    ({ viewportWidth, requestedSidebarWidth, settingsMinimum, canShare }) => {
+      const contentMinimumWidth = resolveDesktopAppContentMinimum({
+        isSettingsRoute: true,
+        requestedSidebarWidth,
+        viewportWidth,
+      });
+
+      expect(contentMinimumWidth).toBe(settingsMinimum);
+      expect(
+        canDesktopAppSidebarShare({ contentMinimumWidth, requestedSidebarWidth, viewportWidth }),
+      ).toBe(canShare);
+    },
+  );
+
   it("imposes no content minimum outside settings", () => {
-    expect(resolveDesktopAppContentMinimum({ isSettingsRoute: false })).toBe(0);
+    const contentMinimumWidth = resolveDesktopAppContentMinimum({
+      isSettingsRoute: false,
+      requestedSidebarWidth: 320,
+      viewportWidth: 751,
+    });
+    expect(contentMinimumWidth).toBe(0);
     expect(
       canDesktopAppSidebarShare({
-        contentMinimumWidth: resolveDesktopAppContentMinimum({ isSettingsRoute: false }),
+        contentMinimumWidth,
         requestedSidebarWidth: 320,
         viewportWidth: 751,
       }),

@@ -47,7 +47,11 @@ describe("Android app config", () => {
         (entry: ManifestEntry) => entry.$["android:name"],
       );
       const features = (manifest["uses-feature"] ?? []).map((entry: ManifestEntry) => entry.$);
+      const mainActivity = manifest.application[0].activity.find(
+        (entry: ManifestEntry) => entry.$["android:name"] === ".MainActivity",
+      );
 
+      expect(mainActivity.$["android:screenOrientation"]).toBe("unspecified");
       expect(permissions).toContain("android.permission.CAMERA");
       expect(features).toEqual(
         expect.arrayContaining([
