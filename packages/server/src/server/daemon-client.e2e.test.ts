@@ -1,9 +1,9 @@
 import { test, expect, beforeAll, afterAll } from "vitest";
-import { mkdirSync, mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, existsSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";
 import path from "node:path";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { CreationSnapshot } from "@getpaseo/protocol";
@@ -1309,7 +1309,7 @@ test("opens an exact gitignored workspace path without offering it as a suggesti
   const target = path.join(cwd, "generated", "notes.md");
 
   try {
-    execSync("git init -q", { cwd });
+    execFileSync("git", ["init", "-q"], { cwd });
     writeFileSync(path.join(cwd, ".gitignore"), "generated/\n");
     mkdirSync(path.dirname(target), { recursive: true });
     writeFileSync(target, "generated notes\n");
@@ -2014,17 +2014,17 @@ speechTest(
 test("supports git and file operations", async () => {
   const cwd = tmpCwd();
 
-  execSync("git init -b main", { cwd, stdio: "pipe" });
-  execSync("git config user.email 'test@test.com'", {
+  execFileSync("git", ["init", "-b", "main"], { cwd, stdio: "pipe" });
+  execFileSync("git", ["config", "user.email", "test@test.com"], {
     cwd,
     stdio: "pipe",
   });
-  execSync("git config user.name 'Test'", { cwd, stdio: "pipe" });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd, stdio: "pipe" });
 
   const testFile = path.join(cwd, "test.txt");
   writeFileSync(testFile, "original content\n");
-  execSync("git add test.txt", { cwd, stdio: "pipe" });
-  execSync("git -c commit.gpgSign=false commit -m 'Initial commit'", {
+  execFileSync("git", ["add", "test.txt"], { cwd, stdio: "pipe" });
+  execFileSync("git", ["-c", "commit.gpgSign=false", "commit", "-m", "Initial commit"], {
     cwd,
     stdio: "pipe",
   });
@@ -2045,7 +2045,7 @@ test("supports git and file operations", async () => {
   const checkoutStatus = await ctx.client.getCheckoutStatus(cwd);
   expect(checkoutStatus.error).toBeNull();
   expect(checkoutStatus.isGit).toBe(true);
-  expect(checkoutStatus.repoRoot).toContain(cwd);
+  expect(realpathSync.native(checkoutStatus.repoRoot ?? "")).toBe(realpathSync.native(cwd));
 
   const diffResult = await ctx.client.getCheckoutDiff(cwd, { mode: "uncommitted" });
   expect(diffResult.error).toBeNull();

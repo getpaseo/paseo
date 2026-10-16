@@ -426,7 +426,7 @@ describe("NetworkTunnelSession", () => {
     expect(budgets).toHaveLength(2);
     expect(budgets[0]).toBeLessThanOrEqual(120);
     expect(budgets[1]).toBeGreaterThan(0);
-    expect(server.sockets).toHaveLength(1);
+    await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
   });
 
   it("does not dial another address after the total deadline expires", async () => {
@@ -541,7 +541,7 @@ describe("NetworkTunnelSession", () => {
       harness.socket,
     );
     await harness.nextFrame(isConnected("raw"));
-    expect(server.sockets).toHaveLength(2);
+    await vi.waitFor(() => expect(server.sockets).toHaveLength(2));
   });
 
   it("delivers remote data in order before a normal Close when the destination ends", async () => {
@@ -756,7 +756,7 @@ describe("NetworkTunnelSession", () => {
       harness.socket,
     );
     await harness.nextFrame(isConnected("s"));
-    expect(server.sockets).toHaveLength(1);
+    await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
   });
 
   it("counts connecting streams against the stream limit", async () => {
@@ -793,6 +793,7 @@ describe("NetworkTunnelSession", () => {
       harness.socket,
     );
     await harness.nextFrame(isConnected("first"));
+    await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
     await harness.controller.handleFrame(
       {
         opcode: TunnelOpcode.Close,
@@ -831,6 +832,7 @@ describe("NetworkTunnelSession", () => {
       harness.socket,
     );
     await harness.nextFrame(isConnected("s"));
+    await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
     await harness.controller.handleFrame(
       {
         opcode: TunnelOpcode.Close,
@@ -914,6 +916,7 @@ describe("NetworkTunnelSession", () => {
       harness.socket,
     );
     await harness.nextFrame(isConnected("s"));
+    await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
     await harness.controller.handleFrame(
       {
         opcode: TunnelOpcode.Close,
@@ -1135,7 +1138,7 @@ describe("NetworkTunnelSession", () => {
       harness.socket,
     );
     await harness.nextFrame(isConnected("s"));
-    expect(server.sockets).toHaveLength(1);
+    await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
   });
 
   it("announces a daemon-initiated close as JSON before releasing, and stays silent for client closes", async () => {
