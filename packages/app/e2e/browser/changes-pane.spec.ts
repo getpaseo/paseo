@@ -2218,3 +2218,72 @@ async function scrollToLowerUnwrappedDiffRows(page: Page): Promise<void> {
   });
   await expect(page.getByTestId("git-diff-canvas")).toBeVisible();
 }
+
+for (const [layout, width] of [
+  ["wide", 1400],
+  ["compact", 900],
+] as const) {
+  test(`PR conflicts open model settings without starting an agent: ${layout}`, async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(180_000);
+    const workspace = await createWorkspaceWithCommittedDiff();
+    await page.routeWebSocket(daemonWsRoutePattern(), (browserSocket) => {
+      const serverSocket = browserSocket.connectToServer();
+      browserSocket.onMessage((message) => serverSocket.send(message));
+      serverSocket.onMessage((message) => {
+        if (typeof message !== "string") return browserSocket.send(message);
+        const envelope = JSON.parse(message);
+        const msg = envelope.message;
+        const pr = {
+          cwd: workspace.repoPath,
+          status: {
+            forge: "github",
+            number: 8,
+            url: "https://github.com/example/repo/pull/8",
+            title: "Update workspace",
+            state: "open",
+            baseRefName: "main",
+            headRefName: "feature",
+            isMerged: false,
+            isDraft: false,
+            mergeable: "CONFLICTING",
+            checks: [],
+            checksStatus: "success",
+          },
+          githubFeaturesEnabled: true,
+          forge: "github",
+          error: null,
+          requestId: "visual-pr",
+        };
+        if (msg?.type === "checkout_pr_status_response")
+          msg.payload = { ...pr, requestId: msg.payload.requestId };
+        if (msg?.type === "checkout_status_update") msg.payload.prStatus = pr;
+        browserSocket.send(JSON.stringify(envelope));
+      });
+    });
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.id));
+    const cta = page.getByTestId("changes-primary-cta").filter({ visible: true }).first();
+    await expect(cta).toHaveAccessibleName("Resolve conflicts", { timeout: 90_000 });
+    await page.screenshot({
+      path: testInfo.outputPath(`conflict-button-${layout}.png`),
+      fullPage: true,
+    });
+    await cta.click();
+    if (layout === "compact") await page.setViewportSize({ width: 600, height: 900 });
+    await expect(page.getByTestId("workspace-git-workflow-settings")).toBeVisible();
+    await page.getByTestId("workspace-git-workflow-edit").click();
+    const conflictField = page.getByTestId("workspace-git-workflow-conflictModel");
+    await conflictField.scrollIntoViewIfNeeded();
+    await expect(conflictField).toBeInViewport({ ratio: 1 });
+    await page.screenshot({
+      path: testInfo.outputPath(`conflict-settings-${layout}.png`),
+      fullPage: true,
+    });
+    expect(errors).toEqual([]);
+  });
+}

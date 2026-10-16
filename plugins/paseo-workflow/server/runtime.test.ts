@@ -7,6 +7,7 @@ import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import { profiles } from "../shared/profiles";
 import { prepareAgent, runtime } from "./runtime";
 import * as executionRouting from "./execution-routing";
+import * as vibeIsland from "./vibe-island";
 import { workflowSettings } from "./state";
 import type { WorkflowPort } from "./workflow";
 
@@ -376,4 +377,68 @@ test.each([
     accepted ? "classifying" : undefined,
   );
   expect(prompts).toHaveLength(accepted ? 1 : 0);
+});
+
+test.each(["persistence", "runtimeInfo"])(
+  "handoff notification uses the source's native %s session",
+  async (field) => {
+    const end = vi.spyOn(vibeIsland, "endVibeIslandSession").mockResolvedValue(undefined);
+    const ids: string[] = [];
+    const api = {
+      agents: {
+        ref: (id: string) => {
+          ids.push(id);
+          return {
+            refresh: async () => ({
+              agent: {
+                provider: "codex",
+                cwd: "/source/workspace",
+                [field]: { sessionId: "native-source" },
+              },
+            }),
+          };
+        },
+      },
+    };
+    try {
+      const controller = runtime(
+        api as unknown as Parameters<typeof runtime>[0],
+        {} as Parameters<typeof runtime>[1],
+      );
+      const { port } = controller as unknown as { port: WorkflowPort };
+      await port.endHandoffSource("planner");
+      expect(ids).toEqual(["planner"]);
+      expect(end).toHaveBeenCalledExactlyOnceWith({
+        provider: "codex",
+        sessionId: "native-source",
+        cwd: "/source/workspace",
+      });
+    } finally {
+      end.mockRestore();
+    }
+  },
+);
+
+test("a failed source lookup cannot fail a launched handoff", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const api = {
+    agents: {
+      ref: () => ({
+        refresh: async () => {
+          throw new Error("lookup failed");
+        },
+      }),
+    },
+  };
+  try {
+    const controller = runtime(
+      api as unknown as Parameters<typeof runtime>[0],
+      {} as Parameters<typeof runtime>[1],
+    );
+    const { port } = controller as unknown as { port: WorkflowPort };
+    await expect(port.endHandoffSource("planner")).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledOnce();
+  } finally {
+    warn.mockRestore();
+  }
 });

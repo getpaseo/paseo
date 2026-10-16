@@ -1288,7 +1288,7 @@ describe("workspace workflow policy", () => {
           mergeActionId: undefined,
         }),
       ),
-    ).toEqual({ action: "view-pr", nativeActionId: "pr", reason: "pull-request-blocked" });
+    ).toEqual({ action: "view-pr", nativeActionId: "pr", presentation: "checks-failed" });
   });
 
   it("does not repair checks while the branch is not synchronized with origin", () => {
@@ -1314,7 +1314,7 @@ describe("workspace workflow policy", () => {
           behindOfOrigin: 2,
         }),
       ),
-    ).toEqual({ action: "view-pr", nativeActionId: "pr", reason: "pull-request-blocked" });
+    ).toEqual({ action: "view-pr", nativeActionId: "pr", presentation: "checks-failed" });
   });
 
   it("prioritizes local delivery over repairing failing checks", () => {
@@ -1379,6 +1379,75 @@ describe("workspace workflow policy", () => {
           mergeActionId: undefined,
         }),
       ),
-    ).toEqual({ action: "view-pr", nativeActionId: "pr", reason: "pull-request-blocked" });
+    ).toEqual({
+      action: "view-pr",
+      nativeActionId: "pr",
+      reason: "pull-request-blocked",
+      presentation: "blocked",
+    });
+  });
+});
+
+describe("PR workflow presentation", () => {
+  it("distinguishes a failed refresh from loading", () => {
+    expect(
+      buildWorkspaceWorkflowState(createWorkflowInput({ isGit: false, statusKnown: false })),
+    ).toEqual({ action: "checking", reason: "status-unavailable" });
+    expect(buildWorkspaceWorkflowState(createWorkflowInput({ statusError: true }))).toEqual({
+      action: "unavailable",
+      reason: "status-unavailable",
+    });
+  });
+});
+
+describe("PR state priorities and transitions", () => {
+  const open = { pullRequestUrl: "https://example.com/pr/1", pullRequestState: "open" as const };
+  it.each([
+    [{ pullRequestChecksPending: true, pullRequestIsDraft: true }, "checks-pending"],
+    [
+      { pullRequestIsDraft: true, pullRequestReviewDecision: "changes_requested" as const },
+      "draft",
+    ],
+    [
+      {
+        pullRequestReviewDecision: "changes_requested" as const,
+        pullRequestAutoMergeEnabled: true,
+      },
+      "changes-requested",
+    ],
+    [{ pullRequestReviewDecision: "pending" as const }, "review-pending"],
+    [{ pullRequestAutoMergeEnabled: true }, "auto-merge"],
+    [{ pullRequestInMergeQueue: true, pullRequestAutoMergeEnabled: true }, "merge-queued"],
+  ])("presents the blocking reason %s", (facts, presentation) => {
+    expect(buildWorkspaceWorkflowState(createWorkflowInput({ ...open, ...facts }))).toEqual({
+      action: "view-pr",
+      nativeActionId: "pr",
+      presentation,
+    });
+  });
+  it("updates running checks to failures and then ready merge", () => {
+    expect(
+      buildWorkspaceWorkflowState(createWorkflowInput({ ...open, pullRequestChecksPending: true }))
+        .presentation,
+    ).toBe("checks-pending");
+    expect(
+      buildWorkspaceWorkflowState(createWorkflowInput({ ...open, pullRequestChecksFailed: true }))
+        .action,
+    ).toBe("repair-checks");
+    expect(buildWorkspaceWorkflowState(createWorkflowInput(open))).toEqual({
+      action: "merge",
+      nativeActionId: "merge-pr-squash",
+    });
+  });
+  it("prioritizes conflicts then local delivery over running checks", () => {
+    const facts = { ...open, pullRequestChecksPending: true, hasUncommittedChanges: true };
+    expect(
+      buildWorkspaceWorkflowState(
+        createWorkflowInput({ ...facts, pullRequestMergeable: "CONFLICTING" }),
+      ),
+    ).toEqual({ action: "resolve-conflicts" });
+    expect(buildWorkspaceWorkflowState(createWorkflowInput(facts))).toEqual({
+      action: "commit-and-push",
+    });
   });
 });

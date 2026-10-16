@@ -28,9 +28,15 @@ interface OwnedRequest {
   online: boolean;
 }
 
-export function widgetBounds(area: Electron.Rectangle, reduced: boolean): Electron.Rectangle {
+export function widgetBounds(
+  area: Electron.Rectangle,
+  reduced: boolean,
+  contentHeight = area.height - 32,
+): Electron.Rectangle {
   const width = Math.min(reduced ? 260 : 512, area.width);
-  const height = reduced ? Math.min(80, area.height) : Math.max(1, area.height - 32);
+  const height = reduced
+    ? Math.min(80, area.height)
+    : Math.max(1, Math.min(contentHeight, area.height - 32));
   return {
     x: area.x + Math.max(0, area.width - width - 16),
     y: area.y + Math.max(0, area.height - height - 16),
@@ -50,6 +56,7 @@ export function registerAgentWidget(
   let requestGeneration = 0;
   let window: BrowserWindow | null = null;
   let reduced = false;
+  let contentHeight = 400;
   let hidden = false;
   let quitting = false;
 
@@ -87,12 +94,14 @@ export function registerAgentWidget(
     if (!window || window.isDestroyed()) return;
     const current = window.getBounds();
     const area = screen.getDisplayMatching(current).workArea;
-    const bounds = widgetBounds(area, reduced);
-    window.setBounds({
+    const bounds = widgetBounds(area, reduced, contentHeight);
+    const next = {
       ...bounds,
       x: Math.max(area.x, Math.min(current.x, area.x + area.width - bounds.width)),
       y: Math.max(area.y, Math.min(current.y, area.y + area.height - bounds.height)),
-    });
+    };
+    if (Object.entries(next).some(([key, value]) => current[key as keyof typeof current] !== value))
+      window.setBounds(next);
   }
   function setReduced(value: boolean) {
     reduced = value || !requests().length;
@@ -121,7 +130,7 @@ export function registerAgentWidget(
     }
     if (!window) {
       window = new BrowserWindow({
-        ...widgetBounds(screen.getPrimaryDisplay().workArea, reduced),
+        ...widgetBounds(screen.getPrimaryDisplay().workArea, reduced, contentHeight),
         ...(process.platform === "darwin" ? { type: "panel" as const } : {}),
         title: "Paseo",
         show: false,
@@ -153,6 +162,7 @@ export function registerAgentWidget(
         event.preventDefault();
         hide();
       });
+      window.on("moved", position);
       window.on("closed", () => {
         window = null;
       });
@@ -205,6 +215,14 @@ export function registerAgentWidget(
     assertWidget(event.sender);
     if (typeof value !== "boolean") throw new Error("Invalid widget size.");
     setReduced(value);
+  });
+  ipcMain.handle("paseo:agent-widget:height", (event, value: unknown) => {
+    assertWidget(event.sender);
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0)
+      throw new Error("Invalid widget height.");
+    if (contentHeight === value) return;
+    contentHeight = value;
+    position();
   });
   ipcMain.handle("paseo:agent-widget:hide", (event) => {
     assertWidget(event.sender);

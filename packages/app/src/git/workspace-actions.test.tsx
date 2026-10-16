@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   runGitAction: vi.fn(),
   launch: vi.fn(),
   toastError: vi.fn(),
+  push: vi.fn(),
+  conflictSupported: true,
   client: { listProviderFeatures: vi.fn() },
 }));
 
@@ -53,10 +55,13 @@ vi.mock("@/contexts/toast-context", () => ({
   useToast: () => ({ error: mocks.toastError }),
 }));
 
-vi.mock("expo-router", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock("expo-router", () => ({ useRouter: () => ({ push: mocks.push }) }));
 
 vi.mock("@/agent-profiles", () => ({ useAgentProfiles: () => ({ profiles: [] }) }));
 
+vi.mock("@/hooks/use-providers-snapshot", () => ({
+  useProvidersSnapshot: () => ({ entries: [] }),
+}));
 vi.mock("@/hooks/use-daemon-config", () => ({
   useDaemonConfig: () => ({
     config: { workspaceGitWorkflow: { prModel: { provider: "codex", model: "pr" } } },
@@ -67,7 +72,14 @@ vi.mock("@/stores/session-store", () => ({
   useSessionStore: (selector: (state: unknown) => unknown) =>
     selector({
       sessions: {
-        host: { serverInfo: { features: { workspaceGitWorkflow: true } } },
+        host: {
+          serverInfo: {
+            features: {
+              workspaceGitWorkflow: true,
+              workspaceConflictModel: mocks.conflictSupported,
+            },
+          },
+        },
       },
     }),
 }));
@@ -187,11 +199,11 @@ describe("WorkspaceActions", () => {
   it.each([
     ["create-pr", { action: "create-pr" }, "Create PR"],
     ["commit-and-push", { action: "commit-and-push" }, "Commit & push"],
-    ["repair-checks", { action: "repair-checks", nativeActionId: "pr" }, "Resolve failures"],
+    ["repair-checks", { action: "repair-checks", nativeActionId: "pr" }, "Fix checks"],
     ["merge", { action: "merge", nativeActionId: "merge-pr-squash" }, "Merge"],
     ["view-pr", { action: "view-pr", nativeActionId: "pr" }, "View PR"],
     ["archive", { action: "archive", nativeActionId: "archive-workspace" }, "Archive workspace"],
-    ["checking", { action: "checking", reason: "status-unavailable" }, "Checking status..."],
+    ["checking", { action: "checking", reason: "status-unavailable" }, "Refreshing…"],
     [
       "unavailable",
       { action: "unavailable", reason: "pull-request-blocked" },
@@ -218,7 +230,7 @@ describe("WorkspaceActions", () => {
 
     const viewPr = document.querySelector('[data-testid="workspace-git-view-pr"]');
     expect(viewPr?.textContent).toBe("View PR");
-    expect(primaryCta().textContent).toBe("Resolve failures");
+    expect(primaryCta().textContent).toBe("Fix checks");
 
     fireEvent.click(primaryCta());
     expect(mocks.launch).toHaveBeenCalledWith(
@@ -288,5 +300,26 @@ describe("WorkspaceActions", () => {
 
     expect(mocks.toastError).toHaveBeenCalledWith("Feature discovery failed");
     expect(primaryCta().disabled).toBe(false);
+  });
+
+  it("opens settings without launching conflicts when no model is chosen", () => {
+    mocks.launch.mockClear();
+    mocks.push.mockClear();
+    useScenario({ action: "resolve-conflicts" });
+    current = render();
+    fireEvent.click(primaryCta());
+    expect(mocks.push).toHaveBeenCalledWith("/settings");
+    expect(mocks.launch).not.toHaveBeenCalled();
+  });
+  it("asks to update an older host before configuring conflicts", () => {
+    mocks.conflictSupported = false;
+    mocks.launch.mockClear();
+    mocks.toastError.mockClear();
+    useScenario({ action: "resolve-conflicts" });
+    current = render();
+    fireEvent.click(primaryCta());
+    expect(mocks.launch).not.toHaveBeenCalled();
+    expect(mocks.toastError).toHaveBeenCalledWith("Update the host to configure conflicts");
+    mocks.conflictSupported = true;
   });
 });

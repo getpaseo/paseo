@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
 import { handoffReason, handoffWidgetPlan } from "./handoff";
-import { collectAllTabs, useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 
 const { plugins, run, navigate } = vi.hoisted(() => ({
   plugins: vi.fn(),
@@ -79,8 +79,8 @@ describe("widget handoff", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it("passes the exact plan and selects the executor without a window focus call", async () => {
-    run.mockImplementation(async ({ navigation }) => navigation.openAgent("executor"));
+  it("passes the exact plan without navigating to the executor", async () => {
+    run.mockImplementation(async ({ navigation }) => navigation.openAgent?.("executor"));
     await handoffWidgetPlan(input);
     expect(run).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -91,41 +91,28 @@ describe("widget handoff", () => {
         plan: { callId: "call-1", text: action.planText, permissionRequestId: "permission" },
       }),
     );
-    expect(navigate).toHaveBeenCalledWith({
-      serverId: "host",
-      agentId: "executor",
-      workspaceId: "workspace",
-    });
+    expect(navigate).not.toHaveBeenCalled();
   });
 
   it.each([false, true])(
-    "opens the handed-off executor's workspace when its target tab already exists: %s",
+    "preserves tabs when the executor already exists: %s",
     async (targetExists) => {
       const workspaceKey = "host:workspace";
       const store = useWorkspaceLayoutStore.getState();
       store.openTab({ workspaceKey, target: { kind: "agent", agentId: "planner" }, intent: "new" });
-      if (targetExists) {
+      if (targetExists)
         store.openTab({
           workspaceKey,
           target: { kind: "agent", agentId: "executor" },
           intent: "new",
         });
-      }
+      const before = structuredClone(useWorkspaceLayoutStore.getState().layoutByWorkspace);
       run.mockImplementation(async ({ navigation }) =>
-        navigation.replaceAgent("planner", "executor"),
+        navigation.replaceAgent?.("planner", "executor"),
       );
       await handoffWidgetPlan(input);
-      expect(navigate).toHaveBeenCalledWith({
-        serverId: "host",
-        workspaceId: "workspace",
-        agentId: "executor",
-      });
-      const layout = useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey]!;
-      expect(
-        collectAllTabs(layout.root)
-          .filter((tab) => tab.target.kind === "agent")
-          .map((tab) => tab.target),
-      ).toEqual([{ kind: "agent", agentId: "executor" }]);
+      expect(navigate).not.toHaveBeenCalled();
+      expect(useWorkspaceLayoutStore.getState().layoutByWorkspace).toEqual(before);
     },
   );
 

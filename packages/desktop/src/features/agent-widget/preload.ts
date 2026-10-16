@@ -81,7 +81,7 @@ function actions(item: WidgetDisplayItem): string {
     const handoff = handoffReason
       ? ""
       : `<div class="action-row handoff-row"><span>${escape(labels.handoff)} :</span>${profiles.length ? profiles.map((profile) => `<button type="button" data-action="handoff" data-profile-id="${escape(profile.id)}" aria-busy="${busyProfileId === profile.id}" ${disabled ? "disabled" : ""}>${busyProfileId === profile.id ? `${escape(labels.pending)} · ` : ""}${escape(profile.name)}</button>`).join("") : `<span>${escape(labels.noProfiles ?? "Aucun profil disponible")}</span>`}</div>`;
-    return `<form class="actions plan-actions"><div class="action-row"><label class="sr-only" for="comment">${escape(labels.comment)}</label><input id="comment" data-focus="comment" type="text" placeholder="${escape(labels.comment)}" value="${escape(draft(item.key).message)}" ${disabled ? "disabled" : ""}><button id="send-comment" type="submit" ${disabled || !draft(item.key).message.trim() ? "disabled" : ""}>${escape(labels.sendComment)}</button></div><div class="action-row"><button type="button" data-action="approve" class="primary" ${disabled || !item.canApprove ? "disabled" : ""}>${escape(labels.execute)} ↗</button></div>${handoff}${handoffReason ? `<small class="handoff-reason">${escape(handoffReason)}</small>` : ""}</form>`;
+    return `<form class="actions plan-actions"><div class="action-row"><label class="sr-only" for="comment">${escape(labels.comment)}</label><textarea id="comment" data-focus="comment" rows="1" placeholder="${escape(labels.comment)}" ${disabled ? "disabled" : ""}>${escape(draft(item.key).message)}</textarea><button id="send-comment" type="submit" ${disabled || !draft(item.key).message.trim() ? "disabled" : ""}>${escape(labels.sendComment)}</button></div><div class="action-row"><button type="button" data-action="approve" class="primary" ${disabled || !item.canApprove ? "disabled" : ""}>${escape(labels.execute)} ↗</button></div>${handoff}${handoffReason ? `<small class="handoff-reason">${escape(handoffReason)}</small>` : ""}</form>`;
   }
   const value = draft(item.key);
   const last = value.question >= item.questions.length - 1;
@@ -93,6 +93,9 @@ function actions(item: WidgetDisplayItem): string {
 interface ReadingPosition {
   focus?: string;
   caret: number | null;
+  selectionEnd: number | null;
+  selectionDirection: "forward" | "backward" | "none" | null;
+  inputScroll: number;
   scroll: number;
 }
 function readingPosition(root: HTMLElement): ReadingPosition {
@@ -102,7 +105,16 @@ function readingPosition(root: HTMLElement): ReadingPosition {
     active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement
       ? active.selectionStart
       : null;
-  return { focus, caret, scroll: root.querySelector(".body")?.scrollTop ?? 0 };
+  const field =
+    active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement ? active : null;
+  return {
+    focus,
+    caret,
+    selectionEnd: field?.selectionEnd ?? null,
+    selectionDirection: field?.selectionDirection ?? null,
+    inputScroll: field?.scrollTop ?? 0,
+    scroll: root.querySelector(".body")?.scrollTop ?? 0,
+  };
 }
 function restoreReadingPosition(root: HTMLElement, position: ReadingPosition) {
   const body = root.querySelector(".body");
@@ -113,7 +125,12 @@ function restoreReadingPosition(root: HTMLElement, position: ReadingPosition) {
   if (position.caret === null) return;
   if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) return;
   if (target.type === "radio" || target.type === "checkbox") return;
-  target.setSelectionRange(position.caret, position.caret);
+  target.setSelectionRange(
+    position.caret,
+    position.selectionEnd ?? position.caret,
+    position.selectionDirection ?? undefined,
+  );
+  target.scrollTop = position.inputScroll;
 }
 function requestContent(
   item: WidgetDisplayItem | undefined,
@@ -123,7 +140,7 @@ function requestContent(
   const heading = item.kind === "plan" ? labels.plan : labels.question;
   const body =
     item.kind === "plan" ? `<div class="markdown">${item.planHtml}</div>` : questionBody(item);
-  return `<div class="body"><p class="status">${escape(heading)}</p>${body}</div>${actions(item)}`;
+  return `<div class="body"><div class="body-content"><p class="status">${escape(heading)}</p>${body}</div></div>${actions(item)}`;
 }
 function header(item: WidgetDisplayItem | undefined, labels: WidgetDisplay["labels"]) {
   const project = item?.project;
@@ -132,11 +149,42 @@ function header(item: WidgetDisplayItem | undefined, labels: WidgetDisplay["labe
   const icon = project?.emoji
     ? `<span class="avatar emoji">${escape(project.emoji)}</span>`
     : `<span class="avatar" style="background-color:${project?.color ?? "#7a6aa8"}"><span class="initial">${initial}</span>${project?.iconDataUri ? `<img src="${escape(project.iconDataUri)}" alt="">` : ""}</span>`;
-  return `<header><div class="header-identity">${icon}<span class="identity"><b>${escape(name)}</b><small>${escape(project?.branchName ?? "")}</small></span></div><button data-action="reduce" aria-label="${escape(labels.minimize)}" title="${escape(labels.minimize)}">−</button></header>`;
+  return `<header><div class="header-identity">${icon}<span class="identity"><b>${escape(name)}</b><small>${escape(item?.workspaceTitle ?? project?.branchName ?? "")}</small></span></div><button data-action="reduce" aria-label="${escape(labels.minimize)}" title="${escape(labels.minimize)}">−</button></header>`;
 }
 function footer(position: number, count: number, labels: WidgetDisplay["labels"]) {
   const disabled = count < 2 || busy !== null;
   return `<footer class="queue"><span>${count ? position : 0} / ${count}</span><button data-action="previous" aria-label="←" ${disabled ? "disabled" : ""}>←</button><button data-action="next" aria-label="→" ${disabled ? "disabled" : ""}>→</button><button data-action="hide" aria-label="${escape(labels.close)}">×</button></footer>`;
+}
+function sizeComment() {
+  const field = document.querySelector<HTMLTextAreaElement>("#comment");
+  if (!field) return;
+  field.style.height = "0px";
+  field.style.height = `${Math.min(140, Math.max(34, field.scrollHeight + 2))}px`;
+}
+let measurementFrame = 0;
+function measure() {
+  if (measurementFrame) return;
+  measurementFrame = requestAnimationFrame(() => {
+    measurementFrame = 0;
+    if (reduced) return;
+    const surface = document.querySelector<HTMLElement>(".surface");
+    const content = surface?.querySelector<HTMLElement>(".body-content");
+    if (!surface || !content) return;
+    // Measure natural content independently of the flex body's current viewport height.
+    let height = window.innerHeight - surface.getBoundingClientRect().height;
+    for (const child of Array.from(surface.children)) {
+      if (child.classList.contains("body")) {
+        const style = getComputedStyle(child);
+        height +=
+          content.getBoundingClientRect().height +
+          parseFloat(style.paddingTop) +
+          parseFloat(style.paddingBottom);
+      } else {
+        height += child.getBoundingClientRect().height;
+      }
+    }
+    void ipcRenderer.invoke("paseo:agent-widget:height", Math.ceil(height)).catch(console.error);
+  });
 }
 function render() {
   const root = document.getElementById("widget");
@@ -165,6 +213,8 @@ function render() {
   root.innerHTML = `<section class="sheet"><div class="surface">${header(item, labels)}${content}${statusHtml}${footer(position, requests.length, labels)}</div></section>`;
   const logo = root.querySelector<HTMLImageElement>(".avatar img");
   logo?.addEventListener("error", () => logo.remove(), { once: true });
+  sizeComment();
+  measure();
   if (selected !== previous) return;
   restoreReadingPosition(root, positionBefore);
 }
@@ -283,6 +333,8 @@ function handleInput(event: Event) {
   const value = draft(item.key);
   if (element.id === "comment") {
     value.message = element.value;
+    sizeComment();
+    measure();
     const button = document.querySelector<HTMLButtonElement>("#send-comment");
     if (button) button.disabled = !value.message.trim() || !item.online || busy !== null;
     return;
@@ -301,6 +353,10 @@ function handleInput(event: Event) {
 }
 window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("widget")!.style.height = "100%";
+  window.addEventListener("resize", () => {
+    sizeComment();
+    measure();
+  });
   document.addEventListener("click", handleClick);
   document.addEventListener("input", handleInput);
   document.addEventListener("keydown", (event) => {

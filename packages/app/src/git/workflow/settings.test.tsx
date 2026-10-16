@@ -9,9 +9,11 @@ const { state, patchConfig } = vi.hoisted(() => ({
   state: {
     config: null as MutableDaemonConfig | null,
     isLoading: false,
+    conflictSupported: true,
     entries: [] as ProviderSnapshotEntry[],
   },
-  patchConfig: vi.fn<() => Promise<MutableDaemonConfig | undefined>>(),
+  patchConfig:
+    vi.fn<(patch: { workspaceGitWorkflow: unknown }) => Promise<MutableDaemonConfig | undefined>>(),
 }));
 
 interface ContainerProps {
@@ -31,6 +33,14 @@ vi.mock("react-i18next", async (importOriginal) => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
 vi.mock("@/constants/layout", () => ({ useIsCompactFormFactor: () => false }));
+vi.mock("@/stores/session-store", () => ({
+  useSessionStore: (selector: (state: unknown) => unknown) =>
+    selector({
+      sessions: {
+        "host-1": { serverInfo: { features: { workspaceConflictModel: state.conflictSupported } } },
+      },
+    }),
+}));
 vi.mock("@/hooks/use-daemon-config", () => ({
   useDaemonConfig: () => ({ ...state, patchConfig }),
 }));
@@ -219,6 +229,7 @@ describe("WorkspaceGitWorkflowSettingsSection", () => {
       },
     };
     state.isLoading = false;
+    state.conflictSupported = true;
     state.entries = ["codex", "claude"].map(providerFixture);
     patchConfig.mockReset().mockResolvedValue(state.config);
   });
@@ -257,8 +268,14 @@ describe("WorkspaceGitWorkflowSettingsSection", () => {
     await choose("reviewModel", "codex-review");
     await choose("commitModel", "codex-commit");
     await choose("prModel", "claude-pr");
+    await choose("conflictModel", "codex-pr");
     await act(async () => {
       const effort = element(byId(prefix + "reviewModel-thinking")) as HTMLSelectElement;
+      effort.value = "high";
+      effort.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      const effort = element(byId(prefix + "conflictModel-thinking")) as HTMLSelectElement;
       effort.value = "high";
       effort.dispatchEvent(new Event("change", { bubbles: true }));
     });
@@ -273,6 +290,7 @@ describe("WorkspaceGitWorkflowSettingsSection", () => {
         reviewModel: { provider: "codex", model: "codex-review", thinkingOptionId: "high" },
         commitModel: { provider: "codex", model: "codex-commit" },
         prModel: { provider: "claude", model: "claude-pr" },
+        conflictModel: { provider: "codex", model: "codex-pr", thinkingOptionId: "high" },
       },
     });
     expect(sheet()).toBeNull();
@@ -321,4 +339,12 @@ describe("WorkspaceGitWorkflowSettingsSection", () => {
       expect(patchConfig).not.toHaveBeenCalled();
     },
   );
+  it("keeps legacy settings editable without sending conflictModel to an older host", async () => {
+    state.conflictSupported = false;
+    render();
+    await click(byId(prefix + "edit"));
+    await click(byId(prefix + "save"));
+    expect(patchConfig.mock.calls).toHaveLength(1);
+    expect(patchConfig.mock.calls[0][0].workspaceGitWorkflow).not.toHaveProperty("conflictModel");
+  });
 });

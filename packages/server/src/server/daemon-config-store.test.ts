@@ -717,8 +717,9 @@ describe("DaemonConfigStore", () => {
     const reviewModel = { provider: "codex", model: "review-model" };
     const commitModel = { provider: "claude", model: "commit-model" };
     const prModel = { provider: "codex", model: "pr-model" };
-    store.patch({ workspaceGitWorkflow: { reviewModel, commitModel, prModel } });
-    for (const key of ["reviewModel", "commitModel", "prModel"] as const) {
+    const conflictModel = { provider: "codex", model: "conflicts", thinkingOptionId: "high" };
+    store.patch({ workspaceGitWorkflow: { reviewModel, commitModel, prModel, conflictModel } });
+    for (const key of ["reviewModel", "commitModel", "prModel", "conflictModel"] as const) {
       store.patch({
         workspaceGitWorkflow: {
           [key]: { provider: "codex", model: "old-model", thinkingOptionId: "high" },
@@ -731,7 +732,7 @@ describe("DaemonConfigStore", () => {
         replacement,
       );
     }
-    store.patch({ workspaceGitWorkflow: { reviewModel, commitModel, prModel } });
+    store.patch({ workspaceGitWorkflow: { reviewModel, commitModel, prModel, conflictModel } });
     store.patch({ workspaceGitWorkflow: { commitModel: null } });
     expect(store.get().workspaceGitWorkflow).toEqual({
       reviewProfileId: "review",
@@ -740,6 +741,7 @@ describe("DaemonConfigStore", () => {
       reviewModel,
       commitModel: null,
       prModel,
+      conflictModel,
     });
     expect(loadPersistedConfig(paseoHome).daemon?.workspaceGitWorkflow).toEqual(
       store.get().workspaceGitWorkflow,

@@ -13,6 +13,8 @@ import {
   PlanModeIcon,
   ThinkingIcon,
 } from "@/agent-controls/icons";
+import { FAST_MODE_FEATURE_ID } from "@/agent-controls/policy";
+import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { useProviderIcons } from "@/components/provider-icons";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import {
@@ -88,6 +90,20 @@ export function useAgentControlCommandCenterActions(input: {
   const { t } = useTranslation();
   const { controls } = input;
   const { features, models, modes, thinking } = controls;
+  const fastFeature = features.list?.find(
+    (feature) => feature.id === FAST_MODE_FEATURE_ID && feature.type === "toggle",
+  );
+  useKeyboardActionHandler({
+    handlerId: `${input.sourceId}:fast-toggle`,
+    actions: ["message-input.fast-toggle"],
+    enabled: input.enabled && Boolean(features.set),
+    priority: 200,
+    handle: (action) => {
+      if (action.id !== "message-input.fast-toggle" || fastFeature?.type !== "toggle") return false;
+      features.set?.(FAST_MODE_FEATURE_ID, !fastFeature.value);
+      return true;
+    },
+  });
   const getProviderIcon = useProviderIcons(controls.serverId);
   const actions = useMemo(
     () =>

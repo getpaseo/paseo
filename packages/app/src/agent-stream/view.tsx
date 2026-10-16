@@ -863,6 +863,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                 <AssistantMessage
                   renderFullContent={renderFullContent}
                   occurrenceKey={createAssistantImageOccurrenceKey({ agentId, itemId: item.id })}
+                  galleryGroupKey={createAssistantImageOccurrenceKey({
+                    agentId,
+                    itemId: item.blockGroupId ?? item.id,
+                  })}
                   message={item.text}
                   timestamp={item.timestamp.getTime()}
                   workspaceRoot={workspaceRoot}

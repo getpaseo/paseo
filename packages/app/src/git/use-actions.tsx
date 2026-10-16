@@ -1021,8 +1021,7 @@ function useWorkspaceWorkflowActions(input: {
       pullRequestState: narrowPullRequestState(prStatus?.state),
       pullRequestIsDraft: prStatus?.isDraft ?? false,
       pullRequestIsMerged: prStatus?.isMerged ?? false,
-      pullRequestChecksFailed: prStatus?.checksStatus === "failure",
-      pullRequestMergeable: prStatus?.mergeable ?? "UNKNOWN",
+      ...workflowPrFacts(prStatus),
       mergeActionId,
       archiveAvailable: archiveController.canArchive && !archiveController.isArchiving,
     });
@@ -1287,5 +1286,17 @@ function getWorktreeArchiveWarningLabels(
           : "workspace.git.actions.archiveWarning.unpushedCommits",
         { count },
       ),
+  };
+}
+
+function workflowPrFacts(status: PrStatusValue | undefined) {
+  const capability = deriveMergeCapability(status?.forgeSpecific, status?.github);
+  return {
+    pullRequestChecksFailed: status?.checksStatus === "failure",
+    pullRequestChecksPending: status?.checksStatus === "pending",
+    pullRequestReviewDecision: status?.reviewDecision,
+    pullRequestAutoMergeEnabled: capability?.autoMergeEnabled,
+    pullRequestInMergeQueue: capability?.isInMergeQueue,
+    pullRequestMergeable: status?.mergeable ?? "UNKNOWN",
   };
 }

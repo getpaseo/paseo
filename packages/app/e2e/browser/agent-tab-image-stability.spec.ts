@@ -15,6 +15,7 @@ import {
   userPagesUntilAssistantImageRenders,
 } from "../support/helpers/assistant-images";
 import { expectAgentReadyToInterrupt } from "../support/helpers/agent-stream";
+import { attachImageFromMenu } from "../support/helpers/composer";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 
 const test = base.extend<{ imageWorkspace: SeededWorkspace }>({
@@ -94,6 +95,144 @@ test("opens a timeline image in a zoomable lightbox", async ({
   await page.keyboard.press("Escape");
   await expect(lightboxImage).toHaveCount(0);
   await expectAgentReadyToInterrupt(page);
+});
+
+test("navigates all Markdown images from the same assistant message", async ({
+  imageWorkspace: workspace,
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const first = await createSmallAssistantPng(workspace, {
+    alt: "Gallery first image",
+    fileName: "gallery-first.png",
+  });
+  const second = await createSmallAssistantPng(workspace, {
+    alt: "Gallery second image",
+    fileName: "gallery-second.png",
+  });
+  const response = `![${first.alt}](${first.relativePath})\n\nA paragraph between images.\n\n![${second.alt}](${second.relativePath})`;
+  const imageAgent = await createSettledMockAgent(workspace, "Assistant image gallery", {
+    mockAssistantResponses: [response],
+  });
+  await workspace.client.sendAgentMessage(imageAgent.id, "Show two images in this answer.");
+  await workspace.client.waitForFinish(imageAgent.id, 30_000);
+  await openAssistantImageTimeline(page, imageAgent);
+  await expectAssistantImageRendered(page, first);
+  await expectAssistantImageRendered(page, second);
+
+  await page.getByRole("button", { name: "Open image attachment" }).first().click();
+  const lightboxRoot = page.getByTestId("attachment-lightbox-root");
+  await expect(lightboxRoot).toHaveAttribute("data-gallery-count", "2");
+  const thumbnails = page.getByTestId("attachment-lightbox-thumbnails");
+  await expect(thumbnails).toBeVisible();
+  await expect(page.getByTestId("attachment-lightbox-thumbnail-0")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(page.getByTestId("attachment-lightbox-thumbnail-1")).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  const lightboxImage = page.getByTestId("attachment-lightbox-image");
+  const getLightboxImageSource = () =>
+    lightboxImage.evaluate((element) => {
+      const image = element instanceof HTMLImageElement ? element : element.querySelector("img");
+      return image?.currentSrc || image?.getAttribute("src") || null;
+    });
+  const firstSource = await getLightboxImageSource();
+  expect(firstSource).not.toBeNull();
+  await page.screenshot({
+    path: test.info().outputPath("assistant-image-gallery-first.png"),
+    fullPage: false,
+  });
+
+  await page.getByTestId("attachment-lightbox-thumbnail-1").click();
+  await expect(page.getByTestId("attachment-lightbox-thumbnail-1")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect.poll(getLightboxImageSource).not.toBe(firstSource);
+  await page.screenshot({
+    path: test.info().outputPath("assistant-image-gallery-second.png"),
+    fullPage: false,
+  });
+
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByTestId("attachment-lightbox-thumbnail-1")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await page.keyboard.press("ArrowLeft");
+  await expect(page.getByTestId("attachment-lightbox-thumbnail-0")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await page.keyboard.press("Escape");
+  await expect(lightboxImage).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Open image attachment" }).nth(1).click();
+  await expect(page.getByTestId("attachment-lightbox-thumbnail-1")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Open image attachment" }).nth(1).click();
+  await expect(thumbnails).toBeVisible();
+  await expect(page.getByTestId("attachment-lightbox-thumbnail-1")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await page.screenshot({
+    path: test.info().outputPath("assistant-image-gallery-compact.png"),
+    fullPage: false,
+  });
+  await page.keyboard.press("Escape");
+  await expect(lightboxImage).toHaveCount(0);
+});
+
+test("navigates images attached to the same user message", async ({ imageWorkspace, page }) => {
+  test.setTimeout(120_000);
+  const image = {
+    mimeType: "image/png",
+    buffer: Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGJr9awAAAABJRU5ErkJggg==",
+      "base64",
+    ),
+  };
+  const imageAgent = await createSettledMockAgent(imageWorkspace, "User image gallery");
+  await openAssistantImageTimeline(page, imageAgent);
+  await attachImageFromMenu(page, { ...image, name: "user-first.png" });
+  await attachImageFromMenu(page, { ...image, name: "user-second.png" });
+  await page
+    .getByRole("textbox", { name: "Message agent..." })
+    .first()
+    .fill("Compare these images.");
+  await page.getByRole("textbox", { name: "Message agent..." }).first().press("Enter");
+
+  const userMessage = page
+    .getByTestId("user-message")
+    .filter({ hasText: "Compare these images." })
+    .last();
+  await expect(userMessage.getByRole("button", { name: "Open image attachment" })).toHaveCount(2);
+  await userMessage.getByRole("button", { name: "Open image attachment" }).nth(1).click();
+
+  const lightboxRoot = page.getByTestId("attachment-lightbox-root");
+  await expect(lightboxRoot).toHaveAttribute("data-gallery-count", "2");
+  await expect(page.getByTestId("attachment-lightbox-thumbnail-1")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await page.screenshot({
+    path: test.info().outputPath("user-image-gallery-second.png"),
+    fullPage: false,
+  });
+  await page.keyboard.press("ArrowLeft");
+  await expect(page.getByTestId("attachment-lightbox-thumbnail-0")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await page.keyboard.press("Escape");
+  await expect(lightboxRoot).toHaveCount(0);
 });
 
 test("reloading a timeline anchors near-tail assistant image growth", async ({

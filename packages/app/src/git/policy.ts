@@ -62,6 +62,15 @@ export interface WorkspaceWorkflowState {
     GitActionId,
     "pr" | "merge-pr-squash" | "merge-pr-merge" | "merge-pr-rebase" | "archive-workspace"
   >;
+  presentation?:
+    | "checks-failed"
+    | "checks-pending"
+    | "draft"
+    | "changes-requested"
+    | "review-pending"
+    | "auto-merge"
+    | "merge-queued"
+    | "blocked";
   reason?:
     | "not-git"
     | "status-unavailable"
@@ -92,6 +101,10 @@ export interface BuildWorkspaceWorkflowStateInput {
   pullRequestIsMerged: boolean;
   /** True when the forge reports an aggregated failing checks status for the PR. */
   pullRequestChecksFailed: boolean;
+  pullRequestChecksPending?: boolean;
+  pullRequestReviewDecision?: string | null;
+  pullRequestAutoMergeEnabled?: boolean;
+  pullRequestInMergeQueue?: boolean;
   pullRequestMergeable: PullRequestMergeable;
   mergeActionId: WorkspaceWorkflowState["nativeActionId"];
   archiveAvailable: boolean;
@@ -100,10 +113,13 @@ export interface BuildWorkspaceWorkflowStateInput {
 export function buildWorkspaceWorkflowState(
   input: BuildWorkspaceWorkflowStateInput,
 ): WorkspaceWorkflowState {
-  if (!input.isGit) return { action: "unavailable", reason: "not-git" };
-  if (!input.statusKnown || input.statusError || input.pullRequestError) {
+  if (input.statusError || input.pullRequestError) {
+    return { action: "unavailable", reason: "status-unavailable" };
+  }
+  if (!input.statusKnown) {
     return { action: "checking", reason: "status-unavailable" };
   }
+  if (!input.isGit) return { action: "unavailable", reason: "not-git" };
   if (!input.pullRequestKnown) return { action: "checking", reason: "status-unavailable" };
 
   if (
@@ -171,9 +187,13 @@ function resolveOpenPullRequestState(
   // Failing checks are only actionable on a clean, synchronized branch. Local
   // work to deliver and unknown synchronization are resolved above, and a ready
   // merge is impossible while checks fail, so this only fires for blocked PRs.
-  if (isRepairChecksActionable(input)) {
-    return { action: "repair-checks", nativeActionId: "pr" };
+  if (input.pullRequestChecksFailed) {
+    return isRepairChecksActionable(input)
+      ? { action: "repair-checks", nativeActionId: "pr" }
+      : { action: "view-pr", nativeActionId: "pr", presentation: "checks-failed" };
   }
+  const presentation = openPullRequestPresentation(input);
+  if (presentation) return { action: "view-pr", nativeActionId: "pr", presentation };
   if (
     input.aheadOfOrigin === 0 &&
     input.behindOfOrigin === 0 &&
@@ -184,7 +204,24 @@ function resolveOpenPullRequestState(
   ) {
     return { action: "merge", nativeActionId: input.mergeActionId };
   }
-  return { action: "view-pr", nativeActionId: "pr", reason: "pull-request-blocked" };
+  return {
+    action: "view-pr",
+    nativeActionId: "pr",
+    reason: "pull-request-blocked",
+    presentation: "blocked",
+  };
+}
+
+function openPullRequestPresentation(
+  input: BuildWorkspaceWorkflowStateInput,
+): WorkspaceWorkflowState["presentation"] {
+  if (input.pullRequestChecksPending) return "checks-pending";
+  if (input.pullRequestIsDraft) return "draft";
+  if (input.pullRequestReviewDecision === "changes_requested") return "changes-requested";
+  if (input.pullRequestReviewDecision === "pending") return "review-pending";
+  if (input.pullRequestInMergeQueue) return "merge-queued";
+  if (input.pullRequestAutoMergeEnabled) return "auto-merge";
+  return undefined;
 }
 
 function isRepairChecksActionable(input: BuildWorkspaceWorkflowStateInput): boolean {
@@ -195,6 +232,30 @@ function isRepairChecksActionable(input: BuildWorkspaceWorkflowStateInput): bool
     input.pullRequestState === "open" &&
     input.pullRequestChecksFailed
   );
+}
+
+export function workspaceWorkflowLabel(state: WorkspaceWorkflowState): string {
+  if (state.presentation) return i18n.t(`workspace.git.workflow.prStates.${state.presentation}`);
+  switch (state.action) {
+    case "create-pr":
+      return i18n.t("workspace.git.actions.createPr.label");
+    case "commit-and-push":
+      return i18n.t("workspace.git.workflow.commitAndPush");
+    case "resolve-conflicts":
+      return i18n.t("workspace.git.workflow.resolveConflicts");
+    case "repair-checks":
+      return i18n.t("workspace.git.workflow.repairChecks");
+    case "merge":
+      return i18n.t("workspace.git.workflow.merge");
+    case "archive":
+      return i18n.t("workspace.git.actions.archive.label");
+    case "view-pr":
+      return i18n.t("workspace.git.actions.viewPr");
+    case "checking":
+      return i18n.t("workspace.git.workflow.checking");
+    case "unavailable":
+      return i18n.t("workspace.git.workflow.unavailable");
+  }
 }
 
 interface GitActionRuntimeState {

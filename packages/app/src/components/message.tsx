@@ -26,6 +26,7 @@ import {
   useCallback,
   createContext,
   useContext,
+  useSyncExternalStore,
 } from "react";
 import type { ComponentType, ReactNode } from "react";
 import type MarkdownIt from "markdown-it";
@@ -454,14 +455,18 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
 
 interface UserMessageImagePillProps {
   image: UserMessageImageAttachment;
-  onOpen: (image: UserMessageImageAttachment) => void;
+  index: number;
+  onOpen: (index: number) => void;
   accessibilityLabel: string;
 }
 
-function UserMessageImagePill({ image, onOpen, accessibilityLabel }: UserMessageImagePillProps) {
-  const handlePress = useCallback(() => {
-    onOpen(image);
-  }, [onOpen, image]);
+function UserMessageImagePill({
+  image,
+  index,
+  onOpen,
+  accessibilityLabel,
+}: UserMessageImagePillProps) {
+  const handlePress = useCallback(() => onOpen(index), [index, onOpen]);
   return (
     <AttachmentFrame onPress={handlePress} accessibilityLabel={accessibilityLabel}>
       <AttachmentThumbnail metadata={image} />
@@ -470,6 +475,122 @@ function UserMessageImagePill({ image, onOpen, accessibilityLabel }: UserMessage
 }
 
 const MESSAGE_TEXT_DATASET = { messageText: "true" };
+
+interface AssistantImageGalleryEntry {
+  key: string;
+  source: ImageLightboxSource | null;
+}
+
+interface AssistantImageGallerySnapshot {
+  entries: AssistantImageGalleryEntry[];
+  hostKey: string | null;
+  selectedKey: string | null;
+}
+
+interface AssistantImageGalleryGroup {
+  listeners: Set<() => void>;
+  snapshot: AssistantImageGallerySnapshot;
+}
+
+interface AssistantImageGalleryContextValue {
+  blockKey: string;
+  register: (key: string, source: ImageLightboxSource | null) => void;
+  open: (key: string, source: ImageLightboxSource | null) => void;
+}
+
+const AssistantImageGalleryContext = createContext<AssistantImageGalleryContextValue | null>(null);
+const assistantImageGalleryGroups = new Map<string, AssistantImageGalleryGroup>();
+
+function getAssistantImageGalleryGroup(groupKey: string): AssistantImageGalleryGroup {
+  let group = assistantImageGalleryGroups.get(groupKey);
+  if (!group) {
+    group = {
+      listeners: new Set(),
+      snapshot: { entries: [], hostKey: null, selectedKey: null },
+    };
+    assistantImageGalleryGroups.set(groupKey, group);
+  }
+  return group;
+}
+
+function updateAssistantImageGallery(
+  groupKey: string,
+  update: (snapshot: AssistantImageGallerySnapshot) => AssistantImageGallerySnapshot,
+) {
+  const group = getAssistantImageGalleryGroup(groupKey);
+  const snapshot = update(group.snapshot);
+  if (snapshot === group.snapshot) return;
+  group.snapshot = snapshot;
+  for (const listener of group.listeners) listener();
+}
+
+function subscribeToAssistantImageGallery(groupKey: string, listener: () => void) {
+  const group = getAssistantImageGalleryGroup(groupKey);
+  group.listeners.add(listener);
+  return () => {
+    group.listeners.delete(listener);
+    if (group.listeners.size === 0) assistantImageGalleryGroups.delete(groupKey);
+  };
+}
+
+function getAssistantImageGallerySnapshot(groupKey: string) {
+  return getAssistantImageGalleryGroup(groupKey).snapshot;
+}
+
+function AssistantImageGalleryBlock({
+  blockKey,
+  gallery,
+  children,
+}: {
+  blockKey: string;
+  gallery: Omit<AssistantImageGalleryContextValue, "blockKey">;
+  children: ReactNode;
+}) {
+  const value = useMemo(() => ({ ...gallery, blockKey }), [blockKey, gallery]);
+  return (
+    <AssistantImageGalleryContext.Provider value={value}>
+      {children}
+    </AssistantImageGalleryContext.Provider>
+  );
+}
+
+function isSameLightboxSource(
+  previous: ImageLightboxSource | null | undefined,
+  next: ImageLightboxSource | null,
+): boolean {
+  if (previous?.type !== next?.type) return false;
+  if (previous?.type === "uri" && next?.type === "uri") {
+    return (
+      previous.uri === next.uri &&
+      previous.contentSize?.width === next.contentSize?.width &&
+      previous.contentSize?.height === next.contentSize?.height
+    );
+  }
+  if (previous?.type === "attachment" && next?.type === "attachment") {
+    return previous.metadata.id === next.metadata.id;
+  }
+  return previous === next;
+}
+
+function updateGalleryEntry(
+  entries: AssistantImageGalleryEntry[],
+  key: string,
+  source: ImageLightboxSource | null,
+): AssistantImageGalleryEntry[] {
+  const index = entries.findIndex((entry) => entry.key === key);
+  if (index < 0) return [...entries, { key, source }];
+  if (isSameLightboxSource(entries[index]?.source, source)) return entries;
+  return entries.map((entry, entryIndex) => (entryIndex === index ? { key, source } : entry));
+}
+
+function getUserImageEntries(images: UserMessageImageAttachment[]) {
+  const occurrences = new Map<string, number>();
+  return images.map((image, index) => {
+    const occurrence = occurrences.get(image.id) ?? 0;
+    occurrences.set(image.id, occurrence + 1);
+    return { image, index, key: `${image.id}:${occurrence}` };
+  });
+}
 
 function HandoffCopyButton({
   text,
@@ -587,15 +708,24 @@ export const UserMessage = memo(function UserMessage({
   const isCompact = useIsCompactFormFactor();
   const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
-  const [lightboxMetadata, setLightboxMetadata] = useState<UserMessageImageAttachment | null>(null);
-  const handleLightboxClose = useCallback(() => setLightboxMetadata(null), []);
+  const [lightboxSelection, setLightboxSelection] = useState<{ index: number } | null>(null);
+  const handleLightboxClose = useCallback(() => setLightboxSelection(null), []);
+  const handleImageOpen = useCallback((index: number) => setLightboxSelection({ index }), []);
+  const lightboxSources = useMemo<ImageLightboxSource[]>(
+    () => images.map((metadata) => ({ type: "attachment", metadata })),
+    [images],
+  );
+  const handleUserGalleryIndexChange = useCallback((index: number) => {
+    setLightboxSelection({ index });
+  }, []);
   const lightboxSource = useMemo<ImageLightboxSource | null>(
-    () => (lightboxMetadata ? { type: "attachment", metadata: lightboxMetadata } : null),
-    [lightboxMetadata],
+    () => lightboxSources[lightboxSelection?.index ?? -1] ?? null,
+    [lightboxSelection, lightboxSources],
   );
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
   const hasText = message.trim().length > 0;
   const hasImages = images.length > 0;
+  const imageEntries = useMemo(() => getUserImageEntries(images), [images]);
   const hasAttachments = attachments.length > 0;
   const showTrailingRow = !isPending && hasText && (isCompact || isNative || isHovered);
   const formattedTimestamp = useMemo(
@@ -678,11 +808,12 @@ export const UserMessage = memo(function UserMessage({
         <View style={bubbleStyle}>
           {hasImages ? (
             <View style={imagePreviewContainerStyle}>
-              {images.map((image) => (
+              {imageEntries.map(({ image, index, key }) => (
                 <UserMessageImagePill
-                  key={image.id}
+                  key={key}
                   image={image}
-                  onOpen={setLightboxMetadata}
+                  index={index}
+                  onOpen={handleImageOpen}
                   accessibilityLabel={t("composer.attachments.openImage")}
                 />
               ))}
@@ -733,7 +864,13 @@ export const UserMessage = memo(function UserMessage({
           </View>
         ) : null}
       </View>
-      <AttachmentLightbox source={lightboxSource} onClose={handleLightboxClose} />
+      <AttachmentLightbox
+        source={lightboxSource}
+        sources={lightboxSelection ? lightboxSources : undefined}
+        index={lightboxSelection?.index}
+        onIndexChange={handleUserGalleryIndexChange}
+        onClose={handleLightboxClose}
+      />
     </View>
   );
 });
@@ -910,6 +1047,7 @@ export const LiveElapsed = memo(function LiveElapsed({
 interface AssistantMessageProps {
   renderFullContent?: boolean;
   occurrenceKey: string;
+  galleryGroupKey?: string;
   message: string;
   timestamp: number;
   workspaceRoot?: string;
@@ -992,9 +1130,8 @@ function AssistantMarkdownImage({
   serverId?: string;
 }) {
   const { t } = useTranslation();
-  const [viewerOpen, setViewerOpen] = useState(false);
-  const openViewer = useCallback(() => setViewerOpen(true), []);
-  const closeViewer = useCallback(() => setViewerOpen(false), []);
+  const gallery = useContext(AssistantImageGalleryContext);
+  const galleryKey = `${gallery?.blockKey ?? "block"}:${occurrenceKey}:${source}`;
   const containerStyle = useMemo<StyleProp<ViewStyle>>(
     () => ({
       marginTop: hasLeadingContent ? 16 : 0,
@@ -1004,7 +1141,7 @@ function AssistantMarkdownImage({
   );
   const image = useAssistantImage({
     source,
-    occurrenceKey,
+    occurrenceKey: galleryKey,
     client,
     workspaceRoot,
     serverId,
@@ -1012,6 +1149,19 @@ function AssistantMarkdownImage({
   const binding = image.status === "failed" ? null : image.binding;
   const aspectRatio = image.status === "failed" ? null : image.aspectRatio;
   const imageUri = binding?.uri ?? "";
+  const gallerySource = useMemo<ImageLightboxSource | null>(() => {
+    if (image.status === "failed") return { type: "uri", uri: "" };
+    if (!imageUri) return null;
+    return {
+      type: "uri",
+      uri: imageUri,
+      contentSize: aspectRatio ? { width: aspectRatio, height: 1 } : undefined,
+    };
+  }, [aspectRatio, image.status, imageUri]);
+  const openViewer = useCallback(
+    () => gallery?.open(galleryKey, gallerySource),
+    [gallery, galleryKey, gallerySource],
+  );
   const imageSource = useMemo(() => ({ uri: imageUri }), [imageUri]);
   const frameStyle = useMemo<StyleProp<ViewStyle>>(
     () => [assistantMessageStylesheet.imageFrame, containerStyle],
@@ -1025,14 +1175,9 @@ function AssistantMarkdownImage({
     () => [assistantMessageStylesheet.imageSurface, imageSizeStyle],
     [imageSizeStyle],
   );
-  const lightboxSource = useMemo<ImageLightboxSource | null>(() => {
-    if (!viewerOpen || !imageUri) return null;
-    return {
-      type: "uri",
-      uri: imageUri,
-      contentSize: aspectRatio ? { width: aspectRatio, height: 1 } : undefined,
-    };
-  }, [aspectRatio, imageUri, viewerOpen]);
+  useEffect(() => {
+    gallery?.register(galleryKey, gallerySource);
+  }, [gallery, galleryKey, gallerySource]);
 
   const stateFrameStyle = useMemo<StyleProp<ViewStyle>>(
     () => [
@@ -1090,7 +1235,6 @@ function AssistantMarkdownImage({
           ) : null}
         </View>
       </Pressable>
-      <AttachmentLightbox source={lightboxSource} onClose={closeViewer} />
     </View>
   );
 }
@@ -1653,6 +1797,7 @@ function MarkdownListView({
 export const AssistantMessage = memo(function AssistantMessage({
   renderFullContent = false,
   occurrenceKey,
+  galleryGroupKey = occurrenceKey,
   message,
   timestamp: _timestamp,
   workspaceRoot,
@@ -1662,6 +1807,72 @@ export const AssistantMessage = memo(function AssistantMessage({
   phase,
 }: AssistantMessageProps) {
   const { t } = useTranslation();
+  const [localGalleryKeys, setLocalGalleryKeys] = useState<string[]>([]);
+  const getGallerySnapshot = useCallback(
+    () => getAssistantImageGallerySnapshot(galleryGroupKey),
+    [galleryGroupKey],
+  );
+  const subscribeGallery = useCallback(
+    (listener: () => void) => subscribeToAssistantImageGallery(galleryGroupKey, listener),
+    [galleryGroupKey],
+  );
+  const gallerySnapshot = useSyncExternalStore(
+    subscribeGallery,
+    getGallerySnapshot,
+    getGallerySnapshot,
+  );
+  const galleryEntries = gallerySnapshot.entries;
+  const gallerySelection = gallerySnapshot.selectedKey;
+  const registerGalleryImage = useCallback(
+    (key: string, source: ImageLightboxSource | null) => {
+      updateAssistantImageGallery(galleryGroupKey, (snapshot) => {
+        const entries = updateGalleryEntry(snapshot.entries, key, source);
+        return entries === snapshot.entries ? snapshot : { ...snapshot, entries };
+      });
+      setLocalGalleryKeys((keys) => (keys.includes(key) ? keys : [...keys, key]));
+    },
+    [galleryGroupKey],
+  );
+  const openGalleryImage = useCallback(
+    (key: string, source: ImageLightboxSource | null) => {
+      updateAssistantImageGallery(galleryGroupKey, (snapshot) => {
+        const entries = updateGalleryEntry(snapshot.entries, key, source);
+        return { ...snapshot, entries, hostKey: key, selectedKey: key };
+      });
+    },
+    [galleryGroupKey],
+  );
+  const handleGalleryIndexChange = useCallback(
+    (index: number) => {
+      const selectedKey = galleryEntries[index]?.key ?? null;
+      updateAssistantImageGallery(galleryGroupKey, (snapshot) =>
+        snapshot.selectedKey === selectedKey ? snapshot : { ...snapshot, selectedKey },
+      );
+    },
+    [galleryEntries, galleryGroupKey],
+  );
+  const handleGalleryClose = useCallback(() => {
+    updateAssistantImageGallery(galleryGroupKey, (snapshot) =>
+      snapshot.selectedKey === null && snapshot.hostKey === null
+        ? snapshot
+        : { ...snapshot, hostKey: null, selectedKey: null },
+    );
+  }, [galleryGroupKey]);
+  const imageGalleryContext = useMemo(
+    () => ({
+      register: registerGalleryImage,
+      open: openGalleryImage,
+    }),
+    [openGalleryImage, registerGalleryImage],
+  );
+  const gallerySources = useMemo(
+    () => galleryEntries.map((entry) => entry.source ?? { type: "uri" as const, uri: "" }),
+    [galleryEntries],
+  );
+  const galleryIndex = galleryEntries.findIndex((entry) => entry.key === gallerySelection);
+  const gallerySource = gallerySources[galleryIndex] ?? null;
+  const ownsGallerySelection =
+    gallerySnapshot.hostKey !== null && localGalleryKeys.includes(gallerySnapshot.hostKey);
   const markdownParser = useMemo(createAssistantMarkdownParser, []);
   const streamingMarkdownParser = useMemo(
     () => createAssistantMarkdownParser({ streaming: true }),
@@ -2147,23 +2358,31 @@ export const AssistantMessage = memo(function AssistantMessage({
   return (
     <View testID="assistant-message" dataSet={revealDataSet} style={assistantContainerStyle}>
       {keyedBlocks.map(({ key, block }, index) => (
-        <AssistantMessageBlockContainer
-          key={key}
-          block={block}
-          marginBottom={index < keyedBlocks.length - 1 ? 12 : 0}
-        >
-          <MemoizedMarkdownBlock
-            text={block}
-            rules={markdownRules}
-            parser={
-              phase === "streaming" && index === keyedBlocks.length - 1
-                ? streamingMarkdownParser
-                : markdownParser
-            }
-            onLinkPress={handleMarkdownLinkPress}
-          />
-        </AssistantMessageBlockContainer>
+        <AssistantImageGalleryBlock key={key} blockKey={key} gallery={imageGalleryContext}>
+          <AssistantMessageBlockContainer
+            block={block}
+            marginBottom={index < keyedBlocks.length - 1 ? 12 : 0}
+          >
+            <MemoizedMarkdownBlock
+              text={block}
+              rules={markdownRules}
+              parser={
+                phase === "streaming" && index === keyedBlocks.length - 1
+                  ? streamingMarkdownParser
+                  : markdownParser
+              }
+              onLinkPress={handleMarkdownLinkPress}
+            />
+          </AssistantMessageBlockContainer>
+        </AssistantImageGalleryBlock>
       ))}
+      <AttachmentLightbox
+        source={ownsGallerySelection ? gallerySource : null}
+        sources={ownsGallerySelection ? gallerySources : undefined}
+        index={galleryIndex}
+        onIndexChange={handleGalleryIndexChange}
+        onClose={handleGalleryClose}
+      />
       {fullMessageByteLength !== null ? (
         <Text
           testID="assistant-message-capped-notice"

@@ -56,7 +56,7 @@ export function useCheckoutPrStatusQuery({
     payloadError: query.data?.error ?? null,
     isLoading: query.isLoading,
     isFetching: query.isFetching,
-    isError: query.isError,
+    isError: query.isError || Boolean(query.data?.error),
     error: query.error,
   };
 }

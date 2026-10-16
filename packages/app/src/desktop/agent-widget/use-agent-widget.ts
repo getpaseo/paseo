@@ -7,7 +7,12 @@ import {
 import { getDesktopHost } from "@/desktop/host";
 import { useSessionStore } from "@/stores/session-store";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
-import { respondToWidgetRequest, projectWidgetRequest, projectWidgetIdentity } from "./model";
+import {
+  respondToWidgetRequest,
+  projectWidgetRequest,
+  projectWidgetIdentity,
+  projectWidgetWorkspaceTitle,
+} from "./model";
 import { useAgentProfiles } from "@/agent-profiles";
 import { pluginRegistry } from "@/plugins/registry";
 import { handoffReason, handoffWidgetPlan } from "./handoff";
@@ -77,6 +82,7 @@ export function useAgentWidget(serverId: string): void {
         agentTitle: agent.title ?? agent.provider,
         workspace: workspace ? `${workspace.projectDisplayName} · ${workspace.name}` : agent.cwd,
         workspaceId: agent.workspaceId ?? undefined,
+        workspaceTitle: projectWidgetWorkspaceTitle(workspace),
         handoffProfiles: profiles?.map(({ id, name }) => ({ id, name })),
         handoffDisabledReason: handoffReason(
           serverId,

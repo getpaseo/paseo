@@ -7,6 +7,8 @@ import { classifyInitialExecution } from "./execution-routing";
 import { workflowSettings } from "./state";
 import type { PaseoApi } from "./types";
 
+import { endVibeIslandSession } from "./vibe-island";
+
 const execute = promisify(execFile);
 async function git(cwd: string, args: string[]): Promise<string> {
   return (await execute("git", args, { cwd, maxBuffer: 8 * 1024 * 1024, timeout: 30_000 })).stdout;
@@ -56,6 +58,18 @@ export function runtime(
     );
   };
   const port: WorkflowPort = {
+    endHandoffSource: async (id) => {
+      try {
+        const snapshot = await paseo.agents.ref(id).refresh();
+        if (!snapshot) throw new Error(`Source agent '${id}' is unavailable.`);
+        const agent = snapshot.agent;
+        const sessionId = agent.persistence?.sessionId ?? agent.runtimeInfo?.sessionId;
+        if (!sessionId) throw new Error(`Source agent '${id}' has no native session id.`);
+        await endVibeIslandSession({ provider: agent.provider, sessionId, cwd: agent.cwd });
+      } catch (error) {
+        console.warn("[paseo-workflow] Failed to end source Vibe Island session", error);
+      }
+    },
     profiles: async () => (await paseo.config.get()).config.agentProfiles ?? [],
     executionSettings: async (profile, cwd) => {
       const [catalog, features] = await Promise.all([

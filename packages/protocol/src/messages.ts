@@ -3770,6 +3770,7 @@ export const ServerInfoStatusPayloadSchema = z
         agentProfileWorkflows: z.boolean().optional(),
         // COMPAT(workspaceGitWorkflow): added in v0.8.0; remove gate after 2027-09-22.
         workspaceGitWorkflow: z.boolean().optional(),
+        workspaceConflictModel: z.boolean().optional(),
         // COMPAT(agentRequestReceipts): added in v0.8.0; remove gate after 2027-03-05.
         agentRequestReceipts: z.boolean().optional(),
         // COMPAT(initialModelRouting): added in v0.8.0; remove gate after 2027-09-22.

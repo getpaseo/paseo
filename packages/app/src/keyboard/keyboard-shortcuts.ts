@@ -200,6 +200,7 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
   "agent-input": [
     "focus-message-input",
     "cycle-agent-mode",
+    "toggle-fast-mode",
     "voice-toggle",
     "dictation-toggle",
     "agent-interrupt",
@@ -248,6 +249,7 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "cycle-theme": "settings.shortcuts.help.cycleTheme",
   "focus-message-input": "settings.shortcuts.help.focusMessageInput",
   "cycle-agent-mode": "settings.shortcuts.help.cycleAgentMode",
+  "toggle-fast-mode": "shell.commandCenter.fastModeGroupLabel",
   "voice-toggle": "settings.shortcuts.help.toggleVoiceMode",
   "dictation-toggle": "settings.shortcuts.help.startStopDictation",
   "agent-interrupt": "settings.shortcuts.help.interruptAgent",
@@ -494,7 +496,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "workspace-tab-target-files-cmd-shift-e-mac",
     action: "workspace.tab.target.files",
-    combo: "Cmd+Shift+E",
+    combo: "",
     when: { mac: true, commandCenter: false },
     help: {
       id: "workspace-tab-target-files",
@@ -1086,6 +1088,19 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "focus-message-input",
       section: "agent-input",
       label: "Focus message input",
+    },
+  },
+  {
+    id: "message-input-fast-toggle-cmd-shift-e-mac",
+    action: "message-input.action",
+    combo: "Cmd+Shift+E",
+    repeat: false,
+    when: { mac: true, commandCenter: false, terminal: false },
+    payload: { type: "message-input", kind: "fast-toggle" },
+    help: {
+      id: "toggle-fast-mode",
+      section: "agent-input",
+      label: "Fast",
     },
   },
   {

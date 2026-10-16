@@ -4,6 +4,7 @@ import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
 import {
   projectWidgetRequest,
   projectWidgetIdentity,
+  projectWidgetWorkspaceTitle,
   buildWidgetPermissionResponse,
   respondToWidgetRequest,
 } from "./model";
@@ -17,6 +18,15 @@ const plan: AgentPermissionRequest = {
   actions: [{ id: "implement", label: "Implement", behavior: "allow", variant: "primary" }],
 };
 describe("desktop agent widget", () => {
+  it("uses the workspace title, including renames, and falls back to its name", () => {
+    expect(projectWidgetWorkspaceTitle({ title: "Renamed", name: "generated-name" })).toBe(
+      "Renamed",
+    );
+    expect(projectWidgetWorkspaceTitle({ title: null, name: "generated-name" })).toBe(
+      "generated-name",
+    );
+    expect(projectWidgetWorkspaceTitle(undefined)).toBeUndefined();
+  });
   it("preserves project identity across the widget IPC boundary and rejects remote logos", () => {
     const project = projectWidgetIdentity(
       { projectName: "Atlas", viewKey: "atlas" },
@@ -41,9 +51,11 @@ describe("desktop agent widget", () => {
       request: plan,
       agentTitle: "Agent name",
       workspace: "Different workspace title",
+      workspaceTitle: "Workspace renamed",
       project,
     });
     expect(WidgetRequestSchema.parse(item).project).toEqual(project);
+    expect(WidgetRequestSchema.parse(item).workspaceTitle).toBe("Workspace renamed");
     expect(
       WidgetRequestSchema.safeParse({
         ...item,

@@ -12,6 +12,7 @@ export type KeyboardActionId =
   | "message-input.dictation-confirm"
   | "message-input.voice-toggle"
   | "message-input.voice-mute-toggle"
+  | "message-input.fast-toggle"
   | "message-input.mode-cycle"
   | "message-input.profile-next"
   | "workspace.agent.new"
@@ -67,6 +68,7 @@ export type KeyboardActionDefinition =
   | { id: "message-input.dictation-confirm"; scope: KeyboardActionScope }
   | { id: "message-input.voice-toggle"; scope: KeyboardActionScope }
   | { id: "message-input.voice-mute-toggle"; scope: KeyboardActionScope }
+  | { id: "message-input.fast-toggle"; scope: KeyboardActionScope }
   | { id: "message-input.mode-cycle"; scope: KeyboardActionScope }
   | { id: "message-input.profile-next"; scope: KeyboardActionScope }
   | { id: "workspace.agent.new"; scope: KeyboardActionScope }

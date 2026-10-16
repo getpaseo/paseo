@@ -15,6 +15,7 @@ export const WorkspaceGitWorkflowConfigSchema = z
     reviewModel: MutableStructuredGenerationProviderSchema.nullable().optional(),
     commitModel: MutableStructuredGenerationProviderSchema.nullable().optional(),
     prModel: MutableStructuredGenerationProviderSchema.nullable().optional(),
+    conflictModel: MutableStructuredGenerationProviderSchema.nullable().optional(),
     reviewPrompt: z.string().optional(),
     createPrPrompt: z.string().optional(),
     commitAndPushPrompt: z.string().optional(),

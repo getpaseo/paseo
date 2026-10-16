@@ -1249,14 +1249,17 @@ describe("direct new-tab target shortcuts", () => {
     expect(result.match?.action).toBe(action);
   });
 
-  it.each(targetCases)("routes Cmd+Shift+%s directly to %s", (key, code, action) => {
-    const result = resolveShortcut({
-      event: { key, code, metaKey: true, shiftKey: true },
-      context: { isMac: true, isDesktop: true, focusScope: "other" },
-      bindings: buildEffectiveBindings({}),
-    });
-    expect(result.match?.action).toBe(action);
-  });
+  it.each(targetCases.filter(([key]) => key !== "e"))(
+    "routes Cmd+Shift+%s directly to %s",
+    (key, code, action) => {
+      const result = resolveShortcut({
+        event: { key, code, metaKey: true, shiftKey: true },
+        context: { isMac: true, isDesktop: true, focusScope: "other" },
+        bindings: buildEffectiveBindings({}),
+      });
+      expect(result.match?.action).toBe(action);
+    },
+  );
 
   it("uses the existing override map for target matching and display", () => {
     const bindingId = "workspace-tab-target-agent-ctrl-shift-a-non-mac";
@@ -1314,5 +1317,39 @@ describe("reopen last browser binding", () => {
     ] as const) {
       expect(resolveShortcut({ event, bindings, context }).match).toBeNull();
     }
+  });
+});
+
+describe("Fast mode shortcut", () => {
+  it.each([{ focusScope: "terminal" as const }, { commandCenterOpen: true }])(
+    "does not toggle Fast in an excluded context %j",
+    (context) => {
+      expect(
+        resolveShortcut({
+          event: { key: "E", code: "KeyE", metaKey: true, shiftKey: true },
+          context: { isMac: true, ...context },
+        }).match,
+      ).toBeNull();
+    },
+  );
+
+  it.each(["other", "message-input", "editable"] as const)(
+    "toggles Fast with Cmd+Shift+E from %s",
+    (focusScope) => {
+      expectShortcutResolution({
+        event: { key: "E", code: "KeyE", metaKey: true, shiftKey: true },
+        context: { isMac: true, isDesktop: true, focusScope },
+        action: "message-input.action",
+        payload: { kind: "fast-toggle" },
+      });
+    },
+  );
+  it("ignores key repeats", () => {
+    expect(
+      resolveShortcut({
+        event: { key: "E", code: "KeyE", metaKey: true, shiftKey: true, repeat: true },
+        context: { isMac: true },
+      }).match,
+    ).toBeNull();
   });
 });

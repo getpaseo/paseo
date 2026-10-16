@@ -22,6 +22,7 @@ describe("workspace git workflow settings model", () => {
       reviewModel: null,
       commitModel: null,
       prModel: null,
+      conflictModel: null,
     });
   });
 

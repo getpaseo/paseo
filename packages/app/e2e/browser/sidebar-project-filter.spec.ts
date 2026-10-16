@@ -28,7 +28,6 @@ import {
 
 async function openProjectPopover(page: Page): Promise<void> {
   await page.getByTestId("sidebar-display-preferences-menu").click();
-  await page.getByTestId("sidebar-display-project-filter").hover();
   await expect(page.getByTestId("sidebar-project-filter-all")).toBeInViewport();
 }
 
@@ -37,6 +36,46 @@ test.describe("Sidebar project visibility", () => {
   test.beforeEach(async ({ page }) => {
     page.setDefaultTimeout(15_000);
   });
+
+  for (const compact of [false, true]) {
+    test(`shows alphabetized projects directly in ${compact ? "compact" : "wide"} filters`, async ({
+      page,
+    }, testInfo) => {
+      if (compact) await page.setViewportSize({ width: 390, height: 844 });
+      const zebra = await seedWorkspace({ repoPrefix: "zebra-" });
+      const alpha = await seedWorkspace({ repoPrefix: "alpha-" });
+      const beta = await seedWorkspace({ repoPrefix: "beta-" });
+      try {
+        await zebra.client.renameProject(zebra.projectId, "Zebra");
+        await alpha.client.renameProject(alpha.projectId, "alpha");
+        await beta.client.renameProject(beta.projectId, "Éclair");
+        await gotoAppShell(page);
+        if (compact) await openMobileAgentSidebar(page);
+        await expect(page.getByTestId(`sidebar-project-row-${zebra.projectKey}`)).toBeVisible({
+          timeout: 30_000,
+        });
+        await openProjectPopover(page);
+        await expect(page.getByTestId("sidebar-display-project-filter")).toHaveCount(0);
+        const choices = page.locator(
+          '[data-testid^="sidebar-project-filter-"]:not([data-testid="sidebar-project-filter-all"])',
+        );
+        await expect(choices).toHaveText([/alpha$/, /Éclair$/, /Zebra$/]);
+        await toggleProjectFilter(page, alpha.projectKey);
+        await expect(
+          page.getByTestId(`sidebar-project-filter-${alpha.projectKey}`),
+        ).toHaveAttribute("aria-checked", "false");
+        await selectAllProjectsFilter(page);
+        await expect(
+          page.getByTestId(`sidebar-project-filter-${alpha.projectKey}`),
+        ).toHaveAttribute("aria-checked", "true");
+        await page.screenshot({ path: testInfo.outputPath("direct-project-filters.png") });
+      } finally {
+        await beta.cleanup();
+        await alpha.cleanup();
+        await zebra.cleanup();
+      }
+    });
+  }
 
   for (const method of ["directory-search", "new-directory"] as const) {
     test(`includes a project added through ${method} without revealing excluded projects`, async ({

@@ -47,6 +47,11 @@ const assistantImageSource: ImageLightboxSource = {
   type: "uri",
   uri: "blob:assistant-image",
 };
+const gallerySources: ImageLightboxSource[] = [
+  { type: "uri", uri: "blob:first" },
+  { type: "uri", uri: "blob:second" },
+  { type: "uri", uri: "blob:third" },
+];
 
 vi.mock("react-native-unistyles", () => ({
   StyleSheet: {
@@ -193,6 +198,7 @@ describe("AttachmentLightbox", () => {
     const image = queryByTestId("attachment-lightbox-image");
     expect(image).not.toBeNull();
     expect(image?.getAttribute("data-source")).toBe("blob:preview");
+    expect(queryByTestId("attachment-lightbox-thumbnails")).toBeNull();
   });
 
   it("renders a direct timeline image without resolving attachment storage", () => {
@@ -201,6 +207,55 @@ describe("AttachmentLightbox", () => {
     const image = queryByTestId("attachment-lightbox-image");
     expect(image?.getAttribute("data-source")).toBe("blob:assistant-image");
     expect(useAttachmentPreviewUrlMock).toHaveBeenLastCalledWith(null);
+  });
+
+  it("opens the selected gallery image and exposes selectable thumbnails", () => {
+    const onIndexChange = vi.fn();
+    render(
+      <AttachmentLightbox
+        source={gallerySources[1]!}
+        sources={gallerySources}
+        index={1}
+        onIndexChange={onIndexChange}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(queryByTestId("attachment-lightbox-image")?.getAttribute("data-source")).toBe(
+      "blob:second",
+    );
+    expect(queryByTestId("attachment-lightbox-thumbnails")).not.toBeNull();
+    expect(
+      document
+        .querySelector('[data-testid="attachment-lightbox-thumbnail-1"]')
+        ?.getAttribute("aria-pressed"),
+    ).toBe("true");
+    click(queryByTestId("attachment-lightbox-thumbnail-2")!);
+    expect(onIndexChange).toHaveBeenCalledWith(2);
+  });
+
+  it("keeps arrow navigation within the first and last images", () => {
+    const onIndexChange = vi.fn();
+    render(
+      <AttachmentLightbox
+        source={gallerySources[0]!}
+        sources={gallerySources}
+        index={0}
+        onIndexChange={onIndexChange}
+        onClose={vi.fn()}
+      />,
+    );
+
+    act(() => {
+      window.dispatchEvent(
+        new window.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }),
+      );
+      window.dispatchEvent(
+        new window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }),
+      );
+    });
+
+    expect(onIndexChange.mock.calls).toEqual([[0], [1]]);
   });
 
   it("calls onClose when the backdrop is pressed", () => {
@@ -233,6 +288,24 @@ describe("AttachmentLightbox", () => {
 
     expect(queryByTestId("attachment-lightbox-image")).toBeNull();
     expect(document.body.textContent ?? "").toContain("Couldn't load image");
+  });
+
+  it("keeps gallery navigation available when the active image cannot load", () => {
+    const onIndexChange = vi.fn();
+    useAttachmentPreviewUrlMock.mockReturnValue(null);
+    render(
+      <AttachmentLightbox
+        source={attachmentSource}
+        sources={[attachmentSource, assistantImageSource]}
+        index={0}
+        onIndexChange={onIndexChange}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(document.body.textContent ?? "").toContain("Couldn't load image");
+    click(queryByTestId("attachment-lightbox-thumbnail-1")!);
+    expect(onIndexChange).toHaveBeenCalledWith(1);
   });
 
   it("closes on Escape key on web", () => {

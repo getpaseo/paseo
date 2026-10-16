@@ -16,6 +16,7 @@ export const WidgetRequestSchema = z.object({
   agentId: z.string().min(1),
   requestId: z.string().min(1),
   workspaceId: z.string().optional(),
+  workspaceTitle: z.string().optional(),
   planCallId: z.string().optional(),
   planText: z.string().optional(),
   handoffDisabledReason: z.string().optional(),

@@ -3,8 +3,6 @@ import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
 import type { AgentWidgetBridge, WidgetAction } from "@getpaseo/protocol/desktop-agent-widget";
 import { pluginRegistry } from "@/plugins/registry";
 import { runPlanContribution } from "@/plugins/plan-actions/contribution";
-import { createPluginNavigation } from "@/plugins/navigation";
-import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { projectWidgetRequest } from "./model";
 
 export function handoffReason(
@@ -55,7 +53,6 @@ export async function handoffWidgetPlan(input: {
     .getSnapshot()
     .find((entry) => entry.serverId === serverId && entry.id === "paseo-workflow");
   if (!plugin) throw new Error("Handoff is unavailable.");
-  const navigation = createPluginNavigation({ serverId, workspaceId: item.workspaceId });
   const progress = setInterval(() => {
     void bridge.progress(operationId).catch(() => undefined);
   }, 10_000);
@@ -71,10 +68,11 @@ export async function handoffWidgetPlan(input: {
       signal: plugin.lifetime.signal,
       profileId: action.profileId,
       navigation: {
-        ...navigation,
-        openAgent: (executorId) => {
-          navigateToAgent({ serverId, agentId: executorId, workspaceId: item.workspaceId });
-        },
+        // External popup actions must not change the main window's navigation or tabs.
+        openSettings() {},
+        openSurface() {},
+        openWorkspacePanel() {},
+        openAgentPanel() {},
       },
     });
   } finally {

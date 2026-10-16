@@ -14,6 +14,12 @@ import {
   parseQuestionFormQuestions,
 } from "@/components/question-form-card-core";
 
+export function projectWidgetWorkspaceTitle(
+  workspace: Pick<WorkspaceDescriptor, "title" | "name"> | undefined,
+) {
+  return workspace?.title ?? workspace?.name;
+}
+
 export function projectWidgetIdentity(
   project: Pick<HostProjectListItem, "projectName" | "viewKey"> | undefined,
   workspace: Pick<WorkspaceDescriptor, "gitRuntime"> | undefined,
@@ -41,6 +47,7 @@ interface RequestInput {
   agentTitle: string;
   workspace: string;
   workspaceId?: string;
+  workspaceTitle?: string;
   handoffDisabledReason?: string;
   handoffProfiles?: { id: string; name: string }[];
 }
@@ -68,6 +75,7 @@ export function projectWidgetRequest(input: RequestInput): WidgetRequest | null 
     agentId,
     requestId: request.id,
     workspaceId: input.workspaceId,
+    workspaceTitle: input.workspaceTitle,
     planCallId: request.sourcePlanCallId,
     planText: typeof plan === "string" ? plan : undefined,
     handoffDisabledReason: handoffDisabledReason(input, plan),

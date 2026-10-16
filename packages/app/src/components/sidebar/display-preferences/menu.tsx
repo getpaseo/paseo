@@ -84,8 +84,7 @@ type OptionIcon = ComponentType<{
   uniProps: (theme: Theme) => { color: string };
 }>;
 
-// Options carry icons; the root rows deliberately do not. The root is four labels with their
-// current values, and a column of icons there would be decoration competing with the values.
+// Display options carry icons; their root rows use labels and current values.
 const GROUPING_ICONS: Record<SidebarGroupMode, OptionIcon> = {
   project: withUnistyles(Folder),
   status: withUnistyles(CircleDashed),
@@ -157,9 +156,7 @@ const TRAILING_LABEL_KEYS: Record<SidebarTrailingChoice, string> = {
 /**
  * What the sidebar shows and how it is arranged.
  *
- * The root is one row per decision with its current value; the options live a level down. The
- * shape is deliberate — every option of every decision on one surface is what this menu used to
- * be, and it grew a row for each host on top of that.
+ * Display options live a level down; project visibility choices stay directly accessible.
  */
 export function SidebarDisplayPreferencesMenu(): ReactElement {
   const { t } = useTranslation();
@@ -247,19 +244,6 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
         content: <HostFilterPage preferences={preferences} hosts={hosts} />,
       });
     }
-    if (showProjectFilter) {
-      definitions.push({
-        id: "projectFilter",
-        title: t("sidebar.display.projectFilter.label"),
-        content: (
-          <ProjectFilterPage
-            projects={allProjects}
-            resolvedHiddenProjectKeys={resolvedHiddenProjectKeys}
-            preferences={preferences}
-          />
-        ),
-      });
-    }
     if (showLabelFilter) {
       definitions.push({
         id: "labelFilter",
@@ -270,18 +254,7 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
       });
     }
     return definitions;
-  }, [
-    t,
-    preferences,
-    hosts,
-    showHostFilter,
-    showProjectFilter,
-    allProjects,
-    resolvedHiddenProjectKeys,
-    showLabelFilter,
-    labels,
-    openManager,
-  ]);
+  }, [t, preferences, hosts, showHostFilter, showLabelFilter, labels, openManager]);
 
   return (
     <>
@@ -334,17 +307,12 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
           ) : null}
           {showProjectFilter ? (
             <>
-              {/* Host and Project narrow the same list, so they read as one block. The separator
-                belongs above whichever of the two is showing first — with a single host there is
-                no Host row and Project is what has to carry it. */}
-              {showHostFilter ? null : <MenuSeparator />}
-              <MenuSubTrigger
-                id="projectFilter"
-                indicator={resolvedHiddenProjectKeys.length > 0}
-                testID="sidebar-display-project-filter"
-              >
-                {t("sidebar.display.projectFilter.label")}
-              </MenuSubTrigger>
+              <MenuSeparator />
+              <ProjectFilterItems
+                projects={allProjects}
+                resolvedHiddenProjectKeys={resolvedHiddenProjectKeys}
+                preferences={preferences}
+              />
             </>
           ) : null}
           {showLabelFilter ? (
@@ -600,7 +568,7 @@ function ChecksSubTrigger(): ReactElement {
   );
 }
 
-function ProjectFilterPage({
+function ProjectFilterItems({
   projects,
   resolvedHiddenProjectKeys,
   preferences,
@@ -609,7 +577,17 @@ function ProjectFilterPage({
   resolvedHiddenProjectKeys: readonly string[];
   preferences: Preferences;
 }): ReactElement {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const sortedProjects = useMemo(
+    () =>
+      [...projects].sort((a, b) =>
+        a.projectName.localeCompare(b.projectName, i18n.language, {
+          sensitivity: "base",
+          numeric: true,
+        }),
+      ),
+    [projects, i18n.language],
+  );
   const iconTargets = useMemo(() => resolveSidebarProjectIconTargets(projects), [projects]);
   // Shares TanStack's cache with the sidebar's own call, so this subscribes rather than refetches.
   const iconByProjectViewKey = useProjectIcons({ projects: iconTargets });
@@ -624,7 +602,7 @@ function ProjectFilterPage({
       >
         {t("sidebar.display.projectFilter.all")}
       </MenuItem>
-      {projects.map((project) => (
+      {sortedProjects.map((project) => (
         <ProjectFilterItem
           key={project.viewKey}
           viewKey={project.viewKey}

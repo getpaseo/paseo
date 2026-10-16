@@ -46,6 +46,7 @@ const plan = {
   agentId: "agent",
   requestId: "plan",
   workspaceId: "workspace",
+  workspaceTitle: "Popup de plans",
   planCallId: "plan-call",
   handoffProfiles: [
     { id: "profile-1", name: "Codex rapide" },
@@ -132,7 +133,7 @@ try {
   widget.on("pageerror", (error) => errors.push(error.message));
   await expect(widget.locator("#comment")).toBeVisible();
   await expect(widget.locator(".identity b")).toHaveText("Atlas");
-  await expect(widget.locator(".identity small")).toHaveText("feat/widget-header");
+  await expect(widget.locator(".identity small")).toHaveText("Popup de plans");
   await expect(widget.locator("header")).not.toContainText(/paseo/i);
   await expect(widget.locator(".avatar img")).toHaveJSProperty("naturalWidth", 30);
   await widget.locator("header").screenshot({ path: path.join(output, "header-logo.png") });
@@ -174,11 +175,57 @@ try {
   expect(geometry.bounds.x + geometry.bounds.width).toBe(
     geometry.area.x + geometry.area.width - 16,
   );
-  expect(geometry.bounds.y).toBe(geometry.area.y + 16);
-  expect(geometry.bounds.height).toBe(geometry.area.height - 32);
-  expect(geometry.bounds.y + geometry.bounds.height).toBe(
-    geometry.area.y + geometry.area.height - 16,
+  expect(geometry.bounds.height).toBeLessThan(geometry.area.height - 32);
+  expect(geometry.bounds.y).toBeGreaterThanOrEqual(geometry.area.y);
+  expect(geometry.bounds.y + geometry.bounds.height).toBeLessThanOrEqual(
+    geometry.area.y + geometry.area.height,
   );
+  const comment = widget.locator("#comment");
+  expect(await comment.evaluate((element) => element.tagName)).toBe("TEXTAREA");
+  expect(await comment.evaluate((element) => element.offsetHeight)).toBe(34);
+  const multiline = Array.from({ length: 20 }, (_, i) => `Consigne ${i + 1}`).join("\n");
+  await comment.fill(multiline);
+  await expect.poll(() => comment.evaluate((element) => element.offsetHeight)).toBe(140);
+  expect(await comment.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(
+    true,
+  );
+  await widget.screenshot({ path: path.join(output, "plan-multiline.png") });
+  await comment.fill("Deux lignes\nConsigne à conserver");
+  await comment.evaluate((element) => {
+    element.focus();
+    element.setSelectionRange(3, 10, "backward");
+  });
+  const renamed = { ...plan, workspaceTitle: "Popup renommée — " + "titre long ".repeat(20) };
+  await owner.evaluate((snapshot) => window.paseoDesktop.agentWidget.publish(snapshot), {
+    serverId: "host",
+    online: true,
+    requests: [renamed, question],
+    labels,
+  });
+  await expect(widget.locator(".identity small")).toHaveText(renamed.workspaceTitle);
+  await expect(comment).toHaveValue("Deux lignes\nConsigne à conserver");
+  expect(
+    await comment.evaluate((element) => [
+      element.selectionStart,
+      element.selectionEnd,
+      element.selectionDirection,
+    ]),
+  ).toEqual([3, 10, "backward"]);
+  await widget.screenshot({ path: path.join(output, "plan-renamed.png") });
+  await comment.fill("");
+  await expect.poll(() => comment.evaluate((element) => element.offsetHeight)).toBe(34);
+  await comment.press("Enter");
+  await expect(comment).toHaveValue("\n");
+  expect(await owner.evaluate(() => window.widgetActions)).toEqual([]);
+  await comment.fill("");
+  await owner.evaluate((snapshot) => window.paseoDesktop.agentWidget.publish(snapshot), {
+    serverId: "host",
+    online: true,
+    requests: [plan, question],
+    labels,
+  });
+  await expect(widget.locator(".identity small")).toHaveText(plan.workspaceTitle);
+  await widget.screenshot({ path: path.join(output, "plan-short.png") });
   // The identity is the current drag handle; only the dedicated button reduces.
   expect(
     await widget.locator("header").evaluate((element) => getComputedStyle(element).webkitAppRegion),
@@ -282,7 +329,7 @@ try {
     labels,
   });
   await expect(widget.locator(".markdown h1")).toHaveText("Plan fictif — test automatique");
-  await widget.locator("#comment").press("Enter");
+  await widget.locator("#send-comment").click();
   const activationAfterAction = await app.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows().some(
       (candidate) => candidate.getTitle() !== "Paseo" && candidate.isFocused(),
@@ -321,8 +368,31 @@ try {
   await widget.screenshot({ path: path.join(output, "reduced-after-answer.png") });
   await widget.locator("[data-action=restore]").click();
   await expect(widget.locator("#comment")).toHaveValue("Garde le widget silencieux.");
+  const mainRouteBeforeHandoff = owner.url();
+  if (previousBundleId)
+    execFileSync("osascript", ["-e", `tell application id "${previousBundleId}" to activate`]);
+  const frontmost = () =>
+    process.platform === "darwin"
+      ? execFileSync("osascript", [
+          "-e",
+          'tell application "System Events" to get bundle identifier of first process whose frontmost is true',
+        ])
+          .toString()
+          .trim()
+      : null;
+  const applicationBeforeHandoff = frontmost();
+  const mainFocusBeforeHandoff = await app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows().some((win) => win.getTitle() !== "Paseo" && win.isFocused()),
+  );
   await widget.locator('[data-action="handoff"]').first().click();
   await expect(widget.locator(".pill")).toBeVisible();
+  expect(frontmost()).toBe(applicationBeforeHandoff);
+  expect(owner.url()).toBe(mainRouteBeforeHandoff);
+  expect(
+    await app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows().some((win) => win.getTitle() !== "Paseo" && win.isFocused()),
+    ),
+  ).toBe(mainFocusBeforeHandoff);
   const actions = await owner.evaluate(() => window.widgetActions);
   expect(actions.map((action) => action.type)).toEqual(["comment", "answer", "handoff"]);
   expect(actions.at(-1).profileId).toBe("profile-1");
@@ -533,9 +603,18 @@ try {
     scrollHeight: element.scrollHeight,
   }));
   expect(scrollMetrics.scrollHeight).toBeGreaterThan(scrollMetrics.clientHeight);
+  const cappedHeight = await app.evaluate(({ BrowserWindow, screen }) => {
+    const win = BrowserWindow.getAllWindows().find((candidate) => candidate.getTitle() === "Paseo");
+    return {
+      height: win.getBounds().height,
+      max: screen.getDisplayMatching(win.getBounds()).workArea.height - 32,
+    };
+  });
+  expect(cappedHeight.height).toBe(cappedHeight.max);
   await body.evaluate((element) => element.scrollTo(0, element.scrollHeight));
   expect(await body.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   await expect(widget.locator("[data-action=approve]")).toBeVisible();
+  await widget.screenshot({ path: path.join(output, "plan-long.png") });
   const sizeChecks = await app.evaluate(() => {
     const widgetBounds = globalThis.widgetBounds;
     return [
@@ -550,13 +629,68 @@ try {
     expect(bounds.x + bounds.width).toBe(size.width - 16);
     expect(bounds.y + bounds.height).toBe(size.height - 16);
   }
+  await secondOwner.evaluate((snapshot) => window.paseoDesktop.agentWidget.publish(snapshot), {
+    serverId: "host",
+    online: true,
+    requests: [{ ...tallPlan, planHtml: plan.planHtml }],
+    labels,
+  });
+  await expect
+    .poll(() =>
+      app.evaluate(
+        ({ BrowserWindow }) =>
+          BrowserWindow.getAllWindows()
+            .find((win) => win.getTitle() === "Paseo")
+            .getBounds().height,
+      ),
+    )
+    .toBeLessThan(cappedHeight.height);
+  // Display changes reapply the stored natural height through the production handler.
+  const screenChecks = await app.evaluate(({ BrowserWindow, screen }) => {
+    const win = BrowserWindow.getAllWindows().find((candidate) => candidate.getTitle() === "Paseo");
+    const original = screen.getDisplayMatching;
+    const display = original.call(screen, win.getBounds());
+    const initialHeight = win.getBounds().height;
+    try {
+      screen.getDisplayMatching = () => ({
+        ...display,
+        workArea: { x: 0, y: 0, width: 1280, height: 500 },
+      });
+      screen.emit("display-metrics-changed", {}, display, ["workArea"]);
+      const smallHeight = win.getBounds().height;
+      screen.getDisplayMatching = () => ({
+        ...display,
+        workArea: { x: 0, y: 0, width: 1440, height: 900 },
+      });
+      screen.emit("display-metrics-changed", {}, display, ["workArea"]);
+      return { smallHeight, restoredHeight: win.getBounds().height, initialHeight };
+    } finally {
+      screen.getDisplayMatching = original;
+      screen.emit("display-metrics-changed", {}, display, ["workArea"]);
+    }
+  });
+  expect(screenChecks.smallHeight).toBe(468);
+  expect(screenChecks.restoredHeight).toBe(screenChecks.initialHeight);
   expect(errors).toEqual([]);
   await writeFile(
     path.join(output, "results.json"),
-    JSON.stringify({ passed: true, geometry, actions, pageErrors: errors }, null, 2),
+    JSON.stringify(
+      {
+        passed: true,
+        geometry,
+        actions,
+        cappedHeight,
+        screenChecks,
+        applicationBeforeHandoff,
+        mainFocusBeforeHandoff,
+        pageErrors: errors,
+      },
+      null,
+      2,
+    ),
   );
   console.log(
-    "PASS: non-activating widget with a visible main window, full primary-screen height, feedback failure/retry, app and widget responses, questions, drafts, stale snapshots, offline, persistent zero-count pill, multi-window takeover and long-content scrolling.",
+    "PASS: non-activating widget with a visible main window, adaptive content height, feedback failure/retry, app and widget responses, questions, drafts, stale snapshots, offline, persistent zero-count pill, multi-window takeover and long-content scrolling.",
   );
 } finally {
   await app.close();

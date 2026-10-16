@@ -75,6 +75,7 @@ function deriveGithubMergeCapability(github: GithubMergeFacts): MergeCapability 
     autoMergeEnabled: github.autoMergeRequest !== null,
     canDisableAutoMerge: github.viewerCanDisableAutoMerge === true,
     mergeBlockedByQueue: github.isMergeQueueEnabled || github.isInMergeQueue,
+    isInMergeQueue: github.isInMergeQueue,
     allowedMethods,
     preferredMethod: normalizeGithubMergeMethod(repository.viewerDefaultMergeMethod ?? null),
   };

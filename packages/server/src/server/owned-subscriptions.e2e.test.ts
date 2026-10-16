@@ -1753,3 +1753,74 @@ test("public project subscriptions request updates and release their producer de
     await daemon.close();
   }
 });
+
+test("conflict model configuration is negotiated per socket and survives legacy edits", async () => {
+  const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
+  const peers: SubscriptionPeer[] = [];
+  const selection = { provider: "codex", model: "conflicts", thinkingOptionId: "high" };
+  try {
+    const modern = await SubscriptionPeer.connect(daemon.port, "conflict-config", {
+      workspace_conflict_model: true,
+    });
+    peers.push(modern);
+    const legacy = await SubscriptionPeer.connect(daemon.port, "conflict-config");
+    peers.push(legacy);
+    for (const [index, peer] of peers.entries()) {
+      await peer.request({
+        type: "session.events.set_subscription.request",
+        requestId: `config-feed-${index}`,
+        events: ["status.daemon_config_changed"],
+      });
+    }
+    await modern.request({
+      type: "set_daemon_config_request",
+      requestId: "set-conflicts",
+      config: { workspaceGitWorkflow: { conflictModel: selection } },
+    });
+    await legacy.request({ type: "get_daemon_config_request", requestId: "legacy-read" });
+    await legacy.request({
+      type: "set_daemon_config_request",
+      requestId: "legacy-edit",
+      config: { workspaceGitWorkflow: { prModel: null } },
+    });
+    await modern.request({ type: "get_daemon_config_request", requestId: "modern-read" });
+    const modernConfig = modern.frames.find(
+      (frame) => frame.type === "session" && frame.message.type === "get_daemon_config_response",
+    );
+    expect(modernConfig).toMatchObject({
+      message: {
+        payload: { config: { workspaceGitWorkflow: { conflictModel: selection, prModel: null } } },
+      },
+    });
+    const legacyConfigs = legacy.frames.flatMap((frame) => {
+      if (frame.type !== "session") return [];
+      const msg = frame.message;
+      if (
+        msg.type === "get_daemon_config_response" ||
+        msg.type === "set_daemon_config_response" ||
+        (msg.type === "status" && msg.payload.status === "daemon_config_changed")
+      )
+        return [msg.payload.config];
+      return [];
+    });
+    expect(legacyConfigs.length).toBeGreaterThanOrEqual(3);
+    for (const config of legacyConfigs)
+      expect(config).not.toHaveProperty("workspaceGitWorkflow.conflictModel");
+    expect(modern.frames).toContainEqual(
+      expect.objectContaining({
+        message: expect.objectContaining({
+          type: "status",
+          payload: expect.objectContaining({
+            status: "daemon_config_changed",
+            config: expect.objectContaining({
+              workspaceGitWorkflow: expect.objectContaining({ conflictModel: selection }),
+            }),
+          }),
+        }),
+      }),
+    );
+  } finally {
+    for (const peer of peers) peer.close();
+    await daemon.close();
+  }
+});

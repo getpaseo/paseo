@@ -216,9 +216,10 @@ export async function openSidebarDisplayPage(page: Page, branchTestID: string): 
   await page.getByTestId(branchTestID).click();
 }
 
-// Project filters live a page below the display-preferences root, like the host filters.
+// Project choices are visible directly in the display-preferences root.
 export async function openSidebarProjectFilter(page: Page): Promise<void> {
-  await openSidebarDisplayPage(page, "sidebar-display-project-filter");
+  await page.getByTestId("sidebar-display-preferences-menu").click();
+  await expect(page.getByTestId("sidebar-project-filter-all")).toBeVisible();
 }
 
 // The filter rows are keyed by the project's sidebar view key. A project seeded from its own temp

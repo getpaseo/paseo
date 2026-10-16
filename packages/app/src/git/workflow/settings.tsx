@@ -15,6 +15,7 @@ import { buildSelectableProviderSelectorProviders } from "@/provider-selection/p
 import { findModelByReference } from "@/provider-selection/model-catalog";
 import { formatThinkingOptionLabel } from "@/agent-controls/labels";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { useSessionStore } from "@/stores/session-store";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import {
   createWorkspaceGitWorkflowSettingsModel,
@@ -25,7 +26,7 @@ import {
   type WorkspaceGitWorkflowSettingsModel,
 } from "./settings-model";
 
-const MODEL_FIELDS = ["reviewModel", "commitModel", "prModel"] as const;
+const MODEL_FIELDS = ["reviewModel", "commitModel", "prModel", "conflictModel"] as const;
 
 function selectionSummary(selection: WorkspaceWorkflowModel | null | undefined) {
   return selection
@@ -37,6 +38,9 @@ export function WorkspaceGitWorkflowSettingsSection({ serverId }: { serverId: st
   const { t } = useTranslation();
   const { config, isLoading, patchConfig } = useDaemonConfig(serverId);
   const snapshot = useProvidersSnapshot(serverId);
+  const conflictModelSupported = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.workspaceConflictModel === true,
+  );
   const { profiles } = useAgentProfiles(serverId);
   const [draft, setDraft] = useState<WorkspaceGitWorkflowSettingsModel | null>(null);
   const [saving, setSaving] = useState(false);
@@ -63,9 +67,9 @@ export function WorkspaceGitWorkflowSettingsSection({ serverId }: { serverId: st
     setSaving(true);
     setError(null);
     try {
-      const saved = await patchConfig({
-        workspaceGitWorkflow: workspaceGitWorkflowSettingsPatch(draft),
-      });
+      const patch = workspaceGitWorkflowSettingsPatch(draft);
+      if (!conflictModelSupported) delete patch.conflictModel;
+      const saved = await patchConfig({ workspaceGitWorkflow: patch });
       if (!saved) throw new Error(t("workspace.git.workflow.saveFailed"));
       setDraft(null);
     } catch (caught) {
@@ -73,7 +77,7 @@ export function WorkspaceGitWorkflowSettingsSection({ serverId }: { serverId: st
     } finally {
       setSaving(false);
     }
-  }, [draft, patchConfig, t]);
+  }, [draft, patchConfig, t, conflictModelSupported]);
   const header = useMemo(() => ({ title: t("workspace.git.workflow.title") }), [t]);
   const onReviewPrompt = useCallback((value: string) => update("reviewPrompt", value), [update]);
   const onCreatePrPrompt = useCallback(
@@ -89,13 +93,21 @@ export function WorkspaceGitWorkflowSettingsSection({ serverId }: { serverId: st
     reviewModel: t("workspace.git.workflow.review"),
     commitModel: "Commit",
     prModel: "PR",
+    conflictModel: t("workspace.git.workflow.conflicts"),
   };
   const fallback = (key: WorkspaceWorkflowModelKey) => {
     const profileIds = {
       reviewModel: config?.workspaceGitWorkflow?.reviewProfileId,
       prModel: config?.workspaceGitWorkflow?.deliveryProfileId,
       commitModel: undefined,
+      conflictModel: undefined,
     };
+    if (key === "conflictModel")
+      return t(
+        conflictModelSupported
+          ? "workspace.git.workflow.selectConflictModel"
+          : "workspace.git.workflow.updateConflictHost",
+      );
     const id = profileIds[key];
     return id
       ? (profiles?.find((profile) => profile.id === id)?.name ??
@@ -161,7 +173,7 @@ export function WorkspaceGitWorkflowSettingsSection({ serverId }: { serverId: st
                 fallback={fallback(key)}
                 snapshot={snapshot}
                 serverId={serverId}
-                disabled={saving}
+                disabled={saving || (key === "conflictModel" && !conflictModelSupported)}
                 fieldKey={key}
                 onChange={update}
                 testID={`workspace-git-workflow-${key}`}

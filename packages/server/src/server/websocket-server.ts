@@ -1,3 +1,4 @@
+import { workspaceConflictModelMessage } from "./workspace-conflict-model-compat.js";
 import { interactiveResponsesEnabled } from "./interactive-responses.js";
 import { stat } from "node:fs/promises";
 import type { CreationSnapshot } from "@getpaseo/protocol/messages";
@@ -1185,10 +1186,22 @@ export class VoiceAssistantWebSocketServer {
     }
 
     const payloadBytes = outboundFrameByteLength(payload);
+    let legacyPayload: string | undefined;
     for (const ws of writableSockets) {
-      this.sendFrameToClient(ws, payload, payloadBytes, () => {
-        this.runtimeMetrics.recordOutboundMessage(message, ws.bufferedAmount);
-      });
+      const supported =
+        this.sessions.get(ws)?.session.supportsForSource(CLIENT_CAPS.workspaceConflictModel, ws) ===
+        true;
+      const adapted = workspaceConflictModelMessage(message, supported);
+      if (adapted !== message) legacyPayload ??= JSON.stringify(adapted);
+      const frame = adapted === message ? payload : legacyPayload!;
+      this.sendFrameToClient(
+        ws,
+        frame,
+        adapted === message ? payloadBytes : outboundFrameByteLength(frame),
+        () => {
+          this.runtimeMetrics.recordOutboundMessage(message, ws.bufferedAmount);
+        },
+      );
     }
   }
 
@@ -1801,6 +1814,7 @@ export class VoiceAssistantWebSocketServer {
         agentWritePolicy: true,
         agentProfileWorkflows: true,
         workspaceGitWorkflow: true,
+        workspaceConflictModel: true,
         agentRequestReceipts: true,
         // COMPAT(initialModelRouting): added in v0.8.0; remove gate after 2027-09-22.
         initialModelRouting: true,

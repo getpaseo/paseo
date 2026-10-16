@@ -76,6 +76,7 @@ export interface MergeCapability {
   canDisableAutoMerge: boolean;
   /** A merge queue is blocking both direct merge and auto-merge. */
   mergeBlockedByQueue: boolean;
+  isInMergeQueue?: boolean;
   /** Merge methods the forge permits for this change request. */
   allowedMethods: CheckoutPrMergeMethod[];
   /** The forge's preferred/default merge method, if it reports one. */

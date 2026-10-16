@@ -117,6 +117,7 @@ export interface WorkflowState {
 const UNCONFIRMED_APPROVAL =
   "Approval follow-up outcome_unknown. Inspect this conversation before continuing; automatic completion is suspended.";
 export interface WorkflowPort {
+  endHandoffSource(agentId: string): Promise<void>;
   profiles(): Promise<AgentProfile[]>;
   executionSettings(
     profile: AgentProfile,
@@ -654,6 +655,7 @@ export class WorkflowController {
     }
     handoff.phase = "running";
     await this.port.write(state);
+    await this.port.endHandoffSource(plan.context.agentId);
     return executorId;
   }
   finished(agentId: string, text: string, timeline: readonly AgentTimelineItem[] = []) {

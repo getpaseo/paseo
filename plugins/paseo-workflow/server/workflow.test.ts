@@ -11,6 +11,7 @@ function fixture() {
   const launches: Parameters<WorkflowPort["create"]>[0][] = [];
   const prompts: Array<{ agentId: string; text: string; messageId: string }> = [];
   const decisions: string[] = [];
+  const endedSources: string[] = [];
   const agents = new Map<string, WorkflowAgent>([
     [
       "planner",
@@ -33,6 +34,9 @@ function fixture() {
   let stored: WorkflowState = { workflows: {} };
   let installed = [...profiles];
   const port: WorkflowPort = {
+    endHandoffSource: async (id) => {
+      endedSources.push(id);
+    },
     profiles: async () => installed,
     executionSettings: async () => ({ modes: [], features: [] }),
     agent: async (id) => {
@@ -106,6 +110,7 @@ function fixture() {
     launches,
     prompts,
     decisions,
+    endedSources,
     agents,
     removeProfile: (id: string) => {
       installed = installed.filter((profile) => profile.id !== id);
@@ -1631,4 +1636,43 @@ test("review objections request a new append-only plan and allow only one furthe
   expect(saved.workflows.planner.plans["plan-1"].context.text).toBe("Exact (c) plan");
   await new WorkflowController(f.port).finished("child-1", "Late duplicate");
   expect(f.prompts).toHaveLength(4);
+});
+
+test("ends only the source session after a confirmed handoff and never on a failed launch", async () => {
+  const f = fixture();
+  let timeline = await f.port.timeline("planner");
+  f.port.timeline = async () => timeline;
+  f.port.respond = async (_id, _requestId, response) => {
+    f.agents.get("planner")!.pendingPermissions = [];
+    timeline = [
+      {
+        type: "tool_call",
+        callId: plan.callId,
+        name: "Plan",
+        status: "completed",
+        error: null,
+        detail: { type: "plan", text: plan.text },
+        metadata: { approved: false, resolution: response },
+      },
+    ];
+  };
+  const controller = new WorkflowController(f.port);
+  const send = f.port.send;
+  f.port.send = async () => {
+    expect(f.endedSources).toEqual([]);
+    throw new Error("agent_request_not_accepted");
+  };
+  await expect(controller.handoff(plan, "paseo-workflow-executor-standard")).rejects.toThrow(
+    "agent_request_not_accepted",
+  );
+  expect(f.endedSources).toEqual([]);
+  f.port.send = async (...args) => {
+    expect(f.endedSources).toEqual([]);
+    await send(...args);
+  };
+  const result = await controller.handoff(plan, "paseo-workflow-executor-standard");
+  expect(f.endedSources).toEqual(["planner"]);
+  expect(await controller.handoff(plan, "paseo-workflow-executor-standard")).toEqual(result);
+  expect(f.endedSources).toEqual(["planner"]);
+  expect(f.launches).toHaveLength(1);
 });

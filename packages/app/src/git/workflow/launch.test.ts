@@ -26,6 +26,25 @@ const context = {
   cwd: "/repo",
   baseRef: "origin/paseo-local",
   branch: "feature",
+  providerEntries: [
+    {
+      provider: "codex",
+      enabled: true,
+      status: "ready" as const,
+      label: "Codex",
+      description: "",
+      defaultModeId: null,
+      modes: [],
+      models: [
+        {
+          provider: "codex",
+          id: "pr",
+          label: "PR",
+          thinkingOptions: [{ id: "high", label: "High" }],
+        },
+      ],
+    },
+  ],
 };
 const profile = {
   id: "legacy",
@@ -135,7 +154,10 @@ describe("workspace workflow launch", () => {
         ...context,
         action: "repair-checks",
         prUrl: null,
-        config: { prModel: { provider: "codex", model: "pr" } },
+        config: {
+          prModel: { provider: "codex", model: "pr" },
+          conflictModel: { provider: "codex", model: "pr" },
+        },
       }),
     ).rejects.toThrow();
     await expect(
@@ -144,7 +166,10 @@ describe("workspace workflow launch", () => {
         action: "repair-checks",
         branch: null,
         prUrl: "https://example.com/pr/8",
-        config: { prModel: { provider: "codex", model: "pr" } },
+        config: {
+          prModel: { provider: "codex", model: "pr" },
+          conflictModel: { provider: "codex", model: "pr" },
+        },
       }),
     ).rejects.toThrow();
   });
@@ -158,13 +183,19 @@ describe("workspace workflow launch", () => {
         action: "resolve-conflicts",
         prUrl: "https://example.com/pr/8",
         config: {
-          prModel: { provider: "codex", model: "pr" },
+          conflictModel: { provider: "codex", model: "pr", thinkingOptionId: "high" },
           commitAndPushPrompt: "COMMIT_PUSH_SENTINEL",
         },
       });
 
       const request = calls.submitting.mock.calls[0][0];
-      expect(request).toMatchObject({ provider: "codex", model: "pr", cwd: "/repo" });
+      expect(request).toMatchObject({
+        provider: "codex",
+        model: "pr",
+        thinkingOptionId: "high",
+        modelRouting: "manual",
+        cwd: "/repo",
+      });
       const prompt = request.text as string;
       expect(prompt).toContain("https://example.com/pr/8");
       expect(prompt).toContain("Branche courante : feature");
@@ -222,7 +253,10 @@ describe("workspace workflow launch", () => {
         ...context,
         action,
         prUrl: "https://example.com/pr/8",
-        config: { prModel: { provider: "codex", model: "pr" } },
+        config: {
+          prModel: { provider: "codex", model: "pr" },
+          conflictModel: { provider: "codex", model: "pr" },
+        },
       });
 
       expect(calls.submitting.mock.calls[0][0].featureValues).toEqual({
@@ -334,7 +368,10 @@ describe("workspace workflow launch", () => {
       launchWorkspaceWorkflowAction({
         ...context,
         action: "create-pr",
-        config: { prModel: { provider: "codex", model: "pr" } },
+        config: {
+          prModel: { provider: "codex", model: "pr" },
+          conflictModel: { provider: "codex", model: "pr" },
+        },
       }),
     ).rejects.toThrow("Feature discovery failed");
     expect(calls.pending).not.toHaveBeenCalled();
@@ -363,4 +400,32 @@ describe("workspace workflow launch", () => {
     expect(calls.features).toHaveBeenCalledTimes(1);
     expect(calls.navigate).toHaveBeenCalledTimes(1);
   });
+});
+
+it("never launches conflicts via a PR model or legacy profile", async () => {
+  calls.submitting.mockClear();
+  await expect(
+    launchWorkspaceWorkflowAction({
+      ...context,
+      action: "resolve-conflicts",
+      profile,
+      config: { prModel: { provider: "codex", model: "pr" } },
+    }),
+  ).rejects.toThrow("Select a model");
+  expect(calls.submitting).not.toHaveBeenCalled();
+});
+it.each([
+  { provider: "missing", model: "pr" },
+  { provider: "codex", model: "removed" },
+  { provider: "codex", model: "pr", thinkingOptionId: "removed" },
+])("refuses an unavailable conflict choice %s", async (conflictModel) => {
+  calls.submitting.mockClear();
+  await expect(
+    launchWorkspaceWorkflowAction({
+      ...context,
+      action: "resolve-conflicts",
+      config: { conflictModel },
+    }),
+  ).rejects.toThrow();
+  expect(calls.submitting).not.toHaveBeenCalled();
 });

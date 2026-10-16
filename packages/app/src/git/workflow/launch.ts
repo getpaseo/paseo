@@ -1,3 +1,6 @@
+import { i18n } from "@/i18n/i18next";
+import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
+import { conflictSelectionAvailable, workspaceWorkflowSelection } from "./settings-model";
 import type { WorkspaceGitWorkflowConfig } from "@getpaseo/protocol/messages";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { materializeAgentProfile, type AgentProfile } from "@/agent-profiles";
@@ -338,7 +341,7 @@ async function resolveWorkflowFeatureValues(input: {
   return fastMode ? { ...profile.featureValues, [fastMode.id]: true } : profile.featureValues;
 }
 
-export async function launchWorkspaceWorkflowAction(input: {
+interface LaunchWorkspaceWorkflowInput {
   action: WorkspaceWorkflowAction;
   client: Pick<DaemonClient, "listProviderFeatures"> | null;
   serverId: string;
@@ -349,28 +352,18 @@ export async function launchWorkspaceWorkflowAction(input: {
   prUrl?: string | null;
   profile?: AgentProfile;
   config: WorkspaceGitWorkflowConfig;
-}): Promise<{ draftId: string; clientMessageId: string }> {
+  providerEntries?: ProviderSnapshotEntry[];
+}
+
+export async function launchWorkspaceWorkflowAction(
+  input: LaunchWorkspaceWorkflowInput,
+): Promise<{ draftId: string; clientMessageId: string }> {
   assertRepairChecksContext(input);
   const launchKey = `${input.serverId}:${input.workspaceId}:${input.action}`;
   if (opening.has(launchKey)) {
     throw new Error("This workspace action is already opening.");
   }
-  const manual = input.action === "review" ? input.config.reviewModel : input.config.prModel;
-  const legacyProfile = input.profile ? materializeAgentProfile(input.profile) : null;
-  const profile = manual
-    ? {
-        provider: manual.provider,
-        modelId: manual.model ?? "",
-        thinkingOptionId: manual.thinkingOptionId ?? "",
-        modeId: "",
-        featureValues: {},
-        launchProfileId: undefined,
-      }
-    : legacyProfile;
-  if (!profile) throw new Error("Select a model for this workspace action in settings.");
-  if (!profile.provider.trim()) {
-    throw new Error("The selected agent profile has no provider.");
-  }
+  const profile = resolveWorkflowProfile(input);
   opening.add(launchKey);
   try {
     const featureValues = await resolveWorkflowFeatureValues({
@@ -395,7 +388,9 @@ export async function launchWorkspaceWorkflowAction(input: {
           ]),
     ].join("\n");
     const timestamp = Date.now();
+    const routing = input.action === "resolve-conflicts" ? { modelRouting: "manual" as const } : {};
     const setup = {
+      ...routing,
       ...(profile.launchProfileId ? { launchProfileId: profile.launchProfileId } : {}),
       provider: profile.provider,
       cwd: input.cwd,
@@ -414,6 +409,7 @@ export async function launchWorkspaceWorkflowAction(input: {
       timestamp,
     });
     useWorkspaceDraftSubmissionStore.getState().setPending({
+      ...routing,
       ...(profile.launchProfileId ? { launchProfileId: profile.launchProfileId } : {}),
       serverId: input.serverId,
       workspaceId: input.workspaceId,
@@ -439,4 +435,34 @@ export async function launchWorkspaceWorkflowAction(input: {
   } finally {
     opening.delete(launchKey);
   }
+}
+
+function resolveWorkflowProfile(input: LaunchWorkspaceWorkflowInput) {
+  const manual = workspaceWorkflowSelection(input.action, input.config);
+  if (
+    input.action === "resolve-conflicts" &&
+    manual &&
+    !conflictSelectionAvailable(manual, input.providerEntries)
+  ) {
+    throw new Error(i18n.t("workspace.git.workflow.replaceConflictModel"));
+  }
+  const legacyProfile =
+    input.action !== "resolve-conflicts" && input.profile
+      ? materializeAgentProfile(input.profile)
+      : null;
+  const profile = manual
+    ? {
+        provider: manual.provider,
+        modelId: manual.model ?? "",
+        thinkingOptionId: manual.thinkingOptionId ?? "",
+        modeId: "",
+        featureValues: {},
+        launchProfileId: undefined,
+      }
+    : legacyProfile;
+  if (!profile) throw new Error("Select a model for this workspace action in settings.");
+  if (!profile.provider.trim()) {
+    throw new Error("The selected agent profile has no provider.");
+  }
+  return profile;
 }

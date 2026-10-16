@@ -10,7 +10,9 @@ import { useAgentProfiles } from "@/agent-profiles";
 import { Button } from "@/components/ui/button";
 import { GIT_ACTION_ICONS } from "@/git/action-icons";
 import { launchWorkspaceWorkflowAction, type WorkspaceWorkflowAction } from "@/git/workflow/launch";
-import type { WorkspaceWorkflowState } from "@/git/policy";
+import { workspaceWorkflowLabel, type WorkspaceWorkflowState } from "@/git/policy";
+import { workspaceWorkflowSelection } from "@/git/workflow/settings-model";
+import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useGitActionRunner, useGitActions } from "@/git/use-actions";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
@@ -52,6 +54,10 @@ export function WorkspaceActions({
   const [launchingAction, setLaunchingAction] = useState<WorkspaceWorkflowAction | null>(null);
   const { config } = useDaemonConfig(serverId);
   const { profiles } = useAgentProfiles(serverId);
+  const providerSnapshot = useProvidersSnapshot(serverId, { cwd });
+  const conflictModelSupported = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.workspaceConflictModel === true,
+  );
   const workflowSupported = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.workspaceGitWorkflow === true,
   );
@@ -78,9 +84,13 @@ export function WorkspaceActions({
   const launch = useCallback(
     (action: WorkspaceWorkflowAction) => {
       if (launchingAction) return;
+      if (action === "resolve-conflicts" && !conflictModelSupported) {
+        toast.error(t("workspace.git.workflow.updateConflictHost"));
+        return;
+      }
       const profile = action === "review" ? reviewProfile : deliveryProfile;
-      const manual = action === "review" ? workflowConfig.reviewModel : workflowConfig.prModel;
-      if (!manual && !profile) {
+      const manual = workspaceWorkflowSelection(action, workflowConfig);
+      if (!manual && (action === "resolve-conflicts" || !profile)) {
         openAgentsSettings();
         return;
       }
@@ -107,12 +117,15 @@ export function WorkspaceActions({
         prUrl: workflowContext.pullRequestUrl,
         profile,
         config: workflowConfig,
+        providerEntries: providerSnapshot.entries,
       })
         .catch((error) => toast.error(error instanceof Error ? error.message : String(error)))
         .finally(() => setLaunchingAction(null));
     },
     [
       client,
+      conflictModelSupported,
+      providerSnapshot.entries,
       deliveryProfile,
       launchingAction,
       openAgentsSettings,
@@ -125,14 +138,9 @@ export function WorkspaceActions({
       workspaceId,
     ],
   );
-  const workflowNativeAction =
-    workflowState.nativeActionId === "archive-workspace"
-      ? [gitActions.primary, ...gitActions.secondary].find(
-          (action) => action?.id === "archive-workspace",
-        )
-      : [gitActions.primary, ...gitActions.secondary].find(
-          (action) => action?.id === workflowState.nativeActionId,
-        );
+  const workflowNativeAction = [gitActions.primary, ...gitActions.secondary].find(
+    (action) => action?.id === workflowState.nativeActionId,
+  );
   const viewPrAction = useMemo(
     () =>
       [gitActions.primary, ...gitActions.secondary].find((action) => action?.id === "pr") ?? null,
@@ -145,28 +153,7 @@ export function WorkspaceActions({
     workflowState.action === "unavailable" ||
     (workflowNativeAction?.disabled ?? false);
 
-  const workflowLabel = useMemo(() => {
-    switch (workflowState.action) {
-      case "create-pr":
-        return t("workspace.git.actions.createPr.label");
-      case "commit-and-push":
-        return t("workspace.git.workflow.commitAndPush");
-      case "resolve-conflicts":
-        return t("workspace.git.workflow.resolveConflicts");
-      case "repair-checks":
-        return t("workspace.git.workflow.repairChecks");
-      case "merge":
-        return t("workspace.git.workflow.merge");
-      case "view-pr":
-        return t("workspace.git.actions.viewPr");
-      case "archive":
-        return t("workspace.git.actions.archive.label");
-      case "checking":
-        return t("workspace.git.workflow.checking");
-      case "unavailable":
-        return t("workspace.git.workflow.unavailable");
-    }
-  }, [t, workflowState.action]);
+  const workflowLabel = workspaceWorkflowLabel(workflowState);
 
   const handleReview = useCallback(() => launch("review"), [launch]);
   const handleCommit = useCallback(() => runGitAction(commitAction), [runGitAction, commitAction]);
@@ -219,7 +206,7 @@ export function WorkspaceActions({
           <Text style={styles.tooltipText}>Commit</Text>
         </TooltipContent>
       </Tooltip>
-      {workflowState.action === "repair-checks" ? (
+      {viewPrAction && workflowState.action !== "view-pr" ? (
         <Button
           size="xs"
           variant="secondary"
