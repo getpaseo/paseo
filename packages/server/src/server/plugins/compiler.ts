@@ -245,6 +245,10 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
             runtimeSpecifierError(packageSpecifier, owner, file) ??
             lexicalBoundaryError(specifier, path.dirname(file), pluginDirectory, owner);
           if (error) return error;
+          // Protocol types are shared host contracts, also exposed by the SDK's peer
+          // dependency during development. Erased imports need no plugin-local install;
+          // runtime imports still go through normal dependency resolution below.
+          if (typeOnly && specifier.startsWith("@getpaseo/protocol/")) continue;
           // Host modules have separately enforced SDK boundaries and need no local installation.
           if (
             (PLUGIN_SDK_SPECIFIERS as readonly string[]).includes(specifier) ||

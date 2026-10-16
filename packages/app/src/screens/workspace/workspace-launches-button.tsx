@@ -1,4 +1,4 @@
-import { useCallback, useMemo, type ReactElement } from "react";
+import { useCallback, useMemo, useState, type ReactElement } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useMutation } from "@tanstack/react-query";
 import { ChevronDown, Globe, Play, Square, SquareTerminal } from "lucide-react-native";
@@ -48,6 +48,12 @@ export interface WorkspaceLaunchesSectionProps {
   onOpenUrlInBrowserTab?: (url: string) => void;
 }
 
+export interface WorkspaceLaunchErrors {
+  launchErrors: Readonly<Record<string, WorkspaceLaunchError | undefined>>;
+  onLaunchError: (launchName: string, error: WorkspaceLaunchError) => void;
+  onClearLaunchError: (launchName: string) => void;
+}
+
 const ThemedGlobe = withUnistyles(Globe);
 const ThemedPlay = withUnistyles(Play);
 const ThemedSquare = withUnistyles(Square);
@@ -57,6 +63,45 @@ const ThemedChevronDown = withUnistyles(ChevronDown);
 
 const playFillTransparent = { fill: "transparent" };
 const pendingAccessibilityState = { busy: true, disabled: true };
+const EMPTY_LAUNCH_ERRORS: Readonly<Record<string, WorkspaceLaunchError | undefined>> = {};
+
+export function useWorkspaceLaunchErrors(workspaceId: string): WorkspaceLaunchErrors {
+  const [errorsByWorkspace, setErrorsByWorkspace] = useState<
+    Record<string, Record<string, WorkspaceLaunchError | undefined>>
+  >({});
+  const launchErrors = errorsByWorkspace[workspaceId] ?? EMPTY_LAUNCH_ERRORS;
+
+  const onLaunchError = useCallback(
+    (launchName: string, error: WorkspaceLaunchError) => {
+      setErrorsByWorkspace((current) => ({
+        ...current,
+        [workspaceId]: { ...current[workspaceId], [launchName]: error },
+      }));
+    },
+    [workspaceId],
+  );
+  const onClearLaunchError = useCallback(
+    (launchName: string) => {
+      setErrorsByWorkspace((current) => {
+        const workspaceErrors = current[workspaceId];
+        if (!workspaceErrors?.[launchName]) return current;
+
+        const nextWorkspaceErrors = { ...workspaceErrors };
+        delete nextWorkspaceErrors[launchName];
+        const next = { ...current };
+        if (Object.keys(nextWorkspaceErrors).length === 0) {
+          delete next[workspaceId];
+        } else {
+          next[workspaceId] = nextWorkspaceErrors;
+        }
+        return next;
+      });
+    },
+    [workspaceId],
+  );
+
+  return { launchErrors, onLaunchError, onClearLaunchError };
+}
 
 const foregroundColorMapping = (theme: Theme) => ({
   color: theme.colors.foreground,

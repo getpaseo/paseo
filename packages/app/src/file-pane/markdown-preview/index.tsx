@@ -1,16 +1,9 @@
-import { useMemo } from "react";
+import { MarkdownRenderer } from "@/components/markdown/renderer";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { ASTNode, RenderRules } from "react-native-markdown-display";
+import { useMemo } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import {
-  createSharedMarkdownRules,
-  MarkdownRenderer,
-  type MarkdownStyles,
-} from "@/components/markdown/renderer";
 import { parseMarkdownPreviewDocument } from "./document";
-import { resolveMarkdownPreviewImageSource } from "./image-source";
-import { FileMarkdownPreviewImage } from "./preview-image";
 
 export function FileMarkdownPreview({
   source,
@@ -26,34 +19,6 @@ export function FileMarkdownPreview({
   serverId?: string;
 }) {
   const document = useMemo(() => parseMarkdownPreviewDocument(source), [source]);
-  const rules = useMemo<RenderRules>(
-    () => ({
-      ...createSharedMarkdownRules(),
-      image: (node: ASTNode, _children, _parent: ASTNode[], _styles: MarkdownStyles) => {
-        const resolved = resolveMarkdownPreviewImageSource({
-          source: String(node.attributes?.src ?? ""),
-          markdownPath: filePath,
-          workspaceRoot,
-        });
-        if (!resolved) {
-          return null;
-        }
-
-        return (
-          <FileMarkdownPreviewImage
-            key={node.key}
-            source={resolved}
-            occurrenceKey={`${filePath}:${node.key}`}
-            alt={typeof node.attributes?.alt === "string" ? node.attributes.alt : undefined}
-            client={client}
-            workspaceRoot={workspaceRoot}
-            serverId={serverId}
-          />
-        );
-      },
-    }),
-    [client, filePath, serverId, workspaceRoot],
-  );
 
   return (
     <View style={styles.outerGutter}>
@@ -79,7 +44,13 @@ export function FileMarkdownPreview({
             ))}
           </View>
         ) : null}
-        <MarkdownRenderer text={document.body} rules={rules} />
+        <MarkdownRenderer
+          text={document.body}
+          filePath={filePath}
+          workspaceRoot={workspaceRoot}
+          client={client}
+          serverId={serverId}
+        />
       </View>
     </View>
   );

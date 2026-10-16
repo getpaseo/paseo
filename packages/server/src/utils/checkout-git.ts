@@ -2643,6 +2643,60 @@ export async function listCheckoutCommits({
   return { baseRef: comparisonBaseRef, commits };
 }
 
+const commitRenamesCache = new TTLCache<string, Promise<ReadonlyMap<string, string>>>({
+  max: 100,
+  ttl: 60_000,
+  checkAgeOnGet: true,
+});
+
+function getCommitRenames(cwd: string, sha: string): Promise<ReadonlyMap<string, string>> {
+  // Symbolic refs and abbreviated IDs can resolve to a different commit later.
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(sha)) {
+    return readCommitRenames(cwd, sha);
+  }
+  const key = JSON.stringify([cwd, sha]);
+  const cached = commitRenamesCache.get(key);
+  if (cached) {
+    return cached;
+  }
+  const lookup = readCommitRenames(cwd, sha).catch((error: unknown) => {
+    if (commitRenamesCache.get(key) === lookup) {
+      commitRenamesCache.delete(key);
+    }
+    throw error;
+  });
+  // Store the pending lookup too, so concurrent file requests share the scan.
+  commitRenamesCache.set(key, lookup);
+  return lookup;
+}
+
+// Discover renames across the commit before narrowing the patch to a file.
+// --follow also detects copies, which would disagree with history's -M-only list.
+async function readCommitRenames(cwd: string, sha: string): Promise<ReadonlyMap<string, string>> {
+  const result = await runGitCommand(
+    [
+      "show",
+      sha,
+      "--format=",
+      "--diff-merges=first-parent",
+      "--name-status",
+      "-z",
+      "-M",
+      "--diff-filter=R",
+    ],
+    { cwd, envOverlay: READ_ONLY_GIT_ENV },
+  );
+  if (result.truncated) {
+    throw new Error("Commit renames exceeded the git output limit");
+  }
+  const renames = new Map<string, string>();
+  const fields = result.stdout.split("\0");
+  for (let index = 0; index + 2 < fields.length; index += 3) {
+    renames.set(fields[index + 2]!, fields[index + 1]!);
+  }
+  return renames;
+}
+
 /**
  * Fetches the unified diff of a single file as introduced by one commit and
  * parses it into the same {@link ParsedDiffFile} shape the diff subscription
@@ -2665,8 +2719,20 @@ export async function getCommitFileDiff({
   path: string;
 }): Promise<ParsedDiffFile | null> {
   const worktreeRoot = await requireGitWorktreeRoot(cwd);
+  const renames = await getCommitRenames(worktreeRoot, sha);
+  const oldPath = renames.get(path);
+  const paths = oldPath === undefined ? [path] : [oldPath, path];
   const { stdout } = await runGitCommand(
-    ["show", sha, "--format=", "--diff-merges=first-parent", ...GIT_PATCH_FORMAT_ARGS, "--", path],
+    [
+      "show",
+      sha,
+      "--format=",
+      "--diff-merges=first-parent",
+      "-M",
+      ...GIT_PATCH_FORMAT_ARGS,
+      "--",
+      ...paths.map((filePath) => `:(literal)${filePath}`),
+    ],
     {
       cwd: worktreeRoot,
       envOverlay: READ_ONLY_GIT_ENV,
@@ -2682,8 +2748,8 @@ export async function getCommitFileDiff({
     getNewFileContent: (file) => readGitFileContentAtRef(worktreeRoot, sha, file.path),
   });
 
-  // `--` scopes the diff to a single pathspec, so there is at most one real
-  // entry. Pick by path to drop any stray header-only section the parser emits.
+  // Including the rename source lets Git pair it with the destination. Select
+  // the requested entry if another change also matches the source path.
   const file = parsedFiles.find((candidate) => candidate.path === path) ?? null;
   if (!file) {
     return null;
@@ -3423,7 +3489,7 @@ export async function getCheckoutDiff(
   compare: CheckoutDiffCompare,
   context?: CheckoutContext,
 ): Promise<CheckoutDiffResult> {
-  await requireGitRepo(cwd);
+  cwd = await requireGitWorktreeRoot(cwd);
 
   const refsForDiff = await resolveCheckoutDiffRefs(cwd, compare, context);
   if (!refsForDiff) {

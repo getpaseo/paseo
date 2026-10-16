@@ -544,7 +544,7 @@ async function readTimelineViewport(page: Page): Promise<TimelineViewportSnapsho
   });
 }
 
-async function waitForTimelineGeometryToSettle(page: Page): Promise<void> {
+export async function waitForTimelineGeometryToSettle(page: Page): Promise<void> {
   const scroll = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
   await scroll.evaluate(
     (element) =>

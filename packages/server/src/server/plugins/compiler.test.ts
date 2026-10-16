@@ -139,6 +139,51 @@ async function createRootAlias(directory: string): Promise<string> {
 
 describe("plugin runtime entries", () => {
   it.each([
+    'import type { AgentTimelineItem, ToolCallDetail } from "@getpaseo/protocol/agent-types"; export type Detail = ToolCallDetail; export type Item = AgentTimelineItem;',
+    'import { type AgentTimelineItem } from "@getpaseo/protocol/agent-types"; export type Item = AgentTimelineItem;',
+    'export type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";',
+    'export type Item = import("@getpaseo/protocol/agent-types").AgentTimelineItem;',
+    'export type { AgentAttachment } from "@getpaseo/protocol/messages";',
+  ])("compiles protocol types without local dependencies: %s", async (typeSource) => {
+    const entries = await createSplitPlugin();
+    await writeFile(
+      path.join(entries.directory, "shared", "labels.ts"),
+      `${typeSource}\nexport const clientLabel = "Client contribution"; export const serverLabel = "Server contribution";`,
+    );
+
+    const result = await compilePlugin(entries);
+
+    expect(result.clientBundle).toContain("Client contribution");
+    expect(result.serverBundle).toContain("Server contribution");
+    expect(result.clientBundle).not.toContain("@getpaseo/protocol");
+    expect(result.serverBundle).not.toContain("@getpaseo/protocol");
+  });
+
+  it("still requires local dependencies for protocol runtime imports", async () => {
+    const entries = await createSplitPlugin();
+    await writeFile(
+      entries.server,
+      'import { TOOL_CALL_ICON_NAMES } from "@getpaseo/protocol/agent-types"; export default () => TOOL_CALL_ICON_NAMES;',
+    );
+
+    await expect(compilePlugin(entries)).rejects.toThrow(
+      'Could not resolve "@getpaseo/protocol/agent-types"',
+    );
+  });
+
+  it("still rejects missing third-party type dependencies", async () => {
+    const entries = await createSplitPlugin();
+    await writeFile(
+      entries.client,
+      'import type { Item } from "missing-types"; export default (item: Item) => item;',
+    );
+
+    await expect(compilePlugin(entries)).rejects.toThrow(
+      'Could not resolve type dependency "missing-types"',
+    );
+  });
+
+  it.each([
     "react",
     "react/jsx-runtime",
     "react-native",
