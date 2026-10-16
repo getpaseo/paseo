@@ -69,11 +69,7 @@ export function SidebarHeaderRow({
   return (
     <View ref={rowRef} collapsable={false} style={getContainerStyle(variant)}>
       <View
-        style={[
-          styles.row,
-          isHighlighted && styles.rowHighlighted,
-          isPressed && styles.rowPressed,
-        ]}
+        style={[styles.row, isHighlighted && styles.rowHighlighted, isPressed && styles.rowPressed]}
         onPointerEnter={handlePointerEnter}
         onPointerLeave={handlePointerLeave}
       >
