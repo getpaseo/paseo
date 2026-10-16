@@ -61,7 +61,7 @@ function buildTerminalStateResult(
   return { ...session.getStateSnapshot(options), replayPreamble: session.getReplayPreamble() };
 }
 
-function toTerminalInfo(session: TerminalSession): WorkerTerminalInfo {
+function toTerminalInfo(session: TerminalSession, retainOnExit = false): WorkerTerminalInfo {
   return {
     id: session.id,
     name: session.name,
@@ -69,6 +69,7 @@ function toTerminalInfo(session: TerminalSession): WorkerTerminalInfo {
     workspaceId: session.workspaceId,
     ...(session.getTitle() ? { title: session.getTitle() } : {}),
     activity: session.getActivity(),
+    ...(retainOnExit ? { retainOnExit: true } : {}),
   };
 }
 
@@ -218,9 +219,10 @@ async function handleCreateTerminalRequest(message: TerminalCreateRequest): Prom
     }
     watchTerminal(session);
     const initialSnapshot = session.getStateSnapshot();
+    const terminalInfo = toTerminalInfo(session, message.options.retainOnExit === true);
     sendToParent({
       type: "terminalCreated",
-      terminal: toTerminalInfo(session),
+      terminal: terminalInfo,
       state: initialSnapshot.state,
     });
     sendToParent({
@@ -228,7 +230,7 @@ async function handleCreateTerminalRequest(message: TerminalCreateRequest): Prom
       requestId: message.requestId,
       ok: true,
       result: {
-        terminal: toTerminalInfo(session),
+        terminal: terminalInfo,
         state: initialSnapshot.state,
       },
     });

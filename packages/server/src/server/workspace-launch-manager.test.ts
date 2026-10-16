@@ -651,7 +651,7 @@ describe("WorkspaceLaunchManager", () => {
         branchName: null,
       };
       try {
-        await manager.start(context, "dev");
+        const launch = await manager.start(context, "dev");
         await vi.waitFor(
           () => {
             expect(manager.buildSnapshot(context)).toEqual([
@@ -665,6 +665,14 @@ describe("WorkspaceLaunchManager", () => {
           },
           { timeout: 10_000 },
         );
+        if (!launch.terminalId) {
+          throw new Error("Expected launch terminal ID");
+        }
+        expect(terminalManager.getTerminal(launch.terminalId)).toBeDefined();
+        const captured = await terminalManager.captureTerminal(launch.terminalId, {
+          stripAnsi: true,
+        });
+        expect(captured.lines.join("\n")).toContain("launch-output");
       } finally {
         await manager.disposeWorkspace(context.workspaceId);
         terminalManager.killAll();
@@ -704,6 +712,7 @@ describe("WorkspaceLaunchManager", () => {
 
     try {
       await manager.start(context, "dev");
+      expect(terminalManager.created[0]?.retainOnExit).toBe(true);
       terminalManager.created[0]?.triggerExit(17);
 
       expect(manager.buildSnapshot(context)).toEqual([
@@ -1005,6 +1014,7 @@ function createTerminalManager(): {
   manager: TerminalManager;
   created: Array<{
     env: Record<string, string> | undefined;
+    retainOnExit: boolean;
     triggerExit: (exitCode: number | null) => void;
   }>;
   killed: string[];
@@ -1013,13 +1023,14 @@ function createTerminalManager(): {
   const sessions = new Map<string, TerminalSession>();
   const created: Array<{
     env: Record<string, string> | undefined;
+    retainOnExit: boolean;
     triggerExit: (exitCode: number | null) => void;
   }> = [];
   const killed: string[] = [];
   let nextId = 0;
   let failNextCreate = false;
   const manager = {
-    createTerminal: async (options: { env?: Record<string, string> }) => {
+    createTerminal: async (options: { env?: Record<string, string>; retainOnExit?: boolean }) => {
       if (failNextCreate) {
         failNextCreate = false;
         throw new Error("Failed to create terminal");
@@ -1044,6 +1055,7 @@ function createTerminalManager(): {
       sessions.set(id, terminal);
       created.push({
         env: options.env,
+        retainOnExit: options.retainOnExit === true,
         triggerExit: (exitCode) => exitListener?.({ exitCode }),
       });
       // Keep the exit callback with the fake terminal rather than exposing an
@@ -1054,6 +1066,9 @@ function createTerminalManager(): {
       return terminal;
     },
     getTerminal: (id: string) => sessions.get(id),
+    killTerminal: (id: string) => {
+      sessions.delete(id);
+    },
     killTerminalAndWait: async (id: string) => {
       killed.push(id);
       const terminal = sessions.get(id) as (TerminalSession & { __exit?: () => void }) | undefined;

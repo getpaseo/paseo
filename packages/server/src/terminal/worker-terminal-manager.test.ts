@@ -969,6 +969,44 @@ it("removes a killed worker terminal from terminalExit without duplicate snapsho
   ]);
 });
 
+it("keeps a retained worker terminal available after it exits", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 50,
+    forkWorker: () => worker,
+  });
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal: {
+      id: "terminal-a",
+      name: "Launch",
+      cwd: "/workspace",
+      workspaceId: "ws-test",
+      activity: null,
+      retainOnExit: true,
+    },
+    state: createTerminalState(),
+  });
+  const session = manager.getTerminal("terminal-a");
+  if (!session) {
+    throw new Error("Expected retained terminal");
+  }
+  const exitInfo = { exitCode: 17, signal: null, lastOutputLines: ["launch failed"] };
+
+  worker.emitWorkerMessage({
+    type: "terminalExit",
+    terminalId: "terminal-a",
+    info: exitInfo,
+  });
+
+  expect(manager.getTerminal("terminal-a")).toBe(session);
+  expect(session.getExitInfo()).toEqual(exitInfo);
+  expect(await manager.getTerminals("/workspace")).toEqual([session]);
+
+  manager.killTerminal("terminal-a");
+  expect(manager.getTerminal("terminal-a")).toBeUndefined();
+});
+
 it("does not resurrect a terminal that exited before its create response was handled", async () => {
   const worker = new FakeTerminalWorker();
   manager = createWorkerTerminalManager({

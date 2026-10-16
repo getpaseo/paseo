@@ -128,6 +128,9 @@ export class WorkspaceLaunchManager {
       }
       // Configuration is the source of truth for stopped launches. Keep an
       // orphan visible only while it is still running so users can stop it.
+      if (runtime.terminalId) {
+        this.deps.terminalManager?.killTerminal(runtime.terminalId);
+      }
       workspaceRuntimes?.delete(name);
     }
     if (workspaceRuntimes?.size === 0) {
@@ -236,6 +239,10 @@ export class WorkspaceLaunchManager {
     if (!terminalManager) {
       throw new Error("Workspace launches are not available on this daemon");
     }
+    const previousRuntime = this.runtimes.get(context.workspaceId)?.get(launchName);
+    if (previousRuntime?.lifecycle === "stopped" && previousRuntime.terminalId) {
+      terminalManager.killTerminal(previousRuntime.terminalId);
+    }
     const terminal = await terminalManager.createTerminal({
       cwd: context.workspaceDirectory,
       workspaceId: context.workspaceId,
@@ -245,6 +252,7 @@ export class WorkspaceLaunchManager {
       args: invocation.args,
       // Non-interactive Bash must not source an inherited BASH_ENV startup script.
       env: { ...environment.env, PASEO_LAUNCH_NAME: launchName, BASH_ENV: "" },
+      retainOnExit: true,
     });
     const runtime: WorkspaceLaunchRuntime = {
       launchName,
@@ -334,6 +342,8 @@ export class WorkspaceLaunchManager {
         Array.from(runtimes.values(), async (runtime) => {
           if (runtime.lifecycle === "running") {
             await this.stopRuntime(runtime);
+          } else if (runtime.terminalId) {
+            this.deps.terminalManager?.killTerminal(runtime.terminalId);
           }
         }),
       );

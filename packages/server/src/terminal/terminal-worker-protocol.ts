@@ -16,6 +16,7 @@ export interface WorkerTerminalInfo {
   workspaceId?: string;
   title?: string;
   activity: TerminalActivity | null;
+  retainOnExit?: boolean;
 }
 
 export interface WorkerCreateTerminalOptions {
@@ -31,6 +32,7 @@ export interface WorkerCreateTerminalOptions {
   cols?: number;
   activityToken?: string;
   activityUrl?: string | null;
+  retainOnExit?: boolean;
 }
 
 export interface WorkerKillAndWaitOptions {

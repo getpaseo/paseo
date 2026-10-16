@@ -73,6 +73,29 @@ describe("WorkspaceRuntimeEnvironmentService", () => {
     service.release("workspace-with-explicit-service");
   });
 
+  it("does not lease a port already bound on IPv6 loopback", async () => {
+    const listener = net.createServer();
+    await listen(listener, 0, "::1");
+    const address = listener.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Failed to obtain IPv6 listener port");
+    }
+    const service = new WorkspaceRuntimeEnvironmentService();
+
+    try {
+      await expect(
+        service.ensure({
+          workspaceId: "workspace-ipv6-conflict",
+          cwd: process.cwd(),
+          branchName: "feature/ipv6-conflict",
+          allocation: { range: `${address.port}-${address.port}`, blockSize: 1 },
+        }),
+      ).rejects.toThrow("No available workspace port block");
+    } finally {
+      await close(listener);
+    }
+  });
+
   it("serializes concurrent port block allocation across workspaces", async () => {
     const service = new WorkspaceRuntimeEnvironmentService({
       random: () => 0,
@@ -246,10 +269,10 @@ async function getFreePort(): Promise<number> {
   return address.port;
 }
 
-async function listen(server: net.Server, port: number): Promise<void> {
+async function listen(server: net.Server, port: number, host = "127.0.0.1"): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(port, "127.0.0.1", () => resolve());
+    server.listen(port, host, () => resolve());
   });
 }
 

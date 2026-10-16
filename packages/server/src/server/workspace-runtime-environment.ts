@@ -312,11 +312,24 @@ function resolveExcludedPorts(
 }
 
 async function checkPortAvailable(port: number): Promise<boolean> {
+  if (!(await checkPortAvailableOnHost(port, "127.0.0.1"))) {
+    return false;
+  }
+  return await checkPortAvailableOnHost(port, "::1");
+}
+
+async function checkPortAvailableOnHost(port: number, host: "127.0.0.1" | "::1"): Promise<boolean> {
   return await new Promise((resolve) => {
     const server = net.createServer();
     server.unref();
-    server.once("error", () => resolve(false));
-    server.listen(port, "127.0.0.1", () => {
+    server.once("error", (error: NodeJS.ErrnoException) => {
+      if (host === "::1" && (error.code === "EAFNOSUPPORT" || error.code === "EADDRNOTAVAIL")) {
+        resolve(true);
+        return;
+      }
+      resolve(false);
+    });
+    server.listen({ port, host, ipv6Only: host === "::1" }, () => {
       server.close((error) => resolve(!error));
     });
   });
