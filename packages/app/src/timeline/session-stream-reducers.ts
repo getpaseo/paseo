@@ -684,6 +684,7 @@ function mergePrependedCanonicalTail(olderTail: StreamItem[], currentTail: Strea
   }
   olderTail = remainingOlder;
   currentTail = reconciledCurrent;
+  ({ olderTail, currentTail } = closeCompactionAcrossPageBoundary(olderTail, currentTail));
   if (olderTail.length === 0) return currentTail;
 
   const olderLast = olderTail.at(-1);
@@ -705,6 +706,48 @@ function mergePrependedCanonicalTail(olderTail: StreamItem[], currentTail: Strea
   }
 
   return [...olderTail.slice(0, -1), mergedAssistant, ...currentTail.slice(1)];
+}
+
+/**
+ * A compaction's loading marker and the event that ends it can land on different pages. The older
+ * page's last marker is still loading only if its end is on the newer page: a completion there
+ * takes the marker's place, and anything else means the compaction ended without completing (a
+ * failure, which the reducer applies by removing a marker that page did not have), so the marker
+ * goes away.
+ */
+function closeCompactionAcrossPageBoundary(
+  olderTail: StreamItem[],
+  currentTail: StreamItem[],
+): { olderTail: StreamItem[]; currentTail: StreamItem[] } {
+  let lastCompactionIndex = -1;
+  for (let index = olderTail.length - 1; index >= 0; index -= 1) {
+    if (olderTail[index]?.kind === "compaction") {
+      lastCompactionIndex = index;
+      break;
+    }
+  }
+  const loading = olderTail[lastCompactionIndex];
+  if (!loading || loading.kind !== "compaction" || loading.status !== "loading") {
+    return { olderTail, currentTail };
+  }
+  const endIndex = currentTail.findIndex((item) => item.kind === "compaction");
+  const end = currentTail[endIndex];
+  const nextOlder = [...olderTail];
+  if (end?.kind === "compaction" && end.status === "completed") {
+    nextOlder[lastCompactionIndex] = {
+      ...loading,
+      ...(end.timelineCursor ? { timelineCursor: end.timelineCursor } : {}),
+      status: "completed",
+      trigger: end.trigger ?? loading.trigger,
+      preTokens: end.preTokens ?? loading.preTokens,
+    };
+    return {
+      olderTail: nextOlder,
+      currentTail: [...currentTail.slice(0, endIndex), ...currentTail.slice(endIndex + 1)],
+    };
+  }
+  nextOlder.splice(lastCompactionIndex, 1);
+  return { olderTail: nextOlder, currentTail };
 }
 
 function mergeTimelineIdentityBoundary(
