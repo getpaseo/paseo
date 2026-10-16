@@ -21,6 +21,15 @@ test("project and workspace kebabs open action sheets on compact layouts", async
     await page.getByRole("button", { name: "Open menu", exact: true }).click();
     await waitForSidebarHydration(page);
 
+    await page.getByTestId("sidebar-display-preferences-menu").click();
+    await expect(page.getByRole("menuitem")).toHaveText([
+      /^Grouping/,
+      /^Title/,
+      "Show",
+      "Show background",
+    ]);
+    await closeMenuSheet(page);
+
     await page
       .getByTestId(`sidebar-project-kebab-${projectEquivalenceViewKey(seeded.projectKey)}`)
       .click();
