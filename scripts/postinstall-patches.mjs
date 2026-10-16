@@ -9,8 +9,9 @@ import { join, relative } from "node:path";
 // the patch's node_modules/... paths relative to its working directory.
 const patchedPackages = [
   {
-    nodeModulesPath: "node_modules/react-native-markdown-display",
-    patchPrefix: "react-native-markdown-display+",
+    nodeModulesPath: "packages/app/node_modules/react-native-enriched-markdown",
+    patchPrefix: "react-native-enriched-markdown+",
+    cwd: "packages/app",
   },
   // Remove after react-native-unistyles ships
   // https://github.com/jpudysz/react-native-unistyles/pull/1203.
@@ -25,6 +26,14 @@ const patchedPackages = [
   {
     nodeModulesPath: "node_modules/react-native-gesture-handler",
     patchPrefix: "react-native-gesture-handler+",
+  },
+  // Exports BottomSheetModalInternalProvider so a subtree can host its own sheets on the shared
+  // modal stack (see packages/app/src/components/ui/isolated-bottom-sheet-modal/host-scope.tsx), and
+  // keeps a dismissing modal's status through its final onChange(-1), so a modal with
+  // enableDismissOnClose=false that unmounts while presented still leaves the portal.
+  {
+    nodeModulesPath: "node_modules/@gorhom/bottom-sheet",
+    patchPrefix: "@gorhom+bottom-sheet+",
   },
   {
     nodeModulesPath: "node_modules/react-native-svg",

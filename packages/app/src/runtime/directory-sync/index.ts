@@ -151,6 +151,7 @@ export class DirectorySync {
   private agentSubscription: OwnedSubscription<FetchAgentsPayload> | null = null;
   private workspaceSubscription: OwnedSubscription<FetchWorkspacesPayload> | null = null;
   private eventSubscription: ReturnType<DaemonClient["observeEvents"]> | null = null;
+  private scriptStatusSubscription: ReturnType<DaemonClient["observeEvents"]> | null = null;
   private readonly abortSessionWaits = new Set<() => void>();
   private cacheLoad: Promise<void> | null = null;
   private cacheAccepted = false;
@@ -158,6 +159,7 @@ export class DirectorySync {
   private workspaceRevision = 0;
   private readonly routeDemandIds = new Set<string>();
   private readonly fullDemandSources = new Set<object>();
+  private readonly scriptStatusDemand = new Map<object, string>();
   private demandRefresh: Promise<void> | null = null;
   private satisfiedDemandSource: DirectorySourceToken | null = null;
   private cursors: DirectoryCheckpoint = {};
@@ -190,11 +192,13 @@ export class DirectorySync {
     }
     this.flushAbortedTransactions();
     this.releaseSubscriptions();
+    this.releaseScriptStatusEvents();
     workspaceLabels.disconnect(this.serverId);
     sharedOrdering.disconnect(this.serverId);
     this.connection = connection;
     this.abortPendingSessionWaits();
     if (!connection.client || connection.status !== "online") return true;
+    if (this.scriptStatusDemand.size > 0) this.observeScriptStatusEvents();
     // Reattach labels here because route-only demand can satisfy the epoch before full demand requests them.
     void this.connectWorkspaceLabels().catch(() => undefined);
     if (this.hasDemand()) void this.requestDemandRefresh().catch(() => undefined);
@@ -228,10 +232,32 @@ export class DirectorySync {
     }
   }
 
+  /**
+   * Keeps one workspace's script status live without demanding the directory: a
+   * script_status_update subscription, plus one scripts fetch to cover what changed before it.
+   */
+  setScriptStatusDemand(source: object, workspaceId: string | null): void {
+    if (!workspaceId) {
+      this.scriptStatusDemand.delete(source);
+      if (!this.wantsScriptStatus()) this.releaseScriptStatusEvents();
+      return;
+    }
+    this.scriptStatusDemand.set(source, workspaceId);
+    if (!this.getOnlineConnection()) return;
+    // A new subscription fetches every demanded workspace once its snapshot lands.
+    if (!this.scriptStatusSubscription) this.observeScriptStatusEvents();
+    else
+      void this.scriptStatusSubscription.ready
+        .then(() => this.fetchScriptStatus(workspaceId))
+        .catch(() => undefined);
+  }
+
   dispose(): void {
     this.flushAbortedTransactions();
     this.abortPendingSessionWaits();
+    this.scriptStatusDemand.clear();
     this.releaseSubscriptions();
+    this.releaseScriptStatusEvents();
     this.fullDemandSources.clear();
     this.routeDemandIds.clear();
     workspaceLabels.disconnect(this.serverId);
@@ -250,6 +276,12 @@ export class DirectorySync {
     this.workspaceSubscription = null;
     this.eventSubscription = null;
     this.satisfiedDemandSource = null;
+    if (!this.wantsScriptStatus()) this.releaseScriptStatusEvents();
+  }
+
+  private releaseScriptStatusEvents(): void {
+    void this.scriptStatusSubscription?.release().catch(() => undefined);
+    this.scriptStatusSubscription = null;
   }
 
   private receiveAgentDelta(source: DirectorySourceToken, delta: AgentDirectoryDelta): void {
@@ -279,20 +311,49 @@ export class DirectorySync {
   private observeDirectoryEvents(): void {
     if (this.eventSubscription) return;
     const { client, source } = this.requireOnline();
-    this.eventSubscription = client.observeEvents(["project.update", "script_status_update"]);
+    this.eventSubscription = client.observeEvents(["project.update"]);
     this.eventSubscription.subscribe({
       snapshot: () => {},
       update: (message) => {
         if (!this.isCurrent(client, source)) return;
         if (message.type === "project.update") this.receiveWorkspaceDelta(source, message.payload);
-        if (message.type === "script_status_update")
-          this.receiveWorkspaceDelta(source, { kind: "script_status", update: message.payload });
       },
+    });
+  }
+
+  // Script status has its own subscription so a workspace screen can hold it without the directory.
+  private observeScriptStatusEvents(): void {
+    if (this.scriptStatusSubscription) return;
+    const { client, source } = this.requireOnline();
+    this.scriptStatusSubscription = client.observeEvents(["script_status_update"]);
+    this.scriptStatusSubscription.subscribe({
+      snapshot: () => {
+        for (const workspaceId of new Set(this.scriptStatusDemand.values()))
+          void this.fetchScriptStatus(workspaceId).catch(() => undefined);
+      },
+      update: (message) => {
+        if (!this.isCurrent(client, source) || message.type !== "script_status_update") return;
+        this.receiveWorkspaceDelta(source, { kind: "script_status", update: message.payload });
+      },
+    });
+  }
+
+  private async fetchScriptStatus(workspaceId: string): Promise<void> {
+    const { client, source } = this.requireOnline();
+    const result = await client.listWorkspaceScripts(workspaceId);
+    if (!this.isCurrent(client, source) || result.error || !result.scripts) return;
+    this.receiveWorkspaceDelta(source, {
+      kind: "script_status",
+      update: { workspaceId, scripts: result.scripts },
     });
   }
 
   private hasDemand(): boolean {
     return this.fullDemandSources.size > 0 || this.routeDemandIds.size > 0;
+  }
+
+  private wantsScriptStatus(): boolean {
+    return this.hasDemand() || this.scriptStatusDemand.size > 0;
   }
 
   private requestDemandRefresh(force = false): Promise<void> {
@@ -302,6 +363,7 @@ export class DirectorySync {
       return this.fullDemandSources.size > 0 ? this.loadCachedDirectory() : Promise.resolve();
     }
     this.observeDirectoryEvents();
+    this.observeScriptStatusEvents();
     const source = this.connection.source;
     if (
       !force &&
