@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { dispatchTopWebOverlayKeyDown, useWebOverlayRegistration } from "./overlay-root";
+import {
+  dispatchTopWebOverlayKeyDown,
+  hasActiveWebOverlay,
+  useWebOverlayRegistration,
+} from "./overlay-root";
 
 describe("useWebOverlayRegistration", () => {
   let opener: HTMLButtonElement;
@@ -81,6 +85,61 @@ describe("useWebOverlayRegistration", () => {
     unmount();
 
     expect(openerFocus).toHaveBeenCalled();
+  });
+
+  it("lets a passive overlay answer keys without counting as an open overlay", () => {
+    const onKeyDown = vi.fn((event: KeyboardEvent) => event.key === "Escape");
+    const { result, unmount } = renderHook(() =>
+      useWebOverlayRegistration({
+        active: true,
+        layer: 10,
+        onKeyDown,
+        manageFocus: false,
+        passive: true,
+      }),
+    );
+
+    act(() => result.current(scope));
+
+    expect(hasActiveWebOverlay()).toBe(false);
+    expect(dispatchTopWebOverlayKeyDown(new KeyboardEvent("keydown", { key: "Escape" }))).toBe(
+      true,
+    );
+    expect(dispatchTopWebOverlayKeyDown(new KeyboardEvent("keydown", { key: "f" }))).toBe(false);
+    expect(onKeyDown).toHaveBeenCalledTimes(2);
+    unmount();
+  });
+
+  it("keeps keys with an open overlay when a passive one registers after it", () => {
+    const menuKeyDown = vi.fn(() => true);
+    const passiveKeyDown = vi.fn(() => true);
+    const menu = renderHook(() =>
+      useWebOverlayRegistration({
+        active: true,
+        layer: 10,
+        onKeyDown: menuKeyDown,
+        manageFocus: false,
+      }),
+    );
+    act(() => menu.result.current(scope));
+    const passive = renderHook(() =>
+      useWebOverlayRegistration({
+        active: true,
+        layer: 10,
+        onKeyDown: passiveKeyDown,
+        manageFocus: false,
+        passive: true,
+      }),
+    );
+    act(() => passive.result.current(scope));
+
+    expect(dispatchTopWebOverlayKeyDown(new KeyboardEvent("keydown", { key: "Escape" }))).toBe(
+      true,
+    );
+    expect(menuKeyDown).toHaveBeenCalledTimes(1);
+    expect(passiveKeyDown).not.toHaveBeenCalled();
+    passive.unmount();
+    menu.unmount();
   });
 
   it("leaves IME composition keys with the focused editor", () => {

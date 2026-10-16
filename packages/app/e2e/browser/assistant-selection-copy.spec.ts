@@ -1,5 +1,9 @@
-import type { BrowserContext, Locator } from "@playwright/test";
+import type { BrowserContext } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
+import {
+  assistantMessageBlocks,
+  selectAssistantTextRange,
+} from "../support/helpers/assistant-selection";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
 const CROSS_STRUCTURE_MARKDOWN = [
@@ -100,13 +104,6 @@ interface ClipboardContent {
 
 async function allowRichClipboard(context: BrowserContext): Promise<void> {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-}
-
-/**
- * Locate assistant rows by source-message identity.
- */
-function assistantMessageBlocks(page: Page): Locator {
-  return page.locator("[data-message-id]").filter({ has: page.getByTestId("assistant-message") });
 }
 
 async function selectStructuredClipboardFixture(page: Page): Promise<void> {
@@ -256,48 +253,6 @@ async function doubleClickAssistantMarkdownText(
     .locator(tag)
     .filter({ hasText: text })
     .dblclick({ position: { x: 5, y: 5 } });
-}
-
-async function selectAssistantTextRange(
-  page: Page,
-  startText: string,
-  endText: string,
-): Promise<void> {
-  await assistantMessageBlocks(page).evaluateAll(
-    (blocks, selectedRange) => {
-      // The message's text nodes in reading order, across every block row.
-      const nodes: Text[] = [];
-      for (const block of blocks) {
-        const blockWalker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
-        let found = blockWalker.nextNode();
-        while (found) {
-          nodes.push(found as Text);
-          found = blockWalker.nextNode();
-        }
-      }
-      const text = nodes.map((node) => node.data).join("");
-      const start = text.indexOf(selectedRange.startText);
-      const end = text.indexOf(selectedRange.endText, start);
-      if (start < 0 || end < 0)
-        throw new Error(
-          `Could not find assistant text range: ${selectedRange.startText} — ${selectedRange.endText}`,
-        );
-      const boundary = (offset: number, isEnd = false): [Text, number] => {
-        for (const node of nodes) {
-          if (offset < node.length || (isEnd && offset === node.length)) return [node, offset];
-          offset -= node.length;
-        }
-        throw new Error("Selection extends beyond message");
-      };
-      const range = document.createRange();
-      range.setStart(...boundary(start));
-      range.setEnd(...boundary(end + selectedRange.endText.length, true));
-      const selection = window.getSelection();
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-    },
-    { startText, endText },
-  );
 }
 
 /**

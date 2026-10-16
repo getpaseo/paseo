@@ -237,6 +237,12 @@ export const es: TranslationResources = {
     scrollToBottom: "Desplazarse hacia abajo",
     historyLoadFailed: "No se pudo cargar el historial del agente",
     messageCapped: "Este mensaje fue truncado ({{bytes}} bytes).",
+    quote: {
+      action: "Citar",
+      noteLabel: "Nota sobre la cita",
+      notePlaceholder: "Añade una nota",
+      hint: "Enter lo añade al mensaje · Shift+Enter nueva línea · Esc cancela",
+    },
     permission: {
       rejectedPlan: "Plan rechazado",
       approvedPlan: "Plan aprobado",
