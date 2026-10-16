@@ -60,7 +60,7 @@ describe("daemon E2E (real claude) - thinking effort memory", () => {
     }
   });
 
-  test("changing thinking effort preserves the previous conversation", async () => {
+  test("concurrent command discovery and thinking changes preserve replies and conversation", async () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
     const daemon = await createTestPaseoDaemon({
@@ -88,10 +88,13 @@ describe("daemon E2E (real claude) - thinking effort memory", () => {
         model: model.id,
       });
 
-      await client.sendMessage(
-        agent.id,
-        "Remember the code phrase PASEO_MEMORY_56. Reply exactly: ACK_56",
-      );
+      await Promise.all([
+        client.listCommands(agent.id),
+        client.sendMessage(
+          agent.id,
+          "Remember the code phrase PASEO_MEMORY_56. Reply exactly: ACK_56",
+        ),
+      ]);
       const firstFinish = await client.waitForFinish(agent.id, 180_000);
       expect(firstFinish.status).toBe("idle");
       expect(firstFinish.final?.lastError).toBeUndefined();
@@ -99,16 +102,25 @@ describe("daemon E2E (real claude) - thinking effort memory", () => {
 
       await client.setAgentThinkingOption(agent.id, "low");
 
-      await client.sendMessage(
-        agent.id,
-        "What code phrase did I ask you to remember? Reply exactly with that code phrase and nothing else.",
-      );
+      await Promise.all([
+        client.listCommands(agent.id),
+        client.sendMessage(
+          agent.id,
+          "What code phrase did I ask you to remember? Reply exactly with that code phrase and nothing else.",
+        ),
+      ]);
       const secondFinish = await client.waitForFinish(agent.id, 180_000);
       expect(secondFinish.status).toBe("idle");
       expect(secondFinish.final?.lastError).toBeUndefined();
 
       const assistantText = await getAssistantText(client, agent.id);
       expect(compactText(assistantText)).toContain("paseo_memory_56");
+
+      await client.sendMessage(agent.id, "Reply exactly: FOLLOWUP_56");
+      const followup = await client.waitForFinish(agent.id, 180_000);
+      expect(followup.status).toBe("idle");
+      expect(followup.final?.lastError).toBeUndefined();
+      expect(compactText(await getAssistantText(client, agent.id))).toContain("followup_56");
     } finally {
       await client.close().catch(() => undefined);
       await daemon.close().catch(() => undefined);

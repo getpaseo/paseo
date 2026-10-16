@@ -143,10 +143,6 @@ function getLatestCompletedBashCall(events: AgentStreamEvent[]): ToolCallTimelin
     .find((item) => item.status === "completed" && item.name.toLowerCase() === "bash");
 }
 
-function getInternalQuery(session: AgentSession): unknown {
-  return (session as AgentSession & { query?: unknown }).query ?? null;
-}
-
 async function createSession(params?: {
   cwdPrefix?: string;
   modeId?: string;
@@ -316,7 +312,7 @@ describe("ClaudeAgentSession integration", () => {
     }
   }, 60_000);
 
-  test("interrupts a running Bash turn and continues on the same query", async () => {
+  test("interrupts a running Bash turn and continues the same conversation", async () => {
     const handle = await createSession({
       cwdPrefix: "claude-agent-interrupt-continue-",
     });
@@ -340,9 +336,9 @@ describe("ClaudeAgentSession integration", () => {
           event.item.name.toLowerCase() === "bash",
         45_000,
       );
-      const firstQuery = getInternalQuery(handle.session);
+      const firstSessionId = (await handle.session.getRuntimeInfo()).sessionId;
 
-      expect(firstQuery).toBeTruthy();
+      expect(firstSessionId).toEqual(expect.any(String));
 
       await handle.session.interrupt();
 
@@ -360,9 +356,9 @@ describe("ClaudeAgentSession integration", () => {
       const followUpEvents = await collectUntilTerminal(
         streamSession(handle.session, "Respond with exactly: AFTER_INTERRUPT_OK"),
       );
-      const secondQuery = getInternalQuery(handle.session);
+      const secondSessionId = (await handle.session.getRuntimeInfo()).sessionId;
 
-      expect(secondQuery).toBe(firstQuery);
+      expect(secondSessionId).toBe(firstSessionId);
       expect(compactText(getAssistantText(followUpEvents))).toContain("after_interrupt_ok");
       expect(followUpEvents.at(-1)).toMatchObject({
         type: "turn_completed",
