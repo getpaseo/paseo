@@ -636,7 +636,7 @@ export const ptBR: TranslationResources = {
       },
       switcher: {
         trigger: "Alternar abas ({{count}} abertas)",
-        title: "Alternar aba",
+        title: "Abas do workspace",
         searchPlaceholder: "Buscar abas",
       },
       menu: {
@@ -1688,13 +1688,18 @@ export const ptBR: TranslationResources = {
     title: "Adicionar provedor",
     search: "Buscar provedores",
     noProviders: "Nenhum provedor encontrado",
+    clearSearch: "Limpar pesquisa",
     actions: {
       add: "Adicionar",
+      addProvider: "Adicionar {{provider}}",
       adding: "Adicionando",
       installed: "Instalado",
       cancel: "Cancelar",
       installInstructions: "Instruções de instalação",
       installInstructionsFor: "Instruções de instalação de {{provider}}",
+    },
+    types: {
+      acp: "ACP",
     },
     errors: {
       unableToInstall: "Não foi possível instalar provedor",

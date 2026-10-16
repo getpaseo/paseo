@@ -665,7 +665,7 @@ function MobileGestureWrapper({
 
   return (
     <GestureDetector gesture={openGesture} touchAction={MOBILE_WEB_GESTURE_TOUCH_ACTION}>
-      <View collapsable={false} style={layoutStyles.surfaceFill}>
+      <View collapsable={false} style={layoutStyles.surfaceFill} testID="compact-shell">
         {children}
       </View>
     </GestureDetector>

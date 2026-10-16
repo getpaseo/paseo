@@ -1,5 +1,9 @@
-import { WorkspaceComposerEditingSessionsProvider } from "@/composer/editing-session";
+import {
+  WorkspaceComposerEditingSessionsProvider,
+  useComposerTabFullscreen,
+} from "@/composer/editing-session";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { SheetHostScope } from "@/components/ui/isolated-bottom-sheet-modal";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { getOpenAgentTabLabel } from "@getpaseo/protocol/agent-labels";
 import {
@@ -75,6 +79,7 @@ import {
   selectExplorerSidebarPaneId,
   selectPaneFocusSuspended,
   type WorkspaceLayout,
+  type SheetTab,
   type WorkspaceTabPlacement,
   useWorkspaceLayoutStore,
   useWorkspaceLayoutStoreHydrated,
@@ -161,7 +166,7 @@ import {
   type WorkspacePaneContentModel,
 } from "@/screens/workspace/workspace-pane-content";
 import { useMountedTabSet } from "@/screens/workspace/use-mounted-tab-set";
-import { WorkspaceSheetHost } from "@/screens/workspace/workspace-sheet-host";
+import { SheetTabs } from "@/screens/workspace/sheet-tabs";
 import type { PaneHost } from "@/panels/panel-manifest";
 import { WorkspaceFocusProvider } from "@/workspace/focus";
 import { DiffDocumentWorkspaceCacheProvider } from "@/git/diff-document/workspace-cache";
@@ -204,6 +209,7 @@ import { RenderProfile } from "@/utils/render-profiler";
 import { useWorkspaceCheckoutStatus } from "@/screens/workspace/use-workspace-checkout-status";
 import { useHasPullRequest, usePullRequestAutoAdd } from "@/panels/pull-request";
 
+const NO_SHEETS: readonly SheetTab[] = [];
 const WORKSPACE_FLOATING_PANEL_PORTAL_HOST_PREFIX = "workspace-floating-panels";
 const EMPTY_UI_TABS: WorkspaceTab[] = [];
 const EMPTY_WORKSPACE_SCRIPTS: WorkspaceDescriptor["scripts"] = [];
@@ -824,6 +830,16 @@ function floatsHeaderOverContent(activeTab: WorkspaceTabDescriptor | null): bool
   return supportsStreamTopOverlay && activeTab?.kind === "agent";
 }
 
+/** A fullscreen composer covers the compact header; the column lays out without it. */
+function resolveCompactHeaderLayout(input: {
+  header: ReactNode;
+  activeTab: WorkspaceTabDescriptor | null;
+  composerFullscreen: boolean;
+}): { header: ReactNode; floating: boolean } {
+  if (input.composerFullscreen) return { header: null, floating: false };
+  return { header: input.header, floating: floatsHeaderOverContent(input.activeTab) };
+}
+
 function shouldShowWorkspaceScreenHeader(input: {
   isFocusModeEnabled: boolean;
   isMobile: boolean;
@@ -1309,8 +1325,12 @@ function WorkspaceScreenContent({
   const focusWorkspaceTab = useWorkspaceLayoutStore((state) => state.focusTab);
   const selectWorkspaceTabInPane = useWorkspaceLayoutStore((state) => state.selectTabInPane);
   const closeWorkspaceTab = useWorkspaceLayoutStore((state) => state.closeTab);
+  const sheets = useWorkspaceLayoutStore((state) =>
+    persistenceKey ? (state.sheetsByWorkspace[persistenceKey] ?? NO_SHEETS) : NO_SHEETS,
+  );
+  // Only the top sheet is on screen.
   const sheetTab = useWorkspaceLayoutStore((state) =>
-    persistenceKey ? (state.sheetByWorkspace[persistenceKey]?.tab ?? null) : null,
+    persistenceKey ? (state.sheetsByWorkspace[persistenceKey]?.at(-1)?.tab ?? null) : null,
   );
   const unpinWorkspaceAgent = useWorkspaceLayoutStore((state) => state.unpinAgent);
   const hideWorkspaceAgent = useWorkspaceLayoutStore((state) => state.hideAgent);
@@ -2069,7 +2089,7 @@ function WorkspaceScreenContent({
 
   const handleCloseTabById = useCallback(
     async (tabId: string) => {
-      if (persistenceKey && sheetTab?.tabId === tabId) {
+      if (persistenceKey && sheets.some((sheet) => sheet.tab.tabId === tabId)) {
         if (await confirmDiscardModifiedTab(tabId)) {
           closeWorkspaceTab(persistenceKey, tabId);
         }
@@ -2100,7 +2120,7 @@ function WorkspaceScreenContent({
       handleClosePassiveTab,
       handleCloseTerminalTab,
       persistenceKey,
-      sheetTab,
+      sheets,
     ],
   );
 
@@ -3095,7 +3115,6 @@ function WorkspaceScreenContent({
     focusedPaneTabDescriptorMap,
     isRouteFocused,
     focusedPaneId,
-    // The sheet owns input while it covers the tab.
     paneFocusSuspended,
     onFocusPane: handleFocusPane,
     buildMobilePaneContentModel,
@@ -3524,22 +3543,28 @@ function WorkspaceScreenContent({
   const rendersDesktopSplitContent = !isMobile && desktopSplitContent !== null;
 
   const workspacePanelTabIds = useMemo(
-    () => [...uiTabs.map((tab) => tab.tabId), ...(sheetTab ? [sheetTab.tabId] : [])],
-    [uiTabs, sheetTab],
+    () => [...uiTabs.map((tab) => tab.tabId), ...sheets.map((sheet) => sheet.tab.tabId)],
+    [uiTabs, sheets],
   );
   const workspacePanelKey = `${normalizedServerId}:${normalizedWorkspaceId}`;
+  const compactHeaderLayout = resolveCompactHeaderLayout({
+    header: compactWorkspaceHeader,
+    activeTab: activeTabDescriptor,
+    composerFullscreen: useComposerTabFullscreen(workspacePanelKey, activeTabId),
+  });
 
-  // The sheet is the column's last child, so it covers the compact header as a modal.
+  // Sheets opened from the compact column present inside it, so their panels read the workspace
+  // providers, and they cover the compact header as a modal.
   const workspaceCenterColumn = isMobile ? (
     <WorkspacePanelProviders
       launcher={newTabLauncher}
       workspaceKey={workspacePanelKey}
       tabIds={workspacePanelTabIds}
     >
-      <View style={styles.centerColumn}>
+      <SheetHostScope style={styles.centerColumn}>
         <FloatingHeaderLayout
-          header={compactWorkspaceHeader}
-          floating={floatsHeaderOverContent(activeTabDescriptor)}
+          header={compactHeaderLayout.header}
+          floating={compactHeaderLayout.floating}
         >
           {(topOverlayInset) => (
             <StreamTopOverlayProvider value={topOverlayInset}>
@@ -3547,17 +3572,15 @@ function WorkspaceScreenContent({
             </StreamTopOverlayProvider>
           )}
         </FloatingHeaderLayout>
-        <StreamTopOverlayProvider value={0}>
-          <WorkspaceSheetHost
-            workspaceKey={persistenceKey}
-            serverId={normalizedServerId}
-            workspaceId={normalizedWorkspaceId}
-            isWorkspaceFocused={isRouteFocused}
-            buildContent={buildSheetPaneContentModel}
-            onCloseTab={handleCloseTabById}
-          />
-        </StreamTopOverlayProvider>
-      </View>
+        <SheetTabs
+          workspaceKey={persistenceKey}
+          serverId={normalizedServerId}
+          workspaceId={normalizedWorkspaceId}
+          isWorkspaceFocused={isRouteFocused}
+          buildContent={buildSheetPaneContentModel}
+          onCloseTab={handleCloseTabById}
+        />
+      </SheetHostScope>
     </WorkspacePanelProviders>
   ) : (
     <View style={styles.centerColumn}>

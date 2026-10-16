@@ -6,6 +6,7 @@ import { ComposerDock } from "@/composer/dock";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import invariant from "tiny-invariant";
 import { Composer } from "@/composer";
+import { useComposerEditingSession, useComposerFullscreen } from "@/composer/editing-session";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { ComposerImportPill } from "@/composer/draft/import-pill";
 import { COMPOSER_PILL_CLEARANCE } from "@/composer/pill-styles";
@@ -385,6 +386,8 @@ export function WorkspaceDraftAgentTab({
   }, [pendingCreateAttempt]);
   const allowsEmptyAutoSubmit = pendingAutoSubmit?.allowEmptyText === true;
   const isCompactFormFactor = useIsCompactFormFactor();
+  const editingSession = useComposerEditingSession("chat");
+  const isComposerFullscreen = useComposerFullscreen(editingSession);
   const { onLayout: onInputAreaLayout, isBelow: isCompactComposerLayout } = useContainerWidthBelow(
     COMPACT_FORM_FACTOR_WIDTH,
     { initialIsBelow: isCompactFormFactor },
@@ -628,10 +631,10 @@ export function WorkspaceDraftAgentTab({
 
   return (
     <FileDropZone style={styles.container}>
-      <ComposerDock>
+      <ComposerDock fullscreen={isComposerFullscreen}>
         {dockContent}
         <View style={animatedStaticStyles.inputAreaWrapper} onLayout={onInputAreaLayout}>
-          {importPillPress ? (
+          {importPillPress && !isComposerFullscreen ? (
             <View style={styles.importPillRow}>
               <View style={styles.importPillContent}>
                 <ComposerImportPill onPress={importPillPress} />
@@ -655,6 +658,7 @@ export function WorkspaceDraftAgentTab({
             onChangeAttachments={draftInput.setAttachments}
             cwd={composerState.workingDir}
             clearDraft={draftInput.clear}
+            editingSession={editingSession}
             autoFocus={shouldAutoFocusWorkspaceDraftComposer({ isPaneFocused, isSubmitting })}
             autoFocusKey={String(draftInput.attachmentFocusRequestId)}
             onFocusInput={handleFocusInputCallback}
@@ -672,6 +676,8 @@ const animatedStaticStyles = RNStyleSheet.create({
   inputAreaWrapper: {
     width: "100%",
     flexShrink: 1,
+    // Content-sized inline; fills the dock's fullscreen slot.
+    flexGrow: 1,
   },
 });
 

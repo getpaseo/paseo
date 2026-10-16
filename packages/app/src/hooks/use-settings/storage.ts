@@ -522,7 +522,24 @@ export function sanitizeFontFamily(value: unknown): string | null {
   if ([...trimmed].some((char) => char.charCodeAt(0) <= 0x1f)) {
     return null; // control chars would corrupt the font-family string
   }
-  return trimmed; // quotes/commas are legit in stacks
+  // Unistyles serializes theme values into one shared stylesheet. An unfinished
+  // string, escape, comment, or block consumes the declarations that follow.
+  let quote: string | null = null;
+  let escaped = false;
+  for (const char of trimmed) {
+    if (escaped) {
+      escaped = false;
+    } else if (char === "\\") {
+      escaped = true;
+    } else if (quote !== null) {
+      if (char === quote) quote = null;
+    } else if (char === "'" || char === '"') {
+      quote = char;
+    } else if (/[()[\]/*]/.test(char)) {
+      return null;
+    }
+  }
+  return quote === null && !escaped ? trimmed : null;
 }
 
 async function loadLegacyDesktopSettingsFromStorage(storage: KeyValueStorage): Promise<{

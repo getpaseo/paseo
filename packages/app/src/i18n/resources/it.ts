@@ -634,7 +634,7 @@ export const it: TranslationResources = {
       },
       switcher: {
         trigger: "Cambia scheda ({{count}} aperte)",
-        title: "Cambia scheda",
+        title: "Schede dell'ambiente di lavoro",
         searchPlaceholder: "Cerca schede",
       },
       menu: {
@@ -1718,13 +1718,18 @@ export const it: TranslationResources = {
     title: "Aggiungi provider",
     search: "Cerca provider",
     noProviders: "Nessun provider trovato",
+    clearSearch: "Cancella ricerca",
     actions: {
       add: "Aggiungi",
+      addProvider: "Aggiungi {{provider}}",
       adding: "Aggiunta in corso",
       installed: "Installato",
       cancel: "Annulla",
       installInstructions: "Istruzioni di installazione",
       installInstructionsFor: "Istruzioni di installazione di {{provider}}",
+    },
+    types: {
+      acp: "ACP",
     },
     errors: {
       unableToInstall: "Impossibile installare il provider",

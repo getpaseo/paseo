@@ -637,7 +637,7 @@ export const ja: TranslationResources = {
       },
       switcher: {
         trigger: "タブを切り替え（{{count}}件開いています）",
-        title: "タブを切り替え",
+        title: "ワークスペースのタブ",
         searchPlaceholder: "タブを検索",
       },
       menu: {
@@ -1674,13 +1674,18 @@ export const ja: TranslationResources = {
     title: "プロバイダーを追加",
     search: "プロバイダーを検索",
     noProviders: "プロバイダーが見つかりません",
+    clearSearch: "検索をクリア",
     actions: {
       add: "追加",
+      addProvider: "{{provider}} を追加",
       adding: "追加中",
       installed: "インストール済み",
       cancel: "キャンセル",
       installInstructions: "インストール手順",
       installInstructionsFor: "{{provider}}のインストール手順",
+    },
+    types: {
+      acp: "ACP",
     },
     errors: {
       unableToInstall: "プロバイダーをインストールできません",

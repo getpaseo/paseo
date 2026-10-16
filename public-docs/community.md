@@ -10,12 +10,11 @@ category: Getting started
 
 These projects are related to Paseo and built by the community.
 
-## Plugin directory
+## Plugins
 
-[paseo.cafe](https://paseo.cafe) is a community-run directory of Paseo plugins. Listings are generated
-from each plugin's public repository, so it is the fastest way to see what people are building and to
-publish your own. It is independent of the Paseo project and nothing on it is reviewed or endorsed by
-us, so read a plugin's source before installing it.
+Browse the [plugin registry](/plugins) for reviewed community plugins. To share your own, follow
+[Publish a plugin](/docs/plugins/publishing) for package preparation and submission.
+Plugins run unsandboxed; read their listing and source before installing.
 
 ## Tools and integrations
 

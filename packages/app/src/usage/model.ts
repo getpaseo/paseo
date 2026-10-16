@@ -82,17 +82,24 @@ export function upsertReport(
 }
 
 /**
- * The list a finished request leaves: its reports, dropping any the host no longer has, except
- * that a copy on screen fetched after the request's copy stays.
+ * Keep displayed reports in place: the finished list is in fetch-completion order, which can
+ * change on every refresh. Drop missing reports, append new ones, and keep newer fetched copies.
  */
 export function settleReports(
   shown: readonly UsageReportEntry[] | undefined,
   finished: readonly UsageReportEntry[],
 ): UsageReportEntry[] {
-  return finished.map((report) => {
-    const copy = shown?.find((entry) => entry.id === report.id);
-    return copy ? laterFetched(copy, report) : report;
-  });
+  const remaining = new Map(finished.map((report) => [report.id, report]));
+  const settled: UsageReportEntry[] = [];
+  for (const report of shown ?? []) {
+    const arriving = remaining.get(report.id);
+    if (!arriving) {
+      continue;
+    }
+    settled.push(laterFetched(report, arriving));
+    remaining.delete(report.id);
+  }
+  return [...settled, ...remaining.values()];
 }
 
 export interface UsageQueryState {

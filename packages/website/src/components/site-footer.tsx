@@ -1,9 +1,12 @@
 import { PLUGINS_LINKED } from "~/plugins/launch";
 import { getAlternativePages } from "~/data/alternative-pages";
 import { appStoreUrl, playStoreUrl, webAppUrl } from "~/downloads";
+import { SponsorsSection } from "~/components/sponsorship";
 
 interface SiteFooterProps {
   width?: "default" | "prose" | "wide";
+  /** Pages that show the sponsors in their content turn the footer band off. */
+  sponsors?: boolean;
 }
 
 const WIDTH_CLASSES: Record<NonNullable<SiteFooterProps["width"]>, string> = {
@@ -12,11 +15,12 @@ const WIDTH_CLASSES: Record<NonNullable<SiteFooterProps["width"]>, string> = {
   wide: "max-w-7xl p-6 md:p-20 md:pt-0",
 };
 
-export function SiteFooter({ width = "default" }: SiteFooterProps) {
+export function SiteFooter({ width = "default", sponsors = true }: SiteFooterProps) {
   const widthClasses = WIDTH_CLASSES[width];
   const alternatives = getAlternativePages();
   return (
     <footer className={`${widthClasses} mx-auto mt-12 md:mt-16`}>
+      {sponsors ? <SponsorsSection placement="footer" /> : null}
       <div className="border-t border-white/10 pt-8 pb-4 grid grid-cols-2 sm:grid-cols-5 gap-8 text-sm">
         <div className="space-y-3">
           <p className="text-extra-muted-foreground">Product</p>

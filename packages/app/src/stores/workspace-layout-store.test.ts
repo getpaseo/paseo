@@ -4449,7 +4449,7 @@ describe("compact workspace sheet", () => {
 
   function createCompactStore() {
     const store = createWorkspaceLayoutStore(workspaceLayoutIds);
-    store.setState({ layoutByWorkspace: {}, sheetByWorkspace: {} });
+    store.setState({ layoutByWorkspace: {}, sheetsByWorkspace: {} });
     store.getState().setLayoutMode("compact");
     store.getState().openTab({
       workspaceKey,
@@ -4457,6 +4457,16 @@ describe("compact workspace sheet", () => {
       intent: "reveal",
     });
     return store;
+  }
+
+  function topSheet(store: ReturnType<typeof createCompactStore>) {
+    return store.getState().sheetsByWorkspace[workspaceKey]?.at(-1);
+  }
+
+  function sheetTargets(store: ReturnType<typeof createCompactStore>) {
+    return (store.getState().sheetsByWorkspace[workspaceKey] ?? []).map(
+      (sheet) => sheet.tab.target,
+    );
   }
 
   function tabKinds(store: ReturnType<typeof createCompactStore>): string[] {
@@ -4523,7 +4533,7 @@ describe("compact workspace sheet", () => {
 
     const tabId = store.getState().openTab({ workspaceKey, target: fileTarget, intent: "reveal" });
 
-    expect(store.getState().sheetByWorkspace[workspaceKey]?.tab).toEqual({
+    expect(topSheet(store)?.tab).toEqual({
       tabId,
       target: fileTarget,
       createdAt: expect.any(Number),
@@ -4547,20 +4557,69 @@ describe("compact workspace sheet", () => {
     const tabId = store.getState().openTab({ workspaceKey, target: fileTarget, intent: "reveal" });
 
     expect(tabId).toBe(fileTabId);
-    expect(store.getState().sheetByWorkspace[workspaceKey]).toBeUndefined();
+    expect(topSheet(store)).toBeUndefined();
     const layout = store.getState().layoutByWorkspace[workspaceKey];
     expect(findPaneContainingTab(layout.root, fileTabId ?? "")?.focusedTabId).toBe(fileTabId);
   });
 
-  it("replaces the sheet content with the next sheet target", () => {
+  it("stacks the next sheet target over the open sheet", () => {
     const store = createCompactStore();
     store.getState().openTab({ workspaceKey, target: fileTarget, intent: "reveal" });
 
     const nextTarget = { kind: "file" as const, path: "src/other.ts" };
+    const nextTabId = store
+      .getState()
+      .openTab({ workspaceKey, target: nextTarget, intent: "reveal" });
+
+    expect(sheetTargets(store)).toEqual([fileTarget, nextTarget]);
+    expect(tabKinds(store)).toEqual(["terminal"]);
+
+    store.getState().closeTab(workspaceKey, nextTabId ?? "");
+    expect(sheetTargets(store)).toEqual([fileTarget]);
+  });
+
+  it("closes a lower sheet and keeps the sheets above it", () => {
+    const store = createCompactStore();
+    const fileTabId = store
+      .getState()
+      .openTab({ workspaceKey, target: fileTarget, intent: "reveal" });
+    const nextTarget = { kind: "file" as const, path: "src/other.ts" };
     store.getState().openTab({ workspaceKey, target: nextTarget, intent: "reveal" });
 
-    expect(store.getState().sheetByWorkspace[workspaceKey]?.tab.target).toEqual(nextTarget);
+    store.getState().closeTab(workspaceKey, fileTabId ?? "");
+
+    expect(sheetTargets(store)).toEqual([nextTarget]);
     expect(tabKinds(store)).toEqual(["terminal"]);
+  });
+
+  it("uncovers a covered sheet by dropping the sheets above it", () => {
+    const store = createCompactStore();
+    const fileTabId = store
+      .getState()
+      .openTab({ workspaceKey, target: fileTarget, intent: "reveal" });
+    store
+      .getState()
+      .openTab({ workspaceKey, target: { kind: "file", path: "src/other.ts" }, intent: "reveal" });
+
+    const tabId = store.getState().openTab({ workspaceKey, target: fileTarget, intent: "reveal" });
+
+    expect(tabId).toBe(fileTabId);
+    expect(sheetTargets(store)).toEqual([fileTarget]);
+  });
+
+  it("opens the top sheet as a tab and dismisses the sheets that would cover it", () => {
+    const store = createCompactStore();
+    store.getState().openTab({ workspaceKey, target: fileTarget, intent: "reveal" });
+    const nextTabId = store
+      .getState()
+      .openTab({ workspaceKey, target: { kind: "file", path: "src/other.ts" }, intent: "reveal" });
+
+    store.getState().openSheetAsTab(workspaceKey, nextTabId ?? "");
+
+    expect(sheetTargets(store)).toEqual([]);
+    expect(tabKinds(store)).toEqual(["terminal", "file"]);
+    const layout = store.getState().layoutByWorkspace[workspaceKey];
+    expect(findPaneById(layout.root, "main")?.focusedTabId).toBe(nextTabId);
   });
 
   it("closes the sheet when a tab target is revealed, and keeps it for background opens", () => {
@@ -4572,7 +4631,7 @@ describe("compact workspace sheet", () => {
       target: { kind: "file", path: "src/background.ts" },
       intent: "background",
     });
-    expect(store.getState().sheetByWorkspace[workspaceKey]?.tab.target).toEqual(fileTarget);
+    expect(topSheet(store)?.tab.target).toEqual(fileTarget);
     expect(tabKinds(store)).toEqual(["terminal", "file"]);
 
     store.getState().openTab({
@@ -4580,7 +4639,7 @@ describe("compact workspace sheet", () => {
       target: { kind: "terminal", terminalId: "term-2" },
       intent: "reveal",
     });
-    expect(store.getState().sheetByWorkspace[workspaceKey]).toBeUndefined();
+    expect(topSheet(store)).toBeUndefined();
   });
 
   it("moves the sheet tab into the focused pane with the same tab id and state", () => {
@@ -4591,10 +4650,10 @@ describe("compact workspace sheet", () => {
     if (!sheetTabId) throw new Error("Expected a sheet tab");
     store.getState().setTabState(workspaceKey, sheetTabId, { scrollTop: 120 });
 
-    const tabId = store.getState().openSheetAsTab(workspaceKey);
+    const tabId = store.getState().openSheetAsTab(workspaceKey, sheetTabId);
 
     expect(tabId).toBe(sheetTabId);
-    expect(store.getState().sheetByWorkspace[workspaceKey]).toBeUndefined();
+    expect(topSheet(store)).toBeUndefined();
     const layout = store.getState().layoutByWorkspace[workspaceKey];
     const pane = findPaneContainingTab(layout.root, sheetTabId);
     expect(pane?.id).toBe(layout.focusedPaneId);
@@ -4616,7 +4675,7 @@ describe("compact workspace sheet", () => {
     expect(store.getState().layoutByWorkspace[workspaceKey]).toBe(layoutBefore);
 
     store.getState().closeTab(workspaceKey, sheetTabId);
-    expect(store.getState().sheetByWorkspace[workspaceKey]).toBeUndefined();
+    expect(topSheet(store)).toBeUndefined();
     expect(tabKinds(store)).toEqual(["terminal"]);
   });
 
@@ -4639,19 +4698,21 @@ describe("compact workspace sheet", () => {
 
     store.getState().openTab({ workspaceKey, target: fileTarget, intent: "reveal" });
 
-    expect(store.getState().sheetByWorkspace).toEqual({});
+    expect(store.getState().sheetsByWorkspace).toEqual({});
     expect(tabKinds(store)).toEqual(["terminal", "file"]);
   });
 
-  it("keeps the sheet content as a tab when the layout widens", () => {
+  it("keeps every stacked sheet as a tab when the layout widens, focusing the top one", () => {
     const store = createCompactStore();
+    store.getState().openTab({ workspaceKey, target: fileTarget, intent: "reveal" });
     const sheetTabId = store
       .getState()
-      .openTab({ workspaceKey, target: fileTarget, intent: "reveal" });
+      .openTab({ workspaceKey, target: { kind: "file", path: "src/other.ts" }, intent: "reveal" });
 
     store.getState().setLayoutMode("split-panes");
 
-    expect(store.getState().sheetByWorkspace).toEqual({});
+    expect(store.getState().sheetsByWorkspace).toEqual({});
+    expect(tabKinds(store)).toEqual(["terminal", "file", "file"]);
     const layout = store.getState().layoutByWorkspace[workspaceKey];
     expect(findPaneContainingTab(layout.root, sheetTabId ?? "")?.focusedTabId).toBe(sheetTabId);
   });
@@ -4669,7 +4730,7 @@ describe("compact workspace sheet", () => {
       target: { kind: "agent", agentId: "child" },
       intent: "reveal",
     });
-    expect(store.getState().sheetByWorkspace[workspaceKey]).toMatchObject({
+    expect(topSheet(store)).toMatchObject({
       tab: { target: { kind: "agent", agentId: "child" } },
       policy: { openAsTab: true },
     });
@@ -4679,7 +4740,7 @@ describe("compact workspace sheet", () => {
       target: { kind: "provider_subagent", parentAgentId: "root", subagentId: "task-1" },
       intent: "reveal",
     });
-    expect(store.getState().sheetByWorkspace[workspaceKey]).toMatchObject({
+    expect(topSheet(store)).toMatchObject({
       tab: { target: { kind: "provider_subagent", subagentId: "task-1" } },
       policy: { openAsTab: false },
     });
@@ -4689,7 +4750,7 @@ describe("compact workspace sheet", () => {
         .getState()
         .openTab({ workspaceKey, target: { kind: "agent", agentId }, intent: "reveal" });
     }
-    expect(store.getState().sheetByWorkspace[workspaceKey]).toBeUndefined();
+    expect(topSheet(store)).toBeUndefined();
     expect(tabKinds(store)).toEqual(["terminal", "agent", "agent"]);
   });
 
@@ -4715,9 +4776,9 @@ describe("compact workspace sheet", () => {
       intent: "reveal",
       parentTabId: childSheetTabId ?? undefined,
     });
-    expect(store.getState().sheetByWorkspace[workspaceKey]?.parentTabId).toBe(rootTabId);
+    expect(topSheet(store)?.parentTabId).toBe(rootTabId);
 
-    store.getState().openSheetAsTab(workspaceKey);
+    store.getState().openSheetAsTab(workspaceKey, fileSheetTabId ?? "");
     const layout = store.getState().layoutByWorkspace[workspaceKey];
     expect(layout.parentTabIdByTabId?.[fileSheetTabId ?? ""]).toBe(rootTabId);
   });
@@ -4746,7 +4807,7 @@ describe("compact workspace sheet", () => {
       intent: "reveal",
       parentTabId: openChildSheet(),
     });
-    expect(store.getState().sheetByWorkspace[workspaceKey]).toBeUndefined();
+    expect(topSheet(store)).toBeUndefined();
     let layout = store.getState().layoutByWorkspace[workspaceKey];
     expect(findPaneById(layout.root, "main")?.focusedTabId).toBe(terminalTabId);
 
@@ -4756,7 +4817,7 @@ describe("compact workspace sheet", () => {
       intent: "reveal",
       parentTabId: openChildSheet(),
     });
-    expect(store.getState().sheetByWorkspace[workspaceKey]).toBeUndefined();
+    expect(topSheet(store)).toBeUndefined();
     layout = store.getState().layoutByWorkspace[workspaceKey];
     expect(findPaneById(layout.root, "main")?.focusedTabId).toBe(secondRootTabId);
     expect(layout.parentTabIdByTabId?.[secondRootTabId ?? ""]).toBe(rootTabId);
@@ -4798,22 +4859,47 @@ describe("compact workspace sheet", () => {
     });
 
     function sheetTabId(store: ReturnType<typeof createCompactStore>): string | null {
-      return store.getState().sheetByWorkspace[workspaceKey]?.tab.tabId ?? null;
+      return topSheet(store)?.tab.tabId ?? null;
     }
 
-    it("opens the next sheet target as a tab under a modified sheet", () => {
+    it("stacks the next sheet target over a modified sheet", () => {
       const store = createCompactStore();
-      const modifiedSheetTabId = openModifiedFileSheet(store);
+      openModifiedFileSheet(store);
 
       const nextTarget = { kind: "file" as const, path: "src/other.ts" };
       const nextTabId = store
         .getState()
         .openTab({ workspaceKey, target: nextTarget, intent: "reveal" });
 
+      expect(sheetTabId(store)).toBe(nextTabId);
+      expect(sheetTargets(store)).toEqual([fileTarget, nextTarget]);
+      expect(store.getState().sheetsByWorkspace[workspaceKey]?.[0]?.tab.state).toEqual({
+        scrollTop: 40,
+      });
+    });
+
+    it("keeps a covered sheet in place under a modified sheet instead of reordering", () => {
+      const store = createCompactStore();
+      const otherTarget = { kind: "file" as const, path: "src/other.ts" };
+      const otherTabId = store
+        .getState()
+        .openTab({ workspaceKey, target: otherTarget, intent: "reveal" });
+      const modifiedSheetTabId = openModifiedFileSheet(store);
+      const unmodifiedTopTarget = { kind: "file" as const, path: "src/third.ts" };
+      store.getState().openTab({ workspaceKey, target: unmodifiedTopTarget, intent: "reveal" });
+      const focusedBefore = focusedTabId(store);
+
+      const tabId = store
+        .getState()
+        .openTab({ workspaceKey, target: otherTarget, intent: "reveal" });
+
+      expect(tabId).toBe(otherTabId);
+      // Moving a sheet would remount its panel, so the stack keeps its order: the modified sheet
+      // stays on top of the one revealed, and only the unmodified sheet above them closes.
+      expect(sheetTargets(store)).toEqual([otherTarget, fileTarget]);
       expect(sheetTabId(store)).toBe(modifiedSheetTabId);
-      expect(store.getState().sheetByWorkspace[workspaceKey]?.tab.state).toEqual({ scrollTop: 40 });
-      expect(stripTab(store, nextTabId ?? "")).toMatchObject({ target: nextTarget });
-      expect(focusedTabId(store)).toBe(nextTabId);
+      expect(stripTab(store, tabId ?? "")).toBeNull();
+      expect(focusedTabId(store)).toBe(focusedBefore);
     });
 
     it("opens a tab target under a modified sheet without closing it", () => {
@@ -4851,23 +4937,6 @@ describe("compact workspace sheet", () => {
       store.getState().closeTab(workspaceKey, modifiedSheetTabId);
       expect(sheetTabId(store)).toBeNull();
       expect(tabKinds(store)).toEqual(["terminal", "terminal"]);
-    });
-
-    it("replaces an unmodified sheet with the next sheet target", () => {
-      const store = createCompactStore();
-      store.getState().openTab({ workspaceKey, target: fileTarget, intent: "reveal" });
-
-      store.getState().openTab({
-        workspaceKey,
-        target: { kind: "file", path: "src/other.ts" },
-        intent: "reveal",
-      });
-
-      expect(store.getState().sheetByWorkspace[workspaceKey]?.tab.target).toEqual({
-        kind: "file",
-        path: "src/other.ts",
-      });
-      expect(tabKinds(store)).toEqual(["terminal"]);
     });
 
     it("closes an unmodified sheet when another tab is chosen", () => {
@@ -4913,10 +4982,38 @@ describe("compact workspace sheet", () => {
     };
 
     store.getState().reconcileTabs(workspaceKey, { ...snapshot, agentsHydrated: false });
-    expect(store.getState().sheetByWorkspace[workspaceKey]).toBeDefined();
+    expect(topSheet(store)).toBeDefined();
 
     store.getState().reconcileTabs(workspaceKey, { ...snapshot, agentsHydrated: true });
-    expect(store.getState().sheetByWorkspace[workspaceKey]).toBeUndefined();
+    expect(topSheet(store)).toBeUndefined();
+  });
+
+  it("drops a departed agent's sheet from the middle of the stack", () => {
+    seedAgents([
+      { id: "root", parentAgentId: null, workspaceId: "sheet-ws" },
+      { id: "child", parentAgentId: "root", workspaceId: "sheet-ws" },
+    ]);
+    const store = createCompactStore();
+    const nextTarget = { kind: "file" as const, path: "src/other.ts" };
+    store.getState().openTab({ workspaceKey, target: fileTarget, intent: "reveal" });
+    store.getState().openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "child" },
+      intent: "reveal",
+    });
+    store.getState().openTab({ workspaceKey, target: nextTarget, intent: "reveal" });
+
+    store.getState().reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: false,
+      activeAgentIds: ["root"],
+      autoOpenAgentIds: [],
+      knownTerminalIds: ["term-1"],
+      standaloneTerminalIds: ["term-1"],
+      hasActivePendingTerminalCreate: false,
+    });
+
+    expect(sheetTargets(store)).toEqual([fileTarget, nextTarget]);
   });
 
   it("closes the sheet when its agent stops being a subagent, leaving one tab for it", () => {
@@ -4941,7 +5038,7 @@ describe("compact workspace sheet", () => {
     };
 
     store.getState().reconcileTabs(workspaceKey, { ...snapshot, autoOpenAgentIds: [] });
-    expect(store.getState().sheetByWorkspace[workspaceKey]?.tab.tabId).toBe(sheetTabId);
+    expect(topSheet(store)?.tab.tabId).toBe(sheetTabId);
 
     seedAgents([
       { id: "root", parentAgentId: null, workspaceId: "sheet-ws" },
@@ -4949,7 +5046,7 @@ describe("compact workspace sheet", () => {
     ]);
     store.getState().reconcileTabs(workspaceKey, snapshot);
 
-    expect(store.getState().sheetByWorkspace[workspaceKey]).toBeUndefined();
+    expect(topSheet(store)).toBeUndefined();
     const layout = store.getState().layoutByWorkspace[workspaceKey];
     expect(
       collectAllTabs(layout.root).filter(
@@ -4975,7 +5072,7 @@ describe("compact workspace sheet", () => {
       .replaceTab(workspaceKey, sheetTabId ?? "", { kind: "agent", agentId: "child" });
 
     expect(replacedTabId).toBe(sheetTabId);
-    expect(store.getState().sheetByWorkspace[workspaceKey]).toMatchObject({
+    expect(topSheet(store)).toMatchObject({
       tab: { tabId: sheetTabId, target: { kind: "agent", agentId: "child" } },
       policy: { openAsTab: true },
     });
@@ -4992,7 +5089,7 @@ describe("compact workspace sheet", () => {
       terminalId: "term-2",
     });
 
-    expect(store.getState().sheetByWorkspace[workspaceKey]).toBeUndefined();
+    expect(topSheet(store)).toBeUndefined();
     expect(replacedTabId).toBe(sheetTabId);
     const layout = store.getState().layoutByWorkspace[workspaceKey];
     expect(findPaneById(layout.root, "main")?.focusedTabId).toBe(sheetTabId);
@@ -5008,12 +5105,12 @@ describe("compact workspace sheet", () => {
     const received: string[][] = [];
     const stop = observeOpenWorkspaceAgentIds("server-1", (ids) => received.push(ids), store);
 
-    store.getState().openTab({
+    const sheetTabId = store.getState().openTab({
       workspaceKey,
       target: { kind: "agent", agentId: "child" },
       intent: "reveal",
     });
-    store.getState().closeSheet(workspaceKey);
+    store.getState().closeTab(workspaceKey, sheetTabId ?? "");
     stop();
 
     expect(received).toEqual([[], ["child"], []]);

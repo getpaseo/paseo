@@ -1,31 +1,37 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 
-/** The compact workspace sheet, named after the tab it hosts. */
-export function workspaceSheet(page: Page, label: string): Locator {
+/** A sheet tab's body, named after the tab it shows. */
+export function sheet(page: Page, label: string): Locator {
   return page.getByRole("dialog", { name: label });
 }
 
-/** Sheet height as a fraction of the viewport; mirrors the host's 92% snap point. */
+/** A sheet tab's header, which carries its title, Close, and the Open as tab glyph. */
+export function sheetHeader(page: Page, label: string): Locator {
+  return page.getByTestId("sheet-tab-header").filter({ hasText: label });
+}
+
+/** Sheet height as a fraction of the viewport; mirrors the sheet tab's 92% snap point. */
 const SHEET_SNAP_FRACTION = 0.92;
-/** The dialog starts below the sheet's drag handle. */
-const SHEET_HANDLE_MAX_HEIGHT = 32;
+/** The header starts below the sheet's drag indicator, inside the handle. */
+const SHEET_INDICATOR_MAX_HEIGHT = 32;
 
 /**
  * The sheet rests at its snap point, docked to the bottom edge. A sheet pushed up past it
  * covers the workspace header; a sheet sunk below it hides content.
  */
-export async function expectWorkspaceSheetAtSnap(page: Page, label: string): Promise<void> {
+export async function expectSheetAtSnap(page: Page, label: string): Promise<void> {
   const viewportHeight = page.viewportSize()?.height ?? 0;
   const snapTop = Math.round(viewportHeight * (1 - SHEET_SNAP_FRACTION));
-  const sheet = workspaceSheet(page, label);
+  const header = sheetHeader(page, label);
+  const body = sheet(page, label);
   await expect
     .poll(async () => {
-      const box = await sheet.boundingBox();
-      if (!box) return null;
-      const top = Math.round(box.y);
+      const [headerBox, bodyBox] = await Promise.all([header.boundingBox(), body.boundingBox()]);
+      if (!headerBox || !bodyBox) return null;
+      const top = Math.round(headerBox.y);
       return {
-        dockedToBottom: Math.round(box.y + box.height) === viewportHeight,
-        topAtSnap: top >= snapTop && top <= snapTop + SHEET_HANDLE_MAX_HEIGHT,
+        dockedToBottom: Math.round(bodyBox.y + bodyBox.height) === viewportHeight,
+        topAtSnap: top >= snapTop && top <= snapTop + SHEET_INDICATOR_MAX_HEIGHT,
       };
     })
     .toEqual({ dockedToBottom: true, topAtSnap: true });
@@ -37,26 +43,22 @@ export async function expectOpenTabCount(page: Page, count: number): Promise<voi
   ).toBeVisible();
 }
 
-export async function closeWorkspaceSheet(page: Page, label: string): Promise<void> {
-  const sheet = workspaceSheet(page, label);
-  await sheet.getByRole("button", { name: "Close" }).click();
-  await expect(sheet).toHaveCount(0);
+export async function closeSheet(page: Page, label: string): Promise<void> {
+  await sheetHeader(page, label).getByRole("button", { name: "Close" }).click();
+  await expect(sheet(page, label)).toHaveCount(0);
 }
 
-export async function openWorkspaceSheetAsTab(page: Page, label: string): Promise<void> {
-  const sheet = workspaceSheet(page, label);
-  await sheet.getByRole("button", { name: "Open as tab" }).click();
-  await expect(sheet).toHaveCount(0);
+export async function openSheetAsTab(page: Page, label: string): Promise<void> {
+  await sheetHeader(page, label).getByRole("button", { name: "Open as tab" }).click();
+  await expect(sheet(page, label)).toHaveCount(0);
 }
 
-export async function replaceWorkspaceSheetFileText(
+export async function replaceSheetFileText(
   page: Page,
   label: string,
   content: string,
 ): Promise<void> {
-  const editor = workspaceSheet(page, label)
-    .getByTestId("file-source-editor")
-    .locator(".cm-content");
+  const editor = sheet(page, label).getByTestId("file-source-editor").locator(".cm-content");
   await editor.click();
   await editor.press("ControlOrMeta+A");
   await editor.pressSequentially(content);
@@ -67,15 +69,18 @@ export async function selectTabFromSwitcher(page: Page, label: string): Promise<
     .getByRole("button", { name: /Switch tabs/ })
     .filter({ visible: true })
     .click();
+  await expect(page.getByText("Workspace tabs", { exact: true })).toBeVisible();
   const option = page.getByText(label, { exact: true }).filter({ visible: true }).last();
   await expect(option).toBeVisible();
   await option.click();
   await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(0);
 }
 
-export async function tapWorkspaceSheetBackdrop(page: Page): Promise<void> {
+/** Taps the top sheet's backdrop; each stacked sheet renders its own, top last. */
+export async function tapSheetBackdrop(page: Page): Promise<void> {
   await page
     .getByRole("button", { name: "Bottom sheet backdrop" })
+    .last()
     .click({ position: { x: 10, y: 10 } });
 }
 

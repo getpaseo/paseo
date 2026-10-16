@@ -2801,6 +2801,102 @@ test("readFile drops an old daemon's over-budget binary chunks and reports the r
   await expect(responsePromise).rejects.toThrow("File is too large to display");
 });
 
+async function connectFileClient(clientId: string) {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId,
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+  return { mock, client };
+}
+
+function sendBinaryFile(
+  mock: ReturnType<typeof createMockTransport>,
+  requestId: string,
+  announcedSize: number,
+  chunks: string[],
+) {
+  mock.triggerMessage(
+    encodeFileTransferFrame({
+      opcode: FileTransferOpcode.FileBegin,
+      requestId,
+      metadata: {
+        mime: "application/octet-stream",
+        size: announcedSize,
+        encoding: "binary",
+        modifiedAt: "2026-05-02T00:00:00.000Z",
+      },
+    }),
+  );
+  for (const chunk of chunks) {
+    mock.triggerMessage(
+      encodeFileTransferFrame({
+        opcode: FileTransferOpcode.FileChunk,
+        requestId,
+        payload: new TextEncoder().encode(chunk),
+      }),
+    );
+  }
+}
+
+test("readFile with timeout 0 outlives the default request timeout", async () => {
+  useHeartbeatClock();
+  const { mock, client } = await connectFileClient("clsk_file_no_timeout");
+
+  const responsePromise = client.readFile("/tmp/project", "slow.bin", "req-slow", undefined, 0);
+  await vi.advanceTimersByTimeAsync(60_001);
+
+  sendBinaryFile(mock, "req-slow", 5, ["hello"]);
+  mock.triggerMessage(
+    encodeFileTransferFrame({ opcode: FileTransferOpcode.FileEnd, requestId: "req-slow" }),
+  );
+
+  const result = await responsePromise;
+  expect(result.size).toBe(5);
+  expect(new TextDecoder().decode(result.bytes)).toBe("hello");
+});
+
+test("readFile rejects a binary transfer that ends before the announced size", async () => {
+  const { mock, client } = await connectFileClient("clsk_file_short");
+
+  const responsePromise = client.readFile("/tmp/project", "short.bin", "req-short");
+  sendBinaryFile(mock, "req-short", 10, ["hello"]);
+  mock.triggerMessage(
+    encodeFileTransferFrame({ opcode: FileTransferOpcode.FileEnd, requestId: "req-short" }),
+  );
+
+  await expect(responsePromise).rejects.toThrow(
+    "File transfer incomplete: expected 10 bytes, received 5.",
+  );
+});
+
+test("readFile rejects a binary transfer that exceeds the announced size", async () => {
+  const { mock, client } = await connectFileClient("clsk_file_long");
+
+  const responsePromise = client.readFile("/tmp/project", "long.bin", "req-long");
+  const settled = responsePromise.then(
+    () => null,
+    (error: unknown) => error,
+  );
+  sendBinaryFile(mock, "req-long", 4, ["hello!"]);
+
+  expect(() =>
+    mock.triggerMessage(
+      encodeFileTransferFrame({ opcode: FileTransferOpcode.FileEnd, requestId: "req-long" }),
+    ),
+  ).not.toThrow();
+  expect(await settled).toMatchObject({
+    message: "File transfer incomplete: expected 4 bytes, received 6.",
+  });
+});
+
 test("uploadFile sends metadata request and file bytes as binary chunks", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -7527,3 +7623,29 @@ test.each([false, true])(
     await send;
   },
 );
+
+test("measures an outbound message in UTF-8 bytes against the daemon's message limit", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "message_limit_unit_test",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+  const mib = 1024 * 1024;
+
+  // "é" is one UTF-16 unit but two UTF-8 bytes, so this text is ~98 MiB on the wire.
+  void client.sendMessage("agent-1", "é".repeat(49 * mib)).catch(() => undefined);
+  expect(mock.sent).toHaveLength(1);
+
+  // ~60M characters is under the 100 MiB limit; ~120 MiB of UTF-8 is over it.
+  await expect(client.sendMessage("agent-1", "é".repeat(60 * mib))).rejects.toThrow(
+    "Message is too large to send (120.0 MiB). The limit is 100.0 MiB",
+  );
+  expect(mock.sent).toHaveLength(1);
+  expect(client.getConnectionState().status).toBe("connected");
+});

@@ -636,7 +636,7 @@ export const fr: TranslationResources = {
       },
       switcher: {
         trigger: "Changer d’onglet ({{count}} ouverts)",
-        title: "Changer d’onglet",
+        title: "Onglets de l’espace de travail",
         searchPlaceholder: "Rechercher des onglets",
       },
       menu: {
@@ -1699,13 +1699,18 @@ export const fr: TranslationResources = {
     title: "Ajouter un fournisseur",
     search: "Rechercher des fournisseurs",
     noProviders: "Aucun fournisseur trouvé",
+    clearSearch: "Effacer la recherche",
     actions: {
       add: "Ajouter",
+      addProvider: "Ajouter {{provider}}",
       adding: "Ajout…",
       installed: "Installé",
       cancel: "Annuler",
       installInstructions: "Instructions d’installation",
       installInstructionsFor: "Instructions d’installation de {{provider}}",
+    },
+    types: {
+      acp: "ACP",
     },
     errors: {
       unableToInstall: "Impossible d’installer le fournisseur",

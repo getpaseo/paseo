@@ -218,6 +218,85 @@ index 1234567..abcdefg 100644
     },
   );
 
+  it("decodes quoted Git patch paths before matching files", () => {
+    const files = parseDiff(
+      [
+        'diff --git "a/report \\"draft\\".txt" "b/report \\"draft\\".txt"',
+        "index 1234567..abcdefg 100644",
+        '--- "a/report \\"draft\\".txt"',
+        '+++ "b/report \\"draft\\".txt"',
+        "@@ -1 +1 @@",
+        "-before",
+        "+after",
+        "",
+      ].join("\n"),
+    );
+
+    expect(files).toEqual([
+      {
+        path: 'report "draft".txt',
+        isNew: false,
+        isDeleted: false,
+        additions: 1,
+        deletions: 1,
+        hunks: [
+          {
+            oldStart: 1,
+            oldCount: 1,
+            newStart: 1,
+            newCount: 1,
+            lines: [
+              { type: "header", content: "@@ -1 +1 @@" },
+              { type: "remove", content: "before" },
+              { type: "add", content: "after" },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it.each([
+    ["tab\\tname.txt", "tab\tname.txt"],
+    ["line\\nname.txt", "line\nname.txt"],
+    ["back\\\\slash.txt", "back\\slash.txt"],
+    ["bell\\aname.txt", "bell\u0007name.txt"],
+    ["vertical\\vname.txt", "vertical\u000bname.txt"],
+    ["\\346\\265\\213\\350\\257\\225.txt", "测试.txt"],
+    ['测试 \\"draft\\".txt', '测试 "draft".txt'],
+  ])("decodes C-quoted path %s without changing its diff lines", (encoded, path) => {
+    const files = parseDiff(
+      [
+        'diff --git "a/' + encoded + '" "b/' + encoded + '"',
+        "index 1234567..abcdefg 100644",
+        '--- "a/' + encoded + '"',
+        '+++ "b/' + encoded + '"',
+        "@@ -1 +1 @@",
+        "-before",
+        "+after",
+        "",
+      ].join("\n"),
+    );
+
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatchObject({ path, additions: 1, deletions: 1 });
+    expect(files[0].hunks[0].lines).toEqual([
+      { type: "header", content: "@@ -1 +1 @@" },
+      { type: "remove", content: "before" },
+      { type: "add", content: "after" },
+    ]);
+  });
+
+  it.each([
+    ['"a/old \\"draft\\".txt" b/new with spaces.txt', "new with spaces.txt"],
+    ['a/old with spaces.txt "b/new \\"draft\\".txt"', 'new "draft".txt'],
+    ['"report \\"draft\\".txt" "report \\"draft\\".txt"', 'report "draft".txt'],
+  ])("reads quoted paths from header-only patches: %s", (header, path) => {
+    expect(parseDiff("diff --git " + header + "\nsimilarity index 100%\n")).toEqual([
+      { path, isNew: false, isDeleted: false, additions: 0, deletions: 0, hunks: [] },
+    ]);
+  });
+
   it("parses a simple diff with one hunk", () => {
     const files = parseDiff(SIMPLE_DIFF);
 
