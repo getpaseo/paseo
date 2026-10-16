@@ -1,8 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { createCompactMarkdownStyles, createMarkdownStyles } from "./markdown-styles";
-import { darkTheme } from "./theme";
+import { THEME_OPTIONS, darkPureBlackTheme, darkTheme, lightTheme } from "./theme";
 
 describe("createMarkdownStyles", () => {
+  it("keeps links blue independently of theme accents, including pure black", () => {
+    for (const option of THEME_OPTIONS) {
+      if (!("theme" in option)) continue;
+      const styles = createMarkdownStyles(option.theme);
+      const compactStyles = createCompactMarkdownStyles(option.theme);
+      expect(styles.link.color).toBe(option.theme.colors.link);
+      expect(styles.blocklink.color).toBe(option.theme.colors.link);
+      expect(compactStyles.link.color).toBe(option.theme.colors.link);
+    }
+    expect(createMarkdownStyles(lightTheme).link.color).toBe("#2563eb");
+    expect(createMarkdownStyles(darkPureBlackTheme).link.color).toBe("#60a5fa");
+    expect(darkPureBlackTheme.colors.accent).toBe("#20744A");
+  });
+
   it("uses the content size for conversation prose and list markers", () => {
     const styles = createMarkdownStyles(darkTheme);
     const proseLineHeight = Math.round(darkTheme.fontSize.content * 1.4);

@@ -153,7 +153,7 @@ export function createMarkdownStyles(theme: Theme) {
 
     link: {
       ...webSelectableTextStyle,
-      color: theme.colors.accentBright,
+      color: theme.colors.link,
       textDecorationLine: "none" as const,
       flexShrink: 1,
       minWidth: 0,
@@ -162,7 +162,7 @@ export function createMarkdownStyles(theme: Theme) {
 
     blocklink: {
       ...webSelectableTextStyle,
-      color: theme.colors.accentBright,
+      color: theme.colors.link,
       textDecorationLine: "none" as const,
       flexShrink: 1,
       minWidth: 0,
