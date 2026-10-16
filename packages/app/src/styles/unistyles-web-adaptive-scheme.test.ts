@@ -2,9 +2,11 @@
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const UNISTYLES_WEB = path.resolve(
+// The package's public entry, loaded by path because the unit project aliases the
+// package name to a stub (see vitest.config.ts).
+const UNISTYLES_PUBLIC_ENTRY = path.resolve(
   __dirname,
-  "../../../../node_modules/react-native-unistyles/lib/module",
+  "../../../../node_modules/react-native-unistyles/lib/module/index.js",
 );
 
 type Scheme = "light" | "dark";
@@ -92,26 +94,28 @@ describe("Unistyles web adaptive themes after the window was hidden", () => {
   });
 
   it("emits the theme change when the scheme flipped while hidden and the theme was read before the window returned", async () => {
-    const { services } = await import(path.join(UNISTYLES_WEB, "web/services.js"));
-    const { UnistyleDependency } = await import(
-      path.join(UNISTYLES_WEB, "specs/NativePlatform/NativePlatform.nitro.js")
+    const { StyleSheet, UnistylesRuntime, UnistyleDependency } = await import(
+      UNISTYLES_PUBLIC_ENTRY
     );
-    services.state.init({
+    StyleSheet.configure({
       themes: { light: { colors: { fg: "#111" } }, dark: { colors: { fg: "#eee" } } },
       settings: { adaptiveThemes: true },
     });
-    const themeChanged = vi.fn();
-    services.listener.addListeners([UnistyleDependency.Theme], themeChanged);
-    expect(services.runtime.themeName).toBe("dark");
+    const changed = vi.fn();
+    StyleSheet.addChangeListener(changed);
+    expect(UnistylesRuntime.themeName).toBe("dark");
 
     fake.hide();
     fake.setScheme("light");
     // Any themed component mounting or re-rendering while the window is hidden asks
     // the runtime which theme is active.
-    expect(services.runtime.themeName).toBe("light");
+    expect(UnistylesRuntime.themeName).toBe("light");
     fake.show();
 
-    expect(themeChanged).toHaveBeenCalled();
-    expect(services.runtime.themeName).toBe("light");
+    const themeChanges = changed.mock.calls.filter(([dependencies]) =>
+      dependencies.includes(UnistyleDependency.Theme),
+    );
+    expect(themeChanges).not.toHaveLength(0);
+    expect(UnistylesRuntime.themeName).toBe("light");
   });
 });
