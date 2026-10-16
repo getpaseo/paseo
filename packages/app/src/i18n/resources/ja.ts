@@ -534,6 +534,8 @@ export const ja: TranslationResources = {
         renameFailed: "エントリの名前変更に失敗しました",
         duplicateFailed: "エントリの複製に失敗しました",
         revealFailed: "エントリの表示に失敗しました",
+        externalFolderUnavailable:
+          "ワークスペース外のフォルダは、システムのファイルマネージャーでのみ開けます。",
         deleteFailed: "エントリの削除に失敗しました",
       },
       draft: {

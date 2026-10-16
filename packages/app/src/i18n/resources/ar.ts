@@ -528,6 +528,7 @@ export const ar: TranslationResources = {
         renameFailed: "فشل إعادة تسمية العنصر",
         duplicateFailed: "فشل تكرار العنصر",
         revealFailed: "فشل إظهار العنصر",
+        externalFolderUnavailable: "يمكن فتح المجلدات خارج مساحة العمل فقط في مدير الملفات للنظام",
         deleteFailed: "فشل حذف العنصر",
       },
       draft: {

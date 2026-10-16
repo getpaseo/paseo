@@ -529,6 +529,8 @@ export const ko: TranslationResources = {
         renameFailed: "항목 이름을 바꾸지 못했습니다",
         duplicateFailed: "항목을 복제하지 못했습니다",
         revealFailed: "항목을 표시하지 못했습니다",
+        externalFolderUnavailable:
+          "워크스페이스 외부의 폴더는 시스템 파일 관리자에서만 열 수 있습니다.",
         deleteFailed: "항목을 삭제하지 못했습니다",
       },
       draft: {

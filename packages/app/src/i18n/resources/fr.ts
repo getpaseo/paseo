@@ -533,6 +533,8 @@ export const fr: TranslationResources = {
         renameFailed: "Impossible de renommer l’élément",
         duplicateFailed: "Impossible de dupliquer l’élément",
         revealFailed: "Impossible d’afficher l’élément",
+        externalFolderUnavailable:
+          "Les dossiers en dehors de l'espace de travail ne peuvent être ouverts que dans le gestionnaire de fichiers du système.",
         deleteFailed: "Impossible de supprimer l’élément",
       },
       draft: {

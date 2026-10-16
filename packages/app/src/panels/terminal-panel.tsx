@@ -104,6 +104,7 @@ function TerminalPanel() {
   return (
     <TerminalPane
       serverId={serverId}
+      workspaceId={workspaceId || null}
       cwd={workspaceDirectory}
       terminalId={target.terminalId}
       isWorkspaceFocused={isWorkspaceFocused}

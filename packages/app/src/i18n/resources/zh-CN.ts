@@ -528,6 +528,7 @@ export const zhCN: TranslationResources = {
         renameFailed: "重命名条目失败",
         duplicateFailed: "复制条目失败",
         revealFailed: "显示条目失败",
+        externalFolderUnavailable: "工作区外的文件夹只能在系统文件管理器中打开",
         deleteFailed: "删除条目失败",
       },
       draft: {

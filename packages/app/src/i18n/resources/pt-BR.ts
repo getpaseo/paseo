@@ -533,6 +533,8 @@ export const ptBR: TranslationResources = {
         renameFailed: "Falha ao renomear entrada",
         duplicateFailed: "Falha ao duplicar entrada",
         revealFailed: "Falha ao mostrar entrada",
+        externalFolderUnavailable:
+          "Pastas fora do espaço de trabalho só podem ser abertas no gerenciador de arquivos do sistema.",
         deleteFailed: "Falha ao excluir entrada",
       },
       draft: {

@@ -533,6 +533,8 @@ export const ru: TranslationResources = {
         renameFailed: "Не удалось переименовать элемент",
         duplicateFailed: "Не удалось создать копию элемента",
         revealFailed: "Не удалось показать расположение элемента",
+        externalFolderUnavailable:
+          "Папки вне рабочей области можно открыть только в системном файловом менеджере.",
         deleteFailed: "Не удалось удалить элемент",
       },
       draft: {

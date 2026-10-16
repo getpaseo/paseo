@@ -101,6 +101,47 @@ describe("parseFileProtocolUrl", () => {
     });
   });
 
+  it("parses windows file URLs with VS Code-style colon line suffixes in the path", () => {
+    expect(
+      parseFileProtocolUrl("file:///C:/Users/test/.config/opencode/opencode.jsonc:95"),
+    ).toEqual({
+      raw: "file:///C:/Users/test/.config/opencode/opencode.jsonc:95",
+      path: "C:/Users/test/.config/opencode/opencode.jsonc",
+      lineStart: 95,
+      lineEnd: undefined,
+    });
+    expect(parseFileProtocolUrl("file:///C:/repo/src/app.tsx:12-20")).toEqual({
+      raw: "file:///C:/repo/src/app.tsx:12-20",
+      path: "C:/repo/src/app.tsx",
+      lineStart: 12,
+      lineEnd: 20,
+    });
+    expect(parseFileProtocolUrl("file:///C:/repo/src/app.tsx:12:4")).toEqual({
+      raw: "file:///C:/repo/src/app.tsx:12:4",
+      path: "C:/repo/src/app.tsx",
+      lineStart: 12,
+      lineEnd: undefined,
+    });
+  });
+
+  it("parses POSIX file URLs with colon line suffixes in the path", () => {
+    expect(parseFileProtocolUrl("file:///Users/test/project/src/app.tsx:33")).toEqual({
+      raw: "file:///Users/test/project/src/app.tsx:33",
+      path: "/Users/test/project/src/app.tsx",
+      lineStart: 33,
+      lineEnd: undefined,
+    });
+  });
+
+  it("prefers line fragments over colon suffixes in file URLs", () => {
+    expect(parseFileProtocolUrl("file:///C:/repo/src/app.tsx:12#L20")).toEqual({
+      raw: "file:///C:/repo/src/app.tsx:12#L20",
+      path: "C:/repo/src/app.tsx",
+      lineStart: 20,
+      lineEnd: undefined,
+    });
+  });
+
   it("rejects non-file URLs and invalid ranges", () => {
     expect(parseFileProtocolUrl("https://example.com/test.ts#L10")).toBeNull();
     expect(parseFileProtocolUrl("file:///Users/test/project/src/app.tsx#L20-L12")).toBeNull();
@@ -271,6 +312,50 @@ describe("parseAssistantFileLink", () => {
     });
   });
 
+  it("routes workspace-folder-name-prefixed relative paths through the daemon lookup", () => {
+    // A real subfolder can carry the workspace folder's name, so the parser must not
+    // guess; classification hands the decision to the daemon's suffix search.
+    expect(
+      classifyAssistantFileLink("civil-rhino\\docs\\electron-mose-vs-server.html", {
+        workspaceRoot: "C:/Codes/civil-rhino",
+      }),
+    ).toEqual({
+      kind: "ambiguousFileCandidate",
+      target: {
+        raw: "civil-rhino\\docs\\electron-mose-vs-server.html",
+        path: "C:/Codes/civil-rhino/civil-rhino/docs/electron-mose-vs-server.html",
+        lineStart: undefined,
+        lineEnd: undefined,
+      },
+    });
+    expect(
+      classifyAssistantFileLink("civil-rhino/docs/electron-mose-vs-server.html:12", {
+        workspaceRoot: "/repo/civil-rhino",
+      }),
+    ).toEqual({
+      kind: "ambiguousFileCandidate",
+      target: {
+        raw: "civil-rhino/docs/electron-mose-vs-server.html:12",
+        path: "/repo/civil-rhino/civil-rhino/docs/electron-mose-vs-server.html",
+        lineStart: 12,
+        lineEnd: undefined,
+      },
+    });
+  });
+
+  it("keeps the leading segment when it is a real folder inside the workspace root", () => {
+    expect(
+      parseAssistantFileLink("civil-rhino-app/src/message.tsx", {
+        workspaceRoot: "C:/Codes/civil-rhino",
+      }),
+    ).toEqual({
+      raw: "civil-rhino-app/src/message.tsx",
+      path: "C:/Codes/civil-rhino/civil-rhino-app/src/message.tsx",
+      lineStart: undefined,
+      lineEnd: undefined,
+    });
+  });
+
   it("parses absolute POSIX hrefs inside the active workspace", () => {
     expect(
       parseAssistantFileLink("/Users/test/project/src/app.tsx#L33", {
@@ -332,6 +417,19 @@ describe("parseAssistantFileLink", () => {
       raw: "file:///tmp/outside.txt",
       path: "/tmp/outside.txt",
       lineStart: undefined,
+      lineEnd: undefined,
+    });
+  });
+
+  it("strips colon line suffixes from windows file URLs outside the workspace root", () => {
+    expect(
+      parseAssistantFileLink("file:///C:/Users/lei.hu/.config/opencode/opencode.jsonc:95", {
+        workspaceRoot: "C:/repo",
+      }),
+    ).toEqual({
+      raw: "file:///C:/Users/lei.hu/.config/opencode/opencode.jsonc:95",
+      path: "C:/Users/lei.hu/.config/opencode/opencode.jsonc",
+      lineStart: 95,
       lineEnd: undefined,
     });
   });

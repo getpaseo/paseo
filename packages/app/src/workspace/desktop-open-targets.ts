@@ -1,5 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { getIsElectron } from "@/constants/platform";
 import { getDesktopHost, type DesktopEditorBridge } from "@/desktop/host";
+import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 
 export type DesktopOpenTargetKind = "editor" | "file-manager";
 export type DesktopOpenTargetIcon =
@@ -91,4 +94,21 @@ export function useDesktopOpenTargets(input: { isLocalExecution: boolean }) {
     targets,
     isAvailable: canListTargets,
   };
+}
+
+/**
+ * The file-manager open target for revealing folders in the OS file manager, or null when
+ * unavailable — outside the Electron desktop wrapper or connected to a remote daemon,
+ * where local file paths would be meaningless.
+ */
+export function useFileManagerOpenTarget(serverId: string | null): DesktopOpenTarget | null {
+  const isLocalDaemon = useIsLocalDaemon(serverId ?? "");
+  const isElectron = getIsElectron();
+  const { targets } = useDesktopOpenTargets({
+    isLocalExecution: isElectron && isLocalDaemon,
+  });
+  return useMemo(
+    () => targets.find((candidate) => candidate.kind === "file-manager") ?? null,
+    [targets],
+  );
 }

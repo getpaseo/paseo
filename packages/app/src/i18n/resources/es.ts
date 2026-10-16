@@ -534,6 +534,8 @@ export const es: TranslationResources = {
         renameFailed: "No se pudo renombrar la entrada",
         duplicateFailed: "No se pudo duplicar la entrada",
         revealFailed: "No se pudo mostrar la entrada",
+        externalFolderUnavailable:
+          "Las carpetas fuera del espacio de trabajo solo se pueden abrir en el administrador de archivos del sistema.",
         deleteFailed: "No se pudo eliminar la entrada",
       },
       draft: {

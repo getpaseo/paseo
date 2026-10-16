@@ -525,6 +525,8 @@ export const en = {
         renameFailed: "Failed to rename entry",
         duplicateFailed: "Failed to duplicate entry",
         revealFailed: "Failed to reveal entry",
+        externalFolderUnavailable:
+          "Folders outside the workspace can only be opened in the system file manager.",
         deleteFailed: "Failed to delete entry",
       },
       draft: {
