@@ -218,12 +218,13 @@ function renderListEmptyComponent(input: {
   );
 }
 
-// History rows sit inside FlatList cells that rerender on every data change (RN recreates each
-// CellRenderer with a fresh ref and, in a newest-first list, a shifted index). This boundary is
+// Live and retained rows use the same boundary so completion preserves the message
+// subtree, including measured diagrams and selections. FlatList recreates history
+// cells with fresh refs and shifted indexes on data changes. This boundary is
 // what stops that churn: a row renders again only when its stream item identity, its layout item
 // identity, or the renderer itself changes. Item identity is the revision signal the strategy
 // already uses (`useRevisedHistoryRows` clones items whose content or display state changed).
-const HistoryStreamRow = memo(function HistoryStreamRow({
+const StreamRow = memo(function StreamRow({
   layoutItem,
   renderStreamItem,
 }: {
@@ -234,7 +235,7 @@ const HistoryStreamRow = memo(function HistoryStreamRow({
   return <>{renderStreamItem(layoutItem)}</>;
 });
 
-function renderHistoryStreamItem(input: {
+function renderStreamRow(input: {
   item: StreamItem;
   layoutItemById: Map<string, StreamLayoutItem>;
   renderStreamItem: (layoutItem: StreamLayoutItem) => ReactNode;
@@ -244,24 +245,12 @@ function renderHistoryStreamItem(input: {
     return null;
   }
   return (
-    <HistoryStreamRow
+    <StreamRow
       item={input.item}
       layoutItem={layoutItem}
       renderStreamItem={input.renderStreamItem}
     />
   );
-}
-
-function renderLiveHeadStreamItem(input: {
-  item: StreamItem;
-  layoutItemById: Map<string, StreamLayoutItem>;
-  renderStreamItem: (layoutItem: StreamLayoutItem) => ReactNode;
-}): ReactNode {
-  const layoutItem = input.layoutItemById.get(input.item.id);
-  if (!layoutItem) {
-    return null;
-  }
-  return input.renderStreamItem(layoutItem);
 }
 
 export interface AgentStreamViewHandle {
@@ -1030,7 +1019,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const renderHistoryRow = useCallback(
       (item: StreamItem) =>
-        renderHistoryStreamItem({
+        renderStreamRow({
           item,
           layoutItemById: layoutHistoryItemById,
           renderStreamItem,
@@ -1051,7 +1040,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     // to be a new object on every text-chunk flush.
     const renderLiveHeadRow: StreamSegmentRenderers["renderLiveHeadRow"] = useStableEvent(
       (item: StreamItem) =>
-        renderLiveHeadStreamItem({
+        renderStreamRow({
           item,
           layoutItemById: layoutLiveHeadItemById,
           renderStreamItem,
@@ -1137,7 +1126,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                 baseListContentContainerStyle: stylesheet.listContentContainer,
                 forwardListContentContainerStyle: stylesheet.forwardListContentContainer,
                 contentMaxWidth,
-                imageContext: { serverId: resolvedServerId, workspaceRoot },
               })}
             </MessageOuterSpacingProvider>
             <ChatOutlineRail

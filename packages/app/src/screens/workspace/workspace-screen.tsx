@@ -1,3 +1,4 @@
+import { AssistantFileLinkResolverProvider, type InlinePathTarget } from "@/assistant-file-links";
 import {
   WorkspaceComposerEditingSessionsProvider,
   useComposerTabFullscreen,
@@ -3657,6 +3658,10 @@ function WorkspaceScreenContent({
     </View>
   );
 
+  const openMarkdownFile = useStableEvent((target: InlinePathTarget) => {
+    handleOpenPreferredAssistantFile({ location: target, parentTabId: activeTabId });
+  });
+
   const renderedWorkspaceScreen = (
     <RenderProfile id="WorkspaceScreenContent">
       <View style={containerStyle}>
@@ -3696,7 +3701,15 @@ function WorkspaceScreenContent({
   }
   return (
     <WorkspaceContentProviders key={persistenceKey} workspaceKey={persistenceKey}>
-      {renderedWorkspaceScreen}
+      <AssistantFileLinkResolverProvider
+        client={client}
+        serverId={normalizedServerId}
+        workspaceRoot={workspaceDirectory ?? undefined}
+        onOpenWorkspaceFile={openMarkdownFile}
+        toast={toast}
+      >
+        {renderedWorkspaceScreen}
+      </AssistantFileLinkResolverProvider>
     </WorkspaceContentProviders>
   );
 }

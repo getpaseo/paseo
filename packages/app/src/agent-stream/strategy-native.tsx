@@ -591,8 +591,11 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       scrollEventThrottle={16}
       onContentSizeChange={handleContentSizeChange}
       maintainVisibleContentPosition={maintainVisibleContentPosition}
-      initialNumToRender={12}
-      windowSize={10}
+      // A history row can contain an entire long reply. Keep synchronous native
+      // Markdown measurement bounded while FlatList fills the surrounding window.
+      initialNumToRender={2}
+      maxToRenderPerBatch={2}
+      windowSize={5}
       removeClippedSubviews={false}
       scrollEnabled={scrollEnabled}
       showsVerticalScrollIndicator

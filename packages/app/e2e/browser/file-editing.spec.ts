@@ -72,10 +72,10 @@ async function selectFileView(page: Page, view: "Preview" | "Source"): Promise<v
 }
 
 async function expectMarkdownImageLoaded(page: Page, name: string): Promise<void> {
-  const image = page.getByRole("img", { name, exact: true });
+  const image = page.getByRole("button", { name, exact: true });
   await expect(image).toBeVisible();
   await expect
-    .poll(() => image.locator("img").evaluate((element: HTMLImageElement) => element.naturalWidth))
+    .poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth))
     .toBeGreaterThan(0);
 }
 
@@ -221,7 +221,7 @@ test.describe("CodeMirror workspace file editing", () => {
       const fileLink = page.getByRole("link", { name: "Open target" }).first();
       await expect(fileLink).toBeVisible({ timeout: 15_000 });
       await fileLink.hover();
-      await expect(page.getByText("src/target.ts:42-45", { exact: true })).toBeVisible();
+      await expect(fileLink).toHaveAttribute("title", "src/target.ts:42-45");
     } finally {
       await workspace.cleanup();
     }

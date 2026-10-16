@@ -1,8 +1,9 @@
 import { writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { expect, type Page, type TestInfo } from "@playwright/test";
-import { seedMockAgentWorkspace, type MockAgentWorkspace } from "./mock-agent";
+import { seedMockAgentWorkspace, openAgentRoute, type MockAgentWorkspace } from "./mock-agent";
 import { openAgentTimeline, expectTimelinePromptVisible } from "./timeline-pagination";
+import { holdAssistantStream } from "./agent-timeline-gate";
 
 export const scrollCadences = [
   { name: "slow", delta: 160, intervalMs: 50, steps: 1000 },
@@ -42,6 +43,120 @@ interface TimelinePage {
   count: number;
   hasOlder: boolean;
   at: number;
+}
+
+export async function withStreamingReader(run: (agent: MockAgentWorkspace) => Promise<void>) {
+  const section = "Read this paragraph while the response continues below. ".repeat(8);
+  const response = [
+    "```mermaid\nflowchart LR\n Start --> Review --> Done\n```",
+    "```mermaid\nflowchart LR\n Nested --> Finished\n```",
+    ...Array.from({ length: 40 }, (_, index) => `## Long section ${index}\n\n${section}`),
+    "READER-STREAM-SETTLED",
+  ].join("\n\n");
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "held-stream-reader-",
+    title: "Held streaming paragraph",
+    featureValues: {
+      mockStreamingAssistantResponse: response,
+      mockStreamingAssistantIntervalMs: 1,
+    },
+  });
+  try {
+    await run(agent);
+  } finally {
+    await agent.cleanup();
+  }
+}
+
+export async function holdParagraphThroughCompletion(page: Page, agent: MockAgentWorkspace) {
+  const stream = await holdAssistantStream(page, agent.agentId);
+  await openAgentRoute(page, agent);
+  await page.getByRole("textbox", { name: "Message agent...", exact: true }).waitFor();
+  const scroll = page.getByTestId("agent-chat-scroll");
+  const following = await scroll.evaluateHandle((viewport) => {
+    const result = { stopped: false, maxGap: 0 };
+    const frame = () => {
+      if (result.stopped) return;
+      result.maxGap = Math.max(
+        result.maxGap,
+        viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop,
+      );
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+    return result;
+  });
+  await agent.client.sendAgentMessage(agent.agentId, "Stream the mixed response.");
+  await stream.showUntil("Long section 12\n");
+  await page
+    .getByRole("heading", { name: "Long section 12", exact: true })
+    .waitFor({ state: "attached" });
+  // Exercise a reader whose producer has already finished; delivery must be gated.
+  await agent.client.waitForFinish(agent.agentId, 30_000);
+  await expect(page.getByTestId("mermaid-viewport")).toHaveCount(2);
+  await expect(page.getByTestId("mermaid-viewport").nth(0)).toHaveCSS("opacity", "1");
+  await expect(page.getByTestId("mermaid-viewport").nth(1)).toHaveCSS("opacity", "1");
+  const maxFollowGap = await following.evaluate((result) => {
+    result.stopped = true;
+    return result.maxGap;
+  });
+  const bounds = await scroll.boundingBox();
+  if (!bounds) throw new Error("Reader viewport is missing");
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  await page.mouse.wheel(0, -1600);
+  await page.waitForTimeout(150);
+  const paragraph = page.getByRole("heading", { name: "Long section 3", exact: true });
+  await paragraph.waitFor({ state: "attached" });
+  const recording = await paragraph.evaluateHandle((heading) => {
+    if (!document.querySelector('[data-testid="turn-working-indicator"]')) {
+      throw new Error("The stream completed before the reader detached");
+    }
+    const viewport = document.querySelector<HTMLElement>('[data-testid="agent-chat-scroll"]')!;
+    const clip = viewport.getBoundingClientRect();
+    viewport.scrollTop += heading.getBoundingClientRect().y - (clip.top + clip.height / 2);
+    const baseline = heading.getBoundingClientRect().y;
+    const initialTextLength = heading.closest('[data-testid="assistant-message"]')!.textContent!
+      .length;
+    const result = { maxDrift: 0, retained: true, textGrowth: 0, done: false };
+    let stableAt = performance.now();
+    let signature = "";
+    const frame = (now: number) => {
+      result.retained &&= heading.isConnected;
+      const current = [...document.querySelectorAll("h2")].find(
+        (n) => n.textContent === "Long section 3",
+      );
+      const textLength =
+        current?.closest('[data-testid="assistant-message"]')?.textContent?.length ?? 0;
+      result.textGrowth = Math.max(result.textGrowth, textLength - initialTextLength);
+      if (current)
+        result.maxDrift = Math.max(
+          result.maxDrift,
+          Math.abs(current.getBoundingClientRect().y - baseline),
+        );
+      const next = `${viewport.scrollHeight}:${viewport.scrollTop}:${current?.getBoundingClientRect().y}`;
+      if (next !== signature) {
+        signature = next;
+        stableAt = now;
+      }
+      const complete =
+        document.body.textContent?.includes("Worked for") &&
+        document.body.textContent.includes("READER-STREAM-SETTLED") &&
+        !document.querySelector('[data-testid="turn-working-indicator"]');
+      if (complete && now - stableAt >= 750) {
+        result.done = true;
+        return;
+      }
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+    return result;
+  });
+  await expect(
+    page.getByTestId("scroll-to-bottom-button").filter({ visible: true }).first(),
+  ).toBeVisible();
+  stream.release();
+  await page.waitForFunction((result) => result.done, recording);
+  return { ...(await recording.jsonValue()), maxFollowGap };
 }
 
 /** Real HTTP image responses, with intrinsic dimensions unavailable until the response arrives. */
@@ -495,7 +610,7 @@ export async function expectImageSpaceReserved(page: Page, testInfo: TestInfo): 
       await agent.client.waitForFinish(agent.agentId, 15_000);
       await openAgentTimeline(page, agent);
       await expectTimelinePromptVisible(page, "Show the delayed image");
-      const image = page.getByRole("img", { name: "Reserved image" }).first();
+      const image = page.getByRole("button", { name: "Reserved image", exact: true }).first();
       await expect(image).toBeVisible();
       const before = await image.boundingBox();
       await attachTimelineScreenshot(page, testInfo, "image-placeholder");
@@ -512,8 +627,9 @@ export async function expectImageSpaceReserved(page: Page, testInfo: TestInfo): 
         .toBe(240);
       await expect
         .poll(async () => {
-          const box = await image.boundingBox();
-          return box ? Math.round((box.width / box.height) * 100) : 0;
+          return image.evaluate((element: HTMLImageElement) =>
+            Math.round((element.naturalWidth / element.naturalHeight) * 100),
+          );
         })
         .toBe(150);
       const after = await image.boundingBox();

@@ -1,3 +1,4 @@
+import { ASSISTANT_FILE_EXTENSIONS } from "./extensions";
 import { isAbsolutePath } from "@/utils/path";
 
 function safeDecodeURIComponent(value: string): string {
@@ -20,64 +21,6 @@ const INLINE_LINE_FRAGMENT = /^L([0-9]+)(?:C[0-9]+)?(?:-L?([0-9]+)(?:C[0-9]+)?)?
 const INLINE_COLON_LINE_SUFFIX = /^(.+?):([0-9]+)(?::[0-9]+)?(?:-([0-9]+)(?::[0-9]+)?)?$/;
 const INLINE_PAREN_LINE_SUFFIX = /^(.+?)\(([0-9]+)(?:,[0-9]+)?(?:-([0-9]+)(?:,[0-9]+)?)?\)$/;
 const INLINE_WORD_LINE_SUFFIX = /^(.+?)\s+lines?\s+([0-9]+)(?:-([0-9]+))?$/i;
-const ASSISTANT_FILE_EXTENSIONS = new Set([
-  "astro",
-  "bash",
-  "c",
-  "cc",
-  "cjs",
-  "cpp",
-  "cs",
-  "css",
-  "cts",
-  "cxx",
-  "env",
-  "fish",
-  "go",
-  "gql",
-  "gradle",
-  "graphql",
-  "h",
-  "hpp",
-  "htm",
-  "html",
-  "ini",
-  "java",
-  "js",
-  "json",
-  "jsonc",
-  "jsx",
-  "kt",
-  "kts",
-  "less",
-  "lock",
-  "lua",
-  "md",
-  "mdx",
-  "mjs",
-  "mts",
-  "php",
-  "proto",
-  "py",
-  "rb",
-  "rs",
-  "sass",
-  "scss",
-  "sh",
-  "sql",
-  "svelte",
-  "swift",
-  "toml",
-  "ts",
-  "tsx",
-  "txt",
-  "vue",
-  "xml",
-  "yaml",
-  "yml",
-  "zsh",
-]);
-
 export interface AssistantHrefParseOptions {
   workspaceRoot?: string;
   /**
