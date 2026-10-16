@@ -1,7 +1,9 @@
 import type { MutableDaemonConfig } from "@getpaseo/protocol/messages";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { i18n } from "@/i18n/i18next";
+import { en } from "@/i18n/resources/en";
+import { zhCN } from "@/i18n/resources/zh-CN";
 import {
-  BROWSER_TOOLS_WARNING,
   createBrowserToolsPatch,
   getBrowserToolsCardState,
   getBrowserToolsMutationViewState,
@@ -21,12 +23,16 @@ function makeConfig(browserToolsEnabled = false): MutableDaemonConfig {
 }
 
 describe("browser tools opt-in config", () => {
+  afterEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+
   it("shows the card with the logged-in browser state warning when connected", () => {
     expect(getBrowserToolsCardState({ isConnected: true, config: makeConfig(false) })).toEqual({
       isVisible: true,
       isEnabled: false,
       title: "Browser tools",
-      warning: BROWSER_TOOLS_WARNING,
+      warning: en.settings.host.browserTools.warning,
     });
   });
 
@@ -67,5 +73,18 @@ describe("browser tools opt-in config", () => {
       loadingText: null,
       errorText: "Disk full",
     });
+  });
+
+  it("shows the card and loading text in the app language", async () => {
+    await i18n.changeLanguage("zh-CN");
+    expect(
+      getBrowserToolsCardState({ isConnected: true, config: makeConfig(false) }),
+    ).toMatchObject({
+      title: zhCN.settings.host.browserTools.title,
+      warning: zhCN.settings.host.browserTools.warning,
+    });
+    expect(getBrowserToolsMutationViewState({ isPending: true, error: null }).loadingText).toBe(
+      zhCN.settings.host.browserTools.updating,
+    );
   });
 });

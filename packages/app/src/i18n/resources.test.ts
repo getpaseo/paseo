@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ar } from "./resources/ar";
-import { en } from "./resources/en";
+import { en, type TranslationResources } from "./resources/en";
 import { es } from "./resources/es";
 import { fr } from "./resources/fr";
 import { ja } from "./resources/ja";
@@ -111,6 +111,72 @@ function findUntranslatedPullRequestPanelLabels(): string[] {
     }
     return matches.length === 0 ? [] : [`${source}: ${matches.join(", ")}`];
   });
+}
+
+const addProjectAndHostSettingsSources = [
+  "components/add-project-flow.tsx",
+  "add-project-flow/options.ts",
+  "screens/settings/host-page.tsx",
+  "screens/settings/browser-tools-card.tsx",
+  "screens/settings/browser-tools-config.ts",
+] as const;
+const untranslatedAddProjectAndHostSettingsLabels = [
+  "Choose host",
+  "Search for directory",
+  "Clone from GitHub",
+  "Choose destination",
+  "Choose parent directory",
+  "Name directory",
+  "Search hosts...",
+  "Search directories or enter a path...",
+  "Find a directory on ",
+  "Choose or create a directory in Finder",
+  "Create an empty directory on ",
+  "Update this host to",
+  "Enter a GitHub URL or owner/repo",
+  "Open this path",
+  "Use this parent",
+  "Parent directory: ",
+  "Already exists",
+  "Cloning project...",
+  "Adding project...",
+  "No connected hosts",
+  "No matching options",
+  "Unable to add project",
+  "Unable to create directory",
+  "Archive merged PR workspaces",
+  "Enable terminal agent hooks",
+  "Terminal agents",
+  "Browser tools",
+  "Enable browser tools",
+  "Updating browser tools",
+] as const;
+// Same text in every language: an interpolated repository name and protocol.
+const sharedAddProjectAndHostSettingsKeys = new Set(["addProject.options.repositoryVia"]);
+
+function findUntranslatedAddProjectAndHostSettingsLabels(): string[] {
+  return addProjectAndHostSettingsSources.flatMap((source) => {
+    const contents = readFileSync(join(appSourceRoot, source), "utf8");
+    const matches = untranslatedAddProjectAndHostSettingsLabels.filter((text) =>
+      contents.includes(text),
+    );
+    return matches.length === 0 ? [] : [`${source}: ${matches.join(", ")}`];
+  });
+}
+
+function addProjectAndHostSettingsStrings(resource: TranslationResources): Record<string, string> {
+  const host = resource.settings.host;
+  return Object.fromEntries(
+    Object.entries({
+      ...flattenStrings(resource.addProject, "addProject"),
+      ...flattenStrings(host.browserTools, "settings.host.browserTools"),
+      ...flattenStrings(host.terminalAgents, "settings.host.terminalAgents"),
+      ...flattenStrings(
+        host.workspaces.autoArchiveMerged,
+        "settings.host.workspaces.autoArchiveMerged",
+      ),
+    }).filter(([key]) => !sharedAddProjectAndHostSettingsKeys.has(key)),
+  );
 }
 
 function collectSourceFiles(directory: string): string[] {
@@ -266,6 +332,16 @@ describe("translation resources", () => {
       expect(resource.sidebar.statusGroupAccessibility).not.toBe(
         en.sidebar.statusGroupAccessibility,
       );
+    }
+  });
+
+  it("keeps the Add project flow and host settings cards translated", () => {
+    expect(findUntranslatedAddProjectAndHostSettingsLabels()).toEqual([]);
+    const english = addProjectAndHostSettingsStrings(en);
+    for (const resource of [ar, es, fr, ja, ko, ptBR, ru, zhCN]) {
+      const translated = addProjectAndHostSettingsStrings(resource);
+      const untranslated = Object.keys(english).filter((key) => translated[key] === english[key]);
+      expect(untranslated).toEqual([]);
     }
   });
 
