@@ -235,6 +235,12 @@ export const zhCN: TranslationResources = {
     scrollToBottom: "滚动到底部",
     historyLoadFailed: "无法加载智能体历史记录",
     messageCapped: "此消息已被截断（{{bytes}} 字节）。",
+    quote: {
+      action: "引用",
+      noteLabel: "引用备注",
+      notePlaceholder: "添加备注",
+      hint: "Enter 添加到消息 · Shift+Enter 换行 · Esc 取消",
+    },
     permission: {
       rejectedPlan: "已拒绝的计划",
       approvedPlan: "已批准的计划",

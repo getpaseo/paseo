@@ -235,6 +235,12 @@ export const ko: TranslationResources = {
     scrollToBottom: "맨 아래로 스크롤",
     historyLoadFailed: "에이전트 기록을 로드할 수 없습니다.",
     messageCapped: "이 메시지는 길이 제한으로 잘렸습니다({{bytes}}바이트).",
+    quote: {
+      action: "인용",
+      noteLabel: "인용에 대한 메모",
+      notePlaceholder: "메모 추가",
+      hint: "Enter로 메시지에 추가 · Shift+Enter로 줄바꿈 · Esc로 취소",
+    },
     permission: {
       rejectedPlan: "거부된 계획",
       approvedPlan: "승인된 계획",

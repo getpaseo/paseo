@@ -237,6 +237,12 @@ export const ru: TranslationResources = {
     scrollToBottom: "Прокрутить вниз",
     historyLoadFailed: "Не удалось загрузить историю агента",
     messageCapped: "Это сообщение было обрезано ({{bytes}} байт).",
+    quote: {
+      action: "Цитировать",
+      noteLabel: "Заметка к цитате",
+      notePlaceholder: "Добавьте заметку",
+      hint: "Enter добавляет в сообщение · Shift+Enter новая строка · Esc отмена",
+    },
     permission: {
       rejectedPlan: "Отклонённый план",
       approvedPlan: "Одобренный план",
