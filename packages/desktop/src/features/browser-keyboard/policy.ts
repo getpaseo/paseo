@@ -38,7 +38,7 @@ export interface BrowserShortcutMatchInput {
   shift: boolean;
 }
 
-export type BrowserReservedShortcut = "new-tab" | "focus-url" | "reload" | "force-reload";
+export type BrowserReservedShortcut = "focus-url" | "reload" | "force-reload";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -200,7 +200,6 @@ export function classifyBrowserReservedShortcut(
     return null;
   }
   const key = input.key.toLowerCase();
-  if (!input.shift && key === "t") return "new-tab";
   if (!input.shift && key === "l") return "focus-url";
   if (key !== "r") return null;
   return input.shift ? "force-reload" : "reload";

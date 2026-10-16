@@ -85,9 +85,15 @@ it("shows pending progress and prevents duplicate submissions", async () => {
   await expect.element(page.getByText("Import complete", { exact: true })).toBeVisible();
 });
 it("keeps errors visible and lets the user retry", async () => {
-  importProfile.mockRejectedValueOnce(new Error("Keychain access denied."));
+  importProfile.mockRejectedValueOnce(
+    new Error(
+      "Error invoking remote method 'paseo:browser:import-comet-profile': Error: COMET_KEYCHAIN_UNAVAILABLE",
+    ),
+  );
   await page.getByRole("button", { name: "Import from Comet", exact: true }).click();
-  await expect.element(page.getByText("Keychain access denied.", { exact: true })).toBeVisible();
+  await expect
+    .element(page.getByText("Allow access to Comet in Keychain, then retry.", { exact: true }))
+    .toBeVisible();
   await page.screenshot({ path: "/tmp/paseo-browser-evidence/comet-import-error.png" });
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect.element(page.getByText("Import complete", { exact: true })).toBeVisible();
@@ -102,15 +108,18 @@ it("offers a profile choice before importing and reports partial completion", as
     imported: 1,
     skipped: 0,
     failed: 1,
-    reason: "Some connections failed.",
+    reason: "Certaines connexions n’ont pas pu être importées.",
   });
   await page.getByRole("button", { name: "Import from Comet", exact: true }).click();
   expect(importProfile).not.toHaveBeenCalled();
   await page.getByRole("button", { name: "Comet profile: Personal", exact: true }).click();
   await page.getByText("Work", { exact: true }).click();
   await page.getByRole("button", { name: "Import from Comet", exact: true }).click();
-  await expect
-    .element(page.getByText("Partial import Some connections failed.", { exact: true }))
-    .toBeVisible();
+  await expect.element(page.getByText("Partial import", { exact: true })).toBeVisible();
   expect(importProfile).toHaveBeenCalledExactlyOnceWith({ profileId: "two" });
+});
+it("shows a localized fallback for unexpected bridge errors", async () => {
+  importProfile.mockRejectedValueOnce(new Error("Internal operation failed at /private/data"));
+  await page.getByRole("button", { name: "Import from Comet", exact: true }).click();
+  await expect.element(page.getByText("Import failed. Try again.", { exact: true })).toBeVisible();
 });

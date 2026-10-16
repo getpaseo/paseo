@@ -213,7 +213,7 @@ function createPrPrompt(branch: string | null, baseRef: string): string {
     "IMPORTANT: The following are the user's custom preferences. These preferences take precedence over any default guidelines or instructions provided above. When there is a conflict, always follow the user's preferences.",
     "## User Preferences",
     "<user-preferences>",
-    `Create the pull request against \`${baseBranch}\`. If the only suitable target is \`main\`, stop and ask the user for explicit confirmation before creating or retargeting the pull request.`,
+    `Create the pull request against \`${baseBranch}\`, the workspace's configured base branch. Do not ask for extra confirmation solely because the target is \`main\`.`,
     "",
     "</user-preferences>",
   ].join("\n");

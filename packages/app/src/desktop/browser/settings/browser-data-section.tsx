@@ -11,6 +11,16 @@ import { useBrowserStore } from "@/desktop/browser/store";
 import { settingsStyles } from "@/styles/settings";
 import { confirmDialog } from "@/utils/confirm-dialog";
 
+const cometImportErrorKeys = new Map<string, string>([
+  ["COMET_BRIDGE_UNAVAILABLE", "settings.general.browserData.importUnavailable"],
+  ["COMET_NO_PROFILES", "settings.general.browserData.noCometProfiles"],
+  ["COMET_PROFILES_UNREADABLE", "settings.general.browserData.profilesUnreadable"],
+  ["COMET_PROFILE_UNAVAILABLE", "settings.general.browserData.profileUnavailable"],
+  ["COMET_READ_FAILED", "settings.general.browserData.connectionsUnreadable"],
+  ["COMET_FORMAT_UNSUPPORTED", "settings.general.browserData.unsupportedFormat"],
+  ["COMET_KEYCHAIN_UNAVAILABLE", "settings.general.browserData.keychainUnavailable"],
+]);
+
 export function BrowserDataSection() {
   const { t } = useTranslation();
   const toast = useToast();
@@ -99,10 +109,10 @@ function CometImportSection() {
     try {
       const bridge = getDesktopHost()?.browser;
       if (!bridge?.listCometProfiles || !bridge.importCometProfile)
-        throw new Error(t("settings.general.browserData.importUnavailable"));
+        throw new Error("COMET_BRIDGE_UNAVAILABLE");
       const available = await bridge.listCometProfiles();
       setProfiles(available);
-      if (!available.length) throw new Error(t("settings.general.browserData.noCometProfiles"));
+      if (!available.length) throw new Error("COMET_NO_PROFILES");
       const selected =
         available.find((profile) => profile.id === profileId) ??
         (available.length === 1 ? available[0] : null);
@@ -116,15 +126,15 @@ function CometImportSection() {
           result.status === "complete"
             ? "settings.general.browserData.importComplete"
             : "settings.general.browserData.importPartial",
-        ) + (result.reason ? ` ${result.reason}` : ""),
+        ),
       );
       setFailed(result.status === "partial");
     } catch (error) {
-      setMessage(
+      const code =
         error instanceof Error
           ? error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "")
-          : t("settings.general.browserData.importUnavailable"),
-      );
+          : "";
+      setMessage(t(cometImportErrorKeys.get(code) ?? "settings.general.browserData.importFailed"));
       setFailed(true);
     } finally {
       inFlight.current = false;

@@ -1739,7 +1739,7 @@ async function verifyCometProfileBridge(page, artifactDir) {
     try {
       await window.paseoDesktop.browser.importCometProfile({ profileId: "/not-a-profile" });
     } catch (error) {
-      invalidProfileRejected = error.message.includes("Profil Comet indisponible");
+      invalidProfileRejected = error.message.includes("COMET_PROFILE_UNAVAILABLE");
     }
     return {
       profileCount: profiles.length,
@@ -1826,9 +1826,77 @@ async function verifyDedicatedBrowserShortcuts({
   await sourceTab.click();
   const after = await readGuest(page, source.browserId);
   assert(after.webContentsId === guest.webContentsId, "Shortcuts recreated the source guest");
+  const overrideChecks = [];
+  const newTabBindingId =
+    process.platform === "darwin"
+      ? "workspace-tab-new-cmd-t-mac"
+      : "workspace-tab-new-ctrl-t-non-mac";
+  for (const binding of ["Mod+Y", ""]) {
+    await page.evaluate(
+      ({ id, combo }) => {
+        const key = "@paseo:keyboard-shortcut-overrides";
+        const overrides = JSON.parse(localStorage.getItem(key) ?? "{}");
+        localStorage.setItem(key, JSON.stringify({ ...overrides, [id]: combo }));
+      },
+      { id: newTabBindingId, combo: binding },
+    );
+    await page.reload();
+    await waitForDesktopStatus(page);
+    await sourceTab.click();
+    await waitForBrowserFixture(client, source.browserId);
+    const currentGuest = await readGuest(page, source.browserId);
+    const sendKey = async (key) =>
+      evaluateMain(
+        inspectorPort,
+        `(() => { const wc = process.mainModule.require('electron').webContents.fromId(${currentGuest.webContentsId}); wc.focus(); wc.sendInputEvent({ type: 'keyDown', keyCode: '${key}', modifiers: ['${modifier}'] }); wc.sendInputEvent({ type: 'keyUp', keyCode: '${key}', modifiers: ['${modifier}'] }); return true; })()`,
+      );
+    for (const surface of ["page", "iframe"]) {
+      await callBrowserTool(client, "browser_evaluate", {
+        browserId: source.browserId,
+        function:
+          surface === "iframe"
+            ? "async () => { const frame = document.createElement('iframe'); frame.srcdoc = '<input>'; document.body.appendChild(frame); await new Promise(resolve => frame.onload = resolve); frame.contentDocument.querySelector('input').focus(); return true; }"
+            : "() => { document.querySelector('#typing-target').focus(); return true; }",
+      });
+      const before = await row.getByRole("tab").count();
+      await sendKey("T");
+      await delay(200);
+      assert((await row.getByRole("tab").count()) === before, "Unassigned Cmd/Ctrl+T opened a tab");
+      if (binding) {
+        await sendKey("Y");
+        await page.waitForFunction(
+          (count) =>
+            [...document.querySelectorAll('[role="tablist"][aria-label="Browser tabs"]')]
+              .filter((el) => el.getBoundingClientRect().width > 0)
+              .some((el) => el.querySelectorAll('[role="tab"]').length === count + 1),
+          before,
+        );
+        assert(
+          await address.evaluate((el) => document.activeElement === el),
+          "Rebound shortcut lost address focus",
+        );
+        const createdId = (
+          await row.getByRole("tab", { selected: true }).getAttribute("data-testid")
+        ).replace("workspace-tab-browser_", "");
+        await callBrowserTool(client, "browser_close_tab", { browserId: createdId });
+        await sourceTab.click();
+      }
+      overrideChecks.push({ binding, surface, oldShortcutIgnored: true });
+    }
+  }
+  await page.evaluate((id) => {
+    const key = "@paseo:keyboard-shortcut-overrides";
+    const overrides = JSON.parse(localStorage.getItem(key) ?? "{}");
+    delete overrides[id];
+    localStorage.setItem(key, JSON.stringify(overrides));
+  }, newTabBindingId);
+  await page.reload();
+  await waitForDesktopStatus(page);
+  await sourceTab.click();
   await page.screenshot({ path: path.join(artifactDir, "browser-dedicated-shortcuts.png") });
   writeJson(path.join(artifactDir, "browser-dedicated-shortcuts.json"), {
     checks,
+    overrideChecks,
     sourceWebContentsId: guest.webContentsId,
     finalWebContentsId: after.webContentsId,
   });

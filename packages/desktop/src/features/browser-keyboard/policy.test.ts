@@ -22,10 +22,10 @@ describe("browser keyboard policy", () => {
 
     expect(
       macInputs.map((input) => classifyBrowserReservedShortcut(input, { isMac: true })),
-    ).toEqual(["new-tab", "focus-url", "reload", "force-reload"]);
+    ).toEqual([null, "focus-url", "reload", "force-reload"]);
     expect(
       nonMacInputs.map((input) => classifyBrowserReservedShortcut(input, { isMac: false })),
-    ).toEqual(["new-tab", "focus-url", "reload", "force-reload"]);
+    ).toEqual([null, "focus-url", "reload", "force-reload"]);
   });
 
   test("rejects the wrong or ambiguous command modifier for reserved shortcuts", () => {

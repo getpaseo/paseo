@@ -2396,6 +2396,12 @@ export const en = {
         importPartial: "Partial import",
         cometProfile: "Comet profile",
         noCometProfiles: "No Comet profiles found.",
+        importFailed: "Import failed. Try again.",
+        profilesUnreadable: "Can't read Comet profiles.",
+        profileUnavailable: "Profile unavailable. Try again.",
+        connectionsUnreadable: "Can't read Comet connections. Try again.",
+        unsupportedFormat: "Comet data format is not supported.",
+        keychainUnavailable: "Allow access to Comet in Keychain, then retry.",
         importUnavailable: "Import unavailable. Update Paseo.",
 
         title: "Browser data",

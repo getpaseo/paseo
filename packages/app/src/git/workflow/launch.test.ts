@@ -24,7 +24,7 @@ const context = {
   serverId: "host",
   workspaceId: "workspace",
   cwd: "/repo",
-  baseRef: "origin/paseo-local",
+  baseRef: "origin/main",
   branch: "feature",
 };
 const profile = {
@@ -63,8 +63,7 @@ describe("workspace workflow launch", () => {
       model: "review",
       thinkingOptionId: "low",
     });
-    expect(calls.submitting.mock.calls[0][0].text).toContain("origin/paseo-local");
-    expect(calls.submitting.mock.calls[0][0].text).not.toContain("origin/main");
+    expect(calls.submitting.mock.calls[0][0].text).toContain("origin/main");
   });
 
   it.each(["create-pr", "commit-and-push"] as const)(
@@ -86,6 +85,24 @@ describe("workspace workflow launch", () => {
       expect(request).not.toHaveProperty("launchProfileId");
     },
   );
+
+  it("uses the workspace main base without asking for extra confirmation", async () => {
+    await launchWorkspaceWorkflowAction({
+      ...context,
+      baseRef: "origin/main",
+      action: "create-pr",
+      config: { prModel: { provider: "codex", model: "pr" } },
+    });
+
+    const prompt = calls.submitting.mock.calls[0][0].text as string;
+    expect(prompt).toContain("The target branch is origin/main.");
+    expect(prompt).toContain(
+      "Create the pull request against `main`, the workspace's configured base branch.",
+    );
+    expect(prompt).toContain(
+      "Do not ask for extra confirmation solely because the target is `main`.",
+    );
+  });
 
   it("preserves the existing profile when no manual choice is configured", async () => {
     await launchWorkspaceWorkflowAction({
@@ -123,7 +140,7 @@ describe("workspace workflow launch", () => {
     const prompt = request.text as string;
     expect(prompt).toContain("https://example.com/pr/8");
     expect(prompt).toContain("feature");
-    expect(prompt).toContain("origin/paseo-local");
+    expect(prompt).toContain("origin/main");
     expect(prompt).toContain("/repo");
     expect(prompt).toContain("aucun commit, push, merge");
     expect(prompt).not.toContain("COMMIT_PUSH_SENTINEL");

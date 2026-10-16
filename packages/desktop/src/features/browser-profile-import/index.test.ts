@@ -165,11 +165,11 @@ describe("Comet cookies", () => {
       const [profile] = await importer.listProfiles();
       const cookies = { set: vi.fn(async () => {}), flushStore: vi.fn(async () => {}) };
       await expect(importer.importProfile("/arbitrary/path", cookies)).rejects.toThrow(
-        "Profil Comet indisponible",
+        "COMET_PROFILE_UNAVAILABLE",
       );
       rmSync(path.join(root, "Default/Cookies"));
       await expect(importer.importProfile(profile.id, cookies)).rejects.toThrow(
-        "Impossible de lire",
+        "COMET_READ_FAILED",
       );
       expect(cookies.set).not.toHaveBeenCalled();
     },
@@ -181,13 +181,15 @@ describe("Comet cookies", () => {
       const unknown = new CometProfileImporter(fixture("25"), async () => "test");
       const [profile] = await unknown.listProfiles();
       await expect(unknown.importProfile(profile.id, cookies)).rejects.toThrow(
-        "pas prise en charge",
+        "COMET_FORMAT_UNSUPPORTED",
       );
       const denied = new CometProfileImporter(fixture(), async () => {
         throw new Error("denied");
       });
       const [other] = await denied.listProfiles();
-      await expect(denied.importProfile(other.id, cookies)).rejects.toThrow("Trousseau");
+      await expect(denied.importProfile(other.id, cookies)).rejects.toThrow(
+        "COMET_KEYCHAIN_UNAVAILABLE",
+      );
       expect(cookies.set).not.toHaveBeenCalled();
     },
   );

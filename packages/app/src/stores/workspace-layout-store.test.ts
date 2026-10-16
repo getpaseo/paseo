@@ -4902,6 +4902,39 @@ describe("browser pane ownership", () => {
     expect(findPaneContainingTab(layout.root, pageId)?.id).toBe(browserPaneId);
   });
 
+  it("opens side content separately when the remembered side pane now holds browser pages", () => {
+    const store = createConversationStore();
+    const oldSidePaneId = store.getState().ensureSidePane(workspaceKey)!;
+    const pageId = store.getState().openTab({
+      workspaceKey,
+      target: { kind: "browser", browserId: "old-side-page" },
+      intent: "reveal",
+      placement: { mode: "pane", paneId: oldSidePaneId },
+    })!;
+    store.setState({
+      layoutByWorkspace: {
+        [workspaceKey]: restoreWorkspaceLayout(
+          store.getState().layoutByWorkspace[workspaceKey],
+          "explorer",
+        ),
+      },
+    });
+
+    const sidePaneId = store.getState().ensureSidePane(workspaceKey)!;
+    const fileId = store.getState().openTab({
+      workspaceKey,
+      target: { kind: "file", path: "/repo/side.ts" },
+      intent: "reveal",
+      placement: { mode: "prefer", paneId: sidePaneId },
+    });
+    expect(fileId).not.toBeNull();
+    const layout = store.getState().layoutByWorkspace[workspaceKey];
+    expect(findPaneContainingTab(layout.root, fileId!)?.id).toBe(sidePaneId);
+    expect(sidePaneId).not.toBe(oldSidePaneId);
+    expect(findPaneContainingTab(layout.root, pageId)?.id).toBe(oldSidePaneId);
+    expect(findPaneById(layout.root, oldSidePaneId)?.tabIds).toEqual([pageId]);
+  });
+
   it("rejects explicit mixed opens and moves without changing content", () => {
     const store = createConversationStore();
     const paneId = store.getState().ensureBrowserPane(workspaceKey, { reveal: true })!;

@@ -914,7 +914,11 @@ export function createWorkspaceLayoutStore(
             currentState.sidePaneIdByWorkspace[normalizedWorkspaceKey],
           );
           const rememberedPane = findPaneById(layout.root, rememberedPaneId);
-          if (rememberedPane && rememberedPane.id !== explorerPaneId) {
+          if (
+            rememberedPane &&
+            rememberedPane.id !== explorerPaneId &&
+            paneAcceptsTarget(rememberedPane, { kind: "new_tab" })
+          ) {
             return rememberedPane.id;
           }
 

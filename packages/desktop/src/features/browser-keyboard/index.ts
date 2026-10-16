@@ -203,14 +203,6 @@ export class BrowserKeyboard {
           guest.contents.reload();
         }
         return;
-      case "new-tab":
-        event.preventDefault();
-        if (!guest.hostContents.isDestroyed())
-          guest.hostContents.send("paseo:event:browser-new-tab-request", {
-            sourceBrowserId: registration.browserId,
-            url: "about:blank",
-          });
-        return;
       case "focus-url":
         event.preventDefault();
         if (!guest.hostContents.isDestroyed()) {

@@ -2,9 +2,9 @@
 
 [prompts]
 general = """
-Use `paseo-local` as the repository base branch and pull-request target.
-Never create, retarget, merge, or push a pull request or commit to `main` unless the user explicitly confirms that exact action in the current conversation. If an action would affect `main`, stop and ask for confirmation.
+Use `main` as the repository base branch and pull-request target by default. When the workspace records a different starting base branch, use that branch instead.
+Never target `paseo-local` unless the user explicitly requests it. Do not ask for extra confirmation solely because the pull request targets `main`.
 """
 create_pr = """
-Create the pull request against `paseo-local`. If the only suitable target is `main`, stop and ask the user for explicit confirmation before creating or retargeting the pull request.
+Create the pull request against the workspace's recorded starting base branch, defaulting to `main`. Do not ask for extra confirmation solely because the target is `main`.
 """

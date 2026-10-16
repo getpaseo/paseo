@@ -26,6 +26,7 @@ import {
   collectAllPanes,
   collectAllTabs,
   findPaneById,
+  findPaneContainingTab,
   normalizeLayout,
   useWorkspaceLayoutStore,
   type SplitNode,
@@ -33,7 +34,6 @@ import {
 } from "@/stores/workspace-layout-store";
 import type { WorkspaceTab } from "@/workspace-tabs/model";
 import {
-  findWorkspaceDevPreview,
   openWorkspaceDevPreview,
   readWorkspaceDevPreviewScriptName,
 } from "@/workspace-tabs/dev-preview";
@@ -170,10 +170,8 @@ describe("workspace dev preview", () => {
     expect(root.group.direction).toBe("horizontal");
     expect(groupSizes(workspaceKey, root.group.id)).toEqual([0.25, 0.75]);
 
-    const sidePaneId = state.sidePaneIdByWorkspace[workspaceKey];
-    expect(sidePaneId).toBeTruthy();
-    const sidePane = findPaneById(root, sidePaneId);
-    expect(sidePane?.tabIds).toEqual([result.tabId]);
+    const browserPaneId = state.browserPaneIdByWorkspace[workspaceKey];
+    expect(findPaneById(root, browserPaneId)?.tabIds).toEqual([result.tabId]);
     const previewTab = collectAllTabs(root).find((tab) => tab.tabId === result.tabId);
     expect(previewTab?.target.kind).toBe("browser");
     expect(readWorkspaceDevPreviewScriptName(previewTab?.state)).toBe("app");
@@ -247,7 +245,35 @@ describe("workspace dev preview", () => {
     expect(contentTabs().filter((tab) => tab.target.kind === "browser")).toHaveLength(1);
   });
 
-  it("refuses a layout whose side pane is not a full-height column", () => {
+  it("preserves an occupied side pane while opening the preview in its browser pane", () => {
+    seedConversationTab();
+    const store = useWorkspaceLayoutStore.getState();
+    const sidePaneId = store.ensureSidePane(workspaceKey)!;
+    const fileId = store.openTab({
+      workspaceKey,
+      target: { kind: "file", path: "/repo/side.ts" },
+      intent: "reveal",
+      placement: { mode: "pane", paneId: sidePaneId },
+    })!;
+
+    const result = openWorkspaceDevPreview({
+      workspaceKey,
+      scriptName: "app",
+      url: "http://localhost:3000",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("Expected preview beside occupied side pane");
+    const state = useWorkspaceLayoutStore.getState();
+    const layout = state.layoutByWorkspace[workspaceKey];
+    expect(findPaneById(layout.root, sidePaneId)?.tabIds).toEqual([fileId]);
+    expect(findPaneContainingTab(layout.root, result.tabId)?.id).toBe(
+      state.browserPaneIdByWorkspace[workspaceKey],
+    );
+    expect(state.browserPaneIdByWorkspace[workspaceKey]).not.toBe(sidePaneId);
+    expect(state.sidePaneIdByWorkspace[workspaceKey]).toBe(sidePaneId);
+  });
+
+  it("keeps nested ordinary side panes while creating a full-height browser column", () => {
     const nestedLayout = normalizeLayout({
       root: {
         kind: "group",
@@ -291,12 +317,18 @@ describe("workspace dev preview", () => {
       url: "http://localhost:3000",
     });
 
-    expect(result).toEqual({ ok: false, reason: "no-full-height-column" });
-    expect(Object.keys(useBrowserStore.getState().browsersById)).toHaveLength(0);
-    expect(browserPreviewTabs()).toHaveLength(0);
-    expect(findWorkspaceDevPreview({ workspaceKey, scriptName: "app" })).toBeNull();
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("Expected a dedicated preview column");
+    const layout = useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    expect(findPaneById(layout.root, "side-nested")?.tabIds).toEqual(["tab-side"]);
+    expect(findPaneById(layout.root, "lower")?.tabIds).toEqual(["tab-lower"]);
+    const root = expectGroup(layout.root);
+    expect(groupSizes(workspaceKey, root.group.id)).toEqual([0.25, 0.75]);
+    expect(findPaneContainingTab(root, result.tabId)?.id).toBe(
+      root.group.children[1].kind === "pane" ? root.group.children[1].pane.id : null,
+    );
   });
-  it("persists the preview marker and reveals it where the user moved it after reload", async () => {
+  it("persists the preview marker and reveals its dedicated browser pane after reload", async () => {
     seedConversationTab();
     const opened = openWorkspaceDevPreview({
       workspaceKey,
@@ -324,7 +356,8 @@ describe("workspace dev preview", () => {
       openWorkspaceDevPreview({ workspaceKey, scriptName: "app", url: "http://localhost:5173" }),
     ).toEqual({ ...opened, created: false });
     const revealed = useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
-    expect(findPaneById(revealed.root, "main")?.focusedTabId).toBe(opened.tabId);
+    expect(findPaneContainingTab(revealed.root, opened.tabId)?.focusedTabId).toBe(opened.tabId);
+    expect(findPaneById(revealed.root, "main")?.tabIds).not.toContain(opened.tabId);
     expect(collectAllTabs(revealed.root).find((tab) => tab.tabId === opened.tabId)?.state).toEqual({
       devPreviewScriptName: "app",
     });

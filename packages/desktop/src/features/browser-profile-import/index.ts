@@ -83,7 +83,7 @@ export class CometProfileImporter {
       entries = await readdir(this.root, { withFileTypes: true });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-      throw new Error("Impossible d’ouvrir les profils Comet.", { cause: error });
+      throw new Error("COMET_PROFILES_UNREADABLE", { cause: error });
     }
     let names: Record<string, { name?: string }> = {};
     try {
@@ -116,8 +116,7 @@ export class CometProfileImporter {
     cookies: { set(details: CookiesSetDetails): Promise<void>; flushStore(): Promise<void> },
   ): Promise<CometImportResult> {
     const directory = this.profiles.get(profileId);
-    if (process.platform !== "darwin" || !directory)
-      throw new Error("Profil Comet indisponible. Réessayez.");
+    if (process.platform !== "darwin" || !directory) throw new Error("COMET_PROFILE_UNAVAILABLE");
     const temp = await mkdtemp(path.join(tmpdir(), "paseo-comet-"));
     try {
       const snapshot = path.join(temp, "Cookies");
@@ -129,7 +128,7 @@ export class CometProfileImporter {
           `.backup '${snapshot.replaceAll("'", "''")}'`,
         ]);
       } catch {
-        throw new Error("Impossible de lire les connexions Comet. Réessayez.");
+        throw new Error("COMET_READ_FAILED");
       }
       const query = async (sql: string) =>
         JSON.parse(
@@ -147,13 +146,13 @@ export class CometProfileImporter {
           "SELECT host_key,name,value,hex(encrypted_value) AS encrypted,path,expires_utc,is_secure,is_httponly,samesite,has_expires,top_frame_site_key FROM cookies",
         );
       } catch {
-        throw new Error("Cette version des données Comet n’est pas prise en charge.");
+        throw new Error("COMET_FORMAT_UNSUPPORTED");
       }
       let password: string;
       try {
         password = await this.readPassword();
       } catch {
-        throw new Error("Accès au Trousseau refusé ou clé Comet indisponible.");
+        throw new Error("COMET_KEYCHAIN_UNAVAILABLE");
       }
       const prepared: CookiesSetDetails[] = [];
       const result: CometImportResult = { status: "complete", imported: 0, skipped: 0, failed: 0 };
