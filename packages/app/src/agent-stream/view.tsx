@@ -106,6 +106,7 @@ import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useStreamHistoryWindow } from "./use-stream-history-window";
 import { PluginTimelineItemView, useInstalledTimelineTransform } from "@/plugins/timeline";
+import { useWorkflowCardShown, WorkflowToolCallCard } from "@/subagents/workflow-card";
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -790,6 +791,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               isLastInSequence={isLastInSequence}
               onOpenFilePath={handleToolCallOpenFile}
               maxDetailHeight={maxDetailHeight}
+              workflowServerId={resolvedServerId}
+              workflowParentAgentId={agentId}
+              workflowSubagentId={data.name === "Workflow" ? data.callId : undefined}
             />
           );
         }
@@ -809,7 +813,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           />
         );
       },
-      [context.cwd, setInlineDetailsExpanded, handleToolCallOpenFile],
+      [context.cwd, setInlineDetailsExpanded, handleToolCallOpenFile, resolvedServerId, agentId],
     );
 
     // Read through a stable event so live group updates do not change the renderer identity
@@ -1284,6 +1288,10 @@ interface ToolCallSlotProps extends Omit<
 > {
   itemId: string;
   onInlineDetailsExpandedChangeByItemId: (itemId: string, expanded: boolean) => void;
+  /** A Workflow call is also a provider subagent keyed by its call id; it draws as a card while it runs. */
+  workflowServerId?: string;
+  workflowParentAgentId?: string;
+  workflowSubagentId?: string;
 }
 
 interface ThoughtSlotProps {
@@ -1322,12 +1330,31 @@ function ThoughtSlot({
 function ToolCallSlot({
   itemId,
   onInlineDetailsExpandedChangeByItemId,
+  workflowServerId,
+  workflowParentAgentId,
+  workflowSubagentId,
   ...rest
 }: ToolCallSlotProps) {
   const handleExpandedChange = useCallback(
     (expanded: boolean) => onInlineDetailsExpandedChangeByItemId(itemId, expanded),
     [onInlineDetailsExpandedChangeByItemId, itemId],
   );
+  const showWorkflowCard = useWorkflowCardShown({
+    serverId: workflowServerId,
+    parentAgentId: workflowParentAgentId,
+    subagentId: workflowSubagentId,
+    toolStatus: rest.status,
+  });
+  if (showWorkflowCard && workflowServerId && workflowParentAgentId && workflowSubagentId) {
+    return (
+      <WorkflowToolCallCard
+        serverId={workflowServerId}
+        parentAgentId={workflowParentAgentId}
+        subagentId={workflowSubagentId}
+        detail={rest.detail}
+      />
+    );
+  }
   return <ToolCall {...rest} onInlineDetailsExpandedChange={handleExpandedChange} />;
 }
 
