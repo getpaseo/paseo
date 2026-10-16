@@ -12,6 +12,7 @@ import { useTranslation } from "react-i18next";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   Pressable,
+  type PressableStateCallbackType,
   StyleSheet as RNStyleSheet,
   Text,
   useWindowDimensions,
@@ -308,7 +309,7 @@ function FooterIconButton({
       <TooltipTrigger asChild>
         <Pressable
           ref={buttonRef}
-          style={styles.footerIconButton}
+          style={footerIconButtonStyle}
           testID={testID}
           nativeID={testID}
           collapsable={false}
@@ -332,6 +333,10 @@ function FooterIconButton({
       </TooltipContent>
     </Tooltip>
   );
+}
+
+function footerIconButtonStyle({ pressed }: PressableStateCallbackType) {
+  return [styles.footerIconButton, pressed && styles.footerIconButtonPressed];
 }
 
 function SidebarHostPicker({
@@ -934,6 +939,10 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     paddingVertical: theme.spacing[1],
     paddingHorizontal: theme.spacing[1],
+    borderRadius: theme.borderRadius.full,
+  },
+  footerIconButtonPressed: {
+    backgroundColor: theme.colors.interactionHighlight,
   },
   tooltipRow: {
     flexDirection: "row",
