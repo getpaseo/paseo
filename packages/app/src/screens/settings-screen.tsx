@@ -124,6 +124,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { resolveDesktopSidebarWidth } from "@/components/desktop-sidebar-layout";
 import { usePanelStore } from "@/stores/panel-store";
 import { densityIconBox, densityIconSize } from "@/styles/density";
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import {
   type EnableBuiltInDaemonOption,
@@ -967,7 +968,7 @@ function SettingsSidebar({
   const outerContainerStyle = useMemo(
     () => [
       isDesktop ? sidebarStyles.desktopContainer : sidebarStyles.mobileContainer,
-      isDesktop && { width: visibleSidebarWidth },
+      isDesktop && inlineUnistylesStyle({ width: visibleSidebarWidth }),
     ],
     [isDesktop, visibleSidebarWidth],
   );
