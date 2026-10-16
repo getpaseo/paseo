@@ -491,11 +491,6 @@ function addScheduleDurationIssue(value: string, context: z.RefinementCtx): void
 }
 
 const scheduleDurationInputSchema = z.string().superRefine(addScheduleDurationIssue);
-const scheduleEveryInputSchema = z.string().superRefine((value, context) => {
-  if (value.trim()) {
-    addScheduleDurationIssue(value, context);
-  }
-});
 
 function resolveScheduleUpdateCadence(input: ScheduleUpdateToolInput): ScheduleCadence | undefined {
   const every = normalizeScheduleCadenceArg(input.every);
@@ -511,7 +506,7 @@ function resolveScheduleUpdateCadence(input: ScheduleUpdateToolInput): ScheduleC
   if (every !== undefined) {
     // COMPAT(scheduleEveryInput): accept the old hidden field and canonicalize it before write.
     // Added in v0.2.0; remove after 2027-01-17.
-    const everyMs = parseDurationString(every);
+    const everyMs = parseDurationString(scheduleDurationInputSchema.parse(every));
     const expression = everyMsToFiveFieldCron(everyMs);
     if (expression) {
       return { type: "cron", expression };
@@ -1124,11 +1119,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   };
   const agentToAgentInputSchema = {
     ...canonicalCreateAgentFields,
-    background: z
-      .boolean()
-      .optional()
-      .default(true)
-      .describe("Accepted for compatibility. Agent-scoped agents always run in the background."),
     notifyOnFinish: z
       .boolean()
       .optional()
@@ -1150,7 +1140,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   const legacyAgentToAgentInputSchema = {
     ...commonCreateAgentFields,
     ...legacyCreateAgentPlacementFields,
-    background: agentToAgentInputSchema.background,
     notifyOnFinish: agentToAgentInputSchema.notifyOnFinish,
   };
   const legacyTopLevelCreateAgentInputSchema = {
@@ -2846,7 +2835,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       inputSchema: z
         .object({
           id: z.string(),
-          every: scheduleEveryInputSchema.optional(),
           cron: z.string().optional().describe("New cron expression."),
           timezone: z
             .string()
