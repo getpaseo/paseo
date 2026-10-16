@@ -35,6 +35,7 @@ import { SidebarNavRows } from "@/components/sidebar/sidebar-nav-rows";
 import { SidebarHelpMenu } from "@/components/sidebar/sidebar-help-menu";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import { DensityIcon } from "@/components/ui/density-icon";
+import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
 import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { HEADER_INNER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
@@ -805,21 +806,18 @@ function DesktopSidebar({
 
 function WorkspacesSectionHeader() {
   return (
-    <View style={styles.workspacesSectionHeader}>
-      <Text style={styles.workspacesSectionTitle}>Workspaces</Text>
-      <View style={styles.workspacesSectionActions}>
-        <Tooltip delayDuration={300}>
-          <TooltipTrigger asChild>
-            <View>
-              <SidebarDisplayPreferencesMenu />
-            </View>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" align="center" offset={8}>
-            <IconTooltipContent label="Display preferences" />
-          </TooltipContent>
-        </Tooltip>
-      </View>
-    </View>
+    <SidebarSectionHeader title="Workspaces">
+      <Tooltip delayDuration={300}>
+        <TooltipTrigger asChild>
+          <View>
+            <SidebarDisplayPreferencesMenu />
+          </View>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" align="center" offset={8}>
+          <IconTooltipContent label="Display preferences" />
+        </TooltipContent>
+      </Tooltip>
+    </SidebarSectionHeader>
   );
 }
 
@@ -849,29 +847,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   sidebarHeaderGroupBelowChrome: {
     paddingTop: 0,
-  },
-  workspacesSectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: theme.spacing[2],
-    // Rendered inside the scroll's listContent (paddingHorizontal spacing[2]). The title
-    // lands at spacing[2] left to align with project icons. Settings2's painted path stops
-    // inside its 14px SVG, so 4px aligns the ink rather than the SVG box to the row rail.
-    paddingLeft: theme.spacing[2],
-    paddingRight: 4,
-    paddingTop: theme.spacing[1],
-    paddingBottom: theme.spacing[1],
-  },
-  workspacesSectionTitle: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.normal,
-  },
-  workspacesSectionActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
   },
   sidebarContent: {
     flex: 1,

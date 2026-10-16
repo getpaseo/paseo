@@ -3,6 +3,71 @@ import { describe, expect, it } from "vitest";
 import { normalizeHtmlishMarkdown, splitHtmlishMarkdown } from "./html-ish";
 
 describe("splitHtmlishMarkdown", () => {
+  it("renders heading text beside a linked picture without literal heading tags", () => {
+    const source =
+      '<h2><a href="https://example.com/r"><picture><source srcset="https://example.com/d.svg"><img alt="Retrigger" src="https://example.com/l.svg"></picture></a>Confidence Score: 5/5</h2>';
+
+    expect(splitHtmlishMarkdown(source)).toEqual([
+      {
+        kind: "inlineImage",
+        alt: "Retrigger",
+        src: "https://example.com/l.svg",
+        href: "https://example.com/r",
+        flowsWithText: true,
+      },
+      { kind: "markdown", text: "Confidence Score: 5/5" },
+    ]);
+  });
+
+  it.each(["h1", "h2", "h3", "h4", "h5", "h6"])(
+    "keeps a mixed %s heading together after preceding markdown",
+    (heading) => {
+      const source = `Intro\n\n<${heading}><img alt="Icon" src="https://example.com/icon.svg">Caption</${heading}>\n\nOutro`;
+
+      expect(splitHtmlishMarkdown(source)).toEqual([
+        { kind: "markdown", text: "Intro\n\n" },
+        {
+          kind: "inlineImage",
+          alt: "Icon",
+          src: "https://example.com/icon.svg",
+          flowsWithText: true,
+        },
+        { kind: "markdown", text: "Caption\n\nOutro" },
+      ]);
+    },
+  );
+
+  it("preserves formatted text before and after images in a details heading", () => {
+    const source =
+      '<details><summary>More</summary><h2><strong>Before</strong><img alt="Icon" src="https://example.com/icon.svg"><em>After</em></h2></details>';
+
+    expect(splitHtmlishMarkdown(source)).toEqual([
+      {
+        kind: "details",
+        summary: "More",
+        body: "**Before***After*",
+        bodyParts: [
+          { kind: "markdown", text: "**Before**" },
+          { kind: "inlineImage", alt: "Icon", src: "https://example.com/icon.svg" },
+          { kind: "markdown", text: "*After*" },
+        ],
+      },
+    ]);
+  });
+
+  it("keeps mixed HTML headings literal in code examples", () => {
+    const heading = '<h2><img src="https://example.com/icon.svg">Caption</h2>';
+    const source = `Use \`${heading}\`\n\n\`\`\`html\n${heading}\n\`\`\``;
+
+    expect(splitHtmlishMarkdown(source)).toEqual([{ kind: "markdown", text: source }]);
+  });
+
+  it("preserves unknown wrappers around text-only headings", () => {
+    expect(splitHtmlishMarkdown("<section><h2>Heading</h2></section>")).toEqual([
+      { kind: "markdown", text: "<section>Heading</section>" },
+    ]);
+  });
+
   const inlineImageBody = [
     '<a href="#"><img alt="Priority" src="https://example.com/assets/priority.svg?v=9" align="top"></a> Spoofed browser User-Agent allows access control bypass',
     "",

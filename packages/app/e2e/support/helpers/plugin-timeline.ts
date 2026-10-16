@@ -231,3 +231,46 @@ export async function attachPromptTimelineEvidence(page: Page, info: TestInfo): 
     contentType: "image/png",
   });
 }
+
+const POPOVER_CLIENT_SOURCE = `import React, { useEffect, useRef } from "react";
+import { z } from "zod";
+
+function Preview() {
+  const panel = useRef(null);
+  useEffect(() => {
+    const close = (event) => {
+      if (event.key === "Escape" && panel.current.matches(":popover-open")) {
+        panel.current.hidePopover();
+      }
+    };
+    document.addEventListener("keydown", close, true);
+    return () => document.removeEventListener("keydown", close, true);
+  }, []);
+  return <div>
+    <button onMouseEnter={() => panel.current.showPopover()}>Hover plugin preview</button>
+    <div ref={panel} popover="manual" role="dialog" aria-label="Plugin preview">Plugin hover preview</div>
+  </div>;
+}
+
+export default function contribute(client) {
+  client.addTimelineTransformer({
+    id: "preview", query: { itemType: "user_message" },
+    transform({ item }) {
+      if (item.text !== "Show the plugin preview.") return;
+      return { items: [{ type: "plugin", kind: "preview", version: 1, data: {} }] };
+    },
+  });
+  client.addTimelineRenderer({
+    kind: "preview", version: 1, schema: z.object({}), Component: Preview,
+  });
+  return () => {};
+}`;
+
+/** Installs a timeline preview that owns Escape through the DOM Popover API. */
+export async function withPopoverTimelinePlugin(run: () => Promise<void>): Promise<void> {
+  await withDirectoryPlugin({
+    pluginId: "timeline-popover-e2e",
+    source: POPOVER_CLIENT_SOURCE,
+    run,
+  });
+}

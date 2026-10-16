@@ -17,7 +17,6 @@ import type { ShortcutKey } from "@/utils/format-shortcut";
 
 const ThemedArrowLeft = withUnistyles(ArrowLeft);
 
-const ISLAND_PADDING = 7;
 const NO_SHORTCUT: ShortcutKey[] = [];
 
 interface CompactHeaderProps {
@@ -37,8 +36,9 @@ interface CompactHeaderProps {
 
 /**
  * The phone header: the navigation button and the screen's actions sit in islands, with the title
- * left-aligned between them. It has no background of its own, so it reads the same in flow and floating
- * over content (see `FloatingHeaderLayout`). Its height matches the old flat header, so anything
+ * left-aligned between them. Neither the header nor its islands draw a background, so it reads the
+ * same in flow and floating over content (see `FloatingHeaderLayout`, whose fade gives the icons
+ * contrast). Its height matches the old flat header, so anything
  * offset by the header height still lines up.
  */
 export function CompactHeader({
@@ -90,7 +90,11 @@ function CompactHeaderTitle({
   return (
     <>
       {title ? (
-        <Text style={styles.title} numberOfLines={1} testID={titleTestID}>
+        <Text
+          style={subtitle ? styles.title : styles.singleLineTitle}
+          numberOfLines={1}
+          testID={titleTestID}
+        >
           {title}
         </Text>
       ) : null}
@@ -146,13 +150,16 @@ const styles = StyleSheet.create((theme) => ({
   island: {
     flexDirection: "row",
     alignItems: "center",
-    padding: ISLAND_PADDING,
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.surface2,
-    ...theme.shadow.sm,
   },
   title: {
     fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.medium,
+    color: theme.colors.foreground,
+    textAlign: "left",
+  },
+  // A title without a subtitle has the header to itself, so it reads one step larger.
+  singleLineTitle: {
+    fontSize: theme.fontSize.lg,
     fontWeight: theme.fontWeight.medium,
     color: theme.colors.foreground,
     textAlign: "left",

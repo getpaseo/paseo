@@ -619,6 +619,9 @@ export const ja: TranslationResources = {
       updateHost: "ネイティブターミナルを使用するにはホストを更新してください。",
       unableToSubscribe: "ターミナルに接続できません",
     },
+    sheet: {
+      openAsTab: "タブで開く",
+    },
     tabs: {
       loading: "読み込み中...",
       modified: "未保存の変更",
@@ -634,7 +637,7 @@ export const ja: TranslationResources = {
       },
       switcher: {
         trigger: "タブを切り替え（{{count}}件開いています）",
-        title: "タブを切り替え",
+        title: "ワークスペースのタブ",
         searchPlaceholder: "タブを検索",
       },
       menu: {
@@ -730,6 +733,7 @@ export const ja: TranslationResources = {
     header: {
       actions: {
         workspaceActions: "ワークスペースアクション",
+        workspaceActionsUnhealthy: "ワークスペースアクション、異常なサービスがあります",
         newAgent: "新しいエージェント",
         newTerminal: "新しいターミナル",
         newBrowser: "新しいブラウザタブ",
@@ -777,6 +781,8 @@ export const ja: TranslationResources = {
         exitCode: "終了コード: {{code}}",
         startFailed: "{{scriptName}}の起動に失敗しました",
         stopFailed: "{{scriptName}}の停止に失敗しました",
+        running: "実行中",
+        runningCount: "{{count}} 件実行中",
       },
     },
     tree: {
@@ -1671,13 +1677,18 @@ export const ja: TranslationResources = {
     title: "プロバイダーを追加",
     search: "プロバイダーを検索",
     noProviders: "プロバイダーが見つかりません",
+    clearSearch: "検索をクリア",
     actions: {
       add: "追加",
+      addProvider: "{{provider}} を追加",
       adding: "追加中",
       installed: "インストール済み",
       cancel: "キャンセル",
       installInstructions: "インストール手順",
       installInstructionsFor: "{{provider}}のインストール手順",
+    },
+    types: {
+      acp: "ACP",
     },
     errors: {
       unableToInstall: "プロバイダーをインストールできません",
