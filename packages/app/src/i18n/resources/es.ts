@@ -5,8 +5,9 @@ export const es: TranslationResources = {
   sharedOrdering: {
     unsupported:
       "Actualiza este host para sincronizar el orden de espacios de trabajo y pestañas entre dispositivos.",
-    failed: "No se pudo sincronizar el orden.",
-    conflict: "Otro dispositivo cambió el orden. Se restauró el orden compartido.",
+    failed: "El orden sigue pendiente. Vuelve a conectar o mueve un elemento para reintentar.",
+    conflict:
+      "El orden sigue pendiente tras cambios en conflicto. Vuelve a conectar o mueve un elemento para reintentar.",
   },
   paneFind: {
     connectionFailure:

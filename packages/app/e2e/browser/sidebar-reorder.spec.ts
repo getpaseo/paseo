@@ -1,3 +1,4 @@
+import { dragTabAfter, openIndependentCompactClient } from "../support/helpers/shared-order";
 import { gotoWorkspace } from "../support/helpers/launcher";
 import {
   openMobileAgentSidebar,
@@ -179,26 +180,9 @@ test("workspace and tab reorder propagate to an independent compact client and s
     });
     await gotoWorkspace(page, seed.workspaceId);
     await waitForSidebarHydration(page);
-    const storage = await page.context().storageState();
-    // A second install shares connection settings only, with its own order/layout caches.
-    secondContext = await browser.newContext({
-      viewport: { width: 390, height: 844 },
-      storageState: {
-        cookies: [],
-        origins: storage.origins.map((origin) => ({
-          origin: origin.origin,
-          localStorage: origin.localStorage.filter((entry) =>
-            ["@paseo:e2e", "@paseo:daemon-registry", "@paseo:create-agent-preferences"].includes(
-              entry.name,
-            ),
-          ),
-        })),
-      },
-    });
-    const compact = await secondContext.newPage();
-    await compact.route(/:(6767)\b/, (route) => route.abort());
-    await compact.routeWebSocket(/:(6767)\b/, (socket) => socket.close());
-    await compact.goto(page.url());
+    const independent = await openIndependentCompactClient({ browser, page });
+    secondContext = independent.context;
+    const compact = independent.page;
     await expect.poll(() => agentTabIds(page)).toHaveLength(2);
     const beforeTabs = await agentTabIds(page);
     await openCompactTabs(compact);
@@ -221,17 +205,7 @@ test("workspace and tab reorder propagate to an independent compact client and s
     expect(initialTabs).toEqual(
       expect.arrayContaining([`workspace-tab-agent_${a.id}`, `workspace-tab-agent_${b.id}`]),
     );
-    const source = page.getByTestId(initialTabs[0]!).filter({ visible: true });
-    const target = page.getByTestId(initialTabs[1]!).filter({ visible: true });
-    const sourceBox = await visibleBoundingBox(source);
-    const targetBox = await visibleBoundingBox(target);
-    await page.mouse.move(sourceBox.x + 20, sourceBox.y + sourceBox.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(sourceBox.x + 32, sourceBox.y + sourceBox.height / 2);
-    await page.mouse.move(targetBox.x + targetBox.width - 8, targetBox.y + targetBox.height / 2, {
-      steps: 20,
-    });
-    await page.mouse.up();
+    await dragTabAfter({ page, sourceTestId: initialTabs[0]!, targetTestId: initialTabs[1]! });
     await expect.poll(() => agentTabIds(page)).toEqual(initialTabs.toReversed());
     await openCompactTabs(compact);
     await expect.poll(() => compactAgentTabIds(compact)).toEqual(initialTabs.toReversed());
@@ -252,6 +226,16 @@ test("workspace and tab reorder propagate to an independent compact client and s
       .poll(() => rowTestIds(compact.locator(workspaceSelector)))
       .toEqual(pinnedBefore.toReversed());
     await captureOrderingScreenshot(compact, testInfo, "compact-shared-pinned-order");
+    await independent.setOffline({ offline: true });
+    const offlineRows = compact.locator(workspaceSelector);
+    const beforeOfflineMove = await rowTestIds(offlineRows);
+    await quickDragFirstRowAfterSecond(offlineRows, pressWorkspaceRow);
+    await expect.poll(() => rowTestIds(rows)).toEqual(beforeOfflineMove);
+    await independent.setOffline({ offline: false });
+    await expect
+      .poll(() => rowTestIds(rows), { timeout: 30_000 })
+      .toEqual(beforeOfflineMove.toReversed());
+    await captureOrderingScreenshot(compact, testInfo, "compact-offline-shared-pinned-order");
   } finally {
     await secondContext?.close();
     await seed.cleanup();

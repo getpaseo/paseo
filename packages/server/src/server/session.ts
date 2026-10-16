@@ -1,5 +1,8 @@
-import type { OrderingService } from "./ordering/index.js";
-import { OrderingSession, createOrderingSession } from "./ordering/session.js";
+import {
+  OrderingSession,
+  createOrderingSession,
+  type OrderingSessionDependency,
+} from "./ordering/session.js";
 import { AgentDirectory } from "./agent/directory.js";
 import { searchTimeline } from "./agent/chat-search/index.js";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
@@ -469,7 +472,7 @@ export interface SessionOptions {
   workspaceRegistry: WorkspaceRegistry;
   directorySync?: DirectorySyncService;
   workspaceLabelService?: WorkspaceLabelService;
-  orderingService?: OrderingService;
+  ordering?: OrderingSessionDependency;
   filesystem?: SessionFileSystem;
   scheduleService: ScheduleService;
   checkoutDiffManager: CheckoutDiffManager;
@@ -905,11 +908,12 @@ export class Session {
     this.workspaceRegistry = workspaceRegistry;
     this.directorySync = resolveDirectorySync(directorySync);
     this.workspaceLabelService = resolveWorkspaceLabelService(workspaceLabelService);
-    this.orderingSession = createOrderingSession(
-      options.orderingService,
-      this.delivery,
-      (message) => this.emit(message),
-    );
+    this.orderingSession = createOrderingSession({
+      ordering: options.ordering,
+      delivery: this.delivery,
+      emit: (message) => this.emit(message),
+      clientId: options.clientId,
+    });
     this.filesystem = filesystem ?? nodeSessionFileSystem;
     this.github = github ?? createGitHubService();
     this.renameCurrentBranch = renameCurrentBranch ?? renameCurrentBranchDefault;
@@ -1255,6 +1259,7 @@ export class Session {
     this.clientCapabilities = parseClientCapabilities(capabilities);
     if (source) {
       this.delivery.attach(source, capabilities?.[CLIENT_CAPS.ownedSubscriptions] === true);
+      this.orderingSession?.attach(source);
       this.clientSources.set(source, {
         capabilities: this.clientCapabilities,
         appVersion,

@@ -1,3 +1,5 @@
+import { OrderReplica } from "../../../../app/src/ordering/replica.js";
+import { createOrderMove } from "../../../../app/src/ordering/move.js";
 import { expect, test } from "vitest";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -53,6 +55,10 @@ test("two clients share workspace and tab order, stale writes lose, reconnect re
     expect(stale.accepted).toBe(false);
     expect(stale.record.order).toEqual(sharedOrder);
     const tabScope = { kind: "tabs", workspaceId: workspace.id } as const;
+    await mobile!.setOrderTargets({
+      expectedRevision: 0,
+      workspaces: [{ workspaceId: workspace.id, targets: ["files", "agent_a"] }],
+    });
     await mobile!.setOrder({ scope: tabScope, expectedRevision: 0, order: ["files", "agent_a"] });
     expect((await desktop!.listOrders()).records).toEqual([
       changed.record,
@@ -124,6 +130,89 @@ test("unpinning and archiving prune shared pinned order", async () => {
     await client.removeProject(first.workspace!.projectId);
   } finally {
     await client.close();
+    await daemon.close();
+  }
+}, 60000);
+
+test("real clients retain offline exact moves and file/browser inventories until explicit forget", async () => {
+  const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
+  const desktop = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    clientId: "order-desktop",
+    appVersion: "0.11.2",
+  });
+  let mobile = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    clientId: "order-mobile",
+    appVersion: "0.11.2",
+  });
+  const errors: unknown[] = [];
+  try {
+    await Promise.all([desktop.connect(), mobile.connect()]);
+    const cwd = join(daemon.paseoHome, "full-order");
+    await mkdir(cwd);
+    const created = await desktop.createWorkspace({ source: { kind: "directory", path: cwd } });
+    const workspace = created.workspace!;
+    const scope = { kind: "tabs", workspaceId: workspace.id } as const;
+    const keys = ["agent_a", "file_readme", "browser_1", "terminal_t"];
+    const workspaces = [{ workspaceId: workspace.id, targets: keys }];
+    await desktop.listOrders();
+    await mobile.listOrders();
+    await desktop.setOrderTargets({ expectedRevision: 0, workspaces });
+    await mobile.setOrderTargets({ expectedRevision: 0, workspaces });
+    await desktop.setOrder({ scope, expectedRevision: 0, order: keys });
+    const replica = new OrderReplica({
+      port: { setOrder: (input) => mobile.setOrder(input) },
+      apply: () => {},
+      failed: (error) => errors.push(error),
+    });
+    replica.reorder({
+      scope,
+      move: createOrderMove({ moved: "browser_1", order: ["browser_1", "agent_a"] }),
+    });
+    const latest = await mobile.listOrders();
+    replica.snapshot(latest.records);
+    await expect
+      .poll(async () => (await desktop.listOrders()).records[0]!.order)
+      .toEqual(["browser_1", "agent_a", "file_readme", "terminal_t"]);
+    replica.pause();
+    await mobile.close();
+    replica.reorder({
+      scope,
+      move: createOrderMove({ moved: "file_readme", order: ["file_readme", "browser_1"] }),
+    });
+    const current = (await desktop.listOrders()).records[0]!;
+    await desktop.setOrder({
+      scope,
+      expectedRevision: current.revision,
+      order: ["terminal_t", "browser_1", "agent_a", "file_readme"],
+    });
+    await desktop.setOrderTargets({ expectedRevision: 1, workspaces: [] });
+    expect((await desktop.listOrders()).records[0]!.order).toEqual([
+      "terminal_t",
+      "browser_1",
+      "agent_a",
+      "file_readme",
+    ]);
+    mobile = new DaemonClient({
+      url: `ws://127.0.0.1:${daemon.port}/ws`,
+      clientId: "order-mobile",
+      appVersion: "0.11.2",
+    });
+    await mobile.connect();
+    replica.snapshot((await mobile.listOrders()).records);
+    await expect
+      .poll(async () => (await desktop.listOrders()).records[0]!.order)
+      .toEqual(["terminal_t", "file_readme", "browser_1", "agent_a"]);
+    expect(errors).toEqual([]);
+    await desktop.forgetOrderDevice({ clientId: "order-mobile" });
+    expect((await desktop.listOrders()).records[0]!.order).toEqual([]);
+    await expect(mobile.setOrderTargets({ expectedRevision: 2, workspaces })).rejects.toThrow(
+      "forgotten",
+    );
+    await desktop.removeProject(workspace.projectId);
+  } finally {
+    await Promise.all([desktop.close(), mobile.close()]);
     await daemon.close();
   }
 }, 60000);

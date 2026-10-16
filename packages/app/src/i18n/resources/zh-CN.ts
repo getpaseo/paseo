@@ -4,8 +4,8 @@ import { pluginSettings } from "./plugin-settings";
 export const zhCN: TranslationResources = {
   sharedOrdering: {
     unsupported: "请更新此主机，以跨设备同步 workspace 和 tab 排序。",
-    failed: "无法同步排序。",
-    conflict: "另一台设备已修改排序，已恢复共享顺序。",
+    failed: "排序仍待同步。请重新连接或移动条目以重试。",
+    conflict: "排序因并发修改仍待同步。请重新连接或移动条目以重试。",
   },
   paneFind: {
     connectionFailure: "无法搜索此聊天。请检查主机连接后重试。",

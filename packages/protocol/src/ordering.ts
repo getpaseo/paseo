@@ -59,6 +59,7 @@ export const OrderListResponseSchema = z.object({
     requestId: z.string(),
     subscriptionId: z.string().optional(),
     records: z.array(OrderRecordSchema),
+    deviceRevision: z.number().int().nonnegative().optional(),
   }),
 });
 export const OrderSetResponseSchema = z.object({
@@ -72,4 +73,28 @@ export const OrderUpdateSchema = z.object({
     scope: OrderScopeSchema,
     record: OrderRecordSchema.nullable(),
   }),
+});
+
+export const OrderTargetsSetRequestSchema = z.object({
+  type: z.literal("ui.order.targets.set.request"),
+  requestId: z.string(),
+  expectedRevision: z.number().int().nonnegative(),
+  workspaces: z.array(z.object({ workspaceId: IdSchema, targets: z.array(IdSchema) })),
+});
+export const OrderTargetsSetResponseSchema = z.object({
+  type: z.literal("ui.order.targets.set.response"),
+  payload: z.object({
+    requestId: z.string(),
+    accepted: z.boolean(),
+    revision: z.number().int().nonnegative(),
+  }),
+});
+export const OrderDeviceForgetRequestSchema = z.object({
+  type: z.literal("ui.order.devices.forget.request"),
+  requestId: z.string(),
+  clientId: z.string().optional(),
+});
+export const OrderDeviceForgetResponseSchema = z.object({
+  type: z.literal("ui.order.devices.forget.response"),
+  payload: z.object({ requestId: z.string() }),
 });

@@ -1,116 +1,71 @@
 # Shared ordering QA
 
-Run on macOS on 2026-10-13, based on upstream `main` at
-`6f62125ee018c5c44e6897c160094594b151036f`.
+Validated on macOS on 2026-10-17 after merging fixed upstream `main`
+`98559bf729ad558bc70035725c8400b5761bbf04` into the PR history.
 
 ## Application workflow
 
-The existing sidebar drag regression and the new cross-client flow ran against an
-isolated real daemon. Agents were seeded with the existing `mock` provider; no
-provider execution was required for sorting. Port 6767 was blocked in both browser
-contexts.
+`packages/app/e2e/browser/sidebar-reorder.spec.ts` uses an isolated real daemon and
+two independent Chromium contexts. The compact context receives connection settings
+only; its client identity, layout, and order caches are independent. Port 6767 is
+blocked. Its disconnect helper forwards frames to the real daemon and closes both
+physical WebSocket ends for offline checks; it does not replace protocol responses.
 
-The second Chromium context had a 390 × 844 viewport and received only connection
-settings. Its order cache, workspace layout, client identity, and replica database
-were independent of the first context.
-
-1. Drag a desktop workspace row and observe the same order in the compact sidebar.
-2. Drag back from the compact sidebar and observe the desktop order change.
-3. Drag an agent tab on desktop and observe the same relative order in the compact
-   tab switcher. Each device retains its own focus and open tabs.
-4. Reload the compact client. Its workspace and tab order still match the daemon.
-5. Pin both workspaces, drag their desktop rows, and observe the matching compact
-   Pinned order.
-
-Command, from `packages/app`:
+The flow covers desktop and compact workspace drags, reverse compact drags, tab
+ordering, reload, and Pinned order. The compact device then disconnects and drags a
+Pinned row: the desktop remains unchanged while it is offline and receives the
+queued move after reconnect.
 
 ```sh
-E2E_RECORD_VIDEO=1 npx playwright test --project=browser sidebar-reorder.spec.ts
+/usr/bin/lockf -k /tmp/paseo-pr-followup-validation.lock npm run test:e2e --workspace=@getpaseo/app -- sidebar-reorder.spec.ts --workers=1 --retries=0
 ```
-
-Observed output:
 
 ```text
-✓ projects, workspaces, and pinned chats reorder with an immediate mouse drag (20.9s)
-✓ workspace and tab reorder propagate to an independent compact client and survive reload (51.4s)
-2 passed (2.7m)
+2 passed (29.2s)
 ```
-
-[Desktop recording](desktop-recording.webm)
-
-| Desktop tab order                                  | Compact Web tab order                                  |
-| -------------------------------------------------- | ------------------------------------------------------ |
-| ![Desktop tab order](desktop-shared-tab-order.png) | ![Compact Web tab order](compact-shared-tab-order.png) |
-
-| Compact Web workspace order                                        | Compact Web Pinned order                                     |
-| ------------------------------------------------------------------ | ------------------------------------------------------------ |
-| ![Compact Web workspace order](compact-shared-workspace-order.png) | ![Compact Web Pinned order](compact-shared-pinned-order.png) |
 
 ## Focused automated checks
 
-From `packages/app`:
+Each file runs separately under the same validation lock. No full test suite runs.
 
-```sh
-npx vitest run src/ordering/index.test.ts src/ordering/replica.test.ts src/ordering/layout.test.ts src/stores/sidebar-order-store.test.ts src/stores/workspace-layout-store.test.ts src/i18n/resources.test.ts --bail=1
-```
+| File                                                     | Contract                                                                                                                                        |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app/src/ordering/replica.test.ts`                       | Exact moved key, untouched pairs, 70 queued gestures, pre-snapshot folding, conflict retries, late acknowledgements and reconnect               |
+| `app/src/ordering/index.test.ts`                         | Cold cache, capability gate, before-connect intent, moved-host isolation and split-pane publishing                                              |
+| `app/src/runtime/directory-sync/index.test.ts`           | Ordering failure leaves labels independently connected                                                                                          |
+| `server/src/server/ordering/index.test.ts`               | Atomic disk writes, live prune loader, inventory reload, offline last-holder retention, principal isolation and epoch fencing                   |
+| `server/src/server/ordering/index.e2e.test.ts`           | Real clients and daemon, exact offline moves, file/browser inventories, stale revisions, subscription teardown, pin/archive and explicit forget |
+| `server/src/server/session.test.ts` (ordering case only) | Real Session authorization and ordering service: distinct admitted principals, viewer write refusal and stale-source rejection                  |
+| `protocol/src/ordering.test.ts`                          | Existing snapshots remain parseable and target requests cannot select principal/client namespaces                                               |
 
-```text
-Test Files  6 passed (6)
-     Tests  188 passed (188)
-```
-
-From `packages/server`:
-
-```sh
-npx vitest run src/server/ordering/index.test.ts src/server/ordering/index.e2e.test.ts --bail=1
-```
-
-```text
-Test Files  2 passed (2)
-     Tests  6 passed (6)
-```
-
-The real daemon checks cover two active clients, an idle client receiving no order
-traffic, stale revision rejection, a fresh connection reading authority, released
-subscriptions, scope validation, unpinning, archive, and project removal. Storage
-unit tests cover restart persistence and failed disk writes without publication.
-Client tests cover cold caches, host capability gating, queued gestures, newer
-broadcasts racing older replies, disposal, and preserving splits and focus.
-
-From `packages/protocol`:
-
-```sh
-npx vitest run src/ordering.test.ts --bail=1
-```
-
-```text
-Test Files  1 passed (1)
-     Tests  3 passed (3)
-```
-
-From the repository root:
+The session authorization case uses the existing adapters for unrelated agent and
+checkout dependencies; it does not mock Session authorization, ordering, delivery,
+or filesystem persistence. The daemon integration uses the actual WebSocket client,
+server protocol, and ordering service. The existing sidebar/layout/supporting-view
+and localization files also pass their targeted checks.
 
 ```sh
 npm run build:server
+npm run format
 npm run typecheck
 npm run lint
-npm run format:check
 ```
 
-All exited with status 0. Lint reported `Found 0 warnings and 0 errors`.
-Formatting reported `All matched files use the correct format`.
+All exit 0. Full command output, retries, browser screenshots and execution metadata
+are retained in the implementation report's `/tmp` evidence directory.
 
 ## Coverage boundary
 
-| Surface                                     | Exercised                                                                           |
-| ------------------------------------------- | ----------------------------------------------------------------------------------- |
-| macOS daemon and client WebSocket API       | Real isolated daemon with independent clients                                       |
-| Chromium desktop layout on macOS            | Actual drag, screenshots, and recording                                             |
-| Chromium compact layout on macOS            | Independent context, reverse workspace drag, tab switcher, reload, and Pinned order |
-| Native iOS / Android                        | Not exercised                                                                       |
-| Packaged Electron Desktop / Windows / Linux | Not exercised                                                                       |
+| Surface                              | Exercised                                                                         |
+| ------------------------------------ | --------------------------------------------------------------------------------- |
+| macOS daemon and WebSocket API       | Isolated real daemon and independent clients                                      |
+| Chromium desktop and compact layouts | Real drag, reload and physical disconnect/reconnect                               |
+| Split-pane exact move                | Store/controller and operation tests; real daemon receives the same move contract |
+| Native iOS / Android                 | Not exercised                                                                     |
+| Packaged Electron / Windows / Linux  | Not exercised                                                                     |
 
-The compact screenshots are Web evidence, not native mobile acceptance. The first
-explicit drag establishes a shared scope. This change synchronizes relative order
-within a pane; it does not synchronize open/closed tabs, pane membership, or focus.
-Cross-daemon interleaving and project-header ordering remain device-local.
+Compact browser evidence does not establish native mobile acceptance. Ordering does
+not open or close another device's tabs or move its focus or pane membership.
+File/browser targets use the same complete shared scope. Cross-host interleaving and
+project-header ordering remain local. Inventory retention and explicit forget follow
+[the persistence contract](../../data-model.md#shared-ordering).

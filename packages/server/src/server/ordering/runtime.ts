@@ -8,20 +8,26 @@ export interface OrderingRuntime {
   dispose(): void;
 }
 
-export async function createOrderingRuntime(input: {
+export interface CreateOrderingRuntimeInput {
   paseoHome: string;
   projects: ProjectRegistry & Required<Pick<ProjectRegistry, "subscribeToMutations">>;
   workspaces: WorkspaceRegistry & Required<Pick<WorkspaceRegistry, "subscribeToMutations">>;
   logger: Logger;
-}): Promise<OrderingRuntime> {
-  const service = new OrderingService(join(input.paseoHome, "projects", "ui-order.json"), validate);
+}
+
+export async function createOrderingRuntime(
+  input: CreateOrderingRuntimeInput,
+): Promise<OrderingRuntime> {
+  const service = new OrderingService({
+    filePath: join(input.paseoHome, "projects", "ui-order.json"),
+    validate,
+  });
   await service.initialize();
   await prune();
   const releases = [
     input.workspaces.subscribeToMutations((mutation) => {
-      if (mutation.kind !== "upsert") return prune().catch(reportPruneFailure);
-      if (!mutation.workspace?.pinnedAt)
-        return service.removePinned(mutation.workspaceId).catch(reportPruneFailure);
+      if (mutation.kind !== "upsert" || !mutation.workspace?.pinnedAt)
+        return prune().catch(reportPruneFailure);
     }),
     input.projects.subscribeToMutations((mutation) => {
       if (mutation.kind !== "upsert") return prune().catch(reportPruneFailure);
@@ -65,22 +71,28 @@ export async function createOrderingRuntime(input: {
   }
 
   async function prune(): Promise<void> {
-    const [projects, workspaces] = await Promise.all([
-      input.projects.list(),
-      input.workspaces.list(),
-    ]);
     await service.prune({
-      projectIds: new Set(
-        projects.filter((project) => !project.archivedAt).map((project) => project.projectId),
-      ),
-      workspaceIds: new Set(
-        workspaces
-          .filter((workspace) => !workspace.archivedAt)
-          .map((workspace) => workspace.workspaceId),
-      ),
+      load: async () => {
+        const [projects, workspaces] = await Promise.all([
+          input.projects.list(),
+          input.workspaces.list(),
+        ]);
+        return {
+          pinnedWorkspaceIds: new Set(
+            workspaces
+              .filter((workspace) => !workspace.archivedAt && workspace.pinnedAt)
+              .map((workspace) => workspace.workspaceId),
+          ),
+          projectIds: new Set(
+            projects.filter((project) => !project.archivedAt).map((project) => project.projectId),
+          ),
+          workspaceIds: new Set(
+            workspaces
+              .filter((workspace) => !workspace.archivedAt)
+              .map((workspace) => workspace.workspaceId),
+          ),
+        };
+      },
     });
-    for (const workspace of workspaces) {
-      if (!workspace.pinnedAt) await service.removePinned(workspace.workspaceId);
-    }
   }
 }

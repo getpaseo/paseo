@@ -5,8 +5,10 @@ export const fr: TranslationResources = {
   sharedOrdering: {
     unsupported:
       "Mettez à jour cet hôte pour synchroniser l’ordre des espaces de travail et des onglets entre appareils.",
-    failed: "Impossible de synchroniser l’ordre.",
-    conflict: "Un autre appareil a modifié l’ordre. L’ordre partagé a été restauré.",
+    failed:
+      "L’ordre attend la synchronisation. Reconnectez-vous ou déplacez un élément pour réessayer.",
+    conflict:
+      "L’ordre reste en attente après des modifications concurrentes. Reconnectez-vous ou déplacez un élément pour réessayer.",
   },
   paneFind: {
     connectionFailure:

@@ -20,8 +20,12 @@ import { TerminalProfileSchema } from "./terminal-profile.js";
 export { TerminalProfileSchema, type TerminalProfile } from "./terminal-profile.js";
 import { z } from "zod";
 import {
+  OrderTargetsSetRequestSchema,
+  OrderDeviceForgetRequestSchema,
   OrderListRequestSchema,
   OrderSetRequestSchema,
+  OrderTargetsSetResponseSchema,
+  OrderDeviceForgetResponseSchema,
   OrderListResponseSchema,
   OrderSetResponseSchema,
   OrderUpdateSchema,
@@ -3228,6 +3232,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProjectRemoveRequestSchema,
   WorkspaceTitleSetRequestSchema,
   WorkspacePinSetRequestSchema,
+  OrderTargetsSetRequestSchema,
+  OrderDeviceForgetRequestSchema,
   OrderListRequestSchema,
   OrderSetRequestSchema,
   WorkspaceLabelListRequestSchema,
@@ -3603,6 +3609,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceLabels: z.boolean().optional(),
         // COMPAT(sharedOrdering): added in v0.11.x, remove optional parsing after 2027-04-12.
         sharedOrdering: z.boolean().optional(),
+        // COMPAT(sharedOrderingTargets): added in v0.11.x, remove optional parsing after 2027-04-17.
+        sharedOrderingTargets: z.boolean().optional(),
         // COMPAT(workspaceSetupRun): added in v0.8.0, remove gate after 2027-09-02.
         workspaceSetupRun: z.boolean().optional(),
         // COMPAT(workspaceTerminals): added in v0.8.0, remove gate after 2027-09-05.
@@ -6903,6 +6911,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ArtifactMessageSchema,
   AgentUpdateMessageSchema,
   WorkspaceUpdateMessageSchema,
+  OrderTargetsSetResponseSchema,
+  OrderDeviceForgetResponseSchema,
   OrderListResponseSchema,
   OrderSetResponseSchema,
   OrderUpdateSchema,

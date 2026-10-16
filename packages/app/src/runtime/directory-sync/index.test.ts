@@ -39,6 +39,10 @@ class FakeDirectoryClient {
   }
 
   supportsWorkspaceLabels = false;
+  orderingFailure = false;
+  observeOrders() {
+    return subscriptionFixture(Promise.reject(new Error("ordering unavailable")), () => () => {});
+  }
   listWorkspaceLabelsCalls = 0;
   fetchAgentsCalls = 0;
   lastAgentOptions: unknown;
@@ -191,7 +195,9 @@ class FakeDirectoryClient {
   }
 
   getLastServerInfoMessage() {
-    return this.supportsWorkspaceLabels ? { features: { workspaceLabels: true } } : null;
+    return this.supportsWorkspaceLabels
+      ? { features: { workspaceLabels: true, sharedOrderingTargets: this.orderingFailure } }
+      : null;
   }
 }
 
@@ -1812,3 +1818,16 @@ it.each(["before", "during", "before-metadata", "damaged"] as const)(
     }
   },
 );
+
+it("ordering failure still connects workspace labels independently", async () => {
+  const { client, directory } = createDirectory("ordering-labels-independent", {
+    workspaceLabels: true,
+  });
+  client.orderingFailure = true;
+  try {
+    await expect(directory.connectWorkspaceLabels()).rejects.toThrow("ordering unavailable");
+    expect(client.listWorkspaceLabelsCalls).toBeGreaterThan(0);
+  } finally {
+    directory.dispose();
+  }
+});

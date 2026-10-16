@@ -169,7 +169,7 @@ export function useSidebarWorkspacesList(options?: {
       orderStore.setProjectOrder(updates.projectOrder);
     }
     for (const { projectViewKey, order } of updates.workspaceOrders) {
-      orderStore.setWorkspaceOrder(projectViewKey, order);
+      orderStore.setWorkspaceOrder({ projectViewKey, keys: order });
     }
   }, [persistedProjectOrder, projects]);
 

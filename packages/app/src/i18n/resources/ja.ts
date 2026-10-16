@@ -5,8 +5,9 @@ export const ja: TranslationResources = {
   sharedOrdering: {
     unsupported:
       "ワークスペースとタブの順序をデバイス間で同期するには、このホストを更新してください。",
-    failed: "順序を同期できませんでした。",
-    conflict: "別のデバイスが順序を変更しました。共有の順序を復元しました。",
+    failed: "順序は同期待ちです。再接続するか、項目を移動して再試行してください。",
+    conflict:
+      "変更が競合したため順序は同期待ちです。再接続するか、項目を移動して再試行してください。",
   },
   paneFind: {
     connectionFailure:

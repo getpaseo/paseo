@@ -1,5 +1,10 @@
 import { expect, test } from "vitest";
-import { applySharedOrder, OrderSetRequestSchema } from "./ordering.js";
+import {
+  applySharedOrder,
+  OrderSetRequestSchema,
+  OrderListResponseSchema,
+  OrderTargetsSetRequestSchema,
+} from "./ordering.js";
 
 test("shared order preserves local-only tabs and other hosts in their slots", () => {
   expect(
@@ -23,4 +28,23 @@ test("wire validation rejects invalid revisions and unbounded ordering payloads"
   expect(
     OrderSetRequestSchema.safeParse({ ...request, order: Array(4097).fill("a") }).success,
   ).toBe(false);
+});
+
+test("old order snapshots still parse and inventories cannot select a principal namespace", () => {
+  const old = { type: "ui.order.list.response", payload: { requestId: "old", records: [] } };
+  expect(OrderListResponseSchema.parse(old)).toEqual(old);
+  const request = {
+    type: "ui.order.targets.set.request",
+    requestId: "r",
+    expectedRevision: 0,
+    workspaces: [],
+    principalId: "other",
+    clientId: "spoofed",
+  };
+  expect(OrderTargetsSetRequestSchema.parse(request)).toEqual({
+    type: "ui.order.targets.set.request",
+    requestId: "r",
+    expectedRevision: 0,
+    workspaces: [],
+  });
 });

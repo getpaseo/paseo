@@ -151,6 +151,12 @@ import { useHostBadges } from "@/hosts/use-host-badges";
 import { useSidebarRowItems } from "@/components/sidebar/display-preferences/model";
 import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
 
+interface WorkspaceReorderInput {
+  projectViewKey: string;
+  workspaces: SidebarWorkspacePlacement[];
+  movedKey: string;
+}
+
 const workspaceKeyExtractor = (workspace: SidebarWorkspacePlacement) => workspace.workspaceKey;
 
 const projectViewKeyExtractor = (project: SidebarProjectEntry) => project.viewKey;
@@ -1577,7 +1583,7 @@ function ProjectBlock({
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
   onToggleCollapsed: (projectViewKey: string) => void;
   onWorkspacePress?: () => void;
-  onWorkspaceReorder: (projectViewKey: string, workspaces: SidebarWorkspacePlacement[]) => void;
+  onWorkspaceReorder: (input: WorkspaceReorderInput) => void;
   onWorktreeCreated?: (workspaceId: string) => void;
   drag: () => void;
   isDragging: boolean;
@@ -1681,8 +1687,8 @@ function ProjectBlock({
   );
 
   const handleWorkspaceDragEnd = useCallback(
-    (workspaces: SidebarWorkspacePlacement[]) => {
-      onWorkspaceReorder(project.viewKey, workspaces);
+    (workspaces: SidebarWorkspacePlacement[], movedKey: string) => {
+      onWorkspaceReorder({ projectViewKey: project.viewKey, workspaces, movedKey });
     },
     [onWorkspaceReorder, project.viewKey],
   );
@@ -1908,11 +1914,7 @@ export function SidebarWorkspaceList({
   useEffect(
     () =>
       observeOrderErrors((error) => {
-        toast.error(
-          error.detail
-            ? `${t(`sharedOrdering.${error.kind}`)}: ${error.detail}`
-            : t(`sharedOrdering.${error.kind}`),
-        );
+        toast.error(t(`sharedOrdering.${error.kind}`));
       }),
     [toast, t],
   );
@@ -1933,7 +1935,7 @@ export function SidebarWorkspaceList({
   const getPinnedWorkspaceOrder = useSidebarOrderStore((state) => state.getPinnedWorkspaceOrder);
   const setPinnedWorkspaceOrder = useSidebarOrderStore((state) => state.setPinnedWorkspaceOrder);
   const handlePinnedWorkspaceReorder = useCallback(
-    (reorderedWorkspaces: SidebarWorkspacePlacement[]) => {
+    (reorderedWorkspaces: SidebarWorkspacePlacement[], movedKey: string) => {
       const reorderedWorkspaceKeys = reorderedWorkspaces.map((workspace) => workspace.workspaceKey);
       const currentOrder = getPinnedWorkspaceOrder();
       if (
@@ -1945,13 +1947,10 @@ export function SidebarWorkspaceList({
         return;
       }
 
-      setPinnedWorkspaceOrder(
-        mergeWithRemainder({
-          currentOrder,
-          reorderedVisibleKeys: reorderedWorkspaceKeys,
-        }),
-        { userInitiated: true },
-      );
+      setPinnedWorkspaceOrder({
+        keys: mergeWithRemainder({ currentOrder, reorderedVisibleKeys: reorderedWorkspaceKeys }),
+        gesture: { userInitiated: true, movedKey },
+      });
     },
     [getPinnedWorkspaceOrder, setPinnedWorkspaceOrder],
   );
@@ -2051,7 +2050,7 @@ function SidebarGroupedModeList({
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
-  onPinnedWorkspaceReorder: (workspaces: SidebarWorkspacePlacement[]) => void;
+  onPinnedWorkspaceReorder: (workspaces: SidebarWorkspacePlacement[], movedKey: string) => void;
   listHeaderComponent?: ReactElement | null;
   sidebarFilterEmpty: boolean;
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
@@ -2127,7 +2126,7 @@ function ProjectModeList({
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>;
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
-  onPinnedWorkspaceReorder: (workspaces: SidebarWorkspacePlacement[]) => void;
+  onPinnedWorkspaceReorder: (workspaces: SidebarWorkspacePlacement[], movedKey: string) => void;
 }) {
   const { t } = useTranslation();
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
@@ -2243,7 +2242,7 @@ function ProjectModeList({
   );
 
   const handleWorkspaceReorder = useCallback(
-    (projectViewKey: string, reorderedWorkspaces: SidebarWorkspacePlacement[]) => {
+    ({ projectViewKey, workspaces: reorderedWorkspaces, movedKey }: WorkspaceReorderInput) => {
       const reorderedWorkspaceKeys = reorderedWorkspaces.map((workspace) => workspace.workspaceKey);
       const currentWorkspaceOrder = getWorkspaceOrder(projectViewKey);
       if (
@@ -2255,14 +2254,14 @@ function ProjectModeList({
         return;
       }
 
-      setWorkspaceOrder(
+      setWorkspaceOrder({
         projectViewKey,
-        mergeWithRemainder({
+        keys: mergeWithRemainder({
           currentOrder: currentWorkspaceOrder,
           reorderedVisibleKeys: reorderedWorkspaceKeys,
         }),
-        { userInitiated: true },
-      );
+        gesture: { userInitiated: true, movedKey },
+      });
     },
     [getWorkspaceOrder, setWorkspaceOrder],
   );

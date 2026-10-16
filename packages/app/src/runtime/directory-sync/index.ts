@@ -654,16 +654,18 @@ export class DirectorySync {
   async connectWorkspaceLabels(): Promise<void> {
     const { client } = this.requireOnline();
     const serverInfo = client.getLastServerInfoMessage();
-    await sharedOrdering.connect({
-      serverId: this.serverId,
-      client,
-      supported: serverInfo?.features?.sharedOrdering === true,
-    });
-    await workspaceLabels.connect({
-      serverId: this.serverId,
-      client,
-      supportsWorkspaceLabels: serverInfo?.features?.workspaceLabels === true,
-    });
+    await Promise.all([
+      sharedOrdering.connect({
+        serverId: this.serverId,
+        client,
+        supported: serverInfo?.features?.sharedOrderingTargets === true,
+      }),
+      workspaceLabels.connect({
+        serverId: this.serverId,
+        client,
+        supportsWorkspaceLabels: serverInfo?.features?.workspaceLabels === true,
+      }),
+    ]);
   }
 
   acceptWorkspaces(workspaces: readonly WorkspaceDescriptor[]): void {

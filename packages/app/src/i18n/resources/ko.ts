@@ -4,8 +4,9 @@ import { pluginSettings } from "./plugin-settings";
 export const ko: TranslationResources = {
   sharedOrdering: {
     unsupported: "기기 간 워크스페이스와 탭 순서를 동기화하려면 이 호스트를 업데이트하세요.",
-    failed: "순서를 동기화할 수 없습니다.",
-    conflict: "다른 기기에서 순서를 변경했습니다. 공유 순서를 복원했습니다.",
+    failed: "순서가 동기화 대기 중입니다. 다시 연결하거나 항목을 이동하여 재시도하세요.",
+    conflict:
+      "변경 충돌로 순서가 동기화 대기 중입니다. 다시 연결하거나 항목을 이동하여 재시도하세요.",
   },
   paneFind: {
     connectionFailure: "이 채팅을 검색할 수 없습니다. 호스트 연결을 확인하고 다시 시도하세요.",

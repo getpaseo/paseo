@@ -11,13 +11,9 @@ import { useSessionStore } from "@/stores/session-store";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { isOrderGesture, observeOrderIntents, reportOrderError, type OrderIntent } from "./intents";
+import { createOrderMove } from "./move";
+import { collectAllTabs, collectAllPanes } from "@/stores/workspace-layout-actions";
 import { OrderReplica, OrderConflictError } from "./replica";
-
-/** Retain entries this device cannot render; reorder only its observed subset. */
-function mergeIntent(shared: readonly string[], local: readonly string[]): string[] {
-  const existing = new Set(shared);
-  return [...applySharedOrder(shared, local), ...local.filter((key) => !existing.has(key))];
-}
 
 function projects() {
   return buildWorkspaceStructureProjects({
@@ -29,16 +25,28 @@ function projects() {
   });
 }
 
-type OrderingClient = Pick<DaemonClient, "setOrder" | "observeOrders">;
+type OrderingClient = Pick<DaemonClient, "setOrder" | "observeOrders" | "setOrderTargets">;
 
 interface HostOrdering {
   client: OrderingClient;
   replica: OrderReplica;
   release: () => void;
   ready: Promise<void>;
+  deviceRevision: number | null;
+  inventory: string | null;
+  syncing: Promise<void> | null;
 }
 
+export interface ConnectOrderingInput {
+  serverId: string;
+  client: OrderingClient;
+  supported: boolean;
+}
 class SharedOrderingController {
+  private readonly replicas = new Map<string, OrderReplica>();
+  constructor() {
+    observeOrderIntents((intent) => this.publish(intent));
+  }
   private readonly hosts = new Map<string, HostOrdering>();
   private applying = false;
   private readonly unsupported = new Set<string>();
@@ -48,7 +56,6 @@ class SharedOrderingController {
   private observeStores(): void {
     if (this.observing) return;
     this.observing = true;
-    observeOrderIntents((intent) => this.publish(intent));
     useSidebarOrderStore.subscribe((state, previous) => {
       if (
         state.workspaceOrderByProject !== previous.workspaceOrderByProject ||
@@ -57,63 +64,64 @@ class SharedOrderingController {
         this.reapply();
     });
     useWorkspaceLayoutStore.subscribe((state, previous) => {
-      if (state.layoutByWorkspace !== previous.layoutByWorkspace) this.reapply();
+      if (
+        state.layoutByWorkspace !== previous.layoutByWorkspace ||
+        state.sheetsByWorkspace !== previous.sheetsByWorkspace
+      ) {
+        this.reapply();
+        this.syncInventories();
+      }
     });
     useSessionStore.subscribe((state, previous) => {
       if (
         [...this.hosts.keys()].some(
           (id) =>
             state.sessions[id]?.workspaces !== previous.sessions[id]?.workspaces ||
-            state.sessions[id]?.projects !== previous.sessions[id]?.projects,
+            state.sessions[id]?.projects !== previous.sessions[id]?.projects ||
+            state.sessions[id]?.hasHydratedWorkspaces !==
+              previous.sessions[id]?.hasHydratedWorkspaces,
         )
-      )
+      ) {
         this.reapply();
+        this.syncInventories();
+      }
     });
+    useWorkspaceLayoutStore.persist.onFinishHydration(() => this.syncInventories());
   }
 
-  async connect(input: {
-    serverId: string;
-    client: OrderingClient;
-    supported: boolean;
-  }): Promise<void> {
+  async connect(input: ConnectOrderingInput): Promise<void> {
     const existing = this.hosts.get(input.serverId);
     if (existing?.client === input.client) return existing.ready;
     this.disconnect(input.serverId);
     this.observeStores();
-    // COMPAT(sharedOrdering): added in v0.11.x, remove gate after 2027-04-12 once daemon floor supports sharedOrdering.
+    // COMPAT(sharedOrderingTargets): added in v0.11.x, remove gate after 2027-04-17 once daemon floor supports target inventories.
     if (!input.supported) {
       this.unsupported.add(input.serverId);
       return;
     }
     const subscription = input.client.observeOrders();
-    const replica = new OrderReplica(
-      input.client,
-      (records) => this.apply(input.serverId, records),
-      (error) => {
-        if (error instanceof OrderConflictError) {
-          reportOrderError({ kind: "conflict" });
-          return;
-        }
-        reportOrderError({
-          kind: "failed",
-          detail: error instanceof Error ? error.message : undefined,
-        });
-        console.error("[SharedOrdering] Order update failed", { serverId: input.serverId, error });
-      },
-    );
+    const replica = this.replica(input.serverId);
     const host: HostOrdering = {
       client: input.client,
       replica,
       release: () => {
-        replica.dispose();
+        replica.pause();
         void subscription.release().catch(() => undefined);
       },
       ready: subscription.ready.then(() => undefined),
+      deviceRevision: null,
+      inventory: null,
+      syncing: null,
     };
     this.hosts.set(input.serverId, host);
     subscription.subscribe({
       snapshot: (snapshot) => {
-        if (this.hosts.get(input.serverId) === host) replica.snapshot(snapshot.records);
+        if (this.hosts.get(input.serverId) !== host) return;
+        if (snapshot.deviceRevision === undefined)
+          throw new Error("Ordering target revision is missing");
+        host.deviceRevision = snapshot.deviceRevision;
+        replica.snapshot(snapshot.records);
+        this.syncInventories();
       },
       update: (message) => {
         if (this.hosts.get(input.serverId) === host && message.type === "ui.order.update")
@@ -173,7 +181,8 @@ class SharedOrderingController {
             ...available.filter((key) => !present.has(key)),
           ];
           const next = applySharedOrder(complete, shared);
-          if (!ordersEqual(next, store.pinnedWorkspaceOrder)) store.setPinnedWorkspaceOrder(next);
+          if (!ordersEqual(next, store.pinnedWorkspaceOrder))
+            store.setPinnedWorkspaceOrder({ keys: next });
           continue;
         }
         const project = structure.find((candidate) =>
@@ -189,87 +198,176 @@ class SharedOrderingController {
           ...project.workspaceKeys.filter((key) => !currentSet.has(key)),
         ];
         const next = applySharedOrder(complete, shared);
-        if (!ordersEqual(current, next)) store.setWorkspaceOrder(project.viewKey, next);
+        if (!ordersEqual(current, next))
+          store.setWorkspaceOrder({ projectViewKey: project.viewKey, keys: next });
       }
     } finally {
       this.applying = false;
     }
   }
 
-  private affectsUnsupportedHost(intent: OrderIntent): boolean {
-    if (intent.kind === "pinned") return this.unsupported.size > 0;
-    if (intent.kind === "tabs")
-      return [...this.unsupported].some((serverId) =>
-        [...(useSessionStore.getState().sessions[serverId]?.workspaces.values() ?? [])].some(
-          (workspace) => `${serverId}:${workspace.id}` === intent.workspaceKey,
-        ),
-      );
-    return (
-      projects()
-        .find((project) => project.viewKey === intent.projectViewKey)
-        ?.hosts.some((host) => this.unsupported.has(host.serverId)) === true
-    );
+  private replica(serverId: string): OrderReplica {
+    let replica = this.replicas.get(serverId);
+    if (replica) return replica;
+    replica = new OrderReplica({
+      port: {
+        setOrder: async (input) => {
+          const host = this.hosts.get(serverId);
+          if (!host) throw new Error("Ordering host is offline");
+          await this.syncInventory(serverId, host);
+          if (this.hosts.get(serverId) !== host) throw new Error("Ordering connection changed");
+          return host.client.setOrder(input);
+        },
+      },
+      apply: (records) => this.apply(serverId, records),
+      failed: (error) => {
+        reportOrderError({ kind: error instanceof OrderConflictError ? "conflict" : "failed" });
+        console.error("[SharedOrdering] Order remains pending", { serverId, error });
+      },
+    });
+    this.replicas.set(serverId, replica);
+    return replica;
   }
 
-  private publish(intent: OrderIntent): void {
-    if (this.affectsUnsupportedHost(intent)) reportOrderError({ kind: "unsupported" });
-    if (intent.kind === "tabs") {
-      for (const [serverId, host] of this.hosts) {
-        const session = useSessionStore.getState().sessions[serverId];
-        const workspace = [...(session?.workspaces.values() ?? [])].find(
-          (candidate) => `${serverId}:${candidate.id}` === intent.workspaceKey,
-        );
-        if (!workspace) continue;
-        const scope: OrderScope = { kind: "tabs", workspaceId: workspace.id };
-        const tabs = useWorkspaceLayoutStore.getState().getWorkspaceTabs(intent.workspaceKey);
-        const keys = [
-          ...new Set(
-            tabs
-              .filter(
-                (tab) =>
-                  tab.target.kind !== "new_tab" &&
-                  tab.target.kind !== "draft" &&
-                  tab.target.kind !== "commit_diff",
-              )
-              .map(tabKey),
-          ),
-        ];
-        host.replica.reorder(scope, mergeIntent(host.replica.order(scope), keys));
-      }
-      return;
-    }
-    const structure = projects();
+  private inventory(serverId: string) {
+    const session = useSessionStore.getState().sessions[serverId];
+    const store = useWorkspaceLayoutStore.getState();
+    if (!useWorkspaceLayoutStore.persist.hasHydrated() || !session?.hasHydratedWorkspaces)
+      return null;
+    return [...session.workspaces.values()].flatMap((workspace) => {
+      const workspaceKey = `${serverId}:${workspace.id}`;
+      const layout = store.layoutByWorkspace[workspaceKey];
+      const sheets = store.sheetsByWorkspace[workspaceKey] ?? [];
+      const tabs = [
+        ...(layout ? collectAllTabs(layout.root) : []),
+        ...sheets.map((sheet) => sheet.tab),
+      ];
+      const targets = [
+        ...new Set(tabs.map(tabKey).filter((key) => !key.startsWith("local:"))),
+      ].sort();
+      return targets.length ? [{ workspaceId: workspace.id, targets }] : [];
+    });
+  }
+  private syncInventories(): void {
     for (const [serverId, host] of this.hosts) {
-      const session = useSessionStore.getState().sessions[serverId];
-      if (!session) continue;
-      const store = useSidebarOrderStore.getState();
-      if (intent.kind === "pinned") {
-        const scope: OrderScope = { kind: "pinned" };
-        const keys = store.pinnedWorkspaceOrder.flatMap((key) => {
-          const workspace = [...session.workspaces.values()].find(
-            (candidate) => `${serverId}:${candidate.id}` === key && candidate.pinnedAt,
-          );
-          return workspace ? [workspace.id] : [];
+      if (host.deviceRevision === null || this.inventory(serverId) === null) continue;
+      void this.syncInventory(serverId, host).catch((error) => {
+        console.error("[SharedOrdering] Target inventory remains pending", { serverId, error });
+        reportOrderError({ kind: "failed" });
+      });
+    }
+  }
+  private async syncInventory(serverId: string, host: HostOrdering): Promise<void> {
+    if (host.syncing) {
+      await host.syncing;
+      return this.syncInventory(serverId, host);
+    }
+    const workspaces = this.inventory(serverId);
+    if (workspaces === null || host.deviceRevision === null)
+      throw new Error("Ordering inventory is not ready");
+    const encoded = JSON.stringify(workspaces);
+    if (encoded === host.inventory) return;
+    host.syncing = (async () => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (this.hosts.get(serverId) !== host) throw new Error("Ordering connection changed");
+        const result = await host.client.setOrderTargets({
+          expectedRevision: host.deviceRevision!,
+          workspaces,
         });
-        host.replica.reorder(scope, mergeIntent(host.replica.order(scope), keys));
-      } else {
-        const project = structure.find((candidate) => candidate.viewKey === intent.projectViewKey);
-        for (const placement of project?.hosts ?? []) {
-          if (placement.serverId !== serverId) continue;
-          const scope: OrderScope = { kind: "workspaces", projectId: placement.projectId };
-          const keys = store.getWorkspaceOrder(intent.projectViewKey).flatMap((key) => {
-            const workspace = [...session.workspaces.values()].find(
-              (candidate) =>
-                `${serverId}:${candidate.id}` === key &&
-                candidate.projectId === placement.projectId,
-            );
-            return workspace ? [workspace.id] : [];
-          });
-          host.replica.reorder(scope, mergeIntent(host.replica.order(scope), keys));
+        host.deviceRevision = result.revision;
+        if (result.accepted) {
+          host.inventory = encoded;
+          host.replica.retry();
+          return;
         }
       }
+      throw new OrderConflictError();
+    })();
+    try {
+      await host.syncing;
+    } finally {
+      host.syncing = null;
+    }
+    // Closing the last target during an in-flight publication must send the new empty inventory too.
+    return this.syncInventory(serverId, host);
+  }
+
+  private publishTabs(intent: Extract<OrderIntent, { kind: "tabs" }>): void {
+    const sessions = useSessionStore.getState().sessions;
+    for (const [serverId, session] of Object.entries(sessions)) {
+      const workspace = [...session.workspaces.values()].find(
+        (w) => `${serverId}:${w.id}` === intent.workspaceKey,
+      );
+      if (!workspace) continue;
+      if (this.unsupported.has(serverId)) {
+        reportOrderError({ kind: "unsupported" });
+        return;
+      }
+      const layout = useWorkspaceLayoutStore.getState().layoutByWorkspace[intent.workspaceKey];
+      if (!layout) return;
+      const pane = collectAllPanes(layout.root).find((p) => p.id === intent.paneId);
+      if (!pane) return;
+      const tabs = collectAllTabs({ kind: "pane", pane });
+      const moved = tabs.find((tab) => tab.tabId === intent.movedTabId);
+      if (!moved || tabKey(moved).startsWith("local:")) return;
+      if (!this.hosts.has(serverId) || this.hosts.get(serverId)!.deviceRevision === null)
+        reportOrderError({ kind: "failed" });
+      this.replica(serverId).reorder({
+        scope: { kind: "tabs", workspaceId: workspace.id },
+        move: createOrderMove({
+          moved: tabKey(moved),
+          order: tabs.map(tabKey).filter((key) => !key.startsWith("local:")),
+        }),
+      });
+    }
+  }
+  private publish(intent: OrderIntent): void {
+    if (intent.kind === "tabs") return this.publishTabs(intent);
+    const sessions = useSessionStore.getState().sessions;
+    for (const [serverId, session] of Object.entries(sessions)) {
+      const moved = [...session.workspaces.values()].find(
+        (w) => `${serverId}:${w.id}` === intent.moved,
+      );
+      if (!moved) continue;
+      const projectId = moved.projectId;
+      const project =
+        intent.kind === "workspaces"
+          ? projects().find((p) => p.viewKey === intent.projectViewKey)
+          : null;
+      if (
+        intent.kind === "workspaces" &&
+        !project?.hosts.some((h) => h.serverId === serverId && h.projectId === projectId)
+      )
+        return;
+      const ids = new Map(
+        [...session.workspaces.values()]
+          .filter((w) =>
+            intent.kind === "pinned" ? Boolean(w.pinnedAt) : w.projectId === projectId,
+          )
+          .map((w) => [`${serverId}:${w.id}`, w.id]),
+      );
+      const projectOrder = (keys: string[]) =>
+        keys.flatMap((key) => {
+          const id = ids.get(key);
+          return id ? [id] : [];
+        });
+      const before = projectOrder(intent.before);
+      const after = projectOrder(intent.after);
+      if (ordersEqual(before, after)) return;
+      if (this.unsupported.has(serverId)) {
+        reportOrderError({ kind: "unsupported" });
+        return;
+      }
+      const scope: OrderScope =
+        intent.kind === "pinned" ? { kind: "pinned" } : { kind: "workspaces", projectId };
+      if (!this.hosts.has(serverId) || this.hosts.get(serverId)!.deviceRevision === null)
+        reportOrderError({ kind: "failed" });
+      this.replica(serverId).reorder({
+        scope,
+        move: createOrderMove({ moved: moved.id, order: after }),
+      });
+      return;
     }
   }
 }
-
 export const sharedOrdering = new SharedOrderingController();

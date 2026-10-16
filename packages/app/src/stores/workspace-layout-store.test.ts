@@ -2683,7 +2683,11 @@ describe("workspace-layout-store actions", () => {
       intent: "reveal",
     });
 
-    store.reorderTabs(workspaceKey, [thirdTabId!, firstTabId!]);
+    store.reorderTabs({
+      workspaceKey,
+      tabIds: [thirdTabId!, firstTabId!],
+      movedTabId: thirdTabId!,
+    });
     const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
 
     expect(findPaneById(layout.root, "main")).toEqual({
@@ -2752,7 +2756,12 @@ describe("workspace-layout-store actions", () => {
 
     store.moveTabToPane(workspaceKey, fourthTabId!, splitPaneId!);
     store.focusPane(workspaceKey, "main");
-    store.reorderTabsInPane(workspaceKey, splitPaneId!, [fourthTabId!, thirdTabId!]);
+    store.reorderTabsInPane({
+      workspaceKey,
+      paneId: splitPaneId!,
+      tabIds: [fourthTabId!, thirdTabId!],
+      movedTabId: fourthTabId!,
+    });
     const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
 
     expect(splitPaneId).toBe("pane_34343434-3434-3434-3434-343434343434");

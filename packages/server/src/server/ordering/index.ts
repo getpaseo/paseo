@@ -2,6 +2,9 @@ import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import {
   OrderRecordSchema,
+  OrderTargetsSetRequestSchema,
+  OrderSetRequestSchema,
+  OrderSetResponseSchema,
   orderScopeKey,
   ordersEqual,
   type OrderRecord,
@@ -13,123 +16,269 @@ export interface OrderChange {
   scope: OrderScope;
   record: OrderRecord | null;
 }
-export interface OrderSetInput {
-  scope: OrderScope;
-  expectedRevision: number;
-  order: string[];
+export type OrderSetInput = Omit<z.infer<typeof OrderSetRequestSchema>, "type" | "requestId">;
+export type OrderSetResult = Omit<z.infer<typeof OrderSetResponseSchema>["payload"], "requestId">;
+export interface OrderingServiceInput {
+  filePath: string;
+  validate: (input: OrderSetInput) => Promise<void>;
+  write?: typeof writeJsonFileAtomic;
 }
-export interface OrderSetResult {
-  accepted: boolean;
-  record: OrderRecord;
+export interface OrderDevice {
+  principalId: string;
+  clientId: string;
 }
-
-/** One daemon authority. Persist before publication; revisions compare within each scope. */
+export interface OrderDeviceLease extends OrderDevice {
+  epoch: number;
+}
+export interface OrderPruneSnapshot {
+  projectIds: ReadonlySet<string>;
+  workspaceIds: ReadonlySet<string>;
+  pinnedWorkspaceIds: ReadonlySet<string>;
+}
+export interface OrderPruneInput {
+  load: () => Promise<OrderPruneSnapshot>;
+}
+export interface OrderSubscriptionInput {
+  principalId: string;
+  listener: (change: OrderChange) => void;
+}
+export interface AuthorizedOrderSetInput extends OrderSetInput {
+  principalId: string;
+  device?: OrderDeviceLease;
+}
+export interface OrderTargetsInput extends Omit<
+  z.infer<typeof OrderTargetsSetRequestSchema>,
+  "type" | "requestId"
+> {
+  device: OrderDeviceLease;
+}
+const DeviceSchema = z.object({
+  principalId: z.string(),
+  clientId: z.string(),
+  epoch: z.number().int().nonnegative(),
+  revision: z.number().int().nonnegative(),
+  workspaces: OrderTargetsSetRequestSchema.shape.workspaces,
+});
+const PrincipalSchema = z.object({ principalId: z.string(), records: z.array(OrderRecordSchema) });
+const StateSchema = z.object({
+  principals: z.array(PrincipalSchema),
+  devices: z.array(DeviceSchema),
+});
+type State = z.infer<typeof StateSchema>;
+type Device = z.infer<typeof DeviceSchema>;
+export class OrderDeviceForgottenError extends Error {
+  constructor() {
+    super("Device ordering preferences were forgotten; reconnect to register again");
+    this.name = "OrderDeviceForgottenError";
+  }
+}
 export class OrderingService {
-  private records = new Map<string, OrderRecord>();
-  private readonly listeners = new Set<(change: OrderChange) => void>();
+  private state: State = { principals: [], devices: [] };
+  private readonly listeners = new Set<OrderSubscriptionInput>();
   private queue: Promise<void> = Promise.resolve();
-
-  constructor(
-    private readonly filePath: string,
-    private readonly validate: (input: OrderSetInput) => Promise<void>,
-    private readonly write: (path: string, value: unknown) => Promise<void> = writeJsonFileAtomic,
-  ) {}
-
+  private readonly write: typeof writeJsonFileAtomic;
+  constructor(private readonly input: OrderingServiceInput) {
+    this.write = input.write ?? writeJsonFileAtomic;
+  }
   async initialize(): Promise<void> {
     let raw: string;
     try {
-      raw = await readFile(this.filePath, "utf8");
+      raw = await readFile(this.input.filePath, "utf8");
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
       throw error;
     }
-    const records = z.array(OrderRecordSchema).parse(JSON.parse(raw));
-    this.records = new Map(records.map((record) => [orderScopeKey(record.scope), record]));
+    const value: unknown = JSON.parse(raw);
+    // COMPAT(sharedOrderingStorage): added in v0.11.x, remove after 2027-04-17 once persisted arrays have upgraded.
+    this.state = Array.isArray(value)
+      ? {
+          principals: [{ principalId: "owner", records: z.array(OrderRecordSchema).parse(value) }],
+          devices: [],
+        }
+      : StateSchema.parse(value);
   }
-
-  list(): OrderRecord[] {
-    return structuredClone([...this.records.values()]);
+  list(principalId: string): OrderRecord[] {
+    return structuredClone(this.records(principalId));
   }
-
-  subscribe(listener: (change: OrderChange) => void): {
-    records: OrderRecord[];
-    unsubscribe: () => void;
-  } {
-    this.listeners.add(listener);
+  lease(device: OrderDevice): OrderDeviceLease {
+    return { ...device, epoch: this.device(device)?.epoch ?? 0 };
+  }
+  deviceRevision(device: OrderDevice): number {
+    return this.device(device)?.revision ?? 0;
+  }
+  subscribe(input: OrderSubscriptionInput) {
+    this.listeners.add(input);
     return {
-      records: this.list(),
+      records: this.list(input.principalId),
       unsubscribe: () => {
-        this.listeners.delete(listener);
+        this.listeners.delete(input);
       },
     };
   }
-
-  set(input: OrderSetInput): Promise<OrderSetResult> {
+  set(input: AuthorizedOrderSetInput): Promise<OrderSetResult> {
     return this.serialize(async () => {
-      await this.validate(input);
-      const key = orderScopeKey(input.scope);
-      const current = this.records.get(key) ?? { scope: input.scope, revision: 0, order: [] };
+      if (input.device) this.assertLease(input.device);
+      await this.input.validate(input);
+      const current = this.records(input.principalId).find(
+        (r) => orderScopeKey(r.scope) === orderScopeKey(input.scope),
+      ) ?? { scope: input.scope, revision: 0, order: [] };
       if (current.revision !== input.expectedRevision)
         return { accepted: false, record: structuredClone(current) };
-      const order = [...new Set(input.order)];
+      let order = [...new Set(input.order)];
+      if (input.scope.kind === "tabs") {
+        const held = this.targets(this.state, input.principalId, input.scope.workspaceId);
+        order = order.filter((key) => held.has(key));
+      }
       if (ordersEqual(current.order, order))
         return { accepted: true, record: structuredClone(current) };
-      const record = { scope: input.scope, revision: current.revision + 1, order };
-      const next = new Map(this.records).set(key, record);
-      await this.commit(next, [{ scope: record.scope, record }]);
+      const record = OrderRecordSchema.parse({
+        scope: input.scope,
+        revision: current.revision + 1,
+        order,
+      });
+      const next = structuredClone(this.state);
+      const records = this.ensureRecords(next, input.principalId);
+      const index = records.findIndex((r) => orderScopeKey(r.scope) === orderScopeKey(input.scope));
+      if (index < 0) records.push(record);
+      else records[index] = record;
+      await this.commit(next);
       return { accepted: true, record: structuredClone(record) };
     });
   }
-
-  removePinned(workspaceId: string): Promise<void> {
+  setTargets(input: OrderTargetsInput) {
     return this.serialize(async () => {
-      const key = orderScopeKey({ kind: "pinned" });
-      const current = this.records.get(key);
-      if (!current?.order.includes(workspaceId)) return;
-      const record = {
-        ...current,
-        revision: current.revision + 1,
-        order: current.order.filter((id) => id !== workspaceId),
+      this.assertLease(input.device);
+      const current = this.device(input.device);
+      const revision = current?.revision ?? 0;
+      if (revision !== input.expectedRevision) return { accepted: false, revision };
+      for (const workspace of input.workspaces)
+        await this.input.validate({
+          scope: { kind: "tabs", workspaceId: workspace.workspaceId },
+          expectedRevision: 0,
+          order: workspace.targets,
+        });
+      const next = structuredClone(this.state);
+      const device: Device = {
+        ...input.device,
+        revision: revision + 1,
+        workspaces: input.workspaces.map((workspace) => ({
+          ...workspace,
+          targets: [...new Set(workspace.targets)],
+        })),
       };
-      await this.commit(new Map(this.records).set(key, record), [{ scope: record.scope, record }]);
+      this.replaceDevice(next, device);
+      this.pruneTargets(next, input.device.principalId);
+      await this.commit(next);
+      return { accepted: true, revision: device.revision };
     });
   }
-
-  prune(input: {
-    projectIds: ReadonlySet<string>;
-    workspaceIds: ReadonlySet<string>;
-  }): Promise<void> {
+  forgetDevice(device: OrderDevice): Promise<void> {
     return this.serialize(async () => {
-      const next = new Map(this.records);
-      const changes: OrderChange[] = [];
-      for (const [key, record] of this.records) {
-        const scope = record.scope;
-        const removed =
-          scope.kind === "workspaces"
-            ? !input.projectIds.has(scope.projectId)
-            : scope.kind === "tabs" && !input.workspaceIds.has(scope.workspaceId);
-        if (removed) {
-          next.delete(key);
-          changes.push({ scope, record: null });
-        } else if (scope.kind !== "tabs") {
-          const order = record.order.filter((id) => input.workspaceIds.has(id));
-          if (ordersEqual(order, record.order)) continue;
-          const updated = { ...record, order, revision: record.revision + 1 };
-          next.set(key, updated);
-          changes.push({ scope, record: updated });
-        }
-      }
-      if (changes.length) await this.commit(next, changes);
+      const current = this.device(device);
+      const next = structuredClone(this.state);
+      // A durable epoch fences every source that observed the previous registration.
+      this.replaceDevice(next, {
+        ...device,
+        epoch: (current?.epoch ?? 0) + 1,
+        revision: (current?.revision ?? 0) + 1,
+        workspaces: [],
+      });
+      this.pruneTargets(next, device.principalId);
+      await this.commit(next);
     });
   }
-
-  private async commit(next: Map<string, OrderRecord>, changes: OrderChange[]): Promise<void> {
-    await this.write(this.filePath, [...next.values()]);
-    this.records = next;
-    for (const change of changes)
-      for (const listener of this.listeners) listener(structuredClone(change));
+  prune(input: OrderPruneInput): Promise<void> {
+    return this.serialize(async () => {
+      const snapshot = await input.load();
+      const next = structuredClone(this.state);
+      for (const principal of next.principals) {
+        principal.records = principal.records.flatMap((record) => {
+          const scope = record.scope;
+          if (scope.kind === "tabs")
+            return snapshot.workspaceIds.has(scope.workspaceId) ? [record] : [];
+          if (scope.kind === "workspaces" && !snapshot.projectIds.has(scope.projectId)) return [];
+          const available =
+            scope.kind === "pinned" ? snapshot.pinnedWorkspaceIds : snapshot.workspaceIds;
+          const order = record.order.filter((id) => available.has(id));
+          return [
+            ordersEqual(order, record.order)
+              ? record
+              : { ...record, order, revision: record.revision + 1 },
+          ];
+        });
+      }
+      for (const device of next.devices)
+        device.workspaces = device.workspaces.filter((workspace) =>
+          snapshot.workspaceIds.has(workspace.workspaceId),
+        );
+      if (JSON.stringify(next) !== JSON.stringify(this.state)) await this.commit(next);
+    });
   }
-
+  private records(principalId: string): OrderRecord[] {
+    return this.state.principals.find((p) => p.principalId === principalId)?.records ?? [];
+  }
+  private ensureRecords(state: State, principalId: string): OrderRecord[] {
+    let principal = state.principals.find((p) => p.principalId === principalId);
+    if (!principal) {
+      principal = { principalId, records: [] };
+      state.principals.push(principal);
+    }
+    return principal.records;
+  }
+  private device(device: OrderDevice): Device | undefined {
+    return this.state.devices.find(
+      (d) => d.principalId === device.principalId && d.clientId === device.clientId,
+    );
+  }
+  private assertLease(device: OrderDeviceLease): void {
+    if ((this.device(device)?.epoch ?? 0) !== device.epoch) throw new OrderDeviceForgottenError();
+  }
+  private replaceDevice(state: State, device: Device): void {
+    const index = state.devices.findIndex(
+      (d) => d.principalId === device.principalId && d.clientId === device.clientId,
+    );
+    if (index < 0) state.devices.push(device);
+    else state.devices[index] = device;
+  }
+  private targets(state: State, principalId: string, workspaceId: string): Set<string> {
+    return new Set(
+      state.devices
+        .filter((d) => d.principalId === principalId)
+        .flatMap((d) =>
+          d.workspaces.filter((w) => w.workspaceId === workspaceId).flatMap((w) => w.targets),
+        ),
+    );
+  }
+  private pruneTargets(state: State, principalId: string): void {
+    const records = this.ensureRecords(state, principalId);
+    for (const record of records) {
+      if (record.scope.kind !== "tabs") continue;
+      const held = this.targets(state, principalId, record.scope.workspaceId);
+      const order = record.order.filter((key) => held.has(key));
+      if (!ordersEqual(order, record.order)) {
+        record.order = order;
+        record.revision++;
+      }
+    }
+  }
+  private async commit(next: State): Promise<void> {
+    await this.write(this.input.filePath, next);
+    const previous = this.state;
+    this.state = next;
+    for (const subscription of this.listeners) {
+      const before =
+        previous.principals.find((p) => p.principalId === subscription.principalId)?.records ?? [];
+      const after = this.records(subscription.principalId);
+      for (const record of after) {
+        const old = before.find((r) => orderScopeKey(r.scope) === orderScopeKey(record.scope));
+        if (old?.revision !== record.revision)
+          subscription.listener({ scope: record.scope, record: structuredClone(record) });
+      }
+      for (const record of before)
+        if (!after.some((r) => orderScopeKey(r.scope) === orderScopeKey(record.scope)))
+          subscription.listener({ scope: record.scope, record: null });
+    }
+  }
   private serialize<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.queue.then(operation);
     this.queue = result.then(

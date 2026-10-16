@@ -1,7 +1,7 @@
 export type OrderIntent =
-  | { kind: "workspaces"; projectViewKey: string }
-  | { kind: "pinned" }
-  | { kind: "tabs"; workspaceKey: string };
+  | { kind: "workspaces"; projectViewKey: string; moved: string; before: string[]; after: string[] }
+  | { kind: "pinned"; moved: string; before: string[]; after: string[] }
+  | { kind: "tabs"; workspaceKey: string; paneId: string; movedTabId: string };
 
 const listeners = new Set<(intent: OrderIntent) => void>();
 let gestureDepth = 0;

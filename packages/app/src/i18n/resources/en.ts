@@ -1,8 +1,9 @@
 export const en = {
   sharedOrdering: {
     unsupported: "Update this host to sync workspace and tab order across devices.",
-    failed: "Could not sync the order.",
-    conflict: "Another device changed the order. The shared order was restored.",
+    failed: "Order is still pending. Reconnect or move an item to retry.",
+    conflict:
+      "Order is still pending after conflicting changes. Reconnect or move an item to retry.",
   },
   paneFind: {
     connectionFailure: "Could not search this chat. Check the host connection and retry.",
