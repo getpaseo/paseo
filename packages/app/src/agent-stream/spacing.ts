@@ -32,9 +32,17 @@ export function getAssistantBlockSpacing(params: {
   return "default";
 }
 
-const isUserMessageItem = (item?: StreamItem | null) => item?.kind === "user_message";
-const isToolSequenceItem = (item?: StreamItem | null) =>
-  item?.kind === "tool_call" || item?.kind === "thought" || item?.kind === "todo_list";
+// A plugin row that a timeline transformer put in place of an item is spaced like that item, so
+// a plugin that redraws tool calls or thoughts keeps them as tight as Paseo's own.
+const spacingKind = (item?: StreamItem | null) =>
+  item?.kind === "plugin" ? item.sourceKind : item?.kind;
+const isUserMessageItem = (item?: StreamItem | null) => spacingKind(item) === "user_message";
+const isAssistantMessageItem = (item?: StreamItem | null) =>
+  spacingKind(item) === "assistant_message";
+const isToolSequenceItem = (item?: StreamItem | null) => {
+  const kind = spacingKind(item);
+  return kind === "tool_call" || kind === "thought" || kind === "todo_list";
+};
 
 export function getGapBetweenStreamItems(
   item: StreamItem | null,
@@ -47,19 +55,19 @@ export function getGapBetweenStreamItems(
   if (isUserMessageItem(item) && isUserMessageItem(belowItem)) {
     return SPACING[1];
   }
-  if (item.kind === "user_message" && belowItem.kind === "assistant_message") {
+  if (isUserMessageItem(item) && isAssistantMessageItem(belowItem)) {
     return 0;
   }
   if (isToolSequenceItem(item) && isToolSequenceItem(belowItem)) {
     return 0;
   }
-  if (item.kind === "user_message" && isToolSequenceItem(belowItem)) {
+  if (isUserMessageItem(item) && isToolSequenceItem(belowItem)) {
     return SPACING[4];
   }
-  if (item.kind === "assistant_message" && isToolSequenceItem(belowItem)) {
+  if (isAssistantMessageItem(item) && isToolSequenceItem(belowItem)) {
     return SPACING[1];
   }
-  if (isToolSequenceItem(item) && belowItem.kind === "assistant_message") {
+  if (isToolSequenceItem(item) && isAssistantMessageItem(belowItem)) {
     return SPACING[1];
   }
   if (isSameAssistantBlockGroup({ item, other: belowItem })) {
