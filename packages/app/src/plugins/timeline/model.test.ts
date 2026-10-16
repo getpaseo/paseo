@@ -1,7 +1,8 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import type { InstalledPlugin } from "../types";
-import { transformTimelineItem } from "./model";
+import type { PluginTimelineStreamItem } from "@/types/stream";
+import { filterReplacedTimelineItems, transformTimelineItem } from "./model";
 
 function plugin(input: {
   id: string;
@@ -36,6 +37,7 @@ function plugin(input: {
       },
     ],
     timelineRenderers: [],
+    timelineFooters: [],
   };
 }
 
@@ -211,5 +213,35 @@ describe("plugin timeline transforms", () => {
       phase: "streaming",
     });
     expect(transformed?.[0]?.id).toBe("summary");
+  });
+});
+
+describe("plugin timeline footer replacements", () => {
+  it("replaces only the owning plugin's exact kind/version even without an inline renderer", () => {
+    const owner = plugin({ id: "reports", transform: () => undefined });
+    owner.timelineFooters = [
+      { id: "pending", Component: () => null, replaces: [{ kind: "card", version: 1 }] },
+    ];
+    const replaced: PluginTimelineStreamItem = {
+      kind: "plugin",
+      id: "reports/1",
+      pluginId: "reports",
+      pluginItemId: "1",
+      itemKind: "card",
+      version: 1,
+      data: null,
+      timestamp: new Date(0),
+    };
+    const otherPlugin = { ...replaced, id: "other/1", pluginId: "other" };
+    const otherVersion = { ...replaced, id: "reports/2", version: 2 };
+    const otherKind = { ...replaced, id: "reports/3", itemKind: "status" };
+    const items = [replaced, otherPlugin, otherVersion, otherKind];
+    expect(filterReplacedTimelineItems(items, [owner])).toEqual([
+      otherPlugin,
+      otherVersion,
+      otherKind,
+    ]);
+    owner.timelineFooters = [];
+    expect(filterReplacedTimelineItems(items, [owner])).toBe(items);
   });
 });

@@ -10,7 +10,11 @@ import {
   type ToolCallItem,
   type UserMessageItem,
 } from "@/types/stream";
-import { transformTimelineItem, type TimelineItemTransform } from "@/plugins/timeline/model";
+import {
+  filterReplacedTimelineItems,
+  transformTimelineItem,
+  type TimelineItemTransform,
+} from "@/plugins/timeline/model";
 import { createStreamPresentation, getStreamItemMessageId } from "./presentation";
 import { buildAgentStreamRenderModel } from "./model";
 
@@ -124,6 +128,34 @@ function rows(result: { tail: StreamItem[]; head: StreamItem[] }): StreamItem[] 
 }
 
 describe("stream presentation through installed plugins", () => {
+  it("removes replaced history and live rows before layout, and restores them when unregistered", () => {
+    const plugin = installProbe("tool_call");
+    plugin.timelineFooters = [
+      { id: "pending", Component: () => null, replaces: [{ kind: "probe", version: 1 }] },
+    ];
+    const transform = installedTransform(plugin);
+    const present = createStreamPresentation();
+    const tail = [toolCall("history", "read")];
+    const head = [toolCall("live", "grep")];
+    const hidden = present({
+      ...presentationOptions,
+      tail,
+      head,
+      transform,
+      filter: (items) => filterReplacedTimelineItems(items, [plugin]),
+    });
+    expect(rows(hidden)).toEqual([]);
+    plugin.timelineFooters = [];
+    const restored = present({
+      ...presentationOptions,
+      tail,
+      head,
+      transform,
+      filter: (items) => filterReplacedTimelineItems(items, [plugin]),
+    });
+    expect(pluginData(rows(restored))).toMatchObject([{ callId: "history" }, { callId: "live" }]);
+  });
+
   it("offers every source tool call to an installed transformer in Overview mode", () => {
     const calls = [toolCall("call-1", "bash"), toolCall("call-2", "read")];
     const rendered = createStreamPresentation()({

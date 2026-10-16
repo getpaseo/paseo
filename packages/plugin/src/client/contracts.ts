@@ -147,6 +147,7 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(
     contribution: PluginTimelineTransformerContribution<ItemType>,
   ): PluginCleanup;
+  addTimelineFooter(contribution: PluginTimelineFooterContribution): PluginCleanup;
   addTimelineRenderer<Schema extends ZodType>(
     contribution: PluginTimelineRendererContribution<Schema>,
   ): PluginCleanup;
@@ -208,6 +209,17 @@ export type PluginTimelineTransformerContribution<
       }): PluginTimelineTransformResult | undefined;
     }
   : never;
+
+export interface PluginTimelineFooterProps extends PluginHostProps {
+  agentId: string;
+}
+
+export interface PluginTimelineFooterContribution {
+  id: string;
+  /** Plugin-owned inline kinds replaced by this footer. */
+  replaces?: readonly { kind: string; version: number }[];
+  Component: ComponentType<PluginTimelineFooterProps>;
+}
 
 export interface PluginTimelineItemProps<Data = unknown> extends PluginHostProps {
   agentId: string;

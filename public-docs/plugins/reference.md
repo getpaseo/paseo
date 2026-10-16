@@ -1315,6 +1315,18 @@ the source row, so updates to one streaming item do not remount its renderer. Us
 `useRevealedText(text, phase)` hook when a renderer should pace streaming text like Paseo's built-in
 assistant rows.
 
+### Pin content below the timeline
+
+`client.addTimelineFooter({ id, Component, replaces? })` registers a surface below scrollable chat
+history and above the composer. `Component` receives `agentId`, `theme`, `host`, and `layout` and can
+use the usual plugin hooks. Return `null` when there is nothing to show. Read active state through
+RPC; the footer does not depend on loaded or paginated history. Multiple footers share a scrollable
+area capped at 45% of the transcript height.
+
+Use `replaces: [{ kind, version }]` to hide this plugin's matching inline timeline rows while the
+footer is registered. Other plugins' rows are unaffected. Removing the registration restores the
+inline renderer. Keep an inline renderer for apps that do not expose `addTimelineFooter`.
+
 ### Append a timeline row from the daemon
 
 A server handler can add a plugin-owned row to canonical history:
