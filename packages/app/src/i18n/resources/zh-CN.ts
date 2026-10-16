@@ -369,6 +369,7 @@ export const zhCN: TranslationResources = {
       failedRetry: "听写失败。点按重试。",
     },
     question: {
+      responseFailed: "未能发送你的回复，请重试。",
       submit: "提交",
       next: "下一步",
       answerPlaceholder: "输入你的回答...",

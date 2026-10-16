@@ -15,7 +15,7 @@ class RetryQuestionSession extends MockLoadTestAgentSession {
     response: Parameters<MockLoadTestAgentSession["respondToPermission"]>[1],
   ) {
     this.attempts += 1;
-    process.send?.({ type: "attempt", requestId, response });
+    process.send?.({ type: "attempt", requestId, response, sessionId: this.id });
     if (this.attempts === 1) {
       await firstResponse.promise;
       throw new Error("Synthetic question response failure");
@@ -26,7 +26,19 @@ class RetryQuestionSession extends MockLoadTestAgentSession {
 
 class RetryQuestionClient extends MockLoadTestAgentClient {
   override async createSession(config: Parameters<MockLoadTestAgentClient["createSession"]>[0]) {
-    return new RetryQuestionSession({ config, sessionId: randomUUID() });
+    const session = new RetryQuestionSession({ config, sessionId: randomUUID() });
+    session.subscribe((event) => {
+      if (event.type === "permission_resolved") {
+        process.send?.({
+          type: "resolved",
+          requestId: event.requestId,
+          response: event.resolution,
+          sessionId: session.id,
+          pendingRequestIds: session.getPendingPermissions().map((request) => request.id),
+        });
+      }
+    });
+    return session;
   }
 }
 

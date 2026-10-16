@@ -3,6 +3,7 @@ import path from "node:path";
 import { expect } from "@playwright/test";
 import { z } from "zod";
 import { test } from "../support/fixtures";
+import { expectVisibleAgentSurfacesIdle } from "../support/helpers/agent-stream";
 import { buildSeededHost } from "../support/helpers/daemon-registry";
 import { killProcessTree } from "../support/helpers/spawn-node";
 import {
@@ -143,14 +144,29 @@ test.describe("Question prompt pagination", () => {
 
 const questionDaemonMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("ready"), port: z.number(), serverId: z.string() }),
-  z.object({ type: z.literal("attempt"), requestId: z.string(), response: z.unknown() }),
+  z.object({
+    type: z.literal("attempt"),
+    requestId: z.string(),
+    response: z.unknown(),
+    sessionId: z.string(),
+  }),
+  z.object({
+    type: z.literal("resolved"),
+    requestId: z.string(),
+    response: z.unknown(),
+    sessionId: z.string(),
+    pendingRequestIds: z.array(z.string()),
+  }),
   z.object({ type: z.literal("error"), error: z.string() }),
 ]);
 
 type QuestionResponseAttempt = Extract<z.infer<typeof questionDaemonMessage>, { type: "attempt" }>;
 
+type QuestionResolution = Extract<z.infer<typeof questionDaemonMessage>, { type: "resolved" }>;
+
 interface QuestionRetryControl {
   attempts: QuestionResponseAttempt[];
+  resolutions: QuestionResolution[];
   releaseFirstResponse(): void;
 }
 
@@ -169,6 +185,7 @@ const retryTest = test.extend<{
     child.stderr?.on("data", (data: Buffer) => output.push(data.toString()));
     const ready = Promise.withResolvers<{ port: number; serverId: string }>();
     const attempts: QuestionResponseAttempt[] = [];
+    const resolutions: QuestionResolution[] = [];
     child.on("message", (message: unknown) => {
       const parsed = questionDaemonMessage.parse(message);
       switch (parsed.type) {
@@ -177,6 +194,9 @@ const retryTest = test.extend<{
           break;
         case "attempt":
           attempts.push(parsed);
+          break;
+        case "resolved":
+          resolutions.push(parsed);
           break;
         case "error":
           ready.reject(new Error(parsed.error));
@@ -213,7 +233,7 @@ const retryTest = test.extend<{
           waitUntil: "commit",
         });
         await waitForQuestionPrompt(page, 120_000);
-        await provide({ attempts, releaseFirstResponse: () => child.send("release") });
+        await provide({ attempts, resolutions, releaseFirstResponse: () => child.send("release") });
       } finally {
         await session.cleanup();
       }
@@ -263,9 +283,12 @@ retryTest(
       "Preserve my answers after a failed submission.",
     );
     await submitQuestionAnswers(page);
-    await expect(page.getByText("Synthetic questions resolved", { exact: true })).toBeVisible();
-    expect(questionClient.attempts).toHaveLength(2);
+    await expectVisibleAgentSurfacesIdle(page);
+    await expect.poll(() => questionClient.attempts.length).toBe(2);
     expect(questionClient.attempts[1]).toEqual(questionClient.attempts[0]);
+    await expect
+      .poll(() => questionClient.resolutions)
+      .toEqual([{ ...questionClient.attempts[1], type: "resolved", pendingRequestIds: [] }]);
     expect(questionClient.attempts[1].response).toMatchObject({
       behavior: "allow",
       updatedInput: {
@@ -277,5 +300,45 @@ retryTest(
       },
     });
     await page.screenshot({ path: testInfo.outputPath("submission-retried.png") });
+  },
+);
+
+retryTest(
+  "failed question dismissal allows an immediate retry",
+  async ({ page, questionClient }, testInfo) => {
+    retryTest.setTimeout(180_000);
+    const card = page.getByTestId("question-form-card");
+    questionClient.releaseFirstResponse();
+    await chooseQuestionOption(page, "App");
+    await chooseQuestionOption(page, "Behind feature flag");
+    await fillQuestionAnswer(page, {
+      question: SUCCESS_QUESTION,
+      answer: "Start with the internal team.",
+    });
+    await card.getByRole("button", { name: "Dismiss" }).click();
+    await expect(card.getByRole("alert")).toHaveText("Could not send your response. Try again.");
+    await expect(card.getByRole("progressbar")).toHaveCount(0);
+    await expect(card.getByRole("button", { name: "Dismiss" })).toHaveText("Dismiss");
+    await expectQuestionDismissEnabled(page);
+    await expectQuestionPrimaryActionEnabled(page, "Submit");
+    await card.screenshot({ path: testInfo.outputPath("dismissal-failed.png") });
+    await openQuestion(page, { index: 1, total: TOTAL_QUESTIONS });
+    await expectQuestionOptionSelected(page, "App");
+    await openQuestion(page, { index: 3, total: TOTAL_QUESTIONS });
+    await expect(card.getByRole("textbox")).toHaveValue("Start with the internal team.");
+    await expect(card.getByRole("alert")).toBeVisible();
+    await card.getByRole("button", { name: "Dismiss" }).click();
+    await expect(card).toHaveCount(0);
+    await expectVisibleAgentSurfacesIdle(page);
+    await expect.poll(() => questionClient.attempts.length).toBe(2);
+    expect(questionClient.attempts[1]).toEqual(questionClient.attempts[0]);
+    await expect
+      .poll(() => questionClient.resolutions)
+      .toEqual([{ ...questionClient.attempts[1], type: "resolved", pendingRequestIds: [] }]);
+    expect(questionClient.attempts[1].response).toEqual({
+      behavior: "deny",
+      message: "Dismissed by user",
+    });
+    await page.screenshot({ path: testInfo.outputPath("dismissal-retried.png") });
   },
 );
