@@ -94,6 +94,7 @@ See [background workspaces](./workspaces.md) for caller inheritance and inclusiv
 | `archivedAt`                   | `string \| null`                  | Archive timestamp; `null` while the agent is active.                                                    |
 | `current()`                    | `PaseoAgent \| null`              | Current detailed value observed by this handle; never fetches.                                          |
 | `refresh(requestId?)`          | `PaseoAgentRefetchResult \| null` | Fetches the current agent and project placement.                                                        |
+| `sendIfIdle(text, options?)`   | `Promise<void>`                   | Sends only if the daemon can atomically admit a new turn. Rejects busy agents without interruption.     |
 | `send(text, options?)`         | `Promise<void>`                   | Resolves when the daemon accepts the prompt.                                                            |
 | `respondToPermission(options)` | `Promise<void>`                   | Answers a pending permission by `requestId` with an allow or deny `response`.                           |
 | `run(text, options?)`          | `PaseoAgentRunResult`             | Sends a prompt and waits for that turn. `timeoutMs` controls the wait; it defaults to 10 minutes.       |
@@ -104,6 +105,17 @@ See [background workspaces](./workspaces.md) for caller inheritance and inclusiv
 | `detach()`                     | `Promise<void>`                   | Removes the parent relationship without stopping the agent.                                             |
 
 `workspaceId` through `archivedAt` mirror the last snapshot the handle observed. A handle from `ref()` reads `null` for all of them until `refresh()`, `run()`, `waitForFinish()`, a timeline refetch, or `subscribe()` delivers a snapshot. Optional values in an observed snapshot also read as `null`. Call `current()` when you need the whole snapshot or need to distinguish those states.
+
+`send()` options include `messageId` and `activeTurnBehavior` (`"interrupt"`,
+`"steer"`, or `"reject"`). Omitting behavior preserves interrupt semantics.
+`sendIfIdle()` selects `"reject"` and accepts the remaining send options.
+Both reject-mode entry points require `server_info.features.sendAgentMessageRejectBusy`;
+the SDK throws `DaemonCapabilityError` before transmission when it is absent.
+An `agent_busy` response means the provider never received that request, so its
+ID can be retried after the agent becomes idle. Keep the same text and ID when
+retrying a lost response. A completed receipt is acknowledged even while the
+agent is busy; an incomplete receipt returns `agent_request_outcome_unknown`
+instead of dispatching again.
 
 `PaseoAgentRunResult` contains `status`, `final`, `error`, and `lastMessage`. `final` refreshes the handle when present.
 

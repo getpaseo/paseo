@@ -269,3 +269,115 @@ test.runIf(process.platform !== "win32")(
     expect((await sdk.terminals.list({ workspaceId })).entries).toEqual([]);
   },
 );
+
+test("idle-only SDK sends preserve a busy turn and permit the same refused ID later", async () => {
+  const workspaceId = await createWorkspace("Reject busy");
+  const agent = await sdk.workspaces
+    .ref(workspaceId)
+    .agents.create({ config: { provider: "codex/gpt-5.4", modeId: "default" } });
+  await agent.sendIfIdle("sleep first", { messageId: "accepted-first" });
+  await expect.poll(async () => (await agent.refresh())?.agent.pendingPermissions.length).toBe(1);
+  const first = await agent.refresh();
+  if (first === null) throw new Error("Missing created agent");
+  const request = first.agent.pendingPermissions[0];
+  if (request === undefined) throw new Error("Missing held permission request");
+  const firstTurnId = first.agent.activeTurn?.turnId;
+  await expect(
+    agent.sendIfIdle("sleep after busy", { messageId: "busy-then-idle" }),
+  ).rejects.toThrow("agent_busy");
+  const afterBusy = await agent.refresh();
+  expect(afterBusy?.agent.activeTurn?.turnId).toBe(firstTurnId);
+  expect(afterBusy?.agent.lastError).toBe(first.agent.lastError);
+  expect(afterBusy?.agent.pendingPermissions).toEqual(first.agent.pendingPermissions);
+  await agent.respondToPermission({ requestId: request.id, response: { behavior: "deny" } });
+  await expect.poll(async () => (await agent.refresh())?.agent.status).toBe("idle");
+  await agent.sendIfIdle("sleep after busy", { messageId: "busy-then-idle" });
+  await expect.poll(async () => (await agent.refresh())?.agent.pendingPermissions.length).toBe(1);
+  const second = await agent.refresh();
+  const secondTurnId = second?.agent.activeTurn?.turnId;
+  expect(secondTurnId).not.toBe(firstTurnId);
+  // Completed receipts are acknowledged before current-agent admission checks.
+  await agent.sendIfIdle("sleep first", { messageId: "accepted-first" });
+  await expect(agent.sendIfIdle("changed text", { messageId: "accepted-first" })).rejects.toThrow(
+    "agent_request_key_conflict",
+  );
+  expect((await agent.refresh())?.agent.activeTurn?.turnId).toBe(secondTurnId);
+  const timeline = await agent.timeline.refetch();
+  const submitted = timeline.entries.flatMap((row) =>
+    row.item.type === "user_message" && row.item.clientMessageId ? [row.item.clientMessageId] : [],
+  );
+  expect(submitted.filter((id) => id === "accepted-first")).toHaveLength(1);
+  expect(submitted.filter((id) => id === "busy-then-idle")).toHaveLength(1);
+});
+
+test("two concurrent idle-only SDK sends admit one foreground turn", async () => {
+  const workspaceId = await createWorkspace("Concurrent reject");
+  const agent = await sdk.workspaces
+    .ref(workspaceId)
+    .agents.create({ config: { provider: "codex/gpt-5.4", modeId: "default" } });
+  const results = await Promise.allSettled([
+    agent.sendIfIdle("sleep A", { messageId: "race-a" }),
+    agent.sendIfIdle("sleep B", { messageId: "race-b" }),
+  ]);
+  expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+  const failures = results.filter((result) => result.status === "rejected");
+  expect(failures).toEqual([
+    { status: "rejected", reason: expect.objectContaining({ message: "agent_busy" }) },
+  ]);
+  await expect.poll(async () => (await agent.refresh())?.agent.pendingPermissions.length).toBe(1);
+  expect((await agent.refresh())?.agent.status).toBe("running");
+});
+
+test("idle-only sends through a plugin's host API preserve the competing turn", async () => {
+  const workspaceId = await createWorkspace("Plugin safe sends");
+  const agent = await sdk.workspaces.ref(workspaceId).agents.create({
+    config: { provider: "codex/gpt-5.4", modeId: "default" },
+  });
+  const directory = path.join(cwd, "safe-send-plugin");
+  await mkdir(directory);
+  await writeFile(
+    path.join(directory, "paseo-plugin.json"),
+    JSON.stringify({
+      id: "safe-send-test",
+      requirements: { paseo: `>=${resolveDaemonVersion(import.meta.url)}` },
+    }),
+  );
+  await writeFile(
+    path.join(directory, "index.server.ts"),
+    `
+import { defineRpc } from "@getpaseo/plugin";
+import { z } from "zod";
+const send = defineRpc({ name: "send", input: z.object({ agentId: z.string(), text: z.string(), messageId: z.string() }), output: z.object({}) });
+export default function contribute(server) {
+  server.handle(send, async ({ agentId, text, messageId }, { paseo }) => {
+    await paseo.agents.ref(agentId).sendIfIdle(text, { messageId });
+    return {};
+  });
+  return () => {};
+}`,
+  );
+  await client.patchDaemonConfig({ pluginsEnabled: true });
+  await client.installDirectoryPlugin(directory);
+  const send = (messageId: string, text: string) =>
+    client.invokePluginRpc("safe-send-test", "send", {
+      agentId: agent.id,
+      messageId,
+      text,
+    });
+  try {
+    await expect(send("plugin-first", "sleep first")).resolves.toEqual({});
+    await expect.poll(async () => (await agent.refresh())?.agent.pendingPermissions.length).toBe(1);
+    const first = await agent.refresh();
+    await expect(send("plugin-contender", "sleep competing")).rejects.toThrow("agent_busy");
+    await expect(send("plugin-first", "sleep first")).resolves.toEqual({});
+    const latest = await agent.refresh();
+    expect(latest?.agent.activeTurn?.turnId).toBe(first?.agent.activeTurn?.turnId);
+    expect(latest?.agent.pendingPermissions).toEqual(first?.agent.pendingPermissions);
+    expect(latest?.agent.lastError).toBe(first?.agent.lastError);
+    const timeline = await agent.timeline.refetch();
+    const submitted = timeline.entries.filter((row) => row.item.type === "user_message");
+    expect(submitted).toHaveLength(1);
+  } finally {
+    await client.removePlugin("safe-send-test");
+  }
+});

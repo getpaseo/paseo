@@ -1,3 +1,4 @@
+import { AgentBusyError } from "../agent/busy-error.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -74,4 +75,42 @@ test("failed local message preparation does not leave an ambiguous receipt", asy
   available = false;
   await requests.send(input);
   expect(sends).toBe(1);
+});
+
+test("busy admission can retry the same receipt after the agent becomes idle", async () => {
+  const { requests, directory } = await fixture();
+  let busy = true;
+  let deliveries = 0;
+  const input = {
+    agentId: "agent",
+    messageId: "same",
+    request: { text: "hello", activeTurnBehavior: "reject" },
+    send: async () => {
+      if (busy) throw new AgentBusyError("agent");
+      deliveries++;
+    },
+  };
+  await expect(requests.send(input)).rejects.toThrow("agent_busy");
+  busy = false;
+  await new MessageReceipts(directory).send(input);
+  // A completed replay does not even reach admission, which may now be busy.
+  busy = true;
+  await requests.send(input);
+  expect(deliveries).toBe(1);
+});
+
+test("a plain error named agent_busy is still ambiguous and cannot erase a receipt", async () => {
+  const { requests, directory } = await fixture();
+  const input = {
+    agentId: "agent",
+    messageId: "ambiguous",
+    request: {},
+    send: async () => {
+      throw new Error("agent_busy");
+    },
+  };
+  await expect(requests.send(input)).rejects.toThrow("agent_busy");
+  await expect(new MessageReceipts(directory).send(input)).rejects.toThrow(
+    "agent_request_outcome_unknown",
+  );
 });

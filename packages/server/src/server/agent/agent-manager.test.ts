@@ -11857,3 +11857,81 @@ test.each([false, true])(
     }
   },
 );
+
+test("reject-mode dispatch shares the foreground reservation without interrupting an active run", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-reject-busy-"));
+  const session = new SteeringTestSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    // streamAgent reserves synchronously, before its generator or provider has started.
+    const reserved = manager.streamAgent(agent.id, "reserved ordinary start");
+    expect(() => manager.streamAgentIfIdle(agent.id, "must not replace")).toThrow("agent_busy");
+    const draining = drainAsyncGenerator(reserved);
+    await manager.waitForAgentRunStart(agent.id);
+    await expect(
+      startAgentRun(manager, agent.id, "must not steer", logger, {
+        replaceRunning: true,
+        activeTurnBehavior: "reject",
+      }),
+    ).rejects.toThrow("agent_busy");
+    expect(session.startCount).toBe(1);
+    expect(session.interruptCount).toBe(0);
+    expect(session.steerCount).toBe(0);
+    session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "active-turn-1" });
+    await draining;
+  } finally {
+    await manager.closeAgent(agent.id);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("two idle-only starts cannot both reserve an agent", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-reject-reservation-"));
+  const manager = new AgentManager({ clients: { codex: new TestAgentClient() }, logger });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    const first = manager.streamAgentIfIdle(agent.id, "first");
+    expect(() => manager.streamAgentIfIdle(agent.id, "second")).toThrow("agent_busy");
+    expect(() => manager.streamAgent(agent.id, "ordinary contender")).toThrow("active run");
+    await drainAsyncGenerator(first);
+    const next = manager.streamAgentIfIdle(agent.id, "after completion");
+    await drainAsyncGenerator(next);
+  } finally {
+    await manager.closeAgent(agent.id);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("idle-only dispatch rejects an initializing managed session", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-reject-initializing-"));
+  const client = new HeldRuntimeInfoClient();
+  const agentId = "00000000-0000-4000-8000-000000000098";
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    idFactory: () => agentId,
+  });
+  const creation = manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  await client.waitForRuntimeInfo();
+  try {
+    expect(() => manager.streamAgentIfIdle(agentId, "too early")).toThrow("agent_busy");
+    expect(manager.hasInFlightRun(agentId)).toBe(false);
+  } finally {
+    client.finishRuntimeInfo();
+    await creation;
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});

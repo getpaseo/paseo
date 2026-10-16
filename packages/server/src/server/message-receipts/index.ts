@@ -1,5 +1,6 @@
+import { AgentBusyError } from "../agent/busy-error.js";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { writeJsonFileAtomic } from "../atomic-file.js";
@@ -51,7 +52,13 @@ export class MessageReceipts {
     await input.prepare?.();
     const receipt = { fingerprint, agentId: input.agentId };
     await writeJsonFileAtomic(file, { ...receipt, state: "pending" });
-    await input.send();
+    try {
+      await input.send();
+    } catch (error) {
+      // Only this admission error proves that the provider never saw the prompt.
+      if (error instanceof AgentBusyError) await rm(file, { force: true });
+      throw error;
+    }
     await writeJsonFileAtomic(file, { ...receipt, state: "completed" });
   }
 }
