@@ -244,14 +244,13 @@ export class WorkspaceFilesSession {
   }
 
   async handleFileExplorerRequest(request: FileExplorerRequest, source?: object): Promise<void> {
-    const { cwd: workspaceCwd, path: requestedPath = ".", mode, requestId } = request;
-    const cwd = workspaceCwd.trim();
-    if (!cwd) {
+    const { cwd, path: requestedPath = ".", mode, requestId } = request;
+    if (!cwd.trim()) {
       this.host.emit(
         {
           type: "file_explorer_response",
           payload: {
-            cwd: workspaceCwd,
+            cwd,
             path: requestedPath,
             mode,
             directory: null,
@@ -423,13 +422,12 @@ export class WorkspaceFilesSession {
   }
 
   async handleFileDownloadTokenRequest(request: FileDownloadTokenRequest): Promise<void> {
-    const { cwd: workspaceCwd, path: requestedPath, requestId } = request;
-    const cwd = workspaceCwd.trim();
-    if (!cwd) {
+    const { cwd, path: requestedPath, requestId } = request;
+    if (!cwd.trim()) {
       this.host.emit({
         type: "file_download_token_response",
         payload: {
-          cwd: workspaceCwd,
+          cwd,
           path: requestedPath,
           token: null,
           fileName: null,

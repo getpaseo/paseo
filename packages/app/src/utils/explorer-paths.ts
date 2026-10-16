@@ -9,7 +9,7 @@ export function buildAbsoluteExplorerPath({
   workspaceRoot,
   entryPath,
 }: BuildAbsoluteExplorerPathInput): string {
-  const normalizedWorkspaceRoot = workspaceRoot.trim().replace(/[\\/]+$/, "");
+  const normalizedWorkspaceRoot = workspaceRoot.replace(/[\\/]+$/, "");
   const normalizedEntryPath = entryPath.trim();
 
   if (!normalizedWorkspaceRoot) {

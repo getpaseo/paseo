@@ -26,15 +26,14 @@ export function useFileDownload({
     () => daemons.find((daemon) => daemon.serverId === serverId),
     [daemons, serverId],
   );
-  const normalizedWorkspaceRoot = useMemo(() => workspaceRoot.trim(), [workspaceRoot]);
   const workspaceScopeId = useMemo(
-    () => workspaceId?.trim() || normalizedWorkspaceRoot,
-    [normalizedWorkspaceRoot, workspaceId],
+    () => workspaceId?.trim() || workspaceRoot,
+    [workspaceRoot, workspaceId],
   );
   const { requestFileDownloadToken, requestFileBytes } = useFileExplorerActions({
     serverId,
     workspaceId,
-    workspaceRoot: normalizedWorkspaceRoot,
+    workspaceRoot,
   });
   const startDownload = useDownloadStore((state) => state.startDownload);
 

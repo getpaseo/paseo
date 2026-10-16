@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import { resolveFilePreviewReadTarget } from "./preview-target";
 
 describe("resolveFilePreviewReadTarget", () => {
+  it.each(["src/file.txt", "/Users/test/project /src/file.txt"])(
+    "preserves whitespace in the workspace cwd when reading %s",
+    (path) => {
+      expect(resolveFilePreviewReadTarget({ path, workspaceRoot: "/Users/test/project " })).toEqual(
+        { cwd: "/Users/test/project ", path },
+      );
+    },
+  );
+
   it("uses the workspace cwd for relative paths", () => {
     expect(
       resolveFilePreviewReadTarget({

@@ -103,7 +103,7 @@ export function resolveMarkdownFileDirectory(input: {
     return absolute ? parentDirectory(absolute) : null;
   }
 
-  const workspaceRoot = input.workspaceRoot?.trim();
+  const workspaceRoot = input.workspaceRoot;
   if (!workspaceRoot || !isAbsolutePath(workspaceRoot)) {
     return null;
   }

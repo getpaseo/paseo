@@ -135,8 +135,8 @@ function pathWithinRoot(root: string, relativePath: string): string {
 
 /** Whether an absolute path names the workspace directory itself. */
 export function isWorkspaceRootPath(input: { path: string; workspaceRoot: string }): boolean {
-  const path = normalizeAbsolutePath(input.path.trim().replace(/\\/g, "/"));
-  const root = normalizeAbsolutePath(input.workspaceRoot.trim().replace(/\\/g, "/"));
+  const path = normalizeAbsolutePath(input.path.replace(/\\/g, "/"));
+  const root = normalizeAbsolutePath(input.workspaceRoot.replace(/\\/g, "/"));
   return path !== null && root !== null && pathsEqual(path, root);
 }
 
@@ -157,7 +157,7 @@ export function resolveWorkspaceFilePaths(input: {
   workspaceRoot: string;
 }): ResolvedWorkspaceFilePaths | null {
   const filePath = input.path.trim().replace(/\\/g, "/");
-  const workspaceRoot = normalizeAbsolutePath(input.workspaceRoot.trim().replace(/\\/g, "/"));
+  const workspaceRoot = normalizeAbsolutePath(input.workspaceRoot.replace(/\\/g, "/"));
   if (!filePath || !workspaceRoot) {
     return null;
   }

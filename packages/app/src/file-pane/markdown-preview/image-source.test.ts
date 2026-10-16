@@ -59,6 +59,16 @@ describe("resolveMarkdownPreviewImageSource", () => {
     ).toBe("/Users/test/project/docs/images/hero.png");
   });
 
+  it("preserves trailing spaces in the workspace root for relative images", () => {
+    expect(
+      resolveMarkdownPreviewImageSource({
+        source: "./image.png",
+        markdownPath: "README.md",
+        workspaceRoot: "/Users/test/project ",
+      }),
+    ).toBe("/Users/test/project /image.png");
+  });
+
   it("ignores local URL query strings and fragments", () => {
     expect(
       resolveMarkdownPreviewImageSource({

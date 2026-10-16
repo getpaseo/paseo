@@ -2,7 +2,11 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, type Page } from "@playwright/test";
 import { test } from "../support/fixtures";
-import { downloadFileFromExplorer, openFileExplorer } from "../support/helpers/file-explorer";
+import {
+  downloadFileFromExplorer,
+  openFileExplorer,
+  openFileFromExplorer,
+} from "../support/helpers/file-explorer";
 import { openChangesPanel } from "../support/helpers/workspace-tabs";
 import { gotoWorkspace } from "../support/helpers/launcher";
 import { daemonWsRoutePattern, getE2EDaemonPort } from "../support/helpers/daemon-port";
@@ -111,6 +115,80 @@ test.afterEach(async () => {
   await workspace?.cleanup();
 });
 
+test("keeps file explorer actions in a workspace whose path ends in a space", async ({
+  page,
+}, testInfo) => {
+  test.skip(process.platform === "win32", "Win32 strips trailing spaces from directory names");
+  const plain = path.join(workspace.repoPath, "nested");
+  const spaced = `${plain} `;
+  const plainImage = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAECAIAAAA8r+mnAAAAEUlEQVR4nGO4o6aGFTFQTwIAUY0lAVfe4GsAAAAASUVORK5CYII=",
+    "base64",
+  );
+  const spacedImage = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAECAIAAAA8r+mnAAAAEUlEQVR4nGMQW+yFFTFQTwIATP4gYe26Fl8AAAAASUVORK5CYII=",
+    "base64",
+  );
+  await mkdir(plain);
+  await mkdir(spaced);
+  await writeFile(path.join(plain, "shared.txt"), "plain workspace\n");
+  await writeFile(path.join(plain, "plain-only.txt"), "plain\n");
+  await writeFile(path.join(spaced, "shared.txt"), "spaced workspace\n");
+  await writeFile(path.join(spaced, "space-only.txt"), "space\n");
+  await writeFile(path.join(plain, "image.png"), plainImage);
+  await writeFile(path.join(spaced, "image.png"), spacedImage);
+  await writeFile(
+    path.join(spaced, "README.md"),
+    "# Spaced workspace image\n\n![Workspace image](./image.png)\n",
+  );
+  const created = await workspace.client.createWorkspace({
+    source: { kind: "directory", path: spaced, projectId: workspace.projectId },
+    title: "Trailing-space workspace",
+  });
+  expect(created.error).toBeNull();
+  expect(created.workspace?.workspaceDirectory).toBe(spaced);
+  await gotoWorkspace(page, created.workspace!.id);
+  await openFileExplorer(page);
+  const tree = page.getByTestId("file-explorer-tree-scroll");
+  await expect(tree.getByText("shared.txt", { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("workspace-files.png") });
+  await expect(tree.getByText("space-only.txt", { exact: true })).toBeVisible();
+  await expect(tree.getByText("plain-only.txt", { exact: true })).toBeHidden();
+
+  await openFileFromExplorer(page, "shared.txt");
+  await expect(
+    page.getByTestId("file-source-editor").filter({ visible: true }).locator(".cm-content"),
+  ).toHaveText("spaced workspace");
+  const download = await downloadFileFromExplorer(page, "shared.txt");
+  const downloadedPath = testInfo.outputPath("shared.txt");
+  await download.saveAs(downloadedPath);
+  expect(await readFile(downloadedPath, "utf8")).toBe("spaced workspace\n");
+
+  await page.getByTestId("files-new-file").click();
+  const nameInput = page.getByTestId("file-explorer-name-input");
+  await nameInput.fill("created.txt");
+  await nameInput.press("Enter");
+  await expect(tree.getByText("created.txt", { exact: true })).toBeVisible();
+  expect(await readFile(path.join(spaced, "created.txt"), "utf8")).toBe("");
+  await expect(readFile(path.join(plain, "created.txt"), "utf8")).rejects.toThrow(/ENOENT/);
+  expect(await readFile(path.join(plain, "shared.txt"), "utf8")).toBe("plain workspace\n");
+  await page.screenshot({ path: testInfo.outputPath("trailing-space-workspace.png") });
+
+  await openFileFromExplorer(page, "README.md");
+  await expect(
+    page.getByTestId("markdown-preview-frame").getByText("Spaced workspace image", { exact: true }),
+  ).toBeVisible();
+  const image = page.getByRole("img", { name: "Workspace image", exact: true }).locator("img");
+  await expect(image).toBeVisible();
+  await expect(image).toHaveJSProperty("naturalWidth", 8);
+  await page.screenshot({ path: testInfo.outputPath("markdown-workspace-image.png") });
+  const renderedImage = await image.evaluate(async (element: HTMLImageElement) => {
+    const response = await fetch(element.currentSrc);
+    return Array.from(new Uint8Array(await response.arrayBuffer()));
+  });
+  expect(Buffer.from(renderedImage)).toEqual(spacedImage);
+});
+
 test("creates, renames, copies, and deletes entries through the file explorer", async ({
   context,
   page,
@@ -139,7 +217,9 @@ test("creates, renames, copies, and deletes entries through the file explorer", 
   await page.getByTestId("files-new-file").click();
   await nameInput.fill("README.md");
   await nameInput.press("Enter");
-  await expect(page.getByText('"README.md" already exists', { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("alert").getByText('"README.md" already exists', { exact: true }),
+  ).toBeVisible();
 
   const emptyArea = page.getByTestId("files-empty-area");
   await expect(emptyArea).toBeVisible();
@@ -278,7 +358,9 @@ test("creates, renames, copies, and deletes entries through the file explorer", 
   await page.getByText("Rename", { exact: true }).click();
   await nameInput.fill("README.md");
   await nameInput.press("Enter");
-  await expect(page.getByText('"README.md" already exists', { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("alert").getByText('"README.md" already exists', { exact: true }),
+  ).toBeVisible();
   await expect(entry("created.txt")).toBeVisible();
 
   await entry("created.txt").click({ button: "right" });

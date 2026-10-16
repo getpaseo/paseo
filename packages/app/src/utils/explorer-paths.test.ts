@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import { buildAbsoluteExplorerPath } from "./explorer-paths";
 
 describe("buildAbsoluteExplorerPath", () => {
+  it.each([
+    ["README.md", "/workspaces/paseo /README.md"],
+    [".", "/workspaces/paseo "],
+  ])("preserves a trailing space in the workspace root for %s", (entryPath, expected) => {
+    expect(buildAbsoluteExplorerPath({ workspaceRoot: "/workspaces/paseo ", entryPath })).toBe(
+      expected,
+    );
+  });
+
   it("builds a POSIX absolute path from a relative explorer path", () => {
     expect(
       buildAbsoluteExplorerPath({

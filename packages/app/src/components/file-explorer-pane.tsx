@@ -416,16 +416,15 @@ export function FileExplorerPane({
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
 
-  const normalizedWorkspaceRoot = useMemo(() => workspaceRoot.trim(), [workspaceRoot]);
   const workspaceStateKey = useMemo(
     () =>
       buildWorkspaceExplorerStateKey({
         workspaceId,
-        workspaceRoot: normalizedWorkspaceRoot,
+        workspaceRoot,
       }),
-    [normalizedWorkspaceRoot, workspaceId],
+    [workspaceRoot, workspaceId],
   );
-  const hasWorkspaceScope = Boolean(workspaceStateKey && normalizedWorkspaceRoot);
+  const hasWorkspaceScope = Boolean(workspaceStateKey && workspaceRoot);
   const explorerState = useSessionStore((state) =>
     workspaceStateKey && state.sessions[serverId]
       ? state.sessions[serverId]?.fileExplorer.get(workspaceStateKey)
@@ -442,7 +441,7 @@ export function FileExplorerPane({
   } = useFileExplorerActions({
     serverId,
     workspaceId,
-    workspaceRoot: normalizedWorkspaceRoot,
+    workspaceRoot,
   });
   const toast = useToast();
   const isLocalDaemon = useIsLocalDaemon(serverId);
@@ -452,7 +451,7 @@ export function FileExplorerPane({
   const fileManagerTarget = desktopOpenTargets.find((target) => target.kind === "file-manager");
   const openDirectoryInEditor = useOpenDirectoryInEditor({
     serverId,
-    workspaceDirectory: normalizedWorkspaceRoot,
+    workspaceDirectory: workspaceRoot,
   });
   // COMPAT(fsEntryOps): added in v0.3.0, remove gate after 2027-02-08.
   const fsEntryOpsEnabled = useSessionStore(
@@ -466,7 +465,7 @@ export function FileExplorerPane({
   const downloadFile = useFileDownload({
     serverId,
     workspaceId,
-    workspaceRoot: normalizedWorkspaceRoot,
+    workspaceRoot,
   });
   const sortOption = usePanelStore((state) => state.explorerSortOption);
   const showHiddenFiles = usePanelStore((state) => state.explorerShowHiddenFiles);
@@ -588,12 +587,12 @@ export function FileExplorerPane({
     async (path: string) => {
       await Clipboard.setStringAsync(
         buildAbsoluteExplorerPath({
-          workspaceRoot: normalizedWorkspaceRoot,
+          workspaceRoot,
           entryPath: path,
         }),
       );
     },
-    [normalizedWorkspaceRoot],
+    [workspaceRoot],
   );
 
   const handleCopyRelativePath = useCallback(async (path: string) => {
@@ -608,9 +607,9 @@ export function FileExplorerPane({
       try {
         await openDesktopTarget({
           editorId: fileManagerTarget.id,
-          workspacePath: normalizedWorkspaceRoot,
+          workspacePath: workspaceRoot,
           filePath: buildAbsoluteExplorerPath({
-            workspaceRoot: normalizedWorkspaceRoot,
+            workspaceRoot,
             entryPath: entry.path,
           }),
         });
@@ -620,7 +619,7 @@ export function FileExplorerPane({
         );
       }
     },
-    [fileManagerTarget, normalizedWorkspaceRoot, t, toast],
+    [fileManagerTarget, workspaceRoot, t, toast],
   );
 
   const handleOpenDirectoryInEditor = useCallback(

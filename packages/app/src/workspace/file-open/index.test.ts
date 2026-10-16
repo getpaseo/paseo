@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createWorkspaceFileTabTarget,
+  isWorkspaceRootPath,
   normalizeWorkspaceFileLocation,
   resolveWorkspaceFilePaths,
   workspaceFileLocationsEqual,
@@ -189,6 +190,19 @@ describe("resolveWorkspaceFilePaths", () => {
         workspaceRoot: "c:\\users\\me\\repo",
       }),
     ).toBeNull();
+  });
+
+  it("keeps a trailing-space workspace distinct from its neighboring directory", () => {
+    expect(resolveWorkspaceFilePaths({ path: "notes.md", workspaceRoot: "/repo " })).toEqual({
+      absolutePath: "/repo /notes.md",
+      relativePath: "notes.md",
+    });
+    expect(resolveWorkspaceFilePaths({ path: "/repo/notes.md", workspaceRoot: "/repo " })).toEqual({
+      absolutePath: "/repo/notes.md",
+      relativePath: null,
+    });
+    expect(isWorkspaceRootPath({ path: "/repo", workspaceRoot: "/repo " })).toBe(false);
+    expect(isWorkspaceRootPath({ path: "/repo ", workspaceRoot: "/repo " })).toBe(true);
   });
 
   it("returns null when the workspace root is not absolute", () => {

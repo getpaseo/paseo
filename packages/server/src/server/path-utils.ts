@@ -12,11 +12,10 @@ function hasHomePrefix(value: string): boolean {
 }
 
 export function expandUserPath(value: string): string {
-  const trimmed = value.trim();
-  if (hasHomePrefix(trimmed)) {
-    return resolve(homedir(), trimmed.slice(2));
+  if (hasHomePrefix(value)) {
+    return resolve(homedir(), value.slice(2));
   }
-  return resolve(trimmed);
+  return resolve(value);
 }
 
 export function resolvePathFromBase(baseCwd: string, requestedPath: string): string {

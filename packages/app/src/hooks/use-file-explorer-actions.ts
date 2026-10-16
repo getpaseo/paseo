@@ -41,7 +41,7 @@ function normalizeWorkspaceValue(value: string | null | undefined): string | nul
     return null;
   }
   const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
+  return trimmed.length > 0 ? value : null;
 }
 
 export function buildWorkspaceExplorerStateKey(scope: FileExplorerWorkspaceScope): string | null {

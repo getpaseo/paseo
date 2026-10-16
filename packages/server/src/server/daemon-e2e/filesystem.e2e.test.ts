@@ -110,6 +110,56 @@ describe("checkout discard", () => {
 });
 
 describe("file explorer", () => {
+  test.skipIf(process.platform === "win32")(
+    "preserves trailing spaces in workspace paths for file browsing and downloads",
+    async () => {
+      const parent = tmpCwd();
+      const plain = path.join(parent, "workspace");
+      const spaced = `${plain} `;
+      try {
+        mkdirSync(plain);
+        mkdirSync(spaced);
+        writeFileSync(path.join(plain, "same-name.txt"), "plain workspace\n");
+        writeFileSync(path.join(plain, "plain-only.txt"), "plain\n");
+        writeFileSync(path.join(spaced, "same-name.txt"), "spaced workspace\n");
+        writeFileSync(path.join(spaced, "space-only.txt"), "space\n");
+        const creation = await ctx.client.createWorkspace({
+          source: { kind: "directory", path: spaced },
+          title: "Trailing-space file explorer",
+        });
+        expect(creation.error).toBeNull();
+        expect(creation.workspace?.workspaceDirectory).toBe(spaced);
+
+        const directory = await ctx.client.listDirectory(spaced, ".");
+        expect(directory.entries.map((entry) => entry.name).sort()).toEqual([
+          "same-name.txt",
+          "space-only.txt",
+        ]);
+        const file = await ctx.client.readFile(spaced, "same-name.txt");
+        expect(new TextDecoder().decode(file.bytes)).toBe("spaced workspace\n");
+        const token = await ctx.client.requestDownloadToken(spaced, "same-name.txt");
+        expect(token.error).toBeNull();
+        const response = await fetch(
+          `http://127.0.0.1:${ctx.daemon.port}/api/files/download?token=${token.token}`,
+        );
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe("spaced workspace\n");
+        const plainFile = await ctx.client.readFile(plain, "same-name.txt");
+        expect(new TextDecoder().decode(plainFile.bytes)).toBe("plain workspace\n");
+
+        const onlySpaced = path.join(parent, "only-spaced ");
+        mkdirSync(onlySpaced);
+        writeFileSync(path.join(onlySpaced, "payload.txt"), "valid file\n");
+        const listing = await ctx.client.listDirectory(onlySpaced, ".");
+        expect(listing.entries.map((entry) => entry.name)).toEqual(["payload.txt"]);
+      } finally {
+        onTestFinished(() =>
+          rm(parent, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }),
+        );
+      }
+    },
+  );
+
   test.each(["..", "..."])(
     "workspace suggestions resolve exact paths starting with %s",
     async (prefix) => {

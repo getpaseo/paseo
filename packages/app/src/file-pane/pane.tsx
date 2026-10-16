@@ -251,17 +251,16 @@ export function FilePane({
   const supportsEditing = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.workspaceFileEditing === true,
   );
-  const normalizedWorkspaceRoot = useMemo(() => workspaceRoot.trim(), [workspaceRoot]);
   const normalizedFilePath = useMemo(() => trimNonEmpty(location.path), [location.path]);
   const readTarget = useMemo(
     () =>
       normalizedFilePath
         ? resolveFilePreviewReadTarget({
             path: normalizedFilePath,
-            workspaceRoot: normalizedWorkspaceRoot,
+            workspaceRoot,
           })
         : null,
-    [normalizedFilePath, normalizedWorkspaceRoot],
+    [normalizedFilePath, workspaceRoot],
   );
 
   // Re-read the file when this pane becomes visible again (#445). `isActive`
@@ -309,7 +308,7 @@ export function FilePane({
   return (
     <FilePanePresentation
       serverId={serverId}
-      workspaceRoot={normalizedWorkspaceRoot}
+      workspaceRoot={workspaceRoot}
       client={client}
       readTarget={readTarget}
       preview={preview}

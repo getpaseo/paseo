@@ -73,7 +73,7 @@ export function resolveFilePreviewReadTarget(input: {
     };
   }
 
-  const workspaceRoot = input.workspaceRoot?.trim();
+  const workspaceRoot = input.workspaceRoot;
   if (!isAbsolutePath(previewPath)) {
     if (!workspaceRoot || !isAbsolutePath(workspaceRoot)) {
       return null;
