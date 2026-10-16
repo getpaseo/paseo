@@ -1318,6 +1318,39 @@ the source row, so updates to one streaming item do not remount its renderer. Us
 `useRevealedText(text, phase)` hook when a renderer should pace streaming text like Paseo's built-in
 assistant rows.
 
+## Assistant file link handlers
+
+A client plugin can claim selected workspace file links from assistant messages before Paseo opens
+them in the workspace file viewer. Register a synchronous handler with
+`client.addAssistantFileLinkHandler`. Return `true` after opening your plugin UI, or `false` to
+continue to the next handler and then Paseo's file viewer.
+
+```tsx
+import type { PluginClientContext } from "@getpaseo/plugin/client";
+
+export default function contribute(client: PluginClientContext) {
+  client.addAssistantFileLinkHandler({
+    id: "csv-viewer",
+    handle({ path, workspaceId, agentId }) {
+      if (!path.toLowerCase().endsWith(".csv")) return false;
+
+      // Store path in plugin state, then open the matching workspace panel.
+      client.openPanel("csv-viewer", { workspaceId, agentId });
+      return true;
+    },
+  });
+  return () => {};
+}
+```
+
+Handlers receive the daemon `serverId`, workspace and agent IDs, normalized file path, optional line
+numbers, and the requested open disposition. Paseo runs handlers only for local file links in
+assistant messages. External URLs, directory links, and links handled by other app surfaces keep
+their existing behavior. A handler that returns `false` leaves the link on Paseo's normal path.
+Handlers run synchronously so Paseo can decide whether to open its viewer in the same click. Since
+the callback runs in the app, set the plugin's minimum Paseo version to a release that includes
+`addAssistantFileLinkHandler`.
+
 ### Append a timeline row from the daemon
 
 A server handler can add a plugin-owned row to canonical history:
