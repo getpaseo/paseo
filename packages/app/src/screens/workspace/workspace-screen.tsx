@@ -1026,12 +1026,15 @@ function WorkspaceScreenContent({
       .prepareWorkspaceRoute(normalizedServerId, normalizedWorkspaceId)
       .catch(() => undefined);
   }, [normalizedServerId, normalizedWorkspaceId, workspaceDescriptor]);
-  // The focused workspace keeps the directory live (script status, workspace updates) even when
-  // no sidebar or viewed agent timeline demands it. Retained, hidden workspaces release it.
+  // The focused workspace keeps its script status live even when no sidebar or viewed agent
+  // timeline demands the directory. Retained, hidden workspaces release it.
   useEffect(() => {
-    if (!isRouteFocused || !normalizedServerId) return;
-    return getHostRuntimeStore().acquireDirectoryDemand(normalizedServerId);
-  }, [isRouteFocused, normalizedServerId]);
+    if (!isRouteFocused || !normalizedServerId || !normalizedWorkspaceId) return;
+    return getHostRuntimeStore().acquireScriptStatusDemand(
+      normalizedServerId,
+      normalizedWorkspaceId,
+    );
+  }, [isRouteFocused, normalizedServerId, normalizedWorkspaceId]);
   const workspaceScripts = getWorkspaceScripts(workspaceDescriptor);
   const { handleRetryHost, handleManageHost, handleDismissMissingWorkspace } =
     useWorkspaceRouteActions(normalizedServerId);
