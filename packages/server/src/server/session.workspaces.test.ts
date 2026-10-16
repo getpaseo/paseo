@@ -9223,7 +9223,7 @@ test("workspace auto-name keeps a manual title written before the scheduled titl
   }
 });
 
-test("workspace auto-name replaces the unchanged prompt title", async () => {
+test("workspace auto-name preserves a manual title matching the prompt", async () => {
   vi.useFakeTimers();
   const workspace = createPersistedWorkspaceRecord({
     workspaceId: "ws-prompt-title",
@@ -9265,7 +9265,7 @@ test("workspace auto-name replaces the unchanged prompt title", async () => {
     });
     await vi.runAllTimersAsync();
 
-    expect(stored.get(workspace.workspaceId)?.title).toBe("Generated login fix");
+    expect(stored.get(workspace.workspaceId)?.title).toBe("Fix login bug");
   } finally {
     vi.useRealTimers();
   }
@@ -9300,7 +9300,7 @@ test("workspace auto-name uses the backing root for a nested worktree", async ()
     cwd: workspaceCwd,
     kind: "worktree",
     displayName: "Fix checkout title",
-    title: "Fix checkout title",
+    title: null,
     branch: "placeholder-branch",
     worktreeRoot: repoDir,
     isPaseoOwnedWorktree: true,
@@ -9435,7 +9435,7 @@ test("checkout.rename_branch.request renames the branch without a denormalized b
   expect(persisted?.title).toBe("Refactor auth flow");
 });
 
-test("workspace.create.response persists the first prompt as the initial title", async () => {
+test("workspace.create.response keeps the title null until AI naming finishes", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
   const session = createSessionForWorkspaceTests({
@@ -9466,8 +9466,8 @@ test("workspace.create.response persists the first prompt as the initial title",
 
   const response = findByType(emitted, "workspace.create.response");
   expect(response?.payload.error).toBeNull();
-  expect(response?.payload.workspace?.title).toBe("Add retries to the payments flow");
-  expect(response?.payload.workspace?.name).toBe("Add retries to the payments flow");
+  expect(response?.payload.workspace?.title).toBeNull();
+  expect(response?.payload.workspace?.name).toBe("repo");
   expect(response?.payload.workspace?.intent).toBe(
     "  Preserve this exact intention\nincluding whitespace  ",
   );
@@ -9475,7 +9475,7 @@ test("workspace.create.response persists the first prompt as the initial title",
   const workspaceId = response?.payload.workspace?.id;
   expect(workspaceId).toBeDefined();
   const persisted = await session.workspaceRegistry.get(workspaceId as string);
-  expect(persisted?.title).toBe("Add retries to the payments flow");
+  expect(persisted?.title).toBeNull();
   expect(persisted?.intent).toBe("  Preserve this exact intention\nincluding whitespace  ");
   expect(filterByType(emitted, "workspace_update")).toHaveLength(1);
 });

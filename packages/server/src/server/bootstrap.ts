@@ -215,10 +215,7 @@ import { createGitMutationService } from "./session/git-mutation/git-mutation-se
 import { workspaceIdsOnCheckout } from "./workspace-directory.js";
 import { configureGitProcessPolicy } from "../utils/run-git-command.js";
 import { resolveGitProcessPolicy } from "../utils/git-process-scheduler.js";
-import {
-  generateCreateAgentTitle,
-  resolveFirstAgentPromptTitle,
-} from "./agent/create-agent-title.js";
+import { generateCreateAgentTitle } from "./agent/create-agent-title.js";
 import {
   createAgentCommand,
   type CreateAgentCommandDependencies,
@@ -1057,10 +1054,7 @@ export async function createPaseoDaemon(
     cwd: string,
     firstAgentContext?: FirstAgentContext,
   ): Promise<string> => {
-    const workspace = await workspaceProvisioning.createWorkspaceForDirectory(
-      cwd,
-      resolveFirstAgentPromptTitle(firstAgentContext),
-    );
+    const workspace = await workspaceProvisioning.createWorkspaceForDirectory(cwd, null);
     if (firstAgentContext) {
       workspaceAutoName.scheduleForDirectory({
         workspaceId: workspace.workspaceId,
@@ -1318,10 +1312,7 @@ export async function createPaseoDaemon(
     cwd: string;
     firstAgentContext: FirstAgentContext;
   }) => {
-    const workspace = await workspaceProvisioning.createWorkspaceForDirectory(
-      input.cwd,
-      resolveFirstAgentPromptTitle(input.firstAgentContext),
-    );
+    const workspace = await workspaceProvisioning.createWorkspaceForDirectory(input.cwd, null);
     workspaceAutoName.scheduleForDirectory({
       workspaceId: workspace.workspaceId,
       cwd: workspace.cwd,

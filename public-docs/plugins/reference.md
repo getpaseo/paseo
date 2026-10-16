@@ -193,7 +193,7 @@ and does not promise delivery while the app is suspended or closed.
 
 ### External links and workspace browsers
 
-Use `ExternalLink` to open documentation outside Paseo:
+Use `ExternalLink` for documentation links:
 
 ```tsx
 import { ExternalLink } from "@getpaseo/plugin/client/ui";
@@ -204,23 +204,23 @@ export function DocumentationLink() {
 ```
 
 The component has accessible link semantics and uses the same opener as
-`openExternalUrl(url: string): Promise<void>`:
+`openExternalUrl(url, event?): Promise<void>`:
 
 ```ts
 import { openExternalUrl } from "@getpaseo/plugin/client";
 
-export async function openDocumentation() {
-  await openExternalUrl("https://paseo.sh/docs");
+export async function openDocumentation(event?: { metaKey?: boolean; nativeEvent?: unknown }) {
+  await openExternalUrl("https://paseo.sh/docs", event);
 }
 ```
 
-Call the function directly from a user interaction so the browser permits a new tab.
+Pass the click event directly from a user interaction to preserve Command-click.
 
-| Platform      | External links                     | `navigation.openBrowser`                         |
-| ------------- | ---------------------------------- | ------------------------------------------------ |
-| Electron      | System browser                     | Available; creates a local workspace browser tab |
-| Browser web   | New tab with `noopener,noreferrer` | `undefined`                                      |
-| iOS / Android | OS URL handler                     | `undefined`                                      |
+| Platform      | External links                                                                | `navigation.openBrowser`                         |
+| ------------- | ----------------------------------------------------------------------------- | ------------------------------------------------ |
+| Electron      | Workspace browser; Command-click or no open workspace uses the system browser | Available; creates a local workspace browser tab |
+| Browser web   | New tab with `noopener,noreferrer`                                            | `undefined`                                      |
+| iOS / Android | OS URL handler                                                                | `undefined`                                      |
 
 #### ExternalLink props
 

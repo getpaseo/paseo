@@ -35,7 +35,7 @@ import type {
 } from "../terminal/local-links/terminal-local-link-provider";
 import type { TerminalClipboardWriter } from "../terminal/native-renderer/terminal-selection";
 import type { TerminalRendererReadyChange } from "../utils/terminal-renderer-readiness";
-import { openExternalUrl } from "../utils/open-external-url";
+import { openWebUrl as openExternalUrl } from "../utils/open-web-url";
 import { focusWithRetries } from "../utils/web-focus";
 import {
   extractTerminalDropPaths,

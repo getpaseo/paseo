@@ -11,7 +11,7 @@ import { SettingsSection } from "@/components/settings/headings/settings-section
 import { settingsStyles } from "@/styles/settings";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { confirmDialog } from "@/utils/confirm-dialog";
-import { openExternalUrl } from "@/utils/open-external-url";
+import { openWebUrl as openExternalUrl, type WebUrlClick } from "@/utils/open-web-url";
 import { SkillSelectionSheet } from "./selection-sheet";
 import { useAgentSkills } from "./use-agent-skills";
 
@@ -89,8 +89,8 @@ export function AgentSkillsSection({ serverId }: { serverId: string }) {
   );
   const handleOpen = useCallback(() => setIsChoosing(true), []);
   const handleClose = useCallback(() => setIsChoosing(false), []);
-  const handleOpenDocs = useCallback(() => {
-    void openExternalUrl(SKILLS_DOCS_URL);
+  const handleOpenDocs = useCallback((event?: WebUrlClick) => {
+    void openExternalUrl(SKILLS_DOCS_URL, event);
   }, []);
   const docsIcon = useMemo(
     () => <ThemedArrowUpRight size={ICON_SIZE.sm} uniProps={mutedMapping} />,

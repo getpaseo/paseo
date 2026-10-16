@@ -1048,7 +1048,6 @@ interface WorkspaceHeaderTitleBarProps {
   onOpenSetupTab: () => void;
   onScriptTerminalStarted: (terminalId: string) => void;
   onViewScriptTerminal: (terminalId: string) => void;
-  onOpenUrlInBrowserTab: (url: string) => void;
 }
 
 function WorkspaceHeaderTitleBar({
@@ -1077,7 +1076,6 @@ function WorkspaceHeaderTitleBar({
   onOpenSetupTab,
   onScriptTerminalStarted,
   onViewScriptTerminal,
-  onOpenUrlInBrowserTab,
 }: WorkspaceHeaderTitleBarProps) {
   const supportsWorkspaceIntent = useHostFeature(normalizedServerId, "workspaceIntent");
   const [editingIntention, setEditingIntention] = useState(false);
@@ -1167,7 +1165,6 @@ function WorkspaceHeaderTitleBar({
             liveTerminalIds={liveTerminalIds}
             onScriptTerminalStarted={onScriptTerminalStarted}
             onViewTerminal={onViewScriptTerminal}
-            onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
             hideLabels
             presentation="ghost"
           />
@@ -2563,8 +2560,27 @@ function WorkspaceScreenContent({
   const showBrowserPane = useCallback((input: { workspaceKey: string }) => {
     const store = useWorkspaceLayoutStore.getState();
     const paneId = store.ensureBrowserPane(input.workspaceKey, { reveal: true });
-    if (paneId) store.focusPane(input.workspaceKey, paneId);
-    setBrowserOpenError(paneId ? null : { kind: "pane", input });
+    if (!paneId) {
+      setBrowserOpenError({ kind: "pane", input });
+      return;
+    }
+    const layout = useWorkspaceLayoutStore.getState().layoutByWorkspace[input.workspaceKey];
+    const pane = findPaneById(layout.root, paneId);
+    const existing = collectAllTabs(layout.root).find(
+      (tab) => tab.tabId === pane?.focusedTabId && tab.target.kind === "browser",
+    );
+    if (existing) {
+      store.focusTab(input.workspaceKey, existing.tabId);
+      setBrowserOpenError(null);
+      return;
+    }
+    const result = openWorkspaceBrowser({
+      workspaceKey: input.workspaceKey,
+      intent: "reveal",
+      url: "about:blank",
+      state: { browserAddressFocusPending: true },
+    });
+    setBrowserOpenError(result.ok ? null : { kind: "pane", input });
   }, []);
   const handleToggleBrowserPane = useCallback(() => {
     if (!persistenceKey || !getIsElectron()) return;
@@ -2671,13 +2687,6 @@ function WorkspaceScreenContent({
     ],
   );
 
-  const handleOpenUrlInBrowserTab = useCallback(
-    (url: string) => {
-      if (!persistenceKey || !getIsElectron()) return;
-      openManualBrowser({ workspaceKey: persistenceKey, url, intent: "reveal" });
-    },
-    [openManualBrowser, persistenceKey],
-  );
   const handleBrowserNewTabRequest = useCallback(
     (request: BrowserNewTabRequest) => {
       if (!persistenceKey || !getIsElectron()) return;
@@ -4096,7 +4105,6 @@ function WorkspaceScreenContent({
             onPreviewTerminalStarted={handlePreviewTerminalStarted}
             onPreviewPendingChange={handlePreviewPendingChange}
             onViewTerminal={handleViewScriptTerminal}
-            onOpenUrlInBrowserTab={handleOpenUrlInBrowserTab}
             preview={workspaceScriptsPreviewActions}
             hideLabels={hideHeaderActionLabels}
           />
@@ -4156,7 +4164,6 @@ function WorkspaceScreenContent({
       liveTerminalIds,
       handleScriptTerminalStarted,
       handleViewScriptTerminal,
-      handleOpenUrlInBrowserTab,
       workspaceScriptsPreviewActions,
       handlePreviewTerminalStarted,
       handlePreviewPendingChange,
@@ -4258,7 +4265,6 @@ function WorkspaceScreenContent({
                 onOpenSetupTab={handleOpenSetupTab}
                 onScriptTerminalStarted={handleScriptTerminalStarted}
                 onViewScriptTerminal={handleViewScriptTerminal}
-                onOpenUrlInBrowserTab={handleOpenUrlInBrowserTab}
               />
             </>
           }
@@ -4277,7 +4283,6 @@ function WorkspaceScreenContent({
       handleCreateTerminal,
       handleCreateTerminalWithProfile,
       handleOpenSetupTab,
-      handleOpenUrlInBrowserTab,
       handleScriptTerminalStarted,
       handleViewScriptTerminal,
       headerRight,

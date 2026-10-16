@@ -10,7 +10,7 @@ import {
   type ClientForgeViewModule,
   type PaneChecksSlotContext,
 } from "@/git/client-forge-module";
-import { openExternalUrl } from "@/utils/open-external-url";
+import { openWebUrl as openExternalUrl, type WebUrlClick } from "@/utils/open-web-url";
 import { formatDuration } from "@/utils/time";
 import { COUNTED_CHECK_PRESENTATIONS } from "@/git/check-presentation";
 import { CheckPresentationIcon } from "@/git/check-presentation.view";
@@ -134,11 +134,14 @@ function GitLabPipelineSection({
   const showBreakdown = !isPlaceholderData && totalCounted > 0;
   const displayCounts = showBreakdown ? counts : countGitlabPipelineJobs([]);
 
-  const handleOpenPipeline = useCallback(() => {
-    if (summary.url) {
-      void openExternalUrl(summary.url);
-    }
-  }, [summary.url]);
+  const handleOpenPipeline = useCallback(
+    (event?: WebUrlClick) => {
+      if (summary.url) {
+        void openExternalUrl(summary.url, event);
+      }
+    },
+    [summary.url],
+  );
 
   const sectionSummary = (
     <>
@@ -220,11 +223,14 @@ function PipelineStageGroup({ stage }: { stage: CheckoutPipelineStage }) {
 
 function PipelineJobRow({ job }: { job: CheckoutPipelineJob }) {
   const { t } = useTranslation();
-  const handlePress = useCallback(() => {
-    if (job.url) {
-      void openExternalUrl(job.url);
-    }
-  }, [job.url]);
+  const handlePress = useCallback(
+    (event?: WebUrlClick) => {
+      if (job.url) {
+        void openExternalUrl(job.url, event);
+      }
+    },
+    [job.url],
+  );
   const duration = formatPipelineDuration(job.durationSeconds);
   return (
     <Pressable onPress={handlePress} style={jobRowPressableStyle} disabled={!job.url}>

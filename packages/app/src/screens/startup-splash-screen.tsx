@@ -12,7 +12,7 @@ import MaskedView from "@react-native-masked-view/masked-view";
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "react-native-svg";
 import * as Clipboard from "expo-clipboard";
 import { useTranslation } from "react-i18next";
-import { openExternalUrl } from "@/utils/open-external-url";
+import { openWebUrl as openExternalUrl } from "@/utils/open-web-url";
 import { BookOpen, Copy, RotateCw, TriangleAlert } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { PaseoLogo } from "@/components/icons/paseo-logo";

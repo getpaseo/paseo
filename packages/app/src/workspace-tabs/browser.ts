@@ -182,8 +182,23 @@ export function openWorkspaceBrowser(input: OpenWorkspaceBrowserInput): OpenWork
     if (!hasBrowserId) useBrowserStore.getState().removeBrowser(browserId);
     return { ok: false, code: "placement_unavailable" };
   }
-  if (input.intent === "reveal") store.focusTab(workspaceKey, tabId);
+  if (input.intent === "reveal") {
+    revealWorkspaceBrowserTab(workspaceKey, tabId);
+  }
   return { ok: true, tabId, browserId, created: !hasBrowserId };
+}
+
+function revealWorkspaceBrowserTab(workspaceKey: string, tabId: string): void {
+  const store = useWorkspaceLayoutStore.getState();
+  const nextLayout = store.layoutByWorkspace[workspaceKey];
+  const pane = findPaneContainingTab(nextLayout.root, tabId);
+  const explorerPaneId = store.explorerSidebarPaneIdByWorkspace[workspaceKey] ?? "explorer";
+  if (pane && resolveBrowserPaneId(nextLayout, pane.id, explorerPaneId) === pane.id) {
+    store.ensureBrowserPane(workspaceKey, { reveal: true, paneId: pane.id });
+  } else {
+    store.hideExplorerSidebar(workspaceKey);
+  }
+  store.focusTab(workspaceKey, tabId);
 }
 
 export async function closeWorkspaceBrowser(

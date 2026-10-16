@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import type { OpenFileDisposition } from "@/workspace/file-open";
-import { openExternalUrl } from "@/utils/open-external-url";
+import { openWebUrl as openExternalUrl, type WebUrlClick } from "@/utils/open-web-url";
 import type { InlinePathTarget } from "./parse";
 import { dispatchFileTarget } from "./open-path";
 import {
@@ -21,7 +21,7 @@ import {
 export interface UseFileLinkResult {
   target: InlinePathTarget | null;
   onHoverIn: () => void;
-  onPress: () => void;
+  onPress: (event?: WebUrlClick) => void;
   open: (source: AssistantFileLinkSource, disposition: OpenFileDisposition) => void;
 }
 
@@ -87,9 +87,14 @@ export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult 
   });
 
   const open = useStableEvent(
-    (nextSource: AssistantFileLinkSource, disposition: OpenFileDisposition) => {
+    (
+      nextSource: AssistantFileLinkSource,
+      disposition: OpenFileDisposition,
+      event?: WebUrlClick,
+    ) => {
       openAssistantFileLink({
         source: nextSource,
+        event,
         disposition,
         context,
         queryClient,
@@ -118,8 +123,8 @@ export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult 
     });
   });
 
-  const onPress = useStableEvent(() => {
-    open(stableSource, "preferred");
+  const onPress = useStableEvent((event?: WebUrlClick) => {
+    open(stableSource, "preferred", event);
   });
 
   const target = useMemo(() => {
@@ -156,6 +161,7 @@ export function useAssistantFileLinkActions(): AssistantFileLinkActions {
 }
 
 function openAssistantFileLink(input: {
+  event?: WebUrlClick;
   source: AssistantFileLinkSource;
   disposition: OpenFileDisposition;
   context: AssistantFileLinkResolverContextValue;
@@ -170,6 +176,11 @@ function openAssistantFileLink(input: {
   if (capturedResolution.kind === "resolved") {
     void dispatchResolvedLink({
       resolution: capturedResolution,
+      event: {
+        metaKey:
+          input.event?.metaKey === true ||
+          (input.event?.nativeEvent as { metaKey?: boolean } | undefined)?.metaKey === true,
+      },
       disposition: input.disposition,
       capturedServerId: capturedConfig.serverId,
       capturedWorkspaceRoot: capturedConfig.workspaceRoot,
@@ -261,6 +272,7 @@ function assistantFileLinkQueryKey(input: {
 }
 
 async function dispatchResolvedLink(input: {
+  event?: WebUrlClick;
   resolution: Extract<AssistantFileLinkResolution, { kind: "resolved" }>;
   disposition: OpenFileDisposition;
   capturedServerId?: string;
@@ -281,6 +293,7 @@ async function dispatchResolvedLink(input: {
   if (value.kind === "external") {
     await dispatchExternalUrl({
       url: value.url,
+      event: input.event,
       capturedServerId: input.capturedServerId,
       capturedWorkspaceRoot: input.capturedWorkspaceRoot,
       context: input.context,
@@ -289,6 +302,7 @@ async function dispatchResolvedLink(input: {
 }
 
 async function dispatchExternalUrl(input: {
+  event?: WebUrlClick;
   url: string;
   capturedServerId?: string;
   capturedWorkspaceRoot?: string;
@@ -301,7 +315,7 @@ async function dispatchExternalUrl(input: {
   ) {
     return;
   }
-  await openExternalUrl(input.url);
+  await openExternalUrl(input.url, input.event);
 }
 
 async function dispatchUnresolvedError(input: {

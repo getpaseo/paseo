@@ -29,7 +29,7 @@ import type {
 } from "../terminal/local-links/terminal-local-link-provider";
 import { terminalEmulatorWebViewHtml } from "../terminal/webview/terminal-emulator-webview-html";
 import type { PendingTerminalModifiers } from "../utils/terminal-keys";
-import { openExternalUrl } from "../utils/open-external-url";
+import { openWebUrl as openExternalUrl } from "../utils/open-web-url";
 import type { TerminalEmulatorHandle, TerminalEmulatorProps } from "./terminal-emulator-contract";
 import { shouldHandleTerminalBridgeMessage } from "./terminal-webview-message-routing";
 import { shouldResetForMissingRendererReady } from "./terminal-webview-readiness";

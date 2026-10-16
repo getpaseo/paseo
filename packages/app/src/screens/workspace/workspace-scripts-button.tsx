@@ -37,6 +37,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { MENU_ITEM_HEIGHT } from "@/components/ui/menu/menu-geometry";
 import { useToast } from "@/contexts/toast-context";
+import type { WebUrlClick } from "@/utils/open-web-url";
 import { openServiceUrl } from "@/utils/open-service-url";
 import {
   resolveWorkspaceScriptLink,
@@ -77,7 +78,6 @@ interface WorkspaceScriptsButtonProps {
   onPreviewTerminalStarted?: (terminalId: string) => void;
   onPreviewPendingChange?: (pending: boolean) => void;
   onViewTerminal?: (terminalId: string) => void;
-  onOpenUrlInBrowserTab?: (url: string) => void;
   hideLabels?: boolean;
   presentation?: "split" | "ghost";
   preview?: WorkspaceScriptsPreviewActions;
@@ -404,7 +404,6 @@ interface ScriptRowProps {
   preferredRouteKind: WorkspaceScriptLinkKind | null;
   onSelectRouteKind: (kind: WorkspaceScriptLinkKind) => void;
   onViewTerminal?: (terminalId: string) => void;
-  onOpenUrlInBrowserTab?: (url: string) => void;
 }
 
 function resolveScriptIconColorMapping(args: {
@@ -436,7 +435,6 @@ function ScriptRow({
   preferredRouteKind,
   onSelectRouteKind,
   onViewTerminal,
-  onOpenUrlInBrowserTab,
 }: ScriptRowProps): ReactElement {
   const { t } = useTranslation();
   const isRunning = script.lifecycle === "running";
@@ -456,11 +454,14 @@ function ScriptRow({
   const showExitBadge = !isRunning && exitCode !== null;
   const closeMenu = useDropdownMenuClose();
 
-  const handleOpenService = useCallback(() => {
-    if (!selectedLink) return;
-    closeMenu();
-    void openServiceUrl(selectedLink.url, { openInApp: onOpenUrlInBrowserTab });
-  }, [selectedLink, closeMenu, onOpenUrlInBrowserTab]);
+  const handleOpenService = useCallback(
+    (event?: WebUrlClick) => {
+      if (!selectedLink) return;
+      closeMenu();
+      void openServiceUrl(selectedLink.url, { event });
+    },
+    [selectedLink, closeMenu],
+  );
 
   const handleView = useCallback(() => {
     if (liveTerminalId) onViewTerminal?.(liveTerminalId);
@@ -1736,7 +1737,6 @@ export function WorkspaceScriptsButton({
   onPreviewTerminalStarted,
   onPreviewPendingChange,
   onViewTerminal,
-  onOpenUrlInBrowserTab,
   hideLabels,
   presentation = "split",
   preview,
@@ -1910,7 +1910,6 @@ export function WorkspaceScriptsButton({
                 preferredRouteKind={preferredRouteKind}
                 onSelectRouteKind={handleSelectRouteKind}
                 onViewTerminal={onViewTerminal}
-                onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
               />
             ))}
           </DropdownMenuContent>

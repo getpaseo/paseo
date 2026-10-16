@@ -3466,6 +3466,62 @@ describe("workspace-layout-store actions", () => {
     expect(total).toBeCloseTo(1, 10);
   });
 
+  it("removes the initial pane when its last tab closes with another visible content pane", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    const first = store.openTab({
+      workspaceKey,
+      target: { kind: "file", path: "/a" },
+      intent: "reveal",
+    })!;
+    const second = store.openTab({
+      workspaceKey,
+      target: { kind: "file", path: "/b" },
+      intent: "reveal",
+    })!;
+    const neighbor = store.splitPane(workspaceKey, {
+      tabId: second,
+      targetPaneId: "main",
+      position: "right",
+    });
+    store.closeTab(workspaceKey, first);
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    expect(findPaneById(layout.root, "main")).toBeNull();
+    expect(layout.focusedPaneId).toBe(neighbor);
+  });
+
+  it("keeps the last visible content pane when the browser is hidden", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    const first = store.openTab({
+      workspaceKey,
+      target: { kind: "file", path: "/a" },
+      intent: "reveal",
+    })!;
+    const second = store.openTab({
+      workspaceKey,
+      target: { kind: "file", path: "/b" },
+      intent: "reveal",
+    })!;
+    const neighbor = store.splitPane(workspaceKey, {
+      tabId: second,
+      targetPaneId: "main",
+      position: "right",
+    })!;
+    store.closeTab(workspaceKey, first);
+    store.ensureBrowserPane(workspaceKey, { reveal: false });
+    store.closeTab(workspaceKey, second);
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    expect(findPaneById(layout.root, neighbor)).not.toBeNull();
+    expect(
+      collectAllTabs(layout.root).some(
+        (tab) =>
+          tab.target.kind === "new_tab" &&
+          findPaneContainingTab(layout.root, tab.tabId)?.id === neighbor,
+      ),
+    ).toBe(true);
+  });
+
   it("closing the last content tab creates a fresh New tab in the retained pane", () => {
     const workspaceKey = createWorkspaceKey();
     const store = workspaceLayoutStore.getState();
@@ -4290,7 +4346,7 @@ describe("workspace-layout-store actions", () => {
     store.closeTab(workspaceKey, strandedTabId as string);
     expect(
       findPaneById(workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey].root, "main"),
-    ).toBeTruthy();
+    ).toBeNull();
 
     store.closePane(workspaceKey, "main");
 
@@ -4703,6 +4759,23 @@ describe("browser pane ownership", () => {
     expect(findPaneById(layout.root, paneId)?.hidden).toBe(true);
     expect(layout.focusedPaneId).toBe(before);
     expect(store.getState().focusRestorationByWorkspace[workspaceKey]).toEqual(restoration);
+  });
+
+  it("reveals the browser at 65 percent and hides Explorer on every user open", () => {
+    const store = createConversationStore();
+    store.getState().showExplorerSidebar(workspaceKey);
+    const paneId = store.getState().ensureBrowserPane(workspaceKey, { reveal: true })!;
+    const layout = store.getState().layoutByWorkspace[workspaceKey];
+    const root = expectGroup(layout.root);
+    expect(root.group.sizes).toEqual([0.35, 0.65]);
+    expect(root.group.children[1]).toMatchObject({ kind: "pane", pane: { id: paneId } });
+    expect(findPaneById(layout.root, "explorer")?.hidden).toBe(true);
+    store.getState().resizeSplit(workspaceKey, root.group.id, [0.8, 0.2]);
+    store.getState().showExplorerSidebar(workspaceKey);
+    expect(store.getState().ensureBrowserPane(workspaceKey, { reveal: true })).toBe(paneId);
+    const reopened = store.getState().layoutByWorkspace[workspaceKey];
+    expect(expectGroup(reopened.root).group.sizes).toEqual([0.35, 0.65]);
+    expect(findPaneById(reopened.root, "explorer")?.hidden).toBe(true);
   });
 
   it("reuses the browser pane and preserves visibility, selected pages and focus restoration", () => {

@@ -9,11 +9,12 @@ import type { ToastApi } from "@/components/toast-host";
 import type { InlinePathTarget } from "./parse";
 import { AssistantFileLinkResolverProvider } from "./provider";
 import type { DirectorySuggestionResult } from "./resolver";
+import { openWebUrl } from "@/utils/open-web-url";
 import { useFileLink } from "./use-file-link";
 import type { OpenFileDisposition } from "@/workspace/file-open";
 
-vi.mock("@/utils/open-external-url", () => ({
-  openExternalUrl: vi.fn(async () => {}),
+vi.mock("@/utils/open-web-url", () => ({
+  openWebUrl: vi.fn(async () => {}),
 }));
 
 const SOURCE = {
@@ -326,3 +327,16 @@ describe("useFileLink", () => {
 });
 
 const WorkspaceSwitchContext = React.createContext<(workspaceRoot: string) => void>(() => {});
+
+it("captures Command-click on an assistant HTTP link", async () => {
+  vi.mocked(openWebUrl).mockClear();
+  const client = { getDirectorySuggestions: vi.fn(async () => resolvedSuggestions([])) };
+  const { result } = renderHook(
+    () => useFileLink({ href: "https://example.com/page", text: "Documentation", markup: "link" }),
+    { wrapper: createWrapper({ client, openedFiles: [] }) },
+  );
+  act(() => result.current.onPress({ nativeEvent: { metaKey: true } }));
+  await waitFor(() =>
+    expect(openWebUrl).toHaveBeenCalledWith("https://example.com/page", { metaKey: true }),
+  );
+});

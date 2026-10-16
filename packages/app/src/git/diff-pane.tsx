@@ -94,7 +94,7 @@ import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { DiffTooLargeState } from "@/git/diff-too-large-state";
 import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
 import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
-import { openExternalUrl } from "@/utils/open-external-url";
+import { openWebUrl as openExternalUrl, type WebUrlClick } from "@/utils/open-web-url";
 import { openWorkspacePullRequest } from "@/workspace-tabs/open-supporting-view";
 import type { PullRequestOpenLocation } from "@/hooks/use-settings";
 
@@ -693,9 +693,12 @@ function ChangesPullRequestExternalLink({
   const { t } = useTranslation();
   const presentation = getForgePresentation(model.forge);
   const label = t("workspace.git.pr.actions.openOn", { brand: presentation.brandLabel });
-  const handlePress = useCallback(() => {
-    void openExternalUrl(model.url);
-  }, [model.url]);
+  const handlePress = useCallback(
+    (event?: WebUrlClick) => {
+      void openExternalUrl(model.url, event);
+    },
+    [model.url],
+  );
   return (
     <ToolbarButton
       compact={compact}

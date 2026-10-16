@@ -3379,6 +3379,140 @@ async function runTabBaseline({ page, client, serverId, target, artifactDir, ins
   }
 }
 
+async function verifyWorkspaceNavigation({ page, serverId, target, artifactDir, inspectorPort }) {
+  const { expect } = await import("@playwright/test");
+  const workspaceKey = `${serverId}:${workspaceIds[0]}`;
+  await page.getByTestId(`sidebar-workspace-row-${workspaceKey}`).click();
+  const deck = page.getByTestId(`workspace-deck-entry-${workspaceKey}`);
+  await deck.getByRole("button", { name: "Open Explorer sidebar", exact: true }).click();
+  await deck.getByRole("button", { name: "Show browser", exact: true }).click();
+  const address = deck.getByRole("textbox", { name: "Address", exact: true });
+  await expect(address).toBeVisible();
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll("webview")].some(
+      (webview) =>
+        webview.parentElement?.getAttribute("aria-hidden") === "false" &&
+        webview.getWebContentsId() > 0 &&
+        !webview.isLoading(),
+    ),
+  );
+  await address.fill(target.url);
+  await address.press("Enter");
+  await expect
+    .poll(() =>
+      page
+        .locator("webview")
+        .evaluateAll((views) =>
+          views
+            .filter((view) => view.parentElement?.getAttribute("aria-hidden") === "false")
+            .map((view) => view.getURL()),
+        ),
+    )
+    .toEqual([target.url]);
+  const measure = async () =>
+    page.evaluate((key) => {
+      const state = JSON.parse(localStorage.getItem("workspace-layout-state")).state;
+      const layout = state.layoutByWorkspace[key];
+      const paneId = state.browserPaneIdByWorkspace[key];
+      const browser = document.querySelector(`[data-testid="workspace-pane-${paneId}"]`);
+      const workspaceDeck = document.querySelector(`[data-testid="workspace-deck-entry-${key}"]`);
+      const panes = [...workspaceDeck.querySelectorAll('[data-testid^="workspace-pane-"]')].filter(
+        (pane) => pane.getBoundingClientRect().width > 0,
+      );
+      const bounds = panes.map((pane) => pane.getBoundingClientRect());
+      const left = Math.min(...bounds.map((box) => box.left));
+      const right = Math.max(...bounds.map((box) => box.right));
+      return {
+        ratio: browser.getBoundingClientRect().width / (right - left),
+        rootSizes: layout.root.group.sizes,
+        paneId,
+        count: panes.length,
+      };
+    }, workspaceKey);
+  const first = await measure();
+  assert(Math.abs(first.ratio - 0.65) < 0.02, `Browser occupies ${first.ratio}, expected 65%`);
+  await expect(
+    deck.getByRole("button", { name: "Open Explorer sidebar", exact: true }),
+  ).toBeVisible();
+  await page.locator("webview").evaluateAll((views) => {
+    const view = views.find(
+      (candidate) => candidate.parentElement?.getAttribute("aria-hidden") === "false",
+    );
+    return view.executeJavaScript(
+      `sessionStorage.setItem('navigation-proof', 'kept'); document.body.insertAdjacentHTML('afterbegin', '<a id="navigation-link" href="https://example.com/navigation-proof" style="position:fixed;top:10px;left:10px;z-index:999999;background:white;color:black;padding:10px">Command link proof</a>'); true`,
+    );
+  });
+  await page.screenshot({ path: path.join(artifactDir, "navigation-browser-65.png") });
+  await deck.getByRole("button", { name: "Hide browser", exact: true }).click();
+  await deck.getByRole("button", { name: "Open Explorer sidebar", exact: true }).click();
+  await deck.getByRole("button", { name: "Show browser", exact: true }).click();
+  const reopened = await measure();
+  assert(
+    first.paneId === reopened.paneId && Math.abs(reopened.ratio - 0.65) < 0.02,
+    "Reopen did not reuse the 65% browser pane",
+  );
+  await expect
+    .poll(() =>
+      page
+        .locator("webview")
+        .evaluateAll(
+          (views) =>
+            views.filter(
+              (candidate) => candidate.parentElement?.getAttribute("aria-hidden") === "false",
+            ).length,
+        ),
+    )
+    .toBe(1);
+  const guest = await page.locator("webview").evaluateAll(async (views) => {
+    const view = views.find(
+      (candidate) => candidate.parentElement?.getAttribute("aria-hidden") === "false",
+    );
+    return {
+      id: view.getWebContentsId(),
+      continuity: await view.executeJavaScript("sessionStorage.getItem('navigation-proof')"),
+      point: await view.executeJavaScript(
+        "(() => { const rect = document.getElementById('navigation-link').getBoundingClientRect(); return { x: Math.round(rect.x + 10), y: Math.round(rect.y + 10) }; })()",
+      ),
+    };
+  });
+  assert(guest.continuity === "kept", "Reopen discarded loaded page state");
+  await evaluateMain(
+    inspectorPort,
+    `(() => { process.__navigationOpens = []; process.mainModule.require('electron').shell.openExternal = async (url) => { process.__navigationOpens.push(url); }; const wc = process.mainModule.require('electron').webContents.fromId(${guest.id}); wc.sendInputEvent({ type:'mouseDown', button:'left', clickCount:1, x:${guest.point.x}, y:${guest.point.y}, modifiers:['meta'] }); wc.sendInputEvent({ type:'mouseUp', button:'left', clickCount:1, x:${guest.point.x}, y:${guest.point.y}, modifiers:['meta'] }); return true; })()`,
+  );
+  await expect
+    .poll(() => evaluateMain(inspectorPort, "process.__navigationOpens"))
+    .toEqual(["https://example.com/navigation-proof"]);
+  await expect(address).toHaveValue(target.url);
+  await page.screenshot({ path: path.join(artifactDir, "navigation-reopened.png") });
+  const projectTitle = page.getByText("Desktop browser project 1", { exact: true }).first();
+  await expect(projectTitle).toHaveCSS("font-size", "16px");
+  await evaluateMain(
+    inspectorPort,
+    "(() => { const { ipcMain } = process.mainModule.require('electron'); ipcMain.removeHandler('paseo:opener:openUrl'); ipcMain.handle('paseo:opener:openUrl', (_event, url) => { process.__navigationOpens.push(url); }); return true; })()",
+  );
+  await page.getByTestId("sidebar-help").click();
+  await page.getByTestId("sidebar-help-github").click({ modifiers: ["Meta"] });
+  await expect.poll(() => evaluateMain(inspectorPort, "process.__navigationOpens.length")).toBe(2);
+  await expect(address).toHaveValue(target.url);
+  const projectRow = page
+    .locator('[data-testid^="sidebar-project-row-"]')
+    .filter({ hasText: "Desktop browser project 1" });
+  await projectRow.click();
+  await expect(page.getByTestId(`sidebar-workspace-row-${workspaceKey}`)).toBeHidden();
+  await expect(projectTitle).toHaveCSS("font-size", "16px");
+  await page.screenshot({ path: path.join(artifactDir, "navigation-project-collapsed.png") });
+  writeJson(path.join(artifactDir, "navigation-result.json"), {
+    first,
+    reopened,
+    commandClickExternal: true,
+    helpCommandClickExternal: true,
+    collapsedProjectTitleSize: "16px",
+    pageStatePreserved: true,
+    projectTitleSize: await projectTitle.evaluate((el) => getComputedStyle(el).fontSize),
+  });
+}
+
 async function main() {
   const artifactDir =
     process.env.PASEO_DESKTOP_BROWSER_E2E_ARTIFACT_DIR ??
@@ -3537,6 +3671,18 @@ async function main() {
       page = await waitForAppPage(browser, expoPort);
       return page;
     };
+
+    if (process.env.PASEO_DESKTOP_WORKSPACE_NAVIGATION_ONLY === "1") {
+      await verifyWorkspaceNavigation({
+        page,
+        serverId: status.serverId,
+        target,
+        artifactDir,
+        inspectorPort,
+      });
+      console.log("Workspace navigation regression passed.");
+      return;
+    }
 
     const checkPluginLinks = () =>
       runPluginLinksRegression({

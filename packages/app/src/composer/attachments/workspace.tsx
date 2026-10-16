@@ -1,3 +1,4 @@
+import type { WebUrlClick } from "@/utils/open-web-url";
 import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import type {
@@ -235,7 +236,7 @@ interface RenderWorkspaceAttachmentPillArgs {
   attachment: WorkspaceComposerAttachment;
   index: number;
   disabled: boolean;
-  onOpen: (attachment: ComposerAttachment) => void;
+  onOpen: (attachment: ComposerAttachment, event?: WebUrlClick) => void;
   onRemove: (index: number) => void;
 }
 
@@ -255,9 +256,12 @@ function WorkspaceAttachmentPill({
 }: WorkspaceAttachmentPillProps) {
   const { t } = useTranslation();
   const content = getWorkspaceAttachmentPillContent(attachment, t);
-  const handleOpen = useCallback(() => {
-    onOpen(attachment);
-  }, [onOpen, attachment]);
+  const handleOpen = useCallback(
+    (event?: WebUrlClick) => {
+      onOpen(attachment, event);
+    },
+    [onOpen, attachment],
+  );
   const handleRemove = useCallback(() => {
     onRemove(index);
   }, [onRemove, index]);

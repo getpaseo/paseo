@@ -12,7 +12,7 @@ import {
 } from "@/hooks/use-acp-provider-catalog";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import type { Theme } from "@/styles/theme";
-import { openExternalUrl } from "@/utils/open-external-url";
+import { openWebUrl as openExternalUrl, type WebUrlClick } from "@/utils/open-web-url";
 import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 
 interface ProviderCatalogListProps {
@@ -61,9 +61,12 @@ function CatalogRow({ entry, installing, onInstall }: CatalogRowProps) {
     onInstall(entry);
   }, [entry, onInstall]);
 
-  const handleOpenInstallLink = useCallback(() => {
-    void openExternalUrl(entry.installLink);
-  }, [entry.installLink]);
+  const handleOpenInstallLink = useCallback(
+    (event?: WebUrlClick) => {
+      void openExternalUrl(entry.installLink, event);
+    },
+    [entry.installLink],
+  );
 
   return (
     <View style={styles.row}>

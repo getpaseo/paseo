@@ -21,7 +21,7 @@ import {
 } from "@/git/policy";
 import { deriveMergeCapability } from "@/git/merge-capability";
 import type { CheckoutPrMergeMethod } from "@getpaseo/protocol/messages";
-import { openExternalUrl } from "@/utils/open-external-url";
+import { openWebUrl as openExternalUrl, type WebUrlClick } from "@/utils/open-web-url";
 import { useToast } from "@/contexts/toast-context";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
 import {
@@ -79,8 +79,8 @@ function forgeVocabulary(forge: Forge): { context: "mr" | undefined } {
   return { context: getForgePresentation(forge).changeRequestContext };
 }
 
-function openURLInNewTab(url: string): void {
-  void openExternalUrl(url);
+function openURLInNewTab(url: string, event?: WebUrlClick): void {
+  void openExternalUrl(url, event);
 }
 
 function isActionDisabled(actionsDisabled: boolean, status: CheckoutGitActionStatus): boolean {
@@ -680,13 +680,16 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     shouldPromoteArchive,
   } = derived;
 
-  const handlePrAction = useCallback(() => {
-    if (prStatus?.url) {
-      openURLInNewTab(prStatus.url);
-      return;
-    }
-    handleCreatePr();
-  }, [prStatus?.url, handleCreatePr]);
+  const handlePrAction = useCallback(
+    (event?: WebUrlClick) => {
+      if (prStatus?.url) {
+        openURLInNewTab(prStatus.url, event);
+        return;
+      }
+      handleCreatePr();
+    },
+    [prStatus?.url, handleCreatePr],
+  );
 
   // Build actions
   const gitActionsInput = useMemo<BuildGitActionsInput>(() => {

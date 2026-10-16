@@ -1547,7 +1547,6 @@ export function closeTabInLayout(input: CloseTabInLayoutInput): WorkspaceLayout 
   if (browserOnly) {
     if (!otherVisibleOrdinaryPane) preserveEmptyPaneId = pane.id;
   } else if (
-    pane.id === DEFAULT_PANE_ID ||
     pane.id === input.explorerSidebarPaneId ||
     isLastVisibleOrdinaryPane(input.layout, pane.id, input.explorerSidebarPaneId)
   ) {
@@ -1573,6 +1572,7 @@ export function closeTabInLayout(input: CloseTabInLayoutInput): WorkspaceLayout 
     root: nextRoot,
     focusedPaneId: internalLayout.focusedPaneId,
     fallbackPaneId,
+    excludedPaneId: input.explorerSidebarPaneId,
   });
 
   const nextLayout = {
@@ -1611,7 +1611,7 @@ function isLastVisibleOrdinaryPane(
   explorerSidebarPaneId: string | null | undefined,
 ): boolean {
   const ordinaryPanes = collectAllPanes(layout.root).filter(
-    (pane) => pane.id !== explorerSidebarPaneId,
+    (pane) => pane.id !== explorerSidebarPaneId && pane.hidden !== true,
   );
   return ordinaryPanes.length === 1 && ordinaryPanes[0].id === paneId;
 }
@@ -2056,6 +2056,59 @@ export function splitWorkspaceRootRightInLayout(
   };
 }
 
+/** User browser opens reserve 65% of the canvas, independently of the Explorer dock. */
+export function revealBrowserPaneInLayout(input: {
+  layout: WorkspaceLayout;
+  paneId: string;
+  explorerPaneId: string | null;
+  createNodeId: (prefix: WorkspaceLayoutNodeIdPrefix) => string;
+}): WorkspaceLayout {
+  const layout = asInternalLayout(input.layout);
+  const pane = findPaneById(layout.root, input.paneId);
+  if (!pane) return input.layout;
+  let remaining = asInternalNode(removePaneFromTree(layout.root, pane.id));
+  if (
+    !collectAllPanes(remaining).some(
+      (candidate) =>
+        candidate.id !== input.explorerPaneId &&
+        candidate.id !== pane.id &&
+        candidate.hidden !== true,
+    )
+  ) {
+    const launcher = createPaneNode({
+      id: input.createNodeId("pane"),
+      tabs: [createNewWorkspaceTab()],
+    });
+    remaining =
+      remaining.kind === "pane" && remaining.pane.id === pane.id
+        ? launcher
+        : createGroupNode({
+            id: input.createNodeId("group"),
+            direction: "horizontal",
+            children: [remaining, launcher],
+            sizes: [0.3, 0.7],
+          });
+  }
+  if (input.explorerPaneId) {
+    remaining = updatePaneInTree(remaining, {
+      paneId: input.explorerPaneId,
+      updater: (current) => ({ ...current, hidden: true }),
+    });
+  }
+  const browserNode = asInternalNode({ kind: "pane", pane });
+  invariant(browserNode.kind === "pane");
+  const { hidden: _hidden, ...visiblePane } = browserNode.pane;
+  return {
+    ...input.layout,
+    root: createGroupNode({
+      id: input.createNodeId("group"),
+      direction: "horizontal",
+      children: [remaining, { kind: "pane", pane: visiblePane }],
+      sizes: [0.35, 0.65],
+    }),
+  };
+}
+
 export function moveTabToPaneInLayout(input: MoveTabToPaneInLayoutInput): WorkspaceLayout | null {
   const layout = asInternalLayout(input.layout);
   const sourcePane = findPaneContainingTab(layout.root, input.tabId);
@@ -2305,12 +2358,18 @@ function getFocusedPaneIdAfterTabClose(input: {
   }
   return (
     (input.focusedPaneId !== input.excludedPaneId
-      ? findPaneById(input.root, input.focusedPaneId)?.id
+      ? collectAllPanes(input.root).find(
+          (pane) => pane.id === input.focusedPaneId && pane.hidden !== true,
+        )?.id
       : null) ??
     (input.fallbackPaneId && input.fallbackPaneId !== input.excludedPaneId
-      ? findPaneById(input.root, input.fallbackPaneId)?.id
+      ? collectAllPanes(input.root).find(
+          (pane) => pane.id === input.fallbackPaneId && pane.hidden !== true,
+        )?.id
       : null) ??
-    collectAllPanes(input.root).find((pane) => pane.id !== input.excludedPaneId)?.id ??
+    collectAllPanes(input.root).find(
+      (pane) => pane.id !== input.excludedPaneId && pane.hidden !== true,
+    )?.id ??
     DEFAULT_PANE_ID
   );
 }

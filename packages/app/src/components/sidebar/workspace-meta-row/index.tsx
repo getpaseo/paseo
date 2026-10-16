@@ -12,7 +12,7 @@ import { HostBadge, HOST_BADGE_ICON_SIZE } from "@/hosts/host-badge";
 import { WorkspaceLabelChip, WORKSPACE_LABEL_CHIP_INSET } from "@/workspace-labels/chip";
 import type { PrHint } from "@/git/pr-hint";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
-import { openExternalUrl } from "@/utils/open-external-url";
+import { openWebUrl as openExternalUrl } from "@/utils/open-web-url";
 import { useSidebarMetaPreferences } from "@/components/sidebar/display-preferences/model";
 import type { Theme } from "@/styles/theme";
 import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
@@ -193,7 +193,7 @@ function PullRequestItem({ hint }: { hint: PrHint }) {
   const handlePress = useCallback(
     (event: GestureResponderEvent) => {
       event.stopPropagation();
-      void openExternalUrl(hint.url);
+      void openExternalUrl(hint.url, event);
     },
     [hint.url],
   );

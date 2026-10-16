@@ -134,7 +134,7 @@ import {
   type SidebarProjectIconTarget,
 } from "@/utils/sidebar-project-row-model";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
-import { openExternalUrl } from "@/utils/open-external-url";
+import { openWebUrl as openExternalUrl } from "@/utils/open-web-url";
 import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
 import {
   getCurrentProjectRemoveReadiness,
@@ -312,7 +312,7 @@ export function PrBadge({ hint, style }: { hint: PrHint; style?: StyleProp<ViewS
   const handlePress = useCallback(
     (event: GestureResponderEvent) => {
       event.stopPropagation();
-      void openExternalUrl(hint.url);
+      void openExternalUrl(hint.url, event);
     },
     [hint.url],
   );
@@ -982,7 +982,7 @@ function ProjectHeaderRow({
 
         <View style={styles.projectTitleGroup}>
           <Text
-            style={isTitleBold ? styles.projectTitleBold : styles.projectTitle}
+            style={[styles.projectTitle, isTitleBold && styles.projectTitleBold]}
             numberOfLines={1}
           >
             {displayName}
@@ -2646,7 +2646,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   projectTitle: {
     color: theme.colors.workspace.muted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.lg,
     fontWeight: theme.fontWeight.medium,
     minWidth: 0,
     flexShrink: 1,

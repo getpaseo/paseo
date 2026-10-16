@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "@getpaseo/protocol/agent-title-limits";
-import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 import type { AgentManager } from "./agent-manager.js";
 import {
   StructuredAgentFallbackError,
@@ -111,12 +110,4 @@ export function resolveCreateAgentTitles(options: {
     explicitTitle,
     provisionalTitle,
   };
-}
-
-export function resolveFirstAgentPromptTitle(firstAgentContext?: FirstAgentContext): string | null {
-  return (
-    resolveCreateAgentTitles({
-      initialPrompt: firstAgentContext?.prompt,
-    }).provisionalTitle ?? null
-  );
 }

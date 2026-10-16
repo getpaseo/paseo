@@ -9,7 +9,7 @@ import {
   type DesktopRuntimeInfo,
 } from "@/desktop/updates/desktop-updates";
 import { useStableEvent } from "@/hooks/use-stable-event";
-import { openExternalUrl } from "@/utils/open-external-url";
+import { openWebUrl as openExternalUrl, type WebUrlClick } from "@/utils/open-web-url";
 
 const FALLBACK_DOWNLOAD_URL = "https://paseo.sh/download";
 
@@ -30,10 +30,10 @@ export function RosettaCalloutSource() {
   const [runtimeInfo, setRuntimeInfo] = useState<DesktopRuntimeInfo | null>(null);
   const isElectronMac = getIsElectronMac();
 
-  const openDownload = useStableEvent(() => {
+  const openDownload = useStableEvent((event?: WebUrlClick) => {
     const downloadUrl =
       buildMacAppleSiliconDownloadUrl(runtimeInfo?.appVersion) ?? FALLBACK_DOWNLOAD_URL;
-    void openExternalUrl(downloadUrl);
+    void openExternalUrl(downloadUrl, event);
   });
 
   useEffect(() => {

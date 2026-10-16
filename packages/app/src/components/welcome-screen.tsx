@@ -22,7 +22,7 @@ import { resolveAppVersion } from "@/utils/app-version";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
 import { buildOpenProjectRoute } from "@/utils/host-routes";
 import { PaseoLogo } from "@/components/icons/paseo-logo";
-import { openExternalUrl } from "@/utils/open-external-url";
+import { openWebUrl as openExternalUrl, type WebUrlClick } from "@/utils/open-web-url";
 import { isFdroidBuild } from "@/constants/build-profile";
 import { isWeb, isNative } from "@/constants/platform";
 import { isElectronRuntime } from "@/desktop/host";
@@ -188,8 +188,8 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
     router.replace(buildOpenProjectRoute());
   }, [router]);
 
-  const handleOpenPaseoSite = useCallback(() => {
-    void openExternalUrl("https://paseo.sh");
+  const handleOpenPaseoSite = useCallback((event?: WebUrlClick) => {
+    void openExternalUrl("https://paseo.sh", event);
   }, []);
 
   const handleOpenSettings = useCallback(() => {

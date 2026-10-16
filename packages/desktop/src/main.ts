@@ -463,6 +463,16 @@ ipcMain.handle("paseo:browser:unregister-workspace-browser", async (event, brows
   }
 });
 
+ipcMain.on("paseo:browser:open-external-link", (event, url: unknown) => {
+  if (
+    !getPaseoBrowserIdForWebContents(event.sender) ||
+    typeof url !== "string" ||
+    !/^https?:\/\//i.test(url)
+  )
+    return;
+  void shell.openExternal(url).catch((error) => log.warn("Failed to open browser link", { error }));
+});
+
 ipcMain.handle("paseo:browser:set-workspace-active-browser", (event, rawInput: unknown) => {
   const input = readActiveBrowserInput(rawInput);
   if (input) {

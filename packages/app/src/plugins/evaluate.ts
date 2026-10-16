@@ -1,5 +1,5 @@
 import type { createPluginHosts } from "./hosts";
-import { openExternalUrl } from "@/utils/open-external-url";
+import { openWebUrl as openExternalUrl } from "@/utils/open-web-url";
 import * as pluginUiRuntime from "./react-native/ui";
 import { useSettings } from "./settings/use-settings";
 import * as pluginSharedRuntime from "@getpaseo/plugin";

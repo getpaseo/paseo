@@ -41,6 +41,7 @@ interface MountedTerminal {
   terminalKeys: TerminalKeyRecord[];
   inputModeChanges: TerminalInputModeState[];
   openedUrls: string[];
+  openedWithCommand: boolean[];
 }
 
 const mountedTerminals: MountedTerminal[] = [];
@@ -100,6 +101,7 @@ function createTerminalHost(input: CreateTerminalHostInput): MountedTerminal {
   const terminalKeys: TerminalKeyRecord[] = [];
   const inputModeChanges: TerminalInputModeState[] = [];
   const openedUrls: string[] = [];
+  const openedWithCommand: boolean[] = [];
   const runtime = new TerminalEmulatorRuntime(
     input.isMac === undefined ? undefined : { isMac: input.isMac },
   );
@@ -117,8 +119,9 @@ function createTerminalHost(input: CreateTerminalHostInput): MountedTerminal {
       onInputModeChange: (state) => {
         inputModeChanges.push(state);
       },
-      onOpenExternalUrl: (url) => {
+      onOpenExternalUrl: (url, event) => {
         openedUrls.push(url);
+        openedWithCommand.push(event?.metaKey === true);
       },
     },
   });
@@ -143,6 +146,7 @@ function createTerminalHost(input: CreateTerminalHostInput): MountedTerminal {
     terminalKeys,
     inputModeChanges,
     openedUrls,
+    openedWithCommand,
   };
   mountedTerminals.push(mounted);
   return mounted;
@@ -674,9 +678,12 @@ describe("terminal emulator runtime in a real browser", () => {
     ]);
 
     await clickTerminalLink({ host: mounted.host, row: 1, col: 4 });
+    await userEvent.keyboard("{Meta>}");
     await clickTerminalLink({ host: mounted.host, row: 0, col: 2 });
+    await userEvent.keyboard("{/Meta}");
 
     expect(mounted.openedUrls).toEqual(["https://example.com/plain", "https://example.com/osc8"]);
+    expect(mounted.openedWithCommand).toEqual([false, true]);
     expect(confirm).not.toHaveBeenCalled();
   });
 });

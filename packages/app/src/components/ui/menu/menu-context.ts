@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
-import { Platform, type View } from "react-native";
+import { Platform, type View, type GestureResponderEvent } from "react-native";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useDismissKeyboardOnOpen } from "@/components/ui/keyboard-dismiss";
 import {
@@ -31,7 +31,11 @@ export interface MenuContextValue {
   open: boolean;
   setOpen: (open: boolean) => void;
   /** Runs an item's action, closing the menu first when the item asks for it. */
-  selectItem: (onSelect: (() => void) | undefined, closeOnSelect: boolean) => void;
+  selectItem: (
+    onSelect: ((event?: GestureResponderEvent) => void) | undefined,
+    closeOnSelect: boolean,
+    event?: GestureResponderEvent,
+  ) => void;
   triggerRef: React.RefObject<View | null>;
   /** Point anchor for menus opened from a gesture rather than a trigger box. */
   anchorRect: Rect | null;
@@ -128,9 +132,14 @@ export function useMenuState({
   );
 
   const selectItem = useCallback(
-    (onSelect: (() => void) | undefined, closeOnSelect: boolean) => {
+    (
+      onSelect: ((event?: GestureResponderEvent) => void) | undefined,
+      closeOnSelect: boolean,
+      event?: GestureResponderEvent,
+    ) => {
+      event?.persist();
       if (!closeOnSelect) {
-        onSelect?.();
+        onSelect?.(event);
         return;
       }
 
@@ -142,11 +151,11 @@ export function useMenuState({
         // tearing down the surface this menu was drawn in. The wait is timed rather than
         // driven by the surface's own dismissal callback: both surfaces unmount as soon as
         // the menu closes, so any such callback is racing its own removal and usually loses.
-        setTimeout(onSelect, IOS_TEARDOWN_GRACE_MS);
+        setTimeout(() => onSelect(event), IOS_TEARDOWN_GRACE_MS);
         return;
       }
 
-      onSelect();
+      onSelect(event);
     },
     [setOpen],
   );

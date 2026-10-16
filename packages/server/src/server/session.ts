@@ -72,10 +72,7 @@ import {
   waitForAgentRunStartWithTimeout,
   unarchiveAgentState,
 } from "./agent/agent-prompt.js";
-import {
-  resolveCreateAgentTitles,
-  resolveFirstAgentPromptTitle,
-} from "./agent/create-agent-title.js";
+import { resolveCreateAgentTitles } from "./agent/create-agent-title.js";
 import { respondToAgentPermission } from "./agent/permission-response.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
 import type { ScriptHealthState } from "./script-health-monitor.js";
@@ -4414,7 +4411,6 @@ export class Session {
         ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}),
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
       };
-      const workspacePromptTitle = resolveFirstAgentPromptTitle(firstAgentContext);
       const createdWorktree = await this.createAgentLifecycleDispatch.createWorktreeForRequest({
         cwd: config.cwd,
         target: worktree,
@@ -4425,7 +4421,6 @@ export class Session {
       const resolvedIntent = await this.resolveSessionCreateAgentIntent({
         request: msg,
         createdWorktree,
-        workspacePromptTitle,
       });
       const resolvedCwd = resolve(resolvedIntent.config.cwd);
       if (!(await this.filesystem.isDirectory(resolvedCwd))) {
@@ -4502,7 +4497,6 @@ export class Session {
   private async resolveSessionCreateAgentIntent(input: {
     request: CreateAgentRequestMessage;
     createdWorktree: CreatePaseoWorktreeWorkflowResult | null;
-    workspacePromptTitle: string | null;
   }): Promise<ResolvedSessionCreateAgentIntent> {
     const { request, createdWorktree } = input;
     const callerAgent = request.callerAgentId
@@ -4535,7 +4529,7 @@ export class Session {
         workspaceId: await this.workspaceProvisioning.resolveOrCreateWorkspaceIdForCreateAgent({
           createdWorktree: null,
           cwd: config.cwd,
-          initialTitle: input.workspacePromptTitle,
+          initialTitle: null,
         }),
         cwd: config.cwd,
       }),
@@ -6910,10 +6904,9 @@ export class Session {
     }
 
     const explicitTitle = request.title?.trim() || null;
-    const promptTitle = resolveFirstAgentPromptTitle(request.firstAgentContext);
     const workspace = await this.workspaceProvisioning.createWorkspaceForDirectory(
       cwd,
-      explicitTitle ?? promptTitle,
+      explicitTitle,
       request.source.projectId,
       {
         expectsInitialAgent: Boolean(request.firstAgentContext),

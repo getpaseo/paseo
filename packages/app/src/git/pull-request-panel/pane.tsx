@@ -17,7 +17,7 @@ import {
 } from "lucide-react-native";
 import type { PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
-import { openExternalUrl } from "@/utils/open-external-url";
+import { openWebUrl as openExternalUrl, type WebUrlClick } from "@/utils/open-web-url";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -136,8 +136,8 @@ const ADD_TO_CHAT_MENU_ICON = (
 const COPY_MENU_ICON = <ThemedCopy size={14} uniProps={foregroundMutedColorMapping} />;
 const OPEN_MENU_ICON = <ThemedExternalLink size={14} uniProps={foregroundMutedColorMapping} />;
 
-function handleMarkdownLinkPress(url: string): boolean {
-  void openExternalUrl(url);
+function handleMarkdownLinkPress(url: string, event?: WebUrlClick): boolean {
+  void openExternalUrl(url, event);
   return false;
 }
 
@@ -226,9 +226,12 @@ export function PullRequestPane({
   const [activityState, setActivityState] = useState(getActivityState);
   const [loadingCheckKeys, setLoadingCheckKeys] = useState<ReadonlySet<string>>(() => new Set());
 
-  const handleOpenPrUrl = useCallback(() => {
-    void openExternalUrl(data.url);
-  }, [data.url]);
+  const handleOpenPrUrl = useCallback(
+    (event?: WebUrlClick) => {
+      void openExternalUrl(data.url, event);
+    },
+    [data.url],
+  );
 
   const refreshSupported = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.checkoutRefresh === true,
@@ -692,9 +695,12 @@ function ActivityKebab({
   const handleCopy = useCallback(() => {
     void writeMarkdownToRichClipboard(activity.body, getDefaultMarkdownClipboardEnvironment());
   }, [activity.body]);
-  const handleOpen = useCallback(() => {
-    void openExternalUrl(activity.url);
-  }, [activity.url]);
+  const handleOpen = useCallback(
+    (event?: WebUrlClick) => {
+      void openExternalUrl(activity.url, event);
+    },
+    [activity.url],
+  );
 
   return (
     <View style={kebabSlotStyle(visible)} pointerEvents={visible ? "auto" : "none"}>
@@ -822,13 +828,16 @@ function SingleActivityCard({
     useRevealOnHover();
   const hasBody = activity.body.trim() !== "";
   const handleAddToChat = useCallback(() => onAddToChat(activity), [activity, onAddToChat]);
-  const handleHeaderPress = useCallback(() => {
-    if (hasBody) {
-      onToggleCollapsed(entry.id, collapsed);
-      return;
-    }
-    void openExternalUrl(activity.url);
-  }, [activity.url, collapsed, entry.id, hasBody, onToggleCollapsed]);
+  const handleHeaderPress = useCallback(
+    (event?: WebUrlClick) => {
+      if (hasBody) {
+        onToggleCollapsed(entry.id, collapsed);
+        return;
+      }
+      void openExternalUrl(activity.url, event);
+    },
+    [activity.url, collapsed, entry.id, hasBody, onToggleCollapsed],
+  );
 
   if (!hasBody) {
     return (
@@ -1052,9 +1061,12 @@ function ThreadBlock({
     () => onAddThreadToChat(thread),
     [onAddThreadToChat, thread],
   );
-  const handleOpenThread = useCallback(() => {
-    void openExternalUrl(thread.comments[0].url);
-  }, [thread.comments]);
+  const handleOpenThread = useCallback(
+    (event?: WebUrlClick) => {
+      void openExternalUrl(thread.comments[0].url, event);
+    },
+    [thread.comments],
+  );
 
   const [root, ...replies] = thread.comments;
 

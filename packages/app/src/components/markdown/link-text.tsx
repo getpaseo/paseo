@@ -3,10 +3,12 @@ import { Pressable, Text, type StyleProp, type TextStyle } from "react-native";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { markdownLinkTextStyle } from "./link-children";
 
+import type { WebUrlClick } from "@/utils/open-web-url";
+
 interface MarkdownLinkTextProps {
   style: StyleProp<TextStyle>;
   dataSet?: Record<string, string>;
-  onPress(): void;
+  onPress(event?: WebUrlClick): void;
   onHoverIn?(): void;
   children?: ReactNode;
 }

@@ -5,22 +5,22 @@ import { Heart } from "lucide-react-native";
 import { Button } from "@/components/ui/button";
 import { GitHubIcon } from "@/components/icons/github-icon";
 import { DiscordIcon } from "@/components/icons/discord-icon";
-import { openExternalUrl } from "@/utils/open-external-url";
+import { openWebUrl as openExternalUrl, type WebUrlClick } from "@/utils/open-web-url";
 
 const renderGitHubIcon = (color: string) => <GitHubIcon color={color} size={14} />;
 const renderDiscordIcon = (color: string) => <DiscordIcon color={color} size={14} />;
 
 export function CommunityLinks() {
-  const handleOpenGitHub = useCallback(() => {
-    void openExternalUrl("https://github.com/getpaseo/paseo");
+  const handleOpenGitHub = useCallback((event?: WebUrlClick) => {
+    void openExternalUrl("https://github.com/getpaseo/paseo", event);
   }, []);
 
-  const handleOpenSponsor = useCallback(() => {
-    void openExternalUrl("https://github.com/sponsors/boudra");
+  const handleOpenSponsor = useCallback((event?: WebUrlClick) => {
+    void openExternalUrl("https://github.com/sponsors/boudra", event);
   }, []);
 
-  const handleOpenDiscord = useCallback(() => {
-    void openExternalUrl("https://discord.gg/jz8T2uahpH");
+  const handleOpenDiscord = useCallback((event?: WebUrlClick) => {
+    void openExternalUrl("https://discord.gg/jz8T2uahpH", event);
   }, []);
 
   return (

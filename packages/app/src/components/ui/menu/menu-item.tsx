@@ -11,6 +11,7 @@ import {
   Text,
   View,
   type PressableStateCallbackType,
+  type GestureResponderEvent,
   type ViewStyle,
 } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -224,7 +225,7 @@ function resolveItemLabel(input: {
 
 export interface MenuItemProps {
   description?: string;
-  onSelect?: () => void;
+  onSelect?: (event?: GestureResponderEvent) => void;
   disabled?: boolean;
   muted?: boolean;
   destructive?: boolean;
@@ -291,10 +292,13 @@ export function MenuItem({
     trailing ??
     (!showSelectedCheck && selected ? <ThemedCheck size={16} uniProps={mutedMapping} /> : null);
 
-  const handleItemPress = useCallback(() => {
-    if (isDisabled) return;
-    selectItem(onSelect, closeOnSelect);
-  }, [isDisabled, selectItem, onSelect, closeOnSelect]);
+  const handleItemPress = useCallback(
+    (event?: GestureResponderEvent) => {
+      if (isDisabled) return;
+      selectItem(onSelect, closeOnSelect, event);
+    },
+    [isDisabled, selectItem, onSelect, closeOnSelect],
+  );
 
   const drag = usePressDragTarget({ onSelect: handleItemPress, disabled: Boolean(isDisabled) });
 

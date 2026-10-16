@@ -135,7 +135,7 @@ import {
   AttachmentThumbnail,
 } from "@/components/attachment-pill";
 import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
-import { openExternalUrl } from "@/utils/open-external-url";
+import { openWebUrl as openExternalUrl, type WebUrlClick } from "@/utils/open-web-url";
 import { useIsDictationReady } from "@/hooks/use-is-dictation-ready";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
@@ -305,7 +305,7 @@ interface RenderAttachmentTrayArgs {
   selectedAttachments: ComposerAttachment[];
   pendingFiles: PendingFileAttachment[];
   isComposerLocked: boolean;
-  handleOpenAttachment: (attachment: ComposerAttachment) => void;
+  handleOpenAttachment: (attachment: ComposerAttachment, event?: WebUrlClick) => void;
   handleRemoveAttachment: (index: number) => void;
   labels: {
     openImage: string;
@@ -383,7 +383,7 @@ interface RenderComposerAttachmentPillArgs {
   attachment: ComposerAttachment;
   index: number;
   disabled: boolean;
-  onOpen: (attachment: ComposerAttachment) => void;
+  onOpen: (attachment: ComposerAttachment, event?: WebUrlClick) => void;
   onRemove: (index: number) => void;
   labels: RenderAttachmentTrayArgs["labels"];
 }
@@ -670,7 +670,7 @@ interface ImageAttachmentPillProps {
   attachment: Extract<ComposerAttachment, { kind: "image" }>;
   index: number;
   disabled: boolean;
-  onOpen: (attachment: ComposerAttachment) => void;
+  onOpen: (attachment: ComposerAttachment, event?: WebUrlClick) => void;
   onRemove: (index: number) => void;
   openLabel: string;
   removeLabel: string;
@@ -685,9 +685,12 @@ function ImageAttachmentPill({
   openLabel,
   removeLabel,
 }: ImageAttachmentPillProps) {
-  const handleOpen = useCallback(() => {
-    onOpen(attachment);
-  }, [onOpen, attachment]);
+  const handleOpen = useCallback(
+    (event?: WebUrlClick) => {
+      onOpen(attachment, event);
+    },
+    [onOpen, attachment],
+  );
   const handleRemove = useCallback(() => {
     onRemove(index);
   }, [onRemove, index]);
@@ -712,7 +715,7 @@ interface GithubAttachmentPillProps {
   >;
   index: number;
   disabled: boolean;
-  onOpen: (attachment: ComposerAttachment) => void;
+  onOpen: (attachment: ComposerAttachment, event?: WebUrlClick) => void;
   onRemove: (index: number) => void;
   openLabel: (kind: string, numberLabel: string) => string;
   removeLabel: (kind: string, numberLabel: string) => string;
@@ -733,9 +736,12 @@ function GithubAttachmentPill({
   const kindLabel = isChangeRequest ? presentation.changeRequestAbbrev : "issue";
   const subtitleKind = isChangeRequest ? presentation.changeRequestAbbrev : "Issue";
   const numberPrefix = isChangeRequest ? presentation.numberPrefix : presentation.issueNumberPrefix;
-  const handleOpen = useCallback(() => {
-    onOpen(attachment);
-  }, [onOpen, attachment]);
+  const handleOpen = useCallback(
+    (event?: WebUrlClick) => {
+      onOpen(attachment, event);
+    },
+    [onOpen, attachment],
+  );
   const handleRemove = useCallback(() => {
     onRemove(index);
   }, [onRemove, index]);
@@ -1731,13 +1737,13 @@ function ComposerContentImpl({
   );
 
   const handleOpenAttachment = useCallback(
-    (attachment: ComposerAttachment) => {
+    (attachment: ComposerAttachment, event?: WebUrlClick) => {
       openComposerAttachment({
         attachment,
         setLightboxMetadata,
         openWorkspaceAttachment: openAttachment,
         openExternalUrl: (url) => {
-          void openExternalUrl(url);
+          void openExternalUrl(url, event);
         },
       });
     },

@@ -1025,7 +1025,7 @@ describe("mountBrowserAutomationHandler", () => {
     const layout = useWorkspaceLayoutStore.getState().layoutByWorkspace[key];
     expect(findPaneContainingTab(layout.root, first.tabId)?.id).toBe("main");
     expect(layout.focusedPaneId).toBe("main");
-    expect(collectAllTabs(layout.root)).toHaveLength(paneCount);
+    expect(collectAllTabs(layout.root)).toHaveLength(paneCount + 1);
     expect(collectAllTabs(layout.root).find((tab) => tab.tabId === first.tabId)?.state).toEqual({
       marker: "keep",
     });

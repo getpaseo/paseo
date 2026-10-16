@@ -40,6 +40,7 @@ import {
   revealTargetInLayout,
   restoreWorkspaceLayout,
   resolveBrowserPaneId,
+  revealBrowserPaneInLayout,
   reconcileWorkspaceTabs,
   removePaneFromTree,
   removeTabFromTree,
@@ -117,6 +118,7 @@ interface WorkspaceLayoutStore {
   explorerSidebarPaneIdByWorkspace: Record<string, string | null>;
   sidePaneIdByWorkspace: Record<string, string | null>;
   browserPaneIdByWorkspace: Record<string, string | null>;
+  browserRevealCountByWorkspace: Record<string, number>;
   /** Workspaces where PR detection already added its tab once; a closed tab never returns. */
   pullRequestTabAutoOpenedByWorkspace: Record<string, true>;
   openTab: (input: OpenWorkspaceTabInput) => string | null;
@@ -132,7 +134,7 @@ interface WorkspaceLayoutStore {
   ensureSidePane: (workspaceKey: string, options?: { focus: boolean }) => string | null;
   ensureBrowserPane: (
     workspaceKey: string,
-    options: { reveal: boolean; reuseVisibleLauncher?: boolean },
+    options: { reveal: boolean; reuseVisibleLauncher?: boolean; paneId?: string },
   ) => string | null;
   hideBrowserPane: (workspaceKey: string) => void;
   closeTab: (workspaceKey: string, tabId: string) => void;
@@ -710,6 +712,7 @@ export function createWorkspaceLayoutStore(
         explorerSidebarPaneIdByWorkspace: {},
         sidePaneIdByWorkspace: {},
         browserPaneIdByWorkspace: {},
+        browserRevealCountByWorkspace: {},
         pullRequestTabAutoOpenedByWorkspace: {},
         openTab: (input) => {
           const normalizedWorkspaceKey = trimNonEmpty(input.workspaceKey);
@@ -916,7 +919,7 @@ export function createWorkspaceLayoutStore(
             );
             paneId = resolveBrowserPaneId(
               layout,
-              state.browserPaneIdByWorkspace[key],
+              options.paneId ?? state.browserPaneIdByWorkspace[key],
               explorerPaneId,
             );
             if (paneId && options.reuseVisibleLauncher === false) {
@@ -930,11 +933,7 @@ export function createWorkspaceLayoutStore(
             }
             let nextLayout = layout;
             if (paneId) {
-              if (options.reveal) {
-                nextLayout = setPaneHiddenInLayout({ layout, paneId, hidden: false }) ?? layout;
-              }
-              if (nextLayout === layout && state.browserPaneIdByWorkspace[key] === paneId)
-                return state;
+              if (!options.reveal && state.browserPaneIdByWorkspace[key] === paneId) return state;
             } else {
               const split = splitWorkspaceRootRightInLayout({
                 layout,
@@ -950,9 +949,25 @@ export function createWorkspaceLayoutStore(
               // Creation must preserve the previous focus, including a pending restoration.
               nextLayout = { ...nextLayout, focusedPaneId: layout.focusedPaneId };
             }
+            if (options.reveal) {
+              nextLayout = revealBrowserPaneInLayout({
+                layout: nextLayout,
+                paneId,
+                explorerPaneId,
+                createNodeId: ids.createNodeId,
+              });
+            }
             return {
               ...(nextLayout !== layout
                 ? { layoutByWorkspace: { ...state.layoutByWorkspace, [key]: nextLayout } }
+                : {}),
+              ...(options.reveal
+                ? {
+                    browserRevealCountByWorkspace: {
+                      ...state.browserRevealCountByWorkspace,
+                      [key]: (state.browserRevealCountByWorkspace[key] ?? 0) + 1,
+                    },
+                  }
                 : {}),
               browserPaneIdByWorkspace: { ...state.browserPaneIdByWorkspace, [key]: paneId },
             };

@@ -16,7 +16,7 @@ import {
 import { StatusBadge } from "@/components/ui/status-badge";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { resolveAppVersion } from "@/utils/app-version";
-import { openExternalUrl } from "@/utils/open-external-url";
+import { openWebUrl as openExternalUrl, type WebUrlClick } from "@/utils/open-web-url";
 import { useChangelog, type ChangelogState } from "./changelog-source";
 import { useRevealedReleases } from "./use-revealed-releases";
 import {
@@ -45,8 +45,8 @@ export function ChangelogSheet({ visible, onClose }: ChangelogSheetProps) {
   const { state, reload } = useChangelog(visible);
   const { count, showMore } = useRevealedReleases(visible && state.status === "ready");
 
-  const handleOpenWebsite = useCallback(() => {
-    void openExternalUrl(WEBSITE_CHANGELOG_URL);
+  const handleOpenWebsite = useCallback((event?: WebUrlClick) => {
+    void openExternalUrl(WEBSITE_CHANGELOG_URL, event);
   }, []);
 
   const header: SheetHeader = useMemo(

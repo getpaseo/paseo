@@ -1,7 +1,6 @@
 import type pino from "pino";
 import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 
-import { resolveFirstAgentPromptTitle } from "./agent/create-agent-title.js";
 import type { AgentManager } from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type { StructuredGenerationDaemonConfig } from "./agent/structured-generation-providers.js";
@@ -144,7 +143,6 @@ export class WorkspaceAutoName {
     await this.applyGeneratedWorkspaceTitle(input.workspace.workspaceId, {
       title: generatedTitle,
       ...(result.renamed ? { branch: result.branchName } : {}),
-      promptTitle: resolveFirstAgentPromptTitle(input.firstAgentContext),
     });
     if (result.renamed) {
       await this.gitMutation.notifyGitMutation(worktreeRoot, "rename-branch");
@@ -171,18 +169,17 @@ export class WorkspaceAutoName {
     // Directory workspaces have no branch — write only the title.
     await this.applyGeneratedWorkspaceTitle(input.workspaceId, {
       title,
-      promptTitle: resolveFirstAgentPromptTitle(input.firstAgentContext),
     });
     await this.emitWorkspaceUpdateForWorkspaceId(input.workspaceId);
   }
 
   private async applyGeneratedWorkspaceTitle(
     workspaceId: string,
-    input: { title: string; branch?: string | null; promptTitle?: string | null },
+    input: { title: string; branch?: string | null },
   ): Promise<void> {
     await this.workspaceRegistry.update(workspaceId, (current) => {
       let title = current.title;
-      if (!title || (input.promptTitle && title === input.promptTitle)) {
+      if (!title) {
         title = input.title;
       }
       return {

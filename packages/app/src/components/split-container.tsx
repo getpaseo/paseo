@@ -44,6 +44,7 @@ import {
 import { RetainedPanel } from "@/components/retained-panel";
 import {
   hasMultipleVisiblePanes,
+  removePaneFromSplitTree,
   resolveSplitContainerRoot,
   splitNodeContainsPane,
 } from "@/components/split-container-focus";
@@ -354,6 +355,13 @@ export function SplitContainer({
     workspaceKey: string;
     paneId: string;
   } | null>(null);
+
+  const browserRevealCount = useWorkspaceLayoutStore(
+    (state) => state.browserRevealCountByWorkspace[workspaceKey] ?? 0,
+  );
+  useEffect(() => {
+    setMaximizedPane(null);
+  }, [workspaceKey, browserRevealCount]);
 
   const explorerSidebarPaneId = useWorkspaceLayoutStore((state) =>
     selectExplorerSidebarPaneId(state, workspaceKey),
@@ -1379,34 +1387,6 @@ function wrapRootPaneForStableMount(node: SplitNode): SplitNode {
       direction: "horizontal",
       children: [node],
       sizes: [1],
-    },
-  };
-}
-
-function removePaneFromSplitTree(node: SplitNode, paneId: string | null): SplitNode | null {
-  if (!paneId) {
-    return node;
-  }
-  if (node.kind === "pane") {
-    return node.pane.id === paneId ? null : node;
-  }
-
-  const children = node.group.children.flatMap((child) => {
-    const nextChild = removePaneFromSplitTree(child, paneId);
-    return nextChild ? [nextChild] : [];
-  });
-  if (children.length === 0) {
-    return null;
-  }
-  if (children.length === 1) {
-    return children[0] ?? null;
-  }
-  return {
-    kind: "group",
-    group: {
-      ...node.group,
-      children,
-      sizes: children.map(() => 1 / children.length),
     },
   };
 }

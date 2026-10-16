@@ -10,7 +10,7 @@ import { ArrowUpRight, Copy, FileText, Activity } from "lucide-react-native";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { openExternalUrl } from "@/utils/open-external-url";
+import { openWebUrl as openExternalUrl, type WebUrlClick } from "@/utils/open-web-url";
 import { isVersionMismatch } from "@/desktop/updates/desktop-updates";
 import {
   getCliDaemonStatus,
@@ -387,7 +387,7 @@ export function LocalDaemonSection() {
   }, [handleOpenCliStatus]);
 
   const handleOpenAdvancedSettings = useCallback(
-    () => void openExternalUrl(ADVANCED_DAEMON_SETTINGS_URL),
+    (event?: WebUrlClick) => void openExternalUrl(ADVANCED_DAEMON_SETTINGS_URL, event),
     [],
   );
 

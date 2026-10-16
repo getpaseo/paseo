@@ -3,7 +3,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
-import { Platform } from "react-native";
+import { Platform, type GestureResponderEvent } from "react-native";
 import { IOS_TEARDOWN_GRACE_MS, useMenuState } from "./menu-context";
 
 /**
@@ -60,4 +60,16 @@ describe("useMenuState selectItem elsewhere", () => {
     expect(result.current.open).toBe(false);
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
+});
+
+it("forwards the captured click to a menu action", () => {
+  setPlatform("web");
+  const { result } = renderHook(() => useMenuState({ defaultOpen: true }));
+  const click = {
+    nativeEvent: { metaKey: true },
+    persist: vi.fn(),
+  } as unknown as GestureResponderEvent;
+  const action = vi.fn();
+  act(() => result.current.selectItem(action, true, click));
+  expect(action).toHaveBeenCalledWith(click);
 });

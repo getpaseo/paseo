@@ -92,8 +92,10 @@ new target and never yanks an existing tab out of a user-selected pane.
 
 ## Browser pane
 
-Electron remembers one browser-only ordinary pane per workspace. User opens reveal that pane;
-agent opens create or reuse it in the background, preserving conversation focus and visible width.
+Electron remembers one browser-only ordinary pane per workspace. User opens reveal that pane on the right at 65% of the central canvas, hide Explorer and exit
+maximization. Remaining conversation splits keep their relative proportions. When the browser is
+the only content pane, opening it adds a launcher on the left. Agent opens create or reuse it in
+the background, preserving conversation focus and visible width.
 Show and Hide affect this pane without closing its pages. Maximize is temporary presentation state;
 hiding the pane or revealing another pane clears it without rewriting saved split sizes.
 
@@ -101,6 +103,11 @@ Tabs stay in the shared workspace layout. Each page has a distinct browser id ev
 If you move a tab, later opens respect that placement. Adding an agent or terminal turns the pane
 into an ordinary mixed pane: browser toggles leave it visible and create or reuse a browser-only pane.
 No browser toggle closes a terminal or archives an agent.
+
+Route user HTTP(S) links through `utils/open-web-url.ts`, passing the click event before any async
+work. See [link routing](../public-docs/plugins/reference.md#external-links-and-workspace-browsers) for
+the platform click policy. Browser pages keep ordinary navigation and authentication
+popups; the guest preload forwards Command-click on HTTP(S) anchors to the system browser.
 
 Manual close remembers one URL, viewport and former pane for Reopen last closed tab in the All tabs
 menu. The descriptor lasts only for this app session and is consumed on a successful reopen. Reopen

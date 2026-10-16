@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { useCliInstall } from "@/desktop/hooks/use-install-status";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { settingsStyles } from "@/styles/settings";
-import { openExternalUrl } from "@/utils/open-external-url";
+import { openWebUrl as openExternalUrl, type WebUrlClick } from "@/utils/open-web-url";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 
 const CLI_DOCS_URL = "https://paseo.sh/docs/cli";
@@ -28,8 +28,8 @@ export function IntegrationsSection() {
     () => <ArrowUpRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
     [theme.iconSize.sm, theme.colors.foregroundMuted],
   );
-  const handleOpenDocs = useCallback(() => {
-    void openExternalUrl(CLI_DOCS_URL);
+  const handleOpenDocs = useCallback((event?: WebUrlClick) => {
+    void openExternalUrl(CLI_DOCS_URL, event);
   }, []);
   const trailing = useMemo(
     () => (

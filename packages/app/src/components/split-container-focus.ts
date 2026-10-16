@@ -45,3 +45,34 @@ function findPane(node: SplitNode, paneId: string): SplitPane | null {
   }
   return null;
 }
+
+export function removePaneFromSplitTree(node: SplitNode, paneId: string | null): SplitNode | null {
+  if (!paneId) {
+    return node;
+  }
+  if (node.kind === "pane") {
+    return node.pane.id === paneId ? null : node;
+  }
+
+  const sizes: number[] = [];
+  const children = node.group.children.flatMap((child, index) => {
+    const nextChild = removePaneFromSplitTree(child, paneId);
+    if (nextChild) sizes.push(node.group.sizes[index] ?? 1);
+    return nextChild ? [nextChild] : [];
+  });
+  const total = sizes.reduce((sum, size) => sum + size, 0);
+  if (children.length === 0) {
+    return null;
+  }
+  if (children.length === 1) {
+    return children[0] ?? null;
+  }
+  return {
+    kind: "group",
+    group: {
+      ...node.group,
+      children,
+      sizes: sizes.map((size) => (total > 0 ? size / total : 1 / children.length)),
+    },
+  };
+}

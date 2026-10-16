@@ -98,3 +98,19 @@ ipcRenderer.on(POLICY_CHANNEL, (_event, value: BrowserKeyboardPolicyPayload) => 
 });
 
 ipcRenderer.send(POLICY_REQUEST_CHANNEL);
+
+// Leave ordinary navigation and authentication popups to Chromium.
+window.addEventListener(
+  "click",
+  (event) => {
+    if (!event.isTrusted || event.button !== 0 || !event.metaKey) return;
+    const anchor = event
+      .composedPath()
+      .find((node): node is HTMLAnchorElement => node instanceof HTMLAnchorElement);
+    if (!anchor || !/^https?:\/\//i.test(anchor.href)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    ipcRenderer.send("paseo:browser:open-external-link", anchor.href);
+  },
+  { capture: true },
+);

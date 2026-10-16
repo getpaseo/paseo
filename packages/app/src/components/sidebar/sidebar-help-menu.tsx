@@ -27,7 +27,7 @@ import type { HostProfile } from "@/types/host-connection";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
 import { resolveAppVersion } from "@/utils/app-version";
 import { openChangelog } from "@/changelog";
-import { openExternalUrl } from "@/utils/open-external-url";
+import { openWebUrl as openExternalUrl, type WebUrlClick } from "@/utils/open-web-url";
 
 const DISCORD_URL = "https://discord.gg/jz8T2uahpH";
 const GITHUB_ISSUE_URL = "https://github.com/getpaseo/paseo/issues/new";
@@ -92,12 +92,12 @@ export function SidebarHelpMenu() {
     setShortcutsDialogOpen(true);
   }, [setShortcutsDialogOpen]);
 
-  const openDiscord = useCallback(() => {
-    void openExternalUrl(DISCORD_URL);
+  const openDiscord = useCallback((event?: WebUrlClick) => {
+    void openExternalUrl(DISCORD_URL, event);
   }, []);
 
-  const openGitHubIssue = useCallback(() => {
-    void openExternalUrl(GITHUB_ISSUE_URL);
+  const openGitHubIssue = useCallback((event?: WebUrlClick) => {
+    void openExternalUrl(GITHUB_ISSUE_URL, event);
   }, []);
 
   return (

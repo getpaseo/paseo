@@ -260,8 +260,8 @@ vi.mock("expo-clipboard", () => ({
   setStringAsync: setStringAsyncMock,
 }));
 
-vi.mock("@/utils/open-external-url", () => ({
-  openExternalUrl: vi.fn(),
+vi.mock("@/utils/open-web-url", () => ({
+  openWebUrl: vi.fn(),
 }));
 
 vi.mock("@/components/ui/dropdown-menu", () => ({
