@@ -3500,11 +3500,7 @@ export class DaemonClient {
   // Agent Interaction
   // ============================================================================
 
-  async sendAgentMessage(
-    agentId: string,
-    text: string,
-    options?: SendMessageOptions,
-  ): Promise<void> {
+  private assertSendMessageCapabilities(options: SendMessageOptions | undefined): void {
     if (
       options?.sourceAgentId &&
       this.lastServerInfoMessage?.features?.agentMessageProvenance !== true
@@ -3517,6 +3513,14 @@ export class DaemonClient {
     ) {
       throw new DaemonCapabilityError("sendAgentMessageRejectBusy");
     }
+  }
+
+  async sendAgentMessage(
+    agentId: string,
+    text: string,
+    options?: SendMessageOptions,
+  ): Promise<void> {
+    this.assertSendMessageCapabilities(options);
     const requestId = this.createRequestId();
     const messageId = options?.messageId ?? crypto.randomUUID();
     const message = SessionInboundMessageSchema.parse({
