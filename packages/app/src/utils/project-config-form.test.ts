@@ -238,6 +238,18 @@ describe("applyDraftToConfig", () => {
     );
   });
 
+  it("preserves a launch named __proto__ when saving", () => {
+    const draft = emptyDraft();
+    draft.launches = [
+      { id: "launch-proto", name: "__proto__", commandText: "./bin/dev", rawEntry: {} },
+    ];
+
+    const next = applyDraftToConfig({ draft, base: {} });
+
+    expect(Object.hasOwn(next.launches ?? {}, "__proto__")).toBe(true);
+    expect(next.launches?.["__proto__"]).toEqual({ command: "./bin/dev" });
+  });
+
   it("normalizes script command text into the original command kind", () => {
     const base = PaseoConfigRawSchema.parse({
       scripts: {

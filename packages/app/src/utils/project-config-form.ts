@@ -134,7 +134,7 @@ function launchesFromDraft(launches: ProjectLaunchDraft[]): Record<string, Paseo
     throw new Error(`Launch names must be unique: ${Array.from(duplicateNames).join(", ")}`);
   }
 
-  const nextLaunches: Record<string, PaseoLaunchEntryRaw> = {};
+  const entries: Array<[string, PaseoLaunchEntryRaw]> = [];
   for (const row of launches) {
     const trimmedName = row.name.trim();
     if (trimmedName.length === 0) {
@@ -146,9 +146,9 @@ function launchesFromDraft(launches: ProjectLaunchDraft[]): Record<string, Paseo
     } else {
       nextEntry.command = row.commandText;
     }
-    nextLaunches[trimmedName] = nextEntry as PaseoLaunchEntryRaw;
+    entries.push([trimmedName, nextEntry as PaseoLaunchEntryRaw]);
   }
-  return nextLaunches;
+  return Object.fromEntries(entries);
 }
 
 function emptyMetadataPrompts(): Record<MetadataPromptKey, string> {
