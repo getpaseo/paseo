@@ -1,5 +1,5 @@
 import { formatPct } from "./format";
-import { displayPercent } from "./model";
+import { displayPercent, sortUsageReports } from "./model";
 import { effectiveUsagePins, type UsagePreferences } from "./preferences";
 import { windowTone } from "./tone";
 import type { UsageReportEntry, UsageTone } from "./types";
@@ -55,12 +55,6 @@ function describe(entry: UsageReportEntry, windowLabel: string): string {
   return `${entry.sourceLabel}${account} ${windowLabel}`;
 }
 
-/** Reports with every account of a source together, sources in the order they first appear. */
-function groupBySource(reports: readonly UsageReportEntry[]): UsageReportEntry[] {
-  const sourceIds = [...new Set(reports.map((entry) => entry.sourceId))];
-  return sourceIds.flatMap((sourceId) => reports.filter((entry) => entry.sourceId === sourceId));
-}
-
 /**
  * The sidebar Usage item's summary: one group per account, grouped by source, each with its
  * windows in its report's order. Accounts with nothing to show are left out.
@@ -71,7 +65,7 @@ export function resolvePinnedUsage(
 ): PinnedUsageSource[] {
   const pins = effectiveUsagePins(preferences, reports);
   const meaning = preferences.displayAs === "remaining" ? "left" : "used";
-  return groupBySource(reports).flatMap((entry) => {
+  return sortUsageReports(reports).flatMap((entry) => {
     if (entry.report.status !== "available") return [];
     const windows = entry.report.windows
       .filter(

@@ -1,16 +1,20 @@
 import type { UsageInput } from "../shared/input.js";
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { z } from "zod";
 import {
   toneFromUsedPct,
   usedPctOf,
   unavailable,
+  windowFromUsedPct,
   type UsageAccount,
   type UsageReport,
   type UsageBalance,
+  type UsageWindow,
 } from "@getpaseo/plugin/server/usage";
 
 const ApiNumberSchema = z.coerce.number().finite();
@@ -23,15 +27,38 @@ function toIsoStringOrNull(timestampMs: number): string | null {
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
-// Cursor desktop stores auth in VS Code's ItemTable (state.vscdb). Modern builds keep
-// the access token as a plain JWT string under `cursorAuth/accessToken`; older builds
-// kept a JSON blob under `cursorAuthStatus`. Read it with node:sqlite so we don't
-// depend on a `sqlite3` CLI, which isn't installed by default on Windows (or on many
-// Linux hosts) — a missing binary silently rendered Cursor usage unavailable.
-// Headless hosts (VPS, cursor-agent only) have no desktop db; their session lives in
-// ~/.config/cursor/auth.json instead.
+// Desktop uses state.vscdb; the CLI uses macOS Keychain or a platform-specific auth.json.
 const CURSOR_ACCESS_TOKEN_KEY = "cursorAuth/accessToken";
 const CURSOR_LEGACY_AUTH_KEY = "cursorAuthStatus";
+const CURSOR_KEYCHAIN_SERVICE = "cursor-access-token";
+const execFileAsync = promisify(execFile);
+
+interface CursorCredentialLookup {
+  platform?: NodeJS.Platform;
+  readKeychainToken?: () => Promise<string | null>;
+}
+
+async function readCursorKeychainToken(): Promise<string | null> {
+  try {
+    // The CLI owns token refresh; usage only reads its access token.
+    const { stdout } = await execFileAsync(
+      "/usr/bin/security",
+      ["find-generic-password", "-s", CURSOR_KEYCHAIN_SERVICE, "-a", "cursor-user", "-w"],
+      { timeout: 2_000 },
+    );
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function cursorAuthPath(platform: NodeJS.Platform): string {
+  const home = homedir();
+  if (platform === "darwin") return join(home, ".cursor", "auth.json");
+  if (platform === "win32")
+    return join(process.env.APPDATA || join(home, "AppData", "Roaming"), "Cursor", "auth.json");
+  return join(process.env.XDG_CONFIG_HOME || join(home, ".config"), "cursor", "auth.json");
+}
 
 // @types/node@20 predates the node:sqlite typings; declare the slice we use.
 interface CursorStateStatement {
@@ -58,6 +85,9 @@ const CursorUsageResponseSchema = z.object({
       bonusSpend: ApiNullableNumberSchema,
       remaining: ApiNullableNumberSchema,
       limit: ApiNullableNumberSchema,
+      totalPercentUsed: ApiNullableNumberSchema,
+      autoPercentUsed: ApiNullableNumberSchema,
+      apiPercentUsed: ApiNullableNumberSchema,
     })
     .nullish(),
   billingCycleStart: CursorBillingCycleTimestampSchema,
@@ -66,6 +96,10 @@ const CursorUsageResponseSchema = z.object({
 
 const CursorAuthStatusSchema = z.object({
   accessToken: z.string().optional(),
+});
+
+const CursorPlanInfoSchema = z.object({
+  planInfo: z.object({ planName: z.string().trim().min(1) }).nullish(),
 });
 
 type CursorUsageResponse = z.infer<typeof CursorUsageResponseSchema>;
@@ -151,23 +185,18 @@ async function readCursorTokenFromAuthJson(path: string): Promise<string | null>
 export async function fetchUsage(
   input: UsageInput,
   fetchApi: typeof fetch = fetch,
+  lookup: CursorCredentialLookup = {},
 ): Promise<UsageReport> {
-  const token = await readToken(input);
+  const token = await readToken(input, lookup);
   if (!token) throw new Error("Cursor login store no longer exists");
 
-  const res = await fetchApi(
-    "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
-    {
-      signal: AbortSignal.timeout(15_000),
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        "Connect-Protocol-Version": "1",
-      },
-      body: JSON.stringify({}),
-    },
-  );
+  const planLabel = fetchPlanLabel(token, fetchApi);
+  const res = await fetchDashboard({
+    method: "GetCurrentPeriodUsage",
+    token,
+    fetchApi,
+    timeoutMs: 15_000,
+  });
 
   if (res.status === 401 || res.status === 403)
     return unavailable({ kind: "rejected", status: res.status });
@@ -175,8 +204,29 @@ export async function fetchUsage(
 
   const resp = CursorUsageResponseSchema.parse(await res.json());
   const billingCycleEnd = parseCursorBillingCycleTimestamp(resp.billingCycleEnd);
+  const windows: UsageWindow[] = [];
   const balances: UsageBalance[] = [];
   if (resp.planUsage) {
+    // Metered spend includes bonus usage; the percentages measure subscription quota.
+    for (const [id, label, usedPct] of [
+      ["plan_usage", "Total", resp.planUsage.totalPercentUsed],
+      ["cursor_usage", "Cursor", resp.planUsage.autoPercentUsed],
+      ["third_party_usage", "Third Party", resp.planUsage.apiPercentUsed],
+    ] as const) {
+      if (usedPct === null) continue;
+      windows.push(
+        windowFromUsedPct({
+          id,
+          label,
+          utilizationPct: usedPct,
+          resetsAt: billingCycleEnd,
+          summary: id === "plan_usage",
+          tone: toneFromUsedPct(usedPct),
+        }),
+      );
+    }
+  }
+  if (resp.planUsage && windows.length === 0) {
     const totalSpend = centsToDollars(resp.planUsage.totalSpend);
     const remaining = centsToDollars(resp.planUsage.remaining);
     const limit = centsToDollars(resp.planUsage.limit);
@@ -194,23 +244,75 @@ export async function fetchUsage(
 
   return {
     status: "available",
-    planLabel: undefined,
-    windows: [],
+    planLabel: await planLabel,
+    windows,
     balances,
     details: [],
   };
 }
 
-async function readToken(input: UsageInput): Promise<string | undefined> {
+interface CursorDashboardRequest {
+  method: "GetCurrentPeriodUsage" | "GetPlanInfo";
+  token: string;
+  fetchApi: typeof fetch;
+  timeoutMs: number;
+}
+
+function fetchDashboard({
+  method,
+  token,
+  fetchApi,
+  timeoutMs,
+}: CursorDashboardRequest): Promise<Response> {
+  return fetchApi(`https://api2.cursor.sh/aiserver.v1.DashboardService/${method}`, {
+    signal: AbortSignal.timeout(timeoutMs),
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "Connect-Protocol-Version": "1",
+    },
+    body: JSON.stringify({}),
+  });
+}
+
+async function fetchPlanLabel(token: string, fetchApi: typeof fetch): Promise<string | undefined> {
+  try {
+    const response = await fetchDashboard({
+      method: "GetPlanInfo",
+      token,
+      fetchApi,
+      timeoutMs: 5_000,
+    });
+    if (!response.ok) {
+      await response.body?.cancel();
+      return undefined;
+    }
+    return CursorPlanInfoSchema.parse(await response.json()).planInfo?.planName;
+  } catch {
+    // Plan metadata is optional; it must not hide a successful quota response.
+    return undefined;
+  }
+}
+
+async function readToken(
+  input: UsageInput,
+  lookup: CursorCredentialLookup,
+): Promise<string | undefined> {
   if (input.store === "env") return process.env[input.locator];
+  if (input.store === "keychain") {
+    if ((lookup.platform ?? process.platform) !== "darwin") return undefined;
+    return (await (lookup.readKeychainToken ?? readCursorKeychainToken)()) ?? undefined;
+  }
   const token =
     input.store === "sqlite"
       ? await readCursorTokenFromSqlite(input.locator)
       : await readCursorTokenFromAuthJson(input.locator);
   return token ?? undefined;
 }
-export async function discover(): Promise<UsageAccount[]> {
+export async function discover(lookup: CursorCredentialLookup = {}): Promise<UsageAccount[]> {
   const home = homedir();
+  const platform = lookup.platform ?? process.platform;
   const candidates: UsageInput[] = ["CURSOR_ACCESS_TOKEN", "CURSOR_TOKEN"].map((locator) => ({
     store: "env",
     locator,
@@ -233,8 +335,14 @@ export async function discover(): Promise<UsageAccount[]> {
       ),
       join(home, ".config", "Cursor", "User", "globalStorage", "state.vscdb"),
     ].map((locator) => ({ store: "sqlite" as const, locator })),
-    { store: "file", locator: join(home, ".config", "cursor", "auth.json") },
   );
-  for (const input of candidates) if (await readToken(input)) return [{ key: "default", input }];
+  const cliStore = process.env.AGENT_CLI_CREDENTIAL_STORE;
+  if (cliStore !== "memory") {
+    if (platform === "darwin" && cliStore !== "file")
+      candidates.push({ store: "keychain", locator: CURSOR_KEYCHAIN_SERVICE });
+    candidates.push({ store: "file", locator: cursorAuthPath(platform) });
+  }
+  for (const input of candidates)
+    if (await readToken(input, lookup)) return [{ key: "default", input }];
   return [];
 }

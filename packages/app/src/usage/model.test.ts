@@ -42,6 +42,33 @@ function ready(data: UsageReportEntry[]): UsageQueryState {
 }
 
 describe("resolveUsageView", () => {
+  it("keeps cards alphabetical across streamed and completed refresh results", () => {
+    const claude = { ...entry({ sourceId: "claude" }), sourceLabel: "Claude" };
+    const otherClaude = { ...claude, id: "claude:account-2" };
+    const codex = { ...entry({ sourceId: "codex" }), sourceLabel: "Codex" };
+    const cursor = { ...entry({ sourceId: "cursor" }), sourceLabel: "Cursor" };
+    const streamed = [cursor, otherClaude, codex, claude];
+    const completed = streamed.toReversed();
+    for (const [data, isFetching] of [
+      [streamed, true],
+      [completed, false],
+    ] as const) {
+      Object.freeze(data);
+      expect(
+        resolveUsageView({
+          hostLabel: "Laptop",
+          isConnected: true,
+          supportsUsage: true,
+          query: { data, error: null, isFetching },
+        }),
+      ).toEqual({
+        kind: "ready",
+        reports: [claude, otherClaude, codex, cursor],
+        isRefreshing: isFetching,
+      });
+    }
+  });
+
   it("asks for a host update when the host lacks usage sources", () => {
     expect(
       resolveUsageView({

@@ -36,6 +36,82 @@ test("discovery preserves account IDs and updates input after token rotation", a
   expect(refreshed[0]?.report.windows[0]?.label).toBe("new");
 });
 
+test.each(["host", "agent"])(
+  "%s refresh rebinds the same login after account switching",
+  async (refreshedScope) => {
+    let account = "personal";
+    const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+      hasAgent: () => true,
+      usageSession: () => ({ provider: "claude", env: {}, sessionKey: "same-launch" }),
+    });
+    registry.register({
+      id: "claude",
+      label: "Claude",
+      discover: async () => [
+        {
+          key: account,
+          label: `${account}@example.test`,
+          harness: "Claude",
+          input: { store: "keychain", service: "shared-login" },
+        },
+      ],
+      fetch: async () => ({ status: "available", windows: [], planLabel: account }),
+    });
+    await registry.listReports({ agentId: "agent" });
+    await registry.listReports();
+    account = "team";
+    if (refreshedScope === "agent") {
+      const refreshed = await registry.listReports({ agentId: "agent", forceRefresh: true });
+      expect(refreshed.map((entry) => entry.id)).toEqual(["claude:team"]);
+    }
+    const host = await registry.listReports({ forceRefresh: true });
+    expect(host.map((entry) => entry.id)).toEqual(["claude:team"]);
+    expect(host[0]?.account.label).toBe("team@example.test");
+    const agent = await registry.listReports({ agentId: "agent" });
+    expect(agent.map((entry) => entry.id)).toEqual(["claude:team"]);
+    expect(agent[0]?.report.planLabel).toBe("team");
+    account = "personal";
+    expect((await registry.listReports({ forceRefresh: true })).map((entry) => entry.id)).toEqual([
+      "claude:personal",
+    ]);
+  },
+);
+
+test("switching one login preserves a different login still using the original account", async () => {
+  let account = "personal";
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: () => true,
+    usageSession: () => ({ provider: "claude", env: {}, sessionKey: "launch" }),
+  });
+  registry.register({
+    id: "claude",
+    label: "Claude",
+    discover: async (scope) => [
+      { key: account, harness: "Claude", input: { path: "shared-login" } },
+      ...(scope.kind === "session"
+        ? [{ key: "personal", harness: "Pi", input: { path: "separate-login" } }]
+        : []),
+    ],
+    fetch: async (input) => ({
+      status: "available",
+      windows: [],
+      planLabel: (input as { path: string }).path === "shared-login" ? account : "personal",
+    }),
+  });
+  await registry.listReports({ agentId: "agent" });
+  account = "team";
+  const host = await registry.listReports({ forceRefresh: true });
+  expect(host.map((entry) => [entry.id, entry.report.planLabel])).toEqual([
+    ["claude:team", "team"],
+    ["claude:personal", "personal"],
+  ]);
+  const agent = await registry.listReports({ agentId: "agent" });
+  expect(agent.map((entry) => [entry.id, entry.report.planLabel])).toEqual([
+    ["claude:team", "team"],
+    ["claude:personal", "personal"],
+  ]);
+});
+
 test("coalesces per account, caches errors, and refreshes only requested IDs", async () => {
   let now = 0;
   const counts = new Map<string, number>();
