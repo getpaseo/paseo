@@ -31,6 +31,7 @@ import {
   type AgentSlashCommand,
   type AgentSlashCommandKind,
   type AgentStreamEvent,
+  type CompactionTimelineItem,
   type FetchCatalogOptions,
   type SteerActiveTurnOptions,
   type SteerResult,
@@ -811,7 +812,17 @@ function isPiRequestAbortError(error: unknown): boolean {
     return true;
   }
 
-  return /\brequest was aborted\b|\babort(ed)?\b/i.test(toDiagnosticErrorMessage(error));
+  return /\brequest was aborted\b|\babort(ed)?\b|\bcompaction cancel(l)?ed\b/i.test(
+    toDiagnosticErrorMessage(error),
+  );
+}
+
+function getPiCompactionOutcome(
+  event: Extract<PiAgentSessionEvent, { type: "compaction_end" }>,
+): NonNullable<CompactionTimelineItem["outcome"]> {
+  if (event.aborted) return "canceled";
+  if (event.errorMessage) return "failed";
+  return "success";
 }
 
 function modelToId(model: PiModel | null | undefined): string | null {
@@ -1189,9 +1200,9 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly contextUserEntries: PiCapturedEntry[] = [];
   private readonly treeUserEntriesById = new Map<string, PiCapturedEntry>();
   private readonly pendingExtensionResults = new Map<string, PendingExtensionResult>();
-  private outOfBandCompactionEmit: ((event: AgentStreamEvent) => void) | null = null;
-  private outOfBandCompactionStarted = false;
-  private outOfBandCompactionCompleted = false;
+  private manualCompactionEmit: ((event: AgentStreamEvent) => void) | null = null;
+  private manualCompactionStarted = false;
+  private manualCompactionCompleted = false;
   private commandCache: AgentSlashCommand[] | null = null;
   private state: PiSessionState;
   private readonly currentModeId: string | null;
@@ -1292,10 +1303,24 @@ export class PiRpcAgentSession implements AgentSession {
     this.pendingSteerSubmissions.length = 0;
     this.clearNoTurnBuffers();
     this.activeNoTurnPromptText = payload.text;
-    const shouldProbeForNoTurnPrompt = this.parseSlashCommandInput(payload.text) !== null;
+    const command = this.parseSlashCommandInput(payload.text);
+    const shouldProbeForNoTurnPrompt = command !== null;
 
     void (async () => {
       try {
+        if (command?.commandName.toLowerCase() === "compact") {
+          this.emitBufferedNoTurnOutputs(turnId);
+          this.activeTurnStarted = true;
+          this.activeTurnStartedEmitted = true;
+          this.emit({ type: "turn_started", provider: this.provider, turnId });
+          await this.executeCompactCommand(command.args, (event) =>
+            this.emit(event.type === "timeline" ? { ...event, turnId } : event),
+          );
+          if (this.activeTurnId === turnId) {
+            this.completeTurn(turnId, []);
+          }
+          return;
+        }
         const ack = await this.runtimeSession.prompt(payload.text, payload.images);
         this.activePromptRequestId = ack.requestId ?? null;
         const correlatedResult = ack.requestId
@@ -1618,13 +1643,6 @@ export class PiRpcAgentSession implements AgentSession {
       return null;
     }
     const commandName = parsed.commandName.toLowerCase();
-    if (commandName === "compact") {
-      return {
-        run: async ({ emit }) => {
-          await this.executeCompactCommand(parsed.args, emit);
-        },
-      };
-    }
     if (commandName === "autocompact") {
       return {
         run: async ({ emit }) => {
@@ -1781,20 +1799,23 @@ export class PiRpcAgentSession implements AgentSession {
     customInstructions: string | undefined,
     emit: (event: AgentStreamEvent) => void,
   ): Promise<void> {
-    if (this.outOfBandCompactionEmit) {
+    if (this.manualCompactionEmit) {
       throw new Error("A Pi compact command is already running");
     }
-    this.outOfBandCompactionEmit = emit;
-    this.outOfBandCompactionStarted = false;
-    this.outOfBandCompactionCompleted = false;
+    this.manualCompactionEmit = emit;
+    this.manualCompactionStarted = false;
+    this.manualCompactionCompleted = false;
+    let outcome: CompactionTimelineItem["outcome"] = "success";
     try {
       await this.runtimeSession.compact(customInstructions);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      outcome = isPiRequestAbortError(error) ? "canceled" : "failed";
+      throw error;
+    } finally {
       if (
-        this.outOfBandCompactionEmit === emit &&
-        this.outOfBandCompactionStarted &&
-        !this.outOfBandCompactionCompleted
+        this.manualCompactionEmit === emit &&
+        this.manualCompactionStarted &&
+        !this.manualCompactionCompleted
       ) {
         this.emitCompactionTimeline({
           turnId: undefined,
@@ -1802,22 +1823,14 @@ export class PiRpcAgentSession implements AgentSession {
             type: "compaction",
             status: "completed",
             trigger: "manual",
+            outcome,
           },
         });
       }
-      emit({
-        type: "timeline",
-        provider: this.provider,
-        item: {
-          type: "assistant_message",
-          text: `[Error] Failed to compact context: ${message}`,
-        },
-      });
-    } finally {
-      if (this.outOfBandCompactionEmit === emit && !this.outOfBandCompactionStarted) {
-        this.outOfBandCompactionEmit = null;
-        this.outOfBandCompactionStarted = false;
-        this.outOfBandCompactionCompleted = false;
+      if (this.manualCompactionEmit === emit) {
+        this.manualCompactionEmit = null;
+        this.manualCompactionStarted = false;
+        this.manualCompactionCompleted = false;
       }
     }
   }
@@ -2227,16 +2240,18 @@ export class PiRpcAgentSession implements AgentSession {
           },
         });
         return;
-      case "compaction_end":
+      case "compaction_end": {
         this.emitCompactionTimeline({
           turnId,
           item: {
             type: "compaction",
             status: "completed",
             trigger: event.reason === "manual" ? "manual" : "auto",
+            outcome: getPiCompactionOutcome(event),
           },
         });
         return;
+      }
       case "auto_retry_start":
         this.emit({
           type: "timeline",
@@ -2300,27 +2315,27 @@ export class PiRpcAgentSession implements AgentSession {
     turnId: string | undefined;
     item: Extract<AgentStreamEvent, { type: "timeline" }>["item"];
   }): void {
-    const emitOutOfBand = this.outOfBandCompactionEmit;
-    if (emitOutOfBand && input.item.type === "compaction") {
+    const emitManualCompaction = this.manualCompactionEmit;
+    if (emitManualCompaction && input.item.type === "compaction") {
       if (input.item.status === "loading") {
-        this.outOfBandCompactionStarted = true;
+        this.manualCompactionStarted = true;
       }
       if (input.item.status === "completed") {
-        this.outOfBandCompactionCompleted = true;
+        this.manualCompactionCompleted = true;
       }
     }
     const event: AgentStreamEvent = {
       type: "timeline",
       provider: this.provider,
-      ...(emitOutOfBand ? {} : { turnId: input.turnId }),
+      turnId: input.turnId,
       item: input.item,
     };
-    if (emitOutOfBand) {
-      emitOutOfBand(event);
+    if (emitManualCompaction) {
+      emitManualCompaction(event);
       if (input.item.type === "compaction" && input.item.status === "completed") {
-        this.outOfBandCompactionEmit = null;
-        this.outOfBandCompactionStarted = false;
-        this.outOfBandCompactionCompleted = false;
+        this.manualCompactionEmit = null;
+        this.manualCompactionStarted = false;
+        this.manualCompactionCompleted = false;
       }
       return;
     }

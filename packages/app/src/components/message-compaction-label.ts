@@ -1,17 +1,20 @@
+import type { CompactionTimelineItem } from "@getpaseo/protocol/agent-types";
 import { i18n } from "@/i18n/i18next";
 
-export interface CompactionMarkerLabelInput {
-  status: "loading" | "completed";
-  trigger?: "auto" | "manual";
-  preTokens?: number;
-}
+export type CompactionMarkerLabelInput = Pick<
+  CompactionTimelineItem,
+  "status" | "trigger" | "preTokens" | "outcome"
+>;
 
 export function getCompactionMarkerLabel({
   status,
   trigger,
   preTokens,
+  outcome,
 }: CompactionMarkerLabelInput): string {
   if (status === "loading") return i18n.t("message.compaction.loading");
+  if (outcome === "canceled") return i18n.t("message.compaction.canceled");
+  if (outcome === "failed") return i18n.t("message.compaction.failed");
   if (trigger === "auto") return i18n.t("message.compaction.auto");
   if (trigger === "manual") return i18n.t("message.compaction.manual");
   if (preTokens) {

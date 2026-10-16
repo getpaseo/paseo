@@ -4,6 +4,7 @@ import type {
   AgentFeatureToggle,
   AgentProviderNotice,
   AgentTaskItem,
+  CompactionTimelineItem,
   JsonValue,
   ProviderOptions,
   ToolPolicy,
@@ -17,6 +18,7 @@ export type {
   AgentFeatureToggle,
   AgentProviderNotice,
   AgentTaskItem,
+  CompactionTimelineItem,
 };
 
 export type AgentProvider = string;
@@ -369,14 +371,6 @@ export type ToolCallTimelineItem =
   | ToolCallCompletedTimelineItem
   | ToolCallFailedTimelineItem
   | ToolCallCanceledTimelineItem;
-
-export interface CompactionTimelineItem {
-  [key: string]: unknown;
-  type: "compaction";
-  status: "loading" | "completed";
-  trigger?: "auto" | "manual";
-  preTokens?: number;
-}
 
 export interface PluginTimelineItem {
   type: "plugin";

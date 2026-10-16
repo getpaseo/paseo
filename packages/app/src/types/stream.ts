@@ -2,6 +2,7 @@ import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import type {
   AgentProvider,
   AgentTimelineItem,
+  CompactionTimelineItem,
   JsonValue,
   ToolCallDetail,
 } from "@getpaseo/protocol/agent-types";
@@ -497,6 +498,7 @@ function mergeRetainedLifecycleItem(tail: StreamItem[], retained: StreamItem): S
       status: "completed",
       trigger: retained.trigger ?? existing.trigger,
       preTokens: retained.preTokens ?? existing.preTokens,
+      ...(retained.outcome ? { outcome: retained.outcome } : {}),
     };
     return next;
   }
@@ -790,15 +792,15 @@ export interface NotificationItem {
   message: string;
 }
 
-export interface CompactionItem {
+export interface CompactionItem extends Pick<
+  CompactionTimelineItem,
+  "status" | "trigger" | "preTokens" | "outcome"
+> {
   kind: "compaction";
   id: string;
   timelineCursor?: TimelinePosition;
   turnId?: string;
   timestamp: Date;
-  status: "loading" | "completed";
-  trigger?: "auto" | "manual";
-  preTokens?: number;
 }
 
 export interface PluginTimelineStreamItem {
@@ -1477,6 +1479,7 @@ function reduceTimelineCompaction(
         status: "completed",
         trigger: item.trigger ?? existing.trigger,
         preTokens: item.preTokens ?? existing.preTokens,
+        ...(item.outcome ? { outcome: item.outcome } : {}),
       };
       return [...state.slice(0, loadingIdx), updated, ...state.slice(loadingIdx + 1)];
     }
@@ -1492,6 +1495,7 @@ function reduceTimelineCompaction(
     status: item.status,
     trigger: item.trigger,
     preTokens: item.preTokens,
+    ...(item.outcome ? { outcome: item.outcome } : {}),
   };
   return [...state, compaction];
 }

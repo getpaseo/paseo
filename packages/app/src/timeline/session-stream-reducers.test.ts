@@ -775,55 +775,67 @@ describe("processTimelineResponse", () => {
     ]);
   });
 
-  it("keeps one completed compaction when bootstrap contains its loading state", () => {
-    const liveCompaction = hydrateStreamState(
-      [
-        {
-          event: {
-            type: "timeline",
-            provider: "codex",
-            item: { type: "compaction", status: "completed", trigger: "auto", preTokens: 1200 },
-          } as AgentStreamEventPayload,
-          timestamp: new Date(2000),
-          timelineCursor: { epoch: "epoch-1", seq: 2 },
-        },
-      ],
-      { source: "canonical" },
-    );
-
-    const result = processTimelineResponse({
-      ...baseTimelineInput,
-      currentHead: liveCompaction,
-      isInitializing: true,
-      hasActiveInitDeferred: true,
-      payload: {
-        ...baseTimelineInput.payload,
-        direction: "tail",
-        reset: false,
-        epoch: "epoch-1",
-        startCursor: { seq: 1 },
-        endCursor: { seq: 1 },
-        entries: [
+  it.each([undefined, "success", "canceled", "failed"] as const)(
+    "keeps completed compaction outcome %s when bootstrap contains its loading state",
+    (outcome) => {
+      const liveCompaction = hydrateStreamState(
+        [
           {
-            seqStart: 1,
-            seqEnd: 1,
-            provider: "codex",
-            item: { type: "compaction", status: "loading", trigger: "auto" },
-            timestamp: new Date(1000).toISOString(),
+            event: {
+              type: "timeline",
+              provider: "codex",
+              item: {
+                type: "compaction",
+                status: "completed",
+                trigger: "auto",
+                preTokens: 1200,
+                ...(outcome ? { outcome } : {}),
+              },
+            } as AgentStreamEventPayload,
+            timestamp: new Date(2000),
+            timelineCursor: { epoch: "epoch-1", seq: 2 },
           },
         ],
-      },
-    });
+        { source: "canonical" },
+      );
 
-    expect([...result.tail, ...result.head].filter((item) => item.kind === "compaction")).toEqual([
-      expect.objectContaining({
-        timelineCursor: { epoch: "epoch-1", seq: 2 },
-        status: "completed",
-        trigger: "auto",
-        preTokens: 1200,
-      }),
-    ]);
-  });
+      const result = processTimelineResponse({
+        ...baseTimelineInput,
+        currentHead: liveCompaction,
+        isInitializing: true,
+        hasActiveInitDeferred: true,
+        payload: {
+          ...baseTimelineInput.payload,
+          direction: "tail",
+          reset: false,
+          epoch: "epoch-1",
+          startCursor: { seq: 1 },
+          endCursor: { seq: 1 },
+          entries: [
+            {
+              seqStart: 1,
+              seqEnd: 1,
+              provider: "codex",
+              item: { type: "compaction", status: "loading", trigger: "auto" },
+              timestamp: new Date(1000).toISOString(),
+            },
+          ],
+        },
+      });
+
+      expect([...result.tail, ...result.head].filter((item) => item.kind === "compaction")).toEqual(
+        [
+          expect.objectContaining({
+            timelineCursor: { epoch: "epoch-1", seq: 2 },
+            status: "completed",
+            trigger: "auto",
+            preTokens: 1200,
+            ...(outcome ? { outcome } : {}),
+          }),
+        ],
+      );
+    },
+  );
 
   it("replaces a painted replica with an empty authoritative timeline", () => {
     const result = processTimelineResponse({

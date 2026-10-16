@@ -14,6 +14,25 @@ function thought(text: string, status: "loading" | "ready" = "loading"): StreamI
 }
 
 describe("plugin timeline projection", () => {
+  it.each(["success", "canceled", "failed"] as const)(
+    "preserves compaction outcome %s for plugins",
+    (outcome) => {
+      const source: StreamItem = {
+        kind: "compaction",
+        id: "compact-1",
+        status: "completed",
+        outcome,
+        timestamp: new Date("2026-10-15T07:00:00.000Z"),
+      };
+      const observed: unknown[] = [];
+      projectPluginTimelineItems([source], ({ item }) => {
+        observed.push(item);
+        return undefined;
+      });
+      expect(observed).toEqual([{ type: "compaction", status: "completed", outcome }]);
+    },
+  );
+
   it("does not expose mutable tool detail from stream state", () => {
     const detail = { type: "read" as const, filePath: "/repo/original.ts" };
     const source: StreamItem = {

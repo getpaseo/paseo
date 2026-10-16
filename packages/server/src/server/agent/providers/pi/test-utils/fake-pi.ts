@@ -45,6 +45,12 @@ export interface FakePiSubagentMessagesResult {
   messages: PiAgentMessage[];
 }
 
+interface HeldCompaction {
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (error: Error) => void;
+}
+
 interface FakePiUserEntry {
   id: string;
   parentId: string | null;
@@ -140,6 +146,7 @@ export class FakePiSession implements PiRuntimeSession {
   subagentSubscriptionError: Error | null = null;
   setSessionNameError: Error | null = null;
   compactError: Error | null = null;
+  private heldCompaction: HeldCompaction | null = null;
   emitCompactEnd = true;
   getStateError: Error | null = null;
   getSessionStatsError: Error | null = null;
@@ -238,14 +245,46 @@ export class FakePiSession implements PiRuntimeSession {
     }
   }
 
+  holdNextCompaction(): HeldCompaction {
+    if (this.heldCompaction) {
+      throw new Error("FakePi already has a held compaction");
+    }
+    let resolve!: () => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<void>((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise;
+      reject = rejectPromise;
+    });
+    this.heldCompaction = { promise, resolve, reject };
+    return this.heldCompaction;
+  }
+
   async compact(customInstructions?: string): Promise<void> {
     this.compactRequests.push(customInstructions === undefined ? {} : { customInstructions });
+    this.state.isCompacting = true;
     this.emit({ type: "compaction_start", reason: "manual" });
-    if (this.emitCompactEnd) {
-      this.emit({ type: "compaction_end", reason: "manual" });
-    }
-    if (this.compactError) {
-      throw this.compactError;
+    let failure: unknown;
+    try {
+      await this.heldCompaction?.promise;
+      if (this.compactError) {
+        throw this.compactError;
+      }
+    } catch (error) {
+      failure = error;
+      throw error;
+    } finally {
+      this.state.isCompacting = false;
+      this.heldCompaction = null;
+      if (this.emitCompactEnd) {
+        const message = failure instanceof Error ? failure.message : undefined;
+        const aborted = message === "Compaction cancelled";
+        this.emit({
+          type: "compaction_end",
+          reason: "manual",
+          aborted,
+          errorMessage: aborted ? undefined : message,
+        });
+      }
     }
   }
 
@@ -260,6 +299,7 @@ export class FakePiSession implements PiRuntimeSession {
   async abort(): Promise<void> {
     this.controlRequests.push("abort");
     this.abortRequested = true;
+    this.heldCompaction?.reject(new Error("Compaction cancelled"));
   }
 
   async getState(): Promise<PiSessionState> {

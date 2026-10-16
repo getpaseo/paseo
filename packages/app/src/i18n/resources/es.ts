@@ -395,6 +395,8 @@ export const es: TranslationResources = {
     },
     compaction: {
       loading: "Compactando...",
+      canceled: "Compactación del contexto cancelada",
+      failed: "Error al compactar el contexto",
       auto: "Contexto compactado automáticamente",
       manual: "Contexto compactado manualmente",
       withTokens: "Contexto compactado (tokens{{tokens}}K)",

@@ -595,6 +595,26 @@ describe("ReplicaCache", () => {
     expect((await cache.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([timelineItem("New")]);
   });
 
+  it.each([undefined, "success", "canceled", "failed"] as const)(
+    "round-trips compaction outcome %s",
+    async (outcome) => {
+      const storage = new MemoryStorage();
+      const writer = createCache(storage);
+      const item: StreamItem = {
+        kind: "compaction",
+        id: "compaction-1",
+        status: "completed",
+        trigger: "manual",
+        timestamp: new Date("2026-10-15T07:00:00.000Z"),
+        ...(outcome ? { outcome } : {}),
+      };
+      writer.commitTimeline(SERVER_ID, "agent-1", { ...timeline(), items: [item] });
+      await writer.flush();
+      const restored = await createCache(storage).readTimeline(SERVER_ID, "agent-1");
+      expect(restored?.items).toEqual([item]);
+    },
+  );
+
   it("round-trips plugin timeline items", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);

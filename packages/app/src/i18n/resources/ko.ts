@@ -391,6 +391,8 @@ export const ko: TranslationResources = {
     },
     compaction: {
       loading: "압축하는 중...",
+      canceled: "컨텍스트 압축이 취소되었습니다",
+      failed: "컨텍스트 압축에 실패했습니다",
       auto: "컨텍스트가 자동으로 압축되었습니다",
       manual: "컨텍스트가 수동으로 압축되었습니다",
       withTokens: "컨텍스트가 압축되었습니다 ({{tokens}}K 토큰)",

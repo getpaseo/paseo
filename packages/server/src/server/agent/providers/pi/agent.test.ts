@@ -17,6 +17,8 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, onTestFinished, test } from "vitest";
 
 import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
+import { AgentManager } from "../../agent-manager.js";
+import { startAgentRun } from "../../agent-prompt.js";
 import {
   PiProviderOptionsSchema,
   PiRpcAgentClient,
@@ -3038,62 +3040,148 @@ describe("PiRpcAgentClient", () => {
     ]);
   });
 
-  test("executes Pi compact through RPC instead of prompt text", async () => {
-    const { pi, session } = await createSession();
+  test("runs Pi compact as a foreground turn through RPC instead of prompt text", async () => {
+    const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
-    const handler = (session as AgentSession).tryHandleOutOfBand?.("/compact focus on tests");
-    const events: AgentStreamEvent[] = [];
+    const compact = fakeSession.holdNextCompaction();
 
-    expect(handler).not.toBeNull();
-    await handler?.run({ emit: (event) => events.push(event) });
-
+    expect(session.tryHandleOutOfBand("/compact focus on tests")).toBeNull();
+    const { turnId } = await session.startTurn("/compact focus on tests", {
+      clientMessageId: "compact-request",
+    });
     expect(fakeSession.compactRequests).toEqual([{ customInstructions: "focus on tests" }]);
     expect(fakeSession.prompts).toEqual([]);
-    expect(events).toEqual([
-      {
-        type: "timeline",
-        provider: "pi",
-        item: { type: "compaction", status: "loading", trigger: "manual" },
-      },
-      {
-        type: "timeline",
-        provider: "pi",
-        item: { type: "compaction", status: "completed", trigger: "manual" },
-      },
+    expect(events.turnLifecycleEvents()).toEqual([{ type: "turn_started", turnId }]);
+    await expect(session.startTurn("overlapping request")).rejects.toThrow(
+      "A Pi turn is already active",
+    );
+
+    compact.resolve();
+    await events.nextTurnCompletion();
+    expect(events.timelineItems()).toEqual([
+      { type: "user_message", text: "/compact focus on tests", clientMessageId: "compact-request" },
+      { type: "compaction", status: "loading", trigger: "manual" },
+      { type: "compaction", status: "completed", trigger: "manual", outcome: "success" },
     ]);
+    expect(events.turnLifecycleEvents()).toEqual([
+      { type: "turn_started", turnId },
+      { type: "turn_completed", turnId },
+    ]);
+    await session.startTurn("next request");
+    expect(fakeSession.prompts).toEqual([{ message: "next request", imageCount: 0 }]);
+    await session.close();
   });
 
-  test("closes Pi compact loading marker when RPC rejects after compaction starts", async () => {
-    const { pi, session } = await createSession();
+  test("closes Pi compact loading marker on failure and permits a retry", async () => {
+    const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
     fakeSession.emitCompactEnd = false;
     fakeSession.compactError = new Error("summarizer failed");
-    const handler = (session as AgentSession).tryHandleOutOfBand?.("/compact");
-    const events: AgentStreamEvent[] = [];
 
-    expect(handler).not.toBeNull();
-    await handler?.run({ emit: (event) => events.push(event) });
-
-    expect(events).toEqual([
-      {
-        type: "timeline",
-        provider: "pi",
-        item: { type: "compaction", status: "loading", trigger: "manual" },
-      },
-      {
-        type: "timeline",
-        provider: "pi",
-        item: { type: "compaction", status: "completed", trigger: "manual" },
-      },
-      {
-        type: "timeline",
-        provider: "pi",
-        item: {
-          type: "assistant_message",
-          text: "[Error] Failed to compact context: summarizer failed",
-        },
-      },
+    const { turnId } = await session.startTurn("/compact");
+    await expect(events.nextTurnFailure()).resolves.toEqual({
+      type: "turn_failed",
+      provider: "pi",
+      turnId,
+      error: "summarizer failed",
+    });
+    expect(events.timelineItems()).toEqual([
+      { type: "user_message", text: "/compact" },
+      { type: "compaction", status: "loading", trigger: "manual" },
+      { type: "compaction", status: "completed", trigger: "manual", outcome: "failed" },
     ]);
+
+    fakeSession.compactError = null;
+    fakeSession.emitCompactEnd = true;
+    const retry = await session.startTurn("/compact");
+    await expect(events.nextTurnCompletion()).resolves.toMatchObject({ turnId: retry.turnId });
+    expect(fakeSession.compactRequests).toEqual([{}, {}]);
+    expect(events.turnLifecycleEvents()).toEqual([
+      { type: "turn_started", turnId },
+      { type: "turn_failed", turnId },
+      { type: "turn_started", turnId: retry.turnId },
+      { type: "turn_completed", turnId: retry.turnId },
+    ]);
+    await session.close();
+  });
+
+  test("preserves native Pi cancellation and failure outcomes in compaction markers", async () => {
+    const { pi, session, events } = await createSession();
+    const runtime = pi.latestSession();
+    runtime.emit({ type: "compaction_start", reason: "manual" });
+    runtime.emit({ type: "compaction_end", reason: "manual", aborted: true });
+    runtime.emit({ type: "compaction_start", reason: "threshold" });
+    runtime.emit({
+      type: "compaction_end",
+      reason: "threshold",
+      errorMessage: "Summary unavailable",
+    });
+    expect(events.timelineItems()).toEqual([
+      { type: "compaction", status: "loading", trigger: "manual" },
+      { type: "compaction", status: "completed", trigger: "manual", outcome: "canceled" },
+      { type: "compaction", status: "loading", trigger: "auto" },
+      { type: "compaction", status: "completed", trigger: "auto", outcome: "failed" },
+    ]);
+    await session.close();
+  });
+
+  test("reports Pi compact cancellation without failing the turn", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.compactError = new Error("Compaction cancelled");
+
+    const { turnId } = await session.startTurn("/compact");
+    await flushTurnScheduling();
+    expect(events.turnLifecycleEvents()).toEqual([
+      { type: "turn_started", turnId },
+      { type: "turn_canceled", turnId },
+    ]);
+    await session.startTurn("next request");
+    expect(fakeSession.prompts).toEqual([{ message: "next request", imageCount: 0 }]);
+    await session.close();
+  });
+
+  test("Stop reaches Pi compact through AgentManager and a follow-up turn completes", async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "paseo-pi-compact-"));
+    const pi = new FakePi();
+    const logger = pino({ level: "silent" });
+    const manager = new AgentManager({ clients: { pi: createClient(pi) }, logger });
+    onTestFinished(() => rmSync(cwd, { recursive: true, force: true }));
+    const agent = await manager.createAgent(createConfig({ cwd }), undefined, {
+      workspaceId: undefined,
+    });
+    onTestFinished(async () => {
+      await manager.closeAgent(agent.id);
+      await manager.flush();
+    });
+    const fakeSession = pi.latestSession();
+    fakeSession.holdNextCompaction();
+
+    await expect(startAgentRun(manager, agent.id, "/compact", logger)).resolves.toEqual({
+      disposition: "turn_started",
+    });
+    await manager.waitForAgentRunStart(agent.id);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "running",
+      activeForegroundTurnId: expect.any(String),
+    });
+    expect(fakeSession.state.isCompacting).toBe(true);
+
+    await expect(manager.cancelAgentRun(agent.id)).resolves.toEqual({ status: "settled" });
+    expect(fakeSession.controlRequests).toEqual(["clear_queue", "abort"]);
+    expect(fakeSession.state.isCompacting).toBe(false);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+    });
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
+
+    await startAgentRun(manager, agent.id, "next request", logger);
+    await manager.waitForAgentRunStart(agent.id);
+    expect(fakeSession.prompts).toEqual([{ message: "next request", imageCount: 0 }]);
+    fakeSession.finishTurn({ role: "assistant", content: [{ type: "text", text: "Ready" }] });
+    await expect(manager.waitForAgentEvent(agent.id)).resolves.toMatchObject({ status: "idle" });
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
   });
 
   test("executes Pi autocompact through RPC instead of prompt text", async () => {

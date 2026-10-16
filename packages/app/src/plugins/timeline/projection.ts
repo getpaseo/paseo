@@ -73,6 +73,7 @@ function sourceTimelineItem(item: StreamItem): AgentTimelineItem | null {
         status: item.status,
         ...(item.trigger ? { trigger: item.trigger } : {}),
         ...(item.preTokens !== undefined ? { preTokens: item.preTokens } : {}),
+        ...(item.outcome ? { outcome: item.outcome } : {}),
       };
     case "plugin":
       return null;

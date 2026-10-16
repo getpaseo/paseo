@@ -387,6 +387,8 @@ export const en = {
     },
     compaction: {
       loading: "Compacting...",
+      canceled: "Context compaction canceled",
+      failed: "Context compaction failed",
       auto: "Context automatically compacted",
       manual: "Context manually compacted",
       withTokens: "Context compacted ({{tokens}}K tokens)",

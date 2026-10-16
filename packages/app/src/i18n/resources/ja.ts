@@ -395,6 +395,8 @@ export const ja: TranslationResources = {
     },
     compaction: {
       loading: "コンテキストを圧縮中...",
+      canceled: "コンテキストの圧縮をキャンセルしました",
+      failed: "コンテキストの圧縮に失敗しました",
       auto: "コンテキストが自動的に圧縮されました",
       manual: "コンテキストが手動で圧縮されました",
       withTokens: "コンテキストを圧縮しました（{{tokens}}Kトークン）",

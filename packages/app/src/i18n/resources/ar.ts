@@ -390,6 +390,8 @@ export const ar: TranslationResources = {
     },
     compaction: {
       loading: "الضغط...",
+      canceled: "أُلغي ضغط السياق",
+      failed: "فشل ضغط السياق",
       auto: "يتم ضغط السياق تلقائيًا",
       manual: "تم ضغط السياق يدويًا",
       withTokens: "تم ضغط السياق (رموز{{tokens}}K)",

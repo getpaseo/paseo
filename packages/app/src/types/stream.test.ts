@@ -1382,6 +1382,36 @@ describe("stream reducer canonical tool calls", () => {
     ]);
   });
 
+  it.each(["success", "canceled", "failed"] as const)(
+    "retains compaction outcome %s in the visible stream",
+    (outcome) => {
+      const state = hydrateStreamState([
+        { event: compactionTimeline("loading", "manual"), timestamp: new Date(1000) },
+        {
+          event: {
+            type: "timeline",
+            provider: "pi",
+            item: {
+              type: "compaction",
+              status: "completed",
+              trigger: "manual",
+              outcome,
+            },
+          },
+          timestamp: new Date(2000),
+        },
+      ]);
+      expect(state).toEqual([
+        expect.objectContaining({
+          kind: "compaction",
+          status: "completed",
+          trigger: "manual",
+          outcome,
+        }),
+      ]);
+    },
+  );
+
   it("terminalizes the loading compaction before a completed turn", () => {
     const state = hydrateStreamState([
       {

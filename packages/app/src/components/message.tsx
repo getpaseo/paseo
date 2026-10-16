@@ -93,7 +93,10 @@ import {
   useAssistantFileLinkActions,
   useAssistantLinkPress,
 } from "@/assistant-file-links";
-import { getCompactionMarkerLabel } from "./message-compaction-label";
+import {
+  getCompactionMarkerLabel,
+  type CompactionMarkerLabelInput,
+} from "./message-compaction-label";
 import { useAssistantImage } from "@/assistant-image/use-assistant-image";
 import { localFileSourceToPath } from "@/attachments/utils";
 import {
@@ -2179,12 +2182,6 @@ export const Notification = memo(function Notification({
   );
 });
 
-interface CompactionMarkerProps {
-  status: "loading" | "completed";
-  trigger?: "auto" | "manual";
-  preTokens?: number;
-}
-
 const compactionStylesheet = StyleSheet.create((theme) => ({
   container: {
     flexDirection: "row",
@@ -2214,8 +2211,9 @@ export const CompactionMarker = memo(function CompactionMarker({
   status,
   trigger,
   preTokens,
-}: CompactionMarkerProps) {
-  const label = getCompactionMarkerLabel({ status, trigger, preTokens });
+  outcome,
+}: CompactionMarkerLabelInput) {
+  const label = getCompactionMarkerLabel({ status, trigger, preTokens, outcome });
 
   return (
     <View style={compactionStylesheet.container}>

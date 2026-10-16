@@ -67,6 +67,23 @@ const LegacyAgentSnapshotPayloadSchema = AgentSnapshotPayloadSchema.extend({
 });
 
 describe("wire schema compatibility", () => {
+  test.each(["success", "canceled", "failed"])(
+    "retains optional compaction outcome %s without breaking legacy messages",
+    (outcome) => {
+      const legacy = { type: "compaction", status: "completed", trigger: "manual" };
+      const current = { ...legacy, outcome };
+      const legacySchema = z.object({
+        type: z.literal("compaction"),
+        status: z.enum(["loading", "completed"]),
+        trigger: z.enum(["auto", "manual"]).optional(),
+        preTokens: z.number().optional(),
+      });
+      expect(AgentTimelineItemPayloadSchema.parse(legacy)).toEqual(legacy);
+      expect(AgentTimelineItemPayloadSchema.parse(current)).toEqual(current);
+      expect(legacySchema.parse(current)).toEqual(legacy);
+    },
+  );
+
   test("hello parses with and without the project update capability", () => {
     const legacy = WSHelloMessageSchema.parse({
       type: "hello",
