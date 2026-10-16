@@ -369,15 +369,13 @@ export function buildSidebarWorkspaceEntries(input: {
   sessions: SidebarWorkspaceSession[];
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
   previousEntries?: ReadonlyMap<string, SidebarWorkspaceEntry>;
-}): ReadonlyMap<string, SidebarWorkspaceEntry> {
+}): Map<string, SidebarWorkspaceEntry> {
   if (input.placements.length === 0 || input.sessions.length === 0) {
     return new Map();
   }
 
   const sessionByServerId = new Map(input.sessions.map((session) => [session.serverId, session]));
   const entries = new Map<string, SidebarWorkspaceEntry>();
-  const previousKeys = input.previousEntries?.keys();
-  let unchanged = input.previousEntries !== undefined;
 
   for (const placement of input.placements) {
     const session = sessionByServerId.get(placement.serverId);
@@ -397,22 +395,15 @@ export function buildSidebarWorkspaceEntries(input: {
       workspaceAgentActivity: session.workspaceAgentActivity,
     });
     const previousEntry = input.previousEntries?.get(placement.workspaceKey);
-    const nextEntry =
+    entries.set(
+      placement.workspaceKey,
       previousEntry && areSidebarWorkspaceEntriesEqual(previousEntry, entry)
         ? previousEntry
-        : entry;
-    entries.set(placement.workspaceKey, nextEntry);
-    unchanged =
-      previousKeys?.next().value === placement.workspaceKey &&
-      previousEntry === nextEntry &&
-      unchanged;
+        : entry,
+    );
   }
 
-  // Resuming a retained sidebar must not invalidate its project/filter projections
-  // when the directory has not changed while it was hidden.
-  return unchanged && input.previousEntries?.size === entries.size
-    ? input.previousEntries
-    : entries;
+  return entries;
 }
 
 function areSidebarWorkspaceEntriesEqual(
