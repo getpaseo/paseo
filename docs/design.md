@@ -148,10 +148,10 @@ One row off the rail makes the whole card look unconsidered.
 
 Compact-first. The small case is designed; the large case adds chrome around it.
 
-The list+detail pattern is canonical and reused across surfaces. The settings shell (`packages/app/src/screens/settings-screen.tsx`) and the projects screen (`packages/app/src/screens/projects-screen.tsx`) share this framing:
+The list+detail pattern is canonical and reused across surfaces. The settings shell (`packages/app/src/screens/settings-screen.tsx`) follows this framing:
 
 - On compact: full-screen list with `<BackHeader>` at the top. Tapping a row pushes a full-screen detail with its own `<BackHeader>` that returns to the list.
-- On desktop: a sidebar on the left holds the list with `surfaceSidebar` background. Settings shares the app navigation's saved width; Projects uses a 320px list. The content pane on the right holds the selected detail with `<ScreenHeader>`, `<HeaderIconBadge>`, and `<ScreenTitle>`.
+- On desktop: a sidebar on the left holds the list with `surfaceSidebar` background and shares the app navigation's visible width. The content pane on the right holds the selected detail with `<ScreenHeader>`, `<HeaderIconBadge>`, and `<ScreenTitle>`.
 
 The branching is one `useIsCompactFormFactor()` check at the top of the screen component. The list and the detail are the same components in both layouts; only the framing changes.
 

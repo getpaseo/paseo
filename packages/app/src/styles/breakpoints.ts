@@ -4,4 +4,4 @@ export const APP_BREAKPOINTS = {
   md: 600,
   lg: 992,
   xl: 1200,
-};
+} as const;
