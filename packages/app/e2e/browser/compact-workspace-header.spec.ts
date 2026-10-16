@@ -3,6 +3,18 @@ import { test, expect } from "../support/fixtures";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { openAgentRoute } from "../support/helpers/mock-agent";
 import { getServerId } from "../support/helpers/server-id";
+import { expectOpenTabCount } from "../support/helpers/sheet";
+import {
+  closeCompactWorkspaceMenu,
+  goBackInMenu,
+  menuRow,
+  openCompactWorkspaceMenu,
+  openRunningScriptPage,
+  openScriptsPage,
+  runScriptFromScriptsPage,
+  scriptRow,
+  scriptsMenuRow,
+} from "../support/helpers/compact-workspace-scripts";
 
 const labels = {
   long: {
@@ -94,3 +106,87 @@ for (const width of [320, 390]) {
     });
   }
 }
+
+const KEEP_ALIVE = 'node -e "setInterval(() => {}, 1000)"';
+const WEB_SERVER =
+  "node -e \"require('http').createServer((q, r) => r.end('ok')).listen(process.env.PASEO_PORT)\"";
+
+async function openWorkspaceWithScripts(page: Page) {
+  const workspace = await seedWorkspace({
+    repoPrefix: "compact-scripts-",
+    repo: {
+      paseoConfig: {
+        scripts: {
+          lint: { type: "script", command: KEEP_ALIVE },
+          web: { type: "service", command: WEB_SERVER },
+        },
+      },
+    },
+  });
+  try {
+    const agent = await workspace.client.createAgent({
+      provider: "mock",
+      cwd: workspace.repoPath,
+      workspaceId: workspace.workspaceId,
+      title: "Scripts menu check",
+      modeId: "load-test",
+      model: "e2e-fast-stream",
+    });
+    await openAgentRoute(page, { workspaceId: workspace.workspaceId, agentId: agent.id });
+    return workspace;
+  } catch (error) {
+    await workspace.cleanup();
+    throw error;
+  }
+}
+
+test("compact header menu runs, shows, and stops workspace scripts", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const workspace = await openWorkspaceWithScripts(page);
+  try {
+    await expectOpenTabCount(page, 1);
+
+    await test.step("nothing running: the Scripts row has no value", async () => {
+      await openCompactWorkspaceMenu(page);
+      await expect(scriptsMenuRow(page)).toHaveAccessibleName("Scripts");
+      await closeCompactWorkspaceMenu(page);
+    });
+
+    await test.step("a stopped script runs from the Scripts page into a terminal tab", async () => {
+      await runScriptFromScriptsPage(page, "lint");
+      await expectOpenTabCount(page, 2);
+      await openCompactWorkspaceMenu(page);
+      await expect(scriptsMenuRow(page)).toHaveAccessibleName(/^Scripts\s*lint$/);
+      await closeCompactWorkspaceMenu(page);
+    });
+
+    await test.step("two running scripts are counted on the root row", async () => {
+      await runScriptFromScriptsPage(page, "web");
+      await expectOpenTabCount(page, 3);
+      await openCompactWorkspaceMenu(page);
+      await expect(scriptsMenuRow(page)).toHaveAccessibleName(/^Scripts\s*2 running$/);
+      await closeCompactWorkspaceMenu(page);
+    });
+
+    await test.step("stopping a script keeps its page open in the stopped state", async () => {
+      await openRunningScriptPage(page, "web");
+      await expect(menuRow(page, "View service")).toBeVisible();
+      await menuRow(page, "Stop").click();
+      await expect(menuRow(page, "Run")).toBeVisible({ timeout: 15_000 });
+      await expect(menuRow(page, "Stop")).toHaveCount(0);
+
+      await goBackInMenu(page);
+      await expect(scriptRow(page, "web")).toHaveAccessibleName(/^web\s*exit \d+$/);
+      await expect(scriptRow(page, "lint")).toHaveAccessibleName(/^lint\s*Running$/);
+      await closeCompactWorkspaceMenu(page);
+    });
+
+    await test.step("the root row names the one script still running", async () => {
+      await openScriptsPage(page);
+      await goBackInMenu(page);
+      await expect(scriptsMenuRow(page)).toHaveAccessibleName(/^Scripts\s*lint$/);
+    });
+  } finally {
+    await workspace.cleanup();
+  }
+});

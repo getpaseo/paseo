@@ -8,7 +8,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot } from "react-dom/client";
-import { WorkspaceScriptsButton } from "@/screens/workspace/workspace-scripts-button";
+import { WorkspaceScriptsButton } from "./workspace-scripts-button";
 
 void testI18n;
 
@@ -235,7 +235,6 @@ const LIVE_TERMINAL_IDS: string[] = ["terminal-script-1"];
 
 interface RenderScriptsOptions {
   hideLabels?: boolean;
-  presentation?: "split" | "ghost";
 }
 
 function renderScripts(
@@ -264,7 +263,6 @@ function renderScripts(
           scripts={nextScripts}
           liveTerminalIds={LIVE_TERMINAL_IDS}
           hideLabels={options.hideLabels}
-          presentation={options.presentation}
         />
       </QueryClientProvider>
     );
@@ -429,17 +427,6 @@ describe("WorkspaceScriptsButton", () => {
     expect(requirePrimaryIcon(requireRow("old-service")).dataset.color).toBe(
       theme.colors.foregroundMuted,
     );
-  });
-
-  it("removes the trigger caret in ghost presentation", () => {
-    current = renderScripts([script({ scriptName: "dev" })], {
-      hideLabels: true,
-      presentation: "ghost",
-    });
-
-    const trigger = document.querySelector('[data-testid="workspace-scripts-button"]');
-    expect(trigger?.querySelector('[data-icon="Play"]')?.getAttribute("data-size")).toBe("16");
-    expect(trigger?.querySelector('[data-icon="ChevronDown"]')).toBeNull();
   });
 
   it("keeps the trigger caret in split presentation", () => {

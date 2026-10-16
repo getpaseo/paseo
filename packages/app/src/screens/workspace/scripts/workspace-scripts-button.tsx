@@ -1,13 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, type ReactElement } from "react";
+import { useCallback, useMemo, type ReactElement } from "react";
 import type { GestureResponderEvent } from "react-native";
 import { Pressable, Text, View } from "react-native";
-import * as Clipboard from "expo-clipboard";
-import { useMutation } from "@tanstack/react-query";
 import {
   ChevronDown,
   Copy,
   Eye,
-  Globe,
   Play,
   RotateCw,
   Square,
@@ -16,8 +13,6 @@ import {
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
-import { useSessionStore } from "@/stores/session-store";
-import { useHostRuntimeSnapshot } from "@/runtime/host-runtime";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,17 +22,20 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { MENU_ITEM_HEIGHT } from "@/components/ui/menu/menu-geometry";
-import { useToast } from "@/contexts/toast-context";
 import { openServiceUrl } from "@/utils/open-service-url";
-import {
-  resolveWorkspaceScriptLink,
-  type WorkspaceScriptLinkKind,
-  type WorkspaceScriptLinkTarget,
+import type {
+  WorkspaceScriptLinkKind,
+  WorkspaceScriptLinkTarget,
 } from "@/utils/workspace-script-links";
 import type { Theme } from "@/styles/theme";
-import { useWorkspaceServiceRoutePreferencesStore } from "@/workspace-service-routes/store";
 import { buttonControlHeight, HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
 import { extraMutedIconColorMapping } from "@/components/ui/icon-color";
+import { ExitCodeBadge, routeLabelKey, ScriptIcon } from "./script-marks";
+import { scriptToneColorMapping } from "./script-status";
+import {
+  useWorkspaceScriptActions,
+  type WorkspaceScriptActions,
+} from "./use-workspace-script-actions";
 
 type RowActionIcon = "copy" | "open" | "restart" | "start" | "stop" | "terminal";
 
@@ -50,19 +48,15 @@ interface WorkspaceScriptsButtonProps {
   onViewTerminal?: (terminalId: string) => void;
   onOpenUrlInBrowserTab?: (url: string) => void;
   hideLabels?: boolean;
-  presentation?: "split" | "ghost";
 }
 
 const ThemedPlay = withUnistyles(Play);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
-const ThemedGlobe = withUnistyles(Globe);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedEye = withUnistyles(Eye);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedSquare = withUnistyles(Square);
-
-const GHOST_TRIGGER_ICON_SIZE = 16;
 
 const foregroundColorMapping = (theme: Theme) => ({
   color: theme.colors.foreground,
@@ -70,17 +64,7 @@ const foregroundColorMapping = (theme: Theme) => ({
 const mutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
-const blueColorMapping = (theme: Theme) => ({
-  color: theme.colors.palette.blue[500],
-});
-const greenColorMapping = (theme: Theme) => ({
-  color: theme.colors.palette.green[500],
-});
-const redColorMapping = (theme: Theme) => ({
-  color: theme.colors.palette.red[500],
-});
 const playFillTransparent = { fill: "transparent" };
-const ghostPlayStroke = { strokeWidth: 1.5 };
 
 interface ScriptRowActionButtonProps {
   accessibilityLabel: string;
@@ -163,23 +147,7 @@ interface ServiceLinkRowProps {
   targets: WorkspaceScriptLinkTarget[];
   scriptName: string;
   onSelectKind: (kind: WorkspaceScriptLinkKind) => void;
-  onCopy: (url: string, label: string) => void;
-}
-
-function routeLabelKey(
-  kind: WorkspaceScriptLinkKind,
-):
-  | "workspace.scripts.routes.public"
-  | "workspace.scripts.routes.paseo"
-  | "workspace.scripts.routes.direct" {
-  switch (kind) {
-    case "public":
-      return "workspace.scripts.routes.public";
-    case "paseo":
-      return "workspace.scripts.routes.paseo";
-    case "direct":
-      return "workspace.scripts.routes.direct";
-  }
+  onCopy: (target: WorkspaceScriptLinkTarget) => void;
 }
 
 function ServiceRouteOption({
@@ -298,12 +266,12 @@ function ServiceLinkRow({
 }: ServiceLinkRowProps): ReactElement {
   const { t } = useTranslation();
   const closeMenu = useDropdownMenuClose();
-  const { label, url } = selectedTarget;
+  const { label } = selectedTarget;
 
   const handleCopy = useCallback(() => {
     closeMenu();
-    onCopy(url, label);
-  }, [url, label, onCopy, closeMenu]);
+    onCopy(selectedTarget);
+  }, [selectedTarget, onCopy, closeMenu]);
 
   return (
     <View style={styles.hostRow}>
@@ -333,84 +301,29 @@ function ServiceLinkRow({
   );
 }
 
-function ExitCodeBadge({ code }: { code: number }): ReactElement {
-  const { t } = useTranslation();
-  const exitTextStyle =
-    code === 0 ? styles.exitBadgeText : [styles.exitBadgeText, styles.exitBadgeTextError];
-  return (
-    <View style={styles.exitBadge}>
-      <Text style={exitTextStyle}>{t("workspace.scripts.states.exitCode", { code })}</Text>
-    </View>
-  );
-}
-
 interface ScriptRowProps {
   script: WorkspaceDescriptor["scripts"][number];
   liveTerminalIdSet: Set<string>;
-  activeConnection: ReturnType<typeof useHostRuntimeSnapshot> extends infer R
-    ? R extends { activeConnection: infer A }
-      ? A
-      : null
-    : null;
-  isStartPending: boolean;
-  isStopPending: boolean;
-  onStartScript: (scriptName: string) => void;
-  onStopScript: (scriptName: string) => void;
-  onRestartScript: (scriptName: string) => void;
-  onCopyUrl: (url: string, label: string) => void;
-  preferredRouteKind: WorkspaceScriptLinkKind | null;
-  onSelectRouteKind: (kind: WorkspaceScriptLinkKind) => void;
+  actions: WorkspaceScriptActions;
   onViewTerminal?: (terminalId: string) => void;
   onOpenUrlInBrowserTab?: (url: string) => void;
-}
-
-function resolveScriptIconColorMapping(args: {
-  script: WorkspaceDescriptor["scripts"][number];
-  isService: boolean;
-  isRunning: boolean;
-}): (theme: Theme) => { color: string } {
-  const { script, isService, isRunning } = args;
-  if (isService) {
-    if (isRunning && script.health === "healthy") return greenColorMapping;
-    if (isRunning && script.health === "unhealthy") return redColorMapping;
-    if (isRunning) return blueColorMapping;
-    return mutedColorMapping;
-  }
-  if (isRunning) return blueColorMapping;
-  return mutedColorMapping;
 }
 
 function ScriptRow({
   script,
   liveTerminalIdSet,
-  activeConnection,
-  isStartPending,
-  isStopPending,
-  onStartScript,
-  onStopScript,
-  onRestartScript,
-  onCopyUrl,
-  preferredRouteKind,
-  onSelectRouteKind,
+  actions,
   onViewTerminal,
   onOpenUrlInBrowserTab,
 }: ScriptRowProps): ReactElement {
   const { t } = useTranslation();
   const isRunning = script.lifecycle === "running";
-  const isService = (script.type ?? "service") === "service";
   const exitCode = script.exitCode ?? null;
-  const serviceLink = resolveWorkspaceScriptLink({ script, activeConnection });
-  const selectedLink =
-    isService && isRunning
-      ? (serviceLink.targets.find((target) => target.kind === preferredRouteKind) ??
-        serviceLink.primary)
-      : null;
+  const { selected: selectedLink, targets: linkTargets } = actions.resolveLinks(script);
   const liveTerminalId =
     script.terminalId && liveTerminalIdSet.has(script.terminalId) ? script.terminalId : null;
-
-  const iconColorMapping = resolveScriptIconColorMapping({ script, isService, isRunning });
-  const ScriptIcon = isService ? ThemedGlobe : ThemedSquareTerminal;
   const showExitBadge = !isRunning && exitCode !== null;
+  const { start, stop, restart } = actions;
   const closeMenu = useDropdownMenuClose();
 
   const handleOpenService = useCallback(() => {
@@ -424,16 +337,16 @@ function ScriptRow({
   }, [liveTerminalId, onViewTerminal]);
 
   const handleRun = useCallback(() => {
-    onStartScript(script.scriptName);
-  }, [onStartScript, script.scriptName]);
+    start(script.scriptName);
+  }, [start, script.scriptName]);
 
   const handleStop = useCallback(() => {
-    onStopScript(script.scriptName);
-  }, [onStopScript, script.scriptName]);
+    stop(script.scriptName);
+  }, [stop, script.scriptName]);
 
   const handleRestart = useCallback(() => {
-    onRestartScript(script.scriptName);
-  }, [onRestartScript, script.scriptName]);
+    restart(script.scriptName);
+  }, [restart, script.scriptName]);
 
   const scriptNameStyle = useMemo(
     () => (isRunning ? [styles.scriptName, styles.scriptNameActive] : styles.scriptName),
@@ -471,7 +384,7 @@ function ScriptRow({
         scriptName: script.scriptName,
       })}
       testID={`workspace-scripts-stop-${script.scriptName}`}
-      disabled={isStopPending}
+      disabled={actions.isStopPending}
       icon="stop"
       onPress={handleStop}
       tooltipLabel={t("workspace.scripts.actions.stop")}
@@ -482,7 +395,7 @@ function ScriptRow({
         scriptName: script.scriptName,
       })}
       testID={`workspace-scripts-start-${script.scriptName}`}
-      disabled={isStartPending}
+      disabled={actions.isStartPending}
       icon="start"
       onPress={handleRun}
       tooltipLabel={t("workspace.scripts.actions.run")}
@@ -497,7 +410,7 @@ function ScriptRow({
       })}
     >
       <View style={styles.scriptHeader}>
-        <ScriptIcon size={14} uniProps={iconColorMapping} style={styles.scriptIcon} />
+        <ScriptIcon script={script} size={14} />
         <Text style={scriptNameStyle} numberOfLines={1}>
           {script.scriptName}
         </Text>
@@ -511,7 +424,7 @@ function ScriptRow({
               scriptName: script.scriptName,
             })}
             testID={`workspace-scripts-restart-${script.scriptName}`}
-            disabled={isStopPending}
+            disabled={actions.isStopPending}
             icon="restart"
             onPress={handleRestart}
             tooltipLabel={t("workspace.scripts.actions.restart")}
@@ -523,10 +436,10 @@ function ScriptRow({
         <View style={styles.hostList}>
           <ServiceLinkRow
             selectedTarget={selectedLink}
-            targets={serviceLink.targets}
+            targets={linkTargets}
             scriptName={script.scriptName}
-            onSelectKind={onSelectRouteKind}
-            onCopy={onCopyUrl}
+            onSelectKind={actions.selectRoute}
+            onCopy={actions.copyUrl}
           />
         </View>
       ) : null}
@@ -543,142 +456,35 @@ export function WorkspaceScriptsButton({
   onViewTerminal,
   onOpenUrlInBrowserTab,
   hideLabels,
-  presentation = "split",
 }: WorkspaceScriptsButtonProps): ReactElement | null {
   const { t } = useTranslation();
-  const toast = useToast();
-  const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
-  const activeConnection = useHostRuntimeSnapshot(serverId)?.activeConnection ?? null;
-  const preferredRouteKind = useWorkspaceServiceRoutePreferencesStore(
-    (state) => state.byServerId[serverId] ?? null,
-  );
-  const setPreferredRoute = useWorkspaceServiceRoutePreferencesStore(
-    (state) => state.setPreferredRoute,
-  );
+  const actions = useWorkspaceScriptActions({
+    serverId,
+    workspaceId,
+    scripts,
+    onScriptTerminalStarted,
+  });
   const liveTerminalIdSet = useMemo(() => new Set(liveTerminalIds), [liveTerminalIds]);
-  const pendingRestartRef = useRef<Set<string>>(new Set());
-
-  const startScriptMutation = useMutation({
-    mutationFn: async (scriptName: string) => {
-      if (!client) {
-        throw new Error(t("common.errors.daemonClientUnavailable"));
-      }
-      const result = await client.startWorkspaceScript(workspaceId, scriptName);
-      if (result.error) {
-        throw new Error(result.error);
-      }
-      return result;
-    },
-    onError: (error, scriptName) => {
-      toast.show(
-        error instanceof Error
-          ? error.message
-          : t("workspace.scripts.states.startFailed", { scriptName }),
-        {
-          variant: "error",
-        },
-      );
-    },
-    onSuccess: (result) => {
-      if (result.terminalId) {
-        onScriptTerminalStarted?.(result.terminalId);
-      }
-    },
-  });
-  const startScript = startScriptMutation.mutate;
-
-  const stopScriptMutation = useMutation({
-    mutationFn: async (scriptName: string) => {
-      if (!client) {
-        throw new Error(t("common.errors.daemonClientUnavailable"));
-      }
-      const terminalId = scripts.find((s) => s.scriptName === scriptName)?.terminalId;
-      if (!terminalId) {
-        throw new Error(t("workspace.scripts.states.stopFailed", { scriptName }));
-      }
-      const result = await client.killTerminal(terminalId);
-      if (!result.success) {
-        throw new Error(t("workspace.scripts.states.stopFailed", { scriptName }));
-      }
-    },
-    onError: (error, scriptName) => {
-      pendingRestartRef.current.delete(scriptName);
-      toast.show(
-        error instanceof Error
-          ? error.message
-          : t("workspace.scripts.states.stopFailed", { scriptName }),
-        {
-          variant: "error",
-        },
-      );
-    },
-  });
-
-  // Restart = kill the script terminal, then start again once the daemon
-  // reports the script as stopped (it tears the runtime entry down on exit).
-  useEffect(() => {
-    const pending = pendingRestartRef.current;
-    if (pending.size === 0) return;
-    for (const script of scripts) {
-      if (!pending.has(script.scriptName) || script.lifecycle === "running") continue;
-      pending.delete(script.scriptName);
-      startScript(script.scriptName);
-    }
-  }, [scripts, startScript]);
 
   const triggerStyle = useCallback(
     ({ hovered, pressed, open }: { hovered: boolean; pressed: boolean; open: boolean }) => [
-      presentation === "ghost" ? styles.ghostButton : styles.splitButtonPrimary,
-      (hovered || pressed || open) &&
-        (presentation === "ghost" ? styles.ghostButtonHovered : styles.splitButtonPrimaryHovered),
+      styles.splitButtonPrimary,
+      (hovered || pressed || open) && styles.splitButtonPrimaryHovered,
     ],
-    [presentation],
-  );
-
-  const handleStartScript = useCallback(
-    (scriptName: string) => startScriptMutation.mutate(scriptName),
-    [startScriptMutation],
-  );
-
-  const handleStopScript = useCallback(
-    (scriptName: string) => stopScriptMutation.mutate(scriptName),
-    [stopScriptMutation],
-  );
-
-  const handleRestartScript = useCallback(
-    (scriptName: string) => {
-      pendingRestartRef.current.add(scriptName);
-      stopScriptMutation.mutate(scriptName);
-    },
-    [stopScriptMutation],
-  );
-
-  const handleCopyUrl = useCallback(
-    (url: string, label: string) => {
-      void Clipboard.setStringAsync(url);
-      toast.copied(label);
-    },
-    [toast],
-  );
-
-  const handleSelectRouteKind = useCallback(
-    (kind: WorkspaceScriptLinkKind) => setPreferredRoute(serverId, kind),
-    [serverId, setPreferredRoute],
+    [],
   );
 
   if (scripts.length === 0) {
     return null;
   }
 
+  // The trigger only says whether anything runs; health is for the rows inside.
   const hasAnyRunning = scripts.some((s) => s.lifecycle === "running");
-  const triggerPlayMapping = hasAnyRunning ? blueColorMapping : mutedColorMapping;
-  const triggerIconSize = presentation === "ghost" ? GHOST_TRIGGER_ICON_SIZE : 14;
-  const triggerPlayProps =
-    presentation === "ghost" ? { ...playFillTransparent, ...ghostPlayStroke } : playFillTransparent;
+  const triggerPlayMapping = scriptToneColorMapping(hasAnyRunning ? "running" : "idle");
 
   return (
     <View style={styles.row}>
-      <View style={presentation === "ghost" ? styles.ghostButtonFrame : styles.splitButton}>
+      <View style={styles.splitButton}>
         <DropdownMenu>
           <DropdownMenuTrigger
             testID="workspace-scripts-button"
@@ -687,17 +493,11 @@ export function WorkspaceScriptsButton({
             accessibilityLabel={t("workspace.scripts.accessibility.trigger")}
           >
             <View style={styles.splitButtonContent}>
-              <ThemedPlay
-                size={triggerIconSize}
-                uniProps={triggerPlayMapping}
-                {...triggerPlayProps}
-              />
+              <ThemedPlay size={14} uniProps={triggerPlayMapping} {...playFillTransparent} />
               {!hideLabels && (
                 <Text style={styles.splitButtonText}>{t("workspace.scripts.title")}</Text>
               )}
-              {presentation === "split" ? (
-                <ThemedChevronDown size={16} uniProps={extraMutedIconColorMapping} />
-              ) : null}
+              <ThemedChevronDown size={16} uniProps={extraMutedIconColorMapping} />
             </View>
           </DropdownMenuTrigger>
           <DropdownMenuContent
@@ -711,15 +511,7 @@ export function WorkspaceScriptsButton({
                 key={script.scriptName}
                 script={script}
                 liveTerminalIdSet={liveTerminalIdSet}
-                activeConnection={activeConnection}
-                isStartPending={startScriptMutation.isPending}
-                isStopPending={stopScriptMutation.isPending}
-                onStartScript={handleStartScript}
-                onStopScript={handleStopScript}
-                onRestartScript={handleRestartScript}
-                onCopyUrl={handleCopyUrl}
-                preferredRouteKind={preferredRouteKind}
-                onSelectRouteKind={handleSelectRouteKind}
+                actions={actions}
                 onViewTerminal={onViewTerminal}
                 onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
               />
@@ -749,21 +541,6 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.borderAccent,
     overflow: "hidden",
-  },
-  ghostButtonFrame: {
-    flexDirection: "row",
-    alignItems: "stretch",
-  },
-  ghostButton: {
-    width: theme.spacing[8],
-    height: theme.spacing[8],
-    padding: 0,
-    borderRadius: theme.borderRadius.lg,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  ghostButtonHovered: {
-    backgroundColor: theme.colors.surface2,
   },
   splitButtonPrimary: {
     paddingHorizontal: {
@@ -797,9 +574,6 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     minHeight: MENU_ITEM_HEIGHT,
-  },
-  scriptIcon: {
-    flexShrink: 0,
   },
   scriptName: {
     fontSize: theme.fontSize.base,
@@ -843,21 +617,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   hostLabelActive: {
     color: theme.colors.foreground,
-  },
-  exitBadge: {
-    paddingHorizontal: theme.spacing[1.5],
-    paddingVertical: 1,
-    borderRadius: 2,
-    backgroundColor: theme.colors.surface2,
-  },
-  exitBadgeText: {
-    fontSize: 10,
-    lineHeight: 12,
-    fontWeight: theme.fontWeight.medium,
-    color: theme.colors.foregroundMuted,
-  },
-  exitBadgeTextError: {
-    color: theme.colors.palette.red[300],
   },
   iconActionButton: {
     padding: 2,
