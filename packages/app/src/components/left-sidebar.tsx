@@ -12,7 +12,6 @@ import { useTranslation } from "react-i18next";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   Pressable,
-  type PressableStateCallbackType,
   StyleSheet as RNStyleSheet,
   Text,
   useWindowDimensions,
@@ -33,6 +32,7 @@ import { HostPicker } from "@/components/hosts/host-picker";
 import { SidebarDisplayPreferencesMenu } from "@/components/sidebar/display-preferences/menu";
 import { SidebarSeparator } from "@/components/sidebar/sidebar-separator";
 import { SidebarNavRows } from "@/components/sidebar/sidebar-nav-rows";
+import { SidebarFooterIconHighlight } from "@/components/sidebar/sidebar-footer-icon-highlight";
 import { SidebarHelpMenu } from "@/components/sidebar/sidebar-help-menu";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import { DensityIcon } from "@/components/ui/density-icon";
@@ -309,7 +309,7 @@ function FooterIconButton({
       <TooltipTrigger asChild>
         <Pressable
           ref={buttonRef}
-          style={footerIconButtonStyle}
+          style={styles.footerIconButton}
           testID={testID}
           nativeID={testID}
           collapsable={false}
@@ -318,13 +318,16 @@ function FooterIconButton({
           accessibilityRole="button"
           onPress={onPress}
         >
-          {({ hovered }) => (
-            <DensityIcon
-              icon={icon}
-              size="md"
-              sizeAdjustment={iconSizeAdjustment}
-              color={hovered ? "foreground" : "foregroundMuted"}
-            />
+          {({ hovered, pressed }) => (
+            <>
+              <SidebarFooterIconHighlight visible={pressed} />
+              <DensityIcon
+                icon={icon}
+                size="md"
+                sizeAdjustment={iconSizeAdjustment}
+                color={hovered ? "foreground" : "foregroundMuted"}
+              />
+            </>
           )}
         </Pressable>
       </TooltipTrigger>
@@ -333,10 +336,6 @@ function FooterIconButton({
       </TooltipContent>
     </Tooltip>
   );
-}
-
-function footerIconButtonStyle({ pressed }: PressableStateCallbackType) {
-  return [styles.footerIconButton, pressed && styles.footerIconButtonPressed];
 }
 
 function SidebarHostPicker({
@@ -939,10 +938,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     paddingVertical: theme.spacing[1],
     paddingHorizontal: theme.spacing[1],
-    borderRadius: theme.borderRadius.full,
-  },
-  footerIconButtonPressed: {
-    backgroundColor: theme.colors.interactionHighlight,
   },
   tooltipRow: {
     flexDirection: "row",

@@ -15,7 +15,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { DensityIcon } from "@/components/ui/density-icon";
-import type { MenuTriggerState } from "@/components/ui/menu";
+import { SidebarFooterIconHighlight } from "./sidebar-footer-icon-highlight";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAppDiagnosticStore } from "@/diagnostics/store";
 import { useKeyboardShortcutsAvailable } from "@/keyboard/availability";
@@ -104,17 +104,20 @@ export function SidebarHelpMenu() {
         <TooltipTrigger asChild>
           <View>
             <DropdownMenuTrigger
-              style={triggerStyle}
+              style={styles.trigger}
               testID="sidebar-help"
               accessibilityRole="button"
               accessibilityLabel={t("sidebar.help.trigger")}
             >
-              {({ hovered }) => (
-                <DensityIcon
-                  icon={CircleHelp}
-                  size="md"
-                  color={hovered ? "foreground" : "foregroundMuted"}
-                />
+              {({ hovered, pressed, open: menuOpen }) => (
+                <>
+                  <SidebarFooterIconHighlight visible={pressed || menuOpen} />
+                  <DensityIcon
+                    icon={CircleHelp}
+                    size="md"
+                    color={hovered ? "foreground" : "foregroundMuted"}
+                  />
+                </>
               )}
             </DropdownMenuTrigger>
           </View>
@@ -182,10 +185,6 @@ export function SidebarHelpMenu() {
   );
 }
 
-function triggerStyle({ pressed, open }: MenuTriggerState) {
-  return [styles.trigger, (pressed || open) && styles.triggerPressed];
-}
-
 const styles = StyleSheet.create((theme) => ({
   trigger: {
     width: density.iconButton,
@@ -194,10 +193,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     paddingVertical: theme.spacing[1],
     paddingHorizontal: theme.spacing[1],
-    borderRadius: theme.borderRadius.full,
-  },
-  triggerPressed: {
-    backgroundColor: theme.colors.interactionHighlight,
   },
   tooltipText: {
     fontSize: theme.fontSize.base,
