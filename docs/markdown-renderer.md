@@ -1,0 +1,31 @@
+# Markdown rendering
+
+Use `MarkdownRenderer` for chat replies, file previews, plans, pull requests and changelog content. It uses `react-native-enriched-markdown` on iOS, Android and web. Keep source adaptation and renderer configuration in `components/markdown`; consumers supply Markdown and, when needed, its file location.
+
+Native selection belongs to the library's text view. Keep an assistant message in one row so selection can cross paragraphs, headings and lists. Code blocks and tables use the library's native views and their selection behavior. Web uses browser selection over semantic HTML. Once its WASM parser is initialized, the library parses synchronously for the first commit of each mounted row; an empty interim row would corrupt virtualized measurements and move the reader. Chat owns paced reveal, the web render cap, message identity and list measurement. Native renders completed messages together. While streaming, it keeps closed blocks in one head view and updates a separate tail, then reunites the text on completion. See [native parsing cost](agent-stream-performance.md#native-parsing-cost) for the boundary and pacing constraints.
+
+## Links and images
+
+Workspace file links use the shared file-link resolver. The workspace supplies its client, root and open-file action once; chat can supply the agent's more specific context. URLs use the same link press path. Recognized inline-code paths stay tappable. The library callback carries the tapped occurrence’s syntax context. Preserve it when opening files: explicit Markdown links decode URL escapes, while recognized inline-code paths preserve literal percent characters and use suffix lookup. Identical URL strings in different occurrences must stay distinct. Explicit absolute workspace links receive a relative hover title; existing authored titles remain intact.
+
+Resolve workspace image paths over the existing session RPC, then give the library a cached native file URL or web blob URL. HTTP(S) images pass through unchanged. This preserves relay, SSH and local socket connections, which do not expose a daemon HTTP endpoint. Each mounted renderer owns its image acquisition identity, so a later reply reads a rewritten path again while the earlier mounted reply retains its snapshot. Image taps open the attachment lightbox. File previews resolve relative images against the Markdown file's directory.
+
+## Engine constraints
+
+The pinned nightly has the same React Native package and core source trees as upstream commit `73ac5085eb1fdc743973b3473d4dba65abad5261`. Compatibility was checked with React Native 0.81.5. Native dependencies must be rebuilt when changing the highlighting configuration; JavaScript refresh cannot enable compiled grammars.
+
+Math and video are disabled. Task lists and admonitions are enabled; task checkboxes are read-only. Source adaptation spaces adjacent empty GFM table delimiters before escaping prose spoiler delimiters and decodes entity text before the engine can discard it. Code spans and fences keep their literal source. Comment HTML is normalized to Markdown before parsing; details show their summary and body expanded.
+
+Mermaid fences use the existing isolated diagram runtime and fullscreen viewer. Web dispatches them through the library’s code-block override. Native has no block-renderer hook, so the renderer extracts only Mermaid fences and places the existing WebView host between library-rendered segments. This is the only block exception; see [native selection limitations](native-text-selection.md) for diagram grouping and leading inline images. Streaming keeps the last valid diagram visible while the next revision renders.
+
+Native code blocks use the library's copy control and compiled grammars. Web code blocks use `HighlightedCodeBlock` through the library's `renderers.codeBlock` override. The patch also preserves web list numbering and link titles, marks pending parses with `aria-busy` so Find waits for rendered text, and carries link syntax through native and web tap events. Web inline code inside a link inherits only the link colour; its code font, size and background stay intact. Keep link variants colour-only: native pills replace text runs and prevent paths from wrapping; Android pills also use the surrounding block’s font size. The package patch is tracked by [upstream PR #997](https://github.com/software-mansion/enriched-markdown/pull/997); remove the patch when the pinned release includes it.
+
+The package patch also keeps overflowing native horizontal blocks in control of their drags: Android claims parent interception at touch-down and releases it for vertical drags so the chat list can scroll; iOS keeps its scroll recognizer active for outward drags at the leading edge. This prevents compact sidebar pans from taking block scrolling without changing sidebar swipes on prose or non-overflowing blocks. Native changes require a client rebuild.
+
+Android measurements use a size-only, 512-entry LRU across view unmounts, matching the library’s existing iOS cache. Scrolling back through history can reuse layout sizes without parsing those rows again. Content, layout props and width identify each entry; font-scale changes and native layout invalidation discard affected sizes. The cache retains no views or spans.
+
+The library determines how incomplete Markdown appears during streaming. Completed text uses the same component and engine as history. Find and scroll-to-message address source message ids; selection-copy understands semantic HTML and the web code component's copy metadata.
+
+## Verification
+
+Follow [QA](qa.md) and [mobile testing](mobile-testing.md). Exercise chat, file preview, plan and PR content on all three platforms. Include cross-paragraph selection, progressive streaming, a file-link tap, code copy/highlighting, a table and a workspace image. On iPad, repeat preview selection after opening and closing Explorer and after rotation. Check web find, selection-copy and source-message navigation after DOM changes.

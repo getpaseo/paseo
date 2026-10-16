@@ -30,7 +30,7 @@ import {
   type ActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { density, densityFontSize, densityIconBox } from "@/styles/density";
+import { density, densityIconBox } from "@/styles/density";
 import type { Theme } from "@/styles/theme";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 import { getSidebarRowBackdrop } from "@/components/sidebar/sidebar-row-backdrop";
@@ -93,7 +93,7 @@ import {
   SidebarWorkspaceMenu,
 } from "@/components/sidebar/sidebar-workspace-menu";
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
-import { PinnedSectionHeader } from "@/components/sidebar/pinned-section-header";
+import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
 import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
 import {
@@ -2114,6 +2114,7 @@ function ProjectModeList({
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   onPinnedWorkspaceReorder: (workspaces: SidebarWorkspacePlacement[]) => void;
 }) {
+  const { t } = useTranslation();
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const [creatingWorkspaceIds, setCreatingWorkspaceIds] = useState<Set<string>>(() => new Set());
   const creatingWorkspaceTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
@@ -2413,7 +2414,12 @@ function ProjectModeList({
     <>
       {pinnedChats.length > 0 ? (
         <View style={styles.pinnedSection} testID="sidebar-pinned-section">
-          <PinnedSectionHeader collapsed={pinnedCollapsed} onToggle={togglePinnedCollapsed} />
+          <SidebarSectionHeader
+            title={t("sidebar.pinned.title")}
+            collapsed={pinnedCollapsed}
+            onToggle={togglePinnedCollapsed}
+            testID="sidebar-pinned-section-header"
+          />
           {pinnedCollapsed ? null : (
             <>
               <DraggableList
@@ -2550,12 +2556,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   newWorkspaceGhostText: {
     color: theme.colors.foregroundMuted,
-    fontSize: densityFontSize(theme, "base"),
+    fontSize: theme.fontSize.base,
     minWidth: 0,
     flexShrink: 1,
   },
   newWorkspaceGhostTextHovered: {
-    fontSize: densityFontSize(theme, "base"),
+    fontSize: theme.fontSize.base,
     minWidth: 0,
     flexShrink: 1,
     color: theme.colors.foreground,
@@ -2603,7 +2609,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   projectTitle: {
     color: theme.colors.foregroundMuted,
-    fontSize: densityFontSize(theme, "base"),
+    fontSize: theme.fontSize.base,
     fontWeight: "400",
     minWidth: 0,
     flexShrink: 1,

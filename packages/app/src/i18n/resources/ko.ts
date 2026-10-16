@@ -614,6 +614,9 @@ export const ko: TranslationResources = {
       updateHost: "기본 터미널 렌더러를 사용하도록 호스트를 업데이트합니다.",
       unableToSubscribe: "터미널을 구독할 수 없습니다",
     },
+    sheet: {
+      openAsTab: "탭으로 열기",
+    },
     tabs: {
       loading: "불러오는 중...",
       modified: "저장되지 않은 변경사항",
@@ -629,7 +632,7 @@ export const ko: TranslationResources = {
       },
       switcher: {
         trigger: "탭 전환 ({{count}}개 열림)",
-        title: "탭 전환",
+        title: "워크스페이스 탭",
         searchPlaceholder: "탭 검색",
       },
       menu: {
@@ -726,6 +729,7 @@ export const ko: TranslationResources = {
     header: {
       actions: {
         workspaceActions: "워크스페이스 작업",
+        workspaceActionsUnhealthy: "워크스페이스 작업, 비정상 서비스가 있습니다",
         newAgent: "새 에이전트",
         newTerminal: "새 터미널",
         newBrowser: "새 브라우저 탭",
@@ -773,6 +777,8 @@ export const ko: TranslationResources = {
         exitCode: "종료 {{code}}",
         startFailed: "{{scriptName}}을(를) 시작하지 못했습니다",
         stopFailed: "{{scriptName}}를 중지하지 못했습니다.",
+        running: "실행 중",
+        runningCount: "{{count}}개 실행 중",
       },
     },
     tree: {
@@ -1664,13 +1670,18 @@ export const ko: TranslationResources = {
     title: "프로바이더 추가",
     search: "프로바이더 검색",
     noProviders: "프로바이더를 찾을 수 없습니다",
+    clearSearch: "검색 지우기",
     actions: {
       add: "추가",
+      addProvider: "{{provider}} 추가",
       adding: "추가 중",
       installed: "설치됨",
       cancel: "취소",
       installInstructions: "설치 안내",
       installInstructionsFor: "{{provider}} 설치 안내",
+    },
+    types: {
+      acp: "ACP",
     },
     errors: {
       unableToInstall: "프로바이더를 설치할 수 없습니다",

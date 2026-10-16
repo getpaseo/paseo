@@ -240,6 +240,7 @@ export function createProviderSnapshotManagerStub(): {
   const off = vi.fn();
   const destroy = vi.fn<ProviderSnapshotManager["destroy"]>();
   const stub = {
+    supportsConfigRequiredProvider: () => false,
     getSnapshot,
     refreshSnapshotForCwd,
     refreshSettingsSnapshot,

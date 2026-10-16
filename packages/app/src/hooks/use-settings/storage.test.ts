@@ -15,6 +15,7 @@ import {
   parseClampedFontSize,
   parseTerminalScrollbackLines,
   resolveContentMaxWidth,
+  sanitizeFontFamily,
   saveAppSettings,
   type SettingsDeps,
 } from "./storage";
@@ -1093,4 +1094,35 @@ describe("content max width", () => {
     expect((await load(10)).contentMaxWidth).toBe(600);
     expect((await load("wide")).contentMaxWidth).toBeNull();
   });
+});
+
+describe("font family CSS safety", () => {
+  it.each(["'foo", '"foo', "Menlo, 'foo", "foo\\", "foo/*", "foo(", "foo["])(
+    "rejects unfinished CSS syntax: %s",
+    (value) => expect(sanitizeFontFamily(value)).toBeNull(),
+  );
+
+  it.each([
+    "Menlo",
+    "'Fira Code', monospace",
+    '"Fira Code", monospace',
+    "'Font\\'s name'",
+    "Font\\ Name",
+    "'Font (Mono)'",
+    "'Font [Mono]'",
+  ])("preserves complete font families: %s", (value) =>
+    expect(sanitizeFontFamily(value)).toBe(value),
+  );
+
+  it.each(["uiFontFamily", "monoFontFamily"])(
+    "recovers a persisted unmatched quote in %s",
+    async (field) => {
+      const deps = makeDeps({
+        storage: createInMemoryKeyValueStorage({
+          [APP_SETTINGS_KEY]: JSON.stringify({ [field]: "'foo" }),
+        }),
+      });
+      expect(await loadAppSettingsFromStorage(deps)).toMatchObject({ [field]: "" });
+    },
+  );
 });

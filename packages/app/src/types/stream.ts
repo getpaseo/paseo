@@ -718,8 +718,6 @@ export interface AssistantMessageItem {
   text: string;
   timestamp: Date;
   /** Display-only fields, assigned after source-item plugin transforms. */
-  blockGroupId?: string;
-  blockIndex?: number;
 }
 
 export interface TimelinePosition {

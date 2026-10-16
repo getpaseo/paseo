@@ -4,6 +4,7 @@ import { keyboardEventToComboString } from "./shortcut-string";
 import {
   buildKeyboardShortcutHelpSections,
   buildEffectiveBindings,
+  normalizeCapturedShortcutCombo,
   getBindingIdForAction,
   getDefaultKeysForAction,
   getWorkspaceIndexJumpModifierKey,
@@ -823,9 +824,9 @@ describe("keyboard-shortcut help sections", () => {
       expect(rowChord({}, "show-shortcuts")).toEqual([["?"]]);
     });
 
-    it("replaces the default-only wildcard when the index jump is rebound", () => {
+    it("keeps the digit range readable when the index jump is rebound", () => {
       expect(rowChord({ [MAC_INDEX_BINDING]: "Ctrl+Digit" }, "workspace-jump-index")).toEqual([
-        ["ctrl", "Digit"],
+        ["ctrl", "1-9"],
       ]);
     });
 
@@ -1027,6 +1028,71 @@ describe("unassigned shortcuts", () => {
   });
 
   describe("matching", () => {
+    it("dispatches a captured Russian letter shortcut on the same key", () => {
+      const event = keyboardInput({ key: "и", code: "KeyB", ctrlKey: true });
+      const combo = keyboardEventToComboString(event as KeyboardEvent);
+      expect(combo).toBe("Ctrl+B");
+      const bindings = buildEffectiveBindings({
+        "sidebar-toggle-left-ctrl-period-non-mac": combo!,
+      });
+
+      expect(resolveShortcut({ event, context: desktopNonMac, bindings }).match?.action).toBe(
+        "sidebar.toggle.left",
+      );
+    });
+
+    it("dispatches a recorded dotted-uppercase letter with Shift held", () => {
+      const event = keyboardInput({ key: "İ", code: "KeyS", ctrlKey: true, shiftKey: true });
+      const combo = keyboardEventToComboString(event as KeyboardEvent);
+      expect(combo).toBe("Ctrl+Shift+S");
+      const bindings = buildEffectiveBindings({
+        "sidebar-toggle-left-ctrl-period-non-mac": combo!,
+      });
+      expect(resolveShortcut({ event, context: desktopNonMac, bindings }).match?.action).toBe(
+        "sidebar.toggle.left",
+      );
+    });
+
+    it.each(["и", "И", "β", "ش", "ב", "é"])(
+      "matches default and recorded letter bindings for unsupported letter %s",
+      (key) => {
+        const event = keyboardInput({ key, code: "KeyB", ctrlKey: true });
+        expectShortcutResolution({
+          event,
+          context: desktopNonMac,
+          action: "sidebar.toggle.left",
+        });
+        const combo = keyboardEventToComboString(event as KeyboardEvent);
+        expect(combo).toBe("Ctrl+B");
+        expect(
+          resolveShortcut({
+            event,
+            context: desktopNonMac,
+            bindings: buildEffectiveBindings({
+              "sidebar-toggle-left-ctrl-period-non-mac": combo!,
+            }),
+          }).match?.action,
+        ).toBe("sidebar.toggle.left");
+      },
+    );
+
+    it.each(["v", "†", "Dead", "Unidentified", ""])(
+      "does not match an unrelated character or named key %s by physical letter",
+      (key) => {
+        expectNoShortcutResolution({
+          event: { key, code: "KeyB", ctrlKey: true },
+          context: desktopNonMac,
+        });
+      },
+    );
+
+    it("does not match non-letter bindings by physical key for unsupported letters", () => {
+      expectNoShortcutResolution({
+        event: { key: "ю", code: "Period", ctrlKey: true },
+        context: desktopNonMac,
+      });
+    });
+
     it("dispatches a captured Dvorak binding on the same logical key", () => {
       const event = keyboardInput({ key: "b", code: "KeyN", metaKey: true });
       const combo = keyboardEventToComboString(event as KeyboardEvent);
@@ -1280,5 +1346,47 @@ describe("direct new-tab target shortcuts", () => {
     expect(
       resolveShortcutKeysForAction("workspace-tab-target-agent", overrides, desktopNonMac),
     ).toEqual([["ctrl", "shift", "H"]]);
+  });
+});
+
+describe("number-group shortcut capture", () => {
+  const tabBindingId = "workspace-tab-navigate-index-cmd-alt-digit-mac-desktop";
+  it.each([
+    { id: tabBindingId, action: "workspace.tab.navigate.index", row: "workspace-tab-jump-index" },
+    {
+      id: "workspace-navigate-index-cmd-digit-mac",
+      action: "workspace.navigate.index",
+      row: "workspace-jump-index",
+    },
+  ])("captures Ctrl+1 as the entire number group for $row", ({ id, action, row }) => {
+    const combo = normalizeCapturedShortcutCombo(id, "Ctrl+1");
+    expect(combo).toBe("Ctrl+Digit");
+    const overrides = { [id]: combo };
+    const bindings = buildEffectiveBindings(overrides);
+    for (let index = 1; index <= 9; index++) {
+      const result = resolveShortcut({
+        event: { key: String(index), code: `Digit${index}`, ctrlKey: true },
+        context: { isMac: true, isDesktop: true, focusScope: "message-input" },
+        bindings,
+      });
+      expect(result.match?.action).toBe(action);
+      expect(result.match?.payload).toEqual({ index });
+    }
+    expect(resolveShortcutKeysForAction(row, overrides, { isMac: true, isDesktop: true })).toEqual([
+      ["ctrl", "1-9"],
+    ]);
+    expect(
+      resolveShortcut({
+        event: { key: "0", code: "Digit0", ctrlKey: true },
+        context: { isMac: true, isDesktop: true },
+        bindings,
+      }).match,
+    ).toBeNull();
+  });
+  it("preserves literal numbers for non-index actions and existing nonnumeric combos", () => {
+    expect(normalizeCapturedShortcutCombo("show-shortcuts", "Ctrl+1")).toBe("Ctrl+1");
+    expect(normalizeCapturedShortcutCombo(tabBindingId, "Ctrl+K")).toBe("Ctrl+K");
+    expect(normalizeCapturedShortcutCombo(tabBindingId, "Ctrl+0")).toBe("Ctrl+0");
+    expect(normalizeCapturedShortcutCombo(tabBindingId, "Ctrl+9")).toBe("Ctrl+Digit");
   });
 });

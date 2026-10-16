@@ -1,10 +1,10 @@
 const BLOCKS = ["p", "pre", "li", "td", "th", "h1", "h2", "h3", "h4", "h5", "h6"]
-  .map((tag) => `[data-paseo-markdown-tag="${tag}"]`)
+  .flatMap((tag) => [tag, `[data-paseo-markdown-tag="${tag}"]`])
   .join(",");
 const IGNORED =
   '[data-paseo-markdown-ignore="true"], [aria-hidden="true"], button, [role="button"], svg, script, style';
 
-/** The rows of one message, in reading order. Each is one Markdown block. */
+/** Rendered rows carrying a source message identity, in reading order. */
 export function findMessageRows(root: HTMLElement | null, messageId: string): HTMLElement[] {
   if (!root) return [];
   return Array.from(
