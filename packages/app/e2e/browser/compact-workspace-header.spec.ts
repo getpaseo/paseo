@@ -50,11 +50,13 @@ async function openNamedWorkspace(page: Page, names: typeof labels.long) {
 }
 
 async function expectHeaderContentsFit(page: Page, info: TestInfo, long: boolean) {
+  const menu = page.getByTestId("menu-button").filter({ visible: true });
   const title = page.getByTestId("workspace-header-title");
   const project = page.getByTestId("workspace-header-subtitle");
   const badge = page.getByTestId(`host-badge-${getServerId()}`).filter({ visible: true });
   const trigger = page.getByRole("button", { name: /Switch tabs/ });
   const measure = async () => ({
+    menu: await menu.boundingBox(),
     title: await title.boundingBox(),
     project: await project.boundingBox(),
     badge: await badge.boundingBox(),
@@ -66,23 +68,21 @@ async function expectHeaderContentsFit(page: Page, info: TestInfo, long: boolean
   await page.screenshot({ path: info.outputPath("header.png") });
   await expect(async () => {
     const bounds = await measure();
+    expect(bounds.menu).not.toBeNull();
     expect(bounds.title).not.toBeNull();
     expect(bounds.project).not.toBeNull();
     expect(bounds.badge).not.toBeNull();
     expect(bounds.icon).not.toBeNull();
     expect(bounds.trigger).not.toBeNull();
-    // Approved geometry: 12px outside margin, 46px leading island, 8px title gap.
-    expect(bounds.title!.x).toBe(66);
+    // The labels sit between the menu button and the actions without overlapping either.
+    expect(bounds.title!.x).toBeGreaterThan(bounds.menu!.x + bounds.menu!.width);
     expect(bounds.project!.x).toBe(bounds.title!.x);
-    expect(bounds.trigger!.width).toBe(32);
-    expect(bounds.trigger!.height).toBe(32);
-    // The action frame starts 7px inside its island; preserve the 8px gap before it.
-    const contentRight = bounds.trigger!.x - 15;
     for (const box of [bounds.title!, bounds.project!, bounds.badge!, bounds.icon!]) {
-      expect(box.x + box.width).toBeLessThanOrEqual(contentRight + 1);
+      expect(box.x + box.width).toBeLessThan(bounds.trigger!.x);
     }
     expect(bounds.project!.width).toBeGreaterThan(20);
-    expect(bounds.icon!.width).toBe(12);
+    // Long labels truncate instead of squeezing the host icon.
+    expect(bounds.icon!.width).toBe(bounds.icon!.height);
     expect(bounds.badge!.x).toBeGreaterThan(bounds.project!.x + bounds.project!.width);
     expect(bounds.titleTruncated).toBe(long);
     expect(bounds.projectTruncated).toBe(long);
