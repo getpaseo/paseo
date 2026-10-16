@@ -6,6 +6,7 @@ import type {
   SessionEventSubscription,
   UsageReportEntry,
   ProviderUsage,
+  AgentMessagePreview,
 } from "@getpaseo/protocol/messages";
 import { relative } from "node:path";
 import { isAbsolute } from "node:path";
@@ -48,7 +49,7 @@ import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import type { BinaryFrame } from "@getpaseo/protocol/binary-frames/index";
 import { CursorError } from "./pagination/cursor.js";
 import { SortablePager, type SortSpec } from "./pagination/sortable-pager.js";
-import { matchesAgentHistoryQuery } from "./agent-history-search.js";
+import { matchAgentHistoryQuery } from "./agent-history-search.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
 import type { TurnDetectionProvider } from "./speech/turn-detection-provider.js";
 import {
@@ -5402,14 +5403,34 @@ export class Session {
     return placementsByWorkspaceId;
   }
 
+  /**
+   * The stored message previews, keyed by agent id. The storage cache is loaded
+   * at boot, so this is a map build, not a disk read.
+   */
+  private async loadMessagePreviewById(): Promise<Map<string, AgentMessagePreview[]>> {
+    const previewMessagesById = new Map<string, AgentMessagePreview[]>();
+    for (const record of await this.agentStorage.list()) {
+      if (record.previewMessages?.length) {
+        previewMessagesById.set(record.id, record.previewMessages);
+      }
+    }
+    // The live copy wins: a message recorded a moment ago is here before its
+    // queued record write reaches the storage cache.
+    for (const [agentId, preview] of this.agentManager.listMessagePreviews()) {
+      previewMessagesById.set(agentId, preview);
+    }
+    return previewMessagesById;
+  }
+
   private async collectFetchAgentsEntries(params: {
     candidates: AgentSnapshotPayload[];
     limit: number;
     getPlacement: (workspaceId: string | undefined) => Promise<ProjectPlacementPayload | null>;
     filter: AgentUpdatesFilter | undefined;
     search?: string;
+    previewMessagesById?: ReadonlyMap<string, AgentMessagePreview[]> | null;
   }): Promise<FetchAgentsResponseEntry[]> {
-    const { candidates, limit, getPlacement, filter, search } = params;
+    const { candidates, limit, getPlacement, filter, search, previewMessagesById } = params;
     const matchedEntries: FetchAgentsResponseEntry[] = [];
     const batchSize = 25;
     for (
@@ -5437,8 +5458,21 @@ export class Session {
         ) {
           continue;
         }
-        if (search && !matchesAgentHistoryQuery(search, entry)) continue;
-        matchedEntries.push(entry);
+        let matched: FetchAgentsResponseEntry = entry;
+        if (search) {
+          const result = matchAgentHistoryQuery(search, {
+            agent: entry.agent,
+            project: entry.project,
+            previewMessages: previewMessagesById?.get(entry.agent.id),
+          });
+          if (!result.matched) {
+            continue;
+          }
+          if (result.messageSnippet) {
+            matched = { ...entry, searchSnippet: result.messageSnippet };
+          }
+        }
+        matchedEntries.push(matched);
         if (matchedEntries.length > limit) {
           break;
         }
@@ -5499,6 +5533,9 @@ export class Session {
     };
 
     const search = agentDirectorySearchQuery(request);
+    // Read once per searched request, and only from the storage cache: the
+    // preview is in memory, so a search never touches a provider file.
+    const previewMessagesById = search ? await this.loadMessagePreviewById() : null;
     let candidates = [...agents];
     candidates.sort((left, right) => this.agentsPager.compare(left, right, sort));
     const cursorToken = request.page?.cursor;
@@ -5517,6 +5554,7 @@ export class Session {
       getPlacement,
       filter,
       search,
+      previewMessagesById,
     });
 
     const pagedEntries = matchedEntries.slice(0, limit);

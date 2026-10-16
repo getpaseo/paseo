@@ -63,6 +63,11 @@ export class InMemoryAgentTimelineStore {
       .map((row) => row.item);
   }
 
+  /** The newest items only; `getItems` clones the whole timeline. */
+  getRecentItems(agentId: string, limit: number): AgentTimelineItem[] {
+    return this.requireState(agentId).projection.getRecentItems(limit);
+  }
+
   getRows(agentId: string): ProjectedTimelineRow[] {
     return this.requireState(agentId).projection.getRows().map(cloneRow);
   }

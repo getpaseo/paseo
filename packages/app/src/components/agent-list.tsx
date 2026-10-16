@@ -160,6 +160,38 @@ function SessionRowTrailingAttention({
   );
 }
 
+/** One line under the title: the message a History query matched. */
+function SessionRowSnippet({
+  snippet,
+  search,
+  testID,
+}: {
+  snippet: AggregatedAgent["searchSnippet"];
+  search?: string;
+  testID: string;
+}): ReactElement | null {
+  const { t } = useTranslation();
+  if (!snippet) {
+    return null;
+  }
+  const roleLabel =
+    snippet.role === "user"
+      ? t("sessions.searchSnippet.user")
+      : t("sessions.searchSnippet.assistant");
+  return (
+    <View style={styles.snippetRow}>
+      <Text style={styles.snippetRole}>{roleLabel}</Text>
+      <HighlightedText
+        text={snippet.text}
+        ranges={findHighlightRanges(search ?? "", snippet.text)}
+        style={styles.snippetText}
+        numberOfLines={1}
+        testID={testID}
+      />
+    </View>
+  );
+}
+
 function SessionRow({
   agent,
   search,
@@ -264,6 +296,11 @@ function SessionRow({
           />
         </View>
         {isMobile ? agentTitle : null}
+        <SessionRowSnippet
+          snippet={agent.searchSnippet}
+          search={search}
+          testID={`agent-row-snippet-${agent.serverId}-${agent.id}`}
+        />
         {isMobile ? (
           <View style={styles.rowMetaRow}>
             <HighlightedText
@@ -648,6 +685,25 @@ const styles = StyleSheet.create((theme) => ({
   sessionMetaText: {
     maxWidth: "100%",
     fontSize: theme.fontSize.base,
+    color: theme.colors.foregroundMuted,
+  },
+  /** One line under the title: why a searched row is in the list. */
+  snippetRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    marginTop: 2,
+    minWidth: 0,
+  },
+  snippetRole: {
+    flexShrink: 0,
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+  },
+  snippetText: {
+    flexShrink: 1,
+    minWidth: 0,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
   sessionMetaSeparator: {

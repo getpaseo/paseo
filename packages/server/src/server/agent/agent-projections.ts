@@ -4,6 +4,7 @@ import type {
   RecentProviderSessionDescriptorPayload,
 } from "../messages.js";
 import type { SerializableAgentConfig, StoredAgentRecord } from "./agent-storage.js";
+import { capMessagePreviewText } from "./message-preview.js";
 import type {
   AgentCapabilityFlags,
   AgentFeature,
@@ -83,6 +84,15 @@ export function toStoredAgentRecord(
     lastActivityAt: agent.updatedAt.toISOString(),
     lastUserMessageAt: agent.lastUserMessageAt ? agent.lastUserMessageAt.toISOString() : null,
     title: options?.title ?? null,
+    // The live copy keeps a streamed chunk's trailing space so the next chunk can
+    // continue it; the stored copy is trimmed.
+    previewMessages:
+      agent.previewMessages.length > 0
+        ? agent.previewMessages.map((message) => ({
+            role: message.role,
+            text: capMessagePreviewText(message.text),
+          }))
+        : undefined,
     labels: agent.labels,
     lastStatus: agent.lifecycle,
     lastModeId: agent.currentModeId ?? config?.modeId ?? null,
