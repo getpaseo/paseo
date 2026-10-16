@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { loadConfig, resolveBundledWebUiDistDir, resolveConfigFromPersisted } from "./config.js";
+import { daemonLaunchEnvironment } from "./config-environment.js";
 import { loadPersistedConfig } from "./persisted-config.js";
 
 const roots: string[] = [];
@@ -25,6 +26,17 @@ describe("server config", () => {
 
     expect(desktopConfig.desktopManaged).toBe(true);
     expect(standaloneConfig.desktopManaged).toBe(false);
+  });
+
+  test("retains the Paseo Synthetic credential environment for managed daemons", async () => {
+    const env = daemonLaunchEnvironment({
+      env: { PASEO_SYNTHETIC_API_KEY: "synthetic-test-key", PASEO_PASSWORD: "password" },
+      home: "/tmp/paseo-config-env",
+      mode: "managed",
+    });
+
+    expect(env.PASEO_SYNTHETIC_API_KEY).toBe("synthetic-test-key");
+    expect(env.PASEO_PASSWORD).toBeUndefined();
   });
 
   test("loads the provider catalog refresh timeout", async () => {
