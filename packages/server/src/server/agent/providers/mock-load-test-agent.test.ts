@@ -285,6 +285,48 @@ describe("MockLoadTestAgentClient", () => {
     expect(completedNames).toContain("bash");
   });
 
+  test("one-minute stream starts a few lines of assistant text before overflowing reasoning", async () => {
+    vi.useFakeTimers();
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "one-minute-stream",
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn("Exercise thinking follow-output.");
+    await vi.advanceTimersByTimeAsync(40_000);
+    await session.interrupt();
+
+    const timelineItems = events.flatMap((event): AgentTimelineItem[] =>
+      event.type === "timeline" ? [event.item] : [],
+    );
+    const firstContent = timelineItems.find(
+      (item) => item.type === "assistant_message" || item.type === "reasoning",
+    );
+    expect(firstContent).toMatchObject({
+      type: "assistant_message",
+      text: expect.stringContaining("##"),
+    });
+
+    const firstReasoningIndex = timelineItems.findIndex((item) => item.type === "reasoning");
+    const assistantTextBeforeReasoning = timelineItems
+      .slice(0, firstReasoningIndex)
+      .flatMap((item) => (item.type === "assistant_message" ? [item.text] : []))
+      .join("");
+    expect(assistantTextBeforeReasoning).toContain("## Cycle 1");
+    expect(assistantTextBeforeReasoning).toContain("I'll take a look at the scroll anchor");
+
+    const reasoning = timelineItems
+      .flatMap((item) => (item.type === "reasoning" ? [item.text] : []))
+      .join("");
+    expect(reasoning.startsWith("Need to find the scroll container")).toBe(true);
+    expect(reasoning.length).toBeGreaterThan(2500);
+    expect(reasoning).toContain("long Thinking panel for cycle 1");
+  });
+
   test("interrupt cancels the active foreground turn and stops future chunks", async () => {
     vi.useFakeTimers();
     const client = new MockLoadTestAgentClient();
