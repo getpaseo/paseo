@@ -1,7 +1,7 @@
 import { ROUTED_BROWSER_PARTITION_PREFIX } from "../network-routing/contract";
 import { HostNetworkBadge } from "../network-routing/host-network-badge";
 import { useHosts } from "@/runtime/host-runtime";
-import { getHostNetworkLoadError } from "../network-routing/load-error";
+import { getBrowserAttachError, getHostNetworkLoadError } from "../network-routing/load-error";
 import {
   useCallback,
   useEffect,
@@ -939,11 +939,12 @@ export function BrowserPane({
         }
       };
     };
-    void attach().catch(() => {
+    void attach().catch((error: unknown) => {
+      const lastError = getBrowserAttachError(error, hostLabelRef.current);
       if (!cancelled)
         updateBrowserRef.current(browserId, {
           isLoading: false,
-          lastError: t("browserRouting.notReady", { host: hostLabelRef.current }),
+          lastError,
         });
     });
     return () => {

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { i18n } from "@/i18n/i18next";
-import { getHostNetworkLoadError } from "./load-error";
+import { getBrowserAttachError, getHostNetworkLoadError } from "./load-error";
+import { RoutingIpcError } from "./contract";
 
 const host = "Remote Mac";
 const proxyUnavailable =
@@ -15,6 +16,27 @@ afterEach(async () => {
 });
 
 describe("host network load errors", () => {
+  it("explains expected routing failures while attaching a browser", () => {
+    expect(getBrowserAttachError(new RoutingIpcError("not_ready", "Not ready"), host)).toBe(
+      i18n.t("browserRouting.notReady", { host }),
+    );
+  });
+
+  it.each([
+    new Error("Electron browser profile bridge is unavailable"),
+    new TypeError("Guest creation failed"),
+    "unexpected rejection",
+    null,
+  ])("preserves unexpected browser attachment failures (%j)", (error) => {
+    let rejection: unknown = Symbol("no rejection");
+    try {
+      getBrowserAttachError(error, host);
+    } catch (caught) {
+      rejection = caught;
+    }
+    expect(rejection).toBe(error);
+  });
+
   it.each([
     [-130, "ERR_PROXY_CONNECTION_FAILED", proxyUnavailable],
     [-111, "ERR_TUNNEL_CONNECTION_FAILED", destinationFailed],

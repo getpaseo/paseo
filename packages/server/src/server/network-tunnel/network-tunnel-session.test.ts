@@ -403,7 +403,7 @@ describe("NetworkTunnelSession", () => {
         { address: "127.0.0.2", family: 4 },
         { address: "127.0.0.1", family: 4 },
       ],
-      dial: async (address, port, deadline) => {
+      dial: async ({ address, port, deadline }) => {
         budgets.push(deadline - Date.now());
         if (address.address === "127.0.0.2") {
           await settle(Math.max(0, deadline - Date.now()));
@@ -437,7 +437,7 @@ describe("NetworkTunnelSession", () => {
         { address: "127.0.0.2", family: 4 },
         { address: "127.0.0.1", family: 4 },
       ],
-      dial: async (address) => {
+      dial: async ({ address }) => {
         attempts.push(address.address);
         await settle(60);
         throw new TunnelTargetError(TunnelCloseReason.Timeout, "Connect timed out");
@@ -459,7 +459,7 @@ describe("NetworkTunnelSession", () => {
         { address: "127.0.0.2", family: 4 },
         { address: "127.0.0.1", family: 4 },
       ],
-      dial: async (address, _port, _deadline, signal) => {
+      dial: async ({ address, signal }) => {
         attempts.push(address.address);
         return new Promise((_resolve, reject) =>
           signal.addEventListener(

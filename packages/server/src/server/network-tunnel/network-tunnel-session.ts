@@ -58,12 +58,19 @@ export interface NetworkTunnelHost {
 }
 
 export type TunnelLookup = (hostname: string) => Promise<ResolvedTunnelAddress[]>;
-export type TunnelDial = (
-  address: ResolvedTunnelAddress,
-  port: number,
-  deadline: number,
-  signal: AbortSignal,
-) => Promise<net.Socket>;
+export interface TunnelDialInput {
+  address: ResolvedTunnelAddress;
+  port: number;
+  deadline: number;
+  signal: AbortSignal;
+}
+
+export type TunnelDial = (input: TunnelDialInput) => Promise<net.Socket>;
+
+interface DialAnyInput extends Omit<TunnelDialInput, "address"> {
+  addresses: readonly ResolvedTunnelAddress[];
+  dialAddress: TunnelDial;
+}
 
 export interface NetworkTunnelSessionOptions {
   host: NetworkTunnelHost;
@@ -421,13 +428,13 @@ export class NetworkTunnelSession {
             )));
       const approved = approveAddresses(candidates);
       if (stream.state !== "connecting") return;
-      const socket = await dialAny(
-        approved,
-        target.port,
+      const socket = await dialAny({
+        addresses: approved,
+        port: target.port,
         deadline,
-        stream.cancel.signal,
-        this.dial,
-      );
+        signal: stream.cancel.signal,
+        dialAddress: this.dial,
+      });
       if (stream.state !== "connecting") {
         socket.destroy();
         return;
@@ -702,13 +709,13 @@ async function withDeadline<T>(
 }
 
 /** `localhost` often resolves to ::1 first while the service listens on 127.0.0.1; try every approved answer. */
-async function dialAny(
-  addresses: readonly ResolvedTunnelAddress[],
-  port: number,
-  deadline: number,
-  signal: AbortSignal,
-  dialAddress: TunnelDial,
-): Promise<net.Socket> {
+async function dialAny({
+  addresses,
+  port,
+  deadline,
+  signal,
+  dialAddress,
+}: DialAnyInput): Promise<net.Socket> {
   let lastError: unknown;
   for (const [index, address] of addresses.entries()) {
     if (signal.aborted) throw new TunnelTargetError(TunnelCloseReason.Ok, "Stream cancelled");
@@ -719,7 +726,7 @@ async function dialAny(
     }
     const attemptDeadline = now + Math.ceil(remaining / (addresses.length - index));
     try {
-      return await dialAddress(address, port, attemptDeadline, signal);
+      return await dialAddress({ address, port, deadline: attemptDeadline, signal });
     } catch (error) {
       lastError = error;
       const reason = closeReasonForError(error);
@@ -730,12 +737,7 @@ async function dialAny(
 }
 
 /** Dials the approved literal only; no second resolution can swap the target underneath the policy check. */
-function dial(
-  address: ResolvedTunnelAddress,
-  port: number,
-  deadline: number,
-  signal: AbortSignal,
-): Promise<net.Socket> {
+function dial({ address, port, deadline, signal }: TunnelDialInput): Promise<net.Socket> {
   return new Promise<net.Socket>((resolve, reject) => {
     const remaining = Math.max(1, deadline - Date.now());
     const socket = net.connect({ host: address.address, port, family: address.family });

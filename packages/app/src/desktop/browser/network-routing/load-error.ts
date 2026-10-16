@@ -1,4 +1,10 @@
 import { i18n } from "@/i18n/i18next";
+import { RoutingIpcError } from "./contract";
+
+export function getBrowserAttachError(error: unknown, host: string): string {
+  if (!(error instanceof RoutingIpcError)) throw error;
+  return i18n.t("browserRouting.notReady", { host });
+}
 
 export function getHostNetworkLoadError(error: unknown, host: string): string | null {
   if (typeof error !== "object" || error === null) return null;
