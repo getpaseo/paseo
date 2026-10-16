@@ -75,6 +75,16 @@ async function expectNoLoadingPane(page: Page): Promise<void> {
   await expect(page.getByText(LOADING_WORKSPACE_TEXT_PATTERN)).toHaveCount(0);
 }
 
+async function getWorkspacesHoldingTab(page: Page, tabId: string): Promise<string[]> {
+  const layouts = await page.evaluate(() => {
+    const raw = localStorage.getItem("workspace-layout-state");
+    return raw ? (JSON.parse(raw).state.layoutByWorkspace as Record<string, unknown>) : {};
+  });
+  return Object.entries(layouts)
+    .filter(([, layout]) => JSON.stringify(layout).includes(`"${tabId}"`))
+    .map(([workspaceKey]) => workspaceKey);
+}
+
 async function getVisibleDraftTabCount(page: Page): Promise<number> {
   return page.locator('[data-testid^="workspace-tab-draft"]').filter({ visible: true }).count();
 }
@@ -131,6 +141,73 @@ test.describe("Workspace navigation regression", () => {
     await expect(page.getByText("Connecting", { exact: true })).toBeVisible();
     await expect(page.getByText("Notification Host", { exact: true })).toBeVisible();
     await expect(page.getByText("Add a project", { exact: true })).toHaveCount(0);
+  });
+
+  test("a tab opened through another workspace's route stays out of the workspace left behind", async ({
+    page,
+  }) => {
+    const serverId = getServerId();
+    const sourceWorkspace = await seedWorkspace({ repoPrefix: "workspace-open-intent-source-" });
+    const targetWorkspace = await seedWorkspace({ repoPrefix: "workspace-open-intent-target-" });
+
+    try {
+      const sourceAgent = await createMockIdleAgent(sourceWorkspace.client, {
+        cwd: sourceWorkspace.repoPath,
+        workspaceId: sourceWorkspace.workspaceId,
+        title: `workspace-open-intent-source-${Date.now()}`,
+      });
+      const created = await targetWorkspace.client.createTerminal(
+        targetWorkspace.repoPath,
+        "Notification terminal",
+        undefined,
+        { workspaceId: targetWorkspace.workspaceId },
+      );
+      if (!created.terminal) {
+        throw new Error(`Failed to create terminal: ${created.error}`);
+      }
+      const terminalId = created.terminal.id;
+
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await page.goto(buildHostAgentDetailRoute(serverId, sourceAgent.id, sourceAgent.workspaceId));
+      await page.waitForURL(
+        (url) => url.pathname.includes("/workspace/") && !url.searchParams.has("open"),
+        { timeout: 60_000 },
+      );
+      await waitForWorkspaceTabsVisible(page);
+      await expectWorkspaceTabVisible(page, sourceAgent.id);
+
+      // A terminal notification navigates to the target workspace with `?open`, so the source
+      // workspace screen stays mounted behind it while the target consumes the intent. The
+      // persisted layouts show which workspace took the tab, mounted or not.
+      await page.evaluate(
+        (data) => {
+          globalThis.dispatchEvent(
+            new CustomEvent("paseo:web-notification-click", {
+              detail: { data },
+              cancelable: true,
+            }),
+          );
+        },
+        {
+          serverId,
+          workspaceId: targetWorkspace.workspaceId,
+          terminalId,
+        },
+      );
+      await page.waitForURL(
+        (url) =>
+          url.pathname.includes(targetWorkspace.workspaceId) && !url.searchParams.has("open"),
+        { timeout: 60_000 },
+      );
+
+      await expect
+        .poll(() => getWorkspacesHoldingTab(page, `terminal_${terminalId}`), { timeout: 30_000 })
+        .toEqual([`${serverId}:${targetWorkspace.workspaceId}`]);
+    } finally {
+      await targetWorkspace.cleanup();
+      await sourceWorkspace.cleanup();
+    }
   });
 
   test("shows the New launcher after returning from settings and closing the last agent draft tab", async ({
