@@ -29,11 +29,11 @@ export function resolveNotificationTarget(data: NotificationData): {
 
 export function buildNotificationRoute(data: NotificationData): NotificationRoute {
   const { serverId, agentId, workspaceId, terminalId } = resolveNotificationTarget(data);
-  if (serverId && workspaceId && agentId) {
-    return buildHostWorkspaceOpenRoute(serverId, workspaceId, `agent:${agentId}`);
-  }
   if (serverId && workspaceId && terminalId) {
     return buildHostWorkspaceOpenRoute(serverId, workspaceId, `terminal:${terminalId}`);
+  }
+  if (serverId && workspaceId && agentId) {
+    return buildHostWorkspaceOpenRoute(serverId, workspaceId, `agent:${agentId}`);
   }
   if (serverId) {
     return buildHostRootRoute(serverId);

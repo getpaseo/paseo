@@ -9,7 +9,11 @@ import {
   type NavigateToLastWorkspaceDeps,
   type NavigateToWorkspaceDeps,
 } from "./navigation";
-import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
+import {
+  normalizeWorkspaceDescriptor,
+  type Agent,
+  type WorkspaceDescriptor,
+} from "@/stores/session-store";
 
 interface RecordedTab {
   workspaceKey: string;
@@ -25,6 +29,7 @@ function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
     getSessionWorkspaces: () => null,
     getSessionAgents: () => [] as Agent[],
     isWorkspaceLayoutHydrated: () => true,
+    isAgentDirectoryCurrent: () => true,
     openTab: ({ workspaceKey, target, pin = false }) => {
       openedTabs.push({ workspaceKey, target, pin });
       return target.kind === "agent" ? target.agentId : null;
@@ -60,6 +65,42 @@ function createLastSelectionDeps(
 }
 
 describe("workspace navigation", () => {
+  it("keeps the agent open intent when cached workspace and layout are already available", () => {
+    const workspace = normalizeWorkspaceDescriptor({
+      id: "workspace-a",
+      projectId: "project-1",
+      projectDisplayName: "Paseo",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo/workspace-a",
+      projectKind: "git",
+      workspaceKind: "local_checkout",
+      name: "main",
+      status: "done",
+      statusEnteredAt: null,
+      activityAt: null,
+      archivingAt: null,
+      diffStat: null,
+      scripts: [],
+    });
+    const { deps, navigations, openedTabs } = createFakeDeps({
+      getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
+      isAgentDirectoryCurrent: () => false,
+    });
+
+    navigateToWorkspace(
+      {
+        serverId: "server-1",
+        workspaceId: "workspace-a",
+        target: { kind: "agent", agentId: "agent-1" },
+        pin: true,
+      },
+      deps,
+    );
+
+    expect(openedTabs).toEqual([]);
+    expect(navigations).toEqual(["/h/server-1/workspace/workspace-a?open=agent%3Aagent-1"]);
+  });
+
   it("reports when no last workspace is known", () => {
     const { deps } = createLastSelectionDeps(null);
 

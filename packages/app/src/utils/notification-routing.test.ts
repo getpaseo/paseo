@@ -49,6 +49,17 @@ describe("resolveNotificationTarget", () => {
 });
 
 describe("buildNotificationRoute", () => {
+  it("prefers the terminal when a notification also names an agent", () => {
+    expect(
+      buildNotificationRoute({
+        serverId: "srv-1",
+        workspaceId: "ws-main",
+        terminalId: "term-1",
+        agentId: "agent-1",
+      }),
+    ).toBe("/h/srv-1/workspace/ws-main?open=terminal%3Aterm-1");
+  });
+
   it("routes to the agent path when workspace id is present", () => {
     expect(
       buildNotificationRoute({
@@ -79,6 +90,13 @@ describe("buildNotificationRoute", () => {
         serverId: "srv-1",
         terminalId: "term-1",
         cwd: "/tmp/repo",
+      }),
+    ).toBe("/h/srv-1");
+    expect(
+      buildNotificationRoute({
+        serverId: "srv-1",
+        terminalId: "term-1",
+        agentId: "agent-1",
       }),
     ).toBe("/h/srv-1");
   });

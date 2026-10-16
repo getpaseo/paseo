@@ -40,9 +40,33 @@ function createFakeNavigators(target: AgentNavTarget): {
 }
 
 describe("resolveNavigateToAgent", () => {
+  it("keeps a notification's workspace when stored ownership is cached", () => {
+    const { deps, hostNavigations, tabNavigations } = createFakeNavigators({
+      agentWorkspaceId: "workspace-cached",
+      isCurrent: false,
+    });
+
+    const route = resolveNavigateToAgent(
+      { serverId: SERVER_ID, agentId: AGENT_ID, workspaceId: WORKSPACE_ID, pin: true },
+      deps,
+    );
+
+    expect(route).toBe("/h/server-1/workspace/workspace-1");
+    expect(hostNavigations).toEqual([]);
+    expect(tabNavigations).toEqual([
+      {
+        serverId: SERVER_ID,
+        workspaceId: WORKSPACE_ID,
+        target: { kind: "agent", agentId: AGENT_ID },
+        pin: true,
+      },
+    ]);
+  });
+
   it("opens the workspace tab carried by the agent's workspaceId", () => {
     const { deps, hostNavigations, tabNavigations } = createFakeNavigators({
       agentWorkspaceId: WORKSPACE_ID,
+      isCurrent: true,
     });
 
     const route = resolveNavigateToAgent(
@@ -62,20 +86,79 @@ describe("resolveNavigateToAgent", () => {
     ]);
   });
 
-  it("uses the input workspaceId without reading the nav target", () => {
-    const readTargets: { serverId: string; agentId: string }[] = [];
-    const { deps, tabNavigations } = createFakeNavigators({ agentWorkspaceId: null });
-    deps.readAgentNavTarget = (input) => {
-      readTargets.push(input);
-      return { agentWorkspaceId: null };
-    };
+  it("prefers the agent's live workspace over the carried workspaceId", () => {
+    const { deps, tabNavigations } = createFakeNavigators({
+      agentWorkspaceId: "workspace-live",
+      isCurrent: true,
+    });
 
     resolveNavigateToAgent(
       { serverId: SERVER_ID, agentId: AGENT_ID, workspaceId: WORKSPACE_ID },
       deps,
     );
 
-    expect(readTargets).toEqual([]);
+    expect(tabNavigations).toEqual([
+      {
+        serverId: SERVER_ID,
+        workspaceId: "workspace-live",
+        target: { kind: "agent", agentId: AGENT_ID },
+        pin: undefined,
+      },
+    ]);
+  });
+
+  it("uses the input workspaceId when the agent is not in the store", () => {
+    const { deps, tabNavigations } = createFakeNavigators({
+      agentWorkspaceId: null,
+      isCurrent: false,
+    });
+
+    resolveNavigateToAgent(
+      { serverId: SERVER_ID, agentId: AGENT_ID, workspaceId: WORKSPACE_ID },
+      deps,
+    );
+
+    expect(tabNavigations).toEqual([
+      {
+        serverId: SERVER_ID,
+        workspaceId: WORKSPACE_ID,
+        target: { kind: "agent", agentId: AGENT_ID },
+        pin: undefined,
+      },
+    ]);
+  });
+
+  it("uses cached ownership when no workspace is supplied", () => {
+    const { deps, hostNavigations, tabNavigations } = createFakeNavigators({
+      agentWorkspaceId: WORKSPACE_ID,
+      isCurrent: false,
+    });
+
+    const route = resolveNavigateToAgent({ serverId: SERVER_ID, agentId: AGENT_ID }, deps);
+
+    expect(route).toBe("/h/server-1/workspace/workspace-1");
+    expect(hostNavigations).toEqual([]);
+    expect(tabNavigations).toEqual([
+      {
+        serverId: SERVER_ID,
+        workspaceId: WORKSPACE_ID,
+        target: { kind: "agent", agentId: AGENT_ID },
+        pin: undefined,
+      },
+    ]);
+  });
+
+  it("uses the input workspaceId when the store value is an empty string", () => {
+    const { deps, tabNavigations } = createFakeNavigators({
+      agentWorkspaceId: "",
+      isCurrent: true,
+    });
+
+    resolveNavigateToAgent(
+      { serverId: SERVER_ID, agentId: AGENT_ID, workspaceId: WORKSPACE_ID },
+      deps,
+    );
+
     expect(tabNavigations).toEqual([
       {
         serverId: SERVER_ID,
@@ -89,6 +172,7 @@ describe("resolveNavigateToAgent", () => {
   it("falls back to the host agent route when the agent has no workspaceId", () => {
     const { deps, hostNavigations, tabNavigations } = createFakeNavigators({
       agentWorkspaceId: null,
+      isCurrent: false,
     });
 
     const route = resolveNavigateToAgent({ serverId: SERVER_ID, agentId: "missing-agent" }, deps);

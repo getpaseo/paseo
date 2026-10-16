@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigation } from "@react-navigation/native";
 import { StyleSheet, View } from "react-native";
-import { useGlobalSearchParams, useLocalSearchParams, useRootNavigationState } from "expo-router";
+import {
+  router,
+  useGlobalSearchParams,
+  useLocalSearchParams,
+  useRootNavigationState,
+  type Href,
+} from "expo-router";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
 import { RetainedPanel } from "@/components/retained-panel";
 import {
@@ -33,7 +39,12 @@ import {
   replaceBrowserRouteWithCanonicalHostWorkspaceRoute,
   stripHostWorkspaceRouteEchoSearchFromBrowserUrlAfterCommit,
 } from "@/utils/host-route-browser";
+import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
+import { useSessionStore } from "@/stores/session-store";
+import { selectAgentNavTarget } from "@/utils/navigate-to-agent/resolve";
+import { resolveWorkspaceAgentOpen } from "@/navigation/workspace-agent-open";
+import { getHostRuntimeStore, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { isNative, isWeb } from "@/constants/platform";
 import { RenderProfile } from "@/utils/render-profiler";
 
@@ -97,8 +108,8 @@ function HostWorkspaceRouteContent() {
   const navigation = useNavigation();
   const rootNavigationState = useRootNavigationState();
   const hasHydratedWorkspaceLayoutStore = useWorkspaceLayoutStoreHydrated();
-  const consumedIntentRef = useRef<string | null>(null);
-  const [intentConsumed, setIntentConsumed] = useState(false);
+  const openedIntentRef = useRef<string | null>(null);
+  const [intentOpened, setIntentOpened] = useState(false);
   const params = useLocalSearchParams<{
     serverId?: string | string[];
     workspaceId?: string | string[];
@@ -113,12 +124,54 @@ function HostWorkspaceRouteContent() {
     : "";
   const openValue = getParamValue(globalParams.open);
   const hasHydratedWorkspaces = useHasHydratedWorkspaces(serverId);
-  const workspaceExists = useWorkspaceExists(serverId, workspaceId);
+  const hasCurrentAgentDirectory = useSessionStore(
+    (state) => state.sessions[serverId]?.hasCurrentAgentDirectory ?? false,
+  );
+  const isConnected = useHostRuntimeIsConnected(serverId);
   const openIntent = useMemo(() => parseWorkspaceOpenIntent(openValue), [openValue]);
   const isAgentOpenIntent = openIntent?.kind === "agent";
-  const isOpenIntentWaitingForWorkspace = Boolean(
-    isAgentOpenIntent && (!hasHydratedWorkspaces || !workspaceExists),
-  );
+  // Subscribed (not getState) so an agent record landing after workspace
+  // hydration re-fires the redirect effect below.
+  const liveAgentWorkspaceId = useSessionStore((s) => {
+    if (openIntent?.kind !== "agent") return null;
+    const session = s.sessions[serverId];
+    const target = selectAgentNavTarget({ session, agentId: openIntent.agentId });
+    return target.isCurrent ? normalizeWorkspaceOpaqueId(target.agentWorkspaceId) : null;
+  });
+  const sessionWorkspaces = useSessionStore((s) => s.sessions[serverId]?.workspaces);
+  const agentOpenResolution = useMemo(() => {
+    if (!isAgentOpenIntent) return null;
+    return resolveWorkspaceAgentOpen({
+      serverId,
+      workspaceId,
+      openValue,
+      agentTarget: {
+        agentWorkspaceId: liveAgentWorkspaceId,
+        isCurrent: liveAgentWorkspaceId !== null,
+      },
+      isConnected,
+      hasCurrentAgentDirectory,
+      hasHydratedWorkspaces,
+      workspaces: sessionWorkspaces,
+    });
+  }, [
+    hasCurrentAgentDirectory,
+    hasHydratedWorkspaces,
+    isAgentOpenIntent,
+    isConnected,
+    liveAgentWorkspaceId,
+    openValue,
+    serverId,
+    sessionWorkspaces,
+    workspaceId,
+  ]);
+  const isOpenIntentWaitingForWorkspace = agentOpenResolution?.kind === "waiting";
+  useEffect(() => {
+    if (!serverId || !isAgentOpenIntent) return;
+    // A closed or filtered sidebar may hold no demand for the target host.
+    return getHostRuntimeStore().acquireDirectoryDemand(serverId);
+  }, [isAgentOpenIntent, serverId]);
+
   useEffect(() => {
     if (!serverId || !workspaceId) {
       return;
@@ -136,23 +189,17 @@ function HostWorkspaceRouteContent() {
     if (!hasHydratedWorkspaceLayoutStore) {
       return;
     }
+    if (agentOpenResolution?.kind === "redirect") {
+      router.replace(agentOpenResolution.route as Href);
+      return;
+    }
     if (isOpenIntentWaitingForWorkspace) {
       return;
     }
 
-    const consumptionKey = `${serverId}:${workspaceId}:${openValue}`;
-    if (consumedIntentRef.current === consumptionKey) {
-      clearConsumedOpenIntent({
-        navigation: navigation as unknown as {
-          setParams: (params: { open?: string | undefined }) => void;
-        },
-      });
-      setIntentConsumed(true);
-      return;
-    }
-    consumedIntentRef.current = consumptionKey;
-
-    if (openIntent) {
+    const intentKey = `${serverId}:${workspaceId}:${openValue}`;
+    const hasOpenedIntent = openedIntentRef.current === intentKey;
+    if (!hasOpenedIntent && openIntent) {
       prepareWorkspaceTab({
         serverId,
         workspaceId,
@@ -160,6 +207,10 @@ function HostWorkspaceRouteContent() {
         pin: openIntent.kind === "agent",
       });
     }
+    openedIntentRef.current = intentKey;
+    setIntentOpened(true);
+    // An offline open stays correctable when this host reconnects.
+    if (agentOpenResolution?.kind === "openCached") return;
 
     // Expo Router's replace ignores query-param-only changes (findDivergentState
     // skips search params). Strip ?open from the browser URL directly so the
@@ -169,9 +220,8 @@ function HostWorkspaceRouteContent() {
         setParams: (params: { open?: string | undefined }) => void;
       },
     });
-
-    setIntentConsumed(true);
   }, [
+    agentOpenResolution,
     hasHydratedWorkspaceLayoutStore,
     isOpenIntentWaitingForWorkspace,
     navigation,
@@ -185,7 +235,7 @@ function HostWorkspaceRouteContent() {
   if (
     openValue &&
     !isOpenIntentWaitingForWorkspace &&
-    (!intentConsumed || !hasHydratedWorkspaceLayoutStore)
+    (!intentOpened || !hasHydratedWorkspaceLayoutStore)
   ) {
     return null;
   }
