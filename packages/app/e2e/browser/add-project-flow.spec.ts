@@ -20,6 +20,7 @@ import {
 import { gotoAppShell } from "../support/helpers/app";
 import {
   addConnectedHostAndReload,
+  addConnectedHostsAndReload,
   addOfflineHostAndReload,
   waitForConnectedHost,
 } from "../support/helpers/hosts";
@@ -214,6 +215,60 @@ test.describe("Add Project command-center flow", () => {
         await rm(parentDirectory, { recursive: true, force: true });
       }
     });
+  });
+
+  test("filtered hosts keep the keyboard-selected row visible", async ({ page }) => {
+    const hosts: IsolatedHostDaemon[] = [];
+    try {
+      for (let index = 1; index <= 3; index += 1) {
+        hosts.push(await startIsolatedHostDaemon(`scroll-host-${index}`));
+      }
+      await page.setViewportSize({ width: 1280, height: 360 });
+      await gotoAppShell(page);
+      await addConnectedHostsAndReload(
+        page,
+        hosts.map((host, index) => ({
+          serverId: host.serverId,
+          port: host.port,
+          label: index < 2 ? `Fleet 0${index + 1}` : "Other host",
+        })),
+        { primaryLabel: "Fleet 00" },
+      );
+      for (const host of hosts) {
+        await waitForConnectedHost(page, {
+          serverId: host.serverId,
+          endpoint: `localhost:${host.port}`,
+        });
+      }
+      await openAddProjectHostSelection(page);
+      await expect(
+        addProjectFlow(page).getByRole("button").filter({ hasText: "Other host" }),
+      ).toBeVisible();
+
+      await addProjectFlowInput(page).fill("Fleet");
+      await expect(addProjectFlowHost(page, hosts[2]!.serverId)).toHaveCount(0);
+      await navigateAddProjectResults(page, "ArrowDown", 2);
+      await expectAddProjectResultVisible(page, "Fleet 02");
+
+      // Filtering out the first host moves retained rows to new positions.
+      await addProjectFlowInput(page).fill("scroll-host");
+      await expect(addProjectFlowHost(page, getServerId())).toHaveCount(0);
+      await expectAddProjectResultVisible(page, "Fleet 01");
+      await navigateAddProjectResults(page, "ArrowDown", 2);
+      await expectAddProjectResultVisible(page, "Other host");
+      await navigateAddProjectResults(page, "ArrowDown", 1);
+      await expectAddProjectResultVisible(page, "Fleet 01");
+
+      await addProjectFlowInput(page).fill("Fleet");
+      await expectAddProjectResultVisible(page, "Fleet 00");
+      await navigateAddProjectResults(page, "ArrowDown", 2);
+      await expectAddProjectResultVisible(page, "Fleet 02");
+      await page.keyboard.press("Enter");
+      await expectAddProjectPage(page, "method");
+      await expect(addProjectFlow(page)).toContainText("Fleet 02");
+    } finally {
+      await Promise.all(hosts.map((host) => host.close()));
+    }
   });
 
   test("keyboard directory search adds the selected Project", async ({

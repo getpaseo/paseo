@@ -99,11 +99,9 @@ export async function navigateAddProjectResults(
   for (let index = 0; index < count; index += 1) await page.keyboard.press(key);
 }
 
-export async function expectAddProjectResultVisible(page: Page, pathname: string): Promise<void> {
+export async function expectAddProjectResultVisible(page: Page, text: string): Promise<void> {
   const results = page.getByTestId("add-project-flow-results");
-  const row = results
-    .getByRole("button")
-    .filter({ has: page.getByText(pathname, { exact: true }) });
+  const row = results.getByRole("button").filter({ has: page.getByText(text, { exact: true }) });
   await expect
     .poll(async () => {
       const viewport = await results.boundingBox();

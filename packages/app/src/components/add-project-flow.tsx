@@ -19,6 +19,7 @@ import {
   useRef,
   useState,
   type ComponentType,
+  type RefObject,
 } from "react";
 import {
   Modal,
@@ -26,7 +27,6 @@ import {
   ScrollView,
   Text,
   View,
-  type LayoutChangeEvent,
   type PressableStateCallbackType,
 } from "react-native";
 import {
@@ -256,14 +256,14 @@ function pathTestId(path: string): string {
 
 function FlowRow({
   option,
-  index,
   active,
+  activeItemRef,
   onRowLayout,
 }: {
   option: FlowRowOption;
-  index: number;
   active: boolean;
-  onRowLayout: (index: number, event: LayoutChangeEvent) => void;
+  activeItemRef: RefObject<View | null>;
+  onRowLayout: () => void;
 }) {
   const accessibilityState = useMemo(
     () => ({ disabled: option.disabled === true, selected: active }),
@@ -277,16 +277,13 @@ function FlowRow({
     ],
     [active, option.disabled],
   );
-  const handleLayout = useCallback(
-    (event: LayoutChangeEvent) => onRowLayout(index, event),
-    [index, onRowLayout],
-  );
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityState={accessibilityState}
       disabled={option.disabled}
-      onLayout={handleLayout}
+      ref={active ? activeItemRef : undefined}
+      onLayout={active ? onRowLayout : undefined}
       onPress={option.select}
       style={rowStyle}
       testID={option.testID}
@@ -734,7 +731,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
 
   const activeIndex = rows.length === 0 ? 0 : Math.min(page.activeIndex, rows.length - 1);
   const rowListKey = useMemo(() => rows.map((row) => row.id).join("\u0000"), [rows]);
-  const { onItemLayout, onViewportLayout, onScroll } = useRevealActiveItem({
+  const { activeItemRef, onItemLayout, onViewportLayout, onScroll } = useRevealActiveItem({
     activeIndex,
     listKey: rowListKey,
     scrollRef: resultsRef,
@@ -971,7 +968,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
                   <FlowRow
                     key={option.id}
                     option={option}
-                    index={index}
+                    activeItemRef={activeItemRef}
                     active={index === activeIndex}
                     onRowLayout={onItemLayout}
                   />

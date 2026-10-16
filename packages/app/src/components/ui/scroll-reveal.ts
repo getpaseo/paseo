@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, type RefObject } from "react";
+import { useCallback, useLayoutEffect, useRef, type RefObject } from "react";
 import type {
   LayoutChangeEvent,
   NativeScrollEvent,
   NativeSyntheticEvent,
   ScrollView,
+  View,
 } from "react-native";
 
 export function getScrollOffsetToRevealItem(args: {
@@ -31,31 +32,19 @@ export function getScrollOffsetToRevealItem(args: {
   return args.currentOffset;
 }
 
-interface ItemLayout {
-  top: number;
-  height: number;
-}
-
 export interface RevealActiveItemHandlers {
-  onItemLayout: (index: number, event: LayoutChangeEvent) => void;
+  activeItemRef: RefObject<View | null>;
+  onItemLayout: () => void;
   onViewportLayout: (event: LayoutChangeEvent) => void;
   onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
 }
 
 /**
- * Keeps the keyboard-selected row of a top-anchored ScrollView inside the
- * viewport. Rows are measured through onLayout because their height varies
- * with their content.
- *
- * `listKey` identifies the rendered rows. When it changes the list was
- * replaced: stale measurements are dropped and, when the selection restarts
- * at the top (`activeIndex === 0`, e.g. a new query), the viewport returns to
- * the top. A preserved selection (`activeIndex !== 0`, e.g. async results
- * arriving mid-navigation) keeps its scroll position and is revealed once the
- * new rows are measured, without a detour through the top.
- *
- * Bottom-anchored lists need different reset semantics (the composer
- * autocomplete pins to the end), so they share only getScrollOffsetToRevealItem.
+ * Reveals the keyboard-selected row using its current position in the scroll
+ * content. Measuring on selection/list changes also covers retained rows that
+ * move or keep their size without emitting another onLayout event on web.
+ * A list replacement resets to the top only when selection restarts there.
+ * Bottom-anchored lists share only getScrollOffsetToRevealItem.
  */
 export function useRevealActiveItem(options: {
   activeIndex: number;
@@ -63,55 +52,45 @@ export function useRevealActiveItem(options: {
   scrollRef: RefObject<ScrollView | null>;
 }): RevealActiveItemHandlers {
   const { activeIndex, listKey, scrollRef } = options;
-  const itemLayoutsRef = useRef<Map<number, ItemLayout>>(new Map());
+  const activeItemRef = useRef<View | null>(null);
   const viewportHeightRef = useRef(0);
   const offsetRef = useRef(0);
+  const measurementRef = useRef(0);
 
   const reveal = useCallback(() => {
-    const layout = itemLayoutsRef.current.get(activeIndex);
-    if (!layout) {
-      return;
-    }
-    const nextOffset = getScrollOffsetToRevealItem({
-      currentOffset: offsetRef.current,
-      viewportHeight: viewportHeightRef.current,
-      itemTop: layout.top,
-      itemHeight: layout.height,
+    const request = ++measurementRef.current;
+    const item = activeItemRef.current;
+    const scroll = scrollRef.current;
+    const content = scroll?.getInnerViewNode();
+    if (!item || !scroll || !content) return;
+
+    item.measureLayout(content, (_left, top, _width, height) => {
+      if (request !== measurementRef.current || activeItemRef.current !== item) return;
+      const nextOffset = getScrollOffsetToRevealItem({
+        currentOffset: offsetRef.current,
+        viewportHeight: viewportHeightRef.current,
+        itemTop: top,
+        itemHeight: height,
+      });
+      if (Math.abs(nextOffset - offsetRef.current) < 1) return;
+      offsetRef.current = nextOffset;
+      scroll.scrollTo({ y: nextOffset, animated: false });
     });
-    if (Math.abs(nextOffset - offsetRef.current) < 1) {
-      return;
-    }
-    offsetRef.current = nextOffset;
-    scrollRef.current?.scrollTo({ y: nextOffset, animated: false });
-  }, [activeIndex, scrollRef]);
+  }, [scrollRef]);
 
   const prevListKeyRef = useRef(listKey);
-  useEffect(() => {
-    if (prevListKeyRef.current === listKey) {
-      return;
-    }
-    prevListKeyRef.current = listKey;
-    itemLayoutsRef.current = new Map();
-    if (activeIndex === 0) {
+  useLayoutEffect(() => {
+    if (prevListKeyRef.current !== listKey && activeIndex === 0) {
       offsetRef.current = 0;
       scrollRef.current?.scrollTo({ y: 0, animated: false });
     }
-  }, [activeIndex, listKey, scrollRef]);
-
-  useEffect(() => {
+    prevListKeyRef.current = listKey;
     reveal();
-  }, [listKey, reveal]);
-
-  const onItemLayout = useCallback(
-    (index: number, event: LayoutChangeEvent) => {
-      itemLayoutsRef.current.set(index, {
-        top: event.nativeEvent.layout.y,
-        height: event.nativeEvent.layout.height,
-      });
-      reveal();
-    },
-    [reveal],
-  );
+    return () => {
+      // Measurements are asynchronous; a previous selection must not scroll us.
+      measurementRef.current += 1;
+    };
+  }, [activeIndex, listKey, reveal, scrollRef]);
 
   const onViewportLayout = useCallback(
     (event: LayoutChangeEvent) => {
@@ -125,5 +104,5 @@ export function useRevealActiveItem(options: {
     offsetRef.current = event.nativeEvent.contentOffset.y;
   }, []);
 
-  return { onItemLayout, onViewportLayout, onScroll };
+  return { activeItemRef, onItemLayout: reveal, onViewportLayout, onScroll };
 }
