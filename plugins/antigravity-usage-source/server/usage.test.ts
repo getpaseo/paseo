@@ -457,4 +457,148 @@ describe("antigravity usage fetcher", () => {
     expect(report.windows).toHaveLength(1);
     expect(report.windows[0]?.id).toBe("gemini");
   });
+
+  it("handles Gemini 4 Argon quota group with separate weekly window in retrieveUserQuotaSummary", async () => {
+    await writeFile(
+      authFile,
+      JSON.stringify({
+        token: { access_token: "argon-quota-token" },
+      }),
+    );
+
+    const mockFetch = async (url: string | URL | Request) => {
+      const urlStr = String(url);
+      if (urlStr.includes("loadCodeAssist")) {
+        return new Response(JSON.stringify({ currentTier: { id: "pro-tier" } }), { status: 200 });
+      }
+      if (urlStr.includes("retrieveUserQuotaSummary")) {
+        return new Response(
+          JSON.stringify({
+            groups: [
+              {
+                displayName: "Gemini Models",
+                buckets: [
+                  {
+                    bucketId: "gemini-weekly",
+                    window: "weekly",
+                    remainingFraction: 0.9,
+                    resetTime: "2026-10-23T07:00:00Z",
+                  },
+                ],
+              },
+              {
+                displayName: "Claude and GPT models",
+                buckets: [
+                  {
+                    bucketId: "3p-weekly",
+                    window: "weekly",
+                    remainingFraction: 0.7,
+                    resetTime: "2026-10-22T10:00:00Z",
+                  },
+                ],
+              },
+              {
+                name: "Gemini 4 Argon",
+                description:
+                  "For paid Pro plans, Argon quota is separate. Higher Argon quota is available on Ultra plans.",
+                buckets: [
+                  {
+                    id: "gemini-argon-wtu-weekly",
+                    name: "Gemini 4 Argon Weekly Limit",
+                    window: "weekly",
+                    remaining_fraction: 1.0,
+                    reset_time: "2026-10-23T08:00:00Z",
+                  },
+                ],
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("Not found", { status: 404 });
+    };
+
+    const report = await fetchUsage(makeInput(authFile), mockFetch as unknown as typeof fetch);
+
+    expect(report.status).toBe("available");
+    assert(report.status === "available");
+    expect(report.windows).toHaveLength(3);
+
+    const argonWindow = report.windows.find((w) => w.id === "gemini-argon-weekly");
+    expect(argonWindow).toBeDefined();
+    expect(argonWindow).toMatchObject({
+      id: "gemini-argon-weekly",
+      label: "Gemini 4 Argon \u00b7 Weekly",
+      shortLabel: "Argon wk",
+      usedPct: 0,
+      remainingPct: 100,
+      summary: true,
+      resetsAt: "2026-10-23T08:00:00Z",
+    });
+  });
+
+  it("isolates Argon models into a separate bucket in fetchAvailableModels fallback", async () => {
+    await writeFile(
+      authFile,
+      JSON.stringify({
+        token: { access_token: "argon-models-token" },
+      }),
+    );
+
+    const mockFetch = async (url: string | URL | Request) => {
+      const urlStr = String(url);
+      if (urlStr.includes("loadCodeAssist")) {
+        return new Response(JSON.stringify({ currentTier: { id: "pro-tier" } }), { status: 200 });
+      }
+      if (urlStr.includes("retrieveUserQuotaSummary")) {
+        return new Response("Not found", { status: 404 });
+      }
+      if (urlStr.includes("fetchAvailableModels")) {
+        return new Response(
+          JSON.stringify({
+            models: {
+              "gemini-2.5-pro": {
+                displayName: "Gemini 2.5 Pro",
+                quotaInfo: { remainingFraction: 0.6, resetTime: "2026-10-16T15:00:00Z" },
+              },
+              "gemini-4-argon-high": {
+                displayName: "Gemini 4 Argon (High)",
+                quotaInfo: { remainingFraction: 0.95, resetTime: "2026-10-23T08:00:00Z" },
+              },
+              "claude-opus-5-5-high": {
+                displayName: "Claude Opus 5.5 (High)",
+                quotaInfo: { remainingFraction: 0.4, resetTime: "2026-10-22T10:00:00Z" },
+              },
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("Not found", { status: 404 });
+    };
+
+    const report = await fetchUsage(makeInput(authFile), mockFetch as unknown as typeof fetch);
+
+    expect(report.status).toBe("available");
+    assert(report.status === "available");
+    expect(report.windows).toHaveLength(3);
+
+    expect(report.windows.find((w) => w.id === "gemini")).toMatchObject({
+      id: "gemini",
+      label: "Gemini (all models)",
+      usedPct: 40,
+    });
+    expect(report.windows.find((w) => w.id === "gemini-argon")).toMatchObject({
+      id: "gemini-argon",
+      label: "Gemini 4 Argon (all models)",
+      shortLabel: "Argon",
+      usedPct: 5,
+    });
+    expect(report.windows.find((w) => w.id === "claude-gpt-oss")).toMatchObject({
+      id: "claude-gpt-oss",
+      label: "Claude & GPT-OSS (all models)",
+      usedPct: 60,
+    });
+  });
 });
