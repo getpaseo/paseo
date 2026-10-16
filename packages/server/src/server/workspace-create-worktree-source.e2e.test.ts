@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, onTestFinished, test } from "vitest";
@@ -18,6 +19,7 @@ function createGitRepoWithBranch(): { repoDir: string; tempRoot: string } {
   const tempRoot = mkdtempSync(path.join(tmpdir(), "workspace-create-worktree-source-"));
   const repoDir = path.join(tempRoot, "repo");
   execFileSync("git", ["init", "-b", "main", repoDir], { stdio: "pipe" });
+  execFileSync("git", ["config", "core.autocrlf", "false"], { cwd: repoDir, stdio: "pipe" });
   execFileSync("git", ["config", "user.email", "test@getpaseo.local"], {
     cwd: repoDir,
     stdio: "pipe",
@@ -60,9 +62,133 @@ test("workspace.create worktree source forwards action=checkout + refName into t
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();
-    rmSync(tempRoot, { recursive: true, force: true });
+    await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 180000);
+
+test.each([false, true])(
+  "workspace.create opens worktree.terminals (setup service: %s)",
+  async (withSetupService) => {
+    const daemon = await createTestPaseoDaemon();
+    const { repoDir, tempRoot } = createGitRepoWithBranch();
+    writeFileSync(
+      path.join(repoDir, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          ...(withSetupService
+            ? {
+                // Launch the Windows service asynchronously so it outlives
+                // the setup command instead of holding setup open.
+                setup:
+                  process.platform === "win32"
+                    ? "Start-Process -FilePath node -ArgumentList 'setup.cjs','serve' -WorkingDirectory (Get-Location).Path -WindowStyle Hidden; while (!(Test-Path setup-pid.txt)) { Start-Sleep -Milliseconds 25 }"
+                    : "node setup.cjs",
+              }
+            : {}),
+          terminals: [
+            { name: "preview", command: "echo paseo-auto-terminal >> terminal-marker.txt" },
+          ],
+        },
+      }),
+    );
+    writeFileSync(
+      path.join(repoDir, "setup.cjs"),
+      `
+const fs = require("node:fs");
+if (process.argv[2] === "serve") {
+  require("node:net").createServer().listen(Number(process.env.PASEO_WORKTREE_PORT), "127.0.0.1", () => {
+    fs.writeFileSync("setup-pid.txt", String(process.pid));
+    process.send?.("ready");
+  });
+} else {
+  const child = require("node:child_process").spawn(process.execPath, [__filename, "serve"], {
+    detached: true,
+    stdio: ["ignore", "ignore", "ignore", "ipc"],
+  });
+  child.once("message", () => { child.disconnect(); child.unref(); });
+}
+`,
+    );
+    execFileSync("git", ["add", "paseo.json", "setup.cjs"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add paseo.json"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+    const client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemon.port}/ws`,
+      appVersion: "0.1.82",
+    });
+
+    let workspaceCwd: string | undefined;
+    try {
+      await client.connect();
+
+      // This is the request the New Workspace screen sends: the workspace is
+      // created on its own, with no agent in the same request.
+      const result = await client.createWorkspace({
+        source: {
+          kind: "worktree",
+          cwd: repoDir,
+          action: "branch-off",
+          branchName: "feature/auto-terminals",
+          worktreeSlug: "feature-auto-terminals",
+          baseBranch: "main",
+        },
+      });
+
+      expect(result.error).toBeNull();
+      const workspace = result.workspace;
+      if (!workspace) {
+        throw new Error("Expected a created workspace");
+      }
+
+      workspaceCwd = workspace.workspaceDirectory;
+      if (withSetupService) {
+        await expect
+          .poll(() => existsSync(path.join(workspaceCwd!, "setup-pid.txt")), { timeout: 30000 })
+          .toBe(true);
+      }
+      await expect
+        .poll(async () => (await client.fetchWorkspaceSetupStatus(workspace.id)).snapshot, {
+          timeout: 30000,
+        })
+        .toMatchObject({ status: "completed", error: null });
+      await expect
+        .poll(
+          async () =>
+            (
+              await client.listTerminals(workspace.workspaceDirectory, undefined, {
+                workspaceId: workspace.id,
+              })
+            ).terminals.map((terminal) => terminal.name),
+          { timeout: 30000 },
+        )
+        .toContain("preview");
+      await expect
+        .poll(
+          () => {
+            const marker = path.join(workspaceCwd!, "terminal-marker.txt");
+            return existsSync(marker) ? readFileSync(marker, "utf8").trim() : null;
+          },
+          { timeout: 10000 },
+        )
+        .toBe("paseo-auto-terminal");
+      expect(
+        (await client.listTerminals(workspaceCwd, undefined, { workspaceId: workspace.id }))
+          .terminals,
+      ).toHaveLength(1);
+    } finally {
+      const pidFile = workspaceCwd && path.join(workspaceCwd, "setup-pid.txt");
+      if (pidFile && existsSync(pidFile)) {
+        process.kill(Number(readFileSync(pidFile, "utf8")));
+      }
+      await client.close().catch(() => undefined);
+      await daemon.close();
+      await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  },
+  180000,
+);
 
 test("existing branch changes remain visible after archive and restore", async () => {
   const daemon = await createTestPaseoDaemon();
@@ -74,7 +200,7 @@ test("existing branch changes remain visible after archive and restore", async (
   onTestFinished(async () => {
     await client.close().catch(() => undefined);
     await daemon.close();
-    rmSync(tempRoot, { recursive: true, force: true });
+    await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
   runGit(repoDir, "switch", "feature/existing-branch");
   commitFile(repoDir, "feature.txt", "feature change\n");
@@ -134,7 +260,7 @@ test("workspace.create keeps a branch-off name separate from its worktree slug",
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();
-    rmSync(tempRoot, { recursive: true, force: true });
+    await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 180000);
 
@@ -168,7 +294,7 @@ test("workspace.create accepts a Git-valid branch-off name outside Paseo slug sy
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();
-    rmSync(tempRoot, { recursive: true, force: true });
+    await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 180000);
 
@@ -210,7 +336,7 @@ test("workspace.create always creates a new worktree when the slug is already oc
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();
-    rmSync(tempRoot, { recursive: true, force: true });
+    await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 180000);
 
@@ -255,7 +381,7 @@ test("workspace.create suffixes past an occupied detached worktree", async () =>
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();
-    rmSync(tempRoot, { recursive: true, force: true });
+    await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 180000);
 
@@ -297,7 +423,7 @@ test("workspace.create suffixes an occupied checkout branch", async () => {
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();
-    rmSync(tempRoot, { recursive: true, force: true });
+    await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 180000);
 
@@ -340,7 +466,7 @@ async function createRestorableWorkspace(baseRef: string) {
   onTestFinished(async () => {
     await client.close().catch(() => undefined);
     await daemon.close();
-    rmSync(tempRoot, { recursive: true, force: true });
+    await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
   createDivergentBases(repoDir);
   await client.connect();

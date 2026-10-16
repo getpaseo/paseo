@@ -65,3 +65,14 @@ it("matches whitespace across text nodes without inspecting hidden link destinat
     "world\nline",
   ]);
 });
+
+it("keeps semantic Markdown paragraphs separate while finding inline matches", () => {
+  const row = content(
+    "<p>İ😀hello <strong>world</strong>; hello <em>world</em>.</p><p>another paragraph</p>",
+  );
+  expect(findRenderedMatches(row, "hello world").map((range) => range.toString())).toEqual([
+    "hello world",
+    "hello world",
+  ]);
+  expect(findRenderedMatches(row, ".another")).toEqual([]);
+});

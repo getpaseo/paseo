@@ -228,11 +228,12 @@ The output includes each script's lifecycle and supervised terminal ID. Services
 Create and manage trusted plugins on a daemon:
 
 ```bash
-paseo plugin init /absolute/path/to/plugin
-paseo plugin install /absolute/path/to/plugin
-paseo plugin add owner/repository
+paseo plugin init ./plugin
+paseo plugin install ./plugin
+paseo plugin add owner/slug
+paseo plugin add git:owner/repository
 paseo plugin add https://gitlab.com/group/repository.git --ref main
-paseo plugin add owner/monorepo:plugins/review
+paseo plugin add git:owner/monorepo:plugins/review
 paseo plugin ls [id]
 paseo plugin update my-plugin
 paseo plugin update --all
@@ -243,8 +244,10 @@ paseo plugin enable my-plugin
 paseo plugin remove my-plugin
 ```
 
-GitHub shorthand checks an existing host directory first. Append `:<directory>` for a plugin in a
-monorepo. `paseo plugin ls [id]` does not contact the remote. `paseo plugin logs <id>` returns the
+Bare `owner/slug` installs a reviewed registry listing. Use `git:owner/repository` for GitHub
+source, or `./plugin` for a local directory. Append `:<directory>` for a plugin in a monorepo.
+
+`paseo plugin ls [id]` does not contact the remote. `paseo plugin logs <id>` returns the
 plugin's recent daemon-side stdout and stderr. Add `--json` for structured entries, or run
 `paseo --host <target> plugin logs <id>` for another daemon. See the
 [Plugin reference](/docs/plugins/reference) for installation, trust, lifecycle, and log-retention
