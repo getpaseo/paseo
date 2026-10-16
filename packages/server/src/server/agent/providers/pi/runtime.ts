@@ -6,6 +6,7 @@ import type {
   PiRuntimeEvent,
   PiSessionState,
   PiSessionStats,
+  PiStreamingBehavior,
 } from "./rpc-types.js";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 
@@ -42,9 +43,12 @@ export interface PiStartSessionInput {
 export interface PiRuntimeSession {
   readonly environment: Record<string, string>;
   onEvent(callback: (event: PiRuntimeEvent) => void): () => void;
+  // With streamingBehavior, a busy Pi queues the message instead of rejecting it, and an
+  // idle Pi starts a run with it.
   prompt(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
+    options?: { streamingBehavior?: PiStreamingBehavior },
   ): Promise<PiPromptAck>;
   steer(
     message: string,

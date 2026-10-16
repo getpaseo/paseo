@@ -15,6 +15,10 @@ import { createAgentMcpServer as createAgentMcpServerWithDependencies } from "./
 import { AgentManager, type ManagedAgent } from "./agent-manager.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
+import { OmpAgentClient } from "./providers/omp/agent.js";
+import { FakeOmp } from "./providers/omp/test-utils/fake-omp.js";
+import { PiRpcAgentClient } from "./providers/pi/agent.js";
+import { FakePi } from "./providers/pi/test-utils/fake-pi.js";
 import type {
   AgentClient,
   AgentMode,
@@ -3856,8 +3860,7 @@ class HeldTurnAgentSession implements AgentSession {
   }
 
   tryHandleOutOfBand(prompt: AgentPromptInput) {
-    const text = typeof prompt === "string" ? (parseAgentMessage(prompt)?.text ?? prompt) : null;
-    return text === "/side-command" ? { run: async () => {} } : null;
+    return prompt === "/side-command" ? { run: async () => {} } : null;
   }
 
   async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
@@ -4550,6 +4553,335 @@ describe("send_agent_prompt MCP tool", () => {
         expect(parentPrompts).toHaveLength(1);
         expect(parentPrompts[0]).toContain(child.id);
         expect(parentPrompts[0]).toContain("finished");
+      });
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
+});
+
+describe("send_agent_prompt MCP tool to an OMP child", () => {
+  const logger = createTestLogger();
+  const existingCwd = process.cwd();
+
+  async function setupOmpChild() {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-omp-child-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const parentClient = new HeldTurnAgentClient("claude", false);
+    const omp = new FakeOmp();
+    const agentManager = new AgentManager({
+      clients: { claude: parentClient, omp: new OmpAgentClient({ logger, runtime: omp }) },
+      registry: storage,
+      logger,
+    });
+    const parent = await agentManager.createAgent(
+      { provider: "claude", cwd: existingCwd },
+      undefined,
+      { workspaceId: "wks_parent" },
+    );
+    const child = await agentManager.createAgent(
+      { provider: "omp", cwd: existingCwd, title: "OMP child" },
+      undefined,
+      { workspaceId: "wks_parent" },
+    );
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage: storage,
+      callerAgentId: parent.id,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
+    return {
+      agentManager,
+      storage,
+      workdir,
+      parentClient,
+      ompSession: omp.latestSession(),
+      childId: child.id,
+      tool: registeredTool(server, "send_agent_prompt"),
+    };
+  }
+
+  async function expectOneFinishNotification(
+    agentManager: AgentManager,
+    parentClient: HeldTurnAgentClient,
+    childId: string,
+  ) {
+    await vi.waitFor(() => expect(agentManager.getAgent(childId)?.lifecycle).toBe("idle"));
+    await vi.waitFor(() => {
+      expect(parentClient.sessions[0]!.prompts).toHaveLength(1);
+      expect(parentClient.sessions[0]!.prompts[0]).toContain(
+        `Agent ${childId} (OMP child) finished.`,
+      );
+    });
+  }
+
+  it.each([
+    { command: "follow-up", streamingBehavior: "followUp" },
+    { command: "steer", streamingBehavior: "steer" },
+  ] as const)(
+    "delivers /$command into a turn OMP started on its own, without aborting it",
+    async ({ command, streamingBehavior }) => {
+      const { agentManager, storage, workdir, parentClient, ompSession, childId, tool } =
+        await setupOmpChild();
+      try {
+        ompSession.beginTurn();
+        ompSession.streamAssistantText("background job finished, working on it");
+        await vi.waitFor(() => {
+          expect(agentManager.getAgent(childId)?.activeTurnId).toMatch(/^autonomous-/);
+        });
+
+        const response = await invokeToolWithParsedInput(tool, {
+          agentId: childId,
+          prompt: `/${command} then summarize the logs`,
+        });
+
+        expect(response.structuredContent).toMatchObject({
+          success: true,
+          disposition: "out_of_band",
+          status: "running",
+        });
+        await vi.waitFor(() => {
+          expect(ompSession.prompts).toEqual([
+            { message: "then summarize the logs", imageCount: 0, streamingBehavior },
+          ]);
+        });
+        expect(ompSession.abortRequested).toBe(false);
+        expect(agentManager.getAgent(childId)?.lifecycle).toBe("running");
+
+        ompSession.finishTurn();
+        await expectOneFinishNotification(agentManager, parentClient, childId);
+      } finally {
+        await removeAgentStateDir(agentManager, storage, workdir);
+      }
+    },
+  );
+
+  it("lets an idle child start a run with the follow-up", async () => {
+    const { agentManager, storage, workdir, parentClient, ompSession, childId, tool } =
+      await setupOmpChild();
+    try {
+      const response = await invokeToolWithParsedInput(tool, {
+        agentId: childId,
+        prompt: "/follow-up check the build",
+      });
+
+      expect(response.structuredContent).toMatchObject({
+        success: true,
+        disposition: "out_of_band",
+        status: "idle",
+      });
+      await vi.waitFor(() => {
+        expect(ompSession.prompts).toEqual([
+          { message: "check the build", imageCount: 0, streamingBehavior: "followUp" },
+        ]);
+      });
+
+      ompSession.beginTurn();
+      ompSession.streamAssistantText("Build is green");
+      await vi.waitFor(() => expect(agentManager.getAgent(childId)?.lifecycle).toBe("running"));
+      ompSession.finishTurn();
+      await expectOneFinishNotification(agentManager, parentClient, childId);
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
+});
+
+describe("send_agent_prompt MCP tool to a Pi child", () => {
+  const logger = createTestLogger();
+  const existingCwd = process.cwd();
+
+  async function setupPiChild() {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-pi-child-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const parentClient = new HeldTurnAgentClient("claude", false);
+    const pi = new FakePi();
+    const agentManager = new AgentManager({
+      clients: { claude: parentClient, pi: new PiRpcAgentClient({ logger, runtime: pi }) },
+      registry: storage,
+      logger,
+    });
+    const parent = await agentManager.createAgent(
+      { provider: "claude", cwd: existingCwd },
+      undefined,
+      { workspaceId: "wks_parent" },
+    );
+    const child = await agentManager.createAgent(
+      { provider: "pi", cwd: existingCwd, title: "Pi child" },
+      undefined,
+      { workspaceId: "wks_parent" },
+    );
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage: storage,
+      callerAgentId: parent.id,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
+    return {
+      agentManager,
+      storage,
+      workdir,
+      parentClient,
+      piSession: pi.latestSession(),
+      childId: child.id,
+      tool: registeredTool(server, "send_agent_prompt"),
+    };
+  }
+
+  async function expectOneFinishNotification(
+    agentManager: AgentManager,
+    parentClient: HeldTurnAgentClient,
+    childId: string,
+  ) {
+    await vi.waitFor(() => expect(agentManager.getAgent(childId)?.lifecycle).toBe("idle"));
+    await vi.waitFor(() => {
+      expect(parentClient.sessions[0]!.prompts).toHaveLength(1);
+      expect(parentClient.sessions[0]!.prompts[0]).toContain(
+        `Agent ${childId} (Pi child) finished.`,
+      );
+    });
+    await vi.waitFor(() => expect(parentClient.sessions[0]!.prompts).toHaveLength(1));
+  }
+
+  it("queues a follow-up into a run Pi started on its own, without aborting it", async () => {
+    const { agentManager, storage, workdir, parentClient, piSession, childId, tool } =
+      await setupPiChild();
+    try {
+      piSession.emit({ type: "agent_start" });
+      piSession.emit({ type: "turn_start" });
+      await vi.waitFor(() => {
+        expect(agentManager.getAgent(childId)?.activeTurnId).toMatch(/^autonomous-/);
+      });
+
+      const response = await invokeToolWithParsedInput(tool, {
+        agentId: childId,
+        prompt: "/follow-up then summarize the logs",
+      });
+
+      expect(response.structuredContent).toMatchObject({
+        success: true,
+        disposition: "out_of_band",
+        status: "running",
+      });
+      await vi.waitFor(() => {
+        expect(piSession.prompts).toEqual([
+          { message: "then summarize the logs", imageCount: 0, streamingBehavior: "followUp" },
+        ]);
+      });
+      expect(piSession.controlRequests).toEqual([]);
+      expect(agentManager.getAgent(childId)?.lifecycle).toBe("running");
+
+      piSession.finishTurn({
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text: "Summarized" }],
+      });
+      await expectOneFinishNotification(agentManager, parentClient, childId);
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
+
+  it("steers a turn Paseo started, without canceling it", async () => {
+    const { agentManager, storage, workdir, parentClient, piSession, childId, tool } =
+      await setupPiChild();
+    try {
+      await invokeToolWithParsedInput(tool, {
+        agentId: childId,
+        prompt: "Ongoing task",
+        notifyOnFinish: false,
+      });
+      piSession.emit({ type: "agent_start" });
+      piSession.emit({ type: "turn_start" });
+      const foregroundTurnId = agentManager.getAgent(childId)?.activeForegroundTurnId;
+      expect(foregroundTurnId).toBeTruthy();
+
+      const response = await invokeToolWithParsedInput(tool, {
+        agentId: childId,
+        prompt: "/steer skip the flaky test",
+      });
+
+      expect(response.structuredContent).toMatchObject({
+        success: true,
+        disposition: "out_of_band",
+        status: "running",
+      });
+      await vi.waitFor(() => {
+        expect(piSession.prompts.at(-1)).toEqual({
+          message: "skip the flaky test",
+          imageCount: 0,
+          streamingBehavior: "steer",
+        });
+      });
+      expect(piSession.prompts).toHaveLength(2);
+      expect(piSession.controlRequests).toEqual([]);
+      expect(agentManager.getAgent(childId)?.activeForegroundTurnId).toBe(foregroundTurnId);
+
+      piSession.finishTurn({
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text: "Done" }],
+      });
+      await expectOneFinishNotification(agentManager, parentClient, childId);
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
+
+  it("lets an idle child start a run with the follow-up", async () => {
+    const { agentManager, storage, workdir, parentClient, piSession, childId, tool } =
+      await setupPiChild();
+    try {
+      const response = await invokeToolWithParsedInput(tool, {
+        agentId: childId,
+        prompt: "/follow-up check the build",
+      });
+
+      expect(response.structuredContent).toMatchObject({
+        success: true,
+        disposition: "out_of_band",
+        status: "idle",
+      });
+      await vi.waitFor(() => {
+        expect(piSession.prompts).toEqual([
+          { message: "check the build", imageCount: 0, streamingBehavior: "followUp" },
+        ]);
+      });
+      expect(parentClient.sessions[0]!.prompts).toHaveLength(0);
+
+      piSession.emit({ type: "agent_start" });
+      piSession.emit({ type: "turn_start" });
+      await vi.waitFor(() => expect(agentManager.getAgent(childId)?.lifecycle).toBe("running"));
+      piSession.finishTurn({
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text: "Build is green" }],
+      });
+      await expectOneFinishNotification(agentManager, parentClient, childId);
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
+
+  it("still starts a normal turn for a plain prompt to an idle child", async () => {
+    const { agentManager, storage, workdir, piSession, childId, tool } = await setupPiChild();
+    try {
+      const response = await invokeToolWithParsedInput(tool, {
+        agentId: childId,
+        prompt: "Plain task",
+        notifyOnFinish: false,
+      });
+
+      expect(response.structuredContent).toMatchObject({
+        success: true,
+        disposition: "turn_started",
+      });
+      expect(piSession.prompts).toHaveLength(1);
+      expect(piSession.prompts[0]!.streamingBehavior).toBeUndefined();
+      expect(parseAgentMessage(piSession.prompts[0]!.message)).toMatchObject({
+        text: "Plain task",
       });
     } finally {
       await removeAgentStateDir(agentManager, storage, workdir);

@@ -2989,6 +2989,18 @@ describe("PiRpcAgentClient", () => {
         argumentHint: "[on|off|toggle]",
         kind: "command",
       },
+      {
+        name: "steer",
+        description: "Steer the active Pi run",
+        argumentHint: "<message>",
+        kind: "command",
+      },
+      {
+        name: "follow-up",
+        description: "Queue a follow-up message for Pi",
+        argumentHint: "<message>",
+        kind: "command",
+      },
       { name: "review", description: "Review changes", argumentHint: "", kind: "command" },
       { name: "fix-tests", description: "Fix tests", argumentHint: "", kind: "command" },
       { name: "skill:docs", description: "Read docs", argumentHint: "", kind: "skill" },
@@ -3035,8 +3047,55 @@ describe("PiRpcAgentClient", () => {
         argumentHint: "[on|off|toggle]",
         kind: "command",
       },
+      {
+        name: "steer",
+        description: "Steer the active Pi run",
+        argumentHint: "<message>",
+        kind: "command",
+      },
+      {
+        name: "follow-up",
+        description: "Queue a follow-up message for Pi",
+        argumentHint: "<message>",
+        kind: "command",
+      },
     ]);
   });
+
+  test.each([
+    { command: "follow-up", streamingBehavior: "followUp" },
+    { command: "steer", streamingBehavior: "steer" },
+  ] as const)(
+    "sends /$command to Pi as a prompt that queues while Pi is busy",
+    async ({ command, streamingBehavior }) => {
+      const { pi, session, events } = await createSession();
+      const fakeSession = pi.latestSession();
+      fakeSession.emit({ type: "agent_start" });
+      fakeSession.emit({ type: "turn_start" });
+
+      const handler = (session as AgentSession).tryHandleOutOfBand?.(
+        `/${command} also check the docs`,
+      );
+      expect(handler).not.toBeNull();
+      await handler?.run({ emit: () => {} });
+
+      expect(fakeSession.prompts).toEqual([
+        { message: "also check the docs", imageCount: 0, streamingBehavior },
+      ]);
+      expect(fakeSession.steerCalls).toEqual([]);
+      expect(fakeSession.controlRequests).toEqual([]);
+      expect(events.turnLifecycleEvents()).toEqual([{ type: "turn_started", turnId: undefined }]);
+    },
+  );
+
+  test.each(["/follow-up", "/steer", "/follow-up   "])(
+    "leaves %s without a message to the normal prompt path",
+    async (prompt) => {
+      const { session } = await createSession();
+
+      expect((session as AgentSession).tryHandleOutOfBand?.(prompt)).toBeNull();
+    },
+  );
 
   test("executes Pi compact through RPC instead of prompt text", async () => {
     const { pi, session } = await createSession();
