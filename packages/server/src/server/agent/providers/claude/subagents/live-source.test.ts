@@ -576,6 +576,117 @@ describe("ClaudeTaskProtocolSource", () => {
   });
 });
 
+describe("ClaudeTaskProtocolSource workflow agents", () => {
+  // Shape copied from real wire output (Claude Code 2.1.286): the CLI adds `workflow_progress`
+  // to a workflow's task_progress, carrying every phase marker and agent so far.
+  function workflowProgress(agents: Record<string, unknown>[]): SDKMessage {
+    return {
+      type: "system",
+      subtype: "task_progress",
+      task_id: "a1730a6215e1f5cf6",
+      workflow_progress: [
+        { type: "workflow_phase", index: 1, title: "Check" },
+        ...agents.map((agent, index) => ({
+          type: "workflow_agent",
+          index: index + 1,
+          phaseIndex: 1,
+          phaseTitle: "Check",
+          ...agent,
+        })),
+      ],
+    } as unknown as SDKMessage;
+  }
+
+  function startedWorkflow(): ClaudeTaskProtocolSource {
+    const source = new ClaudeTaskProtocolSource({ readWorkflowResult: () => undefined });
+    source.observe(taskStarted({ task_type: "local_workflow", subagent_type: undefined }));
+    return source;
+  }
+
+  it("reads each agent's state and label off the workflow's progress", () => {
+    const source = startedWorkflow();
+
+    expect(
+      source.observe(
+        workflowProgress([
+          { label: "metamask", state: "done", startedAt: 10, lastProgressAt: 40 },
+          { label: "phantom", state: "progress", startedAt: 10, lastProgressAt: 30 },
+          { label: "rabby", state: "start", startedAt: 20, lastProgressAt: 20 },
+          { label: "exodus", state: "start", queuedAt: 10 },
+          { label: "keplr", state: "error", startedAt: 10, error: "API Error" },
+          { label: "argent", state: "cancelled", startedAt: 10 },
+        ]),
+      ),
+    ).toEqual([
+      {
+        kind: "workflow_agents",
+        id: "toolu_01DgLoPMW9",
+        agents: [
+          { status: "completed", label: "metamask", lastProgressAt: 40 },
+          { status: "running", label: "phantom", lastProgressAt: 30 },
+          { status: "running", label: "rabby", lastProgressAt: 20 },
+          { status: "queued", label: "exodus", lastProgressAt: null },
+          { status: "failed", label: "keplr", lastProgressAt: null },
+          { status: "canceled", label: "argent", lastProgressAt: null },
+        ],
+      },
+    ]);
+  });
+
+  it("stays quiet while no agent changes", () => {
+    const source = startedWorkflow();
+    const agents = [{ label: "metamask", state: "progress", startedAt: 10, lastProgressAt: 30 }];
+    source.observe(workflowProgress(agents));
+
+    expect(source.observe(workflowProgress(agents))).toEqual([]);
+  });
+
+  it("ignores progress lists on a task that is not a workflow", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted());
+
+    expect(source.observe(workflowProgress([{ label: "metamask", state: "start" }]))).toEqual([]);
+  });
+
+  it("settles the agents a finished workflow left mid-state, before its status", () => {
+    const source = startedWorkflow();
+    source.observe(
+      workflowProgress([
+        { label: "metamask", state: "done", startedAt: 10 },
+        { label: "phantom", state: "progress", startedAt: 10 },
+        { label: "exodus", state: "start", queuedAt: 10 },
+      ]),
+    );
+
+    expect(source.observe(taskNotification("completed"))).toEqual([
+      {
+        kind: "workflow_agents",
+        id: "toolu_01DgLoPMW9",
+        agents: [
+          { status: "completed", label: "metamask", lastProgressAt: null },
+          { status: "completed", label: "phantom", lastProgressAt: null },
+          { status: "canceled", label: "exodus", lastProgressAt: null },
+        ],
+      },
+      { kind: "status", id: "toolu_01DgLoPMW9", status: "completed" },
+    ]);
+  });
+
+  it("stops the agents of a workflow whose runtime died", () => {
+    const source = startedWorkflow();
+    source.observe(workflowProgress([{ label: "phantom", state: "progress", startedAt: 10 }]));
+
+    expect(source.failRunningTasks()).toEqual([
+      {
+        kind: "workflow_agents",
+        id: "toolu_01DgLoPMW9",
+        agents: [{ status: "canceled", label: "phantom", lastProgressAt: null }],
+      },
+      { kind: "status", id: "toolu_01DgLoPMW9", status: "failed" },
+    ]);
+  });
+});
+
 describe("ClaudeTaskProtocolSource usage and runtime", () => {
   function assistantFrame(model: string): SDKMessage {
     return { type: "assistant", message: { model, content: [] } } as unknown as SDKMessage;

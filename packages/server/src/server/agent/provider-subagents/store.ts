@@ -9,6 +9,14 @@ import type {
 
 export type ProviderSubagentStatus = "running" | "completed" | "failed" | "canceled";
 
+/** One agent a workflow-style subagent runs. Queued is the one state a subagent itself never has. */
+export interface ProviderSubagentWorkflowAgent {
+  status: "queued" | ProviderSubagentStatus;
+  label: string | null;
+  /** Epoch ms of the agent's last progress report. */
+  lastProgressAt: number | null;
+}
+
 export interface ProviderSubagentDescriptor {
   id: string;
   parentAgentId: string;
@@ -23,6 +31,7 @@ export interface ProviderSubagentDescriptor {
   toolCallId: string | null;
   cwd: string | null;
   subtitle: string | null;
+  workflowAgents: ProviderSubagentWorkflowAgent[] | null;
 }
 
 export type ProviderSubagentInputEvent =
@@ -39,6 +48,7 @@ export type ProviderSubagentInputEvent =
       toolCallId?: string | null;
       cwd?: string | null;
       subtitle?: string | null;
+      workflowAgents?: ProviderSubagentWorkflowAgent[] | null;
       parentSubagentId?: string | null;
       timestamp?: string;
     }
@@ -125,6 +135,7 @@ export class ProviderSubagentStore {
       toolCallId: stickyField(event.toolCallId, previous?.toolCallId),
       cwd: stickyField(event.cwd, previous?.cwd),
       subtitle: stickyField(event.subtitle, previous?.subtitle),
+      workflowAgents: stickyField(event.workflowAgents, previous?.workflowAgents),
       parentSubagentId: stickyField(event.parentSubagentId, previous?.parentSubagentId),
     };
     this.descriptors.set(key, subagent);

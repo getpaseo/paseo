@@ -4697,6 +4697,19 @@ export const AgentTimelineListPromptsResponseMessageSchema = z.object({
   }),
 });
 
+// The enum is closed: an old client rejects the whole upsert on a value it does not know, so a
+// new state needs a new field rather than a new member here.
+export const ProviderSubagentWorkflowAgentPayloadSchema = z.object({
+  status: z.enum(["queued", "running", "completed", "failed", "canceled"]),
+  label: z.string().nullable().optional(),
+  // Epoch ms of the agent's last progress report. Clients read a long silence as a stall.
+  lastProgressAt: z.number().nullable().optional(),
+});
+
+export type ProviderSubagentWorkflowAgentPayload = z.infer<
+  typeof ProviderSubagentWorkflowAgentPayloadSchema
+>;
+
 export const ProviderSubagentDescriptorPayloadSchema = z.object({
   id: z.string(),
   parentAgentId: z.string(),
@@ -4713,6 +4726,9 @@ export const ProviderSubagentDescriptorPayloadSchema = z.object({
   // Compact provider-owned context for the shared track. Providers choose what belongs here and
   // format it for display; clients must not parse provider-specific facts out of this string.
   subtitle: z.string().nullable().optional(),
+  // Agents a workflow-style subagent runs, in launch order. Absent for ordinary subagents and
+  // from daemons that predate it.
+  workflowAgents: z.array(ProviderSubagentWorkflowAgentPayloadSchema).nullable().optional(),
 });
 
 export type ProviderSubagentDescriptorPayload = z.infer<
