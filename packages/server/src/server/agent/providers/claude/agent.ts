@@ -3813,25 +3813,52 @@ class ClaudeAgentSession implements AgentSession {
     if (event.type === "turn_failed" || event.type === "turn_canceled") {
       this.flushPendingToolCalls();
     }
+    this.notifyFailedCompaction();
     this.notifySubscribers(event);
     this.activeForegroundTurnId = null;
     this.activeForegroundQuery = null;
     this.activeForegroundInput = null;
     this.cancelCurrentTurn = null;
     this.activeTurnHasAssistantText = false;
-    this.compactionMarkerOpen = false;
     this.syncTurnState("foreground turn terminal");
+  }
+
+  /**
+   * A compaction marker still open when its turn ends belongs to a compaction that never reached
+   * its compact_boundary: it failed, or the turn was interrupted before Claude Code reported the
+   * result. Either way the marker is closed as failed, ahead of the terminal event.
+   */
+  private takeFailedCompactionEvent(): AgentStreamEvent | null {
+    this.compacting = false;
+    if (!this.compactionMarkerOpen) {
+      return null;
+    }
+    this.compactionMarkerOpen = false;
+    return {
+      type: "timeline",
+      item: { type: "compaction", status: "failed" },
+      provider: "claude",
+    };
+  }
+
+  private notifyFailedCompaction(): void {
+    if (!this.compactionMarkerOpen) {
+      return;
+    }
+    const failed = this.takeFailedCompactionEvent();
+    if (failed) this.notifySubscribers(failed);
   }
 
   private dispatchEvents(events: AgentStreamEvent[]): void {
     let terminalSeen = false;
     for (const event of events) {
+      const terminal = this.isTerminalTurnEvent(event);
+      if (terminal) this.notifyFailedCompaction();
       this.notifySubscribers(event);
-      terminalSeen ||= this.isTerminalTurnEvent(event);
+      terminalSeen ||= terminal;
     }
 
     if (terminalSeen) {
-      this.compactionMarkerOpen = false;
       if (this.activeForegroundTurnId) {
         this.activeForegroundTurnId = null;
         this.activeForegroundQuery = null;
@@ -3868,12 +3895,12 @@ class ClaudeAgentSession implements AgentSession {
     if (!this.autonomousTurn) {
       return;
     }
+    this.notifyFailedCompaction();
     this.notifySubscribers({ type: "turn_completed", provider: "claude" });
     this.autonomousTurn = null;
     this.activeForegroundQuery = null;
     this.activeForegroundInput = null;
     this.activeTurnHasAssistantText = false;
-    this.compactionMarkerOpen = false;
     this.syncTurnState("autonomous turn completed");
   }
 
@@ -4564,7 +4591,14 @@ class ClaudeAgentSession implements AgentSession {
           availableModes: this.availableModes,
         });
       }
-      const status = toObjectRecord(message)?.status;
+      const statusRecord = toObjectRecord(message);
+      const status = statusRecord?.status;
+      // A compaction that fails ends with a status message carrying compact_result "failed" and no
+      // compact_boundary, so this is the only place its marker can be closed.
+      if (statusRecord?.compact_result === "failed") {
+        const failed = this.takeFailedCompactionEvent();
+        if (failed) events.push(failed);
+      }
       if (status === "compacting") {
         this.compacting = true;
         // Claude Code repeats this status every 30 seconds until the compaction

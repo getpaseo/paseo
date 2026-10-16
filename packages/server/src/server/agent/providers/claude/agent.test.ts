@@ -3241,6 +3241,40 @@ describe("ClaudeAgentSession context window usage", () => {
     }
   });
 
+  test("a failed compaction closes its marker", async () => {
+    // Claude Code ends a failed /compact with a status message carrying compact_result "failed"
+    // and never sends a compact_boundary.
+    const session = await createSessionForTurns([
+      [
+        createCompactingStatus(),
+        {
+          type: "system",
+          subtype: "status",
+          status: null,
+          compact_result: "failed",
+          compact_error: "You've hit your session limit",
+          session_id: "session-1",
+        },
+        createSuccessResult(),
+      ],
+      [createCompactingStatus(), createCompactBoundary(), createSuccessResult()],
+    ]);
+
+    try {
+      const compactionStatuses = (events: AgentStreamEvent[]) =>
+        events.flatMap((event) =>
+          event.type === "timeline" && event.item.type === "compaction" ? [event.item.status] : [],
+        );
+      const failedTurn = await collectStreamEvents(session, "failed compaction");
+      expect(compactionStatuses(failedTurn)).toEqual(["loading", "failed"]);
+
+      const nextTurn = await collectStreamEvents(session, "next compaction");
+      expect(compactionStatuses(nextTurn)).toEqual(["loading", "completed"]);
+    } finally {
+      await session.close();
+    }
+  });
+
   test("reports the plan mode Claude enters on its own with EnterPlanMode", async () => {
     // Claude Code announces a mode it switched to itself as a status message
     // carrying the new permissionMode, right after the EnterPlanMode tool call.
@@ -3289,7 +3323,11 @@ describe("ClaudeAgentSession context window usage", () => {
 
     try {
       const abandonedTurn = await collectStreamEvents(session, "abandoned compaction");
-      expect(abandonedTurn.filter(isLoadingCompactionEvent)).toHaveLength(1);
+      expect(
+        abandonedTurn.flatMap((event) =>
+          event.type === "timeline" && event.item.type === "compaction" ? [event.item.status] : [],
+        ),
+      ).toEqual(["loading", "failed"]);
 
       const nextTurn = await collectStreamEvents(session, "next compaction");
       expect(nextTurn.filter(isLoadingCompactionEvent)).toHaveLength(1);
@@ -3323,6 +3361,15 @@ describe("ClaudeAgentSession context window usage", () => {
       expect(interruptedTurn).toContainEqual(
         expect.objectContaining({ type: "turn_canceled", provider: "claude" }),
       );
+      const failedIndex = interruptedTurn.findIndex(
+        (event) =>
+          event.type === "timeline" &&
+          event.item.type === "compaction" &&
+          event.item.status === "failed",
+      );
+      const canceledIndex = interruptedTurn.findIndex((event) => event.type === "turn_canceled");
+      expect(failedIndex).toBeGreaterThanOrEqual(0);
+      expect(failedIndex).toBeLessThan(canceledIndex);
 
       const nextTurn = await collectStreamEvents(session, "next compaction");
       expect(nextTurn.filter(isLoadingCompactionEvent)).toHaveLength(1);

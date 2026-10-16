@@ -1467,6 +1467,12 @@ function reduceTimelineCompaction(
   timestamp: Date,
   timelineCursor?: TimelinePosition,
 ): StreamItem[] {
+  if (item.status === "failed") {
+    // The provider reports the failure itself (Claude Code's "Error during compaction: ..."), so
+    // the marker goes away instead of turning into a row of its own.
+    const loadingIdx = state.findIndex((s) => s.kind === "compaction" && s.status === "loading");
+    return loadingIdx < 0 ? state : [...state.slice(0, loadingIdx), ...state.slice(loadingIdx + 1)];
+  }
   if (item.status === "completed") {
     const loadingIdx = state.findIndex((s) => s.kind === "compaction" && s.status === "loading");
     const existing = loadingIdx >= 0 ? state[loadingIdx] : undefined;
