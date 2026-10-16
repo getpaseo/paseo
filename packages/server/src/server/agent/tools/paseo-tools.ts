@@ -825,7 +825,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     const schedule = await scheduleService.inspect(id);
     if (schedule.target.type !== type) {
       throw new Error(
-        type === "agent" ? `Heartbeat not found: ${id}` : `Schedule not found: ${id}`,
+        type === "agent"
+          ? `Record ${id} is a new-agent schedule, not a heartbeat`
+          : `Record ${id} is a heartbeat, not a new-agent schedule`,
       );
     }
     return schedule;
@@ -2593,6 +2595,67 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   );
 
   registerTool(
+    "list_heartbeats",
+    {
+      title: "List heartbeats",
+      description:
+        "List only your heartbeats, including the next wake and latest execution result.",
+      inputSchema: {},
+      outputSchema: {
+        heartbeats: z.array(
+          ScheduleSummarySchema.extend({ latestRun: ScheduleRunSchema.nullable() }),
+        ),
+      },
+    },
+    async () => {
+      if (!callerAgentId) {
+        throw new Error("Heartbeat operations require an agent-scoped session");
+      }
+      if (!scheduleService) {
+        throw new Error("Schedule service is not configured");
+      }
+      const owned = (await scheduleService.list()).filter(
+        (schedule) => schedule.target.type === "agent" && schedule.target.agentId === callerAgentId,
+      );
+      const heartbeats = owned.map((schedule) => {
+        const latestRun =
+          [...schedule.runs].sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0] ?? null;
+        return Object.assign(toScheduleSummary(schedule), { latestRun });
+      });
+      return { content: [], structuredContent: ensureValidJson({ heartbeats }) };
+    },
+  );
+
+  registerTool(
+    "inspect_heartbeat",
+    {
+      title: "Inspect heartbeat",
+      description: "Inspect one of your heartbeats, including its next wake and execution history.",
+      inputSchema: { id: z.string().min(1) },
+      outputSchema: StoredScheduleSchema.shape,
+    },
+    async ({ id }) => {
+      const heartbeat = await requireCallerHeartbeat(id);
+      return { content: [], structuredContent: ensureValidJson(heartbeat) };
+    },
+  );
+
+  registerTool(
+    "heartbeat_logs",
+    {
+      title: "Heartbeat logs",
+      description: "Read execution history for one of your heartbeats, oldest first.",
+      inputSchema: { id: z.string().min(1) },
+      outputSchema: { runs: z.array(ScheduleRunSchema) },
+    },
+    async ({ id }) => {
+      const heartbeat = await requireCallerHeartbeat(id);
+      const runs = [...heartbeat.runs].sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+      return { content: [], structuredContent: ensureValidJson({ runs }) };
+    },
+  );
+
+  registerTool(
     "delete_heartbeat",
     {
       title: "Delete heartbeat",
@@ -2617,7 +2680,8 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "list_schedules",
     {
       title: "List schedules",
-      description: "List all schedules managed by the daemon.",
+      description:
+        "List new-agent schedules managed by the daemon. Use list_heartbeats for your heartbeats.",
       inputSchema: {},
       outputSchema: {
         schedules: z.array(ScheduleSummarySchema),

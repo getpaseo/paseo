@@ -6,7 +6,62 @@ import {
   compileEveryPresetToCron,
   parseScheduleCreateInput,
   parseScheduleUpdateInput,
+  requireNewAgentSchedule,
 } from "./shared.js";
+import type { ScheduleRecord } from "./types.js";
+
+describe("schedule target errors", () => {
+  const heartbeat: ScheduleRecord = {
+    id: "heartbeat-fixture",
+    name: null,
+    prompt: "private prompt",
+    cadence: { type: "cron", expression: "0 0 1 1 *" },
+    target: { type: "agent", agentId: "fixture-owner" },
+    status: "active",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    nextRunAt: "2027-01-01T00:00:00.000Z",
+    lastRunAt: null,
+    pausedAt: null,
+    expiresAt: null,
+    maxRuns: null,
+    runs: [],
+  };
+
+  test("reports a heartbeat as the wrong type, not a missing record", async () => {
+    const client = {
+      scheduleInspect: async () => ({ requestId: "test", schedule: heartbeat, error: null }),
+    };
+    await expect(requireNewAgentSchedule(client, heartbeat.id)).rejects.toThrow(
+      "Record heartbeat-fixture is a heartbeat, not a new-agent schedule",
+    );
+  });
+
+  test("reports a genuinely missing record", async () => {
+    const client = {
+      scheduleInspect: async () => ({ requestId: "test", schedule: null, error: null }),
+    };
+    await expect(requireNewAgentSchedule(client, "missing")).rejects.toThrow(
+      "Schedule not found: missing",
+    );
+  });
+
+  test("preserves daemon errors", async () => {
+    const client = {
+      scheduleInspect: async () => ({ requestId: "test", schedule: null, error: "Read failed" }),
+    };
+    await expect(requireNewAgentSchedule(client, "missing")).rejects.toThrow("Read failed");
+  });
+
+  test("returns new-agent schedules unchanged", async () => {
+    const schedule: ScheduleRecord = {
+      ...heartbeat,
+      target: { type: "new-agent", config: { provider: "claude", cwd: "/fixture" } },
+    };
+    const client = { scheduleInspect: async () => ({ requestId: "test", schedule, error: null }) };
+    await expect(requireNewAgentSchedule(client, schedule.id)).resolves.toBe(schedule);
+  });
+});
 
 const baseOptions = {
   daemonTarget: selectDaemonTarget({ home: process.cwd() }, {}),
