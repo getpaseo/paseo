@@ -2671,11 +2671,6 @@ function WorkspaceScreenContent({
         url: "about:blank",
         state: { browserAddressFocusPending: true },
         intent: "reveal",
-        replaceTabId: destination.kind === "replace" ? destination.tabId : undefined,
-        placement:
-          destination.kind === "open" && destination.paneId
-            ? paneLocalPlacement(destination.paneId)
-            : undefined,
       });
     },
     [
@@ -2698,6 +2693,7 @@ function WorkspaceScreenContent({
       openManualBrowser({
         workspaceKey: persistenceKey,
         url: request.url,
+        ...(request.url === "about:blank" ? { state: { browserAddressFocusPending: true } } : {}),
         intent: "reveal",
         ...source,
       });

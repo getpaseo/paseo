@@ -100,9 +100,11 @@ Show and Hide affect this pane without closing its pages. Maximize is temporary 
 hiding the pane or revealing another pane clears it without rewriting saved split sizes.
 
 Tabs stay in the shared workspace layout. Each page has a distinct browser id even when URLs match.
-If you move a tab, later opens respect that placement. Adding an agent or terminal turns the pane
-into an ordinary mixed pane: browser toggles leave it visible and create or reuse a browser-only pane.
-No browser toggle closes a terminal or archives an agent.
+Browser pages share that dedicated pane. The + button and Cmd/Ctrl+T create a blank page and focus
+its address, including shortcuts from guest pages and iframes. Outside the browser, Cmd/Ctrl+T
+keeps the workspace launcher. Explicit placements and tab moves reject mixed browser/content panes.
+Restoring old layouts gathers browser tabs into one pane without replacing their identities or state;
+agents and terminals stay in their panes. No browser toggle closes a terminal or archives an agent.
 
 Route user HTTP(S) links through `utils/open-web-url.ts`, passing the click event before any async
 work. See [link routing](../public-docs/plugins/reference.md#external-links-and-workspace-browsers) for

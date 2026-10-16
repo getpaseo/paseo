@@ -55,14 +55,13 @@ function getBrowserBridge(override?: BrowserWebviewProfileHost): BrowserWebviewP
   return browser;
 }
 
-function registerBrowserWhenAttached(
+function registerBrowserWhenReady(
   webview: BrowserWebviewElement,
   identity: BrowserWebviewIdentity,
   browser: BrowserWebviewProfileHost,
 ): void {
-  // Reparenting a webview can replace its guest WebContents without replacing
-  // this DOM element, so every attachment needs a fresh main-process registration.
-  webview.addEventListener("did-attach", () => {
+  // Electron exposes getWebContentsId only after dom-ready; navigation keeps registration idempotent.
+  webview.addEventListener("dom-ready", () => {
     const webContentsId = webview.getWebContentsId();
     void browser
       .registerAttachedBrowser({
@@ -339,7 +338,7 @@ export function prepareBrowserWebview(
   if (input.initialUrl) {
     (webview as BrowserWebviewElement).src = input.initialUrl;
   }
-  registerBrowserWhenAttached(webview as BrowserWebviewElement, input, browser);
+  registerBrowserWhenReady(webview as BrowserWebviewElement, input, browser);
   webview.addEventListener("render-process-gone", handleResidentRenderProcessGone);
   webview.addEventListener("did-start-loading", handleResidentStartLoading);
 }

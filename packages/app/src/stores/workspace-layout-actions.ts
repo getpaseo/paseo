@@ -1223,6 +1223,56 @@ export function restoreWorkspaceLayout(
       });
     }
   }
+  const focusedTabId = findPaneById(root, focusedPaneId)?.focusedTabId;
+  const pages = collectAllTabs(root).filter((tab) => tab.target.kind === "browser");
+  if (pages.length) {
+    const focusedBrowserTabId = pages.find((tab) => tab.tabId === focusedTabId)?.tabId;
+    const browserWasPresented = collectAllPanes(root).some((pane) =>
+      pages.some((tab) => tab.tabId === pane.focusedTabId),
+    );
+    const browserPaneId =
+      resolveBrowserPaneId({ root, focusedPaneId }, null, explorerSidebarPaneId) ??
+      createNodeId("pane");
+    const destination = findPaneById(root, browserPaneId);
+    function migrate(node: SplitNodeInternal): SplitNodeInternal {
+      if (node.kind === "group")
+        return {
+          kind: "group",
+          group: { ...node.group, children: node.group.children.map(migrate) },
+        };
+      const tabs =
+        node.pane.id === browserPaneId
+          ? pages
+          : node.pane.tabs.filter((tab) => tab.target.kind !== "browser");
+      return createPaneNode({
+        ...node.pane,
+        tabs,
+        hidden:
+          node.pane.id === browserPaneId ? !browserWasPresented || undefined : node.pane.hidden,
+        focusedTabId:
+          node.pane.id === browserPaneId && focusedBrowserTabId
+            ? focusedBrowserTabId
+            : node.pane.focusedTabId,
+      });
+    }
+    root = migrate(root);
+    if (focusedBrowserTabId) focusedPaneId = browserPaneId;
+    if (!destination)
+      root = createGroupNode({
+        id: createNodeId("group"),
+        direction: "horizontal",
+        children: [
+          root,
+          createPaneNode({
+            id: browserPaneId,
+            tabs: pages,
+            focusedTabId: focusedBrowserTabId,
+            hidden: !browserWasPresented || undefined,
+          }),
+        ],
+        sizes: [0.35, 0.65],
+      });
+  }
   return {
     ...normalized,
     focusedPaneId,
@@ -1315,6 +1365,17 @@ export function removeTabFromTree(root: SplitNode, tabId: string): SplitNode {
   }).root;
 }
 
+/** Browser panes never accept other content; explicit incompatible placements fail. */
+export function paneAcceptsTarget(pane: SplitPane, target: WorkspaceTabTarget): boolean {
+  const tabs = collectAllTabs({ kind: "pane", pane });
+  return target.kind === "browser"
+    ? tabs.every(
+        (tab) =>
+          tab.target.kind === "browser" || (tabs.length === 1 && tab.target.kind === "new_tab"),
+      )
+    : !tabs.some((tab) => tab.target.kind === "browser");
+}
+
 function resolvePlacementPane(input: {
   layout: { root: SplitNodeInternal; focusedPaneId: string | null };
   target: WorkspaceTabTarget;
@@ -1322,6 +1383,7 @@ function resolvePlacementPane(input: {
   explorerSidebarPaneId: string | null;
 }): SplitPaneInternal | null {
   const supportsTarget = (pane: SplitPane) =>
+    paneAcceptsTarget(pane, input.target) &&
     panelSupportsHost(
       input.target.kind,
       pane.id === input.explorerSidebarPaneId ? "explorer" : "main",
@@ -1330,6 +1392,7 @@ function resolvePlacementPane(input: {
     input.placement.mode === "pane" || input.placement.mode === "prefer"
       ? findPaneById(input.layout.root, input.placement.paneId)
       : null;
+  if (requestedCandidate && !paneAcceptsTarget(requestedCandidate, input.target)) return null;
   const requestedPane =
     requestedCandidate && supportsTarget(requestedCandidate) ? requestedCandidate : null;
   if (requestedPane) {
@@ -1777,7 +1840,8 @@ export function replaceTabTargetInLayout(
   input: ReplaceTabTargetInLayoutInput,
 ): RetargetTabInLayoutResult | null {
   const layout = asInternalLayout(input.layout);
-  if (!findPaneContainingTab(layout.root, input.tabId)) return null;
+  const pane = findPaneContainingTab(layout.root, input.tabId);
+  if (!pane || !paneAcceptsTarget(pane, input.target)) return null;
   const currentTab = collectAllTabs(layout.root).find((tab) => tab.tabId === input.tabId) ?? null;
   if (currentTab && workspaceTabTargetsEqual(currentTab.target, input.target)) {
     if (input.state === undefined) {
@@ -1954,6 +2018,11 @@ export function splitPaneInLayout(input: SplitPaneInLayoutInput): SplitPaneInLay
     return null;
   }
 
+  if (
+    collectAllTabs(layout.root).find((tab) => tab.tabId === input.tabId)?.target.kind === "browser"
+  )
+    return null;
+
   const result = insertSplitInternal({
     root: layout.root,
     targetPaneId: input.targetPaneId,
@@ -2118,6 +2187,7 @@ export function moveTabToPaneInLayout(input: MoveTabToPaneInLayoutInput): Worksp
   }
 
   const sourceTab = collectAllTabs(layout.root).find((tab) => tab.tabId === input.tabId);
+  if (!sourceTab || !paneAcceptsTarget(targetPane, sourceTab.target)) return null;
   const isMovingSoleNewTab =
     sourcePane.id !== input.toPaneId &&
     sourcePane.tabIds.length === 1 &&

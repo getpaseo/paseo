@@ -1383,11 +1383,16 @@ async function runRegression({
   await delay(10_000);
   const screenshotButton = originalDeck.getByRole("button", { name: "Screenshot element" });
   await screenshotButton.click();
+  const screenshotSelectorStarted = Date.now();
   const screenshotSelectorActive = await waitForGuestSelector(client, browserId);
   if (!screenshotSelectorActive) {
     failures.push("loaded local browser remains ready for element screenshots");
   }
-  await delay(20_500);
+  await page.screenshot({
+    path: path.join(artifactDir, "local-page-screenshot-selector.png"),
+    timeout: 5_000,
+  });
+  await delay(Math.max(0, 20_500 - (Date.now() - screenshotSelectorStarted)));
   const selectorAfterPriorTimeout = await callBrowserTool(client, "browser_evaluate", {
     browserId,
     function: "() => Boolean(globalThis.__paseoSelector)",
@@ -1395,7 +1400,6 @@ async function runRegression({
   if (JSON.parse(selectorAfterPriorTimeout.resultJson) !== true) {
     failures.push("a previous selector timeout does not destroy the current selector session");
   }
-  await page.screenshot({ path: path.join(artifactDir, "local-page-screenshot-selector.png") });
   await originalDeck.getByRole("button", { name: "Cancel element selector" }).click();
 
   await originalDeck.getByTestId(`workspace-tab-agent_${callerAgentId}`).click();
@@ -1725,6 +1729,110 @@ async function waitForBrowserFixture(client, browserId) {
     await delay(50);
   }
   throw new Error(`Browser fixture ${browserId} never loaded`);
+}
+
+async function verifyCometProfileBridge(page, artifactDir) {
+  if (process.platform !== "darwin") return;
+  const result = await page.evaluate(async () => {
+    const profiles = await window.paseoDesktop.browser.listCometProfiles();
+    let invalidProfileRejected = false;
+    try {
+      await window.paseoDesktop.browser.importCometProfile({ profileId: "/not-a-profile" });
+    } catch (error) {
+      invalidProfileRejected = error.message.includes("Profil Comet indisponible");
+    }
+    return {
+      profileCount: profiles.length,
+      publicFieldsOnly: profiles.every(
+        (profile) =>
+          typeof profile.id === "string" &&
+          !profile.id.includes("/") &&
+          typeof profile.name === "string" &&
+          Object.keys(profile).sort().join(",") === "id,name",
+      ),
+      invalidProfileRejected,
+    };
+  });
+  assert(
+    result.publicFieldsOnly && result.invalidProfileRejected,
+    "Comet bridge exposed invalid profiles or accepted an arbitrary path",
+  );
+  writeJson(path.join(artifactDir, "comet-profile-bridge.json"), result);
+}
+
+async function verifyDedicatedBrowserShortcuts({
+  page,
+  client,
+  serverId,
+  target,
+  artifactDir,
+  inspectorPort,
+}) {
+  const workspaceKey = `${serverId}:${workspaceIds[0]}`;
+  await page.getByTestId(`sidebar-workspace-row-${workspaceKey}`).click();
+  const deck = page.getByTestId(`workspace-deck-entry-${workspaceKey}`);
+  const source = await callBrowserTool(client, "browser_new_tab", { url: target.url });
+  await revealBrowserForAfter(deck);
+  const row = deck.getByRole("tablist", { name: "Browser tabs", exact: true });
+  const sourceTab = row.getByTestId(`workspace-tab-browser_${source.browserId}`);
+  await sourceTab.click();
+  const guest = await readGuest(page, source.browserId);
+  const address = deck
+    .getByRole("textbox", { name: "Address", exact: true })
+    .filter({ visible: true });
+  const modifier = process.platform === "darwin" ? "meta" : "control";
+  const chord = process.platform === "darwin" ? "Meta+t" : "Control+t";
+  const checks = [];
+  for (const surface of ["address", "tab-row", "page", "iframe"]) {
+    await sourceTab.click();
+    const before = await row.getByRole("tab").count();
+    if (surface === "address") {
+      await address.focus();
+      await page.keyboard.press(chord);
+    } else if (surface === "tab-row") {
+      await sourceTab.focus();
+      await page.keyboard.press(chord);
+    } else {
+      await callBrowserTool(client, "browser_evaluate", {
+        browserId: source.browserId,
+        function:
+          surface === "iframe"
+            ? "async () => { const frame = document.createElement('iframe'); frame.srcdoc = '<input id=iframe-typing>'; document.body.appendChild(frame); await new Promise(resolve => frame.onload = resolve); frame.contentDocument.querySelector('input').focus(); return true; }"
+            : "() => { document.querySelector('#typing-target').focus(); return true; }",
+      });
+      await evaluateMain(
+        inspectorPort,
+        `(() => { const wc = process.mainModule.require('electron').webContents.fromId(${guest.webContentsId}); wc.focus(); wc.sendInputEvent({ type: 'keyDown', keyCode: 'T', modifiers: ['${modifier}'] }); wc.sendInputEvent({ type: 'keyUp', keyCode: 'T', modifiers: ['${modifier}'] }); return true; })()`,
+      );
+    }
+    await page.waitForFunction(
+      (count) =>
+        [...document.querySelectorAll('[role="tablist"][aria-label="Browser tabs"]')]
+          .filter((el) => el.getBoundingClientRect().width > 0)
+          .some((el) => el.querySelectorAll('[role="tab"]').length === count + 1),
+      before,
+    );
+    assert((await address.inputValue()) === "", `${surface}: shortcut did not create a blank page`);
+    assert(
+      await address.evaluate((el) => document.activeElement === el),
+      `${surface}: shortcut did not focus the address`,
+    );
+    const createdId = (
+      await row.getByRole("tab", { selected: true }).getAttribute("data-testid")
+    ).replace("workspace-tab-browser_", "");
+    checks.push({ surface, createdId, focusedAddress: true });
+    await callBrowserTool(client, "browser_close_tab", { browserId: createdId });
+  }
+  await sourceTab.click();
+  const after = await readGuest(page, source.browserId);
+  assert(after.webContentsId === guest.webContentsId, "Shortcuts recreated the source guest");
+  await page.screenshot({ path: path.join(artifactDir, "browser-dedicated-shortcuts.png") });
+  writeJson(path.join(artifactDir, "browser-dedicated-shortcuts.json"), {
+    checks,
+    sourceWebContentsId: guest.webContentsId,
+    finalWebContentsId: after.webContentsId,
+  });
+  await callBrowserTool(client, "browser_close_tab", { browserId: source.browserId });
 }
 
 async function verifyManualBrowserInsertion({ page, client, serverId, target, artifactDir }) {
@@ -2457,7 +2565,6 @@ async function verifyBrowserLastOrdinary({ page, serverId, artifactDir }) {
   const reopen = page.getByTestId("workspace-browser-reopen-last-closed").filter({ visible: true });
   assert(await reopen.isDisabled(), "Empty launcher without descriptor must disable reopen");
   await page.keyboard.press("Escape");
-  await row.getByRole("button", { name: "New browser tab", exact: true }).click();
   const tabId = await row.getByRole("tab", { selected: true }).getAttribute("data-testid");
   await page
     .getByRole("textbox", { name: "Address", exact: true })
@@ -2479,7 +2586,10 @@ async function verifyBrowserLastOrdinary({ page, serverId, artifactDir }) {
     .filter({ visible: true })
     .click();
   await page.keyboard.press(process.platform === "darwin" ? "Meta+w" : "Control+w");
-  await deck.getByRole("button", { name: "Close Explorer sidebar", exact: true }).click();
+  assert(
+    await deck.getByRole("button", { name: "Open Explorer sidebar", exact: true }).isVisible(),
+    "Reopening a browser must leave Explorer hidden",
+  );
   await page.getByTestId(`sidebar-workspace-row-${serverId}:${workspaceIds[0]}`).click();
 }
 
@@ -2522,10 +2632,18 @@ async function verifyBrowserPlacementError({ page, client, serverId, typingAgent
   await alert.waitFor({ state: "detached" });
   const blankRow = deck.getByRole("tablist", { name: "Browser tabs", exact: true });
   assert(await blankRow.isVisible(), "Show Retry did not reveal its blank browser pane");
+  const recordsAfterRetry = await callBrowserTool(client, "browser_list_tabs");
+  const previousIds = new Set(recordsBefore.tabs.map((tab) => tab.browserId));
+  const createdByRetry = recordsAfterRetry.tabs.filter((tab) => !previousIds.has(tab.browserId));
   assert(
-    JSON.stringify((await callBrowserTool(client, "browser_list_tabs")).tabs) ===
-      JSON.stringify(recordsBefore.tabs),
-    "Show Retry created a BrowserRecord",
+    createdByRetry.length === 1 && createdByRetry[0].url === "about:blank",
+    "Show Retry did not create exactly one blank browser page",
+  );
+  assert(
+    recordsBefore.tabs.every((before) =>
+      recordsAfterRetry.tabs.some((after) => after.browserId === before.browserId),
+    ),
+    "Show Retry removed an existing browser",
   );
   await blankRow.getByRole("tab", { selected: true }).hover();
   await blankRow.getByRole("button", { name: "Close", exact: true }).click();
@@ -2709,7 +2827,6 @@ async function verifyBrowserFinalLifecycle({
   );
   const before = await readState();
   const workspacePanes = panes(before.layoutByWorkspace[workspaceKey].root);
-  const agentPane = workspacePanes.find((pane) => pane.tabIds.includes(`agent_${callerAgentId}`));
   const terminal = workspacePanes
     .flatMap((pane) => pane.tabs ?? [])
     .find((item) => item.target.kind === "terminal" && !terminalIdsBefore.includes(item.tabId));
@@ -2722,26 +2839,26 @@ async function verifyBrowserFinalLifecycle({
     (pane) => pane.id === browserPaneId,
   );
   assert(
-    mixedPane.tabIds.includes(terminal.tabId) &&
+    !mixedPane.tabIds.includes(terminal.tabId) &&
       mixedPane.tabIds.includes(`browser_${tab.browserId}`),
-    "Terminal drag did not create a mixed browser pane",
+    "Terminal drag mixed the browser pane",
   );
-  await page.screenshot({ path: path.join(artifactDir, "browser-mixed-pane.png") });
-  await deck.getByRole("button", { name: "Show browser", exact: true }).click();
+  await page.screenshot({ path: path.join(artifactDir, "browser-mixed-move-rejected.png") });
   await deck.getByRole("button", { name: "Hide browser", exact: true }).click();
-  assert(await browserPane.isVisible(), "Browser toggle hid a mixed pane");
+  assert(!(await browserPane.isVisible()), "Browser toggle did not hide its dedicated pane");
+  await deck.getByRole("button", { name: "Show browser", exact: true }).click();
   await drag(
     browserPane.getByTestId(`workspace-tab-browser_${tab.browserId}`),
     deck.getByTestId(`workspace-tab-agent_${callerAgentId}`),
   );
-  await deck.getByRole("button", { name: "Show browser", exact: true }).click();
   await deck.getByRole("button", { name: "Hide browser", exact: true }).click();
+  await deck.getByRole("button", { name: "Show browser", exact: true }).click();
   const moved = await readState();
   assert(
     panes(moved.layoutByWorkspace[workspaceKey].root)
-      .find((pane) => pane.id === agentPane.id)
+      .find((pane) => pane.id === browserPaneId)
       .tabIds.includes(`browser_${tab.browserId}`),
-    "Toggle moved a manually placed browser",
+    "Rejected move changed browser placement",
   );
   const terminals = (await client.callTool({ name: "list_terminals", args: {} })).structuredContent;
   const agent = (
@@ -2764,9 +2881,9 @@ async function verifyBrowserFinalLifecycle({
   const reloaded = await readState();
   assert(
     panes(reloaded.layoutByWorkspace[workspaceKey].root)
-      .find((pane) => pane.id === agentPane.id)
+      .find((pane) => pane.id === browserPaneId)
       .tabIds.includes(`browser_${tab.browserId}`),
-    "Application reload lost manual placement",
+    "Application reload lost browser placement",
   );
   await deck.getByTestId(`workspace-tab-browser_${tab.browserId}`).click();
   const reloadGuest = await verifyReloadedBrowser({
@@ -2800,7 +2917,7 @@ async function verifyBrowserFinalLifecycle({
   // Removing legacy hidden flags exposes every pane accumulated by this scenario.
   // Maximize the restored pane through its real control before selecting its clipped tab.
   await deck
-    .getByTestId(`workspace-pane-${agentPane.id}`)
+    .getByTestId(`workspace-pane-${browserPaneId}`)
     .getByTestId("workspace-maximize-pane")
     .click();
   await deck.getByTestId(`workspace-tab-browser_${tab.browserId}`).click();
@@ -2991,11 +3108,10 @@ async function hideBrowserForAfter(page) {
 }
 
 async function revealBrowserForAfter(page) {
-  if (phase === "after")
-    await page
-      .getByRole("button", { name: "Show browser", exact: true })
-      .filter({ visible: true })
-      .click();
+  const show = page
+    .getByRole("button", { name: "Show browser", exact: true })
+    .filter({ visible: true });
+  if (await show.count()) await show.click();
 }
 
 async function measureBrowserReopenCycles({ page, client, target, inspectorPort, survivor }) {
@@ -3025,8 +3141,26 @@ async function measureBrowserReopenCycles({ page, client, target, inspectorPort,
   return cycles;
 }
 
+async function clearMeasurementTabs(client) {
+  for (const tab of (await callBrowserTool(client, "browser_list_tabs")).tabs) {
+    if (tab.workspaceId === workspaceIds[0])
+      await callBrowserTool(client, "browser_close_tab", { browserId: tab.browserId });
+  }
+}
+
+function assertMeasuredLatency(report) {
+  if (phase === "after" && process.env.PASEO_DESKTOP_BROWSER_TABS_ONLY === "1") {
+    for (const series of report.latency)
+      assert(
+        series.p95PresentationRequestedMs < 100,
+        `${series.tabCount} pages: presentation-request p95 ${series.p95PresentationRequestedMs} ms exceeds 100 ms`,
+      );
+  }
+}
+
 async function runTabBaseline({ page, client, serverId, target, artifactDir, inspectorPort }) {
   await page.getByTestId(`sidebar-workspace-row-${serverId}:${workspaceIds[0]}`).click();
+  await clearMeasurementTabs(client);
   const reportPath = path.join(artifactDir, `browser-tabs-${phase}.json`);
   const git = (...args) => execFileSync("git", args, { cwd: rootDir, encoding: "utf8" }).trim();
   fs.writeFileSync(
@@ -3214,6 +3348,17 @@ async function runTabBaseline({ page, client, serverId, target, artifactDir, ins
         writeJson(reportPath, report);
       }
     }
+    report.latency = [2, 10].map((tabCount) => {
+      const samples = report.samples
+        .filter((sample) => sample.tabCount === tabCount && !sample.warmup)
+        .map((sample) => sample.presentationRequestedMs)
+        .sort((left, right) => left - right);
+      return {
+        tabCount,
+        samples: samples.length,
+        p95PresentationRequestedMs: samples[Math.ceil(samples.length * 0.95) - 1],
+      };
+    });
     await evaluateMain(
       inspectorPort,
       `process.mainModule.require('electron').contentTracing.stopRecording(${JSON.stringify(tracePath)})`,
@@ -3357,6 +3502,7 @@ async function runTabBaseline({ page, client, serverId, target, artifactDir, ins
       note: "Illustrative CDP host screencast; frame timestamps are raw, playback is constant rate and is not latency evidence.",
     };
     assert(videoFrames.length > 1, "Tab-switch video contains no changing frames");
+    assertMeasuredLatency(report);
     report.completedAt = new Date().toISOString();
     return report;
   } catch (error) {
@@ -3513,6 +3659,40 @@ async function verifyWorkspaceNavigation({ page, serverId, target, artifactDir, 
   });
 }
 
+const focusedJourney =
+  process.env.PASEO_DESKTOP_BROWSER_KEYBOARD_ONLY === "1" ||
+  process.env.PASEO_DESKTOP_BROWSER_TABS_ONLY === "1" ||
+  process.env.PASEO_DESKTOP_BROWSER_LIFECYCLE_ONLY === "1";
+async function prepareJourneySettings(page) {
+  if (focusedJourney) return null;
+  return runSettingsMemoryRegression(page);
+}
+async function prepareJourneyAppearance(page) {
+  if (!focusedJourney) await runAppearanceFontSizeRegression(page);
+}
+async function runLifecycleJourney(context) {
+  await verifyBrowserLastOrdinary(context);
+  const report = await runRegression({ ...context, targetUrl: context.target.url });
+  writeJson(path.join(context.artifactDir, "regression-result.json"), report);
+  const pluginLinks = await context.checkPluginLinks();
+  context.page = context.currentPage();
+  await verifyBrowserFinalLifecycle(context);
+  writeJson(path.join(context.artifactDir, "result.json"), { ...report, pluginLinks });
+  console.log("Browser lifecycle, viewport, capture, overlays and links passed.");
+}
+
+async function runFocusedJourney(context) {
+  if (process.env.PASEO_DESKTOP_BROWSER_LIFECYCLE_ONLY === "1") return runLifecycleJourney(context);
+  if (process.env.PASEO_DESKTOP_BROWSER_KEYBOARD_ONLY === "1") {
+    await verifyDedicatedBrowserShortcuts(context);
+    console.log("Dedicated browser shortcuts passed.");
+    return;
+  }
+  if (phase === "after") await verifyManualBrowserInsertion(context);
+  await runTabBaseline(context);
+  console.log("Browser tab measurement and continuity journey passed.");
+}
+
 async function main() {
   const artifactDir =
     process.env.PASEO_DESKTOP_BROWSER_E2E_ARTIFACT_DIR ??
@@ -3666,6 +3846,8 @@ async function main() {
       .getByRole("button", { name: "Settings", exact: true })
       .waitFor({ state: "visible", timeout: timeoutMs });
 
+    await verifyCometProfileBridge(page, artifactDir);
+
     const reconnect = async () => {
       browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
       page = await waitForAppPage(browser, expoPort);
@@ -3700,7 +3882,7 @@ async function main() {
       console.log("Plugin external links and workspace browser passed.");
       return;
     }
-    const settingsMemory = await runSettingsMemoryRegression(page);
+    const settingsMemory = await prepareJourneySettings(page);
     if (process.env.PASEO_DESKTOP_SETTINGS_MEMORY_ONLY === "1") {
       writeJson(path.join(artifactDir, "result.json"), { settingsMemory });
       console.log(
@@ -3709,7 +3891,7 @@ async function main() {
       return;
     }
 
-    await runAppearanceFontSizeRegression(page);
+    await prepareJourneyAppearance(page);
 
     const callerAgentId = await createCallerAgent(daemonPort);
     const typingAgent = {
@@ -3722,6 +3904,22 @@ async function main() {
       ),
     );
     client = await experimental_createMCPClient({ transport });
+    if (focusedJourney) {
+      await runFocusedJourney({
+        page,
+        client,
+        serverId: status.serverId,
+        target,
+        artifactDir,
+        inspectorPort,
+        reconnect,
+        callerAgentId,
+        typingAgent,
+        checkPluginLinks,
+        currentPage: () => page,
+      });
+      return;
+    }
     if (phase === "after") {
       await verifyManualBrowserInsertion({
         page,

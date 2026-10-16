@@ -2379,6 +2379,15 @@ export const fr: TranslationResources = {
       title: "Général",
       sending: "Envoi",
       browserData: {
+        importComet: "Importer depuis Comet",
+        importing: "Importation…",
+        importHint: "Certains sites peuvent demander une reconnexion.",
+        importComplete: "Import terminé",
+        importPartial: "Import partiel",
+        cometProfile: "Profil Comet",
+        noCometProfiles: "Aucun profil Comet trouvé.",
+        importUnavailable: "Import indisponible. Mettez Paseo à jour.",
+
         title: "Données du navigateur",
         siteData: "Cookies et données des sites",
         description:

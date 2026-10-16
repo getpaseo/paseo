@@ -157,6 +157,14 @@ export interface DesktopBrowserBridge {
   }) => Promise<void>;
   focus?: (browserId: string) => Promise<boolean>;
   openDevTools?: (browserId: string) => Promise<unknown>;
+  listCometProfiles?: () => Promise<Array<{ id: string; name: string }>>;
+  importCometProfile?: (input: { profileId: string }) => Promise<{
+    status: "complete" | "partial";
+    imported: number;
+    skipped: number;
+    failed: number;
+    reason?: string;
+  }>;
   clearProfile?: (legacyBrowserIds: string[]) => Promise<void>;
   executeAutomationCommand?: (
     request: BrowserAutomationExecuteRequest,

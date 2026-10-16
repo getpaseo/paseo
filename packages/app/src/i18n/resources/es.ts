@@ -2314,6 +2314,14 @@ export const es: TranslationResources = {
       title: "General",
       sending: "Envío",
       browserData: {
+        importComet: "Importar desde Comet",
+        importing: "Importando…",
+        importHint: "Algunos sitios pueden pedirte que vuelvas a iniciar sesión.",
+        importComplete: "Importación completada",
+        importPartial: "Importación parcial",
+        cometProfile: "Perfil de Comet",
+        noCometProfiles: "No se encontraron perfiles de Comet.",
+        importUnavailable: "Importación no disponible. Actualiza Paseo.",
         title: "Datos del navegador",
         siteData: "Cookies y datos de sitios",
         description:

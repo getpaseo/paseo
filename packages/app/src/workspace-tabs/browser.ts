@@ -8,7 +8,6 @@ import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { createWorkspaceBrowser, getBrowserRecord, useBrowserStore } from "@/desktop/browser/store";
 import { useSessionStore } from "@/stores/session-store";
 import {
-  collectAllPanes,
   collectAllTabs,
   createWorkspaceLayoutWithExplorerSidebar,
   findPaneById,
@@ -19,6 +18,7 @@ import {
 } from "@/stores/workspace-layout-store";
 import {
   resolveBrowserPaneId,
+  paneAcceptsTarget,
   type WorkspaceTabInsertionPosition,
 } from "@/stores/workspace-layout-actions";
 import { panelTargetSupportsHostForWorkspaceKey } from "@/plugins/workspace-panels/locations";
@@ -68,10 +68,14 @@ interface BrowserOpenContext {
 }
 
 function supportsBrowserPane(context: BrowserOpenContext, paneId: string): boolean {
-  return panelTargetSupportsHostForWorkspaceKey(
-    context.workspaceKey,
-    { kind: "browser", browserId: "pending" },
-    paneId === context.explorerPaneId ? "explorer" : "main",
+  const pane = findPaneById(context.layout.root, paneId);
+  return (
+    Boolean(pane && paneAcceptsTarget(pane, { kind: "browser", browserId: "pending" })) &&
+    panelTargetSupportsHostForWorkspaceKey(
+      context.workspaceKey,
+      { kind: "browser", browserId: "pending" },
+      paneId === context.explorerPaneId ? "explorer" : "main",
+    )
   );
 }
 
@@ -98,8 +102,15 @@ function resolveExplicitBrowserPlacement(
   context: BrowserOpenContext,
   placement: Extract<WorkspaceTabPlacement, { mode: "pane" | "prefer" }>,
 ): WorkspaceTabPlacement | null {
+  if (context.existing && placement.mode === "prefer") return { mode: "ambient" };
   const pane = findPaneById(context.layout.root, placement.paneId);
   if (!pane || !supportsBrowserPane(context, pane.id)) return null;
+  if (
+    input.intent === "background" &&
+    pane.hidden !== true &&
+    collectAllTabs({ kind: "pane", pane }).some((tab) => tab.target.kind !== "browser")
+  )
+    return null;
   if (!context.existing || placement.mode === "prefer") return placement;
   const sourcePane = findPaneContainingTab(context.layout.root, context.existing.tabId);
   const movesExisting = sourcePane?.id !== pane.id;
@@ -117,20 +128,11 @@ function resolveBrowserPlacement(
     return resolveExplicitBrowserPlacement(input, context, placement);
   }
   if (context.existing) return placement ?? { mode: "ambient" };
-  if (!placement) {
-    const paneId = useWorkspaceLayoutStore.getState().ensureBrowserPane(context.workspaceKey, {
-      reveal: input.intent === "reveal",
-      reuseVisibleLauncher: input.intent !== "background",
-    });
-    return paneId ? { mode: "pane", paneId } : null;
-  }
-  const focused = findPaneById(context.layout.root, context.layout.focusedPaneId);
-  const canUseFocused =
-    focused && focused.hidden !== true && supportsBrowserPane(context, focused.id);
-  const destination = canUseFocused
-    ? focused
-    : collectAllPanes(context.layout.root).find((pane) => supportsBrowserPane(context, pane.id));
-  return destination ? { mode: "pane", paneId: destination.id } : null;
+  const paneId = useWorkspaceLayoutStore.getState().ensureBrowserPane(context.workspaceKey, {
+    reveal: input.intent === "reveal",
+    reuseVisibleLauncher: input.intent !== "background",
+  });
+  return paneId ? { mode: "pane", paneId } : null;
 }
 
 /** Opens only within a known workspace; explicit placement must never fall back elsewhere. */

@@ -165,6 +165,9 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     focus: (browserId: string) => ipcRenderer.invoke("paseo:browser:focus", browserId),
     openDevTools: (browserId: string) =>
       ipcRenderer.invoke("paseo:browser:open-devtools", browserId),
+    listCometProfiles: () => ipcRenderer.invoke("paseo:browser:list-comet-profiles"),
+    importCometProfile: (input: { profileId: string }) =>
+      ipcRenderer.invoke("paseo:browser:import-comet-profile", input),
     clearProfile: (legacyBrowserIds: string[]) =>
       ipcRenderer.invoke("paseo:browser:clear-profile", legacyBrowserIds),
     executeAutomationCommand: (request: Record<string, unknown>) =>

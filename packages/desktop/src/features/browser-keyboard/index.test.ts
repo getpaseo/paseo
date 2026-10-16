@@ -291,19 +291,21 @@ describe("BrowserKeyboard", () => {
     const command = process.platform === "darwin" ? { meta: true } : { control: true };
 
     const reservedWasPrevented = guest.input(electronInput({ ...command, code: "KeyL", key: "l" }));
-    const customizableWasPrevented = guest.input(
-      electronInput({ ...command, code: "KeyT", key: "t" }),
-    );
+    const newTabWasPrevented = guest.input(electronInput({ ...command, code: "KeyT", key: "t" }));
     const enterWasPrevented = guest.input(electronInput({ code: "Enter", key: "Enter" }));
 
     expect(reservedWasPrevented).toBe(true);
-    expect(customizableWasPrevented).toBe(false);
+    expect(newTabWasPrevented).toBe(true);
     expect(enterWasPrevented).toBe(false);
     expect(guest.ignoredMenuShortcuts).toEqual([false, false, true]);
     expect(host.sent).toEqual([
       {
         channel: "paseo:event:browser-shortcut",
         payload: { action: "focus-url", browserId: "browser-a" },
+      },
+      {
+        channel: "paseo:event:browser-new-tab-request",
+        payload: { sourceBrowserId: "browser-a", url: "about:blank" },
       },
     ]);
   });

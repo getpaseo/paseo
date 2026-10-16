@@ -2389,6 +2389,15 @@ export const en = {
       title: "General",
       sending: "Sending",
       browserData: {
+        importComet: "Import from Comet",
+        importing: "Importing…",
+        importHint: "Some sites may ask you to sign in again.",
+        importComplete: "Import complete",
+        importPartial: "Partial import",
+        cometProfile: "Comet profile",
+        noCometProfiles: "No Comet profiles found.",
+        importUnavailable: "Import unavailable. Update Paseo.",
+
         title: "Browser data",
         siteData: "Cookies and site data",
         description: "Browser tabs share sign-ins and site data across Paseo.",

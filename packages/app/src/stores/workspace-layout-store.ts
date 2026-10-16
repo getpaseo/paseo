@@ -34,6 +34,7 @@ import {
   getTreeDepth,
   insertSplit,
   moveTabToPaneInLayout,
+  paneAcceptsTarget,
   normalizeLayout,
   openTabInLayoutBackground,
   replaceTabTargetInLayout,
@@ -574,6 +575,7 @@ function getOpenTabPlacement(
   );
   const requestedPlacement = placement ?? AMBIENT_PLACEMENT;
   const supportsPane = (pane: SplitPane) =>
+    paneAcceptsTarget(pane, target) &&
     panelTargetSupportsHostForWorkspaceKey(
       workspaceKey,
       target,
@@ -588,7 +590,15 @@ function getOpenTabPlacement(
     (pane) => pane.hidden !== true && supportsPane(pane),
   );
   let resolvedPlacement = requestedPlacement;
-  if ((!requestedPane || !supportsPane(requestedPane)) && fallbackPane) {
+  if (
+    !(
+      requestedPane &&
+      (requestedPlacement.mode === "pane" || requestedPlacement.mode === "prefer") &&
+      !paneAcceptsTarget(requestedPane, target)
+    ) &&
+    (!requestedPane || !supportsPane(requestedPane)) &&
+    fallbackPane
+  ) {
     resolvedPlacement = {
       mode: requestedPlacement.mode === "pane" ? "pane" : "prefer",
       paneId: fallbackPane.id,
@@ -720,12 +730,37 @@ export function createWorkspaceLayoutStore(
           if (!normalizedWorkspaceKey || !normalizedTarget) {
             return null;
           }
+          // Restore the conversation canvas before opening ordinary content beside the last browser.
+          const implicitPlacement =
+            !input.placement ||
+            input.placement.mode === "focused" ||
+            input.placement.mode === "ambient";
+          if (
+            implicitPlacement &&
+            input.intent !== "background" &&
+            normalizedTarget.kind !== "browser"
+          ) {
+            const current = get().layoutByWorkspace[normalizedWorkspaceKey];
+            const visible = current ? collectAllPanes(current.root) : [];
+            const tabs =
+              visible.length === 1 ? collectAllTabs({ kind: "pane", pane: visible[0] }) : [];
+            if (tabs.length > 0 && tabs.every((tab) => tab.target.kind === "browser")) {
+              get().ensureBrowserPane(normalizedWorkspaceKey, {
+                reveal: true,
+                paneId: visible[0].id,
+              });
+            }
+          }
           const placement = getOpenTabPlacement(
             get(),
             normalizedWorkspaceKey,
             normalizedTarget,
             input.placement,
           );
+          if (input.placement?.mode === "pane") {
+            const requested = findPaneById(placement.layout.root, input.placement.paneId);
+            if (requested && !paneAcceptsTarget(requested, normalizedTarget)) return null;
+          }
           let result;
           if (input.intent === "new") {
             result = createTabInLayout({
