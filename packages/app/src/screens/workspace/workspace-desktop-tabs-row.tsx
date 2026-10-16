@@ -15,6 +15,8 @@ import {
   ArrowLeftToLine,
   ArrowRightToLine,
   Copy,
+  ExternalLink,
+  FolderOpen,
   Pencil,
   RotateCw,
   Columns2,
@@ -59,9 +61,11 @@ import { buildDeterministicWorkspaceTabId } from "@/workspace-tabs/identity";
 import {
   buildWorkspaceDesktopTabActions,
   type WorkspaceDesktopTabActions,
+  type WorkspaceTabFileActions,
   type WorkspaceTabMenuEntry,
   type WorkspaceTabMenuLabels,
 } from "@/screens/workspace/workspace-tab-menu";
+import { useWorkspaceTabFileActions } from "@/workspace/open-in-file-manager/tab-file-actions";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import type { PaneHost } from "@/panels/panel-manifest";
 import type { WorkspaceTabLaunchPurpose } from "@/workspace-tabs/launcher";
@@ -124,6 +128,8 @@ const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine);
 const ThemedArrowRightToLine = withUnistyles(ArrowRightToLine);
 const ThemedCopyX = withUnistyles(CopyX);
 const ThemedPencil = withUnistyles(Pencil);
+const ThemedExternalLink = withUnistyles(ExternalLink);
+const ThemedFolderOpen = withUnistyles(FolderOpen);
 const ThemedPlus = withUnistyles(Plus);
 const ThemedColumns2 = withUnistyles(Columns2);
 const ThemedRows2 = withUnistyles(Rows2);
@@ -428,6 +434,10 @@ function TabContextMenuItem({
         return <ThemedCopyX size={16} uniProps={mutedColorMapping} />;
       case "pencil":
         return <ThemedPencil size={16} uniProps={mutedColorMapping} />;
+      case "external-link":
+        return <ThemedExternalLink size={16} uniProps={mutedColorMapping} />;
+      case "folder-open":
+        return <ThemedFolderOpen size={16} uniProps={mutedColorMapping} />;
       case "x":
         return <ThemedX size={16} uniProps={mutedColorMapping} />;
       default:
@@ -1046,6 +1056,10 @@ function ResolvedWorkspaceDesktopTabsRow({
   onExitFocusMode,
 }: ResolvedWorkspaceDesktopTabsRowProps) {
   const { t } = useTranslation();
+  const fileActions = useWorkspaceTabFileActions({
+    serverId: normalizedServerId,
+    workspaceId: normalizedWorkspaceId,
+  });
   const newTabKeys = useShortcutKeys("workspace-tab-new");
   const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
   const [exitFocusModeWidth, setExitFocusModeWidth] = useState<number>(0);
@@ -1290,6 +1304,7 @@ function ResolvedWorkspaceDesktopTabsRow({
           onCloseTabsToLeft={onCloseTabsToLeft}
           onCloseTabsToRight={onCloseTabsToRight}
           onCloseOtherTabs={onCloseOtherTabs}
+          fileActions={fileActions}
           resolvedTabWidth={resolvedTabWidth}
           showLabel={showLabel}
           showCloseButton={shouldShowCloseButton}
@@ -1324,6 +1339,7 @@ function ResolvedWorkspaceDesktopTabsRow({
       tabMenuLabels,
       tabDropPreviewIndex,
       displayedTabs.length,
+      fileActions,
     ],
   );
 
@@ -1443,6 +1459,7 @@ function ResolvedDesktopTabChip({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
+  fileActions,
   resolvedTabWidth,
   showLabel,
   showCloseButton,
@@ -1469,6 +1486,7 @@ function ResolvedDesktopTabChip({
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
+  fileActions: WorkspaceTabFileActions | null;
   resolvedTabWidth: number;
   showLabel: boolean;
   showCloseButton: boolean;
@@ -1498,11 +1516,13 @@ function ResolvedDesktopTabChip({
         onCloseTabsToLeft,
         onCloseTabsToRight,
         onCloseOtherTabs,
+        fileActions: fileActions ?? undefined,
         labels,
       }),
     [
       index,
       item.tab,
+      fileActions,
       onCloseOtherTabs,
       onCloseTab,
       onCloseTabsToLeft,

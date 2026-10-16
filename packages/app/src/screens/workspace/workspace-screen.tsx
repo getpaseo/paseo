@@ -202,6 +202,7 @@ import { PluginHeaderButtons } from "@/plugins";
 import {
   createWorkspaceFileTabTarget,
   normalizeWorkspaceFileLocation,
+  resolveWorkspaceFilePaths,
   type WorkspaceFileLocation,
   type WorkspaceFileOpenRequest,
 } from "@/workspace/file-open";
@@ -2162,14 +2163,19 @@ function WorkspaceScreenContent({
   const handleCopyFilePath = useCallback(
     async (path: string) => {
       if (!path) return;
+      // Tab targets can be workspace-relative (files opened from the explorer);
+      // copy the absolute path so it can be pasted straight into a shell.
+      const resolved = workspaceDirectory
+        ? resolveWorkspaceFilePaths({ path, workspaceRoot: workspaceDirectory })
+        : null;
       try {
-        await Clipboard.setStringAsync(path);
+        await Clipboard.setStringAsync(resolved?.absolutePath ?? path);
         toast.copied(t("workspace.tabs.toasts.filePathCopiedLabel"));
       } catch {
         toast.error(t("workspace.tabs.toasts.copyFailed"));
       }
     },
-    [toast, t],
+    [toast, t, workspaceDirectory],
   );
 
   const handleCopyResumeCommand = useCallback(

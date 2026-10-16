@@ -274,6 +274,135 @@ describe("buildWorkspaceTabMenuEntries", () => {
     expect(onCopyFilePath).toHaveBeenCalledWith("/some/path.ts");
   });
 
+  it("adds open and reveal entries for file tabs when a desktop host provides them", () => {
+    const onOpenWithDefaultApp = vi.fn();
+    const onRevealInFileManager = vi.fn();
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab: {
+        key: "file_abc",
+        tabId: "file_abc",
+        kind: "file",
+        target: { kind: "file", path: "src/report.md" },
+      },
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context-file_abc",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+      fileActions: {
+        openWithDefaultApp: { label: "Open with default app", onSelect: onOpenWithDefaultApp },
+        revealInFileManager: { label: "Reveal in Finder", onSelect: onRevealInFileManager },
+      },
+    });
+
+    expect(entries.filter((entry) => entry.kind === "item").map((entry) => entry.label)).toEqual([
+      "Copy file path",
+      "Open with default app",
+      "Reveal in Finder",
+      "Close to the left",
+      "Close to the right",
+      "Close other tabs",
+      "Close",
+    ]);
+
+    const openEntry = entries.find(
+      (entry) => entry.kind === "item" && entry.key === "open-with-default-app",
+    );
+    const revealEntry = entries.find(
+      (entry) => entry.kind === "item" && entry.key === "reveal-in-file-manager",
+    );
+    if (!openEntry || openEntry.kind !== "item" || !revealEntry || revealEntry.kind !== "item") {
+      throw new Error("File action entries missing");
+    }
+    expect(openEntry.testID).toBe("workspace-tab-context-file_abc-open-with-default-app");
+    expect(openEntry.icon).toBe("external-link");
+    expect(revealEntry.testID).toBe("workspace-tab-context-file_abc-reveal-in-file-manager");
+    expect(revealEntry.icon).toBe("folder-open");
+    openEntry.onSelect();
+    expect(onOpenWithDefaultApp).toHaveBeenCalledWith("src/report.md");
+    revealEntry.onSelect();
+    expect(onRevealInFileManager).toHaveBeenCalledWith("src/report.md");
+  });
+
+  it("omits open and reveal entries for file tabs without a desktop host", () => {
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab: {
+        key: "file_abc",
+        tabId: "file_abc",
+        kind: "file",
+        target: { kind: "file", path: "src/report.md" },
+      },
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context-file_abc",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    expect(entries.filter((entry) => entry.kind === "item").map((entry) => entry.label)).toEqual([
+      "Copy file path",
+      "Close to the left",
+      "Close to the right",
+      "Close other tabs",
+      "Close",
+    ]);
+  });
+
+  it("passes file actions through the desktop tab action builder", () => {
+    const onRevealInFileManager = vi.fn();
+    const actions = buildWorkspaceDesktopTabActions({
+      tab: {
+        key: "file_abc",
+        tabId: "file_abc",
+        kind: "file",
+        target: { kind: "file", path: "src/report.md" },
+      },
+      index: 0,
+      tabCount: 1,
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsToLeft: vi.fn(),
+      onCloseTabsToRight: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+      fileActions: {
+        openWithDefaultApp: { label: "Open with default app", onSelect: vi.fn() },
+        revealInFileManager: { label: "Reveal in Finder", onSelect: onRevealInFileManager },
+      },
+    });
+
+    const revealEntry = actions.menuEntries.find(
+      (entry) => entry.kind === "item" && entry.key === "reveal-in-file-manager",
+    );
+    if (!revealEntry || revealEntry.kind !== "item") {
+      throw new Error("Reveal entry missing");
+    }
+    revealEntry.onSelect();
+    expect(onRevealInFileManager).toHaveBeenCalledWith("src/report.md");
+  });
+
   it("uses a Changes close id for the working diff tab", () => {
     const actions = buildWorkspaceDesktopTabActions({
       tab: {

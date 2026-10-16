@@ -233,6 +233,14 @@ export const es: TranslationResources = {
     },
   },
   agentStream: {
+    linkMenu: {
+      openInPaseo: "Abrir en Paseo",
+      openInBrowser: "Abrir en el navegador predeterminado",
+      copyFilePath: "Copiar ruta del archivo",
+      openWithDefaultApp: "Abrir con la aplicación predeterminada",
+      revealIn: "Mostrar en {{target}}",
+      fileManagerFallback: "gestor de archivos",
+    },
     empty: "Comience a chatear con este agente...",
     scrollToBottom: "Desplazarse hacia abajo",
     historyLoadFailed: "No se pudo cargar el historial del agente",
@@ -646,6 +654,7 @@ export const es: TranslationResources = {
         copyAgentId: "Copiar ID del agente",
         copyTerminalId: "Copiar ID del terminal",
         copyFilePath: "Copy file path",
+        openWithDefaultApp: "Abrir con la aplicación predeterminada",
         rename: "Rebautizar",
         closeAbove: "Cerrar pestañas arriba",
         closeBelow: "Cerrar pestañas a continuación",

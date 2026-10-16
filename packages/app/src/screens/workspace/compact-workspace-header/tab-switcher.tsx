@@ -17,6 +17,7 @@ import {
   type WorkspaceTabMenuLabels,
 } from "@/screens/workspace/workspace-tab-menu";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
+import { useWorkspaceTabFileActions } from "@/workspace/open-in-file-manager/tab-file-actions";
 
 // The trigger draws at 32pt beside its island neighbours, so only vertical slop is free.
 const TAB_SWITCHER_TRIGGER_HIT_SLOP = { top: 8, bottom: 8 } as const;
@@ -201,6 +202,10 @@ function MobileWorkspaceTabOption({
     [t],
   );
   const menuTestIDBase = `workspace-tab-menu-${tab.tabId}`;
+  const fileActions = useWorkspaceTabFileActions({
+    serverId: normalizedServerId,
+    workspaceId: normalizedWorkspaceId,
+  });
   const menuEntries = buildWorkspaceTabMenuEntries({
     surface: "mobile",
     tab,
@@ -217,6 +222,7 @@ function MobileWorkspaceTabOption({
     onCloseTabsBefore: onCloseTabsAbove,
     onCloseTabsAfter: onCloseTabsBelow,
     onCloseOtherTabs,
+    fileActions: fileActions ?? undefined,
     labels: tabMenuLabels,
   });
 
