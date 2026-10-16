@@ -3,6 +3,7 @@ import os from "node:os";
 import path, { join } from "node:path";
 import type pino from "pino";
 import type { ForgeService } from "../services/forge-service.js";
+import { ForgeRegistry } from "../services/forge-registry.js";
 import type {
   CheckoutSnapshotFacts,
   CheckoutStatusGit,
@@ -261,6 +262,7 @@ interface CreateServiceTestOptions {
   runGitCommand?: ReturnType<typeof vi.fn>;
   getWorkspaceGitSelfHealPhaseMs?: (cwd: string) => number;
   now?: () => Date;
+  forgeRegistry?: ForgeRegistry;
 }
 
 function buildDefaultTestServiceDeps() {
@@ -319,6 +321,7 @@ function createService(options?: CreateServiceTestOptions) {
   return new WorkspaceGitServiceImpl({
     logger: createLogger() as unknown as pino.Logger,
     paseoHome: "/tmp/paseo-test",
+    ...(options?.forgeRegistry ? { forgeRegistry: options.forgeRegistry } : {}),
     deps,
   });
 }
@@ -407,6 +410,95 @@ describe("WorkspaceGitServiceImpl", () => {
     expect(getPullRequestStatus).toHaveBeenCalledTimes(1);
 
     service.dispose();
+  });
+
+  test("does not publish a stale unresolved forge snapshot after the registry revision changes", async () => {
+    const remoteUrl = "https://git.acme.internal/acme/repo.git";
+    const oldProbeStarted = createDeferred<void>();
+    const oldProbeResult = createDeferred<boolean>();
+    const currentStatusStarted = createDeferred<void>();
+    const currentStatusResult = createDeferred<PullRequestStatusResult>();
+    const registry = new ForgeRegistry();
+    const oldService = createGitHubServiceStub();
+    const currentService = createGitHubServiceStub();
+    const unregisterOld = registry.register("old", {
+      createService: () => oldService,
+      probeHost: async () => {
+        oldProbeStarted.resolve();
+        return oldProbeResult.promise;
+      },
+    });
+    let unregisterCurrent: (() => void) | undefined;
+    const getPullRequestStatus = vi.fn(async (_cwd, forgeService) => {
+      expect(forgeService).toBe(currentService);
+      currentStatusStarted.resolve();
+      return currentStatusResult.promise;
+    });
+    const service = createService({
+      forgeRegistry: registry,
+      getCheckoutSnapshotFacts: vi.fn(async (cwd: string) => ({
+        ...createCheckoutSnapshotFacts(cwd),
+        remoteUrl,
+      })),
+      getCheckoutStatus: vi.fn(async (cwd: string) => createCheckoutStatus(cwd, { remoteUrl })),
+      getPullRequestStatus,
+    });
+    const listener = vi.fn();
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, listener);
+
+    try {
+      await oldProbeStarted.promise;
+      unregisterOld();
+      unregisterCurrent = registry.register("current", {
+        createService: () => currentService,
+        matchesHost: (host) => host === "git.acme.internal",
+      });
+
+      expect(service.peekSnapshot(REPO_CWD)?.forge).toMatchObject({
+        featuresEnabled: false,
+        authState: "no_remote",
+      });
+      await vi.advanceTimersByTimeAsync(1_000);
+      oldProbeResult.resolve(true);
+      await currentStatusStarted.promise;
+
+      expect(service.peekSnapshot(REPO_CWD)?.forge).toEqual({
+        featuresEnabled: false,
+        authState: "no_remote",
+        pullRequest: null,
+        error: null,
+      });
+      expect(listener.mock.calls.map(([snapshot]) => snapshot.forge)).not.toContainEqual(
+        expect.objectContaining({ forge: "git.acme.internal" }),
+      );
+
+      currentStatusResult.resolve(
+        createPullRequestStatusResult({
+          status: {
+            url: "https://git.acme.internal/acme/repo/changes/7",
+            title: "Current registry result",
+            state: "open",
+            baseRefName: "main",
+            headRefName: "feature",
+            isMerged: false,
+          },
+        }),
+      );
+      await flushPromises();
+
+      await vi.waitFor(() => {
+        expect(service.peekSnapshot(REPO_CWD)?.forge).toMatchObject({
+          forge: "current",
+          authState: "authenticated",
+          pullRequest: { title: "Current registry result" },
+        });
+      });
+      expect(getPullRequestStatus).toHaveBeenCalledTimes(1);
+    } finally {
+      subscription.unsubscribe();
+      await service.dispose();
+      unregisterCurrent?.();
+    }
   });
 
   test("getSnapshot does not probe isAuthenticated for a forge adapter that never throws from it", async () => {

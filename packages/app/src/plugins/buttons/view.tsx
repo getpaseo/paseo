@@ -2,7 +2,7 @@ import type {
   PluginButtonBehavior,
   PluginButtonIcon,
   PluginButtonMenuEntry,
-  PluginHostProps,
+  PluginNavigableHostProps,
 } from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
 import { useCallback, useMemo, useSyncExternalStore, type ReactNode } from "react";
@@ -32,6 +32,8 @@ import { useToast } from "@/contexts/toast-context";
 import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import { createPluginClientStateSource } from "../client-state/source";
+import { buildPluginHostNavigation } from "../host-navigation";
+import { usePluginLayout } from "../layout";
 import { Icon } from "../icons";
 import {
   PluginEnvironmentProvider,
@@ -43,16 +45,17 @@ import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { toPluginTheme } from "../theme";
 import { buttonMatches, type RegisteredPluginButton } from "./model";
 import { pluginButtonStore } from "./store";
-import { resolvePluginPlatform } from "../platform";
 
 interface ButtonView {
   entry: RegisteredPluginButton;
-  props: PluginHostProps & RegisteredPluginButton["context"];
+  props: PluginNavigableHostProps & RegisteredPluginButton["context"];
   environment: PluginEnvironment;
   toast: ReturnType<typeof useToast>;
 }
 
 const ROOT_PATH: readonly string[] = [];
+/** Room kept between a sized popover and the window edges. */
+const POPOVER_WINDOW_MARGIN = 16;
 
 const pluginThemeMapping = (theme: Theme) => ({ theme: toPluginTheme(theme) });
 const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -70,6 +73,8 @@ function headerButtonStyle(compact: boolean, state: IconButtonChromeState, disab
   ];
 }
 
+// These providers live inside the surface content as well as around its trigger. Native sheets
+// teleport their children, so providers around MenuRoot alone cannot reach the plugin body.
 function ButtonEnvironment({ view, children }: { view: ButtonView; children: ReactNode }) {
   return (
     <PluginEnvironmentProvider environment={view.environment}>{children}</PluginEnvironmentProvider>
@@ -243,6 +248,17 @@ function buttonPages(
   });
 }
 
+/** A popover may drop the phone sheet's title and ask for an exact width on wide layouts. */
+function useSurfaceFrame(behavior: PluginButtonBehavior, title: string) {
+  const { width: windowWidth } = useWindowDimensions();
+  const popover = behavior.kind === "popover" ? behavior : null;
+  const sheetTitle = popover?.sheetTitle === false ? undefined : title;
+  if (!popover?.width) return { sheetTitle, minWidth: 280, maxWidth: 420 };
+  // Exact, but never wider than the window it opens in.
+  const width = Math.min(popover.width, windowWidth - POPOVER_WINDOW_MARGIN);
+  return { sheetTitle, minWidth: width, maxWidth: width };
+}
+
 function ButtonControl({ view }: { view: ButtonView }) {
   const { entry, props } = view;
   const { button } = entry;
@@ -318,6 +334,7 @@ function ButtonControl({ view }: { view: ButtonView }) {
     </Pressable>
   );
   const pages = useMemo(() => buttonPages(view, button.behavior), [view, button.behavior]);
+  const frame = useSurfaceFrame(button.behavior, button.title);
   return (
     <MenuRoot compactMode="sheet" open={entry.open} onOpenChange={setOpen}>
       <Tooltip enabledOnMobile={false}>
@@ -328,10 +345,12 @@ function ButtonControl({ view }: { view: ButtonView }) {
       </Tooltip>
       {expanded ? (
         <PluginPopoverSurface
-          sheetTitle={button.title}
+          sheetTitle={frame.sheetTitle}
           side={composer ? "top" : "bottom"}
           align={composer ? "start" : "end"}
           offset={composer ? 12 : 4}
+          minWidth={frame.minWidth}
+          maxWidth={frame.maxWidth}
           pages={pages}
         >
           <ButtonSurfaceBody view={view} behavior={button.behavior} path={ROOT_PATH} />
@@ -371,14 +390,14 @@ function createButtonView({
   entry,
   client,
   toast,
-  compact,
+  layout,
   hostLabel,
   theme,
 }: {
   entry: RegisteredPluginButton;
   client: ReturnType<typeof useHostRuntimeClient>;
   toast: ReturnType<typeof useToast>;
-  compact: boolean;
+  layout: PluginNavigableHostProps["layout"];
   hostLabel: string;
   theme: PluginTheme;
 }): ButtonView | null {
@@ -395,7 +414,8 @@ function createButtonView({
       ...entry.context,
       theme,
       host: { id: entry.installation.serverId, label: hostLabel },
-      layout: { compact, platform: resolvePluginPlatform() },
+      navigation: buildPluginHostNavigation(entry.installation.serverId, entry.installation.id),
+      layout,
     },
   };
 }
@@ -413,9 +433,10 @@ function PluginButtonHost({
 }) {
   const client = useHostRuntimeClient(entry.installation.serverId);
   const toast = useToast();
+  const layout = usePluginLayout(compact);
   const view = useMemo(
-    () => createButtonView({ entry, client, toast, compact, hostLabel, theme }),
-    [entry, client, toast, compact, hostLabel, theme],
+    () => createButtonView({ entry, client, toast, layout, hostLabel, theme }),
+    [entry, client, toast, layout, hostLabel, theme],
   );
   const renderError = useCallback(
     (error: string) => <BrokenButton title={entry.button.title} error={error} compact={compact} />,
@@ -467,11 +488,12 @@ function OverflowPages({
   // The header belongs to one host, but each button keeps its installation's query cache and RPCs.
   const client = useHostRuntimeClient(entries[0].installation.serverId);
   const toast = useToast();
+  const layout = usePluginLayout(compact);
   const menuContent = useMemo(() => {
     const pages: MenuPageDefinition[] = [];
     const rows: ReactNode[] = [];
     for (const entry of entries) {
-      const view = createButtonView({ entry, client, toast, compact, hostLabel, theme });
+      const view = createButtonView({ entry, client, toast, layout, hostLabel, theme });
       if (!view) continue;
       rows.push(
         <SurfaceErrorBoundary
@@ -498,7 +520,7 @@ function OverflowPages({
       );
     }
     return { pages, rows };
-  }, [entries, client, toast, theme, hostLabel, compact]);
+  }, [entries, client, toast, theme, hostLabel, layout]);
   const { t } = useTranslation();
   return (
     <PluginPopoverSurface

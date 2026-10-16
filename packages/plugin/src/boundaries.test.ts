@@ -13,6 +13,7 @@ const entries = {
   "./server/provider": "server",
   "./server/usage": "server",
   "./server/acp": "server",
+  "./server/forge-toolkit": "server",
   "./client": "client",
   "./client/host": "client",
   "./client/react-native": "client",

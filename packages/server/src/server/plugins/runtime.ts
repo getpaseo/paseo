@@ -4,7 +4,11 @@ import {
   type ProviderStatus,
   type ProviderStatusRequest,
 } from "@getpaseo/plugin/server/provider";
-import type { PluginBeforeRequests, PluginLifecycleEvents } from "@getpaseo/plugin/server";
+import type {
+  PluginBeforeRequests,
+  PluginLifecycleEvents,
+  PluginPresence,
+} from "@getpaseo/plugin/server";
 import { validateBeforeRequest, validateBeforeResult } from "./lifecycle/index.js";
 import { fork } from "node:child_process";
 import { stat } from "node:fs/promises";
@@ -12,6 +16,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import type pino from "pino";
+import type {
+  PluginForgeSerializedError,
+  PluginForgeServerProviderDescriptor,
+  PluginForgeServiceMethod,
+} from "@getpaseo/plugin/server";
 import {
   PROVIDER_CAPABILITIES,
   requireProviderCapabilities,
@@ -22,7 +31,13 @@ import {
   type ProviderInput,
 } from "@getpaseo/plugin/server/provider";
 import type { PluginLogEntry } from "@getpaseo/protocol/messages";
+import {
+  ForgeAuthenticationError,
+  ForgeCliMissingError,
+  ForgeCommandError,
+} from "../../services/forge-cli-command.js";
 import { compilePlugin } from "./compiler.js";
+import { parsePluginForgeProviderDescriptors, parsePluginForgeResult } from "./forge-validation.js";
 import { readPluginManifest } from "./manifest.js";
 import type { PluginRequirements } from "@getpaseo/protocol/messages";
 import { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
@@ -40,6 +55,8 @@ import { evaluateBundle } from "./bundle-evaluator.js";
 const CLIENT_ENTRY_FILENAMES = ["index.client.ts", "index.client.tsx"] as const;
 const SERVER_ENTRY_FILENAMES = ["index.server.ts", "index.server.tsx"] as const;
 const REQUEST_TIMEOUT_MS = 30_000;
+const FORGE_REQUEST_TIMEOUT_MS = 180_000;
+const FORGE_PROBE_TIMEOUT_MS = 30_000;
 const MAX_LOG_ENTRIES = 500;
 const MAX_LOG_BYTES = 256 * 1024;
 const MAX_LOG_LINE_BYTES = 16 * 1024;
@@ -65,6 +82,7 @@ interface PendingInvocation {
   resolve: (output: unknown) => void;
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
+  parseOutput?: (output: unknown) => unknown;
 }
 
 interface LoadedPlugin {
@@ -75,6 +93,7 @@ interface LoadedPlugin {
   hooks: { events: string[]; before: string[] };
   providers: readonly PluginProviderMetadata[];
   usageSources: readonly PluginUsageSourceMetadata[];
+  forgeProviders: readonly PluginForgeServerProviderDescriptor[];
   child: PluginChild | null;
   outputCapture: PluginOutputCapture | null;
   pending: Map<string, PendingInvocation>;
@@ -206,6 +225,7 @@ export interface PluginPaseoSessionHost {
     pluginId: string,
     socket: PluginSessionSocket,
   ): Promise<{ closed: Promise<void> }>;
+  getClientPresence(): PluginPresence;
 }
 
 function resolveWorkerUrl(): URL {
@@ -251,6 +271,34 @@ function jsonTransportValue<Value>(value: Value): Value {
   const encoded = JSON.stringify(value);
   if (encoded === undefined) throw new Error("Provider value is not JSON-serializable");
   return JSON.parse(encoded) as Value;
+}
+
+function deserializeForgeError(serialized: PluginForgeSerializedError): Error {
+  let error: Error;
+  if (serialized.kind === "missing-cli") {
+    error = new ForgeCliMissingError(serialized.message);
+  } else if (serialized.kind === "auth-failure") {
+    error = new ForgeAuthenticationError(serialized.message, { stderr: serialized.stderr ?? "" });
+  } else if (serialized.kind === "command-error") {
+    error = new ForgeCommandError(
+      { brand: serialized.brand ?? "Forge", binary: serialized.binary ?? "forge" },
+      {
+        args: serialized.args ?? [],
+        cwd: serialized.cwd ?? "",
+        exitCode: serialized.exitCode ?? null,
+        stderr: serialized.stderr ?? serialized.message,
+      },
+    );
+    // The host class always words its message as a CLI failure. A REST-backed
+    // adapter said something else, so restore what it actually reported rather
+    // than telling the user a command failed that was never run. The class stays
+    // the host's: `instanceof ForgeCommandError` gates cached-failure fallback.
+    error.message = serialized.message;
+  } else {
+    error = new Error(serialized.message);
+  }
+  if (serialized.name) error.name = serialized.name;
+  return error;
 }
 
 function send(child: PluginChild, message: PluginProcessRequest): Promise<void> {
@@ -491,6 +539,11 @@ export class PluginRuntime {
     return connected.finally(() => clearTimeout(timeout));
   }
 
+  forgeProviders(pluginId: string): readonly PluginForgeServerProviderDescriptor[] {
+    const loaded = this.plugins.get(pluginId);
+    return loaded ? structuredClone(loaded.forgeProviders) : [];
+  }
+
   getLogs(pluginId: string): PluginLogEntry[] {
     return (
       this.logTails.get(pluginId)?.entries.map((entry) => ({
@@ -508,7 +561,7 @@ export class PluginRuntime {
 
   async invoke(pluginId: string, method: string, input: unknown): Promise<unknown> {
     const loaded = this.plugins.get(pluginId);
-    if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
+    if (!loaded?.child) throw new Error(`Plugin is not available: ${pluginId}`);
     if (!loaded.methods.has(method))
       throw new Error(`Plugin ${pluginId} does not contribute RPC ${method}`);
     return this.request(loaded, { type: "invoke", requestId: randomUUID(), method, input });
@@ -597,6 +650,13 @@ export class PluginRuntime {
   private request(
     loaded: LoadedPlugin,
     message: Extract<PluginProcessRequest, { requestId: string }>,
+    // Forge calls share this transport but carry their own deadline, timeout
+    // wording, and result validation.
+    options?: {
+      timeoutMs?: number;
+      timedOutMessage?: string;
+      parseOutput?: (output: unknown) => unknown;
+    },
   ): Promise<unknown> {
     const child = loaded.child;
     const pluginId = loaded.id;
@@ -608,15 +668,52 @@ export class PluginRuntime {
         if (message.type === "hook") {
           void send(child, { type: "hook.cancel", requestId }).catch(() => {});
         }
-        reject(new Error(`Plugin RPC timed out: ${pluginId}.${message.type}`));
-      }, REQUEST_TIMEOUT_MS);
-      loaded.pending.set(requestId, { resolve, reject, timeout });
+        reject(
+          new Error(
+            options?.timedOutMessage ?? `Plugin RPC timed out: ${pluginId}.${message.type}`,
+          ),
+        );
+      }, options?.timeoutMs ?? REQUEST_TIMEOUT_MS);
+      loaded.pending.set(requestId, {
+        resolve,
+        reject,
+        timeout,
+        ...(options?.parseOutput ? { parseOutput: options.parseOutput } : {}),
+      });
       void send(child, message).catch((error) => {
         clearTimeout(timeout);
         loaded.pending.delete(requestId);
         reject(error);
       });
     });
+  }
+
+  async invokeForge(
+    pluginId: string,
+    providerId: string,
+    method: PluginForgeServiceMethod | "probeHost",
+    input: unknown,
+  ): Promise<unknown> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded?.child) throw new Error(`Plugin is not available: ${pluginId}`);
+    const provider = loaded.forgeProviders.find(
+      (descriptor) => descriptor.definition.id === providerId,
+    );
+    if (!provider) {
+      throw new Error(`Plugin ${pluginId} does not contribute forge provider ${providerId}`);
+    }
+    if (method === "probeHost" ? !provider.hasProbeHost : !provider.methods.includes(method)) {
+      throw new Error(`Forge provider ${providerId} does not contribute ${method}`);
+    }
+    return this.request(
+      loaded,
+      { type: "invoke_forge", requestId: randomUUID(), providerId, method, input },
+      {
+        timeoutMs: method === "probeHost" ? FORGE_PROBE_TIMEOUT_MS : FORGE_REQUEST_TIMEOUT_MS,
+        timedOutMessage: `Plugin forge request timed out: ${pluginId}.${providerId}.${method}`,
+        parseOutput: (output) => parsePluginForgeResult(method, output),
+      },
+    );
   }
 
   async stopAll(): Promise<void> {
@@ -647,6 +744,7 @@ export class PluginRuntime {
         hooks: { events: [], before: [] },
         providers: [],
         usageSources: [],
+        forgeProviders: [],
         child: null,
         outputCapture: null,
         pending: new Map(),
@@ -730,11 +828,23 @@ export class PluginRuntime {
               });
             } else if (message.type === "paseo_close") {
               session.socket.peerClosed();
+            } else if (message.type === "presence.request") {
+              // Answered before `ready` too, so a contribution can read presence while it starts.
+              void send(child, {
+                type: "presence.result",
+                requestId: message.requestId,
+                presence: sessionHost.getClientPresence(),
+              }).catch(() => undefined);
             } else if (message.type === "ready") {
               if (settled) return;
-              settled = true;
-              clearTimeout(timeout);
-              resolve(message);
+              try {
+                const forgeProviders = parsePluginForgeProviderDescriptors(message.forgeProviders);
+                settled = true;
+                clearTimeout(timeout);
+                resolve({ ...message, forgeProviders });
+              } catch (error) {
+                fail(error instanceof Error ? error : new Error(String(error)));
+              }
             } else if (message.type === "fatal") {
               fail(new Error(message.error));
             } else if (loaded) {
@@ -775,6 +885,7 @@ export class PluginRuntime {
       hooks: ready.hooks ?? { events: [], before: [] },
       providers: ready.providers ?? [],
       usageSources: ready.usageSources ?? [],
+      forgeProviders: ready.forgeProviders,
       child,
       outputCapture,
       pending,
@@ -785,7 +896,12 @@ export class PluginRuntime {
     };
     session.plugin = loaded;
     this.logger.info(
-      { pluginId, methods: ready.methods, providers: ready.providers },
+      {
+        pluginId,
+        methods: ready.methods,
+        providers: ready.providers,
+        forgeProviders: ready.forgeProviders.map((provider) => provider.definition.id),
+      },
       "Loaded plugin",
     );
     return loaded;
@@ -863,13 +979,29 @@ export class PluginRuntime {
       this.handleProviderMessage(loaded, message);
       return;
     }
-    if (message.type !== "result" && message.type !== "error") return;
+    if (
+      message.type !== "result" &&
+      message.type !== "error" &&
+      message.type !== "forge_result" &&
+      message.type !== "forge_error"
+    ) {
+      return;
+    }
     const pending = loaded.pending.get(message.requestId);
     if (!pending) return;
     loaded.pending.delete(message.requestId);
     clearTimeout(pending.timeout);
-    if (message.type === "result") pending.resolve(message.output);
-    else pending.reject(new Error(message.error));
+    if (message.type === "result" || message.type === "forge_result") {
+      try {
+        pending.resolve(pending.parseOutput ? pending.parseOutput(message.output) : message.output);
+      } catch (error) {
+        pending.reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    } else if (message.type === "forge_error") {
+      pending.reject(deserializeForgeError(message.error));
+    } else {
+      pending.reject(new Error(message.error));
+    }
   }
 
   private handleProviderMessage(loaded: LoadedPlugin, message: PluginProcessMessage): void {
@@ -1172,8 +1304,8 @@ export class PluginRuntime {
       this.failRemoteProviderConnection(state, new Error(`Plugin process exited: ${loaded.id}`));
     }
     loaded.providerConnections.clear();
-    await loaded.sessionClosed;
     if (wasPublished) this.notify(loaded.id, `Plugin process exited: ${loaded.id}`);
+    await loaded.sessionClosed;
   }
 
   private async stopPlugin(loaded: LoadedPlugin): Promise<void> {

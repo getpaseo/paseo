@@ -39,6 +39,7 @@ function installation(
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    forgeClientProviders: [],
   };
 }
 

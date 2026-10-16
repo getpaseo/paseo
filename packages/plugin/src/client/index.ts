@@ -1,5 +1,13 @@
 export type {
   PluginHostProps,
+  PluginNavigableHostProps,
+  PluginSafeAreaInsets,
+  PluginOverlayProps,
+  PluginOverlayHandle,
+  PluginAgentLaunchRequest,
+  PluginAgentLaunchEvent,
+  PluginAgentLaunchOpenResult,
+  PluginPendingAgentMessage,
   PluginSurfaceProps,
   PluginScreenProps,
   PluginPopoverProps,
@@ -26,6 +34,7 @@ export type {
   PluginTimelineItemProps,
   PluginTimelineRendererContribution,
   PluginCommandCapabilities,
+  PluginNotifier,
   PluginGlobalCommandContext,
   PluginWorkspaceCommandContext,
   PluginAgentCommandContext,
@@ -45,6 +54,7 @@ export type {
   PluginComposerPillContribution,
   PluginHeaderButtonContribution,
 } from "./buttons.js";
+export type { PluginForgeClientProviderContribution } from "../forge.js";
 export { usePaseo } from "./paseo-context.js";
 export { useAgent, useWorkspace } from "./client-state.js";
 export { useRpc } from "./rpc-context.js";
