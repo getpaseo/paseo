@@ -2,6 +2,7 @@ import type { AgentTimelineItem } from "../../../agent-sdk-types.js";
 import type {
   ProviderSubagentInputEvent,
   ProviderSubagentStatus,
+  ProviderSubagentWorkflowAgent,
 } from "../../../provider-subagents/store.js";
 
 /**
@@ -31,6 +32,13 @@ export type SubagentObservation =
   | { kind: "status"; id: string; status: ProviderSubagentStatus; timestamp?: string }
   /** Complete provider-owned secondary label. Clients display this without parsing it. */
   | { kind: "subtitle"; id: string; subtitle: string; timestamp?: string }
+  /** Every agent a workflow runs, in launch order. Each observation replaces the last. */
+  | {
+      kind: "workflow_agents";
+      id: string;
+      agents: ProviderSubagentWorkflowAgent[];
+      timestamp?: string;
+    }
   | { kind: "timeline"; id: string; item: AgentTimelineItem; timestamp?: string };
 
 /**
@@ -62,6 +70,16 @@ export function foldSubagentObservations(
         type: "upsert",
         id: observation.id,
         subtitle: observation.subtitle,
+        ...(observation.timestamp ? { timestamp: observation.timestamp } : {}),
+      });
+      continue;
+    }
+
+    if (observation.kind === "workflow_agents") {
+      events.push({
+        type: "upsert",
+        id: observation.id,
+        workflowAgents: observation.agents,
         ...(observation.timestamp ? { timestamp: observation.timestamp } : {}),
       });
       continue;
