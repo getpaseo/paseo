@@ -102,9 +102,9 @@ export function computeNextRunAt(cadence: ScheduleCadence, after: Date): Date {
     const { minute, hour, dayOfMonth, month, dayOfWeek } = readDateParts(cursor);
     const dayOfMonthMatches = cron.dayOfMonth.matches(dayOfMonth);
     const dayOfWeekMatches = cron.dayOfWeek.matches(dayOfWeek);
-    const dayMatches = hasWildcardDay
-      ? dayOfMonthMatches && dayOfWeekMatches
-      : dayOfMonthMatches || dayOfWeekMatches;
+    const bothDaysMatch = dayOfMonthMatches && dayOfWeekMatches;
+    const eitherDayMatches = dayOfMonthMatches || dayOfWeekMatches;
+    const dayMatches = hasWildcardDay ? bothDaysMatch : eitherDayMatches;
 
     if (
       cron.minute.matches(minute) &&
