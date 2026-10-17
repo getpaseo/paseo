@@ -35,6 +35,7 @@ import Animated, {
 import { useTranslation } from "react-i18next";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ResizeHandle } from "@/components/resize-handle";
+import { useFramePointerShield } from "@/components/use-frame-pointer-shield";
 import {
   resolveExplorerSidebarDockSizes,
   resolveExplorerSidebarWidth,
@@ -345,6 +346,7 @@ export function SplitContainer({
   const [activeDragTabId, setActiveDragTabId] = useState<string | null>(null);
   const [dropPreview, setDropPreview] = useState<SplitDropZoneHover | null>(null);
   const [tabDropPreview, setTabDropPreview] = useState<TabDropPreview | null>(null);
+  useFramePointerShield(activeDragTabId !== null);
   const [maximizedPane, setMaximizedPane] = useState<{
     workspaceKey: string;
     paneId: string;
