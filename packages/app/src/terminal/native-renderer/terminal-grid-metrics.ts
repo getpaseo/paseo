@@ -44,6 +44,21 @@ export function resolveMeasuredTerminalCellMetrics(
   };
 }
 
+export interface TerminalTextLetterSpacingInput {
+  measuredTextWidth: number;
+  measureTextLength: number;
+  cellWidth: number;
+  cellsPerGlyph: 1 | 2;
+}
+
+// Cells are snapped to the pixel grid but glyphs advance by their font's natural width, so a run
+// of N glyphs ends N * (cells * cellWidth - advance) away from its cells and the cursor. The
+// letter spacing makes up that difference per glyph.
+export function resolveTerminalTextLetterSpacing(input: TerminalTextLetterSpacingInput): number {
+  const textLength = Math.max(1, input.measureTextLength);
+  return input.cellsPerGlyph * input.cellWidth - input.measuredTextWidth / textLength;
+}
+
 export function resolveTerminalGridMetricsMeasurement(
   previous: TerminalGridCellMetrics | null,
   next: TerminalGridCellMetrics,
