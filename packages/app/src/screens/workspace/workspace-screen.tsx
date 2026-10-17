@@ -137,6 +137,12 @@ import {
   WorkspaceTabRenameModal,
 } from "@/screens/workspace/use-workspace-tab-rename";
 import {
+  useWorkspaceTabMoveDnd,
+  useWorkspaceTabMovePicker,
+  WorkspaceTabMoveSheet,
+} from "@/screens/workspace/use-workspace-tab-move";
+import { startWorkspaceTabSync } from "@/screens/workspace/workspace-tab-sync";
+import {
   WorkspaceDesktopTabsRow,
   type WorkspaceDesktopTabRowItem,
 } from "@/screens/workspace/workspace-desktop-tabs-row";
@@ -1326,6 +1332,11 @@ function WorkspaceScreenContent({
     tabs: uiTabs,
     enabled: hasHydratedWorkspaceLayoutStore,
   });
+  useEffect(() => {
+    startWorkspaceTabSync();
+  }, []);
+  useWorkspaceTabMoveDnd(persistenceKey);
+  const { movingTab, openMovePicker, closeMovePicker } = useWorkspaceTabMovePicker();
   useSyncWorkspaceActiveBrowser({
     workspaceLayout,
     isRouteFocused,
@@ -3437,6 +3448,7 @@ function WorkspaceScreenContent({
             onCopyFilePath={handleCopyFilePath}
             onReloadAgent={handleReloadAgent}
             onRenameTab={handleRenameTab}
+            onMoveToWorkspace={openMovePicker}
             onCloseTab={handleCloseTabById}
             onCloseTabsAbove={handleCloseTabsToLeft}
             onCloseTabsBelow={handleCloseTabsToRight}
@@ -3485,6 +3497,7 @@ function WorkspaceScreenContent({
       handleOpenSetupTab,
       handleReloadAgent,
       handleRenameTab,
+      openMovePicker,
       handleSelectSwitcherTab,
       handleToggleExplorerSidebar,
       isMobile,
@@ -3528,6 +3541,7 @@ function WorkspaceScreenContent({
         onCopyFilePath={handleCopyFilePath}
         onReloadAgent={handleReloadAgent}
         onRenameTab={handleRenameTab}
+        onMoveToWorkspace={openMovePicker}
         onCloseTabsToLeft={handleCloseTabsToLeftInPane}
         onCloseTabsToRight={handleCloseTabsToRightInPane}
         onCloseOtherTabs={handleCloseOtherTabsInPane}
@@ -3568,6 +3582,7 @@ function WorkspaceScreenContent({
     handleCloseTabsToRightInPane,
     handleCloseOtherTabsInPane,
     handleCreateNewTab,
+    openMovePicker,
     buildDesktopPaneContentModel,
     handleFocusPane,
     handleSplitPane,
@@ -3641,6 +3656,7 @@ function WorkspaceScreenContent({
             onCopyFilePath={handleCopyFilePath}
             onReloadAgent={handleReloadAgent}
             onRenameTab={handleRenameTab}
+            onMoveToWorkspace={openMovePicker}
             onCloseTabsToLeft={handleCloseTabsToLeft}
             onCloseTabsToRight={handleCloseTabsToRight}
             onCloseOtherTabs={handleCloseOtherTabs}
@@ -3730,6 +3746,12 @@ function WorkspaceScreenContent({
           renamingTab={isRouteFocused ? renamingTab : null}
           onSubmit={handleRenameModalSubmit}
           onClose={handleRenameModalClose}
+        />
+        <WorkspaceTabMoveSheet
+          tab={movingTab}
+          serverId={normalizedServerId}
+          enabled={isRouteFocused}
+          onClose={closeMovePicker}
         />
       </View>
     </RenderProfile>
