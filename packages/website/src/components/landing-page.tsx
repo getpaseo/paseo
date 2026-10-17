@@ -59,7 +59,7 @@ const AGENT_LIST_GRID_STYLE = {
 const PHONE_PERSPECTIVE_STYLE = { minHeight: 480, perspective: 700 };
 import { CursorFieldProvider } from "~/components/butterfly";
 import { CommandDialog } from "~/components/command-dialog";
-import { AGENT_PAGES } from "~/data/agent-pages";
+import { AGENT_PAGES, type AgentPage } from "~/data/agent-pages";
 import {
   appStoreUrl,
   playStoreUrl,
@@ -91,12 +91,12 @@ import { SponsorSection, SponsorsSection } from "~/components/sponsorship";
 import { SiteHeader } from "~/components/site-header";
 import "~/styles.css";
 
-interface LandingPageProps {
+interface LandingPageProps extends Pick<AgentPage, "mockup" | "section"> {
   title: React.ReactNode;
   subtitle: React.ReactNode;
 }
 
-export function LandingPage({ title, subtitle }: LandingPageProps) {
+export function LandingPage({ title, subtitle, mockup, section }: LandingPageProps) {
   return (
     <CursorFieldProvider>
       {/* Hero section with background image */}
@@ -115,13 +115,15 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
           className="relative px-6 md:px-8 pt-4 md:pt-8 pb-8 md:pb-16"
         >
           <div className="max-w-7xl mx-auto">
-            <HeroMockup />
+            <HeroMockup agent={mockup} />
           </div>
         </motion.div>
       </div>
 
+      {section ? <AgentSection section={section} /> : null}
+
       {/* Phone showcase */}
-      <PhoneShowcase />
+      <PhoneShowcase agent={mockup} />
 
       {/* Content section */}
       <div className="landing-content bg-background">
@@ -141,6 +143,32 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
         <SiteFooter sponsors={false} />
       </div>
     </CursorFieldProvider>
+  );
+}
+
+function AgentSection({ section }: { section: NonNullable<AgentPage["section"]> }) {
+  return (
+    <section aria-label={section.title} className="mx-auto max-w-5xl px-6 py-16 md:py-24">
+      <h2 className="max-w-2xl text-3xl font-medium tracking-tight md:text-4xl">{section.title}</h2>
+      <p className="mt-4 max-w-2xl text-base leading-relaxed text-muted-foreground">
+        {section.description}
+      </p>
+      <div className="mt-10 grid gap-8 md:grid-cols-3">
+        {section.items.map((item) => (
+          <div key={item.title} className="border-t border-white/10 pt-5">
+            <h3 className="text-lg font-medium">{item.title}</h3>
+            <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{item.description}</p>
+          </div>
+        ))}
+      </div>
+      <a
+        href={section.link.href}
+        className="mt-8 inline-flex items-center gap-2 text-sm text-white/80 hover:text-white"
+      >
+        {section.link.label}
+        <ArrowRight className="h-4 w-4" />
+      </a>
+    </section>
   );
 }
 
@@ -1082,7 +1110,7 @@ function ServerInstallButton() {
   );
 }
 
-function PhoneShowcase() {
+function PhoneShowcase({ agent }: { agent?: AgentPage["mockup"] }) {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const textInView = useInView(containerRef, { once: true, margin: "-80px" });
 
@@ -1176,7 +1204,7 @@ function PhoneShowcase() {
           aria-label="Paseo agent chat"
         >
           <PhoneFrame time="18:53">
-            <MobileChat />
+            <MobileChat agent={agent} />
           </PhoneFrame>
         </motion.div>
 

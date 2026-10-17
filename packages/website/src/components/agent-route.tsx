@@ -7,7 +7,14 @@ export function agentRouteOptions(slug: string) {
   return {
     head: () => pageMeta(page.metaTitle, page.metaDescription, `/${slug}`),
     component: function AgentLandingPage() {
-      return <LandingPage title={page.title} subtitle={page.subtitle} />;
+      return (
+        <LandingPage
+          title={page.title}
+          subtitle={page.subtitle}
+          mockup={page.mockup}
+          section={page.section}
+        />
+      );
     },
   };
 }

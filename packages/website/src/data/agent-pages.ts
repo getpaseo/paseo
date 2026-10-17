@@ -1,3 +1,6 @@
+import { PiIcon } from "~/components/agent-icons";
+import type { MockupAgent } from "~/components/mockup";
+
 // Source of truth for per-agent marketing landing pages.
 // To add a new agent, append an entry here and create a 4-line route file at
 // `src/routes/<slug>.tsx`. The sitemap (vite.config) reads `AGENT_PAGE_SLUGS`.
@@ -9,6 +12,14 @@ export interface AgentPage {
   subtitle: string;
   metaTitle: string;
   metaDescription: string;
+  // Omit either field to keep the shared landing page unchanged.
+  mockup?: MockupAgent;
+  section?: {
+    title: string;
+    description: string;
+    items: readonly { title: string; description: string }[];
+    link: { href: string; label: string };
+  };
 }
 
 export const AGENT_PAGES = [
@@ -45,9 +56,33 @@ export const AGENT_PAGES = [
   {
     slug: "pi",
     name: "Pi Agent",
+    mockup: { name: "Pi", Icon: PiIcon, model: "Sonnet 4.5" },
+    section: {
+      title: "Your Pi setup, with a desktop and mobile UI",
+      description:
+        "Paseo runs your installed Pi CLI. Start a session from the app, or import one you started in the terminal and continue from there.",
+      items: [
+        {
+          title: "Bring your extensions",
+          description:
+            "Paseo supports Pi extensions including pi-subagents, pi-ask-user, pi-mcp-adapter and pi-goal-x. Follow subagents, answer questions and see task progress in the app. Extensions that depend on a custom terminal UI do not carry over.",
+        },
+        {
+          title: "Pick from your Pi models",
+          description:
+            "The model picker reads the models available in your Pi setup and uses Pi’s configured model by default. Keep your provider configuration in Pi.",
+        },
+        {
+          title: "Start with Pi on your machine",
+          description:
+            "Install and configure Pi on the machine where you run Paseo. Open a workspace in Paseo and choose Pi when you create an agent. Pair your phone to keep working on that machine when you step away.",
+        },
+      ],
+      link: { href: "/docs", label: "Set up Paseo" },
+    },
     title: "Open source app for the Pi coding agent",
     subtitle:
-      "Run the Pi coding agent on your machine, drive it from your phone or desktop. Self-hosted and open source.",
+      "Use Pi from your desktop or phone, with the models and extensions you already use. Pi runs on your machine. Paseo gives you a UI for it.",
     metaTitle: "Pi Agent Mobile and Desktop App, Open Source",
     metaDescription:
       "Open source mobile and desktop app for the Pi coding agent. Launch sessions on your machine, monitor progress, merge from anywhere. Self-hosted.",

@@ -1,3 +1,4 @@
+import { MockupAgentIcon, type MockupAgent } from "../agent";
 // Mobile agent chat — the counterpart of the desktop chat pane, drawn at phone
 // width. Maps to the "agent chat" reference screenshot: header, collapsed slash
 // command, muted tool-call rows, an assistant turn, the diff-stat pill, and the
@@ -115,7 +116,7 @@ function Transcript() {
   );
 }
 
-function Composer() {
+function Composer({ agent }: { agent?: MockupAgent }) {
   return (
     <div className="shrink-0 px-[18px] pt-[10px] pb-[30px]">
       <div className="mb-[16px]">
@@ -129,8 +130,14 @@ function Composer() {
         <div className="flex items-center gap-[13px] pt-[26px]">
           <Plus size={20} className="shrink-0 text-mock-fg-muted" strokeWidth={1.9} />
           <span className="flex shrink-0 items-center gap-[5px]">
-            <CodexIcon size={19} className="shrink-0 text-mock-fg" />
-            <span className="whitespace-nowrap text-[16px] text-mock-fg">GPT-5.6-Sol</span>
+            {agent ? (
+              <MockupAgentIcon agent={agent} size={19} />
+            ) : (
+              <CodexIcon size={19} className="shrink-0 text-mock-fg" />
+            )}
+            <span className="whitespace-nowrap text-[16px] text-mock-fg">
+              {agent ? `${agent.name} · ${agent.model ?? "GPT-5.6-Sol"}` : "GPT-5.6-Sol"}
+            </span>
             <span className="whitespace-nowrap text-[16px] text-mock-fg-muted">Medium</span>
           </span>
           <span className="flex-1" />
@@ -143,7 +150,7 @@ function Composer() {
   );
 }
 
-export function MobileChat() {
+export function MobileChat({ agent }: { agent?: MockupAgent }) {
   return (
     <>
       <Header />
@@ -151,7 +158,7 @@ export function MobileChat() {
       <div className="min-h-0 flex-1 overflow-hidden pt-[6px]">
         <Transcript />
       </div>
-      <Composer />
+      <Composer agent={agent} />
     </>
   );
 }

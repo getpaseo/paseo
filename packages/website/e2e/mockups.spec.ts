@@ -59,3 +59,72 @@ test("desktop mockup corners shrink in proportion on a phone", async ({ page }) 
   await resizeToPhone(page);
   await expect.poll(() => cornerProportion(mockup)).toBeCloseTo(desktopCorner, 3);
 });
+
+async function openAgentPage(page: Page, slug: string, width: number) {
+  await page.setViewportSize({ width, height: 900 });
+  await page.goto(`/${slug}`);
+  await expect(page.getByRole("button", { name: "Build", exact: true })).toBeVisible();
+}
+
+async function expectComposerModel(page: Page, label: string) {
+  const desktop = page.getByRole("img", { name: desktopName, exact: true });
+  await expect(desktop.getByText(label, { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Extend", exact: true }).click();
+  await expect(desktop.getByText(label, { exact: true })).toHaveCount(1);
+  await expect(desktop.getByText(label, { exact: true })).toBeVisible();
+  await viewPhones(page);
+  await expect(
+    page
+      .getByRole("img", { name: "Paseo agent chat", exact: true })
+      .getByText(label, { exact: true }),
+  ).toBeVisible();
+}
+
+async function expectPiOverlay(page: Page) {
+  await expect(page).toHaveTitle("Pi Agent Mobile and Desktop App, Open Source");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+    "Open source app for the Pi coding agent",
+  );
+  await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
+    "href",
+    "https://paseo.sh/pi",
+  );
+  await expectComposerModel(page, "Pi · Sonnet 4.5");
+  const section = page.getByRole("region", { name: "Your Pi setup, with a desktop and mobile UI" });
+  await section.scrollIntoViewIfNeeded();
+  await expect(section.getByRole("heading", { name: "Bring your extensions" })).toBeVisible();
+  await expect(
+    section.getByText(/pi-subagents, pi-ask-user, pi-mcp-adapter and pi-goal-x/),
+  ).toBeVisible();
+  await expect(section.getByRole("link", { name: "Set up Paseo" })).toHaveAttribute(
+    "href",
+    "/docs",
+  );
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+    await page.evaluate(() => window.innerWidth),
+  );
+}
+
+for (const width of [1440, 390]) {
+  test(`Pi has its own content and composer at ${width}px`, async ({ page }) => {
+    await openAgentPage(page, "pi", width);
+    await expectPiOverlay(page);
+  });
+
+  test(`an agent without an overlay keeps the shared page at ${width}px`, async ({ page }) => {
+    await openAgentPage(page, "opencode", width);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+      "Open source app for OpenCode",
+    );
+    await expect(
+      page.getByText(
+        "Run OpenCode on your machine, drive it from your phone or desktop. Open source on both ends, your code stays local.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "Your Pi setup, with a desktop and mobile UI" }),
+    ).toHaveCount(0);
+    await expectComposerModel(page, "GPT-5.6-Sol");
+  });
+}

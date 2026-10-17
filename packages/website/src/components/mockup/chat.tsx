@@ -1,3 +1,4 @@
+import { MockupAgentIcon, type MockupAgent } from "./agent";
 import {
   AudioLines,
   BookOpen,
@@ -188,10 +189,10 @@ export function PluginBuildTranscript() {
 
 // --- composer ---------------------------------------------------------------
 
-function ControlPill({ icon, label }: { icon: React.ReactNode; label: string }) {
+function ControlPill({ children, label }: { children: React.ReactNode; label: string }) {
   return (
     <span className="flex items-center gap-[6px] text-[12px] text-mock-fg-muted">
-      {icon}
+      {children}
       {label}
       <ChevronDown size={11} className="text-mock-fg-xmuted" />
     </span>
@@ -213,9 +214,11 @@ function BusyRing() {
 }
 
 export function Composer({
+  agent,
   showProgress = true,
   busy = true,
 }: {
+  agent?: MockupAgent;
   showProgress?: boolean;
   busy?: boolean;
 }) {
@@ -243,9 +246,13 @@ export function Composer({
           </div>
           <div className="flex items-center gap-[17px] pt-[26px]">
             <Plus size={15} className="text-mock-fg-muted" />
-            <ControlPill icon={MODEL_ICON} label="GPT-5.6-Sol" />
-            <ControlPill icon={EFFORT_ICON} label="Medium" />
-            <ControlPill icon={ACCESS_ICON} label="Full access" />
+            <ControlPill
+              label={agent ? `${agent.name} · ${agent.model ?? "GPT-5.6-Sol"}` : "GPT-5.6-Sol"}
+            >
+              {agent ? <MockupAgentIcon agent={agent} size={13} /> : MODEL_ICON}
+            </ControlPill>
+            <ControlPill label="Medium">{EFFORT_ICON}</ControlPill>
+            <ControlPill label="Full access">{ACCESS_ICON}</ControlPill>
             <Zap size={14} className="text-mock-fg-muted" />
             <ListTodo size={14} className="text-mock-fg-muted" />
             <span className="flex-1" />

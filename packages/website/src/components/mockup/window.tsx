@@ -1,3 +1,4 @@
+import type { MockupAgent } from "./agent";
 import { AnimatePresence, MotionConfig, motion, useReducedMotion } from "framer-motion";
 import { AgentTranscript, Composer, PluginBuildTranscript } from "./chat";
 import { DESIGN_HEIGHT, DESIGN_WIDTH, RIGHT_PANEL_W } from "./geometry";
@@ -26,7 +27,7 @@ function panelKey(state: MockupStateId): string {
   return "changes";
 }
 
-function CenterPane({ state }: { state: MockupStateId }) {
+function CenterPane({ state, agent }: { state: MockupStateId; agent?: MockupAgent }) {
   if (state === "review") return <DiffReviewPane />;
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-mock-surface0">
@@ -34,7 +35,7 @@ function CenterPane({ state }: { state: MockupStateId }) {
       <div className="flex min-h-0 flex-1 flex-col justify-end overflow-hidden px-[27px] pb-[6px]">
         {state === "extend" ? <PluginBuildTranscript /> : <AgentTranscript />}
       </div>
-      <Composer showProgress={state !== "extend"} busy={state !== "extend"} />
+      <Composer agent={agent} showProgress={state !== "extend"} busy={state !== "extend"} />
     </div>
   );
 }
@@ -59,7 +60,7 @@ function PanelCrossfade({ state }: { state: MockupStateId }) {
 }
 
 /** The middle content column: its own header, then the tab strip, then the pane. */
-function CenterColumn({ state }: { state: MockupStateId }) {
+function CenterColumn({ state, agent }: { state: MockupStateId; agent?: MockupAgent }) {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <TitleBar state={state} />
@@ -73,7 +74,7 @@ function CenterColumn({ state }: { state: MockupStateId }) {
             exit={FADE_OUT}
             className="absolute inset-0 flex flex-col"
           >
-            <CenterPane state={state} />
+            <CenterPane state={state} agent={agent} />
           </motion.div>
         </AnimatePresence>
       </div>
@@ -96,7 +97,7 @@ function DockedPanel({ state }: { state: MockupStateId }) {
   );
 }
 
-export function MockupWindow({ state }: { state: MockupStateId }) {
+export function MockupWindow({ state, agent }: { state: MockupStateId; agent?: MockupAgent }) {
   const reduceMotion = useReducedMotion();
 
   return (
@@ -109,7 +110,7 @@ export function MockupWindow({ state }: { state: MockupStateId }) {
             header stops at the divider — it never spans over the right panel. */}
         <Sidebar state={state} />
         <div className="w-px shrink-0 bg-mock-border" />
-        <CenterColumn state={state} />
+        <CenterColumn state={state} agent={agent} />
         <AnimatePresence initial={false}>
           {hasRightPanel(state) ? <DockedPanel key="right-panel" state={state} /> : null}
         </AnimatePresence>

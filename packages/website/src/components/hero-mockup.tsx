@@ -6,6 +6,7 @@ import {
   DESIGN_WIDTH,
   MOCKUP_STATES,
   type MockupStateId,
+  type MockupAgent,
   MockupWindow,
   ScaledMockup,
 } from "~/components/mockup";
@@ -15,7 +16,7 @@ const ALT =
 
 const PILL_TRANSITION = { duration: 0.34, ease: [0.22, 0.61, 0.36, 1] as const };
 
-export function HeroMockup() {
+export function HeroMockup({ agent }: { agent?: MockupAgent }) {
   const [state, setState] = useState<MockupStateId>(DEFAULT_MOCKUP_STATE);
 
   return (
@@ -39,7 +40,7 @@ export function HeroMockup() {
         label={ALT}
         className="ring-1 ring-white/10"
       >
-        <MockupWindow state={state} />
+        <MockupWindow state={state} agent={agent} />
       </ScaledMockup>
     </div>
   );
