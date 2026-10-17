@@ -182,6 +182,7 @@ async function connect(input: {
   selective: boolean;
   timelineReplacementInvalidation?: boolean;
   timelineNotifications?: boolean;
+  failedCompactions?: boolean;
   pluginTimelineItems?: boolean;
   workspaceSetupBlocked?: boolean;
 }): Promise<ConnectedClient> {
@@ -198,6 +199,7 @@ async function connect(input: {
       [CLIENT_CAPS.selectiveAgentTimeline]: input.selective,
       [CLIENT_CAPS.pluginTimelineItems]: input.pluginTimelineItems ?? false,
       [CLIENT_CAPS.workspaceSetupBlocked]: input.workspaceSetupBlocked ?? false,
+      [CLIENT_CAPS.failedCompactions]: input.failedCompactions ?? false,
       ...(input.timelineNotifications === undefined
         ? {}
         : { [CLIENT_CAPS.timelineNotifications]: input.timelineNotifications }),
@@ -286,6 +288,72 @@ test("notification timeline items are sent only to clients that advertise suppor
   );
   expect(legacyTimeline.window).toEqual(capableTimeline.window);
   expect(legacyTimeline.endCursor).toEqual(capableTimeline.endCursor);
+});
+
+test("failed compactions are sent only to clients that advertise support", async () => {
+  await daemon.close();
+  daemon = await createTestPaseoDaemon({
+    isDev: true,
+    agentClients: { mock: new MockLoadTestAgentClient() },
+  });
+  const capable = await connect({
+    clientId: "compaction-capable",
+    selective: false,
+    failedCompactions: true,
+  });
+  const legacy = await connect({
+    clientId: "compaction-legacy",
+    selective: false,
+    failedCompactions: false,
+  });
+  const agent = await capable.client.createAgent({
+    provider: "mock",
+    cwd: "/tmp",
+    title: "Failed compaction compatibility",
+    model: "ten-second-stream",
+  });
+  capable.clear();
+  legacy.clear();
+
+  await daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+    type: "compaction",
+    status: "loading",
+  });
+  await daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+    type: "compaction",
+    status: "failed",
+  });
+  await daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+    type: "assistant_message",
+    text: "Visible to every client",
+  });
+  await Promise.all([
+    capable.next(isAgentStream(agent.id), "capable timeline delivery"),
+    legacy.next(isAgentStream(agent.id), "legacy timeline delivery"),
+  ]);
+  await Promise.all([capable.barrier("compaction-capable"), legacy.barrier("compaction-legacy")]);
+
+  const compactionStatuses = (connected: ConnectedClient) =>
+    connected.messages.flatMap((message) =>
+      message.type === "agent_stream" &&
+      message.payload.event.type === "timeline" &&
+      message.payload.event.item.type === "compaction"
+        ? [message.payload.event.item.status]
+        : [],
+    );
+  expect(compactionStatuses(capable)).toEqual(["loading", "failed"]);
+  expect(compactionStatuses(legacy)).toEqual(["loading"]);
+
+  const [capableTimeline, legacyTimeline] = await Promise.all([
+    capable.client.fetchAgentTimeline(agent.id, { direction: "tail", projection: "canonical" }),
+    legacy.client.fetchAgentTimeline(agent.id, { direction: "tail", projection: "canonical" }),
+  ]);
+  const timelineStatuses = (timeline: typeof capableTimeline) =>
+    timeline.entries.flatMap((entry) =>
+      entry.item.type === "compaction" ? [entry.item.status] : [],
+    );
+  expect(timelineStatuses(capableTimeline)).toEqual(["loading", "failed"]);
+  expect(timelineStatuses(legacyTimeline)).toEqual(["loading"]);
 });
 
 test("plugin timeline items are sent only to clients that advertise support", async () => {

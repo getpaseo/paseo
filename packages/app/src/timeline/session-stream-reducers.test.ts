@@ -44,6 +44,23 @@ function makeTimelineEntry(
   };
 }
 
+function makeCompactionTimelineEntry(
+  seq: number,
+  status: "loading" | "completed",
+): TimelineResponseEntry {
+  return {
+    seqStart: seq,
+    seqEnd: seq,
+    provider: "claude",
+    item: {
+      type: "compaction",
+      status,
+      ...(status === "completed" ? { trigger: "manual" as const, preTokens: 1200 } : {}),
+    },
+    timestamp: new Date(1000 + seq).toISOString(),
+  };
+}
+
 function makeToolCallTimelineEntry(
   seq: number,
   callId: string,
@@ -2618,6 +2635,74 @@ describe("processTimelineResponse", () => {
       endSeq: 5,
     });
     expect(result.older).toBe("none");
+  });
+
+  it("closes an older page's compaction marker that ended in a failure on the newer page", () => {
+    // The failed event arrived with the newer page, where it had no marker to close.
+    const currentTail: StreamItem[] = [makeAssistantItem("Compaction canceled.")];
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail,
+      currentCursor: { epoch: "epoch-1", startSeq: 3, endSeq: 4 },
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        epoch: "epoch-1",
+        startCursor: { seq: 1 },
+        endCursor: { seq: 2 },
+        entries: [
+          makeTimelineEntry(1, "/compact", "user_message"),
+          makeCompactionTimelineEntry(2, "loading"),
+        ],
+      },
+    });
+
+    expect(result.tail.some((item) => item.kind === "compaction")).toBe(false);
+    expect(getUserTexts(result.tail)).toEqual(["/compact"]);
+    expect(getAssistantTexts(result.tail)).toEqual(["Compaction canceled."]);
+  });
+
+  it("completes an older page's compaction marker with the newer page's completion", () => {
+    const newer = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [],
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "tail",
+        epoch: "epoch-1",
+        startCursor: { seq: 3 },
+        endCursor: { seq: 4 },
+        hasOlder: true,
+        entries: [makeCompactionTimelineEntry(3, "completed"), makeTimelineEntry(4, "after")],
+      },
+    });
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: newer.tail,
+      currentCursor: newer.cursor ?? undefined,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        epoch: "epoch-1",
+        startCursor: { seq: 1 },
+        endCursor: { seq: 2 },
+        entries: [
+          makeTimelineEntry(1, "/compact", "user_message"),
+          makeCompactionTimelineEntry(2, "loading"),
+        ],
+      },
+    });
+
+    const compactions = result.tail.filter((item) => item.kind === "compaction");
+    expect(compactions).toHaveLength(1);
+    expect(compactions[0]).toMatchObject({ status: "completed", preTokens: 1200 });
+    expect(result.tail.map((item) => item.kind)).toEqual([
+      "user_message",
+      "compaction",
+      "assistant_message",
+    ]);
   });
 
   it("keeps only projected entries anchored in an older response page", () => {

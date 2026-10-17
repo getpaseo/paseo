@@ -704,7 +704,9 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
   }),
   z.object({
     type: z.literal("compaction"),
-    status: z.enum(["loading", "completed"]),
+    // COMPAT(failedCompactions): "failed" added after v0.11.4; the daemon sends it only to clients
+    // advertising failed_compactions.
+    status: z.enum(["loading", "completed", "failed"]),
     trigger: z.enum(["auto", "manual"]).optional(),
     preTokens: z.number().optional(),
   }),

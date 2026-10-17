@@ -45,6 +45,10 @@ export const CLIENT_CAPS = {
   pluginTimelineItems: "plugin_timeline_items",
   // COMPAT(workspaceSetupBlocked): added in v0.8.0, remove after 2027-03-07 once client floor >= v0.8.0.
   workspaceSetupBlocked: "workspace_setup_blocked",
+  // COMPAT(failedCompactions): added after v0.11.4. The daemon omits failed compaction items for
+  // older clients whose strict status enum rejects them; those keep the loading marker.
+  // Remove after 2027-04-16 once the supported client floor includes failed_compactions.
+  failedCompactions: "failed_compactions",
   browserHost: "browser_host",
 } as const;
 
