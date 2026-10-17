@@ -244,6 +244,13 @@ paseo plugin enable my-plugin
 paseo plugin remove my-plugin
 ```
 
+`paseo plugin reload <id>` reports the result of the reload itself: it waits while the daemon stops
+and starts the plugin, however long that takes, and it queues behind the daemon's other plugin work.
+Cancelling the command or losing the connection does not stop the daemon's work, and no listing or
+log entry settles what a cancelled reload did — the [Plugin reference](/docs/plugins/reference)
+covers those interim states. Running the reload again is what reports the result: it waits behind the
+outstanding one, then stops and starts the plugin once more.
+
 Bare `owner/slug` installs a reviewed registry listing. Use `git:owner/repository` for GitHub
 source, or `./plugin` for a local directory. Append `:<directory>` for a plugin in a monorepo.
 

@@ -364,6 +364,7 @@ export const ptBR: TranslationResources = {
       details: "Detalhes",
     },
     dictation: {
+      paused: "Microfone interrompido. Aguardando para retomar…",
       start: "Iniciar ditado por voz",
       cancel: "Cancelar ditado",
       retry: "Tentar ditado novamente",
