@@ -5,7 +5,7 @@ import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
 import type { AssistantFileLinkSource } from "@/assistant-file-links";
 import { decodeString } from "micromark-util-decode-string";
 import { fromMarkdown } from "mdast-util-from-markdown";
-import type { Link, Nodes, Root } from "mdast";
+import type { Link, Nodes, Paragraph, PhrasingContent, Root } from "mdast";
 
 // Keep this regex in the syntax shared by JavaScript, ICU and java.util.regex.
 // The Unicode flag makes Metro expand it to escapes rejected by native engines.
@@ -130,10 +130,50 @@ export function prepareMarkdownSource(
         end,
       });
   }
+  // Line boundaries already turned into paragraph breaks, by offset of their newline.
+  const splitBoundaries = new Set<number>();
+  function isImageLike(node: PhrasingContent): boolean {
+    if (node.type === "image" || node.type === "imageReference") return true;
+    return (
+      (node.type === "link" || node.type === "linkReference") &&
+      node.children.length === 1 &&
+      isImageLike(node.children[0])
+    );
+  }
+  // An image alone on its line becomes its own paragraph, so every platform renders
+  // it as a block. The library only treats sole-child paragraph images as blocks;
+  // with hardSoftBreaks every newline is a break node, which made these inline.
+  function splitStandaloneImages(paragraph: Paragraph, start: number, end: number) {
+    for (const child of paragraph.children) {
+      const childStart = child.position?.start.offset;
+      const childEnd = child.position?.end.offset;
+      if (childStart === undefined || childEnd === undefined || !isImageLike(child)) continue;
+      const lineStart = source.lastIndexOf("\n", childStart - 1) + 1;
+      const newline = source.indexOf("\n", childEnd);
+      const lineEnd = newline === -1 ? source.length : newline;
+      const prefix = source.slice(lineStart, childStart);
+      const suffix = source.slice(childEnd, lineEnd);
+      const aloneBefore = childStart === start || /^[\s>]*$/.test(prefix);
+      const aloneAfter = /^\s*\\?$/.test(suffix);
+      if (!aloneBefore || !aloneAfter) continue;
+      // Continuation lines inside quotes and lists keep their quote markers on the blank line.
+      const blank = prefix.replace(/[^>]/g, " ").trimEnd();
+      const split = (boundary: number) => {
+        if (splitBoundaries.has(boundary)) return;
+        splitBoundaries.add(boundary);
+        // A trailing backslash was a hard break; at a paragraph end it would render literally.
+        const cut = source[boundary - 1] === "\\" ? boundary - 1 : boundary;
+        edits.push({ start: cut, end: boundary + 1, text: `\n${blank}\n` });
+      };
+      if (lineStart > start) split(lineStart - 1);
+      if (lineEnd < end) split(lineEnd);
+    }
+  }
   function visit(node: Nodes) {
     const start = node.position?.start.offset;
     const end = node.position?.end.offset;
     if (start !== undefined && end !== undefined) {
+      if (node.type === "paragraph") splitStandaloneImages(node, start, end);
       if (node.type === "link") {
         const title = workspaceHoverTitle(node, source.slice(start, end), workspaceRoot);
         if (title !== null)
