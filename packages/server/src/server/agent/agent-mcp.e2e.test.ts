@@ -889,4 +889,113 @@ describe("agent MCP end-to-end (offline)", () => {
       await rm(repoRoot, { recursive: true, force: true });
     }
   }, 60_000);
+
+  test("agents inherit the shared project context saved by earlier agents", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
+    const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+    const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-agent-cwd-"));
+    const port = await getAvailablePort();
+    const recorder: LaunchRecorder = { recordedLaunches: [] };
+
+    const daemonConfig: PaseoDaemonConfig = {
+      listen: `127.0.0.1:${port}`,
+      paseoHome,
+      corsAllowedOrigins: [],
+      hostnames: true,
+      mcpEnabled: true,
+      staticDir,
+      mcpDebug: false,
+      agentClients: createMcpRecordingAgentClients(recorder),
+      agentStoragePath: path.join(paseoHome, "agents"),
+    };
+
+    const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));
+    await daemon.start();
+
+    const client = await createMcpClient(`http://127.0.0.1:${port}/mcp/agents`);
+
+    let firstAgentId: string | null = null;
+    let secondAgentId: string | null = null;
+    try {
+      const firstResult = await client.callTool({
+        name: "create_agent",
+        args: {
+          cwd: agentCwd,
+          title: "First contributor",
+          provider: "claude/claude-test-model",
+          mode: "bypassPermissions",
+          initialPrompt: "reply with done and stop",
+          background: true,
+        },
+      });
+      const firstPayload = getStructuredContent(firstResult);
+      firstAgentId = typeof firstPayload?.agentId === "string" ? firstPayload.agentId : null;
+      expect(firstAgentId).toBeTruthy();
+      // Launched before anything was saved: no digest in the first launch.
+      expect(recorder.recordedLaunches[0]?.daemonAppendSystemPrompt).toBeUndefined();
+
+      // Save knowledge through the first agent's scoped MCP session.
+      const scopedClient = await createMcpClient(
+        `http://127.0.0.1:${port}/mcp/agents?callerAgentId=${firstAgentId!}`,
+      );
+      try {
+        const saveResult = await scopedClient.callTool({
+          name: "context_save",
+          args: {
+            kind: "learning",
+            title: "Build system",
+            body: "Vitest, run per workspace; never the whole suite locally.",
+          },
+        });
+        const savePayload = getStructuredContent(saveResult);
+        expect(savePayload?.entry).toMatchObject({
+          kind: "learning",
+          title: "Build system",
+          authorAgentId: firstAgentId,
+          authorLabel: "First contributor",
+        });
+
+        const listResult = await scopedClient.callTool({
+          name: "context_list",
+          args: { query: "vitest" },
+        });
+        expect(getStructuredContent(listResult)?.entries).toHaveLength(1);
+      } finally {
+        await scopedClient.close();
+      }
+
+      // A second agent on the same project inherits the saved knowledge.
+      const secondResult = await client.callTool({
+        name: "create_agent",
+        args: {
+          cwd: agentCwd,
+          title: "Second contributor",
+          provider: "claude/claude-test-model",
+          mode: "bypassPermissions",
+          initialPrompt: "reply with done and stop",
+          background: true,
+        },
+      });
+      const secondPayload = getStructuredContent(secondResult);
+      secondAgentId = typeof secondPayload?.agentId === "string" ? secondPayload.agentId : null;
+      expect(secondAgentId).toBeTruthy();
+
+      const secondLaunch = recorder.recordedLaunches.at(-1);
+      expect(secondLaunch?.daemonAppendSystemPrompt).toContain("<shared-project-context>");
+      expect(secondLaunch?.daemonAppendSystemPrompt).toContain("Build system");
+      expect(secondLaunch?.daemonAppendSystemPrompt).toContain("context_save");
+    } finally {
+      if (firstAgentId) {
+        await client.callTool({ name: "kill_agent", args: { agentId: firstAgentId } });
+      }
+      if (secondAgentId) {
+        await client.callTool({ name: "kill_agent", args: { agentId: secondAgentId } });
+      }
+      await client.close();
+      await daemon.stop();
+      await rm(paseoHome, { recursive: true, force: true });
+      await rm(staticDir, { recursive: true, force: true });
+      await rm(agentCwd, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
