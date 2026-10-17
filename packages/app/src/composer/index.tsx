@@ -1,3 +1,4 @@
+import { UsageLimitCallout } from "./usage-limit-callout";
 import {
   useComposerEditingSession,
   useComposerFullscreen,
@@ -2409,6 +2410,7 @@ function ComposerContentImpl({
         {/* Input area */}
         <View style={inputAreaContainerStyle}>
           <View style={inputAreaContentStyle}>
+            {isFullscreen ? null : <UsageLimitCallout serverId={serverId} agentId={agentId} />}
             {isFullscreen ? null : queueList}
             {!isFullscreen && sendErrorNode}
 

@@ -250,6 +250,14 @@ export const zhCN: TranslationResources = {
     },
   },
   agentPanel: {
+    usageLimit: {
+      label: "用量限制重置后继续",
+      enabled: "已为此聊天启用。请保持主机运行。",
+      available: "已达到用量限制。可在 {{at}} 后重试。",
+      scheduled: "主机运行时，将于 {{at}} 继续。",
+      unknownReset: "提供商未报告重置时间。请手动继续。",
+      saving: "正在保存…",
+    },
     states: {
       notFound: "未找到 Agent",
       failedToLoad: "加载 Agent 失败",

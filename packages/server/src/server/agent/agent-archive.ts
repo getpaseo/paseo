@@ -15,6 +15,7 @@ export function buildArchivedAgentRecord(
   return {
     ...record,
     archivedAt,
+    usageLimit: undefined,
     updatedAt: options?.updatedAt ?? record.updatedAt,
     lastStatus: normalizeArchivedStatus(record.lastStatus),
     requiresAttention: false,

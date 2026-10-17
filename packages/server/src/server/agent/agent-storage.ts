@@ -1,3 +1,4 @@
+import { AgentUsageLimitSchema } from "@getpaseo/protocol/agent-usage-limit";
 import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
@@ -69,6 +70,7 @@ const STORED_AGENT_SCHEMA = z.object({
   features: z.array(AgentFeatureSchema).optional(),
   persistence: PERSISTENCE_HANDLE_SCHEMA,
   lastError: z.string().nullable().optional(),
+  usageLimit: AgentUsageLimitSchema.optional(),
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),

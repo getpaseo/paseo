@@ -1,3 +1,8 @@
+import {
+  AUTO_RESUME_USAGE_LIMIT_LABEL,
+  usageLimitResumeAt,
+  type AgentUsageLimit,
+} from "@getpaseo/protocol/agent-usage-limit";
 import { projectTimelineRows } from "./timeline-projection.js";
 import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
 import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/index.js";
@@ -91,7 +96,12 @@ import {
   type ProviderSubagentStoreEvent,
 } from "./provider-subagents/store.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
-import { extractAttention } from "../persistence-hooks.js";
+import {
+  extractAttention,
+  extractTimestamps,
+  buildConfigOverrides,
+  toAgentPersistenceHandle,
+} from "../persistence-hooks.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -430,6 +440,7 @@ interface ManagedAgentBase {
   activeTurnId: string | null;
   activeTurnStartedAt: Date | null;
   lastUsage?: AgentUsage;
+  usageLimit?: AgentUsageLimit;
   lastError?: string;
   attention: AttentionState;
   foregroundTurnWaiters: Set<ForegroundTurnWaiter>;
@@ -1441,6 +1452,8 @@ export class AgentManager {
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       ...options,
       persistence: handle,
+      usageLimit: record?.usageLimit,
+      lastError: record?.lastError ?? undefined,
       restoring: true,
     });
   }
@@ -1630,6 +1643,7 @@ export class AgentManager {
         historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
         lastUsage: preservedLastUsage,
         lastError: preservedLastError,
+        usageLimit: existing.usageLimit,
         attention: preservedAttention,
         restoring: true,
       });
@@ -1859,6 +1873,7 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} not found in storage after snapshot`);
     }
 
+    agent.usageLimit = undefined;
     const { archivedAt } = await this.markRecordArchived(stored, requestedArchivedAt);
     agent.updatedAt = new Date(archivedAt);
     await this.closeAgentRuntime(agentId);
@@ -2012,6 +2027,7 @@ export class AgentManager {
         lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
         lastUsage: undefined,
         lastError: record.lastError ?? undefined,
+        usageLimit: record.usageLimit,
         attention,
         internal: record.internal,
         labels: record.labels,
@@ -2411,6 +2427,86 @@ export class AgentManager {
     return result;
   }
 
+  async resumeAfterUsageLimit(agentId: string, expected: AgentUsageLimit): Promise<void> {
+    await this.runLifecycleMutation(agentId, async () => {
+      const registry = this.requireRegistry();
+      const record = await registry.get(agentId);
+      const existing = this.agents.get(agentId);
+      const resumeAt = usageLimitResumeAt(expected);
+      if (!record || !this.acceptingAgentRegistrations || record.archivedAt || record.internal)
+        return;
+      const labels = existing ? existing.labels : record.labels;
+      const limit = existing ? existing.usageLimit : record.usageLimit;
+      if (
+        labels[AUTO_RESUME_USAGE_LIMIT_LABEL] !== "true" ||
+        limit?.resetsAt !== expected.resetsAt ||
+        resumeAt === null ||
+        resumeAt > Date.now() ||
+        this.hasInFlightRun(agentId) ||
+        (existing && existing.pendingPermissions.size > 0)
+      )
+        return;
+      const handle = toAgentPersistenceHandle(this.getRegisteredProviderIds(), record.persistence);
+      if (!handle) return;
+
+      const lastUserMessageAt = await this.claimUsageLimitResume(record, existing, handle);
+      // A manual turn may finish while the durable claim or history load is awaiting I/O.
+      if (!this.canDispatchUsageLimitResume(agentId, lastUserMessageAt)) return;
+      void this.runAgent(
+        agentId,
+        "The usage limit reset. Continue the interrupted task from where you stopped, respecting the existing instructions. If the task is already complete, do not start new work.",
+        { clientMessageId: randomUUID() },
+      ).catch((error) => {
+        this.logger.warn({ err: error, agentId }, "Failed to resume after usage limit");
+      });
+    });
+  }
+
+  private canDispatchUsageLimitResume(
+    agentId: string,
+    lastUserMessageAt: Date | null | undefined,
+  ): boolean {
+    const agent = this.agents.get(agentId);
+    return Boolean(
+      this.acceptingAgentRegistrations &&
+      agent &&
+      !this.hasInFlightRun(agentId) &&
+      agent.pendingPermissions.size === 0 &&
+      agent.lastUserMessageAt === lastUserMessageAt,
+    );
+  }
+
+  private async claimUsageLimitResume(
+    record: StoredAgentRecord,
+    existing: ManagedAgent | undefined,
+    handle: AgentPersistenceHandle,
+  ): Promise<Date | null | undefined> {
+    // Consume durably before loading or dispatching: a crash must not replay an unattended prompt.
+    if (existing) {
+      const lastUserMessageAt = existing.lastUserMessageAt;
+      existing.usageLimit = undefined;
+      await this.persistSnapshot(existing);
+      this.emitState(existing, { persist: false });
+      return lastUserMessageAt;
+    }
+    const consumed = {
+      ...record,
+      usageLimit: undefined,
+      updatedAt: this.nextStoredUpdatedAt(record),
+    };
+    await this.requireRegistry().upsert(consumed);
+    this.dispatchStoredAgentState(consumed);
+    await this.resumeAgentFromPersistenceInternal(
+      handle,
+      buildConfigOverrides(consumed),
+      record.id,
+      { ...extractTimestamps(consumed), attention: extractAttention(consumed) },
+    );
+    const lastUserMessageAt = this.agents.get(record.id)?.lastUserMessageAt;
+    await this.hydrateTimelineFromProvider(record.id);
+    return lastUserMessageAt;
+  }
+
   async runAgent(
     agentId: string,
     prompt: AgentPromptInput,
@@ -2620,6 +2716,7 @@ export class AgentManager {
     const agent = existingAgent;
     const isReplacement = agent.pendingReplacement;
     agent.lastError = undefined;
+    agent.usageLimit = undefined;
 
     const pendingRun = this.runs.createPendingRun(agentId);
 
@@ -3563,6 +3660,7 @@ export class AgentManager {
       persistence?: AgentPersistenceHandle;
       historyPrimed?: boolean;
       lastUsage?: AgentUsage;
+      usageLimit?: AgentUsageLimit;
       lastError?: string;
       attention?: AttentionState;
       /**
@@ -3746,6 +3844,7 @@ export class AgentManager {
           labels?: Record<string, string>;
           historyPrimed?: boolean;
           lastUsage?: AgentUsage;
+          usageLimit?: AgentUsageLimit;
           lastError?: string;
           attention?: AttentionState;
           persistence?: AgentPersistenceHandle;
@@ -3788,6 +3887,7 @@ export class AgentManager {
       lastUserMessageAt: options?.lastUserMessageAt ?? null,
       lastUsage: options?.lastUsage,
       lastError: options?.lastError,
+      usageLimit: options?.usageLimit,
       attention: resolveInitialAttention(options?.attention),
       internal: config.internal ?? false,
       labels: options?.labels ?? {},
@@ -4639,6 +4739,7 @@ export class AgentManager {
       agent.lifecycle = "error";
     }
     agent.lastError = event.error;
+    if (!options?.fromHistory) agent.usageLimit = event.usageLimit;
     await this.appendSystemErrorTimelineMessage(
       agent,
       event.provider,

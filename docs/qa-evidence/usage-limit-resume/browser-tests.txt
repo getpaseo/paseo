@@ -1,0 +1,53 @@
+npm notice run paseo@0.12.0-beta.1 npx
+npm notice run 'playwright' test e2e/browser/usage-limit-resume.spec.ts --project=browser --workers=1
+(node:2992605) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[metro] Starting project at /home/bobik/src/paseo-worktrees/resume-after-usage-limit/packages/app
+[metro] Using src/app as the root directory for Expo Router.
+[metro] Experimental Expo Autolinking module resolver is enabled.
+[metro] React Compiler enabled
+[metro] Starting Metro Bundler
+[metro] Waiting on http://localhost:37643
+[metro] Logs for your project will appear below.
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] | (node:2993257) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[metro] | (Use `node --trace-warnings ...` to show where the warning was created)
+[metro] Web Bundled 1287ms packages/app/index.ts (5587 modules)
+[e2e] Metro warmed on port 37643
+
+Running 4 tests using 1 worker
+
+(node:2993414) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:2993414) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(node:2993414) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[e2e] Worker 0 daemon started on port 39105, home: /tmp/paseo-e2e-worker-0-hoIyM9
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 49ms packages/app/index.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+[metro] Web Bundled 17ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro] Web Bundled 45ms packages/app/index.ts (1 module)
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 1ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+  ✓  1 [browser] › e2e/browser/usage-limit-resume.spec.ts:9:7 › usage limit opt-in survives reload and can be cancelled (wide) (6.8s)
+[metro] Web Bundled 42ms packages/app/index.ts (1 module)
+[metro] Web Bundled 3ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+[metro] Web Bundled 42ms packages/app/index.ts (1 module)
+[metro] Web Bundled 1ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+  ✓  2 [browser] › e2e/browser/usage-limit-resume.spec.ts:9:7 › usage limit opt-in survives reload and can be cancelled (compact) (6.5s)
+[metro] Web Bundled 43ms packages/app/index.ts (1 module)
+[metro] Web Bundled 3ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+  ✓  3 [browser] › e2e/browser/usage-limit-resume.spec.ts:50:5 › overdue opt-in continues the same chat once (4.1s)
+[metro] Web Bundled 37ms packages/app/index.ts (1 module)
+[metro] Web Bundled 1ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+  ✓  4 [browser] › e2e/browser/usage-limit-resume.spec.ts:76:5 › missing reset time leaves manual continuation available (3.7s)
+[e2e] Worker 0 daemon stopped
+[e2e] Metro stopped
+
+  4 passed (33.4s)

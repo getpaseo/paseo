@@ -1,3 +1,4 @@
+import { UsageLimitResumeService } from "./agent/usage-limit-resume.js";
 import type { PluginRegistries } from "@getpaseo/protocol/plugin-registry";
 import { describeHookWorkspace } from "./plugins/lifecycle/index.js";
 import express from "express";
@@ -1369,6 +1370,16 @@ export async function createPaseoDaemon(
     createPaseoWorktreeWorkspace: createSchedulePaseoWorktreeExternal,
     archiveWorkspace: archiveScheduleWorkspaceExternal,
   });
+  const usageLimitResume = new UsageLimitResumeService({
+    agentStorage,
+    agentManager,
+    logger,
+    canResumeWorkspace: async (record) => {
+      if (!record.workspaceId) return false;
+      const workspace = await workspaceRegistry.get(record.workspaceId);
+      return Boolean(workspace && !workspace.archivedAt && !workspace.untrustedSource);
+    },
+  });
   await scheduleService.start();
   agentManager.setAgentArchivedCallback(async (agentId) => {
     try {
@@ -1794,6 +1805,7 @@ export async function createPaseoDaemon(
       // model loading doesn't block the server from accepting connections.
       speechService.start();
       scriptHealthMonitor.start();
+      usageLimitResume.start();
     } catch (error) {
       localCredential = null;
       await deleteLocalCredential(config.paseoHome);
@@ -1823,6 +1835,7 @@ export async function createPaseoDaemon(
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();
     agentManager.prepareForShutdown();
+    await usageLimitResume.stop();
     await closeAllAgents(logger, agentManager);
     await withTimeout({
       promise: pluginRuntime.drainEvents(),

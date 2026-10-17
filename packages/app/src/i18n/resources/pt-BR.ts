@@ -251,6 +251,14 @@ export const ptBR: TranslationResources = {
     },
   },
   agentPanel: {
+    usageLimit: {
+      label: "Continuar após a redefinição do limite",
+      enabled: "Ativado para este chat. Mantenha o servidor em execução.",
+      available: "Limite atingido. Nova tentativa disponível em {{at}}.",
+      scheduled: "Continuará em {{at}} se o servidor estiver em execução.",
+      unknownReset: "O provedor não informou o horário de redefinição. Continue manualmente.",
+      saving: "Salvando…",
+    },
     states: {
       notFound: "Agente não encontrado",
       failedToLoad: "Falha ao carregar agente",
