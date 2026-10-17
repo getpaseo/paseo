@@ -55,9 +55,15 @@ import { composeSystemPromptParts } from "../system-prompt.js";
 import { curateAgentActivity } from "../activity-curator.js";
 import { CodexAsyncQuestions, codexAsyncQuestionToTimeline } from "./codex/async-questions.js";
 import {
+  aggregateCollabAgentChildStatuses,
+  applyCollabAgentToolCallStatus,
+  isTerminalSubAgentStatus,
   mapCodexToolCallEnvelope,
   mapCodexToolCallFromThreadItem,
   normalizeCommandExecutionCommand,
+  resolveClosedCollabAgentChildStatus,
+  resolveCollabAgentChildStatus,
+  settleCollabAgentChildStatus,
   splitCodexMcpToolResultImages,
 } from "./codex/tool-call-mapper.js";
 import {
@@ -504,6 +510,15 @@ interface PersistedSubAgentRoute {
 interface CodexThreadHistoryProjection {
   timeline: PersistedTimelineEntry[];
   subAgentRoutes: PersistedSubAgentRoute[];
+  /** Native state of the thread itself, read from its latest turn; null when it is unknown. */
+  status: ToolCallTimelineItem["status"] | null;
+  /**
+   * Re-settles the replayed spawn cards once the children's own histories have been read.
+   * Each child only ever moves from a still-running snapshot to its terminal state.
+   */
+  settleSubAgentCards(
+    childStatusByThreadId: ReadonlyMap<string, ToolCallTimelineItem["status"]>,
+  ): void;
 }
 
 function mergeCodexConfiguredDefaults(
@@ -1824,13 +1839,7 @@ function readCodexTurnHistoryTimestamp(
 interface CodexSubAgentActivity {
   id: string | null;
   agentThreadId: string;
-  kind: "started" | "interacted" | "interrupted";
-}
-
-function isTerminalSubAgentStatus(
-  status: ToolCallTimelineItem["status"],
-): status is "completed" | "failed" | "canceled" {
-  return status === "completed" || status === "failed" || status === "canceled";
+  kind: "started" | "interacted" | "interrupted" | "completed";
 }
 
 function readCodexSubAgentActivity(item: unknown): CodexSubAgentActivity | null {
@@ -1844,7 +1853,10 @@ function readCodexSubAgentActivity(item: unknown): CodexSubAgentActivity | null 
   if (
     normalizedType !== "subAgentActivity" ||
     typeof record.agentThreadId !== "string" ||
-    (record.kind !== "started" && record.kind !== "interacted" && record.kind !== "interrupted")
+    (record.kind !== "started" &&
+      record.kind !== "interacted" &&
+      record.kind !== "interrupted" &&
+      record.kind !== "completed")
   ) {
     return null;
   }
@@ -1914,6 +1926,42 @@ function readCodexHistoricalSubAgentThreadIds(item: unknown): string[] {
   return record.receiverThreadIds.filter(
     (threadId): threadId is string => typeof threadId === "string" && threadId.length > 0,
   );
+}
+
+/**
+ * Reads the per-child status that a collabAgentToolCall item reports in its `agentsStates`.
+ * Spawn items snapshot the child as `pendingInit`; the later `wait`/`closeAgent` items carry the
+ * status replay must settle on. A `closeAgent` entry always ends its child, so its pre-shutdown
+ * snapshot settles even when Codex still reported the child as running.
+ */
+function readCodexCollabChildStatuses(
+  item: unknown,
+): Array<[childThreadId: string, status: ToolCallTimelineItem["status"]]> {
+  const record = toObjectRecord(item);
+  const normalizedType = normalizeCodexThreadItemType(
+    typeof record?.type === "string" ? record.type : undefined,
+  );
+  if (normalizedType !== "collabAgentToolCall") {
+    return [];
+  }
+  const closesChild = record?.tool === "closeAgent";
+  const agentsStates = toObjectRecord(record?.agentsStates);
+  if (!agentsStates) {
+    return [];
+  }
+  const statuses: Array<[string, ToolCallTimelineItem["status"]]> = [];
+  for (const [childThreadId, state] of Object.entries(agentsStates)) {
+    const childStatus = toObjectRecord(state)?.status;
+    if (typeof childStatus !== "string" || childStatus.trim().length === 0) {
+      continue;
+    }
+    const childStatusValue = resolveCollabAgentChildStatus(childStatus);
+    statuses.push([
+      childThreadId,
+      closesChild ? resolveClosedCollabAgentChildStatus(childStatusValue) : childStatusValue,
+    ]);
+  }
+  return statuses;
 }
 
 function codexImageOutputFromResult(result: unknown): ProviderImageOutput | null {
@@ -2079,6 +2127,32 @@ const CodexThreadReadResponseSchema = z
 type CodexThreadReadResponse = z.infer<typeof CodexThreadReadResponseSchema>;
 type CodexThreadReadRequest = (threadId: string) => Promise<unknown>;
 
+/**
+ * The child's own thread is the authority on whether it finished. Legacy spawn entries and
+ * restored threads can hold only the spawn snapshot while the child's latest turn already
+ * completed, so a terminal turn is read back onto the recorded status. Missing status and a
+ * thread that is not loaded or active leave the recorded status untouched.
+ */
+function readCodexHistoryStatus(
+  thread: CodexThreadReadResponse["thread"],
+): ToolCallTimelineItem["status"] | null {
+  if (toObjectRecord(thread.status)?.type === "active") {
+    return "running";
+  }
+  switch (thread.turns.at(-1)?.status) {
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "interrupted":
+      return "canceled";
+    case "inProgress":
+      return "running";
+    default:
+      return null;
+  }
+}
+
 async function requestCodexThreadHistory(
   requestThread: CodexThreadReadRequest,
   threadId: string,
@@ -2095,8 +2169,13 @@ async function loadCodexThreadHistoryTimeline(params: {
   const response = await requestCodexThreadHistory(params.requestThread, params.threadId);
   const timeline: PersistedTimelineEntry[] = [];
   const subAgentTimelineIndexByThreadId = new Map<string, number>();
+  const childThreadIdsByTimelineIndex = new Map<number, Set<string>>();
+  const latestCollabStatusByChildThreadId = new Map<string, ToolCallTimelineItem["status"]>();
   for (const turn of response.thread.turns) {
     for (const item of turn.items) {
+      for (const [childThreadId, status] of readCodexCollabChildStatuses(item)) {
+        latestCollabStatusByChildThreadId.set(childThreadId, status);
+      }
       const historicalSubAgentActivity = readCodexSubAgentActivity(item);
       if (historicalSubAgentActivity) {
         const existingIndex = subAgentTimelineIndexByThreadId.get(
@@ -2131,20 +2210,108 @@ async function loadCodexThreadHistoryTimeline(params: {
             : {}),
         });
         for (const childThreadId of readCodexHistoricalSubAgentThreadIds(item)) {
-          subAgentTimelineIndexByThreadId.set(childThreadId, timeline.length - 1);
+          const timelineIndex = timeline.length - 1;
+          subAgentTimelineIndexByThreadId.set(childThreadId, timelineIndex);
+          addIndexedChildThreadId(childThreadIdsByTimelineIndex, timelineIndex, childThreadId);
         }
       }
     }
   }
   const subAgentRoutes = Array.from(subAgentTimelineIndexByThreadId.entries()).flatMap(
-    ([childThreadId, timelineIndex]): PersistedSubAgentRoute[] => {
-      const item = timeline[timelineIndex]?.item;
-      return item?.type === "tool_call" && item.detail.type === "sub_agent"
-        ? [{ childThreadId, toolCall: item }]
-        : [];
-    },
+    ([childThreadId, timelineIndex]): PersistedSubAgentRoute[] =>
+      replaySubAgentRoute(
+        childThreadId,
+        timelineIndex,
+        timeline,
+        latestCollabStatusByChildThreadId,
+      ),
   );
-  return { timeline, subAgentRoutes };
+  const settleSubAgentCards = (
+    childStatusByThreadId: ReadonlyMap<string, ToolCallTimelineItem["status"]> = new Map(),
+  ): void => {
+    settleReplayedSharedSubAgentCards({
+      timeline,
+      childThreadIdsByTimelineIndex,
+      latestCollabStatusByChildThreadId,
+      childHistoryStatusByChildThreadId: childStatusByThreadId,
+    });
+  };
+  settleSubAgentCards();
+  return {
+    timeline,
+    subAgentRoutes,
+    status: readCodexHistoryStatus(response.thread),
+    settleSubAgentCards,
+  };
+}
+
+function replaySubAgentRoute(
+  childThreadId: string,
+  timelineIndex: number,
+  timeline: PersistedTimelineEntry[],
+  latestStatusByChildThreadId: Map<string, ToolCallTimelineItem["status"]>,
+): PersistedSubAgentRoute[] {
+  const entry = timeline[timelineIndex];
+  const item = entry?.item;
+  if (!entry || item?.type !== "tool_call" || item.detail.type !== "sub_agent") {
+    return [];
+  }
+  const status = settleCollabAgentChildStatus(
+    item.status,
+    latestStatusByChildThreadId.get(childThreadId),
+  );
+  return [{ childThreadId, toolCall: applyCollabAgentToolCallStatus(item, status) }];
+}
+
+function addIndexedChildThreadId(
+  childThreadIdsByTimelineIndex: Map<number, Set<string>>,
+  timelineIndex: number,
+  childThreadId: string,
+): void {
+  const children = childThreadIdsByTimelineIndex.get(timelineIndex);
+  if (children) {
+    children.add(childThreadId);
+  } else {
+    childThreadIdsByTimelineIndex.set(timelineIndex, new Set([childThreadId]));
+  }
+}
+
+/**
+ * A spawn entry can own several children; settle the shared card only once every child has a
+ * terminal state in the replayed history.
+ */
+function settleReplayedSharedSubAgentCards(params: {
+  timeline: PersistedTimelineEntry[];
+  childThreadIdsByTimelineIndex: Map<number, Set<string>>;
+  latestCollabStatusByChildThreadId: Map<string, ToolCallTimelineItem["status"]>;
+  childHistoryStatusByChildThreadId?: ReadonlyMap<string, ToolCallTimelineItem["status"]>;
+}): void {
+  for (const [timelineIndex, childThreadIds] of params.childThreadIdsByTimelineIndex) {
+    const entry = params.timeline[timelineIndex];
+    const item = entry?.item;
+    if (!entry || item?.type !== "tool_call" || item.detail.type !== "sub_agent") {
+      continue;
+    }
+    if (isTerminalSubAgentStatus(item.status)) {
+      continue;
+    }
+    const statuses = [...childThreadIds].map((childThreadId) =>
+      settleCollabAgentChildStatus(
+        settleCollabAgentChildStatus(
+          item.status,
+          params.latestCollabStatusByChildThreadId.get(childThreadId),
+        ),
+        params.childHistoryStatusByChildThreadId?.get(childThreadId),
+      ),
+    );
+    if (statuses.some((status) => !isTerminalSubAgentStatus(status))) {
+      continue;
+    }
+    params.timeline[timelineIndex] = {
+      ...entry,
+      item: applyCollabAgentToolCallStatus(item, aggregateCollabAgentChildStatuses(statuses)),
+    };
+  }
 }
 
 function readCodexThread(client: CodexAppServerClientLike, threadId: string): Promise<unknown> {
@@ -3403,6 +3570,7 @@ interface CodexSubAgentCallState {
   childItemOrder: string[];
   childItems: Map<string, AgentTimelineItem>;
   childThreadIds: Set<string>;
+  childStatusByThreadId: Map<string, ToolCallTimelineItem["status"]>;
 }
 
 function resolveCodexParentSubagentId(
@@ -3987,14 +4155,14 @@ export class CodexAppServerAgentSession implements AgentSession {
         return readCodexThread(client, threadIdToRead);
       },
     });
-    const { timeline, subAgentRoutes } = history;
+    const { timeline } = history;
     this.subAgentCallsByCallId.clear();
     this.subAgentCallIdByChildThreadId.clear();
     this.pendingSubAgentNotificationsByThreadId.clear();
     this.persistedProviderSubagentEvents = [];
     this.loadingPersistedHistory = true;
     try {
-      await this.loadPersistedSubAgentHistories(client, subAgentRoutes);
+      await this.loadPersistedSubAgentHistories(client, history);
     } finally {
       this.loadingPersistedHistory = false;
     }
@@ -4013,13 +4181,14 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private async loadPersistedSubAgentHistories(
     client: CodexAppServerClientLike,
-    rootRoutes: readonly PersistedSubAgentRoute[],
+    rootHistory: CodexThreadHistoryProjection,
   ): Promise<void> {
-    const queue = rootRoutes.map((route) => ({
+    const queue = rootHistory.subAgentRoutes.map((route) => ({
       route,
       parentCallId: null as string | null,
       parentSubagentId: null as string | null,
     }));
+    const childStatusByThreadId = new Map<string, ToolCallTimelineItem["status"]>();
     const visitedThreadIds = new Set(this.currentThreadId ? [this.currentThreadId] : []);
     while (queue.length > 0 && visitedThreadIds.size < 100) {
       const next = queue.shift();
@@ -4027,35 +4196,50 @@ export class CodexAppServerAgentSession implements AgentSession {
         continue;
       }
       visitedThreadIds.add(next.route.childThreadId);
-      this.registerSubAgentToolCall({
-        timelineItem: next.route.toolCall,
-        rawItem: { agentThreadId: next.route.childThreadId },
-        parentCallId: next.parentCallId,
-        parentSubagentId: next.parentSubagentId,
-      });
+      let childHistory: CodexThreadHistoryProjection | null = null;
       try {
-        const childHistory = await loadCodexThreadHistoryTimeline({
+        childHistory = await loadCodexThreadHistoryTimeline({
           threadId: next.route.childThreadId,
           cwd: this.config.cwd ?? null,
           requestThread: (childThreadId) => readCodexThread(client, childThreadId),
         });
-        for (const entry of childHistory.timeline) {
-          this.emitProviderSubagentTimeline(next.route.childThreadId, entry.item, entry.timestamp);
-        }
-        for (const route of childHistory.subAgentRoutes) {
-          queue.push({
-            route,
-            parentCallId: next.route.toolCall.callId,
-            parentSubagentId: next.route.childThreadId,
-          });
-        }
       } catch (error) {
         this.logger.trace(
           { err: error, childThreadId: next.route.childThreadId },
           "Failed to load persisted Codex child history",
         );
       }
+      if (childHistory?.status) {
+        childStatusByThreadId.set(next.route.childThreadId, childHistory.status);
+      }
+      // Read the child before registering it so a child that finished after its spawn snapshot
+      // settles its own row. Live notifications that arrived while reading stay buffered and are
+      // replayed after registration, so they keep precedence over the replayed state.
+      const timelineItem = applyCollabAgentToolCallStatus(
+        next.route.toolCall,
+        settleCollabAgentChildStatus(next.route.toolCall.status, childHistory?.status ?? undefined),
+      );
+      const registeredChildThreadIds = this.registerSubAgentToolCall({
+        timelineItem,
+        rawItem: { agentThreadId: next.route.childThreadId },
+        parentCallId: next.parentCallId,
+        parentSubagentId: next.parentSubagentId,
+      });
+      this.replayPendingSubAgentNotifications(registeredChildThreadIds);
+      if (childHistory) {
+        for (const entry of childHistory.timeline) {
+          this.emitProviderSubagentTimeline(next.route.childThreadId, entry.item, entry.timestamp);
+        }
+        for (const route of childHistory.subAgentRoutes) {
+          queue.push({
+            route,
+            parentCallId: timelineItem.callId,
+            parentSubagentId: next.route.childThreadId,
+          });
+        }
+      }
     }
+    rootHistory.settleSubAgentCards(childStatusByThreadId);
   }
 
   private async ensureThreadLoaded(): Promise<void> {
@@ -5642,6 +5826,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         childItemOrder: [],
         childItems: new Map<string, AgentTimelineItem>(),
         childThreadIds: new Set<string>(),
+        childStatusByThreadId: new Map<string, ToolCallTimelineItem["status"]>(),
       } satisfies CodexSubAgentCallState);
 
     state.toolCall = {
@@ -5678,6 +5863,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
       this.subAgentCallIdByChildThreadId.set(receiverThreadId, timelineItem.callId);
       state.childThreadIds.add(receiverThreadId);
+      state.childStatusByThreadId.set(receiverThreadId, timelineItem.status);
       this.emitProviderSubagentUpsert(receiverThreadId, state, timelineItem.status);
     }
     return childThreadIds;
@@ -5718,7 +5904,9 @@ export class CodexAppServerAgentSession implements AgentSession {
       };
     }
     let nextStatus: ToolCallTimelineItem["status"] | undefined = "running";
-    if (activity.kind === "interrupted") {
+    if (activity.kind === "completed") {
+      nextStatus = "completed";
+    } else if (activity.kind === "interrupted") {
       nextStatus = "canceled";
     } else if (isTerminalSubAgentStatus(state.toolCall.status)) {
       nextStatus = undefined;
@@ -5837,7 +6025,13 @@ export class CodexAppServerAgentSession implements AgentSession {
       resolvedStatus = state.toolCall.status;
     }
     for (const childThreadId of state.childThreadIds) {
-      this.emitProviderSubagentUpsert(childThreadId, state, resolvedStatus);
+      // A shared spawn can hold children with different states, so an update that carries no
+      // status of its own keeps each row on the state that child already settled on.
+      const childStatus = status
+        ? resolvedStatus
+        : (state.childStatusByThreadId.get(childThreadId) ?? resolvedStatus);
+      state.childStatusByThreadId.set(childThreadId, childStatus);
+      this.emitProviderSubagentUpsert(childThreadId, state, childStatus);
     }
     const baseToolCall = {
       ...state.toolCall,
