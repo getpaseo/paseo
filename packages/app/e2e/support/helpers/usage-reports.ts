@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import type { UsageReportEntry } from "@getpaseo/protocol/messages";
 import { daemonWsRoutePattern, wsRoutePatternForPort } from "./daemon-port";
 
@@ -11,6 +11,21 @@ export interface UsageListRequest {
 export interface UsageReportsFixture {
   listRequests(): UsageListRequest[];
   waitForListRequests(count: number): Promise<void>;
+}
+
+export async function expectUsageBalanceInsideCard(page: Page, balanceId: string): Promise<void> {
+  const card = page.getByTestId("usage-card");
+  const value = page.getByTestId(`provider-usage-balance-${balanceId}-value`);
+  const reset = page.getByTestId(`provider-usage-balance-${balanceId}-reset`);
+  await expect(value).toBeVisible({ timeout: 10_000 });
+  await expect(reset).toHaveText(/resets \d+d/);
+  await expect(reset).toBeVisible();
+  const [cardBox, valueBox] = await Promise.all([card.boundingBox(), value.boundingBox()]);
+  expect(cardBox).not.toBeNull();
+  expect(valueBox).not.toBeNull();
+  expect((valueBox?.x ?? 0) + (valueBox?.width ?? 0)).toBeLessThanOrEqual(
+    (cardBox?.x ?? 0) + (cardBox?.width ?? 0),
+  );
 }
 
 interface UsageReportsFixtureOptions {

@@ -1,5 +1,6 @@
 import { RotateCw } from "lucide-react-native";
 import { useCallback, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { Text, View, type StyleProp, type TextStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
@@ -12,19 +13,23 @@ import { ToolbarButton, paneContentToolbarIconSize } from "@/components/ui/pane-
 import { StatusBadge } from "@/components/ui/status-badge";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
-import { useCompactTimeAgo } from "@/hooks/use-time-ago";
+import { i18n } from "@/i18n/i18next";
 import { UsageBalanceBar } from "./balance-bar";
 import { usageCopy } from "./copy";
 import type { UsageDisplay } from "./display";
-import { formatUsageFreshness, type UsageRefresh } from "./model";
+import { formatAgo } from "./format";
+import type { UsageRefresh } from "./model";
 import { useReportRefresh } from "./queries";
 import { UsageSourceIcon } from "./source-icon";
 import type { UsageReport, UsageReportEntry, UsageWindow } from "./types";
 import { UsageWindowBar } from "./window-bar";
+import { useRelativeTimeTick } from "./use-relative-time-tick";
 
 function statusText(report: UsageReport): string | null {
   if (report.status === "available") return null;
-  return report.status === "error" ? "Error" : "Unavailable";
+  return report.status === "error"
+    ? i18n.t("providerUsage.status.error")
+    : i18n.t("providerUsage.status.unavailable");
 }
 
 function reportContent(report: UsageReport) {
@@ -273,10 +278,13 @@ function UsageFreshness({
   style: StyleProp<TextStyle>;
   testID: string;
 }) {
-  const elapsed = useCompactTimeAgo(new Date(fetchedAt));
+  const { t } = useTranslation();
+  useRelativeTimeTick({ enabled: true });
+  const relativeTime = formatAgo(fetchedAt);
+  if (!relativeTime) return null;
   return (
     <Text style={style} numberOfLines={1} testID={testID}>
-      {formatUsageFreshness(elapsed)}
+      {t("providerUsage.timing.updated", { relativeTime })}
     </Text>
   );
 }

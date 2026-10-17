@@ -1,5 +1,7 @@
+import { type ReactNode } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { FloatingScrollView } from "@/components/ui/floating";
 import { UsageCard } from "./card";
 import { usageCopy } from "./copy";
 import { useUsageDisplay } from "./display";
@@ -15,29 +17,53 @@ export function AgentUsage({
   serverId,
   agentId,
   refreshable,
+  scrollable = false,
 }: {
   serverId: string;
   agentId: string;
-  /** Whether each card has a Refresh button; a surface that cannot be pressed hides it. */
+  /** Whether each card has a Refresh button. */
   refreshable: boolean;
+  /** Limit long report lists in a floating surface. */
+  scrollable?: boolean;
 }) {
   const view = useAgentUsage(serverId, agentId);
   if (view.kind === "none") return null;
+
+  let content: ReactNode;
+  if (view.kind === "ready") {
+    const cards = (
+      <AgentUsageCards
+        serverId={serverId}
+        agentId={agentId}
+        reports={view.reports}
+        refreshable={refreshable}
+      />
+    );
+    content = scrollable ? (
+      <FloatingScrollView
+        bounces={false}
+        contentContainerStyle={styles.reports}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator
+        style={styles.reportScroll}
+      >
+        {cards}
+      </FloatingScrollView>
+    ) : (
+      cards
+    );
+  } else {
+    content = (
+      <Text style={styles.message}>
+        {view.kind === "loading" ? usageCopy.loading : view.message}
+      </Text>
+    );
+  }
+
   return (
     <>
       <View style={styles.divider} />
-      {view.kind === "ready" ? (
-        <AgentUsageCards
-          serverId={serverId}
-          agentId={agentId}
-          reports={view.reports}
-          refreshable={refreshable}
-        />
-      ) : (
-        <Text style={styles.message}>
-          {view.kind === "loading" ? usageCopy.loading : view.message}
-        </Text>
-      )}
+      {content}
     </>
   );
 }
@@ -71,4 +97,6 @@ function AgentUsageCards({
 const styles = StyleSheet.create((theme) => ({
   divider: { height: 1, backgroundColor: theme.colors.borderAccent },
   message: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm },
+  reports: { alignSelf: "stretch", gap: theme.spacing[3] },
+  reportScroll: { alignSelf: "stretch", maxHeight: 240 },
 }));

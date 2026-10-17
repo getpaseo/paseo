@@ -4,6 +4,7 @@ import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { getServerId } from "../support/helpers/server-id";
 import { openSettingsHostSection } from "../support/helpers/settings";
 import {
+  expectUsageBalanceInsideCard,
   installUsageReportsFixture,
   type UsageReportsFixture,
 } from "../support/helpers/usage-reports";
@@ -136,6 +137,39 @@ test.describe("usage settings", () => {
     await refreshAllUsage(page);
     await expect.poll(() => forcedRefreshCount(usage)).toBe(1);
     await expect(card.getByText("64%")).toBeVisible();
+  });
+
+  test("keeps a localized balance reset within its usage card", async ({ page }) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 320, height: 844 });
+    const serverId = getServerId();
+    await installUsageReportsFixture(page, {
+      lists: [
+        [
+          report({
+            sourceId: "fixture",
+            sourceLabel: "Fixture plan",
+            report: {
+              balances: [
+                {
+                  id: "credits",
+                  label: "Credits available for additional usage",
+                  remaining: 999_999_999_999_999,
+                  unit: "credits",
+                  resetsAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+                },
+              ],
+            },
+          }),
+        ],
+      ],
+    });
+
+    await gotoAppShell(page);
+    await openSettings(page);
+    await openSettingsHostSection(page, serverId, "usage");
+
+    await expectUsageBalanceInsideCard(page, "credits");
   });
 
   test("asks to update a host without usage support and never calls it", async ({ page }) => {

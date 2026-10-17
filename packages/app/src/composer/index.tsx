@@ -27,6 +27,7 @@ import {
   useImperativeHandle,
   memo,
   type ReactElement,
+  type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -281,6 +282,52 @@ function buildAgentStateSelector(serverId: string, agentId: string) {
       totalCostUsd: agent?.lastUsage?.totalCostUsd ?? null,
       model: agent?.model ?? null,
     };
+  };
+}
+
+interface RenderContextWindowMeterArgs {
+  serverId: string;
+  agentId: string;
+  contextWindowMaxTokens: number | null;
+  contextWindowUsedTokens: number | null;
+  totalCostUsd: number | null;
+  showPercentage: boolean;
+  glyphSize: number;
+}
+
+function renderContextWindowMeter(args: RenderContextWindowMeterArgs): ReactElement {
+  return (
+    <ContextWindowMeter
+      serverId={args.serverId}
+      agentId={args.agentId}
+      maxTokens={args.contextWindowMaxTokens}
+      usedTokens={args.contextWindowUsedTokens}
+      totalCostUsd={args.totalCostUsd}
+      showPercentage={args.showPercentage}
+      glyphSize={args.glyphSize}
+    />
+  );
+}
+
+interface ResolveContextWindowPlacementArgs {
+  meter: ReactElement;
+  reserveSlot: boolean;
+  isCompactLayout: boolean;
+}
+
+function resolveContextWindowPlacement(args: ResolveContextWindowPlacementArgs): {
+  beforeVoiceContent: ReactNode;
+  compactContextWindowContent: ReactNode;
+} {
+  if (!args.reserveSlot) {
+    return { beforeVoiceContent: null, compactContextWindowContent: null };
+  }
+  if (args.isCompactLayout) {
+    return { beforeVoiceContent: null, compactContextWindowContent: args.meter };
+  }
+  return {
+    beforeVoiceContent: <View style={styles.contextWindowMeterSlot}>{args.meter}</View>,
+    compactContextWindowContent: null,
   };
 }
 
@@ -2054,29 +2101,35 @@ function ComposerContentImpl({
   );
 
   const contextWindowMeterGlyphSize = isCompactLayout ? ICON_SIZE.md : buttonIconSize;
-  const beforeVoiceContent = useMemo(
+  const contextWindowMeter = useMemo(
     () =>
-      hasAgent ? (
-        <View style={styles.contextWindowMeterSlot}>
-          <ContextWindowMeter
-            serverId={serverId}
-            agentId={agentId}
-            maxTokens={agentState.contextWindowMaxTokens}
-            usedTokens={agentState.contextWindowUsedTokens}
-            totalCostUsd={agentState.totalCostUsd}
-            glyphSize={contextWindowMeterGlyphSize}
-          />
-        </View>
-      ) : null,
+      renderContextWindowMeter({
+        serverId,
+        agentId,
+        contextWindowMaxTokens: agentState.contextWindowMaxTokens,
+        contextWindowUsedTokens: agentState.contextWindowUsedTokens,
+        totalCostUsd: agentState.totalCostUsd,
+        showPercentage: isCompactLayout,
+        glyphSize: contextWindowMeterGlyphSize,
+      }),
     [
-      hasAgent,
       serverId,
       agentId,
       agentState.contextWindowMaxTokens,
       agentState.contextWindowUsedTokens,
       agentState.totalCostUsd,
+      isCompactLayout,
       contextWindowMeterGlyphSize,
     ],
+  );
+  const { beforeVoiceContent, compactContextWindowContent } = useMemo(
+    () =>
+      resolveContextWindowPlacement({
+        meter: contextWindowMeter,
+        reserveSlot: hasAgent,
+        isCompactLayout,
+      }),
+    [contextWindowMeter, hasAgent, isCompactLayout],
   );
 
   const hasGithubAttachment = useMemo(
@@ -2480,6 +2533,11 @@ function ComposerContentImpl({
                   submitLabel={submitLabel}
                 />
               </RenderProfile>
+              {compactContextWindowContent ? (
+                <View style={styles.contextWindowMeterCompactSlot}>
+                  {compactContextWindowContent}
+                </View>
+              ) : null}
               <Combobox
                 options={githubSearchOptions}
                 value=""
@@ -2587,6 +2645,9 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flexShrink: 0,
     alignItems: "center",
     justifyContent: "center",
+  },
+  contextWindowMeterCompactSlot: {
+    alignSelf: "stretch",
   },
   realtimeVoiceButton: {
     width: 28,

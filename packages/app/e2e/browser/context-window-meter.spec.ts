@@ -254,9 +254,16 @@ for (const theme of ["light", "dark"] as const) {
     await openAgent(page, agent);
     const shot: Shot = (state) => qaScreenshot(page, `hover-card-desktop-${theme}-${state}`);
 
-    await test.step("reports stream in one card at a time, each with Refresh", async () => {
+    await test.step("reports stream in one card at a time, with accessible Refresh", async () => {
       const card = await expectCardsToStreamIn(page, usage, hoverContextWindowMeter, shot);
       await expectRefreshButtons(card, 2);
+      const meter = page.getByRole("button", { name: "Context window 25% used" });
+      await meter.focus();
+      await page.keyboard.press("ArrowDown");
+      await expect(card.getByRole("button", { name: "Refresh Claude" })).toBeFocused();
+      await page.mouse.move(0, 0);
+      await page.waitForTimeout(150);
+      await expect(card).toBeVisible();
       await shot("ready");
       expect(usage.agentRequests()).toEqual([agent.agentId]);
     });
