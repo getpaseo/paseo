@@ -73,7 +73,7 @@ export interface TerminalManager {
     options?: TerminalStateSnapshotOptions,
   ): Promise<TerminalStateSnapshot | null>;
   setTerminalTitle(id: string, title: string): boolean;
-  setTerminalActivity(id: string, state: TerminalActivityState): Promise<boolean>;
+  setTerminalActivity(id: string, state: TerminalActivityState, atNs?: string): Promise<boolean>;
   clearTerminalAttention(id: string): Promise<boolean>;
   killTerminal(id: string): void;
   killTerminalAndWait(
@@ -407,13 +407,17 @@ export function createTerminalManager(
       return true;
     },
 
-    async setTerminalActivity(id: string, state: TerminalActivityState): Promise<boolean> {
+    async setTerminalActivity(
+      id: string,
+      state: TerminalActivityState,
+      atNs?: string,
+    ): Promise<boolean> {
       const session = terminalsById.get(id);
       if (!session) {
         return false;
       }
 
-      session.setActivity(state);
+      session.setActivity(state, atNs);
       return true;
     },
 
