@@ -7771,6 +7771,18 @@ export class Session {
       const entries = selectedTimeline.entries.filter((entry) =>
         this.supportsTimelineItem(entry.item, source),
       );
+      const turnIds = new Set<string>();
+      const messageIds = new Set<string>();
+      for (const entry of entries) {
+        if (entry.turnId) turnIds.add(entry.turnId);
+        if (entry.item.type === "assistant_message" && entry.item.messageId)
+          messageIds.add(entry.item.messageId);
+      }
+      const turnTimings = await this.agentStorage.getTurnTimings({
+        agentId: msg.agentId,
+        turnIds,
+        messageIds,
+      });
 
       this.emitForSource(
         {
@@ -7791,6 +7803,7 @@ export class Session {
             hasOlder: selectedTimeline.hasOlder,
             hasNewer: selectedTimeline.hasNewer,
             ...(msg.mergeWindow === true ? { mergeWindow: true } : {}),
+            turnTimings,
             entries: entries.map((entry) => {
               const payloadEntry = {
                 provider: snapshot.provider,

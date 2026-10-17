@@ -1,6 +1,7 @@
 import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { AgentTurnTimingSchema, type AgentTurnTiming } from "@getpaseo/protocol/messages";
 import type { Logger } from "pino";
 
 import { writeJsonFileAtomic } from "../atomic-file.js";
@@ -51,6 +52,7 @@ const STORED_AGENT_SCHEMA = z.object({
   updatedAt: z.string(),
   lastActivityAt: z.string().optional(),
   lastUserMessageAt: z.string().nullable().optional(),
+  turnTimings: z.array(AgentTurnTimingSchema).optional(),
   title: z.string().nullable().optional(),
   labels: z.record(z.string(), z.string()).default({}),
   lastStatus: AgentStatusSchema.default("closed"),
@@ -92,6 +94,17 @@ export type SerializableAgentConfig = Pick<
 export type StoredAgentRecord = z.infer<typeof STORED_AGENT_SCHEMA>;
 export function parseStoredAgentRecord(value: unknown): StoredAgentRecord {
   return STORED_AGENT_SCHEMA.parse(value);
+}
+
+export interface GetTurnTimingsInput {
+  agentId: string;
+  turnIds: ReadonlySet<string>;
+  messageIds: ReadonlySet<string>;
+}
+
+export interface RecordTurnTimingInput {
+  agentId: string;
+  timing: AgentTurnTiming;
 }
 
 export class AgentStorage {
@@ -155,8 +168,35 @@ export class AgentStorage {
     await this.queueRecordWrite(record);
   }
 
+  async recordTurnTiming(params: RecordTurnTimingInput): Promise<void> {
+    const { agentId, timing } = params;
+    await this.load();
+    await this.queueRecordMutation(agentId, (record) => {
+      if (!record) throw new Error(`Agent ${agentId} not found`);
+      const timings = record.turnTimings ?? [];
+      if (timings.some((existing) => existing.turnId === timing.turnId)) return record;
+      return { ...record, turnTimings: [...timings, timing] };
+    });
+  }
+
+  async getTurnTimings(params: GetTurnTimingsInput): Promise<AgentTurnTiming[]> {
+    const { agentId, turnIds, messageIds } = params;
+    await this.load();
+    await this.waitForPendingWrite(agentId);
+    const record = this.cache.get(agentId);
+    return (record?.turnTimings ?? []).filter((timing) => {
+      const hasTurn = turnIds.has(timing.turnId);
+      const hasMessage = timing.messageIds.some((id) => messageIds.has(id));
+      return hasTurn || hasMessage;
+    });
+  }
+
   private queueRecordWrite(record: StoredAgentRecord): Promise<void> {
-    return this.queueRecordMutation(record.id, () => record);
+    return this.queueRecordMutation(record.id, (existing) => {
+      // Timing is append-only; metadata writers may hold an older agent snapshot.
+      if (existing?.turnTimings) return { ...record, turnTimings: existing.turnTimings };
+      return record;
+    });
   }
 
   private queueRecordMutation(
@@ -259,6 +299,7 @@ export class AgentStorage {
       if (existing && existing.archivedAt !== undefined) {
         record.archivedAt = existing.archivedAt;
       }
+      if (existing?.turnTimings) record.turnTimings = existing.turnTimings;
       return record;
     });
   }
