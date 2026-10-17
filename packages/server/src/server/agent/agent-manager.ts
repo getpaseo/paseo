@@ -2331,16 +2331,22 @@ export class AgentManager {
     if (this.agents.has(agentId)) await this.closeAgentRuntime(agentId);
     await this.syncNativeArchiveState(record.provider, record.persistence, "restore");
 
-    await registry.upsert({
+    const unarchivedRecord: StoredAgentRecord = {
       ...record,
       ...(updates?.workspaceId ? { workspaceId: updates.workspaceId } : {}),
       ...(updates?.labels ? { labels: applyLabelPatch(record.labels, updates.labels) } : {}),
       archivedAt: null,
       updatedAt: new Date().toISOString(),
-    });
+    };
+    await registry.upsert(unarchivedRecord);
 
     if (this.getAgent(agentId)) {
       this.notifyAgentState(agentId);
+    } else if (!unarchivedRecord.internal) {
+      // An archived agent has no live runtime, so `notifyAgentState` is a no-op.
+      // Publish the stored snapshot the same way `markRecordArchived` does, or
+      // clients keep rendering the archived row until they refetch.
+      this.dispatchStoredAgentState(unarchivedRecord);
     }
     return true;
   }
