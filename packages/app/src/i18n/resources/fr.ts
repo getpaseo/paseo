@@ -365,6 +365,7 @@ export const fr: TranslationResources = {
       details: "Détails",
     },
     dictation: {
+      paused: "Microphone interrompu. En attente de reprise…",
       start: "Démarrer la dictée vocale",
       cancel: "Annuler la dictée",
       retry: "Relancer la dictée",
