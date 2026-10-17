@@ -1,4 +1,9 @@
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
+import type {
+  AgentHistoryContentExcerpt,
+  AgentHistoryContentSource,
+  AgentHistoryMatchBand,
+} from "@getpaseo/protocol/messages";
 import {
   compareMatchScores,
   type MatchScore,
@@ -58,7 +63,16 @@ export interface CommandCenterAgentResult {
   id: string;
   agent: AggregatedAgent;
   title: string;
+  /** Line 2. The meta subtitle, or the excerpt when the body matched. */
   subtitle: string;
+  /** The meta line that was replaced when the body matched. Still searchable. */
+  metaSubtitle?: string;
+  /** Set when line 2 is a conversation excerpt. The label is not part of subtitle. */
+  snippetSource?: AgentHistoryContentSource;
+  /** Lead excerpt first. Later entries are words that only matched a worse place. */
+  excerpts?: readonly AgentHistoryContentExcerpt[];
+  /** message outranks trace. Absent on rows the daemon has not scored. */
+  matchBand?: AgentHistoryMatchBand;
   run(): void;
 }
 
@@ -169,8 +183,18 @@ function contributionSearchFields(
   return { visible, hidden: contribution.keywords };
 }
 
+const AGENT_ROW_HEIGHT = 56;
+const EXTRA_EXCERPT_HEIGHT = 18;
+
+/** Title plus one excerpt is 56. Each extra labeled place needs another line. */
+export function commandCenterAgentHeight(result: CommandCenterAgentResult): number {
+  const lines = result.excerpts && result.excerpts.length > 1 ? result.excerpts.length : 1;
+  return AGENT_ROW_HEIGHT + (lines - 1) * EXTRA_EXCERPT_HEIGHT;
+}
+
 function resultHeight(result: CommandCenterResult): number {
-  if (result.kind === "workspace" || result.kind === "agent") return 56;
+  if (result.kind === "agent") return commandCenterAgentHeight(result);
+  if (result.kind === "workspace") return 56;
   if (result.kind === "file") return 36;
   if (result.contribution.presentation.kind === "action") {
     return result.contribution.presentation.subtitle ? 56 : 36;
@@ -212,6 +236,115 @@ const DEFAULT_CATEGORY_RESULT_LIMIT = 5;
  * agents). It decides equal-scoring rows, so an agent awaiting input still outranks an idle one
  * that matched exactly as well.
  */
+function agentSearchTexts(row: CommandCenterAgentResult): CommandCenterSearchFields {
+  if (row.excerpts && row.excerpts.length > 0) {
+    const message = row.excerpts
+      .filter((excerpt) => excerpt.source === "user" || excerpt.source === "reply")
+      .map((excerpt) => excerpt.snippet)
+      .join("\n");
+    const trace = row.excerpts
+      .filter((excerpt) => excerpt.source === "thinking" || excerpt.source === "tool")
+      .map((excerpt) => excerpt.snippet)
+      .join("\n");
+    return {
+      visible: [row.title, row.metaSubtitle ?? "", message],
+      hidden: [row.agent.cwd, trace],
+    };
+  }
+  const excerpt = row.snippetSource ? row.subtitle : "";
+  const meta = row.metaSubtitle ?? (row.snippetSource ? "" : row.subtitle);
+  const excerptIsMessage = row.snippetSource === "user" || row.snippetSource === "reply";
+  return {
+    visible: [row.title, meta, excerptIsMessage ? excerpt : ""],
+    hidden: [row.agent.cwd, excerptIsMessage ? "" : excerpt],
+  };
+}
+
+/**
+ * One row per chat. A daemon content hit is folded onto the local row so a title
+ * match cannot drop the excerpt. Chats that are not already on screen stay.
+ */
+export function mergeAgentContentHits(
+  localRows: readonly CommandCenterAgentResult[],
+  serverRows: readonly CommandCenterAgentResult[],
+): CommandCenterAgentResult[] {
+  const serverById = new Map(serverRows.map((row) => [row.id, row]));
+  const seen = new Set<string>();
+  const merged = localRows.map((local) => {
+    seen.add(local.id);
+    const server = serverById.get(local.id);
+    if (!server) return local;
+    return combineAgentContentHit(local, server);
+  });
+  return [...merged, ...serverRows.filter((row) => !seen.has(row.id))];
+}
+
+function combineAgentContentHit(
+  local: CommandCenterAgentResult,
+  server: CommandCenterAgentResult,
+): CommandCenterAgentResult {
+  const snippet = server.snippetSource ? server.subtitle.trim() : "";
+  if (!snippet) {
+    return server.matchBand ? { ...local, matchBand: server.matchBand } : local;
+  }
+  return {
+    ...local,
+    subtitle: snippet,
+    metaSubtitle: local.metaSubtitle ?? local.subtitle,
+    snippetSource: server.snippetSource,
+    excerpts: server.excerpts,
+    matchBand: server.matchBand ?? local.matchBand,
+    agent: {
+      ...local.agent,
+      contentSnippet: snippet,
+      contentSource: server.snippetSource ?? null,
+      contentExcerpts: server.excerpts ?? null,
+      contentMatchBand: server.matchBand ?? null,
+    },
+  };
+}
+
+/**
+ * Visible text (title, meta, user message, reply) outranks a hit that only
+ * landed in thinking or a tool trace. The daemon's band keeps a row when the
+ * excerpt itself does not hold every token.
+ */
+export function rankCommandCenterAgents(
+  rows: readonly CommandCenterAgentResult[],
+  query: string,
+  tiebreak: (left: CommandCenterAgentResult, right: CommandCenterAgentResult) => number,
+): CommandCenterAgentResult[] {
+  if (!query.trim()) return rows.slice(0, DEFAULT_CATEGORY_RESULT_LIMIT);
+  const scored: { row: CommandCenterAgentResult; score: CommandCenterScore }[] = [];
+  for (const row of rows) {
+    const fields = agentSearchTexts(row);
+    const scoredFields = scoreSearchFields(query, fields);
+    const visibleOnly = scoreSearchFields(query, { visible: fields.visible, hidden: [] });
+    let score = scoredFields;
+    if (row.matchBand) {
+      if (visibleOnly) score = visibleOnly;
+      else if (row.matchBand === "message") {
+        score = {
+          fieldRank: VISIBLE_FIELD_RANK,
+          match: scoredFields?.match ?? { tier: 4, offset: 0 },
+        };
+      } else {
+        score = {
+          fieldRank: KEYWORD_FIELD_RANK,
+          match: scoredFields?.match ?? { tier: 4, offset: 0 },
+        };
+      }
+    }
+    if (!score) continue;
+    scored.push({ row, score });
+  }
+  scored.sort(
+    (left, right) =>
+      compareCommandCenterScores(left.score, right.score) || tiebreak(left.row, right.row),
+  );
+  return scored.map((entry) => entry.row);
+}
+
 export function filterAndRankBuiltInResults<Row>(
   rows: readonly Row[],
   query: string,
