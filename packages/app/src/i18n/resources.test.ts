@@ -239,6 +239,13 @@ describe("translation resources", () => {
     expect(glued).toEqual([]);
   });
 
+  it("separates Spanish interpolation placeholders from neighboring words", () => {
+    const glued = Object.entries(flattenStrings(es)).filter(([, value]) =>
+      /\p{L}\{\{|\}\}\p{L}{2,}/u.test(value),
+    );
+    expect(glued).toEqual([]);
+  });
+
   it("labels the immediate add-to-chat action without an ellipsis", () => {
     expect(en.workspace.fileActions.addToChat).toBe("Add to chat");
   });
