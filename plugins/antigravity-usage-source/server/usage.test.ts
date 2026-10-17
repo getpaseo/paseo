@@ -1,0 +1,604 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, assert, beforeEach, describe, expect, it } from "vitest";
+import { fetchUsage } from "./usage.js";
+import type { AntigravityUsageInput } from "../shared/input.js";
+
+describe("antigravity usage fetcher", () => {
+  let tempHome: string;
+  let authFile: string;
+
+  beforeEach(async () => {
+    tempHome = await mkdtemp(join(tmpdir(), "agy-fetch-home-"));
+    authFile = join(tempHome, "antigravity-oauth-token");
+  });
+
+  afterEach(async () => {
+    await rm(tempHome, { recursive: true, force: true });
+  });
+
+  const makeInput = (path: string): AntigravityUsageInput => ({
+    route: { store: "antigravity", path },
+  });
+
+  it("returns unavailable expired when token expiration is in the past", async () => {
+    await writeFile(
+      authFile,
+      JSON.stringify({
+        token: {
+          access_token: "expired-token",
+          expiry: "2026-10-01T10:00:00Z",
+        },
+      }),
+    );
+
+    const report = await fetchUsage(makeInput(authFile), fetch, {
+      now: () => new Date("2026-10-13T12:00:00Z").getTime(),
+    });
+
+    expect(report).toEqual({
+      status: "unavailable",
+      problem: {
+        kind: "expired",
+        expiresAt: "2026-10-01T10:00:00.000Z",
+        refreshedBy: "agy",
+      },
+    });
+  });
+
+  it("returns unavailable rejected on HTTP 401 and 403 without modifying credentials", async () => {
+    await writeFile(
+      authFile,
+      JSON.stringify({
+        token: { access_token: "valid-looking-token" },
+      }),
+    );
+
+    const mock401 = async () =>
+      new Response(JSON.stringify({ error: { code: 401 } }), { status: 401 });
+    const report401 = await fetchUsage(makeInput(authFile), mock401 as unknown as typeof fetch);
+
+    expect(report401).toEqual({
+      status: "unavailable",
+      problem: {
+        kind: "rejected",
+        status: 401,
+        refreshedBy: "agy",
+      },
+    });
+
+    const mock403 = async () =>
+      new Response(JSON.stringify({ error: { code: 403 } }), { status: 403 });
+    const report403 = await fetchUsage(makeInput(authFile), mock403 as unknown as typeof fetch);
+
+    expect(report403).toEqual({
+      status: "unavailable",
+      problem: {
+        kind: "rejected",
+        status: 403,
+        refreshedBy: "agy",
+      },
+    });
+  });
+
+  it("propagates TimeoutError from loadCodeAssist", async () => {
+    await writeFile(
+      authFile,
+      JSON.stringify({
+        token: { access_token: "token" },
+      }),
+    );
+
+    const mockTimeout = async () => {
+      const err = new Error("The operation timed out");
+      err.name = "TimeoutError";
+      throw err;
+    };
+
+    await expect(
+      fetchUsage(makeInput(authFile), mockTimeout as unknown as typeof fetch),
+    ).rejects.toThrow("The operation timed out");
+  });
+
+  it("throws when loadCodeAssist returns HTTP error", async () => {
+    await writeFile(
+      authFile,
+      JSON.stringify({
+        token: { access_token: "token" },
+      }),
+    );
+
+    const mock500 = async (url: string | URL | Request) => {
+      if (String(url).includes("loadCodeAssist")) {
+        return new Response("Server error", { status: 500 });
+      }
+      return new Response("{}", { status: 200 });
+    };
+
+    await expect(
+      fetchUsage(makeInput(authFile), mock500 as unknown as typeof fetch),
+    ).rejects.toThrow("Antigravity account API returned 500");
+  });
+
+  it("throws when endpoint returns HTML error page", async () => {
+    await writeFile(
+      authFile,
+      JSON.stringify({
+        token: { access_token: "token" },
+      }),
+    );
+
+    const mockHtml = async (url: string | URL | Request) => {
+      if (String(url).includes("loadCodeAssist")) {
+        return new Response("{}", { status: 200 });
+      }
+      return new Response("<html><body>Service Unavailable</body></html>", { status: 200 });
+    };
+
+    await expect(
+      fetchUsage(makeInput(authFile), mockHtml as unknown as typeof fetch),
+    ).rejects.toThrow("Antigravity usage API returned HTML");
+  });
+
+  it("groups models into Gemini and Claude & OSS quota buckets, filters telemetry, and respects currentTier", async () => {
+    await writeFile(
+      authFile,
+      JSON.stringify({
+        token: { access_token: "valid-token" },
+      }),
+    );
+
+    const mockFetch = async (url: string | URL | Request) => {
+      const urlStr = String(url);
+      if (urlStr.includes("loadCodeAssist")) {
+        return new Response(
+          JSON.stringify({
+            currentTier: { id: "standard-tier" },
+            paidTier: { id: "upgrade-pro-tier" },
+            cloudaicompanionProject: "custom-project",
+          }),
+          { status: 200 },
+        );
+      }
+      if (urlStr.includes("fetchAvailableModels")) {
+        return new Response(
+          JSON.stringify({
+            models: {
+              "gemini-3.1-pro-high": {
+                displayName: "Gemini 3.1 Pro (High)",
+                model: "gemini-3.1-pro-high",
+                quotaInfo: {
+                  remainingFraction: 0.8,
+                  resetTime: "2026-10-13T18:00:00Z",
+                },
+              },
+              "gemini-2.5-pro": {
+                displayName: "Gemini 2.5 Pro",
+                model: "gemini-2.5-pro",
+                quotaInfo: {
+                  remainingFraction: 0.8,
+                  resetTime: "2026-10-13T18:00:00Z",
+                },
+              },
+              "claude-opus-5-5-high": {
+                displayName: "Claude Opus 5.5 (High)",
+                model: "claude-opus-5-5-high",
+                quotaInfo: {
+                  remainingFraction: 1,
+                  resetTime: "2026-10-13T19:00:00Z",
+                },
+              },
+              "gpt-oss-120b-medium": {
+                displayName: "GPT-OSS 120B (Medium)",
+                model: "gpt-oss-120b-medium",
+                quotaInfo: {
+                  remainingFraction: 1,
+                  resetTime: "2026-10-13T19:00:00Z",
+                },
+              },
+              tab_flash_lite_preview: {
+                displayName: "Internal Tab",
+                quotaInfo: { remainingFraction: 0.5 },
+              },
+              chat_20706: {
+                displayName: "Internal Chat",
+                quotaInfo: { remainingFraction: 0.5 },
+              },
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("Not found", { status: 404 });
+    };
+
+    const report = await fetchUsage(makeInput(authFile), mockFetch as unknown as typeof fetch);
+
+    expect(report.status).toBe("available");
+    assert(report.status === "available");
+    expect(report.planLabel).toBe("Standard");
+    expect(report.windows).toHaveLength(2);
+
+    const geminiWindow = report.windows.find((w) => w.id === "gemini");
+    expect(geminiWindow).toMatchObject({
+      id: "gemini",
+      label: "Gemini (all models)",
+      shortLabel: "Gemini",
+      usedPct: 20,
+      remainingPct: 80,
+      summary: true,
+      resetsAt: "2026-10-13T18:00:00Z",
+      tone: "ok",
+    });
+
+    const claudeOssWindow = report.windows.find((w) => w.id === "claude-gpt-oss");
+    expect(claudeOssWindow).toMatchObject({
+      id: "claude-gpt-oss",
+      label: "Claude & GPT-OSS (all models)",
+      shortLabel: "Claude/OSS",
+      usedPct: 0,
+      remainingPct: 100,
+      summary: true,
+      resetsAt: "2026-10-13T19:00:00Z",
+      tone: "ok",
+    });
+  });
+
+  it("selects the most constrained quota in a bucket when models diverge", async () => {
+    await writeFile(
+      authFile,
+      JSON.stringify({
+        token: { access_token: "valid-token" },
+      }),
+    );
+
+    const mockFetch = async (url: string | URL | Request) => {
+      const urlStr = String(url);
+      if (urlStr.includes("loadCodeAssist")) {
+        return new Response("{}", { status: 200 });
+      }
+      if (urlStr.includes("fetchAvailableModels")) {
+        return new Response(
+          JSON.stringify({
+            models: {
+              "gemini-3.1-pro-high": {
+                displayName: "Gemini 3.1 Pro (High)",
+                quotaInfo: {
+                  remainingFraction: 0.4,
+                  resetTime: "2026-10-13T16:00:00Z",
+                },
+              },
+              "gemini-3-flash": {
+                displayName: "Gemini 3 Flash",
+                quotaInfo: {
+                  remainingFraction: 0.7,
+                  resetTime: "2026-10-13T17:00:00Z",
+                },
+              },
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("Not found", { status: 404 });
+    };
+
+    const report = await fetchUsage(makeInput(authFile), mockFetch as unknown as typeof fetch);
+
+    expect(report.status).toBe("available");
+    assert(report.status === "available");
+    expect(report.windows).toHaveLength(1);
+    expect(report.windows[0]).toMatchObject({
+      id: "gemini",
+      label: "Gemini (all models)",
+      usedPct: 60,
+      remainingPct: 40,
+      resetsAt: "2026-10-13T16:00:00Z",
+    });
+  });
+
+  it("tracks weekly and 5h quota windows via retrieveUserQuotaSummary with formatted plan label", async () => {
+    await writeFile(
+      authFile,
+      JSON.stringify({
+        token: { access_token: "quota-summary-token" },
+      }),
+    );
+
+    let recordedHeaders: Headers | undefined;
+    const mockFetch = async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = String(url);
+      if (urlStr.includes("loadCodeAssist")) {
+        return new Response(
+          JSON.stringify({
+            currentTier: { id: "free-tier" },
+          }),
+          { status: 200 },
+        );
+      }
+      if (urlStr.includes("retrieveUserQuotaSummary")) {
+        recordedHeaders = new Headers(init?.headers);
+        return new Response(
+          JSON.stringify({
+            groups: [
+              {
+                displayName: "Gemini Models",
+                buckets: [
+                  {
+                    bucketId: "gemini-weekly",
+                    window: "weekly",
+                    displayName: "Weekly Limit Remaining",
+                    remainingFraction: 0.5,
+                    resetTime: "2026-10-19T07:00:00Z",
+                  },
+                  {
+                    bucketId: "gemini-5h",
+                    window: "5h",
+                    displayName: "Five Hour Limit Remaining",
+                    remainingFraction: 0.8,
+                    resetTime: "2026-10-14T18:00:00Z",
+                  },
+                ],
+              },
+              {
+                displayName: "Claude and GPT models",
+                buckets: [
+                  {
+                    bucketId: "3p-weekly",
+                    window: "weekly",
+                    displayName: "Weekly Limit Remaining",
+                    remainingFraction: 1.0,
+                    resetTime: "2026-10-21T15:00:00Z",
+                  },
+                  {
+                    bucketId: "3p-5h",
+                    window: "5h",
+                    displayName: "Five Hour Limit Remaining",
+                    remainingFraction: 1.0,
+                    resetTime: "2026-10-14T20:00:00Z",
+                  },
+                ],
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("Not found", { status: 404 });
+    };
+
+    const report = await fetchUsage(makeInput(authFile), mockFetch as unknown as typeof fetch, {
+      platform: "darwin",
+    });
+
+    expect(report.status).toBe("available");
+    assert(report.status === "available");
+    expect(report.planLabel).toBe("Free");
+    expect(report.windows).toHaveLength(4);
+
+    expect(report.windows).toEqual([
+      expect.objectContaining({
+        id: "gemini-weekly",
+        label: "Gemini \u00b7 Weekly",
+        shortLabel: "Gemini wk",
+        usedPct: 50,
+        remainingPct: 50,
+        summary: true,
+        resetsAt: "2026-10-19T07:00:00Z",
+      }),
+      expect.objectContaining({
+        id: "gemini-5h",
+        label: "Gemini \u00b7 5h",
+        shortLabel: "Gemini 5h",
+        usedPct: 20,
+        remainingPct: 80,
+        resetsAt: "2026-10-14T18:00:00Z",
+      }),
+      expect.objectContaining({
+        id: "claude-gpt-oss-weekly",
+        label: "Claude & GPT-OSS \u00b7 Weekly",
+        shortLabel: "Claude/OSS wk",
+        usedPct: 0,
+        remainingPct: 100,
+        summary: true,
+        resetsAt: "2026-10-21T15:00:00Z",
+      }),
+      expect.objectContaining({
+        id: "claude-gpt-oss-5h",
+        label: "Claude & GPT-OSS \u00b7 5h",
+        shortLabel: "Claude/OSS 5h",
+        usedPct: 0,
+        remainingPct: 100,
+        resetsAt: "2026-10-14T20:00:00Z",
+      }),
+    ]);
+
+    expect(recordedHeaders?.get("User-Agent")).toContain("antigravity/1.107.0 darwin/");
+  });
+
+  it("falls back to fetchAvailableModels when retrieveUserQuotaSummary returns 404", async () => {
+    await writeFile(
+      authFile,
+      JSON.stringify({
+        token: { access_token: "fallback-token" },
+      }),
+    );
+
+    const mockFetch = async (url: string | URL | Request) => {
+      const urlStr = String(url);
+      if (urlStr.includes("loadCodeAssist")) {
+        return new Response(JSON.stringify({ currentTier: { id: "pro-tier" } }), { status: 200 });
+      }
+      if (urlStr.includes("retrieveUserQuotaSummary")) {
+        return new Response("Not found", { status: 404 });
+      }
+      if (urlStr.includes("fetchAvailableModels")) {
+        return new Response(
+          JSON.stringify({
+            models: {
+              "gemini-2.5-pro": {
+                displayName: "Gemini 2.5 Pro",
+                quotaInfo: { remainingFraction: 0.7, resetTime: "2026-10-14T15:00:00Z" },
+              },
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("Not found", { status: 404 });
+    };
+
+    const report = await fetchUsage(makeInput(authFile), mockFetch as unknown as typeof fetch);
+
+    expect(report.status).toBe("available");
+    assert(report.status === "available");
+    expect(report.planLabel).toBe("Pro");
+    expect(report.windows).toHaveLength(1);
+    expect(report.windows[0]?.id).toBe("gemini");
+  });
+
+  it("handles Gemini 4 Argon quota group with separate weekly window in retrieveUserQuotaSummary", async () => {
+    await writeFile(
+      authFile,
+      JSON.stringify({
+        token: { access_token: "argon-quota-token" },
+      }),
+    );
+
+    const mockFetch = async (url: string | URL | Request) => {
+      const urlStr = String(url);
+      if (urlStr.includes("loadCodeAssist")) {
+        return new Response(JSON.stringify({ currentTier: { id: "pro-tier" } }), { status: 200 });
+      }
+      if (urlStr.includes("retrieveUserQuotaSummary")) {
+        return new Response(
+          JSON.stringify({
+            groups: [
+              {
+                displayName: "Gemini Models",
+                buckets: [
+                  {
+                    bucketId: "gemini-weekly",
+                    window: "weekly",
+                    remainingFraction: 0.9,
+                    resetTime: "2026-10-23T07:00:00Z",
+                  },
+                ],
+              },
+              {
+                displayName: "Claude and GPT models",
+                buckets: [
+                  {
+                    bucketId: "3p-weekly",
+                    window: "weekly",
+                    remainingFraction: 0.7,
+                    resetTime: "2026-10-22T10:00:00Z",
+                  },
+                ],
+              },
+              {
+                name: "Gemini 4 Argon",
+                description:
+                  "For paid Pro plans, Argon quota is separate. Higher Argon quota is available on Ultra plans.",
+                buckets: [
+                  {
+                    id: "gemini-argon-wtu-weekly",
+                    name: "Gemini 4 Argon Weekly Limit",
+                    window: "weekly",
+                    remaining_fraction: 1.0,
+                    reset_time: "2026-10-23T08:00:00Z",
+                  },
+                ],
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("Not found", { status: 404 });
+    };
+
+    const report = await fetchUsage(makeInput(authFile), mockFetch as unknown as typeof fetch);
+
+    expect(report.status).toBe("available");
+    assert(report.status === "available");
+    expect(report.windows).toHaveLength(3);
+
+    const argonWindow = report.windows.find((w) => w.id === "gemini-argon-weekly");
+    expect(argonWindow).toBeDefined();
+    expect(argonWindow).toMatchObject({
+      id: "gemini-argon-weekly",
+      label: "Gemini 4 Argon \u00b7 Weekly",
+      shortLabel: "Argon wk",
+      usedPct: 0,
+      remainingPct: 100,
+      summary: true,
+      resetsAt: "2026-10-23T08:00:00Z",
+    });
+  });
+
+  it("isolates Argon models into a separate bucket in fetchAvailableModels fallback", async () => {
+    await writeFile(
+      authFile,
+      JSON.stringify({
+        token: { access_token: "argon-models-token" },
+      }),
+    );
+
+    const mockFetch = async (url: string | URL | Request) => {
+      const urlStr = String(url);
+      if (urlStr.includes("loadCodeAssist")) {
+        return new Response(JSON.stringify({ currentTier: { id: "pro-tier" } }), { status: 200 });
+      }
+      if (urlStr.includes("retrieveUserQuotaSummary")) {
+        return new Response("Not found", { status: 404 });
+      }
+      if (urlStr.includes("fetchAvailableModels")) {
+        return new Response(
+          JSON.stringify({
+            models: {
+              "gemini-2.5-pro": {
+                displayName: "Gemini 2.5 Pro",
+                quotaInfo: { remainingFraction: 0.6, resetTime: "2026-10-16T15:00:00Z" },
+              },
+              "gemini-4-argon-high": {
+                displayName: "Gemini 4 Argon (High)",
+                quotaInfo: { remainingFraction: 0.95, resetTime: "2026-10-23T08:00:00Z" },
+              },
+              "claude-opus-5-5-high": {
+                displayName: "Claude Opus 5.5 (High)",
+                quotaInfo: { remainingFraction: 0.4, resetTime: "2026-10-22T10:00:00Z" },
+              },
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("Not found", { status: 404 });
+    };
+
+    const report = await fetchUsage(makeInput(authFile), mockFetch as unknown as typeof fetch);
+
+    expect(report.status).toBe("available");
+    assert(report.status === "available");
+    expect(report.windows).toHaveLength(3);
+
+    expect(report.windows.find((w) => w.id === "gemini")).toMatchObject({
+      id: "gemini",
+      label: "Gemini (all models)",
+      usedPct: 40,
+    });
+    expect(report.windows.find((w) => w.id === "gemini-argon")).toMatchObject({
+      id: "gemini-argon",
+      label: "Gemini 4 Argon (all models)",
+      shortLabel: "Argon",
+      usedPct: 5,
+    });
+    expect(report.windows.find((w) => w.id === "claude-gpt-oss")).toMatchObject({
+      id: "claude-gpt-oss",
+      label: "Claude & GPT-OSS (all models)",
+      usedPct: 60,
+    });
+  });
+});
