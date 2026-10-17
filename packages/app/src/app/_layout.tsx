@@ -90,7 +90,12 @@ import { useGlobalNewWorkspaceAction } from "@/hooks/use-global-new-workspace-ac
 import { useLatchedBoolean } from "@/hooks/use-latched-boolean";
 import { useFaviconStatus } from "@/hooks/use-favicon-status";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
-import { resolveExplorerSidebarPresentation } from "@/workspace-tabs/explorer-sidebar";
+import {
+  resolveExplorerSidebarPresentation,
+  useIsExplorerSidebarOpen,
+} from "@/workspace-tabs/explorer-sidebar";
+import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { KeyboardShiftProvider } from "@/keyboard/shift";
 import { useCompactWebViewportZoomLock } from "@/hooks/use-compact-web-viewport-zoom-lock";
 import { useOpenProject } from "@/hooks/use-open-project";
@@ -481,7 +486,17 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const usesCompactExplorerHost = explorerSidebarPresentation !== "pane";
   useCompactWebViewportZoomLock(isCompactLayout);
   const pathname = usePathname();
-  const isWorkspaceRoute = parseHostWorkspaceRouteFromPathname(pathname) !== null;
+  const workspaceRoute = parseHostWorkspaceRouteFromPathname(pathname);
+  const isWorkspaceRoute = workspaceRoute !== null;
+  const workspaceKey = workspaceRoute ? buildWorkspaceTabPersistenceKey(workspaceRoute) : null;
+  const isExplorerOpen = useIsExplorerSidebarOpen({
+    isCompact: isCompactLayout,
+    workspaceKey,
+  });
+  const requestedExplorerSidebarWidth = useWorkspaceLayoutStore((state) =>
+    workspaceKey ? state.explorerSidebarWidthByWorkspace[workspaceKey] : undefined,
+  );
+  const isWorkspaceExplorerOpen = isWorkspaceRoute && isExplorerOpen;
   const isWorkspaceFocusModeEnabled = isWorkspaceRoute && isFocusModeEnabled;
   const chromeEnabled = chromeEnabledOverride ?? daemons.length > 0;
   const hasMountedDesktopSidebar = useLatchedBoolean(chromeEnabled);
@@ -518,6 +533,10 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
 
   const appContentMinimumWidth = resolveDesktopAppContentMinimum({
     isSettingsRoute: pathname.includes("/settings"),
+    isWorkspaceExplorerOpen,
+    requestedSidebarWidth: sidebarWidth,
+    requestedExplorerSidebarWidth,
+    viewportWidth,
   });
   const desktopSidebarMounted = hasMountedDesktopSidebar && !isWorkspaceFocusModeEnabled;
   const desktopSidebarVisible = resolveDesktopSidebarVisibility({

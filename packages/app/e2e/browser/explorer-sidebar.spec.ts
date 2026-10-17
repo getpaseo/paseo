@@ -8,8 +8,13 @@ import { seedWorkspace } from "../support/helpers/seed-client";
 import {
   ensureExplorerSidebar,
   openFilesPanel,
+  resizeExplorerSidebarBy,
   waitForWorkspaceTabsVisible,
 } from "../support/helpers/workspace-tabs";
+
+function renderedWidth(element: Element): number {
+  return element.getBoundingClientRect().width;
+}
 
 function explorerSidebar(page: Parameters<typeof ensureExplorerSidebar>[0]) {
   return page.getByTestId("workspace-explorer-sidebar").filter({ visible: true });
@@ -35,6 +40,134 @@ async function expectExplorerActiveTabForeground(
 }
 
 test.describe("Explorer sidebar", () => {
+  test("yields navigation on narrow tablets and restores it without changing saved widths", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(120_000);
+    const workspace = await seedWorkspace({ repoPrefix: "explorer-tablet-priority-" });
+    try {
+      await page.setViewportSize({ width: 1040, height: 900 });
+      await gotoWorkspace(page, workspace.workspaceId);
+      const explorer = await ensureExplorerSidebar(page);
+      const navigation = page.getByTestId("sidebar-footer");
+      await expect(navigation).toBeVisible();
+      const modifier = process.platform === "darwin" ? "Meta" : "Control";
+      await page.keyboard.press(`${modifier}+b`);
+      await expect(navigation).toBeHidden();
+      await page.keyboard.press(`${modifier}+b`);
+      await expect(navigation).toBeVisible();
+      const navigationWidth = await navigation.evaluate(renderedWidth);
+      const readPreferences = () =>
+        page.evaluate(() => ({
+          panel: JSON.parse(localStorage.getItem("panel-state")!).state,
+          explorerWidths: JSON.parse(localStorage.getItem("workspace-layout-state")!).state
+            .explorerSidebarWidthByWorkspace,
+        }));
+      const before = await readPreferences();
+      for (const width of [600, 639, 640, 960, 1000]) {
+        await page.setViewportSize({ width, height: 900 });
+        await expect(navigation).toBeHidden();
+        const explorerWidth = width < 640 ? 240 : Math.min(320, width - 400);
+        await expect.poll(() => explorer.evaluate(renderedWidth)).toBe(explorerWidth);
+        await expect
+          .poll(() => page.getByTestId("workspace-pane-main").evaluate(renderedWidth))
+          .toBe(width - explorerWidth - 1);
+        await testInfo.attach(`explorer-priority-${width}`, {
+          body: await page.screenshot({
+            path: testInfo.outputPath(`explorer-priority-${width}.png`),
+          }),
+          contentType: "image/png",
+        });
+      }
+      await page.getByTestId("workspace-explorer-toggle").first().click();
+      await expect(navigation).toBeVisible();
+      await expect.poll(() => navigation.evaluate(renderedWidth)).toBe(navigationWidth);
+      await ensureExplorerSidebar(page);
+      await expect(navigation).toBeHidden();
+
+      await page.keyboard.press(`${modifier}+n`);
+      await expect(navigation).toBeVisible();
+      await gotoWorkspace(page, workspace.workspaceId);
+      await ensureExplorerSidebar(page);
+      await expect(navigation).toBeHidden();
+
+      await page.keyboard.press(`${modifier}+Comma`);
+      await expect(page.getByRole("navigation", { name: "Settings" })).toBeVisible();
+      await expect(navigation).toBeHidden();
+      await page.setViewportSize({ width: 1040, height: 900 });
+      await expect(navigation).toBeHidden();
+      await gotoWorkspace(page, workspace.workspaceId);
+      await expect(explorerSidebar(page)).toBeVisible();
+      await expect(navigation).toBeVisible();
+      await expect.poll(() => explorerSidebar(page).evaluate(renderedWidth)).toBe(320);
+      await page.keyboard.press(`${modifier}+Shift+F`);
+      await expect(page.getByRole("button", { name: "Exit focus mode" })).toBeVisible();
+      await expect(navigation).toBeHidden();
+      await expect(explorerSidebar(page)).toHaveCount(0);
+      await page.getByRole("button", { name: "Exit focus mode" }).click();
+      await expect(navigation).toBeVisible();
+      await expect(explorerSidebar(page)).toBeVisible();
+      const after = await readPreferences();
+      expect(after.panel.sidebarWidth).toBe(before.panel.sidebarWidth);
+      expect(after.panel.desktop).toEqual(before.panel.desktop);
+      expect(after.explorerWidths).toEqual(before.explorerWidths);
+      await testInfo.attach("explorer-priority-1040", {
+        body: await page.screenshot({ path: testInfo.outputPath("explorer-priority-1040.png") }),
+        contentType: "image/png",
+      });
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("yields navigation until a resized Explorer fits and ignores an inactive workspace", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(120_000);
+    const workspace = await seedWorkspace({ repoPrefix: "explorer-resized-priority-" });
+    const other = await seedWorkspace({ repoPrefix: "explorer-inactive-priority-" });
+    try {
+      await page.setViewportSize({ width: 1000, height: 900 });
+      await gotoWorkspace(page, workspace.workspaceId);
+      const explorer = await ensureExplorerSidebar(page);
+      await resizeExplorerSidebarBy({ page, deltaWidth: 40 });
+      await expect.poll(() => explorer.evaluate(renderedWidth)).toBe(360);
+      const savedWidths = await page.evaluate(
+        () =>
+          JSON.parse(localStorage.getItem("workspace-layout-state")!).state
+            .explorerSidebarWidthByWorkspace,
+      );
+      for (const width of [1040, 1079]) {
+        await page.setViewportSize({ width, height: 900 });
+        await expect(page.getByTestId("sidebar-footer")).toBeHidden();
+        await expect.poll(() => explorer.evaluate(renderedWidth)).toBe(360);
+      }
+      await gotoWorkspace(page, other.workspaceId);
+      await expect(explorerSidebar(page)).toHaveCount(0);
+      await expect(page.getByTestId("sidebar-footer")).toBeVisible();
+      await gotoWorkspace(page, workspace.workspaceId);
+      await expect(page.getByTestId("sidebar-footer")).toBeHidden();
+      await page.setViewportSize({ width: 1080, height: 900 });
+      await expect(page.getByTestId("sidebar-footer")).toBeVisible();
+      await expect.poll(() => explorerSidebar(page).evaluate(renderedWidth)).toBe(360);
+      const restoredWidths = await page.evaluate(
+        () =>
+          JSON.parse(localStorage.getItem("workspace-layout-state")!).state
+            .explorerSidebarWidthByWorkspace,
+      );
+      expect(restoredWidths).toEqual(savedWidths);
+      await testInfo.attach("explorer-priority-resized-1080", {
+        body: await page.screenshot({
+          path: testInfo.outputPath("explorer-priority-resized-1080.png"),
+        }),
+        contentType: "image/png",
+      });
+    } finally {
+      await other.cleanup();
+      await workspace.cleanup();
+    }
+  });
+
   test("starts with Files and Changes, switches views, and toggles without changing main", async ({
     page,
   }) => {
