@@ -968,8 +968,12 @@ function SplitNodeView({
     groupId ? state.splitSizesByWorkspace[workspaceKey]?.[groupId] : undefined,
   );
   const groupChildren = node.kind === "group" ? node.group.children : EMPTY_SPLIT_NODES;
+  // Dragged sizes live per group id, apart from the layout tree, and a group keeps its id when
+  // panes are added or removed. They only apply while they still have one entry per child;
+  // otherwise the dividers past the end of the list could not move.
+  const layoutGroupSizes = node.kind === "group" ? node.group.sizes : EMPTY_SPLIT_SIZES;
   const groupSizes =
-    storedGroupSizes ?? (node.kind === "group" ? node.group.sizes : EMPTY_SPLIT_SIZES);
+    storedGroupSizes?.length === groupChildren.length ? storedGroupSizes : layoutGroupSizes;
   const visibleFlex = useMemo(
     () => resolveVisibleGroupFlex(groupChildren, groupSizes, maximizedPaneId),
     [groupChildren, groupSizes, maximizedPaneId],
