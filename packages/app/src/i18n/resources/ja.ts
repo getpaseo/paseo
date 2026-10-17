@@ -1316,6 +1316,18 @@ export const ja: TranslationResources = {
         archiving: "アーカイブ中...",
         hiding: "非表示にしています...",
       },
+      batch: {
+        pin_one: "{{count}} 個のワークスペースをピン留め",
+        pin_other: "{{count}} 個のワークスペースをピン留め",
+        unpin_one: "{{count}} 個のワークスペースのピン留めを解除",
+        unpin_other: "{{count}} 個のワークスペースのピン留めを解除",
+        markUnread_one: "{{count}} 個のワークスペースを未読にする",
+        markUnread_other: "{{count}} 個のワークスペースを未読にする",
+        archive_one: "{{count}} 個のワークスペースをアーカイブ",
+        archive_other: "{{count}} 個のワークスペースをアーカイブ",
+        addLabel: "ラベルを追加",
+        deselect: "選択を解除",
+      },
       confirmations: {
         hideTitle: "ワークスペースを非表示にしますか？",
         hideMessage:
@@ -1335,6 +1347,12 @@ export const ja: TranslationResources = {
         hostDisconnected: "ホストが接続されていません",
         hideFailed: "ワークスペースの非表示に失敗しました",
         archiveFailed: "ワークスペースのアーカイブに失敗しました",
+        batchPinFailed: "{{count}} 個のワークスペースのピン留めに失敗しました",
+        batchMarkUnreadFailed: "{{count}} 個のワークスペースを未読にできませんでした",
+        batchArchiveFailed_one:
+          "{{total}} 個のワークスペースのうち 1 個をアーカイブできませんでした",
+        batchArchiveFailed_other:
+          "{{total}} 個のワークスペースのうち {{count}} 個をアーカイブできませんでした",
       },
     },
   },

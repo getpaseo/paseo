@@ -1331,6 +1331,18 @@ export const fr: TranslationResources = {
         archiving: "Archivage…",
         hiding: "Masquage…",
       },
+      batch: {
+        pin_one: "Épingler {{count}} espace de travail",
+        pin_other: "Épingler {{count}} espaces de travail",
+        unpin_one: "Désépingler {{count}} espace de travail",
+        unpin_other: "Désépingler {{count}} espaces de travail",
+        markUnread_one: "Marquer {{count}} espace de travail comme non lu",
+        markUnread_other: "Marquer {{count}} espaces de travail comme non lus",
+        archive_one: "Archiver {{count}} espace de travail",
+        archive_other: "Archiver {{count}} espaces de travail",
+        addLabel: "Ajouter un libellé",
+        deselect: "Tout désélectionner",
+      },
       confirmations: {
         hideTitle: "Masquer l’espace de travail ?",
         hideMessage:
@@ -1350,6 +1362,11 @@ export const fr: TranslationResources = {
         hostDisconnected: "L’hôte n’est pas connecté",
         hideFailed: "Impossible de masquer l’espace de travail",
         archiveFailed: "Impossible d’archiver l’espace de travail",
+        batchPinFailed: "Impossible d’épingler {{count}} espaces de travail",
+        batchMarkUnreadFailed: "Impossible de marquer {{count}} espaces de travail comme non lus",
+        batchArchiveFailed_one: "Impossible d’archiver 1 espace de travail sur {{total}}",
+        batchArchiveFailed_other:
+          "Impossible d’archiver {{count}} espaces de travail sur {{total}}",
       },
     },
   },

@@ -1320,6 +1320,18 @@ export const ru: TranslationResources = {
         archiving: "Архивирование...",
         hiding: "Скрытие...",
       },
+      batch: {
+        pin_one: "Закрепить {{count}} рабочее пространство",
+        pin_other: "Закрепить {{count}} рабочих пространств",
+        unpin_one: "Открепить {{count}} рабочее пространство",
+        unpin_other: "Открепить {{count}} рабочих пространств",
+        markUnread_one: "Отметить {{count}} рабочее пространство как непрочитанное",
+        markUnread_other: "Отметить {{count}} рабочих пространств как непрочитанные",
+        archive_one: "Архивировать {{count}} рабочее пространство",
+        archive_other: "Архивировать {{count}} рабочих пространств",
+        addLabel: "Добавить метку",
+        deselect: "Снять выделение",
+      },
       confirmations: {
         hideTitle: "Скрыть рабочее пространство?",
         hideMessage:
@@ -1339,6 +1351,12 @@ export const ru: TranslationResources = {
         hostDisconnected: "Хост не подключён",
         hideFailed: "Не удалось скрыть рабочее пространство",
         archiveFailed: "Не удалось архивировать рабочее пространство",
+        batchPinFailed: "Не удалось закрепить {{count}} рабочих пространств",
+        batchMarkUnreadFailed:
+          "Не удалось отметить {{count}} рабочих пространств как непрочитанные",
+        batchArchiveFailed_one: "Не удалось архивировать 1 из {{total}} рабочих пространств",
+        batchArchiveFailed_other:
+          "Не удалось архивировать {{count}} из {{total}} рабочих пространств",
       },
     },
   },
