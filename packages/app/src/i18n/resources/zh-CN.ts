@@ -360,6 +360,7 @@ export const zhCN: TranslationResources = {
       details: "详情",
     },
     dictation: {
+      paused: "麦克风已中断，正在等待恢复…",
       start: "开始语音听写",
       cancel: "取消听写",
       retry: "重试听写",

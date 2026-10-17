@@ -12,6 +12,13 @@ import {
   toAgentPersistenceHandle,
 } from "../persistence-hooks.js";
 
+export class AgentNotFoundError extends Error {
+  constructor(agentId: string) {
+    super(`Agent not found: ${agentId}`);
+    this.name = "AgentNotFoundError";
+  }
+}
+
 interface PendingAgentInitialization {
   promise: Promise<ManagedAgent>;
   options: { broadcastTimeline: boolean };
@@ -94,7 +101,7 @@ export async function ensureAgentLoaded(
   const initPromise = (async () => {
     const record = await deps.agentStorage.get(agentId);
     if (!record) {
-      throw new Error(`Agent not found: ${agentId}`);
+      throw new AgentNotFoundError(agentId);
     }
 
     const validProviders = deps.validProviders ?? deps.agentManager.getRegisteredProviderIds();

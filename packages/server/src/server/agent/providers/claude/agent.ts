@@ -2610,13 +2610,13 @@ class ClaudeAgentSession implements AgentSession {
     const normalized = isPermissionMode(modeId) ? modeId : "default";
     assertClaudeModeCanRun(normalized, this.harnessEnvironment);
     const previousMode = this.currentMode;
-    const launchesQuery = !this.query || this.queryRestartNeeded;
+    const previousQuery = this.query;
     const activeQuery = await this.ensureQuery(normalized);
     try {
       await activeQuery.setPermissionMode(normalized);
     } catch (error) {
       // The query was launched in the rejected mode; relaunch in the current mode next time.
-      if (launchesQuery) this.queryRestartNeeded = true;
+      if (activeQuery !== previousQuery) this.queryRestartNeeded = true;
       throw error;
     }
     if (normalized === "plan") {
@@ -3314,7 +3314,9 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private async ensureQuery(launchMode: PermissionMode = this.currentMode): Promise<Query> {
-    if (this.query && !this.queryRestartNeeded) {
+    // Controls use the running turn's query. Pending launch settings take effect
+    // after that turn finishes, when its active query handle has been cleared.
+    if (this.query && (!this.queryRestartNeeded || this.activeForegroundQuery === this.query)) {
       return this.query;
     }
 
