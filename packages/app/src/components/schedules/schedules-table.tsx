@@ -5,6 +5,7 @@ import { ScheduleRow, type ScheduleRowPending } from "@/components/schedules/sch
 import { useScheduleMutations } from "@/hooks/use-schedule-mutations";
 import type { AggregatedSchedule } from "@/hooks/use-schedules";
 import type { ScheduleDerivedState } from "@/schedules/schedule-derivation";
+import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { settingsStyles } from "@/styles/settings";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { resolveScheduleTitle, scheduleProductName } from "@/utils/schedule-format";
@@ -15,6 +16,7 @@ export interface ScheduleRowView {
   targetLabel: string;
   provider: string | null;
   state: ScheduleDerivedState;
+  workspaceUnavailable: boolean;
   serverName: string;
   /** True when only one host exists, so the host name is redundant in rows. */
   singleHost: boolean;
@@ -99,6 +101,14 @@ function SchedulesTableRow({
     onEditSchedule(schedule);
   }, [onEditSchedule, schedule]);
 
+  const workspaceId =
+    schedule.target.type === "new-agent" ? schedule.target.config.workspaceId : undefined;
+  const handleOpenWorkspace = useCallback(() => {
+    if (workspaceId) {
+      navigateToWorkspace({ serverId, workspaceId });
+    }
+  }, [serverId, workspaceId]);
+
   const handlePause = useCallback(() => {
     void runAction("pause", () => mutations.pauseSchedule(id));
   }, [runAction, mutations, id]);
@@ -139,6 +149,8 @@ function SchedulesTableRow({
       isFirst={isFirst}
       pending={pending}
       onEdit={handleEdit}
+      onOpenWorkspace={workspaceId ? handleOpenWorkspace : undefined}
+      workspaceUnavailable={row.workspaceUnavailable}
       onPause={handlePause}
       onResume={handleResume}
       onRunNow={handleRunNow}

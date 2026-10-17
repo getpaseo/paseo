@@ -9,6 +9,7 @@ import {
   connectScheduleClient,
   parseScheduleUpdateInput,
   requireNewAgentSchedule,
+  requireScheduleWorkspaceSupport,
   toScheduleCommandError,
   type ScheduleCommandOptions,
 } from "./shared.js";
@@ -23,6 +24,7 @@ export interface ScheduleUpdateOptions extends ScheduleCommandOptions {
   model?: string;
   mode?: string;
   cwd?: string;
+  workspace?: string | false;
   maxRuns?: string | false;
   expiresIn?: string | false;
 }
@@ -43,6 +45,8 @@ export async function runUpdateCommand(
     model: options.model,
     mode: options.mode,
     cwd: options.cwd,
+    workspace: options.workspace === false ? undefined : options.workspace,
+    clearWorkspace: options.workspace === false,
     maxRuns: options.maxRuns === false ? undefined : options.maxRuns,
     expiresIn: options.expiresIn === false ? undefined : options.expiresIn,
     clearMaxRuns: options.maxRuns === false,
@@ -50,6 +54,9 @@ export async function runUpdateCommand(
   });
   const { client } = await connectScheduleClient(options.daemonTarget);
   try {
+    if (options.workspace !== undefined) {
+      requireScheduleWorkspaceSupport(client);
+    }
     await requireNewAgentSchedule(client, id);
     const payload = await client.scheduleUpdate(input);
     if (payload.error || !payload.schedule) {

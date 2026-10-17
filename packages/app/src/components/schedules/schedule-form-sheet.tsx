@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { Text, View } from "react-native";
-import { Brain, Folder, GitBranch } from "lucide-react-native";
+import { Brain, Folder, GitBranch, Plus } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { ScheduleCadence, ScheduleSummary } from "@getpaseo/protocol/schedule/types";
@@ -42,17 +42,19 @@ import {
 import { useScheduleMutations } from "@/hooks/use-schedule-mutations";
 import { useAggregatedAgents } from "@/hooks/use-aggregated-agents";
 import { useProjects } from "@/hooks/use-projects";
-import { useHosts } from "@/runtime/host-runtime";
+import { useHostRuntimeConnectionStatuses, useHosts } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import { buildScheduleProjectTargets } from "@/schedules/schedule-project-targets";
 import { useScheduleFormModel } from "@/schedules/use-schedule-form-model";
 import { useScheduleFormProviderSnapshot } from "@/schedules/use-schedule-form-provider-snapshot";
-import type {
-  ScheduleFormDisplay,
-  ScheduleFormHost,
-  ScheduleFormModel,
-  ScheduleFormSnapshot,
-  ScheduleFormState,
+import {
+  NEW_WORKSPACE_OPTION_ID,
+  type ScheduleFormDisplay,
+  type ScheduleFormHost,
+  type ScheduleFormModel,
+  type ScheduleFormSnapshot,
+  type ScheduleFormState,
+  type ScheduleFormWorkspaceOption,
 } from "@/schedules/schedule-form-model";
 import { validateCron } from "@/utils/schedule-format";
 import { toErrorMessage } from "@/utils/error-messages";
@@ -121,6 +123,9 @@ function selectScheduleHosts(
       label: host.label,
       supportsWorkspaceMultiplicity:
         state.sessions[host.serverId]?.serverInfo?.features?.workspaceMultiplicity === true,
+      supportsWorkspaceTarget:
+        state.sessions[host.serverId]?.serverInfo?.features?.scheduleWorkspaceTarget === true,
+      workspacesLoaded: state.sessions[host.serverId]?.hasHydratedWorkspaces === true,
     }));
 }
 
@@ -242,10 +247,20 @@ function OpenScheduleFormSheet({
   const controlSize: FieldControlSize = useIsCompactFormFactor() ? "md" : "sm";
   const { projects } = useProjects();
   const hostProfiles = useHosts();
-  const hosts = useStoreWithEqualityFn(
+  const hostServerIds = useMemo(() => hostProfiles.map((host) => host.serverId), [hostProfiles]);
+  const connectionStatuses = useHostRuntimeConnectionStatuses(hostServerIds);
+  const sessionHosts = useStoreWithEqualityFn(
     useSessionStore,
     useMemo(() => selectScheduleHosts(hostProfiles), [hostProfiles]),
     equal,
+  );
+  const hosts = useMemo(
+    () =>
+      sessionHosts.map((host) => ({
+        ...host,
+        isOnline: connectionStatuses.get(host.serverId) === "online",
+      })),
+    [connectionStatuses, sessionHosts],
   );
   const { preferences, updatePreferences } = useFormPreferences();
   const projectTargets = useMemo(() => buildScheduleProjectTargets(projects), [projects]);
@@ -345,7 +360,7 @@ function OpenScheduleFormSheet({
           model: state.selectedModel || null,
           modeId: state.selectedMode || null,
           thinkingOptionId: state.selectedThinkingOptionId || null,
-          cwd,
+          ...buildUpdateWorkspaceFields(state.submitWorkspaceId, cwd),
           ...(state.submitArchiveOnFinish !== undefined
             ? { archiveOnFinish: state.submitArchiveOnFinish }
             : {}),
@@ -364,7 +379,7 @@ function OpenScheduleFormSheet({
         type: "new-agent",
         config: {
           provider,
-          cwd,
+          ...buildCreateWorkspaceFields(state.submitWorkspaceId, cwd),
           model: state.selectedModel || undefined,
           modeId: state.selectedMode || undefined,
           thinkingOptionId: state.selectedThinkingOptionId || undefined,
@@ -740,6 +755,10 @@ function ScheduleTargetFields({
         />
       ) : null}
 
+      {state.disclosure.showWorkspaceField ? (
+        <ScheduleWorkspaceField model={model} state={state} size={controlSize} />
+      ) : null}
+
       {state.disclosure.showModelField ? (
         <Field label="Model">
           <CombinedModelSelector
@@ -809,6 +828,130 @@ function ScheduleTargetFields({
         </Field>
       ) : null}
     </>
+  );
+}
+
+/** A schedule bound to a workspace runs in the workspace's directory, so it sends no cwd. */
+function buildCreateWorkspaceFields(
+  submitWorkspaceId: string | null | undefined,
+  cwd: string,
+): { cwd?: string; workspaceId?: string } {
+  return typeof submitWorkspaceId === "string" ? { workspaceId: submitWorkspaceId } : { cwd };
+}
+
+/** `null` clears a binding and carries the project directory the form switched back to. */
+function buildUpdateWorkspaceFields(
+  submitWorkspaceId: string | null | undefined,
+  cwd: string,
+): { cwd?: string; workspaceId?: string | null } {
+  if (typeof submitWorkspaceId === "string") {
+    return { workspaceId: submitWorkspaceId };
+  }
+  return submitWorkspaceId === null ? { cwd, workspaceId: null } : { cwd };
+}
+
+function ScheduleWorkspaceField({
+  model,
+  state,
+  size,
+}: {
+  model: ScheduleFormModel;
+  state: ScheduleFormState;
+  size: FieldControlSize;
+}): ReactElement {
+  const options = state.workspaceOptions;
+  const kindByOptionId = useMemo(
+    () => new Map(state.workspaceOptions.map((option) => [option.id, option.workspaceKind])),
+    [state.workspaceOptions],
+  );
+  const selectedKind = kindByOptionId.get(state.selectedWorkspaceId ?? NEW_WORKSPACE_OPTION_ID);
+  // A workspace that is gone has no kind to show an icon for.
+  const triggerLeading = useMemo(
+    () =>
+      selectedKind === undefined ? undefined : (
+        <View style={styles.optionIconBox}>
+          <WorkspaceKindIcon kind={selectedKind} />
+        </View>
+      ),
+    [selectedKind],
+  );
+  const handleSelectWorkspace = useCallback(
+    (value: string) => {
+      model.setWorkspace(value === NEW_WORKSPACE_OPTION_ID ? null : value);
+    },
+    [model],
+  );
+  const renderWorkspaceOption = useCallback(
+    (input: SelectFieldRenderOptionInput<string>) => (
+      <WorkspaceOptionItem {...input} kind={kindByOptionId.get(input.option.id) ?? null} />
+    ),
+    [kindByOptionId],
+  );
+
+  return (
+    <SelectField
+      label="Workspace"
+      value={state.selectedWorkspaceId ?? NEW_WORKSPACE_OPTION_ID}
+      selectedDisplay={state.selectedWorkspaceDisplay}
+      options={options}
+      onChange={handleSelectWorkspace}
+      placeholder="Select workspace"
+      emptyText="No workspaces found"
+      loading={state.workspaceLoading}
+      error={state.workspaceError}
+      searchable={options.length > 6}
+      searchPlaceholder="Search workspaces..."
+      title="Select workspace"
+      size={size}
+      testID="schedule-workspace"
+      triggerTestID="schedule-workspace-trigger"
+      triggerLeading={triggerLeading}
+      renderOption={renderWorkspaceOption}
+    />
+  );
+}
+
+function WorkspaceKindIcon({
+  kind,
+}: {
+  kind: ScheduleFormWorkspaceOption["workspaceKind"];
+}): ReactElement {
+  if (kind === null) {
+    return <Plus size={16} color={styles.providerIcon.color} />;
+  }
+  if (kind === "worktree") {
+    return <GitBranch size={16} color={styles.providerIcon.color} />;
+  }
+  return <Folder size={16} color={styles.providerIcon.color} />;
+}
+
+function WorkspaceOptionItem({
+  option,
+  selected,
+  active,
+  onPress,
+  kind,
+}: SelectFieldRenderOptionInput<string> & {
+  kind: ScheduleFormWorkspaceOption["workspaceKind"];
+}): ReactElement {
+  const leadingSlot = useMemo(
+    () => (
+      <View style={styles.optionIconBox}>
+        <WorkspaceKindIcon kind={kind} />
+      </View>
+    ),
+    [kind],
+  );
+
+  return (
+    <ComboboxItem
+      testID={option.testID}
+      label={option.label}
+      selected={selected}
+      active={active}
+      onPress={onPress}
+      leadingSlot={leadingSlot}
+    />
   );
 }
 

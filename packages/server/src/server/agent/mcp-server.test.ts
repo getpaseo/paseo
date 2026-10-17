@@ -653,7 +653,7 @@ function createStoredSchedule(input: CreateScheduleInput): StoredSchedule {
     name: input.name ?? null,
     prompt: input.prompt,
     cadence: input.cadence,
-    target: input.target,
+    target: input.target as StoredSchedule["target"],
     status: "active",
     createdAt: now,
     updatedAt: now,
@@ -5157,6 +5157,94 @@ describe("create_schedule MCP tool", () => {
     });
   });
 
+  it("runs in the named workspace without defaulting cwd to the caller's", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue({
+      id: "parent-agent",
+      provider: "opencode",
+      cwd: REPO_CWD,
+      lifecycle: "idle",
+      currentModeId: "build",
+      availableModes: [],
+      config: { title: "Parent agent", model: "openai/gpt-5.5" },
+    } as ManagedAgent);
+    const createOrReplace = vi.fn(async (input: CreateScheduleInput) =>
+      createStoredSchedule(input),
+    );
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+    const tool = registeredTool(server, "create_schedule");
+
+    await tool.handler({
+      prompt: "weekly report",
+      cron: "0 12 * * 4",
+      workspaceId: "wks_weekly",
+    });
+    await tool.handler({
+      prompt: "weekly report with an explicit cwd",
+      cron: "0 12 * * 4",
+      workspaceId: "wks_weekly",
+      cwd: REPO_CWD,
+    });
+
+    expect(createOrReplace).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        target: {
+          type: "new-agent",
+          config: {
+            provider: "opencode",
+            workspaceId: "wks_weekly",
+            modeId: "build",
+            model: "openai/gpt-5.5",
+          },
+        },
+      }),
+    );
+    expect(createOrReplace).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        target: expect.objectContaining({
+          config: expect.objectContaining({ workspaceId: "wks_weekly", cwd: REPO_CWD }),
+        }),
+      }),
+    );
+  });
+
+  it("names the workspace outside an agent-scoped session without a cwd", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const createOrReplace = vi.fn(async (input: CreateScheduleInput) =>
+      createStoredSchedule(input),
+    );
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
+      logger,
+    });
+    const tool = registeredTool(server, "create_schedule");
+
+    await tool.handler({
+      prompt: "weekly report",
+      cron: "0 12 * * 4",
+      provider: "claude",
+      workspaceId: "wks_weekly",
+    });
+
+    expect(createOrReplace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: { type: "new-agent", config: { provider: "claude", workspaceId: "wks_weekly" } },
+      }),
+    );
+  });
+
   it("passes timezone through cron create_schedule input", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const createOrReplace = vi.fn(async (scheduleInput: CreateScheduleInput) =>
@@ -5443,6 +5531,32 @@ describe("update_schedule MCP tool", () => {
       id: "schedule-1",
       name: "updated name",
       prompt: "new prompt",
+    });
+  });
+
+  it("binds and clears the workspace", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const stored = makeStoredSchedule();
+    const update = vi.fn(async (_input: UpdateScheduleInput) => stored);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: scheduleServiceWithUpdate(update, stored),
+      logger,
+    });
+    const tool = registeredTool(server, "update_schedule");
+
+    await invokeToolWithParsedInput(tool, { id: "schedule-1", workspaceId: "wks_weekly" });
+    await invokeToolWithParsedInput(tool, { id: "schedule-1", workspaceId: null });
+
+    expect(update).toHaveBeenNthCalledWith(1, {
+      id: "schedule-1",
+      newAgentConfig: { workspaceId: "wks_weekly" },
+    });
+    expect(update).toHaveBeenNthCalledWith(2, {
+      id: "schedule-1",
+      newAgentConfig: { workspaceId: null },
     });
   });
 

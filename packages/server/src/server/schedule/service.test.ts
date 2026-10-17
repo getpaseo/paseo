@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AgentManager } from "../agent/agent-manager.js";
 import { AgentStorage } from "../agent/agent-storage.js";
 import { createAgentCommand } from "../agent/create-agent/create.js";
+import { archiveAgentCommand } from "../agent/lifecycle-command.js";
 import type {
   AgentCapabilityFlags,
   AgentClient,
@@ -101,7 +102,12 @@ let workspaceArchiveInProgress = false;
 
 type TestScheduleServiceOptions = Omit<
   ScheduleServiceOptions,
-  "createAgent" | "createDirectoryWorkspace" | "createPaseoWorktreeWorkspace" | "archiveWorkspace"
+  | "createAgent"
+  | "createDirectoryWorkspace"
+  | "createPaseoWorktreeWorkspace"
+  | "archiveWorkspace"
+  | "getWorkspace"
+  | "archiveAgent"
 > & {
   agentManager: AgentManager;
   providerSnapshotManager: Pick<ProviderSnapshotManager, "resolveCreateConfig">;
@@ -109,6 +115,8 @@ type TestScheduleServiceOptions = Omit<
   createDirectoryWorkspace?: ScheduleServiceOptions["createDirectoryWorkspace"];
   createPaseoWorktreeWorkspace?: ScheduleServiceOptions["createPaseoWorktreeWorkspace"];
   archiveWorkspace?: ScheduleServiceOptions["archiveWorkspace"];
+  getWorkspace?: ScheduleServiceOptions["getWorkspace"];
+  archiveAgent?: ScheduleServiceOptions["archiveAgent"];
 };
 
 function createScheduleService(options: TestScheduleServiceOptions): ScheduleService {
@@ -208,6 +216,20 @@ function createScheduleService(options: TestScheduleServiceOptions): ScheduleSer
         };
       }),
     archiveWorkspace: options.archiveWorkspace ?? archiveDefaultWorkspace,
+    getWorkspace:
+      options.getWorkspace ?? (async (workspaceId) => workspaces.get(workspaceId) ?? null),
+    archiveAgent:
+      options.archiveAgent ??
+      (async (agentId) => {
+        await archiveAgentCommand(
+          {
+            agentManager: options.agentManager,
+            agentStorage: options.agentStorage,
+            logger: options.logger,
+          },
+          agentId,
+        );
+      }),
   });
 }
 
@@ -3614,5 +3636,642 @@ describe("ScheduleService", () => {
     now = new Date("2026-01-01T00:01:00.000Z");
     expect(await service.completeForAgent(agentId)).toBe(1);
     expect(await service.completeForAgent(agentId)).toBe(0);
+  });
+
+  async function setupBoundWorkspace(
+    overrides: Partial<
+      Pick<ScheduleServiceOptions, "createAgent" | "archiveAgent" | "runner" | "logger">
+    > = {},
+  ) {
+    const deps = await createRegistryBackedScheduleWorkspaceDeps(tempDir);
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    const archiveWorkspaceCalls: string[] = [];
+    const archiveWorkspace = deps.createArchiveWorkspace({ agentManager: manager, agentStorage });
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      createDirectoryWorkspace: deps.createDirectoryWorkspace,
+      archiveWorkspace: async (workspaceId) => {
+        archiveWorkspaceCalls.push(workspaceId);
+        await archiveWorkspace(workspaceId);
+      },
+      getWorkspace: (workspaceId) => deps.workspaceRegistry.get(workspaceId),
+      now: () => now,
+      ...overrides,
+    });
+    const workspace = await deps.createDirectoryWorkspace({
+      cwd: tempDir,
+      firstAgentContext: { prompt: "weekly report" },
+    });
+    return { ...deps, manager, service, workspace, archiveWorkspaceCalls };
+  }
+
+  function boundTarget(workspaceId: string, config: Record<string, unknown> = {}) {
+    return {
+      type: "new-agent" as const,
+      config: { provider: "claude", model: "test-model", workspaceId, ...config },
+    };
+  }
+
+  test("workspace target: stores the workspace directory as cwd and drops isolation", async () => {
+    const { service, workspace } = await setupBoundWorkspace();
+
+    const created = await service.create({
+      prompt: "weekly report",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: boundTarget(workspace.workspaceId, { isolation: "local" }),
+      runOnCreate: false,
+    });
+
+    expect(created.target).toEqual({
+      type: "new-agent",
+      config: {
+        provider: "claude",
+        model: "test-model",
+        workspaceId: workspace.workspaceId,
+        cwd: workspace.cwd,
+      },
+    });
+  });
+
+  test("workspace target: rejects a workspace that cannot run the schedule when it is created", async () => {
+    const { service, workspaceRegistry, workspace } = await setupBoundWorkspace();
+    const create = (target: ReturnType<typeof boundTarget>) =>
+      service.create({
+        prompt: "weekly report",
+        cadence: { type: "every", everyMs: 60_000 },
+        target,
+        runOnCreate: false,
+      });
+
+    await expect(create(boundTarget("wks_missing"))).rejects.toThrow(
+      "Workspace wks_missing not found",
+    );
+    await expect(
+      create(boundTarget(workspace.workspaceId, { isolation: "worktree" })),
+    ).rejects.toThrow(
+      `A schedule that runs in workspace ${workspace.workspaceId} cannot use worktree isolation`,
+    );
+    await expect(
+      create(boundTarget(workspace.workspaceId, { cwd: join(tempDir, "elsewhere") })),
+    ).rejects.toThrow(
+      `cwd ${join(tempDir, "elsewhere")} is not workspace ${workspace.workspaceId}'s directory`,
+    );
+    await expect(create({ type: "new-agent", config: { provider: "claude" } })).rejects.toThrow(
+      "cwd or workspaceId is required",
+    );
+
+    await workspaceRegistry.update(workspace.workspaceId, (record) => ({
+      ...record,
+      untrustedSource: {
+        kind: "change_request",
+        forge: "github",
+        number: 12,
+        headRepository: "someone/fork",
+      },
+    }));
+    await expect(create(boundTarget(workspace.workspaceId))).rejects.toThrow(
+      "Scripts are blocked for PR #12 from someone/fork",
+    );
+
+    await workspaceRegistry.update(workspace.workspaceId, ({ untrustedSource: _, ...record }) => ({
+      ...record,
+    }));
+    await workspaceRegistry.archive(workspace.workspaceId, now.toISOString());
+    await expect(create(boundTarget(workspace.workspaceId))).rejects.toThrow(
+      `Workspace ${workspace.workspaceId} is archived`,
+    );
+    expect(await service.list()).toEqual([]);
+  });
+
+  test("workspace target: every run starts a new agent in the same workspace and archives only the agent", async () => {
+    const { service, workspaceRegistry, workspace, archiveWorkspaceCalls } =
+      await setupBoundWorkspace();
+    const created = await service.create({
+      prompt: "weekly report",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: boundTarget(workspace.workspaceId),
+      maxRuns: 2,
+    });
+
+    await service.tick();
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    expect(inspected.runs.map((run) => run.status)).toEqual(["succeeded", "succeeded"]);
+    expect(inspected.runs.map((run) => run.workspaceId)).toEqual([null, null]);
+    const agents = await Promise.all(inspected.runs.map((run) => agentStorage.get(run.agentId!)));
+    expect(agents[0]?.id).not.toBe(agents[1]?.id);
+    expect(agents.map((agent) => agent?.workspaceId)).toEqual([
+      workspace.workspaceId,
+      workspace.workspaceId,
+    ]);
+    expect(agents.map((agent) => agent?.archivedAt)).toEqual([
+      expect.any(String),
+      expect.any(String),
+    ]);
+    expect(await workspaceRegistry.list()).toEqual([
+      expect.objectContaining({ workspaceId: workspace.workspaceId, archivedAt: null }),
+    ]);
+    expect(archiveWorkspaceCalls).toEqual([]);
+  });
+
+  test("workspace target: archiveOnFinish=false leaves the run agent active in the workspace", async () => {
+    const { service, workspaceRegistry, workspace, archiveWorkspaceCalls } =
+      await setupBoundWorkspace();
+    const created = await service.create({
+      prompt: "weekly report",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: boundTarget(workspace.workspaceId, { archiveOnFinish: false }),
+      maxRuns: 1,
+    });
+
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    const agent = await agentStorage.get(inspected.runs[0]!.agentId!);
+    expect(agent?.workspaceId).toBe(workspace.workspaceId);
+    expect(agent?.archivedAt ?? null).toBeNull();
+    expect((await workspaceRegistry.get(workspace.workspaceId))?.archivedAt).toBeNull();
+    expect(archiveWorkspaceCalls).toEqual([]);
+  });
+
+  test("workspace target: a failed agent creation leaves the schedule's workspace alone", async () => {
+    const { service, workspaceRegistry, workspace, archiveWorkspaceCalls } =
+      await setupBoundWorkspace({
+        createAgent: async () => {
+          throw new Error("provider misconfigured");
+        },
+      });
+    const created = await service.create({
+      prompt: "weekly report",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: boundTarget(workspace.workspaceId),
+      runOnCreate: false,
+    });
+
+    await expect(
+      (service as unknown as ScheduleServiceInternals).executeSchedule(created, "run-fails"),
+    ).rejects.toThrow("provider misconfigured");
+
+    expect(archiveWorkspaceCalls).toEqual([]);
+    expect((await workspaceRegistry.list()).map((record) => record.archivedAt)).toEqual([null]);
+  });
+
+  describe("workspace target: runs that fail after the agent was created", () => {
+    type BoundSetup = Awaited<ReturnType<typeof setupBoundWorkspace>>;
+
+    async function runBoundScheduleOnce(setup: BoundSetup, config: Record<string, unknown> = {}) {
+      const created = await setup.service.create({
+        prompt: "weekly report",
+        cadence: { type: "every", everyMs: 60_000 },
+        target: boundTarget(setup.workspace.workspaceId, config),
+        maxRuns: 1,
+      });
+      await setup.service.tick();
+      return setup.service.inspect(created.id);
+    }
+
+    async function expectWorkspaceUntouched(setup: BoundSetup) {
+      expect(setup.archiveWorkspaceCalls).toEqual([]);
+      expect((await setup.workspaceRegistry.list()).map((record) => record.archivedAt)).toEqual([
+        null,
+      ]);
+    }
+
+    async function singleAgentOf(setup: BoundSetup) {
+      const agents = await agentStorage.list();
+      expect(agents).toHaveLength(1);
+      expect(agents[0]?.workspaceId).toBe(setup.workspace.workspaceId);
+      return agents[0]!;
+    }
+
+    test("archives the agent and leaves the workspace alone when the run throws", async () => {
+      const setup = await setupBoundWorkspace();
+      setup.manager.runAgent = async () => {
+        throw new Error("run exploded");
+      };
+
+      const inspected = await runBoundScheduleOnce(setup);
+
+      const agent = await singleAgentOf(setup);
+      expect(inspected.runs[0]).toMatchObject({
+        status: "failed",
+        error: "run exploded",
+        agentId: agent.id,
+        workspaceId: null,
+      });
+      expect(agent.archivedAt).toEqual(expect.any(String));
+      await expectWorkspaceUntouched(setup);
+    });
+
+    test("archives the agent and leaves the workspace alone when the run is canceled", async () => {
+      const setup = await setupBoundWorkspace();
+      setup.manager.runAgent = async () => ({
+        sessionId: "canceled-run",
+        finalText: "",
+        timeline: [],
+        canceled: true,
+      });
+
+      const inspected = await runBoundScheduleOnce(setup);
+
+      const agent = await singleAgentOf(setup);
+      expect(inspected.runs[0]).toMatchObject({
+        status: "failed",
+        error: expect.stringContaining("was canceled"),
+        agentId: agent.id,
+        workspaceId: null,
+      });
+      expect(agent.archivedAt).toEqual(expect.any(String));
+      await expectWorkspaceUntouched(setup);
+    });
+
+    test("keeps a run agent that waits for permission when archiveOnFinish is false", async () => {
+      const setup = await setupBoundWorkspace();
+      setup.manager.runAgent = async () => ({
+        sessionId: "permission-run",
+        finalText: "",
+        timeline: [],
+      });
+      setup.manager.waitForAgentEvent = async () => ({
+        status: "idle",
+        permission: { id: "permission-1", provider: "claude", name: "Bash", kind: "tool" },
+        lastMessage: null,
+      });
+
+      const inspected = await runBoundScheduleOnce(setup, { archiveOnFinish: false });
+
+      const agent = await singleAgentOf(setup);
+      expect(inspected.runs[0]).toMatchObject({
+        status: "failed",
+        error: expect.stringContaining("is waiting for permission"),
+        agentId: agent.id,
+        workspaceId: null,
+      });
+      expect(agent.archivedAt ?? null).toBeNull();
+      await expectWorkspaceUntouched(setup);
+    });
+
+    test("keeps the run's result when archiving its agent throws", async () => {
+      const logger = createTestLogger();
+      const warn = vi.fn();
+      logger.warn = warn as typeof logger.warn;
+      logger.child = (() => logger) as typeof logger.child;
+      const archiveError = new Error("archive exploded");
+      const setup = await setupBoundWorkspace({
+        logger,
+        archiveAgent: async () => {
+          throw archiveError;
+        },
+      });
+
+      const inspected = await runBoundScheduleOnce(setup);
+
+      const agent = await singleAgentOf(setup);
+      expect(inspected.runs[0]).toMatchObject({
+        status: "succeeded",
+        error: null,
+        agentId: agent.id,
+        workspaceId: null,
+      });
+      expect(agent.archivedAt ?? null).toBeNull();
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          err: archiveError,
+          agentId: agent.id,
+          workspaceId: setup.workspace.workspaceId,
+          scheduleId: inspected.id,
+        }),
+        expect.stringContaining("Failed to archive scheduled agent"),
+      );
+      await expectWorkspaceUntouched(setup);
+    });
+  });
+
+  test("workspace target: ends the schedule instead of creating a workspace when the workspace is archived", async () => {
+    const { service, workspaceRegistry, workspace, archiveWorkspaceCalls } =
+      await setupBoundWorkspace();
+    const created = await service.create({
+      prompt: "weekly report",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: boundTarget(workspace.workspaceId),
+    });
+    await workspaceRegistry.archive(workspace.workspaceId, now.toISOString());
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    expect(inspected.status).toBe("completed");
+    expect(inspected.runs).toHaveLength(1);
+    expect(inspected.runs[0]).toMatchObject({
+      status: "failed",
+      agentId: null,
+      error: expect.stringContaining(`Workspace ${workspace.workspaceId} is archived`),
+    });
+    expect(await workspaceRegistry.list()).toHaveLength(1);
+    expect(archiveWorkspaceCalls).toEqual([]);
+  });
+
+  test("workspace target: ends the schedule when the workspace no longer exists", async () => {
+    const { service, workspaceRegistry, workspace } = await setupBoundWorkspace();
+    const created = await service.create({
+      prompt: "weekly report",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: boundTarget(workspace.workspaceId),
+    });
+    await workspaceRegistry.remove(workspace.workspaceId);
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    expect(inspected.status).toBe("completed");
+    expect(inspected.runs[0]).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining(`Workspace ${workspace.workspaceId} no longer exists`),
+    });
+    expect(await workspaceRegistry.list()).toEqual([]);
+  });
+
+  test("workspace target: a workspace record marked untrusted after binding fails the run and keeps the schedule", async () => {
+    const { service, workspaceRegistry, workspace } = await setupBoundWorkspace();
+    const created = await service.create({
+      prompt: "weekly report",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: boundTarget(workspace.workspaceId),
+    });
+    await workspaceRegistry.update(workspace.workspaceId, (record) => ({
+      ...record,
+      untrustedSource: {
+        kind: "change_request",
+        forge: "github",
+        number: 12,
+        headRepository: "someone/fork",
+      },
+    }));
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    expect(inspected.status).toBe("active");
+    expect(inspected.runs[0]).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("Scripts are blocked for PR #12"),
+    });
+  });
+
+  test("workspace target: update binds, rebinds and clears the workspace", async () => {
+    const { service, createDirectoryWorkspace, workspaceRegistry, workspace } =
+      await setupBoundWorkspace();
+    const otherDir = join(tempDir, "other-project");
+    await mkdir(otherDir, { recursive: true });
+    const otherWorkspace = await createDirectoryWorkspace({
+      cwd: otherDir,
+      firstAgentContext: { prompt: "other" },
+    });
+    const created = await service.create({
+      prompt: "weekly report",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: { provider: "claude", cwd: tempDir, isolation: "worktree" },
+      },
+      runOnCreate: false,
+    });
+
+    const bound = await service.update({
+      id: created.id,
+      newAgentConfig: { workspaceId: workspace.workspaceId },
+    });
+    expect(bound.target).toEqual({
+      type: "new-agent",
+      config: { provider: "claude", workspaceId: workspace.workspaceId, cwd: workspace.cwd },
+    });
+
+    const rebound = await service.update({
+      id: created.id,
+      newAgentConfig: { workspaceId: otherWorkspace.workspaceId },
+    });
+    expect(rebound.target).toMatchObject({
+      config: { workspaceId: otherWorkspace.workspaceId, cwd: otherDir },
+    });
+
+    const cleared = await service.update({
+      id: created.id,
+      newAgentConfig: { workspaceId: null },
+    });
+    expect(cleared.target).toEqual({
+      type: "new-agent",
+      config: { provider: "claude", cwd: otherDir },
+    });
+
+    await workspaceRegistry.archive(workspace.workspaceId, now.toISOString());
+    await expect(
+      service.update({ id: created.id, newAgentConfig: { workspaceId: workspace.workspaceId } }),
+    ).rejects.toThrow(`Workspace ${workspace.workspaceId} is archived`);
+    expect((await service.inspect(created.id)).target).toEqual(cleared.target);
+  });
+
+  test("workspace target: update keeps a bound schedule's cwd and isolation tied to the workspace", async () => {
+    const { service, workspace } = await setupBoundWorkspace();
+    const created = await service.create({
+      prompt: "weekly report",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: boundTarget(workspace.workspaceId),
+      runOnCreate: false,
+    });
+
+    await expect(
+      service.update({ id: created.id, newAgentConfig: { cwd: join(tempDir, "elsewhere") } }),
+    ).rejects.toThrow("its working directory follows the workspace");
+    await expect(
+      service.update({ id: created.id, newAgentConfig: { isolation: "worktree" } }),
+    ).rejects.toThrow("cannot use worktree isolation");
+
+    const updated = await service.update({
+      id: created.id,
+      newAgentConfig: { cwd: workspace.cwd, isolation: "local", model: "other-model" },
+    });
+    expect(updated.target).toEqual({
+      type: "new-agent",
+      config: {
+        provider: "claude",
+        model: "other-model",
+        workspaceId: workspace.workspaceId,
+        cwd: workspace.cwd,
+      },
+    });
+  });
+
+  test("workspace target: createOrReplace finds the same bound schedule whether or not the request names cwd", async () => {
+    const { service, workspace } = await setupBoundWorkspace();
+    const input = {
+      name: "weekly report",
+      prompt: "weekly report",
+      cadence: { type: "every" as const, everyMs: 60_000 },
+      runOnCreate: false,
+    };
+
+    const first = await service.createOrReplace({
+      ...input,
+      target: boundTarget(workspace.workspaceId),
+    });
+    const second = await service.createOrReplace({
+      ...input,
+      target: boundTarget(workspace.workspaceId, { cwd: workspace.cwd, isolation: "local" }),
+    });
+
+    expect(second.id).toBe(first.id);
+    expect(await service.list()).toHaveLength(1);
+  });
+
+  async function createInterruptedRun(params: {
+    service: ScheduleService;
+    config: Record<string, unknown>;
+    run: { agentId: string | null; workspaceId: string | null };
+  }) {
+    const created = await params.service.create({
+      prompt: "interrupted",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+      runOnCreate: false,
+    });
+    await params.service.stop();
+    const store = new ScheduleStore(join(tempDir, "schedules"), createTestLogger());
+    const startedAt = now.toISOString();
+    await store.update(created.id, (schedule) => ({
+      ...schedule,
+      target: {
+        type: "new-agent",
+        config: { provider: "claude", cwd: tempDir, ...params.config },
+      },
+      runs: [
+        {
+          id: "run-interrupted",
+          scheduledFor: startedAt,
+          startedAt,
+          endedAt: null,
+          status: "running",
+          output: null,
+          error: null,
+          ...params.run,
+        },
+      ],
+    }));
+    return created;
+  }
+
+  test("workspace target: startup recovery archives only the agent of an interrupted run in the workspace", async () => {
+    const setup = await setupBoundWorkspace();
+    const agentId = "22222222-2222-4222-8222-222222222222";
+    const created = await createInterruptedRun({
+      service: setup.service,
+      config: { workspaceId: "wks_bound_now" },
+      run: { agentId, workspaceId: null },
+    });
+
+    const archivedAgents: string[] = [];
+    now = new Date("2026-01-01T00:10:00.000Z");
+    const restarted = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+      archiveWorkspace: async (workspaceId) => {
+        setup.archiveWorkspaceCalls.push(workspaceId);
+      },
+      archiveAgent: async (archivedAgentId) => {
+        archivedAgents.push(archivedAgentId);
+      },
+    });
+    await restarted.start();
+
+    expect(archivedAgents).toEqual([agentId]);
+    expect(setup.archiveWorkspaceCalls).toEqual([]);
+    expect((await restarted.inspect(created.id)).runs[0]).toMatchObject({
+      status: "failed",
+      agentId,
+      error: "Daemon restarted before the scheduled run completed",
+    });
+    await restarted.stop();
+  });
+
+  test("workspace target: startup recovery archives the workspace a run created even after the schedule was bound", async () => {
+    const setup = await setupBoundWorkspace();
+    const agentId = "33333333-3333-4333-8333-333333333334";
+    await createInterruptedRun({
+      service: setup.service,
+      config: { workspaceId: setup.workspace.workspaceId },
+      run: { agentId, workspaceId: "wks_created_by_run" },
+    });
+
+    const archivedAgents: string[] = [];
+    now = new Date("2026-01-01T00:10:00.000Z");
+    const restarted = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+      archiveWorkspace: async (workspaceId) => {
+        setup.archiveWorkspaceCalls.push(workspaceId);
+      },
+      archiveAgent: async (archivedAgentId) => {
+        archivedAgents.push(archivedAgentId);
+      },
+    });
+    await restarted.start();
+
+    expect(setup.archiveWorkspaceCalls).toEqual(["wks_created_by_run"]);
+    expect(archivedAgents).toEqual([]);
+    await restarted.stop();
+  });
+
+  test("workspace target: startup recovery leaves the run agent alone when archiveOnFinish is false", async () => {
+    const setup = await setupBoundWorkspace();
+    await createInterruptedRun({
+      service: setup.service,
+      config: { workspaceId: setup.workspace.workspaceId, archiveOnFinish: false },
+      run: { agentId: "44444444-4444-4444-8444-444444444444", workspaceId: null },
+    });
+
+    const archivedAgents: string[] = [];
+    now = new Date("2026-01-01T00:10:00.000Z");
+    const restarted = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+      archiveWorkspace: async (workspaceId) => {
+        setup.archiveWorkspaceCalls.push(workspaceId);
+      },
+      archiveAgent: async (archivedAgentId) => {
+        archivedAgents.push(archivedAgentId);
+      },
+    });
+    await restarted.start();
+
+    expect(archivedAgents).toEqual([]);
+    expect(setup.archiveWorkspaceCalls).toEqual([]);
+    await restarted.stop();
   });
 });

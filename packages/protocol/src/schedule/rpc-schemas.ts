@@ -7,7 +7,10 @@ import {
   ScheduleTargetSchema,
 } from "./types.js";
 
-const ScheduleCreateNewAgentConfigSchema = ScheduleTargetSchema.options[1].shape.config;
+// cwd may be omitted when workspaceId is given; the daemon takes the workspace's directory.
+const ScheduleCreateNewAgentConfigSchema = ScheduleTargetSchema.options[1].shape.config.extend({
+  cwd: z.string().trim().min(1).optional(),
+});
 
 const ScheduleCreateTargetSchema = z.discriminatedUnion("type", [
   z.object({
@@ -85,6 +88,7 @@ const ScheduleUpdateNewAgentConfigSchema = z.object({
   archiveOnFinish: z.boolean().optional(),
   isolation: z.enum(["local", "worktree"]).optional(),
   cwd: z.string().trim().min(1).optional(),
+  workspaceId: z.string().trim().min(1).nullable().optional(),
 });
 
 export const ScheduleUpdateRequestSchema = z.object({

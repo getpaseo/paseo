@@ -1,4 +1,12 @@
-import { MoreVertical, Pause, Pencil, Play, RotateCw, Trash2 } from "lucide-react-native";
+import {
+  FolderOpen,
+  MoreVertical,
+  Pause,
+  Pencil,
+  Play,
+  RotateCw,
+  Trash2,
+} from "lucide-react-native";
 import { useCallback, useState, type ReactElement } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -27,6 +35,7 @@ import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 
 // Themed lucide wrappers — module-scope so only the icon re-renders on theme
 // change (never call useUnistyles in render). See docs/unistyles.md.
+const ThemedFolderOpen = withUnistyles(FolderOpen);
 const ThemedPencil = withUnistyles(Pencil);
 const ThemedPause = withUnistyles(Pause);
 const ThemedPlay = withUnistyles(Play);
@@ -59,6 +68,10 @@ export interface ScheduleRowActions {
 }
 
 interface ScheduleRowProps extends ScheduleRowActions {
+  /** Jumps to the workspace the schedule runs in; absent when it creates its own. */
+  onOpenWorkspace?: () => void;
+  /** The workspace page is a dead end once the workspace is gone, so the item stays but is disabled. */
+  workspaceUnavailable?: boolean;
   serverId: string;
   schedule: ScheduleSummary;
   /** Client-derived target line (agent title / project / shortened path). */
@@ -179,6 +192,8 @@ export function ScheduleRow({
   pending,
   isFirst,
   onEdit,
+  onOpenWorkspace,
+  workspaceUnavailable,
   onPause,
   onResume,
   onRunNow,
@@ -245,6 +260,8 @@ export function ScheduleRow({
             canRun={canRun}
             pending={pending}
             onEdit={onEdit}
+            onOpenWorkspace={onOpenWorkspace}
+            workspaceUnavailable={workspaceUnavailable}
             onPause={onPause}
             onResume={onResume}
             onRunNow={onRunNow}
@@ -256,6 +273,9 @@ export function ScheduleRow({
   );
 }
 
+const openWorkspaceLeading = (
+  <ThemedFolderOpen size={MENU_ICON_SIZE} uniProps={mutedColorMapping} />
+);
 const editLeading = <ThemedPencil size={MENU_ICON_SIZE} uniProps={mutedColorMapping} />;
 const pauseLeading = <ThemedPause size={MENU_ICON_SIZE} uniProps={mutedColorMapping} />;
 const resumeLeading = <ThemedPlay size={MENU_ICON_SIZE} uniProps={mutedColorMapping} />;
@@ -336,13 +356,23 @@ function ScheduleKebabMenu({
   canRun,
   pending,
   onEdit,
+  onOpenWorkspace,
+  workspaceUnavailable,
   onPause,
   onResume,
   onRunNow,
   onDelete,
 }: Pick<
   ScheduleRowProps,
-  "schedule" | "pending" | "onEdit" | "onPause" | "onResume" | "onRunNow" | "onDelete"
+  | "schedule"
+  | "pending"
+  | "onEdit"
+  | "onOpenWorkspace"
+  | "workspaceUnavailable"
+  | "onPause"
+  | "onResume"
+  | "onRunNow"
+  | "onDelete"
 > & {
   canRun: boolean;
 }): ReactElement {
@@ -360,6 +390,16 @@ function ScheduleKebabMenu({
         {renderKebabTriggerIcon}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" width={220}>
+        {onOpenWorkspace ? (
+          <DropdownMenuItem
+            leading={openWorkspaceLeading}
+            disabled={workspaceUnavailable}
+            onSelect={onOpenWorkspace}
+            testID={`schedule-menu-open-workspace-${schedule.id}`}
+          >
+            Open workspace
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuItem
           leading={editLeading}
           onSelect={onEdit}

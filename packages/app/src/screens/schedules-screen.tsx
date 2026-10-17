@@ -27,7 +27,12 @@ import {
   type AggregatedSchedule,
   type ScheduleHostError,
 } from "@/hooks/use-schedules";
-import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
+import {
+  getHostRuntimeStore,
+  useHostRuntimeConnectionStatuses,
+  useHosts,
+} from "@/runtime/host-runtime";
+import { useHydratedWorkspaceServerIds } from "@/stores/session-store-hooks";
 import {
   resolveSchedule,
   type ScheduleBucket,
@@ -37,6 +42,8 @@ import { resolveSchedulesScreenBodyState } from "./schedules-screen-state";
 import {
   buildProjectNameByCwd,
   buildScheduleProjectTargets,
+  buildScheduleWorkspaceIndex,
+  canJudgeWorkspaceMissing,
 } from "@/schedules/schedule-project-targets";
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 
@@ -118,10 +125,15 @@ function SchedulesScreenContent(): ReactElement {
     return map;
   }, [agents]);
 
-  const projectNameByCwd = useMemo(
-    () => buildProjectNameByCwd(buildScheduleProjectTargets(projects)),
-    [projects],
+  const projectTargets = useMemo(() => buildScheduleProjectTargets(projects), [projects]);
+  const projectNameByCwd = useMemo(() => buildProjectNameByCwd(projectTargets), [projectTargets]);
+  const workspacesByKey = useMemo(
+    () => buildScheduleWorkspaceIndex(projectTargets),
+    [projectTargets],
   );
+  const hostServerIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
+  const workspaceReadyHosts = useHydratedWorkspaceServerIds(hostServerIds);
+  const connectionStatuses = useHostRuntimeConnectionStatuses(hostServerIds);
 
   // Resolve every schedule's derived state and target line once, then partition
   // by the host and status filters. Sorted newest-first for a stable order
@@ -137,9 +149,22 @@ function SchedulesScreenContent(): ReactElement {
         agentsByKey,
         projectNameByCwd,
         agentDataLoaded: agentDirReadyHosts.has(schedule.serverId),
+        workspacesByKey,
+        workspaceDataLoaded: canJudgeWorkspaceMissing({
+          workspacesLoaded: workspaceReadyHosts.includes(schedule.serverId),
+          hostOnline: connectionStatuses.get(schedule.serverId) === "online",
+        }),
       }),
     }));
-  }, [schedules, agentsByKey, projectNameByCwd, agentDirReadyHosts]);
+  }, [
+    schedules,
+    agentsByKey,
+    projectNameByCwd,
+    agentDirReadyHosts,
+    workspacesByKey,
+    workspaceReadyHosts,
+    connectionStatuses,
+  ]);
 
   const visibleRows = useMemo<ScheduleRowView[]>(() => {
     const singleHost = hosts.length <= 1;
@@ -155,6 +180,7 @@ function SchedulesScreenContent(): ReactElement {
         targetLabel: resolved.target.label,
         provider: resolved.target.provider,
         state: resolved.state,
+        workspaceUnavailable: resolved.workspaceUnavailable,
         serverName: schedule.serverName,
         singleHost,
       }));

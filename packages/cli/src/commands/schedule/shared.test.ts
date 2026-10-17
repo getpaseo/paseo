@@ -2,11 +2,15 @@ import { describe, expect, test, vi } from "vitest";
 
 import { selectDaemonTarget } from "../../utils/daemon-target.js";
 
+import { createScheduleInspectRows, heartbeatSchema, scheduleSchema } from "./schema.js";
 import {
   compileEveryPresetToCron,
   parseScheduleCreateInput,
   parseScheduleUpdateInput,
+  requireScheduleWorkspaceSupport,
+  toScheduleRow,
 } from "./shared.js";
+import type { ScheduleDaemonClient, ScheduleRecord } from "./types.js";
 
 const baseOptions = {
   daemonTarget: selectDaemonTarget({ home: process.cwd() }, {}),
@@ -159,7 +163,159 @@ describe("parseScheduleCreateInput thinking", () => {
   });
 });
 
+describe("parseScheduleCreateInput workspace", () => {
+  test("--workspace leaves cwd to the workspace", () => {
+    const input = parseScheduleCreateInput({ ...baseOptions, workspace: "  wks_weekly  " });
+
+    expect(input.target).toEqual({
+      type: "new-agent",
+      config: { provider: "claude", workspaceId: "wks_weekly" },
+    });
+  });
+
+  test("--workspace keeps an explicit --cwd for the daemon to check", () => {
+    const input = parseScheduleCreateInput({
+      ...baseOptions,
+      workspace: "wks_weekly",
+      cwd: "/project",
+    });
+
+    expect(input.target).toEqual({
+      type: "new-agent",
+      config: { provider: "claude", workspaceId: "wks_weekly", cwd: "/project" },
+    });
+  });
+
+  test("--workspace replaces the --cwd requirement of --host", () => {
+    const input = parseScheduleCreateInput({
+      ...baseOptions,
+      daemonTarget: selectDaemonTarget({ host: "dev:12345" }, {}),
+      workspace: "wks_weekly",
+    });
+
+    expect(input.target).toEqual({
+      type: "new-agent",
+      config: { provider: "claude", workspaceId: "wks_weekly" },
+    });
+  });
+
+  test("rejects an empty --workspace", () => {
+    expect(() => parseScheduleCreateInput({ ...baseOptions, workspace: "  " })).toThrow(
+      expect.objectContaining({ code: "INVALID_WORKSPACE" }),
+    );
+  });
+
+  test("rejects --workspace on an agent target", () => {
+    expect(() =>
+      parseScheduleCreateInput({
+        ...baseOptions,
+        target: "11111111-1111-4111-8111-111111111111",
+        workspace: "wks_weekly",
+      }),
+    ).toThrow(expect.objectContaining({ code: "INVALID_TARGET" }));
+  });
+});
+
+describe("schedule workspace support", () => {
+  function clientWithFeatures(features: { scheduleWorkspaceTarget?: boolean } | null) {
+    return {
+      getLastServerInfoMessage: () => (features ? { features } : null),
+    } as unknown as ScheduleDaemonClient;
+  }
+
+  test("accepts a host that advertises scheduleWorkspaceTarget", () => {
+    expect(() =>
+      requireScheduleWorkspaceSupport(clientWithFeatures({ scheduleWorkspaceTarget: true })),
+    ).not.toThrow();
+  });
+
+  test.each([{}, { scheduleWorkspaceTarget: false }, null])(
+    "asks to update a host that does not advertise it (%j)",
+    (features) => {
+      expect(() => requireScheduleWorkspaceSupport(clientWithFeatures(features))).toThrow(
+        expect.objectContaining({
+          code: "DAEMON_UPDATE_REQUIRED",
+          message: "This host does not support running schedules in a workspace. Update the host.",
+        }),
+      );
+    },
+  );
+});
+
+describe("schedule workspace output", () => {
+  const record: ScheduleRecord = {
+    id: "abc12345",
+    name: "weekly",
+    prompt: "write the report",
+    cadence: { type: "cron", expression: "0 12 * * 4" },
+    target: {
+      type: "new-agent",
+      config: { provider: "claude", cwd: "/project", workspaceId: "wks_weekly" },
+    },
+    status: "active",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    nextRunAt: null,
+    lastRunAt: null,
+    pausedAt: null,
+    expiresAt: null,
+    maxRuns: null,
+    runs: [],
+  };
+  const unbound: ScheduleRecord = {
+    ...record,
+    target: { type: "new-agent", config: { provider: "claude", cwd: "/project" } },
+  };
+
+  test("ls rows carry the workspace, or null when the schedule creates its own", () => {
+    expect(toScheduleRow(record).workspace).toBe("wks_weekly");
+    expect(toScheduleRow(unbound).workspace).toBeNull();
+  });
+
+  test("heartbeats leave the workspace out of rows and columns", () => {
+    const heartbeat: ScheduleRecord = {
+      ...record,
+      target: { type: "agent", agentId: "11111111-1111-4111-8111-111111111111" },
+    };
+
+    expect(toScheduleRow(heartbeat)).not.toHaveProperty("workspace");
+    expect(scheduleSchema.columns.map((column) => column.field)).toContain("workspace");
+    expect(heartbeatSchema.columns.map((column) => column.field)).not.toContain("workspace");
+  });
+
+  test("inspect lists the workspace row", () => {
+    const workspaceRow = (schedule: ScheduleRecord) =>
+      createScheduleInspectRows(schedule).find((row) => row.key === "Workspace");
+
+    expect(workspaceRow(record)?.value).toBe("wks_weekly");
+    expect(workspaceRow(unbound)?.value).toBe("null");
+  });
+});
+
 describe("parseScheduleUpdateInput", () => {
+  test("--workspace binds and --no-workspace clears", () => {
+    expect(parseScheduleUpdateInput({ id: "abc", workspace: " wks_weekly " })).toEqual({
+      id: "abc",
+      newAgentConfig: { workspaceId: "wks_weekly" },
+    });
+    expect(parseScheduleUpdateInput({ id: "abc", clearWorkspace: true })).toEqual({
+      id: "abc",
+      newAgentConfig: { workspaceId: null },
+    });
+  });
+
+  test("rejects passing both --workspace and --no-workspace", () => {
+    expect(() =>
+      parseScheduleUpdateInput({ id: "abc", workspace: "wks_weekly", clearWorkspace: true }),
+    ).toThrow(expect.objectContaining({ code: "CONFLICTING_WORKSPACE" }));
+  });
+
+  test("rejects an empty --workspace", () => {
+    expect(() => parseScheduleUpdateInput({ id: "abc", workspace: "  " })).toThrow(
+      expect.objectContaining({ code: "INVALID_WORKSPACE" }),
+    );
+  });
+
   test("rejects calls with no fields to update", () => {
     expect(() => parseScheduleUpdateInput({ id: "abc" })).toThrow(
       expect.objectContaining({ code: "NO_UPDATES" }),

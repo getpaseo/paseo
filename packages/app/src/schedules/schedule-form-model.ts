@@ -27,7 +27,12 @@ import {
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
 import { shortenPath } from "@/utils/shorten-path";
 import { normalizeScheduleFormCadence } from "./schedule-cadence-options";
-import { PROJECT_OPTION_PREFIX, type ScheduleProjectTarget } from "./schedule-project-targets";
+import {
+  canJudgeWorkspaceMissing,
+  PROJECT_OPTION_PREFIX,
+  type ScheduleProjectTarget,
+  type ScheduleProjectWorkspace,
+} from "./schedule-project-targets";
 
 export interface ScheduleFormDisplay {
   label: string;
@@ -38,6 +43,11 @@ export interface ScheduleFormHost {
   serverId: string;
   label: string;
   supportsWorkspaceMultiplicity?: boolean;
+  supportsWorkspaceTarget?: boolean;
+  /** The host's workspace list has loaded, so a missing workspace is really gone. */
+  workspacesLoaded?: boolean;
+  /** The host's connection is online. An offline host keeps a stale list, so nothing is gone. */
+  isOnline?: boolean;
 }
 
 export interface ScheduleFormSnapshot {
@@ -61,6 +71,7 @@ export interface ScheduleDisclosureState {
   showModelField: boolean;
   showThinkingField: boolean;
   showModeField: boolean;
+  showWorkspaceField: boolean;
   showIsolationField: boolean;
   showArchiveOnFinishField: boolean;
 }
@@ -77,12 +88,28 @@ export interface ScheduleFormProjectOption {
   testID: string;
 }
 
+export interface ScheduleFormWorkspaceOption {
+  id: string;
+  value: string;
+  label: string;
+  /** Null for the "new workspace each run" option. */
+  workspaceKind: ScheduleProjectWorkspace["workspaceKind"] | null;
+  testID: string;
+}
+
+export const NEW_WORKSPACE_OPTION_ID = "new-workspace";
+const NEW_WORKSPACE_LABEL = "New workspace each run";
+const WORKSPACE_UNAVAILABLE_LABEL = "Workspace unavailable";
+export const WORKSPACE_UNAVAILABLE_ERROR = "Choose another workspace";
+
 export type ScheduleFormTargetKind = "agent" | "new-agent";
 type CronCadence = Extract<ScheduleCadence, { type: "cron" }>;
 type ProviderResolutionStatus = "idle" | "pending" | "complete";
 
 export interface ScheduleFormState {
   mode: "create" | "edit";
+  /** The schedule being edited has already ended, so editing cannot bring its runs back. */
+  scheduleCompleted: boolean;
   targetKind: ScheduleFormTargetKind;
   name: string;
   prompt: string;
@@ -108,6 +135,14 @@ export interface ScheduleFormState {
   archiveOnFinish: boolean;
   isolation: "local" | "worktree";
   effectiveIsolation: "local" | "worktree";
+  /** The workspace every run goes into; null creates a workspace per run. */
+  selectedWorkspaceId: string | null;
+  workspaceOptions: ScheduleFormWorkspaceOption[];
+  selectedWorkspaceDisplay: ScheduleFormDisplay;
+  workspaceLoading: boolean;
+  workspaceError: string | null;
+  /** String binds, null clears a binding (edit only), undefined leaves it alone. */
+  submitWorkspaceId: string | null | undefined;
   submitArchiveOnFinish: boolean | undefined;
   submitIsolation: "local" | "worktree" | undefined;
   canUseWorktreeIsolation: boolean;
@@ -128,6 +163,7 @@ export interface ScheduleFormModel {
   applyProviderSnapshot: (serverId: string, snapshot: ScheduleFormProviderSnapshot) => void;
   setHost: (serverId: string | null) => void;
   setProject: (optionId: string, display: ScheduleFormDisplay) => void;
+  setWorkspace: (workspaceId: string | null) => void;
   setModel: (provider: AgentProvider, modelId: string) => void;
   setThinking: (thinkingOptionId: string) => void;
   setSessionMode: (modeId: string) => void;
@@ -190,13 +226,26 @@ function resolveProjectTarget(input: {
   targets: readonly ScheduleProjectTarget[];
   serverId: string | null;
   cwd: string;
+  workspaceId?: string | null;
 }): ScheduleProjectTarget | null {
   const cwd = input.cwd.trim();
   if (!input.serverId || !cwd) {
     return null;
   }
+  // A schedule bound to a workspace stores that workspace's directory, which is not always
+  // its project root (a worktree), so the workspace names the project.
+  const workspaceId = input.workspaceId;
+  const targetOfWorkspace = workspaceId
+    ? input.targets.find(
+        (target) =>
+          target.serverId === input.serverId &&
+          target.workspaces.some((workspace) => workspace.id === workspaceId),
+      )
+    : undefined;
   return (
-    input.targets.find((target) => target.serverId === input.serverId && target.cwd === cwd) ?? null
+    targetOfWorkspace ??
+    input.targets.find((target) => target.serverId === input.serverId && target.cwd === cwd) ??
+    null
   );
 }
 
@@ -211,10 +260,17 @@ function resolveProjectDisplay(input: {
   targets: readonly ScheduleProjectTarget[];
   serverId: string | null;
   cwd: string;
+  workspaceId?: string | null;
 }): ScheduleFormDisplay | null {
   const target = resolveProjectTarget(input);
   if (target) {
     return buildProjectDisplay(target);
+  }
+  // A bound schedule stores its workspace's directory, which names no project once the
+  // workspace is gone, so the field stays on its placeholder instead of showing a path
+  // while nothing is selected.
+  if (input.workspaceId) {
+    return null;
   }
   return buildStoredProjectDisplay(input.cwd);
 }
@@ -403,6 +459,7 @@ function buildInitialProjectDisplay(input: {
     targets: input.targets,
     serverId: input.selectedServerId,
     cwd: input.config.cwd,
+    workspaceId: input.config.workspaceId,
   });
 }
 
@@ -432,6 +489,10 @@ function formatInitialMaxRuns(schedule: ScheduleFormSnapshot["schedule"]): strin
     return "";
   }
   return String(schedule.maxRuns);
+}
+
+function isScheduleCompleted(schedule: ScheduleFormSnapshot["schedule"]): boolean {
+  return schedule?.status === "completed";
 }
 
 function resolveInitialSubmitCadence(
@@ -465,7 +526,7 @@ function buildInitialProviderResolution(
 }
 
 function resolveCanUseWorktreeIsolation(input: {
-  state: Pick<ScheduleFormState, "selectedServerId" | "workingDir">;
+  state: Pick<ScheduleFormState, "selectedServerId" | "workingDir" | "selectedWorkspaceId">;
   hosts: readonly ScheduleFormHost[];
   targets: readonly ScheduleProjectTarget[];
 }): boolean {
@@ -473,6 +534,7 @@ function resolveCanUseWorktreeIsolation(input: {
     targets: input.targets,
     serverId: input.state.selectedServerId,
     cwd: input.state.workingDir,
+    workspaceId: input.state.selectedWorkspaceId,
   });
   const host = input.hosts.find((entry) => entry.serverId === input.state.selectedServerId);
   return Boolean(target?.isGit && host?.supportsWorkspaceMultiplicity);
@@ -509,6 +571,89 @@ function resolveEffectiveIsolation(input: {
   return "local";
 }
 
+function toWorkspaceOption(workspace: ScheduleProjectWorkspace): ScheduleFormWorkspaceOption {
+  return {
+    id: workspace.id,
+    value: workspace.id,
+    label: workspace.name,
+    workspaceKind: workspace.workspaceKind,
+    testID: `schedule-workspace-option-${workspace.id}`,
+  };
+}
+
+function resolveWorkspaceView(input: {
+  state: Pick<
+    ScheduleFormState,
+    "mode" | "scheduleCompleted" | "selectedServerId" | "selectedWorkspaceId"
+  >;
+  hosts: readonly ScheduleFormHost[];
+  targets: readonly ScheduleProjectTarget[];
+  projectTarget: ScheduleProjectTarget | null;
+}): Pick<
+  ScheduleFormState,
+  | "workspaceOptions"
+  | "selectedWorkspaceDisplay"
+  | "workspaceLoading"
+  | "workspaceError"
+  | "submitWorkspaceId"
+> {
+  const { state, projectTarget } = input;
+  const selectedWorkspaceId = state.selectedWorkspaceId;
+  const host = input.hosts.find((entry) => entry.serverId === state.selectedServerId);
+  const hostTargets = input.targets.filter((target) => target.serverId === state.selectedServerId);
+  const hostWorkspace = selectedWorkspaceId
+    ? hostTargets
+        .flatMap((target) => target.workspaces)
+        .find((workspace) => workspace.id === selectedWorkspaceId)
+    : undefined;
+  const unavailable =
+    selectedWorkspaceId !== null &&
+    !hostWorkspace &&
+    canJudgeWorkspaceMissing({
+      workspacesLoaded: host?.workspacesLoaded === true,
+      hostOnline: host?.isOnline === true,
+    });
+  // A schedule that has already ended cannot be revived by editing, so a missing workspace is
+  // not something to fix: like an unavailable agent it is only labeled, never an error, and
+  // the stale id is not sent back (the server would reject it).
+  const blocking = unavailable && !state.scheduleCompleted;
+  // Background workspaces are not offered, because their finished runs leave History; a
+  // schedule that is already bound to one keeps showing it.
+  const selectable = (projectTarget?.workspaces ?? []).filter(
+    (workspace) => !workspace.background || workspace.id === selectedWorkspaceId,
+  );
+  let selectedWorkspaceDisplay: ScheduleFormDisplay = { label: NEW_WORKSPACE_LABEL };
+  if (selectedWorkspaceId !== null) {
+    if (hostWorkspace) {
+      selectedWorkspaceDisplay = { label: hostWorkspace.name };
+    } else {
+      selectedWorkspaceDisplay = {
+        label: unavailable ? WORKSPACE_UNAVAILABLE_LABEL : "Loading...",
+      };
+    }
+  }
+  let submitWorkspaceId: string | null | undefined;
+  if (host?.supportsWorkspaceTarget === true && !(unavailable && state.scheduleCompleted)) {
+    submitWorkspaceId = selectedWorkspaceId ?? (state.mode === "edit" ? null : undefined);
+  }
+  return {
+    workspaceOptions: [
+      {
+        id: NEW_WORKSPACE_OPTION_ID,
+        value: NEW_WORKSPACE_OPTION_ID,
+        label: NEW_WORKSPACE_LABEL,
+        workspaceKind: null,
+        testID: "schedule-workspace-option-new",
+      },
+      ...selectable.map(toWorkspaceOption),
+    ],
+    selectedWorkspaceDisplay,
+    workspaceLoading: host?.workspacesLoaded !== true,
+    workspaceError: blocking ? WORKSPACE_UNAVAILABLE_ERROR : null,
+    submitWorkspaceId,
+  };
+}
+
 function resolveDisclosure(state: ScheduleFormState): ScheduleDisclosureState {
   if (state.targetKind === "agent") {
     return {
@@ -516,6 +661,7 @@ function resolveDisclosure(state: ScheduleFormState): ScheduleDisclosureState {
       showModelField: false,
       showThinkingField: false,
       showModeField: false,
+      showWorkspaceField: false,
       showIsolationField: false,
       showArchiveOnFinishField: false,
     };
@@ -532,7 +678,12 @@ function resolveDisclosure(state: ScheduleFormState): ScheduleDisclosureState {
     showThinkingField:
       showModelField && hasSelectedModel && state.availableThinkingOptions.length > 0,
     showModeField: showModelField && hasSelectedProvider && state.modeOptions.length > 0,
-    showIsolationField: hasProject && state.canUseWorktreeIsolation,
+    showWorkspaceField:
+      hasProject &&
+      state.hosts.find((entry) => entry.serverId === state.selectedServerId)
+        ?.supportsWorkspaceTarget === true,
+    showIsolationField:
+      hasProject && state.canUseWorktreeIsolation && state.selectedWorkspaceId === null,
     showArchiveOnFinishField:
       hasProject &&
       selectedHostSupportsWorkspaceMultiplicity({
@@ -555,6 +706,9 @@ function resolveCanSubmit(state: ScheduleFormState): boolean {
     return false;
   }
   if (!hasWorkingDir) {
+    return false;
+  }
+  if (state.workspaceError !== null) {
     return false;
   }
   return isSelectedModelValidForProviders({
@@ -595,6 +749,7 @@ function updateDerivedState(input: {
     targets: input.targets,
     serverId: input.state.selectedServerId,
     cwd: input.state.workingDir,
+    workspaceId: input.state.selectedWorkspaceId,
   });
   const nextState: ScheduleFormState = {
     ...input.state,
@@ -604,6 +759,13 @@ function updateDerivedState(input: {
       targets: input.targets,
       serverId: input.state.selectedServerId,
       cwd: input.state.workingDir,
+      workspaceId: input.state.selectedWorkspaceId,
+    }),
+    ...resolveWorkspaceView({
+      state: input.state,
+      hosts: input.hosts,
+      targets: input.targets,
+      projectTarget,
     }),
     selectedProjectOptionId: projectTarget?.optionId ?? input.state.selectedProjectOptionId,
     selectedModelDisplay: resolveModelDisplay({
@@ -623,10 +785,17 @@ function updateDerivedState(input: {
     submitArchiveOnFinish: canSubmitWorkspaceLifecycleOptions
       ? input.state.archiveOnFinish
       : undefined,
-    submitIsolation: canSubmitWorkspaceLifecycleOptions ? effectiveIsolation : undefined,
+    submitIsolation:
+      canSubmitWorkspaceLifecycleOptions && input.state.selectedWorkspaceId === null
+        ? effectiveIsolation
+        : undefined,
   };
   const disclosure = resolveDisclosure(nextState);
   return { ...nextState, disclosure, canSubmit: resolveCanSubmit({ ...nextState, disclosure }) };
+}
+
+function resolveBoundWorkspaceId(config: ReturnType<typeof newAgentConfig>): string | null {
+  return config?.workspaceId ?? null;
 }
 
 function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
@@ -634,10 +803,12 @@ function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
   const config = newAgentConfig(snapshot.schedule);
   const targetKind = resolveTargetKind(snapshot);
   const workingDir = config?.cwd ?? "";
+  const boundWorkspaceId = resolveBoundWorkspaceId(config);
   const selectedProjectTarget = resolveProjectTarget({
     targets: snapshot.defaults.projectTargets,
     serverId: selectedServerId,
     cwd: workingDir,
+    workspaceId: boundWorkspaceId,
   });
   const providerSnapshotRequest = buildProviderSnapshotRequest({
     targetKind,
@@ -653,6 +824,7 @@ function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
   const initialThinking = config?.thinkingOptionId ?? "";
   const state: ScheduleFormState = {
     mode: snapshot.mode,
+    scheduleCompleted: isScheduleCompleted(snapshot.schedule),
     targetKind,
     name: snapshot.schedule?.name ?? "",
     prompt: snapshot.schedule?.prompt ?? "",
@@ -682,6 +854,12 @@ function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
     archiveOnFinish: config?.archiveOnFinish ?? true,
     isolation: resolveInitialIsolation({ config, preferences: snapshot.defaults.preferences }),
     effectiveIsolation: "local",
+    selectedWorkspaceId: boundWorkspaceId,
+    workspaceOptions: [],
+    selectedWorkspaceDisplay: { label: NEW_WORKSPACE_LABEL },
+    workspaceLoading: true,
+    workspaceError: null,
+    submitWorkspaceId: undefined,
     submitArchiveOnFinish: undefined,
     submitIsolation: undefined,
     canUseWorktreeIsolation: false,
@@ -692,6 +870,7 @@ function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
       showModelField: false,
       showThinkingField: false,
       showModeField: false,
+      showWorkspaceField: false,
       showIsolationField: false,
       showArchiveOnFinishField: false,
     },
@@ -858,7 +1037,7 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
     );
   }
   let providerEntries: ProviderSnapshotEntry[] = [];
-  let userModified = { ...INITIAL_USER_MODIFIED, isolation: false };
+  let userModified = { ...INITIAL_USER_MODIFIED, isolation: false, archiveOnFinish: false };
   const timezone = snapshot.defaults.timezone ?? DEFAULT_TIMEZONE;
   let state = buildInitialState(snapshot);
 
@@ -875,6 +1054,19 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
     for (const listener of listeners) {
       listener();
     }
+  }
+
+  // Running in a shared workspace usually means the agents are meant to be read there, so a
+  // new schedule stops archiving them unless the user has chosen otherwise.
+  function withWorkspace(
+    nextState: ScheduleFormState,
+    workspaceId: string | null,
+  ): ScheduleFormState {
+    const archiveOnFinish =
+      snapshot.mode === "create" && !userModified.archiveOnFinish
+        ? workspaceId === null
+        : nextState.archiveOnFinish;
+    return { ...nextState, selectedWorkspaceId: workspaceId, archiveOnFinish };
   }
 
   function requestProviderSnapshot(serverId: string | null, cwd: string): void {
@@ -1010,14 +1202,19 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
         return;
       }
       publish(
-        clearProviderSelection({
-          ...state,
-          selectedServerId: serverId,
-          workingDir: "",
-          projectDisplay: null,
-          selectedProjectOptionId: "",
-          providerResolutionByServerId: {},
-        }),
+        clearProviderSelection(
+          withWorkspace(
+            {
+              ...state,
+              selectedServerId: serverId,
+              workingDir: "",
+              projectDisplay: null,
+              selectedProjectOptionId: "",
+              providerResolutionByServerId: {},
+            },
+            null,
+          ),
+        ),
       );
     },
     setProject(optionId, display) {
@@ -1028,23 +1225,61 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
       if (!target) {
         return;
       }
-      const providerScopeChanged =
-        state.selectedServerId !== target.serverId || state.workingDir !== target.cwd;
-      if (!providerScopeChanged && state.selectedProjectOptionId === target.optionId) {
+      // Picking the project that is already selected changes nothing. workingDir cannot tell:
+      // a schedule bound to a worktree workspace keeps that worktree's directory, not the
+      // project root, so comparing it would reset the binding.
+      if (
+        state.selectedServerId === target.serverId &&
+        state.selectedProjectOptionId === target.optionId
+      ) {
         return;
       }
-      const nextState = {
-        ...state,
-        selectedServerId: target.serverId,
-        workingDir: target.cwd,
-        projectDisplay: display,
-        selectedProjectOptionId: target.optionId,
-      };
+      const providerScopeChanged =
+        state.selectedServerId !== target.serverId || state.workingDir !== target.cwd;
+      const nextState = withWorkspace(
+        {
+          ...state,
+          selectedServerId: target.serverId,
+          workingDir: target.cwd,
+          projectDisplay: display,
+          selectedProjectOptionId: target.optionId,
+        },
+        null,
+      );
       publish(providerScopeChanged ? clearProviderSelection(nextState) : nextState);
       if (!providerScopeChanged) {
         return;
       }
       requestProviderSnapshot(target.serverId, target.cwd);
+    },
+    setWorkspace(workspaceId) {
+      if (closed || state.selectedWorkspaceId === workspaceId) {
+        return;
+      }
+      // Binding keeps workingDir and unbinding to a project root changes it, and neither
+      // refetches the provider list: the list was resolved for the project, and the daemon
+      // runs the agent with the workspace's own directory regardless. A directory with a
+      // different provider config only shows up as a failed run, which the schedule reports.
+      if (workspaceId !== null) {
+        publish(withWorkspace(state, workspaceId));
+        return;
+      }
+      // A bound schedule stores the workspace's directory, which is not always the project
+      // root. Going back to a workspace per run starts from the project root again; when the
+      // project cannot be found (the workspace is gone), the project has to be chosen again.
+      const projectTarget = findProjectTargetByOptionId(
+        projectTargets,
+        state.selectedProjectOptionId,
+      );
+      if (!projectTarget) {
+        publish(
+          clearProviderSelection(
+            withWorkspace({ ...state, workingDir: "", selectedProjectOptionId: "" }, null),
+          ),
+        );
+        return;
+      }
+      publish(withWorkspace({ ...state, workingDir: projectTarget.cwd }, null));
     },
     setModel(provider, modelId) {
       if (closed) {
@@ -1119,6 +1354,7 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
       publish({ ...state, isolation: value });
     },
     setArchiveOnFinish(value) {
+      userModified = { ...userModified, archiveOnFinish: true };
       publish({ ...state, archiveOnFinish: value });
     },
     setSubmitError(value) {

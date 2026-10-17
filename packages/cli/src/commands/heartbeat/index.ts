@@ -9,7 +9,7 @@ import {
   toScheduleRow,
   type ScheduleRow,
 } from "../schedule/shared.js";
-import { scheduleSchema } from "../schedule/schema.js";
+import { heartbeatSchema } from "../schedule/schema.js";
 
 interface HeartbeatOptions extends CommandOptions {
   cron?: string;
@@ -87,7 +87,7 @@ async function runCreateHeartbeat(
     if (payload.error || !payload.schedule) {
       throw new Error(payload.error ?? "Heartbeat creation failed");
     }
-    return { type: "single", data: toScheduleRow(payload.schedule), schema: scheduleSchema };
+    return { type: "single", data: toScheduleRow(payload.schedule), schema: heartbeatSchema };
   } catch (error) {
     throw toScheduleCommandError("HEARTBEAT_CREATE_FAILED", "create heartbeat", error);
   } finally {
@@ -119,7 +119,7 @@ async function runUpdateHeartbeat(
     if (payload.error || !payload.schedule) {
       throw new Error(payload.error ?? `Heartbeat update failed: ${id}`);
     }
-    return { type: "single", data: toScheduleRow(payload.schedule), schema: scheduleSchema };
+    return { type: "single", data: toScheduleRow(payload.schedule), schema: heartbeatSchema };
   } catch (error) {
     throw toScheduleCommandError("HEARTBEAT_UPDATE_FAILED", "update heartbeat", error);
   } finally {

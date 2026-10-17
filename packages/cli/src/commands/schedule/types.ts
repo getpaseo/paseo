@@ -24,7 +24,8 @@ export type ScheduleTarget =
       type: "new-agent";
       config: {
         provider: string;
-        cwd: string;
+        cwd?: string;
+        workspaceId?: string;
         modeId?: string;
         model?: string;
         thinkingOptionId?: string;
@@ -139,6 +140,7 @@ export interface UpdateScheduleNewAgentConfig {
   model?: string | null;
   modeId?: string | null;
   cwd?: string;
+  workspaceId?: string | null;
 }
 
 export interface UpdateScheduleInput {
@@ -158,6 +160,7 @@ export interface ScheduleUpdatePayload {
 }
 
 export interface ScheduleDaemonClient {
+  getLastServerInfoMessage(): { features?: { scheduleWorkspaceTarget?: boolean } } | null;
   scheduleCreate(input: CreateScheduleInput): Promise<ScheduleCreatePayload>;
   scheduleList(): Promise<ScheduleListPayload>;
   scheduleInspect(input: { id: string }): Promise<ScheduleInspectPayload>;

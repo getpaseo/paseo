@@ -6,7 +6,11 @@ import type {
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 import type { FormPreferences } from "@/create-agent-preferences/preferences";
 import { describe, expect, it } from "vitest";
-import { buildProjectOptionId, type ScheduleProjectTarget } from "./schedule-project-targets";
+import {
+  buildProjectOptionId,
+  type ScheduleProjectTarget,
+  type ScheduleProjectWorkspace,
+} from "./schedule-project-targets";
 import { openScheduleForm, type ScheduleFormSnapshot } from "./schedule-form-model";
 
 type TestSchedule = ScheduleSummary & { serverId: string; serverName: string };
@@ -64,6 +68,7 @@ function target(input: {
   projectName: string;
   cwd: string;
   isGit?: boolean;
+  workspaces?: readonly ScheduleProjectWorkspace[];
 }): ScheduleProjectTarget {
   return {
     optionId: buildProjectOptionId(input.serverId, input.projectKey),
@@ -73,6 +78,7 @@ function target(input: {
     projectName: input.projectName,
     cwd: input.cwd,
     isGit: input.isGit ?? true,
+    workspaces: input.workspaces ?? [],
   };
 }
 
@@ -354,6 +360,7 @@ describe("schedule form model", () => {
       showModelField: false,
       showThinkingField: false,
       showModeField: false,
+      showWorkspaceField: false,
       showIsolationField: false,
       showArchiveOnFinishField: false,
     });
@@ -365,6 +372,7 @@ describe("schedule form model", () => {
       showModelField: true,
       showThinkingField: false,
       showModeField: false,
+      showWorkspaceField: false,
       showIsolationField: true,
       showArchiveOnFinishField: true,
     });
@@ -377,6 +385,7 @@ describe("schedule form model", () => {
       showModelField: true,
       showThinkingField: true,
       showModeField: true,
+      showWorkspaceField: false,
       showIsolationField: true,
       showArchiveOnFinishField: true,
     });
@@ -758,5 +767,384 @@ describe("schedule form model", () => {
       selectedMode: "load-test",
       isolation: "worktree",
     });
+  });
+});
+
+describe("schedule form workspace binding", () => {
+  const WORKSPACE_HOSTS = [
+    {
+      serverId: "host-a",
+      label: "Host A",
+      supportsWorkspaceMultiplicity: true,
+      supportsWorkspaceTarget: true,
+      workspacesLoaded: true,
+      isOnline: true,
+    },
+  ];
+  const PROJECT_A_WORKSPACES: ScheduleProjectWorkspace[] = [
+    { id: "wks_main", name: "main", workspaceKind: "local_checkout", background: false },
+    { id: "wks_report", name: "Weekly report", workspaceKind: "directory", background: false },
+    { id: "wks_feature", name: "feature", workspaceKind: "worktree", background: false },
+    { id: "wks_hidden", name: "Hidden", workspaceKind: "directory", background: true },
+  ];
+  const WORKSPACE_TARGETS = [
+    target({
+      serverId: "host-a",
+      projectKey: "project-a",
+      projectName: "Project A",
+      cwd: "/repo/a",
+      workspaces: PROJECT_A_WORKSPACES,
+    }),
+    target({
+      serverId: "host-a",
+      projectKey: "project-c",
+      projectName: "Project C",
+      cwd: "/repo/c",
+      workspaces: [
+        { id: "wks_c", name: "c main", workspaceKind: "local_checkout", background: false },
+      ],
+    }),
+  ];
+  const PROJECT_A = buildProjectOptionId("host-a", "project-a");
+  const PROJECT_C = buildProjectOptionId("host-a", "project-c");
+
+  function openCreate(hosts: readonly ScheduleFormSnapshot["hosts"][number][] = WORKSPACE_HOSTS) {
+    return openWithHosts({
+      mode: "create",
+      hosts,
+      defaults: { serverId: "host-a", projectTargets: WORKSPACE_TARGETS, preferences: {} },
+    });
+  }
+
+  function openBound(
+    workspaceId: string,
+    cwd: string,
+    hosts = WORKSPACE_HOSTS,
+    targets = WORKSPACE_TARGETS,
+    status: ScheduleSummary["status"] = "active",
+  ) {
+    const schedule = scheduleOnHost({
+      serverId: "host-a",
+      serverName: "Host A",
+      cwd,
+      model: "model-a",
+    });
+    if (schedule.target.type !== "new-agent") {
+      throw new Error("expected a new-agent schedule");
+    }
+    schedule.status = status;
+    schedule.target.config.workspaceId = workspaceId;
+    delete schedule.target.config.isolation;
+    return openWithHosts({
+      mode: "edit",
+      schedule,
+      hosts,
+      defaults: { serverId: null, projectTargets: targets, preferences: {} },
+    });
+  }
+
+  it("offers the project's workspaces after one new workspace per run, without background ones", () => {
+    const form = openCreate();
+    expect(form.getState().disclosure.showWorkspaceField).toBe(false);
+
+    form.setProject(PROJECT_A, { label: "Project A" });
+
+    const state = form.getState();
+    expect(state.disclosure.showWorkspaceField).toBe(true);
+    expect(state.workspaceOptions.map((option) => option.id)).toEqual([
+      "new-workspace",
+      "wks_main",
+      "wks_report",
+      "wks_feature",
+    ]);
+    expect(state.selectedWorkspaceDisplay).toEqual({ label: "New workspace each run" });
+    expect(state.submitWorkspaceId).toBeUndefined();
+  });
+
+  it("hides the workspace field and sends nothing when the host does not support it", () => {
+    const form = openCreate([{ ...WORKSPACE_HOSTS[0]!, supportsWorkspaceTarget: false }]);
+    form.setProject(PROJECT_A, { label: "Project A" });
+
+    expect(form.getState().disclosure.showWorkspaceField).toBe(false);
+    expect(form.getState().submitWorkspaceId).toBeUndefined();
+  });
+
+  it("hides isolation and stops archiving the run's agent for an untouched new schedule", () => {
+    const form = openCreate();
+    form.setProject(PROJECT_A, { label: "Project A" });
+    expect(form.getState()).toMatchObject({
+      archiveOnFinish: true,
+      disclosure: { showIsolationField: true },
+    });
+
+    form.setWorkspace("wks_report");
+
+    expect(form.getState()).toMatchObject({
+      selectedWorkspaceId: "wks_report",
+      selectedWorkspaceDisplay: { label: "Weekly report" },
+      archiveOnFinish: false,
+      submitArchiveOnFinish: false,
+      submitIsolation: undefined,
+      submitWorkspaceId: "wks_report",
+      disclosure: { showIsolationField: false, showArchiveOnFinishField: true },
+    });
+
+    form.setWorkspace(null);
+
+    expect(form.getState()).toMatchObject({
+      selectedWorkspaceId: null,
+      archiveOnFinish: true,
+      disclosure: { showIsolationField: true },
+    });
+  });
+
+  it("keeps the archive on finish choice the user made", () => {
+    const form = openCreate();
+    form.setProject(PROJECT_A, { label: "Project A" });
+    form.setArchiveOnFinish(true);
+
+    form.setWorkspace("wks_report");
+
+    expect(form.getState().archiveOnFinish).toBe(true);
+  });
+
+  it("returns to a workspace per run when the project changes", () => {
+    const form = openCreate();
+    form.setProject(PROJECT_A, { label: "Project A" });
+    form.setWorkspace("wks_report");
+
+    form.setProject(PROJECT_C, { label: "Project C" });
+
+    expect(form.getState()).toMatchObject({
+      selectedWorkspaceId: null,
+      archiveOnFinish: true,
+      selectedWorkspaceDisplay: { label: "New workspace each run" },
+    });
+    expect(form.getState().workspaceOptions.map((option) => option.id)).toEqual([
+      "new-workspace",
+      "wks_c",
+    ]);
+  });
+
+  it("shows a spinner on the workspace list until the host's workspaces have loaded", () => {
+    const form = openCreate([{ ...WORKSPACE_HOSTS[0]!, workspacesLoaded: false }]);
+    form.setProject(PROJECT_A, { label: "Project A" });
+    expect(form.getState().workspaceLoading).toBe(true);
+
+    form.applyHosts(WORKSPACE_HOSTS);
+
+    expect(form.getState().workspaceLoading).toBe(false);
+  });
+
+  it("opens a schedule bound to a worktree workspace under its project, selected by name", () => {
+    const form = openBound("wks_feature", "/worktrees/feature");
+
+    expect(form.getState()).toMatchObject({
+      selectedWorkspaceId: "wks_feature",
+      selectedWorkspaceDisplay: { label: "feature" },
+      workspaceError: null,
+      projectDisplay: { label: "Project A" },
+      selectedProjectOptionId: PROJECT_A,
+      submitWorkspaceId: "wks_feature",
+      disclosure: { showWorkspaceField: true, showIsolationField: false },
+    });
+    form.applyProviderSnapshot("host-a", providerSnapshot(HOST_A_MODELS));
+    expect(form.getState().canSubmit).toBe(true);
+  });
+
+  it("reports a bound workspace that is gone and blocks saving until another is chosen", () => {
+    const form = openBound("wks_archived", "/repo/a");
+    form.applyProviderSnapshot("host-a", providerSnapshot(HOST_A_MODELS));
+
+    expect(form.getState()).toMatchObject({
+      selectedWorkspaceDisplay: { label: "Workspace unavailable" },
+      workspaceError: "Choose another workspace",
+      canSubmit: false,
+    });
+
+    form.setWorkspace("wks_report");
+
+    expect(form.getState()).toMatchObject({
+      workspaceError: null,
+      submitWorkspaceId: "wks_report",
+      canSubmit: true,
+    });
+  });
+
+  it("labels a bound workspace that is gone on an ended schedule without asking to fix it", () => {
+    const form = openBound(
+      "wks_archived",
+      "/repo/a",
+      WORKSPACE_HOSTS,
+      WORKSPACE_TARGETS,
+      "completed",
+    );
+    form.applyProviderSnapshot("host-a", providerSnapshot(HOST_A_MODELS));
+
+    expect(form.getState()).toMatchObject({
+      selectedWorkspaceDisplay: { label: "Workspace unavailable" },
+      workspaceError: null,
+      // The stale binding stays as it is: sending it back would be rejected by the daemon.
+      submitWorkspaceId: undefined,
+      canSubmit: true,
+    });
+  });
+
+  it("keeps the binding of an ended schedule whose workspace is still there", () => {
+    const form = openBound(
+      "wks_feature",
+      "/worktrees/feature",
+      WORKSPACE_HOSTS,
+      WORKSPACE_TARGETS,
+      "completed",
+    );
+
+    expect(form.getState()).toMatchObject({
+      selectedWorkspaceDisplay: { label: "feature" },
+      workspaceError: null,
+      submitWorkspaceId: "wks_feature",
+    });
+  });
+
+  it("calls a bound workspace gone on an online host that has no projects left", () => {
+    // The host's last project was removed, so there is nothing to list and the workspace is gone.
+    const form = openBound("wks_feature", "/repo/a", WORKSPACE_HOSTS, []);
+    form.applyProviderSnapshot("host-a", providerSnapshot(HOST_A_MODELS));
+
+    expect(form.getState()).toMatchObject({
+      selectedWorkspaceDisplay: { label: "Workspace unavailable" },
+      workspaceError: "Choose another workspace",
+      canSubmit: false,
+    });
+  });
+
+  it("only labels the missing workspace of an ended schedule on a host with no projects", () => {
+    const form = openBound("wks_feature", "/repo/a", WORKSPACE_HOSTS, [], "completed");
+    form.applyProviderSnapshot("host-a", providerSnapshot(HOST_A_MODELS));
+
+    expect(form.getState()).toMatchObject({
+      selectedWorkspaceDisplay: { label: "Workspace unavailable" },
+      workspaceError: null,
+      submitWorkspaceId: undefined,
+      canSubmit: true,
+    });
+  });
+
+  it("does not call a bound workspace gone while the host is offline", () => {
+    // An offline host is left out of the targets and keeps its loaded flag: nothing is known.
+    const form = openBound(
+      "wks_feature",
+      "/repo/a",
+      [{ ...WORKSPACE_HOSTS[0]!, isOnline: false }],
+      [],
+    );
+
+    expect(form.getState()).toMatchObject({
+      workspaceError: null,
+      selectedWorkspaceDisplay: { label: "Loading..." },
+    });
+  });
+
+  it("judges a bound workspace once the host comes online", () => {
+    const form = openBound(
+      "wks_feature",
+      "/repo/a",
+      [{ ...WORKSPACE_HOSTS[0]!, isOnline: false }],
+      [],
+    );
+    expect(form.getState().workspaceError).toBeNull();
+
+    form.applyHosts(WORKSPACE_HOSTS);
+
+    expect(form.getState()).toMatchObject({
+      selectedWorkspaceDisplay: { label: "Workspace unavailable" },
+      workspaceError: "Choose another workspace",
+    });
+  });
+
+  it("does not call a bound workspace gone while the host's workspaces are loading", () => {
+    const form = openBound(
+      "wks_feature",
+      "/repo/a",
+      [{ ...WORKSPACE_HOSTS[0]!, workspacesLoaded: false }],
+      [
+        target({
+          serverId: "host-a",
+          projectKey: "project-a",
+          projectName: "Project A",
+          cwd: "/repo/a",
+        }),
+      ],
+    );
+
+    expect(form.getState()).toMatchObject({
+      workspaceLoading: true,
+      workspaceError: null,
+      selectedWorkspaceDisplay: { label: "Loading..." },
+    });
+  });
+
+  it("keeps a schedule that is bound to a background workspace selectable", () => {
+    const form = openBound("wks_hidden", "/repo/a");
+
+    expect(form.getState().workspaceError).toBeNull();
+    expect(form.getState().workspaceOptions.map((option) => option.id)).toContain("wks_hidden");
+  });
+
+  it("clears the binding when editing a schedule back to a workspace per run", () => {
+    const form = openBound("wks_feature", "/worktrees/feature");
+
+    form.setWorkspace(null);
+
+    expect(form.getState()).toMatchObject({
+      selectedWorkspaceId: null,
+      workingDir: "/repo/a",
+      submitWorkspaceId: null,
+    });
+  });
+
+  it("sends an explicit clear when editing an unbound schedule on a supporting host", () => {
+    const form = openWithHosts({
+      mode: "edit",
+      schedule: scheduleOnHost({
+        serverId: "host-a",
+        serverName: "Host A",
+        cwd: "/repo/a",
+        model: "model-a",
+      }),
+      hosts: WORKSPACE_HOSTS,
+      defaults: { serverId: null, projectTargets: WORKSPACE_TARGETS, preferences: {} },
+    });
+
+    expect(form.getState().submitWorkspaceId).toBeNull();
+  });
+
+  it("keeps the binding when the project it already belongs to is picked again", () => {
+    const form = openBound("wks_feature", "/worktrees/feature");
+    form.applyProviderSnapshot("host-a", providerSnapshot(HOST_A_MODELS));
+
+    form.setProject(PROJECT_A, { label: "Project A" });
+
+    expect(form.getState()).toMatchObject({
+      selectedWorkspaceId: "wks_feature",
+      workingDir: "/worktrees/feature",
+      submitWorkspaceId: "wks_feature",
+      canSubmit: true,
+    });
+  });
+
+  it("leaves the project field on its placeholder when a bound workspace's project is gone", () => {
+    const form = openBound("wks_archived", "/worktrees/gone");
+
+    expect(form.getState()).toMatchObject({ projectDisplay: null, selectedProjectOptionId: "" });
+  });
+
+  it("asks for a project again when leaving a workspace whose project cannot be found", () => {
+    const form = openBound("wks_archived", "/worktrees/gone");
+    expect(form.getState().selectedProjectOptionId).toBe("");
+
+    form.setWorkspace(null);
+
+    expect(form.getState()).toMatchObject({ workingDir: "", canSubmit: false });
   });
 });

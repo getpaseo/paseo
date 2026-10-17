@@ -364,6 +364,19 @@ function resolveScheduleProviderAndModel(params: {
   };
 }
 
+// A schedule that names a workspace runs in that workspace's directory, so the default cwd
+// is left out and the daemon fills it in.
+function resolveScheduleCwd(
+  params: { cwd?: string; workspaceId?: string } | undefined,
+  defaultCwd: string,
+): { cwd?: string } {
+  const requested = params?.cwd?.trim();
+  if (requested) {
+    return { cwd: expandUserPath(requested) };
+  }
+  return params?.workspaceId ? {} : { cwd: defaultCwd };
+}
+
 function resolveScheduleUpdateProviderAndModel(params: {
   provider?: string;
   model?: string | null;
@@ -417,6 +430,7 @@ interface ScheduleUpdateToolInput {
   model?: string | null;
   mode?: string | null;
   cwd?: string;
+  workspaceId?: string | null;
   expiresIn?: string;
   clearExpires?: boolean;
 }
@@ -494,6 +508,7 @@ function buildScheduleUpdateInput(input: ScheduleUpdateToolInput): UpdateSchedul
     ...(providerModelPatch.model !== undefined ? { model: providerModelPatch.model } : {}),
     ...(input.mode !== undefined ? { modeId: input.mode } : {}),
     ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+    ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
   };
 
   return {
@@ -754,7 +769,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
 
   const buildCallerAgentScheduleConfig = (
     callerAgent: NonNullable<ReturnType<typeof resolveCallerAgent>>,
-    params?: { provider?: string; cwd?: string },
+    params?: { provider?: string; cwd?: string; workspaceId?: string },
   ) => {
     const hasProviderOverride = params?.provider !== undefined;
     const resolvedProviderModel = hasProviderOverride
@@ -772,7 +787,8 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     }
     return {
       provider: resolvedProvider,
-      cwd: params?.cwd?.trim() ? expandUserPath(params.cwd) : callerAgent.cwd,
+      ...resolveScheduleCwd(params, callerAgent.cwd),
+      ...(params?.workspaceId ? { workspaceId: params.workspaceId } : {}),
       ...(callerAgent.currentModeId && callerAgent.provider === resolvedProvider
         ? {
             modeId: callerAgent.currentModeId,
@@ -786,6 +802,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   const resolveNewAgentScheduleTarget = (params?: {
     provider?: string;
     cwd?: string;
+    workspaceId?: string;
     isolation?: "local" | "worktree";
   }) => {
     const callerAgent = resolveCallerAgent();
@@ -811,7 +828,8 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       type: "new-agent" as const,
       config: {
         provider: resolvedProviderModel.provider,
-        cwd: params?.cwd?.trim() ? expandUserPath(params.cwd) : process.cwd(),
+        ...resolveScheduleCwd(params, process.cwd()),
+        ...(params?.workspaceId ? { workspaceId: params.workspaceId } : {}),
         ...(resolvedProviderModel.model ? { model: resolvedProviderModel.model } : {}),
         ...(params?.isolation ? { isolation: params.isolation } : {}),
       },
@@ -2512,13 +2530,32 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           "Provider, or provider/model (for example: codex or codex/gpt-5.4). Defaults to the caller's provider in an agent-scoped session.",
         ),
         cwd: z.string().optional(),
+        workspaceId: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe(
+            "Run every execution in this existing workspace instead of creating one. Its directory is used as cwd; incompatible with worktree isolation.",
+          ),
         isolation: z.enum(["local", "worktree"]).optional(),
         maxRuns: z.number().int().positive().optional(),
         expiresIn: z.string().optional(),
       },
       outputSchema: ScheduleSummarySchema.shape,
     },
-    async ({ prompt, cron, timezone, name, provider, cwd, isolation, maxRuns, expiresIn }) => {
+    async ({
+      prompt,
+      cron,
+      timezone,
+      name,
+      provider,
+      cwd,
+      workspaceId,
+      isolation,
+      maxRuns,
+      expiresIn,
+    }) => {
       if (!scheduleService) {
         throw new Error("Schedule service is not configured");
       }
@@ -2530,7 +2567,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           cron,
           ...(timezone !== undefined ? { timezone } : {}),
         }),
-        target: resolveNewAgentScheduleTarget({ provider, cwd, isolation }),
+        target: resolveNewAgentScheduleTarget({ provider, cwd, workspaceId, isolation }),
         ...(name?.trim() ? { name: name.trim() } : {}),
         ...(maxRuns === undefined ? {} : { maxRuns }),
         ...(expiresAt === undefined ? {} : { expiresAt }),
@@ -2787,6 +2824,15 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
             .optional()
             .describe("New mode for new-agent target (null to clear)."),
           cwd: z.string().trim().min(1).optional().describe("New cwd for new-agent target."),
+          workspaceId: z
+            .string()
+            .trim()
+            .min(1)
+            .nullable()
+            .optional()
+            .describe(
+              "Run every execution in this existing workspace for new-agent target (null to create a new workspace for each run again).",
+            ),
           expiresIn: z
             .string()
             .optional()

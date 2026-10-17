@@ -21,6 +21,7 @@ function projectTarget(input: {
     projectName: input.projectName,
     cwd: input.cwd,
     isGit: true,
+    workspaces: [],
   };
 }
 

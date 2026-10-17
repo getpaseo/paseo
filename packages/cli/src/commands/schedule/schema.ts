@@ -9,9 +9,15 @@ export const scheduleSchema: OutputSchema<ScheduleRow> = {
     { header: "NAME", field: "name", width: 20 },
     { header: "CADENCE", field: "cadence", width: 20 },
     { header: "TARGET", field: "target", width: 20 },
+    { header: "WORKSPACE", field: "workspace", width: 20 },
     { header: "STATUS", field: "status", width: 12 },
     { header: "NEXT RUN", field: "nextRunAt", width: 24 },
   ],
+};
+
+export const heartbeatSchema: OutputSchema<ScheduleRow> = {
+  ...scheduleSchema,
+  columns: scheduleSchema.columns.filter((column) => column.field !== "workspace"),
 };
 
 export interface ScheduleInspectRow {
@@ -77,6 +83,10 @@ export function createScheduleInspectRows(schedule: ScheduleRecord): ScheduleIns
           : `every:${schedule.cadence.everyMs}ms`,
     },
     { key: "Target", value: formatTarget(schedule.target) },
+    {
+      key: "Workspace",
+      value: (schedule.target.type === "new-agent" && schedule.target.config.workspaceId) || "null",
+    },
     { key: "Status", value: schedule.status },
     { key: "CreatedAt", value: schedule.createdAt },
     { key: "UpdatedAt", value: schedule.updatedAt },

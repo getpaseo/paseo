@@ -3,6 +3,8 @@ import type { ProjectSummary } from "@/utils/projects";
 import {
   buildProjectNameByCwd,
   buildScheduleProjectTargets,
+  buildScheduleWorkspaceIndex,
+  canJudgeWorkspaceMissing,
   describeScheduleCwd,
 } from "./schedule-project-targets";
 
@@ -59,6 +61,79 @@ describe("buildScheduleProjectTargets", () => {
       }),
     ]);
     expect(targets).toHaveLength(0);
+  });
+});
+
+function makeWorkspace(
+  overrides: Partial<ProjectSummary["hosts"][number]["workspaces"][number]>,
+): ProjectSummary["hosts"][number]["workspaces"][number] {
+  return {
+    id: "wks_main",
+    name: "main",
+    workspaceKind: "local_checkout",
+    status: "done",
+    currentBranch: "main",
+    changeRequestNumber: null,
+    ...overrides,
+  };
+}
+
+describe("schedule project workspaces", () => {
+  const projects = [
+    makeProject({
+      hosts: [
+        makeHost({
+          projectId: "project-1",
+          projectName: "Alpha",
+          repoRoot: "/tmp/alpha",
+          workspaces: [
+            makeWorkspace({ id: "wks_main", name: "main" }),
+            makeWorkspace({ id: "wks_report", name: "Weekly report", workspaceKind: "directory" }),
+            makeWorkspace({ id: "wks_bg", name: "Hidden", background: true }),
+            makeWorkspace({ id: "wks_closing", name: "Closing", archivingAt: "2026-07-01" }),
+          ],
+        }),
+      ],
+    }),
+  ];
+
+  it("lists each target's workspaces that are not being archived, flagging background ones", () => {
+    const [target] = buildScheduleProjectTargets(projects);
+    expect(target?.workspaces).toEqual([
+      { id: "wks_main", name: "main", workspaceKind: "local_checkout", background: false },
+      { id: "wks_report", name: "Weekly report", workspaceKind: "directory", background: false },
+      { id: "wks_bg", name: "Hidden", workspaceKind: "local_checkout", background: true },
+    ]);
+  });
+
+  it("names a bound workspace by host and id, leaving out one being archived", () => {
+    const index = buildScheduleWorkspaceIndex(buildScheduleProjectTargets(projects));
+    expect(index.get("host-1:wks_report")).toEqual({
+      name: "Weekly report",
+      projectName: "Alpha",
+    });
+    expect(index.has("host-1:wks_bg")).toBe(true);
+    expect(index.has("host-1:wks_closing")).toBe(false);
+  });
+
+  it("calls a workspace missing once the host is online and its workspaces loaded", () => {
+    expect(canJudgeWorkspaceMissing({ workspacesLoaded: true, hostOnline: true })).toBe(true);
+  });
+
+  it("calls a workspace missing on an online host that has no projects at all", () => {
+    // The host's last project was removed: nothing is left in the targets, and that is the answer.
+    expect(buildScheduleProjectTargets([])).toEqual([]);
+    expect(canJudgeWorkspaceMissing({ workspacesLoaded: true, hostOnline: true })).toBe(true);
+  });
+
+  it("does not call a workspace missing on an offline host", () => {
+    // An offline host has no targets and keeps its loaded flag: its workspaces are unknown, not gone.
+    expect(canJudgeWorkspaceMissing({ workspacesLoaded: true, hostOnline: false })).toBe(false);
+  });
+
+  it("does not call a workspace missing before the host's workspaces loaded", () => {
+    expect(canJudgeWorkspaceMissing({ workspacesLoaded: false, hostOnline: true })).toBe(false);
+    expect(canJudgeWorkspaceMissing({ workspacesLoaded: false, hostOnline: false })).toBe(false);
   });
 });
 

@@ -1,5 +1,9 @@
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
-import { describeScheduleCwd } from "@/schedules/schedule-project-targets";
+import {
+  buildScheduleWorkspaceKey,
+  describeScheduleCwd,
+  type ScheduleWorkspaceRef,
+} from "@/schedules/schedule-project-targets";
 
 // Derived from existing fields only — no new protocol state. "active"/"paused"
 // mirror the stored status; the rest are computed truths the daemon does not
@@ -24,6 +28,8 @@ export interface ResolvedSchedule {
   state: ScheduleDerivedState;
   bucket: ScheduleBucket;
   target: ScheduleTargetResolution;
+  /** The workspace the schedule runs in is known to be gone, whatever the badge says. */
+  workspaceUnavailable: boolean;
 }
 
 export interface ResolveScheduleInput {
@@ -39,6 +45,10 @@ export interface ResolveScheduleInput {
    * not claim an agent target is gone — absence would just be a cold cache.
    */
   agentDataLoaded: boolean;
+  /** Workspaces the client knows, keyed by `${serverId}:${workspaceId}`. */
+  workspacesByKey: ReadonlyMap<string, ScheduleWorkspaceRef>;
+  /** Same cold-cache rule for the workspaces a schedule is bound to. */
+  workspaceDataLoaded: boolean;
 }
 
 function agentKey(serverId: string, agentId: string): string {
@@ -61,6 +71,29 @@ function isAgentTargetGone(input: ResolveScheduleInput): boolean {
   return !agentsByKey.has(agentKey(serverId, schedule.target.agentId));
 }
 
+function findTargetWorkspace(input: ResolveScheduleInput): ScheduleWorkspaceRef | null {
+  const { schedule, serverId, workspacesByKey } = input;
+  if (schedule.target.type !== "new-agent" || !schedule.target.config.workspaceId) {
+    return null;
+  }
+  return (
+    workspacesByKey.get(buildScheduleWorkspaceKey(serverId, schedule.target.config.workspaceId)) ??
+    null
+  );
+}
+
+function isWorkspaceTargetGone(input: ResolveScheduleInput): boolean {
+  const { schedule, workspaceDataLoaded } = input;
+  if (
+    schedule.target.type !== "new-agent" ||
+    !schedule.target.config.workspaceId ||
+    !workspaceDataLoaded
+  ) {
+    return false;
+  }
+  return findTargetWorkspace(input) === null;
+}
+
 function resolveTarget(input: ResolveScheduleInput): ScheduleTargetResolution {
   const { schedule, serverId, agentsByKey, projectNameByCwd } = input;
   if (schedule.target.type === "agent") {
@@ -70,9 +103,17 @@ function resolveTarget(input: ResolveScheduleInput): ScheduleTargetResolution {
     }
     return { label: "Agent unavailable", provider: null };
   }
+  const provider = schedule.target.config.provider;
+  const workspace = findTargetWorkspace(input);
+  if (workspace) {
+    return { label: `${workspace.name} · ${workspace.projectName}`, provider };
+  }
+  if (isWorkspaceTargetGone(input)) {
+    return { label: "Workspace unavailable", provider };
+  }
   return {
     label: describeScheduleCwd({ serverId, cwd: schedule.target.config.cwd, projectNameByCwd }),
-    provider: schedule.target.config.provider,
+    provider,
   };
 }
 
@@ -83,7 +124,7 @@ function deriveState(input: ResolveScheduleInput): ScheduleDerivedState {
   if (isExpired(schedule, now)) {
     return "expired";
   }
-  if (isAgentTargetGone(input)) {
+  if (isAgentTargetGone(input) || isWorkspaceTargetGone(input)) {
     return "targetGone";
   }
   if (schedule.status === "completed") {
@@ -105,5 +146,6 @@ export function resolveSchedule(input: ResolveScheduleInput): ResolvedSchedule {
     state,
     bucket: scheduleBucket(state),
     target: resolveTarget(input),
+    workspaceUnavailable: isWorkspaceTargetGone(input),
   };
 }

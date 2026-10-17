@@ -11,13 +11,18 @@ import { ensureAgentLoaded } from "../agent/agent-loading.js";
 import { startAgentRun, type AgentRunController } from "../agent/agent-prompt.js";
 import { resolveCreateAgentTitles } from "../agent/create-agent-title.js";
 import { type BoundCreateAgentCommand, formatProviderModel } from "../agent/create-agent/create.js";
+import { areEquivalentPaths } from "../../utils/path.js";
+import { expandUserPath } from "../path-utils.js";
 import type { PersistedWorkspaceRecord } from "../workspace-registry.js";
+import { assertWorkspaceAutomationAllowed } from "../workspace-automation-gate.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../worktree-session.js";
 import { ScheduleStore } from "./store.js";
 import { computeNextRunAt, validateScheduleCadence } from "./cron.js";
 import type {
   CreateScheduleInput,
+  CreateScheduleTarget,
   ScheduleExecutionResult,
+  ScheduleNewAgentConfig,
   ScheduleRun,
   ScheduleTarget,
   StoredSchedule,
@@ -29,8 +34,9 @@ import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 const SCHEDULE_TICK_INTERVAL_MS = 1000;
 
 // A run failed because its target no longer exists: the agent was deleted or
-// archived, or a new-agent cwd was removed. These are permanent, so the schedule
-// is completed instead of retried until it burns down to its expiry.
+// archived, a new-agent cwd was removed, or the workspace the schedule runs in was
+// deleted or archived. These are permanent, so the schedule is completed instead of
+// retried until it burns down to its expiry.
 export class ScheduleTargetGoneError extends Error {
   constructor(message: string) {
     super(message);
@@ -122,7 +128,27 @@ function applyNewAgentConfig(
   if (patch.isolation !== undefined) {
     config.isolation = patch.isolation;
   }
+  if (patch.workspaceId === null) {
+    delete config.workspaceId;
+  } else if (patch.workspaceId !== undefined) {
+    const trimmed = patch.workspaceId.trim();
+    if (!trimmed) {
+      throw new Error("workspaceId cannot be empty");
+    }
+    config.workspaceId = trimmed;
+  }
   return { ...target, config };
+}
+
+function assertWorkspaceAllowsIsolation(
+  workspaceId: string,
+  isolation: ScheduleNewAgentConfig["isolation"],
+): void {
+  if (isolation === "worktree") {
+    throw new Error(
+      `A schedule that runs in workspace ${workspaceId} cannot use worktree isolation`,
+    );
+  }
 }
 
 function normalizeMaxRuns(value: number | null | undefined): number | null {
@@ -247,6 +273,8 @@ export interface ScheduleServiceOptions {
     input: ScheduleWorkspaceCreateInput,
   ) => Promise<CreatePaseoWorktreeWorkflowResult>;
   archiveWorkspace: (workspaceId: string) => Promise<void>;
+  getWorkspace: (workspaceId: string) => Promise<PersistedWorkspaceRecord | null>;
+  archiveAgent: (agentId: string) => Promise<void>;
   now?: () => Date;
   runner?: (schedule: StoredSchedule, runId: string) => Promise<ScheduleExecutionResult>;
 }
@@ -264,6 +292,8 @@ export class ScheduleService {
     input: ScheduleWorkspaceCreateInput,
   ) => Promise<CreatePaseoWorktreeWorkflowResult>;
   private readonly archiveWorkspace: (workspaceId: string) => Promise<void>;
+  private readonly getWorkspace: (workspaceId: string) => Promise<PersistedWorkspaceRecord | null>;
+  private readonly archiveAgent: (agentId: string) => Promise<void>;
   private readonly now: () => Date;
   private readonly runner: (
     schedule: StoredSchedule,
@@ -281,6 +311,8 @@ export class ScheduleService {
     this.createDirectoryWorkspace = options.createDirectoryWorkspace;
     this.createPaseoWorktreeWorkspace = options.createPaseoWorktreeWorkspace;
     this.archiveWorkspace = options.archiveWorkspace;
+    this.getWorkspace = options.getWorkspace;
+    this.archiveAgent = options.archiveAgent;
     this.now = options.now ?? (() => new Date());
     this.runner = options.runner ?? ((schedule, runId) => this.executeSchedule(schedule, runId));
   }
@@ -313,7 +345,7 @@ export class ScheduleService {
     return this.createScheduleRecord(input, {
       name: trimOptionalName(input.name),
       prompt,
-      target: input.target,
+      target: await this.resolveCreateTarget(input.target),
     });
   }
 
@@ -355,11 +387,12 @@ export class ScheduleService {
     const name = trimOptionalName(input.name);
     const prompt = normalizePrompt(input.prompt);
     validateScheduleCadence(input.cadence);
+    // Resolve before matching: the identity compares the stored form of the target.
+    const inputTarget = await this.resolveCreateTarget(input.target);
     if (name === null) {
-      return this.createScheduleRecord(input, { name, prompt, target: input.target });
+      return this.createScheduleRecord(input, { name, prompt, target: inputTarget });
     }
 
-    const inputTarget = input.target;
     return this.store.upsertByNameAndTarget(name, inputTarget, {
       create: async () => {
         return this.buildScheduleRecord(input, { name, prompt, target: inputTarget });
@@ -468,7 +501,10 @@ export class ScheduleService {
         if (updated.target.type !== "new-agent") {
           throw new Error("new-agent config updates are only valid for new-agent target schedules");
         }
-        const patchedTarget = applyNewAgentConfig(updated.target, input.newAgentConfig);
+        const patchedTarget = await this.applyNewAgentConfigPatch(
+          updated.target,
+          input.newAgentConfig,
+        );
         updated = {
           ...updated,
           target: patchedTarget,
@@ -599,8 +635,12 @@ export class ScheduleService {
   }
 
   private async recoverInterruptedSchedule(scheduleId: string, now: Date): Promise<void> {
-    const interruptedWorkspaces: Array<{
-      workspaceId: string;
+    // A run that created its own workspace archives that workspace. A run inside the
+    // schedule's workspaceId only has an agent to archive: run.workspaceId is set exactly
+    // when the run created the workspace, so recovery never reads the config's workspaceId
+    // (it may have been rebound since the run started).
+    const interruptedRuns: Array<{
+      workspaceId: string | null;
       agentId: string | null;
       runId: string;
     }> = [];
@@ -612,19 +652,24 @@ export class ScheduleService {
       if (runningIndex !== -1) {
         const runs = [...updated.runs];
         const runningRun = runs[runningIndex];
-        if (
-          updated.target.type === "new-agent" &&
-          runningRun.workspaceId &&
-          shouldArchiveScheduleRunWorkspace({
-            agentId: runningRun.agentId,
-            archiveOnFinish: updated.target.config.archiveOnFinish,
-          })
-        ) {
-          interruptedWorkspaces.push({
-            workspaceId: runningRun.workspaceId,
-            agentId: runningRun.agentId,
-            runId: runningRun.id,
-          });
+        if (updated.target.type === "new-agent") {
+          const archiveOnFinish = updated.target.config.archiveOnFinish;
+          if (
+            runningRun.workspaceId &&
+            shouldArchiveScheduleRunWorkspace({ agentId: runningRun.agentId, archiveOnFinish })
+          ) {
+            interruptedRuns.push({
+              workspaceId: runningRun.workspaceId,
+              agentId: runningRun.agentId,
+              runId: runningRun.id,
+            });
+          } else if (!runningRun.workspaceId && runningRun.agentId && (archiveOnFinish ?? true)) {
+            interruptedRuns.push({
+              workspaceId: null,
+              agentId: runningRun.agentId,
+              runId: runningRun.id,
+            });
+          }
         }
         runs[runningIndex] = {
           ...runningRun,
@@ -657,22 +702,26 @@ export class ScheduleService {
       }
       return current;
     });
-    const interruptedWorkspace = interruptedWorkspaces[0];
-    if (!interruptedWorkspace) {
+    const interrupted = interruptedRuns[0];
+    if (!interrupted) {
       return;
     }
     try {
-      await this.archiveWorkspace(interruptedWorkspace.workspaceId);
+      if (interrupted.workspaceId) {
+        await this.archiveWorkspace(interrupted.workspaceId);
+      } else if (interrupted.agentId) {
+        await this.archiveAgent(interrupted.agentId);
+      }
     } catch (error) {
       this.logger.warn(
         {
           err: error,
-          agentId: interruptedWorkspace.agentId,
-          workspaceId: interruptedWorkspace.workspaceId,
+          agentId: interrupted.agentId,
+          workspaceId: interrupted.workspaceId,
           scheduleId,
-          runId: interruptedWorkspace.runId,
+          runId: interrupted.runId,
         },
-        "Failed to archive interrupted scheduled workspace after daemon restart",
+        "Failed to archive interrupted scheduled run after daemon restart",
       );
     }
   }
@@ -890,10 +939,12 @@ export class ScheduleService {
     requireSchedule(updatedSchedule, params.scheduleId);
   }
 
+  // workspaceId is the workspace the run created; null when the run uses the schedule's
+  // own workspaceId.
   private async recordRunWorkspace(params: {
     scheduleId: string;
     runId: string;
-    workspaceId: string;
+    workspaceId: string | null;
     agentId: string | null;
   }): Promise<void> {
     const updatedSchedule = await this.store.update(params.scheduleId, (schedule) => ({
@@ -961,17 +1012,23 @@ export class ScheduleService {
     if (!config) {
       throw new Error(`Schedule ${schedule.id} target changed during execution`);
     }
-    await this.assertNewAgentCwdDirectory(config.cwd);
-    let workspace: PersistedWorkspaceRecord | null = null;
+    const boundWorkspace = config.workspaceId
+      ? await this.requireBoundWorkspace(config.workspaceId)
+      : null;
+    await this.assertNewAgentCwdDirectory(boundWorkspace?.cwd ?? config.cwd);
+    let ownedWorkspace: PersistedWorkspaceRecord | null = null;
     let agentId: string | null = null;
     try {
-      workspace = await this.createScheduleRunWorkspace(config, schedule.prompt);
-      await this.recordRunWorkspace({
-        scheduleId: schedule.id,
-        runId,
-        workspaceId: workspace.workspaceId,
-        agentId: null,
-      });
+      if (!boundWorkspace) {
+        ownedWorkspace = await this.createScheduleRunWorkspace(config, schedule.prompt);
+        await this.recordRunWorkspace({
+          scheduleId: schedule.id,
+          runId,
+          workspaceId: ownedWorkspace.workspaceId,
+          agentId: null,
+        });
+      }
+      const workspace = boundWorkspace ?? ownedWorkspace!;
       const runConfig = { ...config, cwd: workspace.cwd };
       const created = await this.createAgent({
         kind: "mcp",
@@ -996,55 +1053,186 @@ export class ScheduleService {
       await this.recordRunWorkspace({
         scheduleId: schedule.id,
         runId,
-        workspaceId: workspace.workspaceId,
+        workspaceId: ownedWorkspace?.workspaceId ?? null,
         agentId,
       });
       if (created.initialPromptError) {
         throw created.initialPromptError;
       }
-      const result = await this.agentManager.runAgent(agent.id, schedule.prompt);
-      const waitResult = await this.agentManager.waitForAgentEvent(agent.id, {
-        waitForActive: true,
-      });
-      if (result.canceled) {
-        throw new Error(`Scheduled agent ${agent.id} was canceled`);
-      }
-      if (waitResult.permission) {
-        throw new Error(`Scheduled agent ${agent.id} is waiting for permission`);
-      }
-      if (waitResult.status === "error") {
-        throw new Error(waitResult.lastMessage ?? `Scheduled agent ${agent.id} failed`);
-      }
-      const timelineText = curateAgentActivity(result.timeline);
-      return {
-        agentId: agent.id,
-        output: buildRunOutput({
-          output: waitResult.lastMessage ?? null,
-          timelineText,
-          finalText: result.finalText,
-        }),
-      };
+      return await this.runScheduledAgent(agent.id, schedule.prompt);
     } finally {
-      if (
-        workspace &&
-        shouldArchiveScheduleRunWorkspace({ agentId, archiveOnFinish: config.archiveOnFinish })
-      ) {
-        try {
-          await this.archiveWorkspace(workspace.workspaceId);
-        } catch (error) {
-          this.logger.warn(
-            {
-              err: error,
-              agentId,
-              workspaceId: workspace.workspaceId,
-              scheduleId: schedule.id,
-              runId,
-            },
-            "Failed to archive scheduled workspace after run",
-          );
-        }
+      await this.archiveFinishedRun({
+        scheduleId: schedule.id,
+        runId,
+        agentId,
+        archiveOnFinish: config.archiveOnFinish,
+        ownedWorkspace,
+        boundWorkspace,
+      });
+    }
+  }
+
+  private async runScheduledAgent(
+    agentId: string,
+    prompt: string,
+  ): Promise<ScheduleExecutionResult> {
+    const result = await this.agentManager.runAgent(agentId, prompt);
+    const waitResult = await this.agentManager.waitForAgentEvent(agentId, {
+      waitForActive: true,
+    });
+    if (result.canceled) {
+      throw new Error(`Scheduled agent ${agentId} was canceled`);
+    }
+    if (waitResult.permission) {
+      throw new Error(`Scheduled agent ${agentId} is waiting for permission`);
+    }
+    if (waitResult.status === "error") {
+      throw new Error(waitResult.lastMessage ?? `Scheduled agent ${agentId} failed`);
+    }
+    const timelineText = curateAgentActivity(result.timeline);
+    return {
+      agentId,
+      output: buildRunOutput({
+        output: waitResult.lastMessage ?? null,
+        timelineText,
+        finalText: result.finalText,
+      }),
+    };
+  }
+
+  private async archiveFinishedRun(params: {
+    scheduleId: string;
+    runId: string;
+    agentId: string | null;
+    archiveOnFinish: boolean | undefined;
+    ownedWorkspace: PersistedWorkspaceRecord | null;
+    boundWorkspace: PersistedWorkspaceRecord | null;
+  }): Promise<void> {
+    const { scheduleId, runId, agentId, archiveOnFinish, ownedWorkspace, boundWorkspace } = params;
+    if (ownedWorkspace && shouldArchiveScheduleRunWorkspace({ agentId, archiveOnFinish })) {
+      try {
+        await this.archiveWorkspace(ownedWorkspace.workspaceId);
+      } catch (error) {
+        this.logger.warn(
+          { err: error, agentId, workspaceId: ownedWorkspace.workspaceId, scheduleId, runId },
+          "Failed to archive scheduled workspace after run",
+        );
+      }
+    } else if (boundWorkspace && agentId !== null && (archiveOnFinish ?? true)) {
+      // The schedule's workspace outlives every run; only this run's agent is archived.
+      try {
+        await this.archiveAgent(agentId);
+      } catch (error) {
+        this.logger.warn(
+          { err: error, agentId, workspaceId: boundWorkspace.workspaceId, scheduleId, runId },
+          "Failed to archive scheduled agent after run",
+        );
       }
     }
+  }
+
+  private async resolveCreateTarget(target: CreateScheduleTarget): Promise<ScheduleTarget> {
+    if (target.type === "agent") {
+      return target;
+    }
+    const { config } = target;
+    if (config.workspaceId) {
+      return {
+        type: "new-agent",
+        config: await this.bindWorkspaceConfig({
+          config,
+          workspaceId: config.workspaceId,
+          requestedCwd: config.cwd,
+          requestedIsolation: config.isolation,
+        }),
+      };
+    }
+    if (!config.cwd) {
+      throw new Error("cwd or workspaceId is required");
+    }
+    return { type: "new-agent", config: { ...config, cwd: config.cwd } };
+  }
+
+  private async applyNewAgentConfigPatch(
+    target: Extract<ScheduleTarget, { type: "new-agent" }>,
+    patch: UpdateScheduleNewAgentConfig,
+  ): Promise<Extract<ScheduleTarget, { type: "new-agent" }>> {
+    const patched = applyNewAgentConfig(target, patch);
+    const workspaceId = patched.config.workspaceId;
+    if (!workspaceId) {
+      return patched;
+    }
+    if (patch.workspaceId === undefined) {
+      // Still bound to the same workspace: its directory is the schedule's cwd.
+      if (
+        patch.cwd !== undefined &&
+        !areEquivalentPaths(expandUserPath(patch.cwd), target.config.cwd)
+      ) {
+        throw new Error(
+          `This schedule runs in workspace ${workspaceId}; its working directory follows the workspace. Clear the workspace to change cwd.`,
+        );
+      }
+      assertWorkspaceAllowsIsolation(workspaceId, patch.isolation);
+      const { isolation: _isolation, ...config } = patched.config;
+      return { ...patched, config: { ...config, cwd: target.config.cwd } };
+    }
+    return {
+      ...patched,
+      config: await this.bindWorkspaceConfig({
+        config: patched.config,
+        workspaceId,
+        requestedCwd: patch.cwd,
+        requestedIsolation: patch.isolation,
+      }),
+    };
+  }
+
+  // Validates a config that runs in an existing workspace and returns its stored form: cwd
+  // is the workspace's directory and isolation is dropped, so there is one representation.
+  private async bindWorkspaceConfig(params: {
+    config: Omit<ScheduleNewAgentConfig, "cwd"> & { cwd?: string };
+    workspaceId: string;
+    requestedCwd: string | undefined;
+    requestedIsolation: ScheduleNewAgentConfig["isolation"];
+  }): Promise<ScheduleNewAgentConfig> {
+    const { config, workspaceId, requestedCwd, requestedIsolation } = params;
+    assertWorkspaceAllowsIsolation(workspaceId, requestedIsolation);
+    const workspace = await this.getWorkspace(workspaceId);
+    if (!workspace) {
+      throw new Error(`Workspace ${workspaceId} not found`);
+    }
+    if (workspace.archivedAt) {
+      throw new Error(`Workspace ${workspaceId} is archived`);
+    }
+    assertWorkspaceAutomationAllowed(workspace.untrustedSource);
+    if (requestedCwd && !areEquivalentPaths(expandUserPath(requestedCwd), workspace.cwd)) {
+      throw new Error(
+        `cwd ${requestedCwd} is not workspace ${workspaceId}'s directory (${workspace.cwd}). Omit cwd to use the workspace directory.`,
+      );
+    }
+    const { isolation: _isolation, ...rest } = config;
+    return { ...rest, workspaceId, cwd: workspace.cwd };
+  }
+
+  // The workspace a schedule runs in can disappear between runs. That is permanent, like a
+  // deleted cwd, so the schedule ends; a run never falls back to creating a workspace.
+  private async requireBoundWorkspace(workspaceId: string): Promise<PersistedWorkspaceRecord> {
+    const workspace = await this.getWorkspace(workspaceId);
+    if (!workspace) {
+      throw new ScheduleTargetGoneError(
+        `Workspace ${workspaceId} no longer exists. Create a new schedule that runs in another workspace.`,
+      );
+    }
+    if (workspace.archivedAt) {
+      throw new ScheduleTargetGoneError(
+        `Workspace ${workspaceId} is archived, so this schedule has ended. Restore the workspace and create the schedule again.`,
+      );
+    }
+    // Binding already refuses an untrusted workspace; this guards against the record being
+    // marked untrusted afterwards. It is the user's pending decision, not an intent to stop,
+    // so the run fails like any other error and the schedule stays active.
+    assertWorkspaceAutomationAllowed(workspace.untrustedSource);
+    return workspace;
   }
 
   private async createScheduleRunWorkspace(

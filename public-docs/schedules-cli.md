@@ -62,6 +62,32 @@ paseo schedule create \
   "Review overnight CI failures and summarize anything urgent."
 ```
 
+## Run in a workspace
+
+`--workspace <id>` runs every execution in a workspace you already have instead of creating one per run. The schedule uses the workspace's directory, so leave out `--cwd`; with `--host`, `--workspace` replaces it.
+
+```bash
+paseo workspace create --isolation local --path ~/dev/my-app --title "Weekly report"
+paseo workspace ls
+paseo schedule create \
+  --cron "0 9 * * 1" \
+  --name weekly-report \
+  --provider codex/gpt-5.5 \
+  --workspace <workspace-id> \
+  "Write the weekly report and leave it in docs/reports."
+```
+
+`paseo schedule ls` shows the workspace in its own column. To change it later:
+
+```bash
+paseo schedule update <id> --workspace <other-workspace-id>
+paseo schedule update <id> --no-workspace
+```
+
+`--no-workspace` goes back to a new workspace per run and keeps the schedule's current working directory, which is the old workspace's directory. Add `--cwd` to change it in the same command.
+
+Use a regular workspace, not a background one, and see [Run in one workspace](/docs/schedules#run-in-one-workspace) for how archiving and a missing workspace behave. The host must support it; otherwise the command fails and asks you to update the host.
+
 ## Heartbeats
 
 Inside a running Paseo agent, create a heartbeat for that same conversation:

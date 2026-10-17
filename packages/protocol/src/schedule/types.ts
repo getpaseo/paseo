@@ -27,6 +27,9 @@ export const ScheduleTargetSchema = z.discriminatedUnion("type", [
     config: z.object({
       provider: AgentProviderSchema,
       cwd: z.string().trim().min(1),
+      // Runs go into this existing workspace instead of creating one per run. cwd is then the
+      // workspace's directory and isolation is not stored.
+      workspaceId: z.string().trim().min(1).optional(),
       modeId: z.string().trim().min(1).optional(),
       model: z.string().trim().min(1).optional(),
       thinkingOptionId: z.string().trim().min(1).optional(),
@@ -49,6 +52,8 @@ export const ScheduleRunSchema = z.object({
   endedAt: z.string().nullable(),
   status: z.enum(["running", "succeeded", "failed"]),
   agentId: z.guid().nullable(),
+  // The workspace this run created and owns. Null when the run used the schedule's own
+  // workspaceId: the daemon never archives that one.
   workspaceId: z.string().nullable().optional(),
   output: z.string().nullable(),
   error: z.string().nullable(),
@@ -78,11 +83,21 @@ export const ScheduleSummarySchema = StoredScheduleSchema.omit({
 });
 export type ScheduleSummary = z.infer<typeof ScheduleSummarySchema>;
 
+export type ScheduleNewAgentConfig = Extract<ScheduleTarget, { type: "new-agent" }>["config"];
+
+// A new-agent create request may omit cwd when it names a workspace.
+export type CreateScheduleTarget =
+  | Extract<ScheduleTarget, { type: "agent" }>
+  | {
+      type: "new-agent";
+      config: Omit<ScheduleNewAgentConfig, "cwd"> & { cwd?: string };
+    };
+
 export interface CreateScheduleInput {
   name?: string | null;
   prompt: string;
   cadence: ScheduleCadence;
-  target: ScheduleTarget;
+  target: CreateScheduleTarget;
   maxRuns?: number | null;
   expiresAt?: string | null;
   runOnCreate?: boolean | null;
@@ -96,6 +111,8 @@ export interface UpdateScheduleNewAgentConfig {
   archiveOnFinish?: boolean;
   isolation?: "local" | "worktree";
   cwd?: string;
+  // A string binds or rebinds; null runs in a new workspace again.
+  workspaceId?: string | null;
 }
 
 export interface UpdateScheduleInput {

@@ -11,6 +11,8 @@ export interface WorkspaceSummary {
   status: WorkspaceDescriptor["status"];
   currentBranch: string | null;
   archivingAt?: string;
+  /** Hidden from public discovery; its agents are left out of History by default. */
+  background?: boolean;
   /** Pull/merge request number backing this workspace, so a query can find it. */
   changeRequestNumber: number | null;
 }
@@ -160,6 +162,7 @@ function toWorkspaceSummary(workspace: WorkspaceDescriptor): WorkspaceSummary {
     status: workspace.status,
     currentBranch: currentBranch && currentBranch !== "HEAD" ? currentBranch : null,
     ...(workspace.archivingAt ? { archivingAt: workspace.archivingAt } : {}),
+    ...(workspace.background ? { background: true } : {}),
     changeRequestNumber: toChangeRequestNumber(workspace),
   };
 }
