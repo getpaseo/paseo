@@ -66,6 +66,13 @@ import {
   type MessageInputRef,
 } from "./input/input";
 import type { ImageAttachment, MessagePayload, TextReplacement } from "./types";
+import {
+  readRecallHistory,
+  readRecallSession,
+  resolveRecall,
+  resolveRecallDirection,
+  writeRecallSession,
+} from "./message-recall";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { DraftCommandTarget } from "@/hooks/use-agent-commands-query";
 import { encodeImages } from "@/utils/encode-images";
@@ -1553,6 +1560,7 @@ function ComposerContentImpl({
       }
       await dispatchComposerAgentMessage({
         client,
+        serverId,
         agentId: targetAgentId,
         text,
         attachments: sendAttachments,
@@ -1976,10 +1984,34 @@ function ComposerContentImpl({
 
   const hasSendableContent = hasText || selectedAttachments.length > 0;
 
-  // Handle keyboard navigation for command autocomplete.
+  // Handle keyboard navigation for command autocomplete, then message recall. Autocomplete owns
+  // the arrow keys while its menu is open, so recall only ever sees the keys it declined.
   const handleCommandKeyPress = useCallback(
-    (event: ComposerKeyPressEvent) => autocompleteRef.current?.onKeyPress(event) ?? false,
-    [],
+    (event: ComposerKeyPressEvent) => {
+      if (autocompleteRef.current?.onKeyPress(event)) return true;
+
+      const direction = resolveRecallDirection(event);
+      if (!direction) return false;
+      // Read the sources on the key press instead of subscribing to them: the stream changes on
+      // every chunk of a running turn, and the composer must not re-render with it.
+      const outcome = resolveRecall({
+        history: readRecallHistory({
+          serverId,
+          agentId,
+          timeline: useSessionStore.getState().sessions[serverId]?.agentStreamTail.get(agentId),
+        }),
+        session: readRecallSession({ serverId, agentId }),
+        snapshot: event.input,
+        direction,
+      });
+      if (!outcome) return false;
+
+      writeRecallSession({ serverId, agentId, session: outcome.session });
+      event.preventDefault();
+      replaceUserInput(outcome.text, outcome.selection);
+      return true;
+    },
+    [agentId, replaceUserInput, serverId],
   );
 
   const cancelButtonStyle = useMemo(
