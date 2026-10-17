@@ -13,7 +13,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { File, Folder } from "lucide-react-native";
 import type { Theme } from "@/styles/theme";
-import { getAutocompleteScrollOffset } from "./autocomplete-utils";
+import { getScrollOffsetToRevealItem } from "./scroll-reveal";
 
 export interface AutocompleteOption {
   id: string;
@@ -146,7 +146,7 @@ export function Autocomplete({
       return;
     }
 
-    const nextOffset = getAutocompleteScrollOffset({
+    const nextOffset = getScrollOffsetToRevealItem({
       currentOffset: scrollOffsetRef.current,
       viewportHeight: viewportHeightRef.current,
       itemTop: layout.top,

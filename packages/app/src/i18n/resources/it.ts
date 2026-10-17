@@ -362,6 +362,7 @@ export const it: TranslationResources = {
       details: "Dettagli",
     },
     dictation: {
+      paused: "Microfono interrotto. In attesa di riprendere…",
       start: "Avvia dettatura vocale",
       cancel: "Annulla dettatura",
       retry: "Riprova dettatura",
@@ -371,6 +372,7 @@ export const it: TranslationResources = {
       failedRetry: "Dettatura non riuscita. Tocca Riprova.",
     },
     question: {
+      responseFailed: "Impossibile inviare la risposta. Riprova.",
       submit: "Invia",
       next: "Avanti",
       answerPlaceholder: "Scrivi la tua risposta...",
@@ -733,6 +735,8 @@ export const it: TranslationResources = {
     header: {
       actions: {
         workspaceActions: "Azioni dell'ambiente di lavoro",
+        workspaceActionsUnhealthy:
+          "Azioni dell'ambiente di lavoro, un servizio non funziona correttamente",
         newAgent: "Nuovo agente",
         newTerminal: "Nuovo terminale",
         newBrowser: "Nuova scheda del browser",
@@ -781,6 +785,8 @@ export const it: TranslationResources = {
         exitCode: "exit {{code}}",
         startFailed: "Avvio di {{scriptName}} non riuscito",
         stopFailed: "Arresto di {{scriptName}} non riuscito",
+        running: "In esecuzione",
+        runningCount: "{{count}} in esecuzione",
       },
     },
     tree: {
@@ -1361,8 +1367,9 @@ export const it: TranslationResources = {
     },
     fields: {
       project: "Progetto",
-      base: "Base",
+      branch: "Branch",
       baseNotApplicable: "Non applicabile",
+      host: "Host",
     },
     titlePlaceholder: "Titolo (facoltativo)",
     errors: {

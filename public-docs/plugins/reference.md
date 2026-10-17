@@ -411,11 +411,14 @@ Built-in session routes:
 | Claude                 | `pi`, `omp` with `anthropic/…` model          | That harness's Anthropic login store                                                           |
 | Codex                  | `codex`                                       | `CODEX_HOME/auth.json`, or the default                                                         |
 | Codex                  | `pi`, `opencode`, `omp` with `openai/…` model | That harness's OpenAI login store                                                              |
+| Cursor                 | `cursor`                                      | cursor-agent's `auth.json` for that session's `XDG_CONFIG_HOME`, `APPDATA`, or home directory  |
 | Muse                   | `muse`                                        | That session's own Muse launch/config                                                          |
 | Other built-in sources | Any                                           | No session discovery                                                                           |
 
 Claude excludes Bedrock, Vertex, and foreign `ANTHROPIC_BASE_URL` sessions. Codex excludes sessions
-with `OPENAI_BASE_URL` set.
+with `OPENAI_BASE_URL` set. Cursor excludes sessions that authenticate with `CURSOR_API_KEY` or
+`CURSOR_AUTH_TOKEN`, and macOS sessions that keep the login in the Keychain, the default unless
+`AGENT_CLI_CREDENTIAL_STORE=file`.
 
 Use a stable account key: 1–128 characters from `[A-Za-z0-9._-]`. It identifies the account or
 organization whose quota is metered and survives token rotation. Never use a credential or raw
@@ -2265,6 +2268,12 @@ Reload replaces their registrations. Disable, removal, host disconnect, and eval
 remove Command Center items and clear the installation's query state. An already-restored panel tab
 remains as unavailable until its matching contribution returns or the user closes it. Panel render
 failures stay inside the plugin error boundary.
+
+Reload queues behind the daemon's other plugin work, such as a running installation or preparation
+command, and the daemon answers when the plugin is running again or has failed. Nothing reads the
+plugin's status as the reload's outcome: while the reload is queued, `plugin ls`, Settings, and the
+logs show the plugin's previous state, and while the daemon stops and starts it, a status read
+reports `failed` because the plugin is absent from the runtime catalog until its start completes.
 
 ## Plugin sources
 

@@ -300,16 +300,33 @@ done
 
 ### Android audio focus interruptions
 
-Voice mode uses the custom `expo-two-way-audio` Android module, so incoming calls and other system audio owners must be tested with emulator/system commands, not a JS-only test. To verify that voice resume handles denied audio focus without crashing:
+Use native instrumentation for audio interruptions. JS-only tests cannot prove Android focus,
+input silencing, or route recovery. The module's `android/src/androidTest` suite runs through
+Gradle's `connectedDebugAndroidTest` task and uses real `AudioManager` and `AudioRecord` instances.
+Run the microphone-privacy cases on Android 12 or newer.
+
+Verify these distinct outcomes:
+
+- Dictation continues when another media owner takes permanent, temporary, or ducking focus.
+- Disabling microphone access pauses audio delivery without discarding the dictation. Enabling
+  access resumes it. Starting dictation while access is disabled waits for the same recovery.
+- Returning from music controls resumes dictation without pausing music again. Cancelling a
+  backgrounded recording must prevent the lifecycle callback from restarting it.
+- Two-way voice still stops coherently on focus loss. Keep the incoming-call check below: it
+  exercises denied focus during lifecycle resume, beyond an ordinary media takeover.
 
 ```bash
-adb shell am start -n sh.paseo/.MainActivity
-# Start voice mode in an existing composer, then background Paseo with Home.
+# Start voice mode in an existing composer, then background Paseo.
 adb emu gsm call 5551234
-# Foreground Paseo while the call is still ringing.
+# Foreground Paseo while the call is still ringing, then end the simulated call.
+adb emu gsm cancel 5551234
 ```
 
-Expected result: Paseo does not throw `RuntimeException: Audio focus request failed`; native audio reports an interruption and voice mode stops or pauses coherently.
+Expected result: no `RuntimeException: Audio focus request failed`, and voice mode stops or pauses
+coherently. Repeat with dictation: it must retain captured audio and recover microphone access.
+Use browser/device automation to operate the app; the commands above only control emulator telephony.
+
+This fix requires a rebuilt native app. An OTA update on an older binary retains legacy capture.
 
 ### Releasing the audio session when idle
 
