@@ -6,6 +6,7 @@ import { promises as fs } from "node:fs";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentStorage } from "./agent-storage.js";
+import { AGENT_NOTIFICATIONS_MUTED_LABEL } from "@getpaseo/protocol/agent-labels";
 import { buildConfigOverrides, buildSessionConfig } from "../persistence-hooks.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type {
@@ -393,6 +394,63 @@ describe("AgentStorage", () => {
     const record = await storage.get(agentId);
     expect(record?.title).toBe("Generated title");
     expect(record?.archivedAt).toBe("2025-01-03T00:00:00.000Z");
+  });
+
+  test("committed label updates survive queued runtime snapshots", async () => {
+    const agent = createManagedAgent({ id: "agent-label-commit" });
+    agent.labels = { team: "infra" };
+    await storage.applySnapshot(agent);
+    const labels = { ...agent.labels, [AGENT_NOTIFICATIONS_MUTED_LABEL]: "true" };
+
+    const labelUpdate = storage.applySnapshot(agent, {
+      labels,
+      onCommitted: () => {
+        agent.labels = labels;
+      },
+    });
+    agent.lifecycle = "running";
+    agent.updatedAt = new Date("2025-01-02T00:00:00.000Z");
+    const runtimeUpdate = storage.applySnapshot(agent);
+    await Promise.all([labelUpdate, runtimeUpdate]);
+
+    const reloaded = new AgentStorage(storagePath, logger);
+    expect(await reloaded.get(agent.id)).toMatchObject({
+      labels,
+      lastStatus: "running",
+      updatedAt: agent.updatedAt.toISOString(),
+    });
+  });
+
+  test("failed label writes keep the previous setting until a successful retry", async () => {
+    const agent = createManagedAgent({ id: "agent-label-failure" });
+    agent.labels = { team: "infra" };
+    await storage.applySnapshot(agent);
+    const labels = { ...agent.labels, [AGENT_NOTIFICATIONS_MUTED_LABEL]: "true" };
+    const recordPath = path.join(storagePath, "tmp-project", `${agent.id}.json`);
+    const backupPath = `${recordPath}.saved`;
+    await fs.rename(recordPath, backupPath);
+    await fs.mkdir(recordPath);
+
+    const commitLabels = () =>
+      storage.applySnapshot(agent, {
+        labels,
+        onCommitted: () => {
+          agent.labels = labels;
+        },
+      });
+    try {
+      await expect(commitLabels()).rejects.toThrow();
+      expect(agent.labels).toEqual({ team: "infra" });
+      expect((await storage.get(agent.id))?.labels).toEqual({ team: "infra" });
+    } finally {
+      await fs.rm(recordPath, { recursive: true });
+      await fs.rename(backupPath, recordPath);
+    }
+
+    await commitLabels();
+    expect(agent.labels).toEqual(labels);
+    const reloaded = new AgentStorage(storagePath, logger);
+    expect((await reloaded.get(agent.id))?.labels).toEqual(labels);
   });
 
   test("list returns all agents including internal ones", async () => {

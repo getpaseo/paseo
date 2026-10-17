@@ -1,0 +1,84 @@
+{
+  "head": "0c92e3dcc6e421dd356af7a1bcbe5dc9edebfe1a",
+  "passed": true,
+  "results": [
+    {
+      "name": "Real Electron renderer and preload loaded",
+      "electron": "44.2.0",
+      "daemonPort": 45579,
+      "serverId": "srv_HI5E-YoArlXn"
+    },
+    {
+      "name": "Baseline completion reached Linux notification service"
+    },
+    {
+      "name": "Muted completion did not reach notification service"
+    },
+    {
+      "name": "Muted agent permission reached notification service"
+    },
+    {
+      "name": "Completion after permission stayed muted"
+    },
+    {
+      "name": "Unmuted completion reached notification service"
+    }
+  ],
+  "notifications": [
+    {
+      "actions": ["default", "View"],
+      "app_icon": "",
+      "app_name": "Paseo",
+      "body": "Hello world",
+      "event": "Notify",
+      "expire_timeout": -1,
+      "hints": {
+        "desktop-entry": "Paseo",
+        "sender-pid": 1218713,
+        "urgency": 1
+      },
+      "id": 1,
+      "replaces_id": 0,
+      "summary": "Agent finished",
+      "time": 1792231295.5218742
+    },
+    {
+      "actions": ["default", "View"],
+      "app_icon": "",
+      "app_name": "Paseo",
+      "body": "Permission required - Test permission request",
+      "event": "Notify",
+      "expire_timeout": -1,
+      "hints": {
+        "desktop-entry": "Paseo",
+        "sender-pid": 1218713,
+        "urgency": 1
+      },
+      "id": 2,
+      "replaces_id": 0,
+      "summary": "Agent needs permission",
+      "time": 1792231303.5401175
+    },
+    {
+      "actions": ["default", "View"],
+      "app_icon": "",
+      "app_name": "Paseo",
+      "body": "Hello world",
+      "event": "Notify",
+      "expire_timeout": -1,
+      "hints": {
+        "desktop-entry": "Paseo",
+        "sender-pid": 1218713,
+        "urgency": 1
+      },
+      "id": 3,
+      "replaces_id": 0,
+      "summary": "Agent finished",
+      "time": 1792231311.382149
+    }
+  ],
+  "limits": [
+    "Existing fake agent provider drives deterministic turns; real daemon, renderer, preload, IPC and Electron notification backend",
+    "Private freedesktop notification service records delivery; no popup rendering, macOS/Windows or mobile delivery tested"
+  ]
+}

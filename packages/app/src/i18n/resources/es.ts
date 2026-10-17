@@ -655,6 +655,9 @@ export const es: TranslationResources = {
         closeRight: "Cerrar pestañas a la derecha",
         closeOthers: "Cerrar otras pestañas",
         moveToMain: "Mover al panel principal",
+        muteNotifications: "Silenciar avisos de fin",
+        unmuteNotifications: "Activar avisos de fin",
+        notificationMuteFailed: "Error al guardar. Pulsa para reintentar.",
         reloadAgent: "Recargar agente",
         reloadAgentTooltip:
           "Vuelva a cargar el agente para actualizar habilidades, MCP o estado de inicio de sesión.",

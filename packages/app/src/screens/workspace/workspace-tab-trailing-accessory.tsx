@@ -3,6 +3,8 @@ import { useTranslation } from "react-i18next";
 import { Text } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
+  Bell,
+  BellOff,
   ArrowLeftToLine,
   ArrowRightToLine,
   Copy,
@@ -23,6 +25,8 @@ import type { WorkspaceTabMenuEntry } from "@/screens/workspace/workspace-tab-me
 import type { Theme } from "@/styles/theme";
 
 const ThemedEllipsis = withUnistyles(Ellipsis);
+const ThemedBell = withUnistyles(Bell);
+const ThemedBellOff = withUnistyles(BellOff);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine);
@@ -47,6 +51,10 @@ function MobileTabDropdownMenuItem({
 }) {
   const leading = useMemo(() => {
     switch (entry.icon) {
+      case "bell":
+        return <ThemedBell size={16} uniProps={mutedColorMapping} />;
+      case "bell-off":
+        return <ThemedBellOff size={16} uniProps={mutedColorMapping} />;
       case "copy":
         return <ThemedCopy size={16} uniProps={mutedColorMapping} />;
       case "rotate-cw":
@@ -72,6 +80,9 @@ function MobileTabDropdownMenuItem({
   return (
     <DropdownMenuItem
       testID={entry.testID}
+      description={entry.description}
+      status={entry.status}
+      closeOnSelect={entry.closeOnSelect}
       disabled={entry.disabled}
       destructive={entry.destructive}
       onSelect={entry.onSelect}

@@ -16,6 +16,9 @@ export interface WorkspaceTabMenuLabels {
   closeLeft: string;
   closeRight: string;
   closeOthers: string;
+  muteNotifications: string;
+  unmuteNotifications: string;
+  notificationMuteFailed: string;
   reloadAgent: string;
   reloadAgentTooltip: string;
   close: string;
@@ -32,10 +35,19 @@ export const DEFAULT_WORKSPACE_TAB_MENU_LABELS: WorkspaceTabMenuLabels = {
   closeLeft: i18n.t("workspace.tabs.menu.closeLeft"),
   closeRight: i18n.t("workspace.tabs.menu.closeRight"),
   closeOthers: i18n.t("workspace.tabs.menu.closeOthers"),
+  muteNotifications: i18n.t("workspace.tabs.menu.muteNotifications"),
+  unmuteNotifications: i18n.t("workspace.tabs.menu.unmuteNotifications"),
+  notificationMuteFailed: i18n.t("workspace.tabs.menu.notificationMuteFailed"),
   reloadAgent: i18n.t("workspace.tabs.menu.reloadAgent"),
   reloadAgentTooltip: i18n.t("workspace.tabs.menu.reloadAgentTooltip"),
   close: i18n.t("workspace.tabs.menu.close"),
 };
+
+export interface WorkspaceTabNotificationMute {
+  muted: boolean;
+  status: "idle" | "pending" | "success" | "error";
+  onToggle: () => void;
+}
 
 export type WorkspaceTabMenuEntry =
   | {
@@ -43,6 +55,8 @@ export type WorkspaceTabMenuEntry =
       key: string;
       label: string;
       icon?:
+        | "bell"
+        | "bell-off"
         | "copy"
         | "rotate-cw"
         | "arrow-left-to-line"
@@ -51,6 +65,9 @@ export type WorkspaceTabMenuEntry =
         | "pencil"
         | "x";
       hint?: string;
+      description?: string;
+      status?: "pending";
+      closeOnSelect?: boolean;
       tooltip?: string;
       disabled?: boolean;
       destructive?: boolean;
@@ -78,6 +95,7 @@ interface BuildWorkspaceTabMenuEntriesInput {
   onCloseTabsBefore: (tabId: string) => Promise<void> | void;
   onCloseTabsAfter: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
+  notificationMute?: WorkspaceTabNotificationMute;
   labels?: WorkspaceTabMenuLabels;
 }
 
@@ -95,6 +113,7 @@ interface BuildWorkspaceDesktopTabActionsInput {
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
+  notificationMute?: WorkspaceTabNotificationMute;
   labels?: WorkspaceTabMenuLabels;
 }
 
@@ -191,6 +210,21 @@ export function buildWorkspaceTabMenuEntries(
 
   if (tab.target.kind === "agent") {
     const { agentId } = tab.target;
+    if (input.notificationMute) {
+      const { muted, status, onToggle } = input.notificationMute;
+      entries.push({
+        kind: "item",
+        key: "notification-mute",
+        label: muted ? labels.unmuteNotifications : labels.muteNotifications,
+        icon: muted ? "bell" : "bell-off",
+        disabled: status === "pending",
+        status: status === "pending" ? "pending" : undefined,
+        description: status === "error" ? labels.notificationMuteFailed : undefined,
+        closeOnSelect: false,
+        testID: `${menuTestIDBase}-notification-mute`,
+        onSelect: onToggle,
+      });
+    }
     entries.push({
       kind: "item",
       key: "copy-resume-command",
@@ -343,6 +377,7 @@ export function buildWorkspaceDesktopTabActions(
       onCloseTabsBefore: input.onCloseTabsToLeft,
       onCloseTabsAfter: input.onCloseTabsToRight,
       onCloseOtherTabs: input.onCloseOtherTabs,
+      notificationMute: input.notificationMute,
       labels: input.labels,
     }),
     closeButtonTestId: getCloseButtonTestId(input.tab),

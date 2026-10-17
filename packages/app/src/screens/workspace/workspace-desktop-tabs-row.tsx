@@ -12,6 +12,8 @@ import React, {
 import { Pressable, Text, View, type LayoutChangeEvent } from "react-native";
 import {
   CopyX,
+  Bell,
+  BellOff,
   ArrowLeftToLine,
   ArrowRightToLine,
   Copy,
@@ -61,6 +63,7 @@ import {
   type WorkspaceDesktopTabActions,
   type WorkspaceTabMenuEntry,
   type WorkspaceTabMenuLabels,
+  type WorkspaceTabNotificationMute,
 } from "@/screens/workspace/workspace-tab-menu";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import type { PaneHost } from "@/panels/panel-manifest";
@@ -85,9 +88,10 @@ import {
   HorizontalScrollBoundaryShades,
   useHorizontalScrollBoundary,
 } from "@/components/ui/horizontal-scroll-boundary";
+import { useAgentNotificationMute } from "./use-agent-notification-mute";
 import { useSessionStore } from "@/stores/session-store";
 
-const DROPDOWN_WIDTH = 220;
+const DROPDOWN_WIDTH = 240;
 const DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH = 36;
 const PANE_SPLIT_ACTIONS_HORIZONTAL_PADDING = 2;
 const PANE_SPLIT_ACTIONS_OUTER_MARGIN =
@@ -117,6 +121,8 @@ const AGENT_TOOLTIP_TITLE_MAX_LENGTH = 80;
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedX = withUnistyles(X);
+const ThemedBell = withUnistyles(Bell);
+const ThemedBellOff = withUnistyles(BellOff);
 const ThemedCopy = withUnistyles(Copy);
 
 const ThemedRotateCw = withUnistyles(RotateCw);
@@ -416,6 +422,10 @@ function TabContextMenuItem({
 }) {
   const leading = useMemo(() => {
     switch (entry.icon) {
+      case "bell":
+        return <ThemedBell size={16} uniProps={mutedColorMapping} />;
+      case "bell-off":
+        return <ThemedBellOff size={16} uniProps={mutedColorMapping} />;
       case "copy":
         return <ThemedCopy size={16} uniProps={mutedColorMapping} />;
       case "rotate-cw":
@@ -441,6 +451,9 @@ function TabContextMenuItem({
   return (
     <ContextMenuItem
       testID={entry.testID}
+      description={entry.description}
+      status={entry.status}
+      closeOnSelect={entry.closeOnSelect}
       disabled={entry.disabled}
       destructive={entry.destructive}
       onSelect={entry.onSelect}
@@ -1046,6 +1059,7 @@ function ResolvedWorkspaceDesktopTabsRow({
   onExitFocusMode,
 }: ResolvedWorkspaceDesktopTabsRowProps) {
   const { t } = useTranslation();
+  const notificationMuteForTab = useAgentNotificationMute(normalizedServerId);
   const newTabKeys = useShortcutKeys("workspace-tab-new");
   const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
   const [exitFocusModeWidth, setExitFocusModeWidth] = useState<number>(0);
@@ -1112,6 +1126,9 @@ function ResolvedWorkspaceDesktopTabsRow({
       closeLeft: t("workspace.tabs.menu.closeLeft"),
       closeRight: t("workspace.tabs.menu.closeRight"),
       closeOthers: t("workspace.tabs.menu.closeOthers"),
+      muteNotifications: t("workspace.tabs.menu.muteNotifications"),
+      unmuteNotifications: t("workspace.tabs.menu.unmuteNotifications"),
+      notificationMuteFailed: t("workspace.tabs.menu.notificationMuteFailed"),
       reloadAgent: t("workspace.tabs.menu.reloadAgent"),
       reloadAgentTooltip: t("workspace.tabs.menu.reloadAgentTooltip"),
       close: t("workspace.tabs.menu.close"),
@@ -1277,6 +1294,7 @@ function ResolvedWorkspaceDesktopTabsRow({
           key={`${item.tab.key}:${item.tab.kind}`}
           serverId={normalizedServerId}
           item={item}
+          notificationMute={notificationMuteForTab(item.tab)}
           isFocused={isFocused}
           isDragging={isActive}
           index={index}
@@ -1309,6 +1327,7 @@ function ResolvedWorkspaceDesktopTabsRow({
       layout.closeButtonPolicy,
       layout.items,
       normalizedServerId,
+      notificationMuteForTab,
       onCloseOtherTabs,
       onCloseTab,
       onCloseTabsToLeft,
@@ -1430,6 +1449,7 @@ function ResolvedWorkspaceDesktopTabsRow({
 function ResolvedDesktopTabChip({
   serverId,
   item,
+  notificationMute,
   isFocused,
   isDragging,
   index,
@@ -1456,6 +1476,7 @@ function ResolvedDesktopTabChip({
 }: {
   serverId: string;
   item: ResolvedWorkspaceDesktopTabRowItem;
+  notificationMute?: WorkspaceTabNotificationMute;
   isFocused: boolean;
   isDragging: boolean;
   index: number;
@@ -1498,11 +1519,13 @@ function ResolvedDesktopTabChip({
         onCloseTabsToLeft,
         onCloseTabsToRight,
         onCloseOtherTabs,
+        notificationMute,
         labels,
       }),
     [
       index,
       item.tab,
+      notificationMute,
       onCloseOtherTabs,
       onCloseTab,
       onCloseTabsToLeft,

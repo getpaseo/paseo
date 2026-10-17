@@ -2130,9 +2130,15 @@ export class AgentManager {
   private async writeLabels(agentId: string, patch: AgentLabelPatch): Promise<WriteLabelsResult> {
     const liveAgent = this.agents.get(agentId);
     if (liveAgent) {
-      liveAgent.labels = applyLabelPatch(liveAgent.labels, patch);
+      const labels = applyLabelPatch(liveAgent.labels, patch);
       this.touchUpdatedAt(liveAgent);
-      await this.persistSnapshot(liveAgent);
+      await this.persistSnapshot(liveAgent, {
+        labels,
+        // Commit before queued runtime snapshots can project the old labels.
+        onCommitted: () => {
+          liveAgent.labels = labels;
+        },
+      });
       this.emitState(liveAgent, { persist: false });
       const record = this.registry ? await this.registry.get(agentId) : null;
       return { record, live: true };
@@ -2390,7 +2396,8 @@ export class AgentManager {
       return;
     }
 
-    await this.writeStoredMetadata(agentId, updates);
+    const record = await this.writeStoredMetadata(agentId, updates);
+    if (!record.internal) this.dispatchStoredAgentState(record);
   }
 
   private async runLifecycleMutation<T>(agentId: string, mutation: () => Promise<T>): Promise<T> {
@@ -4012,13 +4019,15 @@ export class AgentManager {
 
   private async persistSnapshot(
     agent: ManagedAgent,
-    options?: { title?: string | null; internal?: boolean },
+    options?: Parameters<AgentStorage["applySnapshot"]>[1],
   ): Promise<void> {
     if (!this.registry) {
+      options?.onCommitted?.();
       return;
     }
     // Don't persist internal agents - they're ephemeral system tasks
     if (agent.internal) {
+      options?.onCommitted?.();
       return;
     }
     await this.registry.applySnapshot(agent, options);

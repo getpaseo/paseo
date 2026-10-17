@@ -1,4 +1,5 @@
 export const PARENT_AGENT_ID_LABEL = "paseo.parent-agent-id";
+export const AGENT_NOTIFICATIONS_MUTED_LABEL = "paseo.notifications-muted";
 const OPEN_AGENT_TAB_LABEL_PREFIX = "paseo.open-agent-tab.";
 
 export function getOpenAgentTabLabel(clientId: string): string {
@@ -11,6 +12,10 @@ export function isOpenAgentTabLabel(label: string): boolean {
 
 export interface AgentLabelSource {
   labels?: Record<string, unknown> | null;
+}
+
+export function areAgentNotificationsMuted(agent: AgentLabelSource): boolean {
+  return agent.labels?.[AGENT_NOTIFICATIONS_MUTED_LABEL] === "true";
 }
 
 export function getParentAgentIdFromLabels(labels: Record<string, unknown> | null | undefined) {

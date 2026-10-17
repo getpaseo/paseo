@@ -5,6 +5,8 @@ import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import type { AgentSnapshotPayload } from "./messages.js";
 import type { PushNotificationSender, PushPayload } from "./push/index.js";
 import { PRESENCE_THRESHOLD_MS } from "./agent-attention-policy.js";
+import { AGENT_NOTIFICATIONS_MUTED_LABEL } from "@getpaseo/protocol/agent-labels";
+import { dirname } from "node:path";
 
 class RecordingPushNotificationSender implements PushNotificationSender {
   readonly sent: PushPayload[] = [];
@@ -34,7 +36,6 @@ class RecordingPushNotificationSender implements PushNotificationSender {
 describe("client activity tracking", () => {
   const TEST_PROVIDER = "claude";
   const TEST_MODEL = "haiku";
-  const TEST_CWD = "/tmp";
   let daemon: TestPaseoDaemon;
   let client1: DaemonClient;
   let client2: DaemonClient;
@@ -57,6 +58,7 @@ describe("client activity tracking", () => {
       messageQueueLimit: null,
     });
     await client.connect();
+    await client.observeEvents(["agent_attention_required"], { notifications: true }).ready;
     return client;
   }
 
@@ -64,10 +66,15 @@ describe("client activity tracking", () => {
     client: DaemonClient;
     title: string;
   }): Promise<AgentSnapshotPayload> {
+    const { workspace, error } = await params.client.createWorkspace({
+      source: { kind: "directory", path: daemon.paseoHome },
+    });
+    if (!workspace) throw new Error(error ?? "Expected activity test workspace");
     return params.client.createAgent({
       provider: TEST_PROVIDER,
       model: TEST_MODEL,
-      cwd: TEST_CWD,
+      cwd: daemon.paseoHome,
+      workspaceId: workspace.id,
       title: params.title,
       labels: { surface: "activity-test" },
     });
@@ -121,6 +128,215 @@ describe("client activity tracking", () => {
   // ===========================================================================
   // SINGLE CLIENT SCENARIOS
   // ===========================================================================
+
+  test("muting an agent suppresses alerts while preserving its unread completion", async () => {
+    client1 = await createClient();
+    expect(client1.getLastServerInfoMessage()?.features?.agentNotificationMute).toBe(true);
+    const agent = await createAgent({ client: client1, title: "Muted completion" });
+    await client1.updateAgent(agent.id, {
+      labels: { [AGENT_NOTIFICATIONS_MUTED_LABEL]: "true" },
+    });
+    client1.sendHeartbeat({
+      deviceType: "web",
+      focusedAgentId: null,
+      lastActivityAt: new Date().toISOString(),
+      appVisible: false,
+    });
+    await client1.ping();
+
+    const attentionPromise = waitForAttentionRequired(client1, agent.id);
+    await client1.sendMessage(agent.id, "Say 'hello' and nothing else");
+    const attention = await attentionPromise;
+
+    expect(attention.reason).toBe("finished");
+    expect(attention.shouldNotify).toBe(false);
+    expect(pushNotifications.sent).toEqual([]);
+    expect((await client1.fetchAgent({ agentId: agent.id }))?.agent).toMatchObject({
+      status: "idle",
+      requiresAttention: true,
+      attentionReason: "finished",
+      labels: {
+        surface: "activity-test",
+        [AGENT_NOTIFICATIONS_MUTED_LABEL]: "true",
+      },
+    });
+
+    const unmutedAgent = await createAgent({ client: client1, title: "Unmuted neighbor" });
+    const unmutedAttention = waitForAttentionRequired(client1, unmutedAgent.id);
+    await client1.sendMessage(unmutedAgent.id, "Say 'hello' and nothing else");
+    expect((await unmutedAttention).shouldNotify).toBe(true);
+    expect(pushNotifications.sent).toEqual([]);
+  });
+
+  test("muting survives reload and daemon restart, and unmuting restores push alerts", async () => {
+    client1 = await createClient();
+    const agent = await createAgent({ client: client1, title: "Persistent mute" });
+    await client1.updateAgent(agent.id, {
+      labels: { [AGENT_NOTIFICATIONS_MUTED_LABEL]: "true" },
+    });
+    await client1.refreshAgent(agent.id);
+    expect((await client1.fetchAgent({ agentId: agent.id }))?.agent.labels).toMatchObject({
+      [AGENT_NOTIFICATIONS_MUTED_LABEL]: "true",
+    });
+
+    const paseoHomeRoot = dirname(daemon.paseoHome);
+    const staticDir = daemon.staticDir;
+    await client1.close();
+    await daemon.daemon.stop();
+    await daemon.daemon.agentManager.flush();
+    daemon = await createTestPaseoDaemon({
+      paseoHomeRoot,
+      staticDir,
+      pushNotificationSender: pushNotifications,
+    });
+    client1 = await createClient();
+    expect((await client1.fetchAgent({ agentId: agent.id }))?.agent.labels).toMatchObject({
+      surface: "activity-test",
+      [AGENT_NOTIFICATIONS_MUTED_LABEL]: "true",
+    });
+
+    client2 = await createClient();
+    const siblingUpdates: AgentSnapshotPayload[] = [];
+    client2.on("agent_update", (message) => {
+      if (message.payload.kind === "upsert") siblingUpdates.push(message.payload.agent);
+    });
+    await client2.observeAgents().ready;
+    await client1.updateAgent(agent.id, {
+      labels: { [AGENT_NOTIFICATIONS_MUTED_LABEL]: "false" },
+    });
+    await expect
+      .poll(() => siblingUpdates)
+      .toContainEqual(
+        expect.objectContaining({
+          id: agent.id,
+          status: "closed",
+          labels: expect.objectContaining({ [AGENT_NOTIFICATIONS_MUTED_LABEL]: "false" }),
+        }),
+      );
+    await client1.updateAgent(agent.id, {
+      labels: { [AGENT_NOTIFICATIONS_MUTED_LABEL]: "true" },
+    });
+    await expect
+      .poll(() => siblingUpdates)
+      .toContainEqual(
+        expect.objectContaining({
+          id: agent.id,
+          labels: expect.objectContaining({ [AGENT_NOTIFICATIONS_MUTED_LABEL]: "true" }),
+        }),
+      );
+
+    const mutedAttention = waitForAttentionRequired(client1, agent.id);
+    await client1.sendMessage(agent.id, "Say 'hello' and nothing else");
+    expect((await mutedAttention).shouldNotify).toBe(false);
+    expect(pushNotifications.sent).toEqual([]);
+
+    await client1.clearAgentAttention(agent.id);
+    await client1.updateAgent(agent.id, {
+      labels: { [AGENT_NOTIFICATIONS_MUTED_LABEL]: "false" },
+    });
+    const unmutedAttention = waitForAttentionRequired(client1, agent.id);
+    await client1.sendMessage(agent.id, "Say 'hello again' and nothing else");
+    expect((await unmutedAttention).reason).toBe("finished");
+    expect(pushNotifications.sent).toHaveLength(1);
+    expect(pushNotifications.sent[0]?.data).toMatchObject({
+      agentId: agent.id,
+      reason: "finished",
+    });
+    expect((await client1.fetchAgent({ agentId: agent.id }))?.agent.labels).toMatchObject({
+      surface: "activity-test",
+      [AGENT_NOTIFICATIONS_MUTED_LABEL]: "false",
+    });
+  });
+
+  test("muted agents retain normal error alerts for a present client", async () => {
+    client1 = await createClient();
+    const agent = await createAgent({ client: client1, title: "Muted error" });
+    await client1.updateAgent(agent.id, { labels: { [AGENT_NOTIFICATIONS_MUTED_LABEL]: "true" } });
+    client1.sendHeartbeat({
+      deviceType: "mobile",
+      focusedAgentId: null,
+      lastActivityAt: new Date().toISOString(),
+      appVisible: false,
+    });
+    await client1.ping();
+    const attentionPromise = waitForAttentionRequired(client1, agent.id);
+    await client1.sendMessage(agent.id, "Emit a turn failure");
+    const attention = await attentionPromise;
+
+    expect(attention.reason).toBe("error");
+    expect(attention.shouldNotify).toBe(true);
+    expect(pushNotifications.sent).toEqual([]);
+    expect((await client1.fetchAgent({ agentId: agent.id }))?.agent).toMatchObject({
+      status: "error",
+      requiresAttention: true,
+      attentionReason: "error",
+      lastError: "Requested fake provider failure",
+    });
+  });
+
+  test("muted agents still push permission alerts and keep completion alerts quiet", async () => {
+    client1 = await createClient();
+    const agent = await createAgent({ client: client1, title: "Muted permission" });
+    await client1.updateAgent(agent.id, { labels: { [AGENT_NOTIFICATIONS_MUTED_LABEL]: "true" } });
+    const attentionPromise = waitForAttentionRequired(client1, agent.id);
+    await client1.sendMessage(agent.id, "Run rm -f permission.txt");
+    const attention = await attentionPromise;
+
+    expect(attention.reason).toBe("permission");
+    expect(attention.shouldNotify).toBe(false);
+    expect(pushNotifications.sent).toHaveLength(1);
+    expect(pushNotifications.sent[0]?.data).toMatchObject({
+      agentId: agent.id,
+      reason: "permission",
+    });
+    const snapshot = (await client1.fetchAgent({ agentId: agent.id }))?.agent;
+    expect(snapshot?.status).toBe("running");
+    expect(snapshot?.pendingPermissions).toHaveLength(1);
+    const permission = snapshot?.pendingPermissions[0];
+    if (!permission) throw new Error("Expected pending permission request");
+    const completionPromise = waitForAttentionRequired(client1, agent.id);
+    await client1.respondToPermission(agent.id, permission.id, { behavior: "allow" });
+    const completion = await completionPromise;
+    expect(completion.reason).toBe("finished");
+    expect(completion.shouldNotify).toBe(false);
+    expect(pushNotifications.sent).toHaveLength(1);
+    expect((await client1.fetchAgent({ agentId: agent.id }))?.agent).toMatchObject({
+      status: "idle",
+      pendingPermissions: [],
+      requiresAttention: true,
+      attentionReason: "finished",
+    });
+  });
+
+  test("muted agents still notify a present client about permission requests", async () => {
+    client1 = await createClient();
+    const agent = await createAgent({ client: client1, title: "Muted in-app permission" });
+    await client1.updateAgent(agent.id, { labels: { [AGENT_NOTIFICATIONS_MUTED_LABEL]: "true" } });
+    client1.sendHeartbeat({
+      deviceType: "web",
+      focusedAgentId: null,
+      lastActivityAt: new Date().toISOString(),
+      appVisible: true,
+    });
+    await client1.ping();
+    const attentionPromise = waitForAttentionRequired(client1, agent.id);
+    await client1.sendMessage(agent.id, "Run rm -f permission.txt");
+    const attention = await attentionPromise;
+
+    expect(attention.reason).toBe("permission");
+    expect(attention.shouldNotify).toBe(true);
+    expect(pushNotifications.sent).toEqual([]);
+    const snapshot = (await client1.fetchAgent({ agentId: agent.id }))?.agent;
+    const permission = snapshot?.pendingPermissions[0];
+    if (!permission) throw new Error("Expected pending permission request");
+    const completionPromise = waitForAttentionRequired(client1, agent.id);
+    await client1.respondToPermission(agent.id, permission.id, { behavior: "allow" });
+    const completion = await completionPromise;
+    expect(completion.reason).toBe("finished");
+    expect(completion.shouldNotify).toBe(false);
+    expect(pushNotifications.sent).toEqual([]);
+    expect((await client1.fetchAgent({ agentId: agent.id }))?.agent.pendingPermissions).toEqual([]);
+  });
 
   describe("single client - basic cases", () => {
     test("no notification when actively focused on agent", async () => {

@@ -16,6 +16,11 @@ export interface NotificationPlan {
   shouldPush: boolean;
 }
 
+interface AgentAttentionMuteInput {
+  reason: AgentAttentionReason;
+  notificationsMuted: boolean;
+}
+
 interface ComputeNotificationPlanInput {
   allStates: ClientPresenceState[];
   // A present, app-visible client focused on the attention target suppresses the
@@ -77,4 +82,11 @@ export function computeNotificationPlan({
 
 export function isPushEligibleAttentionReason(reason: AgentAttentionReason): boolean {
   return reason !== "error";
+}
+
+export function isAgentAttentionMuted({
+  reason,
+  notificationsMuted,
+}: AgentAttentionMuteInput): boolean {
+  return reason === "finished" && notificationsMuted;
 }
