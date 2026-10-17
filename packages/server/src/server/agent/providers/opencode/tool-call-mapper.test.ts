@@ -39,6 +39,59 @@ describe("opencode tool-call mapper", () => {
     expect(new Set(stages.map((item) => item.detail.type)).size).toBe(1);
   });
 
+  it("labels execute calls with the Code Mode tool name", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-1",
+        status: "running",
+        input: {
+          code: 'const r = await tools.hzmcp.memory__write_note({ project: "benjamin", title: "x" });\nreturn r;',
+        },
+        output: null,
+      }),
+    );
+
+    expect(item.detail).toEqual({
+      type: "plain_text",
+      label: "hzmcp.memory__write_note",
+      icon: "wrench",
+    });
+  });
+
+  it("labels execute calls with bracketed server accessors", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-2",
+        status: "completed",
+        input: { code: 'const tabs = await tools["charlotte"].charlotte_tabs({});' },
+        output: "tab list",
+      }),
+    );
+
+    expect(item.detail).toEqual({
+      type: "plain_text",
+      label: "charlotte.charlotte_tabs",
+      icon: "wrench",
+      text: "tab list",
+    });
+  });
+
+  it("keeps unknown detail for execute calls without a recognizable tool chain", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-3",
+        status: "completed",
+        input: { code: "return 1 + 1;" },
+        output: "2",
+      }),
+    );
+
+    expect(item.detail?.type).toBe("unknown");
+  });
+
   it("maps running shell calls", () => {
     const item = expectMapped(
       mapOpencodeToolCall({

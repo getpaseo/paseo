@@ -27,6 +27,38 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+// Code Mode wraps MCP (and catalog) tool calls inside the `execute` tool. The
+// real tool name only exists in the generated code, as a property chain on
+// `tools` — e.g. `tools.hzmcp.memory__write_note(...)` or
+// `tools["charlotte"].charlotte_tabs(...)`. Reconstruct the chain to label the
+// timeline row with the tool that actually ran.
+function extractCodeModeToolLabel(code: string): string | undefined {
+  const start = /\btools\b/.exec(code);
+  if (!start) {
+    return undefined;
+  }
+  const segments: string[] = [];
+  const accessor = /\s*(?:\.\s*([\w$]+)|\[\s*(["'`])([\s\S]*?)\2\s*\])/y;
+  let index = start.index + start[0].length;
+  for (;;) {
+    accessor.lastIndex = index;
+    const match = accessor.exec(code);
+    if (!match) {
+      break;
+    }
+    const segment = (match[1] ?? match[3])?.trim();
+    if (!segment) {
+      return undefined;
+    }
+    segments.push(segment);
+    index = accessor.lastIndex;
+  }
+  if (segments.length === 0 || !/^\s*\(/.test(code.slice(index))) {
+    return undefined;
+  }
+  return segments.join(".");
+}
+
 function normalizeSubAgentText(value: unknown): string | undefined {
   return nonEmptyString(value)?.trim().replace(/\s+/g, " ");
 }
@@ -364,6 +396,20 @@ export function deriveOpencodeToolDetail(
     const taskDetail = deriveOpencodeTaskDetail(input, output, metadata);
     if (taskDetail) {
       return taskDetail;
+    }
+  }
+
+  if (toolName.trim().toLowerCase() === "execute" && isRecord(input)) {
+    const code = input.code;
+    const label = typeof code === "string" ? extractCodeModeToolLabel(code) : undefined;
+    if (label) {
+      const text = readOutputText(output);
+      return {
+        type: "plain_text",
+        label,
+        icon: "wrench",
+        ...(text ? { text } : {}),
+      } satisfies ToolCallDetail;
     }
   }
 
