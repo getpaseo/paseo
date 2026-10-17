@@ -104,3 +104,45 @@ describe("hold to capture", () => {
     expect(ready.mock.calls[0][2]).toContain("Micro indisponible");
   });
 });
+
+import { createCaptureSubmitter } from "./submit";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+const paraAgentCreate = vi.hoisted(() =>
+  vi.fn(async (_request: unknown) => ({ id: "00000000-0000-4000-8000-000000000001" })),
+);
+vi.mock("@getpaseo/client", () => ({
+  createPaseoApi: () => ({
+    workspaces: { open: async () => ({ id: "para", agents: { create: paraAgentCreate } }) },
+    dispose: async () => {},
+  }),
+}));
+it("adds source context to the first agent message without the workflow plugin", async () => {
+  const submit = createCaptureSubmitter();
+  await submit(
+    { listPlugins: async () => [] } as unknown as DaemonClient,
+    {
+      key: "capture",
+      deviceId: "mac",
+      text: "Classe ces documents",
+      context: {
+        application: "Finder",
+        directoryPath: "/Users/test/Factures",
+        selectedPaths: ["/Users/test/Factures/devis.pdf"],
+      },
+      ocr: "Devis",
+      config: { provider: "codex" },
+      autoModel: false,
+      images: [{ data: "image", mimeType: "image/png" }],
+    },
+    async () => "/PARA",
+  );
+  const request = paraAgentCreate.mock.calls[0][0] as unknown as {
+    prompt: string;
+    images: unknown[];
+  };
+  expect(request.prompt).toContain("Classe ces documents");
+  expect(request.prompt).toContain('"directoryPath": "/Users/test/Factures"');
+  expect(request.prompt).toContain("devis.pdf");
+  expect(request.prompt).toContain('"screenText": "Devis"');
+  expect(request.images).toHaveLength(1);
+});

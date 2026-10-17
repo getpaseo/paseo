@@ -110,7 +110,15 @@ for (const scenario of [
           png: capturedPng,
           width: 720,
           height: 620,
-          context: { application: "Boutique" },
+          context: {
+            application: "Finder",
+            windowTitle: "Factures",
+            document: "file:///Users/test/Factures/",
+            directoryPath: "/Users/test/Factures",
+            selectedPaths: ["/Users/test/Factures/devis.pdf"],
+            selectedText: "Texte sélectionné",
+            accessibleText: "AXButton: Ajouter",
+          },
           ocr: "Ajouter",
           captureMs: 12,
           gesture: fixture.held,
@@ -217,6 +225,16 @@ for (const scenario of [
     expect(
       agents.entries.filter(({ agent }) => agent.cwd === process.env.E2E_PASEO_HOME),
     ).toHaveLength(1);
+    const created = agents.entries.find(
+      ({ agent }) => agent.cwd === process.env.E2E_PASEO_HOME,
+    )!.agent;
+    const timeline = await e2eWorkerClient.fetchAgentTimeline(created.id, { limit: 100 });
+    const received = JSON.stringify(timeline.entries);
+    expect(received).toContain("Corrige le bouton Ajouter");
+    expect(received).toContain("/Users/test/Factures");
+    expect(received).toContain("devis.pdf");
+    expect(received).toContain("Texte sélectionné");
+    expect(received).toContain("AXButton: Ajouter");
     await page.screenshot({ path: testInfo.outputPath("capture-created.png") });
     await page.getByRole("button", { name: "Ouvrir dans Paseo", exact: true }).click();
     expect(await page.evaluate(() => Reflect.get(window, "captureOpens"))).toBe(1);

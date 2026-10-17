@@ -191,8 +191,8 @@ it("keeps the selected project through worktree failure and reuses completed cre
     key: "fbe38053-85c5-4e41-bf80-32be1ade6632",
     deviceId: "c7d9bf71-8110-456b-9b97-83f2d2f7bd46",
     text: input.text,
-    ocr: "",
-    context: {},
+    ocr: "Texte visible",
+    context: { application: "Finder", directoryPath: "/Users/test/Projet été" },
     config: { provider: "codex/gpt-6-astra", featureValues: { plan_mode: true } },
     autoModel: false,
     images: [{ data: "aGVsbG8=", mimeType: "image/png" as const }],
@@ -214,8 +214,12 @@ it("keeps the selected project through worktree failure and reuses completed cre
     expect(createAgent.mock.calls[0][0]).toMatchObject({
       config: request.config,
       images: request.images,
-      prompt: request.text,
+      prompt: expect.stringContaining(request.text),
     });
+    const prompt = createAgent.mock.calls[0][0].prompt;
+    expect(prompt).toContain('"directoryPath": "/Users/test/Projet été"');
+    expect(prompt).toContain('"screenText": "Texte visible"');
+    expect(createWorkspace.mock.calls[1][0].firstAgentContext.prompt).toBe(prompt);
     await captureRuntime(settings)(request, api as Parameters<typeof create>[1]);
     expect(createAgent).toHaveBeenCalledTimes(1);
     await expect(

@@ -1,3 +1,4 @@
+import { formatDesktopCapturePrompt } from "@getpaseo/protocol/desktop-capture";
 import { createHash } from "node:crypto";
 import { mkdir, realpath } from "node:fs/promises";
 import { z } from "zod";
@@ -244,7 +245,7 @@ export function captureRuntime(settings: PluginSettings<typeof captureSettings.s
                 action: "branch-off",
               },
               idempotencyKey: `capture:${input.key}:workspace`,
-              firstAgentContext: { prompt: input.text },
+              firstAgentContext: { prompt: formatDesktopCapturePrompt(input) },
             })
           ).id;
         } else {
@@ -270,7 +271,7 @@ export function captureRuntime(settings: PluginSettings<typeof captureSettings.s
           config,
           launchProfileId: input.launchProfileId,
           idempotencyKey: `capture:${input.key}:agent`,
-          prompt: input.text,
+          prompt: formatDesktopCapturePrompt(input),
           clientMessageId: `capture:${input.key}:message`,
           images: input.images,
           labels: { "paseo.capture.id": input.key, "paseo.capture.device": input.deviceId },

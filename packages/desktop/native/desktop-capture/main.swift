@@ -40,17 +40,82 @@ func attribute(_ element: AXUIElement, _ key: String) -> CFTypeRef? {
 func context() -> [String: Any] {
   guard let app = NSWorkspace.shared.frontmostApplication else { return [:] }
   let element = AXUIElementCreateApplication(app.processIdentifier)
-  AXUIElementSetMessagingTimeout(element, 0.08)
+  AXUIElementSetMessagingTimeout(element, 0.01)
   var result: [String: Any] = [
-    "application": app.localizedName ?? "", "bundleId": app.bundleIdentifier ?? "",
+    "application": String((app.localizedName ?? "").prefix(1000)),
+    "bundleId": String((app.bundleIdentifier ?? "").prefix(1000)),
+    "capturedAt": ISO8601DateFormatter().string(from: Date()),
   ]
-  if let window = attribute(element, kAXFocusedWindowAttribute),
+  guard let window = attribute(element, kAXFocusedWindowAttribute),
     CFGetTypeID(window) == AXUIElementGetTypeID()
-  {
-    let focused = unsafeBitCast(window, to: AXUIElement.self)
-    result["windowTitle"] = attribute(focused, kAXTitleAttribute) as? String ?? ""
-    result["document"] = attribute(focused, kAXDocumentAttribute) as? String ?? ""
+  else { return result }
+  let focused = unsafeBitCast(window, to: AXUIElement.self)
+  AXUIElementSetMessagingTimeout(focused, 0.005)
+  result["windowTitle"] = String(
+    (attribute(focused, kAXTitleAttribute) as? String ?? "").prefix(4000))
+  func text(_ element: AXUIElement, _ key: String) -> String {
+    let value = attribute(element, key)
+    return (value as? String) ?? (value as? URL)?.absoluteString ?? ""
   }
+  var document = text(focused, kAXDocumentAttribute)
+  if let control = attribute(element, kAXFocusedUIElementAttribute),
+    CFGetTypeID(control) == AXUIElementGetTypeID()
+  {
+    let field = unsafeBitCast(control, to: AXUIElement.self)
+    AXUIElementSetMessagingTimeout(field, 0.005)
+    if text(field, kAXRoleAttribute) != "AXSecureTextField" {
+      result["selectedText"] = String(text(field, kAXSelectedTextAttribute).prefix(8000))
+    }
+  }
+  // Restrict the snapshot to the source window, with both a time and payload budget.
+  var queue = [focused]
+  var lines = [String]()
+  var selectedPaths = [String]()
+  let deadline = ProcessInfo.processInfo.systemUptime + 0.1
+  var visited = 0
+  while !queue.isEmpty && visited < 120 && ProcessInfo.processInfo.systemUptime < deadline {
+    let node = queue.removeFirst()
+    visited += 1
+    AXUIElementSetMessagingTimeout(node, 0.003)
+    let role = text(node, kAXRoleAttribute)
+    if role == "AXSecureTextField" { continue }
+    let url = text(node, kAXURLAttribute)
+    if document.isEmpty && (role == "AXWebArea" || node == focused) { document = url }
+    let values = [
+      text(node, kAXTitleAttribute), text(node, kAXDescriptionAttribute),
+      text(node, kAXValueAttribute),
+    ]
+    .filter { !$0.isEmpty }.map { String($0.prefix(500)) }
+    if !values.isEmpty { lines.append("\(role): \(values.joined(separator: " | "))") }
+    if let selected = attribute(node, kAXSelectedChildrenAttribute) as? [AXUIElement] {
+      for item in selected.prefix(40 - selectedPaths.count) {
+        if ProcessInfo.processInfo.systemUptime >= deadline { break }
+        AXUIElementSetMessagingTimeout(item, 0.003)
+        if let path = captureLocalPath(text(item, kAXURLAttribute)), path.count <= 4000,
+          !selectedPaths.contains(path)
+        {
+          selectedPaths.append(path)
+        }
+      }
+    }
+    if let children = attribute(node, kAXChildrenAttribute) as? [AXUIElement] {
+      queue.append(contentsOf: children.prefix(max(0, 120 - visited - queue.count)))
+    }
+  }
+  result["document"] = String(document.prefix(4000))
+  if let path = captureLocalPath(document), path.count <= 4000 {
+    var directory: ObjCBool = false
+    if FileManager.default.fileExists(atPath: path, isDirectory: &directory) {
+      if directory.boolValue {
+        result["directoryPath"] = path
+      } else {
+        result["documentPath"] = path
+        result["directoryPath"] = (path as NSString).deletingLastPathComponent
+      }
+    }
+  }
+  result["selectedPaths"] = selectedPaths
+  result["accessibleText"] = String(lines.joined(separator: "\n").prefix(16000))
   return result
 }
 

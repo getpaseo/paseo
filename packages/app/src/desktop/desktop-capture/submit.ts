@@ -1,6 +1,9 @@
 import { createPaseoApi, type PaseoAgentConfig } from "@getpaseo/client";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { DesktopCaptureDraft } from "@getpaseo/protocol/desktop-capture";
+import {
+  formatDesktopCapturePrompt,
+  type DesktopCaptureDraft,
+} from "@getpaseo/protocol/desktop-capture";
 import { z } from "zod";
 
 export interface CaptureSubmission {
@@ -53,7 +56,7 @@ export function createCaptureSubmitter() {
         idempotencyKey: `capture:${input.key}:agent`,
         launchProfileId: input.launchProfileId,
         config: input.config,
-        prompt: input.text,
+        prompt: formatDesktopCapturePrompt(input),
         clientMessageId: `capture:${input.key}:message`,
         images: input.images,
         labels: { "paseo.capture.id": input.key, "paseo.capture.device": input.deviceId },

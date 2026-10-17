@@ -1,4 +1,7 @@
-import type { DesktopCommand } from "@getpaseo/protocol/desktop-capture";
+import {
+  DesktopCaptureContextSchema,
+  type DesktopCommand,
+} from "@getpaseo/protocol/desktop-capture";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { z } from "zod";
@@ -31,12 +34,7 @@ const helperEvent = z.discriminatedUnion("event", [
       .string()
       .max(64 * 1024 * 1024)
       .regex(/^[A-Za-z0-9+/]+={0,2}$/),
-    context: z.object({
-      application: z.string().optional(),
-      bundleId: z.string().optional(),
-      windowTitle: z.string().optional(),
-      document: z.string().optional(),
-    }),
+    context: DesktopCaptureContextSchema,
     display: z.object({
       id: z.number().int(),
       x: z.number().finite(),

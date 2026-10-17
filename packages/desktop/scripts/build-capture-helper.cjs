@@ -20,6 +20,7 @@ function buildCaptureHelper(outputDirectory, arch) {
         "-target",
         `${target}-apple-macosx14.0`,
         path.join(source, "ModifierShortcut.swift"),
+        path.join(source, "CaptureContext.swift"),
         path.join(source, "GestureOverlay.swift"),
         path.join(source, "main.swift"),
         "-o",

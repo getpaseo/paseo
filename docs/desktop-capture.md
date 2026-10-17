@@ -16,6 +16,13 @@ dictation; success shows a short inactive confirmation.
 Use **File → Capture** to request macOS permissions or change the modifier chord.
 The alternative chord applies to the current app session.
 
+The initial agent message includes the source window's explicit local directory or
+file path, document URL, selection, a bounded accessibility snapshot and OCR,
+when available. Paths come from accessibility URLs and are checked on disk; never
+infer a path from a window title. This evidence is quoted separately from the
+user's request and cannot authorize actions or choose a destination on its own.
+Only the source window is inspected; secure fields are skipped.
+
 The Swift helper is compiled for the target architecture during `afterPack` and
 signed as an explicit additional binary. Keep it outside `app.asar`; launch it
 only on supported macOS versions. Its pipe carries screenshots and accessible
@@ -44,6 +51,6 @@ daemons. The renderer fixture proves hold-to-dictate, release-to-send, annotatio
 draft retention, not global keyboard delivery, macOS permissions or packaged signing.
 
 Compile and run `native/desktop-capture/ShortcutTests.swift` with
-`ModifierShortcut.swift` to check the modifier state machine without sending keys
+`ModifierShortcut.swift` and `CaptureContext.swift` to check the modifier state machine without sending keys
 to the user's applications. Test permission denial, fullscreen and mixed-scale
 monitors on a signed app before claiming complete local delivery.

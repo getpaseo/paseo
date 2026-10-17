@@ -2,6 +2,13 @@ import Foundation
 
 @main struct ShortcutTests {
   static func main() {
+    precondition(
+      captureLocalPath("file:///Users/test/Projet%20%C3%A9t%C3%A9/") == "/Users/test/Projet été")
+    precondition(captureLocalPath("/Users/test/Dossier") == "/Users/test/Dossier")
+    precondition(captureLocalPath("https://example.com/folder") == nil)
+    precondition(captureLocalPath("file://remote-server/folder") == nil)
+    precondition(captureLocalPath("Dossier") == nil)
+
     for order in [[UInt64(1), 3, 2, 0], [UInt64(2), 3, 1, 0]] {
       var shortcut = ModifierShortcut(required: 3)
       precondition(shortcut.update(modifiers: order[0]) == nil)

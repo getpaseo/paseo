@@ -1,13 +1,9 @@
+import { DesktopCaptureContextSchema } from "@getpaseo/protocol/desktop-capture";
 import { defineRpc, defineSettings } from "@getpaseo/plugin";
 import { z } from "zod";
 import { executionDecision } from "./rpc";
 
-export const captureContext = z.object({
-  application: z.string().max(1000).optional(),
-  bundleId: z.string().max(1000).optional(),
-  windowTitle: z.string().max(4000).optional(),
-  document: z.string().max(4000).optional(),
-});
+export const captureContext = DesktopCaptureContextSchema;
 export const captureInput = z.object({
   key: z.uuid(),
   deviceId: z.uuid(),
