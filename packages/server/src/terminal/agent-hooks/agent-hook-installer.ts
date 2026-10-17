@@ -14,6 +14,10 @@ export interface AgentHookActivityInput {
   read(): Promise<string | null>;
 }
 
+// The session the agent can be resumed with, `null` when the agent session
+// ended, or `undefined` when the event says nothing about the session.
+export type AgentHookSessionUpdate = { sessionId: string; cwd?: string } | null | undefined;
+
 export interface AgentHookProvider<TConfig = unknown> {
   id: string;
   events: AgentHookEventDefinition[];
@@ -21,6 +25,10 @@ export interface AgentHookProvider<TConfig = unknown> {
     event: string;
     input: AgentHookActivityInput;
   }): Promise<AgentHookActivityState | null>;
+  resolveSession?(input: {
+    event: string;
+    input: AgentHookActivityInput;
+  }): Promise<AgentHookSessionUpdate>;
   install: AgentHookInstallStrategy<TConfig>;
 }
 

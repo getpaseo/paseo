@@ -61,6 +61,8 @@ $PASEO_HOME/
 │   ├── workspace-labels.json            # Shared host-local label catalog
 │   ├── workspace-labels.transaction.json # Recoverable catalog/assignment compound commit
 │   └── icons/                           # Host-local custom project icon images
+├── terminals/
+│   └── {terminalId}.json                # Terminal tabs to restore on next start (daemon.restoreTerminals)
 ├── runtime/
 │   └── managed-processes/
 │       └── {recordId}.json              # Helper processes owned by Paseo; reconciled on daemon bootstrap
@@ -167,9 +169,27 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 
 ---
 
-## Runtime-only Terminal Sessions
+## Terminal Sessions
 
-Terminals are live daemon state, not persisted JSON records. A terminal carries a `workspaceId` while it is running; workspace-scoped terminal lists include only terminals with the matching `workspaceId`. Legacy live terminals without an owner remain visible to unscoped terminal reads but contribute to no workspace status.
+**Path:** `$PASEO_HOME/terminals/{terminalId}.json` (`PersistedTerminalSchema` in `packages/server/src/terminal/persisted-terminal-store.ts`)
+
+The live terminal is daemon state: its process, scrollback, title, and activity die with the daemon. A terminal carries a `workspaceId` while it is running; workspace-scoped terminal lists include only terminals with the matching `workspaceId`. Legacy live terminals without an owner remain visible to unscoped terminal reads but contribute to no workspace status.
+
+With `daemon.restoreTerminals` on, each terminal tab a client opens also gets a record: id, `workspaceId`, `cwd`, name, the original `command`/`args`, and the agent session (`{ provider, sessionId, cwd }`) last reported by a terminal agent hook. Only `create_terminal_request` terminals are restorable; script, worktree-setup, and agent-tool terminals are never recorded. Closing the tab or the process exiting deletes the record. Daemon shutdown keeps it. Records freeze at the start of shutdown, before agents and plugins are torn down, because the agent sees SIGHUP once its terminal dies and reports its session as ended.
+
+On start, the daemon recreates each record with the same terminal id before accepting connections, a few at a time, so open tabs reattach. Records whose workspace is gone or archived, or whose `cwd` no longer exists, are deleted. The record keeps the original launch; `packages/server/src/terminal/terminal-relaunch.ts` derives the resume command on every start:
+
+| Original terminal              | Resumable agent session | Relaunch                                                                              |
+| ------------------------------ | ----------------------- | ------------------------------------------------------------------------------------- |
+| Shell (no command)             | yes                     | Shell in the session's `cwd`, then types `claude --resume <id>` / `codex resume <id>` |
+| Interactive `claude` / `codex` | yes                     | Same binary with the original flags plus the resume arguments                         |
+| Anything else                  | no                      | Plain shell in the terminal's `cwd`                                                   |
+
+Stored argv is never replayed without a resumable session. Default terminal profiles put the prompt in argv (`claude <prompt>`, `opencode --prompt=<prompt>`), and any other command is one the user did not ask to rerun. On resume, only flags survive: each provider lists its value-taking flags, every other flag is boolean, and parsing stops at `--`, so an unknown flag loses at most its value instead of keeping the prompt.
+
+The session `cwd` is used when it still exists inside the terminal's `cwd`, because Claude keys sessions by project directory; outside it, the tab would leave its workspace. Typing the resume command lands in shell history, and an rc file that `exec`s tmux or another shell swallows it. Session ids that are not `[A-Za-z0-9._:-]{1,256}` are dropped when reported, since they are typed into a shell.
+
+Turning the setting off deletes every record; turning it on writes records for the restorable terminals that are already open. A disabled daemon clears leftover records at start so they cannot resurrect old terminals when the setting is turned back on.
 
 Terminal activity contributes to the workspace status bucket **per `workspaceId`**: a working terminal drives `running` onto the workspace it carries only. Same-`cwd` siblings are untouched; terminal visibility is likewise `workspaceId`-scoped.
 
@@ -204,6 +224,7 @@ snapshot so a mixed edit can apply its live subset and still name the paths that
     mcp: { enabled: boolean, injectIntoAgents: boolean },
     git: { maxProcessesPerSecond: number, maxProcessConcurrency: number },
     appendSystemPrompt: string,    // appended to supported provider system/developer prompts
+    restoreTerminals: boolean,     // default false; see "Terminal Sessions"
     terminalProfiles: TerminalProfile[],  // named shell commands; omitted means DEFAULT_TERMINAL_PROFILES
     agentProfiles: AgentProfile[],        // named agent launch bundles; omitted means none
     cors: { allowedOrigins: string[] },
