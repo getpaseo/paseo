@@ -1,4 +1,4 @@
-import imageHistory from "./fixtures/image-history.json" with { type: "json" };
+import { imageHistory } from "./fixtures/image-history.js";
 import { describe, expect, test } from "vitest";
 
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
@@ -225,7 +225,7 @@ describe("Pi history mapper", () => {
 });
 
 test("replays captured native Pi images without dropping the image-only entry", async () => {
-  const entries = imageHistory.entries as Array<{ id: string; message: PiAgentMessage }>;
+  const entries = imageHistory.entries;
   const userEntries = entries.flatMap((entry) =>
     entry.message.role === "user" ? [{ id: entry.id, text: "" }] : [],
   );

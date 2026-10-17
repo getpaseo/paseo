@@ -25,9 +25,8 @@ import {
 } from "./agent.js";
 import { AgentManager } from "../../agent-manager.js";
 import { AgentStorage } from "../../agent-storage.js";
-import imageHistory from "./fixtures/image-history.json" with { type: "json" };
+import { imageHistory } from "./fixtures/image-history.js";
 import { getUserMessageText } from "./history-mapper.js";
-import type { PiAgentMessage } from "./rpc-types.js";
 import { FakePi } from "./test-utils/fake-pi.js";
 import { createPiExtensionHost } from "./extensions/index.js";
 import { PiExtensionHost } from "./extensions/host.js";
@@ -3495,11 +3494,7 @@ describe("transformPiModels", () => {
 });
 
 test("captured Pi image history keeps canonical identities across disk reload and refresh", async () => {
-  const entries = imageHistory.entries as Array<{
-    id: string;
-    parentId: string | null;
-    message: PiAgentMessage;
-  }>;
+  const entries = imageHistory.entries;
   const users = entries.filter((entry) => entry.message.role === "user");
   const workdir = mkdtempSync(path.join(tmpdir(), "pi-image-history-storage-"));
   const logger = pino({ level: "silent" });
@@ -3613,11 +3608,7 @@ test("captured Pi image history keeps canonical identities across disk reload an
 
 test("old Pi handles replay native identities without inventing client mappings", async () => {
   const pi = new FakePi();
-  const entries = imageHistory.entries as Array<{
-    id: string;
-    parentId: string | null;
-    message: PiAgentMessage;
-  }>;
+  const entries = imageHistory.entries;
   pi.queueSessionSetup((session) => {
     session.messages = entries.map((entry) => entry.message);
     session.treeUserEntries = entries.flatMap((entry) =>
