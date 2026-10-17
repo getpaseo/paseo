@@ -880,7 +880,6 @@ async function assertLocalRelease({ page, userData }) {
   await expect(page.getByTestId("sidebar-display-preferences-menu")).toBeVisible();
   await expect(page.getByTestId(rowId)).toHaveCount(0);
   await page.getByTestId("sidebar-display-preferences-menu").click();
-  await page.getByTestId("sidebar-display-project-filter").click();
   await page.getByTestId("sidebar-project-filter-all").click();
   await page.keyboard.press("Escape");
   await expect(page.getByTestId(rowId)).toBeVisible();
