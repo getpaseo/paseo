@@ -2662,6 +2662,110 @@ describe("ACPAgentSession", () => {
     );
   });
 
+  test("applies Grok _x.ai/models/update catalog and retries the configured model", async () => {
+    const session = createSessionWithConfig({ provider: "grok", model: "grok-4.7" });
+    const prepared = prepareConfiguredOverrideSession(session, {
+      currentModel: "grok-4.6",
+      availableModels: [
+        { modelId: "grok-4.6", name: "Grok 4.6", description: null },
+        { modelId: "grok-4.5", name: "Grok 4.5", description: null },
+      ],
+    });
+
+    await session.extNotification("_x.ai/models/update", {
+      currentModelId: "grok-4.7",
+      availableModels: [
+        { modelId: "grok-4.7", name: "Grok 4.7", _meta: 42 },
+        { modelId: "grok-4.6", name: "Grok 4.6" },
+        { id: "grok-4.5", name: "Grok 4.5" },
+      ],
+    });
+
+    expect(prepared.internals.availableModels?.map((model) => model.modelId)).toEqual([
+      "grok-4.7",
+      "grok-4.6",
+      "grok-4.5",
+    ]);
+    expect(prepared.unstableSetSessionModel).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      modelId: "grok-4.7",
+    });
+    expect(prepared.internals.currentModel).toBe("grok-4.7");
+  });
+
+  test("does not restore the original Grok config after an explicit model selection", async () => {
+    const session = createSessionWithConfig({ provider: "grok", model: "grok-4.7" });
+    const prepared = prepareConfiguredOverrideSession(session, {
+      currentModel: "grok-4.6",
+      availableModels: [
+        { modelId: "grok-4.6", name: "Grok 4.6", description: null },
+        { modelId: "grok-4.5", name: "Grok 4.5", description: null },
+      ],
+    });
+
+    await session.setModel("grok-4.5");
+    prepared.unstableSetSessionModel.mockClear();
+
+    await session.extNotification("_x.ai/models/update", {
+      currentModelId: "grok-4.7",
+      availableModels: [
+        { modelId: "grok-4.7", name: "Grok 4.7" },
+        { modelId: "grok-4.6", name: "Grok 4.6" },
+        { modelId: "grok-4.5", name: "Grok 4.5" },
+      ],
+    });
+
+    expect(prepared.internals.availableModels?.map((model) => model.modelId)).toEqual([
+      "grok-4.7",
+      "grok-4.6",
+      "grok-4.5",
+    ]);
+    expect(prepared.unstableSetSessionModel).not.toHaveBeenCalled();
+    expect(prepared.internals.currentModel).toBe("grok-4.5");
+  });
+
+  test("does not switch to Grok catalog default when the session is already on the configured model", async () => {
+    const session = createSessionWithConfig({ provider: "grok", model: "grok-4.6" });
+    const prepared = prepareConfiguredOverrideSession(session, {
+      currentModel: "grok-4.6",
+      availableModels: [
+        { modelId: "grok-4.6", name: "Grok 4.6", description: null },
+        { modelId: "grok-4.5", name: "Grok 4.5", description: null },
+      ],
+    });
+
+    await session.extNotification("_x.ai/models/update", {
+      currentModelId: "grok-4.7",
+      availableModels: [
+        { modelId: "grok-4.7", name: "Grok 4.7" },
+        { modelId: "grok-4.6", name: "Grok 4.6" },
+      ],
+    });
+
+    expect(prepared.internals.availableModels?.map((model) => model.modelId)).toEqual([
+      "grok-4.7",
+      "grok-4.6",
+    ]);
+    expect(prepared.unstableSetSessionModel).not.toHaveBeenCalled();
+    expect(prepared.internals.currentModel).toBe("grok-4.6");
+  });
+
+  test("ignores Grok _x.ai/models/update without a usable catalog", async () => {
+    const session = createSessionWithConfig({ provider: "grok", model: "grok-4.7" });
+    const prepared = prepareConfiguredOverrideSession(session, {
+      currentModel: "grok-4.6",
+      availableModels: [{ modelId: "grok-4.6", name: "Grok 4.6", description: null }],
+    });
+
+    await session.extNotification("_x.ai/models/update", {
+      currentModelId: "grok-4.7",
+      availableModels: [{ name: "broken" }],
+    });
+
+    expect(prepared.internals.availableModels?.map((model) => model.modelId)).toEqual(["grok-4.6"]);
+    expect(prepared.unstableSetSessionModel).not.toHaveBeenCalled();
+  });
+
   test("maps the Kiro _kiro.dev/commands/available notification into slash commands and skills", async () => {
     const session = createKiroSession({
       waitForInitialCommands: true,
