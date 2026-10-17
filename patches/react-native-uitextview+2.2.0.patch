@@ -1,0 +1,88 @@
+diff --git a/node_modules/react-native-uitextview/ios/RNUITextView.mm b/node_modules/react-native-uitextview/ios/RNUITextView.mm
+index d0c31ed..d1605ea 100644
+--- a/node_modules/react-native-uitextview/ios/RNUITextView.mm
++++ b/node_modules/react-native-uitextview/ios/RNUITextView.mm
+@@ -22,6 +22,7 @@ using namespace facebook::react;
+   RNUITextViewShadowNode::ConcreteState::Shared _state;
+   UITapGestureRecognizer * _outsideTapRecognizer;
+   BOOL _suppressSelectionChange;
++  CGRect _lastTextLayoutFrame;
+ }
+ 
+ + (ComponentDescriptorProvider)componentDescriptorProvider
+@@ -47,7 +48,8 @@ using namespace facebook::react;
+     _textView.delegate = self;
+     // Must match RCTTextLayoutManager, which measures with usesFontLeading = NO.
+     _textView.layoutManager.usesFontLeading = NO;
+-    [self addSubview:_textView];
++    _textView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
++    [_view addSubview:_textView];
+ 
+     const auto longPressGestureRecognizer = [[UILongPressGestureRecognizer alloc] initWithTarget:self
+                                                                                           action:@selector(handleLongPressIfNecessary:)];
+@@ -91,19 +93,21 @@ using namespace facebook::react;
+   [super prepareForRecycle];
+   _state.reset();
+ 
+-  // Reset the frame to zero so that when it properly lays out on the next use
+-  _textView.frame = CGRectZero;
++  // Keep the text view on the content container's bounds. The container keeps
++  // its size while the view waits in the recycle pool, and autoresizing only
++  // applies the size delta on reuse, so a zeroed text view would come back as
++  // wide as that delta (zero, or a two-word column).
++  _textView.frame = _view.bounds;
+   _textView.attributedText = nil;
++  _lastTextLayoutFrame = CGRectZero;
+ }
+ 
+ - (void)layoutSubviews
+ {
+   [super layoutSubviews];
+-  // _textView's frame is assigned inside drawRect, which only fires when
+-  // state changes. Trigger a redraw whenever the host frame moves out from
+-  // under it (rotation, parent relayout) so the text view resizes and
+-  // onTextLayout re-fires with the new line wrapping.
+-  if (!CGRectEqualToRect(_textView.frame, _view.frame)) {
++  // Autoresizing updates UIKit immediately; report the new line layout when
++  // the content container's bounds change.
++  if (!CGRectEqualToRect(_lastTextLayoutFrame, _view.bounds)) {
+     [self setNeedsDisplay];
+   }
+ }
+@@ -124,10 +128,16 @@ using namespace facebook::react;
+   // entirely when nothing actually changed so a JS-side state update made in
+   // response to onSelectionChange doesn't deselect what the user is selecting.
+   const BOOL textChanged = ![_textView.attributedText isEqualToAttributedString:convertedAttrString];
+-  const BOOL frameChanged = !CGRectEqualToRect(_textView.frame, _view.frame);
+-  if (!textChanged && !frameChanged) {
++  const BOOL frameChanged = !CGRectEqualToRect(_textView.frame, _view.bounds);
++  const BOOL layoutChanged = !CGRectEqualToRect(_lastTextLayoutFrame, _view.bounds);
++  if (!textChanged && !frameChanged && !layoutChanged) {
+     return;
+   }
++  // Size the text view before handing it the text, so UIKit lays the text out
++  // at the container width instead of a stale width.
++  if (frameChanged) {
++    _textView.frame = _view.bounds;
++  }
+   if (textChanged) {
+     // Reassigning attributedText clears any active selection. Save it and
+     // restore after, while suppressing the synthetic textViewDidChangeSelection
+@@ -141,9 +151,6 @@ using namespace facebook::react;
+     }
+     _suppressSelectionChange = NO;
+   }
+-  if (frameChanged) {
+-    _textView.frame = _view.frame;
+-  }
+ 
+   __block std::vector<std::string> lines;
+   const int maxLines = props.numberOfLines;
+@@ -162,6 +169,7 @@ using namespace facebook::react;
+     }
+   }];
+ 
++  _lastTextLayoutFrame = _view.bounds;
+   if (_eventEmitter != nullptr) {
+     std::dynamic_pointer_cast<const facebook::react::RNUITextViewEventEmitter>(_eventEmitter)
+     ->onTextLayout(facebook::react::RNUITextViewEventEmitter::OnTextLayout{static_cast<int>(self.tag), lines});
