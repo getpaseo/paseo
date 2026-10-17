@@ -50,6 +50,29 @@ function linkMetadata(inlineCodePaths: ReadonlySet<string>) {
   };
 }
 
+function collectInlineCodePaths(source: string, workspaceRoot?: string): ReadonlySet<string> {
+  const paths = new Set<string>();
+  const previousEnds = new Map<number, number>();
+  // Collect candidates between consecutive runs of equal length. The engine owns
+  // Markdown context (escapes, fences, authored links); extra candidates are harmless
+  // because recognition only applies to complete Code nodes. This avoids an AST
+  // parse on every streaming reveal, including updates inside long code fences.
+  for (const match of source.matchAll(/`+/g)) {
+    const length = match[0].length;
+    const previousEnd = previousEnds.get(length);
+    previousEnds.set(length, match.index + length);
+    if (previousEnd === undefined) continue;
+    let value = source.slice(previousEnd, match.index).replace(/\r\n?|\n/g, " ");
+    // CommonMark code spans replace line endings and strip one surrounding space.
+    if (value.startsWith(" ") && value.endsWith(" ") && /[^ ]/.test(value)) {
+      value = value.slice(1, -1);
+    }
+    const classification = classifyAssistantFileLink(value, { workspaceRoot });
+    if (classification && classification.kind !== "external") paths.add(value);
+  }
+  return paths;
+}
+
 export function markdownLinkSource(
   url: string,
   sourceType?: "markdown" | "text" | "inline-code",
@@ -93,16 +116,7 @@ export function prepareMarkdownSource(
       extensions: [gfmTable()],
       mdastExtensions: [gfmTableFromMarkdown()],
     }));
-  const inlineCodePaths = new Set<string>();
-  function collectInlineCode(node: Nodes) {
-    if (node.type === "inlineCode") {
-      const classification = classifyAssistantFileLink(node.value, { workspaceRoot });
-      if (classification && classification.kind !== "external") inlineCodePaths.add(node.value);
-    }
-    if ("children" in node) node.children.forEach(collectInlineCode);
-  }
-  if (source.includes("`")) collectInlineCode(getTree());
-  const metadata = linkMetadata(inlineCodePaths);
+  const metadata = linkMetadata(collectInlineCodePaths(source, workspaceRoot));
   const edits: { start: number; end: number; text: string }[] = [];
   if (
     !source.includes("![") &&

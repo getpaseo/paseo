@@ -174,6 +174,40 @@ it("preserves stable inline-code file classification through the library parser"
   ).toMatchObject({ target: { path: "/repo/src/index.ts", lineStart: 10, lineEnd: 20 } });
 });
 
+it("lets the engine own code boundaries while classifying candidate values", async () => {
+  const source = [
+    "```ts\n`src/fenced.ts`\n```",
+    "`` src/app/[id].tsx `` and `  src/spaced.ts  `",
+    "``src/a`b.ts`` and `src/after.ts`",
+    "\\`src/escaped.ts` and `src/final.ts`",
+    "`\nsrc/newline.ts\n`",
+    "[`src/explicit.ts`](https://example.com)",
+  ].join("\n\n");
+  const prepared = prepareMarkdownSource(source, "/repo");
+  const tree = recognizeTextLinks(
+    await parseMarkdown(prepared.render(), { latexMath: false }),
+    prepared.linkRecognition.text,
+    prepared.linkRecognition.inlineCode,
+  );
+  const recognized: string[] = [];
+  function collect(node: ASTNode) {
+    if (node.type === "Link" && node.attributes?.recognizedLink === "true") {
+      recognized.push(String(node.attributes.url));
+    }
+    node.children?.forEach(collect);
+  }
+  collect(tree);
+  expect(recognized).toEqual([
+    "src/app/[id].tsx",
+    " src/spaced.ts ",
+    "src/a`b.ts",
+    "src/after.ts",
+    "src/escaped.ts",
+    "src/final.ts",
+    "src/newline.ts",
+  ]);
+});
+
 it("requires workspace context for relative inline paths and escapes literal regex characters", () => {
   const source = "`src/app/[id].tsx` and `src/a+b.ts` and `README.md` and `/tmp/file.ts`";
   const withoutWorkspace = prepareMarkdownSource(source).linkRecognition.inlineCode;
