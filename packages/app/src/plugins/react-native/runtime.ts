@@ -1,3 +1,4 @@
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Icon } from "../icons";
 import { Modal } from "./modal";
 import { ScrollView, FlatList } from "./scroll-view";
@@ -14,5 +15,6 @@ export const pluginReactNativeRuntime = {
   TextInput,
   copyText,
   useRevealedText,
+  useSafeAreaInsets,
   useToast,
 };
