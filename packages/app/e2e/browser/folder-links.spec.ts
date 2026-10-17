@@ -16,13 +16,21 @@ async function expectFolderContents(page: Page) {
   ).toBeVisible();
 }
 
-for (const folder of ["docs/guides", "docs/guides/", "docs/reports.v1", ".github/workflows"]) {
+for (const folder of [
+  "./docs/guides",
+  "./docs/guides/",
+  "./docs/reports.v1",
+  "./.github/workflows",
+  "docs/guides",
+  "docs/guides/",
+  "docs/指南",
+]) {
   test(`chat folder link opens folder contents: ${folder}`, async ({ page }) => {
     const session = await seedMockAgentWorkspace({
       repoPrefix: "folder-link-repro-",
       title: "Folder link reproduction",
       initialPrompt: "Show the folder link",
-      featureValues: { mockAssistantResponse: `[Open folder](./${folder})` },
+      featureValues: { mockAssistantResponse: `[Open folder](${folder})` },
     });
     try {
       await mkdir(path.join(session.cwd, folder), { recursive: true });
