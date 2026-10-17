@@ -13,6 +13,7 @@ import {
   expectNoFileCalloutWasRendered,
   recordFileCallouts,
 } from "../support/helpers/file-callouts";
+import { answerConfirmDialog } from "../support/helpers/confirm-dialog";
 
 function visibleEditor(page: Page) {
   return page.getByTestId("file-source-editor").filter({ visible: true }).locator(".cm-content");
@@ -107,8 +108,8 @@ async function expectDirtyConflictCanReload(page: Page): Promise<void> {
   await expectOnlyFileCallout(page, "Changed on disk");
   await expect(fileCallout(page).getByRole("button", { name: "Overwrite" })).toBeEnabled();
   await expect(fileCallout(page).getByRole("button", { name: "Reload" })).toBeEnabled();
-  page.once("dialog", (dialog) => dialog.accept());
   await fileCallout(page).getByRole("button", { name: "Reload" }).click();
+  await answerConfirmDialog(page, "accept");
   await expect(visibleEditor(page)).toContainText("const external = true;");
   await expect(fileCallout(page)).toHaveCount(0);
 }

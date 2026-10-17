@@ -2,9 +2,10 @@ import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { Dialog, Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
+import { answerConfirmDialog } from "../support/helpers/confirm-dialog";
 import {
   archiveWorkspaceFromDaemon,
   connectNewWorkspaceDaemonClient,
@@ -61,25 +62,14 @@ async function seedRiskyWorktree(
   }
 }
 
-// The archive confirmation is a synchronous web `window.confirm()`. The click that
-// opens it does not resolve until the dialog is answered, so the handler must
-// accept/dismiss inline — awaiting the dialog only *after* the click deadlocks, as
-// the click waits for an answer that is gated behind that same click.
+// Returns the text of the in-app archive confirmation after answering it.
 async function clickArchiveAndAnswerWarning(
   page: Page,
   workspaceId: string,
   answer: "accept" | "dismiss",
-): Promise<Dialog> {
-  let warning: Dialog | undefined;
-  page.once("dialog", (dialog) => {
-    warning = dialog;
-    void (answer === "accept" ? dialog.accept() : dialog.dismiss());
-  });
+): Promise<string> {
   await clickArchiveWorkspaceMenuItem(page, workspaceId);
-  if (!warning) {
-    throw new Error("Expected an archive confirmation dialog, but none was shown.");
-  }
-  return warning;
+  return answerConfirmDialog(page, answer);
 }
 
 test.describe("Workspace archive risk warning for worktree backing", () => {
@@ -122,10 +112,9 @@ test.describe("Workspace archive risk warning for worktree backing", () => {
     await waitForWorkspaceInSidebar(page, { serverId, workspaceId: worktree.workspaceId });
 
     const firstWarning = await clickArchiveAndAnswerWarning(page, worktree.workspaceId, "dismiss");
-    expect(firstWarning.type()).toBe("confirm");
-    expect(firstWarning.message()).toContain(`Archive "${worktree.workspaceName}"?`);
-    expect(firstWarning.message()).toContain("Uncommitted changes");
-    expect(firstWarning.message()).toContain("1 unpushed commit");
+    expect(firstWarning).toContain(`Archive "${worktree.workspaceName}"?`);
+    expect(firstWarning).toContain("Uncommitted changes");
+    expect(firstWarning).toContain("1 unpushed commit");
 
     await expect(
       page.getByTestId(`sidebar-workspace-row-${serverId}:${worktree.workspaceId}`),
@@ -133,8 +122,8 @@ test.describe("Workspace archive risk warning for worktree backing", () => {
     expect(existsSync(worktree.workspaceDirectory)).toBe(true);
 
     const secondWarning = await clickArchiveAndAnswerWarning(page, worktree.workspaceId, "accept");
-    expect(secondWarning.message()).toContain("Uncommitted changes");
-    expect(secondWarning.message()).toContain("1 unpushed commit");
+    expect(secondWarning).toContain("Uncommitted changes");
+    expect(secondWarning).toContain("1 unpushed commit");
 
     await expectWorkspaceAbsentFromSidebar(page, worktree.workspaceId);
     await expect

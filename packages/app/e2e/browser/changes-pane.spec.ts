@@ -9,6 +9,7 @@ import { getServerId } from "../support/helpers/server-id";
 import { connectSeedClient } from "../support/helpers/seed-client";
 import { createTempGitRepo } from "../support/helpers/workspace";
 import { openChangesPanel, waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
+import { answerConfirmDialog } from "../support/helpers/confirm-dialog";
 
 interface DirtyWorkspace {
   id: string;
@@ -645,30 +646,18 @@ test("changes context menus expose folder revert and restore a file after confir
   await page.keyboard.press("Escape");
 
   await tree.getByTestId("diff-tree-file-0-toggle").click({ button: "right" });
-  const cancelledConfirmation = new Promise<string>((resolve) => {
-    page.once("dialog", async (dialog) => {
-      const message = dialog.message();
-      await dialog.dismiss();
-      resolve(message);
-    });
-  });
   await page.getByTestId("diff-tree-file-0-revert").click();
-  expect(await cancelledConfirmation).toContain("src/use-mounted-tab-set.ts");
+  const cancelledConfirmation = await answerConfirmDialog(page, "dismiss");
+  expect(cancelledConfirmation).toContain("src/use-mounted-tab-set.ts");
   await expect(tree.getByTestId("diff-tree-file-0")).toBeVisible();
   await expect
     .poll(() => readFile(path.join(workspace.repoPath, "src/use-mounted-tab-set.ts"), "utf8"))
     .toBe(AFTER);
 
   await tree.getByTestId("diff-tree-file-0-toggle").click({ button: "right" });
-  const confirmation = new Promise<string>((resolve) => {
-    page.once("dialog", async (dialog) => {
-      const message = dialog.message();
-      await dialog.accept();
-      resolve(message);
-    });
-  });
   await page.getByTestId("diff-tree-file-0-revert").click();
-  expect(await confirmation).toContain("src/use-mounted-tab-set.ts");
+  const confirmation = await answerConfirmDialog(page, "accept");
+  expect(confirmation).toContain("src/use-mounted-tab-set.ts");
 
   await expect(tree.getByTestId("diff-tree-file-0")).toHaveCount(0, { timeout: 30_000 });
   await expect
@@ -689,14 +678,8 @@ test("discarding a staged rename restores its source path", async ({ page }) => 
   expect(toggleTestId).not.toBeNull();
   const rowTestId = toggleTestId!.slice(0, -"-toggle".length);
   await renamedToggle.click({ button: "right" });
-  const confirmation = new Promise<void>((resolve) => {
-    page.once("dialog", async (dialog) => {
-      await dialog.accept();
-      resolve();
-    });
-  });
   await page.getByTestId(`${rowTestId}-revert`).click();
-  await confirmation;
+  await answerConfirmDialog(page, "accept");
 
   await expect(page.getByText("zz-renamed.ts", { exact: true })).toHaveCount(0, {
     timeout: 30_000,
@@ -719,14 +702,8 @@ test("discarding an untracked file removes it from the working tree", async ({ p
   expect(toggleTestId).not.toBeNull();
   const rowTestId = toggleTestId!.slice(0, -"-toggle".length);
   await untrackedToggle.click({ button: "right" });
-  const confirmation = new Promise<void>((resolve) => {
-    page.once("dialog", async (dialog) => {
-      await dialog.accept();
-      resolve();
-    });
-  });
   await page.getByTestId(`${rowTestId}-revert`).click();
-  await confirmation;
+  await answerConfirmDialog(page, "accept");
 
   await expect(page.getByText("zz-untracked.txt", { exact: true })).toHaveCount(0, {
     timeout: 30_000,
@@ -743,14 +720,8 @@ test("shows a revert error returned by the daemon", async ({ page }) => {
   await openWorkspaceChanges(page, workspace);
 
   await page.getByTestId("diff-file-0-toggle").click({ button: "right" });
-  const confirmation = new Promise<void>((resolve) => {
-    page.once("dialog", async (dialog) => {
-      await dialog.accept();
-      resolve();
-    });
-  });
   await page.getByTestId("diff-file-0-revert").click();
-  await confirmation;
+  await answerConfirmDialog(page, "accept");
 
   await expect(page.getByText("Injected revert failure", { exact: true })).toBeVisible({
     timeout: 30_000,
