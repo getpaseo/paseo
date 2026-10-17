@@ -1,14 +1,18 @@
-import type { PersistStorage } from "zustand/middleware";
+import type { PersistStorage, StorageValue } from "zustand/middleware";
 
-export const DRAFT_PERSIST_INTERVAL_MS = 200;
 export interface PersistenceScheduler {
   now: () => number;
   schedule: (callback: () => void, delayMs: number) => unknown;
   cancel: (handle: unknown) => void;
 }
 
-export interface DraftPersistStorage<T> extends PersistStorage<T> {
+export interface ThrottledPersistStorage<T> extends PersistStorage<T> {
   flush: () => Promise<void>;
+}
+
+interface ThrottledPersistOptions {
+  intervalMs: number;
+  scheduler?: PersistenceScheduler;
 }
 
 let nextSystemTimerId = 0;
@@ -35,23 +39,19 @@ const systemScheduler: PersistenceScheduler = {
   },
 };
 
-export function createDraftPersistStorage<T>(
+/**
+ * Writes the first change immediately and the latest change once per interval. Zustand's
+ * persist middleware calls setItem after every set, including ones that leave the state
+ * untouched, so a value whose partialized state is the reference already accepted is dropped
+ * before it reaches the schema or the backing store.
+ */
+export function createThrottledPersistStorage<T>(
   storage: PersistStorage<T>,
-  scheduler?: PersistenceScheduler,
-): DraftPersistStorage<T>;
-export function createDraftPersistStorage<T>(
-  storage: PersistStorage<T> | undefined,
-  scheduler?: PersistenceScheduler,
-): DraftPersistStorage<T> | undefined;
-export function createDraftPersistStorage<T>(
-  storage: PersistStorage<T> | undefined,
-  scheduler: PersistenceScheduler = systemScheduler,
-): DraftPersistStorage<T> | undefined {
-  if (!storage) {
-    return undefined;
-  }
-
-  let pending: { name: string; value: Parameters<typeof storage.setItem>[1] } | null = null;
+  options: ThrottledPersistOptions,
+): ThrottledPersistStorage<T> {
+  const scheduler = options.scheduler ?? systemScheduler;
+  let pending: { name: string; value: StorageValue<T> } | null = null;
+  let accepted: StorageValue<T> | null = null;
   let timer: unknown = null;
   let lastWriteAt = -Infinity;
 
@@ -72,15 +72,19 @@ export function createDraftPersistStorage<T>(
     try {
       await storage.setItem(write.name, write.value);
     } catch (error) {
-      console.warn("[DraftStore] Failed to persist draft checkpoint", error);
+      console.warn("[PersistStorage] Failed to persist checkpoint", { name: write.name, error });
     }
   };
 
   return {
     getItem: (name) => storage.getItem(name),
     setItem: (name, value) => {
+      if (accepted && accepted.state === value.state && accepted.version === value.version) {
+        return;
+      }
+      accepted = value;
       pending = { name, value };
-      const delay = DRAFT_PERSIST_INTERVAL_MS - (scheduler.now() - lastWriteAt);
+      const delay = options.intervalMs - (scheduler.now() - lastWriteAt);
       if (delay <= 0) {
         return flush();
       }
@@ -91,6 +95,7 @@ export function createDraftPersistStorage<T>(
     removeItem: (name) => {
       cancelTimer();
       pending = null;
+      accepted = null;
       lastWriteAt = scheduler.now();
       return storage.removeItem(name);
     },
