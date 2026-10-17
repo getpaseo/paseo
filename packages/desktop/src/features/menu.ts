@@ -38,6 +38,43 @@ interface ReloadActiveBrowserOrWindowInput {
   ignoreCache?: boolean;
 }
 
+export type ViewZoomDirection = "in" | "out" | "reset";
+
+export interface ViewZoomTarget {
+  getZoomLevel(): number;
+  setZoomLevel(level: number): void;
+  executeJavaScript(code: string, userGesture?: boolean): Promise<unknown>;
+  isDestroyed?(): boolean;
+}
+
+export async function applyViewZoom(
+  target: ViewZoomTarget,
+  direction: ViewZoomDirection,
+): Promise<void> {
+  let handled = false;
+  try {
+    handled =
+      (await target.executeJavaScript(
+        `globalThis.paseoConsumeTerminalZoom?.(${JSON.stringify(direction)}) === true`,
+        true,
+      )) === true;
+  } catch {
+    handled = false;
+  }
+  if (handled || target.isDestroyed?.()) {
+    return;
+  }
+  if (direction === "reset") {
+    target.setZoomLevel(0);
+    return;
+  }
+  target.setZoomLevel(target.getZoomLevel() + (direction === "in" ? 0.5 : -0.5));
+}
+
+export function requestViewZoom(target: ViewZoomTarget, direction: ViewZoomDirection): void {
+  void applyViewZoom(target, direction).catch(() => {});
+}
+
 export function reloadActiveBrowserOrWindow({
   win,
   getActiveBrowserContentsForHostWindow,
@@ -122,7 +159,7 @@ function buildApplicationMenuTemplate(
           accelerator: "CmdOrCtrl+=",
           enabled: zoomEnabled,
           click: withBrowserWindow((win) => {
-            win.webContents.setZoomLevel(win.webContents.getZoomLevel() + 0.5);
+            requestViewZoom(win.webContents, "in");
           }),
         },
         {
@@ -130,7 +167,7 @@ function buildApplicationMenuTemplate(
           accelerator: "CmdOrCtrl+-",
           enabled: zoomEnabled,
           click: withBrowserWindow((win) => {
-            win.webContents.setZoomLevel(win.webContents.getZoomLevel() - 0.5);
+            requestViewZoom(win.webContents, "out");
           }),
         },
         {
@@ -138,7 +175,7 @@ function buildApplicationMenuTemplate(
           accelerator: "CmdOrCtrl+0",
           enabled: zoomEnabled,
           click: withBrowserWindow((win) => {
-            win.webContents.setZoomLevel(0);
+            requestViewZoom(win.webContents, "reset");
           }),
         },
         { type: "separator" },

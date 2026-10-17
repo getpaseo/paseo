@@ -33,6 +33,11 @@ import {
 import { isFindShortcut, type FindShortcutPlatform } from "@/pane-find/find-shortcut";
 import { isMacUserAgent } from "@/utils/mac-user-agent";
 import { resolveTerminalFontFamily, resolveTerminalFontSize } from "./terminal-font";
+import {
+  consumeTerminalZoomKeyboardEvent,
+  installTerminalFontZoomBridge,
+  sharedTerminalFontZoomRegistry,
+} from "./terminal-font-zoom";
 
 export type TerminalOutputData = Uint8Array;
 
@@ -234,6 +239,7 @@ export class TerminalEmulatorRuntime {
   };
 
   private fitAndEmitResize: ((input?: TerminalResizeRequest) => void) | null = null;
+  private unregisterTerminalFontZoom: (() => void) | null = null;
   private lastSize: { rows: number; cols: number } | null = null;
   private cleanup: (() => void) | null = null;
   private outputOperations: TerminalOutputOperation[] = [];
@@ -313,6 +319,8 @@ export class TerminalEmulatorRuntime {
       if (event.type !== "keydown" || event.isComposing) {
         return true;
       }
+
+      if (consumeTerminalZoomKeyboardEvent(event)) return false;
 
       if (this.handleFindShortcut(event)) return false;
 
@@ -654,6 +662,15 @@ export class TerminalEmulatorRuntime {
       );
     };
     this.fitAndEmitResize = fitAndEmitResize;
+    this.unregisterTerminalFontZoom?.();
+    this.unregisterTerminalFontZoom = sharedTerminalFontZoomRegistry().register({
+      terminal,
+      fit: (request) => {
+        fitAndEmitResize(request);
+      },
+      baseFontSize: terminal.options.fontSize ?? 13,
+    });
+    installTerminalFontZoomBridge();
 
     fitAndEmitResize({ forceRefresh: true, shouldClaim: false });
 
@@ -899,7 +916,13 @@ export class TerminalEmulatorRuntime {
 
     try {
       terminal.options.fontFamily = resolveTerminalFontFamily(input.fontFamily);
-      terminal.options.fontSize = resolveTerminalFontSize(input.fontSize);
+      const nextFontSize = sharedTerminalFontZoomRegistry().settingsFontSize(
+        terminal,
+        resolveTerminalFontSize(input.fontSize),
+      );
+      if (nextFontSize !== null) {
+        terminal.options.fontSize = nextFontSize;
+      }
     } catch {
       // ignore
       return;
@@ -976,6 +999,8 @@ export class TerminalEmulatorRuntime {
 
     this.cleanup?.();
     this.cleanup = null;
+    this.unregisterTerminalFontZoom?.();
+    this.unregisterTerminalFontZoom = null;
     if (window.__paseoTerminal === this.terminal) {
       window.__paseoTerminal = undefined;
     }
