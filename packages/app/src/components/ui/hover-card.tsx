@@ -207,9 +207,9 @@ function WebHoverCard({
       )
         keyPressed(event);
     };
+    // Only a scroll that moves the trigger detaches the card. A streaming chat beside it does not.
     const scrolled = (event: Event) => {
-      if (!(contentRef.current as unknown as HTMLElement | null)?.contains(event.target as Node))
-        close();
+      if ((event.target as Node).contains(trigger)) close();
     };
     document.addEventListener("focusin", focusEntered);
     document.addEventListener("focusout", focusLeft);
