@@ -22,6 +22,9 @@ interface DesktopWindowOwnerPort<TAgentTarget> {
   focusedWindow(): OwnedDesktopWindow<TAgentTarget> | null;
   agentRoute(target: TAgentTarget): string;
   deliverAgent(webContentsId: number, target: TAgentTarget): TAgentTarget | null;
+  /** The window already showing `target`, if any — tried before `focusedWindow`. Optional
+   * so a port that doesn't track window contents (e.g. in tests) keeps today's order. */
+  preferredWindow?(target: TAgentTarget): OwnedDesktopWindow<TAgentTarget> | null;
 }
 
 export interface DesktopWindowOwner<TAgentTarget> {
@@ -70,7 +73,10 @@ export function createDesktopWindowOwner<TAgentTarget>(
     async openOrFocusAgent(target) {
       const windows = port.windows();
       const window =
-        port.focusedWindow() ?? windows.find((candidate) => candidate.isVisible()) ?? windows[0];
+        port.preferredWindow?.(target) ??
+        port.focusedWindow() ??
+        windows.find((candidate) => candidate.isVisible()) ??
+        windows[0];
       if (!window || window.isDestroyed()) {
         if (!agentWindowCreation) {
           agentWindowCreation = owner
