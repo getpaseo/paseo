@@ -270,6 +270,10 @@ export function TerminalPane({
     (state) =>
       state.sessions[serverId]?.serverInfo?.features?.["terminal-input-mode-replay"] === true,
   );
+  const supportsTerminalUnicode11Widths = useSessionStore(
+    (state) =>
+      state.sessions[serverId]?.serverInfo?.features?.["terminal-unicode11-widths"] === true,
+  );
   const supportsTerminalSizeOwnership = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.["terminal-size-ownership"] === true,
   );
@@ -1072,6 +1076,7 @@ export function TerminalPane({
             dom={TERMINAL_EMULATOR_DOM_PROPS}
             streamKey={terminalStreamKey}
             supportsTerminalInputModeReplay={supportsTerminalInputModeReplay}
+            supportsTerminalUnicode11Widths={supportsTerminalUnicode11Widths}
             testId="terminal-surface"
             xtermTheme={xtermTheme}
             scrollbackLines={settings.terminalScrollbackLines}

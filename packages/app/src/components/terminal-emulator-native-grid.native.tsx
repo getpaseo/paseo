@@ -162,6 +162,7 @@ function viewportStateFromSnapshot(state: TerminalState): TerminalViewportState 
 function NativeTerminalEmulator({
   ref,
   streamKey,
+  supportsTerminalUnicode11Widths,
   testId = "terminal-surface",
   xtermTheme = DEFAULT_XTERM_THEME,
   scrollbackLines,
@@ -453,6 +454,7 @@ function NativeTerminalEmulator({
         rows: size.rows,
         cols: size.cols,
         scrollbackLines,
+        unicode11Widths: supportsTerminalUnicode11Widths,
       });
       terminalRef.current = terminal;
       screenModelRef.current = createNativeTerminalScreenModel({ terminal });
@@ -473,6 +475,7 @@ function NativeTerminalEmulator({
       resetInputModeTracker,
       resolveTerminalScreen,
       scrollbackLines,
+      supportsTerminalUnicode11Widths,
       clearSelection,
     ],
   );

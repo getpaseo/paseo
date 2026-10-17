@@ -22,6 +22,10 @@ export const CLIENT_CAPS = {
   // Old clients use a strict TerminalState schema and would reject the extra fields.
   // Drop the gate (always send the flags) when floor >= v0.1.88.
   terminalReflowableSnapshot: "terminal_reflowable_snapshot",
+  // COMPAT(terminalUnicode11Widths): added in v0.11.3, remove after 2027-04-11.
+  // Older native apps measure terminal text with Unicode 6 widths, so the daemon
+  // sends them emoji spacer cells as spaces to keep snapshot columns aligned.
+  terminalUnicode11Widths: "terminal_unicode11_widths",
   // COMPAT(providerSubagents): added in v0.1.107. The daemon emits provider-owned
   // child descriptors and timelines only to clients that understand the new messages.
   providerSubagents: "provider_subagents",
