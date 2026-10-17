@@ -39,7 +39,14 @@ interface PluginNavigableHostProps extends PluginHostProps {
       readonly workspaceId: string;
       readonly serverId?: string;
     }) => void;
-    readonly openAgent: (input: { readonly agentId: string; readonly serverId?: string }) => void;
+    readonly openAgent: (input: {
+      readonly agentId: string;
+      readonly serverId?: string;
+      /** Known workspace for agents not yet in the client cache, including archived agents. */
+      readonly workspaceId?: string;
+      /** Pin the opened tab, matching an explicit open from History. */
+      readonly pin?: boolean;
+    }) => void;
     readonly openWorkspace: (input: {
       readonly workspaceId: string;
       readonly serverId?: string;
