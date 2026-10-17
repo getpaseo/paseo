@@ -2126,6 +2126,7 @@ export const ja: TranslationResources = {
       projects: "プロジェクト",
       connections: "接続",
       agents: "エージェント",
+      notifications: "通知",
       metadata: "メタデータ",
       workspaces: "ワークスペース",
       providers: "プロバイダー",
@@ -2574,6 +2575,16 @@ export const ja: TranslationResources = {
       },
       agents: {
         unavailable: "エージェントを管理するにはこのホストに接続してください",
+      },
+      notifications: {
+        agentFinished: {
+          title: "エージェントの完了時に通知",
+          hint: "オフにすると、エージェントが許可や入力を必要とするときだけ通知します",
+          accessibilityLabel: "エージェントの完了時に通知",
+          updateFailed: "通知を更新できません",
+          saving: "保存中…",
+          loadFailed: "このホストの通知設定を読み込めません",
+        },
       },
       workspaces: {
         unavailable: "ワークスペースを管理するにはこのホストに接続してください",

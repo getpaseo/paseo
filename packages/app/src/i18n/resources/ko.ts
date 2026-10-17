@@ -2115,6 +2115,7 @@ export const ko: TranslationResources = {
       projects: "프로젝트",
       connections: "연결",
       agents: "에이전트",
+      notifications: "알림",
       metadata: "메타데이터",
       workspaces: "워크스페이스",
       providers: "프로바이더",
@@ -2560,6 +2561,16 @@ export const ko: TranslationResources = {
       },
       agents: {
         unavailable: "에이전트를 관리하려면 이 호스트에 연결하세요",
+      },
+      notifications: {
+        agentFinished: {
+          title: "에이전트가 완료되면 알림",
+          hint: "끄면 에이전트에 권한이나 입력이 필요할 때만 알립니다",
+          accessibilityLabel: "에이전트가 완료되면 알림",
+          updateFailed: "알림을 업데이트할 수 없습니다",
+          saving: "저장 중…",
+          loadFailed: "이 호스트의 알림 설정을 불러올 수 없습니다",
+        },
       },
       workspaces: {
         unavailable: "워크스페이스를 관리하려면 이 호스트에 연결하세요",

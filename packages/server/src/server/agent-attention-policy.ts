@@ -78,3 +78,17 @@ export function computeNotificationPlan({
 export function isPushEligibleAttentionReason(reason: AgentAttentionReason): boolean {
   return reason !== "error";
 }
+
+export const SILENT_NOTIFICATION_PLAN: NotificationPlan = {
+  inAppRecipientIndex: null,
+  shouldPush: false,
+};
+
+// Turning off finished notifications leaves only the events that wait on the user
+// (permission requests and terminal input) able to notify.
+export function isAttentionReasonMuted(
+  reason: AgentAttentionReason | "needs_input",
+  settings: { agentFinishedNotifications: boolean },
+): boolean {
+  return reason === "finished" && !settings.agentFinishedNotifications;
+}

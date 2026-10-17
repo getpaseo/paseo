@@ -2168,6 +2168,7 @@ export const en = {
       projects: "Projects",
       connections: "Connections",
       agents: "Agents",
+      notifications: "Notifications",
       metadata: "Metadata",
       workspaces: "Workspaces",
       providers: "Providers",
@@ -2676,6 +2677,16 @@ export const en = {
       },
       agents: {
         unavailable: "Connect to this host to manage agents",
+      },
+      notifications: {
+        agentFinished: {
+          title: "Notify when an agent finishes",
+          hint: "Turn off to notify only when an agent needs permission or input",
+          accessibilityLabel: "Notify when an agent finishes",
+          updateFailed: "Unable to update notifications",
+          saving: "Saving…",
+          loadFailed: "Couldn't load this host's notification setting",
+        },
       },
       workspaces: {
         unavailable: "Connect to this host to manage workspaces",
