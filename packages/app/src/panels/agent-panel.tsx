@@ -102,7 +102,10 @@ import { getInitDeferred, getInitKey } from "@/utils/agent-initialization";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-workspaces";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
-import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
+import {
+  deriveAgentBucketWithSubagentActivity,
+  useHasRunningProviderSubagent,
+} from "@/subagents/agent-activity";
 import { buildDraftAgentSetup, type ClientSlashCommand } from "@/client-slash-commands";
 
 interface ChatAgentStateShape {
@@ -349,6 +352,10 @@ function useAgentPanelDescriptor(
       };
     }),
   );
+  const hasRunningProviderSubagent = useHasRunningProviderSubagent({
+    serverId: context.serverId,
+    parentAgentId: target.agentId,
+  });
   const provider = descriptorState.provider;
   const label = resolveWorkspaceAgentTabLabel(descriptorState.title);
   const icon = useProviderIcon(provider, context.serverId);
@@ -360,11 +367,14 @@ function useAgentPanelDescriptor(
     titleState: label ? "ready" : "loading",
     icon,
     statusBucket: descriptorState.status
-      ? deriveSidebarStateBucket({
-          status: descriptorState.isTurnActive ? "running" : descriptorState.status,
-          pendingPermissionCount: descriptorState.pendingPermissionCount,
-          requiresAttention: descriptorState.requiresAttention,
-          attentionReason: descriptorState.attentionReason,
+      ? deriveAgentBucketWithSubagentActivity({
+          agent: {
+            status: descriptorState.isTurnActive ? "running" : descriptorState.status,
+            pendingPermissionCount: descriptorState.pendingPermissionCount,
+            requiresAttention: descriptorState.requiresAttention,
+            attentionReason: descriptorState.attentionReason,
+          },
+          hasRunningProviderSubagent,
         })
       : null,
   };

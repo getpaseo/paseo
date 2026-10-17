@@ -67,6 +67,7 @@ import {
 } from "@/data/push-router";
 import { mountBrowserAutomationDaemonClientHandler } from "@/desktop/browser/automation/handler";
 import { schedulesQueryBaseKey } from "@/schedules/aggregated-schedules";
+import { invalidateProviderSubagentLoads } from "@/subagents/provider-store";
 import { dispatchComposerAgentMessage, sendQueuedComposerMessageNow } from "@/composer/actions";
 import { createMessageSubmissionWriter } from "@/composer/submission/writer";
 import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/submit";
@@ -2390,6 +2391,9 @@ export class HostRuntimeStore {
       void invalidateCheckoutGitQueriesForServer(queryClient, serverId);
       invalidateServerDataQueriesAfterReconnect({ queryClient, serverId });
       void queryClient.invalidateQueries({ queryKey: schedulesQueryBaseKey });
+      // The daemon does not replay provider-subagent events missed while offline.
+      // The same client object stays mounted, so the once-cache has to be dropped.
+      if (snapshot.client) invalidateProviderSubagentLoads(snapshot.client);
     }
   }
 

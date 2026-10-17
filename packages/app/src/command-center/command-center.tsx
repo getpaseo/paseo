@@ -16,6 +16,7 @@ import { Check, ChevronRight, Folder, X } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { BottomSheetFlatList, type BottomSheetFlatListMethods } from "@gorhom/bottom-sheet";
 import { AgentStatusDot } from "@/components/agent-status-dot";
+import { useHasRunningProviderSubagent } from "@/subagents/agent-activity";
 import { MaterialFileIcon } from "@/components/material-file-icon";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
@@ -453,28 +454,7 @@ function ResultContent({ result }: { result: CommandCenterResult }) {
     );
   }
   if (result.kind === "agent") {
-    const agent = result.agent;
-    return (
-      <View style={styles.rowContent} testID={`command-center-agent-${agent.serverId}:${agent.id}`}>
-        <View style={styles.rowMain}>
-          <View style={styles.iconSlot}>
-            <AgentStatusDot
-              status={agent.status}
-              requiresAttention={agent.requiresAttention}
-              showInactive
-            />
-          </View>
-          <View style={styles.textContent}>
-            <Text style={styles.title} numberOfLines={1}>
-              {result.title}
-            </Text>
-            <Text style={styles.subtitle} numberOfLines={1} testID="command-center-agent-subtitle">
-              {result.subtitle}
-            </Text>
-          </View>
-        </View>
-      </View>
-    );
+    return <AgentResultContent result={result} />;
   }
   if (result.kind === "workspace") {
     const key = result.id.slice("workspace:".length);
@@ -558,6 +538,42 @@ function ResultContent({ result }: { result: CommandCenterResult }) {
           <ThemedCheck size={16} strokeWidth={2.2} />
         </View>
       ) : null}
+    </View>
+  );
+}
+
+/**
+ * Its own component because the dot needs a hook: a parent that finished its turn while its
+ * provider subagents still work is busy, not ready for review.
+ */
+function AgentResultContent({ result }: { result: CommandCenterAgentResult }) {
+  const agent = result.agent;
+  const hasRunningProviderSubagent = useHasRunningProviderSubagent({
+    serverId: agent.serverId,
+    parentAgentId: agent.id,
+  });
+  return (
+    <View style={styles.rowContent} testID={`command-center-agent-${agent.serverId}:${agent.id}`}>
+      <View style={styles.rowMain}>
+        <View style={styles.iconSlot}>
+          <AgentStatusDot
+            status={agent.status}
+            requiresAttention={agent.requiresAttention}
+            attentionReason={agent.attentionReason}
+            pendingPermissionCount={agent.pendingPermissionCount}
+            hasRunningProviderSubagent={hasRunningProviderSubagent}
+            showInactive
+          />
+        </View>
+        <View style={styles.textContent}>
+          <Text style={styles.title} numberOfLines={1}>
+            {result.title}
+          </Text>
+          <Text style={styles.subtitle} numberOfLines={1} testID="command-center-agent-subtitle">
+            {result.subtitle}
+          </Text>
+        </View>
+      </View>
     </View>
   );
 }
