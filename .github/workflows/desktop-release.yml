@@ -216,7 +216,17 @@ jobs:
     permissions:
       contents: write
       packages: read
-    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            electron_arch: x64
+            manifest_suffix: ""
+          - runner: ubuntu-22.04-arm
+            electron_arch: arm64
+            manifest_suffix: "-arm64"
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - uses: actions/checkout@v4
@@ -270,7 +280,7 @@ jobs:
           PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke
         run: |
           set -euo pipefail
-          build_args=(-- --publish never --linux --x64)
+          build_args=(-- --publish never --linux --${{ matrix.electron_arch }})
           build_args+=("-c.publish.releaseType=$RELEASE_TYPE")
           build_args+=("-c.publish.channel=$RELEASE_CHANNEL")
           npm run build:desktop "${build_args[@]}"
@@ -279,7 +289,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-smoke-linux-x64
+          name: desktop-smoke-linux-${{ matrix.electron_arch }}
           path: ${{ runner.temp }}/desktop-smoke
           if-no-files-found: ignore
           retention-days: 7
@@ -299,7 +309,7 @@ jobs:
         if: env.SHOULD_PUBLISH != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-linux
+          name: desktop-linux-${{ matrix.electron_arch }}
           path: ${{ env.DESKTOP_PACKAGE_PATH }}/release/*
           retention-days: 7
 
@@ -307,8 +317,9 @@ jobs:
         if: env.SHOULD_PUBLISH == 'true' && env.IS_SMOKE_TAG != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: linux-manifest
-          path: ${{ env.DESKTOP_PACKAGE_PATH }}/release/${{ env.RELEASE_CHANNEL }}-linux.yml
+          name: linux-manifest-${{ matrix.electron_arch }}
+          path: ${{ env.DESKTOP_PACKAGE_PATH }}/release/${{ env.RELEASE_CHANNEL }}-linux${{ matrix.manifest_suffix }}.yml
+          if-no-files-found: error
           retention-days: 1
 
   publish-windows:
@@ -457,8 +468,8 @@ jobs:
         if: env.IS_SMOKE_TAG != 'true' && needs.publish-linux.result == 'success'
         uses: actions/download-artifact@v4
         with:
-          name: linux-manifest
-          path: release-manifests/linux-manifest
+          pattern: linux-manifest-*
+          path: release-manifests
 
       - name: Download Windows manifest artifact
         if: env.IS_SMOKE_TAG != 'true' && needs.publish-windows.result == 'success'
@@ -481,6 +492,7 @@ jobs:
           expected_manifests=(
             "${RELEASE_CHANNEL}-mac.yml"
             "${RELEASE_CHANNEL}-linux.yml"
+            "${RELEASE_CHANNEL}-linux-arm64.yml"
             "${RELEASE_CHANNEL}.yml"
           )
           release_lookup="$(node ../scripts/github-release.mjs --repo "${{ github.repository }}" --tag "$RELEASE_TAG" --cleanup-duplicates)"
@@ -489,7 +501,7 @@ jobs:
             if grep -Fxq "$manifest_name" <<< "$existing_assets"; then
               case "$manifest_name" in
                 "${RELEASE_CHANNEL}-mac.yml") platform_result="${{ needs.publish-macos.result }}" ;;
-                "${RELEASE_CHANNEL}-linux.yml") platform_result="${{ needs.publish-linux.result }}" ;;
+                "${RELEASE_CHANNEL}-linux.yml"|"${RELEASE_CHANNEL}-linux-arm64.yml") platform_result="${{ needs.publish-linux.result }}" ;;
                 "${RELEASE_CHANNEL}.yml") platform_result="${{ needs.publish-windows.result }}" ;;
               esac
               if [[ "$platform_result" =~ ^(success|skipped)$ ]]; then
@@ -514,7 +526,8 @@ jobs:
           fi
 
           if [[ "${{ needs.publish-linux.result }}" == "success" ]]; then
-            cp "linux-manifest/${RELEASE_CHANNEL}-linux.yml" "$manifests_dir/"
+            cp "linux-manifest-x64/${RELEASE_CHANNEL}-linux.yml" "$manifests_dir/"
+            cp "linux-manifest-arm64/${RELEASE_CHANNEL}-linux-arm64.yml" "$manifests_dir/"
           fi
 
           if [[ "${{ needs.publish-windows.result }}" == "success" ]]; then

@@ -89,6 +89,9 @@ jobs:
       - name: Install dependencies
         run: node scripts/npm-retry.mjs ci
 
+      - name: Validate Linux release workflow
+        run: node --test scripts/linux-arm64-release-workflow.test.mjs
+
       - name: Lint lockfile
         run: npx --yes lockfile-lint --path package-lock.json --type npm --allowed-hosts npm --validate-https --validate-integrity
 

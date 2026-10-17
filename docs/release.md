@@ -688,3 +688,26 @@ Every entry covers `previous stable release → release source`: first beta, lat
 - [ ] EAS Android `build_android` completes for the same tag
 - [ ] EAS Android `submit_android` succeeds, putting the build on its Play Store track
 - [ ] The release heartbeat was created after the tag push and deleted only after every item above passed
+
+## Linux desktop architectures
+
+Linux desktop releases build on native x64 (`ubuntu-22.04`) and ARM64
+(`ubuntu-22.04-arm`) runners. Each runner installs its architecture's native
+modules and runs the packaged-app smoke check before uploading AppImage, DEB,
+RPM, and tar.gz artifacts. The ARM64 AppImage is `Paseo-arm64.AppImage`;
+`Paseo-x86_64.AppImage` remains the x64 download.
+
+Keep both `${RELEASE_CHANNEL}-linux.yml` (x64) and
+`${RELEASE_CHANNEL}-linux-arm64.yml` (ARM64) in the final release. Electron's
+Linux updater uses separate architecture-specific manifests; they must not be
+merged. Finalization stamps and validates both manifests before publishing the
+release, and a failed build on either architecture leaves the release in draft.
+
+The first release after enabling ARM64 must build Linux before a single-platform
+macOS or Windows republish can reuse both Linux manifests.
+
+To build locally on a Linux ARM64 host after installing dependencies:
+
+```sh
+npm run build:desktop -- --linux --arm64 --publish never
+```
