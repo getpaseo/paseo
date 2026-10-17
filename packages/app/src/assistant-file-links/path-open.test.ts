@@ -54,3 +54,51 @@ it("keeps unavailable probes and external paths on the existing file-open path",
     ).resolves.toEqual({ kind: "file" });
   }
 });
+
+it("ignores an older probe after a newer file link opens", async () => {
+  const { createInlinePathOpener } = await import("./path-open");
+  let rejectProbe!: (error: Error) => void;
+  const pendingProbe = new Promise<never>((_, reject) => {
+    rejectProbe = reject;
+  });
+  const opened: string[] = [];
+  const opener = createInlinePathOpener({
+    workspaceRoot: "/repo",
+    client: { listDirectory: () => pendingProbe },
+    openFile: (location) => {
+      opened.push(location.path);
+    },
+    openDirectory: (directory) => {
+      opened.push(directory);
+    },
+  });
+  const first = opener.open({ raw: "./first.md", path: "/repo/first.md" }, "preferred");
+  await opener.open({ raw: "./second.md:2", path: "/repo/second.md", lineStart: 2 }, "preferred");
+  rejectProbe(new Error("Not a directory"));
+  await first;
+  expect(opened).toEqual(["second.md"]);
+});
+
+it("ignores a pending probe when its view is left", async () => {
+  const { createInlinePathOpener } = await import("./path-open");
+  let resolveProbe!: (value: unknown) => void;
+  const pendingProbe = new Promise((resolve) => {
+    resolveProbe = resolve;
+  });
+  const opened: string[] = [];
+  const opener = createInlinePathOpener({
+    workspaceRoot: "/repo",
+    client: { listDirectory: () => pendingProbe },
+    openFile: (location) => {
+      opened.push(location.path);
+    },
+    openDirectory: (directory) => {
+      opened.push(directory);
+    },
+  });
+  const pending = opener.open({ raw: "./docs", path: "/repo/docs" }, "preferred");
+  opener.cancel();
+  resolveProbe({});
+  await pending;
+  expect(opened).toEqual([]);
+});

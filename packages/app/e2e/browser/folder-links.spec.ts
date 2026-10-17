@@ -16,7 +16,7 @@ async function expectFolderContents(page: Page) {
   ).toBeVisible();
 }
 
-for (const folder of ["docs/guides", "docs/guides/", "docs/reports.v1"]) {
+for (const folder of ["docs/guides", "docs/guides/", "docs/reports.v1", ".github/workflows"]) {
   test(`chat folder link opens folder contents: ${folder}`, async ({ page }) => {
     const session = await seedMockAgentWorkspace({
       repoPrefix: "folder-link-repro-",
@@ -28,6 +28,12 @@ for (const folder of ["docs/guides", "docs/guides/", "docs/reports.v1"]) {
       await mkdir(path.join(session.cwd, folder), { recursive: true });
       await writeFile(path.join(session.cwd, folder, "guide.md"), "# Folder link destination\n");
       await session.client.waitForFinish(session.agentId, 30_000);
+      await page.addInitScript(() => {
+        localStorage.setItem(
+          "panel-state",
+          JSON.stringify({ state: { explorerShowHiddenFiles: false }, version: 0 }),
+        );
+      });
       await openAgentRoute(page, session);
       await openReportedFolderLink(page, "Open folder");
       await expectFolderContents(page);

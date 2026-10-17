@@ -180,6 +180,10 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       await revealExplorerDirectory({
         directoryPath,
         requestDirectoryListing,
+        showHiddenFiles: () => {
+          const panel = usePanelStore.getState();
+          if (!panel.explorerShowHiddenFiles) panel.toggleExplorerShowHiddenFiles();
+        },
         expandPaths: (paths) =>
           usePanelStore
             .getState()
