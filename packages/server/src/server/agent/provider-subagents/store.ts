@@ -23,6 +23,11 @@ export interface ProviderSubagentDescriptor {
   toolCallId: string | null;
   cwd: string | null;
   subtitle: string | null;
+  /**
+   * Set when a live poll re-reports this row on every tick, so silence proves the poll is gone.
+   * Rows without it are event-driven and may stay quiet while their child still runs.
+   */
+  liveness?: "poll";
 }
 
 export type ProviderSubagentInputEvent =
@@ -40,6 +45,8 @@ export type ProviderSubagentInputEvent =
       cwd?: string | null;
       subtitle?: string | null;
       parentSubagentId?: string | null;
+      /** Only a poll-backed reporter may set this; it is what makes a stale row sweepable. */
+      liveness?: "poll";
       timestamp?: string;
     }
   | {
@@ -113,6 +120,7 @@ export class ProviderSubagentStore {
       this.timelines.initialize(key);
     }
     const timestamp = event.timestamp ?? new Date().toISOString();
+    const liveness = event.liveness ?? previous?.liveness;
     const subagent: ProviderSubagentDescriptor = {
       id: event.id,
       parentAgentId,
@@ -126,6 +134,7 @@ export class ProviderSubagentStore {
       cwd: stickyField(event.cwd, previous?.cwd),
       subtitle: stickyField(event.subtitle, previous?.subtitle),
       parentSubagentId: stickyField(event.parentSubagentId, previous?.parentSubagentId),
+      ...(liveness === undefined ? {} : { liveness }),
     };
     this.descriptors.set(key, subagent);
     return { type: "upsert", subagent };
