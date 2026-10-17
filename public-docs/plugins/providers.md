@@ -248,6 +248,8 @@ emit({
         type: "toggle",
         id: "fast",
         label: "Fast mode",
+        icon: "zap",
+        tooltip: "Toggle fast mode",
         value: nativeSession.fast,
       },
       {
@@ -268,6 +270,10 @@ emit({
 Paseo renders these controls in the composer. A user change arrives as `session.configure`; apply it
 and publish the committed `session.config` before `request.completed`. The provider may change the
 available controls at runtime, including after a model change.
+
+Toggle and select settings accept optional `icon` and `tooltip` fields. Supported icon keys are
+`list-todo`, `shield-check`, and `zap`; an omitted or unknown key uses the settings icon. Use
+`list-todo` for the same Plan icon as Codex. Older hosts discard these optional fields.
 
 `settings` are user-facing controls. `providerOptions` is opaque JSON supplied at session creation
 for provider-specific configuration that Paseo does not render. A provider-specific token budget

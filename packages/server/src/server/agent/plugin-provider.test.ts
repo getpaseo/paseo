@@ -1,10 +1,12 @@
 import { relative } from "node:path";
+import { ProviderEventSchema } from "@getpaseo/plugin/server/provider";
 import type {
   ProviderConnection,
   ProviderLaunch,
   ProviderEvent,
   ProviderInput,
   ProviderRegistration,
+  ProviderSetting,
 } from "@getpaseo/plugin/server/provider";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { describe, expect, test } from "vitest";
@@ -77,26 +79,39 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
           persistence: { version: 1, data: { token: "root" } },
           cwd: input.config.cwd,
         });
-        emit({
-          type: "session.config",
-          sessionId: input.sessionId,
-          config: {
-            model: "plugin-model",
-            mode: "build",
-            models: [{ id: "plugin-model", label: "Plugin model" }],
-            modes: [{ id: "build", label: "Build" }],
-            thinkingOptions: [],
-            settings: [
-              {
-                type: "select",
-                id: "voice",
-                label: "Voice",
-                value: "direct",
-                options: [{ label: "Direct", value: "direct" }],
-              },
-            ],
-          },
-        });
+        // Match the plugin host's validation before adapting settings to agent features.
+        emit(
+          ProviderEventSchema.parse({
+            type: "session.config",
+            sessionId: input.sessionId,
+            config: {
+              model: "plugin-model",
+              mode: "build",
+              models: [{ id: "plugin-model", label: "Plugin model" }],
+              modes: [{ id: "build", label: "Build" }],
+              thinkingOptions: [],
+              settings: [
+                {
+                  type: "toggle",
+                  id: "plan_mode",
+                  label: "Plan",
+                  value: false,
+                  icon: "list-todo",
+                  tooltip: "Toggle plan mode",
+                },
+                {
+                  type: "select",
+                  id: "voice",
+                  label: "Voice",
+                  icon: "zap",
+                  tooltip: "Choose a voice",
+                  value: "direct",
+                  options: [{ label: "Direct", value: "direct" }],
+                },
+              ] satisfies readonly ProviderSetting[],
+            },
+          }),
+        );
         emit({
           type: "session.opened",
           sessionId: "child-1",
@@ -287,6 +302,30 @@ function expectNestedChildren(events: AgentStreamEvent[]) {
 }
 
 describe("PluginAgentClientRegistry", () => {
+  test.each<ProviderSetting>([
+    { type: "toggle", id: "legacy-toggle", label: "Legacy toggle", value: false },
+    {
+      type: "select",
+      id: "legacy-select",
+      label: "Legacy select",
+      value: null,
+      options: [{ label: "Direct", value: "direct" }],
+    },
+  ])("accepts $type settings without presentation metadata", (setting) => {
+    const event = ProviderEventSchema.parse({
+      type: "session.config",
+      sessionId: "legacy-session",
+      config: {
+        models: [],
+        modes: [],
+        thinkingOptions: [],
+        settings: [{ ...setting, unknownField: "discard me" }],
+      },
+    });
+    if (event.type !== "session.config") throw new Error("Expected a configuration event");
+    expect(event.config.settings).toEqual([setting]);
+  });
+
   test("stores only agent options while the plugin receives merged defaults", async () => {
     const logger = createTestLogger();
     const harness = createProviderHarness();
@@ -698,9 +737,19 @@ describe("PluginAgentClientRegistry", () => {
 
     const session = await client!.createSession({ provider: "plugin-direct", cwd: "/workspace" });
     expect(session.features).toEqual([
+      {
+        type: "toggle",
+        id: "plan_mode",
+        label: "Plan",
+        value: false,
+        icon: "list-todo",
+        tooltip: "Toggle plan mode",
+      },
       expect.objectContaining({
         type: "select",
         id: "voice",
+        icon: "zap",
+        tooltip: "Choose a voice",
         options: [{ id: "direct", label: "Direct", value: "direct" }],
       }),
     ]);
