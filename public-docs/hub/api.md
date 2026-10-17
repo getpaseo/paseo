@@ -43,6 +43,7 @@ Each key has one or more selectable scopes:
 | `configuration:validate` | Validate triggers or legacy configuration without changing Hub state. |
 | `configuration:install`  | Install triggers or replace a legacy project's configuration.         |
 | `runs:dispatch`          | Dispatch a configured manual trigger for a project.                   |
+| `runs:read`              | Inspect a run or reconcile a manual delivery.                         |
 | `daemons:enroll`         | Issue a short-lived daemon enrollment token.                          |
 
 API keys do not grant dashboard access. They cannot manage connections,
@@ -210,7 +211,7 @@ Request body:
 }
 ```
 
-- `expectedVersionId` is optional. When supplied, Hub rejects the dispatch if that revision is no longer active.
+- `expectedVersionId` is optional. When supplied, Hub rejects the dispatch if that revision is no longer active. A revision belonging to the explicit project selects that project even when an organization trigger has the same name. Replays retain the original delivery route.
 - `input` is the same string a provider message uses: leading `key=value` tokens are parsed as declared inputs, and the remainder becomes `${{ paseo.prompt }}`.
 - `deliveryKey` should be unique and stable per dispatch. Hub uses it for durable deduplication, but does not promise exactly-once dispatch or replay of an earlier response.
 
@@ -245,6 +246,33 @@ curl --fail-with-body -sS -X POST "$PASEO_HUB_URL/api/v1/manual-runs" \
 
 See [Hub workflows](/docs/hub/workflows) for input types, defaults, choices,
 rejected input, and manual invocation examples.
+
+### Reconcile a lost dispatch response
+
+Use `runs:read` with the original project, trigger, and delivery key:
+
+```http
+GET /api/v1/manual-runs?projectSlug=my-project&trigger=deploy&deliveryKey=deploy-2026-08-04-001
+```
+
+Hub returns `200` with the canonical run snapshot when it finds the run. If a
+frozen configuration mismatch durably prevented startup and fenced every
+replay, it returns this negative receipt instead:
+
+```json
+{
+  "status": "not_started",
+  "providerEventReceiptId": "00000000-0000-4000-8000-000000000000",
+  "deliveryKey": "deploy-2026-08-04-001",
+  "trigger": "deploy",
+  "configurationRevisionId": "00000000-0000-4000-8000-000000000001",
+  "reason": "configuration_unavailable"
+}
+```
+
+Match the receipt to the original delivery and requested configuration before
+settling that admission. A `404`, timeout, or ambiguous lookup leaves the
+dispatch uncertain; it does not authorize a replacement launch.
 
 ## Daemon enrollment
 
