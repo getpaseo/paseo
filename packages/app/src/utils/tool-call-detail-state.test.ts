@@ -76,4 +76,25 @@ describe("tool-call detail state", () => {
 
     assert.strictEqual(hasMeaningfulToolCallDetail(detail), true);
   });
+
+  it("treats a sub_agent card that carries only its prompt as meaningful", () => {
+    const detail: ToolCallDetail = {
+      type: "sub_agent",
+      prompt: "List the top-level folders.",
+      log: "",
+      actions: [],
+    };
+
+    assert.strictEqual(hasMeaningfulToolCallDetail(detail), true);
+  });
+
+  it("treats an empty sub_agent card as not meaningful", () => {
+    const detail: ToolCallDetail = {
+      type: "sub_agent",
+      log: "",
+      actions: [],
+    };
+
+    assert.strictEqual(hasMeaningfulToolCallDetail(detail), false);
+  });
 });

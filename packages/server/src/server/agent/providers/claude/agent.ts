@@ -349,6 +349,7 @@ interface ClaudeReplayOwnership {
 interface ClaudeSubagentCardFacts {
   title?: string;
   description?: string;
+  prompt?: string;
 }
 
 interface PersistedTimelineEntry {
@@ -6137,6 +6138,7 @@ function buildClaudeSubagentCardDetail(
     type: "sub_agent",
     ...(facts.title ? { subAgentType: facts.title } : {}),
     ...(facts.description ? { description: facts.description } : {}),
+    ...(facts.prompt ? { prompt: facts.prompt } : {}),
     log: "",
     actions: [],
   };
@@ -6162,11 +6164,12 @@ function labelReplayedSubagentCard(
  * Claude Code wrote the meta sidecar.
  */
 function readClaudeReplayParentFacts(parentEntries: ClaudeHistoryEntry[]): ClaudeReplayParentFacts {
-  const toolCalls = new Map<string, { title?: string; description?: string }>();
+  const toolCalls = new Map<string, ClaudeSubagentCardFacts>();
   for (const [id, call] of readClaudeHistoricalSubagentToolCalls(parentEntries)) {
     toolCalls.set(id, {
       ...((call.name ?? call.subagentType) ? { title: call.name ?? call.subagentType } : {}),
       ...(call.description ? { description: call.description } : {}),
+      ...(call.prompt ? { prompt: call.prompt } : {}),
     });
   }
 
@@ -6281,6 +6284,7 @@ interface ClaudeHistoricalSubagentToolCall {
   name?: string;
   subagentType?: string;
   description?: string;
+  prompt?: string;
 }
 
 function readClaudeHistoricalSubagentToolCalls(
@@ -6303,10 +6307,13 @@ function readClaudeHistoricalSubagentToolCalls(
       const name = readNonEmptyString(input?.name);
       const subagentType = readNonEmptyString(input?.subagent_type);
       const description = readNonEmptyString(input?.description);
+      // Read like the live declaration: use trim only to reject whitespace-only prompts.
+      const prompt = readNonEmptyString(input?.prompt);
       toolCalls.set(block.id, {
         ...(name ? { name } : {}),
         ...(subagentType ? { subagentType } : {}),
         ...(description ? { description } : {}),
+        ...(prompt ? { prompt } : {}),
       });
     }
   }

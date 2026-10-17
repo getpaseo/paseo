@@ -244,6 +244,7 @@ interface SubAgentDetailProps {
   childSessionId: string | null | undefined;
   subAgentType: string | null | undefined;
   description: string | null | undefined;
+  prompt: string | null | undefined;
   ds: DetailStyles;
 }
 
@@ -355,6 +356,7 @@ function SubAgentDetailSection({
   childSessionId,
   subAgentType,
   description,
+  prompt,
   ds,
 }: SubAgentDetailProps) {
   const { t } = useTranslation();
@@ -365,6 +367,9 @@ function SubAgentDetailSection({
     t("toolCallDetails.subAgentActivity"),
   );
   const hasActions = actions.length > 0;
+  // Below a prompt, the activity block shows only what the child did. Its type-and-task fallback
+  // would repeat the card header.
+  const showActivity = !prompt || Boolean(childSessionId) || hasActions || remainingLog.length > 0;
   return (
     <View style={ds.sectionFillStyle}>
       <View style={ds.codeBlockFillStyle}>
@@ -374,32 +379,41 @@ function SubAgentDetailSection({
           nestedScrollEnabled
           showsVerticalScrollIndicator
         >
-          <ScrollView
-            horizontal
-            nestedScrollEnabled
-            showsHorizontalScrollIndicator
-            contentContainerStyle={styles.codeHorizontalContent}
-          >
-            <View style={styles.codeLine} dataSet={CODE_SURFACE_DATASET}>
-              {childSessionId ? (
-                <Text selectable style={styles.subAgentSessionText}>
-                  session {childSessionId}
-                </Text>
-              ) : null}
-              {hasActions ? (
-                <View style={styles.subAgentActions}>
-                  {actions.map((action) => (
-                    <SubAgentActionRow key={action.index} action={action} />
-                  ))}
-                </View>
-              ) : null}
-              <SubAgentLogText
-                activityLog={remainingLog}
-                fallbackHeader={fallbackHeader}
-                hasActions={hasActions}
-              />
+          {prompt ? (
+            <View style={showActivity ? styles.subAgentPromptAboveActivity : styles.subAgentPrompt}>
+              <Text selectable style={styles.plainText}>
+                {prompt}
+              </Text>
             </View>
-          </ScrollView>
+          ) : null}
+          {showActivity ? (
+            <ScrollView
+              horizontal
+              nestedScrollEnabled
+              showsHorizontalScrollIndicator
+              contentContainerStyle={styles.codeHorizontalContent}
+            >
+              <View style={styles.codeLine} dataSet={CODE_SURFACE_DATASET}>
+                {childSessionId ? (
+                  <Text selectable style={styles.subAgentSessionText}>
+                    session {childSessionId}
+                  </Text>
+                ) : null}
+                {hasActions ? (
+                  <View style={styles.subAgentActions}>
+                    {actions.map((action) => (
+                      <SubAgentActionRow key={action.index} action={action} />
+                    ))}
+                  </View>
+                ) : null}
+                <SubAgentLogText
+                  activityLog={remainingLog}
+                  fallbackHeader={fallbackHeader}
+                  hasActions={hasActions}
+                />
+              </View>
+            </ScrollView>
+          ) : null}
         </ScrollView>
       </View>
     </View>
@@ -697,6 +711,7 @@ function buildDetailSections(
         childSessionId={detail.childSessionId}
         subAgentType={detail.subAgentType}
         description={detail.description}
+        prompt={detail.prompt}
         ds={ds}
       />,
     ];
@@ -951,6 +966,16 @@ const styles = StyleSheet.create((theme) => {
     },
     shellPrompt: {
       color: theme.colors.foregroundMuted,
+    },
+    subAgentPrompt: {
+      paddingHorizontal: insets.padding,
+      paddingVertical: insets.padding,
+    },
+    subAgentPromptAboveActivity: {
+      paddingHorizontal: insets.padding,
+      paddingVertical: insets.padding,
+      borderBottomWidth: theme.borderWidth[1],
+      borderBottomColor: theme.colors.border,
     },
     subAgentSessionText: {
       fontFamily: theme.fontFamily.mono,
