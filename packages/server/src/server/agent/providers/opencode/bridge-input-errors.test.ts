@@ -79,6 +79,7 @@ test("bridge preserves tool failure messages and classifies invalid requests as 
     const { baseUrl, token } = config.plugin[0][1];
     const completed = await scheduleService.create({
       prompt: "Run once",
+      name: "Daily check",
       cadence: { type: "cron", expression: "0 0 * * *" },
       target: { type: "new-agent", config: { provider: "codex", cwd: paseoHome } },
       maxRuns: 1,
@@ -129,7 +130,7 @@ test("bridge preserves tool failure messages and classifies invalid requests as 
         }),
         400,
       ],
-      ["update_schedule", JSON.stringify({ id: completed.id, name: "" }), 400],
+      ["update_schedule", JSON.stringify({ id: completed.id, name: "" }), 200],
       ["update_schedule", JSON.stringify({ id: completed.id, cron: "0 0 30 2 *" }), 400],
       ["update_schedule", JSON.stringify({ id: completed.id, expiresIn: "not-a-duration" }), 400],
       ["send_agent_prompt", JSON.stringify({ agentId: "missing", prompt: "Hello" }), 400],
@@ -159,6 +160,11 @@ test("bridge preserves tool failure messages and classifies invalid requests as 
     }
 
     for (const result of observed) expect.soft(result.status, result.body).toBe(result.expected);
+    expect((await scheduleService.inspect(completed.id)).name).toBeNull();
+    expect(
+      tools.find((tool: { name: string }) => tool.name === "update_schedule").inputSchema.properties
+        .name,
+    ).not.toHaveProperty("minLength");
     for (const result of observed.slice(14)) {
       expect.soft(result.payload).toEqual({ error: "Workspace not found: wks_typo" });
     }
@@ -171,7 +177,6 @@ test("bridge preserves tool failure messages and classifies invalid requests as 
     for (const [index, field] of [
       [7, "cron"],
       [8, "timezone"],
-      [9, "name"],
       [10, "cron"],
       [11, "expiresIn"],
     ] as const) {

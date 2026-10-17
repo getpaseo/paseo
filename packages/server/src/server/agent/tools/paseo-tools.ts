@@ -2859,13 +2859,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
             .describe(
               "IANA time zone for cron cadence; requires cron. For example: America/New_York.",
             ),
-          name: z
-            .string()
-            .trim()
-            .min(1)
-            .nullable()
-            .optional()
-            .describe("New name (null to clear)."),
+          name: z.string().nullable().optional().describe("New name (null to clear)."),
           prompt: z.string().trim().min(1).optional().describe("New prompt text."),
           maxRuns: z
             .number()
