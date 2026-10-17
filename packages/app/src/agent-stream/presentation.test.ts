@@ -1,7 +1,5 @@
-import { QueryClient } from "@tanstack/react-query";
-import { describe, expect, it } from "vitest";
-import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import { runPluginClientBundle, type PluginClientRuntime } from "@/plugins/evaluate";
+import { transformTimelineItem, type TimelineItemTransform } from "@/plugins/timeline/model";
 import type { InstalledPlugin } from "@/plugins/types";
 import {
   applyStreamEvent,
@@ -10,9 +8,11 @@ import {
   type ToolCallItem,
   type UserMessageItem,
 } from "@/types/stream";
-import { transformTimelineItem, type TimelineItemTransform } from "@/plugins/timeline/model";
-import { createStreamPresentation } from "./presentation";
+import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
+import { QueryClient } from "@tanstack/react-query";
+import { describe, expect, it } from "vitest";
 import { buildAgentStreamRenderModel } from "./model";
+import { createStreamPresentation, getStreamItemMessageId } from "./presentation";
 
 const runtime = {
   paseo: {},
@@ -29,7 +29,7 @@ const runtime = {
 } as unknown as PluginClientRuntime;
 
 function installProbe(
-  itemType: "assistant_message" | "tool_call" | "reasoning",
+  itemType: "user_message" | "assistant_message" | "tool_call" | "reasoning",
   condition = "true",
 ): InstalledPlugin {
   const clientBundle = `(function() {
@@ -123,6 +123,25 @@ function rows(result: { tail: StreamItem[]; head: StreamItem[] }): StreamItem[] 
   return [...result.tail, ...result.head];
 }
 
+describe("whole-message Markdown presentation", () => {
+  it("keeps paragraphs, fences and quotes in one progressively updated row", () => {
+    const present = createStreamPresentation();
+    const text = "First paragraph.\n\nSecond paragraph.\n\n```ts\nconst n = 1;\n```\n\n> Quote";
+    for (const length of [10, 30, text.length]) {
+      const source = hydrateStreamState([
+        { event: assistant(text.slice(0, length)), timestamp: new Date(1000) },
+      ]);
+      const result = present({
+        ...presentationOptions,
+        tail: [],
+        head: source,
+        transform: undefined,
+      });
+      expect(rows(result)).toEqual(source);
+    }
+  });
+});
+
 describe("stream presentation through installed plugins", () => {
   it("offers every source tool call to an installed transformer in Overview mode", () => {
     const calls = [toolCall("call-1", "bash"), toolCall("call-2", "read")];
@@ -160,6 +179,23 @@ describe("stream presentation through installed plugins", () => {
     },
   );
 
+  it("addresses a prompt a plugin replaced by the prompt's own id", () => {
+    const harness = streamHarness(installedTransform(installProbe("user_message")));
+    const rendered = rows(
+      harness.send({
+        type: "timeline",
+        provider: "claude",
+        item: { type: "user_message", messageId: "prompt-1", text: "Earlier prompt" },
+      }),
+    );
+    const source = rows(harness.source());
+
+    expect(source).toMatchObject([{ kind: "user_message", id: "prompt-1" }]);
+    expect(rendered).toMatchObject([{ kind: "plugin", id: "probe-plugin/prompt-1/0" }]);
+    // The chat outline jumps to the source id; the row it lands on is the plugin's.
+    expect(rendered.map(getStreamItemMessageId)).toEqual(["prompt-1"]);
+  });
+
   it("finishes one message before streaming a different message ID", () => {
     const harness = streamHarness(installedTransform(installProbe("assistant_message")));
     harness.send(assistant("First\n\nBody", "first"));
@@ -181,26 +217,17 @@ describe("stream presentation through installed plugins", () => {
       { text: "Header\n\nBody", phase: "streaming" },
     ]);
     expect(rows(harness.render(transform))).toHaveLength(1);
-    expect(rows(harness.render()).map((item) => item.kind)).toEqual([
-      "assistant_message",
-      "assistant_message",
-    ]);
+    expect(rows(harness.render()).map((item) => item.kind)).toEqual(["assistant_message"]);
   });
 
-  it("keeps completed native blocks stable while the last block grows and finishes", () => {
+  it("retains the complete message when streaming finishes", () => {
     const harness = streamHarness();
-    const first = harness.send(assistant("Intro\n\n![Image](image.png)"));
-    const growing = harness.send(assistant("\n\nAfter\n"));
-    const last = harness.send(assistant("- item"));
+    harness.send(assistant("Intro\n\n![Image](image.png)"));
+    const last = harness.send(assistant("\n\nAfter\n- item"));
     const completed = harness.send({ type: "turn_completed", provider: "claude" });
-    expect(first.tail).toMatchObject([{ text: "Intro", blockIndex: 0 }]);
-    expect(first.head).toMatchObject([{ text: "![Image](image.png)", blockIndex: 1 }]);
-    expect(growing.tail[0]).toBe(first.tail[0]);
-    expect(growing.tail[1]).toBe(first.head[0]);
-    expect(last.tail).toBe(growing.tail);
-    expect(last.head).toMatchObject([{ text: "After\n- item", blockIndex: 2 }]);
-    expect(completed.tail).toEqual(rows(last));
-    expect(completed.tail[2]).toBe(last.head[0]);
+    expect(last.tail).toEqual([]);
+    expect(last.head).toMatchObject([{ text: "Intro\n\n![Image](image.png)\n\nAfter\n- item" }]);
+    expect(completed.tail).toEqual(last.head);
     expect(completed.head).toEqual([]);
   });
 
@@ -208,8 +235,8 @@ describe("stream presentation through installed plugins", () => {
     const harness = streamHarness();
     harness.send(assistant("Intro\n\n```ts\nconst a = 1;"));
     const result = harness.send(assistant("\n\nconst b = 2;"));
-    expect(result.tail).toMatchObject([{ text: "Intro" }]);
-    expect(result.head).toMatchObject([{ text: "```ts\nconst a = 1;\n\nconst b = 2;" }]);
+    expect(result.tail).toEqual([]);
+    expect(result.head).toMatchObject([{ text: "Intro\n\n```ts\nconst a = 1;\n\nconst b = 2;" }]);
   });
 
   // Codex streams a line break and the next line's indent as their own chunks.
@@ -227,14 +254,13 @@ describe("stream presentation through installed plugins", () => {
   // which is what lets find, scroll-to-message and history reveal address it by id.
   // A link reference definition stays with the paragraph that uses it, so the split
   // never leaves an empty row behind and the reference still resolves.
-  it("splits an assistant message into the same blocks through history and through the live head", () => {
+  it("preserves source identity through history and the live head", () => {
     const source = hydrateStreamState([
       {
         event: assistant("[Link][docs]\n\n[docs]: https://example.com\n\nClosing paragraph."),
         timestamp: new Date(1000),
       },
     ]);
-    const messageId = source[0]!.id;
     const present = (placement: "tail" | "head") =>
       rows(
         createStreamPresentation()({
@@ -244,20 +270,7 @@ describe("stream presentation through installed plugins", () => {
           transform: undefined,
         }),
       );
-    expect(present("tail")).toMatchObject([
-      {
-        id: `${messageId}:block:0`,
-        blockGroupId: messageId,
-        blockIndex: 0,
-        text: "[Link][docs]\n\n[docs]: https://example.com",
-      },
-      {
-        id: `${messageId}:block:1`,
-        blockGroupId: messageId,
-        blockIndex: 1,
-        text: "Closing paragraph.",
-      },
-    ]);
+    expect(present("tail")).toEqual(source);
     const blocks = (items: StreamItem[]) =>
       items.map((item) => [item.id, item.kind === "assistant_message" ? item.text : null]);
     expect(blocks(present("head"))).toEqual(blocks(present("tail")));
@@ -265,7 +278,7 @@ describe("stream presentation through installed plugins", () => {
 
   // Rows are addressed by id from outside presentation, so the same text has to land on
   // the same ids whether the reader watched it arrive or opened the chat afterwards.
-  it("gives a streamed message the block ids its hydrated text would have had", () => {
+  it("gives a streamed message the same id as its hydrated text", () => {
     const text = "Intro paragraph.\n\n# Heading\n\n- first\n- second\n\nClosing paragraph.";
     const harness = streamHarness();
     for (let end = 8; end < text.length; end += 8) {
@@ -287,7 +300,7 @@ describe("stream presentation through installed plugins", () => {
     );
   });
 
-  it("repoints a block at the canonical source that replaced the streamed one", () => {
+  it("uses the canonical source that replaced the streamed message", () => {
     const harness = streamHarness();
     harness.send(assistant("Streamed answer"));
     const streamed = rows(harness.render());
@@ -321,15 +334,8 @@ describe("stream presentation through installed plugins", () => {
       head: [],
       transform: undefined,
     });
-    expect(result.tail).toMatchObject([
-      {
-        id: `${messageId}:block:0`,
-        blockGroupId: messageId,
-        blockIndex: 0,
-        text: "Only one paragraph.",
-      },
-    ]);
-    expect(result.tail[0]!.id).not.toBe(messageId);
+    expect(result.tail).toEqual(source);
+    expect(result.tail[0]!.id).toBe(messageId);
   });
 
   it("continues to stream inline reasoning with a stable plugin row", () => {
@@ -546,13 +552,7 @@ describe("timeline presentation", () => {
         text: "<spoken-input>Example</spoken-input><instruction>Explain this XML.</instruction>",
       },
     ];
-    expect(projectTimelineItems(items)).toEqual(
-      items.map((item) =>
-        item.kind === "assistant_message"
-          ? { ...item, id: `${item.id}:block:0`, blockGroupId: item.id, blockIndex: 0 }
-          : item,
-      ),
-    );
+    expect(projectTimelineItems(items)).toEqual(items);
     expect(projectTimelineItems(items)[0]).toBe(items[0]);
   });
 

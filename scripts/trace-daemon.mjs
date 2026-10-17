@@ -13,7 +13,8 @@
 // node_modules populated (the Nix build invokes this post-configHook).
 
 import { nodeFileTrace } from "@vercel/nft";
-import { glob } from "node:fs/promises";
+import { glob, readFile, readdir } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -29,6 +30,47 @@ const { sherpaPlatformPackageName } = await import(
 );
 
 const traceDesktop = process.env.PASEO_TRACE_DESKTOP === "1";
+const terminalModule = "packages/server/dist/server/terminal/terminal.js";
+const sherpaModule =
+  "packages/server/dist/server/server/speech/providers/local/sherpa/sherpa-onnx-node-loader.js";
+const sherpaEnvModule =
+  "packages/server/dist/server/server/speech/providers/local/sherpa/sherpa-runtime-env.js";
+
+// Resolve-only and computed requires need explicit graph edges, not installed
+// paths. Analyze them at their real importer so nft retains the package exports,
+// manifests and workspace symlinks used by Node's resolution.
+const runtimeDependencies = new Map([
+  ["packages/cli/dist/commands/daemon/local-daemon.js", ["@getpaseo/server"]],
+  [terminalModule, ["@getpaseo/cli/bin/paseo", "node-pty/package.json"]],
+  [sherpaModule, ["sherpa-onnx-node"]],
+  [sherpaEnvModule, [`${sherpaPlatformPackageName()}/package.json`]],
+  ...(traceDesktop
+    ? [
+        ["packages/desktop/dist/daemon/runtime-paths.js", ["@getpaseo/server"]],
+        ["packages/desktop/dist/integrations/cli-install/paths.js", ["@getpaseo/cli/bin/paseo"]],
+      ]
+    : []),
+]);
+
+function requireFrom(importer) {
+  return createRequire(path.join(REPO_ROOT, importer));
+}
+
+function resolvedPackageFiles(importer, specifier) {
+  const manifest = requireFrom(importer).resolve(`${specifier}/package.json`);
+  return path.join(path.dirname(manifest), "**");
+}
+
+// Let node-pty select the native build it actually loads. npm hoisting and
+// prebuild/build layout are owned by the package, not this trace. Its Darwin
+// spawn-helper lives beside the selected addon; retain the files in that dir.
+const terminalRequire = requireFrom(terminalModule);
+const ptyLoader = terminalRequire.resolve("node-pty/lib/utils");
+const { dir: ptyNativeDir } = terminalRequire(ptyLoader).loadNativeModule("pty");
+const ptyNativeRoot = path.resolve(path.dirname(ptyLoader), ptyNativeDir);
+const ptyNativeFiles = (await readdir(ptyNativeRoot, { withFileTypes: true }))
+  .filter((entry) => entry.isFile())
+  .map((entry) => path.join(ptyNativeRoot, entry.name));
 
 // Daemon entry points. Workers forked into their own Node processes have
 // independent require trees; nft does not follow fork boundaries, so trace
@@ -63,33 +105,40 @@ const additionalInputs = [
   "packages/server/dist/server/server/agent/providers/opencode/**/bridge-plugin.bundle.mjs",
   // Server runtime config files (read by path, not require)
   "packages/server/.env.example",
-  // CLI shebang script wrapping dist/index.js
-  "packages/cli/bin/paseo",
-  // node-pty's compiled native addon. nft can't trace it because
-  // node-pty loads it via `require(path.join(__dirname, 'prebuilds/<plat>/pty.node'))`
-  // with a runtime-computed platform suffix. Pin to the host platform —
-  // the Nix derivation builds for one platform at a time and ships only
-  // its own binaries.
-  `node_modules/node-pty/prebuilds/${process.platform}-${process.arch}/**`,
-  // sherpa-onnx-node dynamically resolves a platform-specific native package.
-  // Copy the wrapper plus the host platform package explicitly.
-  "node_modules/sherpa-onnx-node/**",
-  `node_modules/${sherpaPlatformPackageName()}/**`,
+  ...ptyNativeFiles,
+  // Resolve native speech packages from the same modules as the runtime.
+  resolvedPackageFiles(sherpaModule, "sherpa-onnx-node"),
+  resolvedPackageFiles(sherpaEnvModule, sherpaPlatformPackageName()),
   ...(traceDesktop
     ? [
         // The unpackaged Nix launcher resolves these beside desktop/dist.
         "packages/desktop/package.json",
         "packages/desktop/assets/**",
-        // resolveExternalCliEntrypoint() looks up the workspace through this
-        // link at runtime; nft traces the target files but not the link.
-        "node_modules/@getpaseo/cli",
       ]
     : []),
 ];
 
+// Fail at build time if a required runtime edge cannot resolve.
+for (const [importer, specifiers] of runtimeDependencies) {
+  for (const specifier of specifiers) requireFrom(importer).resolve(specifier);
+}
+
 // Trace.
 const { fileList, warnings } = await nodeFileTrace(entries, {
   base: REPO_ROOT,
+  async readFile(file) {
+    let source;
+    try {
+      source = await readFile(file);
+    } catch (error) {
+      if (error.code === "ENOENT" || error.code === "EISDIR") return null;
+      throw error;
+    }
+    const dependencies = runtimeDependencies.get(path.relative(REPO_ROOT, file));
+    if (!dependencies) return source;
+    // These statements exist only in nft's input, never in the shipped code.
+    return `${source}\n${dependencies.map((specifier) => `require(${JSON.stringify(specifier)});`).join("\n")}`;
+  },
   // Tolerate the conditional / dynamic patterns we already audited:
   // sherpa-onnx-${platform}-${arch} package resolution (the host package
   // is copied explicitly above), and a handful of test-only requires that
@@ -129,10 +178,10 @@ const expanded = new Set(fileList);
 for (const pattern of additionalInputs) {
   if (pattern.includes("*")) {
     for await (const file of glob(pattern, { cwd: REPO_ROOT })) {
-      expanded.add(file);
+      expanded.add(path.relative(REPO_ROOT, path.resolve(REPO_ROOT, file)));
     }
   } else {
-    expanded.add(pattern);
+    expanded.add(path.relative(REPO_ROOT, path.resolve(REPO_ROOT, pattern)));
   }
 }
 

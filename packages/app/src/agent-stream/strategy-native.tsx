@@ -42,6 +42,7 @@ import {
   type HistoryStartPaginationInput,
   type HistoryStartPaginationTransition,
 } from "./history-start-pagination";
+import { useStreamTopOverlayInset } from "./top-overlay";
 import {
   createHistoryStartSettleScheduler,
   type HistoryStartSettleScheduler,
@@ -274,12 +275,20 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     Platform.OS === "android" && bottomAnchorController.mode === "sticky-bottom"
       ? undefined
       : DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION;
+  const topOverlayInset = useStreamTopOverlayInset();
+  // The list is inverted, so its content's bottom padding is the visual top.
   const listContentContainerStyle = useMemo(
     () => [
       baseListContentContainerStyle,
-      { paddingBottom: streamKeyboardInset.contentContainerPaddingBottom },
+      {
+        paddingBottom: streamKeyboardInset.contentContainerPaddingBottom + topOverlayInset,
+      },
     ],
-    [baseListContentContainerStyle, streamKeyboardInset.contentContainerPaddingBottom],
+    [
+      baseListContentContainerStyle,
+      streamKeyboardInset.contentContainerPaddingBottom,
+      topOverlayInset,
+    ],
   );
   const listInsetProps = useMemo(
     () =>
@@ -582,8 +591,11 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       scrollEventThrottle={16}
       onContentSizeChange={handleContentSizeChange}
       maintainVisibleContentPosition={maintainVisibleContentPosition}
-      initialNumToRender={12}
-      windowSize={10}
+      // A history row can contain an entire long reply. Keep synchronous native
+      // Markdown measurement bounded while FlatList fills the surrounding window.
+      initialNumToRender={2}
+      maxToRenderPerBatch={2}
+      windowSize={5}
       removeClippedSubviews={false}
       scrollEnabled={scrollEnabled}
       showsVerticalScrollIndicator

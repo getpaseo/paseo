@@ -5,6 +5,12 @@
     "url": "https://plugins.paseo.sh"
   },
   "generatedAt": "2026-10-04T15:55:47.882Z",
+  "featured": [
+    "omercnet/dracula",
+    "gpambrozio/herald",
+    "acme/not-published",
+    "gpambrozio/launchd-jobs"
+  ],
   "categories": [
     {
       "slug": "daemon-management",
@@ -74,13 +80,13 @@
         "name": "alhassanaraouf",
         "github": "alhassanaraouf"
       },
-      "screenshots": [
+      "media": [
         "https://raw.githubusercontent.com/alhassanaraouf/paseo-themes/main/packages/paseo-base2tone-theme/preview.png"
       ],
       "submittedAt": "2026-09-24T00:00:00.000Z",
-      "reviewedAt": "2026-10-03T00:00:00.000Z",
-      "publishedAt": "2026-09-24T17:12:05.467Z",
-      "updatedAt": "2026-10-03T00:00:00.000Z",
+      "reviewedAt": "2026-09-24T00:00:00.000Z",
+      "publishedAt": "2026-09-24T00:00:00.000Z",
+      "updatedAt": "2026-09-24T00:00:00.000Z",
       "installs": 0,
       "readme": "# Base2Tone\n\n## Behavior\n\nBase2Tone theme for Paseo, ported from the Obsidian theme deathau/Base2Tone-For-Obsidian.md."
     },
@@ -106,14 +112,14 @@
         "name": "Tom Lundy",
         "github": "dorasto"
       },
-      "screenshots": [
+      "media": [
         "https://raw.githubusercontent.com/dorasto/sayr/main/packages/paseo-plugin/assets/sayr-plguin-1.png",
         "https://raw.githubusercontent.com/dorasto/sayr/main/packages/paseo-plugin/assets/paseo-plugin-2.png"
       ],
       "submittedAt": "2026-09-22T00:00:00.000Z",
-      "reviewedAt": "2026-10-03T00:00:00.000Z",
-      "publishedAt": "2026-09-22T10:39:28.935Z",
-      "updatedAt": "2026-10-03T00:00:00.000Z",
+      "reviewedAt": "2026-09-22T00:00:00.000Z",
+      "publishedAt": "2026-09-22T00:00:00.000Z",
+      "updatedAt": "2026-09-22T00:00:00.000Z",
       "installs": 0,
       "readme": "# Sayr\n\n## Behavior\n\nA paseo plugin for viewing and managing your Sayr tasks"
     },
@@ -139,14 +145,14 @@
         "name": "gpambrozio",
         "github": "gpambrozio"
       },
-      "screenshots": [
+      "media": [
         "https://raw.githubusercontent.com/gpambrozio/paseo-plugins/main/github-board/docs/screenshot.png",
         "https://raw.githubusercontent.com/gpambrozio/paseo-plugins/main/github-board/docs/detail-panel.png"
       ],
       "submittedAt": "2026-09-19T00:00:00.000Z",
-      "reviewedAt": "2026-10-03T00:00:00.000Z",
-      "publishedAt": "2026-10-01T17:46:20.500Z",
-      "updatedAt": "2026-10-03T00:00:00.000Z",
+      "reviewedAt": "2026-09-19T00:00:00.000Z",
+      "publishedAt": "2026-09-19T00:00:00.000Z",
+      "updatedAt": "2026-09-19T00:00:00.000Z",
       "installs": 0,
       "readme": "# GitHub Board\n\n## Behavior\n\nPaseo plugin: a GitHub sidebar board of your issues, draft and open pull requests, and discussions"
     },
@@ -172,14 +178,14 @@
         "name": "gpambrozio",
         "github": "gpambrozio"
       },
-      "screenshots": [
+      "media": [
         "https://raw.githubusercontent.com/gpambrozio/paseo-plugins/main/herald/docs/panel.png",
         "https://raw.githubusercontent.com/gpambrozio/paseo-plugins/main/herald/docs/timeline-card.png"
       ],
       "submittedAt": "2026-09-19T00:00:00.000Z",
-      "reviewedAt": "2026-10-03T00:00:00.000Z",
-      "publishedAt": "2026-09-27T19:03:31.943Z",
-      "updatedAt": "2026-10-03T00:00:00.000Z",
+      "reviewedAt": "2026-09-19T00:00:00.000Z",
+      "publishedAt": "2026-09-19T00:00:00.000Z",
+      "updatedAt": "2026-09-19T00:00:00.000Z",
       "installs": 0,
       "readme": "# Herald\n\n## Behavior\n\nPaseo plugin: speaks one sentence when an agent needs you, and lists everything waiting in a sidebar panel"
     },
@@ -205,13 +211,13 @@
         "name": "gpambrozio",
         "github": "gpambrozio"
       },
-      "screenshots": [
-        "https://raw.githubusercontent.com/gpambrozio/paseo-plugins/main/launchd-jobs/docs/screenshot.png"
+      "media": [
+        "https://raw.githubusercontent.com/web-platform-tests/wpt/master/media/movie_5.mp4"
       ],
       "submittedAt": "2026-09-19T00:00:00.000Z",
-      "reviewedAt": "2026-10-03T00:00:00.000Z",
-      "publishedAt": "2026-09-22T17:56:41.061Z",
-      "updatedAt": "2026-10-03T00:00:00.000Z",
+      "reviewedAt": "2026-09-19T00:00:00.000Z",
+      "publishedAt": "2026-09-19T00:00:00.000Z",
+      "updatedAt": "2026-09-19T00:00:00.000Z",
       "installs": 0,
       "readme": "# launchd Jobs\n\n## Behavior\n\nPaseo plugin: schedule shell commands on your Mac through launchd, from a sidebar panel"
     },
@@ -237,13 +243,13 @@
         "name": "gpambrozio",
         "github": "gpambrozio"
       },
-      "screenshots": [
+      "media": [
         "https://raw.githubusercontent.com/gpambrozio/paseo-plugins/main/model-pricing/docs/screenshot.png"
       ],
       "submittedAt": "2026-09-19T00:00:00.000Z",
-      "reviewedAt": "2026-10-03T00:00:00.000Z",
-      "publishedAt": "2026-09-22T18:03:14.979Z",
-      "updatedAt": "2026-10-03T00:00:00.000Z",
+      "reviewedAt": "2026-09-19T00:00:00.000Z",
+      "publishedAt": "2026-09-19T00:00:00.000Z",
+      "updatedAt": "2026-09-19T00:00:00.000Z",
       "installs": 0,
       "readme": "# Model Pricing\n\n## Behavior\n\nPaseo plugin: a sidebar table of what every model costs, across Anthropic, OpenAI, Fireworks AI, Ollama Cloud and OpenRouter"
     },
@@ -269,11 +275,11 @@
         "name": "gpambrozio",
         "github": "gpambrozio"
       },
-      "screenshots": [],
+      "media": [],
       "submittedAt": "2026-09-19T00:00:00.000Z",
-      "reviewedAt": "2026-10-03T00:00:00.000Z",
-      "publishedAt": "2026-10-01T22:25:58.192Z",
-      "updatedAt": "2026-10-03T00:00:00.000Z",
+      "reviewedAt": "2026-09-19T00:00:00.000Z",
+      "publishedAt": "2026-09-19T00:00:00.000Z",
+      "updatedAt": "2026-09-19T00:00:00.000Z",
       "installs": 0,
       "readme": "# Skills\n\n## Behavior\n\nPaseo plugin: lists the skills an agent can use, shows where each comes from, renders its SKILL.md, and invokes it"
     },
@@ -298,14 +304,14 @@
         "name": "hungcuong9125",
         "github": "hungcuong9125"
       },
-      "screenshots": [
+      "media": [
         "https://raw.githubusercontent.com/hungcuong9125/paseo-prompt-kit/main/docs/images/settings-provider-cli.png",
         "https://raw.githubusercontent.com/hungcuong9125/paseo-prompt-kit/main/docs/images/settings-direct-api.png"
       ],
       "submittedAt": "2026-09-22T00:00:00.000Z",
-      "reviewedAt": "2026-10-03T00:00:00.000Z",
-      "publishedAt": "2026-09-30T02:57:56.473Z",
-      "updatedAt": "2026-10-03T00:00:00.000Z",
+      "reviewedAt": "2026-09-22T00:00:00.000Z",
+      "publishedAt": "2026-09-22T00:00:00.000Z",
+      "updatedAt": "2026-09-22T00:00:00.000Z",
       "installs": 0,
       "readme": "# PromptKit\n\n## Behavior\n\nPromptKit - rewrite and transform prompts directly from the Paseo composer."
     },
@@ -331,14 +337,14 @@
         "name": "Omer Cohen",
         "github": "omercnet"
       },
-      "screenshots": [
+      "media": [
         "https://raw.githubusercontent.com/omercnet/paseo-plugins/main/agent-monitor/docs/images/agent-monitor-roster.png",
         "https://raw.githubusercontent.com/omercnet/paseo-plugins/main/agent-monitor/docs/images/agent-monitor-settings.png"
       ],
       "submittedAt": "2026-09-17T00:00:00.000Z",
-      "reviewedAt": "2026-10-03T00:00:00.000Z",
-      "publishedAt": "2026-10-03T09:36:35.639Z",
-      "updatedAt": "2026-10-03T00:00:00.000Z",
+      "reviewedAt": "2026-09-17T00:00:00.000Z",
+      "publishedAt": "2026-09-17T00:00:00.000Z",
+      "updatedAt": "2026-09-17T00:00:00.000Z",
       "installs": 0,
       "readme": "# Agent Monitor\n\n## Behavior\n\nA Paseo plugin that provides a host-wide agent triage roster."
     },
@@ -364,14 +370,14 @@
         "name": "Omer Cohen",
         "github": "omercnet"
       },
-      "screenshots": [
+      "media": [
         "https://raw.githubusercontent.com/omercnet/paseo-plugins/main/paseo-beads/docs/images/paseo-beads-wide.png",
         "https://raw.githubusercontent.com/omercnet/paseo-plugins/main/paseo-beads/docs/images/paseo-beads-compact.png"
       ],
       "submittedAt": "2026-09-17T00:00:00.000Z",
-      "reviewedAt": "2026-10-03T00:00:00.000Z",
-      "publishedAt": "2026-10-03T09:37:29.149Z",
-      "updatedAt": "2026-10-03T00:00:00.000Z",
+      "reviewedAt": "2026-09-17T00:00:00.000Z",
+      "publishedAt": "2026-09-17T00:00:00.000Z",
+      "updatedAt": "2026-09-17T00:00:00.000Z",
       "installs": 0,
       "readme": "# Beads\n\n## Behavior\n\nA dependency-aware Beads work queue for each Paseo workspace."
     },
@@ -397,14 +403,15 @@
         "name": "Omer Cohen",
         "github": "omercnet"
       },
-      "screenshots": [
+      "media": [
         "https://raw.githubusercontent.com/omercnet/paseo-plugins/main/paseo-dracula/screenshot.png",
+        "https://raw.githubusercontent.com/web-platform-tests/wpt/master/media/movie_5.webm",
         "https://raw.githubusercontent.com/omercnet/paseo-plugins/main/paseo-dracula/screenshot-alucard.png"
       ],
       "submittedAt": "2026-09-17T00:00:00.000Z",
-      "reviewedAt": "2026-10-03T00:00:00.000Z",
-      "publishedAt": "2026-10-03T09:37:18.185Z",
-      "updatedAt": "2026-10-03T00:00:00.000Z",
+      "reviewedAt": "2026-09-17T00:00:00.000Z",
+      "publishedAt": "2026-09-17T00:00:00.000Z",
+      "updatedAt": "2026-09-17T00:00:00.000Z",
       "installs": 0,
       "readme": "# Dracula\n\n## Behavior\n\nDracula Classic and Alucard Classic themes for Paseo."
     },
@@ -430,14 +437,14 @@
         "name": "Omer Cohen",
         "github": "omercnet"
       },
-      "screenshots": [
+      "media": [
         "https://raw.githubusercontent.com/omercnet/paseo-plugins/main/fresh-worktrees/docs/images/fresh-worktrees-behind.png",
         "https://raw.githubusercontent.com/omercnet/paseo-plugins/main/fresh-worktrees/docs/images/fresh-worktrees-settings.png"
       ],
       "submittedAt": "2026-09-18T00:00:00.000Z",
-      "reviewedAt": "2026-10-03T00:00:00.000Z",
-      "publishedAt": "2026-10-03T09:36:06.720Z",
-      "updatedAt": "2026-10-03T00:00:00.000Z",
+      "reviewedAt": "2026-09-18T00:00:00.000Z",
+      "publishedAt": "2026-09-18T00:00:00.000Z",
+      "updatedAt": "2026-09-18T00:00:00.000Z",
       "installs": 0,
       "readme": "# Fresh Worktrees\n\n## Behavior\n\nFast-forwards clean local base branches before Paseo creates branch-off worktrees"
     },
@@ -463,14 +470,14 @@
         "name": "Omer Cohen",
         "github": "omercnet"
       },
-      "screenshots": [
+      "media": [
         "https://raw.githubusercontent.com/omercnet/paseo-plugins/main/paseo-omp/docs/images/plugin-manager.png",
         "https://raw.githubusercontent.com/omercnet/paseo-plugins/main/paseo-omp/docs/images/workspace-settings.png"
       ],
       "submittedAt": "2026-09-17T00:00:00.000Z",
-      "reviewedAt": "2026-10-03T00:00:00.000Z",
-      "publishedAt": "2026-10-03T09:36:36.267Z",
-      "updatedAt": "2026-10-03T00:00:00.000Z",
+      "reviewedAt": "2026-10-03T09:00:00.000Z",
+      "publishedAt": "2026-09-17T00:00:00.000Z",
+      "updatedAt": "2026-10-03T09:00:00.000Z",
       "installs": 0,
       "readme": "# OMP\n\n## Behavior\n\nPaseo integration for OMP, including its direct provider and workspace tooling."
     },
@@ -496,11 +503,11 @@
         "name": "Omer Cohen",
         "github": "omercnet"
       },
-      "screenshots": [],
+      "media": [],
       "submittedAt": "2026-09-17T00:00:00.000Z",
-      "reviewedAt": "2026-10-03T00:00:00.000Z",
-      "publishedAt": "2026-10-03T09:37:04.327Z",
-      "updatedAt": "2026-10-03T00:00:00.000Z",
+      "reviewedAt": "2026-09-17T00:00:00.000Z",
+      "publishedAt": "2026-09-17T00:00:00.000Z",
+      "updatedAt": "2026-09-17T00:00:00.000Z",
       "installs": 0,
       "readme": "# PR Radar\n\n## Behavior\n\nA viewer-aware delivery queue for pull requests linked to Paseo workspaces."
     },
@@ -526,14 +533,14 @@
         "name": "Omer Cohen",
         "github": "omercnet"
       },
-      "screenshots": [
+      "media": [
         "https://raw.githubusercontent.com/omercnet/paseo-plugins/main/paseo-shared-browser/docs/images/shared-browser-wide.png",
         "https://raw.githubusercontent.com/omercnet/paseo-plugins/main/paseo-shared-browser/docs/images/shared-browser-compact.png"
       ],
       "submittedAt": "2026-09-18T00:00:00.000Z",
-      "reviewedAt": "2026-10-03T00:00:00.000Z",
-      "publishedAt": "2026-10-03T09:38:48.289Z",
-      "updatedAt": "2026-10-03T00:00:00.000Z",
+      "reviewedAt": "2026-09-18T00:00:00.000Z",
+      "publishedAt": "2026-09-18T00:00:00.000Z",
+      "updatedAt": "2026-09-18T00:00:00.000Z",
       "installs": 0,
       "readme": "# Shared Browser\n\n## Behavior\n\nOne real Chromium session per Paseo workspace, shared live across every connected client."
     },
@@ -559,11 +566,11 @@
         "name": "Omer Cohen",
         "github": "omercnet"
       },
-      "screenshots": [],
+      "media": [],
       "submittedAt": "2026-09-17T00:00:00.000Z",
-      "reviewedAt": "2026-10-03T00:00:00.000Z",
-      "publishedAt": "2026-10-03T09:36:15.719Z",
-      "updatedAt": "2026-10-03T00:00:00.000Z",
+      "reviewedAt": "2026-09-17T00:00:00.000Z",
+      "publishedAt": "2026-09-17T00:00:00.000Z",
+      "updatedAt": "2026-09-17T00:00:00.000Z",
       "installs": 0,
       "readme": "# Tell Agent\n\n## Behavior\n\nSend messages to agents in other workspaces on the same Paseo host."
     },
@@ -588,20 +595,20 @@
         "name": "Tom Gringauz",
         "github": "tomgrin10"
       },
-      "screenshots": [
+      "media": [
         "https://raw.githubusercontent.com/tomgrin10/paseo-defer/main/docs/defer-popover.png"
       ],
       "submittedAt": "2026-09-22T00:00:00.000Z",
-      "reviewedAt": "2026-10-03T00:00:00.000Z",
-      "publishedAt": "2026-09-27T09:59:16.553Z",
-      "updatedAt": "2026-10-03T00:00:00.000Z",
+      "reviewedAt": "2026-10-03T15:00:00.000Z",
+      "publishedAt": "2026-09-22T00:00:00.000Z",
+      "updatedAt": "2026-10-03T15:00:00.000Z",
       "installs": 0,
       "readme": "# Defer\n\n## Behavior\n\nDefer messages to Paseo coding agents until a chosen time or usage-window reset."
     },
     {
       "id": "tomgrin10/graphite",
       "name": "Graphite",
-      "description": "Workspace-native Graphite stack status and PR action radar for Paseo.",
+      "description": "Workspace-native Graphite stack status and PR action radar for Paseo. <p align=\"center\">   <picture>     <source media=\"(prefers-color-scheme: dark)\" srcset=\"https://raw.githubusercontent.com/xpufx/paseo/main/plugins/slash/docs/screenshots/slash-logo-for-dark-bg.png\">     <source media=\"(prefers-color-scheme: light)\" srcset",
       "artifact": {
         "kind": "npm",
         "package": "paseo-graphite",
@@ -619,11 +626,11 @@
         "name": "Tom Gringauz",
         "github": "tomgrin10"
       },
-      "screenshots": [],
+      "media": [],
       "submittedAt": "2026-09-22T00:00:00.000Z",
-      "reviewedAt": "2026-10-03T00:00:00.000Z",
-      "publishedAt": "2026-09-23T10:36:50.112Z",
-      "updatedAt": "2026-10-03T00:00:00.000Z",
+      "reviewedAt": "2026-09-22T00:00:00.000Z",
+      "publishedAt": "2026-09-22T00:00:00.000Z",
+      "updatedAt": "2026-09-22T00:00:00.000Z",
       "installs": 0,
       "readme": "# Graphite\n\n## Behavior\n\nWorkspace-native Graphite stack status and PR action radar for Paseo."
     }

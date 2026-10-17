@@ -4,8 +4,9 @@ import {
   PublishedPluginDetailSchema,
 } from "@getpaseo/protocol/plugin-registry";
 import { getBlockingColdCache, type WebsiteCacheContext } from "../github-cache";
+import { handlePluginThumbnailRequest } from "./thumbnails";
 import { CATEGORIES } from "./categories";
-import { type InstallCounts, readInstallCounts, recordInstall } from "./installs";
+import { type InstallCounts, readInstallCounts, recordClientInstall } from "./installs";
 export interface RegistryEnvironment {
   PLUGINS_REGISTRY_URL?: string;
   WEBSITE_CACHE?: KVNamespace;
@@ -63,6 +64,10 @@ export async function handlePluginRegistryRequest(
   const url = new URL(request.url);
   if (request.method !== "GET") return null;
   const base = env.PLUGINS_REGISTRY_URL ?? "https://getpaseo.github.io/plugins";
+  if (url.pathname.startsWith("/plugins/thumb/")) {
+    const index = await loadRegistryIndex(base, context);
+    return handlePluginThumbnailRequest(request, index.plugins);
+  }
   if (url.hostname === "plugins.paseo.sh" && url.pathname === "/index.json")
     return Response.json(await loadRegistryIndex(base, context));
   if (url.pathname === "/sitemap-plugins.xml") {
@@ -111,7 +116,12 @@ export async function handlePluginRegistryRequest(
     url.searchParams.get("intent") === "install"
   ) {
     const cache = context.cache;
-    if (cache) context.waitUntil(recordInstall(cache, id, new Date()).catch(() => undefined));
+    if (cache)
+      context.waitUntil(
+        recordClientInstall({ cache, id, ip: request.headers.get("CF-Connecting-IP") }).catch(
+          () => undefined,
+        ),
+      );
   }
   return Response.json(plugin);
 }

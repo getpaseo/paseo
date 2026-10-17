@@ -12,6 +12,14 @@ export function SiteHeader() {
         <span className="text-lg font-medium">Paseo</span>
       </a>
       <div className="flex flex-wrap items-center justify-center gap-4">
+        {PLUGINS_LINKED && (
+          <a
+            href="/plugins"
+            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Plugins
+          </a>
+        )}
         <a
           href="/blog"
           className="text-sm text-muted-foreground hover:text-foreground transition-colors"
@@ -24,14 +32,6 @@ export function SiteHeader() {
         >
           Docs
         </a>
-        {PLUGINS_LINKED && (
-          <a
-            href="/plugins"
-            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Plugins
-          </a>
-        )}
         <a
           href="/changelog"
           className="text-sm text-muted-foreground hover:text-foreground transition-colors"

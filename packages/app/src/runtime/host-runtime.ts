@@ -2426,6 +2426,11 @@ export class HostRuntimeStore {
           }),
           encodeImages,
           submission: createMessageSubmissionWriter(serverId),
+          // The queue drains when the agent goes idle, but the agent can start a turn of its own
+          // in that same moment (a wake-up after background work). Steering folds the message
+          // into that turn instead of interrupting it; with no turn running, the daemon starts
+          // a normal one.
+          activeTurnBehavior: "steer",
         });
       },
     })
@@ -2599,6 +2604,14 @@ export class HostRuntimeStore {
     const source = {};
     directory.setDemand(source, true);
     return () => directory.setDemand(source, false);
+  }
+
+  acquireScriptStatusDemand(serverId: string, workspaceId: string): () => void {
+    const directory = this.directorySyncByServer.get(serverId);
+    if (!directory) return () => undefined;
+    const source = {};
+    directory.setScriptStatusDemand(source, workspaceId);
+    return () => directory.setScriptStatusDemand(source, null);
   }
 
   async prepareAgentRoute(serverId: string, agentId: string): Promise<void> {

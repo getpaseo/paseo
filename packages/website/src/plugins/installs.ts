@@ -12,6 +12,26 @@ const WINDOW_DAYS = { week: 7, month: 30 } as const;
 const totalKey = (id: string) => `plugin-installs:${id}`;
 const dailyKey = (id: string) => `plugin-installs-daily:${id}`;
 
+export async function recordClientInstall({
+  cache,
+  id,
+  ip,
+}: {
+  cache: KVNamespace;
+  id: string;
+  ip: string | null;
+}): Promise<void> {
+  if (!ip) return;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ip));
+  const hash = Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+  const key = `plugin-installs-client:${id}:${hash}`;
+  if ((await cache.get(key)) !== null) return;
+  await cache.put(key, "1", { expirationTtl: 3600 });
+  await recordInstall(cache, id, new Date());
+}
+
 export async function recordInstall(cache: KVNamespace, id: string, now: Date): Promise<void> {
   const [total, daily] = await Promise.all([cache.get(totalKey(id)), readDaily(cache, id)]);
   await Promise.all([

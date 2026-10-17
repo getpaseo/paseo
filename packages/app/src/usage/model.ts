@@ -82,17 +82,24 @@ export function upsertReport(
 }
 
 /**
- * The list a finished request leaves: its reports, dropping any the host no longer has, except
- * that a copy on screen fetched after the request's copy stays.
+ * Keep displayed reports in place: the finished list is in fetch-completion order, which can
+ * change on every refresh. Drop missing reports, append new ones, and keep newer fetched copies.
  */
 export function settleReports(
   shown: readonly UsageReportEntry[] | undefined,
   finished: readonly UsageReportEntry[],
 ): UsageReportEntry[] {
-  return finished.map((report) => {
-    const copy = shown?.find((entry) => entry.id === report.id);
-    return copy ? laterFetched(copy, report) : report;
-  });
+  const remaining = new Map(finished.map((report) => [report.id, report]));
+  const settled: UsageReportEntry[] = [];
+  for (const report of shown ?? []) {
+    const arriving = remaining.get(report.id);
+    if (!arriving) {
+      continue;
+    }
+    settled.push(laterFetched(report, arriving));
+    remaining.delete(report.id);
+  }
+  return [...settled, ...remaining.values()];
 }
 
 export interface UsageQueryState {
@@ -176,11 +183,11 @@ export function resolveUsageHostId(choice: UsageHostChoice): string | null {
 }
 
 /**
- * The host the Usage screen shows: the picked host while it is connected, even one that cannot
- * report usage so the screen says to update it; else the sidebar row's host; else the first
+ * The host the Usage modal shows: the picked host while it is connected, even one that cannot
+ * report usage so the modal says to update it; else the sidebar row's host; else the first
  * connected host.
  */
-export function resolveUsageScreenHostId(choice: UsageHostChoice): string | null {
+export function resolveUsageModalHostId(choice: UsageHostChoice): string | null {
   const connected = choice.hosts.filter((host) => host.isConnected);
   const picked = connected.find((host) => host.serverId === choice.pickedServerId);
   return picked?.serverId ?? resolveUsageHostId(choice) ?? connected[0]?.serverId ?? null;

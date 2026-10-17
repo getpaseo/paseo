@@ -272,7 +272,7 @@ async function waitForGuestActiveElement(client, browserId, elementId) {
   return false;
 }
 
-async function createCallerAgent(daemonPort) {
+async function createCallerAgent(daemonPort, workspaceId = workspaceIds[0]) {
   const transport = new StreamableHTTPClientTransport(
     new URL(`http://127.0.0.1:${daemonPort}/mcp/agents`),
   );
@@ -282,12 +282,11 @@ async function createCallerAgent(daemonPort) {
       name: "create_agent",
       args: {
         relationship: { kind: "detached" },
-        workspace: { kind: "existing", workspaceId: workspaceIds[0] },
+        workspace: { kind: "existing", workspaceId },
         title: "Browser desktop browser E2E caller",
         provider: "mock/ten-second-stream",
         settings: { modeId: "load-test" },
         initialPrompt: "Remain available while the browser bridge regression runs.",
-        background: true,
       },
     });
     const result = response.structuredContent;
@@ -297,7 +296,7 @@ async function createCallerAgent(daemonPort) {
     );
     assert(typeof result.agentId === "string", "create_agent returned no caller agent id");
     assert(
-      result.workspaceId === workspaceIds[0],
+      result.workspaceId === workspaceId,
       `MCP caller attached to unexpected workspace ${result.workspaceId}`,
     );
     return result.agentId;
@@ -562,12 +561,66 @@ async function verifyHiddenBrowserScreenshots({
   await expectAnimation();
 }
 
+async function verifyBackgroundTypingStaysInGuest({ page, client, serverId, browserId, agent }) {
+  await page
+    .getByTestId(`workspace-deck-entry-${serverId}:${agent.workspaceId}`)
+    .getByTestId(`workspace-tab-agent_${agent.agentId}`)
+    .click({ timeout: timeoutMs });
+  const composer = page
+    .getByRole("textbox", { name: "Message agent..." })
+    .filter({ visible: true })
+    .first();
+  const draft = "draft the user is typing";
+  await composer.click();
+  await composer.pressSequentially(draft);
+  assert(
+    await composer.evaluate((element) => element === document.activeElement),
+    "Composer did not keep focus while the user typed",
+  );
+
+  const snapshot = await callBrowserTool(client, "browser_snapshot", { browserId });
+  const ref = snapshot.snapshot.match(/textbox "Typing target" \[ref=(@e\d+)\]/)?.[1];
+  assert(ref, `browser_snapshot did not expose the typing target: ${snapshot.snapshot}`);
+  await callBrowserTool(client, "browser_type", { browserId, ref, text: "agent text" });
+  await callBrowserTool(client, "browser_keypress", { browserId, ref, key: "!" });
+
+  // The user keeps typing in the composer while the agent types into the tab's focused field.
+  await composer.click();
+  await composer.press("End");
+  assert(
+    await composer.evaluate((element) => element === document.activeElement),
+    "Composer did not take focus back from the browser tab",
+  );
+  await callBrowserTool(client, "browser_type", { browserId, text: " more" });
+  await callBrowserTool(client, "browser_keypress", { browserId, key: "?" });
+
+  const guestValue = JSON.parse(
+    (
+      await callBrowserTool(client, "browser_evaluate", {
+        browserId,
+        function: "() => document.getElementById('typing-target').value",
+      })
+    ).resultJson,
+  );
+  const composerValue = await composer.inputValue();
+  assert(
+    composerValue === draft,
+    `browser_type and browser_keypress in a background tab changed the focused composer: ${JSON.stringify(composerValue)}`,
+  );
+  assert(
+    guestValue === "agent text! more?",
+    `browser_type and browser_keypress did not reach the browser tab: ${JSON.stringify(guestValue)}`,
+  );
+  await composer.fill("");
+}
+
 async function runRegression({
   page,
   client,
   serverId,
   targetUrl,
   callerAgentId,
+  typingAgent,
   artifactDir,
   inspectorPort,
 }) {
@@ -856,6 +909,13 @@ async function runRegression({
     browserId,
     text: "Clicked",
     timeoutMs: 5_000,
+  });
+  await verifyBackgroundTypingStaysInGuest({
+    page,
+    client,
+    serverId,
+    browserId,
+    agent: typingAgent,
   });
 
   await originalWorkspaceRow.click();
@@ -1157,6 +1217,10 @@ async function main() {
     await runAppearanceFontSizeRegression(page);
 
     const callerAgentId = await createCallerAgent(daemonPort);
+    const typingAgent = {
+      workspaceId: workspaceIds.at(-1),
+      agentId: await createCallerAgent(daemonPort, workspaceIds.at(-1)),
+    };
     const transport = new StreamableHTTPClientTransport(
       new URL(
         `http://127.0.0.1:${daemonPort}/mcp/agents?callerAgentId=${encodeURIComponent(callerAgentId)}`,
@@ -1170,6 +1234,7 @@ async function main() {
       targetUrl: target.url,
       inspectorPort,
       callerAgentId,
+      typingAgent,
       artifactDir,
     });
     const pluginLinks = await checkPluginLinks();

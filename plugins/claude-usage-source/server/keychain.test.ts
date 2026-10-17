@@ -141,6 +141,7 @@ describe("Claude credential routes", () => {
       expect(accounts).toEqual([
         {
           key: "fixture-account.fixture-org",
+          harness: "Claude",
           input: { route: { store: "claude", path: join(dir, ".credentials.json") } },
         },
       ]);

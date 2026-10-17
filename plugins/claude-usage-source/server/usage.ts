@@ -380,7 +380,10 @@ export async function discover(
   for (const input of candidates) {
     const credentials = await resolveClaudeCredentials(input, lookup);
     if (!credentials) continue;
-    const fallback = { key: hashAccountKey(JSON.stringify(input.route)), input };
+    const harness = { pi: "Pi", omp: "OMP", claude: "Claude", keychain: "Claude" }[
+      input.route.store
+    ];
+    const fallback = { key: hashAccountKey(JSON.stringify(input.route)), harness, input };
     if (credentials.expires !== undefined && credentials.expires <= (lookup.now ?? Date.now)()) {
       accounts.push(fallback);
       continue;
@@ -391,7 +394,7 @@ export async function discover(
         fetchApi,
         lookup.now ?? Date.now,
       );
-      accounts.push("status" in profile ? fallback : { ...profile, input });
+      accounts.push("status" in profile ? fallback : { ...profile, harness, input });
     } catch {
       // Keep the login visible; fetching usage reports the vendor failure.
       accounts.push(fallback);

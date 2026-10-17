@@ -4,6 +4,7 @@ import { basename } from "node:path";
 import type { AgentSessionConfig } from "./agent/agent-sdk-types.js";
 import {
   type GitSetupOptions,
+  type CreateAgentWorktreeTarget,
   type FirstAgentContext,
   type ChangeRequestCheckoutSource,
   type SessionInboundMessage,
@@ -320,7 +321,42 @@ function validateNormalizedGitOptions(input: ValidateNormalizedGitOptionsInput):
   }
 }
 
-export function normalizeGitOptions(
+export function normalizeAgentCreationGitOptions(
+  gitOptions?: GitSetupOptions,
+  legacyWorktreeName?: string,
+  worktree?: CreateAgentWorktreeTarget,
+): NormalizedGitOptions | null {
+  if (worktree && gitOptions) {
+    throw new Error("create_agent_request worktree cannot be combined with git options");
+  }
+  if (worktree) {
+    switch (worktree.mode) {
+      case "branch-off":
+        gitOptions = {
+          createWorktree: true,
+          createNewBranch: true,
+          newBranchName: worktree.newBranch,
+          baseBranch: worktree.base,
+          action: "branch-off",
+          refName: worktree.base,
+        };
+        break;
+      case "checkout-branch":
+        gitOptions = { createWorktree: true, action: "checkout", refName: worktree.branch };
+        break;
+      case "checkout-pr":
+        gitOptions = {
+          createWorktree: true,
+          action: "checkout",
+          githubPrNumber: worktree.prNumber,
+        };
+        break;
+    }
+  }
+  return normalizeGitOptions(gitOptions, legacyWorktreeName);
+}
+
+function normalizeGitOptions(
   gitOptions?: GitSetupOptions,
   legacyWorktreeName?: string,
 ): NormalizedGitOptions | null {
@@ -465,7 +501,10 @@ export async function handlePaseoWorktreeArchiveRequest(
     "emitWorkspaceUpdatesForWorkspaceIds" | "workspaceGitService"
   > & {
     emit: EmitSessionMessage;
-    workspaceGitService: Pick<WorkspaceGitService, "getSnapshot" | "listWorktrees">;
+    workspaceGitService: Pick<
+      WorkspaceGitService,
+      "getSnapshot" | "listWorktrees" | "invalidateWorktrees"
+    >;
     emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
   },
   msg: Extract<SessionInboundMessage, { type: "paseo_worktree_archive_request" }>,
@@ -778,7 +817,6 @@ export async function handleWorkspaceSetupRunRequest(
             slug: basename(worktree.worktreePath),
             worktreePath: worktree.worktreePath,
             workspaceCwd: workspace.cwd,
-            runAutoTerminals: true,
           },
           signal,
         ),
@@ -818,7 +856,6 @@ export async function runWorktreeSetupInBackground(
     slug: string;
     worktreePath: string;
     workspaceCwd?: string;
-    runAutoTerminals?: boolean;
   },
   signal?: AbortSignal,
 ): Promise<void> {
@@ -859,18 +896,18 @@ export async function runWorktreeSetupInBackground(
       } else {
         const workspaceCwd = options.workspaceCwd ?? worktree.worktreePath;
         const setupCommands = getWorktreeSetupCommands(workspaceCwd);
+        const runtimeEnv = await resolveWorktreeRuntimeEnv({
+          worktreePath: worktree.worktreePath,
+          branchName: worktree.branchName,
+          repoRootPath: options.repoRoot,
+        });
+        dependencies.terminalManager?.registerCwdEnv({
+          cwd: workspaceCwd,
+          env: runtimeEnv,
+        });
         if (setupCommands.length === 0) {
           emitSetupProgress("completed", null);
         } else {
-          const runtimeEnv = await resolveWorktreeRuntimeEnv({
-            worktreePath: worktree.worktreePath,
-            branchName: worktree.branchName,
-            repoRootPath: options.repoRoot,
-          });
-          dependencies.terminalManager?.registerCwdEnv({
-            cwd: workspaceCwd,
-            env: runtimeEnv,
-          });
           setupResults = await runWorktreeSetupCommands({
             worktreePath: workspaceCwd,
             branchName: worktree.branchName,
@@ -885,15 +922,14 @@ export async function runWorktreeSetupInBackground(
           });
           emitSetupProgress("completed", null);
         }
-        if (options.runAutoTerminals) {
-          await runWorktreeAutoTerminals({
-            workspaceId,
-            worktree,
-            workspaceCwd,
-            terminalManager: dependencies.terminalManager,
-            logger: dependencies.sessionLogger,
-          });
-        }
+        await runWorktreeAutoTerminals({
+          workspaceId,
+          worktree,
+          workspaceCwd,
+          runtimeEnv,
+          terminalManager: dependencies.terminalManager,
+          logger: dependencies.sessionLogger,
+        });
       }
     } catch (error) {
       if (error instanceof WorktreeSetupError) {

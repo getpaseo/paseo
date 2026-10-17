@@ -1,4 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Pencil, Plus, Trash2 } from "lucide-react-native";
@@ -17,10 +24,17 @@ import {
   EditingTextInput as TextInput,
   type EditingTextInputHandle,
 } from "@/components/ui/text-input";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { createReviewEditorScope } from "./editor";
 import { isWeb } from "@/constants/platform";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import type { Theme } from "@/styles/theme";
-import { useReviewDraftComments, useReviewDraftStore, type ReviewDraftComment } from "./store";
+import {
+  useReviewDraftComments,
+  useReviewDraftStore,
+  saveReviewDraftComment,
+  type ReviewDraftComment,
+} from "./store";
 import { buildReviewableDiffTargetKey, type ReviewableDiffTarget } from "@/utils/diff-layout";
 import {
   INLINE_REVIEW_EDITOR_HEIGHT,
@@ -98,92 +112,42 @@ export function groupInlineReviewCommentsByTarget(
   return grouped;
 }
 
-export function useInlineReviewController(input: { reviewDraftKey: string }): InlineReviewActions {
+const reviewEditors = createReviewEditorScope({
+  saveComment: saveReviewDraftComment,
+  deleteComment: (input) => useReviewDraftStore.getState().deleteComment(input),
+});
+
+export function useInlineReviewController(input: {
+  reviewDraftKey: string;
+  presentation?: string;
+}): InlineReviewActions & {
+  sheetEditor: InlineReviewEditorState | null;
+  onChangeEditorBody: (body: string) => void;
+} {
+  const isCompact = useIsCompactFormFactor();
   const reviewComments = useReviewDraftComments(input.reviewDraftKey);
   const commentsByTarget = useMemo(
     () => groupInlineReviewCommentsByTarget(reviewComments),
     [reviewComments],
   );
-  const [editor, setEditor] = useState<InlineReviewEditorState | null>(null);
-  const addComment = useReviewDraftStore((state) => state.addComment);
-  const updateComment = useReviewDraftStore((state) => state.updateComment);
-  const deleteComment = useReviewDraftStore((state) => state.deleteComment);
-
-  useEffect(() => {
-    setEditor(null);
-  }, [input.reviewDraftKey]);
-
-  const handleStartComment = useCallback((target: ReviewableDiffTarget) => {
-    setEditor({ target, commentId: null, body: "" });
-  }, []);
-
-  const handleEditComment = useCallback(
-    (target: ReviewableDiffTarget, comment: ReviewDraftComment) => {
-      setEditor({ target, commentId: comment.id, body: comment.body });
-    },
-    [],
+  const model = useMemo(
+    () => reviewEditors.forDraft(input.reviewDraftKey, input.presentation ?? "diff"),
+    [input.reviewDraftKey, input.presentation],
   );
-
-  const handleCancelEditor = useCallback(() => {
-    setEditor(null);
-  }, []);
-
-  const handleSaveEditor = useCallback(
-    (body: string) => {
-      const trimmedBody = body.trim();
-      if (!editor || trimmedBody.length === 0) {
-        return;
-      }
-
-      if (editor.commentId) {
-        updateComment({
-          key: input.reviewDraftKey,
-          id: editor.commentId,
-          updates: { body: trimmedBody },
-        });
-      } else {
-        addComment({
-          key: input.reviewDraftKey,
-          comment: {
-            filePath: editor.target.filePath,
-            side: editor.target.side,
-            lineNumber: editor.target.lineNumber,
-            body: trimmedBody,
-          },
-        });
-      }
-      setEditor(null);
-    },
-    [addComment, editor, input.reviewDraftKey, updateComment],
-  );
-
-  const handleDeleteComment = useCallback(
-    (id: string) => {
-      deleteComment({ key: input.reviewDraftKey, id });
-      setEditor((current) => (current?.commentId === id ? null : current));
-    },
-    [deleteComment, input.reviewDraftKey],
-  );
-
-  return useMemo<InlineReviewActions>(
+  const editor = useSyncExternalStore(model.subscribe, model.getState, model.getState);
+  return useMemo(
     () => ({
       commentsByTarget,
-      editor,
-      onStartComment: handleStartComment,
-      onEditComment: handleEditComment,
-      onCancelEditor: handleCancelEditor,
-      onSaveEditor: handleSaveEditor,
-      onDeleteComment: handleDeleteComment,
+      editor: isCompact ? null : editor,
+      sheetEditor: isCompact ? editor : null,
+      onChangeEditorBody: model.setBody,
+      onStartComment: model.start,
+      onEditComment: model.edit,
+      onCancelEditor: model.cancel,
+      onSaveEditor: model.save,
+      onDeleteComment: model.delete,
     }),
-    [
-      commentsByTarget,
-      editor,
-      handleCancelEditor,
-      handleDeleteComment,
-      handleEditComment,
-      handleSaveEditor,
-      handleStartComment,
-    ],
+    [commentsByTarget, editor, isCompact, model],
   );
 }
 
@@ -321,7 +285,8 @@ export function InlineReviewThread({
   const editorElement = editor ? (
     <InlineReviewEditor
       key={editingCommentId ?? "new"}
-      initialBody={editor.body}
+      body={editor.body}
+      onChangeBody={reviewActions.onChangeEditorBody}
       onCancel={reviewActions.onCancelEditor}
       onSave={reviewActions.onSaveEditor}
       testID="inline-review-editor"
@@ -428,19 +393,20 @@ export function getInlineReviewThreadViewportStyle({
 }
 
 export function InlineReviewEditor({
-  initialBody,
+  body,
+  onChangeBody,
   onCancel,
   onSave,
   testID,
 }: {
-  initialBody: string;
+  body: string;
+  onChangeBody: (body: string) => void;
   onCancel: () => void;
   onSave: (body: string) => void;
   testID?: string;
 }) {
   const { t } = useTranslation();
   const inputRef = useRef<EditingTextInputHandle | null>(null);
-  const [body, setBody] = useState(initialBody);
   const [isFocused, setIsFocused] = useState(false);
   const trimmedBody = body.trim();
   const canSave = trimmedBody.length > 0;
@@ -506,7 +472,7 @@ export function InlineReviewEditor({
         placeholderTextColor={styles.placeholderColor.color}
         multiline
         initialValue={body}
-        onChangeText={setBody}
+        onChangeText={onChangeBody}
         onFocus={handleFocus}
         onBlur={handleBlur}
         style={inputStyle}

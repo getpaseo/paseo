@@ -1,3 +1,4 @@
+import { UsageSourceRegistry } from "../../../packages/server/src/server/plugins/usage-sources/index.js";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -411,4 +412,56 @@ test("session discovery isolates CODEX_HOME and excludes foreign routes", async 
   } finally {
     await rm(home, { recursive: true, force: true });
   }
+});
+
+test("#6155: real Codex and OpenCode stores share an account but keep agent failures separate", async () => {
+  await writeAuth("fixture-codex", "same-account");
+  const data = join(fixtureHome, "data");
+  await mkdir(join(data, "opencode"), { recursive: true });
+  await writeFile(
+    join(data, "opencode", "auth.json"),
+    JSON.stringify({
+      openai: { type: "oauth", access: "fixture-opencode", accountId: "same-account", expires: 0 },
+    }),
+  );
+  const env = { HOME: fixtureHome, CODEX_HOME: fixtureHome, XDG_DATA_HOME: data };
+  const lookup = { home: fixtureHome, env, platform: "linux" as const, now: () => 1_000 };
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: (id) => id === "agent",
+    usageSession: () => ({ provider: "codex", env, sessionKey: "launch" }),
+  });
+  registry.register({
+    id: "codex",
+    label: "Codex",
+    discover: (scope) => discover(scope, lookup),
+    fetch: (input) =>
+      fetchUsage(inputSchema.parse(input), async () => new Response(null, { status: 401 }), lookup),
+  });
+  const [host] = await registry.listReports();
+  expect(host?.loginErrors).toEqual([
+    {
+      harness: "Codex",
+      report: {
+        status: "unavailable",
+        problem: { kind: "rejected", status: 401, refreshedBy: "codex" },
+      },
+    },
+    {
+      harness: "OpenCode",
+      report: {
+        status: "unavailable",
+        problem: {
+          kind: "expired",
+          expiresAt: "1970-01-01T00:00:00.000Z",
+          refreshedBy: "opencode",
+        },
+      },
+    },
+  ]);
+  const [agent] = await registry.listReports({ agentId: "agent" });
+  expect(agent?.report).toEqual({
+    status: "unavailable",
+    problem: { kind: "rejected", status: 401, refreshedBy: "codex" },
+  });
+  expect(agent?.loginErrors).toEqual([host!.loginErrors![0]]);
 });

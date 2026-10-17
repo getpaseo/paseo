@@ -35,6 +35,7 @@ export function asAgentManager(stub: {
 }): SessionOptions["agentManager"] {
   return createStub<SessionOptions["agentManager"]>({
     listProviderSubagentActivity: () => [],
+    getRetiredInternalAgent: () => null,
     ...stub,
   });
 }
@@ -239,6 +240,7 @@ export function createProviderSnapshotManagerStub(): {
   const off = vi.fn();
   const destroy = vi.fn<ProviderSnapshotManager["destroy"]>();
   const stub = {
+    supportsConfigRequiredProvider: () => false,
     getSnapshot,
     refreshSnapshotForCwd,
     refreshSettingsSnapshot,

@@ -174,6 +174,7 @@ export function Button({
   ...props
 }: PropsWithChildren<
   Omit<PressableProps, "style"> & {
+    ref?: React.Ref<View>;
     variant?: ButtonVariant;
     size?: ButtonSize;
     leftIcon?: LeftIcon;

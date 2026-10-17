@@ -6,7 +6,7 @@ import {
   replaceReport,
   resolveUsageRefresh,
   resolveUsageHostId,
-  resolveUsageScreenHostId,
+  resolveUsageModalHostId,
   resolveUsageView,
   settleReports,
   upsertReport,
@@ -117,35 +117,35 @@ describe("resolveUsageHostId", () => {
   });
 });
 
-describe("resolveUsageScreenHostId", () => {
+describe("resolveUsageModalHostId", () => {
   it("shows the picked host while it stays connected, even one that cannot report usage", () => {
-    expect(resolveUsageScreenHostId({ pickedServerId: "old", activeServerId: "b", hosts })).toBe(
+    expect(resolveUsageModalHostId({ pickedServerId: "old", activeServerId: "b", hosts })).toBe(
       "old",
     );
-    expect(
-      resolveUsageScreenHostId({ pickedServerId: "offline", activeServerId: "b", hosts }),
-    ).toBe("b");
+    expect(resolveUsageModalHostId({ pickedServerId: "offline", activeServerId: "b", hosts })).toBe(
+      "b",
+    );
   });
 
   it("otherwise shows the host the sidebar row reads", () => {
     for (const pickedServerId of [null, "a", "offline"]) {
       for (const activeServerId of ["b", null, "old", "offline"]) {
         const choice = { pickedServerId, activeServerId, hosts };
-        expect(resolveUsageScreenHostId(choice)).toBe(resolveUsageHostId(choice));
+        expect(resolveUsageModalHostId(choice)).toBe(resolveUsageHostId(choice));
       }
     }
   });
 
-  it("shows the first connected host when none reports usage, so the screen says to update it", () => {
+  it("shows the first connected host when none reports usage, so the modal says to update it", () => {
     expect(
-      resolveUsageScreenHostId({
+      resolveUsageModalHostId({
         pickedServerId: null,
         activeServerId: null,
         hosts: hosts.slice(0, 2),
       }),
     ).toBe("old");
     expect(
-      resolveUsageScreenHostId({ pickedServerId: null, activeServerId: null, hosts: [] }),
+      resolveUsageModalHostId({ pickedServerId: null, activeServerId: null, hosts: [] }),
     ).toBeNull();
   });
 });
@@ -255,6 +255,22 @@ describe("settleReports", () => {
   it("keeps a report refreshed while the list streamed over its older copy in the list", () => {
     const refreshed = { ...alpha, planLabel: "Refreshed", fetchedAt: "2026-01-01T00:05:00.000Z" };
     expect(settleReports([refreshed, beta], [alpha, beta])).toEqual([refreshed, beta]);
+  });
+
+  it("keeps the displayed order when providers finish a refresh in reverse order", () => {
+    const refreshed = entry({ sourceId: "alpha", planLabel: "New" });
+    const streamed = upsertReport(upsertReport([alpha, beta], beta), refreshed);
+    expect(settleReports(streamed, [beta, refreshed])).toEqual([refreshed, beta]);
+  });
+
+  it("drops missing reports and appends new ones without moving surviving reports", () => {
+    const gamma = entry({ sourceId: "gamma" });
+    const delta = entry({ sourceId: "delta" });
+    expect(settleReports([alpha, beta, gamma], [delta, gamma, alpha])).toEqual([
+      alpha,
+      gamma,
+      delta,
+    ]);
   });
 
   it("takes the finished list as is when nothing was shown yet", () => {

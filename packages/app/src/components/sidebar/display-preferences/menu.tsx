@@ -359,6 +359,14 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
               </MenuSubTrigger>
             </>
           ) : null}
+          <MenuSeparator />
+          <MenuItem
+            selected={preferences.showBackground}
+            closeOnSelect={false}
+            onSelect={preferences.toggleBackground}
+          >
+            {t("sidebar.display.showBackground")}
+          </MenuItem>
         </MenuSurface>
       </MenuRoot>
       <WorkspaceLabelManagerModal visible={managerOpen} onClose={closeManager} />

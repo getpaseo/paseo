@@ -144,7 +144,8 @@ const FeatureVoiceModeSchema = z
       .object({
         provider: SpeechProviderIdSchema.optional(),
         model: z.string().min(1).optional(),
-        voice: z.enum(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]).optional(),
+        // Free-form: self-hosted OpenAI-compatible servers expose their own voice names.
+        voice: z.string().trim().min(1).optional(),
         speakerId: z.number().int().optional(),
         speed: z.number().optional(),
       })
@@ -237,7 +238,12 @@ export const PersistedConfigSchema = z
         listen: z.string().optional(),
         hostnames: z.union([z.literal(true), z.array(z.string())]).optional(),
         allowedHosts: z.union([z.literal(true), z.array(z.string())]).optional(),
-        trustedProxies: z.union([z.literal(true), z.array(z.string())]).optional(),
+        trustedProxies: z
+          .union([z.literal(true), z.array(z.string())])
+          .optional()
+          .describe(
+            'Express trusted proxy setting for X-Forwarded-* headers. Defaults to ["loopback"]. Use true only when the final trusted proxy overwrites client-supplied forwarded headers.',
+          ),
         mcp: z
           .object({
             enabled: z.boolean().optional(),
@@ -284,9 +290,22 @@ export const PersistedConfigSchema = z
             // COMPAT(serviceProxyEnabled): added 2026-06-02, remove after 2026-12-02.
             // Parsed only to suppress optional public/listen layers for old configs;
             // localhost service proxying remains always enabled.
-            enabled: z.boolean().optional(),
-            listen: z.string().optional(),
-            publicBaseUrl: z.url().optional(),
+            enabled: z
+              .boolean()
+              .optional()
+              .describe(
+                "Compatibility shim. false suppresses optional service proxy listen/public layers only; localhost proxying remains enabled.",
+              ),
+            listen: z
+              .string()
+              .optional()
+              .describe(
+                "Optional service-only listener address. Presence enables the standalone service proxy listener.",
+              ),
+            publicBaseUrl: z
+              .url()
+              .optional()
+              .describe("Optional public base URL for service host aliases."),
           })
           .strict()
           .optional(),
@@ -308,7 +327,6 @@ export const PersistedConfigSchema = z
 
     providers: ProvidersSchema.optional(),
     pluginRegistries: PluginRegistriesSchema.optional(),
-    pluginRegistryEnabled: z.boolean().optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
     worktrees: WorktreesConfigSchema.optional(),

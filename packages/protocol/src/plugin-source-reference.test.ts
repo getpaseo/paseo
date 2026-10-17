@@ -4,6 +4,35 @@ import { parsePluginSourceReference } from "./plugin-source-reference.js";
 
 describe("plugin source references", () => {
   it.each([
+    ".",
+    "..",
+    "./owner/slug",
+    "../owner/slug",
+    "/owner/slug",
+    "~/owner/slug",
+    "~",
+    "C:\\",
+    "C:/",
+    "D:\\plugins\\repository",
+    "D:/plugins/repository",
+    "\\\\server\\share",
+    "\\\\server\\share\\plugins\\review",
+    ".\\plugins\\review",
+    "..\\plugins\\review",
+  ])("recognizes the explicit directory %s by shape", (source) => {
+    expect(parsePluginSourceReference(source)).toEqual({
+      kind: "directory",
+      source,
+      pluginPath: undefined,
+    });
+    expect(parsePluginSourceReference(`${source}:plugins/review`)).toEqual({
+      kind: "directory",
+      source,
+      pluginPath: "plugins/review",
+    });
+  });
+
+  it.each([
     ["npm:review@1.2.0:nested", "npm:review@1.2.0", "nested"],
     ["npm:review@^1.2.0", "npm:review@^1.2.0", undefined],
     ["npm:@team/review@next:plugins/main", "npm:@team/review@next", "plugins/main"],
@@ -16,6 +45,7 @@ describe("plugin source references", () => {
     ["git:file:///repo:plugins/main", "git:file:///repo", "plugins/main"],
     ["plugins.example.com:8443/owner/slug", "plugins.example.com:8443/owner/slug", undefined],
     ["owner/repository", "owner/repository", undefined],
+    ["plugins/foo", "plugins/foo", undefined],
     ["owner/repository:plugins/review", "owner/repository", "plugins/review"],
     [
       "https://example.test:8443/owner/repository.git",
@@ -39,10 +69,8 @@ describe("plugin source references", () => {
       "file:///D:/plugins/repository",
       "plugins/review",
     ],
-    ["D:\\plugins\\repository", "D:\\plugins\\repository", undefined],
-    ["D:\\plugins\\repository:plugins/review", "D:\\plugins\\repository", "plugins/review"],
   ])("parses %s", (reference, source, pluginPath) => {
-    expect(parsePluginSourceReference(reference)).toEqual({ source, pluginPath });
+    expect(parsePluginSourceReference(reference)).toEqual({ kind: "managed", source, pluginPath });
   });
 });
 

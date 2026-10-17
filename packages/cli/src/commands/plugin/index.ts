@@ -1,9 +1,12 @@
+import path from "node:path";
+import { expandUserPath } from "../../classify.js";
 import { createInterface } from "node:readline/promises";
 import { reviewPluginUpdates, type UpdateOutcome } from "./update.js";
 import { Command } from "commander";
 import type { PluginListItem, PluginLogEntry } from "@getpaseo/protocol/messages";
 import {
   formatPluginSourceReference,
+  parsePluginSourceReference,
   formatPluginIdentity,
 } from "@getpaseo/protocol/plugin-source-reference";
 import type { CommandOptions, ListResult, OutputSchema, SingleResult } from "../../output/index.js";
@@ -125,7 +128,18 @@ export async function runPluginInstallCommand(
   process.stderr.write(
     "Trusting plugin code: server code and preparation commands run unsandboxed on the daemon host; client code runs inside Paseo. Dependencies and future updates are part of the codebase you trust.\n",
   );
-  const sourceReference = formatPluginSourceReference(source, options.path);
+  const reference = parsePluginSourceReference(source);
+  let resolvedSource = source;
+  if (reference.kind === "directory") {
+    const directory = expandUserPath(reference.source);
+    // An absolute path can target a daemon on a different operating system.
+    const absoluteDirectory =
+      path.posix.isAbsolute(directory) || path.win32.isAbsolute(directory)
+        ? directory
+        : path.resolve(directory);
+    resolvedSource = formatPluginSourceReference(absoluteDirectory, reference.pluginPath);
+  }
+  const sourceReference = formatPluginSourceReference(resolvedSource, options.path);
   const data = await withPluginSourceClient(options.daemonTarget, (client) =>
     client.installPluginSource({
       source: sourceReference,
@@ -215,10 +229,12 @@ export function createPluginCommand(): Command {
     plugin
       .command("install")
       .alias("add")
-      .description("Trust and install a plugin from a directory, Git repository, or npm package")
+      .description(
+        "Trust and install a plugin from a registry, directory, Git repository, or npm package",
+      )
       .argument(
         "<source>",
-        "Host directory, GitHub owner/repo, git: or npm: source, optionally followed by :plugin/path",
+        "Registry owner/slug or host/owner/slug, host directory, explicit git:owner/repo or Git URL, or npm: source",
       )
       .option("--id <id>", "Runtime plugin ID (defaults to paseo-plugin.json id)")
       .option("--ref <ref>", "Git branch, tag, or commit")

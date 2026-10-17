@@ -1,4 +1,6 @@
 import type { SessionMessageAssistant } from "@opencode/client";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { V2Timeline } from "./timeline.js";
 
@@ -54,3 +56,79 @@ test("a completed edit carries the replaced and replacement text", () => {
     },
   ]);
 });
+
+test("a tool's image output is shown as an image, not as base64 in the tool output", () => {
+  const png =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+  const screenshot = assistant([
+    {
+      type: "tool",
+      id: "call-screenshot",
+      name: "paseo_browser_screenshot",
+      executed: false,
+      state: {
+        status: "completed",
+        input: {},
+        content: [
+          { type: "text", text: "Captured browser screenshot (1x1)." },
+          { type: "file", uri: `data:image/png;base64,${png}`, mime: "image/png" },
+        ],
+        metadata: {},
+      },
+      time: { created: 2, ran: 2, completed: 2 },
+    },
+  ]);
+  const timeline = new V2Timeline();
+
+  const events = timeline.messages([screenshot]);
+
+  expect(JSON.stringify(events)).not.toContain(png);
+  expect(events.map((event) => event.type === "timeline" && event.item)).toMatchObject([
+    {
+      type: "tool_call",
+      name: "paseo_browser_screenshot",
+      status: "completed",
+      detail: { output: "Captured browser screenshot (1x1).\n[image]" },
+    },
+    {
+      type: "assistant_message",
+      text: expect.stringMatching(/^\n\n!\[Image\]\(file:\/\/.*paseo-attachments.*\.png\)\n\n$/),
+    },
+  ]);
+  expect(timeline.messages([screenshot])).toEqual([]);
+});
+
+test("a surrogate pair split across deltas streams back intact", () => {
+  const timeline = new V2Timeline();
+  const part = { assistantMessageID: "answer", type: "text" as const, ordinal: 0 };
+  timeline.startPart(part);
+  const chunks = ["a\uD83D", "\uDE00b"].map((delta) => {
+    const event = timeline.delta({ ...part, delta });
+    return event?.type === "timeline" && event.item.type === "assistant_message"
+      ? event.item.text
+      : null;
+  });
+  expect(chunks).toEqual(["a\uD83D", "\uDE00b"]);
+  expect(chunks.join("")).toBe("a😀b");
+});
+
+function retainedBytesAfterStreaming(mode: "delta" | "snapshot", chunks: number): number {
+  const fixture = fileURLToPath(
+    new URL("../test-utils/v2-streamed-text-memory.ts", import.meta.url),
+  );
+  const output = execFileSync(
+    process.execPath,
+    ["--expose-gc", "--import", "tsx", fixture, mode, String(chunks)],
+    { encoding: "utf8" },
+  );
+  return Number(output);
+}
+
+test.each(["delta", "snapshot"] as const)(
+  "a long %s-streamed part holds memory in proportion to its text",
+  (mode) => {
+    const chunks = 2000;
+    const textBytes = chunks * 64;
+    expect(retainedBytesAfterStreaming(mode, chunks)).toBeLessThan(textBytes * 32);
+  },
+);

@@ -683,7 +683,7 @@ test("discarding a staged rename restores its source path", async ({ page }) => 
 
   const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
   const renamedHeader = diffHeaderForPath(panel, "src/zz-renamed.ts");
-  await expect(renamedHeader).toHaveAccessibleName("src/zz-renamed.ts, +1, -0");
+  await expect(renamedHeader).toHaveAccessibleName("src/zz-renamed.ts, +0, -0");
   const renamedToggle = renamedHeader.getByTestId(/^diff-file-\d+-toggle$/);
   const toggleTestId = await renamedToggle.getAttribute("data-testid");
   expect(toggleTestId).not.toBeNull();

@@ -748,6 +748,7 @@ describe("WorkspaceReconciliationService", () => {
       cwd: missingWorkspace,
       kind: "directory",
       displayName: "orphan",
+      background: false,
       title: null,
       pinnedAt: null,
       branch: null,

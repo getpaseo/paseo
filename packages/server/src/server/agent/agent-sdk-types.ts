@@ -628,6 +628,11 @@ export interface AgentCreateSessionOptions {
    * Defaults to true. Providers that cannot honor false should no-op.
    */
   persistSession?: boolean;
+  /**
+   * Model ids added by provider configuration (`models` / `additionalModels`).
+   * Providers that validate against runtime-advertised models must accept these.
+   */
+  configuredModelIds?: readonly string[];
 }
 
 /** What a resumed session is for: driving the agent, or reading what it already did. */
@@ -637,6 +642,8 @@ export type AgentResumePurpose = "interactive" | "history";
 export interface AgentResumeSessionOptions {
   /** Defaults to interactive. History loading may be read-only for archived native sessions. */
   purpose?: AgentResumePurpose;
+  /** See AgentCreateSessionOptions.configuredModelIds. */
+  configuredModelIds?: readonly string[];
 }
 
 /**

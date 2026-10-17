@@ -244,3 +244,28 @@ async function observeScriptLifecycles(
   await subscription.ready;
   return lifecycles;
 }
+
+test.runIf(process.platform !== "win32")(
+  "a missing command fails creation without leaving a terminal listed",
+  async () => {
+    const workspaceId = await createWorkspace("Missing command");
+    await expect(
+      sdk.terminals.create({
+        workspaceId,
+        name: "Missing command",
+        command: "paseo-test-absent-terminal-command",
+      }),
+    ).rejects.toThrow("paseo-test-absent-terminal-command: command not found");
+    expect((await sdk.terminals.list({ workspaceId })).entries).toEqual([]);
+    const control = await sdk.terminals.create({
+      workspaceId,
+      command: process.execPath,
+      args: ["-e", "process.stdin.resume()"],
+    });
+    expect((await sdk.terminals.list({ workspaceId })).entries.map((entry) => entry.id)).toEqual([
+      control.id,
+    ]);
+    await control.kill();
+    expect((await sdk.terminals.list({ workspaceId })).entries).toEqual([]);
+  },
+);

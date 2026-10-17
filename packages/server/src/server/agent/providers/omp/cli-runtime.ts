@@ -15,6 +15,7 @@ import {
   type OmpRuntime,
   type OmpRuntimeLaunch,
   type OmpRuntimeSession,
+  type OmpPromptInput,
   type OmpStartSessionInput,
 } from "./runtime.js";
 import {
@@ -27,7 +28,7 @@ import {
   OmpModelsResultSchema,
   OmpPromptAckSchema,
   OmpRpcCommandSchema,
-  OmpRuntimeEventSchema,
+  parseOmpRuntimeEvent,
   OmpSessionStateSchema,
   OmpSessionStatsSchema,
   type OmpThinkingLevel,
@@ -121,9 +122,9 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     private readonly launchEnvironment: Record<string, string>,
   ) {
     process.onMessage((message) => {
-      const event = OmpRuntimeEventSchema.safeParse(message);
-      if (event.success) {
-        this.emit(event.data);
+      const event = parseOmpRuntimeEvent(message);
+      if (event) {
+        this.emit(event);
       }
     });
     process.onExit(({ error }) => {
@@ -142,14 +143,12 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     };
   }
 
-  async prompt(
-    message: string,
-    images?: Array<{ type: "image"; data: string; mimeType: string }>,
-  ): Promise<OmpPromptAck> {
+  async prompt({ message, images, streamingBehavior }: OmpPromptInput): Promise<OmpPromptAck> {
     const { id: requestId, promise } = this.process.startRequest({
       type: "prompt",
       message,
       ...(images?.length ? { images } : {}),
+      ...(streamingBehavior ? { streamingBehavior: streamingBehavior } : {}),
     });
     const ack = OmpPromptAckSchema.parse(await promise) ?? {};
     return { requestId, ...ack };
@@ -280,13 +279,6 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): Promise<void> {
     await this.request({ type: "steer", message, ...(images?.length ? { images } : {}) });
-  }
-
-  followUp(
-    message: string,
-    images?: Array<{ type: "image"; data: string; mimeType: string }>,
-  ): void {
-    this.process.send({ type: "follow_up", message, ...(images?.length ? { images } : {}) });
   }
 
   async handoff(customInstructions?: string): Promise<void> {

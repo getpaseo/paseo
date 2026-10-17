@@ -915,6 +915,7 @@ it("keeps an expired Keychain login without calling the network and prefers Keyc
     expect(accounts).toEqual([
       {
         key: expect.stringMatching(/^[a-f0-9]{64}$/),
+        harness: "Claude",
         input: {
           route: { store: "keychain", service: "Claude Code-credentials", account: "fixture" },
         },
@@ -960,7 +961,11 @@ it.each([401, 403])("a rejected profile HTTP %i keeps a locator-keyed account", 
   const api: typeof fetch = async () => new Response(null, { status });
   const accounts = await discover({ kind: "global" }, lookup, api);
   expect(accounts).toEqual([
-    { key: expect.stringMatching(/^[a-f0-9]{64}$/), input: credentialInput(lookup.claudeHome) },
+    {
+      key: expect.stringMatching(/^[a-f0-9]{64}$/),
+      harness: "Claude",
+      input: credentialInput(lookup.claudeHome),
+    },
   ]);
   let fetches = 0;
   expect(
@@ -992,7 +997,9 @@ it.each([
       return new Response(null, { status: 500 });
     };
     const accounts = await discover({ kind: "global" }, lookup, api);
-    expect(accounts).toEqual([{ key: hashAccountKey(JSON.stringify(input.route)), input }]);
+    expect(accounts).toEqual([
+      { key: hashAccountKey(JSON.stringify(input.route)), harness: "Claude", input },
+    ]);
     await expect(fetchUsage(accounts[0]!.input as UsageInput, api, lookup)).rejects.toThrow(error);
   },
 );
@@ -1071,7 +1078,12 @@ it("session discovery reads only its Claude home and excludes foreign sessions",
     const lookup = { platform: "linux" as const, home: "/unused-default-home", env: {} };
     const accounts = await discover(scope, lookup, api);
     expect(accounts).toEqual([
-      { key: "session-account.org", label: "session@example.test", input: credentialInput(home) },
+      {
+        key: "session-account.org",
+        label: "session@example.test",
+        harness: "Claude",
+        input: credentialInput(home),
+      },
     ]);
     await discover(scope, lookup, api);
     expect(calls).toEqual(["https://api.anthropic.com/api/oauth/profile"]);

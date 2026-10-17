@@ -3,6 +3,7 @@ import { type ReactNode, useMemo } from "react";
 import { type Author, authorAvatarUrl } from "./registry";
 
 const SIZE_CLASS = {
+  xs: "h-4 w-4 text-[8px]",
   sm: "h-5 w-5 text-[10px]",
   lg: "h-14 w-14 text-xl",
 } as const;
