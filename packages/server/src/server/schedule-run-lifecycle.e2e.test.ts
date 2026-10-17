@@ -364,3 +364,48 @@ test("update_schedule patches thinking, archive behavior, and isolation for the 
   expect(await activeAgentIds()).toContain(agentId);
   expect(existsSync(agent.cwd)).toBe(true);
 });
+
+async function inspectSchedule(scheduleId: string): Promise<ScheduleWithRuns> {
+  const response = await ctx.client.scheduleInspect({ id: scheduleId });
+  if (response.error || !response.schedule) {
+    throw new Error(response.error ?? "schedule/inspect returned no schedule");
+  }
+  return response.schedule;
+}
+
+test("archiving an agent pauses its schedules and unarchiving resumes them", async () => {
+  const cwd = makeTempDir("schedule-archived-target-");
+  const agent = await ctx.client.createAgent({
+    config: { ...getFullAccessConfig("codex"), cwd },
+  });
+  const cadence = { type: "every" as const, everyMs: 60_000 };
+  const target = { type: "agent" as const, agentId: agent.id };
+  const schedule = await createNewAgentSchedule({
+    prompt: "Say done.",
+    cadence,
+    target,
+    runOnCreate: false,
+  });
+  const userPaused = await createNewAgentSchedule({
+    prompt: "Say paused.",
+    cadence,
+    target,
+    runOnCreate: false,
+  });
+  await ctx.client.schedulePause({ id: userPaused.id });
+
+  await ctx.client.archiveAgent(agent.id);
+  await expect
+    .poll(async () => (await inspectSchedule(schedule.id)).status, { timeout: 10_000 })
+    .toBe("paused");
+  expect((await inspectSchedule(schedule.id)).pauseReason).toBe("agent_archived");
+
+  await ctx.client.refreshAgent(agent.id);
+  await expect
+    .poll(async () => (await inspectSchedule(schedule.id)).status, { timeout: 10_000 })
+    .toBe("active");
+  const resumed = await inspectSchedule(schedule.id);
+  expect(resumed.pauseReason).toBeNull();
+  expect(resumed.nextRunAt).not.toBeNull();
+  expect((await inspectSchedule(userPaused.id)).status).toBe("paused");
+});

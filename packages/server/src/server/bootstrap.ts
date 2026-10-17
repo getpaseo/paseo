@@ -1372,9 +1372,16 @@ export async function createPaseoDaemon(
   await scheduleService.start();
   agentManager.setAgentArchivedCallback(async (agentId) => {
     try {
-      await scheduleService.completeForAgent(agentId);
+      await scheduleService.pauseForArchivedAgent(agentId);
     } catch (error) {
-      logger.warn({ err: error, agentId }, "Failed to complete schedules for archived agent");
+      logger.warn({ err: error, agentId }, "Failed to pause schedules for archived agent");
+    }
+  });
+  agentManager.setAgentUnarchivedCallback(async (agentId) => {
+    try {
+      await scheduleService.resumeForUnarchivedAgent(agentId);
+    } catch (error) {
+      logger.warn({ err: error, agentId }, "Failed to resume schedules for unarchived agent");
     }
   });
   logger.info({ elapsed: elapsed() }, "Schedule service initialized");

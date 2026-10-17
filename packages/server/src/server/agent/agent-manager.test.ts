@@ -8537,6 +8537,86 @@ test("fires onAgentArchived for stored-only snapshot archives", async () => {
   expect(archivedIds).toEqual([storedOnly.id]);
 });
 
+test("fires onAgentUnarchived only when an archived agent is unarchived", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-unarchived-hook-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const unarchivedIds: string[] = [];
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  manager.setAgentUnarchivedCallback((agentId) => {
+    unarchivedIds.push(agentId);
+  });
+
+  const agent = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Restored" },
+    undefined,
+    { workspaceId: undefined },
+  );
+  await manager.closeAgent(agent.id);
+
+  expect(await manager.unarchiveSnapshot(agent.id)).toBe(false);
+  expect(unarchivedIds).toEqual([]);
+
+  await manager.archiveSnapshot(agent.id, new Date().toISOString());
+  expect(await manager.unarchiveSnapshot(agent.id)).toBe(true);
+  expect(unarchivedIds).toEqual([agent.id]);
+});
+
+test("an archive started during the unarchive callback waits for it to finish", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-unarchive-order-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const events: string[] = [];
+  let unarchiveStarted!: () => void;
+  const unarchiveCallbackStarted = new Promise<void>((resolve) => {
+    unarchiveStarted = resolve;
+  });
+  let finishUnarchive!: () => void;
+  const unarchiveCallbackFinish = new Promise<void>((resolve) => {
+    finishUnarchive = resolve;
+  });
+  manager.setAgentArchivedCallback(() => {
+    events.push("archive");
+  });
+
+  const agent = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Raced" },
+    undefined,
+    { workspaceId: undefined },
+  );
+  await manager.closeAgent(agent.id);
+  await manager.archiveSnapshot(agent.id, new Date().toISOString());
+  events.length = 0;
+
+  manager.setAgentUnarchivedCallback(async () => {
+    events.push("unarchive:start");
+    unarchiveStarted();
+    await unarchiveCallbackFinish;
+    events.push("unarchive:end");
+  });
+
+  const unarchiving = manager.unarchiveSnapshot(agent.id);
+  await unarchiveCallbackStarted;
+  const archiving = manager.archiveSnapshot(agent.id, new Date().toISOString());
+  // Give the archive a chance to run ahead; it must not finish before the
+  // unarchive callback does.
+  await Promise.race([archiving, new Promise((resolve) => setTimeout(resolve, 100))]);
+  finishUnarchive();
+  await Promise.all([unarchiving, archiving]);
+
+  // Otherwise the archive's pause can land before the unarchive's resume and
+  // be overwritten by it.
+  expect(events).toEqual(["unarchive:start", "unarchive:end", "archive"]);
+});
+
 test("native archive and restore release the loaded session writer", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-native-archive-writer-"));
   class WriterClient extends NativeArchiveRecordingClient {

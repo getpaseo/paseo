@@ -4,6 +4,10 @@ import { AgentProviderSchema } from "../provider-manifest.js";
 export const ScheduleStatusSchema = z.enum(["active", "paused", "completed"]);
 export type ScheduleStatus = z.infer<typeof ScheduleStatusSchema>;
 
+// Why the daemon paused a schedule on its own. A schedule the user paused has no reason.
+export const SchedulePauseReasonSchema = z.enum(["agent_archived"]);
+export type SchedulePauseReason = z.infer<typeof SchedulePauseReasonSchema>;
+
 export const ScheduleCadenceSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("every"),
@@ -67,6 +71,7 @@ export const StoredScheduleSchema = z.object({
   nextRunAt: z.string().nullable(),
   lastRunAt: z.string().nullable(),
   pausedAt: z.string().nullable(),
+  pauseReason: SchedulePauseReasonSchema.nullable().optional(),
   expiresAt: z.string().nullable(),
   maxRuns: z.number().int().positive().nullable(),
   runs: z.array(ScheduleRunSchema),
