@@ -2,6 +2,11 @@ import { TerminalFind, type TerminalPaneFindHandle } from "@/terminal/find";
 import type { TerminalFindResult } from "@/terminal/runtime/terminal-emulator-runtime";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useRetainedPanelActive } from "@/components/retained-panel";
+import {
+  hasActiveWebOverlay,
+  isWithinActiveWebOverlay,
+  subscribeWebOverlayChanges,
+} from "@/lib/overlay-root";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Clipboard from "expo-clipboard";
 import {
@@ -68,7 +73,7 @@ import {
   type TerminalResizeRequest,
 } from "./terminal-resize-debouncer";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { isNative } from "@/constants/platform";
+import { isNative, isWeb } from "@/constants/platform";
 import {
   applyTerminalRendererReadyChange,
   resolveTerminalStreamTarget,
@@ -377,19 +382,67 @@ export function TerminalPane({
   );
 
   useEffect(() => {
-    if (isMobile || !isPaneFocused || !terminalId) {
+    if (isMobile || !isPaneFocused || !isWorkspaceFocused || !terminalId) {
       lastAutoFocusKeyRef.current = null;
       return;
     }
-    if (!isWorkspaceFocused) {
+    if (rendererReadyStreamKey !== terminalStreamKey) {
       return;
     }
     const focusKey = `${scopeKey}:${terminalId}`;
-    if (lastAutoFocusKeyRef.current !== focusKey) {
-      lastAutoFocusKeyRef.current = focusKey;
+    if (lastAutoFocusKeyRef.current === focusKey) return;
+    function tryAutoFocus(): boolean {
+      if (isWeb) {
+        const active = document.activeElement;
+        const hasFocusedInput =
+          active instanceof HTMLElement &&
+          active.matches('input, textarea, [contenteditable="true"]') &&
+          !active.matches(".xterm-helper-textarea") &&
+          active.getClientRects().length > 0;
+        if (hasActiveWebOverlay() || hasFocusedInput) {
+          return false;
+        }
+      }
       requestTerminalFocus();
+      lastAutoFocusKeyRef.current = focusKey;
+      return true;
     }
-  }, [isMobile, isPaneFocused, isWorkspaceFocused, requestTerminalFocus, scopeKey, terminalId]);
+    if (tryAutoFocus() || !isWeb) return;
+
+    let retryFrame: number | null = null;
+    function stopRetrying(): void {
+      document.removeEventListener("focusout", scheduleRetry);
+      document.removeEventListener("focusin", handleFocusIn);
+      unsubscribeOverlayChanges();
+      if (retryFrame !== null) window.cancelAnimationFrame(retryFrame);
+    }
+    function handleFocusIn(event: FocusEvent): void {
+      // Moving within the overlay does not replace the deferred workspace focus owner.
+      if (!isWithinActiveWebOverlay(event.target)) stopRetrying();
+    }
+    function scheduleRetry(): void {
+      if (retryFrame !== null) return;
+      // Let blur, overlay teardown, and focus restoration settle before checking ownership.
+      retryFrame = window.requestAnimationFrame(() => {
+        retryFrame = null;
+        if (tryAutoFocus()) stopRetrying();
+      });
+    }
+    const unsubscribeOverlayChanges = subscribeWebOverlayChanges(scheduleRetry);
+    document.addEventListener("focusout", scheduleRetry);
+    // A new focus owner outside the overlay wins over deferred workspace autofocus.
+    document.addEventListener("focusin", handleFocusIn);
+    return stopRetrying;
+  }, [
+    isMobile,
+    isPaneFocused,
+    isWorkspaceFocused,
+    rendererReadyStreamKey,
+    requestTerminalFocus,
+    scopeKey,
+    terminalId,
+    terminalStreamKey,
+  ]);
 
   useEffect(() => {
     const canRequest = canRequestFocusClaim({

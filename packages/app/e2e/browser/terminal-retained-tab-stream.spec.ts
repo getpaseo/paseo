@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "../support/fixtures";
 import { TerminalE2EHarness } from "../support/helpers/terminal-dsl";
+import { openCommandCenter, closeCommandCenter } from "../support/helpers/command-center";
 
 interface AttachOverlayProbeWindow extends Window {
   __terminalAttachOverlaySeen?: boolean;
@@ -58,5 +59,88 @@ test.describe("retained terminal tab streams", () => {
     await page.waitForTimeout(100);
 
     expect(await terminalAttachOverlayWasSeen(page)).toBe(false);
+  });
+
+  test("workspace number shortcuts refocus a retained terminal", async ({ page }) => {
+    const first = await harness.createTerminal({ name: "focus-first" });
+    const other = await harness.createOtherWorkspace();
+    const second = await other.createTerminal({ name: "focus-second" });
+    await harness.openTerminal(page, { terminalId: first.id });
+    await other.openTerminal(page, { terminalId: second.id });
+    await other.expectTerminalFocused(page);
+    await harness.switchToWorkspaceByShortcut(page);
+    await harness.expectTerminalFocused(page);
+    await other.switchToWorkspaceByShortcut(page);
+    await other.expectTerminalFocused(page);
+    await other.typeCommandAndExpectOutput(page, {
+      terminalId: second.id,
+      command: "printf 'WORKSPACE_FOCUS_OK\\n'",
+      output: "WORKSPACE_FOCUS_OK",
+    });
+  });
+
+  test("closing an overlay after returning to a workspace refocuses its terminal", async ({
+    page,
+  }) => {
+    const first = await harness.createTerminal({ name: "overlay-first" });
+    const other = await harness.createOtherWorkspace();
+    const second = await other.createTerminal({ name: "overlay-second" });
+    await harness.openTerminal(page, { terminalId: first.id });
+    await other.openTerminal(page, { terminalId: second.id });
+    await harness.switchToWorkspaceByShortcut(page);
+    await harness.expectTerminalFocused(page);
+    await harness.rememberWorkspaceForHistoryReturn(page);
+    await other.switchToWorkspaceByShortcut(page);
+    const overlay = await openCommandCenter(page);
+    await harness.returnToWorkspaceThroughHistory(page);
+    await expect(overlay.getByTestId("command-center-input")).toBeFocused();
+    await closeCommandCenter(page);
+    await harness.expectTerminalFocused(page);
+    await harness.typeCommandAndExpectOutput(page, {
+      terminalId: first.id,
+      command: "printf 'OVERLAY_FOCUS_OK\\n'",
+      output: "OVERLAY_FOCUS_OK",
+    });
+  });
+
+  test("moving focus inside an overlay preserves deferred terminal focus", async ({ page }) => {
+    const first = await harness.createTerminal({ name: "overlay-move-first" });
+    const other = await harness.createOtherWorkspace();
+    const second = await other.createTerminal({ name: "overlay-move-second" });
+    await harness.openTerminal(page, { terminalId: first.id });
+    await other.openTerminal(page, { terminalId: second.id });
+    await harness.switchToWorkspaceByShortcut(page);
+    await harness.expectTerminalFocused(page);
+    await harness.rememberWorkspaceForHistoryReturn(page);
+    await other.switchToWorkspaceByShortcut(page);
+    await openCommandCenter(page);
+    await harness.returnToWorkspaceThroughHistory(page);
+    await harness.moveFocusWithinCommandCenter(page);
+    await closeCommandCenter(page);
+    await harness.expectTerminalFocused(page);
+    await harness.typeCommandAndExpectOutput(page, {
+      terminalId: first.id,
+      command: "printf 'OVERLAY_MOVE_FOCUS_OK\\n'",
+      output: "OVERLAY_MOVE_FOCUS_OK",
+    });
+  });
+
+  test("deferred terminal focus does not steal focus from a button", async ({ page }) => {
+    const first = await harness.createTerminal({ name: "button-first" });
+    const other = await harness.createOtherWorkspace();
+    const second = await other.createTerminal({ name: "button-second" });
+    await harness.openTerminal(page, { terminalId: first.id });
+    await other.openTerminal(page, { terminalId: second.id });
+    await harness.switchToWorkspaceByShortcut(page);
+    await harness.expectTerminalFocused(page);
+    await harness.rememberWorkspaceForHistoryReturn(page);
+    await other.switchToWorkspaceByShortcut(page);
+    const overlay = await openCommandCenter(page);
+    await harness.returnToWorkspaceThroughHistory(page);
+    await expect(overlay.getByTestId("command-center-input")).toBeFocused();
+    await harness.closeOverlayAndFocusButtonBeforeRetry(page);
+    await expect(page.getByTestId("sidebar-search")).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(overlay).toBeVisible();
   });
 });
