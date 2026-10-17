@@ -39,6 +39,13 @@ export interface PluginSessionOpenRequest {
   env: Record<string, string>;
 }
 
+export interface PluginSessionMaintenanceRequest extends Omit<
+  PluginSessionOpenRequest,
+  "reason" | "purpose"
+> {
+  operation: "archive" | "restore";
+}
+
 export type PluginTurnOutcome =
   | { kind: "completed" }
   | { kind: "failed"; error: { message: string; code?: string } }
@@ -68,6 +75,7 @@ export interface PluginLifecycleEvents {
 export interface PluginBeforeRequests {
   "agent.create": { config: AgentSessionConfig; env?: Record<string, string> };
   "agent.session_open": PluginSessionOpenRequest;
+  "agent.session_maintenance": PluginSessionMaintenanceRequest;
   "workspace.create": Omit<WorkspaceCreateRequest, "type" | "requestId">;
 }
 

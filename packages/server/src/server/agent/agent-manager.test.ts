@@ -8537,6 +8537,96 @@ test("fires onAgentArchived for stored-only snapshot archives", async () => {
   expect(archivedIds).toEqual([storedOnly.id]);
 });
 
+test.each(["live", "closed"])(
+  "native archive hook failure is best-effort and restore is retryable for a %s agent",
+  async (state) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-native-hook-failure-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new NativeArchiveRecordingClient();
+    let rejectMaintenance = true;
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      pluginLifecycle: {
+        emit: () => {},
+        before: async (_name, request) => {
+          if (_name === "agent.session_maintenance" && rejectMaintenance) {
+            throw new Error("launch context unavailable");
+          }
+          return request;
+        },
+      },
+    });
+    try {
+      const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      if (state === "closed") await manager.closeAgent(agent.id);
+      const archivedAt = new Date().toISOString();
+      await manager.archiveSnapshot(agent.id, archivedAt);
+      expect(client.archivedHandles).toEqual([]);
+      expect((await storage.get(agent.id))?.archivedAt).toBe(archivedAt);
+      expect(manager.getAgent(agent.id)).toBeNull();
+      await expect(manager.unarchiveSnapshot(agent.id)).rejects.toThrow(
+        "launch context unavailable",
+      );
+      expect(client.unarchivedHandles).toEqual([]);
+      expect((await storage.get(agent.id))?.archivedAt).toBe(archivedAt);
+      rejectMaintenance = false;
+      await expect(manager.unarchiveSnapshot(agent.id)).resolves.toBe(true);
+      expect(client.unarchivedHandles).toHaveLength(1);
+      expect((await storage.get(agent.id))?.archivedAt).toBeNull();
+    } finally {
+      for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
+      await storage.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test("native maintenance does not reopen resident-session plugin resources", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-native-hook-resources-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new NativeArchiveRecordingClient();
+  const residents = new Set<string>();
+  const openings: unknown[] = [];
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    pluginLifecycle: {
+      emit: (name, event) => {
+        if (name === "agent.closed" && "agent" in event) residents.delete(event.agent.id);
+      },
+      before: async (name, request) => {
+        if (name === "agent.session_open" && "reason" in request) {
+          openings.push({ reason: request.reason, purpose: request.purpose });
+          residents.add(request.agentId);
+        }
+        return request;
+      },
+    },
+  });
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    expect([...residents]).toEqual([agent.id]);
+    await manager.archiveAgent(agent.id);
+    expect([...residents]).toEqual([]);
+    await manager.unarchiveSnapshot(agent.id);
+    expect([...residents]).toEqual([]);
+    expect(openings).toEqual([{ reason: "create", purpose: "interactive" }]);
+    expect(client.archivedHandles).toHaveLength(1);
+    expect(client.unarchivedHandles).toHaveLength(1);
+  } finally {
+    for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("native archive and restore release the loaded session writer", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-native-archive-writer-"));
   class WriterClient extends NativeArchiveRecordingClient {

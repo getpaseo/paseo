@@ -7468,22 +7468,31 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
   }
 
-  async archiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
-    await this.updateNativeThreadArchiveState(handle, "archive");
+  async archiveNativeSession(
+    handle: AgentPersistenceHandle,
+    launchContext?: AgentLaunchContext,
+  ): Promise<void> {
+    await this.updateNativeThreadArchiveState(handle, "archive", launchContext);
   }
 
-  async unarchiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
-    await this.updateNativeThreadArchiveState(handle, "restore");
+  async unarchiveNativeSession(
+    handle: AgentPersistenceHandle,
+    launchContext?: AgentLaunchContext,
+  ): Promise<void> {
+    await this.updateNativeThreadArchiveState(handle, "restore", launchContext);
   }
 
   private async updateNativeThreadArchiveState(
     handle: AgentPersistenceHandle,
     state: "archive" | "restore",
+    launchContext?: AgentLaunchContext,
   ): Promise<void> {
     const threadId = handle.nativeHandle ?? handle.sessionId;
     if (!threadId) return;
 
-    const child = await this.spawnAppServer();
+    const child = await this.spawnAppServer(launchContext?.env, {
+      agentId: launchContext?.agentId,
+    });
     const client = new CodexAppServerClient(child, this.logger);
 
     try {

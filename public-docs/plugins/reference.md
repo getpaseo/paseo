@@ -617,6 +617,35 @@ server.before("agent.session_open", ({ request }) => {
 This runs on create, resume, refresh, and import. To inject only on creation, set `env` in an
 `agent.create` callback instead.
 
+### Supply environment for native archive and restore
+
+Register `agent.session_maintenance` when a provider wrapper needs per-agent environment to archive
+or restore its native session. It receives `agentId`, `workspaceId`, `provider`, `cwd`, `operation`
+(`archive` or `restore`), and `env`. Only `env` can change.
+
+```ts
+server.before("agent.session_maintenance", ({ request }) => ({
+  ...request,
+  env: { ...request.env, COMPANY_ENV: "development" },
+}));
+```
+
+Resolve the environment from durable agent identity on every call, including after daemon restart.
+Hook-returned environment variables are not persisted. You can share environment-resolution code
+with `agent.session_open`, but keep resident-session setup out of the maintenance callback. Native
+maintenance does not open a resident session or emit a matching `agent.closed` event. Release any
+resources used by the callback before returning.
+
+Existing `agent.session_open` callbacks keep their reasons and purposes and do not run for native
+maintenance. Plugins must register the maintenance callback explicitly. It runs only when the
+provider implements the requested native archive operation. Discovery probes have no agent and do
+not run either hook; wrappers must support those probes without per-agent context.
+
+A maintenance-hook failure during archive is logged and Paseo still archives the agent. A failure
+during restore rejects the operation and leaves the agent archived so you can retry. As with other
+before hooks, do not call lifecycle mutations for the same agent from this callback: the operation
+is already waiting for the callback to finish.
+
 ### Choose workspace isolation
 
 ```ts
@@ -775,11 +804,12 @@ type PluginTurnOutcome =
 
 ### Before hooks
 
-| Name                 | Request fields                                                          | Editable                                |
-| -------------------- | ----------------------------------------------------------------------- | --------------------------------------- |
-| `agent.create`       | `config`, optional `env`                                                | Public agent config except `cwd`; `env` |
-| `agent.session_open` | `agentId`, `workspaceId`, `provider`, `cwd`, `reason`, `purpose`, `env` | Only `env`                              |
-| `workspace.create`   | `source`, optional `title`, `firstAgentContext`                         | Entire explicit creation request        |
+| Name                        | Request fields                                                          | Editable                                |
+| --------------------------- | ----------------------------------------------------------------------- | --------------------------------------- |
+| `agent.create`              | `config`, optional `env`                                                | Public agent config except `cwd`; `env` |
+| `agent.session_open`        | `agentId`, `workspaceId`, `provider`, `cwd`, `reason`, `purpose`, `env` | Only `env`                              |
+| `agent.session_maintenance` | `agentId`, `workspaceId`, `provider`, `cwd`, `operation`, `env`         | Only `env`                              |
+| `workspace.create`          | `source`, optional `title`, `firstAgentContext`                         | Entire explicit creation request        |
 
 **`agent.create.config`** uses `AgentSessionConfig`:
 
@@ -854,7 +884,7 @@ saved; environment overrides are not persisted with it.
 
 | Plugin                                                                                                 | Includes                                                                     |
 | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| [lifecycle-logger](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-logger)       | All eleven hooks; JSON logs with environment values redacted                 |
+| [lifecycle-logger](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-logger)       | Session and workspace lifecycle logs with environment values redacted        |
 | [lifecycle-actions](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-actions)     | Follow-ups, permissions, environment, provider switching, worktree selection |
 | [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) | MCP injection and Codex sandbox/approval options                             |
 

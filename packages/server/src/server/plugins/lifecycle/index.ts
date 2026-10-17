@@ -26,19 +26,32 @@ export const lifecycleEventNames = [
   "workspace.created",
   "workspace.archived",
 ] as const;
-export const beforeHookNames = ["agent.create", "agent.session_open", "workspace.create"] as const;
+export const beforeHookNames = [
+  "agent.create",
+  "agent.session_open",
+  "agent.session_maintenance",
+  "workspace.create",
+] as const;
+
+const sessionContextSchema = z.object({
+  agentId: z.string(),
+  workspaceId: z.string().nullable(),
+  provider: z.string(),
+  cwd: z.string(),
+  env: z.record(z.string(), z.string()),
+});
 
 const beforeSchemas = {
   "agent.create": CreateAgentRequestMessageSchema.pick({ config: true, env: true }).strict(),
-  "agent.session_open": z
-    .object({
-      agentId: z.string(),
-      workspaceId: z.string().nullable(),
-      provider: z.string(),
-      cwd: z.string(),
+  "agent.session_open": sessionContextSchema
+    .extend({
       reason: z.enum(["create", "resume", "refresh", "import"]),
       purpose: z.enum(["interactive", "history"]),
-      env: z.record(z.string(), z.string()),
+    })
+    .strict(),
+  "agent.session_maintenance": sessionContextSchema
+    .extend({
+      operation: z.enum(["archive", "restore"]),
     })
     .strict(),
   "workspace.create": WorkspaceCreateRequestSchema.omit({ type: true, requestId: true }).strict(),
@@ -155,6 +168,19 @@ export function validateBeforeResult<Name extends keyof PluginBeforeRequests>(
     const next = beforeSchemas["agent.create"].parse(result);
     if (previous.config.cwd !== next.config.cwd) {
       throw new Error("agent.create hooks cannot change the workspace directory");
+    }
+  }
+  if (name === "agent.session_maintenance") {
+    const previous = beforeSchemas["agent.session_maintenance"].parse(input);
+    const next = beforeSchemas["agent.session_maintenance"].parse(result);
+    if (
+      previous.agentId !== next.agentId ||
+      previous.workspaceId !== next.workspaceId ||
+      previous.provider !== next.provider ||
+      previous.cwd !== next.cwd ||
+      previous.operation !== next.operation
+    ) {
+      throw new Error("agent.session_maintenance hooks can only change env");
     }
   }
   return result;

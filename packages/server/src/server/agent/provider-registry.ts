@@ -601,10 +601,12 @@ function wrapClientProvider(
         }
       : undefined,
     archiveNativeSession: archiveNativeSession
-      ? async (handle) => await archiveNativeSession({ ...handle, provider: inner.provider })
+      ? async (handle, launchContext) =>
+          await archiveNativeSession({ ...handle, provider: inner.provider }, launchContext)
       : undefined,
     unarchiveNativeSession: unarchiveNativeSession
-      ? async (handle) => await unarchiveNativeSession({ ...handle, provider: inner.provider })
+      ? async (handle, launchContext) =>
+          await unarchiveNativeSession({ ...handle, provider: inner.provider }, launchContext)
       : undefined,
     getCatalogCacheKey: inner.getCatalogCacheKey?.bind(inner),
     isAvailable: (signal, options) => inner.isAvailable(signal, options),
