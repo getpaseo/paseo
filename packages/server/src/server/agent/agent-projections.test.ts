@@ -139,6 +139,12 @@ function createFeature(overrides: Partial<AgentFeature> = {}): AgentFeature {
 }
 
 describe("toStoredAgentRecord", () => {
+  it("does not write invalid usage or invent usage for older records", () => {
+    const record = toStoredAgentRecord(createManagedAgent({ lastUsage: { inputTokens: NaN } }));
+    expect(record.lastUsage).toBeUndefined();
+    expect(buildStoredAgentPayload(record, ["claude"]).lastUsage).toBeUndefined();
+  });
+
   it("captures lifecycle metadata, config, and persistence", () => {
     const agent = createManagedAgent({
       currentModeId: "focus",
