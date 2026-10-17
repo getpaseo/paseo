@@ -506,6 +506,41 @@ Array of workspace records. A workspace is a specific working directory within a
 
 > **Opaque-ID invariant:** `workspaceId` is opaque identity, never a filesystem path. Filesystem and git operations take `cwd`/`workspaceDirectory` only — never the id. A compatibility-only first-materialization bootstrap still groups pre-registry agent records by path and Git remote so existing installs retain their legacy records. That grouping never runs against a live registry, and its keys are not runtime project or workspace identity.
 
+### Shared ordering
+
+**Path:** `$PASEO_HOME/projects/ui-order.json`
+
+Ordering records and complete device target inventories share one atomic write boundary.
+Preferences are partitioned by the admitted principal; a device preference namespace is
+that principal plus the hello `clientId`. This is a same-authority preference identifier,
+not a credential. Clients sharing a principal can collide on a `clientId` and overwrite
+its inventory. Do not use it for access control or describe forgetting preferences as
+revoking login.
+
+Disconnect never deletes an inventory, and there is no TTL. `ui.order.devices.forget`
+forgets a device inside the requesting principal with the existing ordering write
+permission. Its durable epoch fences previously admitted physical sources, including
+late target and order writes. A new connection with that `clientId` can register again.
+No device-management UI or pairing authority is implied by this operation.
+
+Only the first explicit gesture can initialize a scope at revision zero. Its seed is the
+complete dragged pane order for tabs, or the moved host's visible workspace/pinned order.
+Snapshots, cache hydration, and other panes never seed it. Initialization uses the same
+revision CAS as later writes: the losing initializer discards its seed and replays only
+its precise move on the winner's record. Later gestures never replace the whole order.
+
+The app waits for this connection's authoritative workspace refresh before replaying pending
+moves. Cache hydration is not membership authority. An unpinned or archived moved item is
+cancelled with visible feedback; removed anchors are discarded while remaining valid moves
+stay queued. Read subscriptions require `workspace.read`; inventory and gesture writes use
+the server-advertised `workspace.manage` permission.
+
+Inventory replacement and sorting use independent revisions in the same serialized
+owner. Cleaning a closed target checks the union of the principal's inventories inside
+that commit, so an offline device keeps its targets alive. Scope pruning reads the live
+registry inside the ordering queue. The wire's 4096-key scope limit still fails explicitly
+when that many targets remain held; history is never truncated to fit it.
+
 ### Workspace label catalog
 
 **Path:** `$PASEO_HOME/projects/workspace-labels.json`

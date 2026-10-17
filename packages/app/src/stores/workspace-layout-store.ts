@@ -1,3 +1,5 @@
+import type { WorkspacePaneTabOrderInput, WorkspaceTabOrderInput } from "@/workspace-tabs/model";
+import { performOrderGesture } from "@/ordering/intents";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useState } from "react";
 import { create } from "zustand";
@@ -177,7 +179,7 @@ interface WorkspaceLayoutStore {
   setTabState: (workspaceKey: string, tabId: string, state: JsonValue | undefined) => void;
   convertDraftToAgent: (workspaceKey: string, tabId: string, agentId: string) => string | null;
   reconcileTabs: (workspaceKey: string, snapshot: WorkspaceTabSnapshot) => void;
-  reorderTabs: (workspaceKey: string, tabIds: string[]) => void;
+  reorderTabs: (input: WorkspaceTabOrderInput) => void;
   getWorkspaceTabs: (workspaceKey: string) => WorkspaceTab[];
   splitPane: (
     workspaceKey: string,
@@ -206,7 +208,7 @@ interface WorkspaceLayoutStore {
   restorePaneFocus: (workspaceKey: string, token: string) => void;
   resizeSplit: (workspaceKey: string, groupId: string, sizes: number[]) => void;
   resizeExplorerSidebar: (workspaceKey: string, width: number) => void;
-  reorderTabsInPane: (workspaceKey: string, paneId: string, tabIds: string[]) => void;
+  reorderTabsInPane: (input: WorkspacePaneTabOrderInput) => void;
   unpinAgent: (workspaceKey: string, agentId: string) => void;
   hideAgent: (workspaceKey: string, agentId: string) => void;
   unhideAgent: (workspaceKey: string, agentId: string) => void;
@@ -1574,28 +1576,42 @@ export function createWorkspaceLayoutStore(
             };
           });
         },
-        reorderTabs: (workspaceKey, tabIds) => {
+        reorderTabs: ({ workspaceKey, tabIds, movedTabId }) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
           if (!normalizedWorkspaceKey) {
             return;
           }
 
-          set((state) => {
-            const nextLayout = reorderFocusedPaneTabsInLayout({
-              layout: getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey),
-              tabIds,
-            });
-            if (!nextLayout) {
-              return state;
-            }
+          const paneId = getWorkspaceLayout(
+            get().layoutByWorkspace,
+            normalizedWorkspaceKey,
+          ).focusedPaneId;
+          if (paneId === null) return;
+          performOrderGesture(
+            {
+              kind: "tabs",
+              workspaceKey: normalizedWorkspaceKey,
+              paneId,
+              movedTabId,
+            },
+            () =>
+              set((state) => {
+                const nextLayout = reorderFocusedPaneTabsInLayout({
+                  layout: getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey),
+                  tabIds,
+                });
+                if (!nextLayout) {
+                  return state;
+                }
 
-            return {
-              layoutByWorkspace: {
-                ...state.layoutByWorkspace,
-                [normalizedWorkspaceKey]: nextLayout,
-              },
-            };
-          });
+                return {
+                  layoutByWorkspace: {
+                    ...state.layoutByWorkspace,
+                    [normalizedWorkspaceKey]: nextLayout,
+                  },
+                };
+              }),
+          );
         },
         getWorkspaceTabs: (workspaceKey) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
@@ -1949,31 +1965,40 @@ export function createWorkspaceLayoutStore(
             },
           }));
         },
-        reorderTabsInPane: (workspaceKey, paneId, tabIds) => {
+        reorderTabsInPane: ({ workspaceKey, paneId, tabIds, movedTabId }) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
           const normalizedPaneId = trimNonEmpty(paneId);
           if (!normalizedWorkspaceKey || !normalizedPaneId) {
             return;
           }
 
-          set((state) => {
-            const nextLayout = reorderPaneTabsInLayout({
-              layout: getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey),
+          performOrderGesture(
+            {
+              kind: "tabs",
+              workspaceKey: normalizedWorkspaceKey,
               paneId: normalizedPaneId,
-              tabIds,
-            });
-            if (!nextLayout) {
-              return state;
-            }
+              movedTabId,
+            },
+            () =>
+              set((state) => {
+                const nextLayout = reorderPaneTabsInLayout({
+                  layout: getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey),
+                  paneId: normalizedPaneId,
+                  tabIds,
+                });
+                if (!nextLayout) {
+                  return state;
+                }
 
-            return {
-              ...withoutFocusRestoration(state, normalizedWorkspaceKey),
-              layoutByWorkspace: {
-                ...state.layoutByWorkspace,
-                [normalizedWorkspaceKey]: nextLayout,
-              },
-            };
-          });
+                return {
+                  ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+                  layoutByWorkspace: {
+                    ...state.layoutByWorkspace,
+                    [normalizedWorkspaceKey]: nextLayout,
+                  },
+                };
+              }),
+          );
         },
         unpinAgent: (workspaceKey, agentId) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);

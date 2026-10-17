@@ -1,9 +1,22 @@
+import { performOrderGesture } from "@/ordering/intents";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { z } from "zod";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 
+export interface SidebarOrderGestureOptions {
+  userInitiated: true;
+  movedKey: string;
+}
+
+export interface SetPinnedWorkspaceOrderInput {
+  keys: string[];
+  gesture?: SidebarOrderGestureOptions;
+}
+export interface SetWorkspaceOrderInput extends SetPinnedWorkspaceOrderInput {
+  projectViewKey: string;
+}
 interface SidebarOrderStoreState {
   projectOrder: string[];
   pinnedWorkspaceOrder: string[];
@@ -11,9 +24,9 @@ interface SidebarOrderStoreState {
   getProjectOrder: () => string[];
   setProjectOrder: (keys: string[]) => void;
   getPinnedWorkspaceOrder: () => string[];
-  setPinnedWorkspaceOrder: (keys: string[]) => void;
+  setPinnedWorkspaceOrder: (input: SetPinnedWorkspaceOrderInput) => void;
   getWorkspaceOrder: (projectViewKey: string) => string[];
-  setWorkspaceOrder: (projectViewKey: string, keys: string[]) => void;
+  setWorkspaceOrder: (input: SetWorkspaceOrderInput) => void;
 }
 
 interface SidebarOrderPersistedState {
@@ -161,21 +174,45 @@ export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
         set({ projectOrder: dedupeKeys(keys) });
       },
       getPinnedWorkspaceOrder: () => get().pinnedWorkspaceOrder,
-      setPinnedWorkspaceOrder: (keys) => {
-        set({ pinnedWorkspaceOrder: dedupeKeys(keys) });
+      setPinnedWorkspaceOrder: ({ keys, gesture: options }) => {
+        const update = () => set({ pinnedWorkspaceOrder: dedupeKeys(keys) });
+        if (options?.userInitiated)
+          performOrderGesture(
+            {
+              kind: "pinned",
+              moved: options.movedKey,
+              before: get().pinnedWorkspaceOrder,
+              after: keys,
+            },
+            update,
+          );
+        else update();
       },
       getWorkspaceOrder: (projectViewKey) => {
         if (!projectViewKey.trim()) return [];
         return get().workspaceOrderByProject[projectViewKey] ?? [];
       },
-      setWorkspaceOrder: (projectViewKey, keys) => {
+      setWorkspaceOrder: ({ projectViewKey, keys, gesture: options }) => {
         if (!projectViewKey.trim()) return;
-        set((state) => ({
-          workspaceOrderByProject: {
-            ...state.workspaceOrderByProject,
-            [projectViewKey]: dedupeKeys(keys),
-          },
-        }));
+        const update = () =>
+          set((state) => ({
+            workspaceOrderByProject: {
+              ...state.workspaceOrderByProject,
+              [projectViewKey]: dedupeKeys(keys),
+            },
+          }));
+        if (options?.userInitiated)
+          performOrderGesture(
+            {
+              kind: "workspaces",
+              projectViewKey,
+              moved: options.movedKey,
+              before: get().getWorkspaceOrder(projectViewKey),
+              after: keys,
+            },
+            update,
+          );
+        else update();
       },
     }),
     {

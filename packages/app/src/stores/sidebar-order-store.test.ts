@@ -57,7 +57,9 @@ describe("sidebar order keys that end in whitespace", () => {
   });
 
   it("scopes a workspace order under the project key the sidebar indexes by", () => {
-    useSidebarOrderStore.getState().setWorkspaceOrder(PROJECT_KEY, ["srv-1:main"]);
+    useSidebarOrderStore
+      .getState()
+      .setWorkspaceOrder({ projectViewKey: PROJECT_KEY, keys: ["srv-1:main"] });
 
     // use-sidebar-workspaces-list reads workspaceOrderByProject by view key
     // directly, so the scope has to be stored under that same key.

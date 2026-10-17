@@ -1,3 +1,4 @@
+import { sharedOrdering } from "@/ordering";
 import type { OwnedSubscription } from "@getpaseo/client";
 import type {
   DaemonClient,
@@ -156,6 +157,7 @@ export class DirectorySync {
   private cacheAccepted = false;
   private revision = 0;
   private workspaceRevision = 0;
+  private orderingDirectoryReady = false;
   private readonly routeDemandIds = new Set<string>();
   private readonly fullDemandSources = new Set<object>();
   private readonly scriptStatusDemand = new Map<object, string>();
@@ -193,6 +195,8 @@ export class DirectorySync {
     this.releaseSubscriptions();
     this.releaseScriptStatusEvents();
     workspaceLabels.disconnect(this.serverId);
+    sharedOrdering.disconnect(this.serverId);
+    this.orderingDirectoryReady = false;
     this.connection = connection;
     this.abortPendingSessionWaits();
     if (!connection.client || connection.status !== "online") return true;
@@ -259,6 +263,7 @@ export class DirectorySync {
     this.fullDemandSources.clear();
     this.routeDemandIds.clear();
     workspaceLabels.disconnect(this.serverId);
+    sharedOrdering.disconnect(this.serverId);
   }
 
   private releaseSubscriptions(): void {
@@ -651,11 +656,19 @@ export class DirectorySync {
   async connectWorkspaceLabels(): Promise<void> {
     const { client } = this.requireOnline();
     const serverInfo = client.getLastServerInfoMessage();
-    await workspaceLabels.connect({
-      serverId: this.serverId,
-      client,
-      supportsWorkspaceLabels: serverInfo?.features?.workspaceLabels === true,
-    });
+    await Promise.all([
+      sharedOrdering.connect({
+        serverId: this.serverId,
+        client,
+        supported: serverInfo?.features?.sharedOrderingTargets === true,
+        directoryReady: this.orderingDirectoryReady,
+      }),
+      workspaceLabels.connect({
+        serverId: this.serverId,
+        client,
+        supportsWorkspaceLabels: serverInfo?.features?.workspaceLabels === true,
+      }),
+    ]);
   }
 
   acceptWorkspaces(workspaces: readonly WorkspaceDescriptor[]): void {
@@ -858,6 +871,8 @@ export class DirectorySync {
       if (mutation.kind === "project") projectIds.add(mutation.id);
     }
     this.persistWorkspaceChanges(previous, workspaceIds, projectIds);
+    this.orderingDirectoryReady = true;
+    sharedOrdering.directoryReady(this.serverId);
     for (const [entity, cursor] of Object.entries(completion.snapshot.syncCursors ?? {})) {
       if (cursor) this.writeCursor(entity as "projects" | "workspaces", cursor);
     }

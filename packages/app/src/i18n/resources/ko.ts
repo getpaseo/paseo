@@ -2,6 +2,14 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
+  sharedOrdering: {
+    permissionLost: "이 호스트는 이제 읽기 전용입니다. 대기 중인 순서 변경을 취소했습니다.",
+    removed: "대기 중인 순서에서 사용할 수 없는 항목을 제거했습니다.",
+    unsupported: "기기 간 워크스페이스와 탭 순서를 동기화하려면 이 호스트를 업데이트하세요.",
+    failed: "순서가 동기화 대기 중입니다. 다시 연결하거나 항목을 이동하여 재시도하세요.",
+    conflict:
+      "변경 충돌로 순서가 동기화 대기 중입니다. 다시 연결하거나 항목을 이동하여 재시도하세요.",
+  },
   paneFind: {
     connectionFailure: "이 채팅을 검색할 수 없습니다. 호스트 연결을 확인하고 다시 시도하세요.",
     historyChangedFailure: "검색 중에 채팅이 변경되었습니다. 다시 검색하세요.",
