@@ -5,6 +5,7 @@ import {
   resolveDesktopAppContentMinimum,
   resolveDesktopSidebarVisibility,
   resolveDesktopSidebarWidth,
+  resolveWindowSidebarToggleTop,
 } from "@/components/desktop-sidebar-layout";
 
 describe("desktop sidebar layout", () => {
@@ -99,5 +100,25 @@ describe("desktop sidebar layout", () => {
         viewportWidth: 751,
       }),
     ).toBe(true);
+  });
+
+  it("centers the window sidebar toggle on the traffic lights", () => {
+    expect(
+      resolveWindowSidebarToggleTop({ controlsCenterY: 17, containerHeight: 36, buttonHeight: 26 }),
+    ).toBe(-1);
+    expect(
+      resolveWindowSidebarToggleTop({ controlsCenterY: 20, containerHeight: 36, buttonHeight: 26 }),
+    ).toBe(2);
+  });
+
+  it("keeps the window sidebar toggle inside the window when the page is zoomed in", () => {
+    const zoomedInCenterY = 17 / 1.728;
+    expect(
+      resolveWindowSidebarToggleTop({
+        controlsCenterY: zoomedInCenterY,
+        containerHeight: 36,
+        buttonHeight: 26,
+      }),
+    ).toBe(-5);
   });
 });

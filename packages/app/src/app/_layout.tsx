@@ -46,6 +46,7 @@ import { ProviderSettingsHost } from "@/components/provider-settings-host";
 import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
 import { WorkspaceShortcutTargetsSubscriber } from "@/components/workspace-shortcut-targets-subscriber";
 import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
+import { HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
 import { HostChooserModal, useHostChooser } from "@/hosts/host-chooser";
 import { HostConfirmationSheet } from "@/hosts/host-confirmation-sheet";
 import {
@@ -57,6 +58,7 @@ import {
   canDesktopAppSidebarShare,
   resolveDesktopAppChromeLayout,
   resolveDesktopAppContentMinimum,
+  resolveWindowSidebarToggleTop,
   resolveDesktopSidebarVisibility,
 } from "@/components/desktop-sidebar-layout";
 import { isNative, isWeb } from "@/constants/platform";
@@ -118,9 +120,11 @@ import { getNextThemePreference, ICON_STROKE_WIDTH } from "@/styles/theme";
 import { useSessionStore } from "@/stores/session-store";
 import { WorkspaceLayoutModePublisher } from "@/workspace-tabs/layout-mode-publisher";
 import { installWebScrollbarStyles } from "@/styles/install-web-scrollbar-styles";
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import type { HostProfile } from "@/types/host-connection";
 import {
   useHasWindowChromeObstruction,
+  useWindowChromeTopLeftCenterY,
   WindowChromeProvider,
   WindowChromeRegion,
   WindowChromeSafeArea,
@@ -532,6 +536,22 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     }),
   });
   const hasTopLeftWindowControls = useHasWindowChromeObstruction("top-left");
+  const windowControlsCenterY = useWindowChromeTopLeftCenterY();
+  const windowSidebarToggleStyle = useMemo(
+    () => [
+      layoutStyles.windowSidebarToggle,
+      windowControlsCenterY === null
+        ? null
+        : inlineUnistylesStyle({
+            top: resolveWindowSidebarToggleTop({
+              controlsCenterY: windowControlsCenterY,
+              containerHeight: HEADER_INNER_HEIGHT,
+              buttonHeight: HEADER_CONTROL_HEIGHT,
+            }),
+          }),
+    ],
+    [windowControlsCenterY],
+  );
   const appChromeLayout = resolveDesktopAppChromeLayout({
     desktopSidebarRendered: desktopSidebarVisible,
     hasTopLeftWindowControls,
@@ -585,7 +605,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
               placement="inline"
               horizontalPadding={WINDOW_SIDEBAR_TOGGLE_HORIZONTAL_PADDING}
               pointerEvents="box-none"
-              style={layoutStyles.windowSidebarToggle}
+              style={windowSidebarToggleStyle}
             >
               <WindowSidebarMenuToggle />
             </WindowChromeSafeArea>
@@ -1015,7 +1035,5 @@ const layoutStyles = StyleSheet.create((theme) => ({
     height: HEADER_INNER_HEIGHT,
     flexDirection: "row",
     alignItems: "center",
-    borderBottomWidth: theme.borderWidth[1],
-    borderBottomColor: "transparent",
   },
 }));
