@@ -186,6 +186,7 @@ function notifyVoiceAbortFailure(
 interface SessionProviderSharedProps {
   children: ReactNode;
   serverId: string;
+  backgroundEffects?: boolean;
 }
 
 interface SessionProviderClientProps extends SessionProviderSharedProps {
@@ -194,9 +195,18 @@ interface SessionProviderClientProps extends SessionProviderSharedProps {
 
 export type SessionProviderProps = SessionProviderClientProps;
 
-function SessionProviderWithClient({ children, serverId, client }: SessionProviderClientProps) {
+function SessionProviderWithClient({
+  children,
+  serverId,
+  client,
+  backgroundEffects,
+}: SessionProviderClientProps) {
   return (
-    <SessionProviderInternal serverId={serverId} client={client}>
+    <SessionProviderInternal
+      serverId={serverId}
+      client={client}
+      backgroundEffects={backgroundEffects}
+    >
       {children}
     </SessionProviderInternal>
   );
@@ -207,8 +217,13 @@ export function SessionProvider(props: SessionProviderProps) {
   return <SessionProviderWithClient {...props} />;
 }
 
-function SessionProviderInternal({ children, serverId, client }: SessionProviderClientProps) {
-  useAgentWidget(serverId);
+function SessionProviderInternal({
+  children,
+  serverId,
+  client,
+  backgroundEffects = true,
+}: SessionProviderClientProps) {
+  useAgentWidget(serverId, backgroundEffects);
   const { t } = useTranslation();
   const voiceRuntime = useVoiceRuntimeOptional();
   const voiceAudioEngine = useVoiceAudioEngineOptional();
@@ -264,7 +279,10 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     focusedAgentId,
     focusedTerminalId,
   });
-  useEffect(() => startPushNotifications({ client, serverId }), [client, serverId]);
+  useEffect(
+    () => (backgroundEffects ? startPushNotifications({ client, serverId }) : undefined),
+    [client, serverId, backgroundEffects],
+  );
 
   const notifyAgentAttention = useCallback(
     (params: {
@@ -513,7 +531,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         "workspace_setup_progress",
         "status.server_info",
       ],
-      { notifications: true },
+      { notifications: backgroundEffects },
     );
     const onFeed = (
       type: SessionOutboundMessage["type"],
@@ -529,7 +547,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     const unsubAgentAttention = onFeed("agent_attention_required", (message) => {
       if (message.type !== "agent_attention_required") return;
       const notification = message.payload;
-      if (notification.shouldNotify) {
+      if (backgroundEffects && notification.shouldNotify) {
         notifyAgentAttention(notification);
       }
     });
@@ -688,7 +706,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       if (message.type !== "terminal_attention_required") {
         return;
       }
-      if (!message.payload.shouldNotify) {
+      if (!backgroundEffects || !message.payload.shouldNotify) {
         return;
       }
       void sendOsNotification({
@@ -724,6 +742,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     };
   }, [
     client,
+    backgroundEffects,
     queryClient,
     serverId,
     setIsPlayingAudio,

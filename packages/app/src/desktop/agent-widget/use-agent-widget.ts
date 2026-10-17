@@ -21,10 +21,13 @@ import { createProjectIconTarget } from "@/projects/icon-target";
 import { useProjectIcons } from "@/projects/icons";
 import { useStableEvent } from "@/hooks/use-stable-event";
 
-export function useAgentWidget(serverId: string): void {
+export function useAgentWidget(serverId: string, enabled = true): void {
   const { t } = useTranslation();
   const { profiles } = useAgentProfiles(serverId);
-  const hostIds = useMemo(() => (getDesktopHost()?.agentWidget ? [serverId] : []), [serverId]);
+  const hostIds = useMemo(
+    () => (enabled && getDesktopHost()?.agentWidget ? [serverId] : []),
+    [serverId, enabled],
+  );
   const projects = useHostProjects(hostIds);
   const workspaces = useSessionStore((state) =>
     hostIds.length ? state.sessions[serverId]?.workspaces : undefined,
@@ -62,7 +65,7 @@ export function useAgentWidget(serverId: string): void {
   );
   const publish = useStableEvent(() => {
     const bridge = getDesktopHost()?.agentWidget;
-    if (!bridge) return;
+    if (!enabled || !bridge) return;
     const runtime = getHostRuntimeStore();
     const session = useSessionStore.getState().sessions[serverId];
     const host = runtime.getSnapshot(serverId);
@@ -102,7 +105,7 @@ export function useAgentWidget(serverId: string): void {
   }, [publish, projects, workspaces, icons, profiles]);
   useEffect(() => {
     const bridge = getDesktopHost()?.agentWidget;
-    if (!bridge) return;
+    if (!enabled || !bridge) return;
     const runtime = getHostRuntimeStore();
     const offActions = bridge.onAction(async (raw) => {
       const parsed = WidgetActionDeliverySchema.safeParse(raw);
@@ -167,5 +170,5 @@ export function useAgentWidget(serverId: string): void {
         .publish({ serverId, online: false, requests: [], labels })
         .catch((error) => console.warn("[agent-widget] Failed to release requests", error));
     };
-  }, [serverId, labels, publish]);
+  }, [enabled, serverId, labels, publish]);
 }

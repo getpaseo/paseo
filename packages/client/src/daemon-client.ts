@@ -1,3 +1,4 @@
+import type { DesktopExecuteResponse } from "@getpaseo/protocol/desktop-capture";
 import type { WorkspaceTodoMutation } from "@getpaseo/protocol/workspace-todos";
 import { legacyUsageIcon } from "./legacy-usage-icons.js";
 import { subscribeTimeline, type TimelineMessage } from "./timeline-subscription/index.js";
@@ -2315,6 +2316,25 @@ export class DaemonClient {
         }
       },
     );
+  }
+
+  registerDesktopHost(deviceId: string) {
+    return this.observe("desktop.host.register.response", {
+      type: "desktop.host.register.request",
+      deviceId,
+    });
+  }
+
+  sendDesktopExecuteResponse(response: DesktopExecuteResponse): void {
+    this.sendSessionMessageStrict(response);
+  }
+
+  async stopDesktopControl(deviceId: string): Promise<void> {
+    await this.sendCorrelatedSessionRequest({
+      requestId: this.createRequestId(),
+      message: { type: "desktop.control.stop.request", deviceId },
+      responseType: "desktop.control.stop.response",
+    });
   }
 
   registerBrowserHost(

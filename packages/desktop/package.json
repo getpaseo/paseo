@@ -17,7 +17,7 @@
   "scripts": {
     "build": "npm --prefix ../.. run build:server:clean && npm run build:main && electron-builder --config electron-builder.yml",
     "build:local": "npm --prefix ../.. run build:server:clean && npm run build:main && node ./scripts/stamp-local-build.mjs && electron-builder --config electron-builder.local.yml --dir --arm64 --publish never",
-    "build:main": "tsc -p tsconfig.json",
+    "build:main": "tsc -p tsconfig.json && node scripts/build-capture-helper.cjs",
     "capture-harness": "npm run build:main && ./capture-harness/run.sh",
     "dev": "./scripts/dev.sh",
     "dev:win": "powershell ./scripts/dev.ps1",

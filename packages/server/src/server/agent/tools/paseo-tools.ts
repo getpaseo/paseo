@@ -1,3 +1,5 @@
+import { registerDesktopTools } from "../../desktop-tools/tools.js";
+import type { DesktopToolsBroker } from "../../desktop-tools/broker.js";
 import { interactiveInstructions } from "@getpaseo/protocol/interactive-response";
 import {
   interactiveResponsesEnabled,
@@ -141,6 +143,7 @@ export interface PaseoToolHostDependencies {
     firstAgentContext?: FirstAgentContext,
   ) => Promise<string>;
   browserToolsEnabled?: boolean;
+  desktopToolsBroker?: DesktopToolsBroker;
   browserToolsBroker?: BrowserToolsBroker | null;
   paseoToolPolicy?: ProviderPaseoToolsPolicy;
   paseoHome?: string;
@@ -1239,6 +1242,12 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     return toCatalog();
   }
 
+  registerDesktopTools({
+    registerTool,
+    broker: options.desktopToolsBroker,
+    agentId: callerAgentId,
+    isCaptureAgent: (id) => Boolean(agentManager.getAgent(id)?.labels["paseo.capture.device"]),
+  });
   if (options.browserToolsEnabled && options.browserToolsBroker) {
     registerBrowserTools({
       registerTool,

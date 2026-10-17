@@ -1,3 +1,4 @@
+import { DesktopToolsBroker } from "./desktop-tools/broker.js";
 import type { PluginRegistries } from "@getpaseo/protocol/plugin-registry";
 import { describeHookWorkspace } from "./plugins/lifecycle/index.js";
 import express from "express";
@@ -475,6 +476,7 @@ export interface PaseoDaemon {
   serviceProxy: ServiceProxySubsystem;
   scriptRuntimeStore: WorkspaceScriptRuntimeStore;
   browserToolsBroker: BrowserToolsBroker;
+  desktopToolsBroker: DesktopToolsBroker;
   start(): Promise<void>;
   stop(): Promise<void>;
   getListenTarget(): ListenTarget | null;
@@ -629,6 +631,16 @@ export async function createPaseoDaemon(
   });
   const browserToolsPolicy = new DaemonConfigBrowserToolsPolicy(daemonConfigStore);
   const browserToolsBroker = new BrowserToolsBroker({});
+  const desktopToolsBroker = new DesktopToolsBroker((agentId) => {
+    const agent = agentManager.getAgent(agentId);
+    const deviceId = agent?.labels["paseo.capture.device"];
+    if (!agent || !deviceId) return null;
+    const plan =
+      agent.config.featureValues?.plan_mode === true ||
+      agent.config.modeId === "plan" ||
+      agent.config.modeId?.endsWith("#plan") === true;
+    return { deviceId, observationOnly: plan || agent.config.writePolicy === "read_only" };
+  });
   const pluginRuntime: PluginService = new PluginService(logger, daemonConfigStore, daemonVersion, {
     usageAgents: {
       hasAgent: (id) => agentManager.getAgent(id) !== null,
@@ -978,6 +990,15 @@ export async function createPaseoDaemon(
       resolvePaseoToolPolicy(provider, daemonConfigStore.get().providers),
     logger,
   });
+  const unsubscribeDesktopControl = agentManager.subscribe(
+    (event) => {
+      if (event.type === "agent_stream" && event.event.type === "turn_completed")
+        desktopToolsBroker.release(event.agentId);
+      if (event.type === "agent_state" && event.agent.lifecycle !== "running")
+        desktopToolsBroker.release(event.agent.id);
+    },
+    { replayState: false },
+  );
   const syncPluginProviders = () => {
     agentManager.updateProviderRegistry(
       providerSnapshotManager.replacePluginProviders(pluginRuntime.getProviderRegistrations()),
@@ -1447,6 +1468,7 @@ export async function createPaseoDaemon(
     clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
     ensureWorkspaceForCreate: createAgentCommandDependencies.ensureWorkspaceForCreate,
     createPaseoWorktree: createAgentCommandDependencies.createPaseoWorktree,
+    desktopToolsBroker,
     browserToolsEnabled: browserToolsPolicy.isEnabled(),
     browserToolsBroker,
     paseoToolPolicy:
@@ -1755,6 +1777,7 @@ export async function createPaseoDaemon(
               pluginRuntime,
               orchestrationSkills,
               workspaceLabelService,
+              desktopToolsBroker,
             );
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();
@@ -1824,6 +1847,7 @@ export async function createPaseoDaemon(
     // that is still open. Plugins themselves are stopped once every session
     // they serve has been closed, further down.
     unsubscribePluginProviders();
+    unsubscribeDesktopControl();
     await hubRelationships.stop();
     workspaceReconciliation.dispose();
     scriptHealthMonitor.stop();
@@ -1874,6 +1898,7 @@ export async function createPaseoDaemon(
     serviceProxy,
     scriptRuntimeStore,
     browserToolsBroker,
+    desktopToolsBroker,
     start,
     stop,
     getListenTarget: () => boundListenTarget,

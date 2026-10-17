@@ -1,3 +1,4 @@
+import type { DesktopCaptureBridge } from "@getpaseo/protocol/desktop-capture";
 import type { AgentWidgetBridge } from "@getpaseo/protocol/desktop-agent-widget";
 import { Platform } from "react-native";
 import { getElectronHost } from "@/desktop/electron/host";
@@ -192,6 +193,7 @@ export interface DesktopHostBridge {
     onPrepare(handler: () => Promise<boolean>): () => void;
   };
   agentWidget?: AgentWidgetBridge;
+  desktopCapture?: DesktopCaptureBridge;
   platform?: string;
   windowChromeMode?: string;
   invoke?: DesktopInvokeBridge["invoke"];

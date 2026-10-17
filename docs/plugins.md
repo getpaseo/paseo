@@ -110,6 +110,9 @@ normal agent permissions. An agent's classification, green local checks or an ac
 not prove a remote write, delivery or deployment. Report external results only with evidence
 from the system that owns them.
 
+Global Mac capture requests also use this plugin for routing and idempotent creation.
+See [Mac capture requests](desktop-capture.md) for the native helper and control boundary.
+
 ## Install a directory source
 
 Create a typecheckable plugin project, install its development dependencies, then install it into

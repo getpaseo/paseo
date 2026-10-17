@@ -8,6 +8,7 @@ interface ShowContextMenuInput {
 
 interface ApplicationMenuOptions {
   onNewWindow: () => void;
+  capture?: { permissions(): void; setShortcut(modifiers: number): void };
 }
 
 function withBrowserWindow(
@@ -100,6 +101,27 @@ function buildApplicationMenuTemplate(
             options.onNewWindow();
           },
         },
+        ...(isMac && options.capture
+          ? [
+              {
+                label: "Capture",
+                submenu: [
+                  { label: "Autoriser la capture", click: () => options.capture?.permissions() },
+                  {
+                    label: "Option + Control",
+                    type: "radio" as const,
+                    checked: true,
+                    click: () => options.capture?.setShortcut((1 << 19) | (1 << 18)),
+                  },
+                  {
+                    label: "Option + Control + Shift",
+                    type: "radio" as const,
+                    click: () => options.capture?.setShortcut((1 << 19) | (1 << 18) | (1 << 17)),
+                  },
+                ],
+              },
+            ]
+          : []),
       ],
     },
     {

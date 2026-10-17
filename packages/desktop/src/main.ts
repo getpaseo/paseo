@@ -1,3 +1,4 @@
+import { registerDesktopCapture } from "./features/desktop-capture/index.js";
 import { CometProfileImporter } from "./features/browser-profile-import/index.js";
 import { registerAgentWidget } from "./features/agent-widget/index.js";
 process.emitWarning = (() => {}) as typeof process.emitWarning;
@@ -133,6 +134,7 @@ const DESKTOP_WINDOW_CHROME_MODE = resolveDesktopWindowChromeMode({
   isPackaged: app.isPackaged,
 });
 const UPDATE_QUIT_DEADLINE_MS = 5_000;
+let desktopCapture: ReturnType<typeof registerDesktopCapture> = null;
 let agentWidget: ReturnType<typeof registerAgentWidget> | null = null;
 const pendingBrowserWindowOpenRequests = new PendingBrowserWindowOpenRequests();
 const agentNavigationInbox = new AgentNavigationInbox();
@@ -891,11 +893,11 @@ desktopWindowOwner = createDesktopWindowOwner<AgentDeepLinkTarget>({
   },
   windows: () =>
     BrowserWindow.getAllWindows()
-      .filter((win) => !agentWidget?.isWindow(win))
+      .filter((win) => !agentWidget?.isWindow(win) && !desktopCapture?.isWindow(win))
       .map(ownedDesktopWindow),
   focusedWindow: () => {
     const win = BrowserWindow.getFocusedWindow();
-    if (!win || agentWidget?.isWindow(win)) return null;
+    if (!win || agentWidget?.isWindow(win) || desktopCapture?.isWindow(win)) return null;
     return ownedDesktopWindow(win);
   },
   agentRoute: buildAgentDeepLinkRoute,
@@ -1056,6 +1058,14 @@ async function bootstrap(): Promise<void> {
 
   await applyAppIcon();
   setupApplicationMenu({
+    capture: {
+      permissions: () => {
+        desktopCapture?.permissions();
+      },
+      setShortcut: (modifiers) => {
+        desktopCapture?.setShortcut(modifiers);
+      },
+    },
     onNewWindow: () => {
       void desktopWindowOwner.openAdditional().catch((error) => {
         log.error("[window] failed to create window from menu", error);
@@ -1100,8 +1110,19 @@ async function bootstrap(): Promise<void> {
     pendingProjectPath: pendingOpenProjectPath,
   });
   pendingOpenProjectPath = null;
+  desktopCapture = registerDesktopCapture({
+    url: !app.isPackaged
+      ? new URL("/desktop-capture", `${DEV_SERVER_URL}/`).toString()
+      : `${APP_SCHEME}://app/desktop-capture`,
+    preload: path.join(__dirname, "preload.js"),
+    openAgent: async (target) => {
+      await desktopWindowOwner.openOrFocusAgent(target);
+    },
+  });
   const restored = localUpdate?.restoreWindows ?? [];
-  const primary = BrowserWindow.getAllWindows().find((win) => !agentWidget?.isWindow(win));
+  const primary = BrowserWindow.getAllWindows().find(
+    (win) => !agentWidget?.isWindow(win) && !desktopCapture?.isWindow(win),
+  );
   if (primary && restored[0]) {
     primary.setBounds(
       clampWindowStateToWorkAreas(

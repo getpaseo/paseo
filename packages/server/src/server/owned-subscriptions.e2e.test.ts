@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { MockLoadTestAgentClient } from "./agent/providers/mock-load-test-agent.js";
 import { createPaseoApi } from "@getpaseo/client";
 import { execFileSync } from "node:child_process";
@@ -1824,3 +1825,53 @@ test("conflict model configuration is negotiated per socket and survives legacy 
     await daemon.close();
   }
 });
+
+test.skipIf(process.platform !== "darwin")(
+  "desktop host commands remain source-owned and stop revokes the session",
+  async () => {
+    const daemon = await createTestPaseoDaemon();
+    const host = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+    const idle = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+    const deviceId = randomUUID();
+    let registration: ReturnType<typeof host.registerDesktopHost> | undefined;
+    try {
+      await Promise.all([host.connect(), idle.connect()]);
+      const agent = await host.createAgent({
+        config: { provider: "claude", cwd: daemon.paseoHome },
+        labels: { "paseo.capture.device": deviceId },
+      });
+      registration = host.registerDesktopHost(deviceId);
+      const events: SessionOutboundMessage[] = [];
+      registration.subscribe({ snapshot: () => {}, update: (message) => events.push(message) });
+      await registration.ready;
+      expect(daemon.daemon.desktopToolsBroker.available()).toBe(true);
+      const result = daemon.daemon.desktopToolsBroker.execute(agent.id, { command: "screenshot" });
+      await expect
+        .poll(() => events.some((message) => message.type === "desktop.control.execute.request"))
+        .toBe(true);
+      const request = events.find((message) => message.type === "desktop.control.execute.request");
+      if (request?.type !== "desktop.control.execute.request")
+        throw new Error("Missing desktop request");
+      host.sendDesktopExecuteResponse({
+        type: "desktop.control.execute.response",
+        payload: {
+          requestId: request.requestId,
+          sessionId: request.sessionId,
+          ok: true,
+          result: { width: 100 },
+        },
+      });
+      await expect(result).resolves.toEqual({ width: 100 });
+      await host.stopDesktopControl(deviceId);
+      await expect(
+        daemon.daemon.desktopToolsBroker.execute(agent.id, { command: "screenshot" }),
+      ).rejects.toThrow("revoked");
+      await registration.release();
+      expect(daemon.daemon.desktopToolsBroker.available()).toBe(false);
+    } finally {
+      await registration?.release();
+      await Promise.all([host.close(), idle.close()]);
+      await daemon.close();
+    }
+  },
+);

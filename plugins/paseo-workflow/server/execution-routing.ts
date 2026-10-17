@@ -41,7 +41,7 @@ function keyFromText(text: string): string | undefined {
   return values.TYPESAFE_API_KEY?.trim() || values["JEV-API-KEY"]?.trim() || undefined;
 }
 
-async function apiKey(env: NodeJS.ProcessEnv) {
+export async function apiKey(env: NodeJS.ProcessEnv) {
   const direct = env.TYPESAFE_API_KEY?.trim() || env["JEV-API-KEY"]?.trim();
   if (direct) return direct;
   const configuredHome = env.PASEO_HOME?.trim();
@@ -56,7 +56,7 @@ async function apiKey(env: NodeJS.ProcessEnv) {
   }
 }
 
-const criteria = {
+export const criteria = {
   trivial: "Documentation, copy, formatting, or one isolated mechanical edit.",
   bounded: "A bounded implementation with known local impact.",
   diagnostic: "Diagnosis, uncertainty, or several interacting local causes.",

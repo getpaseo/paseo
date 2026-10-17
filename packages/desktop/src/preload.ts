@@ -55,6 +55,26 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       return () => ipcRenderer.removeListener("paseo:local-update:prepare", listener);
     },
   },
+  desktopCapture: {
+    ensurePara: () => ipcRenderer.invoke("paseo:desktop-capture:para"),
+    device: () => ipcRenderer.invoke("paseo:desktop-capture:device"),
+    execute: (request: unknown) => ipcRenderer.invoke("paseo:desktop-capture:execute", request),
+    revoke: (sessionId: string) => ipcRenderer.invoke("paseo:desktop-capture:revoke", sessionId),
+    onStop: (handler: () => void) => {
+      const listener = () => handler();
+      ipcRenderer.on("paseo:desktop-capture:stopped", listener);
+      return () => ipcRenderer.removeListener("paseo:desktop-capture:stopped", listener);
+    },
+    getDraft: () => ipcRenderer.invoke("paseo:desktop-capture:get"),
+    cancel: () => ipcRenderer.invoke("paseo:desktop-capture:cancel"),
+    complete: (target: unknown) => ipcRenderer.invoke("paseo:desktop-capture:complete", target),
+    open: () => ipcRenderer.invoke("paseo:desktop-capture:open"),
+    onUpdate: (handler: (value: unknown) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, value: unknown) => handler(value);
+      ipcRenderer.on("paseo:desktop-capture:update", listener);
+      return () => ipcRenderer.removeListener("paseo:desktop-capture:update", listener);
+    },
+  },
   agentWidget: {
     publish: (snapshot: WidgetSnapshot) =>
       ipcRenderer.invoke("paseo:agent-widget:publish", snapshot),

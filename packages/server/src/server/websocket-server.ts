@@ -1,3 +1,4 @@
+import type { DesktopToolsBroker } from "./desktop-tools/broker.js";
 import { workspaceConflictModelMessage } from "./workspace-conflict-model-compat.js";
 import { interactiveResponsesEnabled } from "./interactive-responses.js";
 import { stat } from "node:fs/promises";
@@ -663,6 +664,7 @@ export class VoiceAssistantWebSocketServer {
     pluginRuntime?: SessionOptions["pluginRuntime"],
     orchestrationSkills?: SessionOptions["orchestrationSkills"],
     workspaceLabelService?: WorkspaceLabelService,
+    private readonly desktopToolsBroker?: DesktopToolsBroker,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
@@ -1473,6 +1475,7 @@ export class VoiceAssistantWebSocketServer {
 
   private createSocketSession(options: SocketSessionOptions): Session {
     return new Session({
+      desktopToolsBroker: this.desktopToolsBroker,
       browserToolsBroker: this.browserToolsBroker,
       admittedConnectionKey: options.admittedConnectionKey,
       clientId: options.clientId,
@@ -1808,6 +1811,8 @@ export class VoiceAssistantWebSocketServer {
       desktopManaged: this.daemonRuntimeConfig?.desktopManaged === true,
       ...(this.serverCapabilities ? { capabilities: this.serverCapabilities } : {}),
       features: {
+        desktopControl: this.desktopToolsBroker?.available() === true,
+        desktopHostRegistration: process.platform === "darwin" && Boolean(this.desktopToolsBroker),
         usageSources: true,
         ownedSubscriptions: true,
         // COMPAT(agentWritePolicy): added in v0.8.0; remove gate after 2027-09-13.

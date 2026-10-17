@@ -12,6 +12,7 @@ directories:
   output: release
 files:
   - dist/**/*
+  - "!dist/native/**"
   - "!**/*.map"
   - "!node_modules/@getpaseo/*/src/**"
   - "!node_modules/@getpaseo/**/*.test.*"
@@ -42,8 +43,12 @@ publish:
 mac:
   artifactName: "Paseo-${version}-${arch}.${ext}"
   minimumSystemVersion: "13.0.0"
+  extendInfo:
+    NSMicrophoneUsageDescription: "Dictez votre demande dans Paseo."
   category: public.app-category.developer-tools
   icon: assets/icon.icns
+  binaries:
+    - Contents/Resources/desktop-capture/paseo-desktop-capture
   hardenedRuntime: true
   notarize: true
   entitlements: build/entitlements.mac.plist

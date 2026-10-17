@@ -1,3 +1,4 @@
+import type { DesktopToolsBroker } from "./desktop-tools/broker.js";
 import { selectResponseContext } from "./response-context.js";
 import {
   interactiveResponsesEnabled,
@@ -447,6 +448,7 @@ type AgentMcpTransportFactory = () => Promise<unknown>;
 export interface SessionOptions {
   // Only daemon admission supplies a stable principal/client identity across Session expiry.
   admittedConnectionKey?: string;
+  desktopToolsBroker?: DesktopToolsBroker | null;
   browserToolsBroker?: BrowserToolsBroker | null;
   clientId: string;
   permissions: readonly DaemonPermission[];
@@ -703,6 +705,7 @@ export class Session {
         "Unrecognized reply contract; application delivery denied",
       ),
   );
+  private readonly desktopToolsBroker: SessionOptions["desktopToolsBroker"];
   private readonly browserToolsBroker: SessionOptions["browserToolsBroker"];
   private readonly clientId: string;
   private readonly admittedConnectionKey: string | undefined;
@@ -868,6 +871,7 @@ export class Session {
       daemonRuntimeConfig,
       getWebSocketRuntimeMetrics,
     } = options;
+    this.desktopToolsBroker = options.desktopToolsBroker;
     this.browserToolsBroker = options.browserToolsBroker;
     this.clientId = clientId;
     this.authorization = new SessionAuthorization(permissions);
@@ -2183,6 +2187,7 @@ export class Session {
 
   public setPermissions(permissions: readonly DaemonPermission[]): void {
     this.authorization.replacePermissions(permissions);
+    this.revokeDesktopHosting();
     if (!this.authorization.allowsPermission("workspace.write")) {
       void this.delivery
         .releaseFamily("browser-host")
@@ -2190,6 +2195,19 @@ export class Session {
           this.sessionLogger.error({ err: error }, "Failed to release revoked browser hosting"),
         );
     }
+  }
+
+  private revokeDesktopHosting(): void {
+    if (
+      this.authorization.allowsPermission("workspace.write") &&
+      this.authorization.allowsPermission("daemon.manage")
+    )
+      return;
+    void this.delivery
+      .releaseFamily("desktop-host")
+      .catch((error) =>
+        this.sessionLogger.error({ err: error }, "Failed to release revoked desktop hosting"),
+      );
   }
 
   public getPermissions(): DaemonPermission[] {
@@ -2245,6 +2263,32 @@ export class Session {
     this.emit(message);
   }
 
+  private async registerDesktopHost(
+    request: Extract<SessionInboundMessage, { type: "desktop.host.register.request" }>,
+  ): Promise<void> {
+    const broker = this.desktopToolsBroker;
+    if (
+      !this.authorization.allowsPermission("daemon.manage") ||
+      !this.authorization.allowsPermission("workspace.write")
+    )
+      throw new Error("Desktop hosting requires owner permissions");
+    if (!broker || process.platform !== "darwin") throw new Error("Desktop hosting is unavailable");
+    let unregister: (() => void) | undefined;
+    const owner = this.delivery.begin("desktop-host", undefined, () => unregister?.());
+    try {
+      unregister = broker.registerHost(owner.id, request.deviceId, (message) =>
+        owner.emit(message),
+      );
+      this.emit({
+        type: "desktop.host.register.response",
+        payload: { requestId: request.requestId, subscriptionId: owner.responseId },
+      });
+    } catch (error) {
+      await owner.release();
+      throw error;
+    }
+  }
+
   private async registerBrowserHost(
     request: Extract<SessionInboundMessage, { type: "browser.host.register.request" }>,
     respond = true,
@@ -2277,6 +2321,21 @@ export class Session {
     msg: SessionInboundMessage,
     source?: object,
   ): Promise<void> | undefined {
+    if (msg.type === "desktop.host.register.request") return this.registerDesktopHost(msg);
+    if (msg.type === "desktop.control.execute.response") {
+      if (source) {
+        for (const id of this.delivery.subscriptionIds(source, "desktop-host"))
+          this.desktopToolsBroker?.respond(id, msg);
+      }
+      return Promise.resolve();
+    }
+    if (msg.type === "desktop.control.stop.request") {
+      if (source)
+        for (const id of this.delivery.subscriptionIds(source, "desktop-host"))
+          this.desktopToolsBroker?.stop(id, msg.deviceId);
+      this.emit({ type: "desktop.control.stop.response", payload: { requestId: msg.requestId } });
+      return Promise.resolve();
+    }
     if (msg.type === "browser.host.register.request") return this.registerBrowserHost(msg);
     if (msg.type === "browser.automation.execute.response") {
       if (source)

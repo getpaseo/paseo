@@ -1,3 +1,5 @@
+import { captureRpc, captureSettings } from "./shared/desktop-capture";
+import { captureRuntime } from "./server/desktop-capture";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import {
   installRpc,
@@ -18,6 +20,8 @@ export default function contribute(server: PluginServerContext) {
   const settings = server.registerSettings(workflowSettings);
   // COMPAT(workflow-server-settings): added in v0.8.0, remove after 2027-09-13.
   if (!settings) throw new Error("Update the Paseo host to use the plan workflow plugin.");
+  const createCapture = captureRuntime(server.registerSettings(captureSettings));
+  server.handle(captureRpc, (input, { paseo }) => createCapture(input, paseo));
   let controller: ReturnType<typeof runtime> | undefined;
   const workflow = (paseo: PaseoApi) => (controller ??= runtime(paseo, settings));
   server.handle(installRpc, async (_, { paseo }) => ({

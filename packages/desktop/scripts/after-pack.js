@@ -117,6 +117,17 @@ exports.default = async function afterPack(context) {
 
   pruneNativeModules(context.appOutDir, platform, arch);
 
+  if (platform === "darwin") {
+    const resources = path.join(
+      context.appOutDir,
+      `${EXECUTABLE_NAME}.app`,
+      "Contents",
+      "Resources",
+      "desktop-capture",
+    );
+    require("./build-capture-helper.cjs").buildCaptureHelper(resources, arch);
+  }
+
   if (platform === "linux") {
     installLinuxLauncher(context.appOutDir);
   }

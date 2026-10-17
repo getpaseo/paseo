@@ -267,6 +267,7 @@ function PushNotificationRouter() {
 }
 
 function ManagedDaemonSession({ daemon }: { daemon: HostProfile }) {
+  const capture = usePathname() === "/desktop-capture";
   const client = useHostRuntimeClient(daemon.serverId);
 
   if (!client) {
@@ -274,7 +275,12 @@ function ManagedDaemonSession({ daemon }: { daemon: HostProfile }) {
   }
 
   return (
-    <SessionProvider key={daemon.serverId} serverId={daemon.serverId} client={client}>
+    <SessionProvider
+      key={daemon.serverId}
+      serverId={daemon.serverId}
+      client={client}
+      backgroundEffects={!capture}
+    >
       <LegacyFavoriteProfileMigrationBootstrap serverId={daemon.serverId} client={client} />
       <PluginCatalogSync serverId={daemon.serverId} client={client} />
     </SessionProvider>
@@ -668,14 +674,14 @@ function MobileGestureWrapper({
   );
 }
 
-function ProvidersWrapper({ children }: { children: ReactNode }) {
+function ProvidersWrapper({ children, capture }: { children: ReactNode; capture: boolean }) {
   return (
     <AppearanceProvider>
       <VoiceProvider>
-        <DesktopWindowControlsSync />
-        <OfferLinkListener />
+        {!capture ? <DesktopWindowControlsSync /> : null}
+        {!capture ? <OfferLinkListener /> : null}
         <HostSessionManager />
-        <FaviconStatusSync />
+        {!capture ? <FaviconStatusSync /> : null}
         {children}
       </VoiceProvider>
     </AppearanceProvider>
@@ -888,6 +894,7 @@ function RootStack() {
       nestedNavigatorScreens={ROOT_STACK_NESTED_NAVIGATOR_SCREENS}
     >
       <Stack.Screen name="index" />
+      <Stack.Screen name="desktop-capture" />
       <Stack.Protected guard={storeReady}>
         <Stack.Screen name="welcome" />
         <Stack.Screen name="settings/index" />
@@ -919,6 +926,8 @@ function WorkspaceRouteNavigationBridge() {
 }
 
 function AppShell() {
+  const pathname = usePathname();
+  if (pathname === "/desktop-capture") return <RootStack />;
   return (
     <MobilePanelsProvider>
       <HorizontalScrollProvider>
@@ -934,11 +943,12 @@ function AppShell() {
 }
 
 function RuntimeProviders({ children }: { children: ReactNode }) {
+  const capture = usePathname() === "/desktop-capture";
   return (
     <HostRuntimeBootstrapProvider>
-      <PushNotificationRouter />
+      {!capture ? <PushNotificationRouter /> : null}
       <SidebarCalloutProvider>
-        <ProvidersWrapper>{children}</ProvidersWrapper>
+        <ProvidersWrapper capture={capture}>{children}</ProvidersWrapper>
       </SidebarCalloutProvider>
     </HostRuntimeBootstrapProvider>
   );

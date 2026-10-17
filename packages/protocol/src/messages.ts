@@ -1,4 +1,13 @@
 import {
+  DesktopHostRegisterRequestSchema,
+  DesktopHostRegisterResponseSchema,
+  DesktopExecuteRequestSchema,
+  DesktopExecuteResponseSchema,
+  DesktopRevokeSchema,
+  DesktopStopRequestSchema,
+  DesktopStopResponseSchema,
+} from "./desktop-capture.js";
+import {
   InteractiveDocumentSchema,
   InteractiveStateSchema,
   InteractiveReferenceSchema,
@@ -3380,6 +3389,9 @@ export const SubscriptionReleaseResponseSchema = z.object({
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ConversationUiGetRequestSchema,
   ConversationUiStateUpdateRequestSchema,
+  DesktopHostRegisterRequestSchema,
+  DesktopExecuteResponseSchema,
+  DesktopStopRequestSchema,
   BrowserHostRegisterRequestSchema,
   SubscriptionReleaseRequestSchema,
   SessionEventsSetSubscriptionRequestSchema,
@@ -3781,6 +3793,8 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(hubAgentRpc): added in v0.8.0; remove gate after 2027-03-05.
         hubAgentRpc: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
+        desktopControl: z.boolean().optional(),
+        desktopHostRegistration: z.boolean().optional(),
         usageSources: z.boolean().optional(),
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: z.boolean().optional(),
@@ -7059,6 +7073,10 @@ export const AgentSkillsImportLegacySelectionResponseSchema = z.object({
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ConversationUiGetResponseSchema,
   ConversationUiStateUpdateResponseSchema,
+  DesktopHostRegisterResponseSchema,
+  DesktopExecuteRequestSchema,
+  DesktopRevokeSchema,
+  DesktopStopResponseSchema,
   BrowserHostRegisterResponseSchema,
   SubscriptionReleaseResponseSchema,
   SessionEventsSetSubscriptionResponseSchema,
