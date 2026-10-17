@@ -164,11 +164,7 @@ test("appends a first notice after old history and records a changed major versi
   }
 });
 
-test.each([
-  "process.exit(1)",
-  'console.log("custom wrapper output")',
-  "setTimeout(() => {}, 30000)",
-])(
+test.each(["process.exit(1)", 'console.log("custom wrapper output")'])(
   "preserves legacy operations when the version probe is inconclusive: %s",
   async (source) => {
     const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
@@ -208,4 +204,204 @@ test.each([
     expect(legacyShutdown).toBe(true);
   },
   10000,
+);
+
+test("preserves legacy fallback when a custom version probe times out", async () => {
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { OpenCodeRuntimeClient } = await import("./runtime-client.js");
+  const { OpenCodeAgentClient } = await import("../opencode-agent.js");
+  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+  const root = await mkdtemp(join(tmpdir(), "opencode-custom-timeout-"));
+  const logger = createTestLogger();
+  const client = new OpenCodeRuntimeClient(
+    logger,
+    { command: { mode: "replace", argv: [process.execPath, "wrapper.cjs"] } },
+    {
+      runVersionProbe: async () => {
+        throw Object.assign(new Error("timeout"), { killed: true });
+      },
+    },
+  );
+  const legacy = new OpenCodeAgentClient(logger);
+  const config = { provider: "opencode", cwd: root };
+  try {
+    expect(await client.listFeatures(config)).toEqual(await legacy.listFeatures(config));
+  } finally {
+    await client.shutdown();
+    await legacy.shutdown();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("waits for a slow default OpenCode version probe", async () => {
+  const { chmod, mkdtemp, writeFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { delimiter, join } = await import("node:path");
+  const { OpenCodeRuntimeClient } = await import("./runtime-client.js");
+  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+  const root = await mkdtemp(join(tmpdir(), "opencode-slow-version-"));
+  const executable = join(root, process.platform === "win32" ? "opencode.cmd" : "opencode");
+  if (process.platform === "win32") await writeFile(executable, "@echo off\r\n");
+  else {
+    await writeFile(executable, "#!/bin/sh\n");
+    await chmod(executable, 0o755);
+  }
+  const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "PATH";
+  const previousPath = process.env[pathKey];
+  process.env[pathKey] = [root, previousPath].filter(Boolean).join(delimiter);
+  let startProbe!: () => void;
+  let finishProbe!: (result: { stdout: string; stderr: string }) => void;
+  const probeStarted = new Promise<void>((resolve) => (startProbe = resolve));
+  const delayedResult = new Promise<{ stdout: string; stderr: string }>(
+    (resolve) => (finishProbe = resolve),
+  );
+  let timeout: number | undefined;
+  let probeArgs: string[] = [];
+  const client = new OpenCodeRuntimeClient(createTestLogger(), undefined, {
+    runVersionProbe: async (_command, args, options) => {
+      probeArgs = args;
+      timeout = options?.timeout;
+      startProbe();
+      return delayedResult;
+    },
+  });
+  try {
+    const features = client.listFeatures({ provider: "opencode", cwd: root });
+    await Promise.race([
+      probeStarted,
+      features.then(() => {
+        throw new Error("OpenCode selection completed before its version probe");
+      }),
+    ]);
+    finishProbe({ stdout: "opencode v2.0.22", stderr: "" });
+    expect(probeArgs.at(-1)).toBe("--version");
+    expect(timeout).toBe(30_000);
+    expect((await features)[0]?.label).toBe("Auto-accept");
+  } finally {
+    await client.shutdown();
+    if (previousPath === undefined) delete process.env[pathKey];
+    else process.env[pathKey] = previousPath;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("waits for a slow custom OpenCode v2 version probe", async () => {
+  const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { OpenCodeRuntimeClient } = await import("./runtime-client.js");
+  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+  const root = await mkdtemp(join(tmpdir(), "opencode-slow-custom-version-"));
+  const script = join(root, "wrapper.cjs");
+  await writeFile(script, 'console.log("opencode v2.0.24")');
+  let startProbe!: () => void;
+  let finishProbe!: (result: { stdout: string; stderr: string }) => void;
+  const probeStarted = new Promise<void>((resolve) => (startProbe = resolve));
+  const delayedResult = new Promise<{ stdout: string; stderr: string }>(
+    (resolve) => (finishProbe = resolve),
+  );
+  let timeout: number | undefined;
+  let probeArgs: string[] = [];
+  const client = new OpenCodeRuntimeClient(
+    createTestLogger(),
+    { command: { mode: "replace", argv: [process.execPath, script] } },
+    {
+      runVersionProbe: async (_command, args, options) => {
+        probeArgs = args;
+        timeout = options?.timeout;
+        startProbe();
+        return delayedResult;
+      },
+    },
+  );
+  try {
+    const features = client.listFeatures({ provider: "opencode", cwd: root });
+    await Promise.race([
+      probeStarted,
+      features.then(() => {
+        throw new Error("OpenCode selection completed before its version probe");
+      }),
+    ]);
+    finishProbe({ stdout: "opencode v2.0.24", stderr: "" });
+    expect(probeArgs.at(-1)).toBe("--version");
+    expect(timeout).toBe(30_000);
+    expect((await features)[0]?.label).toBe("Auto-accept");
+  } finally {
+    await client.shutdown();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("surfaces unrecognized version output from the default OpenCode executable", async () => {
+  const { chmod, mkdtemp, writeFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { delimiter, join } = await import("node:path");
+  const { OpenCodeRuntimeClient } = await import("./runtime-client.js");
+  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+  const root = await mkdtemp(join(tmpdir(), "opencode-default-probe-error-"));
+  const executable = join(root, process.platform === "win32" ? "opencode.cmd" : "opencode");
+  if (process.platform === "win32") {
+    const script = join(root, "version.cjs");
+    await writeFile(script, 'console.log("default wrapper output")');
+    await writeFile(executable, `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`);
+  } else {
+    await writeFile(executable, '#!/usr/bin/env node\nconsole.log("default wrapper output")\n');
+    await chmod(executable, 0o755);
+  }
+  const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "PATH";
+  const previousPath = process.env[pathKey];
+  process.env[pathKey] = [root, previousPath].filter(Boolean).join(delimiter);
+  const client = new OpenCodeRuntimeClient(createTestLogger());
+  try {
+    await expect(client.listFeatures({ provider: "opencode", cwd: root })).rejects.toThrow(
+      "Unrecognized OpenCode version output: default wrapper output",
+    );
+  } finally {
+    await client.shutdown();
+    if (previousPath === undefined) delete process.env[pathKey];
+    else process.env[pathKey] = previousPath;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test.runIf(process.platform === "win32")(
+  "probes the OpenCode cmd shim selected by provider PATH",
+  async () => {
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const path = await import("node:path");
+    const { OpenCodeRuntimeClient } = await import("./runtime-client.js");
+    const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+    const root = await mkdtemp(path.join(tmpdir(), "opencode-provider-path-"));
+    const daemonPath = path.join(root, "daemon");
+    const providerPath = path.join(root, "provider");
+    await import("node:fs/promises").then(({ mkdir }) =>
+      Promise.all([mkdir(daemonPath), mkdir(providerPath)]),
+    );
+    const writeShim = async (directory: string, version: string) => {
+      const script = path.join(directory, "version.cjs");
+      const shim = path.join(directory, "opencode.cmd");
+      await writeFile(script, `console.log("opencode v${version}")`);
+      await writeFile(shim, `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`);
+    };
+    await Promise.all([writeShim(daemonPath, "1.14.46"), writeShim(providerPath, "2.0.22")]);
+    const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "Path";
+    const previousPath = process.env[pathKey];
+    process.env[pathKey] = [daemonPath, process.env[pathKey]].filter(Boolean).join(path.delimiter);
+    const client = new OpenCodeRuntimeClient(createTestLogger(), {
+      env: { [pathKey]: providerPath },
+    });
+    try {
+      expect((await client.listFeatures({ provider: "opencode", cwd: root }))[0]?.label).toBe(
+        "Auto-accept",
+      );
+    } finally {
+      await client.shutdown();
+      if (previousPath === undefined) delete process.env[pathKey];
+      else process.env[pathKey] = previousPath;
+      await rm(root, { recursive: true, force: true });
+    }
+  },
 );
