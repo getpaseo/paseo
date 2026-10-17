@@ -2139,6 +2139,11 @@ export const ko: TranslationResources = {
       saveError: "메타데이터 생성을 업데이트할 수 없습니다",
     },
     general: {
+      voice: "음성",
+      voiceWaitingSound: {
+        label: "대기음",
+        description: "음성 응답을 기다리는 동안 반복 신호음을 재생합니다.",
+      },
       title: "일반",
       sending: "전송",
       browserData: {

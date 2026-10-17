@@ -123,6 +123,10 @@ Cross-platform React Native app that connects to one or more daemons.
 - Timeline sync correctness is documented in [docs/timeline-sync.md](timeline-sync.md): live streams are for immediacy, `fetch_agent_timeline_request` is authoritative, and catch-up is paged but complete.
 - Voice features: dictation (STT) and voice agent (realtime)
 
+Speech endpoint configuration is documented in [the voice guide](../public-docs/voice.md).
+See [local endpoint validation](specs/local-speech-endpoints.md) for the compatibility
+contract and its QA limits.
+
 Consumers request directory or timeline data without choosing memory, cache, or network. The owner
 publishes an accepted cache hit and then reconciles it over the existing network path. A miss or an
 invalid row uses that same path. Offline demand still publishes an accepted cache hit and defers

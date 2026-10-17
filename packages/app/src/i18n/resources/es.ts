@@ -2177,6 +2177,11 @@ export const es: TranslationResources = {
       saveError: "No se pudo actualizar la generación de metadatos",
     },
     general: {
+      voice: "Voz",
+      voiceWaitingSound: {
+        label: "Sonido de espera",
+        description: "Reproduce un tono repetido mientras esperas una respuesta hablada.",
+      },
       title: "General",
       sending: "Envío",
       browserData: {

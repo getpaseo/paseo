@@ -111,6 +111,57 @@ Paseo uses these paths under the configured OpenAI base URL:
 - voice mode STT: `/v1/audio/transcriptions`
 - voice mode TTS: `/v1/audio/speech`
 
+### Unauthenticated local endpoints
+
+Use the `openai` provider for an OpenAI-compatible local speech server. Set
+`auth: "none"` separately on each endpoint that does not require authentication:
+
+```json
+{
+  "version": 1,
+  "providers": {
+    "openai": {
+      "stt": { "auth": "none", "baseUrl": "http://127.0.0.1:8000/v1" },
+      "tts": { "auth": "none", "baseUrl": "http://127.0.0.1:8000/v1" }
+    }
+  },
+  "features": {
+    "dictation": {
+      "stt": { "provider": "openai", "model": "your-asr-model", "language": "zh" }
+    },
+    "voiceMode": {
+      "stt": { "provider": "openai", "model": "your-asr-model", "language": "zh" },
+      "tts": { "provider": "openai", "model": "your-tts-model", "voice": "YourVoice" }
+    }
+  }
+}
+```
+
+Replace the model and voice names with identifiers your server accepts. Model and
+voice identifiers preserve case. The existing defaults remain `whisper-1` for STT,
+`tts-1` for TTS, and `alloy` for the TTS voice.
+
+`auth: "none"` requires an explicit HTTP(S) loopback URL (`127.0.0.1`, `::1`, or
+`localhost`). It ignores shared OpenAI credentials, shared URLs, and endpoint
+environment overrides. Do not supply an `apiKey` in that endpoint block. Paseo
+sends no authentication headers and refuses HTTP redirects in this mode. Missing
+configuration fails validation; request failures stay on the configured endpoint
+and do not select a cloud provider. Without `auth: "none"`, the existing API key
+requirements and configuration precedence still apply.
+
+Run the speech server on the daemon's machine. STT must accept a multipart WAV
+upload with `response_format=json` and return an object containing `text`. TTS
+must accept `response_format=pcm` and return raw **24 kHz, mono, signed 16-bit
+little-endian** audio. Raw PCM has no header, so verify your server's output
+format before using it. Paseo collects each synthesized text segment before
+playback; it does not send a model-specific language or streaming parameter.
+Cancelling speech closes the HTTP request or response; the server controls when
+its inference work stops.
+
+This changes speech inference only. The selected coding agent still processes
+transcribed text using its own provider. Restart your daemon when you choose to
+apply speech configuration changes; see [configuration](/docs/configuration).
+
 ## Environment Variables
 
 - `PASEO_VOICE_LLM_PROVIDER`, voice agent provider override

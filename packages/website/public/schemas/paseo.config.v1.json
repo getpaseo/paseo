@@ -267,6 +267,10 @@
             "stt": {
               "type": "object",
               "properties": {
+                "auth": {
+                  "type": "string",
+                  "enum": ["apiKey", "none"]
+                },
                 "apiKey": {
                   "type": "string",
                   "minLength": 1
@@ -281,6 +285,10 @@
             "tts": {
               "type": "object",
               "properties": {
+                "auth": {
+                  "type": "string",
+                  "enum": ["apiKey", "none"]
+                },
                 "apiKey": {
                   "type": "string",
                   "minLength": 1
