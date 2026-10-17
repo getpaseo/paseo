@@ -25,4 +25,11 @@ describe("timelineItemIdentity", () => {
     ).toBe("review/row-1");
     expect(timelineItemIdentity({ type: "reasoning", text: "hi" })).toBeNull();
   });
+
+  it("identifies an assistant message by its provider message id", () => {
+    expect(
+      timelineItemIdentity({ type: "assistant_message", text: "hi", messageId: "msg-1" }),
+    ).toBe("message:msg-1");
+    expect(timelineItemIdentity({ type: "assistant_message", text: "hi" })).toBeNull();
+  });
 });
