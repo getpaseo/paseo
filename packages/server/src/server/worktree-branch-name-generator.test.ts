@@ -24,6 +24,7 @@ The branch must be a valid git ref: lowercase letters, numbers, hyphens, and sla
 The branch is generated directly from the prompt — it is NEVER derived from or slugified from the title.
 
 Title style:
+Write the title in the same language as the user's request.
 An actionable task label: requested operation + concrete target + strongest distinguishing anchor (sentence case, max 80 characters).
 Preserve explicit identifiers such as PR or issue numbers, file paths, packages, components, commands, and quoted names when they distinguish the task.
 Aim for about 4 words, but never drop a part needed to understand or distinguish the task.

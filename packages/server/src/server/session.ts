@@ -4257,6 +4257,22 @@ export class Session {
     }
   }
 
+  private scheduleConversationTitle(input: {
+    snapshot: { id: string; cwd: string; internal?: boolean };
+    firstAgentContext: FirstAgentContext;
+    provisionalTitle: string | null;
+    explicitTitle: string | null;
+  }): void {
+    if (input.explicitTitle || input.snapshot.internal) return;
+    if (!(input.firstAgentContext.prompt || input.firstAgentContext.attachments?.length)) return;
+    this.workspaceAutoName.scheduleForAgent({
+      agentId: input.snapshot.id,
+      cwd: input.snapshot.cwd,
+      firstAgentContext: input.firstAgentContext,
+      provisionalTitle: input.provisionalTitle,
+    });
+  }
+
   private async createSessionAgent(
     msg: CreateAgentRequestMessage,
     agentId?: string,
@@ -4295,7 +4311,7 @@ export class Session {
       const gitIntent = normalizeAgentCreationGitOptions(git, worktreeName, worktree);
       this.validatePublicAgentWorkspaceIntent(msg, gitIntent?.createWorktree === true);
       const trimmedPrompt = initialPrompt?.trim();
-      const { provisionalTitle } = resolveCreateAgentTitles({
+      const { explicitTitle, provisionalTitle } = resolveCreateAgentTitles({
         configTitle: config.title,
         initialPrompt: trimmedPrompt,
       });
@@ -4368,6 +4384,12 @@ export class Session {
       );
       createdAgentId = snapshot.id;
       await this.agentUpdates.forwardLiveAgent(snapshot);
+      this.scheduleConversationTitle({
+        snapshot,
+        firstAgentContext,
+        provisionalTitle,
+        explicitTitle,
+      });
       if (resolvedIntent.createdDirectoryWorkspace && trimmedPrompt) {
         this.workspaceAutoName.scheduleForDirectory(
           {
@@ -8163,7 +8185,15 @@ export class Session {
     const stored = await this.agentStorage.get(agentId);
     if (stored && !stored.title && !stored.lastUserMessageAt) {
       const { provisionalTitle } = resolveCreateAgentTitles({ initialPrompt: text });
-      if (provisionalTitle) await this.agentManager.setTitle(agentId, provisionalTitle);
+      if (provisionalTitle) {
+        await this.agentManager.setTitle(agentId, provisionalTitle);
+        this.workspaceAutoName.scheduleForAgent({
+          agentId,
+          cwd: stored.cwd,
+          firstAgentContext: { prompt: text },
+          provisionalTitle,
+        });
+      }
     }
   }
 
