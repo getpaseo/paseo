@@ -111,6 +111,7 @@ export default {
       infoPlist: {
         NSMicrophoneUsageDescription: "This app needs access to the microphone for voice commands.",
         ITSAppUsesNonExemptEncryption: false,
+        UIBackgroundModes: ["audio"],
       },
       bundleIdentifier: variant.packageId,
       ...(variant.googleServiceInfoPlist
