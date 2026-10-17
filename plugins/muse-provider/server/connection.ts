@@ -134,7 +134,7 @@ export class MspConnection {
     method: string,
     params: object,
     schema: z.ZodType<T>,
-    timeoutMs = this.options.timeoutMs ?? 10000,
+    timeoutMs = this.options.timeoutMs ?? 60000,
   ): Promise<T> {
     if (this.failure) throw this.failure;
     if (this.closing) throw new MuseError("closed", "Muse host is closing");

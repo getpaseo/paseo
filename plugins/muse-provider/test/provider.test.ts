@@ -138,6 +138,14 @@ async function harness(
       .filter(Boolean)
       .map((line) => JSON.parse(line));
   }
+  async function waitForRequest(method: string) {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      if ((await recorded()).some((frame) => frame.method === method)) return;
+      await delay(10);
+    }
+    throw new Error(`Missing request: ${method}`);
+  }
   return {
     provider,
     launch,
@@ -148,6 +156,7 @@ async function harness(
     open,
     prompt,
     recorded,
+    waitForRequest,
     root,
     usageSource,
   };
@@ -259,6 +268,58 @@ test("tool calls classify read, shell, and edit with fetched JSON patch converte
     ]),
   );
 });
+
+test.each(["error", "timeout"])(
+  "patch fetch %s preserves the edit and completes the turn",
+  async (failure) => {
+    const h = await harness("tools-edit", { MUSE_TEST_OUTPUT_FAILURE: failure });
+    expect(await h.open()).toMatchObject({ type: "session.ready" });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await h.prompt();
+    await h.waitForRequest("item/readOutput");
+    if (failure === "timeout") await vi.advanceTimersByTimeAsync(60000);
+    expect(
+      await h.wait(
+        (event) =>
+          event.type === "session.runtime_failed" ||
+          (event.type === "session.turn" && event.state === "completed"),
+      ),
+    ).toMatchObject({ type: "session.turn", state: "completed" });
+    const edit = h.events.findLast(
+      (event) =>
+        event.type === "timeline.item" &&
+        event.item.type === "tool_call" &&
+        event.item.name === "edit_file",
+    );
+    expect(edit).toMatchObject({
+      type: "timeline.item",
+      item: {
+        type: "tool_call",
+        name: "edit_file",
+        status: "completed",
+        error: null,
+        detail: {
+          type: "edit",
+          filePath: "f",
+          oldString: "beta",
+          newString: "gamma",
+          unifiedDiff: undefined,
+        },
+      },
+    });
+    expect(
+      h.events.findLast(
+        (event) => event.type === "timeline.item" && event.item.type === "assistant_message",
+      ),
+    ).toMatchObject({
+      item: { text: "Done. `f` had 2 lines; changed line 2 from `beta` to `gamma`.\n" },
+    });
+    expect(h.events.filter((event) => event.type === "session.runtime_failed")).toEqual([]);
+    expect(
+      h.events.filter((event) => event.type === "session.turn" && event.state === "completed"),
+    ).toHaveLength(1);
+  },
+);
 
 test("multi-stage approvals surface Stage 2 then Stage 3 and send the current requirement guard", async () => {
   const h = await harness("multi-stage-approval");
@@ -375,6 +436,36 @@ test("a fresh connection restores earlier messages from persisted session state"
   expect(reopened.events.filter((event) => event.type === "session.turn")).toEqual([]);
   await reopened.prompt();
   await reopened.wait((event) => event.type === "session.turn" && event.state === "completed");
+});
+
+test("resume succeeds after more than ten seconds and can complete a new turn", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "muse-resume-gate-"));
+  roots.push(root);
+  const gate = path.join(root, "release");
+  const h = await harness("resume-without-cursor", { MUSE_TEST_RESUME_GATE: gate });
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const opened = h.open({ version: 1, data: { sessionId: "saved-session" } });
+  await h.waitForRequest("session/resume");
+  // The child holds its real MSP response while the provider's request clock advances.
+  await vi.advanceTimersByTimeAsync(15000);
+  await writeFile(gate, "release");
+  expect(await opened).toMatchObject({ type: "session.ready" });
+  expect(h.events).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        type: "timeline.item",
+        item: expect.objectContaining({ type: "assistant_message", text: "RESUME_MARKER_OK" }),
+      }),
+    ]),
+  );
+  await h.prompt();
+  await h.wait((event) => event.type === "session.turn" && event.state === "completed");
+  expect(
+    h.events.filter(
+      (event) => event.type === "request.failed" || event.type === "session.runtime_failed",
+    ),
+  ).toEqual([]);
+  expect((await h.recorded()).filter((frame) => frame.method === "session/start")).toEqual([]);
 });
 
 for (const cursor of [undefined, "v:old:7"]) {
