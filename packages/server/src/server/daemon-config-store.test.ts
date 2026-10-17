@@ -120,6 +120,32 @@ describe("DaemonConfigStore", () => {
     expect(loadPersistedConfig(paseoHome).daemon?.relay?.enabled).toBe(true);
   });
 
+  test("patch persists a host icon and null clears it", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+    const changes: Array<string | null | undefined> = [];
+    store.onChange((config) => changes.push(config.hostIcon));
+
+    store.patch({ hostIcon: "home" });
+    expect(store.get().hostIcon).toBe("home");
+    expect(loadPersistedConfig(paseoHome).daemon?.hostIcon).toBe("home");
+
+    store.patch({ hostIcon: null });
+    expect(store.get().hostIcon).toBeNull();
+    expect(loadPersistedConfig(paseoHome).daemon).not.toHaveProperty("hostIcon");
+    expect(changes).toEqual(["home", null]);
+  });
+
   test("patch round-trips agent profiles through the strictly-parsed persisted config", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);

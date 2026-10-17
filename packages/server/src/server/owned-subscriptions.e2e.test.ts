@@ -865,6 +865,45 @@ test("config changes require their own event demand and cannot escape to an idle
   }
 });
 
+test("a host icon change reaches server_info subscribers without daemon_config demand", async () => {
+  const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
+  const admin = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
+  const peers: SubscriptionPeer[] = [];
+  const serverInfos = (peer: SubscriptionPeer) =>
+    peer.frames.flatMap((frame) =>
+      frame.type === "session" &&
+      frame.message.type === "status" &&
+      frame.message.payload.status === "server_info"
+        ? [frame.message.payload]
+        : [],
+    );
+  try {
+    await admin.connect();
+    const observer = await SubscriptionPeer.connect(daemon.port, "host-icon-session");
+    peers.push(observer);
+    const initial = admin.getLastServerInfoMessage();
+    expect(initial?.features?.hostIcon).toBe(true);
+    expect(initial?.hostIcon?.selected).toBeNull();
+
+    await observer.request({
+      type: "session.events.set_subscription.request",
+      requestId: "server-info-feed",
+      events: ["status.server_info"],
+    });
+    await admin.patchDaemonConfig({ hostIcon: "cloud" });
+    await expect
+      .poll(() => serverInfos(observer).some((info) => info.hostIcon?.selected === "cloud"))
+      .toBe(true);
+
+    await admin.patchDaemonConfig({ hostIcon: null });
+    await expect.poll(() => serverInfos(observer).at(-1)?.hostIcon?.selected === null).toBe(true);
+  } finally {
+    for (const peer of peers) peer.close();
+    await admin.close();
+    await daemon.close();
+  }
+});
+
 test("status-shaped operation replies use actual source request provenance", async () => {
   const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
   const peers: SubscriptionPeer[] = [];

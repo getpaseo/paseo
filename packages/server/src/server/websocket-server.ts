@@ -737,9 +737,11 @@ export class VoiceAssistantWebSocketServer {
     const unsubscribeChange = this.daemonConfigStore.onChange((config) => {
       this.broadcastDaemonConfigChanged(config);
     });
+    const unsubscribeHostIcon = this.rebroadcastServerInfoOnHostIconChange();
     this.unsubscribeDaemonConfigChange = () => {
       unsubscribeProviderConfig();
       unsubscribeChange();
+      unsubscribeHostIcon();
     };
 
     const pushLogger = this.logger.child({ module: "push" });
@@ -1788,6 +1790,11 @@ export class VoiceAssistantWebSocketServer {
       permissions: session.getPermissions(),
       // COMPAT(desktopManaged): added in v0.1.X, remove optional parsing after 2027-01-16.
       desktopManaged: this.daemonRuntimeConfig?.desktopManaged === true,
+      // COMPAT(hostIcon): added in v0.10.3, remove optional after 2027-04-01.
+      hostIcon: {
+        selected: this.daemonConfigStore.get().hostIcon ?? null,
+        detected: this.daemonRuntimeConfig?.detectedHostIcon ?? null,
+      },
       ...(this.serverCapabilities ? { capabilities: this.serverCapabilities } : {}),
       features: {
         usageSources: true,
@@ -1945,6 +1952,8 @@ export class VoiceAssistantWebSocketServer {
         agentProfiles: true,
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: true,
+        // COMPAT(hostIcon): added in v0.10.3, remove gate after 2027-04-01.
+        hostIcon: true,
       },
     };
   }
@@ -1966,6 +1975,18 @@ export class VoiceAssistantWebSocketServer {
         status: "daemon_config_changed",
         config,
       },
+    });
+  }
+
+  // The host icon rides on server_info, which reaches every client that lists this host —
+  // including principals without daemon.read that never see daemon_config_changed.
+  private rebroadcastServerInfoOnHostIconChange(): () => void {
+    let hostIcon = this.daemonConfigStore.get().hostIcon ?? null;
+    return this.daemonConfigStore.onChange((config) => {
+      const nextHostIcon = config.hostIcon ?? null;
+      if (nextHostIcon === hostIcon) return;
+      hostIcon = nextHostIcon;
+      this.broadcastCapabilitiesUpdate();
     });
   }
 

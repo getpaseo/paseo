@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   type HostAppearanceSource,
   defaultHostAppearance,
+  detectedHostIcon,
   normalizeStoredHostAppearance,
+  resolveHostIcon,
   resolveHostBadgeDisplay,
   selectHostBadges,
 } from "@/hosts/appearance";
@@ -31,6 +33,27 @@ describe("normalizeStoredHostAppearance", () => {
       color: "teal",
       badgeDisplay: "icon",
     });
+  });
+
+  it("ignores an icon a device-local build stored", () => {
+    expect(
+      normalizeStoredHostAppearance({ color: "teal", badgeDisplay: null, icon: "cloud" }),
+    ).toEqual({ color: "teal", badgeDisplay: null });
+  });
+});
+
+describe("resolveHostIcon", () => {
+  it("prefers the user's choice, then the daemon's guess, then a server", () => {
+    expect(resolveHostIcon({ selected: "home", detected: "laptop" })).toBe("home");
+    expect(resolveHostIcon({ selected: null, detected: "laptop" })).toBe("laptop");
+    expect(resolveHostIcon({ selected: null, detected: null })).toBe("server");
+    expect(resolveHostIcon(undefined)).toBe("server");
+  });
+
+  it("skips an icon this build does not know", () => {
+    expect(resolveHostIcon({ selected: "toaster", detected: "cloud" })).toBe("cloud");
+    expect(resolveHostIcon({ selected: null, detected: "mainframe" })).toBe("server");
+    expect(detectedHostIcon({ selected: null, detected: "mainframe" })).toBeNull();
   });
 });
 
@@ -104,6 +127,7 @@ describe("selectHostBadges", () => {
       serverId: "beta",
       label: "Beta",
       color: "none",
+      icon: "server",
       showLabel: true,
     });
   });
@@ -112,12 +136,14 @@ describe("selectHostBadges", () => {
     const badges = selectHostBadges({
       hosts: [host("alpha", "Alpha", { color: "teal", badgeDisplay: "icon" })],
       localServerId: null,
+      hostIcons: new Map([["alpha", "cloud"]]),
       enabled: true,
     });
     expect(badges.get("alpha")).toEqual({
       serverId: "alpha",
       label: "Alpha",
       color: "teal",
+      icon: "cloud",
       showLabel: false,
     });
   });

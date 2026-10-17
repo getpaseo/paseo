@@ -18,6 +18,8 @@ export interface DaemonRuntimeConfig {
   worktreesRoot?: string;
   appBaseUrl?: string;
   desktopManaged?: boolean;
+  /** What the daemon guessed about its own hardware, for the host's default icon. */
+  detectedHostIcon?: string | null;
   getRelayConfig(): {
     enabled: boolean;
     endpoint: string;

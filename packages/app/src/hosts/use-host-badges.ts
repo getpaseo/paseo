@@ -1,7 +1,14 @@
 import { useMemo } from "react";
+import { useShallow } from "zustand/shallow";
 import { useHosts } from "@/runtime/host-runtime";
+import { useSessionStore } from "@/stores/session-store";
 import { useLocalDaemonServerId, useLocalDaemonServerIdState } from "@/hooks/use-is-local-daemon";
-import { selectHostBadges, type HostBadgeModel } from "@/hosts/appearance";
+import {
+  resolveHostIcon,
+  selectHostBadges,
+  type HostBadgeModel,
+  type HostIcon,
+} from "@/hosts/appearance";
 
 /**
  * Every host's badge, resolved from the three things that decide one: the host registry, which
@@ -17,14 +24,24 @@ export function useHostBadges({
   const hosts = useHosts();
   const localServerId = useLocalDaemonServerId();
   const localDaemon = useLocalDaemonServerIdState();
+  const icons = useSessionStore(
+    useShallow((state) =>
+      hosts.map((host) => resolveHostIcon(state.sessions[host.serverId]?.serverInfo?.hostIcon)),
+    ),
+  );
+  const hostIcons = useMemo(
+    () => new Map<string, HostIcon>(hosts.map((host, index) => [host.serverId, icons[index]!])),
+    [hosts, icons],
+  );
   return useMemo(
     () =>
       selectHostBadges({
         hosts,
         localServerId,
         localHostResolutionPending: localDaemon.status !== "resolved",
+        hostIcons,
         enabled,
       }),
-    [hosts, localDaemon.status, localServerId, enabled],
+    [hosts, localDaemon.status, localServerId, hostIcons, enabled],
   );
 }
