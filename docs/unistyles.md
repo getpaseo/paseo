@@ -270,6 +270,12 @@ const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
 
 If a style factory is cheap, skipping `useMemo` entirely is also fine.
 
+## Suspended Renderers Miss The Scheme Change
+
+On web, an adaptive scheme switch reaches styles through two different channels. CSS-variable styles (everything from `StyleSheet.create`) repaint from the `prefers-color-scheme` media query alone — pure CSS, no JS. `withUnistyles` mappings (markdown styles, the tab scrim's SVG colors) repaint only when Unistyles' own `matchMedia` change listeners fire.
+
+A renderer suspended while the OS switches appearance can miss those change events. The page then shows light chrome with dark-theme markdown and tab scrims until a reload — the [#3581](https://github.com/getpaseo/paseo/issues/3581) failure. `AppearanceProvider` reconciles this: on `focus`/`pageshow`/`visibilitychange` it compares the live media state against the last scheme it saw and re-runs `applyAppearance`, whose `updateTheme` calls re-emit the theme so every mapping re-reads the current scheme. Do not remove that subscription, and route any similar stale-theme report through it before inventing a second mechanism.
+
 ## Static Theme Imports
 
 Do not import `theme` from `@/styles/theme` for live UI colors. That export is a dark-theme compatibility default, so using it in render code leaves icons, placeholders, or third-party props pinned to dark colors in light mode.
