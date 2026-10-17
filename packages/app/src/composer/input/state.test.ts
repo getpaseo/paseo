@@ -1,14 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   applyDictationTranscript,
+  canOwnHardwareKeyboardSubmit,
   computeCanStartDictation,
   resolveActiveSendBehavior,
+  resolveComposerEnterAction,
   resolveComposerSurfacePresentation,
   resolveComposerSurfaceText,
   resolveGlyphRailOffset,
   resolveRetainedSelection,
   runAlternateSendAction,
   runDefaultSendAction,
+  runHardwareKeyboardEnter,
   runMessageInputKeyboardAction,
   stopRealtimeVoice,
 } from "./state";
@@ -56,6 +59,168 @@ describe("composer surface presentation", () => {
       input: { opacity: 0, pointerEvents: "none" },
       overlay: { opacity: 1, pointerEvents: "auto" },
     });
+  });
+});
+
+const ENTER = { shiftKey: false, ctrlKey: false, metaKey: false };
+const SHIFT_ENTER = { ...ENTER, shiftKey: true };
+const CTRL_ENTER = { ...ENTER, ctrlKey: true };
+const META_ENTER = { ...ENTER, metaKey: true };
+
+describe("composer Enter rules", () => {
+  const wideIdle = {
+    submitOnEnter: true,
+    isAgentRunning: false,
+    canQueue: true,
+    isSendBlocked: false,
+  };
+  const wideRunning = { ...wideIdle, isAgentRunning: true };
+
+  it("sends the default action on Enter and leaves Shift+Enter as a newline", () => {
+    expect(resolveComposerEnterAction(ENTER, wideIdle)).toBe("default");
+    expect(resolveComposerEnterAction(SHIFT_ENTER, wideIdle)).toBe("pass-through");
+    expect(resolveComposerEnterAction({ ...SHIFT_ENTER, ctrlKey: true }, wideRunning)).toBe(
+      "pass-through",
+    );
+  });
+
+  it("uses Ctrl or Meta+Enter for the alternate action only while a queueable agent runs", () => {
+    expect(resolveComposerEnterAction(CTRL_ENTER, wideRunning)).toBe("alternate");
+    expect(resolveComposerEnterAction(META_ENTER, wideRunning)).toBe("alternate");
+    expect(resolveComposerEnterAction(CTRL_ENTER, wideIdle)).toBe("default");
+    expect(resolveComposerEnterAction(META_ENTER, { ...wideRunning, canQueue: false })).toBe(
+      "default",
+    );
+  });
+
+  it("leaves every Enter as a newline on compact layouts or while sending is blocked", () => {
+    for (const keys of [ENTER, CTRL_ENTER, META_ENTER]) {
+      expect(resolveComposerEnterAction(keys, { ...wideRunning, submitOnEnter: false })).toBe(
+        "pass-through",
+      );
+      expect(resolveComposerEnterAction(keys, { ...wideRunning, isSendBlocked: true })).toBe(
+        "pass-through",
+      );
+    }
+  });
+});
+
+describe("hardware keyboard submit ownership", () => {
+  const owning = {
+    isInputFocused: true,
+    isSendButtonDisabled: false,
+    readOnly: false,
+    isDictating: false,
+    showOverlay: false,
+    isRealtimeVoiceForCurrentAgent: false,
+    isSendBlocked: false,
+  };
+
+  it("lets a focused composer that can send own submission under either rules", () => {
+    expect(canOwnHardwareKeyboardSubmit({ ...owning, rules: "send-button" })).toBe(true);
+    expect(canOwnHardwareKeyboardSubmit({ ...owning, rules: "desktop" })).toBe(true);
+  });
+
+  it.each([
+    ["unfocused", { isInputFocused: false }],
+    ["read-only", { readOnly: true }],
+    ["dictating", { isDictating: true }],
+    ["hidden behind the voice overlay", { showOverlay: true }],
+    ["in realtime voice", { isRealtimeVoiceForCurrentAgent: true }],
+  ])("never lets a %s composer own submission", (_label, override) => {
+    expect(canOwnHardwareKeyboardSubmit({ ...owning, ...override, rules: "send-button" })).toBe(
+      false,
+    );
+    expect(canOwnHardwareKeyboardSubmit({ ...owning, ...override, rules: "desktop" })).toBe(false);
+  });
+
+  it("keeps the send-button gate for iOS", () => {
+    expect(
+      canOwnHardwareKeyboardSubmit({ ...owning, rules: "send-button", isSendButtonDisabled: true }),
+    ).toBe(false);
+    expect(
+      canOwnHardwareKeyboardSubmit({ ...owning, rules: "send-button", isSendBlocked: true }),
+    ).toBe(true);
+  });
+
+  it("releases desktop-rule ownership while sending is blocked", () => {
+    expect(canOwnHardwareKeyboardSubmit({ ...owning, rules: "desktop", isSendBlocked: true })).toBe(
+      false,
+    );
+  });
+});
+
+describe("hardware keyboard Enter", () => {
+  function createEnterContext(
+    overrides: Partial<Parameters<typeof runHardwareKeyboardEnter>[1]> = {},
+  ) {
+    const actions: string[] = [];
+    const ctx = {
+      rules: "desktop" as const,
+      isAgentRunning: true,
+      canQueue: true,
+      isSendBlocked: false,
+      handleKeyPress: () => false,
+      handleDefaultSendAction: () => actions.push("default"),
+      handleAlternateSendAction: () => actions.push("alternate"),
+      ...overrides,
+    };
+    return { actions, ctx };
+  }
+
+  it("runs the desktop default and alternate actions for Android", () => {
+    const { actions, ctx } = createEnterContext();
+    runHardwareKeyboardEnter(ENTER, ctx);
+    runHardwareKeyboardEnter(CTRL_ENTER, ctx);
+    runHardwareKeyboardEnter(META_ENTER, { ...ctx, isAgentRunning: false });
+    expect(actions).toEqual(["default", "alternate", "default"]);
+  });
+
+  // Native only reports Enter from a physical keyboard; touch and IME input never get here. The
+  // window width must not matter: a phone or a narrow pane with a keyboard attached sends too.
+  it("routes a physical keyboard Enter by composer state alone, at any window width", () => {
+    const owner = {
+      rules: "desktop" as const,
+      isInputFocused: true,
+      isSendButtonDisabled: false,
+      readOnly: false,
+      isDictating: false,
+      showOverlay: false,
+      isRealtimeVoiceForCurrentAgent: false,
+      isSendBlocked: false,
+    };
+    expect(canOwnHardwareKeyboardSubmit(owner)).toBe(true);
+
+    const { actions, ctx } = createEnterContext();
+    runHardwareKeyboardEnter(ENTER, ctx);
+    runHardwareKeyboardEnter(CTRL_ENTER, ctx);
+    expect(actions).toEqual(["default", "alternate"]);
+  });
+
+  it("lets autocomplete take Enter before any send action", () => {
+    const { actions, ctx } = createEnterContext({ handleKeyPress: () => true });
+    runHardwareKeyboardEnter(CTRL_ENTER, ctx);
+    expect(actions).toEqual([]);
+  });
+
+  it("does nothing for a consumed press once the composer can no longer send", () => {
+    const { actions, ctx } = createEnterContext({ isSendBlocked: true });
+    runHardwareKeyboardEnter(ENTER, ctx);
+    expect(actions).toEqual([]);
+  });
+
+  it("keeps iOS on the send button action", () => {
+    let autocompleteCalls = 0;
+    const { actions, ctx } = createEnterContext({
+      rules: "send-button",
+      handleKeyPress: () => {
+        autocompleteCalls += 1;
+        return true;
+      },
+    });
+    runHardwareKeyboardEnter(ENTER, ctx);
+    expect(actions).toEqual(["default"]);
+    expect(autocompleteCalls).toBe(0);
   });
 });
 

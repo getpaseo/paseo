@@ -1,0 +1,26 @@
+apply plugin: 'com.android.library'
+
+group = 'sh.paseo.hardwarekeyboard'
+version = '0.1.0'
+
+def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
+apply from: expoModulesCorePlugin
+applyKotlinExpoModulesCorePlugin()
+useCoreDependencies()
+useDefaultAndroidSdkVersions()
+
+android {
+  namespace "sh.paseo.hardwarekeyboard"
+  // Instrumentation tests reuse the release dependencies the app build already resolves.
+  testBuildType "release"
+  defaultConfig {
+    testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+  }
+}
+
+dependencies {
+  implementation "com.facebook.react:react-android"
+  testImplementation 'junit:junit:4.13.2'
+  androidTestImplementation 'androidx.test:runner:1.6.2'
+  androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+}
