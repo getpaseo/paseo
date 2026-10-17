@@ -205,6 +205,38 @@ describe("opencode tool-call mapper", () => {
     expect(item.detail).toMatchObject({ type: "plain_text", label: "hzmcp.memory__search_notes" });
   });
 
+  it("does not join keywords across whitespace when detecting regexes", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-12",
+        status: "running",
+        input: {
+          code: "async function check(s) { return await /'/.test(s); }\nawait tools.hzmcp.memory__search_notes({});",
+        },
+        output: null,
+      }),
+    );
+
+    expect(item.detail).toMatchObject({ type: "plain_text", label: "hzmcp.memory__search_notes" });
+  });
+
+  it("starts each template interpolation with fresh scanner state", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-13",
+        status: "running",
+        input: {
+          code: "const s = `${1}${/'/.test(text)}`;\nawait tools.hzmcp.memory__search_notes({});",
+        },
+        output: null,
+      }),
+    );
+
+    expect(item.detail).toMatchObject({ type: "plain_text", label: "hzmcp.memory__search_notes" });
+  });
+
   it("keeps the executed code in the detail text alongside the output", () => {
     const item = expectMapped(
       mapOpencodeToolCall({

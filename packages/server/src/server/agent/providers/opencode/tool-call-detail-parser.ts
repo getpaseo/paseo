@@ -37,7 +37,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 // label extraction only sees executed code. Template-literal ${...}
 // interpolations stay visible: they are evaluated.
 
-function blankRange(chars: string[], start: number, end: number) {
+function blankRange(params: { chars: string[]; start: number; end: number }) {
+  const { chars, start, end } = params;
   for (let i = start; i < end && i < chars.length; i += 1) {
     if (chars[i] !== "\n") {
       chars[i] = " ";
@@ -67,9 +68,13 @@ const REGEX_PRECEDING_KEYWORDS = new Set([
 // identifier/keyword ending at it. Tracked while scanning instead of read
 // back from the text, because earlier masking blanks characters and a
 // lookback would misread them (e.g. `"100" / 2` after the string is blanked).
+// `wordBoundary` marks that whitespace separated the next identifier from the
+// current word, so `return await` stays two keywords instead of one joined
+// token.
 interface MaskState {
   previous: string;
   word: string;
+  wordBoundary: boolean;
 }
 
 function startsRegexLiteral(state: MaskState): boolean {
@@ -84,23 +89,32 @@ function startsRegexLiteral(state: MaskState): boolean {
 
 // A finished string, template or regex literal is a value: a following `/` is
 // division.
-function noteValueToken(state: MaskState) {
-  state.previous = '"';
-  state.word = "";
+function noteValueToken(params: { state: MaskState }) {
+  params.state.previous = '"';
+  params.state.word = "";
+  params.state.wordBoundary = false;
 }
 
-function noteCodeCharacter(character: string, state: MaskState) {
+function noteCodeCharacter(params: { character: string; state: MaskState }) {
+  const { character, state } = params;
   if (/[A-Za-z0-9_$]/.test(character)) {
-    state.word += character;
+    state.word = state.wordBoundary ? character : state.word + character;
+    state.wordBoundary = false;
   } else {
     state.word = "";
+    state.wordBoundary = false;
   }
   state.previous = character;
 }
 
-// start points at the opening `/`. Returns the index after the flags, with the
-// literal body blanked. Unterminated literals are treated as division.
-function maskRegexLiteral(chars: string[], start: number): number {
+function noteWhitespace(params: { state: MaskState }) {
+  params.state.wordBoundary = true;
+}
+
+// params.start points at the opening `/`. Returns the index after the flags,
+// with the literal body blanked. Unterminated literals are treated as division.
+function maskRegexLiteral(params: { chars: string[]; start: number }): number {
+  const { chars, start } = params;
   let i = start + 1;
   let inClass = false;
   while (i < chars.length) {
@@ -127,7 +141,7 @@ function maskRegexLiteral(chars: string[], start: number): number {
       while (j < chars.length && /[a-z]/i.test(chars[j])) {
         j += 1;
       }
-      blankRange(chars, start, j);
+      blankRange({ chars, start, end: j });
       return j;
     }
     i += 1;
@@ -135,36 +149,43 @@ function maskRegexLiteral(chars: string[], start: number): number {
   return start + 1;
 }
 
-// Handles quotes, comments and regex literals at chars[i]; returns the new
-// index, or -1 when the character is none of these.
-function maskCodeToken(chars: string[], source: string, i: number, state: MaskState): number {
+// Handles quotes, comments and regex literals at chars[params.i]; returns the
+// new index, or -1 when the character is none of these.
+function maskCodeToken(params: {
+  chars: string[];
+  source: string;
+  i: number;
+  state: MaskState;
+}): number {
+  const { chars, source, i, state } = params;
   const character = chars[i];
   const next = chars[i + 1];
   if (character === "'" || character === '"') {
-    const end = skipQuotedString(chars, i, character);
-    blankRange(chars, i, end);
-    noteValueToken(state);
+    const end = skipQuotedString({ chars, start: i, quote: character });
+    blankRange({ chars, start: i, end });
+    noteValueToken({ state });
     return end;
   }
   if (character === "/" && next === "/") {
     const end = chars.indexOf("\n", i);
-    blankRange(chars, i, end === -1 ? chars.length : end);
+    blankRange({ chars, start: i, end: end === -1 ? chars.length : end });
     return end === -1 ? chars.length : end;
   }
   if (character === "/" && next === "*") {
     const end = source.indexOf("*/", i + 2);
-    blankRange(chars, i, end === -1 ? chars.length : end + 2);
+    blankRange({ chars, start: i, end: end === -1 ? chars.length : end + 2 });
     return end === -1 ? chars.length : end + 2;
   }
   if (character === "/" && startsRegexLiteral(state)) {
-    const end = maskRegexLiteral(chars, i);
-    noteValueToken(state);
+    const end = maskRegexLiteral({ chars, start: i });
+    noteValueToken({ state });
     return end;
   }
   return -1;
 }
 
-function skipQuotedString(chars: string[], start: number, quote: string): number {
+function skipQuotedString(params: { chars: string[]; start: number; quote: string }): number {
+  const { chars, start, quote } = params;
   let j = start + 1;
   while (j < chars.length) {
     if (chars[j] === "\\") {
@@ -179,15 +200,16 @@ function skipQuotedString(chars: string[], start: number, quote: string): number
   return chars.length;
 }
 
-// start points at the opening backtick. Returns the index after the closing
-// backtick (or end of input when unterminated), with literal text blanked and
-// ${...} interpolation contents left as code.
-function maskTemplateLiteral(
-  chars: string[],
-  source: string,
-  start: number,
-  state: MaskState,
-): number {
+// params.start points at the opening backtick. Returns the index after the
+// closing backtick (or end of input when unterminated), with literal text
+// blanked and ${...} interpolation contents left as code.
+function maskTemplateLiteral(params: {
+  chars: string[];
+  source: string;
+  start: number;
+  state: MaskState;
+}): number {
+  const { chars, source, start, state } = params;
   let i = start + 1;
   let literalStart = start;
   while (i < chars.length) {
@@ -196,51 +218,57 @@ function maskTemplateLiteral(
       continue;
     }
     if (chars[i] === "`") {
-      blankRange(chars, literalStart, i);
-      noteValueToken(state);
+      blankRange({ chars, start: literalStart, end: i });
+      noteValueToken({ state });
       return i + 1;
     }
     if (chars[i] === "$" && chars[i + 1] === "{") {
-      blankRange(chars, literalStart, i);
-      i = maskInterpolation(chars, source, i + 2, state);
+      blankRange({ chars, start: literalStart, end: i });
+      i = maskInterpolation({ chars, source, start: i + 2, state });
       literalStart = i;
       continue;
     }
     i += 1;
   }
-  blankRange(chars, literalStart, chars.length);
+  blankRange({ chars, start: literalStart, end: chars.length });
   return chars.length;
 }
 
-// start is just after "${". Returns the index after the matching "}".
-function maskInterpolation(
-  chars: string[],
-  source: string,
-  start: number,
-  state: MaskState,
-): number {
+// params.start is just after "${". Returns the index after the matching "}".
+// Each interpolation starts fresh after an opening brace, so the state from
+// the surrounding code (e.g. a previous `}`) does not leak in.
+function maskInterpolation(params: {
+  chars: string[];
+  source: string;
+  start: number;
+  state: MaskState;
+}): number {
+  const { chars, source, start, state } = params;
+  state.previous = "(";
+  state.word = "";
+  state.wordBoundary = false;
   let depth = 1;
   let i = start;
   while (i < chars.length && depth > 0) {
     if (chars[i] === "`") {
-      i = maskTemplateLiteral(chars, source, i, state);
+      i = maskTemplateLiteral({ chars, source, start: i, state });
       continue;
     }
-    const tokenEnd = maskCodeToken(chars, source, i, state);
+    const tokenEnd = maskCodeToken({ chars, source, i, state });
     if (tokenEnd !== -1) {
       i = tokenEnd;
       continue;
     }
     const character = chars[i];
-    if (character === "{" || character === "}") {
+    if (/\s/.test(character)) {
+      noteWhitespace({ state });
+    } else {
       if (character === "{") {
         depth += 1;
-      } else {
+      } else if (character === "}") {
         depth -= 1;
       }
-      noteCodeCharacter(character, state);
-    } else if (!/\s/.test(character)) {
-      noteCodeCharacter(character, state);
+      noteCodeCharacter({ character, state });
     }
     i += 1;
   }
@@ -251,27 +279,30 @@ function maskNonCode(source: string): string {
   // UTF-16 units, not code points: the mask must preserve offsets into the
   // original string, and astral characters (emoji) span two units.
   const chars = source.split("");
-  const state: MaskState = { previous: "", word: "" };
+  const state: MaskState = { previous: "", word: "", wordBoundary: false };
   let i = 0;
   while (i < chars.length) {
     if (chars[i] === "`") {
-      i = maskTemplateLiteral(chars, source, i, state);
+      i = maskTemplateLiteral({ chars, source, start: i, state });
       continue;
     }
-    const tokenEnd = maskCodeToken(chars, source, i, state);
+    const tokenEnd = maskCodeToken({ chars, source, i, state });
     if (tokenEnd !== -1) {
       i = tokenEnd;
       continue;
     }
-    if (!/\s/.test(chars[i])) {
-      noteCodeCharacter(chars[i], state);
+    if (/\s/.test(chars[i])) {
+      noteWhitespace({ state });
+    } else {
+      noteCodeCharacter({ character: chars[i], state });
     }
     i += 1;
   }
   return chars.join("");
 }
 
-function extractAccessorChain(masked: string, from: number): string | undefined {
+function extractAccessorChain(params: { masked: string; from: number }): string | undefined {
+  const { masked, from } = params;
   const segments: string[] = [];
   const accessor = /\s*(?:\.\s*([\w$]+)|\[\s*(["'`])([\s\S]*?)\2\s*\])/y;
   let index = from;
@@ -302,7 +333,10 @@ function extractCodeModeToolLabel(code: string): string | undefined {
   const masked = maskNonCode(code);
   const word = /\btools\b/g;
   for (let match = word.exec(masked); match !== null; match = word.exec(masked)) {
-    const label = extractAccessorChain(code, match.index + match[0].length);
+    const label = extractAccessorChain({
+      masked: code,
+      from: match.index + match[0].length,
+    });
     if (label) {
       return label;
     }
