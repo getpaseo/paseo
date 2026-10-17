@@ -5,6 +5,7 @@ import { TextInput } from "./text-input";
 import { copyText } from "./clipboard";
 import { useToast } from "./toast";
 import { useRevealedText } from "@/hooks/use-revealed-text";
+import { PluginRewindMenu } from "./rewind-menu";
 
 export const pluginReactNativeRuntime = {
   Icon,
@@ -15,4 +16,5 @@ export const pluginReactNativeRuntime = {
   copyText,
   useRevealedText,
   useToast,
+  RewindMenu: PluginRewindMenu,
 };
