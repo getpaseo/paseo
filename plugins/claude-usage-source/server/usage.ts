@@ -9,6 +9,7 @@ import { z } from "zod";
 import {
   hashAccountKey,
   toneFromUsedPct,
+  fetchWithAutoProxy,
   unavailable,
   type UsageAccount,
   type UsageScope,
@@ -366,7 +367,7 @@ async function keychainCredentialRecord(
 export async function discover(
   scope: UsageScope,
   lookup: ClaudeCredentialLookup = {},
-  fetchApi: typeof fetch = fetch,
+  fetchApi: typeof fetch = fetchWithAutoProxy,
 ): Promise<UsageAccount[]> {
   if (scope.kind === "session")
     lookup = {
@@ -493,7 +494,7 @@ function toCredentialRecord(credentials: ClaudeCredentials): ClaudeCredentialRec
 
 export async function fetchUsage(
   input: UsageInput,
-  fetchApi: typeof fetch = fetch,
+  fetchApi: typeof fetch = fetchWithAutoProxy,
   credentialLookup: ClaudeCredentialLookup = {},
 ): Promise<UsageReport> {
   /**

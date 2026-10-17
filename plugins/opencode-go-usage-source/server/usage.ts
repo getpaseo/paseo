@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import {
+  fetchWithAutoProxy,
   hashAccountKey,
   unavailable,
   type UsageAccount,
@@ -52,7 +53,7 @@ export async function discover(path = authPath()): Promise<UsageAccount[]> {
 
 export async function fetchUsage(
   input: Input,
-  fetchApi: typeof fetch = fetch,
+  fetchApi: typeof fetch = fetchWithAutoProxy,
 ): Promise<UsageReport> {
   const apiKey = await readDefaultKey(input.path);
   if (!apiKey) throw new Error("OpenCode Go login store no longer exists");
