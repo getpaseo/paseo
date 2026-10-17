@@ -1,3 +1,4 @@
+import imageHistory from "./fixtures/image-history.json" with { type: "json" };
 import { describe, expect, test } from "vitest";
 
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
@@ -79,6 +80,7 @@ describe("Pi history mapper", () => {
         item: {
           type: "user_message",
           text: "read this\n\nthen answer",
+          images: [{ data: "base64", mimeType: "image/png" }],
         },
       },
       {
@@ -220,4 +222,94 @@ describe("Pi history mapper", () => {
       },
     ]);
   });
+});
+
+test("replays captured native Pi images without dropping the image-only entry", async () => {
+  const entries = imageHistory.entries as Array<{ id: string; message: PiAgentMessage }>;
+  const userEntries = entries.flatMap((entry) =>
+    entry.message.role === "user" ? [{ id: entry.id, text: "" }] : [],
+  );
+  const history = await collectHistory(
+    entries.map((entry) => entry.message),
+    userEntries,
+  );
+  expect(
+    history.flatMap((event) =>
+      event.type === "timeline" && event.item.type === "user_message" ? [event.item] : [],
+    ),
+  ).toEqual(
+    entries.flatMap((entry) =>
+      entry.message.role === "user"
+        ? [
+            {
+              type: "user_message",
+              messageId: entry.id,
+              text: Array.isArray(entry.message.content)
+                ? entry.message.content
+                    .flatMap((part) => (part.type === "text" ? [part.text] : []))
+                    .join("\n\n")
+                : entry.message.content,
+              images: Array.isArray(entry.message.content)
+                ? entry.message.content.flatMap((part) =>
+                    part.type === "image" ? [{ data: part.data, mimeType: part.mimeType }] : [],
+                  )
+                : [],
+            },
+          ]
+        : [],
+    ),
+  );
+});
+
+test("replays only explicit captured client identities and preserves native entry ids", async () => {
+  const userEntries = [
+    { id: "native-image", text: "same", clientMessageId: "client-image" },
+    { id: "native-external", text: "same" },
+  ];
+  const events = await collectHistory(
+    [
+      { role: "user", content: "same" },
+      { role: "user", content: "same" },
+    ],
+    userEntries,
+  );
+  expect(events.map((event) => event.item)).toEqual([
+    {
+      type: "user_message",
+      text: "same",
+      messageId: "native-image",
+      clientMessageId: "client-image",
+    },
+    { type: "user_message", text: "same", messageId: "native-external" },
+  ]);
+});
+
+test("ignores empty user content without shifting later image identities", async () => {
+  const events = await collectHistory(
+    [
+      { role: "user", content: [] },
+      {
+        role: "user",
+        content: [
+          { type: "image", data: "AA==", mimeType: "image/png" },
+          { type: "image", data: "AQ==", mimeType: "image/jpeg" },
+        ],
+      },
+    ],
+    [
+      { id: "empty", text: "" },
+      { id: "images", text: "" },
+    ],
+  );
+  expect(events.map((event) => event.item)).toEqual([
+    {
+      type: "user_message",
+      text: "",
+      messageId: "images",
+      images: [
+        { data: "AA==", mimeType: "image/png" },
+        { data: "AQ==", mimeType: "image/jpeg" },
+      ],
+    },
+  ]);
 });

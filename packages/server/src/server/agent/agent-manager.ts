@@ -255,6 +255,11 @@ export interface SubscribeOptions {
   includeInternal?: boolean;
 }
 
+interface RecordHistoryTimelineEventInput {
+  agentId: string;
+  event: Extract<AgentStreamEvent, { type: "timeline" }>;
+}
+
 interface HydrateTimelineOptions {
   force?: boolean;
   broadcast?: boolean | (() => boolean);
@@ -4129,6 +4134,23 @@ export class AgentManager {
     await this.primeTimelineFromLegacyProviderHistory(agent, broadcast);
   }
 
+  private recordHistoryTimelineEvent({
+    agentId,
+    event,
+  }: RecordHistoryTimelineEventInput): AgentTimelineRow {
+    const item = event.item;
+    const providerMessageId =
+      item.type === "user_message" && item.clientMessageId ? item.messageId : undefined;
+    if (item.type === "user_message" && item.clientMessageId) {
+      // Replay carries native identity; the manager owns the submitted wire identity.
+      event.item = { ...item, messageId: item.clientMessageId };
+    }
+    return this.recordTimeline(agentId, event.item, {
+      ...(event.timestamp ? { timestamp: event.timestamp } : {}),
+      ...(providerMessageId ? { providerMessageId } : {}),
+    });
+  }
+
   private async forceHydrateTimelineFromLegacyProviderHistory(
     agent: ActiveManagedAgent,
     broadcast: boolean,
@@ -4165,11 +4187,7 @@ export class AgentManager {
       }
     }
     for (const event of historyEvents) {
-      const row = this.recordTimeline(
-        agent.id,
-        event.item,
-        event.timestamp ? { timestamp: event.timestamp } : undefined,
-      );
+      const row = this.recordHistoryTimelineEvent({ agentId: agent.id, event });
       if (broadcastTimeline) {
         this.dispatchStream(agent.id, event, {
           seq: row.seq,
@@ -4234,11 +4252,7 @@ export class AgentManager {
       }
     }
     for (const event of historyEvents) {
-      const row = this.recordTimeline(
-        agent.id,
-        event.item,
-        event.timestamp ? { timestamp: event.timestamp } : undefined,
-      );
+      const row = this.recordHistoryTimelineEvent({ agentId: agent.id, event });
       if (deferredBroadcast) {
         timelineEvents.push({ event, row });
       } else if (broadcast) {

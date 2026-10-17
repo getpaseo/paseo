@@ -11936,3 +11936,68 @@ test.each(["", "Describe this image"])(
     }
   },
 );
+
+test.each([false, true])(
+  "history ingestion canonicalizes explicit client identity with force=%s",
+  async (force) => {
+    class IdentifiedHistory extends TestAgentSession {
+      override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        yield {
+          type: "timeline",
+          provider: "codex",
+          item: {
+            type: "user_message",
+            text: "same",
+            images: [{ data: "AA==", mimeType: "image/png" }],
+            messageId: "native-1",
+            clientMessageId: "client-1",
+          },
+        };
+        yield {
+          type: "timeline",
+          provider: "codex",
+          item: {
+            type: "user_message",
+            text: "same",
+            images: [{ data: "AA==", mimeType: "image/png" }],
+            messageId: "native-external",
+          },
+        };
+      }
+    }
+    const client = new (class extends TestAgentClient {
+      override async resumeSession() {
+        return new IdentifiedHistory({ provider: "codex", cwd: tmpdir() });
+      }
+    })();
+    const manager = new AgentManager({ clients: { codex: client }, logger });
+    const agent = await manager.resumeAgentFromPersistence({
+      provider: "codex",
+      sessionId: "identified",
+    });
+    try {
+      await manager.hydrateTimelineFromProvider(agent.id, { force });
+      expect(manager.fetchTimeline(agent.id, { limit: 0 }).rows).toMatchObject([
+        {
+          providerMessageId: "native-1",
+          item: {
+            type: "user_message",
+            messageId: "client-1",
+            clientMessageId: "client-1",
+            images: [{ data: "AA==", mimeType: "image/png" }],
+          },
+        },
+        {
+          item: {
+            type: "user_message",
+            messageId: "native-external",
+            images: [{ data: "AA==", mimeType: "image/png" }],
+          },
+        },
+      ]);
+      expect(manager.getTimeline(agent.id)).toHaveLength(2);
+    } finally {
+      await manager.closeAgent(agent.id);
+    }
+  },
+);
