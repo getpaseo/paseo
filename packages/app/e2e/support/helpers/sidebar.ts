@@ -231,6 +231,72 @@ export async function selectSidebarStatusGrouping(page: Page): Promise<void> {
   await page.getByTestId("sidebar-grouping-status").click();
 }
 
+export type SidebarSortScope = "workspace" | "project";
+export type SidebarSortMode = "manual" | "name" | "recent";
+
+// Sort options live one page below the display-preferences root, next to grouping.
+// One helper owns the whole path so menu reshapes only land here.
+export async function chooseSidebarSort(
+  page: Page,
+  scope: SidebarSortScope,
+  mode: SidebarSortMode,
+): Promise<void> {
+  await openSidebarDisplayPage(page, `sidebar-display-${scope}-sorting`);
+  await page.getByTestId(`sidebar-${scope}-sorting-${mode}`).click();
+}
+
+async function waitForAnimationFrames(page: Page, count: number): Promise<void> {
+  for (let frame = 0; frame < count; frame++) {
+    await page.evaluate(() => new Promise<number>((resolve) => requestAnimationFrame(resolve)));
+  }
+}
+
+// The menu must track the pointer without pre-highlighting an option: hover each root
+// row plus every option of one sort scope, then prove keyboard navigation still takes
+// over and the chosen option persists across reopen.
+export async function expectDisplaySortHoverFollowsPointer(
+  page: Page,
+  scope: SidebarSortScope,
+): Promise<void> {
+  const trigger = page.getByTestId("sidebar-display-preferences-menu");
+  await trigger.click();
+  const root = page.getByTestId("sidebar-display-preferences-content");
+  const first = root.locator('[data-menu-item="true"]').first();
+  const parent = page.getByTestId(`sidebar-display-${scope}-sorting`);
+  for (const row of [
+    page.getByTestId("sidebar-display-grouping"),
+    page.getByTestId("sidebar-display-title-source"),
+    parent,
+  ]) {
+    await row.hover({ position: { x: 24, y: 14 } });
+    await expect(row).toBeFocused();
+    await expect(first).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  }
+  const manual = page.getByTestId(`sidebar-${scope}-sorting-manual`);
+  const name = page.getByTestId(`sidebar-${scope}-sorting-name`);
+  const recent = page.getByTestId(`sidebar-${scope}-sorting-recent`);
+  await name.hover();
+  await waitForAnimationFrames(page, 2);
+  await expect(name).toBeFocused();
+  await expect(manual).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await recent.hover();
+  await expect(recent).toBeFocused();
+  await expect(manual).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await page.keyboard.press("Home");
+  await expect(manual).toBeFocused();
+  await expect(manual).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await page.keyboard.press("ArrowDown");
+  await expect(name).toBeFocused();
+  await expect(name).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await page.keyboard.press("Enter");
+  await expect(root).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  await expect(parent).toContainText("Name");
+  await page.keyboard.press("Escape");
+  await expect(trigger).toBeFocused();
+}
+
 export async function openMobileAgentSidebar(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Open menu" }).click();
 }

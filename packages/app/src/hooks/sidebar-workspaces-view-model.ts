@@ -37,6 +37,8 @@ export interface SidebarStatusWorkspacePlacement extends SidebarWorkspacePlaceme
 }
 
 export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
+  lastStartedAt?: Date | null;
+  hasRunningAgent?: boolean;
   workspaceDirectory: string;
   workspaceDirectoryLabel: string;
   // Raw user-set title (null when the name is derived from branch/directory).
@@ -173,6 +175,9 @@ export function createSidebarWorkspaceEntry(input: {
     currentBranch: normalizeCurrentBranch(input.workspace.gitRuntime?.currentBranch),
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
+    lastStartedAt: input.workspaceAgentActivity?.get(input.workspace.id)?.lastStartedAt ?? null,
+    hasRunningAgent:
+      input.workspaceAgentActivity?.get(input.workspace.id)?.hasRunningAgent ?? false,
     archivingAt: input.workspace.archivingAt,
     diffStat: input.workspace.diffStat,
     prHint: selectPrHintFromStatus(
@@ -489,6 +494,83 @@ export function shouldShowSidebarHostLabels(projects: SidebarProjectEntry[]): bo
     }
   }
   return serverIds.size >= 2;
+}
+
+const nameCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
+type SortMode = import("@/stores/sidebar-view-store").SidebarSortMode;
+type ActivityEntry = Pick<SidebarWorkspaceEntry, "lastStartedAt" | "hasRunningAgent">;
+
+export function compareSidebarActivity(
+  left: ActivityEntry,
+  right: ActivityEntry,
+  runningFirst = false,
+): number {
+  if (runningFirst && Boolean(left.hasRunningAgent) !== Boolean(right.hasRunningAgent))
+    return left.hasRunningAgent ? -1 : 1;
+  return (right.lastStartedAt?.getTime() ?? 0) - (left.lastStartedAt?.getTime() ?? 0);
+}
+
+export function compareSidebarNames(left: string, right: string): number {
+  return nameCollator.compare(left, right);
+}
+
+export function sortSidebarProjects(
+  projects: SidebarProjectEntry[],
+  entries: ReadonlyMap<string, SidebarWorkspaceEntry>,
+  levels: {
+    workspaces: SortMode;
+    projects: SortMode;
+    workspaceRunningFirst?: boolean;
+    projectRunningFirst?: boolean;
+  },
+): SidebarProjectEntry[] {
+  if (levels.workspaces === "manual" && levels.projects === "manual") return projects;
+  const projectActivity = new Map<string, ActivityEntry>();
+  const sorted = projects.map((project) => {
+    const workspaces =
+      levels.workspaces === "manual" ? project.workspaces : [...project.workspaces];
+    if (levels.workspaces !== "manual")
+      workspaces.sort((left, right) => {
+        if (levels.workspaces === "name")
+          return compareSidebarNames(
+            entries.get(left.workspaceKey)?.name ?? left.name,
+            entries.get(right.workspaceKey)?.name ?? right.name,
+          );
+        if (levels.workspaces === "recent")
+          return compareSidebarActivity(
+            entries.get(left.workspaceKey) ?? {},
+            entries.get(right.workspaceKey) ?? {},
+            levels.workspaceRunningFirst,
+          );
+        return 0;
+      });
+    if (levels.projects === "recent") {
+      let lastStartedAt: Date | null = null;
+      let hasRunningAgent = false;
+      for (const workspace of workspaces) {
+        const entry = entries.get(workspace.workspaceKey);
+        const startedAt = entry?.lastStartedAt;
+        if (startedAt && (!lastStartedAt || startedAt > lastStartedAt)) lastStartedAt = startedAt;
+        hasRunningAgent ||= entry?.hasRunningAgent ?? false;
+      }
+      projectActivity.set(project.viewKey, { lastStartedAt, hasRunningAgent });
+    }
+    if (workspaces.every((workspace, index) => workspace === project.workspaces[index]))
+      return project;
+    return { ...project, workspaces };
+  });
+  sorted.sort((left, right) => {
+    if (levels.projects === "name") return compareSidebarNames(left.projectName, right.projectName);
+    if (levels.projects === "recent")
+      return compareSidebarActivity(
+        projectActivity.get(left.viewKey)!,
+        projectActivity.get(right.viewKey)!,
+        levels.projectRunningFirst,
+      );
+    return 0;
+  });
+  return sorted;
 }
 
 export function applyStoredOrdering<T>(input: {

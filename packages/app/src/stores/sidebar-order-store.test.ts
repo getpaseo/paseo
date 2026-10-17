@@ -6,6 +6,18 @@ import {
 import { migrateSidebarOrderState, useSidebarOrderStore } from "./sidebar-order-store";
 
 describe("migrateSidebarOrderState", () => {
+  it("persists status orders separately and retains hidden workspace keys", () => {
+    const store = useSidebarOrderStore.getState();
+    store.setWorkspaceOrder("project-a", ["srv:first", "srv:second"]);
+    store.setStatusWorkspaceOrder("done", ["srv:second", "srv:first", "srv:hidden"]);
+    const state = useSidebarOrderStore.getState();
+    expect(state.getWorkspaceOrder("project-a")).toEqual(["srv:first", "srv:second"]);
+    expect(
+      migrateSidebarOrderState({ workspaceOrderByStatus: state.workspaceOrderByStatus })
+        .workspaceOrderByStatus.done,
+    ).toEqual(["srv:second", "srv:first", "srv:hidden"]);
+  });
+
   it("prefixes legacy per-server workspace order with the source server id", () => {
     const migrated = migrateSidebarOrderState({
       projectOrderByServerId: {
@@ -21,6 +33,7 @@ describe("migrateSidebarOrderState", () => {
     expect(migrated).toEqual({
       projectOrder: ["project-a"],
       pinnedWorkspaceOrder: [],
+      workspaceOrderByStatus: {},
       workspaceOrderByProject: {
         "project-a": ["host-a:main", "host-a:feature", "host-b:main"],
       },
@@ -47,6 +60,7 @@ describe("sidebar order keys that end in whitespace", () => {
       projectOrder: [],
       pinnedWorkspaceOrder: [],
       workspaceOrderByProject: {},
+      workspaceOrderByStatus: {},
     });
   });
 

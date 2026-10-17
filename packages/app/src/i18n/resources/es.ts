@@ -101,6 +101,7 @@ export const es: TranslationResources = {
       home: "Hogar",
       groupByProject: "Agrupar por proyecto",
       groupByStatus: "Agrupar por estado",
+      groupByDay: "Agrupar por día de actividad",
       modelGroupLabel: "Modelo",
       modelSearchKeywords: "cambiar modelo modificar modelo establecer modelo seleccionar modelo",
       thinkingGroupLabel: "Razonamiento",
@@ -1193,7 +1194,21 @@ export const es: TranslationResources = {
       working: "En ejecución",
       done: "Terminado",
     },
+    dayBucket: {
+      today: "Hoy",
+      yesterday: "Ayer",
+      older: "Anterior",
+    },
     display: {
+      sorting: {
+        projectGroupingOnly: "Solo por proyecto",
+        name: "Nombre",
+        workspaces: "Ordenar espacios por",
+        projects: "Ordenar proyectos por",
+        label: "Ordenar por",
+        recent: "Actividad reciente",
+        manual: "Orden manual",
+      },
       showBackground: "Mostrar espacios en segundo plano",
       trigger: "Preferencias de visualización",
       heading: "Visualización",
@@ -1201,6 +1216,7 @@ export const es: TranslationResources = {
         label: "Agrupación",
         project: "Proyecto",
         status: "Estado",
+        day: "Día de actividad",
         labels: "Etiquetas",
       },
       titleSource: {
@@ -2094,6 +2110,17 @@ export const es: TranslationResources = {
     },
   },
   settings: {
+    workspaces: {
+      projectGroupingHint:
+        "Agrupa por Proyecto para activar el orden de proyectos por actividad. Se conserva tu selección.",
+      sorting: "Orden por actividad",
+      workspaceRunningFirst: "Priorizar agentes activos en espacios",
+      projectRunningFirst: "Priorizar agentes activos en proyectos",
+      runningFirstHint:
+        "Activado: los elementos con agentes activos van primero y bajan al terminar. Desactivado: solo iniciar un agente adelanta su espacio o proyecto.",
+      disabledHint:
+        "Selecciona Actividad reciente en «{{sortLabel}}» para activarlo. Orden actual: {{sortMode}}.",
+    },
     title: "Ajustes",
     loading: "Cargando configuración...",
     groups: {
@@ -2114,6 +2141,7 @@ export const es: TranslationResources = {
     },
     groupInfo: "Acerca de{{title}}",
     sections: {
+      workspaces: "Espacios de trabajo",
       general: "General",
       chat: "Chat",
       appearance: "Apariencia",

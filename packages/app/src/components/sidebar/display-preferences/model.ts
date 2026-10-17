@@ -7,6 +7,7 @@ import {
 import {
   useSidebarViewStore,
   type SidebarGroupMode,
+  type SidebarSortMode,
   type SidebarLabelFilter,
 } from "@/stores/sidebar-view-store";
 import { DEFAULT_SIDEBAR_CHECKS_DISPLAY, type SidebarChecksDisplay } from "./checks-display";
@@ -16,6 +17,10 @@ import { DEFAULT_SIDEBAR_ROW_ITEMS, type SidebarRowItem, type SidebarRowItems } 
 export type SidebarTrailingChoice = Exclude<SidebarWorkspaceTrailing, "none">;
 
 export interface SidebarDisplayPreferences {
+  sortMode: SidebarSortMode;
+  projectSortMode: SidebarSortMode;
+  setSortMode: (mode: SidebarSortMode) => void;
+  setProjectSortMode: (mode: SidebarSortMode) => void;
   showBackground: boolean;
   toggleBackground: () => void;
   grouping: SidebarGroupMode;
@@ -50,6 +55,10 @@ export interface SidebarDisplayPreferences {
  * this for a value and set it; where it lands is this module's problem.
  */
 export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
+  const sortMode = useSidebarViewStore((state) => state.sortMode);
+  const projectSortMode = useSidebarViewStore((state) => state.projectSortMode);
+  const setProjectSortMode = useSidebarViewStore((state) => state.setProjectSortMode);
+  const setSortMode = useSidebarViewStore((state) => state.setSortMode);
   const showBackground = useSidebarViewStore((state) => state.showBackground);
   const toggleBackground = useSidebarViewStore((state) => state.toggleBackground);
   const grouping = useSidebarViewStore((state) => state.groupMode);
@@ -108,6 +117,10 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
 
   return useMemo(
     () => ({
+      sortMode,
+      setSortMode,
+      projectSortMode,
+      setProjectSortMode,
       showBackground,
       toggleBackground,
       grouping,
@@ -131,6 +144,10 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       clearLabelFilter,
     }),
     [
+      sortMode,
+      setSortMode,
+      projectSortMode,
+      setProjectSortMode,
       showBackground,
       toggleBackground,
       grouping,

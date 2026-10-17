@@ -9,6 +9,8 @@ import type { DraggableListProps, DraggableRenderItemInfo } from "./draggable-li
 
 export type { DraggableListProps, DraggableRenderItemInfo };
 
+const noDrag = () => {};
+
 const SCROLL_ENABLED_FLEX_STYLE = { flex: 1 };
 
 export function DraggableList<T>({
@@ -26,6 +28,7 @@ export function DraggableList<T>({
   showsVerticalScrollIndicator = true,
   scrollEnabled = true,
   useDragHandle: _useDragHandle = false,
+  dragEnabled = true,
   refreshing,
   onRefresh,
   extraData,
@@ -56,12 +59,12 @@ export function DraggableList<T>({
       const info: DraggableRenderItemInfo<T> = {
         item,
         index,
-        drag,
+        drag: dragEnabled ? drag : noDrag,
         isActive,
       };
       return renderItem(info);
     },
-    [renderItem],
+    [renderItem, dragEnabled],
   );
 
   const handleDragEnd = useCallback(

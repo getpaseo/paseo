@@ -15,8 +15,10 @@ import {
   type SidebarGroupMode,
 } from "@/stores/sidebar-view-store";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
+import { applyStoredOrdering, sortSidebarProjects } from "@/hooks/sidebar-workspaces-view-model";
 import type { SidebarShortcutModel } from "@/utils/sidebar-shortcuts";
 import { buildSidebarProjection } from "./sidebar-projection";
+import { useSidebarDayRolloverTick } from "@/hooks/sidebar-day-view-model";
 import type { SidebarProjectIconTarget } from "@/utils/sidebar-project-row-model";
 import { filterWorkspacesByLabels, type SidebarWorkspaceGroup } from "./sidebar-labels";
 import { filterWorkspacesByProjects, resolveActiveProjectFilters } from "./sidebar-project-filter";
@@ -59,6 +61,17 @@ export function SidebarModelProvider({
   const list = useSidebarWorkspacesList({ enabled: active });
   const showBackground = useSidebarViewStore((state) => state.showBackground);
   const groupMode = useSidebarViewStore((state) => state.groupMode);
+  const sortMode = useSidebarViewStore((state) => state.sortMode);
+  const workspaceActivityRunningFirst = useSidebarViewStore(
+    (state) => state.workspaceActivityRunningFirst,
+  );
+  const projectActivityRunningFirst = useSidebarViewStore(
+    (state) => state.projectActivityRunningFirst,
+  );
+  const projectSortMode = useSidebarViewStore((state) => state.projectSortMode);
+  const projectOrder = useSidebarOrderStore((state) => state.projectOrder);
+  const workspaceOrderByProject = useSidebarOrderStore((state) => state.workspaceOrderByProject);
+  const workspaceOrderByStatus = useSidebarOrderStore((state) => state.workspaceOrderByStatus);
   const labelFilter = useSidebarViewStore((state) => state.labelFilter);
   const projectFilters = useSidebarViewStore((state) => state.projectFilters);
   const reconcileLabelFilter = useSidebarViewStore((state) => state.reconcileLabelFilter);
@@ -70,6 +83,7 @@ export function SidebarModelProvider({
     (state) => state.collapsedWorkspaceGroupKeys,
   );
   const pinnedCollapsed = useSidebarCollapsedSectionsStore((state) => state.collapsedPinned);
+  const dayTick = useSidebarDayRolloverTick(groupMode === "day");
   const pinnedWorkspaceOrder = useSidebarOrderStore((state) => state.pinnedWorkspaceOrder);
   const toggleProjectCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.toggleProjectCollapsed,
@@ -138,7 +152,25 @@ export function SidebarModelProvider({
           : [];
       });
     }
-    return projects;
+    const orderedProjects = applyStoredOrdering({
+      items: projects,
+      storedOrder: projectOrder,
+      getKey: (project) => project.viewKey,
+    }).map((project) =>
+      Object.assign({}, project, {
+        workspaces: applyStoredOrdering({
+          items: project.workspaces,
+          storedOrder: workspaceOrderByProject[project.viewKey] ?? [],
+          getKey: (workspace) => workspace.workspaceKey,
+        }),
+      }),
+    );
+    return sortSidebarProjects(orderedProjects, filteredWorkspaceEntriesByKey, {
+      workspaces: sortMode,
+      projects: projectSortMode,
+      workspaceRunningFirst: workspaceActivityRunningFirst,
+      projectRunningFirst: projectActivityRunningFirst,
+    });
   }, [
     showBackground,
     hasActiveLabelFilter,
@@ -146,6 +178,13 @@ export function SidebarModelProvider({
     resolvedProjectFilters,
     list.projects,
     visibleWorkspaceKeys,
+    sortMode,
+    projectSortMode,
+    workspaceActivityRunningFirst,
+    projectActivityRunningFirst,
+    projectOrder,
+    workspaceOrderByProject,
+    filteredWorkspaceEntriesByKey,
   ]);
   const pinnedKeys = usePinnedSidebarKeys(filteredProjects);
   const projectionInput = useMemo(
@@ -153,23 +192,33 @@ export function SidebarModelProvider({
       projects: filteredProjects,
       pinnedKeys,
       pinnedWorkspaceOrder,
+      workspaceOrderByStatus,
       workspaceEntriesByKey: filteredWorkspaceEntriesByKey,
       projectNamesByViewKey: list.projectNamesByViewKey,
       groupMode,
+      sortMode,
+      workspaceActivityRunningFirst,
       pinnedCollapsed,
       collapsedProjectKeys,
       collapsedWorkspaceGroupKeys,
       t,
+      // Bumping the tick on local midnight and on foreground-return re-buckets the day groups
+      // of an idle sidebar that stayed open overnight; it is a no-op in every other mode.
+      dayTick,
     }),
     [
       collapsedProjectKeys,
       collapsedWorkspaceGroupKeys,
+      dayTick,
       groupMode,
+      sortMode,
+      workspaceActivityRunningFirst,
       list.projectNamesByViewKey,
       filteredProjects,
       pinnedCollapsed,
       pinnedKeys,
       pinnedWorkspaceOrder,
+      workspaceOrderByStatus,
       filteredWorkspaceEntriesByKey,
       t,
     ],
