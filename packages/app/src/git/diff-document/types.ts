@@ -16,10 +16,12 @@ interface DiffDocumentBaseProps {
 
 export interface WorkingDiffMode {
   kind: "working";
+  viewedFilesStorageKey: string;
   reviewActions?: InlineReviewActions;
   onFilePress?: (path: string) => void;
   focusPath?: string;
   focusRequestId?: number;
+  onFocusRequestConsumed?: () => void;
   workspaceFileDragScope?: { serverId: string; workspaceId: string };
   onOpenFile?: (path: string) => void;
   onOpenToSide?: (path: string) => void;
@@ -40,6 +42,7 @@ export type DiffDocumentProps = DiffDocumentBaseProps &
         collapseState: {
           paths: readonly string[];
           onChange: (paths: string[]) => void;
+          canAutoExpand: (path: string) => boolean;
         };
       }
     | { mode: { kind: "commit" }; collapseState?: never }
@@ -226,6 +229,10 @@ export type DiffSurfaceProps = DiffDocumentProps & {
   headerTypography: DiffHeaderTypography;
   collapsedFilePaths: ReadonlySet<string>;
   onToggleFile: (path: string) => void;
+  viewedFiles: ReadonlyMap<string, ParsedDiffFile>;
+  viewedActionDisabled: boolean;
+  viewedFilePendingPath: string | null;
+  onToggleFileViewed: (file: ParsedDiffFile) => void;
   selectedPath: string | null;
   onSelectPath: (path: string) => void;
 };

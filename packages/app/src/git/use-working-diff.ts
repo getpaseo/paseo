@@ -118,6 +118,7 @@ export function useWorkingDiff({
     reviewActions,
     reviewAttachment,
     reviewFeedback,
+    viewedFilesStorageKey: `@paseo:working-diff-viewed-files:${reviewDraftKey}`,
   };
 }
 

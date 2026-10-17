@@ -559,6 +559,7 @@ describe("workspace-layout-store version 2 migration", () => {
         "pullRequestTabAutoOpenedByWorkspace",
         "sidePaneIdByWorkspace",
         "splitSizesByWorkspace",
+        "workingDiffStateByWorkspace",
       ]);
       expect(persisted.state.explorerPaneIdByWorkspace).toEqual({
         [workspaceKey]: "explorer",
@@ -918,11 +919,13 @@ describe("workspace-layout-store actions", () => {
       commitsCollapsed: false,
     };
     store.setTabState(workspaceKey, first, changed);
+    const third = store.openTab({ workspaceKey, target: { kind: "working_diff" }, intent: "new" })!;
     const tabs = collectAllTabs(
       workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey].root,
     );
     expect(tabs.find((tab) => tab.tabId === first)?.state).toEqual(changed);
     expect(tabs.find((tab) => tab.tabId === second)?.state).toEqual(undefined);
+    expect(tabs.find((tab) => tab.tabId === third)?.state).toEqual(undefined);
   });
 
   it("restores a revealed file's parent after local replacement", () => {
@@ -1102,6 +1105,7 @@ describe("workspace-layout-store actions", () => {
     workspaceLayoutIds.reset();
     workspaceLayoutStore.setState({
       layoutByWorkspace: {},
+      workingDiffStateByWorkspace: {},
       splitSizesByWorkspace: {},
       pinnedAgentIdsByWorkspace: {},
       hiddenAgentIdsByWorkspace: {},
@@ -1431,6 +1435,78 @@ describe("workspace-layout-store actions", () => {
     const tabs = collectAllTabs(restored.getState().layoutByWorkspace[workspaceKey].root);
     expect(tabs.find((tab) => tab.tabId === first)?.state).toEqual(firstState);
     expect(tabs.find((tab) => tab.tabId === second)?.state).toEqual(secondState);
+  });
+
+  it("restores the last Diff state after its tab closes and the app reloads", async () => {
+    await AsyncStorage.removeItem("workspace-layout-state");
+    const workspaceKey = createWorkspaceKey();
+    const source = createWorkspaceLayoutStore(createDeterministicWorkspaceLayoutIds());
+    await source.persist.rehydrate();
+    const tabId = source
+      .getState()
+      .openTab({ workspaceKey, target: { kind: "working_diff" }, intent: "new" })!;
+    const state: ChangesState = { ...defaultChangesState, collapsedFilePaths: ["README.md"] };
+    source.getState().setTabState(workspaceKey, tabId, state);
+    source.getState().closeTab(workspaceKey, tabId);
+    const restored = createWorkspaceLayoutStore(createDeterministicWorkspaceLayoutIds());
+    await restored.persist.rehydrate();
+    const reopened = restored
+      .getState()
+      .openTab({ workspaceKey, target: { kind: "working_diff" }, intent: "reveal" })!;
+    expect(
+      restored
+        .getState()
+        .getWorkspaceTabs(workspaceKey)
+        .find((tab) => tab.tabId === reopened)?.state,
+    ).toEqual(state);
+
+    restored.getState().closeTab(workspaceKey, reopened);
+    const file = restored
+      .getState()
+      .openTab({ workspaceKey, target: { kind: "file", path: "README.md" }, intent: "new" })!;
+    const replaced = restored.getState().replaceTab(workspaceKey, file, { kind: "working_diff" })!;
+    expect(
+      restored
+        .getState()
+        .getWorkspaceTabs(workspaceKey)
+        .find((tab) => tab.tabId === replaced)?.state,
+    ).toEqual(state);
+    restored.getState().purgeWorkspace(workspaceKey);
+    expect(restored.getState().workingDiffStateByWorkspace).toEqual({});
+  });
+
+  it("keeps collapse state from an older saved layout when its Diff tab closes", () => {
+    const workspaceKey = createWorkspaceKey();
+    const state: ChangesState = { ...defaultChangesState, collapsedFilePaths: ["src/a.ts"] };
+    const savedLayout = {
+      root: createPane({
+        id: "main",
+        tabIds: ["working_diff"],
+        targetsByTabId: { working_diff: { kind: "working_diff" } },
+        stateByTabId: { working_diff: state },
+      }),
+      focusedPaneId: "main",
+    };
+    const merge = workspaceLayoutStore.persist.getOptions().merge!;
+    workspaceLayoutStore.setState(
+      merge(
+        { layoutByWorkspace: { [workspaceKey]: savedLayout } },
+        workspaceLayoutStore.getState(),
+      ),
+    );
+    const store = workspaceLayoutStore.getState();
+    store.closeTab(workspaceKey, "working_diff");
+    const reopened = store.openTab({
+      workspaceKey,
+      target: { kind: "working_diff" },
+      intent: "new",
+    })!;
+    expect(
+      workspaceLayoutStore
+        .getState()
+        .getWorkspaceTabs(workspaceKey)
+        .find((tab) => tab.tabId === reopened)?.state,
+    ).toEqual(state);
   });
 
   it("leaves an Explorer background tab in the only other pane instead of emptying it", () => {
@@ -3146,6 +3222,7 @@ describe("workspace-layout-store actions", () => {
 
     expect(persisted).toEqual({
       layoutByWorkspace: { [workspaceKey]: layout },
+      workingDiffStateByWorkspace: {},
       pinnedAgentIdsByWorkspace: {},
       splitSizesByWorkspace: currentState.splitSizesByWorkspace,
       explorerSidebarWidthByWorkspace: currentState.explorerSidebarWidthByWorkspace,
@@ -3381,6 +3458,7 @@ describe("workspace-layout-store actions", () => {
     expect(partialize?.(state)).toEqual({
       pullRequestTabAutoOpenedByWorkspace: {},
       layoutByWorkspace: {},
+      workingDiffStateByWorkspace: {},
       pinnedAgentIdsByWorkspace: {},
       splitSizesByWorkspace: {},
       explorerSidebarWidthByWorkspace: {},

@@ -16,6 +16,8 @@ const resolvePackageEntry = (packageName: string) => {
 };
 
 export default defineConfig({
+  // Expo leaves JSX for Metro; browser tests need Vite to compile it.
+  esbuild: { jsx: "automatic" },
   test: {
     environment: "node",
     exclude: [...configDefaults.exclude, "e2e/**"],
@@ -81,7 +83,13 @@ export default defineConfig({
   optimizeDeps: {
     // Bundle the CJS dependencies of the excluded gesture-handler package for the browser.
     include: [
+      "@tanstack/react-query",
+      "@testing-library/react",
+      "@react-native-async-storage/async-storage/lib/module/AsyncStorage",
+      "buffer",
+      "fast-sha256",
       "react/jsx-runtime",
+      "react/jsx-dev-runtime",
       "react-native-gesture-handler > hoist-non-react-statics",
       "react-native-gesture-handler > invariant",
     ],

@@ -1,6 +1,6 @@
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { floatingActionsClearance } from "@/components/ui/floating-action-button";
-import { useState, useCallback, useMemo, type ReactElement, type ReactNode } from "react";
+import { useState, useCallback, useMemo, useRef, type ReactElement, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { TreeRail } from "@/components/tree-rail";
@@ -185,6 +185,7 @@ interface ChangesSurfaceProps {
   presentation?: ChangesPresentation;
   focusPath?: string;
   focusRequestId?: number;
+  onFocusRequestConsumed?: () => void;
   onOpenFile?: (path: string) => void;
   onOpenToSide?: (path: string) => void;
   onSelectDiffFile?: (path: string) => void;
@@ -1446,6 +1447,7 @@ export function ChangesSurface({
   presentation = "combined",
   focusPath,
   focusRequestId,
+  onFocusRequestConsumed,
   onOpenFile,
   onOpenToSide,
   onSelectDiffFile,
@@ -1464,17 +1466,9 @@ export function ChangesSurface({
   const desktopTreeVisible = instanceState.treeVisible;
   const effectiveLayout = resolveDiffLayout(preferences.layout, canUseSplitLayout);
   const collapsedFilePaths = instanceState.collapsedFilePaths;
-  const updateCollapsedFilePaths = useCallback(
-    (paths: string[]) => updateState({ ...instanceState, collapsedFilePaths: paths }),
-    [instanceState, updateState],
-  );
   const updateCollapsedFolderPaths = useCallback(
     (paths: string[]) => updateState({ ...instanceState, collapsedFolderPaths: paths }),
     [instanceState, updateState],
-  );
-  const collapseState = useMemo(
-    () => ({ paths: collapsedFilePaths, onChange: updateCollapsedFilePaths }),
-    [collapsedFilePaths, updateCollapsedFilePaths],
   );
 
   const handleToggleWrapLines = useCallback(() => {
@@ -1552,6 +1546,7 @@ export function ChangesSurface({
     reviewActions,
     reviewAttachment,
     reviewFeedback,
+    viewedFilesStorageKey,
   } = useWorkingDiff({
     presentation,
     serverId,
@@ -1560,6 +1555,34 @@ export function ChangesSurface({
     ignoreWhitespace: preferences.hideWhitespace,
     enabled: enabled !== false,
   });
+  const collapseOwnerByPath = useRef(new Map<string, string>());
+  const updateCollapsedFilePaths = useCallback(
+    (paths: string[]) => {
+      const previousPaths = new Set(collapsedFilePaths);
+      const nextPaths = new Set(paths);
+      for (const path of paths) {
+        if (!previousPaths.has(path)) {
+          collapseOwnerByPath.current.set(path, viewedFilesStorageKey);
+        }
+      }
+      for (const path of collapsedFilePaths) {
+        if (!nextPaths.has(path)) collapseOwnerByPath.current.delete(path);
+      }
+      updateState({ ...instanceState, collapsedFilePaths: paths });
+    },
+    [collapsedFilePaths, instanceState, updateState, viewedFilesStorageKey],
+  );
+  const canAutoExpand = useCallback(
+    (path: string) => {
+      const owner = collapseOwnerByPath.current.get(path);
+      return owner === undefined || owner === viewedFilesStorageKey;
+    },
+    [viewedFilesStorageKey],
+  );
+  const collapseState = useMemo(
+    () => ({ paths: collapsedFilePaths, onChange: updateCollapsedFilePaths, canAutoExpand }),
+    [collapsedFilePaths, updateCollapsedFilePaths, canAutoExpand],
+  );
   usePublishWorkingDiffAttachment({
     serverId,
     workspaceId: workspaceId ?? undefined,
@@ -1683,6 +1706,10 @@ export function ChangesSurface({
     (!externalFocusRequest || localFocusRequest.revision >= externalFocusRequest.revision)
       ? localFocusRequest
       : externalFocusRequest;
+  const consumeFocusRequest = useCallback(() => {
+    setLocalFocusRequest(null);
+    onFocusRequestConsumed?.();
+  }, [onFocusRequestConsumed]);
   const handleSelectTreeFile = useCallback(
     (path: string) => {
       if (presentation === "tree" && onSelectDiffFile) {
@@ -1699,9 +1726,11 @@ export function ChangesSurface({
   const workingMode = useMemo(
     () => ({
       kind: "working" as const,
+      viewedFilesStorageKey,
       reviewActions,
       focusPath: documentFocusRequest?.path,
       focusRequestId: documentFocusRequest?.revision,
+      onFocusRequestConsumed: consumeFocusRequest,
       workspaceFileDragScope: workspaceId ? { serverId, workspaceId } : undefined,
       onOpenFile,
       onOpenToSide,
@@ -1716,8 +1745,10 @@ export function ChangesSurface({
     }),
     [
       reviewActions,
+      viewedFilesStorageKey,
       documentFocusRequest?.path,
       documentFocusRequest?.revision,
+      consumeFocusRequest,
       serverId,
       workspaceId,
       onOpenFile,

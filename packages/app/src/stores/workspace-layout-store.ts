@@ -134,6 +134,7 @@ interface WorkspaceLayoutStore {
    */
   sheetsByWorkspace: Record<string, readonly SheetTab[]>;
   layoutByWorkspace: Record<string, WorkspaceLayout>;
+  workingDiffStateByWorkspace: Record<string, JsonValue>;
   splitSizesByWorkspace: Record<string, Record<string, number[]>>;
   explorerSidebarWidthByWorkspace: Record<string, number>;
   pinnedAgentIdsByWorkspace: Record<string, Set<string>>;
@@ -661,6 +662,32 @@ function reconcileRememberedSidePane(
   };
 }
 
+function restoreWorkingDiffState(
+  state: WorkspaceLayoutStore,
+  workspaceKey: string,
+  layout: WorkspaceLayout,
+  tabId: string,
+): WorkspaceLayout {
+  const saved = state.workingDiffStateByWorkspace[workspaceKey];
+  const reopenedTab = collectAllTabs(layout.root).find((tab) => tab.tabId === tabId);
+  if (
+    saved === undefined ||
+    reopenedTab?.target.kind !== "working_diff" ||
+    reopenedTab.state !== undefined
+  ) {
+    return layout;
+  }
+  // Restore the last saved view without sharing state between separate open Diff instances.
+  const currentLayout = state.layoutByWorkspace[workspaceKey];
+  if (
+    currentLayout &&
+    collectAllTabs(currentLayout.root).some((tab) => tab.target.kind === "working_diff")
+  ) {
+    return layout;
+  }
+  return setTabStateInLayout({ layout, tabId, state: saved }) ?? layout;
+}
+
 function attachParentTab(input: {
   layout: WorkspaceLayout;
   childTabId: string | null;
@@ -967,6 +994,7 @@ export function createWorkspaceLayoutStore(
         layoutMode: "split-panes",
         sheetsByWorkspace: {},
         layoutByWorkspace: {},
+        workingDiffStateByWorkspace: {},
         splitSizesByWorkspace: {},
         explorerSidebarWidthByWorkspace: {},
         pinnedAgentIdsByWorkspace: {},
@@ -1052,7 +1080,7 @@ export function createWorkspaceLayoutStore(
             return null;
           }
           const nextLayout = keepWorkspaceFocusOutOfExplorerSidebar(
-            result.layout,
+            restoreWorkingDiffState(get(), normalizedWorkspaceKey, result.layout, result.tabId),
             placement.explorerSidebarPaneId,
             placement.layout.focusedPaneId,
           );
@@ -1437,7 +1465,12 @@ export function createWorkspaceLayoutStore(
                   ),
             layoutByWorkspace: {
               ...state.layoutByWorkspace,
-              [normalizedWorkspaceKey]: result.layout,
+              [normalizedWorkspaceKey]: restoreWorkingDiffState(
+                state,
+                normalizedWorkspaceKey,
+                result.layout,
+                result.tabId,
+              ),
             },
           }));
           return result.tabId;
@@ -1462,7 +1495,14 @@ export function createWorkspaceLayoutStore(
               state: tabState,
             });
             if (!layout) return state;
+            const changedTab = collectAllTabs(layout.root).find(
+              (tab) => tab.tabId === normalizedTabId,
+            );
             return {
+              workingDiffStateByWorkspace:
+                changedTab?.target.kind === "working_diff" && tabState !== undefined
+                  ? { ...state.workingDiffStateByWorkspace, [normalizedWorkspaceKey]: tabState }
+                  : state.workingDiffStateByWorkspace,
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
                 [normalizedWorkspaceKey]: layout,
@@ -2063,6 +2103,7 @@ export function createWorkspaceLayoutStore(
           set((state) => {
             const hasAny =
               normalizedWorkspaceKey in state.layoutByWorkspace ||
+              normalizedWorkspaceKey in state.workingDiffStateByWorkspace ||
               normalizedWorkspaceKey in state.splitSizesByWorkspace ||
               normalizedWorkspaceKey in state.explorerSidebarWidthByWorkspace ||
               normalizedWorkspaceKey in state.pinnedAgentIdsByWorkspace ||
@@ -2081,6 +2122,8 @@ export function createWorkspaceLayoutStore(
             } = state.pullRequestTabAutoOpenedByWorkspace;
             const { [normalizedWorkspaceKey]: _layout, ...layoutByWorkspace } =
               state.layoutByWorkspace;
+            const { [normalizedWorkspaceKey]: _workingDiff, ...workingDiffStateByWorkspace } =
+              state.workingDiffStateByWorkspace;
             const { [normalizedWorkspaceKey]: _splits, ...splitSizesByWorkspace } =
               state.splitSizesByWorkspace;
             const {
@@ -2103,6 +2146,7 @@ export function createWorkspaceLayoutStore(
               ...withSheets(state, normalizedWorkspaceKey, NO_SHEETS),
               pullRequestTabAutoOpenedByWorkspace,
               layoutByWorkspace,
+              workingDiffStateByWorkspace,
               splitSizesByWorkspace,
               explorerSidebarWidthByWorkspace,
               pinnedAgentIdsByWorkspace,
@@ -2131,6 +2175,7 @@ export function createWorkspaceLayoutStore(
           }
           return {
             layoutByWorkspace,
+            workingDiffStateByWorkspace: state.workingDiffStateByWorkspace,
             pinnedAgentIdsByWorkspace: Object.fromEntries(
               Object.entries(state.pinnedAgentIdsByWorkspace).map(([key, agentIds]) => [
                 key,
@@ -2154,6 +2199,7 @@ export function createWorkspaceLayoutStore(
             ...(result.data.explorerSidebarPaneIdByWorkspace ??
               result.data.explorerPaneIdByWorkspace),
           };
+          const workingDiffStateByWorkspace = { ...result.data.workingDiffStateByWorkspace };
           for (const [workspaceKey, persistedLayout] of Object.entries(
             result.data.layoutByWorkspace,
           )) {
@@ -2171,6 +2217,15 @@ export function createWorkspaceLayoutStore(
               ids,
             });
             layoutByWorkspace[workspaceKey] = explorerSidebar?.layout ?? restoredLayout;
+            const savedDiff = collectAllTabs(restoredLayout.root).find(
+              (tab) => tab.target.kind === "working_diff" && tab.state !== undefined,
+            );
+            if (
+              workingDiffStateByWorkspace[workspaceKey] === undefined &&
+              savedDiff?.state !== undefined
+            ) {
+              workingDiffStateByWorkspace[workspaceKey] = savedDiff.state;
+            }
             if (explorerSidebar) {
               explorerSidebarPaneIdByWorkspace[workspaceKey] = explorerSidebar.paneId;
             }
@@ -2178,6 +2233,7 @@ export function createWorkspaceLayoutStore(
           return {
             ...currentState,
             layoutByWorkspace,
+            workingDiffStateByWorkspace,
             pinnedAgentIdsByWorkspace: Object.fromEntries(
               Object.entries(result.data.pinnedAgentIdsByWorkspace ?? {}).map(([key, agentIds]) => [
                 key,

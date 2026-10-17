@@ -483,6 +483,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
     if (file && scrollRef.current) {
       scrollRef.current.scrollTop = file.top;
       consumedFocusRef.current = requestKey;
+      mode.onFocusRequestConsumed?.();
     }
   }, [collapsedFilePaths, mode, model.files, onToggleFile]);
 
@@ -827,9 +828,13 @@ export function DiffSurface(props: DiffSurfaceProps) {
             <WebFileHeaderSection key={file.path} file={file}>
               <DocumentFileHeader
                 file={file}
+                isViewed={props.viewedFiles.get(file.path) === file.file}
+                viewedActionDisabled={props.viewedActionDisabled}
+                viewedActionPending={props.viewedFilePendingPath === file.path}
                 selectedPath={props.selectedPath}
                 mode={props.mode}
                 onToggleFile={props.onToggleFile}
+                onToggleFileViewed={props.onToggleFileViewed}
                 onSelectPath={props.onSelectPath}
                 canvasRendered
               />

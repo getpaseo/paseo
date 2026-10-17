@@ -970,6 +970,9 @@ export const en = {
         newFile: "New",
         deletedFile: "Deleted",
         modifiedFile: "Modified",
+        markAsViewed: "Mark as viewed",
+        viewed: "Viewed",
+        viewedStateFailed: "Could not save or load the viewed files. Retry the action.",
         commits: {
           title: "Commits",
           countLabel: "{{count}} workspace commits",
