@@ -1025,6 +1025,12 @@ it("removes a running retained worker terminal when explicitly killed", async ()
     },
     state: createTerminalState(),
   });
+  const session = manager.getTerminal("terminal-a");
+  if (!session) {
+    throw new Error("Expected retained terminal");
+  }
+  const exits: TerminalExitInfo[] = [];
+  session.onExit((info) => exits.push(info));
 
   manager.killTerminal("terminal-a");
 
@@ -1035,6 +1041,16 @@ it("removes a running retained worker terminal when explicitly killed", async ()
       expect.objectContaining({ type: "killTerminal", terminalId: "terminal-a" }),
     ]),
   );
+
+  const exitInfo = { exitCode: null, signal: "SIGTERM" as const, lastOutputLines: [] };
+  worker.emitWorkerMessage({
+    type: "terminalExit",
+    terminalId: "terminal-a",
+    info: exitInfo,
+  });
+
+  expect(exits).toEqual([exitInfo]);
+  expect(manager.getTerminal("terminal-a")).toBeUndefined();
 });
 
 it("does not resurrect a terminal that exited before its create response was handled", async () => {

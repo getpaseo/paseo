@@ -155,6 +155,7 @@ export function createWorkerTerminalManager(
   const requestTimeoutMs = managerOptions.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
   const pendingRequests = new Map<string, PendingRequest>();
   const recordsById = new Map<string, WorkerTerminalRecord>();
+  const closingRecordsById = new Map<string, WorkerTerminalRecord>();
   const terminalIdsByCwd = new Map<string, Set<string>>();
   const terminalActivityTokenById = new Map<string, string>();
   // Creation owns a reference to the session independently of the live-terminal
@@ -462,15 +463,20 @@ export function createWorkerTerminalManager(
   function handleTerminalExitEvent(
     message: Extract<TerminalWorkerToParentMessage, { type: "terminalExit" }>,
   ): void {
-    const record = recordsById.get(message.terminalId);
+    const record =
+      recordsById.get(message.terminalId) ?? closingRecordsById.get(message.terminalId);
     if (!record) {
       return;
     }
+    const wasExplicitlyClosed = closingRecordsById.delete(message.terminalId);
     record.exitInfo = message.info;
     for (const listener of Array.from(record.exitListeners)) {
       listener(message.info);
     }
     record.exitListeners.clear();
+    if (wasExplicitlyClosed) {
+      return;
+    }
     if (!record.info.retainOnExit) {
       removeRecordAndEmit(message.terminalId);
       return;
@@ -803,7 +809,10 @@ export function createWorkerTerminalManager(
     },
 
     killTerminal(id: string): void {
-      removeRecordAndEmit(id);
+      const record = removeRecordAndEmit(id);
+      if (record && !record.exitInfo) {
+        closingRecordsById.set(id, record);
+      }
       void sendRequest({ type: "killTerminal", terminalId: id }).catch(() => {
         // no-op; kill is intentionally best-effort and synchronous in the public interface.
       });
@@ -859,6 +868,7 @@ export function createWorkerTerminalManager(
       for (const terminalId of Array.from(recordsById.keys())) {
         removeRecord(terminalId);
       }
+      closingRecordsById.clear();
     },
 
     subscribeTerminalsChanged(listener: TerminalsChangedListener): () => void {
