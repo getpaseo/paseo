@@ -10,7 +10,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { Keyboard, useWindowDimensions } from "react-native";
+import { Keyboard, type View, useWindowDimensions } from "react-native";
 import type { GestureType } from "react-native-gesture-handler";
 import {
   cancelAnimation,
@@ -37,6 +37,7 @@ import {
   type MobilePanelMotionState,
   type MobilePanelTransition,
 } from "./model";
+import type { MobilePanelGestureExclusion } from "./gesture-intent";
 
 const ANIMATION_DURATION = 220;
 const ANIMATION_EASING = Easing.bezier(0.25, 0.1, 0.25, 1);
@@ -48,11 +49,13 @@ interface MobilePanelsRuntime {
   leftOpenGestureRef: RefObject<GestureType | undefined>;
   motionState: SharedValue<MobilePanelMotionState>;
   openGesturesBlocked: SharedValue<boolean>;
+  openGestureExclusions: SharedValue<MobilePanelGestureExclusion[]>;
   position: SharedValue<number>;
   rightCloseGestureRef: RefObject<GestureType | undefined>;
   rightOpenGestureRef: RefObject<GestureType | undefined>;
   updateGesture: (startedRevision: number, nextPosition: number) => boolean;
   setOpenGestureBlocked: (owner: symbol, blocked: boolean) => void;
+  setOpenGestureExclusion: (owner: symbol, area: MobilePanelGestureExclusion | null) => void;
   windowWidth: number;
 }
 
@@ -75,6 +78,8 @@ export function MobilePanelsProvider({ children }: { children: ReactNode }) {
   const position = useSharedValue(getMobilePanelAnchor(initialSelection.target));
   const motionState = useSharedValue(createMobilePanelMotionState(initialSelection));
   const openGesturesBlocked = useSharedValue(false);
+  const openGestureExclusions = useSharedValue<MobilePanelGestureExclusion[]>([]);
+  const openGestureExclusionsRef = useRef(new Map<symbol, MobilePanelGestureExclusion>());
   const openGestureBlockersRef = useRef(new Set<symbol>());
   const leftOpenGestureRef = useRef<GestureType | undefined>(undefined);
   const leftCloseGestureRef = useRef<GestureType | undefined>(undefined);
@@ -92,6 +97,18 @@ export function MobilePanelsProvider({ children }: { children: ReactNode }) {
       openGesturesBlocked.value = openGestureBlockersRef.current.size > 0;
     },
     [openGesturesBlocked],
+  );
+
+  const setOpenGestureExclusion = useCallback(
+    (owner: symbol, area: MobilePanelGestureExclusion | null) => {
+      if (area) {
+        openGestureExclusionsRef.current.set(owner, area);
+      } else {
+        openGestureExclusionsRef.current.delete(owner);
+      }
+      openGestureExclusions.value = [...openGestureExclusionsRef.current.values()];
+    },
+    [openGestureExclusions],
   );
 
   const publishActivePanel = useCallback((panel: MobilePanelView, revision: number) => {
@@ -221,11 +238,13 @@ export function MobilePanelsProvider({ children }: { children: ReactNode }) {
       leftOpenGestureRef,
       motionState,
       openGesturesBlocked,
+      openGestureExclusions,
       position,
       rightCloseGestureRef,
       rightOpenGestureRef,
       updateGesture,
       setOpenGestureBlocked,
+      setOpenGestureExclusion,
       windowWidth,
     }),
     [
@@ -233,8 +252,10 @@ export function MobilePanelsProvider({ children }: { children: ReactNode }) {
       finishGesture,
       motionState,
       openGesturesBlocked,
+      openGestureExclusions,
       position,
       setOpenGestureBlocked,
+      setOpenGestureExclusion,
       updateGesture,
       windowWidth,
     ],
@@ -270,4 +291,31 @@ export function useBlockMobilePanelOpenGestures(blocked: boolean): void {
     setOpenGestureBlocked(owner, blocked);
     return () => setOpenGestureBlocked(owner, false);
   }, [blocked, owner, setOpenGestureBlocked]);
+}
+
+/** A mounted surface reserves its bounds even when its own gesture fails or has no action. */
+export function useMobilePanelOpenGestureExclusion(active: boolean) {
+  const { setOpenGestureExclusion } = useMobilePanelsRuntime();
+  const owner = useRef(Symbol("mobile-panel-open-gesture-exclusion")).current;
+  const ref = useRef<View>(null);
+  const measuring = useRef(false);
+  const measure = useCallback(() => {
+    if (!measuring.current) return;
+    ref.current?.measureInWindow((x, y, width, height) => {
+      if (measuring.current && width > 0 && height > 0) {
+        setOpenGestureExclusion(owner, { x, y, width, height });
+      }
+    });
+  }, [owner, setOpenGestureExclusion]);
+
+  useLayoutEffect(() => {
+    measuring.current = active;
+    measure();
+    return () => {
+      measuring.current = false;
+      setOpenGestureExclusion(owner, null);
+    };
+  }, [active, measure, owner, setOpenGestureExclusion]);
+
+  return { ref, onLayout: measure };
 }

@@ -2,14 +2,11 @@ import { useCallback, useMemo } from "react";
 import { Gesture } from "react-native-gesture-handler";
 import { useSharedValue } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
-import { isWeb } from "@/constants/platform";
 import { useHorizontalScrollOptional } from "@/contexts/horizontal-scroll-context";
 import { usePanelStore } from "@/stores/panel-store";
 import { canBeginMobilePanelGesture, isMobilePanelGestureCurrent } from "./model";
 import { useMobilePanelsRuntime } from "./provider";
-import { resolveMobilePanelGestureIntent } from "./gesture-intent";
-
-const MOBILE_WEB_EDGE_SWIPE_WIDTH = 32;
+import { canStartMobilePanelOpenGesture, resolveMobilePanelGestureIntent } from "./gesture-intent";
 
 function isCurrentSelection(startedRevision: number): boolean {
   return usePanelStore.getState().mobilePanel.revision === startedRevision;
@@ -41,6 +38,7 @@ export function useOpenAgentListGesture(enabled: boolean) {
     leftOpenGestureRef,
     motionState,
     openGesturesBlocked,
+    openGestureExclusions,
     position,
     updateGesture,
     windowWidth,
@@ -56,11 +54,22 @@ export function useOpenAgentListGesture(enabled: boolean) {
         .withRef(leftOpenGestureRef)
         .enabled(enabled)
         .manualActivation(true)
-        .onTouchesDown((event) => {
+        .onTouchesDown((event, stateManager) => {
           const touch = event.changedTouches[0];
           if (touch) {
             touchStartX.value = touch.absoluteX;
             touchStartY.value = touch.absoluteY;
+            if (
+              !canStartMobilePanelOpenGesture({
+                x: touch.absoluteX,
+                y: touch.absoluteY,
+                direction: 1,
+                windowWidth,
+                exclusions: openGestureExclusions.value,
+              })
+            ) {
+              stateManager.fail();
+            }
           }
         })
         .onTouchesMove((event, stateManager) => {
@@ -84,7 +93,6 @@ export function useOpenAgentListGesture(enabled: boolean) {
           if (
             !canBeginMobilePanelGesture(motionState.value, "agent", position.value) ||
             horizontalScroll?.isAnyScrolledRight.value ||
-            (isWeb && touchStartX.value > MOBILE_WEB_EDGE_SWIPE_WIDTH) ||
             panIntent === "fail"
           ) {
             stateManager.fail();
@@ -120,6 +128,7 @@ export function useOpenAgentListGesture(enabled: boolean) {
       leftOpenGestureRef,
       motionState,
       openGesturesBlocked,
+      openGestureExclusions,
       position,
       startedRevision,
       touchStartX,
@@ -234,6 +243,7 @@ export function useOpenFileExplorerGesture({ enabled, onOpen }: OpenFileExplorer
     leftOpenGestureRef,
     motionState,
     openGesturesBlocked,
+    openGestureExclusions,
     position,
     rightOpenGestureRef,
     updateGesture,
@@ -249,11 +259,22 @@ export function useOpenFileExplorerGesture({ enabled, onOpen }: OpenFileExplorer
         .simultaneousWithExternalGesture(leftOpenGestureRef)
         .enabled(enabled)
         .manualActivation(true)
-        .onTouchesDown((event) => {
+        .onTouchesDown((event, stateManager) => {
           const touch = event.changedTouches[0];
           if (touch) {
             touchStartX.value = touch.absoluteX;
             touchStartY.value = touch.absoluteY;
+            if (
+              !canStartMobilePanelOpenGesture({
+                x: touch.absoluteX,
+                y: touch.absoluteY,
+                direction: -1,
+                windowWidth,
+                exclusions: openGestureExclusions.value,
+              })
+            ) {
+              stateManager.fail();
+            }
           }
         })
         .onTouchesMove((event, stateManager) => {
@@ -276,7 +297,6 @@ export function useOpenFileExplorerGesture({ enabled, onOpen }: OpenFileExplorer
           });
           if (
             !canBeginMobilePanelGesture(motionState.value, "agent", position.value) ||
-            (isWeb && touchStartX.value < windowWidth - MOBILE_WEB_EDGE_SWIPE_WIDTH) ||
             panIntent === "fail"
           ) {
             stateManager.fail();
@@ -313,6 +333,7 @@ export function useOpenFileExplorerGesture({ enabled, onOpen }: OpenFileExplorer
       leftOpenGestureRef,
       motionState,
       openGesturesBlocked,
+      openGestureExclusions,
       position,
       rightOpenGestureRef,
       startedRevision,

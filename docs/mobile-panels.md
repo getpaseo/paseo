@@ -79,9 +79,10 @@ definition, no longer eligible to begin.
 - Callers request semantic targets through `panel-store`; they never write shared values.
 - Gesture behavior comes from the four explicit hooks in `mobile-panels/gestures.ts`.
 - A focused interactive surface may block panel-opening gestures through
-  `useBlockMobilePanelOpenGestures`. Register only while the conflicting interaction is active and
-  unregister when the surface is hidden or unfocused. The blocker never disables gestures that close
-  an already-open panel.
+  `useBlockMobilePanelOpenGestures`, or reserve its measured bounds through
+  `useMobilePanelOpenGestureExclusion`. Reserve the compact workspace header even when a tab swipe
+  fails or has no adjacent tab. Register only while the surface is visible and focused; unregister
+  when it is hidden or unfocused. Neither mechanism disables gestures that close an already-open panel.
 - Keep `SidebarModelProvider` outside `MobileGestureWrapper`. The provider shares sidebar derivation
   across consumers, while Gesture Handler requires the wrapper's direct child to be a native `View`
   so its injected `collapsable={false}` reaches Android/Fabric.
