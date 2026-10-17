@@ -803,9 +803,7 @@ export function createWorkerTerminalManager(
     },
 
     killTerminal(id: string): void {
-      if (recordsById.get(id)?.exitInfo) {
-        removeRecordAndEmit(id);
-      }
+      removeRecordAndEmit(id);
       void sendRequest({ type: "killTerminal", terminalId: id }).catch(() => {
         // no-op; kill is intentionally best-effort and synchronous in the public interface.
       });

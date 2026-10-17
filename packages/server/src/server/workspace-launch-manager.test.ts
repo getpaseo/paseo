@@ -341,12 +341,20 @@ describe("WorkspaceLaunchManager", () => {
     const directory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-ipv6-"));
     tempDirs.push(directory);
     const server = http.createServer((_request, response) => response.end("ok"));
-    await listen(server, 0, "::1");
-    const address = server.address();
-    if (!address || typeof address === "string") {
-      throw new Error("Failed to obtain IPv6 listener port");
-    }
-    const port = address.port;
+    const workspaceRuntimeEnvironment = new WorkspaceRuntimeEnvironmentService();
+    const context = {
+      workspaceId: "workspace-launch-ipv6",
+      workspaceDirectory: directory,
+      projectSlug: "example-project",
+      branchName: "feature/ipv6",
+    };
+    const environment = await workspaceRuntimeEnvironment.ensure({
+      workspaceId: context.workspaceId,
+      cwd: context.workspaceDirectory,
+      branchName: context.branchName,
+      allocation: { blockSize: 1 },
+    });
+    const port = environment.portBase;
     writeFileSync(
       join(directory, "paseo.json"),
       JSON.stringify({
@@ -357,20 +365,15 @@ describe("WorkspaceLaunchManager", () => {
     const manager = new WorkspaceLaunchManager({
       terminalManager: createTerminalManager().manager,
       serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
-      workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+      workspaceRuntimeEnvironment,
       getDaemonTcpPort: () => 6767,
       serviceProxyPublicBaseUrl: null,
       resolveScriptHealth: null,
       logger: pino({ level: "silent" }),
     });
-    const context = {
-      workspaceId: "workspace-launch-ipv6",
-      workspaceDirectory: directory,
-      projectSlug: "example-project",
-      branchName: "feature/ipv6",
-    };
 
     try {
+      await listen(server, port, "::1");
       await manager.start(context, "dev");
       await vi.waitFor(() => {
         expect(manager.buildSnapshot(context)[0]?.endpoints).toEqual([

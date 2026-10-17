@@ -1007,6 +1007,36 @@ it("keeps a retained worker terminal available after it exits", async () => {
   expect(manager.getTerminal("terminal-a")).toBeUndefined();
 });
 
+it("removes a running retained worker terminal when explicitly killed", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 50,
+    forkWorker: () => worker,
+  });
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal: {
+      id: "terminal-a",
+      name: "Launch",
+      cwd: "/workspace",
+      workspaceId: "ws-test",
+      activity: null,
+      retainOnExit: true,
+    },
+    state: createTerminalState(),
+  });
+
+  manager.killTerminal("terminal-a");
+
+  expect(manager.getTerminal("terminal-a")).toBeUndefined();
+  expect(await manager.getTerminals("/workspace")).toEqual([]);
+  expect(worker.sentMessages).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ type: "killTerminal", terminalId: "terminal-a" }),
+    ]),
+  );
+});
+
 it("does not resurrect a terminal that exited before its create response was handled", async () => {
   const worker = new FakeTerminalWorker();
   manager = createWorkerTerminalManager({
