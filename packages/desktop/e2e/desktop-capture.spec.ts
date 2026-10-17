@@ -18,6 +18,8 @@ test("capture keeps annotations and creates one agent after retry", async ({
   await installDesktopRuntime(page, { serverId, daemonListen: `127.0.0.1:${getE2EDaemonPort()}` });
   await page.addInitScript(
     (fixture) => {
+      // A fresh capture window must enroll the local daemon itself.
+      localStorage.removeItem("@paseo:daemon-registry");
       const {
         serverId: capturedServer,
         png: capturedPng,

@@ -7,7 +7,12 @@ import {
   type DesktopCaptureDraft,
 } from "@getpaseo/protocol/desktop-capture";
 import { getDesktopHost } from "@/desktop/host";
-import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import {
+  getHostRuntimeStore,
+  useHostRuntimeClient,
+  useHostRuntimeIsConnected,
+} from "@/runtime/host-runtime";
+import { connectionFromListen } from "@/types/host-connection";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import { EditingTextInput, type EditingTextInputHandle } from "@/components/ui/text-input";
 import { useDictation } from "@/hooks/use-dictation";
@@ -38,11 +43,29 @@ export function DesktopCaptureScreen() {
       try {
         const [status, deviceId] = await Promise.all([getDesktopDaemonStatus(), bridge.device()]);
         if (disposed) return;
-        if (status.status === "running" && status.serverId)
-          setHost({ serverId: status.serverId, deviceId });
-        else timer = setTimeout(() => void prepareHost(), 1000);
+        if (status.status === "running" && status.serverId && status.listen) {
+          const runtime = getHostRuntimeStore();
+          await runtime.boot();
+          const connection = connectionFromListen(status.listen);
+          if (!connection) throw new Error("Local connection unavailable");
+          const local = runtime.getHosts().find((entry) => entry.serverId === status.serverId);
+          if (!local?.connections.some((entry) => entry.id === connection.id)) {
+            const registered = await runtime.probeAndUpsertConnection({
+              connection,
+              timeoutMs: 5000,
+            });
+            if (registered.serverId !== status.serverId) throw new Error("Local daemon changed");
+          }
+          if (!disposed) {
+            setHost({ serverId: status.serverId, deviceId });
+            setError("");
+          }
+        } else timer = setTimeout(() => void prepareHost(), 1000);
       } catch {
-        if (!disposed) setError("Connexion à Paseo indisponible.");
+        if (!disposed) {
+          setError("Connexion à Paseo indisponible.");
+          timer = setTimeout(() => void prepareHost(), 1000);
+        }
       }
     };
     void prepareHost();
