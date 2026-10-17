@@ -1318,6 +1318,11 @@ the source row, so updates to one streaming item do not remount its renderer. Us
 `useRevealedText(text, phase)` hook when a renderer should pace streaming text like Paseo's built-in
 assistant rows.
 
+Chat find (Ctrl or Cmd+F) addresses a replacement by the message it replaced and searches the
+text your renderer draws, so a replaced prompt or reply is found without extra work. Find treats
+each `View` or `Text` as one block, so a match never spans two of them, and it skips buttons,
+icons, and anything with `aria-hidden`. Find only runs on the web and desktop apps.
+
 ### Append a timeline row from the daemon
 
 A server handler can add a plugin-owned row to canonical history:

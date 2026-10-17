@@ -25,12 +25,19 @@ export function findMessageMatches(
 export function findRenderedMatches(row: HTMLElement, query: string): Range[] {
   if (!query.trim()) return [];
   const groups = new Map<Element, Text[]>();
-  for (const content of row.querySelectorAll<HTMLElement>('[data-message-text="true"]')) {
+  // A plugin renderer owns the DOM of the message it replaced and sets no markers, so the
+  // whole row is searched and each div (a React Native View or Text) bounds a match.
+  const pluginRow = row.dataset.pluginRow === "true";
+  const blocks = pluginRow ? `${BLOCKS},div` : BLOCKS;
+  const contents = pluginRow
+    ? [row]
+    : row.querySelectorAll<HTMLElement>('[data-message-text="true"]');
+  for (const content of contents) {
     const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
     let node: Node | null;
     while ((node = walker.nextNode())) {
       if (!(node instanceof Text) || node.parentElement?.closest(IGNORED)) continue;
-      const block = node.parentElement?.closest(BLOCKS) ?? content;
+      const block = node.parentElement?.closest(blocks) ?? content;
       const texts = groups.get(block) ?? [];
       texts.push(node);
       groups.set(block, texts);

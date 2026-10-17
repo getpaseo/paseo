@@ -76,3 +76,32 @@ it("keeps semantic Markdown paragraphs separate while finding inline matches", (
   ]);
   expect(findRenderedMatches(row, ".another")).toEqual([]);
 });
+
+function pluginRow(html: string) {
+  const row = document.createElement("div");
+  row.dataset.pluginRow = "true";
+  row.dataset.messageId = "message-1";
+  row.innerHTML = html;
+  document.body.append(row);
+  return row;
+}
+
+it("searches a plugin row that sets no text marker, bounding matches by view", () => {
+  const row = pluginRow(
+    "<div><div>Prompt</div><div>find <span>this</span> needle</div><div>needle</div><button>needle</button></div>",
+  );
+  expect(findRenderedMatches(row, "needle").map((range) => range.toString())).toEqual([
+    "needle",
+    "needle",
+  ]);
+  expect(findRenderedMatches(row, "Promptfind")).toEqual([]);
+  expect(findRenderedMatches(row, "find this needle")).toHaveLength(1);
+  expect(findMessageMatches(row.parentElement, "message-1", "needle")).toHaveLength(2);
+});
+
+it("leaves rows without the plugin marker limited to marked message text", () => {
+  const row = document.createElement("div");
+  row.innerHTML = "<div>needle</div>";
+  document.body.append(row);
+  expect(findRenderedMatches(row, "needle")).toEqual([]);
+});

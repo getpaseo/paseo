@@ -19,6 +19,10 @@ import {
 } from "../support/helpers/composer";
 
 import { openCommandCenter, closeCommandCenter } from "../support/helpers/command-center";
+import {
+  expectPromptsDrawnByPlugin,
+  withPromptTimelinePlugin,
+} from "../support/helpers/plugin-timeline";
 
 const MAC_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
@@ -174,7 +178,7 @@ async function highlightedMessage(page: Page) {
     const range = entry && Array.from(entry[1])[0];
     if (!(range instanceof Range)) return null;
     const message = range.startContainer.parentElement?.closest<HTMLElement>(
-      '[data-testid="user-message"], [data-testid="assistant-message"]',
+      '[data-testid="user-message"], [data-testid="plugin-prompt"], [data-testid="assistant-message"]',
     );
     return message?.dataset.testid ?? null;
   });
@@ -214,6 +218,34 @@ test("counts and steps through every match in the chat, not just the selected me
     await expectHighlight(page, "scope-needle");
     await expectHighlightedMessage(page, "assistant-message");
     await closeFind(page);
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+test("finds text in a prompt a timeline plugin draws", async ({ page }, testInfo) => {
+  testInfo.setTimeout(120_000);
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "chat-find-plugin-prompt-",
+    title: "Chat Find plugin prompt",
+    initialPrompt: ACROSS_PROMPT,
+    featureValues: { mockAssistantResponse: ACROSS_RESPONSE },
+  });
+  try {
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+    await withPromptTimelinePlugin(async () => {
+      await openAgentRoute(page, agent);
+      await expectPromptsDrawnByPlugin(page);
+      await openChatFind(page);
+      await query(page).fill("scope-needle");
+      await expect(status(page)).toHaveText("1 of 3");
+      await expectHighlight(page, "scope-needle");
+      await expectHighlightedMessage(page, "plugin-prompt");
+      await page.screenshot({ path: testInfo.outputPath("chat-find-plugin-prompt.png") });
+      await expectNextMatch(page, "2 of 3", "scope-needle");
+      await expectHighlightedMessage(page, "assistant-message");
+      await closeFind(page);
+    });
   } finally {
     await agent.cleanup();
   }
