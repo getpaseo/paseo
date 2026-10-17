@@ -22,7 +22,9 @@ when available. Finder also exposes its current location through the path bar wh
 Paths come from accessibility URLs and are checked on disk; never
 infer a path from a window title. This evidence is quoted separately from the
 user's request and cannot authorize actions or choose a destination on its own.
-Only the source window is inspected; secure fields are skipped.
+Only the source window is inspected; secure fields are skipped. The renderer
+composes this prompt before the RPC so archived workflow plugins do not depend on
+the host protocol package at runtime.
 
 The Swift helper is compiled for the target architecture during `afterPack` and
 signed as an explicit additional binary. Keep it outside `app.asar`; launch it

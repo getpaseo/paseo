@@ -43,9 +43,13 @@ export function createCaptureSubmitter() {
         : "para";
       routes.set(input.key, route);
     }
+    const agentPrompt = formatDesktopCapturePrompt(input);
     if (route === "plugin")
       return captureResultSchema.parse(
-        await client.invokePluginRpc("paseo-workflow", "workflow.capture.create.request", input),
+        await client.invokePluginRpc("paseo-workflow", "workflow.capture.create.request", {
+          ...input,
+          agentPrompt,
+        }),
       );
     const start = performance.now();
     const directory = await ensurePara();
@@ -56,7 +60,7 @@ export function createCaptureSubmitter() {
         idempotencyKey: `capture:${input.key}:agent`,
         launchProfileId: input.launchProfileId,
         config: input.config,
-        prompt: formatDesktopCapturePrompt(input),
+        prompt: agentPrompt,
         clientMessageId: `capture:${input.key}:message`,
         images: input.images,
         labels: { "paseo.capture.id": input.key, "paseo.capture.device": input.deviceId },

@@ -146,3 +146,36 @@ it("adds source context to the first agent message without the workflow plugin",
   expect(request.prompt).toContain('"screenText": "Devis"');
   expect(request.images).toHaveLength(1);
 });
+
+it("keeps routing text separate from the enriched agent prompt sent to the plugin", async () => {
+  const invokePluginRpc = vi.fn(async (_plugin: string, _method: string, _input: unknown) => ({
+    type: "workflow.capture.create.response",
+    workspaceId: "w",
+    agentId: "00000000-0000-4000-8000-000000000001",
+    destination: "/PARA",
+    classificationMs: 0,
+    creationMs: 1,
+  }));
+  const client = {
+    listPlugins: async () => [{ id: "paseo-workflow", status: "running" }],
+    invokePluginRpc,
+  };
+  await createCaptureSubmitter()(
+    client as unknown as DaemonClient,
+    {
+      key: "capture",
+      deviceId: "mac",
+      text: "Ma demande",
+      ocr: "Texte visible",
+      context: { directoryPath: "/Users/test/Dossier" },
+      config: { provider: "codex" },
+      autoModel: false,
+      images: [],
+    },
+    async () => "/PARA",
+  );
+  const sent = invokePluginRpc.mock.calls[0][2] as unknown as { text: string; agentPrompt: string };
+  expect(sent.text).toBe("Ma demande");
+  expect(sent.agentPrompt).toContain('"directoryPath": "/Users/test/Dossier"');
+  expect(sent.agentPrompt).toContain('"screenText": "Texte visible"');
+});

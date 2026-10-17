@@ -1,3 +1,4 @@
+import { formatDesktopCapturePrompt } from "@getpaseo/protocol/desktop-capture";
 import { describe, expect, it, vi } from "vitest";
 import { classifyCapture } from "./desktop-capture";
 const projects = [
@@ -197,16 +198,19 @@ it("keeps the selected project through worktree failure and reuses completed cre
     autoModel: false,
     images: [{ data: "aGVsbG8=", mimeType: "image/png" as const }],
   };
+  const enrichedRequest = { ...request, agentPrompt: formatDesktopCapturePrompt(request) };
   const create = captureRuntime(settings);
   try {
-    await expect(create(request, api as Parameters<typeof create>[1])).rejects.toThrow("disk full");
+    await expect(create(enrichedRequest, api as Parameters<typeof create>[1])).rejects.toThrow(
+      "disk full",
+    );
     expect(values.requests[request.key].decision).toMatchObject({
       projectId: "a",
       root: directory,
     });
     const [first, second] = await Promise.all([
-      create(request, api as Parameters<typeof create>[1]),
-      create(request, api as Parameters<typeof create>[1]),
+      create(enrichedRequest, api as Parameters<typeof create>[1]),
+      create(enrichedRequest, api as Parameters<typeof create>[1]),
     ]);
     expect(first.agentId).toBe(second.agentId);
     expect(createWorkspace).toHaveBeenCalledTimes(2);
@@ -220,7 +224,7 @@ it("keeps the selected project through worktree failure and reuses completed cre
     expect(prompt).toContain('"directoryPath": "/Users/test/Projet été"');
     expect(prompt).toContain('"screenText": "Texte visible"');
     expect(createWorkspace.mock.calls[1][0].firstAgentContext.prompt).toBe(prompt);
-    await captureRuntime(settings)(request, api as Parameters<typeof create>[1]);
+    await captureRuntime(settings)(enrichedRequest, api as Parameters<typeof create>[1]);
     expect(createAgent).toHaveBeenCalledTimes(1);
     await expect(
       create({ ...request, text: "Other request" }, api as Parameters<typeof create>[1]),
