@@ -91,6 +91,8 @@ export interface PluginIconProps {
   name: string;
   size?: number;
   color?: string;
+  accessible?: boolean;
+  accessibilityLabel?: string;
 }
 
 export type PluginPanelLocation = "workspace" | "explorer";

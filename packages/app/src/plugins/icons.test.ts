@@ -3,10 +3,23 @@ import { describe, expect, it } from "vitest";
 import { Icon } from "./icons";
 
 describe("Icon", () => {
-  it("renders a host Lucide icon with the requested presentation", () => {
-    expect(Icon({ name: "Settings", size: 18, color: "#123456" })).toMatchObject({
+  it("renders a host Lucide icon with the requested presentation and accessibility props", () => {
+    expect(
+      Icon({
+        name: "Settings",
+        size: 18,
+        color: "#123456",
+        accessible: true,
+        accessibilityLabel: "Agent settings",
+      }),
+    ).toMatchObject({
       type: Settings,
-      props: { size: 18, color: "#123456" },
+      props: {
+        size: 18,
+        color: "#123456",
+        accessible: true,
+        accessibilityLabel: "Agent settings",
+      },
     });
   });
 
