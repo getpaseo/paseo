@@ -93,6 +93,7 @@ interface WorkerTerminalManagerOptions {
   requestTimeoutMs?: number;
   forkWorker?: () => TerminalWorkerProcess;
   getTerminalActivityUrl?: () => string | null;
+  scrollbackLines?: number;
 }
 
 function createActivityToken(): string {
@@ -703,6 +704,7 @@ export function createWorkerTerminalManager(
             id: terminalId,
             activityToken,
             activityUrl: terminalActivityUrl,
+            scrollbackLines: managerOptions.scrollbackLines,
           },
         });
         if (!creation.session) {

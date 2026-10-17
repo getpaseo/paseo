@@ -235,6 +235,20 @@ Set the persisted value in `config.json`:
 
 `PASEO_RELAY_ENABLED=true|false` overrides the file for a foreground deployment. Managed `start` uses the file. End and relaunch a deployment to remove its override before changing relay from the app or `paseo daemon pair --relay`.
 
+## Terminal scrollback
+
+The daemon keeps the last 1000 lines of each terminal. A terminal you re-open in the app shows at most that much history, whatever the app's **Terminal scrollback** setting says. Raise it in `config.json`, up to 10,000:
+
+```json
+{
+  "daemon": {
+    "terminalScrollbackLines": 10000
+  }
+}
+```
+
+Restart the daemon to apply it. A terminal that fills 10,000 lines holds about 12 MB in the daemon at 80 columns and 26 MB at 200.
+
 ## Common env vars
 
 - `PASEO_HOME`, set Paseo home directory
