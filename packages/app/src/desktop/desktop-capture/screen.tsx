@@ -25,17 +25,39 @@ import { getDesktopDaemonStatus } from "@/desktop/daemon/desktop-daemon";
 import { DesktopControlHost } from "./control-host";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { CaptureCanvas } from "./canvas";
+import { useHoldCapture } from "./use-hold-capture";
 
 export function DesktopCaptureScreen() {
   const bridge = getDesktopHost()?.desktopCapture;
   const [host, setHost] = useState<{ serverId: string; deviceId: string } | null>(null);
   const [capture, setCapture] = useState<DesktopCaptureDraft | null>(null);
   const [error, setError] = useState("");
+  const [automatic, setAutomatic] = useState<{ text: string; error: string } | null>(null);
+  const holdReady = useStableEvent((value: DesktopCaptureDraft, text: string, failure: string) => {
+    setAutomatic({ text, error: failure });
+    setCapture(value);
+    if (failure) void bridge?.present();
+  });
+  const hold = useHoldCapture(bridge, host?.serverId ?? null, holdReady);
   useEffect(() => {
     if (!bridge) return;
     const accept = (value: unknown) => {
-      if (value) setCapture(DesktopCaptureDraftSchema.parse(value));
-      else setCapture(null);
+      if (value) {
+        const parsed = DesktopCaptureDraftSchema.parse(value);
+        if (parsed.gesture) {
+          if (!hold.capture(parsed)) {
+            setAutomatic({ text: "", error: "Écrivez ou dictez votre demande." });
+            setCapture(parsed);
+            void bridge.present();
+          }
+        } else {
+          setAutomatic(null);
+          setCapture(parsed);
+        }
+      } else {
+        setCapture(null);
+        setAutomatic(null);
+      }
     };
     let disposed = false;
     let timer: ReturnType<typeof setTimeout>;
@@ -79,13 +101,13 @@ export function DesktopCaptureScreen() {
       clearTimeout(timer);
       off();
     };
-  }, [bridge]);
+  }, [bridge, hold]);
   if (!bridge) return null;
   return (
     <>
       {host ? <DesktopControlHost serverId={host.serverId} deviceId={host.deviceId} /> : null}
       {capture ? (
-        <CaptureRequest key={capture.id} capture={capture} />
+        <CaptureRequest key={capture.id} capture={capture} automatic={automatic} />
       ) : (
         <View style={styles.page}>
           <Text style={styles.text}>{error || "Prêt à capturer"}</Text>
@@ -95,7 +117,13 @@ export function DesktopCaptureScreen() {
   );
 }
 
-function CaptureRequest({ capture }: { capture: DesktopCaptureDraft }) {
+function CaptureRequest({
+  capture,
+  automatic,
+}: {
+  capture: DesktopCaptureDraft;
+  automatic: { text: string; error: string } | null;
+}) {
   const bridge = getDesktopHost()!.desktopCapture!;
   const client = useHostRuntimeClient(capture.serverId);
   const connected = useHostRuntimeIsConnected(capture.serverId);
@@ -110,8 +138,14 @@ function CaptureRequest({ capture }: { capture: DesktopCaptureDraft }) {
   );
   const editor = useRef<EditingTextInputHandle>(null);
   const [mode, setMode] = useState<"rectangle" | "pen">("rectangle");
-  const [images, setImages] = useState<string[]>([]);
-  const [error, setError] = useState("");
+  const [images, setImages] = useState<string[]>(() =>
+    [capture.png, ...(capture.cropPng ? [capture.cropPng] : [])].map(
+      (png) => `data:image/png;base64,${png}`,
+    ),
+  );
+  const [error, setError] = useState(() => automatic?.error ?? "");
+  const initialized = useRef(false);
+  const autoStarted = useRef(false);
   const [busy, setBusy] = useState(false);
   const [attempted, setAttempted] = useState(false);
   const [complete, setComplete] = useState(false);
@@ -119,6 +153,7 @@ function CaptureRequest({ capture }: { capture: DesktopCaptureDraft }) {
   const attempt = useRef<CaptureSubmission | null>(null);
   const submitter = useRef(createCaptureSubmitter());
   const form = draft.composerState;
+  const selectedProvider = form?.selectedProvider;
   const cancel = useStableEvent(() => {
     if (active.current) return;
     void dictation.cancelDictation();
@@ -187,6 +222,7 @@ function CaptureRequest({ capture }: { capture: DesktopCaptureDraft }) {
       setComplete(true);
     } catch {
       setError("Envoi non confirmé. Réessayez pour retrouver la même demande.");
+      void bridge.present();
     } finally {
       active.current = false;
       setBusy(false);
@@ -221,6 +257,37 @@ function CaptureRequest({ capture }: { capture: DesktopCaptureDraft }) {
     else void dictation.startDictation();
   });
   useEffect(() => {
+    if (!draft.isHydrated || initialized.current) return;
+    initialized.current = true;
+    if (automatic?.text) draft.replaceText(automatic.text);
+  }, [draft, automatic]);
+  useEffect(() => {
+    if (
+      !automatic ||
+      automatic.error ||
+      autoStarted.current ||
+      !initialized.current ||
+      !connected ||
+      !selectedProvider ||
+      !draft.isHydrated ||
+      !text.trim() ||
+      !images.length
+    )
+      return;
+    autoStarted.current = true;
+    send();
+  }, [automatic, connected, selectedProvider, draft.isHydrated, text, images.length, send]);
+  const captureImages = useCallback(
+    (values: string[]) => {
+      setImages(
+        values.length === 1 && capture.cropPng
+          ? [...values, `data:image/png;base64,${capture.cropPng}`]
+          : values,
+      );
+    },
+    [capture.cropPng],
+  );
+  useEffect(() => {
     editor.current?.replaceText(draft.textReplacement.text);
   }, [draft.textReplacement]);
   if (complete)
@@ -236,7 +303,12 @@ function CaptureRequest({ capture }: { capture: DesktopCaptureDraft }) {
   return (
     <View style={styles.page}>
       <ScrollView style={styles.preview}>
-        <CaptureCanvas png={capture.png} mode={mode} disabled={attempted} onChange={setImages} />
+        <CaptureCanvas
+          png={capture.png}
+          mode={mode}
+          disabled={attempted}
+          onChange={captureImages}
+        />
       </ScrollView>
       <View style={styles.actions}>
         <Button
@@ -286,7 +358,7 @@ function CaptureRequest({ capture }: { capture: DesktopCaptureDraft }) {
             disabled={
               !connected ||
               !draft.isHydrated ||
-              !form?.selectedProvider ||
+              !selectedProvider ||
               !images.length ||
               !text.trim() ||
               dictation.isRecording ||

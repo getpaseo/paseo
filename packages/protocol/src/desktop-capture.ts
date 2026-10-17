@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+export const DesktopCaptureGestureSchema = z.object({
+  id: z.uuid(),
+  phase: z.enum(["began", "ended", "cancelled"]),
+});
+export type DesktopCaptureGesture = z.infer<typeof DesktopCaptureGestureSchema>;
+
 export const DesktopCaptureDraftSchema = z.object({
   id: z.uuid(),
   deviceId: z.uuid(),
@@ -15,6 +21,8 @@ export const DesktopCaptureDraftSchema = z.object({
   }),
   ocr: z.string(),
   captureMs: z.number().nonnegative(),
+  gesture: z.boolean().optional(),
+  cropPng: z.string().optional(),
 });
 export type DesktopCaptureDraft = z.infer<typeof DesktopCaptureDraftSchema>;
 export const DesktopCaptureTargetSchema = z.object({
@@ -25,6 +33,8 @@ export const DesktopCaptureTargetSchema = z.object({
 export type DesktopCaptureTarget = z.infer<typeof DesktopCaptureTargetSchema>;
 export interface DesktopCaptureBridge {
   getDraft(): Promise<DesktopCaptureDraft | null>;
+  onGesture(handler: (gesture: DesktopCaptureGesture) => void): () => void;
+  present(): Promise<void>;
   onUpdate(handler: (draft: DesktopCaptureDraft | null) => void): () => void;
   cancel(): Promise<void>;
   complete(target: DesktopCaptureTarget): Promise<void>;

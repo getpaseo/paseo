@@ -2,6 +2,16 @@ import { describe, expect, it } from "vitest";
 import { parseHelperEvent } from "./helper.js";
 
 describe("desktop capture helper boundary", () => {
+  it("accepts hold lifecycle events and rejects unknown phases", () => {
+    for (const phase of ["began", "ended", "cancelled"]) {
+      expect(parseHelperEvent(JSON.stringify({ event: "gesture", id: "hold", phase }))).toEqual({
+        event: "gesture",
+        id: "hold",
+        phase,
+      });
+    }
+    expect(() => parseHelperEvent('{"event":"gesture","id":"hold","phase":"send"}')).toThrow();
+  });
   it("accepts a capture with explicit display coordinates and pixels", () => {
     expect(
       parseHelperEvent(

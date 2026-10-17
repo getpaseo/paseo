@@ -48,6 +48,8 @@ export function registerDesktopCapture(input: {
   let target: DesktopCaptureTarget | null = null;
   let quitting = false;
   let pendingCapture = false;
+  let gestureId: string | null = null;
+  let confirmationTimer: ReturnType<typeof setTimeout> | undefined;
   let helper: ReturnType<typeof startCaptureHelper> | null = null;
   function publish() {
     window?.webContents.send("paseo:desktop-capture:update", draft);
@@ -74,6 +76,7 @@ export function registerDesktopCapture(input: {
         contextIsolation: true,
         nodeIntegration: false,
         backgroundThrottling: false,
+        autoplayPolicy: "no-user-gesture-required",
       },
     });
     window = created;
@@ -161,7 +164,70 @@ export function registerDesktopCapture(input: {
     });
     return true;
   }
+  function receiveGesture(event: Extract<CaptureHelperEvent, { event: "gesture" }>) {
+    if (event.phase === "began") {
+      if ((gestureId && !target) || (draft && !target)) {
+        helper?.command({ command: "cancel_gesture" });
+        if (draft) show();
+        return;
+      }
+      clearTimeout(confirmationTimer);
+      gestureId = event.id;
+      draft = null;
+      target = null;
+      window?.hide();
+      window?.setSize(720, 620);
+      publish();
+    } else if (event.id !== gestureId) return;
+    if (event.phase === "cancelled") gestureId = null;
+    window?.webContents.send("paseo:desktop-capture:gesture", {
+      id: event.id,
+      phase: event.phase,
+    });
+    return;
+  }
+  async function receiveCapture(event: Extract<CaptureHelperEvent, { event: "capture" }>) {
+    if (draft || pendingCapture) {
+      show();
+      return;
+    }
+    pendingCapture = true;
+    try {
+      if (!localServerId) {
+        const status = await resolveDesktopDaemonStatus();
+        if (status.status === "running") localServerId = status.serverId;
+      }
+      if (!localServerId) throw new Error("Ouvrez Paseo et réessayez.");
+      draft = {
+        id: event.id,
+        deviceId,
+        serverId: localServerId,
+        png: event.png,
+        width: event.width,
+        height: event.height,
+        context: event.context,
+        ocr: earlyOcr.get(event.id) ?? "",
+        captureMs: event.captureMs,
+        gesture: event.gesture,
+        cropPng: event.cropPng,
+      };
+      target = null;
+      if (event.gesture) publish();
+      else show();
+    } catch (error) {
+      await dialog.showMessageBox({
+        message: error instanceof Error ? error.message : "Capture indisponible.",
+        type: "error",
+      });
+    } finally {
+      pendingCapture = false;
+    }
+  }
   async function receive(event: CaptureHelperEvent) {
+    if (event.event === "gesture") {
+      receiveGesture(event);
+      return;
+    }
     if (event.event === "stopped") {
       stopTools(event.sessionId);
       return;
@@ -178,40 +244,17 @@ export function registerDesktopCapture(input: {
       return;
     }
     if (event.event === "capture") {
-      if (draft || pendingCapture) {
-        show();
-        return;
-      }
-      pendingCapture = true;
-      try {
-        if (!localServerId) {
-          const status = await resolveDesktopDaemonStatus();
-          if (status.status === "running") localServerId = status.serverId;
-        }
-        if (!localServerId) throw new Error("Ouvrez Paseo et réessayez.");
-        draft = {
-          id: event.id,
-          deviceId,
-          serverId: localServerId,
-          png: event.png,
-          width: event.width,
-          height: event.height,
-          context: event.context,
-          ocr: earlyOcr.get(event.id) ?? "",
-          captureMs: event.captureMs,
-        };
-        target = null;
-        show();
-      } catch (error) {
-        await dialog.showMessageBox({
-          message: error instanceof Error ? error.message : "Capture indisponible.",
-          type: "error",
-        });
-      } finally {
-        pendingCapture = false;
-      }
+      await receiveCapture(event);
+      return;
     }
     if (event.event === "error") {
+      if (gestureId) {
+        window?.webContents.send("paseo:desktop-capture:gesture", {
+          id: gestureId,
+          phase: "cancelled",
+        });
+        gestureId = null;
+      }
       await dialog.showMessageBox({
         message: "Autorisez la capture d’écran dans les réglages du Mac, puis réessayez.",
         type: "error",
@@ -226,6 +269,12 @@ export function registerDesktopCapture(input: {
       );
     },
     onDisconnect(error) {
+      if (gestureId)
+        window?.webContents.send("paseo:desktop-capture:gesture", {
+          id: gestureId,
+          phase: "cancelled",
+        });
+      gestureId = null;
       recoverInput();
       stopTools();
       helper = null;
@@ -237,6 +286,11 @@ export function registerDesktopCapture(input: {
     if (!window || event.sender.id !== window.webContents.id)
       throw new Error("Not the desktop capture window.");
   }
+  ipcMain.handle("paseo:desktop-capture:present", (event) => {
+    requireOwner(event);
+    window?.setSize(720, 620);
+    show();
+  });
   ipcMain.handle("paseo:desktop-capture:para", async (event) => {
     requireOwner(event);
     const directory = "/Users/sylvaindivito/Desktop/PARA";
@@ -291,6 +345,7 @@ export function registerDesktopCapture(input: {
     requireOwner(event);
     draft = null;
     target = null;
+    gestureId = null;
     window?.hide();
     publish();
   });
@@ -300,8 +355,17 @@ export function registerDesktopCapture(input: {
     if (target && JSON.stringify(target) === JSON.stringify(parsed)) return;
     if (!draft || parsed.serverId !== draft.serverId)
       throw new Error("Invalid capture destination.");
+    const automatic = draft.gesture;
     target = parsed;
     draft = null;
+    if (automatic) {
+      setTimeout(() => {
+        if (target !== parsed) return;
+        window?.setSize(360, 220);
+        window?.showInactive();
+        confirmationTimer = setTimeout(() => window?.hide(), 8000);
+      }, 100);
+    }
   });
   ipcMain.handle("paseo:desktop-capture:open", async (event) => {
     requireOwner(event);

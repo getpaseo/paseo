@@ -5,6 +5,11 @@ import { z } from "zod";
 
 const helperEvent = z.discriminatedUnion("event", [
   z.object({
+    event: z.literal("gesture"),
+    id: z.string(),
+    phase: z.enum(["began", "ended", "cancelled"]),
+  }),
+  z.object({
     event: z.literal("result"),
     id: z.string(),
     result: z.record(z.string(), z.unknown()),
@@ -42,6 +47,11 @@ const helperEvent = z.discriminatedUnion("event", [
     width: z.number().int().positive().max(32768),
     height: z.number().int().positive().max(32768),
     captureMs: z.number().nonnegative(),
+    gesture: z.boolean().optional(),
+    cropPng: z
+      .string()
+      .max(64 * 1024 * 1024)
+      .optional(),
   }),
 ]);
 export type CaptureHelperEvent = z.infer<typeof helperEvent>;
@@ -83,6 +93,7 @@ export function startCaptureHelper(input: {
         | { command: "revoke"; sessionId: string }
         | { command: "capture"; id: string }
         | { command: "permissions" }
+        | { command: "cancel_gesture" }
         | { command: "shortcut"; modifiers: number },
     ) {
       if (stopped) throw new Error("Desktop capture helper is unavailable.");

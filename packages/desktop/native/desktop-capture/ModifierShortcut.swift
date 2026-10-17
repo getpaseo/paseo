@@ -1,23 +1,40 @@
+enum ModifierShortcutEvent { case began, ended, cancelled }
+
 struct ModifierShortcut {
-    let required: UInt64
-    private var currentModifiers: UInt64 = 0
-    private var armed = false
-    private var contaminated = false
+  let required: UInt64
+  private var currentModifiers: UInt64 = 0
+  private var active = false
+  private var consumed = false
+  private var contaminated = false
 
-    init(required: UInt64) { self.required = required }
+  init(required: UInt64) { self.required = required }
 
-    mutating func cancel() { if currentModifiers != 0 { contaminated = true } }
+  mutating func cancel() -> ModifierShortcutEvent? {
+    if currentModifiers != 0 { contaminated = true }
+    guard active else { return nil }
+    active = false
+    consumed = true
+    return .cancelled
+  }
 
-    mutating func update(modifiers: UInt64) -> Bool {
-        currentModifiers = modifiers
-        if modifiers == 0 {
-            let trigger = armed && !contaminated
-            armed = false
-            contaminated = false
-            return trigger
-        }
-        if modifiers & ~required != 0 { contaminated = true }
-        if modifiers == required && !contaminated { armed = true }
-        return false
+  mutating func update(modifiers: UInt64) -> ModifierShortcutEvent? {
+    currentModifiers = modifiers
+    let extra = modifiers & ~required != 0
+    var event: ModifierShortcutEvent?
+    if active && modifiers != required {
+      active = false
+      consumed = true
+      event = extra ? .cancelled : .ended
     }
+    if extra { contaminated = true }
+    if modifiers == required && !active && !consumed && !contaminated {
+      active = true
+      event = .began
+    }
+    if modifiers == 0 {
+      contaminated = false
+      consumed = false
+    }
+    return event
+  }
 }

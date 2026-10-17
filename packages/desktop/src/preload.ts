@@ -56,6 +56,12 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     },
   },
   desktopCapture: {
+    present: () => ipcRenderer.invoke("paseo:desktop-capture:present"),
+    onGesture: (handler: (value: unknown) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, value: unknown) => handler(value);
+      ipcRenderer.on("paseo:desktop-capture:gesture", listener);
+      return () => ipcRenderer.removeListener("paseo:desktop-capture:gesture", listener);
+    },
     ensurePara: () => ipcRenderer.invoke("paseo:desktop-capture:para"),
     device: () => ipcRenderer.invoke("paseo:desktop-capture:device"),
     execute: (request: unknown) => ipcRenderer.invoke("paseo:desktop-capture:execute", request),
