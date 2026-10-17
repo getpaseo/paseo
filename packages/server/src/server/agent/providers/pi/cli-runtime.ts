@@ -158,6 +158,10 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     await this.requestStopWork({ type: "abort" });
   }
 
+  async forceInterrupt(): Promise<void> {
+    await this.process.forceInterrupt();
+  }
+
   async getState(): Promise<PiSessionState> {
     return (await this.request({ type: "get_state" })) as PiSessionState;
   }

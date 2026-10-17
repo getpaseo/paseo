@@ -2,7 +2,7 @@ import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:chi
 import type { Logger } from "pino";
 
 import { spawnProcess } from "../../../utils/spawn.js";
-import { terminateWithTreeKill } from "../../../utils/tree-kill.js";
+import { terminateWithTreeKill, type ProcessTerminator } from "../../../utils/tree-kill.js";
 import { JsonlFrameDecoder } from "./jsonl-frame-decoder.js";
 export { supportsJsonlRpcProtocolV2 } from "./jsonl-frame-decoder.js";
 
@@ -17,6 +17,8 @@ export const JSONL_RPC_NO_TIMEOUT = null;
 const STDERR_BUFFER_LIMIT = 8192;
 const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
+const FORCE_INTERRUPT_GRACE_MS = 2_000;
+const FORCE_INTERRUPT_FORCE_MS = 2_000;
 
 export interface JsonlRpcLaunch {
   command: string;
@@ -52,6 +54,7 @@ export interface JsonlRpcProcessOptions {
   diagnosticName?: string;
   defaultRequestTimeoutMs?: number;
   spawn?: (launch: JsonlRpcLaunch) => ChildProcessWithoutNullStreams;
+  terminate?: ProcessTerminator;
 }
 
 function assertChildWithPipes(
@@ -84,9 +87,11 @@ export class JsonlRpcProcess {
   private exited = false;
   private closing: Promise<void> | null = null;
   private readonly frameDecoder: JsonlFrameDecoder;
+  private readonly terminateProcess: ProcessTerminator;
 
   constructor(private readonly options: JsonlRpcProcessOptions) {
     this.diagnosticName = options.diagnosticName ?? "JSONL RPC";
+    this.terminateProcess = options.terminate ?? terminateWithTreeKill;
     this.frameDecoder = new JsonlFrameDecoder({
       frame: (message) => this.dispatchFrame(message),
       problem: (problem, detail) => {
@@ -230,13 +235,43 @@ export class JsonlRpcProcess {
     await this.closing;
   }
 
+  /**
+   * Escalate a wedged child through SIGINT → SIGTERM → SIGKILL after its RPC
+   * loop stops answering. Unlike close(), the transport is left alone: the
+   * exit event itself rejects pending requests and notifies subscribers, so
+   * the runtime's death is reported by the child rather than synthesized
+   * locally. No-op once the child has already exited.
+   */
+  async forceInterrupt(): Promise<void> {
+    if (this.exited) {
+      return;
+    }
+    const firstPass = await this.terminateProcess(this.child, {
+      gracefulSignal: "SIGINT",
+      forceSignal: "SIGTERM",
+      gracefulTimeoutMs: FORCE_INTERRUPT_GRACE_MS,
+      forceTimeoutMs: FORCE_INTERRUPT_FORCE_MS,
+    });
+    if (firstPass !== "kill-timeout") {
+      return;
+    }
+    this.options.logger.warn(
+      `${this.diagnosticName} process did not exit after SIGINT and SIGTERM; sending SIGKILL`,
+    );
+    await this.terminateProcess(this.child, {
+      gracefulSignal: "SIGKILL",
+      forceSignal: "SIGKILL",
+      gracefulTimeoutMs: 0,
+    });
+  }
+
   private async terminate(): Promise<void> {
     try {
       this.child.stdin.end();
     } catch {
       // Ignore cleanup races.
     }
-    const result = await terminateWithTreeKill(this.child, {
+    const result = await this.terminateProcess(this.child, {
       gracefulTimeoutMs: GRACEFUL_SHUTDOWN_TIMEOUT_MS,
       forceTimeoutMs: FORCE_SHUTDOWN_TIMEOUT_MS,
       onForceSignal: () => {
