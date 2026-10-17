@@ -994,6 +994,12 @@ type CorrelatedResponsePayloads = {
 type CorrelatedResponsePayload<TType extends CorrelatedResponseType> =
   CorrelatedResponsePayloads[TType];
 
+type PluginCatalogResponseEntry =
+  CorrelatedResponsePayload<"plugin.catalog.get.response">["plugins"][number];
+export type PluginCatalogEntry = Omit<PluginCatalogResponseEntry, "clientBundle"> & {
+  clientBundle: string;
+};
+
 export class DaemonConnectionError extends Error {
   constructor(
     message: string,
@@ -1288,6 +1294,11 @@ export class DaemonClient {
   private pendingBinaryFileReads = new Map<string, PendingBinaryFileRead>();
   private activeBinaryFileTransfers = new Map<string, BinaryFileTransferState>();
   private completedBinaryFileReads = new Map<string, FileReadResult>();
+  /** The last catalog's client bundles by plugin id, so later catalogs can leave them out. */
+  private pluginClientBundles = new Map<
+    string,
+    { clientBundleHash: string; clientBundle: string }
+  >();
   private logger: Logger;
   private pendingSendQueue: PendingSend[] = [];
   private readonly logConnectionPath: "direct" | "relay";
@@ -5473,14 +5484,37 @@ export class DaemonClient {
     });
   }
 
-  async getPluginCatalog() {
+  async getPluginCatalog(): Promise<PluginCatalogEntry[]> {
     const requestId = this.createRequestId();
+    const cached = this.pluginClientBundles;
+    const cachedClientBundles = [...cached].map(([id, { clientBundleHash }]) => ({
+      id,
+      clientBundleHash,
+    }));
     const payload = await this.sendCorrelatedSessionRequest({
       requestId,
-      message: { type: "plugin.catalog.get.request", requestId },
+      message: {
+        type: "plugin.catalog.get.request",
+        requestId,
+        ...(cachedClientBundles.length > 0 ? { cachedClientBundles } : {}),
+      },
       responseType: "plugin.catalog.get.response",
     });
-    return payload.plugins;
+    const retained = new Map<string, { clientBundleHash: string; clientBundle: string }>();
+    const plugins = payload.plugins.map(({ clientBundle: sent, ...plugin }): PluginCatalogEntry => {
+      const clientBundle = sent ?? cached.get(plugin.id)?.clientBundle;
+      if (clientBundle === undefined) {
+        throw new Error(`Plugin catalog left out the client bundle for ${plugin.id}`);
+      }
+      // COMPAT(pluginCatalogBundleHash): added in v0.11.3, remove after 2027-04-12 once daemon
+      // floor >= v0.11.3. Older daemons send no hash, so their bundles are never retained.
+      if (plugin.clientBundleHash !== undefined) {
+        retained.set(plugin.id, { clientBundleHash: plugin.clientBundleHash, clientBundle });
+      }
+      return Object.assign(plugin, { clientBundle });
+    });
+    this.pluginClientBundles = retained;
+    return plugins;
   }
 
   async listPlugins(): Promise<PluginListItem[]> {

@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, test, vi } from "vitest";
 import { z } from "zod";
 import {
   DaemonClient,
@@ -1961,6 +1961,80 @@ test("gets a structured plugin log snapshot", async () => {
       message: "ready",
     },
   ]);
+});
+
+describe("plugin catalog", () => {
+  async function connectedClient() {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger: createMockLogger(),
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+    const connectPromise = client.connect();
+    mock.triggerOpen({ features: { plugins: true } });
+    await connectPromise;
+    return { client, mock };
+  }
+
+  async function fetchCatalog(
+    harness: Awaited<ReturnType<typeof connectedClient>>,
+    respond: (request: Record<string, unknown>) => Array<Record<string, unknown>>,
+  ) {
+    const response = harness.client.getPluginCatalog();
+    const request = parseSentFrame(harness.mock.sent.at(-1));
+    harness.mock.triggerMessage(
+      wrapSessionMessage({
+        type: "plugin.catalog.get.response",
+        payload: { requestId: request.requestId, plugins: respond(request) },
+      }),
+    );
+    return { request, plugins: await response };
+  }
+
+  test("reuses retained client bundles the daemon leaves out", async () => {
+    const harness = await connectedClient();
+    const first = await fetchCatalog(harness, () => [
+      { id: "kept", clientBundle: "kept bundle", clientBundleHash: "hash-kept" },
+      { id: "changed", clientBundle: "old bundle", clientBundleHash: "hash-old" },
+    ]);
+    expect(first.request).not.toHaveProperty("cachedClientBundles");
+
+    const second = await fetchCatalog(harness, () => [
+      { id: "kept", clientBundleHash: "hash-kept" },
+      { id: "changed", clientBundle: "new bundle", clientBundleHash: "hash-new" },
+    ]);
+
+    expect(second.request.cachedClientBundles).toEqual([
+      { id: "kept", clientBundleHash: "hash-kept" },
+      { id: "changed", clientBundleHash: "hash-old" },
+    ]);
+    expect(second.plugins).toEqual([
+      { id: "kept", clientBundle: "kept bundle", clientBundleHash: "hash-kept" },
+      { id: "changed", clientBundle: "new bundle", clientBundleHash: "hash-new" },
+    ]);
+    const third = await fetchCatalog(harness, () => []);
+    expect(third.request.cachedClientBundles).toEqual([
+      { id: "kept", clientBundleHash: "hash-kept" },
+      { id: "changed", clientBundleHash: "hash-new" },
+    ]);
+    const fourth = await fetchCatalog(harness, () => []);
+    expect(fourth.request).not.toHaveProperty("cachedClientBundles");
+  });
+
+  test("keeps fetching every bundle from a daemon that sends no bundle hashes", async () => {
+    const harness = await connectedClient();
+    const legacyCatalog = () => [{ id: "legacy", clientBundle: "legacy bundle" }];
+    await fetchCatalog(harness, legacyCatalog);
+
+    const second = await fetchCatalog(harness, legacyCatalog);
+
+    expect(second.request).not.toHaveProperty("cachedClientBundles");
+    expect(second.plugins).toEqual([{ id: "legacy", clientBundle: "legacy bundle" }]);
+  });
 });
 
 test("keeps a plugin reload pending past the session RPC deadline", async () => {
