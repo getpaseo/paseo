@@ -417,6 +417,8 @@ export const ko: TranslationResources = {
       loading: "최근 세션을 불러오는 중...",
       failedProvider: "{{provider}} 세션을 불러올 수 없습니다",
       failedImport: "선택한 세션을 가져올 수 없습니다.",
+      activeWriter:
+        "다른 Codex/Paseo 프로세스가 이 세션을 사용 중입니다. 원래 앱에서 세션을 해제한 후 다시 시도하거나 다른 세션을 선택하세요.",
     },
     actions: {
       refresh: "세션 새로고침",
