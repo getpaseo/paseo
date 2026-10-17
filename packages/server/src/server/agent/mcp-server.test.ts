@@ -3957,6 +3957,13 @@ class HeldTurnAgentSession implements AgentSession {
     this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
   }
 
+  /** Start a turn nobody prompted, as a provider does when it retries or wakes on its own. */
+  startOwnTurn(): void {
+    const turnId = randomUUID();
+    this.activeTurnId = turnId;
+    this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+  }
+
   failTurn(error: string): void {
     const turnId = this.activeTurnId;
     if (!turnId) throw new Error("No held turn to fail");
@@ -4269,6 +4276,70 @@ describe("send_agent_prompt MCP tool", () => {
       }
     },
   );
+
+  it("notifies the finish of a turn the child starts on its own after an error", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-error-recovery-notification-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const parentClient = new HeldTurnAgentClient("claude", false);
+    const childClient = new HeldTurnAgentClient("codex", true);
+    const agentManager = new AgentManager({
+      clients: { claude: parentClient, codex: childClient },
+      registry: storage,
+      logger,
+    });
+    try {
+      const parent = await agentManager.createAgent(
+        { provider: "claude", cwd: existingCwd },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      const child = await agentManager.createAgent(
+        { provider: "codex", cwd: existingCwd, title: "Recovering child" },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage: storage,
+        callerAgentId: parent.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+      const tool = registeredTool(server, "send_agent_prompt");
+      await invokeToolWithParsedInput(tool, { agentId: child.id, prompt: "Do the task" });
+      await vi.waitFor(() => expect(agentManager.getAgent(child.id)?.lifecycle).toBe("running"));
+
+      childClient.sessions[0]!.failTurn("Provider resource exhausted");
+      await vi.waitFor(() => {
+        expect(parentClient.sessions[0]!.prompts).toHaveLength(1);
+        expect(parentClient.sessions[0]!.prompts[0]).toContain(
+          `Agent ${child.id} (Recovering child) errored.`,
+        );
+      });
+      await vi.waitFor(() => expect(agentManager.getAgent(parent.id)?.lifecycle).toBe("idle"));
+
+      childClient.sessions[0]!.startOwnTurn();
+      await vi.waitFor(() => expect(agentManager.getAgent(child.id)?.lifecycle).toBe("running"));
+      childClient.sessions[0]!.finishTurn("Opened the PR");
+      await vi.waitFor(() => {
+        expect(parentClient.sessions[0]!.prompts).toHaveLength(2);
+        expect(parentClient.sessions[0]!.prompts[1]).toContain(
+          `Agent ${child.id} (Recovering child) finished.`,
+        );
+        expect(parentClient.sessions[0]!.prompts[1]).toContain("Opened the PR");
+      });
+      await vi.waitFor(() => expect(agentManager.getAgent(parent.id)?.lifecycle).toBe("idle"));
+
+      childClient.sessions[0]!.startOwnTurn();
+      await vi.waitFor(() => expect(agentManager.getAgent(child.id)?.lifecycle).toBe("running"));
+      childClient.sessions[0]!.finishTurn("Later turn");
+      await vi.waitFor(() => expect(agentManager.getAgent(child.id)?.lifecycle).toBe("idle"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(parentClient.sessions[0]!.prompts).toHaveLength(2);
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
 
   it.each(["out_of_band", "startup_failure"] as const)(
     "preserves %s dispatch notification semantics",
