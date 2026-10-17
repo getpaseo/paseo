@@ -137,6 +137,16 @@ describe("PersistedConfigSchema worktrees config", () => {
     expect(parsed.worktrees?.root).toBe("/mnt/fast/paseo-worktrees");
   });
 
+  test("accepts worktree path script", () => {
+    const parsed = PersistedConfigSchema.parse({
+      worktrees: {
+        pathScript: "/abs/place",
+      },
+    });
+
+    expect(parsed.worktrees?.pathScript).toBe("/abs/place");
+  });
+
   test("accepts service port allocation", () => {
     const parsed = PersistedConfigSchema.parse({
       worktrees: {

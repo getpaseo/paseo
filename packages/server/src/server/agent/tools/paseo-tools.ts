@@ -147,6 +147,7 @@ export interface PaseoToolHostDependencies {
   paseoToolPolicy?: ProviderPaseoToolsPolicy;
   paseoHome?: string;
   worktreesRoot?: string;
+  worktreesPathScript?: string;
   /**
    * ID of the agent that is using this tool catalog.
    * Used for cwd/mode inheritance when agents spawn child agents.
@@ -1426,6 +1427,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           {
             paseoHome: options.paseoHome,
             worktreesRoot: options.worktreesRoot,
+            worktreesPathScript: options.worktreesPathScript,
             createPaseoWorktreeWorkflow: options.createPaseoWorktree,
           },
           {
@@ -1554,6 +1556,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           logger: childLogger,
           paseoHome: options.paseoHome,
           worktreesRoot: options.worktreesRoot,
+          worktreesPathScript: options.worktreesPathScript,
           terminalManager,
           providerSnapshotManager,
           createPaseoWorktree: options.createPaseoWorktree,

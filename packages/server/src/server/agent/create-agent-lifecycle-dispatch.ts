@@ -18,6 +18,7 @@ import type { AgentStorage } from "./agent-storage.js";
 interface CreateAgentLifecycleDispatchDependencies {
   paseoHome: string;
   worktreesRoot?: string;
+  worktreesPathScript?: string;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   github: ForgeService;
@@ -79,6 +80,7 @@ export class CreateAgentLifecycleDispatch {
         runSetup: false,
         paseoHome: this.dependencies.paseoHome,
         worktreesRoot: this.dependencies.worktreesRoot,
+        worktreesPathScript: this.dependencies.worktreesPathScript,
       },
       {
         ...(target.baseBranch ? { resolveDefaultBranch: async () => target.baseBranch! } : {}),

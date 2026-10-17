@@ -394,6 +394,7 @@ export interface PaseoDaemonConfig {
   daemonVersion?: string;
   desktopManaged?: boolean;
   worktreesRoot?: string;
+  worktreesPathScript?: string;
   corsAllowedOrigins: string[];
   allowedHosts?: HostnamesConfig;
   hostnames?: HostnamesConfig;
@@ -1146,6 +1147,7 @@ export async function createPaseoDaemon(
       {
         paseoHome: config.paseoHome,
         worktreesRoot: config.worktreesRoot,
+        worktreesPathScript: config.worktreesPathScript,
         createPaseoWorktree: async (workflowInput, workflowOptions) => {
           return createRegisteredPaseoWorktree(workflowInput, {
             github,
@@ -1196,6 +1198,7 @@ export async function createPaseoDaemon(
     logger,
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
+    worktreesPathScript: config.worktreesPathScript,
     terminalManager,
     providerSnapshotManager,
     createPaseoWorktree: createPaseoWorktreeForTools,
@@ -1231,6 +1234,7 @@ export async function createPaseoDaemon(
   const hubAgentLifecycle = new CreateAgentLifecycleDispatch({
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
+    worktreesPathScript: config.worktreesPathScript,
     agentManager,
     agentStorage,
     github,
@@ -1447,6 +1451,7 @@ export async function createPaseoDaemon(
       (runtime.callerAgentId ? agentManager.getPaseoToolPolicy(runtime.callerAgentId) : undefined),
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
+    worktreesPathScript: config.worktreesPathScript,
     callerAgentId: runtime.callerAgentId,
     enableVoiceTools: runtime.enableVoiceTools,
     voiceOnly: runtime.voiceOnly,
@@ -1728,6 +1733,7 @@ export async function createPaseoDaemon(
               {
                 listen: formatListenTarget(boundListenTarget ?? listenTarget),
                 worktreesRoot: config.worktreesRoot,
+                worktreesPathScript: config.worktreesPathScript,
                 get appBaseUrl() {
                   return appBaseUrl;
                 },

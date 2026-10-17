@@ -28,7 +28,19 @@ rediscovering ownership from a directory that may already be gone. Reconciliatio
 mutable placement facts, but never changes `projectId`, `cwd`, `displayName`, or `baseBranch`.
 Workspace archive runs lifecycle teardown from the exact `cwd` but removes only the backing
 `worktreeRoot` after its last active reference disappears. Worktree recovery recreates that backing
-checkout from `mainRepoRoot`, then restores the relative path from `worktreeRoot` to `cwd`.
+checkout from `mainRepoRoot` at the recorded `worktreeRoot`, then restores the relative path from
+`worktreeRoot` to `cwd`.
+
+Creation placement comes from the default layout (`<worktrees.root>/<repo-hash>/<slug>`) or from
+`worktrees.pathScript`, an executable in daemon config that prints the absolute path for each new
+worktree. Either way the record stores the actual path. Nothing re-derives placement from the
+current config: editing `root` or `pathScript` never moves an existing worktree, and restore never
+re-runs the script. A directory is removable only with proof that Paseo created it: a workspace
+registry record for that exact path, the `paseo/worktree.json` marker in its git admin dir verified
+against `git worktree list`, or the legacy hashed layout. Path shape alone (including a slug or
+directory name) proves nothing, and slug lookups resolve against the discovered worktree list for
+the repo. Archive without proof still archives the record; it leaves the directory in place and
+reports the path and reason instead of deleting it.
 
 Paseo uses **file-based JSON persistence** instead of a traditional database. All data is validated at runtime with Zod schemas. Most stores write atomically (write to temp file, then rename); a few still use plain `writeFile` — see each section. There is no schema-versioning/migration framework — schemas rely on optional fields with defaults for forward compatibility, with a small amount of inline normalization in `persisted-config.ts` for legacy provider/speech entries.
 
@@ -215,6 +227,7 @@ snapshot so a mixed edit can apply its live subset and still name the paths that
   },
   worktrees?: {
     root?: string            // optional root for new worktrees; defaults to $PASEO_HOME/worktrees
+    pathScript?: string      // optional executable that prints the absolute path for each new worktree; restart to apply
     servicePorts?: {         // optional dynamic service port allocation policy
       range?: string         // inclusive range, e.g. "3000-4000"
       portScript?: string    // executable that receives service/workspace context and prints one TCP port
@@ -494,7 +507,7 @@ Array of workspace records. A workspace is a specific working directory within a
 | `branch`                       | `string \| null`                                             | The current Git branch for git-backed workspaces. Separate from `displayName`/`title`; a background branch refresh never rewrites the name.                                                   |
 | `worktreeRoot`                 | `string \| null`                                             | Backing checkout/worktree root. May differ from `cwd` for exact subprojects and remains persisted after the worktree is deleted so restore can reproduce the placement.                       |
 | `baseBranch`                   | `string \| null`                                             | Comparison base retained across archive and restore. Branch-off creation stores the resolved ref; legacy and PR-checkout records hold a bare name. Null means no recorded base.               |
-| `isPaseoOwnedWorktree`         | `boolean`                                                    | Whether Paseo owns and may remove/recreate the backing `worktreeRoot`                                                                                                                         |
+| `isPaseoOwnedWorktree`         | `boolean`                                                    | Whether Paseo proved it created the backing `worktreeRoot` and may remove/recreate it; proof set is defined in the placement paragraph at the top of this doc                                 |
 | `mainRepoRoot`                 | `string \| null`                                             | Main repository root for worktree checkouts, independent of both exact `cwd` and backing `worktreeRoot`                                                                                       |
 | `createdAt`                    | `string` (ISO 8601)                                          |                                                                                                                                                                                               |
 | `updatedAt`                    | `string` (ISO 8601)                                          |                                                                                                                                                                                               |

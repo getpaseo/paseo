@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import pino, { type Logger } from "pino";
@@ -8,6 +16,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import type { ForgeService } from "../services/forge-service.js";
 import { createRealpathAwarePathMatcher } from "../utils/path.js";
 import { createWorktree, type WorktreeConfig } from "../utils/worktree.js";
+import { getPaseoWorktreeMetadataPath } from "../utils/worktree-metadata.js";
 import type { ManagedAgent } from "./agent/agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
@@ -217,6 +226,81 @@ describe("archiveByScope", () => {
       archivedWorkspaceIds: [workspaceId],
       removedDirectory: true,
     });
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+  });
+
+  test("workspace scope archives the record but leaves a script-placed directory whose marker is gone", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const scriptPath = path.join(tempDir, "place-worktree");
+    writeFileSync(scriptPath, `#!/bin/sh\nprintf '%s/wt-%s\\n' "$(dirname "$1")" "$6"\n`);
+    chmodSync(scriptPath, 0o755);
+    const worktree = await createWorktree({
+      cwd: repoDir,
+      worktreeSlug: "unproven-workspace",
+      source: { kind: "branch-off", baseBranch: "main", branchName: "unproven-workspace" },
+      runSetup: false,
+      paseoHome,
+      pathScript: scriptPath,
+    });
+    // Remove the ownership marker: no proof remains for this path.
+    rmSync(getPaseoWorktreeMetadataPath(worktree.worktreePath), { force: true });
+    const workspaceId = "ws-unproven";
+
+    const result = await archiveByScope(
+      createArchiveDeps({
+        paseoHome,
+        activeWorkspaces: [{ workspaceId, cwd: worktree.worktreePath, kind: "worktree" }],
+      }),
+      { scope: { kind: "workspace", workspaceId }, requestId: "req-unproven-workspace" },
+    );
+
+    assertArchiveResult(result, { archivedWorkspaceIds: [workspaceId], removedDirectory: false });
+    expect(result.directoryLeftBehind?.path).toBe(worktree.worktreePath);
+    expect(result.directoryLeftBehind?.reason).toContain("no ownership proof");
+    expect(existsSync(worktree.worktreePath)).toBe(true);
+  });
+
+  test("workspace scope deletes a script-placed directory on registry proof even with the marker gone", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const scriptPath = path.join(tempDir, "place-worktree");
+    writeFileSync(scriptPath, `#!/bin/sh\nprintf '%s/wt-%s\\n' "$(dirname "$1")" "$6"\n`);
+    chmodSync(scriptPath, 0o755);
+    const worktree = await createWorktree({
+      cwd: repoDir,
+      worktreeSlug: "registry-proven-workspace",
+      source: {
+        kind: "branch-off",
+        baseBranch: "main",
+        branchName: "registry-proven-workspace",
+      },
+      runSetup: false,
+      paseoHome,
+      pathScript: scriptPath,
+    });
+    rmSync(getPaseoWorktreeMetadataPath(worktree.worktreePath), { force: true });
+    const workspaceId = "ws-registry-proven";
+
+    const result = await archiveByScope(
+      createArchiveDeps({
+        paseoHome,
+        activeWorkspaces: [
+          {
+            workspaceId,
+            cwd: worktree.worktreePath,
+            kind: "worktree",
+            isPaseoOwnedWorktree: true,
+            worktreeRoot: worktree.worktreePath,
+            mainRepoRoot: repoDir,
+          },
+        ],
+      }),
+      { scope: { kind: "workspace", workspaceId }, requestId: "req-registry-proven-workspace" },
+    );
+
+    assertArchiveResult(result, { archivedWorkspaceIds: [workspaceId], removedDirectory: true });
+    expect(result.directoryLeftBehind).toBeUndefined();
     expect(existsSync(worktree.worktreePath)).toBe(false);
   });
 

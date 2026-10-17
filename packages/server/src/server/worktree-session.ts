@@ -84,6 +84,7 @@ type AgentWorktreeSetupTimelineWriter = (input: {
 interface BuildAgentSessionConfigDependencies {
   paseoHome?: string;
   worktreesRoot?: string;
+  worktreesPathScript?: string;
   sessionLogger: Logger;
   workspaceGitService?: WorkspaceGitService;
   createPaseoWorktree: (
@@ -104,6 +105,7 @@ interface BuildAgentSessionConfigDependencies {
 interface CreatePaseoWorktreeInBackgroundDependencies {
   paseoHome?: string;
   worktreesRoot?: string;
+  worktreesPathScript?: string;
   emitWorkspaceUpdateForWorkspaceId: (workspaceId: string) => Promise<void>;
   cacheWorkspaceSetupSnapshot: (workspaceId: string, snapshot: WorkspaceSetupSnapshot) => void;
   emit: EmitSessionMessage;
@@ -177,6 +179,7 @@ interface HandleWorkspaceSetupRunRequestDependencies extends CreatePaseoWorktree
 interface HandleCreatePaseoWorktreeRequestDependencies {
   paseoHome?: string;
   worktreesRoot?: string;
+  worktreesPathScript?: string;
   describeWorkspaceRecord: (
     result: CreatePaseoWorktreeResult,
   ) => Promise<WorkspaceDescriptorPayload>;
@@ -247,6 +250,7 @@ export async function buildAgentSessionConfig(
         runSetup: false,
         paseoHome: dependencies.paseoHome,
         worktreesRoot: dependencies.worktreesRoot,
+        worktreesPathScript: dependencies.worktreesPathScript,
       },
       {
         resolveDefaultBranch: normalized.baseBranch
@@ -567,6 +571,7 @@ export async function handleCreatePaseoWorktreeRequest(
       {
         paseoHome: dependencies.paseoHome,
         worktreesRoot: dependencies.worktreesRoot,
+        worktreesPathScript: dependencies.worktreesPathScript,
         createPaseoWorktreeWorkflow: dependencies.createPaseoWorktreeWorkflow,
       },
       {
@@ -657,6 +662,7 @@ export async function createPaseoWorktreeWorkflow(
       runSetup: false,
       paseoHome: input.paseoHome ?? dependencies.paseoHome,
       worktreesRoot: input.worktreesRoot ?? dependencies.worktreesRoot,
+      worktreesPathScript: input.worktreesPathScript ?? dependencies.worktreesPathScript,
     },
     options?.resolveDefaultBranch
       ? { resolveDefaultBranch: options.resolveDefaultBranch }

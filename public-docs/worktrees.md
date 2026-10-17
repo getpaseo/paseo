@@ -40,6 +40,48 @@ With a custom root, Paseo keeps the same hashed layout under that directory:
 3. Review the diff against the base branch
 4. Merge or archive the workspace; after the last workspace using it is archived, Paseo runs teardown and removes the worktree
 
+### Custom placement with a script
+
+If you want full control over where each worktree goes, set `worktrees.pathScript` in `config.json` to an executable you control. This is a daemon-level setting, not a `paseo.json` setting. Restart the daemon after changing it.
+
+```json
+{
+  "worktrees": {
+    "pathScript": "/home/you/bin/place-worktree"
+  }
+}
+```
+
+Every time Paseo creates a worktree, it runs your executable in the source checkout with no shell and waits up to 30 seconds for it to print exactly one line: the absolute path for the new worktree. Your script must be pure. It decides the path and prints it; it must not create the directory or the worktree itself. Paseo runs `git worktree add`, setup, teardown, archive, and delete as usual, and it records the actual path, so changing or removing the script later never moves existing worktrees.
+
+The path must be absolute, must not already exist, and must not be the source checkout, inside a `.git` directory, an ancestor of the source checkout, your home directory, or the filesystem root. If the script exits non-zero, times out, or prints anything other than one absolute path, creation fails and the error includes the script's stderr. There is no fallback to the default layout.
+
+Paseo passes the same context as positional arguments and as environment variables. Absent values (no remote, no base ref) are empty strings.
+
+| #   | Environment variable  | Value                                                                                                     |
+| --- | --------------------- | --------------------------------------------------------------------------------------------------------- |
+| $1  | `PASEO_REPO_PATH`     | Main source checkout (parent of the shared git dir; same even when creating from inside another worktree) |
+| $2  | `PASEO_REPO`          | Source checkout directory name                                                                            |
+| $3  | `PASEO_OWNER`         | Remote owner path (`origin`, else first remote)                                                           |
+| $4  | `PASEO_REMOTE_REPO`   | Remote repository name                                                                                    |
+| $5  | `PASEO_BRANCH_NAME`   | Branch being created or checked out                                                                       |
+| $6  | `PASEO_WORKTREE_SLUG` | Worktree slug                                                                                             |
+| $7  | `PASEO_REPO_HASH`     | 8-character hash of the source checkout path                                                              |
+| $8  | `PASEO_WORKTREE_MODE` | `branch-off`, `checkout-branch`, `checkout-change-request`, or `checkout-github-pr`                       |
+| $9  | `PASEO_BASE_REF`      | Base ref for `branch-off`; empty otherwise                                                                |
+| $10 | `PASEO_HOME`          | Paseo home directory                                                                                      |
+
+For example, this script reproduces a sibling layout next to each checkout:
+
+```sh
+#!/bin/sh
+printf '%s.worktrees/%s\n' "$1" "$6"
+```
+
+Send any logging to stderr. Anything extra on stdout breaks the one-line contract.
+
+To see what Paseo would pass for a given repo and branch without running your script, use `paseo worktree path-script-preview --path ~/dev/my-app --branch feature/example`. It reads `config.json` on disk and prints the script, working directory, arguments, and environment; it never executes the script. The preview shows the inputs as supplied: live creation can adjust them (the branch is uniquified when it is already checked out in another worktree, and `branch-off` passes the resolved base ref, so pass `--base-ref` yourself to match a real creation).
+
 ## Create a worktree-backed workspace
 
 The examples below use the current directory as the source checkout. Pass `--path ~/dev/my-app` to create the workspace from another checkout.

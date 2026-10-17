@@ -459,6 +459,7 @@ export interface SessionOptions {
   pushNotifications: PushNotifications;
   paseoHome: string;
   worktreesRoot?: string;
+  worktreesPathScript?: string;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   messageReceipts: Pick<MessageReceipts, "send">;
@@ -720,6 +721,7 @@ export class Session {
   private readonly paseoHome: string;
   private readonly projectIcons: ProjectIconReader;
   private readonly worktreesRoot: string | undefined;
+  private readonly worktreesPathScript: string | undefined;
   private readonly rewindInitiators = new Map<string, object | undefined>();
 
   private agentManager: AgentManager;
@@ -821,6 +823,7 @@ export class Session {
       pushNotifications,
       paseoHome,
       worktreesRoot,
+      worktreesPathScript,
       agentManager,
       agentStorage,
       projectRegistry,
@@ -878,6 +881,7 @@ export class Session {
     this.creationService = options.creationService;
     this.projectIcons = new ProjectIconReader(paseoHome);
     this.worktreesRoot = worktreesRoot;
+    this.worktreesPathScript = worktreesPathScript;
     this.pluginRuntime = pluginRuntime;
     this.orchestrationSkills = orchestrationSkills;
     this.sessionLogger = logger.child({
@@ -1127,6 +1131,7 @@ export class Session {
     this.createAgentLifecycleDispatch = new CreateAgentLifecycleDispatch({
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
+      worktreesPathScript: this.worktreesPathScript,
       agentManager: this.agentManager,
       agentStorage: this.agentStorage,
       github: this.github,
@@ -4331,6 +4336,7 @@ export class Session {
           logger: this.sessionLogger,
           paseoHome: this.paseoHome,
           worktreesRoot: this.worktreesRoot,
+          worktreesPathScript: this.worktreesPathScript,
           providerSnapshotManager: this.providerSnapshotManager,
         },
         {
@@ -4867,6 +4873,7 @@ export class Session {
       {
         paseoHome: this.paseoHome,
         worktreesRoot: this.worktreesRoot,
+        worktreesPathScript: this.worktreesPathScript,
         sessionLogger: this.sessionLogger,
         workspaceGitService: this.workspaceGitService,
         createPaseoWorktree: (input, serviceOptions) =>
@@ -7331,6 +7338,7 @@ export class Session {
       {
         paseoHome: this.paseoHome,
         worktreesRoot: this.worktreesRoot,
+        worktreesPathScript: this.worktreesPathScript,
         describeWorkspaceRecord: (result) => this.describeCreatedWorktreeWorkspace(result),
         emit: (message) => this.emit(message),
         sessionLogger: this.sessionLogger,
@@ -7351,6 +7359,7 @@ export class Session {
       {
         paseoHome: this.paseoHome,
         worktreesRoot: this.worktreesRoot,
+        worktreesPathScript: this.worktreesPathScript,
         createPaseoWorktree: (workflowInput, serviceOptions) =>
           this.createPaseoWorktree(workflowInput, serviceOptions),
         warmWorkspaceGitData: (workspace) => this.warmWorkspaceGitDataForWorkspace(workspace),
