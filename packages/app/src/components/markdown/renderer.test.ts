@@ -1,5 +1,8 @@
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { toNativeLinkRecognition } from "react-native-enriched-markdown/src/utils/regexParser";
+import { parseMarkdown } from "react-native-enriched-markdown/src/web/parseMarkdown";
+import { markInlineImages } from "react-native-enriched-markdown/src/web/utils";
+import type { ASTNode } from "react-native-enriched-markdown/src/web/types";
 import { QueryClient } from "@tanstack/react-query";
 import { decodeMarkdownImage, getMarkdownImageStatus } from "./image-decoding";
 import { describe, expect, it } from "vitest";
@@ -30,6 +33,56 @@ describe("shared Markdown source adaptation", () => {
     expect(prepared.render(new Map([["../a.png", "file:///cache/a.png"]]))).toBe(
       "> - ![Image](<file:///cache/a.png>)\n\n[picture]: ../a.png",
     );
+  });
+  it("gives an image alone on its line its own paragraph", () => {
+    expect(
+      prepareMarkdownSource("Before the shot:\n![Shot](https://x/a.png)\nAfter it.").render(),
+    ).toBe("Before the shot:\n\n![Shot](https://x/a.png)\n\nAfter it.");
+    expect(prepareMarkdownSource("![A](https://x/a.png)\n![B](https://x/b.png)").render()).toBe(
+      "![A](https://x/a.png)\n\n![B](https://x/b.png)",
+    );
+    expect(
+      prepareMarkdownSource(
+        "Line one\\\n[![Linked](https://x/a.png)](https://x)\nLine three",
+      ).render(),
+    ).toBe("Line one\n\n[![Linked](https://x/a.png)](https://x)\n\nLine three");
+  });
+  it("keeps images that share a line with text inline", () => {
+    const source = "Icon ![i](https://x/i.png) in text\n![a](https://x/a.png) caption\nNext line";
+    expect(prepareMarkdownSource(source).render()).toBe(source);
+  });
+  it("splits own-line images inside quotes and list items without ending the container", () => {
+    expect(prepareMarkdownSource("> Quote text\n> ![Shot](https://x/a.png)\n> More").render()).toBe(
+      "> Quote text\n>\n> ![Shot](https://x/a.png)\n>\n> More",
+    );
+    expect(
+      prepareMarkdownSource("- Item text\n  ![Shot](https://x/a.png)\n  More\n- Next").render(),
+    ).toBe("- Item text\n\n  ![Shot](https://x/a.png)\n\n  More\n- Next");
+    expect(prepareMarkdownSource("- ![Shot](https://x/a.png)\n  Caption line").render()).toBe(
+      "- ![Shot](https://x/a.png)\n\n  Caption line",
+    );
+  });
+  it("renders own-line images as blocks through the library parser", async () => {
+    const source =
+      "Before:\n![Shot](https://x/a.png)\nIcon ![i](https://x/i.png) in text\n> Quoted\n> ![Q](https://x/q.png)";
+    const tree = await parseMarkdown(prepareMarkdownSource(source).render(), {
+      hardSoftBreaks: true,
+      latexMath: false,
+    });
+    markInlineImages(tree);
+    const images: ASTNode[] = [];
+    const collect = (node: ASTNode) => {
+      if (node.type === "Image") images.push(node);
+      node.children?.forEach(collect);
+    };
+    collect(tree);
+    expect(
+      images.map((image) => [image.attributes?.url, image.attributes?.isInline === true]),
+    ).toEqual([
+      ["https://x/a.png", false],
+      ["https://x/i.png", true],
+      ["https://x/q.png", false],
+    ]);
   });
   it("escapes spoiler delimiters only in prose", () => {
     expect(prepareMarkdownSource("Show ||words|| and `||code||`.").render()).toBe(

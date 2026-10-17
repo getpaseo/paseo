@@ -402,6 +402,8 @@ export interface SetupFinishNotificationParams {
   childAgentId: string;
   callerAgentId: string;
   requireParentOwnership?: boolean;
+  /** Retain pre-dispatch outcomes only when dispatch keeps the existing turn. */
+  dispatchResult?: Promise<PromptDispatchDisposition | false>;
   /** A replacement must observe its new start, not the displaced running snapshot. */
   waitForTurnStart?: boolean;
   logger: Logger;
@@ -466,10 +468,17 @@ interface NotifySafelyOptions {
   permissionRequest?: AgentPermissionRequest;
 }
 
-// A caller waits on a child through one armed notification. Arming again, such as a
-// follow-up prompt while the child still runs, replaces the earlier one so the child's
-// next finish reaches the caller once.
-const armedFinishNotifications = new WeakMap<AgentManager, Map<string, () => void>>();
+// Pending follow-ups coexist until acknowledgement. A successful dispatch replaces
+// every earlier observation for the caller/child pair; a failure removes only itself.
+interface ArmedFinishNotification {
+  stop(): void;
+  supersedeWhen(accepted: Promise<boolean>): void;
+}
+
+const armedFinishNotifications = new WeakMap<
+  AgentManager,
+  Map<string, Set<ArmedFinishNotification>>
+>();
 
 export function setupFinishNotification(params: SetupFinishNotificationParams): () => void {
   const {
@@ -491,15 +500,49 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
   const armedByManager = armedFinishNotifications.get(agentManager) ?? new Map();
   armedFinishNotifications.set(agentManager, armedByManager);
   const armedKey = JSON.stringify([childAgentId, callerAgentId]);
-  armedByManager.get(armedKey)?.();
-  armedByManager.set(armedKey, stop);
+  const registrations = armedByManager.get(armedKey) ?? new Set<ArmedFinishNotification>();
+  armedByManager.set(armedKey, registrations);
+  const previous = [...registrations];
+  let superseded = Promise.resolve(false);
+  let dispatchPending = Boolean(params.dispatchResult);
+  const registration: ArmedFinishNotification = {
+    stop,
+    supersedeWhen(accepted) {
+      superseded = superseded.then(
+        async (alreadySuperseded) => alreadySuperseded || (await accepted),
+      );
+    },
+  };
+  registrations.add(registration);
+  if (params.dispatchResult) {
+    const dispatchAccepted = params.dispatchResult.then((result) => result !== false);
+    for (const observer of previous) observer.supersedeWhen(dispatchAccepted);
+    void params.dispatchResult.then((accepted) => {
+      dispatchPending = false;
+      if (accepted) {
+        for (const observer of previous) observer.stop();
+        if (stopped || accepted === "turn_started") stop();
+      } else {
+        stop();
+      }
+      return undefined;
+    });
+  } else {
+    for (const observer of previous) {
+      observer.supersedeWhen(Promise.resolve(true));
+      observer.stop();
+    }
+  }
 
   function stop(): void {
-    if (stopped) return;
     stopped = true;
     unsubscribe?.();
-    if (armedByManager.get(armedKey) === stop) {
-      armedByManager.delete(armedKey);
+    // Pending observations remain visible to overlapping sends until acknowledgement.
+    if (!dispatchPending) {
+      registrations.delete(registration);
+      if (registrations.size === 0 && armedByManager.get(armedKey) === registrations) {
+        armedByManager.delete(armedKey);
+      }
     }
   }
 
@@ -507,6 +550,11 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     reason: FinishNotificationReason,
     permissionRequest?: AgentPermissionRequest,
   ): Promise<void> {
+    if (params.dispatchResult) {
+      const result = await params.dispatchResult;
+      if (result === false || result === "turn_started") return;
+    }
+    if (await superseded) return;
     const callerRecord = await agentStorage.get(callerAgentId);
     if (callerRecord?.archivedAt) {
       return;
