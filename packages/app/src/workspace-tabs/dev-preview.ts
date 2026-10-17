@@ -3,7 +3,7 @@ import { openWorkspaceBrowser } from "@/workspace-tabs/browser";
 import { trimNonEmpty } from "@/desktop/browser/store/state";
 import {
   collectAllTabs,
-  findPaneById,
+  findPaneContainingTab,
   useWorkspaceLayoutStore,
   type SplitNode,
 } from "@/stores/workspace-layout-store";
@@ -132,9 +132,8 @@ export type OpenWorkspaceDevPreviewResult =
   | { ok: false; reason: "no-side-pane" | "no-full-height-column" };
 
 /**
- * Opens (or reveals) the dev preview for a service. First open gets the ordinary right side pane
- * and pins its column group to 25/75; a preview that is already open is only revealed, so a
- * manual resize survives. Every other pane, tab and split is untouched.
+ * Opens the service preview in the dedicated browser pane at 25/75.
+ * Revealing an existing preview preserves its column share after browser placement.
  */
 export function openWorkspaceDevPreview(input: {
   workspaceKey: string;
@@ -150,39 +149,32 @@ export function openWorkspaceDevPreview(input: {
 
   const store = useWorkspaceLayoutStore.getState();
   const existing = findWorkspaceDevPreview({ workspaceKey, scriptName });
-  if (existing) {
-    const result = openWorkspaceBrowser({
-      workspaceKey,
-      browserId: existing.browserId,
-      intent: "reveal",
-    });
-    return result.ok ? result : { ok: false, reason: "no-side-pane" };
-  }
-
-  const paneId = store.ensureSidePane(workspaceKey);
-  if (!paneId) {
-    return { ok: false, reason: "no-side-pane" };
-  }
-
-  const layout = useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
-  const pane = layout ? findPaneById(layout.root, paneId) : null;
-  if (!layout || !pane || pane.hidden === true) {
-    return { ok: false, reason: "no-full-height-column" };
-  }
-  const column = findFullHeightColumnGroup({ root: layout.root, paneId });
-  if (!column) {
-    return { ok: false, reason: "no-full-height-column" };
-  }
+  const previousLayout = store.layoutByWorkspace[workspaceKey];
+  const previousPane =
+    existing && previousLayout ? findPaneContainingTab(previousLayout.root, existing.tabId) : null;
+  const previousColumn = previousPane
+    ? findFullHeightColumnGroup({ root: previousLayout.root, paneId: previousPane.id })
+    : null;
+  const previousSizes = previousColumn
+    ? (store.splitSizesByWorkspace[workspaceKey]?.[previousColumn.groupId] ?? previousColumn.sizes)
+    : null;
+  const paneShare =
+    previousColumn && previousSizes
+      ? previousSizes[previousColumn.paneIndex]
+      : DEV_PREVIEW_PANE_SHARE;
 
   const opened = openWorkspaceBrowser({
     workspaceKey,
-    url,
     intent: "reveal",
-    placement: { mode: "pane", paneId },
-    state: { [DEV_PREVIEW_MARKER_KEY]: scriptName },
+    ...(existing
+      ? { browserId: existing.browserId }
+      : { url, state: { [DEV_PREVIEW_MARKER_KEY]: scriptName } }),
   });
   if (!opened.ok) return { ok: false, reason: "no-side-pane" };
-  const { browserId, tabId } = opened;
+  const layout = useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+  const pane = findPaneContainingTab(layout.root, opened.tabId);
+  const column = pane ? findFullHeightColumnGroup({ root: layout.root, paneId: pane.id }) : null;
+  if (!column) return { ok: false, reason: "no-full-height-column" };
 
   useWorkspaceLayoutStore.getState().resizeSplit(
     workspaceKey,
@@ -190,9 +182,9 @@ export function openWorkspaceDevPreview(input: {
     columnSizesGivingPaneShare({
       sizes: column.sizes,
       paneIndex: column.paneIndex,
-      paneShare: DEV_PREVIEW_PANE_SHARE,
+      paneShare,
     }),
   );
 
-  return { ok: true, tabId, browserId, created: true };
+  return opened;
 }

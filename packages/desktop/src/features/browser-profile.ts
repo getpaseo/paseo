@@ -121,3 +121,10 @@ export async function clearPaseoBrowserProfile(input: ClearBrowserProfileInput):
     }
   }
 }
+
+let profileOperation: Promise<unknown> = Promise.resolve();
+export function serializeBrowserProfileOperation<T>(operation: () => Promise<T>): Promise<T> {
+  const result = profileOperation.then(operation);
+  profileOperation = result.catch(() => undefined);
+  return result;
+}

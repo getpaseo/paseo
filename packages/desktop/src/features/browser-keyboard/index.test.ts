@@ -291,13 +291,11 @@ describe("BrowserKeyboard", () => {
     const command = process.platform === "darwin" ? { meta: true } : { control: true };
 
     const reservedWasPrevented = guest.input(electronInput({ ...command, code: "KeyL", key: "l" }));
-    const customizableWasPrevented = guest.input(
-      electronInput({ ...command, code: "KeyT", key: "t" }),
-    );
+    const newTabWasPrevented = guest.input(electronInput({ ...command, code: "KeyT", key: "t" }));
     const enterWasPrevented = guest.input(electronInput({ code: "Enter", key: "Enter" }));
 
     expect(reservedWasPrevented).toBe(true);
-    expect(customizableWasPrevented).toBe(false);
+    expect(newTabWasPrevented).toBe(false);
     expect(enterWasPrevented).toBe(false);
     expect(guest.ignoredMenuShortcuts).toEqual([false, false, true]);
     expect(host.sent).toEqual([
@@ -306,6 +304,28 @@ describe("BrowserKeyboard", () => {
         payload: { action: "focus-url", browserId: "browser-a" },
       },
     ]);
+  });
+
+  test("does not reserve the old new-tab key when its published binding is changed or disabled", () => {
+    const { attach, keyboard } = createBrowserKeyboard();
+    const guest = new FakeBrowserContents(83);
+    const host = new FakeBrowserContents(84);
+    attach({ browserId: "browser-a", contents: guest, hostContents: host });
+    const command = process.platform === "darwin" ? { meta: true } : { control: true };
+    const prefix = {
+      alt: false,
+      code: "KeyY",
+      control: process.platform !== "darwin",
+      meta: process.platform === "darwin",
+      shift: false,
+    };
+    keyboard.publish(host.id, { menuPrefixes: [prefix], prefixes: [prefix] });
+    expect(guest.input(electronInput({ ...command, code: "KeyT", key: "t" }))).toBe(false);
+    expect(guest.input(electronInput({ ...command, code: "KeyY", key: "y" }))).toBe(false);
+    keyboard.publish(host.id, { menuPrefixes: [], prefixes: [] });
+    expect(guest.input(electronInput({ ...command, code: "KeyT", key: "t" }))).toBe(false);
+    expect(host.sent).toEqual([]);
+    expect(guest.ignoredMenuShortcuts).toEqual([false, true, false]);
   });
 
   test("keeps policy-owned shortcuts out of the application menu without preempting the page", () => {

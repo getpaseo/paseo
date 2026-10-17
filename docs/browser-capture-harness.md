@@ -55,8 +55,13 @@ window movement, including button clicks and a portal over the titlebar. Leave
 the mouse idle during this group. It reads the app's production CSS and writes
 screenshots and window bounds to the output directory.
 
+For the 2/10-page measurement and continuity journey without unrelated settings checks, set
+`PASEO_DESKTOP_BROWSER_TABS_ONLY=1`. Set `PASEO_DESKTOP_BROWSER_KEYBOARD_ONLY=1` for native
+Cmd/Ctrl+T from the address, tab row, page and iframe. Both use the existing browser-tabs E2E script
+and isolated homes. Presentation-request timings do not prove that pixels reached the screen.
+
 The browser profile group runs two Electron processes in sequence. It verifies that each
-renderer-side `did-attach` identity maps to the correct main-process guest, that two live
+renderer-side `dom-ready` identity maps to the correct main-process guest, that two live
 tabs share cookies and local storage through one persistent session, and that the data is
 still present after the first Electron process exits and the second starts.
 
@@ -130,3 +135,20 @@ observer itself keeps guests animating.
 Element capture keeps its existing zoom-scaled native region path. It does not use the automation
 frame-production wrapper. The harness's direct native-copy parking probes remain separate from the
 automation screenshot implementation.
+
+## Comet connections
+
+On macOS, Settings imports connections manually from Comet into the shared Paseo session. It does
+not import passwords, history, extensions or local storage. Sites that bind sessions to other data
+can require another sign-in. Open pages are not reloaded after import.
+
+The importer reads a SQLite backup and accepts only the inspected schema 24/v10 format. Partitioned
+cookies are skipped because Electron cannot retain their isolation through its cookie setter. A
+refused Keychain request fails before writes; individual write or flush failures return a partial
+result. Import and profile clearing share one main-process queue. Neither cookie values nor the
+Keychain secret crosses the desktop bridge. The profile fixture tests the API boundary; do not run
+CI against a person's Comet data or Keychain.
+
+Electron 44 requires `dom-ready` before `getWebContentsId()`. Calling it from `did-attach` can throw
+before registration, leaving automation without a registered guest. Registering again on navigation
+is idempotent.

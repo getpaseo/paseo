@@ -445,7 +445,7 @@ describe("mountBrowserAutomationHandler", () => {
     browser.unmount();
   });
 
-  test("reopen reuses a compatible retained pane and falls back after it becomes mixed", async () => {
+  test("reopen reuses a retained browser pane and rejects incompatible content", async () => {
     const workspaceKey = seedWorkspace("server-1", "wks_workspace_a");
     const first = openWorkspaceBrowser({ workspaceKey, intent: "reveal" });
     if (!first.ok) throw new Error(first.code);
@@ -478,7 +478,7 @@ describe("mountBrowserAutomationHandler", () => {
         useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey].root,
         fallback.tabId,
       )?.id,
-    ).not.toBe(paneId);
+    ).toBe(paneId);
   });
 
   test("closing from another workspace cannot remove its browser record", async () => {
@@ -1130,6 +1130,8 @@ describe("mountBrowserAutomationHandler", () => {
       target: { kind: "new_tab" },
       intent: "new",
     })!;
+    for (const tab of store.getWorkspaceTabs(key))
+      if (tab.tabId !== launcherId) store.closeTab(key, tab.tabId);
     expect(
       openWorkspaceBrowser({ workspaceKey: key, intent: "background", replaceTabId: launcherId }),
     ).toEqual({ ok: false, code: "placement_unavailable" });
@@ -1326,7 +1328,7 @@ describe("mountBrowserAutomationHandler", () => {
     );
     expect(after.focusRestorationByWorkspace[key]).toBe(before.focusRestorationByWorkspace[key]);
   });
-  test("explicit background placement preserves a focused visible launcher and its selected page", () => {
+  test("explicit background placement rejects a visible launcher without changing focus", () => {
     const key = seedWorkspace("server-1", "launcher-workspace");
     const store = useWorkspaceLayoutStore.getState();
     const draftId = store.openTab({
@@ -1349,19 +1351,9 @@ describe("mountBrowserAutomationHandler", () => {
       intent: "background",
       placement: { mode: "pane", paneId: "main" },
     });
-    if (!opened.ok) throw new Error("Expected background creation");
-    const after = useWorkspaceLayoutStore.getState();
-    const pane = findPaneById(after.layoutByWorkspace[key].root, "main")!;
-    expect(after.layoutByWorkspace[key].focusedPaneId).toBe(
-      before.layoutByWorkspace[key].focusedPaneId,
-    );
-    expect(pane.focusedTabId).toBe(launcherId);
-    expect(
-      collectAllTabs({ kind: "pane", pane: pane }).find((tab) => tab.tabId === launcherId)?.target,
-    ).toEqual({ kind: "new_tab" });
-    expect(pane.tabIds).toEqual([launcherId, opened.tabId]);
-    expect(after.focusRestorationByWorkspace).toBe(before.focusRestorationByWorkspace);
-    expect(after.browserPaneIdByWorkspace[key]).toBeUndefined();
+    expect(opened).toEqual({ ok: false, code: "placement_unavailable" });
+    expect(useWorkspaceLayoutStore.getState()).toBe(before);
+    expect(launcher.focusedTabId).toBe(launcherId);
   });
 
   test("implicit background creation skips a remembered visible launcher and reuses one hidden browser-only pane", () => {

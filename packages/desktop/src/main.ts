@@ -1,3 +1,4 @@
+import { CometProfileImporter } from "./features/browser-profile-import/index.js";
 import { registerAgentWidget } from "./features/agent-widget/index.js";
 process.emitWarning = (() => {}) as typeof process.emitWarning;
 
@@ -73,6 +74,7 @@ import {
 } from "./features/browser-webviews/index.js";
 import {
   clearPaseoBrowserProfile,
+  serializeBrowserProfileOperation,
   getLegacyPaseoBrowserProfileSession,
   PASEO_BROWSER_PROFILE_PARTITION,
   getPaseoBrowserProfileSession,
@@ -533,22 +535,62 @@ ipcMain.handle("paseo:browser:open-devtools", (event, browserId: unknown) => {
   return result;
 });
 
-ipcMain.handle("paseo:browser:clear-profile", async (_event, rawLegacyBrowserIds: unknown) => {
-  const profileSessions = getPaseoBrowserProfileSessions(
-    session,
-    readLegacyPaseoBrowserIds(rawLegacyBrowserIds),
+const cometImporter = new CometProfileImporter();
+const browserProfileHosts = new Set<number>();
+function assertBrowserProfileSender(event: Electron.IpcMainInvokeEvent): void {
+  const url = new URL(event.sender.getURL());
+  const trustedOrigin = app.isPackaged
+    ? url.protocol === `${APP_SCHEME}:` && url.host === "app"
+    : url.origin === new URL(DEV_SERVER_URL).origin;
+  if (
+    !trustedOrigin ||
+    !browserProfileHosts.has(event.sender.id) ||
+    event.senderFrame !== event.sender.mainFrame
+  ) {
+    throw new Error("Browser profile access denied");
+  }
+}
+ipcMain.handle("paseo:browser:list-comet-profiles", async (event) => {
+  assertBrowserProfileSender(event);
+  return cometImporter.listProfiles();
+});
+ipcMain.handle("paseo:browser:import-comet-profile", async (event, input: unknown) => {
+  assertBrowserProfileSender(event);
+  if (
+    !input ||
+    typeof input !== "object" ||
+    !("profileId" in input) ||
+    typeof input.profileId !== "string"
+  )
+    throw new Error("Invalid profile");
+  const profileId = input.profileId;
+  return serializeBrowserProfileOperation(() =>
+    cometImporter.importProfile(
+      profileId,
+      session.fromPartition(PASEO_BROWSER_PROFILE_PARTITION).cookies,
+    ),
   );
-  const profileSession = profileSessions[0];
-  await clearPaseoBrowserProfile({
-    profileSessions,
-    listGuests: () =>
-      listPaseoBrowserProfileGuests({
-        profileSession,
-        webContents: webContents.getAllWebContents(),
-      }),
-    logReloadError: (webContentsId, error) => {
-      log.warn("[browser-profile] failed to reload guest", { webContentsId, error });
-    },
+});
+
+ipcMain.handle("paseo:browser:clear-profile", async (event, rawLegacyBrowserIds: unknown) => {
+  assertBrowserProfileSender(event);
+  return serializeBrowserProfileOperation(async () => {
+    const profileSessions = getPaseoBrowserProfileSessions(
+      session,
+      readLegacyPaseoBrowserIds(rawLegacyBrowserIds),
+    );
+    const profileSession = profileSessions[0];
+    await clearPaseoBrowserProfile({
+      profileSessions,
+      listGuests: () =>
+        listPaseoBrowserProfileGuests({
+          profileSession,
+          webContents: webContents.getAllWebContents(),
+        }),
+      logReloadError: (webContentsId, error) => {
+        log.warn("[browser-profile] failed to reload guest", { webContentsId, error });
+      },
+    });
   });
 });
 
@@ -739,6 +781,7 @@ async function createWindow(
   localUpdate?.attach(mainWindow);
   agentWidget?.attach(mainWindow);
   const webContentsId = mainWindow.webContents.id;
+  browserProfileHosts.add(webContentsId);
   options.onCreated?.(webContentsId);
   mainWindow.webContents.on("did-start-navigation", (_event, _url, isSameDocument, isMainFrame) => {
     if (isMainFrame && !isSameDocument) {
@@ -746,6 +789,7 @@ async function createWindow(
     }
   });
   mainWindow.on("closed", () => {
+    browserProfileHosts.delete(webContentsId);
     options.onClosed?.(webContentsId);
     agentNavigationInbox.removeWindow(webContentsId);
     unregisterPaseoBrowserHost(webContentsId);

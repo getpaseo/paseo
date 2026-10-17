@@ -2394,6 +2394,21 @@ export const fr: TranslationResources = {
       title: "Général",
       sending: "Envoi",
       browserData: {
+        importComet: "Importer depuis Comet",
+        importing: "Importation…",
+        importHint: "Certains sites peuvent demander une reconnexion.",
+        importComplete: "Import terminé",
+        importPartial: "Import partiel",
+        cometProfile: "Profil Comet",
+        noCometProfiles: "Aucun profil Comet trouvé.",
+        importFailed: "Import impossible. Réessayez.",
+        profilesUnreadable: "Impossible de lire les profils Comet.",
+        profileUnavailable: "Profil indisponible. Réessayez.",
+        connectionsUnreadable: "Impossible de lire les connexions Comet. Réessayez.",
+        unsupportedFormat: "Format des données Comet non pris en charge.",
+        keychainUnavailable: "Autorisez Comet dans le Trousseau, puis réessayez.",
+        importUnavailable: "Import indisponible. Mettez Paseo à jour.",
+
         title: "Données du navigateur",
         siteData: "Cookies et données des sites",
         description:
