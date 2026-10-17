@@ -8,6 +8,11 @@ import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { clearCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import {
+  isNamedFileSuggestion,
+  planDaemonFileSearchRequest,
+  resolveSuggestedFilePath,
+} from "./file-search-query";
+import {
   describeWorkspaceFilePath,
   type WorkspaceFileSearchEntry,
 } from "./workspace-file-search-model";
@@ -43,8 +48,13 @@ function errorMessage(error: unknown): string {
 
 function describeFileEntries(
   entries: readonly DirectorySuggestionEntry[],
+  searchRoot: string | null,
 ): WorkspaceFileSearchEntry[] {
-  return entries.map(({ path }) => describeWorkspaceFilePath(path));
+  return entries.map(({ path }) =>
+    describeWorkspaceFilePath(
+      searchRoot ? resolveSuggestedFilePath({ root: searchRoot, path }) : path,
+    ),
+  );
 }
 
 export function useWorkspaceFileSearch(input: { enabled: boolean; query: string }): {
@@ -77,6 +87,12 @@ export function useWorkspaceFileSearch(input: { enabled: boolean; query: string 
     }
     const activeClient = client;
     const activeCwd = cwd;
+    // A typed absolute path may live outside the workspace, which the workspace-scoped search
+    // cannot reach. Re-root that query on the typed path's own directory and re-attach the root to
+    // the suggestions, so the row opens the same path the user named. The named path is also
+    // retrieved on its own, because discovery drops hidden and Git-ignored names.
+    const plan = planDaemonFileSearchRequest({ query: input.query, workspaceRoot: activeCwd });
+    const exactRequest = plan?.exact ?? null;
 
     let cancelled = false;
     setState((previous) => ({
@@ -88,18 +104,55 @@ export function useWorkspaceFileSearch(input: { enabled: boolean; query: string 
     }));
     async function search(): Promise<void> {
       try {
-        const payload = await activeClient.getDirectorySuggestions({
-          cwd: activeCwd,
-          query: input.query,
-          includeFiles: true,
-          includeDirectories: false,
-          limit: FILE_SEARCH_LIMIT,
-        });
+        const [payload, exactPayload] = await Promise.all([
+          activeClient.getDirectorySuggestions({
+            cwd: plan?.list.cwd ?? activeCwd,
+            query: plan?.list.query ?? input.query,
+            includeFiles: true,
+            includeDirectories: false,
+            limit: FILE_SEARCH_LIMIT,
+          }),
+          exactRequest
+            ? activeClient
+                .getDirectorySuggestions({
+                  cwd: exactRequest.cwd,
+                  query: exactRequest.query,
+                  includeFiles: true,
+                  includeDirectories: false,
+                  matchMode: "suffix",
+                  limit: 1,
+                })
+                .catch(() => null)
+            : Promise.resolve(null),
+        ]);
         if (cancelled) return;
+        // The retrieval request falls back to a suffix search when the typed path does not exist;
+        // only a result that is the typed path may lead the list.
+        const exactRoot = exactRequest?.root ?? null;
+        const namedEntries =
+          exactPayload && !exactPayload.error
+            ? describeFileEntries(
+                exactPayload.entries.filter((entry) =>
+                  isNamedFileSuggestion({
+                    root: exactRoot ?? "",
+                    path: entry.path,
+                    namedPath: plan?.namedPath ?? "",
+                  }),
+                ),
+                exactRoot,
+              )
+            : [];
+        const listedEntries = payload.error
+          ? []
+          : describeFileEntries(payload.entries, plan?.list.root ?? null);
+        const listedPaths = new Set(listedEntries.map((entry) => entry.path));
         setState({
           sourceKey,
           requestKey,
-          entries: payload.error ? [] : describeFileEntries(payload.entries),
+          entries: [
+            ...namedEntries.filter((entry) => !listedPaths.has(entry.path)),
+            ...listedEntries,
+          ],
           loading: false,
           error: payload.error ?? null,
         });
