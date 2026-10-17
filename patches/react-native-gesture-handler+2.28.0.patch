@@ -138,20 +138,39 @@ index a532cf6..7b66222 100644
      viewGroup: ViewGroup,
      coords: FloatArray,
 diff --git a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt
-index d8f8fd6..ed101b9 100644
+index d8f8fd6..be42af7 100644
 --- a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt
 +++ b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt
-@@ -19,6 +19,7 @@ class RNGestureHandlerRootHelper(private val context: ReactContext, wrappedView:
+@@ -19,7 +19,10 @@ class RNGestureHandlerRootHelper(private val context: ReactContext, wrappedView:
    private val jsGestureHandler: GestureHandler?
    val rootView: ViewGroup
    private var shouldIntercept = false
 +  private var wasIntercepting = false
    private var passingTouch = false
++  // The event the orchestrator is currently delivering, so `onCancel` can tell what triggered it.
++  private var dispatchingEvent: MotionEvent? = null
  
    init {
-@@ -117,6 +118,14 @@ class RNGestureHandlerRootHelper(private val context: ReactContext, wrappedView:
+     UiThreadUtil.assertOnUiThread()
+@@ -88,6 +91,11 @@ class RNGestureHandlerRootHelper(private val context: ReactContext, wrappedView:
+     override fun onHandleHover(event: MotionEvent, sourceEvent: MotionEvent) = handleEvent(event)
+ 
+     override fun onCancel() {
++      // A Tap activating on a mouse ACTION_BUTTON_RELEASE cancels this handler before ACTION_UP.
++      // Reporting a native gesture start here makes RN drop the Pressable's release, so skip it.
++      if (dispatchingEvent?.actionMasked == MotionEvent.ACTION_BUTTON_RELEASE) {
++        return
++      }
+       shouldIntercept = true
+       val time = SystemClock.uptimeMillis()
+       val event = MotionEvent.obtain(time, time, MotionEvent.ACTION_CANCEL, 0f, 0f, 0).apply {
+@@ -115,8 +123,18 @@ class RNGestureHandlerRootHelper(private val context: ReactContext, wrappedView:
+     // if `requestDisallow` has been called as a result of a normal gesture handling process or
+     // as a result of one of the gesture handlers activating
      passingTouch = true
++    dispatchingEvent = ev
      orchestrator!!.onTouchEvent(ev)
++    dispatchingEvent = null
      passingTouch = false
 +
 +    // On the transition into interception, cancel the native views the pointers landed on - the
