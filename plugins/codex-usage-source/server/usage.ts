@@ -277,23 +277,62 @@ function claimString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+function claimAccountId(
+  auth: Auth,
+  access: Record<string, unknown> | null,
+  accessAuth: Record<string, unknown> | null,
+  idAuth: Record<string, unknown> | null,
+): string | null {
+  return (
+    auth.accountId ??
+    claimString(accessAuth?.["chatgpt_account_id"]) ??
+    claimString(access?.["chatgpt_account_id"]) ??
+    claimString(idAuth?.["chatgpt_account_id"])
+  );
+}
+
+function claimUserId(
+  access: Record<string, unknown> | null,
+  id: Record<string, unknown> | null,
+  accessAuth: Record<string, unknown> | null,
+  idAuth: Record<string, unknown> | null,
+): string | null {
+  const raw =
+    claimString(accessAuth?.["chatgpt_user_id"]) ??
+    claimString(accessAuth?.["user_id"]) ??
+    claimString(idAuth?.["chatgpt_user_id"]) ??
+    claimString(idAuth?.["user_id"]) ??
+    claimString(access?.["sub"]) ??
+    claimString(id?.["sub"]);
+  return raw ? raw.replace(/[^A-Za-z0-9._-]/g, "_") : null;
+}
+
+function claimEmail(
+  access: Record<string, unknown> | null,
+  id: Record<string, unknown> | null,
+): string | null {
+  return (
+    claimString(claimObject(access, "https://api.openai.com/profile")?.["email"]) ??
+    claimString(access?.["email"]) ??
+    claimString(claimObject(id, "https://api.openai.com/profile")?.["email"]) ??
+    claimString(id?.["email"])
+  );
+}
+
 function accountIdentity(auth: Auth, input: CodexUsageInput): { key: string; label?: string } {
   const access = jwtClaims(auth.token);
   const id = jwtClaims(auth.idToken);
   const accessAuth = claimObject(access, "https://api.openai.com/auth");
   const idAuth = claimObject(id, "https://api.openai.com/auth");
-  const key =
-    auth.accountId ??
-    claimString(accessAuth?.["chatgpt_account_id"]) ??
-    claimString(access?.["chatgpt_account_id"]) ??
-    claimString(idAuth?.["chatgpt_account_id"]);
+  const accountId = claimAccountId(auth, access, accessAuth, idAuth);
+  const userId = claimUserId(access, id, accessAuth, idAuth);
+  const label = claimEmail(access, id);
 
-  const label =
-    claimString(claimObject(access, "https://api.openai.com/profile")?.["email"]) ??
-    claimString(access?.["email"]) ??
-    claimString(claimObject(id, "https://api.openai.com/profile")?.["email"]) ??
-    claimString(id?.["email"]);
-  return { key: key ?? hashAccountKey(JSON.stringify(input.route)), ...(label ? { label } : {}) };
+  const key =
+    userId && accountId
+      ? `${userId}.${accountId}`
+      : (accountId ?? userId ?? hashAccountKey(JSON.stringify(input.route)));
+  return { key, ...(label ? { label } : {}) };
 }
 
 function harnessLabel(input: CodexUsageInput): string {
