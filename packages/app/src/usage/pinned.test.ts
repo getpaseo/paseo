@@ -257,9 +257,12 @@ describe("resolvePinnedUsage", () => {
   });
 });
 
-it("keeps unavailable and error reports out of the sidebar summary", () => {
+it("keeps unavailable and error reports out of the sidebar summary even with retained data", () => {
+  if (claude.report.status !== "available" || codex.report.status !== "available")
+    throw new Error("fixtures must be available");
   const expired: UsageReportEntry = {
     ...claude,
+    lastSuccessful: { fetchedAt: claude.fetchedAt, report: claude.report },
     report: {
       status: "unavailable",
       problem: { kind: "expired", expiresAt: "2026-10-01T00:00:00.000Z", refreshedBy: "claude" },
@@ -267,6 +270,7 @@ it("keeps unavailable and error reports out of the sidebar summary", () => {
   };
   const failed: UsageReportEntry = {
     ...codex,
+    lastSuccessful: { fetchedAt: codex.fetchedAt, report: codex.report },
     report: { status: "error", error: "Store deleted" },
   };
   expect(resolvePinnedUsage([expired, failed], preferences(null))).toEqual([]);
