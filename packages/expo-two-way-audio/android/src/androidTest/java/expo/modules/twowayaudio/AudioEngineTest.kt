@@ -159,9 +159,10 @@ class AudioEngineTest {
     @Test @SdkSuppress(minSdkVersion = 31)
     fun stoppingDictationReleasesTheCommunicationRoute() {
         startDictation()
-        assertTrue(audio.availableCommunicationDevices.any { it.id == audio.communicationDevice?.id })
+        await("selected communication route") { hasCommunicationRoute() }
         main { engine.toggleRecording(false); engine.releaseAudioSession() }
         await("normal audio mode") { audio.mode == AudioManager.MODE_NORMAL }
+        await("cleared communication route") { !hasCommunicationRoute() }
         assertFalse(engine.isRecording)
     }
 
@@ -205,9 +206,18 @@ class AudioEngineTest {
         assertTrue("Timed out waiting for $description; events=$events packets=${packets.get()}", condition())
     }
 
-    private fun shell(command: String) {
-        instrumentation.uiAutomation.executeShellCommand(command).use {
-            android.os.ParcelFileDescriptor.AutoCloseInputStream(it).readBytes()
+    // communicationDevice reports the effective system device even after our selection is cleared.
+    // Inspect only current route clients, never the historical routing event log.
+    private fun hasCommunicationRoute(): Boolean {
+        val dump = shell("dumpsys audio")
+        assertTrue("Missing Android communication route diagnostics", dump.contains("Communication route clients:"))
+        return dump.lineSequence().any {
+            it.trimStart().startsWith("[CommunicationRouteClient: mUid: ${android.os.Process.myUid()} ")
         }
     }
+
+    private fun shell(command: String): String =
+        instrumentation.uiAutomation.executeShellCommand(command).use {
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(it).readBytes().toString(Charsets.UTF_8)
+        }
 }
