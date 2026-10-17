@@ -460,7 +460,7 @@ async function expectHiddenStreamingSubmissionOrderAfterWorkspaceEviction(
   const target = await seedMockAgentWorkspace({
     repoPrefix: `submission-hidden-stream-${testInfo.workerIndex}-`,
     title: "Hidden streaming submission",
-    model: "ten-second-stream",
+    model: "e2e-fast-stream",
   });
   const evictionAgents = await Promise.all(
     Array.from({ length: WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES }, (_unused, index) =>
@@ -549,7 +549,7 @@ async function expectCompletedSubmissionClearsAfterMissedRunningTransition(
   const agent = await seedMockAgentWorkspace({
     repoPrefix: `submission-missed-running-${testInfo.workerIndex}-`,
     title: "Submission missed running transition",
-    model: "ten-second-stream",
+    model: "e2e-fast-stream",
   });
   try {
     await openAgentRoute(page, { workspaceId: agent.workspaceId, agentId: agent.agentId });
@@ -700,7 +700,7 @@ async function expectCanonicalOrderWinsAcrossOverlappingClients(
   const agent = await seedMockAgentWorkspace({
     repoPrefix: `submission-cross-client-order-${testInfo.workerIndex}-`,
     title: "Cross-client submission order",
-    model: "ten-second-stream",
+    model: "e2e-fast-stream",
   });
   const localPrompt = "Send this after the other client turn.";
   const remotePrompt = "Commit this other client turn first.";

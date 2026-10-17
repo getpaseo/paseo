@@ -154,6 +154,8 @@ npm run test:e2e:browser-tabs --workspace=@getpaseo/desktop
 - Extract complex setup into reusable helpers
 - Test bodies should read like plain English
 - Build a vocabulary of test helpers that make complex flows simple
+- Use one browser test per causal user journey, with named `test.step()` blocks for behaviors reached along the way. Reuse the open form, workspace, and browser state. Start another test for a distinct initial state, failure injection, race ordering, viewport, or destructive branch.
+- Keep pure test-helper checks in `packages/app/e2e/support/helpers/*.test.ts`; the app unit job runs them without Metro, a daemon, or a browser.
 
 ### File naming
 

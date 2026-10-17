@@ -1,4 +1,4 @@
-import { expect, test } from "../support/fixtures";
+import { expect, test, type Page } from "../support/fixtures";
 import { trackPromptJumpRequests } from "../support/helpers/agent-timeline-gate";
 import {
   clickChatOutlineRowEdge,
@@ -49,6 +49,43 @@ import {
 // for chrome-width changes elsewhere to stay out of these tests.
 const WIDE_VIEWPORT = { width: 1440, height: 900 };
 const LOADED_TURNS = 16;
+
+async function navigateLoadedOutline(page: Page, agent: LongTimelineAgent): Promise<void> {
+  await test.step("preview across the row", async () => {
+    await expectOneActiveChatOutlinePrompt(page);
+    await hoverChatOutlinePrompt(page, 2);
+    await expectChatOutlinePreview(page, agent.prompts[1]);
+
+    await pointAtChatOutlineRowEdge(page, 7);
+    await expectChatOutlinePreview(page, agent.prompts[6]);
+
+    await movePointerOffChatOutline(page);
+    await expectNoChatOutlinePreview(page);
+  });
+  await test.step("jump, dismiss preview, and retain bare selection", async () => {
+    await clickChatOutlineRowEdge(page, 4);
+    await expectChatOutlinePromptToRemainBare(page, 4);
+    await expectTimelinePromptLandedBelowTop(page, agent.prompts[3]);
+    await expectActiveChatOutlinePrompt(page, 4);
+    await movePointerOffChatOutline(page);
+    await expectNoChatOutlinePreview(page);
+  });
+  await test.step("track the active prompt while jumping and scrolling", async () => {
+    await expectOneActiveChatOutlinePrompt(page);
+    await scrollTimelineToNewestLoadedEdge(page);
+    await expectTimelinePromptVisible(page, agent.newestPrompt);
+    await expectActiveChatOutlinePromptMovedFrom(page, 4);
+  });
+  await test.step("clamp the newest prompt at maximum scroll", async () => {
+    await clickChatOutlineRowEdge(page, LOADED_TURNS);
+    await expectTimelineAtMaximumScrollWithPromptVisible(page, agent.newestPrompt);
+  });
+}
+
+async function jumpToNewerLoadedPrompt(page: Page, agent: LongTimelineAgent): Promise<void> {
+  await clickChatOutlineRowEdge(page, 60);
+  await expectTimelinePromptLandedBelowTop(page, agent.prompts[59]);
+}
 
 test.describe("desktop chat outline", () => {
   test("keeps the prompt marked while reading split Markdown blocks and after completion", async ({
@@ -183,26 +220,12 @@ test.describe("desktop chat outline", () => {
       await expectChatOutlinePrompts(page, LOADED_TURNS);
     });
 
-    test("previews the prompt under the pointer, anywhere across its row", async ({ page }) => {
-      await hoverChatOutlinePrompt(page, 2);
-      await expectChatOutlinePreview(page, agent.prompts[1]);
-
-      await pointAtChatOutlineRowEdge(page, 7);
-      await expectChatOutlinePreview(page, agent.prompts[6]);
-
-      await movePointerOffChatOutline(page);
-      await expectNoChatOutlinePreview(page);
+    test("previews, jumps, and tracks the reader through loaded prompts", async ({ page }) => {
+      await navigateLoadedOutline(page, agent);
     });
 
     test("does not preview while crossing the rail toward the sidebar", async ({ page }) => {
       await expectNoChatOutlinePreviewWhileCrossingToSidebar(page);
-    });
-
-    test("closes the preview when the pointer leaves after a jump", async ({ page }) => {
-      await clickChatOutlineRowEdge(page, 4);
-      await movePointerOffChatOutline(page);
-
-      await expectNoChatOutlinePreview(page);
     });
 
     test("previews and jumps to the focused prompt from the keyboard", async ({ page }) => {
@@ -213,32 +236,6 @@ test.describe("desktop chat outline", () => {
       await pressEnterOnFocusedPrompt(page);
       await expectTimelinePromptLandedBelowTop(page, agent.oldestPrompt);
       await expectActiveChatOutlinePrompt(page, 1);
-    });
-
-    test("moves the active mark as the reader jumps and scrolls", async ({ page }) => {
-      await expectOneActiveChatOutlinePrompt(page);
-
-      await clickChatOutlineRowEdge(page, 4);
-      await expectTimelinePromptLandedBelowTop(page, agent.prompts[3]);
-      await expectActiveChatOutlinePrompt(page, 4);
-
-      await scrollTimelineToNewestLoadedEdge(page);
-      await expectTimelinePromptVisible(page, agent.newestPrompt);
-      await expectActiveChatOutlinePromptMovedFrom(page, 4);
-    });
-
-    test("keeps a clicked prompt free of persistent selection chrome", async ({ page }) => {
-      await clickChatOutlineRowEdge(page, 4);
-
-      await expectChatOutlinePromptToRemainBare(page, 4);
-    });
-
-    test("clamps the newest prompt at maximum scroll while keeping it visible", async ({
-      page,
-    }) => {
-      await clickChatOutlineRowEdge(page, LOADED_TURNS);
-
-      await expectTimelineAtMaximumScrollWithPromptVisible(page, agent.newestPrompt);
     });
 
     test("keeps the current prompt active throughout a long live assistant turn", async ({
@@ -282,21 +279,11 @@ test.describe("desktop chat outline", () => {
       await expectTimelinePromptLandedBelowTop(page, agent.prompts[29]);
 
       expect(history.requestCount()).toBe(requestsBeforeJump);
-    });
 
-    test("pins a newer loaded prompt when jumping downward from old history", async ({ page }) => {
-      const history = await holdOlderHistoryPages(page, agent);
-      await openAgentTimeline(page, agent);
-      await expectChatOutlinePrompts(page, 80);
-      await scrollThroughOlderHistoryPages(page, 2, history);
-      await scrollTimelineToNewestLoadedEdge(page);
-
-      await clickChatOutlineRowEdge(page, 30);
-      await expectTimelinePromptLandedBelowTop(page, agent.prompts[29]);
-
-      await clickChatOutlineRowEdge(page, 60);
-
-      await expectTimelinePromptLandedBelowTop(page, agent.prompts[59]);
+      await test.step(
+        "jump downward from old history to a newer loaded prompt",
+        jumpToNewerLoadedPrompt.bind(null, page, agent),
+      );
     });
   });
 

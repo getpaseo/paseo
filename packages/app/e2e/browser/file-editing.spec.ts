@@ -105,24 +105,40 @@ async function seedAgentWithFileLink(input: LinkedFile) {
 }
 
 test.describe("CodeMirror workspace file editing", () => {
-  test("opens explicit screenshot links and explains missing files", async ({ page }) => {
+  test("opens screenshot and non-ASCII Markdown links and explains missing files", async ({
+    page,
+  }) => {
     const session = await seedMockAgentWorkspace({
       repoPrefix: "screenshot-markdown-link-",
       title: "Screenshot file links",
       initialPrompt: "Show screenshots",
       featureValues: {
         mockAssistantResponse:
-          "[Capture](.dev/tablet-review/capture.png) [Missing capture](.dev/tablet-review/missing.png)",
+          "[Capture](.dev/tablet-review/capture.png) [报告](docs/reports/开户赠金.md) [Missing capture](.dev/tablet-review/missing.png)",
       },
     });
     try {
       await mkdir(path.join(session.cwd, ".dev/tablet-review"), { recursive: true });
       await writeFile(path.join(session.cwd, ".dev/tablet-review/capture.png"), RED_PIXEL);
+      await mkdir(path.join(session.cwd, "docs/reports"), { recursive: true });
+      await writeFile(path.join(session.cwd, "docs/reports/开户赠金.md"), "# Report opened\n");
       await openAgentRoute(page, session);
       await test.step("Open the linked screenshot", async () => {
         await openAssistantMarkdownLink(page, "Capture");
         await expectFileTabOpen(page, ".dev/tablet-review/capture.png");
         await expect(page.getByTestId("image-file-preview-canvas")).toBeVisible();
+      });
+      await test.step("Open the non-ASCII report named by its Markdown link", async () => {
+        await returnToAssistant(page, session.agentId);
+        await openAssistantMarkdownLink(page, "报告");
+        await expectFileTabOpen(page, "docs/reports/开户赠金.md");
+        await expect(
+          page
+            .getByTestId("workspace-file-pane")
+            .filter({ visible: true })
+            .getByText("Report opened", { exact: true }),
+        ).toBeVisible();
+        await page.screenshot({ path: test.info().outputPath("non-ascii-file-opened.png") });
       });
       await test.step("Explain why the missing screenshot cannot open", async () => {
         await returnToAssistant(page, session.agentId);
@@ -131,31 +147,6 @@ test.describe("CodeMirror workspace file editing", () => {
         await expect(page.getByText(/ENOENT/)).toBeVisible();
         await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
       });
-    } finally {
-      await session.cleanup();
-    }
-  });
-
-  test("opens the non-ASCII file named by an assistant markdown link", async ({ page }) => {
-    const session = await seedMockAgentWorkspace({
-      repoPrefix: "encoded-markdown-link-",
-      title: "Non-ASCII file link",
-      initialPrompt: "Show the report link",
-      featureValues: { mockAssistantResponse: "[报告](docs/reports/开户赠金.md)" },
-    });
-    try {
-      await mkdir(path.join(session.cwd, "docs/reports"), { recursive: true });
-      await writeFile(path.join(session.cwd, "docs/reports/开户赠金.md"), "# Report opened\n");
-      await openAgentRoute(page, session);
-      await openAssistantMarkdownLink(page, "报告");
-      await expectFileTabOpen(page, "docs/reports/开户赠金.md");
-      await expect(
-        page
-          .getByTestId("workspace-file-pane")
-          .filter({ visible: true })
-          .getByText("Report opened", { exact: true }),
-      ).toBeVisible();
-      await page.screenshot({ path: test.info().outputPath("non-ascii-file-opened.png") });
     } finally {
       await session.cleanup();
     }
@@ -690,7 +681,37 @@ test.describe("CodeMirror workspace file editing", () => {
     const imagePath = path.join(workspace.repoPath, "pixel.png");
     await writeFile(markdownPath, "# First heading\n", "utf8");
     await writeFile(imagePath, RED_PIXEL);
+    await mkdir(path.join(workspace.repoPath, "docs"), { recursive: true });
+    await mkdir(path.join(workspace.repoPath, "data", "cache"), { recursive: true });
+    await writeFile(path.join(workspace.repoPath, "docs", "sibling.png"), RED_PIXEL);
+    await writeFile(path.join(workspace.repoPath, "data", "cache", "hero.png"), RED_PIXEL);
+    await writeFile(
+      path.join(workspace.repoPath, "docs", "guide.md"),
+      [
+        "# Guide",
+        "",
+        "![sibling](./sibling.png)",
+        "",
+        "![hero](../data/cache/hero.png?v=2#preview)",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
     await workspace.navigateTo();
+    await test.step("render sibling and parent-relative images in Markdown preview", async () => {
+      await openFileExplorer(page);
+      await expandFolder(page, "docs");
+      await openFileFromExplorer(page, "guide.md");
+      await expectFileTabOpen(page, "docs/guide.md");
+
+      const guidePane = page.getByTestId("workspace-file-pane").filter({ visible: true });
+      await expect(guidePane.getByText("Guide", { exact: true })).toBeVisible();
+      await expectMarkdownImageLoaded(page, "sibling");
+      await expectMarkdownImageLoaded(page, "hero");
+      await guidePane.screenshot({
+        path: test.info().outputPath("markdown-relative-images.png"),
+      });
+    });
     await openWorkspaceFile(page, "notes.md");
 
     const visibleFilePane = page.getByTestId("workspace-file-pane").filter({ visible: true });
@@ -724,84 +745,30 @@ test.describe("CodeMirror workspace file editing", () => {
     await expect.poll(() => image.getAttribute("src")).not.toBe(initialSource);
   });
 
-  test("renders local relative images inside Markdown preview", async ({ page, withWorkspace }) => {
-    test.setTimeout(90_000);
-    const workspace = await withWorkspace({ prefix: "file-md-relative-image-" });
-    await mkdir(path.join(workspace.repoPath, "docs"), { recursive: true });
-    await mkdir(path.join(workspace.repoPath, "data", "cache"), { recursive: true });
-    await writeFile(path.join(workspace.repoPath, "docs", "sibling.png"), RED_PIXEL);
-    await writeFile(path.join(workspace.repoPath, "data", "cache", "hero.png"), RED_PIXEL);
-    await writeFile(
-      path.join(workspace.repoPath, "docs", "guide.md"),
-      [
-        "# Guide",
-        "",
-        "![sibling](./sibling.png)",
-        "",
-        "![hero](../data/cache/hero.png?v=2#preview)",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-    await workspace.navigateTo();
-    await openFileExplorer(page);
-    await expandFolder(page, "docs");
-    await openFileFromExplorer(page, "guide.md");
-    await expectFileTabOpen(page, "docs/guide.md");
-
-    const visibleFilePane = page.getByTestId("workspace-file-pane").filter({ visible: true });
-    await expect(visibleFilePane.getByText("Guide", { exact: true })).toBeVisible();
-    await expectMarkdownImageLoaded(page, "sibling");
-    await expectMarkdownImageLoaded(page, "hero");
-    await visibleFilePane.screenshot({
-      path: test.info().outputPath("markdown-relative-images.png"),
-    });
-  });
-
-  test("previews and refreshes an HTML plan while preserving source access", async ({
+  test("isolates an HTML preview, blocks fetch egress, and refreshes while retaining source access", async ({
     page,
     withWorkspace,
   }) => {
-    test.setTimeout(90_000);
-    const workspace = await withWorkspace({ prefix: "file-editing-html-preview-" });
-    const htmlPath = path.join(workspace.repoPath, "plan.html");
-    await writeFile(
-      htmlPath,
-      "<!doctype html><html><body><h1>Visual plan</h1></body></html>",
-      "utf8",
-    );
-    await workspace.navigateTo();
-    await openWorkspaceFile(page, "plan.html");
-
-    const preview = htmlPreview(page);
-    await expect(preview.host).toBeVisible();
-    await expect(preview.host).toHaveAttribute("sandbox", /allow-scripts/);
-    await expect(preview.host).not.toHaveAttribute("sandbox", /allow-same-origin/);
-    await expect(preview.document.getByRole("heading", { name: "Visual plan" })).toBeVisible();
-
-    await writeFile(
-      htmlPath,
-      "<!doctype html><html><body><h1>Updated plan</h1></body></html>",
-      "utf8",
-    );
-    await expect(preview.document.getByRole("heading", { name: "Updated plan" })).toBeVisible();
-
-    await selectFileView(page, "Source");
-    await expect(page.getByTestId("file-source-editor")).toBeVisible();
-    await expect(preview.host).toHaveCount(0);
-    await selectFileView(page, "Preview");
-    await expect(preview.host).toBeVisible();
-  });
-
-  test("runs inline scripts without allowing fetch egress", async ({ page, withWorkspace }) => {
     test.setTimeout(90_000);
     const workspace = await withWorkspace({ prefix: "file-editing-html-csp-" });
     await writeFile(
       path.join(workspace.repoPath, "probe.html"),
       `<!doctype html><html><head><title>probe</title></head><body>
+<h1>Visual plan</h1>
 <h1 id="script-result">Inline script did not run</h1>
 <p id="network-result">Network request not attempted</p>
 <p id="document-mode">Standards mode not detected</p>
+<p id="parent">?</p><p id="storage">?</p><p id="cookie">?</p>
+<script>
+  function report(id, label, probe) {
+    try { probe(); document.getElementById(id).textContent = label + " reachable"; }
+    catch (error) { document.getElementById(id).textContent = label + " blocked"; }
+  }
+  report("parent", "Parent DOM", function () { return parent.document.body; });
+  report("storage", "Storage", function () { return localStorage.length; });
+  report("cookie", "Cookies", function () { return document.cookie; });
+</script>
+
 <script>
   document.getElementById("script-result").textContent = "Inline script ran";
   if (document.compatMode === "CSS1Compat") {
@@ -822,6 +789,8 @@ test.describe("CodeMirror workspace file editing", () => {
     await openWorkspaceFile(page, "probe.html");
 
     const preview = htmlPreview(page);
+    await expect(preview.host).toBeVisible();
+    await expect(preview.document.getByRole("heading", { name: "Visual plan" })).toBeVisible();
     await expect(
       preview.document.getByRole("heading", { name: "Inline script ran" }),
     ).toBeVisible();
@@ -832,34 +801,26 @@ test.describe("CodeMirror workspace file editing", () => {
       preview.document.getByText("Network request blocked", { exact: true }),
     ).toBeVisible();
     expect(blockedRequests).toEqual([]);
-  });
-
-  test("isolates HTML plans from the app origin and storage", async ({ page, withWorkspace }) => {
-    test.setTimeout(90_000);
-    const workspace = await withWorkspace({ prefix: "file-editing-html-origin-" });
-    await writeFile(
-      path.join(workspace.repoPath, "origin.html"),
-      `<!doctype html><html><body>
-<p id="parent">?</p><p id="storage">?</p><p id="cookie">?</p>
-<script>
-  function report(id, label, probe) {
-    try { probe(); document.getElementById(id).textContent = label + " reachable"; }
-    catch (error) { document.getElementById(id).textContent = label + " blocked"; }
-  }
-  report("parent", "Parent DOM", function () { return parent.document.body; });
-  report("storage", "Storage", function () { return localStorage.length; });
-  report("cookie", "Cookies", function () { return document.cookie; });
-</script>
-</body></html>`,
-      "utf8",
-    );
-    await workspace.navigateTo();
-    await openWorkspaceFile(page, "origin.html");
-
-    const preview = htmlPreview(page);
-    await expect(preview.document.getByText("Parent DOM blocked", { exact: true })).toBeVisible();
-    await expect(preview.document.getByText("Storage blocked", { exact: true })).toBeVisible();
-    await expect(preview.document.getByText("Cookies blocked", { exact: true })).toBeVisible();
+    await test.step("isolate the preview from app origin and storage", async () => {
+      await expect(preview.host).toHaveAttribute("sandbox", /allow-scripts/);
+      await expect(preview.host).not.toHaveAttribute("sandbox", /allow-same-origin/);
+      await expect(preview.document.getByText("Parent DOM blocked", { exact: true })).toBeVisible();
+      await expect(preview.document.getByText("Storage blocked", { exact: true })).toBeVisible();
+      await expect(preview.document.getByText("Cookies blocked", { exact: true })).toBeVisible();
+    });
+    await test.step("refresh a changed HTML plan and switch to source and back", async () => {
+      await writeFile(
+        path.join(workspace.repoPath, "probe.html"),
+        "<!doctype html><html><body><h1>Updated plan</h1></body></html>",
+        "utf8",
+      );
+      await expect(preview.document.getByRole("heading", { name: "Updated plan" })).toBeVisible();
+      await selectFileView(page, "Source");
+      await expect(page.getByTestId("file-source-editor")).toBeVisible();
+      await expect(preview.host).toHaveCount(0);
+      await selectFileView(page, "Preview");
+      await expect(preview.host).toBeVisible();
+    });
   });
 
   test("persists Vim keybindings and reports Vim mode with cursor position", async ({

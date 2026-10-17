@@ -88,11 +88,23 @@ async function openNewWorkspaceFromContextProject(
   await expectNewWorkspaceProjectSelected(page, "Context project");
 }
 
-const test = base.extend<{ crossHostProject: CrossHostProjectScenario }>({
-  crossHostProject: async ({ page: _page }, provide) => {
-    const secondaryDaemon: IsolatedHostDaemon = await startIsolatedHostDaemon(
-      "new-workspace-project-preservation-secondary",
-    );
+const test = base.extend<
+  { crossHostProject: CrossHostProjectScenario },
+  { secondaryDaemon: IsolatedHostDaemon }
+>({
+  secondaryDaemon: [
+    async ({ e2eWorker }, provide) => {
+      void e2eWorker;
+      const daemon = await startIsolatedHostDaemon("new-workspace-project-preservation-secondary");
+      try {
+        await provide(daemon);
+      } finally {
+        await daemon.close();
+      }
+    },
+    { scope: "worker" },
+  ],
+  crossHostProject: async ({ page: _page, secondaryDaemon }, provide) => {
     const contextRepo = await createTempGitRepo("new-workspace-context-");
     const primarySharedRepo = await createTempGitRepo("new-workspace-paseo-primary-", {
       originUrl: SHARED_REMOTE_URL,
@@ -177,7 +189,6 @@ const test = base.extend<{ crossHostProject: CrossHostProjectScenario }>({
       await primaryDuplicateRepo.cleanup().catch(() => undefined);
       await secondaryFallbackRepo.cleanup().catch(() => undefined);
       await secondarySharedRepo.cleanup().catch(() => undefined);
-      await secondaryDaemon.close().catch(() => undefined);
     }
   },
 });

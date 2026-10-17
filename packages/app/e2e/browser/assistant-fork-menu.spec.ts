@@ -90,7 +90,7 @@ test.describe("Assistant fork menu", () => {
     await expectLiveAssistantText(page, visibleAfterFork);
   });
 
-  test("focuses a forked assistant turn in a new workspace draft tab", async ({
+  test("focuses an existing-workspace fork draft and keeps its attachment after submission", async ({
     page,
     seedForkWorkspace,
   }) => {
@@ -101,55 +101,44 @@ test.describe("Assistant fork menu", () => {
       model: "ten-second-stream",
     });
 
-    await openAgentRoute(page, session);
-    await expectComposerVisible(page);
-    await awaitAssistantMessage(page);
-    await session.client.waitForFinish(session.agentId, 45_000);
+    await test.step("complete a second assistant turn in the visible source tab", async () => {
+      await openAgentRoute(page, session);
+      await expectComposerVisible(page);
+      await awaitAssistantMessage(page);
+      await session.client.waitForFinish(session.agentId, 45_000);
 
-    await submitMessage(page, "emit 1 coalesced agent stream updates while this tab is visible.");
-    await session.client.waitForFinish(session.agentId, 45_000);
-    await awaitAssistantMessage(page);
-
-    const agentTab = page.getByTestId(`workspace-tab-agent_${session.agentId}`);
-    await expect(agentTab).toHaveAttribute("aria-selected", "true");
-
-    await forkMostRecentAssistantTurnToNewTab(page);
-
-    const selectedTab = page
-      .getByTestId("workspace-tabs-row")
-      .getByRole("button")
-      .and(page.locator('[aria-selected="true"]'));
-    await expect(selectedTab).toHaveAttribute("data-testid", /^workspace-tab-draft_/, {
-      timeout: 30_000,
-    });
-    await expect(agentTab).toHaveAttribute("aria-selected", "false");
-    await expectChatHistoryAttachment(page);
-  });
-
-  test("keeps the fork attachment after submitting an existing-workspace draft tab", async ({
-    page,
-    seedForkWorkspace,
-  }) => {
-    const session = await seedForkWorkspace({
-      repoPrefix: "assistant-fork-tab-submit-",
-      title: "Assistant fork tab submit",
-      initialPrompt: "emit 1 coalesced agent stream updates for assistant fork tab submit.",
-      model: "ten-second-stream",
+      await submitMessage(page, "emit 1 coalesced agent stream updates while this tab is visible.");
+      await session.client.waitForFinish(session.agentId, 45_000);
+      await awaitAssistantMessage(page);
     });
 
-    await openAgentRoute(page, session);
-    await expectComposerVisible(page);
-    await awaitAssistantMessage(page);
-    await session.client.waitForFinish(session.agentId, 45_000);
+    await test.step("fork the latest turn into the selected draft tab", async () => {
+      const agentTab = page.getByTestId(`workspace-tab-agent_${session.agentId}`);
+      await expect(agentTab).toHaveAttribute("aria-selected", "true");
 
-    await forkMostRecentAssistantTurnToNewTab(page);
-    await expectChatHistoryAttachment(page);
+      await forkMostRecentAssistantTurnToNewTab(page);
 
-    await submitMessage(page, "");
+      const selectedTab = page
+        .getByTestId("workspace-tabs-row")
+        .getByRole("button")
+        .and(page.locator('[aria-selected="true"]'));
+      await expect(selectedTab).toHaveAttribute("data-testid", /^workspace-tab-draft_/, {
+        timeout: 30_000,
+      });
+      await expect(agentTab).toHaveAttribute("aria-selected", "false");
+      await expectChatHistoryAttachment(page);
+    });
 
-    const userMessage = page.getByTestId("user-message").filter({ hasText: "Chat history" }).last();
-    await expect(userMessage).toBeVisible({ timeout: 30_000 });
-    await expect(userMessage).not.toContainText("Source agent:");
+    await test.step("submit that draft with its chat-history attachment", async () => {
+      await submitMessage(page, "");
+
+      const userMessage = page
+        .getByTestId("user-message")
+        .filter({ hasText: "Chat history" })
+        .last();
+      await expect(userMessage).toBeVisible({ timeout: 30_000 });
+      await expect(userMessage).not.toContainText("Source agent:");
+    });
   });
 
   test("forks an assistant turn into New Workspace and keeps the attachment across host changes", async ({

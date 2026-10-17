@@ -316,7 +316,9 @@ test.describe("Sidebar workspace list", () => {
     }
   });
 
-  test("project with GitHub remote shows its selected folder name in sidebar", async ({ page }) => {
+  test("opens a GitHub-backed workspace with folder metadata and pointer and keyboard hover cards", async ({
+    page,
+  }) => {
     const workspace = await seedWorkspace({
       repoPrefix: "sidebar-remote-",
       repo: { withRemote: true, originUrl: GITHUB_REMOTE_URL },
@@ -335,6 +337,46 @@ test.describe("Sidebar workspace list", () => {
 
       await expect(projectRow).toBeVisible({ timeout: 30_000 });
       await expect(projectRow).not.toContainText("test-owner/test-repo");
+      expect(workspace.workspaceName).toBe("main");
+      const row = await waitForSidebarWorkspace(page, workspace.workspaceId);
+      await expect(row).toContainText("main");
+
+      await test.step("inspect host metadata before opening the workspace", async () => {
+        const hoverCard = await openWorkspaceHoverCard(page, workspace.workspaceId);
+        await expect(page.getByTestId("hover-card-workspace-host")).toHaveText("localhost");
+        await expect(hoverCard).not.toContainText(/\b(Online|Connecting|Offline|Error|Idle)\b/);
+      });
+
+      await test.step("open the workspace and inspect its selected folder header", async () => {
+        await openWorkspaceFromSidebar(page, workspace.workspaceId);
+        await expectWorkspaceHeader(page, {
+          title: workspace.workspaceName,
+          subtitle: projectName,
+        });
+        await movePointerAwayFromWorkspaceHoverCard(page);
+        await expectWorkspaceHoverCardClosed(page);
+      });
+
+      await test.step("dismiss a clicked row's hover card when the pointer leaves", async () => {
+        await row.click();
+        await expect(row).toBeFocused();
+        await expectWorkspaceHoverCardOpen(page);
+        await movePointerAwayFromWorkspaceHoverCard(page);
+        await expectWorkspaceHoverCardClosed(page);
+      });
+
+      await test.step("retain keyboard preview until Escape or focus leaves the row", async () => {
+        await focusWorkspaceRowWithKeyboard(page, workspace.workspaceId);
+        await expectWorkspaceHoverCardOpen(page);
+        await movePointerAwayFromWorkspaceHoverCard(page);
+        await expectWorkspaceHoverCardStaysOpen(page);
+        await page.keyboard.press("Escape");
+        await expectWorkspaceHoverCardClosed(page);
+        await focusWorkspaceRowWithKeyboard(page, workspace.workspaceId);
+        await expectWorkspaceHoverCardOpen(page);
+        await page.keyboard.press("Tab");
+        await expectWorkspaceHoverCardClosed(page);
+      });
     } finally {
       await workspace.cleanup();
     }
@@ -349,107 +391,6 @@ test.describe("Sidebar workspace list", () => {
       const directoryName = path.basename(workspace.repoPath);
       const projectRow = await waitForSidebarProject(page, directoryName);
       await expect(projectRow).toContainText(directoryName);
-    } finally {
-      await workspace.cleanup();
-    }
-  });
-
-  test("workspace header uses the selected folder name instead of its GitHub remote", async ({
-    page,
-  }) => {
-    const workspace = await seedWorkspace({
-      repoPrefix: "sidebar-header-",
-      repo: { withRemote: true, originUrl: GITHUB_REMOTE_URL },
-    });
-
-    try {
-      const projectName = path.basename(workspace.repoPath);
-      await gotoAppShell(page);
-      await waitForSidebarProject(page, projectName);
-      await waitForSidebarWorkspace(page, workspace.workspaceId);
-      await openWorkspaceFromSidebar(page, workspace.workspaceId);
-
-      await expectWorkspaceHeader(page, {
-        title: workspace.workspaceName,
-        subtitle: projectName,
-      });
-    } finally {
-      await workspace.cleanup();
-    }
-  });
-
-  test("git project shows branch name in workspace row", async ({ page }) => {
-    const workspace = await seedWorkspace({ repoPrefix: "sidebar-branch-" });
-
-    try {
-      await gotoAppShell(page);
-      await waitForSidebarProject(page, path.basename(workspace.repoPath));
-
-      expect(workspace.workspaceName).toBe("main");
-      await expect(await waitForSidebarWorkspace(page, workspace.workspaceId)).toContainText(
-        "main",
-      );
-    } finally {
-      await workspace.cleanup();
-    }
-  });
-
-  test("workspace hover card shows host as metadata", async ({ page }) => {
-    const workspace = await seedWorkspace({ repoPrefix: "sidebar-hover-host-" });
-
-    try {
-      await gotoAppShell(page);
-      await waitForSidebarProject(page, path.basename(workspace.repoPath));
-
-      const hoverCard = await openWorkspaceHoverCard(page, workspace.workspaceId);
-      await expect(page.getByTestId("hover-card-workspace-host")).toHaveText("localhost");
-      await expect(hoverCard).not.toContainText(/\b(Online|Connecting|Offline|Error|Idle)\b/);
-    } finally {
-      await workspace.cleanup();
-    }
-  });
-
-  test("workspace hover card closes when the pointer leaves a clicked row", async ({ page }) => {
-    const workspace = await seedWorkspace({ repoPrefix: "sidebar-hover-click-leave-" });
-
-    try {
-      await gotoAppShell(page);
-      await waitForSidebarProject(page, path.basename(workspace.repoPath));
-      const row = await openWorkspaceFromSidebar(page, workspace.workspaceId);
-      await movePointerAwayFromWorkspaceHoverCard(page);
-      await expectWorkspaceHoverCardClosed(page);
-
-      await row.click();
-      await expect(row).toBeFocused();
-      await expectWorkspaceHoverCardOpen(page);
-      await movePointerAwayFromWorkspaceHoverCard(page);
-      await expectWorkspaceHoverCardClosed(page);
-    } finally {
-      await workspace.cleanup();
-    }
-  });
-
-  test("workspace hover card follows keyboard focus on a row", async ({ page }) => {
-    const workspace = await seedWorkspace({ repoPrefix: "sidebar-hover-keyboard-" });
-
-    try {
-      await gotoAppShell(page);
-      await waitForSidebarProject(page, path.basename(workspace.repoPath));
-      await openWorkspaceFromSidebar(page, workspace.workspaceId);
-      await movePointerAwayFromWorkspaceHoverCard(page);
-      await expectWorkspaceHoverCardClosed(page);
-
-      await focusWorkspaceRowWithKeyboard(page, workspace.workspaceId);
-      await expectWorkspaceHoverCardOpen(page);
-      await movePointerAwayFromWorkspaceHoverCard(page);
-      await expectWorkspaceHoverCardStaysOpen(page);
-      await page.keyboard.press("Escape");
-      await expectWorkspaceHoverCardClosed(page);
-
-      await focusWorkspaceRowWithKeyboard(page, workspace.workspaceId);
-      await expectWorkspaceHoverCardOpen(page);
-      await page.keyboard.press("Tab");
-      await expectWorkspaceHoverCardClosed(page);
     } finally {
       await workspace.cleanup();
     }
@@ -495,24 +436,19 @@ test.describe("Sidebar workspace list", () => {
 test.describe("Mobile sidebar panelState transition", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
-  test("showMobileAgent open and close transition", async ({ page }) => {
+  test("opens mobile navigation beside the close button and closes it again", async ({ page }) => {
     await gotoAppShell(page);
     await expectMobileAgentSidebarHidden(page);
     await openMobileAgentSidebar(page);
     await expectMobileAgentSidebarVisible(page);
+    await test.step("place the close button beside the first navigation row", async () => {
+      const firstRow = await page.getByTestId("sidebar-global-new-workspace").boundingBox();
+      const closeButton = await page.getByTestId("sidebar-close").boundingBox();
+      if (!firstRow || !closeButton) throw new Error("first nav row and close button must render");
+      expect(closeButton.x).toBeGreaterThanOrEqual(firstRow.x + firstRow.width);
+    });
     await closeMobileAgentSidebar(page);
     await expectMobileAgentSidebarHidden(page);
-  });
-
-  test("places the close button beside the first nav row instead of over it", async ({ page }) => {
-    await gotoAppShell(page);
-    await openMobileAgentSidebar(page);
-    await expectMobileAgentSidebarVisible(page);
-
-    const firstRow = await page.getByTestId("sidebar-global-new-workspace").boundingBox();
-    const closeButton = await page.getByTestId("sidebar-close").boundingBox();
-    if (!firstRow || !closeButton) throw new Error("first nav row and close button must render");
-    expect(closeButton.x).toBeGreaterThanOrEqual(firstRow.x + firstRow.width);
   });
 
   test("keeps a pinned workspace rendered while the retained sidebar is closed", async ({
@@ -587,14 +523,13 @@ test.describe("Half-screen desktop layout", () => {
     }
   });
 
-  test("keeps the pinned sidebar at half of a 14-inch Mac display", async ({ page }) => {
-    await gotoAppShell(page);
-    await expect(page.getByTestId("sidebar-global-new-workspace")).toBeVisible();
-    await expect(page.getByTestId("agent-list-backdrop")).not.toBeVisible();
-  });
-
   test("keeps the left toggle center-owned without left window controls", async ({ page }) => {
     await gotoAppShell(page);
+
+    await test.step("start with pinned navigation at half of a 14-inch Mac display", async () => {
+      await expect(page.getByTestId("sidebar-global-new-workspace")).toBeVisible();
+      await expect(page.getByTestId("agent-list-backdrop")).not.toBeVisible();
+    });
 
     const openToggle = page.getByTestId("menu-button");
     const openIcon = openToggle.locator("svg").first();

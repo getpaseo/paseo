@@ -18,7 +18,7 @@ const resolvePackageEntry = (packageName: string) => {
 export default defineConfig({
   test: {
     environment: "node",
-    exclude: [...configDefaults.exclude, "e2e/**"],
+    exclude: configDefaults.exclude,
     projects: [
       {
         extends: true,
@@ -27,12 +27,13 @@ export default defineConfig({
           environment: "node",
           include: [
             "src/**/*.{test,spec}.{ts,tsx}",
+            "e2e/support/helpers/*.test.ts",
             "native-release-version.test.ts",
             "app.config.test.ts",
             "vitest-environment.test.ts",
           ],
           setupFiles: [path.resolve(__dirname, "vitest.setup.ts")],
-          exclude: [...configDefaults.exclude, "e2e/**", "src/**/*.browser.{test,spec}.{ts,tsx}"],
+          exclude: [...configDefaults.exclude, "src/**/*.browser.{test,spec}.{ts,tsx}"],
         },
       },
       {

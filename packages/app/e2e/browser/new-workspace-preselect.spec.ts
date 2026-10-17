@@ -172,7 +172,9 @@ test.describe("New workspace preselects the open workspace's project", () => {
     await projectB?.cleanup();
   });
 
-  test("Cmd+N preselects the project you are looking at", async ({ page }) => {
+  test("workspace button and shortcut follow the active project across visits", async ({
+    page,
+  }) => {
     await gotoAppShell(page);
     await waitForSidebarHydration(page);
 
@@ -183,6 +185,15 @@ test.describe("New workspace preselects the open workspace's project", () => {
     });
     await pressNewWorkspaceShortcut(page);
     await expectNewWorkspaceProjectSelected(page, projectB.projectDisplayName);
+    await switchWorkspaceViaSidebar({
+      page,
+      serverId: getServerId(),
+      workspaceId: projectB.workspaceId,
+    });
+    await test.step("global button follows project B", async () => {
+      await openGlobalNewWorkspaceComposer(page);
+      await expectNewWorkspaceProjectSelected(page, projectB.projectDisplayName);
+    });
 
     await switchWorkspaceViaSidebar({
       page,
@@ -191,27 +202,15 @@ test.describe("New workspace preselects the open workspace's project", () => {
     });
     await pressNewWorkspaceShortcut(page);
     await expectNewWorkspaceProjectSelected(page, projectA.projectDisplayName);
-  });
-
-  test("New workspace button preselects the project you are looking at", async ({ page }) => {
-    await gotoAppShell(page);
-    await waitForSidebarHydration(page);
-
-    await switchWorkspaceViaSidebar({
-      page,
-      serverId: getServerId(),
-      workspaceId: projectB.workspaceId,
-    });
-    await openGlobalNewWorkspaceComposer(page);
-    await expectNewWorkspaceProjectSelected(page, projectB.projectDisplayName);
-
     await switchWorkspaceViaSidebar({
       page,
       serverId: getServerId(),
       workspaceId: projectA.workspaceId,
     });
-    await openGlobalNewWorkspaceComposer(page);
-    await expectNewWorkspaceProjectSelected(page, projectA.projectDisplayName);
+    await test.step("global button follows project A", async () => {
+      await openGlobalNewWorkspaceComposer(page);
+      await expectNewWorkspaceProjectSelected(page, projectA.projectDisplayName);
+    });
   });
 
   test("Cmd+N preselects the connected host project when an offline saved host is first", async ({

@@ -107,73 +107,122 @@ async function rejectNextLabelAssignment(page: Page): Promise<void> {
   });
 }
 
+const GROUP_BY_STATUS = "Group by status";
+const GROUP_BY_PROJECT = "Group by project";
+
+// Result rows carry no testID of their own, so the entries are addressed by their visible label.
+async function runGroupingEntry(page: Page, label: string, absent: string): Promise<void> {
+  const panel = await openCommandCenter(page);
+  await panel.getByTestId("command-center-input").fill("group");
+
+  const entry = panel.getByText(label, { exact: true });
+  await expect(entry).toBeVisible({ timeout: 30_000 });
+  // The entry always names the mode you are not in, so its opposite must never be listed.
+  await expect(panel.getByText(absent, { exact: true })).toHaveCount(0);
+
+  await entry.click();
+  await expect(page.getByTestId("command-center-panel")).not.toBeVisible({ timeout: 30_000 });
+}
+
 test.describe("Command center workspace management", () => {
-  test("renames the active workspace while its sidebar row is unmounted", async ({ page }) => {
-    const workspace = await seedWorkspace({ repoPrefix: "cc-rename-" });
-
+  test("manage the active workspace and scope its commands when leaving the route", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "cc-manage-" });
     try {
       await gotoAppShell(page);
       await openWorkspace(page, workspace.workspaceId);
-      await collapseProjectSection(page, workspace);
+      await test.step("renames the active workspace while its sidebar row is unmounted", async () => {
+        await collapseProjectSection(page, workspace);
 
-      await runCommand(page, "rename", "Rename workspace");
+        await runCommand(page, "rename", "Rename workspace");
 
-      // Focused, not merely visible. A modal that mounts behind the closing palette, or loses the
-      // focus race with its focus-restore, still renders — you just cannot type into it.
-      const input = page.getByTestId("workspace-rename-modal-global-input");
-      await expect(input).toBeFocused({ timeout: 15_000 });
-      await expect(input).toHaveValue(workspace.workspaceName);
+        // Focused, not merely visible. A modal that mounts behind the closing palette, or loses the
+        // focus race with its focus-restore, still renders — you just cannot type into it.
+        const input = page.getByTestId("workspace-rename-modal-global-input");
+        await expect(input).toBeFocused({ timeout: 15_000 });
+        await expect(input).toHaveValue(workspace.workspaceName);
 
-      const customTitle = "Renamed From Palette";
-      await input.fill(customTitle);
-      await page.getByTestId("workspace-rename-modal-global-submit").click();
-      await expect(input).toHaveCount(0, { timeout: 15_000 });
+        const customTitle = "Renamed From Palette";
+        await input.fill(customTitle);
+        await page.getByTestId("workspace-rename-modal-global-submit").click();
+        await expect(input).toHaveCount(0, { timeout: 15_000 });
 
-      // Re-expand the section to read the row back.
-      const header = page
-        .locator('[data-testid^="sidebar-project-row-"]')
-        .filter({ hasText: workspace.projectDisplayName });
-      await header.click();
-      await expect(workspaceRow(page, workspace.workspaceId)).toContainText(customTitle, {
-        timeout: 15_000,
+        // Re-expand the section to read the row back.
+        const header = page
+          .locator('[data-testid^="sidebar-project-row-"]')
+          .filter({ hasText: workspace.projectDisplayName });
+        await header.click();
+        await expect(workspaceRow(page, workspace.workspaceId)).toContainText(customTitle, {
+          timeout: 15_000,
+        });
       });
-    } finally {
-      await workspace.cleanup();
-    }
-  });
+      await test.step("copies the workspace path and confirms with a toast", async () => {
+        await runCommand(page, "copy path", "Copy workspace path");
 
-  test("copies the workspace path and confirms with a toast", async ({ page }) => {
-    const workspace = await seedWorkspace({ repoPrefix: "cc-copy-path-" });
-
-    try {
-      await gotoAppShell(page);
-      await openWorkspace(page, workspace.workspaceId);
-
-      await runCommand(page, "copy path", "Copy workspace path");
-
-      // toast.copied wraps its label: "Copied {{label}}" with label "Path copied".
-      await expect(page.getByText("Copied Path copied", { exact: true })).toBeVisible({
-        timeout: 15_000,
+        // toast.copied wraps its label: "Copied {{label}}" with label "Path copied".
+        await expect(page.getByText("Copied Path copied", { exact: true })).toBeVisible({
+          timeout: 15_000,
+        });
       });
-    } finally {
-      await workspace.cleanup();
-    }
-  });
+      await test.step("flips the pin entry to Unpin after pinning from the palette", async () => {
+        await runCommand(page, "pin", "Pin to top");
+        await expect(page.getByTestId("sidebar-pinned-section")).toBeVisible({ timeout: 15_000 });
 
-  test("flips the pin entry to Unpin after pinning from the palette", async ({ page }) => {
-    const workspace = await seedWorkspace({ repoPrefix: "cc-pin-" });
+        const panel = await openCommandCenter(page);
+        await panel.getByTestId("command-center-input").fill("pin");
+        await expect(action(panel, "Unpin")).toBeVisible({ timeout: 15_000 });
+        await expect(action(panel, "Pin to top")).toHaveCount(0);
 
-    try {
-      await gotoAppShell(page);
-      await openWorkspace(page, workspace.workspaceId);
+        await action(panel, "Unpin").click();
+        await expect(page.getByTestId("sidebar-pinned-section")).toHaveCount(0);
+      });
+      await test.step("grouping commands persist across reload and switch back", async () => {
+        const projectList = page.getByTestId("sidebar-project-workspace-list-scroll");
+        const statusList = page.getByTestId("sidebar-status-list-scroll");
+        await expect(projectList).toBeVisible({ timeout: 30_000 });
+        // Query-only: the grouping entry stays out of the default empty-query list.
+        const panel = await openCommandCenter(page);
+        await expect(panel.getByText(GROUP_BY_STATUS, { exact: true })).toHaveCount(0);
+        await expect(panel.getByText(GROUP_BY_PROJECT, { exact: true })).toHaveCount(0);
+        await page.keyboard.press("Escape");
+        await expect(panel).not.toBeVisible({ timeout: 30_000 });
 
-      await runCommand(page, "pin", "Pin to top");
-      await expect(page.getByTestId("sidebar-pinned-section")).toBeVisible({ timeout: 15_000 });
+        await runGroupingEntry(page, GROUP_BY_STATUS, GROUP_BY_PROJECT);
+        await expect(statusList).toBeVisible({ timeout: 30_000 });
+        await expect(projectList).toHaveCount(0);
 
-      const panel = await openCommandCenter(page);
-      await panel.getByTestId("command-center-input").fill("pin");
-      await expect(action(panel, "Unpin")).toBeVisible({ timeout: 15_000 });
-      await expect(action(panel, "Pin to top")).toHaveCount(0);
+        // The only assertion that catches a flip which never reached persisted storage.
+        await page.reload();
+        await expect(statusList).toBeVisible({ timeout: 30_000 });
+
+        // Grouping persists, so the run must leave the sidebar back in project mode.
+        await runGroupingEntry(page, GROUP_BY_PROJECT, GROUP_BY_STATUS);
+        await expect(projectList).toBeVisible({ timeout: 30_000 });
+        await expect(statusList).toHaveCount(0);
+      });
+      await test.step("lists only the globally-handled toggle off a workspace route", async () => {
+        // All three are listed while a workspace route owns the handlers.
+        const workspacePanel = await openCommandCenter(page);
+        await workspacePanel.getByTestId("command-center-input").fill("toggle");
+        await expect(action(workspacePanel, "Toggle left sidebar")).toBeVisible({
+          timeout: 15_000,
+        });
+        await expect(action(workspacePanel, "Toggle Explorer sidebar")).toBeVisible();
+        await expect(action(workspacePanel, "Toggle focus mode")).toBeVisible();
+        await page.keyboard.press("Escape");
+        await expect(page.getByTestId("command-center-panel")).toHaveCount(0);
+
+        await page.locator('[data-testid="sidebar-settings"]:visible').first().click();
+        await expect(page.getByTestId("settings-sidebar")).toBeVisible({ timeout: 30_000 });
+
+        const panel = await openCommandCenter(page);
+        await panel.getByTestId("command-center-input").fill("toggle");
+
+        await expect(action(panel, "Toggle left sidebar")).toBeVisible({ timeout: 15_000 });
+        await expect(action(panel, "Toggle Explorer sidebar")).toHaveCount(0);
+        await expect(action(panel, "Toggle focus mode")).toHaveCount(0);
+      });
     } finally {
       await workspace.cleanup();
     }
@@ -183,35 +232,6 @@ test.describe("Command center workspace management", () => {
   // handled only by workspace-screen.tsx behind `enabled: isRouteFocused && ...`, so listing them
   // off a workspace route would give the user two entries that close the palette and do nothing.
   // Toggle left sidebar calls the panel store directly and works everywhere, so it stays listed.
-  test("lists only the globally-handled toggle off a workspace route", async ({ page }) => {
-    const workspace = await seedWorkspace({ repoPrefix: "cc-toggle-scope-" });
-
-    try {
-      await gotoAppShell(page);
-      await openWorkspace(page, workspace.workspaceId);
-
-      // All three are listed while a workspace route owns the handlers.
-      const workspacePanel = await openCommandCenter(page);
-      await workspacePanel.getByTestId("command-center-input").fill("toggle");
-      await expect(action(workspacePanel, "Toggle left sidebar")).toBeVisible({ timeout: 15_000 });
-      await expect(action(workspacePanel, "Toggle Explorer sidebar")).toBeVisible();
-      await expect(action(workspacePanel, "Toggle focus mode")).toBeVisible();
-      await page.keyboard.press("Escape");
-      await expect(page.getByTestId("command-center-panel")).toHaveCount(0);
-
-      await page.locator('[data-testid="sidebar-settings"]:visible').first().click();
-      await expect(page.getByTestId("settings-sidebar")).toBeVisible({ timeout: 30_000 });
-
-      const panel = await openCommandCenter(page);
-      await panel.getByTestId("command-center-input").fill("toggle");
-
-      await expect(action(panel, "Toggle left sidebar")).toBeVisible({ timeout: 15_000 });
-      await expect(action(panel, "Toggle Explorer sidebar")).toHaveCount(0);
-      await expect(action(panel, "Toggle focus mode")).toHaveCount(0);
-    } finally {
-      await workspace.cleanup();
-    }
-  });
 
   test("toggles a label on the active workspace from the palette", async ({ page }) => {
     const workspace = await seedWorkspace({ repoPrefix: "cc-label-" });

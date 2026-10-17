@@ -1,3 +1,4 @@
+import { expectNoTruncation } from "../support/helpers/no-truncation";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
@@ -33,6 +34,7 @@ import {
   selectGitHubPrInPicker,
   selectPickerOptionByKeyboard,
   selectWorkspaceIsolation,
+  expectWorkspaceIsolationSelected,
   submitNewWorkspacePrompt,
 } from "../support/helpers/new-workspace";
 import {
@@ -723,9 +725,26 @@ test.describe("New workspace flow", () => {
         projectKey: openedProject.projectKey,
         projectDisplayName: openedProject.projectDisplayName,
       });
-      await selectWorkspaceIsolation(page, "worktree");
-      await openStartingRefPicker(page);
-      await selectBranchInPicker(page, "dev");
+      await expectWorkspaceIsolationSelected(page, "local");
+      await page.getByTestId("workspace-create-isolation-trigger").click();
+      const isolationPopup = page.getByTestId("combobox-desktop-container").last();
+      await expect(isolationPopup).toBeVisible({ timeout: 30_000 });
+      await expectNoTruncation(isolationPopup);
+      await page.getByTestId("workspace-create-isolation-worktree").click();
+      await expectWorkspaceIsolationSelected(page, "worktree");
+      await test.step("cancel the branch picker without changing the selection", async () => {
+        await openBranchPicker(page);
+        await expectPickerOpen(page);
+        await closeBranchPicker(page);
+        await expectPickerClosed(page);
+      });
+      await test.step("select the filtered starting branch with the keyboard", async () => {
+        await openBranchPicker(page);
+        await expectPickerOpen(page);
+        await selectPickerOptionByKeyboard(page, "dev");
+        await expectPickerSelected(page, "dev");
+        await expectPickerClosed(page);
+      });
 
       const createButton = page
         .getByTestId("message-input-root")
@@ -749,6 +768,10 @@ test.describe("New workspace flow", () => {
       expect(branchInfo.currentBranch).toBe(path.basename(createdWorkspace.workspaceDirectory));
       expect(branchInfo.hasAncestor(tempRepo.branchHeads.main)).toBe(true);
       expect(branchInfo.hasAncestor(tempRepo.branchHeads.dev)).toBe(true);
+      await test.step("the worktree choice survives creating and reopening New workspace", async () => {
+        await openNewWorkspaceComposer(page, openedProject);
+        await expectWorkspaceIsolationSelected(page, "worktree");
+      });
     } finally {
       await tempRepo.cleanup();
     }
@@ -888,57 +911,6 @@ test.describe("New workspace flow", () => {
         await tempRepo.cleanup();
       }
     });
-  });
-
-  test("branch picker opens via keyboard and selects the filtered option on Enter", async ({
-    page,
-  }) => {
-    const tempRepo = await createTempGitRepo("picker-keyboard-", { branches: ["main", "dev"] });
-
-    try {
-      const openedProject = await openProjectViaDaemon(client, tempRepo.path);
-      localWorkspaceIds.add(openedProject.workspaceId);
-
-      await gotoAppShell(page);
-      await waitForSidebarHydration(page);
-      await openNewWorkspaceComposer(page, {
-        projectKey: openedProject.projectKey,
-        projectDisplayName: openedProject.projectDisplayName,
-      });
-      await selectWorkspaceIsolation(page, "worktree");
-
-      await openBranchPicker(page);
-      await expectPickerOpen(page);
-      await selectPickerOptionByKeyboard(page, "dev");
-      await expectPickerSelected(page, "dev");
-      await expectPickerClosed(page);
-    } finally {
-      await tempRepo.cleanup();
-    }
-  });
-
-  test("branch picker closes on Escape without selecting an option", async ({ page }) => {
-    const tempRepo = await createTempGitRepo("picker-escape-");
-
-    try {
-      const openedProject = await openProjectViaDaemon(client, tempRepo.path);
-      localWorkspaceIds.add(openedProject.workspaceId);
-
-      await gotoAppShell(page);
-      await waitForSidebarHydration(page);
-      await openNewWorkspaceComposer(page, {
-        projectKey: openedProject.projectKey,
-        projectDisplayName: openedProject.projectDisplayName,
-      });
-      await selectWorkspaceIsolation(page, "worktree");
-
-      await openBranchPicker(page);
-      await expectPickerOpen(page);
-      await closeBranchPicker(page);
-      await expectPickerClosed(page);
-    } finally {
-      await tempRepo.cleanup();
-    }
   });
 
   test("selected GitHub PR shows PR context in the trigger and composer", async ({ page }) => {

@@ -4,7 +4,6 @@ import { closeCommandCenter, openCommandCenter } from "../support/helpers/comman
 import {
   applyCommandCenterAgentControls,
   chooseCommandCenterAgentControl,
-  openCommandCenterForAgent,
   expectCommandCenterAgentControlSelected,
   expectFocusedAgentControls,
   expectWorkspaceAgentConfiguration,
@@ -42,37 +41,93 @@ async function seedMockDraftPreferences(page: import("@playwright/test").Page): 
 test.describe("Command Center agent controls", () => {
   test.describe.configure({ timeout: 180_000 });
 
-  test("changes a running agent setting and preserves its selected row", async ({ page }) => {
+  test("search, select, and re-rank live agent controls before navigating to an action", async ({
+    page,
+  }) => {
     const workspace = await seedMockAgentWorkspace({
       repoPrefix: "command-center-live-controls-",
       title: "Command Center live controls",
       model: "five-minute-stream",
     });
     try {
-      // A stale runtime mode makes selecting the provider's supported mode
-      // exercise the live setting RPC instead of the selected-row no-op.
       await workspace.client.setAgentMode(workspace.agentId, "legacy-mode");
-      await openAgentRoute(page, {
-        workspaceId: workspace.workspaceId,
-        agentId: workspace.agentId,
+      await openAgentRoute(page, workspace);
+      await test.step("changes a running agent setting and preserves its selected row", async () => {
+        await openCommandCenter(page);
+        await chooseCommandCenterAgentControl({
+          page,
+          query: "load test",
+          choice: "Mode › Load test",
+        });
+        await expectWorkspaceAgentConfiguration(workspace, {
+          id: workspace.agentId,
+          provider: "mock",
+          model: "five-minute-stream",
+          modeId: "load-test",
+        });
+        await openCommandCenter(page);
+        await expectCommandCenterAgentControlSelected({
+          page,
+          query: "load test",
+          choice: "Mode › Load test",
+        });
+
+        await closeCommandCenter(page);
       });
-      await openCommandCenter(page);
-      await chooseCommandCenterAgentControl({
-        page,
-        query: "load test",
-        choice: "Mode › Load test",
+      await test.step("matches query tokens in any order", async () => {
+        await workspace.client.setAgentMode(workspace.agentId, "legacy-mode");
+        await openCommandCenter(page);
+        await chooseCommandCenterAgentControl({
+          page,
+          query: "test load",
+          choice: "Mode › Load test",
+        });
+
+        await expectWorkspaceAgentConfiguration(workspace, {
+          id: workspace.agentId,
+          provider: "mock",
+          model: "five-minute-stream",
+          modeId: "load-test",
+        });
       });
-      await expectWorkspaceAgentConfiguration(workspace, {
-        id: workspace.agentId,
-        provider: "mock",
-        model: "five-minute-stream",
-        modeId: "load-test",
+      await test.step("activates the best-matching row, not the highest-ranked group", async () => {
+        await workspace.client.setAgentMode(workspace.agentId, "approval-test");
+        const panel = await openCommandCenter(page);
+        const input = panel.getByTestId("command-center-input");
+        await input.fill("load");
+        await page.keyboard.press("Enter");
+
+        await expectWorkspaceAgentConfiguration(workspace, {
+          id: workspace.agentId,
+          provider: "mock",
+          model: "five-minute-stream",
+          modeId: "load-test",
+        });
       });
-      await openCommandCenter(page);
-      await expectCommandCenterAgentControlSelected({
-        page,
-        query: "load test",
-        choice: "Mode › Load test",
+      await test.step("drops an arrow-key selection once the query changes", async () => {
+        await workspace.client.setAgentMode(workspace.agentId, "approval-test");
+        const panel = await openCommandCenter(page);
+        const input = panel.getByTestId("command-center-input");
+        await input.fill("loa");
+        // Moves the highlight onto a model row, which still matches after the next keystroke.
+        await page.keyboard.press("ArrowDown");
+        await input.fill("load");
+        await page.keyboard.press("Enter");
+
+        await expectWorkspaceAgentConfiguration(workspace, {
+          id: workspace.agentId,
+          provider: "mock",
+          model: "five-minute-stream",
+          modeId: "load-test",
+        });
+      });
+      await test.step("keeps an action first when the action is the best match", async () => {
+        const panel = await openCommandCenter(page);
+        const input = panel.getByTestId("command-center-input");
+        await input.fill("sched");
+        await page.keyboard.press("Enter");
+
+        await expectAppRoute(page, buildSchedulesRoute(), { timeout: 30_000 });
       });
     } finally {
       await workspace.cleanup();
@@ -95,107 +150,6 @@ test.describe("Command Center agent controls", () => {
       await expect(
         page.getByTestId("agent-thinking-selector").filter({ visible: true }),
       ).toHaveAccessibleName("Select thinking option (Max)");
-    } finally {
-      await workspace.cleanup();
-    }
-  });
-
-  test("activates the best-matching row, not the highest-ranked group", async ({ page }) => {
-    // "Mode › Load Test" matches "load" at offset 0; every "Model › Mock Load Test › …" row
-    // matches at offset 5. Models used to outrank modes by fixed group rank, so Enter picked a
-    // model. Asserting both model and mode catches either row winning.
-    const workspace = await seedMockAgentWorkspace({
-      repoPrefix: "command-center-relevance-",
-      title: "Command Center relevance",
-      model: "five-minute-stream",
-    });
-    try {
-      await workspace.client.setAgentMode(workspace.agentId, "approval-test");
-      const input = await openCommandCenterForAgent(page, workspace);
-      await input.fill("load");
-      await page.keyboard.press("Enter");
-
-      await expectWorkspaceAgentConfiguration(workspace, {
-        id: workspace.agentId,
-        provider: "mock",
-        model: "five-minute-stream",
-        modeId: "load-test",
-      });
-    } finally {
-      await workspace.cleanup();
-    }
-  });
-
-  test("matches query tokens in any order", async ({ page }) => {
-    // "Mode › Load test" flattens to "mode load test", so the reversed query "test load" is never
-    // a substring of it. Only per-token matching finds this row.
-    const workspace = await seedMockAgentWorkspace({
-      repoPrefix: "command-center-tokenized-",
-      title: "Command Center tokenized search",
-      model: "five-minute-stream",
-    });
-    try {
-      await workspace.client.setAgentMode(workspace.agentId, "legacy-mode");
-      await openAgentRoute(page, {
-        workspaceId: workspace.workspaceId,
-        agentId: workspace.agentId,
-      });
-      await openCommandCenter(page);
-      await chooseCommandCenterAgentControl({
-        page,
-        query: "test load",
-        choice: "Mode › Load test",
-      });
-
-      await expectWorkspaceAgentConfiguration(workspace, {
-        id: workspace.agentId,
-        provider: "mock",
-        model: "five-minute-stream",
-        modeId: "load-test",
-      });
-    } finally {
-      await workspace.cleanup();
-    }
-  });
-
-  test("keeps an action first when the action is the best match", async ({ page }) => {
-    const workspace = await seedMockAgentWorkspace({
-      repoPrefix: "command-center-action-priority-",
-      title: "Command Center action priority",
-      model: "five-minute-stream",
-    });
-    try {
-      const input = await openCommandCenterForAgent(page, workspace);
-      await input.fill("sched");
-      await page.keyboard.press("Enter");
-
-      await expectAppRoute(page, buildSchedulesRoute(), { timeout: 30_000 });
-    } finally {
-      await workspace.cleanup();
-    }
-  });
-
-  test("drops an arrow-key selection once the query changes", async ({ page }) => {
-    const workspace = await seedMockAgentWorkspace({
-      repoPrefix: "command-center-active-reset-",
-      title: "Command Center active reset",
-      model: "five-minute-stream",
-    });
-    try {
-      await workspace.client.setAgentMode(workspace.agentId, "approval-test");
-      const input = await openCommandCenterForAgent(page, workspace);
-      await input.fill("loa");
-      // Moves the highlight onto a model row, which still matches after the next keystroke.
-      await page.keyboard.press("ArrowDown");
-      await input.fill("load");
-      await page.keyboard.press("Enter");
-
-      await expectWorkspaceAgentConfiguration(workspace, {
-        id: workspace.agentId,
-        provider: "mock",
-        model: "five-minute-stream",
-        modeId: "load-test",
-      });
     } finally {
       await workspace.cleanup();
     }

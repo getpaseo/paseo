@@ -3,6 +3,9 @@ import { gotoAppShell } from "../support/helpers/app";
 import {
   connectNewWorkspaceDaemonClient,
   expectNewWorkspaceControlsEnabled,
+  expectNewWorkspaceDraft,
+  fillNewWorkspaceDraft,
+  selectNewWorkspaceHost,
   expectNewWorkspaceProjectSelected,
   expectNewWorkspaceTriggerLabelsAligned,
   openGlobalNewWorkspaceComposer,
@@ -90,6 +93,11 @@ test.describe("New workspace entry points", () => {
         projectLabel: seeded.projectDisplayName,
         hostLabel: "localhost",
       });
+      await test.step("changing hosts preserves the draft", async () => {
+        await fillNewWorkspaceDraft(page, "Keep this draft while choosing a host");
+        await selectNewWorkspaceHost(page, "Secondary host");
+        await expectNewWorkspaceDraft(page, "Keep this draft while choosing a host");
+      });
     } finally {
       await seeded.cleanup();
     }
@@ -121,6 +129,9 @@ test.describe("New workspace entry points", () => {
         timeout: 30_000,
       });
       await expect(page.getByTestId("host-picker-trigger")).toHaveCount(0);
+      await test.step("Ctrl+P opens the project picker with search focused", async () => {
+        await openNewWorkspaceProjectPickerWithShortcut(page);
+      });
     } finally {
       await seeded.cleanup();
     }
@@ -135,20 +146,6 @@ test.describe("New workspace entry points", () => {
     });
 
     await expectNewWorkspaceControlsEnabled(page);
-  });
-
-  test("Ctrl+P opens the project picker with search focused", async ({ page }) => {
-    const seeded: SeededWorkspace = await seedWorkspace({ repoPrefix: "entry-shortcut-" });
-
-    try {
-      await gotoAppShell(page);
-      await waitForSidebarHydration(page);
-      await openGlobalNewWorkspaceComposer(page);
-
-      await openNewWorkspaceProjectPickerWithShortcut(page);
-    } finally {
-      await seeded.cleanup();
-    }
   });
 
   test("keeps the in-progress form when the remembered workspace is archived elsewhere", async ({
@@ -220,6 +217,8 @@ test.describe("New workspace entry points", () => {
       });
       await expectNewWorkspaceProjectSelected(page, projectA.projectDisplayName);
 
+      await fillNewWorkspaceDraft(page, "Keep this draft while choosing a project");
+
       // Manually override the selection to C from inside A's screen. This stale
       // manualProjectKey is what the reused 'new' screen must reset when the next
       // route-driven navigation targets a different project.
@@ -230,6 +229,9 @@ test.describe("New workspace entry points", () => {
       await expect(optionC).toBeVisible({ timeout: 30_000 });
       await optionC.click();
       await expectNewWorkspaceProjectSelected(page, projectC.projectDisplayName);
+      await test.step("changing projects preserves the draft", async () => {
+        await expectNewWorkspaceDraft(page, "Keep this draft while choosing a project");
+      });
 
       // Navigate via B's row icon. B must be preselected — the route project wins
       // because the stale manual choice (C) was reset on the route change. If the

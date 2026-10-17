@@ -749,7 +749,6 @@ function observePluginReload(page: Page) {
   return {
     waitForRequest: () => expect.poll(() => requests.length, { timeout: 30_000 }).toBe(1),
     waitForResponse: () => expect.poll(() => responses.length, { timeout: 120_000 }).toBe(1),
-    requestedAt: () => requests[0]!,
     requestCount: () => requests.length,
   };
 }
@@ -814,12 +813,6 @@ async function capturePluginSurface(page: Page, testInfo: TestInfo, name: string
   });
 }
 
-/** The wait under test is the daemon's lifecycle queue, so the scenario has to spend real time. */
-async function waitPastFormerReloadDeadline(page: Page, requestedAt: number): Promise<void> {
-  const remaining = 66_000 - (Date.now() - requestedAt);
-  if (remaining > 0) await page.waitForTimeout(remaining);
-}
-
 test("keeps Reload pending past a minute while the plugin queue is busy", async ({
   page,
   pluginEnvironment,
@@ -833,6 +826,9 @@ test("keeps Reload pending past a minute while the plugin queue is busy", async 
     "Plugin v1",
   );
 
+  // Advance the real browser client's RPC timers while the daemon's build gate
+  // remains held on its own clock.
+  await page.clock.install();
   // Observe before the app loads: its daemon socket comes up with the page.
   const reload = observePluginReload(page);
   await gotoAppShell(page);
@@ -851,7 +847,7 @@ test("keeps Reload pending past a minute while the plugin queue is busy", async 
     await expectPluginRowPending(page, "e2e-plugin");
     await capturePluginSurface(page, testInfo, "plugin-reload-pending.png");
 
-    await waitPastFormerReloadDeadline(page, reload.requestedAt());
+    await page.clock.fastForward(66_000);
 
     // Past the former deadline the reload is still pending, the row shows its previous state, and
     // no timeout error reached the surface.

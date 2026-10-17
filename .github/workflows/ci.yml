@@ -405,9 +405,9 @@ jobs:
         run: npm run test:e2e --workspace=@getpaseo/app -- --shard=${{ env.PLAYWRIGHT_SHARD }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          # Weight file groups by observed duration; raw test counts overload
-          # early agent/Changes specs. Required check names remain unchanged.
-          PWTEST_SHARD_WEIGHTS: "111:172:137:160"
+          # Balance contiguous file groups using CI durations and the trimmed
+          # inventory. Required check names and worker counts stay unchanged.
+          PWTEST_SHARD_WEIGHTS: "187:183:184:201"
 
       - name: Upload test artifacts
         uses: actions/upload-artifact@v4

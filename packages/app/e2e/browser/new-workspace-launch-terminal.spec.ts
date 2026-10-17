@@ -5,6 +5,7 @@ import {
   expectNewWorkspaceDraft,
   fillNewWorkspaceDraft,
   openNewWorkspaceComposer,
+  submitNewWorkspacePrompt,
 } from "../support/helpers/new-workspace";
 import {
   composerLocator,
@@ -15,6 +16,12 @@ import {
 } from "../support/helpers/composer";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 import {
+  attachButton,
+  expectChatComposerActive,
+  expectTerminalComposerActive,
+  expectChatLaunchSelected,
+  patchTerminalProfiles,
+  selectChatLaunch,
   expectTerminalLaunchSelected,
   expectTerminalOutputContains,
   expectTerminalPreviewCommand,
@@ -67,21 +74,50 @@ test.describe("New workspace: launching a terminal", () => {
     await workspace?.cleanup();
   });
 
-  test("a profile that takes a prompt launches with it as its trailing argument; a profile without the sentinel launches bare from Launch", async ({
+  test("switch launch modes, run prompt and bare profiles, and remember successful targets", async ({
     page,
   }) => {
     test.setTimeout(90_000);
     await gotoAppShell(page);
     await waitForSidebarHydration(page);
 
-    await test.step("pick a profile that takes a prompt, type one, and submit", async () => {
+    await test.step("open New workspace to choose a launch target", async () => {
       await openNewWorkspaceComposer(page, {
         projectKey: workspace.projectKey,
         projectDisplayName: workspace.projectDisplayName,
       });
+    });
+    await test.step("a chat draft does not leak into the terminal prompt", async () => {
+      await fillNewWorkspaceDraft(page, "a chat-only draft");
       await selectLaunchOption(page, PROMPT_PROFILE.id);
-      await expectTerminalLaunchSelected(page, PROMPT_PROFILE.name);
+      await expectTerminalComposerActive(page);
+      await expect(terminalPromptInput(page)).toHaveValue("");
+    });
 
+    await test.step("the attachment button and mic are absent in terminal mode, and the submit button is inside the same surface", async () => {
+      await expect(attachButton(page)).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Start dictation" })).toHaveCount(0);
+      await expect(
+        page.locator('[data-testid="message-input-root"]:visible').getByRole("button", {
+          name: "Launch",
+        }),
+      ).toBeVisible();
+    });
+
+    await test.step("a terminal draft does not leak back into chat, which keeps its own draft", async () => {
+      await fillTerminalPrompt(page, "a terminal-only draft");
+      await selectChatLaunch(page);
+      await expectChatComposerActive(page);
+      await expectNewWorkspaceDraft(page, "a chat-only draft");
+    });
+
+    await test.step("each side keeps its own draft across toggles, without either leaking into the other", async () => {
+      await selectLaunchOption(page, PROMPT_PROFILE.id);
+      await expectTerminalComposerActive(page);
+      await expect(terminalPromptInput(page)).toHaveValue("a terminal-only draft");
+    });
+    await test.step("submit the prompt profile", async () => {
+      await expectTerminalLaunchSelected(page, PROMPT_PROFILE.name);
       await fillTerminalPrompt(page, "fix the flaky test");
       await submitTerminalLaunch(page);
     });
@@ -96,6 +132,7 @@ test.describe("New workspace: launching a terminal", () => {
         projectKey: workspace.projectKey,
         projectDisplayName: workspace.projectDisplayName,
       });
+      await expectTerminalLaunchSelected(page, PROMPT_PROFILE.name);
       await selectLaunchOption(page, BARE_PROFILE.id);
       await expect(terminalPromptInput(page)).toHaveCount(0);
       await expectTerminalPreviewCommand(page, "/bin/sh -c echo bare-launch-static-line; exec cat");
@@ -106,6 +143,31 @@ test.describe("New workspace: launching a terminal", () => {
       await submitTerminalLaunch(page);
       await expectWorkspaceOpensWithTerminalTab(page);
       await expectTerminalOutputContains(page, "bare-launch-static-line");
+    });
+    await test.step("successful launches remember their target across visits", async () => {
+      await openNewWorkspaceComposer(page, workspace);
+      await expectTerminalLaunchSelected(page, BARE_PROFILE.name);
+      await selectChatLaunch(page);
+      await expectChatLaunchSelected(page);
+      await submitNewWorkspacePrompt(page, "hello from chat");
+      await page.waitForURL(hasLeftNewWorkspaceRoute, {
+        timeout: 30_000,
+      });
+      await openNewWorkspaceComposer(page, workspace);
+      await expectChatLaunchSelected(page);
+    });
+    await test.step("a removed remembered terminal profile falls back to Chat", async () => {
+      await selectLaunchOption(page, PROMPT_PROFILE.id);
+      await fillTerminalPrompt(page, "second run");
+      await submitTerminalLaunch(page);
+      await expectWorkspaceOpensWithTerminalTab(page);
+      try {
+        await patchTerminalProfiles([]);
+        await openNewWorkspaceComposer(page, workspace);
+        await expectChatLaunchSelected(page);
+      } finally {
+        await patchTerminalProfiles([PROMPT_PROFILE, BARE_PROFILE]);
+      }
     });
   });
 
@@ -156,6 +218,10 @@ test.describe("New workspace: launching a terminal", () => {
     });
   });
 });
+
+function hasLeftNewWorkspaceRoute(url: URL): boolean {
+  return !/\/new(?:\?.*)?$/.test(`${url.pathname}${url.search}`);
+}
 
 async function expectNewWorkspaceHeaderHidden(page: Page): Promise<void> {
   await expect(page.getByTestId("menu-button").filter({ visible: true })).toHaveCount(0);

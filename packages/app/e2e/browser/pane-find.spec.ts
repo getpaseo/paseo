@@ -226,10 +226,19 @@ test.describe("narrow touch browser", () => {
     await source(page).press("ControlOrMeta+f");
     await expect(query(page)).toBeFocused();
     await query(page).fill("needle");
-    await page.getByRole("button", { name: "Next match" }).tap();
-    await expect(status(page)).toHaveText("2 of 2");
-    await expectFindInsidePane(page);
-    await page.screenshot({ path: testInfo.outputPath("touch-find.png") });
+    await test.step("reveal the first match below the floating Find widget", async () => {
+      await expect(status(page)).toHaveText("1 of 2");
+      await expectActiveMatchUncovered(page);
+    });
+    await test.step("tap the next uncovered match while controls stay inside the pane", async () => {
+      await page.getByRole("button", { name: "Next match" }).tap();
+      await expect(status(page)).toHaveText("2 of 2");
+      await expectActiveMatchUncovered(page);
+      await expectFindInsidePane(page);
+      await page.screenshot({ path: testInfo.outputPath("touch-find.png") });
+      await page.screenshot({ path: testInfo.outputPath("touch-match-uncovered.png") });
+      await expect(query(page)).toHaveValue("needle");
+    });
     await page.getByRole("button", { name: "Close Find" }).tap();
     await expect(source(page)).toBeFocused();
   });
@@ -332,33 +341,6 @@ for (const startingField of ["Find in pane", "Replace with"] as const) {
 }
 
 test.describe("the active match stays visible under the floating widget", () => {
-  test.describe("narrow touch browser", () => {
-    test.use({ hasTouch: true });
-    test("reveals a short file's match that the widget would cover", async ({
-      page,
-      withWorkspace,
-    }, testInfo) => {
-      const workspace = await withWorkspace({ prefix: "pane-find-cover-touch-" });
-      await writeFile(path.join(workspace.repoPath, "touch.txt"), "touch needle\nnext needle\n");
-      await workspace.navigateTo();
-      await openSource(page, "touch.txt");
-      await page.setViewportSize({ width: 390, height: 844 });
-      await source(page).focus();
-      await source(page).press("ControlOrMeta+f");
-      await expect(query(page)).toBeFocused();
-      await query(page).fill("needle");
-      await expect(status(page)).toHaveText("1 of 2");
-      await expectActiveMatchUncovered(page);
-      await page.getByRole("button", { name: "Next match" }).tap();
-      await expect(status(page)).toHaveText("2 of 2");
-      await expectActiveMatchUncovered(page);
-      await page.screenshot({ path: testInfo.outputPath("touch-match-uncovered.png") });
-      await expect(query(page)).toHaveValue("needle");
-      await page.getByRole("button", { name: "Close Find" }).tap();
-      await expect(source(page)).toBeFocused();
-    });
-  });
-
   test("reveals a match beneath the top-right widget in a narrow desktop pane", async ({
     page,
     withWorkspace,

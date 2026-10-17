@@ -51,7 +51,9 @@ test.describe("Archive tab reconciliation", () => {
     await tempRepo?.cleanup();
   });
 
-  test("non-UI archive prunes the archived tab across open pages and reload", async ({ page }) => {
+  test("non-UI archive prunes open tabs and keeps the session archived when reopened", async ({
+    page,
+  }) => {
     const archived = await createIdleAgent(client, {
       cwd: tempRepo.path,
       workspaceId,
@@ -65,28 +67,51 @@ test.describe("Archive tab reconciliation", () => {
     const passivePage = await page.context().newPage();
 
     try {
-      await primeAdditionalPage(passivePage);
-      await resetSeededPageState(page);
-      await resetSeededPageState(passivePage);
-      await openSessions(page);
-      await expectSessionRowVisible(page, archived.title);
-      await expectSessionRowVisible(page, surviving.title);
-      await openSessions(passivePage);
-      await expectSessionRowVisible(passivePage, archived.title);
-      await expectSessionRowVisible(passivePage, surviving.title);
-      await openWorkspaceWithAgents(page, [archived, surviving]);
-      await openWorkspaceWithAgents(passivePage, [archived, surviving]);
+      await test.step("open both sessions in two pages", async () => {
+        await primeAdditionalPage(passivePage);
+        await resetSeededPageState(page);
+        await resetSeededPageState(passivePage);
+        await openSessions(page);
+        await expectSessionRowVisible(page, archived.title);
+        await expectSessionRowVisible(page, surviving.title);
+        await openSessions(passivePage);
+        await expectSessionRowVisible(passivePage, archived.title);
+        await expectSessionRowVisible(passivePage, surviving.title);
+        await openWorkspaceWithAgents(page, [archived, surviving]);
+        await openWorkspaceWithAgents(passivePage, [archived, surviving]);
+      });
+
       await archiveAgentFromDaemon(client, archived.id);
-      await expectWorkspaceArchiveOutcome(page, {
-        archivedAgentId: archived.id,
-        survivingAgentId: surviving.id,
+      const archivedAt = await fetchAgentArchivedAt(client, archived.id);
+      expect(archivedAt).not.toBeNull();
+
+      await test.step("prune the archived tab across both pages and reload", async () => {
+        await expectWorkspaceArchiveOutcome(page, {
+          archivedAgentId: archived.id,
+          survivingAgentId: surviving.id,
+        });
+        await expectWorkspaceArchiveOutcome(passivePage, {
+          archivedAgentId: archived.id,
+          survivingAgentId: surviving.id,
+        });
+        await reloadWorkspace(passivePage, surviving.workspaceId);
+        await expectWorkspaceTabHidden(passivePage, archived.id);
       });
-      await expectWorkspaceArchiveOutcome(passivePage, {
-        archivedAgentId: archived.id,
-        survivingAgentId: surviving.id,
+
+      await test.step("reopen the archived session without unarchiving it", async () => {
+        await openSessions(page);
+        await expectSessionRowArchived(page, archived.title);
+
+        await clickSessionRow(page, archived.title);
+
+        await expectArchivedAgentFocused(page, archived.id);
+        await expectAgentTabActive(page, archived.id);
+        expect(await fetchAgentArchivedAt(client, archived.id)).toBe(archivedAt);
+
+        await expect(page).toHaveURL(buildHostWorkspaceRoute(getServerId(), archived.workspaceId), {
+          timeout: 30_000,
+        });
       });
-      await reloadWorkspace(passivePage, surviving.workspaceId);
-      await expectWorkspaceTabHidden(passivePage, archived.id);
     } finally {
       await passivePage.close();
     }
@@ -122,36 +147,5 @@ test.describe("Archive tab reconciliation", () => {
     } finally {
       await passivePage.close();
     }
-  });
-
-  test("clicking an archived session navigates without unarchiving it", async ({ page }) => {
-    const archived = await createIdleAgent(client, {
-      cwd: tempRepo.path,
-      workspaceId,
-      title: `unarchive-archived-${randomUUID().slice(0, 8)}`,
-    });
-    const surviving = await createIdleAgent(client, {
-      cwd: tempRepo.path,
-      workspaceId,
-      title: `unarchive-control-${randomUUID().slice(0, 8)}`,
-    });
-
-    await resetSeededPageState(page);
-    await openWorkspaceWithAgents(page, [archived, surviving]);
-    await archiveAgentFromDaemon(client, archived.id);
-    const archivedAt = await fetchAgentArchivedAt(client, archived.id);
-    expect(archivedAt).not.toBeNull();
-    await openSessions(page);
-    await expectSessionRowArchived(page, archived.title);
-
-    await clickSessionRow(page, archived.title);
-
-    await expectArchivedAgentFocused(page, archived.id);
-    await expectAgentTabActive(page, archived.id);
-    expect(await fetchAgentArchivedAt(client, archived.id)).toBe(archivedAt);
-
-    await expect(page).toHaveURL(buildHostWorkspaceRoute(getServerId(), archived.workspaceId), {
-      timeout: 30_000,
-    });
   });
 });

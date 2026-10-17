@@ -44,6 +44,16 @@ test.describe("Command center workspaces", () => {
       });
 
       await gotoAppShell(page);
+      await test.step("single-host results show project and branch without a host label", async () => {
+        const singleHostPanel = await openCommandCenter(page);
+        const singleHostRow = singleHostPanel.getByTestId(
+          `command-center-workspace-${getServerId()}:${seeded.workspaceId}`,
+        );
+        await expect(singleHostRow.getByTestId("command-center-workspace-subtitle")).toHaveText(
+          `${seeded.projectDisplayName} · ${WORKSPACE_BRANCH}`,
+        );
+        await page.keyboard.press("Escape");
+      });
       await addOfflineHostAndReload(page, {
         serverId: SECONDARY_HOST_ID,
         label: "Secondary Host",
@@ -117,40 +127,6 @@ test.describe("Command center workspaces", () => {
         await page.keyboard.press("Enter");
         await expectAgentTabActive(page, agent.id);
       });
-    } finally {
-      await seeded.cleanup();
-    }
-  });
-
-  test("single-host workspace subtitle omits the host and shows project · branch", async ({
-    page,
-  }) => {
-    const seeded = await seedWorkspace({
-      repoPrefix: "command-center-workspace-single-",
-      title: WORKSPACE_TITLE,
-    });
-
-    try {
-      execFileSync("git", ["checkout", "-b", WORKSPACE_BRANCH], {
-        cwd: seeded.repoPath,
-        stdio: "ignore",
-      });
-      const refreshed = await seeded.client.checkoutRefresh(seeded.repoPath);
-      if (!refreshed.success) {
-        throw new Error(`Failed to refresh checkout: ${JSON.stringify(refreshed.error)}`);
-      }
-
-      // No secondary host: with a single host, the host label is gated away.
-      await gotoAppShell(page);
-
-      const panel = await openCommandCenter(page);
-      const row = panel.getByTestId(
-        `command-center-workspace-${getServerId()}:${seeded.workspaceId}`,
-      );
-      await expect(row).toBeVisible({ timeout: 30_000 });
-
-      const subtitle = row.getByTestId("command-center-workspace-subtitle");
-      await expect(subtitle).toHaveText(`${seeded.projectDisplayName} · ${WORKSPACE_BRANCH}`);
     } finally {
       await seeded.cleanup();
     }

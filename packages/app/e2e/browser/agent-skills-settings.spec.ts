@@ -36,15 +36,25 @@ test.describe("Host agent skills", () => {
     page,
     skills,
   }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
     const custom = skills.available.slice(0, 2);
     const cancelledAddition = skills.available[2]!;
     await openAgentSkillsSettings(page, skills);
 
     await openSkillSelection(page);
+    await test.step("the desktop sheet gives the bundled label its intended inset", async () => {
+      await expectBundledSkillsInset(page);
+    });
     await chooseCustomSkills(page, custom);
     await saveSkillSelection(page);
     await expectInstalledSkills(skills, custom);
     await expectSavedSelection(skills, { mode: "custom", skills: custom });
+    await test.step("installation ignores agent config environment overrides", async () => {
+      await expect(access(`${skills.home}/../ignored-claude-config/skills`)).rejects.toThrow(
+        "ENOENT",
+      );
+      await expect(access(`${skills.home}/../ignored-codex-home/skills`)).rejects.toThrow("ENOENT");
+    });
 
     await openSkillSelection(page);
     await toggleSkill(page, cancelledAddition);
@@ -150,23 +160,6 @@ test.describe("Host agent skills", () => {
     await expectInstalledSkills(skills, secondSelection.skills);
     await expectSavedSelection(skills, secondSelection);
   });
-
-  test("ignores agent config environment overrides", async ({ skills }) => {
-    await skills.install({ mode: "custom", skills: [skills.available[0]!] });
-
-    await expect(
-      access(`${skills.home}/../ignored-claude-config/skills`).then(
-        () => true,
-        () => false,
-      ),
-    ).resolves.toBe(false);
-    await expect(
-      access(`${skills.home}/../ignored-codex-home/skills`).then(
-        () => true,
-        () => false,
-      ),
-    ).resolves.toBe(false);
-  });
 });
 
 function allSkillsCard(page: Parameters<typeof openSkillSelection>[0]) {
@@ -192,24 +185,14 @@ test.describe("Agent skills sheet inset", () => {
       await openSkillSelection(page);
       await waitForSettledPosition(page.getByTestId("skill-selection-sheet"));
 
-      expect({
-        aboveLabel: await readVerticalGap(allSkillsCard(page), bundledSkillsLabel(page)),
-        belowLabel: await readVerticalGap(bundledSkillsLabel(page), skillListCard(page)),
-      }).toEqual({ aboveLabel: 16, belowLabel: 12 });
-    });
-  });
-
-  test.describe("desktop", () => {
-    test.use({ viewport: { width: 1280, height: 900 } });
-
-    test("keeps more space above the bundled skills label than below", async ({ page, skills }) => {
-      await openAgentSkillsSettings(page, skills);
-      await openSkillSelection(page);
-
-      expect({
-        aboveLabel: await readVerticalGap(allSkillsCard(page), bundledSkillsLabel(page)),
-        belowLabel: await readVerticalGap(bundledSkillsLabel(page), skillListCard(page)),
-      }).toEqual({ aboveLabel: 16, belowLabel: 12 });
+      await expectBundledSkillsInset(page);
     });
   });
 });
+
+async function expectBundledSkillsInset(page: Parameters<typeof openSkillSelection>[0]) {
+  expect({
+    aboveLabel: await readVerticalGap(allSkillsCard(page), bundledSkillsLabel(page)),
+    belowLabel: await readVerticalGap(bundledSkillsLabel(page), skillListCard(page)),
+  }).toEqual({ aboveLabel: 16, belowLabel: 12 });
+}

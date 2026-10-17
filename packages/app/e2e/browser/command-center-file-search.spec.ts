@@ -82,31 +82,20 @@ test("workspace file search stays geometrically stable through delayed loading a
 
     await row.click();
     await expectFileTabOpen(page, FILE_PATH);
-  } finally {
-    await seeded.cleanup();
-  }
-});
+    await test.step("dropping the files scope leaves the search row the same height", async () => {
+      await page.keyboard.press("Meta+P");
 
-test("dropping the files scope leaves the search row the same height", async ({ page }) => {
-  const seeded = await seedWorkspace({
-    repoPrefix: "command-center-file-search-scope-",
-    title: "Scope chip height",
-  });
+      const reopenedPanel = page.getByTestId("command-center-panel");
+      await expect(reopenedPanel).toBeVisible({ timeout: 30_000 });
+      const header = reopenedPanel.getByTestId("command-center-header");
+      const scoped = await header.boundingBox();
 
-  try {
-    await gotoWorkspace(page, seeded.workspaceId);
-    await page.keyboard.press("Meta+P");
+      await page.getByTestId("command-center-files-scope").click();
+      await expect(page.getByTestId("command-center-files-scope")).toHaveCount(0);
+      const unscoped = await header.boundingBox();
 
-    const panel = page.getByTestId("command-center-panel");
-    await expect(panel).toBeVisible({ timeout: 30_000 });
-    const header = panel.getByTestId("command-center-header");
-    const scoped = await header.boundingBox();
-
-    await page.getByTestId("command-center-files-scope").click();
-    await expect(page.getByTestId("command-center-files-scope")).toHaveCount(0);
-    const unscoped = await header.boundingBox();
-
-    expect(scoped?.height).toBe(unscoped?.height);
+      expect(scoped?.height).toBe(unscoped?.height);
+    });
   } finally {
     await seeded.cleanup();
   }

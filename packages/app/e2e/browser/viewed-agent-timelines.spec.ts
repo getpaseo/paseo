@@ -1,6 +1,7 @@
 import { expect, type Page } from "@playwright/test";
 import { buildHostAgentDetailRoute } from "@/utils/host-routes";
 import { test } from "../support/fixtures";
+import { createControlledStream } from "../support/helpers/controlled-stream";
 import { seedWorkspace, type SeedDaemonClient } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
 import { observeTimelineSubscriptions } from "../support/helpers/timeline-delivery";
@@ -27,31 +28,46 @@ interface ViewedTimelineScenario {
   cleanup(): Promise<void>;
 }
 
+type ViewedAgentConfig = Pick<
+  Parameters<SeedDaemonClient["createAgent"]>[0],
+  "provider" | "modeId" | "model"
+>;
+
 async function seedViewedTimelineScenario(
-  options: { firstAgentModel?: string } = {},
+  options: { firstAgent?: ViewedAgentConfig } = {},
 ): Promise<ViewedTimelineScenario> {
   const workspace = await seedWorkspace({ repoPrefix: "viewed-timelines-" });
-  const createAgent = (title: string, model = "ten-second-stream") =>
-    workspace.client.createAgent({
+  const createAgent = (
+    title: string,
+    config: ViewedAgentConfig = {
       provider: "mock",
+      modeId: "load-test",
+      model: "e2e-fast-stream",
+    },
+  ) =>
+    workspace.client.createAgent({
+      ...config,
       cwd: workspace.repoPath,
       workspaceId: workspace.workspaceId,
       title,
-      modeId: "load-test",
-      model,
     });
-  const [firstAgent, secondAgent] = await Promise.all([
-    createAgent("First viewed chat", options.firstAgentModel),
-    createAgent("Second viewed chat"),
-  ]);
-  return {
-    client: workspace.client,
-    workspaceId: workspace.workspaceId,
-    repoPath: workspace.repoPath,
-    firstAgentId: firstAgent.id,
-    secondAgentId: secondAgent.id,
-    cleanup: workspace.cleanup,
-  };
+  try {
+    const [firstAgent, secondAgent] = await Promise.all([
+      createAgent("First viewed chat", options.firstAgent),
+      createAgent("Second viewed chat"),
+    ]);
+    return {
+      client: workspace.client,
+      workspaceId: workspace.workspaceId,
+      repoPath: workspace.repoPath,
+      firstAgentId: firstAgent.id,
+      secondAgentId: secondAgent.id,
+      cleanup: workspace.cleanup,
+    };
+  } catch (error) {
+    await workspace.cleanup();
+    throw error;
+  }
 }
 
 interface RestoredLayoutChat {
@@ -306,19 +322,39 @@ test.describe("Viewed agent timelines", () => {
   }) => {
     test.setTimeout(150_000);
     const subscriptions = observeTimelineSubscriptions(page);
-    const scenario = await seedViewedTimelineScenario({ firstAgentModel: "one-minute-stream" });
+    const stream = await createControlledStream();
+    const scenario = await seedViewedTimelineScenario({
+      firstAgent: { provider: stream.provider },
+    }).catch(async (error) => {
+      await stream.cleanup();
+      throw error;
+    });
     try {
       await openAgent(page, scenario, scenario.firstAgentId);
       await startVisibleTurn(page, scenario, "Finish after this chat becomes hidden.");
+      await stream.append(["The first chat is still producing output."]);
+      await expect(
+        page.getByText("The first chat is still producing output.", { exact: true }),
+      ).toBeVisible();
       await selectAgent(page, "Second viewed chat");
       await subscriptions.waitForSubscribedAgents([scenario.firstAgentId, scenario.secondAgentId]);
-      const finish = await scenario.client.waitForFinish(scenario.firstAgentId, 90_000);
+      const agents = await scenario.client.fetchAgents();
+      expect(
+        agents.entries.find((entry) => entry.agent.id === scenario.firstAgentId)?.agent.status,
+      ).toBe("running");
+      await stream.finish([" Completed while hidden."]);
+      const finish = await scenario.client.waitForFinish(scenario.firstAgentId, 30_000);
       expect(finish.status).toBe("idle");
 
       await selectAgent(page, "First viewed chat");
       await expectAgentConsistentlyIdle(page, "First viewed chat");
+      await expect(page.getByText("Completed while hidden.", { exact: false })).toBeVisible();
     } finally {
-      await scenario.cleanup();
+      try {
+        await stream.cleanup();
+      } finally {
+        await scenario.cleanup();
+      }
     }
   });
 

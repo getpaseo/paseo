@@ -420,36 +420,38 @@ test("context details support keyboard entry and dismiss when the viewport moves
   await expect(details).toHaveCount(0);
 });
 
-test("pointer hovering context details preserves composer focus", async ({ page, agent }) => {
+test("context details preserve composer focus on hover and leave Find available after keyboard dismissal", async ({
+  page,
+  agent,
+}) => {
   const usage = await scriptAgentUsage(page);
   await page.setViewportSize(DESKTOP);
   await openAgent(page, agent);
   const [claude] = claudeAndCodexReports();
-  usage.answerNext([onPersonalLogin(claude!)]);
-  const input = composerLocator(page);
-  await input.focus();
-  await hoverContextWindowMeter(page);
-  await expect(input).toBeFocused();
-  await leaveContextWindowMeter(page);
-  await expect(input).toBeFocused();
-});
 
-test("Find remains available after dismissing context details", async ({ page, agent }) => {
-  const usage = await scriptAgentUsage(page);
-  await page.setViewportSize(DESKTOP);
-  await openAgent(page, agent);
-  const [claude] = claudeAndCodexReports();
-  usage.answerNext([onPersonalLogin(claude!)]);
-  const meter = page.getByTestId("context-window-meter");
-  const trigger = page.getByRole("button", {
-    name: (await meter.getAttribute("aria-label"))!,
-    exact: true,
+  await test.step("pointer entry and dismissal preserve composer focus", async () => {
+    usage.answerNext([onPersonalLogin(claude!)]);
+    const input = composerLocator(page);
+    await input.focus();
+    await hoverContextWindowMeter(page);
+    await expect(input).toBeFocused();
+    await leaveContextWindowMeter(page);
+    await expect(input).toBeFocused();
   });
-  await trigger.focus();
-  await expect(contextWindowDetails(page)).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(contextWindowDetails(page)).toHaveCount(0);
-  await expect(trigger).toBeFocused();
-  await page.keyboard.press("ControlOrMeta+f");
-  await expect(page.getByRole("textbox", { name: "Find in pane", exact: true })).toBeFocused();
+
+  await test.step("keyboard dismissal restores trigger focus and Find remains available", async () => {
+    usage.answerNext([onPersonalLogin(claude!)]);
+    const meter = page.getByTestId("context-window-meter");
+    const trigger = page.getByRole("button", {
+      name: (await meter.getAttribute("aria-label"))!,
+      exact: true,
+    });
+    await trigger.focus();
+    await expect(contextWindowDetails(page)).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(contextWindowDetails(page)).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    await page.keyboard.press("ControlOrMeta+f");
+    await expect(page.getByRole("textbox", { name: "Find in pane", exact: true })).toBeFocused();
+  });
 });
