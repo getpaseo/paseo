@@ -17,6 +17,11 @@ import {
   expectReadyUpdateCheckResult,
   clickInstallUpdate,
   expectInstallInProgress,
+  clickInstallWhenIdle,
+  expectWaitingForAgents,
+  cancelScheduledUpdate,
+  expectInstallAvailable,
+  expectUpdateFailed,
   interceptDaemonManagementConfirmDialog,
   interceptDaemonStopConfirmDialog,
   toggleDaemonManagement,
@@ -61,6 +66,36 @@ test.describe("Desktop updates", () => {
     await expectUpdateBanner(page, "1.2.3");
     await clickInstallUpdate(page);
     await expectInstallInProgress(page);
+  });
+
+  test("a scheduled update can be cancelled from the callout", async ({ page }) => {
+    await installDesktopRuntime(page, {
+      serverId: getServerId(),
+      updateAvailable: true,
+      latestVersion: "1.2.3",
+      waitForIdle: true,
+    });
+    await gotoAppShell(page);
+    await expectUpdateBanner(page, "1.2.3");
+
+    await clickInstallWhenIdle(page);
+    await expectWaitingForAgents(page);
+    await cancelScheduledUpdate(page);
+
+    await expectInstallAvailable(page, "1.2.3");
+  });
+
+  test("a failed activity check displays an error without restarting", async ({ page }) => {
+    await installDesktopRuntime(page, {
+      serverId: getServerId(),
+      updateAvailable: true,
+      installError: "Cannot verify agent activity",
+    });
+    await gotoAppShell(page);
+
+    await clickInstallWhenIdle(page);
+
+    await expectUpdateFailed(page, "Cannot verify agent activity");
   });
 
   test("manual check reports a found update while it downloads", async ({ page }) => {

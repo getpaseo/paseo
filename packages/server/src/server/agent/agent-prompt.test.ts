@@ -55,6 +55,8 @@ interface FinishNotificationScenarioOptions {
   requireParentOwnership?: boolean;
   parentPromptError?: Error;
   logger?: Logger;
+  /** Holds the child's last message read until releaseChildSummary(). */
+  holdChildSummary?: boolean;
 }
 
 interface FinishNotificationScenario {
@@ -69,6 +71,8 @@ interface FinishNotificationScenario {
   parentPrompts(): string[];
   steerAttemptCount(): number;
   wasParentPrompted(): boolean;
+  releaseChildSummary(): void;
+  tryClaimIdleShutdown(): boolean;
 }
 
 function createFinishNotificationScenario(
@@ -107,7 +111,14 @@ function createFinishNotificationScenario(
       subscriber = null;
     };
   });
+  let releaseChildSummary: () => void = () => undefined;
+  const childSummaryReleased = options?.holdChildSummary
+    ? new Promise<void>((resolve) => {
+        releaseChildSummary = resolve;
+      })
+    : Promise.resolve();
   Reflect.set(agentManager, "getLastAssistantMessage", async () => {
+    await childSummaryReleased;
     return options?.childLastAssistantMessage ?? null;
   });
   Reflect.set(agentManager, "tryRunOutOfBand", () => false);
@@ -263,6 +274,12 @@ function createFinishNotificationScenario(
     },
     wasParentPrompted() {
       return parentPrompted;
+    },
+    releaseChildSummary() {
+      releaseChildSummary();
+    },
+    tryClaimIdleShutdown() {
+      return agentManager.tryClaimIdleShutdown();
     },
   };
 }
@@ -449,6 +466,19 @@ test("follow-up finish notifications do not require a parent relationship", asyn
   const parentPrompt = await scenario.finishChildAndReadParentPrompt();
 
   expect(parentPrompt).toContain("Agent child-agent (Child Agent) finished.");
+});
+
+test("a queued finish notification keeps an idle shutdown from dropping it", async () => {
+  const scenario = createFinishNotificationScenario({ holdChildSummary: true });
+  scenario.startWatchingChild();
+  const parentPrompt = scenario.finishChildAndReadParentPrompt();
+
+  expect(scenario.tryClaimIdleShutdown()).toBe(false);
+  scenario.releaseChildSummary();
+
+  await parentPrompt;
+  expect(scenario.wasParentPrompted()).toBe(true);
+  await vi.waitFor(() => expect(scenario.tryClaimIdleShutdown()).toBe(true));
 });
 
 test("finish notifications log a rejected parent prompt without an unhandled rejection", async () => {

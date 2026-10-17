@@ -9,7 +9,7 @@ import type {
 } from "@getpaseo/protocol/messages";
 import { relative } from "node:path";
 import { isAbsolute } from "node:path";
-import { CreationService, type CreatedAgent } from "./creation/index.js";
+import { CreationService, type CreatedAgent, type CreationInput } from "./creation/index.js";
 import type { CreationSnapshot, AgentCreateRequest } from "@getpaseo/protocol/messages";
 import type { MessageReceipts } from "./message-receipts/index.js";
 import equal from "fast-deep-equal";
@@ -2611,7 +2611,7 @@ export class Session {
       case "restart_server_request":
         return this.handleRestartServerRequest(msg.requestId, msg.reason);
       case "shutdown_server_request":
-        return this.handleShutdownServerRequest(msg.requestId);
+        return this.handleShutdownServerRequest(msg.requestId, msg.onlyIfIdle === true);
       case "client_heartbeat":
         this.handleClientHeartbeat(msg);
         return undefined;
@@ -3158,9 +3158,37 @@ export class Session {
     });
   }
 
-  private async handleShutdownServerRequest(requestId: string): Promise<void> {
+  private async handleShutdownServerRequest(requestId: string, onlyIfIdle = false): Promise<void> {
+    // An idle claim is never released, so only a daemon that can act on the
+    // shutdown may take one. Without a lifecycle handler it would refuse all
+    // new agent work while it keeps running.
+    if (onlyIfIdle && !this.onLifecycleIntent) {
+      this.emit({
+        type: "rpc_error",
+        payload: {
+          requestId,
+          requestType: "shutdown_server_request",
+          error: "This daemon cannot stop itself",
+          code: "SHUTDOWN_UNAVAILABLE",
+        },
+      });
+      return;
+    }
+    if (onlyIfIdle && !this.agentManager.tryClaimIdleShutdown()) {
+      this.emit({
+        type: "rpc_error",
+        payload: {
+          requestId,
+          requestType: "shutdown_server_request",
+          error: "Agents are busy",
+          code: "AGENTS_BUSY",
+        },
+      });
+      return;
+    }
+
     const reason = CLIENT_SHUTDOWN_RPC_REASON;
-    this.sessionLogger.warn({ reason }, "Shutdown requested via websocket");
+    this.sessionLogger.warn({ reason, onlyIfIdle }, "Shutdown requested via websocket");
     this.emit({
       type: "status",
       payload: {
@@ -3993,12 +4021,25 @@ export class Session {
       ? (await this.workspaceRegistry.get(id)) !== null
       : this.agentManager.getAgent(id) != null || (await this.agentStorage.get(id)) !== null;
 
+  // Agent creation can provision a workspace or worktree before the agent
+  // registers. Admitting the whole creation keeps an idle shutdown out of that
+  // gap, and a creation refused by one never writes its record.
+  private createWithAdmission(
+    input: CreationInput,
+    observer?: (snapshot: CreationSnapshot) => void,
+  ): Promise<CreationSnapshot> {
+    if (!input.hasAgent) return this.creationService.create(input, observer);
+    return this.agentManager.runAdmittedAgentWork(() =>
+      this.creationService.create(input, observer),
+    );
+  }
+
   private createRequestedAgent(
     request: AgentCreateRequest,
     observer?: (snapshot: CreationSnapshot) => void,
   ): Promise<CreationSnapshot> {
     const { requestId, type: _type, subscribe: _subscribe, idempotencyKey, ...intent } = request;
-    return this.creationService.create(
+    return this.createWithAdmission(
       {
         kind: "agent",
         key: idempotencyKey ?? requestId,
@@ -4087,7 +4128,7 @@ export class Session {
         throw new Error("Session is not authorized to create an agent");
       }
       const agentInput = request.agent;
-      const creation = await this.creationService.create(
+      const creation = await this.createWithAdmission(
         {
           kind: "workspace",
           key: idempotencyKey ?? requestId,
@@ -8219,23 +8260,28 @@ export class Session {
           );
         }
       };
-      if (msg.messageId) {
-        await this.messageReceipts.send({
-          agentId,
-          messageId: msg.messageId,
-          request: {
-            prompt,
-            sourceAgentId: msg.sourceAgentId,
-            activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt",
-          },
-          prepare: async () => {
-            if (!msg.sourceAgentId) await this.prepareAgentMessage(agentId, msg.text);
-          },
-          send,
-        });
-      } else {
-        await send();
-      }
+      // The receipt is written before a run exists. Admission refuses the send
+      // before that write once an idle shutdown is claimed, and keeps the idle
+      // check busy until the run starts, so no receipt is left pending.
+      await this.agentManager.runAdmittedAgentWork(async () => {
+        if (msg.messageId) {
+          await this.messageReceipts.send({
+            agentId,
+            messageId: msg.messageId,
+            request: {
+              prompt,
+              sourceAgentId: msg.sourceAgentId,
+              activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt",
+            },
+            prepare: async () => {
+              if (!msg.sourceAgentId) await this.prepareAgentMessage(agentId, msg.text);
+            },
+            send,
+          });
+        } else {
+          await send();
+        }
+      });
 
       this.emit({
         type: "send_agent_message_response",

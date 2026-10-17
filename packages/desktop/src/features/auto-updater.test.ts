@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { UUID } from "builder-util-runtime";
+import { CancellationToken, UUID } from "builder-util-runtime";
 import { describe, expect, it, vi } from "vitest";
 
 const { autoUpdaterMock } = vi.hoisted(() => {
@@ -40,6 +40,7 @@ import {
   bucketFromStagingUserId,
   checkForAppUpdate,
   createAppUpdateLifecycleLogger,
+  downloadAndInstallUpdate,
   resolveStagingUserId,
   rolloutManifestSchema,
   shouldAdmitToRollout,
@@ -139,6 +140,47 @@ describe("checkForAppUpdate", () => {
       isSilent: false,
       isForceRunAfter: true,
     });
+  });
+});
+
+// Keeps the updater's download running and reports the token it was given.
+function holdUpdaterDownload(): { receivedToken: Promise<CancellationToken> } {
+  let receive: (token: CancellationToken) => void = () => undefined;
+  const receivedToken = new Promise<CancellationToken>((resolve) => {
+    receive = resolve;
+  });
+  autoUpdaterMock.downloadUpdate.mockImplementationOnce((token: CancellationToken) => {
+    receive(token);
+    return new Promise(() => undefined);
+  });
+  return { receivedToken };
+}
+
+describe("downloadAndInstallUpdate", () => {
+  it("cancels the updater download when the install signal aborts", async () => {
+    const token = new CancellationToken();
+    autoUpdaterMock.checkForUpdates.mockResolvedValueOnce({
+      isUpdateAvailable: true,
+      updateInfo: {
+        version: "9.9.9",
+        releaseDate: "2026-04-28T00:00:00.000Z",
+        rolloutHours: 24,
+      },
+      cancellationToken: token,
+    });
+    const download = holdUpdaterDownload();
+    const controller = new AbortController();
+    const pending = downloadAndInstallUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      signal: controller.signal,
+    });
+    await expect(download.receivedToken).resolves.toBe(token);
+
+    controller.abort();
+
+    await expect(pending).resolves.toMatchObject({ installed: false, cancelled: true });
+    expect(token.cancelled).toBe(true);
   });
 });
 

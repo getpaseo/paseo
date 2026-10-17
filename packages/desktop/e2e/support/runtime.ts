@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { appendFile } from "node:fs/promises";
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 import { openSettings } from "../../../app/e2e/support/helpers/app";
 import { getE2EDaemonPort } from "../../../app/e2e/support/helpers/daemon-port";
 import { escapeRegex } from "../../../app/e2e/support/helpers/regex";
@@ -60,6 +60,8 @@ export interface DesktopRuntimeConfig {
   updateReadyToInstall?: boolean;
   manualUpdateBypassesRollout?: boolean;
   slowInstall?: boolean;
+  waitForIdle?: boolean;
+  installError?: string;
   /** Initial PID reported by desktop_daemon_status. Defaults to null. */
   daemonPid?: number | null;
   daemonHome?: string;
@@ -209,6 +211,31 @@ export async function installDesktopRuntime(
       return buildAppUpdateCheckResult(manualUpdateAdmitted, manualUpdateAdmitted);
     }
 
+    let cancelScheduledInstall: (() => void) | null = null;
+
+    async function installAppUpdate(args?: Record<string, unknown>) {
+      if (cfg.installError) throw new Error(cfg.installError);
+      if (cfg.waitForIdle && args?.whenIdle === true) {
+        await new Promise<void>((resolve) => {
+          cancelScheduledInstall = resolve;
+        });
+        return {
+          installed: false,
+          cancelled: true,
+          version: cfg.latestVersion,
+          message: "Installation cancelled.",
+        };
+      }
+      if (cfg.slowInstall) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 3000));
+      }
+      return {
+        installed: true,
+        version: cfg.latestVersion ?? "1.2.3",
+        message: "App update installed. Restart required.",
+      };
+    }
+
     const desktopBridge: {
       platform: string;
       invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -229,15 +256,12 @@ export async function installDesktopRuntime(
           return checkAppUpdate(args?.intent);
         }
 
+        if (command === "cancel_app_update") {
+          cancelScheduledInstall?.();
+          return;
+        }
         if (command === "install_app_update") {
-          if (cfg.slowInstall) {
-            await new Promise<void>((resolve) => setTimeout(resolve, 3000));
-          }
-          return {
-            installed: true,
-            version: cfg.latestVersion ?? "1.2.3",
-            message: "App update installed. Restart required.",
-          };
+          return installAppUpdate(args);
         }
 
         if (command === "desktop_daemon_status") {
@@ -386,6 +410,39 @@ export async function clickInstallUpdate(page: Page): Promise<void> {
 
 export async function expectInstallInProgress(page: Page): Promise<void> {
   await expect(page.getByRole("button", { name: "Installing..." })).toBeVisible();
+}
+
+function updateCallout(page: Page): Locator {
+  return page.getByTestId("update-callout");
+}
+
+export async function clickInstallWhenIdle(page: Page): Promise<void> {
+  await updateCallout(page).getByRole("button", { name: "When idle", exact: true }).click();
+}
+
+export async function expectWaitingForAgents(page: Page): Promise<void> {
+  const callout = updateCallout(page);
+  await expect(callout).toContainText("Waiting for agents");
+  await expect(callout).toContainText("all local projects");
+  await expect(page.getByTestId("update-callout-dismiss")).toHaveCount(0);
+}
+
+export async function cancelScheduledUpdate(page: Page): Promise<void> {
+  await updateCallout(page).getByRole("button", { name: "Cancel", exact: true }).click();
+}
+
+export async function expectInstallAvailable(page: Page, version: string): Promise<void> {
+  await expectUpdateBanner(page, version);
+  await expect(
+    updateCallout(page).getByRole("button", { name: "Install & restart", exact: true }),
+  ).toBeEnabled();
+}
+
+export async function expectUpdateFailed(page: Page, message: string): Promise<void> {
+  const callout = updateCallout(page);
+  await expect(callout).toContainText("Update failed");
+  await expect(callout).toContainText(message);
+  await expect(callout.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
 }
 
 /**

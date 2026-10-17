@@ -27,7 +27,7 @@ import { OWNER_PERMISSIONS, type DaemonPermission } from "./authorization/index.
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
-import type { AgentManagerEvent } from "./agent/agent-manager.js";
+import { AgentManagerShuttingDownError, type AgentManagerEvent } from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { WorkspaceLabelError, type WorkspaceLabelService } from "./workspace-labels/index.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
@@ -106,6 +106,93 @@ function createBinaryMessageHandler(
     binaryMessages.push(frame);
   };
 }
+
+test("onlyIfIdle shutdown reports AGENTS_BUSY and does not emit a lifecycle intent", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const intents: string[] = [];
+  const session = createSessionForTest({
+    messages,
+    onLifecycleIntent: (intent) => {
+      intents.push(intent.type);
+    },
+    agentManager: {
+      tryClaimIdleShutdown: vi.fn(() => false),
+    },
+  });
+
+  await session.handleMessage({
+    type: "shutdown_server_request",
+    requestId: "req-busy",
+    onlyIfIdle: true,
+  });
+
+  expect(intents).toEqual([]);
+  expect(messages).toContainEqual({
+    type: "rpc_error",
+    payload: {
+      requestId: "req-busy",
+      requestType: "shutdown_server_request",
+      error: "Agents are busy",
+      code: "AGENTS_BUSY",
+    },
+  });
+});
+
+test("onlyIfIdle shutdown is refused without claiming when the daemon cannot stop itself", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const tryClaimIdleShutdown = vi.fn(() => true);
+  const session = createSessionForTest({ messages, agentManager: { tryClaimIdleShutdown } });
+
+  await session.handleMessage({
+    type: "shutdown_server_request",
+    requestId: "req-no-handler",
+    onlyIfIdle: true,
+  });
+
+  expect(tryClaimIdleShutdown).not.toHaveBeenCalled();
+  expect(messages).toContainEqual({
+    type: "rpc_error",
+    payload: {
+      requestId: "req-no-handler",
+      requestType: "shutdown_server_request",
+      error: "This daemon cannot stop itself",
+      code: "SHUTDOWN_UNAVAILABLE",
+    },
+  });
+});
+
+test("agent creation refused by an idle shutdown never starts a creation record", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const create = vi.fn();
+  const session = createSessionForTest({
+    messages,
+    creationService: { create, subscribe: vi.fn() },
+    agentManager: {
+      runAdmittedAgentWork: vi.fn(async () => {
+        throw new AgentManagerShuttingDownError();
+      }),
+    },
+  });
+
+  await session.handleMessage({
+    type: "create_agent_request",
+    requestId: "req-create-after-claim",
+    idempotencyKey: "create-after-claim",
+    config: { provider: "codex", cwd: "/tmp/project" },
+    attachments: [],
+  });
+
+  expect(create).not.toHaveBeenCalled();
+  expect(messages).toContainEqual(
+    expect.objectContaining({
+      type: "status",
+      payload: expect.objectContaining({
+        status: "agent_create_failed",
+        requestId: "req-create-after-claim",
+      }),
+    }),
+  );
+});
 
 test("interruptAgentIfRunning rejects when graceful cancellation is refused", async () => {
   const agentId = "11111111-1111-4111-8111-111111111111";
@@ -291,6 +378,7 @@ interface SessionForTestOptions {
   clientId?: string;
   permissions?: readonly DaemonPermission[];
   agentManager?: { [K in keyof SessionOptions["agentManager"]]?: unknown };
+  creationService?: SessionOptions["creationService"];
   agentStorage?: { [K in keyof SessionOptions["agentStorage"]]?: unknown };
   github?: Partial<ForgeService & GitHubService>;
   checkoutDiffManager?: { scheduleRefreshForCwd: ReturnType<typeof vi.fn> };
@@ -332,6 +420,7 @@ interface SessionForTestOptions {
   pluginRuntime?: SessionOptions["pluginRuntime"];
   orchestrationSkills?: SessionOptions["orchestrationSkills"];
   workspaceLabelService?: WorkspaceLabelService;
+  onLifecycleIntent?: SessionOptions["onLifecycleIntent"];
 }
 
 function createSessionForTest(options: SessionForTestOptions = {}): Session {
@@ -368,8 +457,9 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
 
   const sessionOptions: SessionOptions = {
     messageReceipts: createMessageReceiptsStub(),
-    creationService: createTestCreationService(),
+    creationService: options.creationService ?? createTestCreationService(),
     clientId: options.clientId ?? "test-client",
+    onLifecycleIntent: options.onLifecycleIntent,
     onMessage: (message) => messages.push(message),
     ...(options.targetedMessages
       ? {

@@ -593,8 +593,13 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
   function notifySafely(reason: FinishNotificationReason, options: NotifySafelyOptions = {}): void {
     if (stopped) return;
     if (options.terminal ?? true) stop();
-    notificationQueue = notificationQueue
-      .then(() => notify(reason, options.permissionRequest))
+    // The child is already idle and the caller has no run yet, so the idle check
+    // only sees this pending prompt through admission. It is taken now, before
+    // the storage reads, so an idle shutdown cannot drop the notification.
+    notificationQueue = agentManager
+      .runAdmittedAgentWork(() =>
+        notificationQueue.then(() => notify(reason, options.permissionRequest)),
+      )
       .catch((error) => {
         logger.error(
           { err: error, childAgentId, callerAgentId, reason },

@@ -1704,13 +1704,20 @@ export async function createPaseoDaemon(
                 finalTimeoutMs: config.dictationFinalTimeoutMs,
               },
               daemonVersion,
-              (intent) => {
-                try {
-                  config.onLifecycleIntent?.(intent);
-                } catch (error) {
-                  logger.error({ err: error, intent }, "Failed to handle daemon lifecycle intent");
-                }
-              },
+              // Stays absent without a handler, so an idle stop is declined
+              // instead of claiming a shutdown nothing will carry out.
+              config.onLifecycleIntent
+                ? (intent) => {
+                    try {
+                      config.onLifecycleIntent?.(intent);
+                    } catch (error) {
+                      logger.error(
+                        { err: error, intent },
+                        "Failed to handle daemon lifecycle intent",
+                      );
+                    }
+                  }
+                : undefined,
               projectRegistry,
               workspaceRegistry,
               scheduleService,

@@ -1429,9 +1429,9 @@ export class VoiceAssistantWebSocketServer {
         }
         return maxBuffered;
       },
-      onLifecycleIntent: (intent) => {
-        this.onLifecycleIntent?.(intent);
-      },
+      // Absent when the daemon has no lifecycle handler, so a session can tell
+      // it cannot act on a shutdown.
+      onLifecycleIntent: this.onLifecycleIntent ?? undefined,
       hubExecutionAgents: admission.hubExecutionAgents,
       hubRelationships: this.hubRelationships ?? undefined,
     });
@@ -1831,6 +1831,8 @@ export class VoiceAssistantWebSocketServer {
         ...(this.advertiseDaemonStatusRpc ? { daemonStatusRpc: true } : {}),
         // COMPAT(daemonConfigReload): added in v0.4.0, remove gate after 2027-02-14.
         daemonConfigReload: true,
+        // COMPAT(shutdownIfIdle): added in v0.11.0, remove gate after 2027-03-22.
+        shutdownIfIdle: true,
         // COMPAT(relayConfig): added in v0.2.6, remove gate after 2027-01-31.
         ...(this.advertiseRelayConfig ? { relayConfig: true } : {}),
         // COMPAT(pushTokenRevocation): added in v0.3.2, remove gate after 2027-02-10.
