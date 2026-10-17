@@ -327,7 +327,10 @@ export function extractTerminalSelectedText(input: TerminalSelectedTextInput): s
     const startCol = startsOnThisRow ? selection.start.col : 0;
     const endCol = endsOnThisRow ? selection.end.col : cells.length - 1;
     const selectedCells = cells.slice(Math.max(0, startCol), Math.max(0, endCol) + 1);
-    const line = selectedCells.map((cell) => cell.char).join("");
+    const line = selectedCells
+      .filter((cell) => cell.width !== 0)
+      .map((cell) => cell.char)
+      .join("");
     if (offset > 0 && window.wrappedRows[offset] !== true) {
       text += "\n";
     }

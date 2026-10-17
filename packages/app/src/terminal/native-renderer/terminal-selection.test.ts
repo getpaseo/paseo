@@ -41,6 +41,31 @@ function rowWithText(
 }
 
 describe("native terminal selection", () => {
+  it("copies Korean output without adding spaces for continuation cells", async () => {
+    const terminal = createNativeHeadlessTerminal({ rows: 3, cols: 30 });
+    const copied: string[] = [];
+    try {
+      await terminal.write("한글 문장");
+      const bounds = terminal.getBufferBounds();
+      await copyTerminalSelection({
+        terminal,
+        selection: {
+          start: { row: bounds.cursorRow, col: 0 },
+          end: { row: bounds.cursorRow, col: bounds.cursorCol - 1 },
+          coordinateEpoch: bounds.coordinateEpoch,
+        },
+        clipboard: {
+          writeText: async (text) => {
+            copied.push(text);
+          },
+        },
+      });
+      expect(copied).toEqual(["한글 문장"]);
+    } finally {
+      terminal.dispose();
+    }
+  });
+
   it("copies Korean text and real spaces without wide-character continuation spaces", async () => {
     const terminal = createNativeHeadlessTerminal({ rows: 3, cols: 30 });
     try {

@@ -137,7 +137,7 @@ function extractCell(
   const bg = bgMode !== 0 ? cell.getBgColor() : undefined;
 
   return {
-    char: cell.getWidth() === 0 ? "" : cell.getChars() || " ",
+    char: cell.getChars() || " ",
     width: cell.getWidth(),
     fg,
     bg,
