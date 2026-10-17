@@ -305,6 +305,10 @@ Terminal I/O is sent as binary WebSocket frames decoded by `decodeTerminalStream
 - 1-byte slot: terminal slot id
 - variable payload: bytes for output/input, JSON-encoded `{ rows, cols }` for resize, terminal snapshot for snapshot
 
+Terminal image transfers bind the uploaded bytes to a live terminal. Hosts advertising `terminalImageFiles` stage private files and inject a bracketed file reference directly into that PTY, avoiding shared OS clipboard races between clients. The consumer must accept file drops; a terminal without bracketed paste enabled receives an explicit error. The native paste key remains available when no image bytes can be read or when connecting to a legacy host.
+
+Image files belong to the daemon and terminal, not a client socket: disconnecting or acknowledging input does not prove the agent consumed them. Active terminal files are retained. Actual PTY exit schedules a persisted retirement time; background maintenance deletes inactive files after seven days, including orphan directories whose inactivity can be established from the terminal lifecycle. Pending creations and unavailable workers remain protected. Startup accounting recovers retained files before the first image upload completes; subsequent uploads reserve cached quotas without waiting for maintenance. Storage limits reject new uploads instead of evicting active files. POSIX permissions and Windows owner-only directory ACLs protect the staged bytes.
+
 Terminal PTY size is last-interacting-client-wins. A client claims the PTY size only when its terminal viewport genuinely changes size or the user focuses/taps the terminal. Passive rendering work — attaching, restoring visibility, font settling, renderer refits, or just looking at a visible terminal — must not send a resize frame. The server does not broadcast resize ownership; the resized PTY redraws through normal output, and every attached client renders that output in its own local viewport.
 
 There is also a separate file-transfer binary frame format in the same directory, used for download/upload streams.

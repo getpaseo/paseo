@@ -615,6 +615,15 @@ export const ko: TranslationResources = {
       hostDisconnected: "호스트가 연결되어 있지 않습니다",
       updateHost: "기본 터미널 렌더러를 사용하도록 호스트를 업데이트합니다.",
       unableToSubscribe: "터미널을 구독할 수 없습니다",
+      pasteImageFailed: "이미지를 붙여넣지 못했습니다.",
+      pasteImageDiskFull: "호스트 디스크가 가득 찼습니다. 공간을 확보한 뒤 다시 붙여넣으세요.",
+      pasteImageQuota:
+        "터미널 이미지 저장 한도에 도달했습니다. 사용하지 않는 터미널을 닫거나 보관된 이미지가 만료될 때까지 기다리세요.",
+      pasteImageClosed: "이 터미널이 닫혔습니다. 터미널을 열고 다시 붙여넣으세요.",
+      pasteImageUnsupported: "이 프로그램은 이미지 파일 붙여넣기를 지원하지 않습니다.",
+      pasteImageInvalid: "10 MiB보다 작은 PNG 또는 JPEG 이미지를 사용하세요.",
+      pasteImageInputHeld:
+        "붙여넣기가 완료되지 않았습니다. Enter는 전송되지 않았습니다. 내용을 확인한 뒤 다시 누르세요.",
     },
     sheet: {
       openAsTab: "탭으로 열기",

@@ -1,3 +1,4 @@
+import { terminalFileKey } from "./terminal-file-lifecycle.js";
 import { afterEach, expect, it } from "vitest";
 import { isPlatform } from "../test-utils/platform.js";
 import { EventEmitter } from "node:events";
@@ -939,7 +940,9 @@ it("removes a killed worker terminal from terminalExit without duplicate snapsho
     contributions.push(event);
   });
 
+  expect(manager.fileLifecycle?.owner(terminalFileKey("terminal-a"))).toBe("terminal-a");
   manager.killTerminal("terminal-a");
+  expect(manager.fileLifecycle?.owner(terminalFileKey("terminal-a"))).toBe("terminal-a");
   const request = worker.sentMessages.find(
     (message) => message.type === "killTerminal" && message.terminalId === "terminal-a",
   );
@@ -959,6 +962,7 @@ it("removes a killed worker terminal from terminalExit without duplicate snapsho
   });
 
   expect(manager.getTerminal("terminal-a")).toBeUndefined();
+  expect(manager.fileLifecycle?.owner(terminalFileKey("terminal-a"))).toBeNull();
   expect(snapshots).toEqual([{ cwd: "/workspace", terminalIds: [] }]);
   expect(contributions).toEqual([
     {
@@ -1016,6 +1020,7 @@ it("does not resurrect a terminal that exited before its create response was han
   expect(manager.getTerminal("terminal-a")).toBeUndefined();
   expect(await manager.getTerminals("/workspace")).toEqual([]);
   expect(session.getExitInfo()).toEqual(exitInfo);
+  expect(manager.fileLifecycle?.owner(terminalFileKey("terminal-a"))).toBeNull();
   expect(snapshots).toEqual([
     { cwd: "/workspace", terminalIds: ["terminal-a"] },
     { cwd: "/workspace", terminalIds: [] },
@@ -1103,4 +1108,221 @@ it("rejects createTerminal and registers nothing when the worker cannot start th
   expect(manager.getTerminal("terminal-a")).toBeUndefined();
   expect(await manager.getTerminals("/workspace")).toEqual([]);
   expect(snapshots).toEqual([]);
+});
+
+it("protects pending and timed-out creates, and treats worker disconnect as unknown inventory", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({ requestTimeoutMs: 5, forkWorker: () => worker });
+  const creation = manager.createTerminal({
+    id: "pending-image-owner",
+    cwd: "/workspace",
+    workspaceId: "ws-test",
+  });
+  const key = terminalFileKey("pending-image-owner");
+  expect(manager.fileLifecycle?.owner(key)).toBe("pending-image-owner");
+  expect(manager.fileLifecycle?.claimInactive(key)).toBeUndefined();
+  await expect(creation).rejects.toThrow("timed out");
+  expect(manager.fileLifecycle?.owner(key)).toBe("pending-image-owner");
+  worker.connected = false;
+  worker.emit("disconnect");
+  expect(manager.fileLifecycle?.owner(terminalFileKey("absent"))).toBeUndefined();
+  expect(manager.fileLifecycle?.claimInactive(terminalFileKey("absent"))).toBeUndefined();
+});
+
+it("checks live paste modes after attachment and acknowledges injection or rejection", async () => {
+  manager = createWorkerTerminalManager();
+  const session = trackTerminal(
+    await manager.createTerminal({
+      cwd: tmpdir(),
+      workspaceId: "ws-test",
+      ...nodeTerminalCommand(`
+      process.stdin.setRawMode(true);
+      let received = "";
+      process.stdin.on("data", data => {
+        if (data.toString() === "e") process.stdout.write("\\x1b[?2004hENABLED");
+        else if (data.toString() === "d") process.stdout.write("\\x1b[?2004lDISABLED");
+        else { received += data.toString("hex"); process.stdout.write("HEX:" + received + "\\r\\n"); }
+      });
+    `),
+    }),
+  );
+  let output = "";
+  session.subscribe((message) => {
+    if (message.type === "output") output += message.data;
+  });
+  await manager.getTerminalState(session.id);
+  expect(session.getReplayPreamble()).not.toContain("\x1b[?2004h");
+  session.send({ type: "input", data: "e" });
+  await waitForCondition(() => output.includes("ENABLED"), 5000);
+  // Ordinary output has not updated the replay cache. Paste must consult the worker.
+  expect(session.getReplayPreamble()).not.toContain("\x1b[?2004h");
+  await session.paste("image.png");
+  await waitForCondition(
+    () => output.includes("HEX:" + Buffer.from("\x1b[200~image.png\x1b[201~").toString("hex")),
+    5000,
+  );
+  await manager.getTerminalState(session.id);
+  expect(session.getReplayPreamble()).toContain("\x1b[?2004h");
+  session.send({ type: "input", data: "d" });
+  await waitForCondition(() => output.includes("DISABLED"), 5000);
+  expect(session.getReplayPreamble()).toContain("\x1b[?2004h");
+  await expect(session.paste("rejected.png")).rejects.toThrow("stopped accepting file paste");
+  await session.killAndWait({ gracefulTimeoutMs: 500, forceTimeoutMs: 500 });
+  await expect(session.paste("closed.png")).rejects.toThrow("Terminal closed");
+});
+
+it("reports paste acknowledgement timeouts and worker disconnects", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({ requestTimeoutMs: 5, forkWorker: () => worker });
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal: {
+      id: "paste-test",
+      name: "Terminal",
+      cwd: tmpdir(),
+      workspaceId: "ws-test",
+      activity: null,
+    },
+    state: createTerminalState(),
+  });
+  const session = manager.getTerminal("paste-test")!;
+  await expect(session.paste("image.png")).rejects.toThrow("request timed out: paste");
+  const pending = session.paste("image.png");
+  const rejected = expect(pending).rejects.toThrow("Terminal worker");
+  worker.disconnect();
+  await rejected;
+});
+
+it("releases a missing-executable reservation and retires a successful same-ID retry", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "worker-create-retry-"));
+  temporaryDirs.push(cwd);
+  manager = createWorkerTerminalManager();
+  const id = "failed-start-retry";
+  const key = terminalFileKey(id);
+  await expect(
+    manager.createTerminal({
+      id,
+      cwd,
+      workspaceId: "ws-test",
+      command: join(cwd, "absent-executable"),
+    }),
+  ).rejects.toThrow("command not found");
+  expect(manager.fileLifecycle?.owner(key)).toBeNull();
+  const release = manager.fileLifecycle?.claimInactive(key);
+  expect(release).toBeTypeOf("function");
+  release?.();
+  const session = trackTerminal(
+    await manager.createTerminal({
+      id,
+      cwd,
+      workspaceId: "ws-test",
+      ...nodeTerminalCommand("setInterval(() => {}, 1000)"),
+    }),
+  );
+  expect(manager.fileLifecycle?.owner(key)).toBe(id);
+  await session.killAndWait({ gracefulTimeoutMs: 1000, forceTimeoutMs: 1000 });
+  await expect.poll(() => manager?.fileLifecycle?.owner(key)).toBeNull();
+});
+
+it("releases only the failed attempt once, even after timeout and same-ID retry", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({ requestTimeoutMs: 5, forkWorker: () => worker });
+  const id = "retry-after-timeout";
+  const key = terminalFileKey(id);
+  const first = manager.createTerminal({ id, cwd: "/workspace", workspaceId: "ws-test" });
+  const firstRequest = worker.sentMessages.at(-1)!;
+  await expect(first).rejects.toThrow("timed out");
+  expect(manager.fileLifecycle?.owner(key)).toBe(id);
+  const retry = manager.createTerminal({ id, cwd: "/workspace", workspaceId: "ws-test" });
+  const retryRequest = worker.sentMessages.at(-1)!;
+  const failure = {
+    type: "response" as const,
+    requestId: firstRequest.requestId,
+    ok: false as const,
+    error: "missing command",
+    terminalCreationFailed: true,
+  };
+  worker.emitWorkerMessage(failure);
+  worker.emitWorkerMessage(failure);
+  expect(manager.fileLifecycle?.owner(key)).toBe(id);
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    requestId: retryRequest.requestId,
+    terminal: { id, name: "Retry", cwd: "/workspace", workspaceId: "ws-test", activity: null },
+    state: createTerminalState(),
+  });
+  worker.emitWorkerMessage({ type: "response", requestId: retryRequest.requestId, ok: true });
+  await retry;
+  worker.emitWorkerMessage(failure);
+  expect(manager.fileLifecycle?.owner(key)).toBe(id);
+  worker.emitWorkerMessage({
+    type: "terminalExit",
+    terminalId: id,
+    info: { exitCode: 0, signal: null, lastOutputLines: [] },
+  });
+  expect(manager.fileLifecycle?.owner(key)).toBeNull();
+});
+
+it("keeps timed-out creates protected until their delayed creation exits", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({ requestTimeoutMs: 5, forkWorker: () => worker });
+  const id = "late-create";
+  const key = terminalFileKey(id);
+  const created = manager.createTerminal({ id, cwd: "/workspace", workspaceId: "ws-test" });
+  const request = worker.sentMessages.at(-1)!;
+  await expect(created).rejects.toThrow("timed out");
+  expect(manager.fileLifecycle?.claimInactive(key)).toBeUndefined();
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    requestId: request.requestId,
+    terminal: { id, name: "Late", cwd: "/workspace", workspaceId: "ws-test", activity: null },
+    state: createTerminalState(),
+  });
+  // An error after creation is not evidence of process exit.
+  worker.emitWorkerMessage({
+    type: "response",
+    requestId: request.requestId,
+    ok: false,
+    error: "snapshot failed",
+  });
+  expect(manager.getTerminal(id)).toBeDefined();
+  expect(manager.fileLifecycle?.owner(key)).toBe(id);
+  worker.emitWorkerMessage({
+    type: "terminalExit",
+    terminalId: id,
+    info: { exitCode: 0, signal: null, lastOutputLines: [] },
+  });
+  expect(manager.fileLifecycle?.owner(key)).toBeNull();
+});
+
+it("keeps ambiguous worker failures protected but releases local setup failures", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({
+    forkWorker: () => worker,
+    getTerminalActivityUrl: () => {
+      throw new Error("local setup failed");
+    },
+  });
+  await expect(
+    manager.createTerminal({ id: "local", cwd: "/workspace", workspaceId: "ws-test" }),
+  ).rejects.toThrow("local setup failed");
+  expect(manager.fileLifecycle?.owner(terminalFileKey("local"))).toBeNull();
+  expect(worker.sentMessages).toEqual([]);
+  manager.killAll();
+  const uncertainWorker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({ forkWorker: () => uncertainWorker });
+  const creation = manager.createTerminal({
+    id: "uncertain",
+    cwd: "/workspace",
+    workspaceId: "ws-test",
+  });
+  const request = uncertainWorker.sentMessages.at(-1)!;
+  uncertainWorker.emitWorkerMessage({
+    type: "response",
+    requestId: request.requestId,
+    ok: false,
+    error: "async spawn error",
+  });
+  await expect(creation).rejects.toThrow("async spawn error");
+  expect(manager.fileLifecycle?.owner(terminalFileKey("uncertain"))).toBe("uncertain");
 });

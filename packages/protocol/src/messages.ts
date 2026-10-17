@@ -3069,6 +3069,28 @@ export const CaptureTerminalRequestSchema = z.object({
   requestId: z.string(),
 });
 
+// Transfers image bytes to the terminal's host. With terminalImageFiles, the
+// daemon stages a private file and injects its reference into the bound PTY.
+export const TerminalClipboardCancelImageRequestSchema = z.object({
+  type: z.literal("terminal.clipboard.cancel_image.request"),
+  requestId: z.string(),
+  targetRequestId: z.string(),
+});
+export const TerminalClipboardCancelImageResponseSchema = z.object({
+  type: z.literal("terminal.clipboard.cancel_image.response"),
+  payload: z.object({ requestId: z.string(), success: z.boolean() }),
+});
+
+export const TerminalClipboardWriteImageRequestSchema = z.object({
+  type: z.literal("terminal.clipboard.write_image.request"),
+  requestId: z.string(),
+  // Optional on the wire for old clients; required by terminalImageFiles hosts.
+  terminalId: z.string().optional(),
+  // Base64-encoded image bytes.
+  data: z.string(),
+  mimeType: z.enum(["image/png", "image/jpeg"]),
+});
+
 export const HubExecutionAgentCreateRequestSchema = z.object({
   type: z.literal("hub.execution.agent.create.request"),
   requestId: z.string(),
@@ -3381,6 +3403,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   TerminalInputSchema,
   KillTerminalRequestSchema,
   CaptureTerminalRequestSchema,
+  TerminalClipboardWriteImageRequestSchema,
+  TerminalClipboardCancelImageRequestSchema,
   ChatCreateRequestSchema,
   ChatListRequestSchema,
   ChatInspectRequestSchema,
@@ -3646,6 +3670,10 @@ export const ServerInfoStatusPayloadSchema = z
         skillManagement: z.boolean().optional(),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
         "terminal-restore-modes": z.boolean().optional(),
+        // COMPAT(terminalClipboardImage): added in v0.5.1, remove gate after 2027-08-24.
+        terminalClipboardImage: z.boolean().optional(),
+        terminalImageFiles: z.boolean().optional(),
+        terminalImagePasteSequencing: z.boolean().optional(),
         // COMPAT(terminalInputModeReplay): added in v0.2.6, remove gate after 2027-02-02.
         "terminal-input-mode-replay": z.boolean().optional(),
         // COMPAT(terminalSizeOwnership): added in v0.2.6, remove gate after 2027-02-02.
@@ -6491,6 +6519,28 @@ export const CaptureTerminalResponseSchema = z.object({
   }),
 });
 
+export const TerminalClipboardWriteImageResponseSchema = z.object({
+  type: z.literal("terminal.clipboard.write_image.response"),
+  payload: z.object({
+    requestId: z.string(),
+    success: z.boolean(),
+    injected: z.boolean().optional(),
+    error: z.string().nullable(),
+    errorCode: z
+      .enum([
+        "disk_full",
+        "quota_exceeded",
+        "terminal_closed",
+        "unsupported_mode",
+        "invalid_image",
+        "upload_failed",
+      ])
+      .optional(),
+    // Retained for wire compatibility with older clipboard/path hosts.
+    path: z.string().optional(),
+  }),
+});
+
 export const TerminalStreamExitSchema = z.object({
   type: z.literal("terminal_stream_exit"),
   payload: z.object({
@@ -7044,6 +7094,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SubscribeTerminalResponseSchema,
   KillTerminalResponseSchema,
   CaptureTerminalResponseSchema,
+  TerminalClipboardWriteImageResponseSchema,
+  TerminalClipboardCancelImageResponseSchema,
   TerminalStreamExitSchema,
   TerminalAttentionRequiredSchema,
   ChatCreateResponseSchema,
@@ -7519,6 +7571,12 @@ export type KillTerminalRequest = z.infer<typeof KillTerminalRequestSchema>;
 export type KillTerminalResponse = z.infer<typeof KillTerminalResponseSchema>;
 export type CaptureTerminalRequest = z.infer<typeof CaptureTerminalRequestSchema>;
 export type CaptureTerminalResponse = z.infer<typeof CaptureTerminalResponseSchema>;
+export type TerminalClipboardWriteImageRequest = z.infer<
+  typeof TerminalClipboardWriteImageRequestSchema
+>;
+export type TerminalClipboardWriteImageResponse = z.infer<
+  typeof TerminalClipboardWriteImageResponseSchema
+>;
 export type TerminalStreamExit = z.infer<typeof TerminalStreamExitSchema>;
 
 // ============================================================================

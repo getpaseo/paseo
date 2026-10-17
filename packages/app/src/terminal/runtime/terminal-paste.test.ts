@@ -3,15 +3,15 @@ import { describe, expect, it } from "vitest";
 import { encodeTerminalPaste, pasteTerminalClipboard } from "./terminal-paste";
 
 describe("terminal paste encoding", () => {
-  it("sends pasted text unchanged when bracketed paste mode is off", () => {
+  it("normalizes pasted newlines when bracketed paste mode is off", () => {
     expect(encodeTerminalPaste({ text: "echo hello\n", bracketedPaste: false })).toEqual(
-      "echo hello\n",
+      "echo hello\r",
     );
   });
 
   it("wraps pasted text when bracketed paste mode is on", () => {
     expect(encodeTerminalPaste({ text: "echo hello\n", bracketedPaste: true })).toEqual(
-      "\x1b[200~echo hello\n\x1b[201~",
+      "\x1b[200~echo hello\r\x1b[201~",
     );
   });
 
@@ -21,8 +21,18 @@ describe("terminal paste encoding", () => {
         text: "echo safe\x1b[201~echo unsafe\n",
         bracketedPaste: true,
       }),
-    ).toEqual("\x1b[200~echo safe[201~echo unsafe\n\x1b[201~");
+    ).toEqual("\x1b[200~echo safe[201~echo unsafe\r\x1b[201~");
   });
+
+  it.each([false, true])(
+    "normalizes LF and CRLF, preserving CR (bracketed=%s)",
+    (bracketedPaste) => {
+      const result = encodeTerminalPaste({ text: "one\ntwo\r\nthree\rfour", bracketedPaste });
+      expect(result).toBe(
+        bracketedPaste ? "\x1b[200~one\rtwo\rthree\rfour\x1b[201~" : "one\rtwo\rthree\rfour",
+      );
+    },
+  );
 
   it("reads clipboard through the explicit paste adapter", async () => {
     const pasted: string[] = [];

@@ -7843,3 +7843,45 @@ test("measures an outbound message in UTF-8 bytes against the daemon's message l
   expect(mock.sent).toHaveLength(1);
   expect(client.getConnectionState().status).toBe("connected");
 });
+
+test("image upload maps safe errors and cancellation targets only its request", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_image_test",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  mock.triggerOpen({ features: { terminalImagePasteSequencing: true } });
+  await connected;
+  const abort = new AbortController();
+  const upload = client.writeTerminalClipboardImage(
+    { terminalId: "terminal-a", data: "iVBORw0KGgo=", mimeType: "image/png", signal: abort.signal },
+    "image-request",
+  );
+  await expect.poll(() => mock.sent.length).toBe(1);
+  expect(parseSentFrame(mock.sent[0])).toMatchObject({
+    type: "terminal.clipboard.write_image.request",
+    requestId: "image-request",
+    terminalId: "terminal-a",
+  });
+  abort.abort();
+  expect(parseSentFrame(mock.sent[1])).toMatchObject({
+    type: "terminal.clipboard.cancel_image.request",
+    targetRequestId: "image-request",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "terminal.clipboard.write_image.response",
+      payload: {
+        requestId: "image-request",
+        success: false,
+        error: "Unable to paste image",
+        errorCode: "disk_full",
+      },
+    }),
+  );
+  expect(await upload).toMatchObject({ success: false, errorCode: "disk_full" });
+});

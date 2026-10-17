@@ -1,3 +1,4 @@
+import { TerminalImageError } from "@getpaseo/protocol/terminal-image-error";
 import * as pty from "node-pty";
 import xterm, { type Terminal as TerminalType } from "@xterm/headless";
 import { randomUUID } from "crypto";
@@ -11,7 +12,15 @@ import {
   statSync,
 } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
-import { basename, delimiter, dirname, extname, join, resolve as resolvePath } from "node:path";
+import {
+  basename,
+  delimiter,
+  dirname,
+  extname,
+  join,
+  resolve as resolvePath,
+  win32,
+} from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
@@ -104,6 +113,7 @@ export interface TerminalSession {
   cwd: string;
   workspaceId: string;
   send(msg: ClientMessage): void;
+  paste(text: string): Promise<void>;
   subscribe(listener: (msg: ServerMessage) => void, options?: TerminalSubscribeOptions): () => void;
   onExit(listener: (info: TerminalExitInfo) => void): () => void;
   onCommandFinished(listener: (info: TerminalCommandFinishedInfo) => void): () => void;
@@ -930,6 +940,7 @@ export interface AssertTerminalCommandCanStartInput {
   cwd: string;
   env: Record<string, string>;
   platform?: NodeJS.Platform;
+  exists?: (path: string) => boolean;
 }
 
 // node-pty spawns directly through execve on POSIX, with no shell, so a command
@@ -945,7 +956,14 @@ export async function assertTerminalCommandCanStart(
 ): Promise<void> {
   const { command, cwd, env } = input;
   const platform = input.platform ?? process.platform;
-  if (command === undefined || platform === "win32") {
+  if (command === undefined) return;
+  if (platform === "win32") {
+    // Validate the resolved launch path, after PATHEXT/shim handling. Bare and
+    // relative commands still belong to node-pty. Only absence is conclusive;
+    // other launch failures must retain the worker's uncertain reservation.
+    if (win32.isAbsolute(command) && !(input.exists ?? existsSync)(command)) {
+      throw new TerminalCommandNotFoundError(command);
+    }
     return;
   }
 
@@ -964,6 +982,14 @@ export async function assertTerminalCommandCanStart(
   });
   if (!resolved) {
     throw new TerminalCommandNotFoundError(command);
+  }
+}
+
+/** Validation failed before calling node-pty; no child can complete this attempt later. */
+export class TerminalStartError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : "Terminal validation failed", { cause });
+    this.name = "TerminalStartError";
   }
 }
 
@@ -1022,20 +1048,38 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
 
   ensureNodePtySpawnHelperExecutableForCurrentPlatform();
 
-  // Create PTY
-  const { command: spawnCommand, args: spawnArgs } = command
-    ? await resolveTerminalSpawnCommand(command, args)
-    : { command: resolvedShell, args: [] as string[] };
-  const terminalEnv = buildTerminalEnvironment({
-    shell: spawnCommand,
-    env: {
-      ...env,
-      ...activityEnv,
-      PASEO_WORKSPACE_ID: workspaceId,
-    },
-  });
+  // Only pre-spawn validation is a confirmed failure. Errors from node-pty or
+  // later setup can leave a process alive and must keep its files protected.
+  const {
+    command: spawnCommand,
+    args: spawnArgs,
+    terminalEnv,
+  } = await (async () => {
+    try {
+      const spawn = command
+        ? await resolveTerminalSpawnCommand(command, args)
+        : { command: resolvedShell, args: [] as string[] };
+      const preparedEnv = buildTerminalEnvironment({
+        shell: spawn.command,
+        env: {
+          ...env,
+          ...activityEnv,
+          PASEO_WORKSPACE_ID: workspaceId,
+        },
+      });
 
-  await assertTerminalCommandCanStart({ command, cwd, env: terminalEnv });
+      await assertTerminalCommandCanStart({
+        command: process.platform === "win32" ? spawn.command : command,
+        cwd,
+        env: preparedEnv,
+      });
+
+      return { ...spawn, terminalEnv: preparedEnv };
+    } catch (error) {
+      terminal.dispose();
+      throw new TerminalStartError(error);
+    }
+  })();
 
   const ptyProcess = pty.spawn(spawnCommand, spawnArgs, {
     name: "xterm-256color",
@@ -1392,6 +1436,21 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     });
   }
 
+  async function paste(text: string): Promise<void> {
+    if (killed || disposed || exitInfo) {
+      throw new TerminalImageError(
+        "terminal_closed",
+        "Terminal closed before image paste completed",
+      );
+    }
+    if (!inputModeTracker.getState().bracketedPaste) {
+      throw new TerminalImageError("unsupported_mode", "Terminal stopped accepting file paste");
+    }
+    // Keep the check and PTY write in the same turn, after earlier queued input.
+    flushPendingInput();
+    writeInputToPty(`\x1b[200~${text}\x1b[201~`);
+  }
+
   function send(msg: ClientMessage): void {
     if (killed) return;
 
@@ -1628,6 +1687,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     cwd,
     workspaceId,
     send,
+    paste,
     subscribe,
     onExit,
     onCommandFinished,

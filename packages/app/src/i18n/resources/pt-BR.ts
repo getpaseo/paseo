@@ -619,6 +619,15 @@ export const ptBR: TranslationResources = {
       hostDisconnected: "Host não está conectado",
       updateHost: "Atualize o host para usar o renderizador de terminal nativo.",
       unableToSubscribe: "Não foi possível assinar o terminal",
+      pasteImageFailed: "Falha ao colar a imagem",
+      pasteImageDiskFull: "O disco do host está cheio. Libere espaço e cole novamente.",
+      pasteImageQuota:
+        "O limite de imagens do terminal foi atingido. Feche terminais sem uso ou aguarde as imagens retidas expirarem.",
+      pasteImageClosed: "Este terminal foi fechado. Abra um terminal e cole novamente.",
+      pasteImageUnsupported: "Este programa não aceita colar arquivos de imagem.",
+      pasteImageInvalid: "Use uma imagem PNG ou JPEG menor que 10 MiB.",
+      pasteImageInputHeld:
+        "A colagem não foi concluída. Enter não foi enviado; confira o texto antes de pressioná-lo novamente.",
     },
     sheet: {
       openAsTab: "Abrir como aba",

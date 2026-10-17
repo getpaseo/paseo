@@ -5814,3 +5814,123 @@ test("provider snapshots preserve versionless visibility while capabilities upda
   ]);
   expect(references.compactSnapshot!.entries[0]!.modes![0]!.icon).toBe("ShieldCheck");
 });
+
+test("legacy image requests fail explicitly without changing the host clipboard", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({ messages });
+  await session.handleMessage({
+    type: "terminal.clipboard.write_image.request",
+    requestId: "legacy-image",
+    data: "iVBORw0KGgo=",
+    mimeType: "image/png",
+  });
+  expect(messages).toEqual([
+    {
+      type: "terminal.clipboard.write_image.response",
+      payload: {
+        requestId: "legacy-image",
+        success: false,
+        error: "Unable to paste image",
+        errorCode: "terminal_closed",
+      },
+    },
+  ]);
+});
+
+for (const { cancellation, expectedResults } of [
+  { cancellation: "request", expectedResults: [false, true] },
+  { cancellation: "disconnect", expectedResults: [true] },
+] as const) {
+  test(`image ${cancellation} is scoped to the originating client, including duplicate request IDs`, async () => {
+    const { createWorkerTerminalManager } = await import("../terminal/worker-terminal-manager.js");
+    const { getTerminalImageStore } = await import("./host-clipboard.js");
+    const root = mkdtempSync(join(tmpdir(), "image-session-"));
+    const manager = createWorkerTerminalManager();
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const reading = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const gatedManager = {
+      ...manager,
+      getTerminalState: async (...args: Parameters<typeof manager.getTerminalState>) => {
+        entered();
+        await gate;
+        return manager.getTerminalState(...args);
+      },
+    };
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      paseoHome: root,
+      terminalManager: gatedManager,
+    });
+    const a = {};
+    const b = {};
+    session.updateClientCapabilities({}, a);
+    session.updateClientCapabilities({}, b);
+    try {
+      const terminal = await manager.createTerminal({
+        cwd: root,
+        workspaceId: "image-session",
+        command: process.execPath,
+        args: [
+          "-e",
+          "process.stdin.setRawMode(true); process.stdout.write('\\x1b[?2004hREADY'); process.stdin.on('data',()=>{});",
+        ],
+      });
+      await expect
+        .poll(async () => (await manager.getTerminalState(terminal.id))?.replayPreamble)
+        .toContain("?2004h");
+      const request = {
+        type: "terminal.clipboard.write_image.request" as const,
+        requestId: "same-id",
+        terminalId: terminal.id,
+        data: "iVBORw0KGgo=",
+        mimeType: "image/png" as const,
+      };
+      const first = session.handleMessage(request, a);
+      await reading;
+      await session.handleMessage(
+        {
+          type: "terminal.clipboard.cancel_image.request",
+          requestId: "wrong-source",
+          targetRequestId: "same-id",
+        },
+        b,
+      );
+      expect(findByType(messages, "terminal.clipboard.cancel_image.response")?.payload).toEqual({
+        requestId: "wrong-source",
+        success: false,
+      });
+      const second = session.handleMessage(request, b);
+      if (cancellation === "request") {
+        await session.handleMessage(
+          {
+            type: "terminal.clipboard.cancel_image.request",
+            requestId: "cancel-own",
+            targetRequestId: "same-id",
+          },
+          a,
+        );
+      } else {
+        session.clearAgentTimelineSubscription(a);
+      }
+      release();
+      await Promise.all([first, second]);
+      const results = messages.filter(
+        (message) => message.type === "terminal.clipboard.write_image.response",
+      );
+      expect(results.map((message) => message.payload.success)).toEqual(expectedResults);
+      await terminal.killAndWait({ gracefulTimeoutMs: 100, forceTimeoutMs: 500 });
+    } finally {
+      release();
+      manager.killAll();
+      await getTerminalImageStore(root, gatedManager).stop();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}

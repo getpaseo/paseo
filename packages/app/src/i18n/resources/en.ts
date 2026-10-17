@@ -611,6 +611,15 @@ export const en = {
       hostDisconnected: "Host is not connected",
       updateHost: "Update the host to use the native terminal renderer.",
       unableToSubscribe: "Unable to subscribe to terminal",
+      pasteImageFailed: "Failed to paste image",
+      pasteImageDiskFull: "Host disk is full. Free space and paste again.",
+      pasteImageQuota:
+        "Terminal image storage limit reached. Close unused terminals or wait for retained images to expire.",
+      pasteImageClosed: "This terminal has closed. Open a terminal and paste again.",
+      pasteImageUnsupported: "This program does not accept image file pastes.",
+      pasteImageInvalid: "Use a PNG or JPEG image smaller than 10 MiB.",
+      pasteImageInputHeld:
+        "Paste did not finish. Queued Enter was not sent; check the prompt before pressing Enter again.",
     },
     sheet: {
       openAsTab: "Open as tab",

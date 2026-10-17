@@ -7,6 +7,8 @@ interface Message {
   streamKey?: string;
   result?: { resultCount: number; resultIndex: number };
   data?: string;
+  requestId?: number;
+  mimeType?: string;
 }
 interface TerminalFrameWindow extends Window {
   __PASEO_TERMINAL_WEBVIEW_RECEIVE__(message: unknown): void;
@@ -15,7 +17,7 @@ interface TerminalFrameWindow extends Window {
 let frame: HTMLIFrameElement;
 afterEach(() => frame?.remove());
 
-test("the generated WebView searches its mounted stream and keeps Find commands off the input bridge", async () => {
+async function mountWebView() {
   const messages: Message[] = [];
   frame = document.createElement("iframe");
   frame.style.width = "500px";
@@ -42,6 +44,11 @@ test("the generated WebView searches its mounted stream and keeps Find commands 
   await expect
     .poll(() => messages.some((m) => m.type === "rendererReady" && m.streamKey === "owned"))
     .toBe(true);
+  return { win, send, messages };
+}
+
+test("the generated WebView searches its mounted stream and keeps Find commands off the input bridge", async () => {
+  const { win, send, messages } = await mountWebView();
   send({ type: "writeOutput", text: "first a.b\r\n" + "padding\r\n".repeat(30) + "last A.B" });
   await expect
     .poll(() => {
@@ -71,3 +78,45 @@ test("the generated WebView searches its mounted stream and keeps Find commands 
   expect(messages.filter((m) => m.type === "input")).toEqual([]);
   send({ type: "unmount" });
 });
+
+test.each([
+  { outcome: "injected", expected: ["after-paste"] },
+  { outcome: "error", expected: ["after-paste"] },
+  { outcome: "unsupported", expected: ["\x16", "after-paste"] },
+] as const)(
+  "the generated WebView transfers image bytes and handles $outcome without duplicate input",
+  async ({ outcome, expected }) => {
+    const { win, send, messages } = await mountWebView();
+    send({ type: "rawInput", streamKey: "stale", data: "wrong" });
+    send({ type: "rawInput", data: "\x16" });
+    expect(
+      messages.filter((message) => message.type === "input").map((message) => message.data),
+    ).toEqual(["\x16"]);
+    messages.length = 0;
+    const data = new DataTransfer();
+    const bytes = new Uint8Array([137, 80, 78, 71]);
+    data.items.add(new File([bytes], "image.png", { type: "image/png" }));
+    win.document
+      .querySelector(".xterm-helper-textarea")!
+      .dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }),
+      );
+    await expect
+      .poll(() => messages.find((message) => message.type === "imagePaste"))
+      .toMatchObject({
+        streamKey: "owned",
+        data: "iVBORw==",
+        mimeType: "image/png",
+      });
+    const request = messages.find((message) => message.type === "imagePaste")!;
+    send({ type: "imagePasteResult", requestId: request.requestId, outcome });
+    // A queued input is an observable completion boundary, without counting microtasks.
+    send({ type: "rawInput", data: "after-paste" });
+    await expect
+      .poll(() =>
+        messages.filter((message) => message.type === "input").map((message) => message.data),
+      )
+      .toEqual(expected);
+    send({ type: "unmount" });
+  },
+);

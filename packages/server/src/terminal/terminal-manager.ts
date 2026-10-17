@@ -1,3 +1,4 @@
+import { TerminalFileLifecycle } from "./terminal-file-lifecycle.js";
 import {
   createTerminal,
   type TerminalActivityTransition,
@@ -50,6 +51,7 @@ export type TerminalWorkspaceContributionChangedListener = (
 ) => void;
 
 export interface TerminalManager {
+  readonly fileLifecycle?: TerminalFileLifecycle;
   getTerminals(cwd: string, options?: { workspaceId?: string }): Promise<TerminalSession[]>;
   createTerminal(options: {
     id?: string;
@@ -104,6 +106,7 @@ function createActivityToken(): string {
 export function createTerminalManager(
   managerOptions: TerminalManagerOptions = {},
 ): TerminalManager {
+  const fileLifecycle = new TerminalFileLifecycle();
   const terminalsByCwd = new Map<string, TerminalSession[]>();
   const terminalsById = new Map<string, TerminalSession>();
   const terminalExitUnsubscribeById = new Map<string, () => void>();
@@ -188,6 +191,8 @@ export function createTerminalManager(
 
   function registerSession(session: TerminalSession): TerminalSession {
     terminalsById.set(session.id, session);
+    // Keep this listener through explicit removal: only actual PTY exit retires files.
+    session.onExit(() => fileLifecycle.end(session.id));
     const unsubscribeExit = session.onExit(() => {
       removeSessionById(session.id, { kill: false });
     });
@@ -283,6 +288,7 @@ export function createTerminalManager(
   }
 
   return {
+    fileLifecycle,
     async getTerminals(
       cwd: string,
       options?: { workspaceId?: string },
@@ -330,6 +336,8 @@ export function createTerminalManager(
       const mergedEnv =
         inheritedEnv || options.env ? { ...inheritedEnv, ...options.env } : undefined;
       const terminalId = options.id ?? randomUUID();
+      const retiring = fileLifecycle.begin(terminalId);
+      if (retiring) await retiring;
       const activityToken = options.activityToken ?? createActivityToken();
       const terminalActivityUrl =
         options.activityUrl === undefined
@@ -360,6 +368,7 @@ export function createTerminalManager(
         );
       } catch (error) {
         terminalActivityTokenById.delete(terminalId);
+        fileLifecycle.end(terminalId);
         throw error;
       }
 

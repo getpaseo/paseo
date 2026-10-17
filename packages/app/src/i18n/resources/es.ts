@@ -620,6 +620,15 @@ export const es: TranslationResources = {
       hostDisconnected: "Hostno está conectado",
       updateHost: "Actualiza el host para usar el renderizador de terminal nativo.",
       unableToSubscribe: "No se puede suscribir al terminal",
+      pasteImageFailed: "No se pudo pegar la imagen",
+      pasteImageDiskFull: "El disco del host está lleno. Libera espacio y vuelve a pegar.",
+      pasteImageQuota:
+        "Se alcanzó el límite de imágenes del terminal. Cierra terminales sin usar o espera a que caduquen las imágenes guardadas.",
+      pasteImageClosed: "Este terminal se ha cerrado. Abre otro y vuelve a pegar.",
+      pasteImageUnsupported: "Este programa no admite pegar archivos de imagen.",
+      pasteImageInvalid: "Usa una imagen PNG o JPEG de menos de 10 MiB.",
+      pasteImageInputHeld:
+        "No se completó el pegado. No se envió Enter; revisa el texto antes de pulsarlo de nuevo.",
     },
     sheet: {
       openAsTab: "Abrir como pestaña",

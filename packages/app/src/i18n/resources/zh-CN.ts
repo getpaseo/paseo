@@ -614,6 +614,13 @@ export const zhCN: TranslationResources = {
       hostDisconnected: "Host 未连接",
       updateHost: "请更新主机以使用原生终端渲染器。",
       unableToSubscribe: "无法订阅 Terminal",
+      pasteImageFailed: "粘贴图片失败",
+      pasteImageDiskFull: "主机磁盘已满。请释放空间后重新粘贴。",
+      pasteImageQuota: "已达到终端图片存储上限。请关闭未使用的终端或等待保留的图片过期。",
+      pasteImageClosed: "此终端已关闭。请打开终端后重新粘贴。",
+      pasteImageUnsupported: "此程序不支持粘贴图片文件。",
+      pasteImageInvalid: "请使用小于 10 MiB 的 PNG 或 JPEG 图片。",
+      pasteImageInputHeld: "粘贴未完成。排队的回车未发送，请检查输入内容后再按回车。",
     },
     sheet: {
       openAsTab: "作为标签页打开",

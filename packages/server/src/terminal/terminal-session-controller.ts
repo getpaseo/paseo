@@ -1,3 +1,4 @@
+import { terminalImageInput } from "./terminal-image-input.js";
 import type pino from "pino";
 import type {
   OwnedSubscription,
@@ -254,7 +255,7 @@ export class TerminalSessionController {
         if (!text) {
           return;
         }
-        terminal.send({ type: "input", data: text });
+        terminalImageInput(terminal).input(text, (data) => terminal.send({ type: "input", data }));
         return;
       }
 
@@ -761,7 +762,13 @@ export class TerminalSessionController {
       return;
     }
 
-    session.send(msg.message);
+    if (msg.message.type === "input") {
+      terminalImageInput(session).input(msg.message.data, (data) =>
+        session.send({ type: "input", data }),
+      );
+    } else {
+      session.send(msg.message);
+    }
   }
 
   private killTracked(terminalId: string, options?: { emitExit: boolean }): void {

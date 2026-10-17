@@ -1,3 +1,5 @@
+import { TerminalImageError } from "@getpaseo/protocol/terminal-image-error";
+import { TerminalFileLifecycle } from "./terminal-file-lifecycle.js";
 import { fileURLToPath } from "node:url";
 import { fork } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -85,6 +87,7 @@ interface TerminalWorkerProcess {
   send(message: TerminalWorkerRequest, callback: (error: Error | null) => void): boolean;
   disconnect(): void;
   kill(): boolean;
+  on(event: "disconnect", listener: () => void): this;
   on(event: "message", listener: (message: TerminalWorkerToParentMessage) => void): this;
   on(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
 }
@@ -150,9 +153,19 @@ function forkTerminalWorker(): TerminalWorkerProcess {
 export function createWorkerTerminalManager(
   managerOptions: WorkerTerminalManagerOptions = {},
 ): TerminalManager {
+  const fileLifecycle = new TerminalFileLifecycle();
   const worker = managerOptions.forkWorker ? managerOptions.forkWorker() : forkTerminalWorker();
   const requestTimeoutMs = managerOptions.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
   const pendingRequests = new Map<string, PendingRequest>();
+  // Outlive request timeouts: a late authoritative failure can still release
+  // its own reservation, without touching a retry or an existing live session.
+  const creationReservations = new Map<string, string>();
+  function releaseCreation(requestId: string): void {
+    const terminalId = creationReservations.get(requestId);
+    if (terminalId === undefined) return;
+    creationReservations.delete(requestId);
+    fileLifecycle.end(terminalId);
+  }
   const recordsById = new Map<string, WorkerTerminalRecord>();
   const terminalIdsByCwd = new Map<string, Set<string>>();
   const terminalActivityTokenById = new Map<string, string>();
@@ -268,6 +281,15 @@ export function createWorkerTerminalManager(
           };
         }
         sendBestEffortRequest({ type: "send", terminalId: record.info.id, message });
+      },
+      async paste(text: string): Promise<void> {
+        if (recordsById.get(record.info.id) !== record || record.exitInfo) {
+          throw new TerminalImageError(
+            "terminal_closed",
+            "Terminal closed before image paste completed",
+          );
+        }
+        await sendRequest({ type: "paste", terminalId: record.info.id, text });
       },
       subscribe(
         listener: (msg: ServerMessage) => void,
@@ -408,6 +430,7 @@ export function createWorkerTerminalManager(
       return undefined;
     }
     recordsById.delete(terminalId);
+    fileLifecycle.end(terminalId);
     terminalActivityTokenById.delete(terminalId);
     const terminalIds = terminalIdsByCwd.get(record.info.cwd);
     if (terminalIds) {
@@ -545,6 +568,8 @@ export function createWorkerTerminalManager(
   function handleWorkerEvent(message: TerminalWorkerToParentMessage): void {
     switch (message.type) {
       case "terminalCreated": {
+        if (message.requestId) creationReservations.delete(message.requestId);
+        fileLifecycle.created(message.terminal.id);
         const session = registerRecord({
           info: asRequiredWorkerTerminalInfo(message.terminal),
           state: message.state,
@@ -597,6 +622,8 @@ export function createWorkerTerminalManager(
 
   worker.on("message", (message: TerminalWorkerToParentMessage) => {
     if (isResponse(message)) {
+      if (!message.ok && message.terminalCreationFailed) releaseCreation(message.requestId);
+      if (message.ok) creationReservations.delete(message.requestId);
       const pending = pendingRequests.get(message.requestId);
       if (!pending) {
         return;
@@ -606,15 +633,23 @@ export function createWorkerTerminalManager(
       if (message.ok) {
         pending.resolve(message.result);
       } else {
-        pending.reject(new Error(message.error));
+        pending.reject(
+          message.imageErrorCode
+            ? new TerminalImageError(message.imageErrorCode, message.error)
+            : new Error(message.error),
+        );
       }
       return;
     }
     handleWorkerEvent(message);
   });
 
+  worker.on("disconnect", () => fileLifecycle.unavailable());
+
   worker.on("exit", (code, signal) => {
     workerExited = true;
+    creationReservations.clear();
+    fileLifecycle.unavailable();
     if (workerShutdownTimer) {
       clearTimeout(workerShutdownTimer);
       workerShutdownTimer = null;
@@ -622,11 +657,13 @@ export function createWorkerTerminalManager(
     rejectPendingRequests(new Error(`Terminal worker exited (${signal ?? code ?? "unknown"})`));
   });
 
-  function sendRequest(input: TerminalWorkerRequestInput): Promise<unknown> {
+  function sendRequest(
+    input: TerminalWorkerRequestInput,
+    requestId = randomUUID(),
+  ): Promise<unknown> {
     if (workerExited || !worker.connected) {
       return Promise.reject(new Error("Terminal worker is not running"));
     }
-    const requestId = randomUUID();
     const message = { ...input, requestId } as TerminalWorkerRequest;
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -654,6 +691,7 @@ export function createWorkerTerminalManager(
   }
 
   return {
+    fileLifecycle,
     async getTerminals(
       cwd: string,
       options?: { workspaceId?: string },
@@ -690,30 +728,43 @@ export function createWorkerTerminalManager(
       options: WorkerCreateTerminalOptions & { workspaceId: string },
     ): Promise<TerminalSession> {
       const terminalId = options.id ?? randomUUID();
-      const activityToken = createActivityToken();
-      const terminalActivityUrl = managerOptions.getTerminalActivityUrl?.() ?? null;
-      terminalActivityTokenById.set(terminalId, activityToken);
+      const requestId = randomUUID();
+      const retiring = fileLifecycle.begin(terminalId);
+      creationReservations.set(requestId, terminalId);
       const creation = { session: null as TerminalSession | null };
-      pendingCreationsById.set(terminalId, creation);
+      let dispatched = false;
       try {
-        await sendRequest({
-          type: "createTerminal",
-          options: {
-            ...options,
-            id: terminalId,
-            activityToken,
-            activityUrl: terminalActivityUrl,
+        if (retiring) await retiring;
+        const activityToken = createActivityToken();
+        const terminalActivityUrl = managerOptions.getTerminalActivityUrl?.() ?? null;
+        terminalActivityTokenById.set(terminalId, activityToken);
+        pendingCreationsById.set(terminalId, creation);
+        // Once dispatched, only an authoritative worker outcome may retire the
+        // reservation. Timeout, IPC errors and post-spawn errors are ambiguous.
+        dispatched = true;
+        await sendRequest(
+          {
+            type: "createTerminal",
+            options: {
+              ...options,
+              id: terminalId,
+              activityToken,
+              activityUrl: terminalActivityUrl,
+            },
           },
-        });
+          requestId,
+        );
         if (!creation.session) {
           throw new Error("Terminal worker completed creation without a terminalCreated event");
         }
         return creation.session;
       } catch (error) {
+        if (!dispatched) releaseCreation(requestId);
         terminalActivityTokenById.delete(terminalId);
         throw error;
       } finally {
-        pendingCreationsById.delete(terminalId);
+        if (pendingCreationsById.get(terminalId) === creation)
+          pendingCreationsById.delete(terminalId);
       }
     },
 
@@ -820,6 +871,7 @@ export function createWorkerTerminalManager(
     },
 
     killAll(): void {
+      fileLifecycle.unavailable();
       void sendRequest({ type: "killAll" })
         .catch(() => {
           // no-op

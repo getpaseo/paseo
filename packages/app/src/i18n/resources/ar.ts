@@ -614,6 +614,14 @@ export const ar: TranslationResources = {
       hostDisconnected: "Host غير متصل",
       updateHost: "حدّث المضيف لاستخدام عارض الطرفية الأصلي.",
       unableToSubscribe: "غير قادر على الاشتراك في المحطة",
+      pasteImageFailed: "تعذر لصق الصورة",
+      pasteImageDiskFull: "قرص المضيف ممتلئ. حرّر مساحة ثم الصق مجددًا.",
+      pasteImageQuota:
+        "تم بلوغ حد تخزين صور الطرفية. أغلق الطرفيات غير المستخدمة أو انتظر انتهاء مدة الاحتفاظ بالصور.",
+      pasteImageClosed: "أُغلقت هذه الطرفية. افتح طرفية والصق مجددًا.",
+      pasteImageUnsupported: "هذا البرنامج لا يدعم لصق ملفات الصور.",
+      pasteImageInvalid: "استخدم صورة PNG أو JPEG أصغر من 10 MiB.",
+      pasteImageInputHeld: "لم يكتمل اللصق. لم يُرسل Enter؛ راجع النص قبل الضغط عليه مجددًا.",
     },
     sheet: {
       openAsTab: "فتح كعلامة تبويب",
