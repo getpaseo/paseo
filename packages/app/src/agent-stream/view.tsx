@@ -1532,11 +1532,17 @@ function PermissionRequestCard({
   );
 
   if (request.kind === "question") {
+    const responseFailed =
+      permissionMutation.isError &&
+      permissionMutation.variables?.agentId === permission.agentId &&
+      permissionMutation.variables?.requestId === permission.request.id;
+    const responseError = responseFailed ? t("message.question.responseFailed") : null;
     return (
       <QuestionFormCard
         permission={permission}
         onRespond={handleResponse}
         isResponding={isResponding}
+        responseError={responseError}
       />
     );
   }
