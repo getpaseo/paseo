@@ -386,6 +386,46 @@ export type Value = string;`,
     },
   );
 
+  it.each([
+    { name: "import 'node' with Node types installed", source: 'import "node";', nodeTypes: true },
+    { name: "import 'node' without Node types", source: 'import "node";', nodeTypes: false },
+    {
+      name: "a node: builtin unknown to the host",
+      source: 'import type { Future } from "node:paseo-future-builtin";',
+      nodeTypes: false,
+    },
+  ])("treats Node declarations as host types in server dependencies: $name", async (fixture) => {
+    const entries = await createSplitPlugin();
+    const dependency = path.join(entries.directory, "node_modules/image-codec");
+    await mkdir(dependency, { recursive: true });
+    await writeFile(
+      path.join(dependency, "package.json"),
+      JSON.stringify({ name: "image-codec", main: "index.js", types: "index.d.ts" }),
+    );
+    await writeFile(path.join(dependency, "index.js"), 'module.exports = "decoded";');
+    await writeFile(
+      path.join(dependency, "index.d.ts"),
+      `${fixture.source}\ndeclare const value: string;\nexport = value;`,
+    );
+    if (fixture.nodeTypes) {
+      const nodeTypes = path.join(entries.directory, "node_modules/@types/node");
+      await mkdir(nodeTypes, { recursive: true });
+      await writeFile(
+        path.join(nodeTypes, "package.json"),
+        JSON.stringify({ name: "@types/node", types: "index.d.ts" }),
+      );
+      await writeFile(
+        path.join(nodeTypes, "index.d.ts"),
+        'declare module "node:paseo-future-builtin" { export * from "node:stream"; }\nimport type { Future } from "node:paseo-future-builtin";',
+      );
+    }
+    await writeFile(entries.server, 'import value from "image-codec"; export default value;');
+
+    await expect(compilePlugin({ client: null, server: entries.server })).resolves.toMatchObject({
+      serverBundle: expect.stringContaining("decoded"),
+    });
+  });
+
   it("checks the physical owner of type-only symlinks", async () => {
     const entries = await createSplitPlugin();
     await writeFile(

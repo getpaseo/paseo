@@ -92,6 +92,18 @@ function containsPath(directory: string, filePath: string): boolean {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
+// @types/node can declare builtins newer than the host Node (node:stream/iter on Node 24).
+function isNodeSpecifier(specifier: string): boolean {
+  return isBuiltin(specifier) || specifier.startsWith("node:") || specifier === "@types/node";
+}
+
+function declaredPackage(specifier: string, kind: PluginImportKind, typeOnly: boolean): string {
+  if (kind === "type-reference") return `@types/${specifier.replace(/^@/, "").replace("/", "__")}`;
+  // Declarations load Node's ambient types with `import "node"`.
+  if (typeOnly && specifier === "node") return "@types/node";
+  return specifier;
+}
+
 function dependencyName(specifier: string): string {
   const segments = specifier.split("/");
   return specifier.startsWith("@") ? segments.slice(0, 2).join("/") : segments[0];
@@ -236,10 +248,7 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
         if (checked.has(key) || !/\.[cm]?[jt]sx?$/.test(file)) return null;
         checked.add(key);
         for (const { specifier, kind, typeOnly } of imports.read(file)) {
-          const packageSpecifier =
-            kind === "type-reference"
-              ? `@types/${specifier.replace(/^@/, "").replace("/", "__")}`
-              : specifier;
+          const packageSpecifier = declaredPackage(specifier, kind, typeOnly);
           const error =
             runtimeSpecifierError(specifier, owner, file) ??
             runtimeSpecifierError(packageSpecifier, owner, file) ??
@@ -253,7 +262,7 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
           if (
             (PLUGIN_SDK_SPECIFIERS as readonly string[]).includes(specifier) ||
             /^(zod|react|react-native|@tanstack\/react-query)(\/|$)/.test(specifier) ||
-            isBuiltin(specifier) ||
+            isNodeSpecifier(specifier) ||
             packageSpecifier === "@types/node"
           )
             continue;
@@ -328,8 +337,7 @@ function runtimeSpecifierError(
     !(PLUGIN_SDK_SPECIFIERS as readonly string[]).includes(specifier)
   )
     kind = "Unknown SDK";
-  else if (target !== "server" && (isBuiltin(specifier) || specifier === "@types/node"))
-    kind = "Node";
+  else if (target !== "server" && isNodeSpecifier(specifier)) kind = "Node";
   else if (target !== "server" && isPluginServerOnlySdkSpecifier(specifier)) kind = "server-only";
   else if (
     target !== "client" &&
