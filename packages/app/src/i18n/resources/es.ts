@@ -1322,6 +1322,7 @@ export const es: TranslationResources = {
         pending: "Pendientes: {{count}}",
       },
       actions: {
+        changeRoot: "Cambiar carpeta del espacio de trabajo",
         menu: "AccionesWorkspace",
         newWorkspace: "Nuevo espacio de trabajo",
         showMore: "Mostrar más",
@@ -1344,6 +1345,10 @@ export const es: TranslationResources = {
           '¿Ocultar "{{workspaceName}}" de la barra lateral?\n\nLos archivos en el disco no se cambiarán.',
         hideConfirm: "Esconder",
         cancel: "Cancelar",
+      },
+      root: {
+        title: "Cambiar carpeta del espacio de trabajo",
+        submit: "Cambiar carpeta",
       },
       rename: {
         title: "Cambiar nombre del espacio de trabajo",

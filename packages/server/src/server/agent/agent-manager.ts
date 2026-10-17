@@ -755,6 +755,7 @@ export class AgentManager {
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
+  private readonly changingWorkspaceRoots = new Set<string>();
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
   private readonly reloadedSessionCloses = new WeakMap<AgentSession, Promise<void>>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
@@ -1280,6 +1281,7 @@ export class AgentManager {
     options: CreateAgentOptions,
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
+    this.assertWorkspaceRootStable(options.workspaceId);
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
     if (this.pluginLifecycle && !config.internal) {
       const request = await this.pluginLifecycle.before("agent.create", {
@@ -1385,6 +1387,7 @@ export class AgentManager {
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
+    this.assertWorkspaceRootStable(options?.workspaceId);
     const resolvedAgentId = validateAgentId(
       agentId ?? this.idFactory(),
       "resumeAgentFromPersistence",
@@ -1551,6 +1554,7 @@ export class AgentManager {
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     let existing = this.requireSessionAgent(agentId);
+    this.assertWorkspaceRootStable(existing.workspaceId);
     if (this.hasInFlightRun(agentId)) {
       await this.cancelAgentRunBefore(agentId, "reload");
       existing = this.requireSessionAgent(agentId);
@@ -1743,6 +1747,76 @@ export class AgentManager {
       ...entry,
       expiresAt: now + RETIRED_INTERNAL_AGENT_TTL_MS,
     });
+  }
+
+  async changeWorkspaceRoot(
+    workspaceId: string,
+    cwd: string,
+    commit: () => Promise<void>,
+  ): Promise<void> {
+    this.assertWorkspaceRootStable(workspaceId);
+    this.changingWorkspaceRoots.add(workspaceId);
+    try {
+      await Promise.resolve();
+      if (this.agentRegistrationTasks.size > 0) {
+        throw new Error("An agent is being loaded. Retry the root change when loading finishes.");
+      }
+      const agents = this.listAgents().filter((agent) => agent.workspaceId === workspaceId);
+      const hasRunningAgents = agents.some(
+        (agent) =>
+          this.hasInFlightRun(agent.id) ||
+          agent.activeTurnId ||
+          this.providerSubagents.list(agent.id).some((child) => child.status === "running"),
+      );
+      if (hasRunningAgents) {
+        throw new Error(
+          "Finish or stop all running agents in this workspace before changing its root.",
+        );
+      }
+      for (const agent of agents) await this.closeAgent(agent.id);
+      await this.flush();
+      const registry = this.requireRegistry();
+      const records = await registry.listByWorkspace(workspaceId);
+      await this.withAgentLifecycleMutations(
+        records.map((record) => record.id),
+        async () => {
+          const currentRecords = await registry.listByWorkspace(workspaceId);
+          const changed: StoredAgentRecord[] = [];
+          try {
+            for (const record of currentRecords) {
+              await registry.upsert({ ...record, cwd });
+              changed.push(record);
+            }
+            await commit();
+          } catch (error) {
+            for (const record of changed) await registry.upsert(record);
+            throw error;
+          }
+          for (const record of currentRecords) {
+            this.dispatchStoredAgentState({ ...record, cwd });
+          }
+        },
+      );
+    } finally {
+      this.changingWorkspaceRoots.delete(workspaceId);
+    }
+  }
+
+  private withAgentLifecycleMutations<T>(
+    agentIds: readonly string[],
+    mutation: () => Promise<T>,
+  ): Promise<T> {
+    const [agentId, ...remainingIds] = agentIds;
+    if (!agentId) return mutation();
+    return this.runLifecycleMutation(agentId, () =>
+      this.withAgentLifecycleMutations(remainingIds, mutation),
+    );
+  }
+
+  private assertWorkspaceRootStable(workspaceId: string | undefined): void {
+    if (workspaceId && this.changingWorkspaceRoots.has(workspaceId)) {
+      throw new Error("The workspace root is being changed. Retry when the change finishes.");
+    }
   }
 
   closeAgent(agentId: string): Promise<void> {
@@ -2588,6 +2662,7 @@ export class AgentManager {
     options?: AgentRunOptions,
   ): AsyncGenerator<AgentStreamEvent> {
     const existingAgent = this.requireSessionAgent(agentId);
+    this.assertWorkspaceRootStable(existingAgent.workspaceId);
     this.logger.trace(
       {
         agentId,
@@ -3616,6 +3691,7 @@ export class AgentManager {
       }
 
       this.assertAcceptingAgentRegistrations();
+      this.assertWorkspaceRootStable(options?.workspaceId);
       this.agents.set(resolvedAgentId, managed);
       registered = true;
       // Initialize previousStatus to track transitions

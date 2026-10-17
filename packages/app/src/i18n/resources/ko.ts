@@ -1293,6 +1293,7 @@ export const ko: TranslationResources = {
         pending: "대기 중: {{count}}개",
       },
       actions: {
+        changeRoot: "워크스페이스 루트 변경",
         menu: "워크스페이스 작업",
         newWorkspace: "새 워크스페이스",
         showMore: "더 보기",
@@ -1315,6 +1316,10 @@ export const ko: TranslationResources = {
           '"{{workspaceName}}"을(를) 사이드바에서 숨길까요?\n\n디스크의 파일은 변경되지 않습니다.',
         hideConfirm: "숨기기",
         cancel: "취소",
+      },
+      root: {
+        title: "워크스페이스 루트 변경",
+        submit: "루트 변경",
       },
       rename: {
         title: "워크스페이스 이름 변경",

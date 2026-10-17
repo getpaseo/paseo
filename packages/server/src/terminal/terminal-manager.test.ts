@@ -61,6 +61,25 @@ it("returns empty list for new cwd", async () => {
   expect(terminals).toHaveLength(0);
 });
 
+it("blocks terminal creation during workspace root changes and releases the lock on failure", async () => {
+  manager = createTerminalManager();
+  const cwd = realpathSync(tmpdir());
+  await expect(
+    manager.withWorkspaceRootChange("ws-root", async () => {
+      await expect(manager.createTerminal({ cwd, workspaceId: "ws-root" })).rejects.toThrow(
+        "The workspace root is being changed",
+      );
+      throw new Error("Root update failed");
+    }),
+  ).rejects.toThrow("Root update failed");
+  const terminal = await manager.createTerminal({ cwd, workspaceId: "ws-root" });
+  await expect(manager.withWorkspaceRootChange("ws-root", async () => {})).rejects.toThrow(
+    "Close all terminals",
+  );
+  await manager.killTerminalAndWait(terminal.id);
+  await manager.withWorkspaceRootChange("ws-root", async () => {});
+});
+
 it("returns existing terminals on subsequent calls", async () => {
   manager = createTerminalManager();
   const cwd = realpathSync(tmpdir());

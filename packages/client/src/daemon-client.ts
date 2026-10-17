@@ -3108,6 +3108,21 @@ export class DaemonClient {
     return { removedWorkspaceIds: payload.removedWorkspaceIds };
   }
 
+  async setProjectRoot(projectId: string, cwd: string): Promise<void> {
+    const payload = await this.sendNamespacedCorrelatedSessionRequest<"project.set_root.response">({
+      message: { type: "project.set_root.request", projectId, cwd },
+    });
+    if (!payload.accepted) throw new Error(payload.error ?? "Project root change rejected");
+  }
+
+  async setWorkspaceRoot(workspaceId: string, cwd: string, projectId?: string): Promise<void> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.set_root.response">({
+        message: { type: "workspace.set_root.request", workspaceId, cwd, projectId },
+      });
+    if (!payload.accepted) throw new Error(payload.error ?? "Workspace root change rejected");
+  }
+
   async setWorkspaceTitle(
     workspaceId: string,
     title: string | null,

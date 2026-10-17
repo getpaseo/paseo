@@ -149,6 +149,7 @@ import {
   checkoutLiteFromGitSnapshot,
   checkoutFromPersistedWorkspacePlacement,
   deriveWorkspaceDisplayName,
+  initialWorkspacePlacement,
 } from "./workspace-registry-model.js";
 import { resolveWorkspaceIdForPath } from "./resolve-workspace-id-for-path.js";
 import {
@@ -2944,6 +2945,15 @@ export class Session {
         return this.handleProjectRemoveRequest(msg);
       case "workspace.title.set.request":
         return this.handleWorkspaceTitleSetRequest(msg.workspaceId, msg.title, msg.requestId);
+      case "workspace.set_root.request":
+        return this.handleWorkspaceRootSetRequest(
+          msg.workspaceId,
+          msg.cwd,
+          msg.requestId,
+          msg.projectId,
+        );
+      case "project.set_root.request":
+        return this.handleProjectRootSetRequest(msg.projectId, msg.cwd, msg.requestId);
       case "workspace.pin.set.request":
         return this.handleWorkspacePinSetRequest(msg.workspaceId, msg.pinned, msg.requestId);
       default:
@@ -3703,6 +3713,107 @@ export class Session {
           accepted: false,
           removedWorkspaceIds: [],
           error: getErrorMessageOr(error, "Failed to remove project"),
+        },
+      });
+    }
+  }
+
+  private async handleProjectRootSetRequest(
+    projectId: string,
+    requestedCwd: string,
+    requestId: string,
+  ): Promise<void> {
+    try {
+      const cwd = resolve(requestedCwd);
+      if (!isAbsolute(requestedCwd) || !(await stat(cwd)).isDirectory()) {
+        throw new Error("Enter an existing absolute directory path.");
+      }
+      const checkout = await this.workspaceGitService.getCheckout(cwd);
+      const updated = await this.projectRegistry.update(projectId, (existing) => {
+        if (existing.archivedAt) throw new Error("Project is archived.");
+        return {
+          ...existing,
+          rootPath: cwd,
+          kind: checkout.isGit ? "git" : "non_git",
+          projectKey: null,
+          updatedAt: new Date().toISOString(),
+        };
+      });
+      if (!updated) throw new Error("Project not found.");
+      await this.emitProjectUpdate({ kind: "upsert", project: updated });
+      this.emit({
+        type: "project.set_root.response",
+        payload: { requestId, projectId, accepted: true, cwd, error: null },
+      });
+    } catch (error) {
+      this.emit({
+        type: "project.set_root.response",
+        payload: {
+          requestId,
+          projectId,
+          accepted: false,
+          cwd: null,
+          error: getErrorMessage(error),
+        },
+      });
+    }
+  }
+
+  private async handleWorkspaceRootSetRequest(
+    workspaceId: string,
+    requestedCwd: string,
+    requestId: string,
+    projectId?: string,
+  ): Promise<void> {
+    try {
+      const workspace = await this.workspaceRegistry.get(workspaceId);
+      if (!workspace) throw new Error("Workspace not found.");
+      const targetProject = await this.projectRegistry.get(projectId ?? workspace.projectId);
+      if (!targetProject || targetProject.archivedAt)
+        throw new Error("Target project not found or archived.");
+      const path = requestedCwd.trim();
+      const expandedPath = path.startsWith("~/") ? resolve(homedir(), path.slice(2)) : path;
+      if (!isAbsolute(expandedPath)) throw new Error("Enter an absolute directory path.");
+      const cwd = resolve(expandedPath);
+      if (!(await stat(cwd)).isDirectory())
+        throw new Error("The workspace root must be a directory.");
+      const checkout = await this.workspaceGitService.getCheckout(cwd);
+      const placement = initialWorkspacePlacement({ source: "checkout", cwd, checkout });
+      const change = () =>
+        this.agentManager.changeWorkspaceRoot(workspaceId, cwd, async () => {
+          const updated = await this.workspaceRegistry.update(workspaceId, (existing) => {
+            if (existing.archivedAt !== workspace.archivedAt || existing.cwd !== workspace.cwd) {
+              throw new Error("The workspace changed while selecting its root. Refresh and retry.");
+            }
+            return {
+              ...existing,
+              ...placement,
+              projectId: targetProject.projectId,
+              updatedAt: new Date().toISOString(),
+            };
+          });
+          if (!updated) throw new Error("Workspace not found.");
+          this.scriptRuntimeStore?.removeForWorkspace(workspaceId);
+        });
+      if (this.terminalManager) {
+        await this.terminalManager.withWorkspaceRootChange(workspaceId, change);
+      } else {
+        await change();
+      }
+      this.emit({
+        type: "workspace.set_root.response",
+        payload: { requestId, workspaceId, accepted: true, cwd, error: null },
+      });
+      await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId]);
+    } catch (error) {
+      this.emit({
+        type: "workspace.set_root.response",
+        payload: {
+          requestId,
+          workspaceId,
+          accepted: false,
+          cwd: null,
+          error: getErrorMessage(error),
         },
       });
     }

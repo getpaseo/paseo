@@ -972,6 +972,43 @@ export const ProjectRemoveRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const WorkspaceRootSetRequestSchema = z.object({
+  type: z.literal("workspace.set_root.request"),
+  workspaceId: z.string(),
+  cwd: z.string(),
+  projectId: z.string().optional(),
+  requestId: z.string(),
+});
+
+export const WorkspaceRootSetResponseSchema = z.object({
+  type: z.literal("workspace.set_root.response"),
+  payload: z.object({
+    requestId: z.string(),
+    workspaceId: z.string(),
+    accepted: z.boolean(),
+    cwd: z.string().nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const ProjectRootSetRequestSchema = z.object({
+  type: z.literal("project.set_root.request"),
+  projectId: z.string(),
+  cwd: z.string(),
+  requestId: z.string(),
+});
+
+export const ProjectRootSetResponseSchema = z.object({
+  type: z.literal("project.set_root.response"),
+  payload: z.object({
+    requestId: z.string(),
+    projectId: z.string(),
+    accepted: z.boolean(),
+    cwd: z.string().nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
 export const WorkspaceTitleSetRequestSchema = z.object({
   type: z.literal("workspace.title.set.request"),
   workspaceId: z.string(),
@@ -3220,6 +3257,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProjectIconSetRequestSchema,
   ProjectRemoveRequestSchema,
   WorkspaceTitleSetRequestSchema,
+  WorkspaceRootSetRequestSchema,
+  ProjectRootSetRequestSchema,
   WorkspacePinSetRequestSchema,
   WorkspaceLabelListRequestSchema,
   WorkspaceLabelAssignmentSetRequestSchema,
@@ -3692,6 +3731,8 @@ export const ServerInfoStatusPayloadSchema = z
         providerSubagentNesting: z.boolean().optional(),
         // COMPAT(workspacePinning): added in v0.1.107, remove gate after 2027-01-12.
         workspacePinning: z.boolean().optional(),
+        // COMPAT(workspaceRootChange): added after v0.11.2; remove gate after 2027-04-14.
+        workspaceRootChange: z.boolean().optional(),
         // COMPAT(workspaceMarkUnread): added in v0.5.0, remove after 2027-08-20.
         workspaceMarkUnread: z.boolean().optional(),
         // COMPAT(hubRelationship): added in v0.1.X, drop the gate when floor >= v0.1.X.
@@ -6968,6 +7009,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProjectIconSetResponseSchema,
   ProjectRemoveResponseSchema,
   WorkspaceTitleSetResponseSchema,
+  WorkspaceRootSetResponseSchema,
+  ProjectRootSetResponseSchema,
   WorkspacePinSetResponseSchema,
   WorkspaceRecoveryInspectResponseSchema,
   WorkspaceRecoveryRestoreResponseSchema,

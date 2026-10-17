@@ -116,6 +116,31 @@ class FakeTerminalWorker extends EventEmitter {
 }
 
 let manager: TerminalManager | null = null;
+it("fences workspace root changes against pending worker terminal creation", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({ forkWorker: () => worker });
+  const creating = manager.createTerminal({ cwd: tmpdir(), workspaceId: "ws-root" });
+  await expect(manager.withWorkspaceRootChange("ws-root", async () => {})).rejects.toThrow(
+    "Close all terminals",
+  );
+  const request = worker.sentMessages.find((message) => message.type === "createTerminal");
+  expect(request).toBeDefined();
+  worker.emitWorkerMessage({
+    type: "response",
+    requestId: request!.requestId,
+    ok: false,
+    error: "Creation rejected",
+  });
+  await expect(creating).rejects.toThrow("Creation rejected");
+  await manager.withWorkspaceRootChange("ws-root", async () => {
+    await expect(
+      manager!.createTerminal({ cwd: tmpdir(), workspaceId: "ws-root" }),
+    ).rejects.toThrow("being changed");
+  });
+  await expect(manager.withWorkspaceRootChange("ws-root", async () => "released")).resolves.toBe(
+    "released",
+  );
+});
 const temporaryDirs: string[] = [];
 const terminalSessions: TerminalSession[] = [];
 

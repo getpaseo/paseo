@@ -8153,6 +8153,136 @@ test("project.rename.request returns accepted=false when project is not found", 
   expect(response?.payload.error).toBeTruthy();
 });
 
+test("workspace.set_root.request preserves identity while moving to another project and rejects missing paths", async () => {
+  const home = mkdtempSync(path.join(tmpdir(), "workspace-root-rpc-"));
+  const nextCwd = path.join(home, "next");
+  mkdirSync(nextCwd);
+  const logger = createTestLogger();
+  const projects = new FileBackedProjectRegistry(path.join(home, "projects.json"), logger);
+  const workspaces = new FileBackedWorkspaceRegistry(path.join(home, "workspaces.json"), logger);
+  const timestamp = "2026-10-14T10:00:00Z";
+  const emitted: SessionOutboundMessage[] = [];
+  try {
+    for (const projectId of ["source", "target"]) {
+      await projects.upsert(
+        createPersistedProjectRecord({
+          projectId,
+          rootPath: home,
+          kind: "non_git",
+          displayName: projectId,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }),
+      );
+    }
+    await workspaces.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId: "ws-root",
+        projectId: "source",
+        cwd: home,
+        kind: "directory",
+        displayName: "source",
+        title: "Keep title",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    const session = createSessionForWorkspaceTests({
+      projectRegistry: projects,
+      workspaceRegistry: workspaces,
+      onMessage: (message) => emitted.push(message),
+      agentManager: {
+        changeWorkspaceRoot: async (
+          _workspaceId: string,
+          _cwd: string,
+          commit: () => Promise<void>,
+        ) => commit(),
+      },
+    });
+    await session.handleMessage({
+      type: "workspace.set_root.request",
+      workspaceId: "ws-root",
+      projectId: "target",
+      cwd: nextCwd,
+      requestId: "change-root",
+    });
+    expect(findByType(emitted, "workspace.set_root.response")?.payload).toEqual({
+      workspaceId: "ws-root",
+      requestId: "change-root",
+      accepted: true,
+      cwd: nextCwd,
+      error: null,
+    });
+    expect(await workspaces.get("ws-root")).toMatchObject({
+      workspaceId: "ws-root",
+      projectId: "target",
+      cwd: nextCwd,
+      title: "Keep title",
+    });
+    emitted.length = 0;
+    await session.handleMessage({
+      type: "workspace.set_root.request",
+      workspaceId: "ws-root",
+      cwd: path.join(home, "missing"),
+      requestId: "missing-root",
+    });
+    expect(findByType(emitted, "workspace.set_root.response")?.payload).toMatchObject({
+      accepted: false,
+      cwd: null,
+    });
+    expect((await workspaces.get("ws-root"))?.cwd).toBe(nextCwd);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("project.set_root.request preserves project identity and custom name", async () => {
+  const home = mkdtempSync(path.join(tmpdir(), "project-root-rpc-"));
+  const projects = new FileBackedProjectRegistry(
+    path.join(home, "projects.json"),
+    createTestLogger(),
+  );
+  const emitted: SessionOutboundMessage[] = [];
+  try {
+    await projects.upsert(
+      createPersistedProjectRecord({
+        projectId: "project-root",
+        rootPath: path.join(home, "old"),
+        kind: "git",
+        displayName: "source",
+        customName: "Paseo",
+        createdAt: "2026-10-14T10:00:00Z",
+        updatedAt: "2026-10-14T10:00:00Z",
+      }),
+    );
+    const session = createSessionForWorkspaceTests({
+      projectRegistry: projects,
+      onMessage: (message) => emitted.push(message),
+    });
+    await session.handleMessage({
+      type: "project.set_root.request",
+      projectId: "project-root",
+      cwd: home,
+      requestId: "project-root",
+    });
+    expect(findByType(emitted, "project.set_root.response")?.payload).toEqual({
+      projectId: "project-root",
+      requestId: "project-root",
+      accepted: true,
+      cwd: home,
+      error: null,
+    });
+    expect(await projects.get("project-root")).toMatchObject({
+      projectId: "project-root",
+      rootPath: home,
+      customName: "Paseo",
+      kind: "non_git",
+    });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("workspace.title.set.request stores the title and emits an updated descriptor", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = asTestSession(

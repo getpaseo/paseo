@@ -1294,6 +1294,7 @@ export const en = {
         pending: "Pending: {{count}}",
       },
       actions: {
+        changeRoot: "Change workspace root",
         menu: "Workspace actions",
         newWorkspace: "New workspace",
         showMore: "Show more",
@@ -1316,6 +1317,10 @@ export const en = {
           'Hide "{{workspaceName}}" from the sidebar?\n\nFiles on disk will not be changed.',
         hideConfirm: "Hide",
         cancel: "Cancel",
+      },
+      root: {
+        title: "Change workspace root",
+        submit: "Change root",
       },
       rename: {
         title: "Rename workspace",

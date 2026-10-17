@@ -1304,6 +1304,7 @@ export const ru: TranslationResources = {
         pending: "Ожидают: {{count}}",
       },
       actions: {
+        changeRoot: "Изменить корень рабочей области",
         menu: "Действия рабочего пространства",
         newWorkspace: "Новое рабочее пространство",
         showMore: "Показать ещё",
@@ -1326,6 +1327,10 @@ export const ru: TranslationResources = {
           "Скрыть «{{workspaceName}}» на боковой панели?\n\nФайлы на диске не будут изменены.",
         hideConfirm: "Скрыть",
         cancel: "Отмена",
+      },
+      root: {
+        title: "Изменить корень рабочей области",
+        submit: "Изменить корень",
       },
       rename: {
         title: "Переименовать рабочее пространство",

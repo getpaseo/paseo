@@ -50,6 +50,7 @@ export type TerminalWorkspaceContributionChangedListener = (
 ) => void;
 
 export interface TerminalManager {
+  withWorkspaceRootChange<T>(workspaceId: string, change: () => Promise<T>): Promise<T>;
   getTerminals(cwd: string, options?: { workspaceId?: string }): Promise<TerminalSession[]>;
   createTerminal(options: {
     id?: string;
@@ -106,6 +107,13 @@ export function createTerminalManager(
 ): TerminalManager {
   const terminalsByCwd = new Map<string, TerminalSession[]>();
   const terminalsById = new Map<string, TerminalSession>();
+  const changingWorkspaceRoots = new Set<string>();
+  const creatingTerminalsByWorkspace = new Map<string, number>();
+  function finishCreatingTerminal(workspaceId: string): void {
+    const remaining = (creatingTerminalsByWorkspace.get(workspaceId) ?? 1) - 1;
+    if (remaining === 0) creatingTerminalsByWorkspace.delete(workspaceId);
+    else creatingTerminalsByWorkspace.set(workspaceId, remaining);
+  }
   const terminalExitUnsubscribeById = new Map<string, () => void>();
   const terminalTitleUnsubscribeById = new Map<string, () => void>();
   const terminalActivityUnsubscribeById = new Map<string, () => void>();
@@ -283,6 +291,23 @@ export function createTerminalManager(
   }
 
   return {
+    async withWorkspaceRootChange<T>(workspaceId: string, change: () => Promise<T>): Promise<T> {
+      if (changingWorkspaceRoots.has(workspaceId)) {
+        throw new Error("The workspace root is already being changed.");
+      }
+      const hasTerminals = [...terminalsById.values()].some(
+        (terminal) => terminal.workspaceId === workspaceId,
+      );
+      if (hasTerminals || creatingTerminalsByWorkspace.has(workspaceId)) {
+        throw new Error("Close all terminals and stop workspace scripts before changing its root.");
+      }
+      changingWorkspaceRoots.add(workspaceId);
+      try {
+        return await change();
+      } finally {
+        changingWorkspaceRoots.delete(workspaceId);
+      }
+    },
     async getTerminals(
       cwd: string,
       options?: { workspaceId?: string },
@@ -323,6 +348,9 @@ export function createTerminalManager(
       activityUrl?: string | null;
     }): Promise<TerminalSession> {
       assertAbsolutePath(options.cwd);
+      if (changingWorkspaceRoots.has(options.workspaceId)) {
+        throw new Error("The workspace root is being changed. Retry when it finishes.");
+      }
 
       const terminals = terminalsByCwd.get(options.cwd) ?? [];
       const defaultName = `Terminal ${terminals.length + 1}`;
@@ -342,6 +370,10 @@ export function createTerminalManager(
       };
       terminalActivityTokenById.set(terminalId, activityToken);
       let session: TerminalSession;
+      creatingTerminalsByWorkspace.set(
+        options.workspaceId,
+        (creatingTerminalsByWorkspace.get(options.workspaceId) ?? 0) + 1,
+      );
       try {
         session = registerSession(
           await createTerminal({
@@ -361,6 +393,8 @@ export function createTerminalManager(
       } catch (error) {
         terminalActivityTokenById.delete(terminalId);
         throw error;
+      } finally {
+        finishCreatingTerminal(options.workspaceId);
       }
 
       terminals.push(session);
