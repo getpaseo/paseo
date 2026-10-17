@@ -633,6 +633,10 @@ Register a declarative attachment source backed by a plugin RPC. Paseo owns the 
 search picker, drafts, selected pill, and submission. The plugin returns complete text snapshots;
 credentials and vendor API calls stay in the daemon handler.
 
+Set `mentionPrefix` to offer your attachment source in native `@` autocomplete. See the
+[public attachment-source contract](../public-docs/plugins/reference.md#add-a-composer-attachment-source)
+for prefix rules and selection behavior.
+
 ```ts
 // index.server.ts
 import type { PluginServerContext } from "@getpaseo/plugin/server";

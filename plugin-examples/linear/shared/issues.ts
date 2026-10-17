@@ -27,5 +27,6 @@ export const issueAttachments = defineAttachmentSource({
   icon: "CircleDot",
   pickerTitle: "Attach Linear issue",
   searchPlaceholder: "Search by identifier or title",
+  mentionPrefix: "linear",
   search: searchIssuesRpc,
 });

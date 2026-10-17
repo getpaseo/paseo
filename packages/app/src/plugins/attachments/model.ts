@@ -49,6 +49,23 @@ export function togglePluginResourceAttachment(
   return [...current, attachment];
 }
 
+export function addPluginResourceAttachment(
+  current: UserComposerAttachment[],
+  attachment: PluginResourceComposerAttachment,
+): UserComposerAttachment[] {
+  const index = current.findIndex(
+    (candidate) =>
+      candidate.kind === "plugin_resource" &&
+      candidate.pluginId === attachment.pluginId &&
+      candidate.sourceId === attachment.sourceId &&
+      candidate.item.id === attachment.item.id,
+  );
+  if (index < 0) return [...current, attachment];
+  return current.map((candidate, currentIndex) =>
+    currentIndex === index ? attachment : candidate,
+  );
+}
+
 export function pluginResourceAttachmentToAgentAttachment(
   attachment: PluginResourceComposerAttachment,
 ): AgentAttachment {

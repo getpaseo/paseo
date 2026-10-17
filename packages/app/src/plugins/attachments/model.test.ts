@@ -4,6 +4,7 @@ import {
   PluginResourceComposerAttachmentSchema,
   pluginResourceAttachmentToAgentAttachment,
   togglePluginResourceAttachment,
+  addPluginResourceAttachment,
 } from "./model";
 import { splitComposerAttachmentsForSubmit } from "@/composer/attachments/submit";
 
@@ -40,6 +41,15 @@ describe("plugin resource attachments", () => {
 
     expect(togglePluginResourceAttachment([], attachment)).toEqual([attachment]);
     expect(togglePluginResourceAttachment([attachment], attachment)).toEqual([]);
+  });
+
+  it("refreshes a mentioned resource without removing it or merging another source", () => {
+    const attachment = createPluginResourceAttachment(source, item);
+    const other = createPluginResourceAttachment({ ...source, pluginId: "other" }, item);
+    const refreshed = createPluginResourceAttachment(source, { ...item, text: "Updated snapshot" });
+
+    expect(addPluginResourceAttachment([], attachment)).toEqual([attachment]);
+    expect(addPluginResourceAttachment([attachment, other], refreshed)).toEqual([refreshed, other]);
   });
 
   it("submits through the backward-compatible text attachment", () => {
