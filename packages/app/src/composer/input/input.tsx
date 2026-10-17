@@ -691,6 +691,7 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
       ) : null}
       <ComposerTextInput
         ref={props.textInputRef}
+        testID="paseo-composer-input"
         dataSet={COMPOSER_INPUT_DATASET}
         initialValue={props.value}
         onChangeText={handleTextChange}
