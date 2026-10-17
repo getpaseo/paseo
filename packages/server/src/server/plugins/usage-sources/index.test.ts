@@ -556,3 +556,73 @@ test("a hung login records its own timeout and still tries the next login", asyn
     { harness: "OpenCode", report: { status: "error", error: "Login rejected" } },
   ]);
 });
+
+test("#3589: host listings discover each configured provider's environment after the host's own logins", async () => {
+  let providers = [
+    { provider: "claude", label: "Claude (work)", env: { CLAUDE_CONFIG_DIR: "/work" } },
+    { provider: "claude", label: "Claude (copy)", env: { CLAUDE_CONFIG_DIR: "/default-copy" } },
+  ];
+  const calls: unknown[] = [];
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: () => false,
+    usageSession: () => null,
+    providerEnvironments: () => providers,
+  });
+  registry.register({
+    id: "claude",
+    label: "Claude",
+    discover: async (scope) => {
+      if (scope.kind === "global") return [{ key: "default", input: "/default" }];
+      const dir = scope.env.CLAUDE_CONFIG_DIR;
+      return [{ key: dir === "/work" ? "work" : "default", input: dir }];
+    },
+    fetch: async (input) => {
+      calls.push(input);
+      return input === "/default"
+        ? { status: "unavailable", problem: { kind: "rejected", status: 401 } }
+        : { status: "available", windows: [] };
+    },
+  });
+  const reports = await registry.listReports();
+  expect(reports.map((entry) => [entry.id, entry.report.status])).toEqual([
+    ["claude:default", "available"],
+    ["claude:work", "available"],
+  ]);
+  expect(calls).toEqual(["/default", "/default-copy", "/work"]);
+  providers = [];
+  expect((await registry.listReports()).map((entry) => entry.id)).toEqual(["claude:default"]);
+});
+
+test("#3589: a failed provider login is named after its provider; one the host already has keeps the host's name", async () => {
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: () => false,
+    usageSession: () => null,
+    providerEnvironments: () => [
+      { provider: "claude", label: "Claude (home)", env: { CLAUDE_CONFIG_DIR: "/default" } },
+      { provider: "claude", label: "Claude (a)", env: { CLAUDE_CONFIG_DIR: "/a" } },
+      { provider: "claude", label: "Claude (b)", env: { CLAUDE_CONFIG_DIR: "/b" } },
+      { provider: "claude", label: "Claude (b again)", env: { CLAUDE_CONFIG_DIR: "/b" } },
+    ],
+  });
+  // An expired login has no account to read, so each directory is its own account.
+  registry.register({
+    id: "claude",
+    label: "Claude",
+    discover: async (scope) => {
+      const dir = scope.kind === "global" ? "/default" : scope.env.CLAUDE_CONFIG_DIR;
+      return [{ key: `dir${dir?.replace("/", "-")}`, harness: "Claude", input: dir }];
+    },
+    fetch: async () => ({
+      status: "unavailable",
+      problem: { kind: "expired", expiresAt: "1970-01-01T00:00:01.000Z", refreshedBy: "claude" },
+    }),
+  });
+  const reports = await registry.listReports();
+  expect(
+    reports.map((entry) => [entry.id, entry.loginErrors?.map((login) => login.harness)]),
+  ).toEqual([
+    ["claude:dir-default", ["Claude"]],
+    ["claude:dir-a", ["Claude (a)"]],
+    ["claude:dir-b", ["Claude (b)"]],
+  ]);
+});
