@@ -23,6 +23,7 @@ export interface TerminalTextInputChange {
 
 export interface TerminalTextInputState {
   receiveKeyPress: (key: string) => TerminalTextInputChange;
+  receiveSubmit: () => TerminalTextInputChange;
   receiveTextChange: (text: string) => TerminalTextInputChange;
   reset: () => void;
 }
@@ -104,7 +105,6 @@ export function resolveTerminalInputFocusRequest(input: {
 
 export function createTerminalTextInputState(): TerminalTextInputState {
   let previousText = "";
-  let submittedText: string | null = null;
   // A swallowed replacement leaves the terminal holding text the buffer no
   // longer describes. A composition rubout deletes from the terminal, so it
   // would delete whatever is actually sitting there rather than the character
@@ -124,33 +124,24 @@ export function createTerminalTextInputState(): TerminalTextInputState {
         }
         return { data: "\x7f", shouldClear: false };
       }
-      if (key === "Enter" || key === "Return" || key === "return") {
-        submittedText = previousText;
-        return { data: "\r", shouldClear: true };
-      }
       if (isPrintableKey(key)) {
         previousText += key;
         return { data: key, shouldClear: false };
       }
       return { data: "", shouldClear: false };
     },
+    receiveSubmit(): TerminalTextInputChange {
+      return { data: "\r", shouldClear: true };
+    },
     receiveTextChange(text: string): TerminalTextInputChange {
-      if (submittedText !== null) {
-        const lateSubmitText = `${submittedText}\n`;
-        submittedText = null;
-        if (text === lateSubmitText) {
-          previousText = "";
-          replacementDesynced = false;
-          return { data: "", shouldClear: false };
-        }
-      }
-
       if (text.length === 0) {
         previousText = "";
         return { data: "", shouldClear: false };
       }
 
       if (text.includes("\n") || text.includes("\r")) {
+        // A late submit update can restore the native buffer after Enter
+        // cleared it. Clear it again before the IME starts its next word.
         previousText = "";
         replacementDesynced = false;
         return { data: "", shouldClear: true };
@@ -289,6 +280,12 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
       [inputState, onInput, resetNativeInput],
     );
 
+    const handleSubmit = useCallback(() => {
+      const change = inputState.receiveSubmit();
+      onInput?.(change.data);
+      resetNativeInput();
+    }, [inputState, onInput, resetNativeInput]);
+
     const handleKeyPress = useCallback(
       (event: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
         const change = inputState.receiveKeyPress(event.nativeEvent.key);
@@ -325,8 +322,10 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
         onBlur={handleBlur}
         onFocus={handleFocus}
         onKeyPress={handleKeyPress}
+        onSubmitEditing={handleSubmit}
         showSoftInputOnFocus={true}
         spellCheck={false}
+        submitBehavior="submit"
         style={inputStyle}
         testID="terminal-native-input"
         textContentType="none"
