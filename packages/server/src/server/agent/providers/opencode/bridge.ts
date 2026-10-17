@@ -198,6 +198,7 @@ export class OpenCodeBridge {
       sendJson(response, 404, { error: "Not found" });
     } catch (error) {
       this.logger.warn({ err: error }, "OpenCode bridge request failed");
+      const failure = error instanceof Error ? error : new Error(String(error));
       if (!response.headersSent) {
         if (error instanceof OpenCodeBridgeClientError) {
           sendJson(response, error.status, {
@@ -213,10 +214,10 @@ export class OpenCodeBridge {
               : { error: error.message },
           );
         } else {
-          sendJson(response, 500, { error: "Internal OpenCode bridge error" });
+          sendJson(response, 500, { error: failure.message });
         }
       } else {
-        response.destroy(error instanceof Error ? error : new Error(String(error)));
+        response.destroy(failure);
       }
     }
   }

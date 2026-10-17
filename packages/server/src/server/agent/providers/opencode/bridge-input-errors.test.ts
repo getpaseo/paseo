@@ -9,8 +9,16 @@ import { AgentStorage } from "../../agent-storage.js";
 import { ProviderSnapshotManager } from "../../provider-snapshot-manager.js";
 import { OpenCodeBridge } from "./bridge.js";
 import { ScheduleService } from "../../../schedule/service.js";
+import { createWorkspaceScriptsService } from "../../../session/workspace-scripts/workspace-scripts-service.js";
+import {
+  FileBackedProjectRegistry,
+  FileBackedWorkspaceRegistry,
+} from "../../../workspace-registry.js";
+import { createServiceProxySubsystem } from "../../../service-proxy.js";
+import { WorkspaceScriptRuntimeStore } from "../../../workspace-script-runtime-store.js";
+import { createTerminalManager } from "../../../../terminal/terminal-manager.js";
 
-test("invalid create_agent input and malformed requests return actionable client errors", async () => {
+test("bridge preserves tool failure messages and classifies invalid requests as client errors", async () => {
   const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-7045-"));
   const logger = createTestLogger();
   const providerSnapshotManager = new ProviderSnapshotManager({ logger });
@@ -30,7 +38,32 @@ test("invalid create_agent input and malformed requests return actionable client
     archiveWorkspace: unused,
     runner: async () => ({ agentId: null, output: "done" }),
   });
+  const workspaceScripts = createWorkspaceScriptsService({
+    serviceProxy: createServiceProxySubsystem({ logger }),
+    scriptRuntimeStore: new WorkspaceScriptRuntimeStore(),
+    terminalManager: createTerminalManager(),
+    workspaceRegistry: new FileBackedWorkspaceRegistry(
+      path.join(paseoHome, "workspaces.json"),
+      logger,
+    ),
+    projectRegistry: new FileBackedProjectRegistry(path.join(paseoHome, "projects.json"), logger),
+    workspaceGitService: {
+      peekSnapshot: () => {
+        throw new Error("Unexpected git lookup");
+      },
+    },
+    getDaemonTcpPort: null,
+    getDaemonTcpHost: null,
+    serviceProxyPublicBaseUrl: null,
+    resolveScriptHealth: null,
+    logger,
+    emit: () => {},
+    publishStatusUpdate: () => {},
+    spawnWorkspaceScript: unused,
+    assertAutomationAllowed: unused,
+  });
   const catalog = createPaseoToolCatalog({
+    workspaceScripts,
     agentManager,
     agentStorage,
     scheduleService,
@@ -101,6 +134,12 @@ test("invalid create_agent input and malformed requests return actionable client
       ["update_schedule", JSON.stringify({ id: completed.id, expiresIn: "not-a-duration" }), 400],
       ["send_agent_prompt", JSON.stringify({ agentId: "missing", prompt: "Hello" }), 400],
       ["inspect_schedule", JSON.stringify({ id: "broken" }), 500],
+      ["list_workspace_scripts", JSON.stringify({ workspaceId: "wks_typo" }), 500],
+      [
+        "start_workspace_script",
+        JSON.stringify({ workspaceId: "wks_typo", scriptName: "web" }),
+        500,
+      ],
     ] as const) {
       const response = await fetch(
         `${baseUrl}/_internal/opencode/sessions/diagnosis/tools/${tool}`,
@@ -120,8 +159,12 @@ test("invalid create_agent input and malformed requests return actionable client
     }
 
     for (const result of observed) expect.soft(result.status, result.body).toBe(result.expected);
+    for (const result of observed.slice(14)) {
+      expect.soft(result.payload).toEqual({ error: "Workspace not found: wks_typo" });
+    }
     expect.soft(observed[12].payload).toEqual({ error: "Agent not found: missing" });
-    expect.soft(observed[13].payload).toEqual({ error: "Internal OpenCode bridge error" });
+    expect.soft(observed[13].payload).toEqual({ error: expect.stringContaining('"prompt"') });
+    expect.soft(observed[13].payload).not.toHaveProperty("issues");
     expect(observed[3].payload).toEqual({ error: "Schedule not found: missing" });
     for (const result of observed.slice(4, 7))
       expect(result.payload).toEqual({ error: `Schedule ${completed.id} is already completed` });

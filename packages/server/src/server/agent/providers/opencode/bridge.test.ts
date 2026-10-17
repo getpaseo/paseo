@@ -594,7 +594,7 @@ describe("OpenCodeBridge", () => {
             description: "Throws an internal error.",
             inputSchema: {},
             async handler() {
-              throw new Error("secret internal detail");
+              throw new Error("Provider unavailable");
             },
           },
         ],
@@ -659,7 +659,7 @@ describe("OpenCodeBridge", () => {
         { method: "POST", headers, body: "{}" },
       );
       expect(internalError.status).toBe(500);
-      expect(await internalError.json()).toEqual({ error: "Internal OpenCode bridge error" });
+      expect(await internalError.json()).toEqual({ error: "Provider unavailable" });
     } finally {
       await bridge.close();
     }
