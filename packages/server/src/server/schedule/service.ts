@@ -228,6 +228,7 @@ type ScheduleAgentManager = Pick<
   | "reloadAgentSession"
   | "tryRunOutOfBand"
   | "hasInFlightRun"
+  | "hasBlockingRun"
   | "replaceAgentRun"
   | "steerOrReplaceActiveTurn"
   | "streamAgent"
