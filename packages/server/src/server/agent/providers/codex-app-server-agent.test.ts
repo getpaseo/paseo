@@ -83,6 +83,9 @@ describe("Codex executable discovery", () => {
   });
 });
 
+import { runProviderRefreshWithDeadline } from "../provider-refresh-deadline.js";
+import { ProviderIntrospectionQueue } from "../provider-introspection-queue.js";
+
 import { CodexAppServerClient } from "./codex/app-server-transport.js";
 import {
   createFakeCodexAppServer,
@@ -1283,6 +1286,49 @@ describe("Codex app-server provider", () => {
     const startCall = requests.find((req) => req.method === "thread/start");
     expect(startCall).toBeDefined();
     expect((startCall!.params as Record<string, unknown>).ephemeral).toBeUndefined();
+  });
+
+  test("keeps catalog cleanup in the queue when the deadline fires during disposal", async () => {
+    vi.useFakeTimers();
+    const appServer = createFakeCodexAppServer();
+    const provider = createProviderWithFakeAppServer(appServer);
+    let disposalStarted!: () => void;
+    const disposing = new Promise<void>((resolve) => {
+      disposalStarted = resolve;
+    });
+    vi.spyOn(appServer.child, "kill").mockImplementation(() => {
+      disposalStarted();
+      return true;
+    });
+    const queue = new ProviderIntrospectionQueue();
+    let nextStarted = false;
+    const refresh = queue.run("codex", () =>
+      runProviderRefreshWithDeadline({
+        label: "Codex",
+        timeoutMs: 100,
+        operation: (context) => provider.fetchCatalog({ scope: "global", force: false }, context),
+      }),
+    );
+    const rejected = expect(refresh).rejects.toThrow("Timed out refreshing Codex after 100ms");
+    const next = queue.run("codex", async () => {
+      nextStarted = true;
+    });
+    try {
+      await disposing;
+      await vi.advanceTimersByTimeAsync(100);
+      expect(nextStarted).toBe(false);
+      appServer.child.exitCode = 0;
+      appServer.child.emit("exit", 0, null);
+      await rejected;
+      await next;
+      expect(nextStarted).toBe(true);
+      appServer.assertNoErrors();
+    } finally {
+      appServer.child.exitCode = 0;
+      appServer.child.emit("exit", 0, null);
+      await Promise.allSettled([refresh, next, rejected]);
+      vi.useRealTimers();
+    }
   });
 
   test("disposes an unresponsive app-server child with SIGKILL", async () => {
