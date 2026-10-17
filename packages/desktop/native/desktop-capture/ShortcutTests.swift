@@ -9,6 +9,13 @@ import Foundation
     precondition(captureLocalPath("file://remote-server/folder") == nil)
     precondition(captureLocalPath("Dossier") == nil)
 
+    precondition(
+      captureFinderBreadcrumbURL([
+        ("AXStaticText", "file:///"),
+        ("AXStaticText", "file:///Users/test/Projet%20%C3%A9t%C3%A9/"),
+      ]) == "file:///Users/test/Projet%20%C3%A9t%C3%A9/")
+    precondition(captureFinderBreadcrumbURL([("AXLayoutItem", "file:///Users/test/")]) == nil)
+    precondition(captureFinderBreadcrumbURL([("AXStaticText", "https://example.com/")]) == nil)
     for order in [[UInt64(1), 3, 2, 0], [UInt64(2), 3, 1, 0]] {
       var shortcut = ModifierShortcut(required: 3)
       precondition(shortcut.update(modifiers: order[0]) == nil)

@@ -8,3 +8,11 @@ func captureLocalPath(_ value: String) -> String? {
   else { return nil }
   return url.path
 }
+
+// Finder exposes the current location through its path bar, including when AXDocument is absent.
+func captureFinderBreadcrumbURL(_ entries: [(String, String)]) -> String? {
+  guard !entries.isEmpty,
+    entries.allSatisfy({ $0.0 == "AXStaticText" && captureLocalPath($0.1) != nil })
+  else { return nil }
+  return entries.last?.1
+}

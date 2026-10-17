@@ -18,7 +18,8 @@ The alternative chord applies to the current app session.
 
 The initial agent message includes the source window's explicit local directory or
 file path, document URL, selection, a bounded accessibility snapshot and OCR,
-when available. Paths come from accessibility URLs and are checked on disk; never
+when available. Finder also exposes its current location through the path bar when AXDocument is absent.
+Paths come from accessibility URLs and are checked on disk; never
 infer a path from a window title. This evidence is quoted separately from the
 user's request and cannot authorize actions or choose a destination on its own.
 Only the source window is inspected; secure fields are skipped.

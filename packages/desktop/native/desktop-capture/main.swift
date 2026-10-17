@@ -80,10 +80,28 @@ func context() -> [String: Any] {
     let role = text(node, kAXRoleAttribute)
     if role == "AXSecureTextField" { continue }
     let url = text(node, kAXURLAttribute)
-    if document.isEmpty && (role == "AXWebArea" || node == focused) { document = url }
+    if document.isEmpty && node == focused { document = url }
+    if selectedPaths.count < 40, attribute(node, kAXSelectedAttribute) as? Bool == true,
+      let path = captureLocalPath(url), path.count <= 4000, !selectedPaths.contains(path)
+    {
+      selectedPaths.append(path)
+    }
+    if app.bundleIdentifier == "com.apple.finder", role == "AXList",
+      let children = attribute(node, kAXChildrenAttribute) as? [AXUIElement], children.count <= 40
+    {
+      var entries = [(String, String)]()
+      for child in children {
+        if ProcessInfo.processInfo.systemUptime >= deadline { break }
+        AXUIElementSetMessagingTimeout(child, 0.003)
+        entries.append((text(child, kAXRoleAttribute), text(child, kAXURLAttribute)))
+      }
+      if entries.count == children.count, let location = captureFinderBreadcrumbURL(entries) {
+        document = location
+      }
+    }
     let values = [
       text(node, kAXTitleAttribute), text(node, kAXDescriptionAttribute),
-      text(node, kAXValueAttribute),
+      text(node, kAXValueAttribute), url,
     ]
     .filter { !$0.isEmpty }.map { String($0.prefix(500)) }
     if !values.isEmpty { lines.append("\(role): \(values.joined(separator: " | "))") }
