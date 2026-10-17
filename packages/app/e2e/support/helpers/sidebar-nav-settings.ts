@@ -2,6 +2,7 @@ import path from "node:path";
 import { expect, type Locator, type Page } from "@playwright/test";
 import { openSettings } from "./app";
 import { clickSettingsBackToWorkspace, openSettingsSection } from "./settings";
+import { hostModShortcutLabel } from "./shortcut-label";
 
 const APP_SETTINGS_KEY = "@paseo:app-settings";
 
@@ -288,7 +289,7 @@ export async function hoverFooterAddProject(page: Page): Promise<void> {
   await page.locator('[data-testid="sidebar-add-project"]:visible').hover();
   const tooltip = page.getByTestId("sidebar-add-project-tooltip");
   await expect(tooltip.getByText("Add project", { exact: true })).toBeVisible();
-  await expect(tooltip.getByText("Ctrl+O", { exact: true })).toBeVisible();
+  await expect(tooltip.getByText(hostModShortcutLabel("O"), { exact: true })).toBeVisible();
 }
 
 export async function footerScreenshot(page: Page, name: string): Promise<void> {
