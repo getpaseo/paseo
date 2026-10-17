@@ -141,6 +141,54 @@ describe("opencode tool-call mapper", () => {
     expect(item.detail).toMatchObject({ type: "plain_text", label: "hzmcp.memory__search_notes" });
   });
 
+  it("keeps UTF-16 offsets when astral characters precede the call", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-8",
+        status: "running",
+        input: {
+          code: 'const title = "📌 note";\nawait tools.hzmcp.memory__write_note({});',
+        },
+        output: null,
+      }),
+    );
+
+    expect(item.detail).toMatchObject({ type: "plain_text", label: "hzmcp.memory__write_note" });
+  });
+
+  it("ignores quotes inside regular-expression literals", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-9",
+        status: "running",
+        input: {
+          code: "const re = /'/g;\nawait tools.hzmcp.memory__search_notes({});",
+        },
+        output: null,
+      }),
+    );
+
+    expect(item.detail).toMatchObject({ type: "plain_text", label: "hzmcp.memory__search_notes" });
+  });
+
+  it("treats division slashes as code, not regex literals", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-10",
+        status: "running",
+        input: {
+          code: "const half = total / 2;\nawait tools.hzmcp.memory__search_notes({});",
+        },
+        output: null,
+      }),
+    );
+
+    expect(item.detail).toMatchObject({ type: "plain_text", label: "hzmcp.memory__search_notes" });
+  });
+
   it("keeps the executed code in the detail text alongside the output", () => {
     const item = expectMapped(
       mapOpencodeToolCall({

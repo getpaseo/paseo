@@ -45,6 +45,106 @@ function blankRange(chars: string[], start: number, end: number) {
   }
 }
 
+// Keywords after which a `/` starts a regex literal instead of division.
+const REGEX_PRECEDING_KEYWORDS = new Set([
+  "return",
+  "typeof",
+  "instanceof",
+  "in",
+  "of",
+  "new",
+  "delete",
+  "void",
+  "case",
+  "do",
+  "else",
+  "yield",
+  "await",
+  "throw",
+]);
+
+function startsRegexLiteral(chars: string[], index: number): boolean {
+  let j = index - 1;
+  while (j >= 0 && /\s/.test(chars[j])) {
+    j -= 1;
+  }
+  if (j < 0) {
+    return true;
+  }
+  const previous = chars[j];
+  if (!/[A-Za-z0-9_$]/.test(previous)) {
+    return "([{,;=:!&|?+-*%~^<>".includes(previous);
+  }
+  let start = j;
+  while (start >= 0 && /[A-Za-z0-9_$]/.test(chars[start])) {
+    start -= 1;
+  }
+  return REGEX_PRECEDING_KEYWORDS.has(chars.slice(start + 1, j + 1).join(""));
+}
+
+// start points at the opening `/`. Returns the index after the flags, with the
+// literal body blanked. Unterminated literals are treated as division.
+function maskRegexLiteral(chars: string[], start: number): number {
+  let i = start + 1;
+  let inClass = false;
+  while (i < chars.length) {
+    const character = chars[i];
+    if (character === "\\") {
+      i += 2;
+      continue;
+    }
+    if (character === "[") {
+      inClass = true;
+      i += 1;
+      continue;
+    }
+    if (character === "]") {
+      inClass = false;
+      i += 1;
+      continue;
+    }
+    if (character === "\n") {
+      return start + 1;
+    }
+    if (character === "/" && !inClass) {
+      let j = i + 1;
+      while (j < chars.length && /[a-z]/i.test(chars[j])) {
+        j += 1;
+      }
+      blankRange(chars, start, j);
+      return j;
+    }
+    i += 1;
+  }
+  return start + 1;
+}
+
+// Handles quotes, comments and regex literals at chars[i]; returns the new
+// index, or -1 when the character is none of these.
+function maskCodeToken(chars: string[], source: string, i: number): number {
+  const character = chars[i];
+  const next = chars[i + 1];
+  if (character === "'" || character === '"') {
+    const end = skipQuotedString(chars, i, character);
+    blankRange(chars, i, end);
+    return end;
+  }
+  if (character === "/" && next === "/") {
+    const end = chars.indexOf("\n", i);
+    blankRange(chars, i, end === -1 ? chars.length : end);
+    return end === -1 ? chars.length : end;
+  }
+  if (character === "/" && next === "*") {
+    const end = source.indexOf("*/", i + 2);
+    blankRange(chars, i, end === -1 ? chars.length : end + 2);
+    return end === -1 ? chars.length : end + 2;
+  }
+  if (character === "/" && startsRegexLiteral(chars, i)) {
+    return maskRegexLiteral(chars, i);
+  }
+  return -1;
+}
+
 function skipQuotedString(chars: string[], start: number, quote: string): number {
   let j = start + 1;
   while (j < chars.length) {
@@ -92,32 +192,18 @@ function maskInterpolation(chars: string[], source: string, start: number): numb
   let depth = 1;
   let i = start;
   while (i < chars.length && depth > 0) {
-    const character = chars[i];
-    if (character === "'" || character === '"') {
-      const end = skipQuotedString(chars, i, character);
-      blankRange(chars, i, end);
-      i = end;
-      continue;
-    }
-    if (character === "/" && chars[i + 1] === "/") {
-      const end = chars.indexOf("\n", i);
-      blankRange(chars, i, end === -1 ? chars.length : end);
-      i = end === -1 ? chars.length : end;
-      continue;
-    }
-    if (character === "/" && chars[i + 1] === "*") {
-      const end = source.indexOf("*/", i + 2);
-      blankRange(chars, i, end === -1 ? chars.length : end + 2);
-      i = end === -1 ? chars.length : end + 2;
-      continue;
-    }
-    if (character === "`") {
+    if (chars[i] === "`") {
       i = maskTemplateLiteral(chars, source, i);
       continue;
     }
-    if (character === "{") {
+    const tokenEnd = maskCodeToken(chars, source, i);
+    if (tokenEnd !== -1) {
+      i = tokenEnd;
+      continue;
+    }
+    if (chars[i] === "{") {
       depth += 1;
-    } else if (character === "}") {
+    } else if (chars[i] === "}") {
       depth -= 1;
     }
     i += 1;
@@ -126,33 +212,17 @@ function maskInterpolation(chars: string[], source: string, start: number): numb
 }
 
 function maskNonCode(source: string): string {
-  const chars = [...source];
+  // UTF-16 units, not code points: the mask must preserve offsets into the
+  // original string, and astral characters (emoji) span two units.
+  const chars = source.split("");
   let i = 0;
   while (i < chars.length) {
-    const character = chars[i];
-    if (character === "'" || character === '"') {
-      const end = skipQuotedString(chars, i, character);
-      blankRange(chars, i, end);
-      i = end;
-      continue;
-    }
-    if (character === "/" && chars[i + 1] === "/") {
-      const end = chars.indexOf("\n", i);
-      blankRange(chars, i, end === -1 ? chars.length : end);
-      i = end === -1 ? chars.length : end;
-      continue;
-    }
-    if (character === "/" && chars[i + 1] === "*") {
-      const end = source.indexOf("*/", i + 2);
-      blankRange(chars, i, end === -1 ? chars.length : end + 2);
-      i = end === -1 ? chars.length : end + 2;
-      continue;
-    }
-    if (character === "`") {
+    if (chars[i] === "`") {
       i = maskTemplateLiteral(chars, source, i);
       continue;
     }
-    i += 1;
+    const tokenEnd = maskCodeToken(chars, source, i);
+    i = tokenEnd === -1 ? i + 1 : tokenEnd;
   }
   return chars.join("");
 }
