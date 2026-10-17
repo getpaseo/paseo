@@ -49,6 +49,13 @@ export interface WorkspaceLaunchContext {
   branchName: string | null;
 }
 
+export interface WorkspaceLaunchService {
+  buildSnapshot(context: WorkspaceLaunchContext): WorkspaceLaunchPayload[];
+  start(context: WorkspaceLaunchContext, launchName: string): Promise<WorkspaceLaunchPayload>;
+  stop(context: WorkspaceLaunchContext, launchName: string): Promise<WorkspaceLaunchPayload>;
+  disposeWorkspace(workspaceId: string): Promise<void>;
+}
+
 interface WorkspaceLaunchRuntime {
   launchName: string;
   command: string;
@@ -105,7 +112,7 @@ export interface WorkspaceLaunchManagerDependencies {
  * stay under the user's entrypoint rather than becoming a second process
  * supervisor inside Paseo.
  */
-export class WorkspaceLaunchManager {
+export class WorkspaceLaunchManager implements WorkspaceLaunchService {
   private readonly runtimes = new Map<string, Map<string, WorkspaceLaunchRuntime>>();
   private readonly activeLaunches = new Map<string, string>();
   private readonly operationChains = new Map<string, Promise<unknown>>();

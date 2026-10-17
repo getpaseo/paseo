@@ -76,7 +76,7 @@ import type { ScriptHealthState } from "./script-health-monitor.js";
 import { spawnWorkspaceScript } from "./worktree-bootstrap.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import type { WorkspaceRuntimeEnvironmentService } from "./workspace-runtime-environment.js";
-import type { WorkspaceLaunchManager, WorkspaceLaunchContext } from "./workspace-launch-manager.js";
+import type { WorkspaceLaunchContext, WorkspaceLaunchService } from "./workspace-launch-manager.js";
 import {
   createWorkspaceScriptsService,
   type WorkspaceScriptsService,
@@ -539,7 +539,7 @@ export interface SessionOptions {
   serviceProxy?: ServiceProxySubsystem;
   scriptRuntimeStore?: WorkspaceScriptRuntimeStore;
   workspaceRuntimeEnvironment?: WorkspaceRuntimeEnvironmentService;
-  workspaceLaunchManager?: WorkspaceLaunchManager;
+  workspaceLaunchManager?: WorkspaceLaunchService;
   workspaceSetupSnapshots?: Map<string, WorkspaceSetupSnapshot>;
   workspaceSetupRuntime?: WorkspaceSetupRuntime;
   onBranchChanged?: (
@@ -786,7 +786,7 @@ export class Session {
   private readonly serviceProxy: ServiceProxySubsystem | null;
   private readonly scriptRuntimeStore: WorkspaceScriptRuntimeStore | null;
   private workspaceRuntimeEnvironment: WorkspaceRuntimeEnvironmentService | null = null;
-  private workspaceLaunches: WorkspaceLaunchManager | null = null;
+  private workspaceLaunches: WorkspaceLaunchService | null = null;
   private readonly getDaemonTcpPort: (() => number | null) | null;
   private readonly getDaemonTcpHost: (() => string | null) | null;
   private readonly serviceProxyPublicBaseUrl: string | null;

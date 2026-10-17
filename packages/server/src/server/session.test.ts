@@ -23,8 +23,7 @@ import {
   type FileTransferFrame,
 } from "@getpaseo/protocol/binary-frames/index";
 import { Session } from "./session.js";
-import { WorkspaceLaunchManager } from "./workspace-launch-manager.js";
-import { WorkspaceRuntimeEnvironmentService } from "./workspace-runtime-environment.js";
+import type { WorkspaceLaunchContext, WorkspaceLaunchService } from "./workspace-launch-manager.js";
 import { OWNER_PERMISSIONS, type DaemonPermission } from "./authorization/index.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
@@ -32,7 +31,10 @@ import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentManagerEvent } from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { WorkspaceLabelError, type WorkspaceLabelService } from "./workspace-labels/index.js";
-import { createPersistedProjectRecord } from "./workspace-registry.js";
+import {
+  createPersistedProjectRecord,
+  createPersistedWorkspaceRecord,
+} from "./workspace-registry.js";
 import { deriveProjectKey } from "./project-key.js";
 import type { SessionOptions } from "./session.js";
 import type { SessionInboundMessage, SessionOutboundMessage } from "./messages.js";
@@ -4838,17 +4840,27 @@ describe("session workspace launch handling", () => {
       forge: "github",
       number: 42,
       headRepository: "contributor/project",
-    };
-    const getWorkspace = vi.fn().mockResolvedValue({ workspaceId, untrustedSource });
-    const manager = new WorkspaceLaunchManager({
-      terminalManager: null,
-      serviceProxy: null,
-      workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
-      getDaemonTcpPort: null,
-      serviceProxyPublicBaseUrl: null,
-      resolveScriptHealth: null,
-      logger: pino({ level: "silent" }),
+    } as const;
+    const project = createPersistedProjectRecord({
+      projectId: "project-1",
+      rootPath: "/tmp/project",
+      kind: "git",
+      displayName: "project",
+      createdAt: "2026-09-01T00:00:00.000Z",
+      updatedAt: "2026-09-01T00:00:00.000Z",
     });
+    const trustedWorkspace = createPersistedWorkspaceRecord({
+      workspaceId,
+      projectId: project.projectId,
+      cwd: "/tmp/fork-workspace",
+      kind: "worktree",
+      displayName: "fork",
+      branch: "fork",
+      createdAt: "2026-09-01T00:00:00.000Z",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+    });
+    let workspace: typeof trustedWorkspace = { ...trustedWorkspace, untrustedSource };
+    const getWorkspace = vi.fn(async () => workspace);
     const launch = {
       launchName: "dev",
       lifecycle: "running" as const,
@@ -4861,21 +4873,31 @@ describe("session workspace launch handling", () => {
       exitCode: null,
       terminalId: "launch-terminal",
     };
-    const start = vi.spyOn(manager, "start").mockResolvedValue(launch);
+    const starts: Array<{ context: WorkspaceLaunchContext; launchName: string }> = [];
+    const workspaceLaunchManager: WorkspaceLaunchService = {
+      buildSnapshot: () => [],
+      async start(context, launchName) {
+        starts.push({ context, launchName });
+        return launch;
+      },
+      async stop() {
+        return launch;
+      },
+      async disposeWorkspace() {},
+    };
     const session = createSessionForTest({
       messages,
       workspaceRegistry: { get: getWorkspace },
-      workspaceLaunchManager: manager,
+      projectRegistry: { get: vi.fn(async () => project) },
+      workspaceLaunchManager,
     });
     const context = {
       workspaceId,
       workspaceDirectory: "/tmp/fork-workspace",
-      projectSlug: "project",
+      projectConfigDirectory: "/tmp/project",
+      projectSlug: "project-a33e35d3",
       branchName: "fork",
     };
-    vi.spyOn(asSessionInternals(session), "resolveWorkspaceLaunchContextById").mockResolvedValue(
-      context,
-    );
     const request = {
       type: "workspace.launch.start.request" as const,
       requestId: "start-launch",
@@ -4884,7 +4906,7 @@ describe("session workspace launch handling", () => {
     };
 
     await session.handleMessage(request);
-    expect(start).not.toHaveBeenCalled();
+    expect(starts).toEqual([]);
     expect(messages).toContainEqual({
       type: "workspace.launch.start.response",
       payload: {
@@ -4896,9 +4918,9 @@ describe("session workspace launch handling", () => {
       },
     });
 
-    getWorkspace.mockResolvedValue({ workspaceId });
+    workspace = trustedWorkspace;
     await session.handleMessage(request);
-    expect(start).toHaveBeenCalledExactlyOnceWith(context, "dev");
+    expect(starts).toEqual([{ context, launchName: "dev" }]);
     expect(messages.at(-1)).toEqual({
       type: "workspace.launch.start.response",
       payload: { requestId: "start-launch", workspaceId, launchName: "dev", launch, error: null },
