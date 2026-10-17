@@ -935,6 +935,12 @@ export const ja: TranslationResources = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "ベースブランチ",
+          hint: "コミット済みの変更、コミット一覧、Git の更新、新規プルリクエストに使用します。同じチェックアウトのワークスペースで共有されます。",
+          updateHost: "ベースブランチを変更するにはホストを更新してください。",
+          saved: "ベースブランチを更新しました",
+        },
         openChangesTab: "変更タブを開く",
         openDiffTab: "差分タブを開く",
         closeChangesTab: "変更タブを閉じる",

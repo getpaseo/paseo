@@ -20,6 +20,7 @@ import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.j
 import { deriveProjectKey } from "../../project-key.js";
 import { areEquivalentPaths, createRealpathAwarePathMatcher } from "../../../utils/path.js";
 import type { UntrustedWorkspaceSource } from "../../workspace-automation-gate.js";
+import { readPaseoWorktreeMetadata } from "../../../utils/worktree-metadata.js";
 
 export interface ResolveOrCreateWorkspaceIdInput {
   createdWorktree: CreatePaseoWorktreeWorkflowResult | null;
@@ -248,6 +249,9 @@ export function createWorkspaceProvisioningService(deps: {
   ): Promise<PersistedWorkspaceRecord> {
     const normalizedCwd = resolve(cwd);
     const checkout = await workspaceGitService.getCheckout(normalizedCwd);
+    const baseMetadata = checkout.isGit
+      ? readPaseoWorktreeMetadata(checkout.worktreeRoot ?? normalizedCwd)
+      : null;
     const project = projectId
       ? await refreshProjectKind(await requireActiveProject(projectId), normalizedCwd, checkout)
       : // COMPAT(workspaceCreateMissingProjectId): added in v0.1.107, remove after 2027-01-15.
@@ -257,6 +261,7 @@ export function createWorkspaceProvisioningService(deps: {
       workspaceId: context?.workspaceId ?? generateWorkspaceId(),
       projectId: project.projectId,
       ...initialWorkspacePlacement({ source: "checkout", cwd: normalizedCwd, checkout }),
+      baseBranch: baseMetadata?.baseRef ?? baseMetadata?.baseRefName ?? null,
       title: title?.trim() || null,
       createdAt: timestamp,
       updatedAt: timestamp,

@@ -606,6 +606,29 @@ test("workspace handles keep identity and refresh snapshots through existing dri
     }),
   );
   await expect(titlePromise).resolves.toEqual({ title: "SDK review" });
+  const basePromise = workspace.setBaseBranch({
+    baseRef: "refs/heads/release",
+    requestId: "workspace-base-request",
+  });
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "workspace.base_branch.set.request",
+    workspaceId: "workspace_sdk",
+    baseRef: "refs/heads/release",
+    requestId: "workspace-base-request",
+  });
+  ws.message(
+    sessionMessage({
+      type: "workspace.base_branch.set.response",
+      payload: {
+        requestId: "workspace-base-request",
+        workspaceId: "workspace_sdk",
+        accepted: true,
+        baseRef: "refs/heads/release",
+        error: null,
+      },
+    }),
+  );
+  await expect(basePromise).resolves.toEqual({ baseRef: "refs/heads/release" });
 
   unsubscribe();
   ws.message(

@@ -945,6 +945,12 @@ export const ptBR: TranslationResources = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "Branch base",
+          hint: "Usada para alterações commitadas, commits, atualizações do Git e novos pull requests. Compartilhada pelos espaços de trabalho deste checkout.",
+          updateHost: "Atualize o host para alterar a branch base.",
+          saved: "Branch base atualizada",
+        },
         openChangesTab: "Abrir a aba Alterações",
         openDiffTab: "Abrir a aba Diff",
         closeChangesTab: "Fechar a aba Alterações",
