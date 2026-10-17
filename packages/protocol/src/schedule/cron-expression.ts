@@ -90,6 +90,9 @@ function parseField(source: string, bounds: CronFieldBounds): CronFieldMatcher {
     if (!/^\d+$/.test(base)) {
       throw new Error(`Invalid cron ${bounds.name} value`);
     }
+    if (part.includes("/")) {
+      throw new Error(`Invalid cron ${bounds.name} step: use * or a range before /`);
+    }
     const value = Number.parseInt(base, 10);
     if (!Number.isInteger(value) || value < bounds.min || value > bounds.max) {
       throw new Error(`Invalid cron ${bounds.name} value`);
