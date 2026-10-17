@@ -70,6 +70,7 @@ import {
   openPreferredWorkspacePreview,
   openPreferredWorkspaceTarget,
   openWorkspaceTargetBeside,
+  openWorkspaceTargetAtLocation,
 } from "@/workspace-tabs/open-beside";
 import { openWorkspacePullRequest } from "@/workspace-tabs/open-supporting-view";
 import { type ExplorerCheckoutContext } from "@/stores/explorer-checkout-context";
@@ -122,6 +123,9 @@ import { useWorkspace } from "@/stores/session-store-hooks";
 import { useWorkspaceTerminalSessionRetention } from "@/terminal/hooks/use-workspace-terminal-session-retention";
 import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { confirmDialog } from "@/utils/confirm-dialog";
+import { openExternalUrl } from "@/utils/open-external-url";
+import type { ServiceUrlInAppLocation } from "@/utils/open-service-url";
+import { openChatLink, resolveChatLinkDialogChoice } from "@/assistant-file-links/open-chat-link";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { removeResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
@@ -1337,6 +1341,7 @@ function WorkspaceScreenContent({
     [openTab],
   );
   const openInSidePane = useSettings((settings) => settings.openInSidePane);
+  const chatLinkBehavior = useSettings((settings) => settings.chatLinkBehavior);
   const pullRequestOpenLocation = useSettings((settings) => settings.pullRequestOpenLocation);
   const focusWorkspaceTab = useWorkspaceLayoutStore((state) => state.focusTab);
   const selectWorkspaceTabInPane = useWorkspaceLayoutStore((state) => state.selectTabInPane);
@@ -1918,18 +1923,65 @@ function WorkspaceScreenContent({
   );
 
   const handleOpenUrlInBrowserTab = useCallback(
-    (url: string) => {
+    (url: string, location: ServiceUrlInAppLocation = "focused") => {
       if (!persistenceKey || !getIsElectron()) {
+        void openExternalUrl(url);
         return;
       }
       const { browserId } = createWorkspaceBrowser({ initialUrl: url });
+      if (location === "side") {
+        openWorkspaceTargetAtLocation({
+          workspaceKey: persistenceKey,
+          target: { kind: "browser", browserId },
+          location: "side",
+          preferredMainPaneId: lastMainPaneId,
+        });
+        return;
+      }
       openWorkspaceTabFocused(
         persistenceKey,
         { kind: "browser", browserId },
         FOCUSED_PANE_PLACEMENT,
       );
     },
-    [openWorkspaceTabFocused, persistenceKey],
+    [lastMainPaneId, openWorkspaceTabFocused, persistenceKey],
+  );
+
+  const handleOpenChatLink = useCallback(
+    async (url: string) => {
+      if (!persistenceKey || !getIsElectron()) {
+        await openExternalUrl(url);
+        return;
+      }
+      await openChatLink({
+        url,
+        behavior: chatLinkBehavior,
+        askHowToOpen: async () => {
+          const choice = await getDesktopHost()?.dialog?.choose?.(t("chatLink.message", { url }), {
+            title: t("chatLink.title"),
+            buttons: [
+              t("common.actions.cancel"),
+              t("chatLink.externalBrowser"),
+              t("chatLink.internalTab"),
+            ],
+            defaultId: 2,
+            cancelId: 0,
+          });
+          return resolveChatLinkDialogChoice(choice ?? null);
+        },
+        openInternal: (internalUrl, location) => {
+          const { browserId } = createWorkspaceBrowser({ initialUrl: internalUrl });
+          openWorkspaceTargetAtLocation({
+            workspaceKey: persistenceKey,
+            target: { kind: "browser", browserId },
+            location: location === "side" ? "side" : "main",
+            preferredMainPaneId: lastMainPaneId,
+          });
+        },
+        openExternal: openExternalUrl,
+      });
+    },
+    [chatLinkBehavior, lastMainPaneId, persistenceKey, t],
   );
 
   useDesktopBrowserNewTabRequests({
@@ -3050,12 +3102,14 @@ function WorkspaceScreenContent({
             focusPaneBeforeOpen: input.focusPaneBeforeOpen,
           });
         },
+        onOpenUrlInBrowserTab: handleOpenChatLink,
         onOpenImportSheet: openImportSheet,
       }),
     [
       handleCloseTabById,
       fileNavigationRevisionByTabId,
       handleOpenWorkspaceFileFromPane,
+      handleOpenChatLink,
       navigateToTabId,
       normalizedServerId,
       normalizedWorkspaceId,

@@ -1049,6 +1049,37 @@ export function normalizeLayout(layout: unknown): WorkspaceLayout {
   return parentTabIdByTabId ? { ...normalizedLayout, parentTabIdByTabId } : normalizedLayout;
 }
 
+/**
+ * The nearest visible pane to the right of `paneId`: the first pane after it in the closest horizontal
+ * split that has one, skipping `skipPaneId`. Null when nothing is to its right.
+ */
+export function findPaneRightOf(
+  root: SplitNode,
+  paneId: string,
+  skipPaneId: string | null,
+): SplitPane | null {
+  const internalRoot = asInternalNode(root);
+  if (internalRoot.kind === "pane") {
+    return null;
+  }
+  const children = internalRoot.group.children;
+  const index = children.findIndex((child) => findPaneById(child, paneId));
+  if (index === -1) {
+    return null;
+  }
+  const nested = findPaneRightOf(children[index], paneId, skipPaneId);
+  if (nested || internalRoot.group.direction !== "horizontal") {
+    return nested;
+  }
+  for (const sibling of children.slice(index + 1)) {
+    const pane = collectAllPanes(sibling).find((candidate) => candidate.id !== skipPaneId);
+    if (pane) {
+      return pane;
+    }
+  }
+  return null;
+}
+
 export function findPaneById(root: SplitNode, paneId: string | null | undefined): SplitPane | null {
   if (!paneId) {
     return null;

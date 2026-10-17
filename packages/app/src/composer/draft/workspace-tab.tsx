@@ -279,6 +279,7 @@ interface WorkspaceDraftAgentTabProps {
   isPaneFocused: boolean;
   onCreated: (snapshot: AgentSnapshotPayload) => void;
   onOpenWorkspaceFile: (request: WorkspaceFileOpenRequest) => void;
+  onOpenExternalUrl?: (url: string) => void;
   onOpenImportSheet?: () => void;
 }
 
@@ -301,6 +302,7 @@ export function WorkspaceDraftAgentTab({
   isPaneFocused,
   onCreated,
   onOpenWorkspaceFile,
+  onOpenExternalUrl,
   onOpenImportSheet,
 }: WorkspaceDraftAgentTabProps) {
   const { t } = useTranslation();
@@ -613,6 +615,7 @@ export function WorkspaceDraftAgentTab({
             turnPresentation={turnPresentation}
             pendingPermissions={EMPTY_PENDING_PERMISSIONS}
             onOpenWorkspaceFile={onOpenWorkspaceFile}
+            onOpenExternalUrl={onOpenExternalUrl}
           />
         </View>
       ) : (

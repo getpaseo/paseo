@@ -7,8 +7,29 @@ import {
 import { i18n } from "@/i18n/i18next";
 import { openExternalUrl } from "@/utils/open-external-url";
 
+/** Where an in-app service URL lands: the focused pane, or the side pane beside the user's work. */
+export type ServiceUrlInAppLocation = "focused" | "side";
+export type ServiceUrlAskResult = "in-app" | "external";
+
 export interface OpenServiceUrlOptions {
-  openInApp?: (url: string) => void;
+  openInApp?: (url: string, location: ServiceUrlInAppLocation) => void;
+}
+
+export interface RouteServiceUrlInput {
+  url: string;
+  behavior: ServiceUrlBehavior;
+  askHowToOpen(): Promise<ServiceUrlAskResult>;
+  openInApp(url: string, location: ServiceUrlInAppLocation): void;
+  openExternal(url: string): Promise<void>;
+}
+
+export async function routeServiceUrl(input: RouteServiceUrlInput): Promise<void> {
+  const behavior = input.behavior === "ask" ? await input.askHowToOpen() : input.behavior;
+  if (behavior === "external") {
+    await input.openExternal(input.url);
+    return;
+  }
+  input.openInApp(input.url, behavior === "in-app-side" ? "side" : "focused");
 }
 
 export async function openServiceUrl(url: string, options?: OpenServiceUrlOptions): Promise<void> {
@@ -18,20 +39,17 @@ export async function openServiceUrl(url: string, options?: OpenServiceUrlOption
     return;
   }
 
-  const behavior = await resolveBehavior(url);
-  if (behavior === "in-app") {
-    openInApp(url);
-    return;
-  }
-  await openExternalUrl(url);
+  const settings = await loadAppSettingsFromStorage();
+  await routeServiceUrl({
+    url,
+    behavior: settings.serviceUrlBehavior,
+    askHowToOpen: () => askHowToOpen(url),
+    openInApp,
+    openExternal: openExternalUrl,
+  });
 }
 
-async function resolveBehavior(url: string): Promise<Exclude<ServiceUrlBehavior, "ask">> {
-  const settings = await loadAppSettingsFromStorage();
-  if (settings.serviceUrlBehavior === "in-app" || settings.serviceUrlBehavior === "external") {
-    return settings.serviceUrlBehavior;
-  }
-
+async function askHowToOpen(url: string): Promise<ServiceUrlAskResult> {
   const askWithCheckbox = getDesktopHost()?.dialog?.askWithCheckbox;
   if (typeof askWithCheckbox !== "function") {
     return "external";
@@ -44,7 +62,7 @@ async function resolveBehavior(url: string): Promise<Exclude<ServiceUrlBehavior,
     checkboxLabel: i18n.t("serviceUrl.dontAskAgain"),
   });
 
-  const choice: Exclude<ServiceUrlBehavior, "ask"> = result.confirmed ? "in-app" : "external";
+  const choice: ServiceUrlAskResult = result.confirmed ? "in-app" : "external";
   if (result.dontAskAgain) {
     await persistAppSettings({ serviceUrlBehavior: choice });
   }

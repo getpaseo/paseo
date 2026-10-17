@@ -27,6 +27,7 @@ import {
   EXPLORER_SIDEBAR_PANE_ID,
   findPaneById,
   findPaneContainingTab,
+  findPaneRightOf,
   focusPaneInLayout,
   focusTabInLayout,
   getFocusedBrowserId,
@@ -1210,6 +1211,20 @@ export function createWorkspaceLayoutStore(
           const rememberedPane = findPaneById(layout.root, rememberedPaneId);
           if (rememberedPane && rememberedPane.id !== explorerPaneId) {
             return rememberedPane.id;
+          }
+
+          // A split the user made already has a pane beside the focused one: use it as the side pane.
+          const existingPane = layout.focusedPaneId
+            ? findPaneRightOf(layout.root, layout.focusedPaneId, explorerPaneId)
+            : null;
+          if (existingPane) {
+            set((state) => ({
+              sidePaneIdByWorkspace: {
+                ...state.sidePaneIdByWorkspace,
+                [normalizedWorkspaceKey]: existingPane.id,
+              },
+            }));
+            return existingPane.id;
           }
 
           const result = splitWorkspaceRootRightInLayout({

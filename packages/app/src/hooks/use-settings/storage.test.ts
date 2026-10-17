@@ -362,6 +362,31 @@ describe("loadAppSettingsFromStorage", () => {
     expect(legacySide.openInSidePane).not.toHaveProperty("pullRequests");
   });
 
+  it("asks where to open chat links for existing settings", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ openInSidePane: { chatFiles: true } }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.openInSidePane).toMatchObject({ chatFiles: true });
+    expect(result.chatLinkBehavior).toBe("ask");
+  });
+
+  it("keeps script service URLs opening in Paseo on the side", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ serviceUrlBehavior: "in-app-side" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.serviceUrlBehavior).toBe("in-app-side");
+  });
+
   it("uses the native terminal renderer by default", async () => {
     const deps = makeDeps();
 

@@ -1932,6 +1932,12 @@ export const es: TranslationResources = {
     externalBrowser: "Navegador externo",
     dontAskAgain: "no vuelvas a preguntar",
   },
+  chatLink: {
+    title: "Abrir URL",
+    message: "¿Abrir {{url}} en Paseo o en tu navegador externo?",
+    internalTab: "Navegador interno — pestaña",
+    externalBrowser: "Navegador externo",
+  },
   downloads: {
     requestTokenFailed: "No se pudo solicitar el token de descarga.",
     hostUnavailable: "El host de descarga no está disponible.",
@@ -2212,6 +2218,15 @@ export const es: TranslationResources = {
         options: {
           ask: "Preguntar",
           inApp: "EnPaseo",
+          inAppSide: "En Paseo — lateral",
+          external: "Navegador externo",
+        },
+      },
+      chatLinks: {
+        options: {
+          ask: "Preguntar",
+          internalSide: "Navegador interno — lateral",
+          internalTab: "Navegador interno — pestaña",
           external: "Navegador externo",
         },
       },
