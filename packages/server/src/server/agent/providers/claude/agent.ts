@@ -3858,6 +3858,7 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     if (terminalSeen) {
+      this.activeUsageLimit = undefined;
       this.compactionMarkerOpen = false;
       if (this.activeForegroundTurnId) {
         this.activeForegroundTurnId = null;
@@ -3896,6 +3897,7 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     this.notifySubscribers({ type: "turn_completed", provider: "claude" });
+    this.activeUsageLimit = undefined;
     this.autonomousTurn = null;
     this.activeForegroundQuery = null;
     this.activeForegroundInput = null;

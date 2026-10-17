@@ -5,7 +5,7 @@ npm notice run 'vitest' run packages/server/src/server/agent/usage-limit-resume.
 
 
  Test Files  6 passed (6)
-      Tests  337 passed (337)
-   Start at  06:17:10
-   Duration  5.60s (transform 1.61s, setup 0ms, import 2.49s, tests 5.72s, environment 0ms)
+      Tests  338 passed (338)
+   Start at  06:18:49
+   Duration  5.62s (transform 1.61s, setup 0ms, import 2.54s, tests 5.65s, environment 0ms)
 

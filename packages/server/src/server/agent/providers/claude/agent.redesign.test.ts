@@ -2165,3 +2165,36 @@ test.each([undefined, 1, Number.NaN, Number.MAX_VALUE])(
     }
   },
 );
+
+test("an autonomous turn's usage limit does not leak into a later unrelated failure", async () => {
+  const session = await createSession();
+  const internal: SessionStateInternals = asInternals(session);
+  const query = createPendingQueryMock();
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  const failure = {
+    ...successResult(),
+    subtype: "error_during_execution",
+    is_error: true,
+    errors: ["Request failed"],
+  };
+  try {
+    await internal.routeSdkMessageFromPump(claudeTurnInit(), query);
+    await internal.routeSdkMessageFromPump(
+      {
+        ...rateLimitEvent,
+        rate_limit_info: { status: "rejected", resetsAt: Math.ceil(Date.now() / 1000) + 18_000 },
+      },
+      query,
+    );
+    await internal.routeSdkMessageFromPump(failure, query);
+    await internal.routeSdkMessageFromPump(claudeTurnInit(), query);
+    await internal.routeSdkMessageFromPump(failure, query);
+    const failures = events.filter((event) => event.type === "turn_failed");
+    expect(failures).toHaveLength(2);
+    expect(failures[0]).toHaveProperty("usageLimit.resetsAt");
+    expect(failures[1]).not.toHaveProperty("usageLimit");
+  } finally {
+    await session.close();
+  }
+});

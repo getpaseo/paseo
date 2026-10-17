@@ -48,9 +48,9 @@ npm run format
 npm exec -- vitest run packages/server/src/server/agent/usage-limit-resume.test.ts packages/server/src/server/agent/agent-manager.test.ts packages/server/src/server/agent/agent-archive.test.ts packages/server/src/server/agent/providers/claude/agent.redesign.test.ts packages/protocol/src/messages.test.ts packages/app/src/i18n/resources.test.ts
 ```
 
-Raw outputs: [server build](build.txt), [app dependency build](app-deps-build.txt), [typecheck](typecheck.txt), [lint](lint.txt), [format](format.txt), [337 targeted tests](tests.txt). No full test suite was run.
+Raw outputs: [server build](build.txt), [app dependency build](app-deps-build.txt), [typecheck](typecheck.txt), [lint](lint.txt), [format](format.txt), [338 targeted tests](tests.txt). No full test suite was run.
 
-Coverage includes same provider session, durable restart recovery, concurrent scans, default-off behavior, reset buffer, unknown reset, manual cancellation (including a manual turn completing during a paused durable claim), disabled/archived/blocked-workspace/shutdown guards, advisory/overage events, invalid reset metadata, old-shaped protocol messages, and translation parity.
+Coverage includes same provider session, durable restart recovery, concurrent scans, default-off behavior, reset buffer, unknown reset, manual cancellation (including a manual turn completing during a paused durable claim), disabled/archived/blocked-workspace/shutdown guards, advisory/overage events, isolation of consecutive autonomous turns, invalid reset metadata, old-shaped protocol messages, and translation parity.
 
 ## Platform coverage
 
