@@ -6,7 +6,7 @@ import type { Logger } from "pino";
 
 import type { AgentMode, AgentProvider, AgentSessionConfig } from "../agent-sdk-types.js";
 import type { AgentManager } from "../agent-manager.js";
-import { AgentProfileSchema } from "@getpaseo/protocol/messages";
+import { ActiveTurnBehaviorSchema, AgentProfileSchema } from "@getpaseo/protocol/messages";
 import type { DaemonConfigStore } from "../../daemon-config-store.js";
 import {
   AgentFeatureSchema,
@@ -1209,6 +1209,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     .object(legacyTopLevelCreateAgentInputSchema)
     .strict();
   const commonSendAgentPromptInputSchema = {
+    activeTurnBehavior: ActiveTurnBehaviorSchema.optional().describe(
+      'How to send into a running turn: "steer" joins it, falling back to interrupt when unavailable; "interrupt" replaces it. Defaults to steer for agent callers and interrupt otherwise.',
+    ),
     agentId: z.string(),
     prompt: z.string(),
     sessionMode: z.string().optional().describe("Optional mode to set before running the prompt."),
@@ -1955,28 +1958,55 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       inputSchema: sendAgentPromptInputSchema,
       outputSchema: {
         success: z.boolean(),
-        disposition: z.enum(["turn_started", "out_of_band"]).optional(),
+        disposition: z.enum(["turn_started", "out_of_band", "steered"]).optional(),
         status: AgentStatusEnum,
         guidance: z.string().optional(),
       },
     },
-    async ({ agentId, prompt, sessionMode, notifyOnFinish = Boolean(callerAgentId) }) => {
+    async ({
+      agentId,
+      prompt,
+      sessionMode,
+      notifyOnFinish = Boolean(callerAgentId),
+      activeTurnBehavior = callerAgentId ? "steer" : "interrupt",
+    }) => {
       let stopNotification: (() => void) | undefined;
-      function armFinishNotification(disposition: PromptDispatchDisposition): void {
-        if (!callerAgentId || !notifyOnFinish) {
-          return;
-        }
+      let acceptDispatch!: (result: PromptDispatchDisposition | false) => void;
+      const dispatchResult = new Promise<PromptDispatchDisposition | false>((resolve) => {
+        acceptDispatch = resolve;
+      });
+      const notifying = Boolean(callerAgentId && notifyOnFinish);
+      if (callerAgentId && notifyOnFinish) {
         stopNotification = setupFinishNotification({
           agentManager,
           agentStorage,
           childAgentId: agentId,
           callerAgentId,
-          waitForTurnStart: disposition === "turn_started",
+          waitForTurnStart: false,
+          dispatchResult,
+          logger: childLogger,
+        });
+      }
+      function confirmDispatch(disposition: PromptDispatchDisposition): void {
+        // A new turn must ignore outcomes from the displaced turn. Its iterator
+        // has not started yet, so rearm here; steering keeps the early observer.
+        if (disposition !== "turn_started") {
+          acceptDispatch(disposition);
+          return;
+        }
+        acceptDispatch(disposition);
+        if (!callerAgentId || !notifyOnFinish) return;
+        stopNotification?.();
+        stopNotification = setupFinishNotification({
+          agentManager,
+          agentStorage,
+          childAgentId: agentId,
+          callerAgentId,
+          waitForTurnStart: true,
           logger: childLogger,
         });
       }
 
-      const notifying = Boolean(callerAgentId && notifyOnFinish);
       const { disposition } = await sendPromptToAgent({
         agentManager,
         agentStorage,
@@ -1984,9 +2014,11 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         prompt,
         source: callerAgentId ? { kind: "agent-message", agentId: callerAgentId } : undefined,
         sessionMode,
-        onDispatch: armFinishNotification,
+        activeTurnBehavior,
+        onDispatch: confirmDispatch,
         logger: childLogger,
       }).catch((error) => {
+        acceptDispatch(false);
         stopNotification?.();
         if (error instanceof AgentNotFoundError) {
           throw new PaseoToolInputError(error.message);
