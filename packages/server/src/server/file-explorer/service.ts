@@ -123,6 +123,26 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
   ".svg": "image/svg+xml",
 };
 
+// Android's share sheet only lists apps that accept the type we report, so
+// application/octet-stream hides apps that handle video or PDFs. Checked before the
+// content sniff because an ASCII-only PDF would sniff as text/plain. Hand-picked instead
+// of a MIME library, which would also retype text files such as .ts (video/mp2t).
+const DOWNLOAD_MIME_TYPES: Record<string, string> = {
+  ".pdf": "application/pdf",
+  ".zip": "application/zip",
+  ".gz": "application/gzip",
+  ".tgz": "application/gzip",
+  ".tar": "application/x-tar",
+  ".mp4": "video/mp4",
+  ".mov": "video/quicktime",
+  ".webm": "video/webm",
+  ".mp3": "audio/mpeg",
+  ".m4a": "audio/mp4",
+  ".wav": "audio/wav",
+  ".ogg": "audio/ogg",
+  ".flac": "audio/flac",
+};
+
 interface ScopedPathParams {
   root: string;
   relativePath?: string;
@@ -552,6 +572,8 @@ export async function getDownloadableFileInfo({ root, relativePath }: ReadFilePa
     let mimeType = "application/octet-stream";
     if (ext in IMAGE_MIME_TYPES) {
       mimeType = IMAGE_MIME_TYPES[ext];
+    } else if (ext in DOWNLOAD_MIME_TYPES) {
+      mimeType = DOWNLOAD_MIME_TYPES[ext];
     } else {
       const sample = Buffer.alloc(FILE_TYPE_SAMPLE_BYTES);
       const { bytesRead } = await handle.read(sample, 0, sample.length, 0);
