@@ -10,7 +10,9 @@ import {
   runAlternateSendAction,
   runDefaultSendAction,
   runMessageInputKeyboardAction,
+  resolveVoiceAgentId,
   stopRealtimeVoice,
+  toggleRealtimeVoice,
 } from "./state";
 
 const connected = { isConnected: true } as never;
@@ -360,5 +362,69 @@ describe("fullscreen glyph rail", () => {
     expect(
       resolveGlyphRailOffset({ controlSize: 28, sendIconSize: 20, glyphIconSize: 16 }),
     ).toBeCloseTo(1 / 6);
+  });
+});
+
+describe("resolveVoiceAgentId", () => {
+  it("gives a draft composer no voice target", () => {
+    expect(resolveVoiceAgentId({ hasAgent: false, agentId: "new-workspace" })).toBeUndefined();
+  });
+
+  it("targets an existing agent", () => {
+    expect(resolveVoiceAgentId({ hasAgent: true, agentId: "agent-1" })).toBe("agent-1");
+  });
+});
+
+describe("toggleRealtimeVoice", () => {
+  function createContext(overrides: {
+    voiceAgentId: string | undefined;
+    isVoiceModeForAgent?: boolean;
+  }) {
+    const calls: string[] = [];
+    const ctx = {
+      voice: {
+        isVoiceSwitching: false,
+        isVoiceModeForAgent: () => overrides.isVoiceModeForAgent ?? false,
+        startVoice: async (serverId: string, agentId: string) => {
+          calls.push(`start ${serverId} ${agentId}`);
+        },
+      },
+      voiceServerId: "host",
+      voiceAgentId: overrides.voiceAgentId,
+      isConnected: true,
+      disabled: false,
+      isAgentRunning: false,
+      handleStopRealtimeVoice: () => {
+        calls.push("stop");
+      },
+      toast: {
+        error: (message: string) => {
+          calls.push(`toast ${message}`);
+        },
+      },
+      interruptBeforeVoiceMessage: "Interrupt first",
+      exitFullscreen: () => {
+        calls.push("exit fullscreen");
+      },
+    };
+    return { ctx, calls };
+  }
+
+  it("does nothing when the composer has no agent target", () => {
+    const { ctx, calls } = createContext({ voiceAgentId: undefined });
+    toggleRealtimeVoice(ctx);
+    expect(calls).toEqual([]);
+  });
+
+  it("starts voice for an existing agent", () => {
+    const { ctx, calls } = createContext({ voiceAgentId: "agent-1" });
+    toggleRealtimeVoice(ctx);
+    expect(calls).toEqual(["exit fullscreen", "start host agent-1"]);
+  });
+
+  it("stops an active voice session for an existing agent", () => {
+    const { ctx, calls } = createContext({ voiceAgentId: "agent-1", isVoiceModeForAgent: true });
+    toggleRealtimeVoice(ctx);
+    expect(calls).toEqual(["stop"]);
   });
 });
