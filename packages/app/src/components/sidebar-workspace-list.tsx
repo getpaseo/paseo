@@ -2646,7 +2646,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   projectTitle: {
     color: theme.colors.workspace.muted,
-    fontSize: theme.fontSize.lg,
+    fontSize: (theme.fontSize.base + theme.fontSize.lg) / 2,
     fontWeight: theme.fontWeight.medium,
     minWidth: 0,
     flexShrink: 1,
