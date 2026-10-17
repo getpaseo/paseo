@@ -14,6 +14,10 @@ import type { CreationSnapshot, AgentCreateRequest } from "@getpaseo/protocol/me
 import type { MessageReceipts } from "./message-receipts/index.js";
 import equal from "fast-deep-equal";
 import { SessionDelivery, type OwnedSubscription } from "./session/owned-subscriptions/index.js";
+import {
+  NETWORK_TUNNEL_FAMILY,
+  NetworkTunnelSession,
+} from "./network-tunnel/network-tunnel-session.js";
 import { v4 as uuidv4 } from "uuid";
 import { lstat, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { basename, join, resolve, sep } from "path";
@@ -686,7 +690,7 @@ export class Session {
         );
       } else this.emitBinary(frame);
     },
-    (source, message) => this.workspaceSetupMessageForClient(message, source),
+    (source, message) => this.projectMessageForClient(message, source),
     (request, message) =>
       this.sessionLogger.warn(
         {
@@ -781,6 +785,7 @@ export class Session {
   private readonly serviceProxyPublicBaseUrl: string | null;
   private readonly resolveScriptHealth: ((hostname: string) => ScriptHealthState | null) | null;
   private readonly terminalController: TerminalSessionController;
+  private readonly networkTunnelSession: NetworkTunnelSession;
   private inflightRequests = 0;
   private peakInflightRequests = 0;
   private readonly workspaceSetupSnapshots: Map<string, WorkspaceSetupSnapshot>;
@@ -893,6 +898,17 @@ export class Session {
       },
       downloadTokenStore,
       paseoHome,
+      logger: this.sessionLogger,
+    });
+    this.networkTunnelSession = new NetworkTunnelSession({
+      host: {
+        emit: (msg) => this.emit(msg),
+        begin: (stop) => this.delivery.begin(NETWORK_TUNNEL_FAMILY, undefined, stop),
+        currentSource: () => this.delivery.currentSource,
+        isModernSource: (source) => this.delivery.isModern(source),
+        supportsTunnel: (source) => this.supportsForSource(CLIENT_CAPS.networkTunnel, source),
+        allowsNetworkProxy: () => this.authorization.allowsPermission("network.proxy"),
+      },
       logger: this.sessionLogger,
     });
     this.agentManager = agentManager;
@@ -2205,6 +2221,14 @@ export class Session {
   }
 
   public setPermissions(permissions: readonly DaemonPermission[]): void {
+    // The closed notice must leave while network.proxy still authorizes it, so revoke runs first.
+    if (!permissions.includes("network.proxy")) {
+      void this.networkTunnelSession
+        .revoke()
+        .catch((error) =>
+          this.sessionLogger.error({ err: error }, "Failed to release revoked network tunnels"),
+        );
+    }
     this.authorization.replacePermissions(permissions);
     if (!this.authorization.allowsPermission("workspace.write")) {
       void this.delivery
@@ -2298,6 +2322,12 @@ export class Session {
     source?: object,
   ): Promise<void> | undefined {
     if (msg.type === "browser.host.register.request") return this.registerBrowserHost(msg);
+    if (msg.type === "network.tunnel.open.request") {
+      this.networkTunnelSession.handleOpenRequest(msg);
+      return Promise.resolve();
+    }
+    if (msg.type === "network.tunnel.close.request")
+      return this.networkTunnelSession.handleCloseRequest(msg);
     if (msg.type === "browser.automation.execute.response") {
       if (source)
         this.browserToolsBroker?.receiveResponse(
@@ -3123,6 +3153,11 @@ export class Session {
   }
 
   public async handleBinaryFrame(binaryFrame: BinaryFrame, source: object): Promise<void> {
+    // Tunnels carry network.proxy authority of their own; the workspace.write gate below is for terminals and files.
+    if (binaryFrame.kind === "tunnel") {
+      await this.networkTunnelSession.handleFrame(binaryFrame.frame, source);
+      return;
+    }
     if (!this.authorization.allowsPermission("workspace.write")) {
       return;
     }
@@ -8456,7 +8491,7 @@ export class Session {
           !this.delivery.isModern(source) &&
           this.wantsEvent(event, source)
         )
-          this.onMessageToSource(source, this.workspaceSetupMessageForClient(message, source));
+          this.onMessageToSource(source, this.projectMessageForClient(message, source));
       }
     } else if (delivered.size === 0 && this.wantsEvent(event)) this.onMessage(message);
     return true;
@@ -8481,20 +8516,54 @@ export class Session {
     if (msg.type === "workspace_setup_progress" || msg.type === "workspace_setup_status_response") {
       if (this.clientSources.size > 0 && this.onMessageToSource) {
         for (const [source] of this.clientSources) {
-          this.onMessageToSource(source, this.workspaceSetupMessageForClient(msg, source));
+          this.onMessageToSource(source, this.projectMessageForClient(msg, source));
         }
         return;
       }
-      msg = this.workspaceSetupMessageForClient(msg);
+      msg = this.projectMessageForClient(msg);
     }
     this.onMessage(msg);
   }
 
-  // COMPAT(workspaceSetupBlocked): added in v0.8.0, remove after 2027-03-07 once client floor >= v0.8.0.
-  private workspaceSetupMessageForClient(
+  /** Permissions as an older client can parse them: its closed enum rejects the whole envelope otherwise. */
+  public permissionsForSource(source?: object): DaemonPermission[] {
+    const permissions = this.authorization.listPermissions();
+    // COMPAT(networkTunnel): added in v0.12.0, remove permission projection after 2027-10-08 once client floor >= v0.12.0.
+    return this.supportsNetworkTunnel(source)
+      ? permissions
+      : permissions.filter((permission) => permission !== "network.proxy");
+  }
+
+  private supportsNetworkTunnel(source?: object): boolean {
+    return source
+      ? this.supportsForSource(CLIENT_CAPS.networkTunnel, source)
+      : this.supports(CLIENT_CAPS.networkTunnel);
+  }
+
+  private projectMessageForClient(
     message: SessionOutboundMessage,
     source?: object,
   ): SessionOutboundMessage {
+    // COMPAT(networkTunnel): added in v0.12.0, remove permission projection after 2027-10-08 once client floor >= v0.12.0.
+    if (message.type === "status" && message.payload.status === "server_info") {
+      return {
+        ...message,
+        payload: { ...message.payload, permissions: this.permissionsForSource(source) },
+      };
+    }
+    if (
+      message.type === "hub.management.daemon.connect.response" ||
+      message.type === "hub.management.daemon.get_status.response" ||
+      message.type === "hub.management.daemon.disconnect.response" ||
+      message.type === "hub.management.daemon.permissions.update.response"
+    ) {
+      // COMPAT(networkTunnel): added in v0.12.0, remove permission projection after 2027-10-08 once client floor >= v0.12.0.
+      if (this.supportsNetworkTunnel(source)) return message;
+      const status = message.payload.status;
+      const permissions = status.permissions.filter((permission) => permission !== "network.proxy");
+      return { ...message, payload: { ...message.payload, status: { ...status, permissions } } };
+    }
+    // COMPAT(workspaceSetupBlocked): added in v0.8.0, remove after 2027-03-07 once client floor >= v0.8.0.
     if (
       message.type !== "workspace_setup_progress" &&
       message.type !== "workspace_setup_status_response"

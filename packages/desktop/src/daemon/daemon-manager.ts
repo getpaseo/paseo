@@ -474,17 +474,16 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
   };
 }
 
-export function registerDaemonManager(): void {
-  const handlers = createDaemonCommandHandlers();
+export function registerDaemonManager(
+  options: { additionalHandlers?: Record<string, DesktopCommandHandler> } = {},
+): void {
+  const handlers = { ...createDaemonCommandHandlers(), ...options.additionalHandlers };
 
-  ipcMain.handle(
-    "paseo:invoke",
-    async (_event, command: string, args?: Record<string, unknown>) => {
-      const handler = handlers[command];
-      if (!handler) {
-        throw new Error(`Unknown desktop command: ${command}`);
-      }
-      return await handler(args);
-    },
-  );
+  ipcMain.handle("paseo:invoke", async (event, command: string, args?: Record<string, unknown>) => {
+    const handler = handlers[command];
+    if (!handler) {
+      throw new Error(`Unknown desktop command: ${command}`);
+    }
+    return await handler(args, { senderId: event.sender.id });
+  });
 }

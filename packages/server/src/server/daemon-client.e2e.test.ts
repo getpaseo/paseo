@@ -1,11 +1,12 @@
 import { test, expect, beforeAll, afterAll } from "vitest";
-import { mkdirSync, mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, existsSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";
 import path from "node:path";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import type { CreationSnapshot } from "@getpaseo/protocol";
 
 import {
   createDaemonTestContext,
@@ -402,7 +403,7 @@ class RejectingMcpResumeClient implements AgentClient {
   }
 }
 
-test("createAgent fails when the initial turn cannot start", async () => {
+test("createAgent preserves the agent when the initial turn cannot start", async () => {
   const testAgent = new StubAgentClient({
     sessionId: "start-turn-failure-session",
     supportsStreaming: false,
@@ -421,16 +422,18 @@ test("createAgent fails when the initial turn cannot start", async () => {
     await client.connect();
     await client.fetchAgents({ subscribe: {} });
 
-    await expect(
-      client.createAgent({
-        provider: "codex",
-        cwd: tmpCwd(),
-        title: "Start failure agent",
-        modeId: "full-access",
-        model: "gpt-5.4-mini",
-        initialPrompt: "Run exactly: sleep 30",
-      }),
-    ).rejects.toThrow("Initial turn failed to start");
+    const agent = await client.createAgent({
+      provider: "codex",
+      cwd: tmpCwd(),
+      title: "Start failure agent",
+      modeId: "full-access",
+      model: "gpt-5.4-mini",
+      initialPrompt: "Run exactly: sleep 30",
+    });
+    expect(agent).toMatchObject({
+      status: "error",
+      lastError: "Initial turn failed to start",
+    });
   } finally {
     await client.close();
     await daemon.close();
@@ -1220,7 +1223,7 @@ test("opens an exact gitignored workspace path without offering it as a suggesti
   const target = path.join(cwd, "generated", "notes.md");
 
   try {
-    execSync("git init -q", { cwd });
+    execFileSync("git", ["init", "-q"], { cwd });
     writeFileSync(path.join(cwd, ".gitignore"), "generated/\n");
     mkdirSync(path.dirname(target), { recursive: true });
     writeFileSync(target, "generated notes\n");
@@ -1368,33 +1371,13 @@ test("creates agent and exercises lifecycle", async () => {
     return unsubscribe;
   });
 
-  const createRequestId = `create-${Date.now()}`;
-  const createdStatusPromise = waitForSignal(15000, (resolve) => {
-    const unsubscribe = ctx.client.on("status", (message) => {
-      if (message.type !== "status") {
-        return;
-      }
-      const payload = message.payload as {
-        status?: string;
-        agentId?: string;
-        requestId?: string;
-      };
-      if (payload.status !== "agent_created") {
-        return;
-      }
-      if (payload.requestId !== createRequestId) {
-        return;
-      }
-      resolve(message);
-    });
-    return unsubscribe;
-  });
+  const createdSnapshots: CreationSnapshot[] = [];
 
   const agent = await ctx.client.createAgent({
     ...getFullAccessConfig("codex"),
     cwd,
     title: "Daemon Client V2",
-    requestId: createRequestId,
+    onEvent: (snapshot) => createdSnapshots.push(snapshot),
   });
 
   expect(agent.id).toBeTruthy();
@@ -1404,39 +1387,26 @@ test("creates agent and exercises lifecycle", async () => {
 
   const agentUpdate = await agentUpdatePromise;
   expect(agentUpdate.payload.agent.id).toBe(agent.id);
-  const createdStatus = await createdStatusPromise;
-  expect((createdStatus.payload as { agentId?: string }).agentId).toBe(agent.id);
-
-  const failRequestId = `fail-${Date.now()}`;
-  const failedStatusPromise = waitForSignal(15000, (resolve) => {
-    const unsubscribe = ctx.client.on("status", (message) => {
-      if (message.type !== "status") {
-        return;
-      }
-      const payload = message.payload as {
-        status?: string;
-        requestId?: string;
-      };
-      if (payload.status !== "agent_create_failed") {
-        return;
-      }
-      if (payload.requestId !== failRequestId) {
-        return;
-      }
-      resolve(message);
-    });
-    return unsubscribe;
+  expect(createdSnapshots.at(-1)).toMatchObject({
+    phase: "completed",
+    agentId: agent.id,
+    error: null,
   });
+
+  const failedSnapshots: CreationSnapshot[] = [];
 
   await expect(
     ctx.client.createAgent({
       ...getFullAccessConfig("codex"),
       cwd: "/this/path/does/not/exist/12345",
       title: "Should Fail",
-      requestId: failRequestId,
+      onEvent: (snapshot) => failedSnapshots.push(snapshot),
     }),
   ).rejects.toThrow("Working directory does not exist");
-  await failedStatusPromise;
+  expect(failedSnapshots.at(-1)).toMatchObject({
+    phase: "failed",
+    error: expect.stringContaining("Working directory does not exist"),
+  });
 
   let sawRefresh = false;
   const unsubscribe = ctx.client.subscribe((event) => {
@@ -1624,28 +1594,40 @@ test("handles permission flow", async () => {
     title: "Permission Test",
   });
 
+  const permissionEvents = ctx.client.observeEvents([
+    "agent_permission_request",
+    "agent_permission_resolved",
+  ]);
+  await permissionEvents.ready;
+
   const permissionRequestPromise = waitForSignal(60000, (resolve) => {
-    const unsubscribe = ctx.client.on("agent_permission_request", (message) => {
-      if (message.type !== "agent_permission_request") {
-        return;
-      }
-      if (message.payload.agentId !== agent.id) {
-        return;
-      }
-      resolve(message);
+    const unsubscribe = permissionEvents.subscribe({
+      snapshot: () => {},
+      update: (message) => {
+        if (message.type !== "agent_permission_request") {
+          return;
+        }
+        if (message.payload.agentId !== agent.id) {
+          return;
+        }
+        resolve(message);
+      },
     });
     return unsubscribe;
   });
 
   const permissionResolvedPromise = waitForSignal(60000, (resolve) => {
-    const unsubscribe = ctx.client.on("agent_permission_resolved", (message) => {
-      if (message.type !== "agent_permission_resolved") {
-        return;
-      }
-      if (message.payload.agentId !== agent.id) {
-        return;
-      }
-      resolve(message);
+    const unsubscribe = permissionEvents.subscribe({
+      snapshot: () => {},
+      update: (message) => {
+        if (message.type !== "agent_permission_resolved") {
+          return;
+        }
+        if (message.payload.agentId !== agent.id) {
+          return;
+        }
+        resolve(message);
+      },
     });
     return unsubscribe;
   });
@@ -1683,6 +1665,7 @@ test("handles permission flow", async () => {
     // Prevent unhandled rejections if the test fails before promises resolve.
     await permissionRequestPromise.catch(() => {});
     await permissionResolvedPromise.catch(() => {});
+    await permissionEvents.release();
     await ctx.client.deleteAgent(agent.id);
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -1940,17 +1923,17 @@ speechTest(
 test("supports git and file operations", async () => {
   const cwd = tmpCwd();
 
-  execSync("git init -b main", { cwd, stdio: "pipe" });
-  execSync("git config user.email 'test@test.com'", {
+  execFileSync("git", ["init", "-b", "main"], { cwd, stdio: "pipe" });
+  execFileSync("git", ["config", "user.email", "test@test.com"], {
     cwd,
     stdio: "pipe",
   });
-  execSync("git config user.name 'Test'", { cwd, stdio: "pipe" });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd, stdio: "pipe" });
 
   const testFile = path.join(cwd, "test.txt");
   writeFileSync(testFile, "original content\n");
-  execSync("git add test.txt", { cwd, stdio: "pipe" });
-  execSync("git -c commit.gpgSign=false commit -m 'Initial commit'", {
+  execFileSync("git", ["add", "test.txt"], { cwd, stdio: "pipe" });
+  execFileSync("git", ["-c", "commit.gpgSign=false", "commit", "-m", "Initial commit"], {
     cwd,
     stdio: "pipe",
   });
@@ -1971,7 +1954,7 @@ test("supports git and file operations", async () => {
   const checkoutStatus = await ctx.client.getCheckoutStatus(cwd);
   expect(checkoutStatus.error).toBeNull();
   expect(checkoutStatus.isGit).toBe(true);
-  expect(checkoutStatus.repoRoot).toContain(cwd);
+  expect(realpathSync.native(checkoutStatus.repoRoot ?? "")).toBe(realpathSync.native(cwd));
 
   const diffResult = await ctx.client.getCheckoutDiff(cwd, { mode: "uncommitted" });
   expect(diffResult.error).toBeNull();

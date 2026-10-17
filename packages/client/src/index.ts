@@ -1,3 +1,13 @@
+export { NetworkTunnelError, NetworkTunnelRpcError } from "./network-tunnel.js";
+export type {
+  NetworkTunnel,
+  NetworkTunnelLimits,
+  NetworkTunnelClosedReason,
+  NetworkTunnelStream,
+  NetworkTunnelStreamHandlers,
+  NetworkTunnelTarget,
+  NetworkTunnelErrorCode,
+} from "./network-tunnel.js";
 import type { OwnedSubscription } from "./connection/index.js";
 export type { OwnedSubscription, SubscriptionObserver } from "./connection/index.js";
 import type { DaemonClientConfig } from "./daemon-client.js";

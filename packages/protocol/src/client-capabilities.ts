@@ -46,6 +46,8 @@ export const CLIENT_CAPS = {
   // COMPAT(workspaceSetupBlocked): added in v0.8.0, remove after 2027-03-07 once client floor >= v0.8.0.
   workspaceSetupBlocked: "workspace_setup_blocked",
   browserHost: "browser_host",
+  // COMPAT(networkTunnel): added in v0.12.0, remove permission projection after 2027-10-08 once client floor >= v0.12.0.
+  networkTunnel: "network_tunnel",
 } as const;
 
 export type ClientCapability = (typeof CLIENT_CAPS)[keyof typeof CLIENT_CAPS];

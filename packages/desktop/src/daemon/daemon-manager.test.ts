@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_DESKTOP_SETTINGS } from "../settings/desktop-settings";
-import { createDaemonCommandHandlers } from "./daemon-manager";
+import { createDaemonCommandHandlers, registerDaemonManager } from "./daemon-manager";
 
 const mocks = vi.hoisted(() => ({
   paseoHome: "",
@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   logError: vi.fn(),
   appLogPath: "",
   getElectronLogFile: vi.fn(),
+  ipcHandle: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
@@ -35,7 +36,7 @@ vi.mock("electron", () => ({
     getVersion: vi.fn(() => "1.2.3"),
     isPackaged: true,
   },
-  ipcMain: { handle: vi.fn() },
+  ipcMain: { handle: mocks.ipcHandle },
   powerMonitor: { getSystemIdleTime: vi.fn(() => 0) },
 }));
 
@@ -174,5 +175,29 @@ describe("daemon-manager commands", () => {
     expect(await handler({ listen: "remote:6799" })).toBeNull();
     writeFileSync(lockPath, JSON.stringify({ ...lock, desktopManaged: false }));
     expect(await handler({ listen: "localhost:6799" })).toBeNull();
+  });
+  it("dispatches paseo:invoke with the sender id so handlers can bind to their window", async () => {
+    const seen: Array<{ args: unknown; senderId: number | undefined }> = [];
+    registerDaemonManager({
+      additionalHandlers: {
+        probe_sender: (args, context) => {
+          seen.push({ args, senderId: context?.senderId });
+          return "probed";
+        },
+      },
+    });
+    const registration = mocks.ipcHandle.mock.calls.find(([channel]) => channel === "paseo:invoke");
+    expect(registration).toBeDefined();
+    const dispatch = registration![1] as (
+      event: { sender: { id: number } },
+      command: string,
+      args?: Record<string, unknown>,
+    ) => Promise<unknown>;
+
+    expect(await dispatch({ sender: { id: 17 } }, "probe_sender", { x: 1 })).toBe("probed");
+    expect(seen).toEqual([{ args: { x: 1 }, senderId: 17 }]);
+    await expect(dispatch({ sender: { id: 17 } }, "no_such_command")).rejects.toThrow(
+      /Unknown desktop command/,
+    );
   });
 });

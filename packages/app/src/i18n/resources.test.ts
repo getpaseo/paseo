@@ -813,3 +813,16 @@ describe("translation resources", () => {
     expect(en.startup.logs.loadFailed).toBe("Unable to load daemon logs: {{message}}");
   });
 });
+
+it("keeps the host name in every translated browser network failure", () => {
+  for (const resource of [en, ar, es, fr, ja, ko, ptBR, ru, zhCN]) {
+    for (const key of [
+      "proxyUnavailable",
+      "destinationFailed",
+      "connectionClosed",
+      "notReady",
+    ] as const) {
+      expect(resource.browserRouting[key]).toContain("{{host}}");
+    }
+  }
+});
