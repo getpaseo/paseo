@@ -13,6 +13,8 @@ export interface MaterializedAgentProfile {
   modeId: string;
   thinkingOptionId: string;
   featureValues: Record<string, unknown>;
+  /** Provider composer control values. Applied at creation only, never to a running agent. */
+  controlValues: Record<string, unknown>;
 }
 
 function trimmed(value: string | undefined): string {
@@ -26,6 +28,7 @@ export function materializeAgentProfile(profile: AgentProfile): MaterializedAgen
     modeId: trimmed(profile.modeId),
     thinkingOptionId: trimmed(profile.thinkingOptionId),
     featureValues: profile.featureValues ?? {},
+    controlValues: profile.controlValues ?? {},
   };
 }
 

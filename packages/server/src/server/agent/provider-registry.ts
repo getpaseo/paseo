@@ -473,11 +473,33 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     setModel: inner.setModel?.bind(inner),
     setThinkingOption: inner.setThinkingOption?.bind(inner),
     setFeature: inner.setFeature?.bind(inner),
+    listComposerControls: inner.listComposerControls?.bind(inner),
+    invokeComposerControl: inner.invokeComposerControl?.bind(inner),
     revertConversation: inner.revertConversation?.bind(inner),
     revertFiles: inner.revertFiles?.bind(inner),
     revertBoth: inner.revertBoth?.bind(inner),
     tryHandleOutOfBand: inner.tryHandleOutOfBand?.bind(inner),
   } satisfies ForwardedAgentSession;
+}
+
+function composerControlClientMethods(
+  inner: AgentClient,
+  providerOptions: ProviderOptions | undefined,
+): Pick<AgentClient, "listComposerControls"> {
+  const listComposerControls = inner.listComposerControls?.bind(inner);
+  return {
+    listComposerControls: listComposerControls
+      ? async (config, surface) =>
+          await listComposerControls(
+            {
+              ...config,
+              provider: inner.provider,
+              providerOptions: mergeProviderOptions(providerOptions, config.providerOptions),
+            },
+            surface,
+          )
+      : undefined,
+  };
 }
 
 function wrapClientProvider(
@@ -564,6 +586,7 @@ function wrapClientProvider(
             providerOptions: mergeProviderOptions(providerOptions, config.providerOptions),
           })
       : undefined,
+    ...composerControlClientMethods(inner, providerOptions),
     listImportableSessions: listImportableSessions
       ? async (options) => await listImportableSessions({ ...options, providerOptions })
       : undefined,

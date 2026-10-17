@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveFeatureValues } from "./feature-preferences";
+import {
+  applyControlValues,
+  pruneControlValues,
+  resolveControlValues,
+  resolveFeatureValues,
+} from "./feature-preferences";
 
 describe("feature-preferences", () => {
   const features = [
@@ -49,5 +54,63 @@ describe("feature-preferences", () => {
       fast_mode: false,
       plan_mode: false,
     });
+  });
+});
+
+describe("composer control values", () => {
+  const controls = [
+    { kind: "toggle" as const, id: "verbose", label: "Verbose", value: false },
+    {
+      kind: "select" as const,
+      id: "tier",
+      label: "Tier",
+      value: null,
+      options: [{ id: "flex", label: "Flex" }],
+    },
+    { kind: "action" as const, id: "send-pony", label: "Send pony" },
+  ];
+
+  it("resolves local over persisted values for value controls only", () => {
+    expect(
+      resolveControlValues({
+        controls,
+        persistedControlValues: { verbose: true, tier: "flex", sendPony: true },
+        localControlValues: { verbose: false },
+      }),
+    ).toEqual({ verbose: false, tier: "flex" });
+  });
+
+  it("prunes values whose control id is gone and ignores actions", () => {
+    expect(pruneControlValues({ verbose: true, retired: true }, controls)).toEqual({
+      verbose: true,
+    });
+  });
+
+  it("overlays stored values onto descriptors without touching actions", () => {
+    expect(applyControlValues(controls, { verbose: true, tier: "flex" })).toEqual([
+      { kind: "toggle", id: "verbose", label: "Verbose", value: true },
+      {
+        kind: "select",
+        id: "tier",
+        label: "Tier",
+        value: "flex",
+        options: [{ id: "flex", label: "Flex" }],
+      },
+      { kind: "action", id: "send-pony", label: "Send pony" },
+    ]);
+  });
+
+  it("ignores stored values that do not match the control kind", () => {
+    // A string saved against a toggle (or a retired select option) must not
+    // be cast into the descriptor; the plugin default stands.
+    expect(applyControlValues(controls, { verbose: "yes", tier: "priority" })).toEqual(controls);
+    expect(
+      resolveControlValues({
+        controls,
+        persistedControlValues: { verbose: "yes", tier: "priority" },
+        localControlValues: {},
+      }),
+    ).toEqual({});
+    expect(pruneControlValues({ verbose: "yes" }, controls)).toEqual({});
   });
 });

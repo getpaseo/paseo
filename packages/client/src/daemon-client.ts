@@ -588,8 +588,8 @@ type WriteProjectConfigPayload = Extract<
 type ListCommandsPayload = ListCommandsResponse["payload"];
 type ListCommandsDraftConfig = Pick<
   AgentSessionConfig,
-  "provider" | "cwd" | "modeId" | "model" | "thinkingOptionId" | "featureValues"
->;
+  "provider" | "cwd" | "modeId" | "model" | "thinkingOptionId" | "featureValues" | "controlValues"
+> & { surface?: "draft" | "profile" };
 export interface WriteProjectConfigInput {
   repoRoot: string;
   config: PaseoConfigRaw;
@@ -3679,6 +3679,39 @@ export class DaemonClient {
     if (!payload.accepted) {
       throw new Error(payload.error ?? "setAgentFeature rejected");
     }
+  }
+
+  async invokeComposerControl(
+    agentId: string,
+    controlId: string,
+    value?: unknown,
+  ): Promise<import("@getpaseo/protocol/agent-types").AgentComposerControl[]> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.composer_control.invoke.request",
+      agentId,
+      controlId,
+      ...(value === undefined ? {} : { value }),
+      requestId,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "agent.composer_control.invoke.response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "invokeComposerControl rejected");
+    }
+    return payload.controls ?? [];
   }
 
   async setAgentThinkingOption(

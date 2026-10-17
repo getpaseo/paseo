@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useFetchQuery } from "@/data/query";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useHostFeature } from "@/runtime/host-features";
 import type { AgentProfileFormModel, AgentProfileFormState } from "./profile-form-model";
 
 /**
@@ -35,6 +36,7 @@ export function useAgentProfileFormFeatures(input: {
   const { t } = useTranslation();
   const client = useHostRuntimeClient(input.serverId);
   const isConnected = useHostRuntimeIsConnected(input.serverId);
+  const controlsSupported = useHostFeature(input.serverId, "providerComposerControls");
   const request = input.state.featureRequest;
   const requestKey = input.state.featureRequestKey;
 
@@ -55,7 +57,11 @@ export function useAgentProfileFormFeatures(input: {
       if (payload.error) {
         throw new Error(payload.error);
       }
-      return payload.features ?? [];
+      return {
+        features: payload.features ?? [],
+        composerControls: controlsSupported ? (payload.composerControls ?? []) : [],
+        controlsError: controlsSupported ? (payload.controlsError ?? null) : null,
+      };
     },
   });
 
@@ -66,8 +72,14 @@ export function useAgentProfileFormFeatures(input: {
     if (!requestKey || !data) {
       return;
     }
-    model.applyFeatures(requestKey, data);
-  }, [data, model, requestKey]);
+    model.applyFeatures(
+      requestKey,
+      data.features,
+      data.composerControls,
+      data.controlsError ?? null,
+      request,
+    );
+  }, [data, model, request, requestKey]);
 
   useEffect(() => {
     if (!requestKey || !isError) {

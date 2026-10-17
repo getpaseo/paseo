@@ -349,6 +349,9 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
           modeId,
           thinkingOptionId,
           featureValues: profile.featureValues,
+          ...(Object.keys(profile.controlValues ?? {}).length > 0
+            ? { controlValues: profile.controlValues }
+            : {}),
         });
       }).catch((error) => {
         console.warn("[useAgentFormState] persist profile preference failed", error);

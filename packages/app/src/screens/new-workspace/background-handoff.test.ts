@@ -70,6 +70,7 @@ describe("createWorkspaceAgentInBackground", () => {
           model: null,
           thinkingOptionId: null,
           featureValues: {},
+          controlValues: {},
         },
       });
     });
@@ -90,6 +91,7 @@ describe("createWorkspaceAgentInBackground", () => {
         model: null,
         thinkingOptionId: null,
         featureValues: {},
+        controlValues: {},
       },
     });
 

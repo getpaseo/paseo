@@ -17,6 +17,10 @@ executable resolution and applies `agents.providers.<provider-id>.command` and `
 connecting. Register the provider's icon with the plugin rather than adding it to the app's
 provider icon map. You do not need a core manifest entry or provider factory.
 
+A provider plugin can also contribute declarative composer controls (`action`, `toggle`, `select`)
+rendered in the composer toolbar while it is the selected provider. See the [composer controls
+guide](../public-docs/plugins/providers.md#add-composer-controls-beyond-settings).
+
 | Provider    | Transport                                  | Setup and limitations                                            |
 | ----------- | ------------------------------------------ | ---------------------------------------------------------------- |
 | Antigravity | Installed `agy` CLI                        | [Antigravity](../public-docs/supported-providers.md#antigravity) |

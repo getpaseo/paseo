@@ -22,10 +22,20 @@ export function buildDraftAgentControls(input: {
   formState: UseAgentFormStateResult;
   features?: DraftAgentControlsProps["features"];
   onSetFeature?: DraftAgentControlsProps["onSetFeature"];
+  composerControls?: DraftAgentControlsProps["composerControls"];
+  onInvokeComposerControl?: DraftAgentControlsProps["onInvokeComposerControl"];
   onApplyAgentProfile: DraftAgentControlsProps["onApplyAgentProfile"];
   onDropdownClose?: DraftAgentControlsProps["onDropdownClose"];
 }): DraftAgentControlsProps {
-  const { formState, features, onSetFeature, onApplyAgentProfile, onDropdownClose } = input;
+  const {
+    formState,
+    features,
+    onSetFeature,
+    composerControls,
+    onInvokeComposerControl,
+    onApplyAgentProfile,
+    onDropdownClose,
+  } = input;
   return {
     providerDefinitions: formState.providerDefinitions,
     selectedProvider: formState.selectedProvider,
@@ -45,6 +55,8 @@ export function buildDraftAgentControls(input: {
     onApplyAgentProfile,
     features,
     onSetFeature,
+    composerControls,
+    onInvokeComposerControl,
     onDropdownClose,
     onModelSelectorOpen: formState.refetchProviderModelsIfStale,
     onRetryModelProvider: formState.refreshProviderModels,

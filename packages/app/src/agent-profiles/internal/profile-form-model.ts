@@ -1,4 +1,5 @@
 import type {
+  AgentComposerControl,
   AgentFeature,
   AgentMode,
   AgentModelDefinition,
@@ -7,7 +8,13 @@ import type {
 } from "@getpaseo/protocol/agent-types";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
 import { formatAgentModeLabel, formatThinkingOptionLabel } from "@/agent-controls/labels";
-import { applyFeatureValues, pruneFeatureValues } from "@/hooks/feature-preferences";
+import {
+  applyControlValues,
+  applyFeatureValues,
+  pruneControlValues,
+  pruneFeatureValues,
+  serializeControlValues,
+} from "@/hooks/feature-preferences";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
 
 /**
@@ -59,12 +66,30 @@ export interface AgentProfileFormSnapshot {
 /**
  * The inputs a feature listing needs. Features are provider-scoped and change
  * with model/mode/thinking, so every one of those is part of the request.
+ * Control values ride along so a provider can compute dependent controls.
  */
 export interface AgentProfileFeatureRequest {
   provider: string;
   model?: string;
   modeId?: string;
   thinkingOptionId?: string;
+  controlValues?: Record<string, unknown>;
+  surface: "profile";
+}
+
+/** Listing identity: the listing stays valid while these match, even as held
+ * values change (the change only refetches for dependent controls). */
+export function sameFeatureRequestScope(
+  left: AgentProfileFeatureRequest | null,
+  right: AgentProfileFeatureRequest | null,
+): boolean {
+  if (!left || !right) return left === right;
+  return (
+    left.provider === right.provider &&
+    (left.model ?? "") === (right.model ?? "") &&
+    (left.modeId ?? "") === (right.modeId ?? "") &&
+    (left.thinkingOptionId ?? "") === (right.thinkingOptionId ?? "")
+  );
 }
 
 export type AgentProfileResolutionStatus = "idle" | "pending" | "complete";
@@ -87,12 +112,14 @@ export interface AgentProfileFormState {
   modeId: string;
   thinkingOptionId: string;
   featureValues: Record<string, unknown>;
+  controlValues: Record<string, unknown>;
 
   providerOptions: AgentProfileFormOption[];
   modelOptions: AgentProfileFormOption[];
   modeOptions: AgentProfileFormOption[];
   thinkingOptions: AgentProfileFormOption[];
   features: AgentFeature[];
+  composerControls: AgentComposerControl[];
 
   providerDisplay: AgentProfileFormDisplay | null;
   modelDisplay: AgentProfileFormDisplay | null;
@@ -117,8 +144,15 @@ export interface AgentProfileFormModel {
   close: () => void;
   /** Late input: the host-scoped provider catalog. Never touches selections. */
   applyProviderCatalog: (entries: readonly ProviderSnapshotEntry[]) => void;
-  /** Late input: the feature list for one request. Stale keys are ignored. */
-  applyFeatures: (requestKey: string, features: readonly AgentFeature[]) => void;
+  /** Late input: the feature list for one request. Stale keys are ignored.
+   * A controls listing failure keeps the previous controls and values. */
+  applyFeatures: (
+    requestKey: string,
+    features: readonly AgentFeature[],
+    controls?: readonly AgentComposerControl[],
+    controlsError?: string | null,
+    request?: AgentProfileFeatureRequest | null,
+  ) => void;
   /** Resolve a request that produced no usable features (provider error). */
   applyFeaturesUnavailable: (requestKey: string) => void;
   setName: (value: string) => void;
@@ -129,6 +163,7 @@ export interface AgentProfileFormModel {
   setMode: (modeId: string, display: AgentProfileFormDisplay | null) => void;
   setThinking: (thinkingOptionId: string, display: AgentProfileFormDisplay | null) => void;
   setFeatureValue: (featureId: string, value: unknown) => void;
+  setControlValue: (controlId: string, value: unknown) => void;
   setSubmitting: (value: boolean) => void;
   setSubmitError: (value: string | null) => void;
 }
@@ -321,6 +356,10 @@ function buildFeatureRequest(state: AgentProfileFormState): AgentProfileFeatureR
     ...(state.modelId ? { model: state.modelId } : {}),
     ...(state.modeId ? { modeId: state.modeId } : {}),
     ...(state.thinkingOptionId ? { thinkingOptionId: state.thinkingOptionId } : {}),
+    ...(Object.keys(state.controlValues).length > 0
+      ? { controlValues: { ...state.controlValues } }
+      : {}),
+    surface: "profile",
   };
 }
 
@@ -333,6 +372,9 @@ export function buildFeatureRequestKey(request: AgentProfileFeatureRequest | nul
     request.model ?? "",
     request.modeId ?? "",
     request.thinkingOptionId ?? "",
+    // Held values feed the listing (dependent controls), so they are part of
+    // the key; applyFeatures already drops responses for stale keys.
+    serializeControlValues(request.controlValues),
   ].join("|");
 }
 
@@ -351,6 +393,7 @@ function buildSubmitValue(state: AgentProfileFormState): AgentProfileValue | nul
     ...(state.modeId ? { modeId: state.modeId } : {}),
     ...(state.thinkingOptionId ? { thinkingOptionId: state.thinkingOptionId } : {}),
     ...(Object.keys(state.featureValues).length > 0 ? { featureValues: state.featureValues } : {}),
+    ...(Object.keys(state.controlValues).length > 0 ? { controlValues: state.controlValues } : {}),
     ...(notes ? { notes } : {}),
   };
 }
@@ -393,11 +436,13 @@ function buildInitialState(snapshot: AgentProfileFormSnapshot): AgentProfileForm
     modeId: profile.modeId ?? "",
     thinkingOptionId: profile.thinkingOptionId ?? "",
     featureValues: { ...profile.featureValues },
+    controlValues: profile.controlValues ? { ...profile.controlValues } : {},
     providerOptions: [],
     modelOptions: [],
     modeOptions: [],
     thinkingOptions: [],
     features: [],
+    composerControls: [],
     providerDisplay: seedDisplay(provider),
     modelDisplay: seedDisplay(modelId),
     modeDisplay: seedDisplay(profile.modeId),
@@ -424,8 +469,26 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
   let catalogResolution: AgentProfileResolutionStatus = "idle";
   let resolvedFeatureKey: string | null = null;
   let resolvedFeatures: AgentFeature[] = [];
+  let resolvedControls: AgentComposerControl[] = [];
+  let resolvedFeatureRequest: AgentProfileFeatureRequest | null = null;
   let listeners = new Set<() => void>();
   let closed = false;
+
+  function resolveProfileFeatures(
+    next: AgentProfileFormState,
+    listingMatchesScope: boolean,
+  ): AgentFeature[] {
+    if (!listingMatchesScope) return [];
+    return applyFeatureValues(resolvedFeatures, next.featureValues);
+  }
+
+  function resolveProfileControls(
+    next: AgentProfileFormState,
+    listingMatchesScope: boolean,
+  ): AgentComposerControl[] {
+    if (!listingMatchesScope) return [];
+    return applyControlValues(resolvedControls, next.controlValues);
+  }
 
   function derive(incoming: AgentProfileFormState): AgentProfileFormState {
     const models = resolveModels(entries, incoming.provider);
@@ -440,9 +503,13 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
     const featureRequestKey = buildFeatureRequestKey(featureRequest);
     const featuresAreCurrent =
       featureRequestKey !== null && featureRequestKey === resolvedFeatureKey;
-    const features = featuresAreCurrent
-      ? applyFeatureValues(resolvedFeatures, next.featureValues)
-      : [];
+    // While a value-only change refetches, keep showing the previous listing:
+    // it belongs to the same provider/model/mode/thinking scope.
+    const listingMatchesScope =
+      featuresAreCurrent ||
+      (featureRequest !== null && sameFeatureRequestScope(featureRequest, resolvedFeatureRequest));
+    const features = resolveProfileFeatures(next, listingMatchesScope);
+    const composerControls = resolveProfileControls(next, listingMatchesScope);
     const featureResolution = resolveFeatureStatus(featureRequestKey, featuresAreCurrent);
 
     const withOptions: AgentProfileFormState = {
@@ -452,6 +519,7 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
       modeOptions: buildModeOptions(modes),
       thinkingOptions: buildThinkingOptions(thinking),
       features,
+      composerControls,
       providerDisplay: refineDisplay(
         next.providerDisplay,
         next.provider,
@@ -492,7 +560,13 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
       showModeField: hasProvider && (modes.length > 0 || Boolean(withOptions.modeId)),
       showThinkingField:
         hasProvider && (thinking.length > 0 || Boolean(withOptions.thinkingOptionId)),
-      showFeaturesField: hasProvider && features.length > 0,
+      showFeaturesField:
+        hasProvider &&
+        (features.length > 0 ||
+          composerControls.some(
+            (control) =>
+              (control.kind === "toggle" || control.kind === "select") && control.visible !== false,
+          )),
     };
     const canSubmit =
       withOptions.name.trim().length > 0 &&
@@ -531,15 +605,27 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
       catalogResolution = "complete";
       publish((current) => current);
     },
-    applyFeatures: (requestKey, features) => {
+    applyFeatures: (requestKey, features, controls, controlsError, request) => {
       if (requestKey !== state.featureRequestKey) {
         return;
       }
       resolvedFeatureKey = requestKey;
       resolvedFeatures = [...features];
+      resolvedFeatureRequest = request ?? null;
+      if (controlsError) {
+        // The controls listing failed: keep the previous controls and every
+        // saved value instead of pruning against an empty list.
+        publish((current) => ({
+          ...current,
+          featureValues: pruneFeatureValues(current.featureValues, resolvedFeatures),
+        }));
+        return;
+      }
+      resolvedControls = [...(controls ?? [])];
       publish((current) => ({
         ...current,
         featureValues: pruneFeatureValues(current.featureValues, resolvedFeatures),
+        controlValues: pruneControlValues(current.controlValues, resolvedControls),
       }));
     },
     applyFeaturesUnavailable: (requestKey) => {
@@ -548,6 +634,7 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
       }
       resolvedFeatureKey = requestKey;
       resolvedFeatures = [];
+      resolvedControls = [];
       publish((current) => current);
     },
     setName: (value) => publish((current) => ({ ...current, name: value })),
@@ -573,6 +660,7 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
           thinkingOptionId: "",
           thinkingDisplay: null,
           featureValues: {},
+          controlValues: {},
         };
       }),
     setModel: (modelId, display) =>
@@ -602,6 +690,11 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
       publish((current) => ({
         ...current,
         featureValues: { ...current.featureValues, [featureId]: value },
+      })),
+    setControlValue: (controlId, value) =>
+      publish((current) => ({
+        ...current,
+        controlValues: { ...current.controlValues, [controlId]: value },
       })),
     setSubmitting: (value) => publish((current) => ({ ...current, isSubmitting: value })),
     setSubmitError: (value) => publish((current) => ({ ...current, submitError: value })),

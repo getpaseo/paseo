@@ -553,6 +553,65 @@ export default function contribute(server: PluginServerContext) {
     await runtime.stopAll();
   });
 
+  it("lists and invokes provider composer controls through the real plugin subprocess boundary", async () => {
+    const directory = await createPlugin(
+      "provider-controls-round-trip",
+      `import type { PluginServerContext } from "@getpaseo/plugin/server";
+import type { ProviderRegistration } from "@getpaseo/plugin/server/provider";
+
+let verbose = false;
+const provider: ProviderRegistration = {
+  id: "controls-example",
+  label: "Controls example",
+  async connect(request) {
+    return { version: 1, capabilities: [], async send() {}, onEvent: () => () => {}, async close() {} };
+  },
+  composerControls: {
+    getControls: (context) => [
+      { kind: "toggle", id: "verbose", label: "Verbose", icon: "zap", value: verbose },
+      { kind: "action", id: "ping", label: "Ping" },
+    ],
+    onControlEvent: async (event) => {
+      if (event.controlId === "verbose") verbose = event.value === true;
+    },
+  },
+};
+
+export default function contribute(server: PluginServerContext) {
+  server.registerProvider(provider);
+  return () => {};
+}`,
+    );
+    const runtime = createTestRuntime();
+    await runtime.startPlugin("provider-controls-round-trip", directory);
+
+    const [metadata] = runtime.getProviderRegistrations("provider-controls-round-trip");
+    expect(metadata).toMatchObject({ id: "controls-example", hasComposerControls: true });
+
+    const context = { surface: "draft", provider: "controls-example", cwd: "/repo" } as const;
+    const initial = await runtime.getProviderComposerControls(
+      "provider-controls-round-trip",
+      "controls-example",
+      context,
+    );
+    expect(initial).toContainEqual(
+      expect.objectContaining({ kind: "toggle", id: "verbose", value: false }),
+    );
+
+    // A void event response normalizes to a fresh listing in one round trip.
+    const refreshed = await runtime.invokeProviderComposerControl(
+      "provider-controls-round-trip",
+      "controls-example",
+      "verbose",
+      true,
+      { ...context, surface: "live" },
+    );
+    expect(refreshed).toContainEqual(
+      expect.objectContaining({ kind: "toggle", id: "verbose", value: true }),
+    );
+    await runtime.stopAll();
+  });
+
   it("adapts an ACP command and example transformer through the AgentClient path", async () => {
     const transformerPath = fileURLToPath(
       new URL(

@@ -996,6 +996,8 @@ export class Session {
           this.supports(CLIENT_CAPS.providerSnapshotReferences),
         listProviderAvailability: () => this.agentManager.listProviderAvailability(),
         listDraftFeatures: (config) => this.agentManager.listDraftFeatures(config),
+        listDraftComposerControls: (config, surface) =>
+          this.agentManager.listDraftComposerControls(config, surface),
       },
       providerSnapshotManager,
       logger: this.sessionLogger,
@@ -1022,6 +1024,8 @@ export class Session {
         setModel: (agentId, modelId) => agentManager.setAgentModel(agentId, modelId),
         setFeature: (agentId, featureId, value) =>
           agentManager.setAgentFeature(agentId, featureId, value),
+        invokeComposerControl: (agentId, controlId, value) =>
+          agentManager.invokeComposerControl(agentId, controlId, value),
         setThinking: (agentId, thinkingOptionId) =>
           agentManager.setAgentThinkingOption(agentId, thinkingOptionId),
       },
@@ -2798,6 +2802,8 @@ export class Session {
         return this.agentConfigSession.handleSetAgentModelRequest(msg);
       case "set_agent_feature_request":
         return this.agentConfigSession.handleSetAgentFeatureRequest(msg);
+      case "agent.composer_control.invoke.request":
+        return this.agentConfigSession.handleAgentComposerControlInvokeRequest(msg);
       case "set_agent_thinking_request":
         return this.agentConfigSession.handleSetAgentThinkingRequest(msg);
       case "agent.config.apply.request":
