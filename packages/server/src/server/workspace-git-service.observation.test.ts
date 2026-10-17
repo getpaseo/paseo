@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type pino from "pino";
@@ -1185,6 +1186,53 @@ describe("WorkspaceGitService checkout observation", () => {
     first.unsubscribe();
     second.unsubscribe();
     service.dispose();
+  });
+
+  test("ignored metadata bursts resolve paths per batch instead of per workspace and event", async () => {
+    const watcher = createWatcherHarness();
+    const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
+    const service = createService(watcher, {
+      getCheckoutSnapshotFacts: vi.fn(async (cwd: string) => createLinkedCheckoutFacts(cwd)),
+      getCheckoutStatus,
+    });
+    const worktrees = Array.from({ length: 16 }, (_, index) =>
+      path.join(WORKTREE_A, `checkout-${index}`),
+    );
+    const subscriptions = worktrees.map((cwd) => service.registerWorkspace({ cwd }, vi.fn()));
+    try {
+      await vi.waitFor(() => {
+        expect(service.getMetrics()).toMatchObject({
+          repositoryTargetCount: 1,
+          repositoryWorkspaceLinkCount: worktrees.length,
+          workspaceObservationSetupInFlightCount: 0,
+          workspaceRefreshInFlightCount: 0,
+        });
+      });
+      const repoWatcher = getWatcherRecordsForDirectory(watcher, GIT_DIR)[0]!;
+      const events: WatchEvent[] = Array.from({ length: 128 }, (_, index) => ({
+        path: path.join(GIT_DIR, "fsmonitor--daemon", "cookies", `deleted-${index}`),
+        type: "delete",
+      }));
+      getCheckoutStatus.mockClear();
+      // Keep the real filesystem behavior; count syscalls instead of using a timing threshold.
+      const realpath = vi.spyOn(fs.realpathSync, "native");
+      try {
+        repoWatcher.callback(null, events);
+        expect(realpath.mock.calls.length).toBeLessThan(events.length + worktrees.length + 32);
+        realpath.mockClear();
+        repoWatcher.callback(null, events);
+        expect(realpath.mock.calls.length).toBeGreaterThanOrEqual(events.length);
+        expect(realpath.mock.calls.length).toBeLessThan(events.length + worktrees.length + 32);
+      } finally {
+        realpath.mockRestore();
+      }
+      await vi.advanceTimersByTimeAsync(1_000);
+      await flushPromises();
+      expect(getCheckoutStatus).not.toHaveBeenCalled();
+    } finally {
+      for (const subscription of subscriptions) subscription.unsubscribe();
+      await service.dispose();
+    }
   });
 
   test("repository metadata observation ignores root and pruned-directory noise", async () => {
