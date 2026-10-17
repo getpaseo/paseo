@@ -1318,6 +1318,13 @@ the source row, so updates to one streaming item do not remount its renderer. Us
 `useRevealedText(text, phase)` hook when a renderer should pace streaming text like Paseo's built-in
 assistant rows.
 
+Chat find (Ctrl or Cmd+F) finds and highlights text in replacement rows when the query also
+matches the original message. The host searches the original prompt text or the assistant reply
+with Markdown syntax removed, then the app counts matches in the text your renderer draws.
+Text added only by your renderer is not independently indexed. Matches stay within a rendered
+block, and find skips buttons, icons, and anything with `aria-hidden="true"`. Find only runs on
+the web and desktop apps.
+
 ### Append a timeline row from the daemon
 
 A server handler can add a plugin-owned row to canonical history:
@@ -2268,6 +2275,12 @@ Reload replaces their registrations. Disable, removal, host disconnect, and eval
 remove Command Center items and clear the installation's query state. An already-restored panel tab
 remains as unavailable until its matching contribution returns or the user closes it. Panel render
 failures stay inside the plugin error boundary.
+
+Reload queues behind the daemon's other plugin work, such as a running installation or preparation
+command, and the daemon answers when the plugin is running again or has failed. Nothing reads the
+plugin's status as the reload's outcome: while the reload is queued, `plugin ls`, Settings, and the
+logs show the plugin's previous state, and while the daemon stops and starts it, a status read
+reports `failed` because the plugin is absent from the runtime catalog until its start completes.
 
 ## Plugin sources
 

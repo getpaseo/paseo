@@ -188,3 +188,74 @@ async function measureInlineCode(message: Locator) {
     return { codes, right: paragraph.getBoundingClientRect().right };
   });
 }
+
+test("inline-code paths preserve stable recognition and file navigation", async ({
+  page,
+  context,
+}, testInfo) => {
+  const { writeFile, mkdir } = await import("node:fs/promises");
+  const paths = ["src/app/[id].tsx", "src/app/(tabs)/index.tsx", "src/a$b.ts"];
+  const source =
+    paths.map((path) => `Open \`${path}\`.`).join("\n\n") +
+    "\n\nOpen `.gitignore` and `src/index.ts#L10-L20`. Compare before/after and `before/after`. Keep `word.word` plain.";
+  const session = await seedMockAgentWorkspace({
+    repoPrefix: "inline-path-regression-",
+    title: "Inline path regression",
+    initialPrompt: "Show file paths",
+    featureValues: { mockAssistantResponse: source },
+  });
+  try {
+    await mkdir(`${session.cwd}/src/app/(tabs)`, { recursive: true });
+    for (const path of paths) await writeFile(`${session.cwd}/${path}`, `Opened ${path}`);
+    await writeFile(
+      `${session.cwd}/src/index.ts`,
+      Array.from({ length: 30 }, (_, i) => `export const line${i + 1} = ${i + 1};`).join("\n"),
+    );
+    await session.client.waitForFinish(session.agentId, 30_000);
+    await openAgentRoute(page, session);
+    const message = page.getByTestId("assistant-message");
+    await expect(message.getByRole("link", { name: ".gitignore", exact: true })).toBeVisible();
+    await expect(message.getByRole("link", { name: "before/after", exact: true })).toHaveCount(0);
+    await expect(message.getByRole("link", { name: "word.word", exact: true })).toHaveCount(0);
+    for (const path of paths) {
+      await openInlineRegressionFile(page, path);
+      await expect(page.getByTestId("file-source-editor").filter({ visible: true })).toContainText(
+        `Opened ${path}`,
+      );
+    }
+    await openInlineRegressionFile(page, "src/index.ts#L10-L20");
+    await expect(page.getByLabel("Line 20, column 26")).toBeVisible();
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page
+      .getByTestId("file-source-editor")
+      .filter({ visible: true })
+      .locator(".cm-content")
+      .focus();
+    await page.keyboard.press("ControlOrMeta+c");
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe(
+        Array.from({ length: 11 }, (_, i) => `export const line${i + 10} = ${i + 10};`).join("\n"),
+      );
+    await expect(
+      page
+        .getByTestId("file-source-editor")
+        .filter({ visible: true })
+        .locator(".cm-selectionBackground"),
+    ).not.toHaveCount(0);
+    await testInfo.attach("inline-path-line-selection", {
+      body: await page.screenshot(),
+      contentType: "image/png",
+    });
+  } finally {
+    await session.cleanup();
+  }
+});
+
+async function openInlineRegressionFile(page: Page, path: string) {
+  await page.getByRole("button", { name: "Inline path regression", exact: true }).click();
+  await page
+    .getByTestId("assistant-message")
+    .getByRole("link", { name: path, exact: true })
+    .click();
+}

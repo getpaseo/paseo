@@ -18,6 +18,63 @@ const CONTEXT: AssistantFileLinkContext = {
   workspaceRoot: "/Users/test/project",
 };
 
+it.each(["docs/guides", "docs/guides/", "docs/%E6%8C%87%E5%8D%97"])(
+  "resolves an explicit extensionless folder href: %s",
+  (href) => {
+    expect(classifyForResolution({ href }, CONTEXT)).toMatchObject({
+      kind: "resolved",
+      value: {
+        kind: "file",
+        target: { path: `${CONTEXT.workspaceRoot}/${decodeURIComponent(href).replace(/\/$/, "")}` },
+      },
+    });
+  },
+);
+
+it.each(["docs/guides", "origin/main"])("leaves extensionless inline code alone: %s", (text) => {
+  expect(classifyForResolution({ href: text, text, sourceType: "inline-code" }, CONTEXT)).toEqual({
+    kind: "resolved",
+    value: { kind: "ignored" },
+  });
+});
+
+it.each([{ markup: "linkify" }, { sourceInfo: "auto" }])(
+  "keeps auto-recognized extensionless text ignored: %j",
+  (origin) => {
+    expect(
+      classifyForResolution({ href: "docs/guides", text: "docs/guides", ...origin }, CONTEXT),
+    ).toEqual({
+      kind: "resolved",
+      value: { kind: "ignored" },
+    });
+  },
+);
+
+it.each(["docs/guides?view=all"])(
+  "does not turn URL-like hrefs into workspace paths: %s",
+  (href) => {
+    expect(classifyForResolution({ href }, CONTEXT)).toEqual({
+      kind: "resolved",
+      value: { kind: "ignored" },
+    });
+  },
+);
+
+it.each([
+  ".dev/tablet-review/tablet-agent-draft.png",
+  "images/capture.jpg",
+  "downloads/archive.custom",
+  "assets/LICENSE",
+  "example.com/guides",
+  "capture.png",
+  "missing.png",
+])("opens explicit file link %s without filename guessing", (href) => {
+  expect(classifyForResolution({ href }, CONTEXT)).toMatchObject({
+    kind: "resolved",
+    value: { kind: "file", target: { path: `${CONTEXT.workspaceRoot}/${href}` } },
+  });
+});
+
 it("opens the existing non-ASCII file named by a rendered markdown link", async () => {
   const workspaceRoot = await mkdtemp(path.join(tmpdir(), "assistant-file-link-"));
   try {
