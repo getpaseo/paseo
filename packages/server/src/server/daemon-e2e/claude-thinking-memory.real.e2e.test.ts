@@ -115,4 +115,43 @@ describe("daemon E2E (real claude) - thinking effort memory", () => {
       rmSync(cwd, { recursive: true, force: true });
     }
   }, 420_000);
+
+  test("a thinking change before the first turn does not fail that turn", async () => {
+    const logger = pino({ level: "silent" });
+    const cwd = tmpCwd();
+    const daemon = await createTestPaseoDaemon({
+      agentClients: createRealProviderClients(["claude"], logger),
+      logger,
+    });
+    const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+
+    try {
+      await client.connect();
+      await client.fetchAgents({ subscribe: {} });
+
+      const modelList = await client.listProviderModels("claude", { cwd });
+      const model = modelList.models.find(modelHasLowThinkingOption);
+      if (!model) {
+        throw new Error("No Claude Sonnet model with low thinking effort returned");
+      }
+
+      const agent = await client.createAgent({
+        cwd,
+        title: "claude-thinking-before-first-turn-real",
+        ...getRealProviderConfig("claude"),
+        model: model.id,
+      });
+      await client.setAgentThinkingOption(agent.id, "low");
+
+      await client.sendMessage(agent.id, "Reply exactly: ACK_FIRST");
+      const finish = await client.waitForFinish(agent.id, 180_000);
+      expect(finish.final?.lastError).toBeUndefined();
+      expect(finish.status).toBe("idle");
+      expect(compactText(await getAssistantText(client, agent.id))).toContain("ack_first");
+    } finally {
+      await client.close().catch(() => undefined);
+      await daemon.close().catch(() => undefined);
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 300_000);
 });
