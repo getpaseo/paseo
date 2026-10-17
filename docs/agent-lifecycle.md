@@ -50,6 +50,26 @@ older cancellation from settling a newer turn. If interruption is rejected or ti
 keeps its active foreground turn and replacement, reload, rewind, and Stop report the failure.
 Accepting new work after an ambiguous interruption would create a split-brain session.
 
+## Background tasks
+
+A turn can end while the provider keeps work going: Claude's `run_in_background` shells and
+`Monitor` watches. When one finishes, Claude wakes itself and runs an autonomous turn. Between the
+turn's end and that wake the agent's lifecycle is `idle`, but it is not done, so an idle agent with
+background tasks gets the `running` status bucket (`packages/protocol/src/agent-state-bucket.ts`). The
+sidebar spins and the composer shows a **Background tasks track** pill ("1 shell") whose rows each have
+a Stop action (`agent.background_tasks.stop.request`, gated on `features.agentBackgroundTaskStop`).
+
+The Claude provider reads `system/background_tasks_changed`, which carries the whole live set on every
+change. Replace the set from each frame; never pair `task_started` with a terminal status. A foreground
+Bash call never announces a task, and a task that dies with its process never reports a terminal
+status. Claude Code sends no frame when its process dies or is retired, and none when a fresh one
+starts, so the provider clears the set itself whenever it loses a process or starts one. Entries
+flagged `ambient` are Claude Code housekeeping and are left out. Backgrounded subagents and workflows
+(`local_agent`, `local_workflow`) are left out too: the subagents track owns them.
+
+Background tasks live only in the provider runtime. They are not persisted, and a reloaded or resumed
+agent starts with none.
+
 ## Relationships
 
 Agents can launch other agents via the agent-scoped `create_agent` MCP tool. Agent-scoped creation is always asynchronous and always stamps `paseo.parent-agent-id`, pointing back at the caller. Omit `workspaceId` to use the caller's workspace, or pass an existing workspace ID returned by `create_workspace`. Placement never changes parentage.

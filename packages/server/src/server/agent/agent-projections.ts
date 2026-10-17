@@ -151,6 +151,10 @@ export function toAgentPayload(
     payload.lastError = agent.lastError;
   }
 
+  if (agent.backgroundTasks?.length) {
+    payload.backgroundTasks = agent.backgroundTasks.map((task) => ({ ...task }));
+  }
+
   // Handle attention state
   payload.requiresAttention = agent.attention.requiresAttention;
   if (agent.attention.requiresAttention) {

@@ -18,7 +18,10 @@ export interface ArchiveFinishedOutcome {
   failures: Array<{ id: string; error: unknown }>;
 }
 
-export type ManagedSubagentSnapshot = Pick<Agent, "id" | "status" | "parentAgentId" | "archivedAt">;
+export type ManagedSubagentSnapshot = Pick<
+  Agent,
+  "id" | "status" | "parentAgentId" | "archivedAt" | "backgroundTasks"
+>;
 
 export interface ArchiveFinishedSubagentsDeps {
   parentAgentId: string;
@@ -34,8 +37,14 @@ export interface ArchiveFinishedSubagents {
   archiveFinished(): Promise<ArchiveFinishedOutcome>;
 }
 
+/**
+ * An idle agent with background shells is still working: archiving it closes its runtime and kills
+ * them. An errored agent's runtime is already gone, so its leftover set does not hold it back.
+ */
 export function isFinishedSubagent(row: SubagentRow): boolean {
-  if (row.kind === "paseo") return row.status === "idle" || row.status === "error";
+  if (row.kind === "paseo") {
+    return row.status === "error" || (row.status === "idle" && !row.backgroundTaskCount);
+  }
   return row.status === "completed" || row.status === "failed" || row.status === "canceled";
 }
 
@@ -47,7 +56,7 @@ function canArchiveManagedSubagent(
     agent &&
     !agent.archivedAt &&
     agent.parentAgentId === parentAgentId &&
-    (agent.status === "idle" || agent.status === "error"),
+    (agent.status === "error" || (agent.status === "idle" && !agent.backgroundTasks?.length)),
   );
 }
 

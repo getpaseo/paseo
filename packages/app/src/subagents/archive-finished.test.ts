@@ -118,6 +118,58 @@ describe("createArchiveFinishedSubagents", () => {
     expect(archive.getState()).toEqual({ eligibleCount: 4, status: { kind: "idle" } });
   });
 
+  it("leaves idle subagents with live background shells out of finished cleanup", async () => {
+    const shell = { id: "b1", type: "local_bash", description: "Run ctest" };
+    const current = new Map([
+      ["working", managed("working", "idle", { backgroundTasks: [shell] })],
+      ["done", managed("done")],
+    ]);
+    const archived: string[] = [];
+    const archive = createArchiveFinishedSubagents(
+      [{ ...paseo("working"), backgroundTaskCount: 1 }, paseo("done")],
+      {
+        parentAgentId: "parent",
+        getManagedSubagent: (id) => current.get(id),
+        archiveManagedSubagent: async (id) => {
+          archived.push(id);
+        },
+        dismissProviderSubagents: () => undefined,
+      },
+    );
+
+    expect(archive.getState().eligibleCount).toBe(1);
+    await expect(archive.archiveFinished()).resolves.toMatchObject({
+      archivedPaseoIds: ["done"],
+    });
+    expect(archived).toEqual(["done"]);
+  });
+
+  it("skips a subagent that started a background shell after the cleanup was offered", async () => {
+    const current = new Map([
+      [
+        "late",
+        managed("late", "idle", {
+          backgroundTasks: [{ id: "b1", type: "local_bash", description: null }],
+        }),
+      ],
+    ]);
+    const archived: string[] = [];
+    const archive = createArchiveFinishedSubagents([paseo("late")], {
+      parentAgentId: "parent",
+      getManagedSubagent: (id) => current.get(id),
+      archiveManagedSubagent: async (id) => {
+        archived.push(id);
+      },
+      dismissProviderSubagents: () => undefined,
+    });
+
+    await expect(archive.archiveFinished()).resolves.toMatchObject({
+      archivedPaseoIds: [],
+      skippedPaseoIds: ["late"],
+    });
+    expect(archived).toEqual([]);
+  });
+
   it("retains failure through optimistic rollback, retries current rows, and resets for a later eligible-set change", async () => {
     const first = deferred<void>();
     const second = deferred<void>();

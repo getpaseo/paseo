@@ -1959,6 +1959,20 @@ export const es: TranslationResources = {
     archiveFinishedAction: "Archivar subagentes finalizados",
     archiveFinishedRetry: "Reintentar ({{failed}}/{{total}})",
   },
+  backgroundTasks: {
+    title: "Tareas en segundo plano",
+    pillShellsOne: "1 shell",
+    pillShellsMany: "{{count}} shells",
+    pillTasksOne: "1 tarea en segundo plano",
+    pillTasksMany: "{{count}} tareas en segundo plano",
+    kindShell: "Shell",
+    kindMonitor: "Monitor",
+    stopAction: "Detener {{label}}",
+    stopTooltip: "Detener tarea",
+    stopConfirmTitle: "¿Detener la tarea en segundo plano?",
+    stopConfirmMessage: "Se detendrá {{label}}. No se puede deshacer.",
+    stopConfirmLabel: "Detener",
+  },
   panels: {
     draft: {
       newAgent: "Nuevo agente",

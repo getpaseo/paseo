@@ -213,6 +213,17 @@ export interface SteerActiveTurnOptions extends AgentSteerOptions {
   expectedTurnId: string;
 }
 
+/**
+ * Work the provider keeps running in its own process after a turn ends — a background shell, a
+ * monitor watch. The provider reports the whole live set on every change; it is not a log.
+ */
+export interface AgentBackgroundTask {
+  id: string;
+  /** The provider's own task type, e.g. Claude's "local_bash". */
+  type: string;
+  description: string | null;
+}
+
 export interface AgentUsage {
   inputTokens?: number;
   cachedInputTokens?: number;
@@ -458,6 +469,12 @@ export type AgentStreamEvent =
       type: "provider_subagent";
       provider: AgentProvider;
       event: import("./provider-subagents/store.js").ProviderSubagentInputEvent;
+    }
+  | {
+      /** The full live set, replacing the previous one. An empty list means nothing is running. */
+      type: "background_tasks_changed";
+      provider: AgentProvider;
+      tasks: AgentBackgroundTask[];
     };
 
 export function getAgentStreamEventTurnId(event: AgentStreamEvent): string | undefined {
@@ -700,6 +717,8 @@ export interface AgentSession {
   revertConversation?(input: { messageId: string }): Promise<void>;
   revertFiles?(input: { messageId: string }): Promise<void>;
   revertBoth?(input: { messageId: string }): Promise<void>;
+  /** Stop one background task the provider reported through `background_tasks_changed`. */
+  stopBackgroundTask?(taskId: string): Promise<void>;
   /**
    * Out-of-band prompt handler. When non-null, the manager runs the returned
    * handler instead of allocating a turn. The handler emits stream events

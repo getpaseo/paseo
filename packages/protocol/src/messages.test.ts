@@ -287,6 +287,40 @@ describe("diagnostics message contract", () => {
   });
 });
 
+describe("agent background tasks", () => {
+  test("parses the namespaced background task stop request and response", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "agent.background_tasks.stop.request",
+        agentId: "agent-1",
+        taskId: "b1kxzuieg",
+        requestId: "req-stop",
+      }),
+    ).toEqual({
+      type: "agent.background_tasks.stop.request",
+      agentId: "agent-1",
+      taskId: "b1kxzuieg",
+      requestId: "req-stop",
+    });
+
+    const response = SessionOutboundMessageSchema.parse({
+      type: "agent.background_tasks.stop.response",
+      payload: { requestId: "req-stop", agentId: "agent-1", accepted: true, error: null },
+    });
+    expect(response.type).toBe("agent.background_tasks.stop.response");
+  });
+
+  test("parses the agentBackgroundTaskStop server feature gate", () => {
+    const parsed = parseServerInfoStatusPayload({
+      status: "server_info",
+      serverId: "srv-test",
+      features: { agentBackgroundTaskStop: true },
+    });
+
+    expect(parsed?.features?.agentBackgroundTaskStop).toBe(true);
+  });
+});
+
 describe("agent detach RPC", () => {
   test("parses the namespaced detach request", () => {
     const parsed = SessionInboundMessageSchema.parse({

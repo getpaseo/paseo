@@ -2649,6 +2649,8 @@ export class Session {
     switch (msg.type) {
       case "agent.detach.request":
         return this.handleDetachAgentRequest(msg.agentId, msg.requestId);
+      case "agent.background_tasks.stop.request":
+        return this.handleStopAgentBackgroundTaskRequest(msg);
       default:
         return undefined;
     }
@@ -3270,6 +3272,29 @@ export class Session {
     }
 
     return { agentId, archivedAt };
+  }
+
+  private async handleStopAgentBackgroundTaskRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.background_tasks.stop.request" }>,
+  ): Promise<void> {
+    const { agentId, taskId, requestId } = msg;
+    try {
+      await this.agentManager.stopAgentBackgroundTask(agentId, taskId);
+      this.emit({
+        type: "agent.background_tasks.stop.response",
+        payload: { requestId, agentId, accepted: true, error: null },
+      });
+    } catch (error) {
+      const message = getErrorMessageOr(error, "Failed to stop background task");
+      this.sessionLogger.error(
+        { err: error, agentId, taskId, requestId },
+        "Failed to stop background task",
+      );
+      this.emit({
+        type: "agent.background_tasks.stop.response",
+        payload: { requestId, agentId, accepted: false, error: message },
+      });
+    }
   }
 
   private async handleDetachAgentRequest(agentId: string, requestId: string): Promise<void> {

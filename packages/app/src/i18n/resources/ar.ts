@@ -1911,6 +1911,20 @@ export const ar: TranslationResources = {
     archiveFinishedAction: "أرشفة الوكلاء الفرعيين المكتملين",
     archiveFinishedRetry: "إعادة المحاولة ({{failed}}/{{total}})",
   },
+  backgroundTasks: {
+    title: "المهام في الخلفية",
+    pillShellsOne: "صدفة واحدة",
+    pillShellsMany: "{{count}} صدفات",
+    pillTasksOne: "مهمة واحدة في الخلفية",
+    pillTasksMany: "{{count}} مهام في الخلفية",
+    kindShell: "صدفة",
+    kindMonitor: "مراقب",
+    stopAction: "إيقاف {{label}}",
+    stopTooltip: "إيقاف المهمة",
+    stopConfirmTitle: "إيقاف المهمة في الخلفية؟",
+    stopConfirmMessage: "سيتم إيقاف {{label}}. لا يمكن التراجع عن ذلك.",
+    stopConfirmLabel: "إيقاف",
+  },
   panels: {
     draft: {
       newAgent: "وكيل جديد",

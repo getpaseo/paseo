@@ -1930,6 +1930,20 @@ export const ja: TranslationResources = {
     archiveFinishedAction: "完了したサブエージェントをアーカイブ",
     archiveFinishedRetry: "再試行 ({{failed}}/{{total}})",
   },
+  backgroundTasks: {
+    title: "バックグラウンドタスク",
+    pillShellsOne: "1 シェル",
+    pillShellsMany: "{{count}} シェル",
+    pillTasksOne: "1 件のバックグラウンドタスク",
+    pillTasksMany: "{{count}} 件のバックグラウンドタスク",
+    kindShell: "シェル",
+    kindMonitor: "モニター",
+    stopAction: "{{label}} を停止",
+    stopTooltip: "タスクを停止",
+    stopConfirmTitle: "バックグラウンドタスクを停止しますか？",
+    stopConfirmMessage: "{{label}} を停止します。この操作は元に戻せません。",
+    stopConfirmLabel: "停止",
+  },
   panels: {
     draft: {
       newAgent: "新しいエージェント",

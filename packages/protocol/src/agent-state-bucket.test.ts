@@ -50,6 +50,30 @@ describe("deriveAgentStateBucket", () => {
     ).toBe("attention");
   });
 
+  it("keeps an idle agent with background tasks running, even when its turn left it unread", () => {
+    expect(
+      deriveAgentStateBucket({
+        status: "idle",
+        pendingPermissionCount: 0,
+        requiresAttention: true,
+        attentionReason: "finished",
+        backgroundTaskCount: 1,
+      }),
+    ).toBe("running");
+  });
+
+  it("does not let background tasks hide a failed agent", () => {
+    expect(
+      deriveAgentStateBucket({
+        status: "error",
+        pendingPermissionCount: 0,
+        requiresAttention: true,
+        attentionReason: "error",
+        backgroundTaskCount: 1,
+      }),
+    ).toBe("failed");
+  });
+
   it("does not count initializing agents as running for workspace buckets", () => {
     expect(
       deriveAgentStateBucket({

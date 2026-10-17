@@ -1,4 +1,7 @@
 import { memo, useCallback, type ReactElement } from "react";
+import type { AgentBackgroundTaskPayload } from "@getpaseo/protocol/messages";
+import { BackgroundTasksTrack } from "@/background-tasks/track";
+import { useStopBackgroundTask } from "@/background-tasks/use-stop-background-task";
 import { WorkspaceDiffStatPill } from "@/composer/diff-stat-pill";
 import { useWorkspaceHasDiffStat } from "@/composer/workspace-diff-stat";
 import { AgentTaskList } from "@/composer/task-list";
@@ -36,6 +39,7 @@ export const AgentTracks = memo(function AgentTracks({
   cwd,
   subagentRows,
   tasks,
+  backgroundTasks,
   archiveFinishedStatus,
   onArchiveFinished,
   hasPluginComposerPills,
@@ -46,6 +50,7 @@ export const AgentTracks = memo(function AgentTracks({
   cwd: string;
   subagentRows: SubagentRow[];
   tasks: TodoEntry[] | undefined;
+  backgroundTasks: readonly AgentBackgroundTaskPayload[];
   archiveFinishedStatus: ArchiveFinishedStatus;
   onArchiveFinished: () => void;
   hasPluginComposerPills: boolean;
@@ -58,6 +63,10 @@ export const AgentTracks = memo(function AgentTracks({
   const canDetachSubagents = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.agentDetach === true,
   );
+  const canStopBackgroundTasks = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.agentBackgroundTaskStop === true,
+  );
+  const stopBackgroundTask = useStopBackgroundTask({ serverId, agentId });
   const archiveSubagent = useArchiveSubagent({ serverId });
   const detachSubagent = useDetachSubagent({ serverId });
   const openSubagentTarget = useCallback(
@@ -109,6 +118,7 @@ export const AgentTracks = memo(function AgentTracks({
     !hasAgentTracks({
       subagentRows,
       tasks,
+      backgroundTasks,
       archiveFinishedStatus,
       hasPluginComposerPills,
     })
@@ -119,6 +129,10 @@ export const AgentTracks = memo(function AgentTracks({
   return (
     <ComposerTrackBar>
       <AgentTaskList tasks={tasks} />
+      <BackgroundTasksTrack
+        tasks={backgroundTasks}
+        onStopTask={canStopBackgroundTasks ? stopBackgroundTask : undefined}
+      />
       <SubagentsTrack
         serverId={serverId}
         rows={subagentRows}
@@ -148,17 +162,20 @@ export const AgentTracks = memo(function AgentTracks({
 export function hasAgentTracks({
   subagentRows,
   tasks,
+  backgroundTasks = [],
   archiveFinishedStatus,
   hasPluginComposerPills = false,
 }: {
   subagentRows: readonly SubagentRow[];
   tasks: readonly TodoEntry[] | undefined;
+  backgroundTasks?: readonly AgentBackgroundTaskPayload[];
   archiveFinishedStatus: ArchiveFinishedStatus;
   hasPluginComposerPills?: boolean;
 }): boolean {
   return (
     subagentRows.length > 0 ||
     Boolean(tasks?.length) ||
+    backgroundTasks.length > 0 ||
     archiveFinishedStatus.kind !== "idle" ||
     hasPluginComposerPills
   );

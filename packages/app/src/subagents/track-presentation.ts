@@ -9,7 +9,8 @@ import { providerSubagentLifecycleStatus } from "./provider-store";
 function presentationStatus(row: SubagentRow) {
   if (row.kind === "paseo") {
     if (row.turn.phase === "open") return "running";
-    return row.status === "running" ? "idle" : row.status;
+    const status = row.status === "running" ? "idle" : row.status;
+    return status === "idle" && (row.backgroundTaskCount ?? 0) > 0 ? "running" : status;
   }
   return providerSubagentLifecycleStatus(row.status);
 }

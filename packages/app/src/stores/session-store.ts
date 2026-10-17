@@ -34,6 +34,7 @@ import type {
   AgentPersistenceHandle,
 } from "@getpaseo/protocol/agent-types";
 import type {
+  AgentBackgroundTaskPayload,
   ServerInfoStatusPayload,
   ProjectPlacementPayload,
   ServerCapabilities,
@@ -87,6 +88,8 @@ export interface Agent {
   runtimeInfo?: AgentRuntimeInfo;
   lastUsage?: AgentUsage;
   lastError?: string | null;
+  /** Shells and monitors the provider keeps running after its turn ended. */
+  backgroundTasks?: AgentBackgroundTaskPayload[];
   title: string | null;
   cwd: string;
   workspaceId?: string;
