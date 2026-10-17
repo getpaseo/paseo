@@ -2101,6 +2101,52 @@ describe("PiRpcAgentSession", () => {
     });
   });
 
+  test("fails an unfinished workflow on process exit while preserving detached runs", async () => {
+    const { pi, session, events } = await createSession();
+    onTestFinished(() => session.close());
+    const updates: AgentStreamEvent[] = [];
+    session.subscribe((event) => updates.push(event));
+    await session.startTurn("run workflows");
+    const runtime = pi.latestSession();
+    runtime.emit({
+      type: "tool_execution_start",
+      toolCallId: "detached",
+      toolName: "subagent",
+      args: { workflowScript: "return await runs.all([]);", async: true },
+    });
+    runtime.emit({
+      type: "tool_execution_end",
+      toolCallId: "detached",
+      toolName: "subagent",
+      result: {
+        details: {
+          mode: "workflow",
+          runId: "detached-run",
+          asyncId: "detached-run",
+          asyncDir: "/nonexistent/pi-exit-regression",
+          results: [],
+        },
+      },
+    });
+    runtime.emit({
+      type: "tool_execution_start",
+      toolCallId: "foreground",
+      toolName: "subagent",
+      args: { workflowScript: "return await runs.all([]);", async: false },
+    });
+    runtime.emit({ type: "process_exit", error: "Pi exited" });
+
+    await expect(events.nextTurnFailure()).resolves.toMatchObject({ error: "Pi exited" });
+    const statuses = (id: string) =>
+      updates.flatMap((event) =>
+        event.type === "provider_subagent" && event.event.type === "upsert" && event.event.id === id
+          ? [event.event.status]
+          : [],
+      );
+    expect(statuses("foreground")).toEqual(["running", "failed"]);
+    expect(statuses("detached")).toEqual(["running", "running"]);
+  });
+
   test("fails an autonomous turn when the Pi process exits before settlement", async () => {
     const { pi, events } = await createSession();
     const fakeSession = pi.latestSession();
