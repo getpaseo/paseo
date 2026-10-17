@@ -5,7 +5,10 @@ import { renderHook } from "@testing-library/react";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Text } from "react-native";
-import type { PluginWorkspaceRowAccessoryProps } from "@getpaseo/plugin/client";
+import type {
+  PluginWorkspaceRowAccessoryProps,
+  PluginWorkspaceRowTakeoverProps,
+} from "@getpaseo/plugin/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { EvaluatedWorkspaceRowAccessory, InstalledPlugin } from "./types";
@@ -15,9 +18,13 @@ import {
   selectWorkspaceRowAccessory,
   useWorkspaceRowAccessory,
   WorkspaceRowLeading,
+  WorkspaceRowTakeoverLayer,
   type WorkspaceRowAccessories,
   type WorkspaceRowAccessoryTarget,
 } from "./workspace-row-accessory";
+import type { ActiveRowTakeover } from "./workspace-row-takeover";
+
+vi.mock("react-native-reanimated", () => ({ useReducedMotion: () => false }));
 
 let hostClient: object | null = {};
 vi.mock("@/runtime/host-runtime", () => ({ useHostRuntimeClient: () => hostClient }));
@@ -67,6 +74,17 @@ const glyphTarget: WorkspaceRowAccessoryTarget = {
   plugin: plugin("host", []),
   accessory: { id: "glyph", Component: Glyph, size: "large", sequence: 1 },
 };
+let overlayProps: PluginWorkspaceRowTakeoverProps | null = null;
+function Sweep(props: PluginWorkspaceRowTakeoverProps) {
+  overlayProps = props;
+  return <Text>sweep</Text>;
+}
+const sweepTakeover: ActiveRowTakeover = {
+  plugin: plugin("host", []),
+  Overlay: Sweep,
+  data: { label: "checks passed" },
+};
+
 const explodingTarget: WorkspaceRowAccessoryTarget = {
   plugin: plugin("host", []),
   accessory: { id: "glyph", Component: Exploding, size: "status", sequence: 1 },
@@ -188,6 +206,7 @@ describe("without plugins", () => {
           workspace={workspace}
           isHovered={false}
           isSelected={false}
+          takeover={false}
           backdrop="surfaceSidebar"
           loading={false}
         >
@@ -215,6 +234,7 @@ describe("WorkspaceRowLeading", () => {
     act(() => root.unmount());
     container.remove();
     glyphProps = null;
+    overlayProps = null;
     hostClient = {};
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -228,6 +248,7 @@ describe("WorkspaceRowLeading", () => {
           workspace={workspace}
           isHovered={false}
           isSelected
+          takeover={false}
           backdrop="surfaceSidebar"
           loading={false}
         >
@@ -268,5 +289,25 @@ describe("WorkspaceRowLeading", () => {
 
     expect(container.textContent).toBe("native dot");
     expect(glyphProps).toBeNull();
+  });
+
+  it("mounts the takeover Overlay over the row with the leading slot's size", () => {
+    act(() => {
+      root.render(
+        <WorkspaceRowTakeoverLayer
+          takeover={sweepTakeover}
+          accessory={glyphTarget}
+          workspace={workspace}
+        />,
+      );
+    });
+
+    expect(container.textContent).toBe("sweep");
+    expect(overlayProps).toMatchObject({
+      workspaceKey: "host:ws-1",
+      data: { label: "checks passed" },
+      reducedMotion: false,
+      slotSize: 40,
+    });
   });
 });

@@ -2,6 +2,7 @@ import type { PluginWorkspaceRowAccessoryProps } from "@getpaseo/plugin/client";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useCallback, useMemo, type ComponentType, type ReactNode } from "react";
 import { View } from "react-native";
+import { useReducedMotion } from "react-native-reanimated";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { z } from "zod";
 import { create } from "zustand";
@@ -20,6 +21,7 @@ import { SurfaceErrorBoundary } from "./surface-error-boundary";
 import { getProjectStatusBadgeContent } from "@/utils/project-status-badge-content";
 import { toPluginTheme } from "./theme";
 import type { EvaluatedWorkspaceRowAccessory, InstalledPlugin } from "./types";
+import type { ActiveRowTakeover } from "./workspace-row-takeover";
 
 const SLOT_SIZE = { status: 16, large: 40 } as const;
 
@@ -206,7 +208,7 @@ function AccessoryFrame({ Accessory, backdrop, loading, ...props }: AccessoryFra
 
 type WorkspaceRowLeadingProps = Pick<
   AccessoryFrameProps,
-  "isHovered" | "isSelected" | "backdrop" | "loading"
+  "isHovered" | "isSelected" | "takeover" | "backdrop" | "loading"
 > & {
   accessories: WorkspaceRowAccessories;
   workspace: SidebarWorkspaceEntry;
@@ -239,7 +241,41 @@ export function WorkspaceRowLeading({
   return largeRail ? <View style={styles.largeRail}>{leading}</View> : leading;
 }
 
+/** The takeover Overlay: fills the row's main line over the faded title and meta, no pointer. */
+export function WorkspaceRowTakeoverLayer({
+  takeover,
+  accessory,
+  workspace,
+}: {
+  takeover: ActiveRowTakeover;
+  accessory: WorkspaceRowAccessoryTarget | null;
+  workspace: SidebarWorkspaceEntry;
+}) {
+  const reducedMotion = useReducedMotion();
+  return (
+    <View style={styles.layer}>
+      <PluginRowSurface
+        plugin={takeover.plugin}
+        Surface={takeover.Overlay}
+        {...rowIds(workspace)}
+        reducedMotion={reducedMotion}
+        data={takeover.data}
+        slotSize={SLOT_SIZE[accessory?.accessory.size ?? "status"]}
+      />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  layer: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    overflow: "hidden",
+    pointerEvents: "none",
+  },
   // Centered on title and meta together.
   largeRail: {
     width: SLOT_SIZE.large,

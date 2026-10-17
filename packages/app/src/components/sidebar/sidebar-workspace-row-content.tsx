@@ -31,7 +31,13 @@ import { resolveSidebarWorkspacePrimaryLabel } from "@/components/sidebar/sideba
 import { DensityIcon } from "@/components/ui/density-icon";
 import { TrailingActionScrim } from "@/components/ui/trailing-action-scrim";
 import { useWorkspaceLabelDefinitions } from "@/workspace-labels";
-import { useWorkspaceRowAccessory, WorkspaceRowLeading } from "@/plugins/workspace-row-accessory";
+import { isWeb } from "@/constants/platform";
+import {
+  useWorkspaceRowAccessory,
+  WorkspaceRowLeading,
+  WorkspaceRowTakeoverLayer,
+} from "@/plugins/workspace-row-accessory";
+import { useRowTakeover } from "@/plugins/workspace-row-takeover";
 
 const needsInputColorMapping = (theme: Theme) => ({
   color: theme.colors.surface0,
@@ -128,6 +134,19 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   // where the two meet — the meta line is handed finished definitions.
   const labels = useWorkspaceLabelDefinitions(workspace.serverId, workspace.labels);
   const accessories = useWorkspaceRowAccessory(workspace.serverId);
+  const takeover = useRowTakeover(workspace.workspaceKey);
+  // Rows without an accessory keep the upstream column exactly; only accessory rows can fade.
+  const contentColumnStyle = useMemo(
+    () =>
+      accessories.target
+        ? [
+            styles.workspaceContentColumn,
+            styles.workspaceContentFades,
+            takeover && styles.workspaceContentHidden,
+          ]
+        : styles.workspaceContentColumn,
+    [accessories.target, takeover],
+  );
   const workspaceBranchTextStyle = useMemo(
     () => [
       styles.workspaceBranchText,
@@ -166,12 +185,13 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
           workspace={workspace}
           isHovered={isHovered}
           isSelected={isSelected}
+          takeover={takeover !== null}
           backdrop={backdrop}
           loading={isLoading}
         >
           {nativeLeading}
         </WorkspaceRowLeading>
-        <View style={styles.workspaceContentColumn}>
+        <View style={contentColumnStyle}>
           <View style={styles.workspaceTitleRow}>
             <Text style={workspaceBranchTextStyle} numberOfLines={1}>
               {workspaceLabel}
@@ -187,6 +207,13 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             labels={labels}
           />
         </View>
+        {takeover ? (
+          <WorkspaceRowTakeoverLayer
+            takeover={takeover}
+            accessory={accessories.target}
+            workspace={workspace}
+          />
+        ) : null}
       </View>
       {showShortcutBadge && shortcutNumber !== null ? (
         <View style={styles.shortcutBadgeOverlay} pointerEvents="none">
@@ -486,6 +513,13 @@ const styles = StyleSheet.create((theme) => ({
   workspaceContentColumn: {
     flex: 1,
     minWidth: 0,
+  },
+  workspaceContentFades: isWeb
+    ? { transitionProperty: "opacity", transitionDuration: "280ms" }
+    : {},
+  // A plugin's row takeover owns the row's line while it plays; the status badge stays.
+  workspaceContentHidden: {
+    opacity: theme.opacity[0],
   },
   workspaceTitleRow: {
     flexDirection: "row",

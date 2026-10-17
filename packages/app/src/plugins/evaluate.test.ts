@@ -334,6 +334,10 @@ describe("evaluatePluginClientBundle", () => {
         `plugin.addWorkspaceRowAccessory({ id: "a", Component: "div-ish" })`,
         "Invalid workspace row accessory",
       ],
+      [
+        `plugin.addWorkspaceRowAccessory({ id: "a", Component, Overlay: 42 })`,
+        "Invalid workspace row accessory",
+      ],
     ];
     for (const [body, error] of attempts) {
       const source = bundle(`function Component() { return null; } ${body}`);

@@ -1727,11 +1727,12 @@ export default function contribute(client: PluginClientContext) {
 
 `addWorkspaceRowAccessory` fields:
 
-| Field       | Required | Meaning                                                                     |
-| ----------- | -------- | --------------------------------------------------------------------------- |
-| `id`        | Yes      | Plugin-local accessory ID.                                                  |
-| `Component` | Yes      | React Native component drawn in the slot.                                   |
-| `size`      | No       | `status` (default, the native 16 px status slot) or `large` (a 40 px slot). |
+| Field       | Required | Meaning                                                                                   |
+| ----------- | -------- | ----------------------------------------------------------------------------------------- |
+| `id`        | Yes      | Plugin-local accessory ID.                                                                |
+| `Component` | Yes      | React Native component drawn in the slot.                                                 |
+| `size`      | No       | `status` (default, the native 16 px status slot) or `large` (a 40 px slot).               |
+| `Overlay`   | No       | Component played over a row by `requestRowTakeover`. See [Row takeovers](#row-takeovers). |
 
 The component receives `serverId`, `workspaceId`, `workspaceKey`, `theme`, `statusBucket`,
 `isHovered`, `isSelected` and `size` (the side of its square in pixels). Draw within that square.
@@ -1745,6 +1746,26 @@ accessory; the project name stays in the meta line.
 
 The accessory renders once per visible row. Share timers and animation clocks across rows and do
 nothing per frame while idle.
+
+### Row takeovers
+
+Give the accessory an `Overlay` and ask the host to play it over one row for a few seconds, for a
+moment the user earned: checks passed, a task finished.
+
+```tsx
+client.addWorkspaceRowAccessory?.({ id: "ci", Component: CiGlyph, Overlay: ChecksPassedSweep });
+
+const handle = client.requestRowTakeover?.(workspaceId, { durationMs: 1800, data: { checks: 12 } });
+const outcome = await handle?.finished; // "completed" | "cancelled"
+```
+
+While it plays, the row's title and meta fade out, the Overlay fills the row's line without
+taking pointer events, and the accessory receives `takeover: true`. The Overlay receives
+`serverId`, `workspaceId`, `workspaceKey`, `theme`, `reducedMotion`, `data` and `slotSize`; draw a
+still frame when `reducedMotion` is true. The host ends the takeover after `durationMs` (at most
+10000), on `cancel()`, or when the plugin is disposed or reloaded; `finished` settles then. One
+takeover plays per row: a request for a row that is already taken over returns `null`. Rate-limit
+takeovers in the plugin.
 
 ## Command Center items
 

@@ -102,6 +102,7 @@ export type PluginClientRuntime = Pick<
   | "openPanel"
   | "addComposerPill"
   | "addHeaderButton"
+  | "requestRowTakeover"
 > & { hosts: ReturnType<typeof createPluginHosts> };
 
 export function runPluginClientBundle(
@@ -262,18 +263,19 @@ export function runPluginClientBundle(
     },
     addWorkspaceRowAccessory(contribution: PluginWorkspaceRowAccessoryContribution) {
       const accessoryId = requireId(contribution.id, "workspace row accessory id");
-      const { Component, size = "status" } = contribution;
+      const { Component, Overlay, size = "status" } = contribution;
       if (workspaceRowAccessoryIds.has(accessoryId)) {
         throw new Error(`Duplicate workspace row accessory: ${accessoryId}`);
       }
-      if (!isComponentType(Component) || (size !== "status" && size !== "large")) {
+      const validOverlay = Overlay === undefined || isComponentType(Overlay);
+      if (!isComponentType(Component) || !validOverlay || (size !== "status" && size !== "large")) {
         throw new Error(`Invalid workspace row accessory: ${accessoryId}`);
       }
       workspaceRowAccessoryIds.add(accessoryId);
       const sequence = ++workspaceRowAccessorySequence;
       return register(
         collector.workspaceRowAccessories,
-        { id: accessoryId, Component, size, sequence },
+        { id: accessoryId, Component, Overlay, size, sequence },
         () => workspaceRowAccessoryIds.delete(accessoryId),
       );
     },
