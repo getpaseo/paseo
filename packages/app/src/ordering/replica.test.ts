@@ -126,6 +126,36 @@ test("an accepted older response preserves a newer broadcast without replaying a
   expect(applied.at(-1)).toEqual([{ scope, revision: 3, order: ["a", "b"] }]);
 });
 
+test("explicit permission cancellation restores all scopes and fences old acknowledgements without replay on write recovery", async () => {
+  const { port, replica, applied, errors, setMembership } = setup();
+  const pinned = { kind: "pinned" } as const;
+  replica.snapshot([{ scope, revision: 1, order: ["a", "b", "c"] }]);
+  replica.reorder({ scope, move: createOrderMove({ moved: "b", order: ["b", "a", "c"] }) });
+  replica.pause();
+  replica.reorder({ scope: pinned, move: createOrderMove({ moved: "y", order: ["y", "x"] }) });
+  expect(replica.cancelPending()).toBe(true);
+  expect(replica.cancelPending()).toBe(false);
+  setMembership("pending");
+  const records: OrderRecord[] = [
+    { scope, revision: 9, order: ["a", "b", "c"] },
+    { scope: pinned, revision: 4, order: ["x", "y"] },
+  ];
+  replica.snapshot(records);
+  expect(applied.at(-1)).toEqual(records);
+  const update: OrderRecord = { scope, revision: 10, order: ["b", "a", "c"] };
+  replica.receive(scope, update);
+  expect(applied.at(-1)).toEqual([update, records[1]]);
+  port.replies[0]!({ accepted: true, record: { scope, revision: 2, order: ["b", "a", "c"] } });
+  await Promise.resolve();
+  expect(applied.at(-1)).toEqual([update, records[1]]);
+  setMembership("all");
+  replica.retry();
+  expect(port.calls).toHaveLength(1);
+  replica.reorder({ scope, move: createOrderMove({ moved: "c", order: ["c", "b", "a"] }) });
+  expect(port.calls[1]).toEqual({ scope, expectedRevision: 10, order: ["c", "b", "a"] });
+  expect(errors).toEqual([]);
+});
+
 test("a first explicit gesture initializes the complete relevant order at revision zero", () => {
   const { port, replica } = setup();
   replica.reorder({ scope, move: createOrderMove({ moved: "d", order: ["a", "d", "b", "c"] }) });

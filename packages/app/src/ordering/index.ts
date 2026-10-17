@@ -115,12 +115,15 @@ class SharedOrderingController {
       this.unsupported.add(input.serverId);
       return;
     }
-    const canWrite =
-      input.client.getLastServerInfoMessage()?.permissions?.includes("workspace.manage") === true;
+    const permissions = input.client.getLastServerInfoMessage()?.permissions;
+    const canWrite = permissions?.includes("workspace.manage") === true;
     if (canWrite) this.readOnly.delete(input.serverId);
     else this.readOnly.add(input.serverId);
     const subscription = input.client.observeOrders();
     const replica = this.replica(input.serverId);
+    // A confirmed read-only connection cannot publish its offline gestures. Unknown permissions retain them.
+    if (permissions !== undefined && !canWrite && replica.cancelPending())
+      reportOrderError({ kind: "permissionLost" });
     const host: HostOrdering = {
       client: input.client,
       canWrite,

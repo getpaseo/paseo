@@ -3,6 +3,8 @@ import { pluginSettings } from "./plugin-settings";
 
 export const ptBR: TranslationResources = {
   sharedOrdering: {
+    permissionLost:
+      "Este host agora é somente leitura. As alterações de ordem pendentes foram canceladas.",
     removed: "Os itens indisponíveis foram removidos da ordem pendente.",
     unsupported:
       "Atualize este host para sincronizar a ordem dos espaços de trabalho e das abas entre dispositivos.",

@@ -26,7 +26,7 @@ export function performOrderGesture(intent: OrderIntent, action: () => void): vo
 }
 
 export interface OrderError {
-  kind: "unsupported" | "failed" | "conflict" | "removed";
+  kind: "unsupported" | "failed" | "conflict" | "removed" | "permissionLost";
   detail?: string;
 }
 const errorListeners = new Set<(error: OrderError) => void>();

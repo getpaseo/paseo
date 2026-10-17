@@ -3,6 +3,7 @@ import { pluginSettings } from "./plugin-settings";
 
 export const ar: TranslationResources = {
   sharedOrdering: {
+    permissionLost: "أصبح هذا المضيف للقراءة فقط. أُلغيت تغييرات الترتيب المعلّقة.",
     removed: "أُزيلت العناصر غير المتاحة من الترتيب المعلّق.",
     unsupported: "حدّث هذا المضيف لمزامنة ترتيب مساحات العمل وعلامات التبويب بين الأجهزة.",
     failed: "الترتيب بانتظار المزامنة. أعد الاتصال أو حرّك عنصراً للمحاولة مجدداً.",

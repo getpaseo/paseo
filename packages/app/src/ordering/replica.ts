@@ -38,7 +38,7 @@ export interface ReorderInput {
   scope: OrderScope;
   move: OrderMove;
 }
-/** Pending operations outlive sockets; only acknowledgements or authoritative removal retire them. */
+/** Pending operations outlive sockets until acknowledged or explicitly cancelled by authority. */
 export class OrderReplica {
   private records = new Map<string, OrderRecord>();
   private readonly pending = new Map<string, PendingOrder>();
@@ -62,6 +62,15 @@ export class OrderReplica {
     this.ready = false;
     this.generation++;
     this.inFlight.clear();
+  }
+  cancelPending(): boolean {
+    if (this.pending.size === 0) return false;
+    this.generation++;
+    this.inFlight.clear();
+    this.pending.clear();
+    this.blocked.clear();
+    this.reapply();
+    return true;
   }
   receive(scope: OrderScope, record: OrderRecord | null): void {
     const key = orderScopeKey(scope);

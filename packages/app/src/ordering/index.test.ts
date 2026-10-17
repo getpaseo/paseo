@@ -324,6 +324,153 @@ test("read-only hydration and layout changes never write or toast, while subscri
   }
 });
 
+test("a read-only reconnect cancels offline moves, projects snapshots and updates, and later writes only new gestures", async () => {
+  const otherHost = "other-order-host";
+  const store = useSidebarOrderStore.getState();
+  for (const serverId of [host, otherHost]) {
+    useSessionStore.getState().initializeSession(serverId, null);
+    populate(serverId);
+    useSessionStore.getState().setHasHydratedWorkspaces(serverId, true);
+    await sharedOrdering.connect({
+      serverId,
+      client: new FakeClient(),
+      supported: true,
+      directoryReady: true,
+    });
+    sharedOrdering.disconnect(serverId);
+    store.setPinnedWorkspaceOrder({
+      keys: [
+        ...useSidebarOrderStore
+          .getState()
+          .pinnedWorkspaceOrder.filter((key) => !key.startsWith(`${serverId}:`)),
+        `${serverId}:b`,
+        `${serverId}:a`,
+      ],
+      gesture: { userInitiated: true, movedKey: `${serverId}:b` },
+    });
+  }
+  const client = new FakeClient();
+  client.permissions = ["workspace.read"];
+  const errors: OrderError[] = [];
+  const release = observeOrderErrors((error) => errors.push(error));
+  const hostOrder = () =>
+    useSidebarOrderStore
+      .getState()
+      .pinnedWorkspaceOrder.filter((key) => key.startsWith(`${host}:`));
+  try {
+    await sharedOrdering.connect({
+      serverId: host,
+      client,
+      supported: true,
+      directoryReady: false,
+    });
+    expect(hostOrder()).toEqual([`${host}:a`, `${host}:b`]);
+    client.receive({
+      type: "ui.order.update",
+      payload: {
+        scope: { kind: "pinned" },
+        record: { scope: { kind: "pinned" }, revision: 2, order: ["b", "a"] },
+      },
+    });
+    expect(hostOrder()).toEqual([`${host}:b`, `${host}:a`]);
+    client.receive({
+      type: "ui.order.update",
+      payload: {
+        scope: { kind: "pinned" },
+        record: { scope: { kind: "pinned" }, revision: 3, order: ["a", "b"] },
+      },
+    });
+    expect(hostOrder()).toEqual([`${host}:a`, `${host}:b`]);
+    sharedOrdering.directoryReady(host);
+    expect(client.calls).toEqual([]);
+    expect(client.targetCalls).toBe(0);
+    expect(errors).toEqual([{ kind: "permissionLost" }]);
+
+    const other = new FakeClient();
+    await sharedOrdering.connect({
+      serverId: otherHost,
+      client: other,
+      supported: true,
+      directoryReady: true,
+    });
+    await expect
+      .poll(() => other.calls)
+      .toEqual([{ scope: { kind: "pinned" }, expectedRevision: 1, order: ["b", "a"] }]);
+    const writer = new FakeClient();
+    writer.records = [{ scope: { kind: "pinned" }, revision: 3, order: ["a", "b"] }];
+    await sharedOrdering.connect({
+      serverId: host,
+      client: writer,
+      supported: true,
+      directoryReady: true,
+    });
+    expect(writer.calls).toEqual([]);
+    store.setPinnedWorkspaceOrder({
+      keys: [`${host}:b`, `${host}:a`, `${otherHost}:b`, `${otherHost}:a`],
+      gesture: { userInitiated: true, movedKey: `${host}:b` },
+    });
+    await expect
+      .poll(() => writer.calls)
+      .toEqual([{ scope: { kind: "pinned" }, expectedRevision: 3, order: ["b", "a"] }]);
+    expect(errors).toEqual([{ kind: "permissionLost" }]);
+  } finally {
+    release();
+  }
+});
+
+test("unknown connection permissions retain offline moves until an authoritative writer is ready", async () => {
+  useSessionStore.getState().initializeSession(host, null);
+  populate();
+  useSessionStore.getState().setHasHydratedWorkspaces(host, true);
+  await sharedOrdering.connect({
+    serverId: host,
+    client: new FakeClient(),
+    supported: true,
+    directoryReady: true,
+  });
+  sharedOrdering.disconnect(host);
+  useSidebarOrderStore.getState().setPinnedWorkspaceOrder({
+    keys: [`${host}:b`, `${host}:a`],
+    gesture: { userInitiated: true, movedKey: `${host}:b` },
+  });
+  const errors: OrderError[] = [];
+  const release = observeOrderErrors((error) => errors.push(error));
+  try {
+    const unknown = new FakeClient();
+    unknown.permissions = undefined;
+    await sharedOrdering.connect({
+      serverId: host,
+      client: unknown,
+      supported: true,
+      directoryReady: false,
+    });
+    expect(unknown.calls).toEqual([]);
+    expect(unknown.targetCalls).toBe(0);
+    expect(errors).toEqual([]);
+    expect(useSidebarOrderStore.getState().pinnedWorkspaceOrder).toEqual([
+      `${host}:b`,
+      `${host}:a`,
+    ]);
+    const writer = new FakeClient();
+    await sharedOrdering.connect({
+      serverId: host,
+      client: writer,
+      supported: true,
+      directoryReady: false,
+    });
+    expect(writer.calls).toEqual([]);
+    expect(writer.targetCalls).toBe(0);
+    expect(errors).toEqual([]);
+    sharedOrdering.directoryReady(host);
+    await expect
+      .poll(() => writer.calls)
+      .toEqual([{ scope: { kind: "pinned" }, expectedRevision: 1, order: ["b", "a"] }]);
+    expect(errors).toEqual([]);
+  } finally {
+    release();
+  }
+});
+
 test.each(["unpin", "archive"] as const)(
   "offline pinned %s cancels only impossible moves and later gestures sync",
   async (removal) => {

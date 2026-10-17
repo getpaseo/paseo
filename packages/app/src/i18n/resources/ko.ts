@@ -3,6 +3,7 @@ import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
   sharedOrdering: {
+    permissionLost: "이 호스트는 이제 읽기 전용입니다. 대기 중인 순서 변경을 취소했습니다.",
     removed: "대기 중인 순서에서 사용할 수 없는 항목을 제거했습니다.",
     unsupported: "기기 간 워크스페이스와 탭 순서를 동기화하려면 이 호스트를 업데이트하세요.",
     failed: "순서가 동기화 대기 중입니다. 다시 연결하거나 항목을 이동하여 재시도하세요.",

@@ -3,6 +3,8 @@ import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
   sharedOrdering: {
+    permissionLost:
+      "Cet hôte est désormais en lecture seule. Les modifications d’ordre en attente ont été annulées.",
     removed: "Les éléments indisponibles ont été retirés de l’ordre en attente.",
     unsupported:
       "Mettez à jour cet hôte pour synchroniser l’ordre des espaces de travail et des onglets entre appareils.",
