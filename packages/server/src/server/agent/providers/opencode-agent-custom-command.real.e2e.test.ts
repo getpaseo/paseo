@@ -97,7 +97,7 @@ describe("opencode custom command Big Pickle E2E (real)", () => {
       expect(state.lastMessage).toContain(EXPECTED_RESPONSE);
     } finally {
       await ctx?.cleanup();
-      await OpenCodeServerManager.getInstance(logger).shutdown();
+      await OpenCodeServerManager.getInstance({ logger }).shutdown();
       await rm(commandFile, { force: true });
       if (!commandDirExisted) {
         await rmdir(commandDir).catch(() => undefined);
