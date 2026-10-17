@@ -46,6 +46,7 @@ import { parsePartialJsonObject } from "./partial-json.js";
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
 import { readClaudeSubagentHandback } from "./subagent-handback.js";
 import { ClaudeTaskState } from "./task-state.js";
+import { ClaudeBackgroundWorkTracker } from "./background-work.js";
 import {
   ClaudeTaskProtocolSource,
   type ClaudeHookObservationInput,
@@ -2230,6 +2231,8 @@ class ClaudeAgentSession implements AgentSession {
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly timelineAssembler = new TimelineAssembler();
   private readonly taskState = new ClaudeTaskState();
+  /** Work owned by the current Claude process that would die with it. */
+  private readonly backgroundWork = new ClaudeBackgroundWorkTracker();
   private readonly taskProtocolSource = new ClaudeTaskProtocolSource({
     getToolInput: (toolUseId) => this.toolUseCache.get(toolUseId)?.input ?? null,
     readWorkflowResult: readClaudeWorkflowResultFile,
@@ -2859,6 +2862,51 @@ class ClaudeAgentSession implements AgentSession {
     });
   }
 
+  get idleBackendEvictionEligible(): boolean {
+    return this.persistSession !== false && !this.closed;
+  }
+
+  private idleEvictionBusyReason(): string | null {
+    if (this.activeForegroundTurnId) return "foreground turn";
+    if (this.autonomousTurn) return "autonomous turn";
+    if (this.mainTurnInFlight) return "main turn in flight";
+    if (this.compacting) return "compacting";
+    if (this.pendingPermissions.size > 0) return "permission pending";
+    return null;
+  }
+
+  /**
+   * Idle eviction ends this Claude process. Retain it while the process owns anything that would
+   * die with it or could still wake the agent: a turn, a permission prompt, or background work
+   * Claude Code announced through its task protocol. Reject when idleness cannot be proven.
+   */
+  async canEvictIdleBackend(): Promise<boolean> {
+    if (this.closed) {
+      throw new Error("Claude session is already closed");
+    }
+    const busy = this.idleEvictionBusyReason();
+    if (busy) {
+      this.logger.debug({ reason: busy }, "Retaining busy Claude process");
+      return false;
+    }
+    if (!this.query) {
+      // No Claude process is running, so nothing can be lost.
+      return true;
+    }
+    const work = this.backgroundWork.state();
+    if (work.kind === "unknown") {
+      throw new Error(work.reason);
+    }
+    if (work.kind === "active") {
+      this.logger.debug(
+        { liveTaskIds: work.liveTaskIds, sessionState: work.sessionState },
+        "Retaining Claude process with background work",
+      );
+      return false;
+    }
+    return true;
+  }
+
   describePersistence(): AgentPersistenceHandle | null {
     if (this.persistence) {
       return this.persistence;
@@ -3370,6 +3418,8 @@ class ClaudeAgentSession implements AgentSession {
     this.input = input;
     // A fresh Claude process has no turn of its own in flight.
     this.mainTurnInFlight = false;
+    // Background work announced by an earlier process died with it.
+    this.backgroundWork.reset();
     this.query = claudeQuery(
       { prompt: input.iterable, options },
       {
@@ -4126,6 +4176,7 @@ class ClaudeAgentSession implements AgentSession {
     }
     if (isClaudeTurnInit(message)) {
       this.mainTurnInFlight = true;
+      this.backgroundWork.noteTurnStarted();
       // A new turn has begun, so the interrupted one is over. An interrupt that landed after its
       // turn had already ended gets no result, and the leftover flag would swallow this turn's.
       this.pendingInterruptAbort = false;
@@ -4133,6 +4184,7 @@ class ClaudeAgentSession implements AgentSession {
     }
     if (readClaudeCommandLifecycle(message)?.state === "started") {
       this.mainTurnInFlight = true;
+      this.backgroundWork.noteTurnStarted();
     }
   }
 
@@ -4146,6 +4198,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private async routeSdkMessageFromPump(message: SDKMessage): Promise<void> {
+    this.backgroundWork.observe(message);
     if (this.consumeSessionStateChange(message)) {
       return;
     }
