@@ -282,6 +282,52 @@ requires_openai_auth = false
 - To run multiple endpoints side-by-side, define multiple entries that each extend `"codex"` with different IDs, labels, and env. Each appears as its own provider in the app.
 - If you only want to override the binary (e.g. a nightly Codex build) without changing the endpoint, omit `OPENAI_BASE_URL` and use `command` instead — see [Custom binary for a provider](#custom-binary-for-a-provider).
 
+### Model metadata
+
+Paseo wires up the endpoint and passes the model ID to Codex, but Codex still needs that model's metadata — most importantly its context window — and it reads it from its own model catalog. The built-in catalog covers OpenAI models, so an ID such as `deepseek-flash` or `qwen3-coder` matches nothing and Codex falls back to its default window (272,000 tokens at the time of writing, applied at 95% → 258,400).
+
+That fallback is usually far below what the endpoint accepts, and nothing surfaces the mismatch:
+
+- auto-compaction starts much earlier than the model requires;
+- a large first prompt — a forked conversation, a long attachment — can already exceed the fallback window;
+- when the compacted history still exceeds it, Codex compacts again on the next turn, so the agent loops, repeats the same work, and bills every attempt.
+
+Give Codex a catalog that contains your model. Add `-c model_catalog_json=<path>` to the provider's `command`: `command` is the binary plus extra arguments, and Paseo appends `app-server` after them, so the launched process is `codex -c model_catalog_json=/Users/me/.codex/custom_models.json app-server`.
+
+```json
+{
+  "agents": {
+    "providers": {
+      "my-codex": {
+        "extends": "codex",
+        "label": "My Codex",
+        "description": "Codex via custom OpenAI-compatible endpoint",
+        "env": {
+          "OPENAI_API_KEY": "sk-...",
+          "OPENAI_BASE_URL": "https://custom-relay.example.com"
+        },
+        "command": ["codex", "-c", "model_catalog_json=/Users/me/.codex/custom_models.json"],
+        "models": [{ "id": "custom-model", "label": "Custom Model", "isDefault": true }]
+      }
+    }
+  }
+}
+```
+
+Codex validates the catalog strictly and rejects a partial entry, so start from an entry it already knows: dump the built-in catalog, copy one entry, and change `slug`, `display_name`, `context_window`, and `max_context_window`. If your vendor publishes a catalog for Codex, use that file as-is instead.
+
+```bash
+codex debug models > /tmp/catalog.json
+```
+
+Verify before relying on it. `debug models` prints the catalog Codex will actually use, and the effective window is `context_window` scaled by `effective_context_window_percent`:
+
+```bash
+codex -c model_catalog_json=/Users/me/.codex/custom_models.json debug models
+```
+
+A catalog replaces the model list for every agent the Codex process serves. Scope it to the provider that needs it: setting it globally in `~/.codex/config.toml`, or on a provider that also serves GPT models, hides the built-in metadata from those sessions.
+
 ---
 
 ## Multiple profiles for the same provider
