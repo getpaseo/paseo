@@ -60,6 +60,7 @@ export function useAgentProfileFormFeatures(input: {
       return {
         features: payload.features ?? [],
         composerControls: controlsSupported ? (payload.composerControls ?? []) : [],
+        controlsError: controlsSupported ? (payload.controlsError ?? null) : null,
       };
     },
   });
@@ -71,8 +72,14 @@ export function useAgentProfileFormFeatures(input: {
     if (!requestKey || !data) {
       return;
     }
-    model.applyFeatures(requestKey, data.features, data.composerControls);
-  }, [data, model, requestKey]);
+    model.applyFeatures(
+      requestKey,
+      data.features,
+      data.composerControls,
+      data.controlsError ?? null,
+      request,
+    );
+  }, [data, model, request, requestKey]);
 
   useEffect(() => {
     if (!requestKey || !isError) {

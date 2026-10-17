@@ -339,6 +339,7 @@ describe("ProviderCatalogSession", () => {
     expect(res?.payload.error).toBeNull();
     expect(res?.payload.features).toHaveLength(1);
     expect(res?.payload.composerControls).toBeUndefined();
+    expect(res?.payload.controlsError).toBe("controls probe failed");
   });
 });
 

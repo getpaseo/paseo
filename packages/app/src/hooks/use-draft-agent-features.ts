@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type {
   AgentComposerControl,
@@ -108,6 +108,10 @@ export function useDraftAgentFeatures(input: {
     ],
     enabled: Boolean(serverId && client && isConnected && draftConfig),
     staleTime: 5 * 60 * 1000,
+    // The listing key includes held values (dependent controls), so every
+    // toggle refetches. Keep the previous listing across the key change so
+    // the toolbar and the resolved values never blank out mid-refresh.
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       if (!client || !draftConfig) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
@@ -119,16 +123,28 @@ export function useDraftAgentFeatures(input: {
       return {
         features: payload.features ?? [],
         composerControls: payload.composerControls ?? [],
+        controlsError: payload.controlsError ?? null,
       };
     },
   });
   const availableFeaturesRaw = featuresQuery.data?.features;
   const availableFeatures = useMemo(() => availableFeaturesRaw ?? [], [availableFeaturesRaw]);
   const availableControlsRaw = featuresQuery.data?.composerControls;
-  const availableControls = useMemo<AgentComposerControl[]>(
-    () => (controlsSupported ? (availableControlsRaw ?? []) : []),
-    [availableControlsRaw, controlsSupported],
-  );
+  const controlsListingFailed = Boolean(featuresQuery.data?.controlsError);
+  // A failed listing must not wipe held values: fall back to the last good
+  // listing instead of pruning against an empty one.
+  const lastGoodControlsRef = useRef<AgentComposerControl[]>([]);
+  useEffect(() => {
+    const data = featuresQuery.data;
+    if (data && !data.controlsError) {
+      lastGoodControlsRef.current = data.composerControls;
+    }
+  }, [featuresQuery.data]);
+  const availableControls = useMemo<AgentComposerControl[]>(() => {
+    if (!controlsSupported) return [];
+    if (controlsListingFailed) return lastGoodControlsRef.current;
+    return availableControlsRaw ?? [];
+  }, [availableControlsRaw, controlsListingFailed, controlsSupported]);
   const featureValues = useMemo(
     () =>
       resolveFeatureValues({
@@ -175,6 +191,11 @@ export function useDraftAgentFeatures(input: {
     if (next !== localFeatureValues) {
       setLocalFeatureValues(next);
     }
+    // Skip control pruning while the listing is failed (values resolve
+    // against the last good listing instead).
+    if (controlsListingFailed) {
+      return;
+    }
     const nextControls = pruneControlValues(localControlValues, availableControls);
     if (nextControls !== localControlValues) {
       setLocalControlValues(nextControls);
@@ -183,6 +204,7 @@ export function useDraftAgentFeatures(input: {
     availableControls,
     availableFeatures,
     availableFeaturesRaw,
+    controlsListingFailed,
     localControlValues,
     localFeatureValues,
   ]);

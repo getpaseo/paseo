@@ -6227,6 +6227,7 @@ export const ListProviderFeaturesResponseMessageSchema = z.object({
     provider: AgentProviderSchema,
     features: z.array(AgentFeatureSchema).optional(),
     composerControls: z.array(AgentComposerControlSchema).optional(),
+    controlsError: z.string().nullable().optional(),
     error: z.string().nullable().optional(),
     fetchedAt: z.string(),
     requestId: z.string(),

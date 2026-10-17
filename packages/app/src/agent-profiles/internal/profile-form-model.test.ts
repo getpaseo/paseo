@@ -426,6 +426,57 @@ describe("openAgentProfileForm", () => {
       expect(model.getState().featureValues).toEqual({ webSearch: true });
     });
 
+    it("keeps the previous listing while a value-only change refetches", () => {
+      const model = openWithCatalog({ mode: "create" });
+      selectClaude(model);
+      const verbose = {
+        kind: "toggle" as const,
+        id: "verbose",
+        label: "Verbose",
+        value: false,
+      };
+      model.applyFeatures(
+        model.getState().featureRequestKey ?? "",
+        [{ type: "toggle", id: "webSearch", label: "Web search", value: false }],
+        [verbose],
+        null,
+        model.getState().featureRequest,
+      );
+      expect(model.getState().composerControls).toHaveLength(1);
+
+      model.setControlValue("verbose", true);
+      // New key, response pending: the stale listing stays visible with the
+      // current value overlaid instead of blanking.
+      expect(model.getState().featureResolution).toBe("pending");
+      expect(model.getState().composerControls).toMatchObject([{ id: "verbose", value: true }]);
+      expect(model.getState().controlValues).toEqual({ verbose: true });
+    });
+
+    it("keeps saved control values when the controls listing fails", () => {
+      const model = openAgentProfileForm({
+        mode: "edit",
+        profile: {
+          id: "p1",
+          name: "UI work",
+          provider: "claude",
+          controlValues: { verbose: true },
+        },
+      });
+      model.applyProviderCatalog(ENTRIES);
+      const key = model.getState().featureRequestKey ?? "";
+      model.applyFeatures(
+        key,
+        [{ type: "toggle", id: "webSearch", label: "Web search", value: false }],
+        [],
+        "controls probe failed",
+        model.getState().featureRequest,
+      );
+
+      expect(model.getState().features).toHaveLength(1);
+      expect(model.getState().controlValues).toEqual({ verbose: true });
+      expect(model.getState().submitValue?.controlValues).toEqual({ verbose: true });
+    });
+
     it("resolves an unavailable feature listing without showing the field", () => {
       const model = openWithCatalog({ mode: "create" });
       selectClaude(model);

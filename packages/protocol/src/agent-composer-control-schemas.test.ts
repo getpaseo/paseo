@@ -120,6 +120,20 @@ describe("agent composer control schemas", () => {
       },
     });
     expect(response.payload.composerControls).toHaveLength(1);
+    expect(response.payload.controlsError).toBeUndefined();
+
+    const failed = ListProviderFeaturesResponseMessageSchema.parse({
+      type: "list_provider_features_response",
+      payload: {
+        provider: "codex",
+        features: [],
+        error: null,
+        controlsError: "controls probe failed",
+        fetchedAt: "2026-04-03T12:00:00.000Z",
+        requestId: "req-1",
+      },
+    });
+    expect(failed.payload.controlsError).toBe("controls probe failed");
   });
 
   it("parses the single live invoke request and response pair", () => {

@@ -77,6 +77,21 @@ export interface AgentProfileFeatureRequest {
   surface: "profile";
 }
 
+/** Listing identity: the listing stays valid while these match, even as held
+ * values change (the change only refetches for dependent controls). */
+export function sameFeatureRequestScope(
+  left: AgentProfileFeatureRequest | null,
+  right: AgentProfileFeatureRequest | null,
+): boolean {
+  if (!left || !right) return left === right;
+  return (
+    left.provider === right.provider &&
+    (left.model ?? "") === (right.model ?? "") &&
+    (left.modeId ?? "") === (right.modeId ?? "") &&
+    (left.thinkingOptionId ?? "") === (right.thinkingOptionId ?? "")
+  );
+}
+
 export type AgentProfileResolutionStatus = "idle" | "pending" | "complete";
 
 export interface AgentProfileFormDisclosure {
@@ -129,11 +144,14 @@ export interface AgentProfileFormModel {
   close: () => void;
   /** Late input: the host-scoped provider catalog. Never touches selections. */
   applyProviderCatalog: (entries: readonly ProviderSnapshotEntry[]) => void;
-  /** Late input: the feature list for one request. Stale keys are ignored. */
+  /** Late input: the feature list for one request. Stale keys are ignored.
+   * A controls listing failure keeps the previous controls and values. */
   applyFeatures: (
     requestKey: string,
     features: readonly AgentFeature[],
     controls?: readonly AgentComposerControl[],
+    controlsError?: string | null,
+    request?: AgentProfileFeatureRequest | null,
   ) => void;
   /** Resolve a request that produced no usable features (provider error). */
   applyFeaturesUnavailable: (requestKey: string) => void;
@@ -452,8 +470,25 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
   let resolvedFeatureKey: string | null = null;
   let resolvedFeatures: AgentFeature[] = [];
   let resolvedControls: AgentComposerControl[] = [];
+  let resolvedFeatureRequest: AgentProfileFeatureRequest | null = null;
   let listeners = new Set<() => void>();
   let closed = false;
+
+  function resolveProfileFeatures(
+    next: AgentProfileFormState,
+    listingMatchesScope: boolean,
+  ): AgentFeature[] {
+    if (!listingMatchesScope) return [];
+    return applyFeatureValues(resolvedFeatures, next.featureValues);
+  }
+
+  function resolveProfileControls(
+    next: AgentProfileFormState,
+    listingMatchesScope: boolean,
+  ): AgentComposerControl[] {
+    if (!listingMatchesScope) return [];
+    return applyControlValues(resolvedControls, next.controlValues);
+  }
 
   function derive(incoming: AgentProfileFormState): AgentProfileFormState {
     const models = resolveModels(entries, incoming.provider);
@@ -468,12 +503,13 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
     const featureRequestKey = buildFeatureRequestKey(featureRequest);
     const featuresAreCurrent =
       featureRequestKey !== null && featureRequestKey === resolvedFeatureKey;
-    const features = featuresAreCurrent
-      ? applyFeatureValues(resolvedFeatures, next.featureValues)
-      : [];
-    const composerControls = featuresAreCurrent
-      ? applyControlValues(resolvedControls, next.controlValues)
-      : [];
+    // While a value-only change refetches, keep showing the previous listing:
+    // it belongs to the same provider/model/mode/thinking scope.
+    const listingMatchesScope =
+      featuresAreCurrent ||
+      (featureRequest !== null && sameFeatureRequestScope(featureRequest, resolvedFeatureRequest));
+    const features = resolveProfileFeatures(next, listingMatchesScope);
+    const composerControls = resolveProfileControls(next, listingMatchesScope);
     const featureResolution = resolveFeatureStatus(featureRequestKey, featuresAreCurrent);
 
     const withOptions: AgentProfileFormState = {
@@ -569,12 +605,22 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
       catalogResolution = "complete";
       publish((current) => current);
     },
-    applyFeatures: (requestKey, features, controls) => {
+    applyFeatures: (requestKey, features, controls, controlsError, request) => {
       if (requestKey !== state.featureRequestKey) {
         return;
       }
       resolvedFeatureKey = requestKey;
       resolvedFeatures = [...features];
+      resolvedFeatureRequest = request ?? null;
+      if (controlsError) {
+        // The controls listing failed: keep the previous controls and every
+        // saved value instead of pruning against an empty list.
+        publish((current) => ({
+          ...current,
+          featureValues: pruneFeatureValues(current.featureValues, resolvedFeatures),
+        }));
+        return;
+      }
       resolvedControls = [...(controls ?? [])];
       publish((current) => ({
         ...current,

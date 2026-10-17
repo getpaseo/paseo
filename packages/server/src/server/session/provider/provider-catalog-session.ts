@@ -367,14 +367,18 @@ export class ProviderCatalogSession {
       const sessionConfig = this.buildDraftAgentSessionConfig(msg.draftConfig);
       const features = await this.host.listDraftFeatures(sessionConfig);
       // Controls are best-effort: a failing plugin must not take down the
-      // feature response the composer and profile editor depend on.
+      // feature response the composer and profile editor depend on. Report
+      // the failure explicitly so clients keep previously resolved values
+      // instead of pruning against an empty list.
       let composerControls: AgentComposerControl[] = [];
+      let controlsError: string | null = null;
       try {
         composerControls = await this.host.listDraftComposerControls(
           sessionConfig,
           msg.draftConfig.surface ?? "draft",
         );
       } catch (error) {
+        controlsError = getErrorMessage(error);
         this.logger.error(
           { err: error, provider: msg.draftConfig.provider },
           `Failed to list composer controls for ${msg.draftConfig.provider}`,
@@ -386,6 +390,7 @@ export class ProviderCatalogSession {
           provider: msg.draftConfig.provider,
           features,
           ...(composerControls.length > 0 ? { composerControls } : {}),
+          ...(controlsError ? { controlsError } : {}),
           error: null,
           fetchedAt,
           requestId: msg.requestId,
