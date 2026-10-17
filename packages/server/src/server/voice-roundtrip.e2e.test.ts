@@ -193,13 +193,13 @@ for (const targetProvider of [
         },
         logger,
       );
-      const sttProvider = new OpenAISTT(
-        {
+      const sttProvider = new OpenAISTT({
+        config: {
           apiKey: openaiApiKey!,
           model: "gpt-4o-mini-transcribe",
         },
         logger,
-      );
+      });
       const sttOutput = new STTManager("voice-roundtrip-e2e", logger, sttProvider);
 
       const voiceCwd = mkdtempSync(path.join(tmpdir(), `voice-roundtrip-agent-${targetProvider}-`));
