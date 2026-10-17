@@ -3,6 +3,7 @@ import { pluginSettings } from "./plugin-settings";
 
 export const ru: TranslationResources = {
   sharedOrdering: {
+    removed: "Недоступные элементы удалены из ожидающего синхронизации порядка.",
     unsupported:
       "Обновите этот хост, чтобы синхронизировать порядок рабочих пространств и вкладок между устройствами.",
     failed:

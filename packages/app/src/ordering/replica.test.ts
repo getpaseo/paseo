@@ -2,6 +2,8 @@ import { expect, test } from "vitest";
 import {
   OrderReplica,
   type OrderingPort,
+  type OrderMembership,
+  OrderItemsRemovedError,
   type SetOrderInput,
   type SetOrderResult,
 } from "./replica";
@@ -18,14 +20,24 @@ class FakeOrdering implements OrderingPort {
 }
 function setup() {
   const port = new FakeOrdering();
+  let membership: OrderMembership = "all";
   const applied: (readonly OrderRecord[])[] = [];
   const errors: unknown[] = [];
   const replica = new OrderReplica({
     port,
+    membership: () => membership,
     apply: (records) => applied.push(records),
     failed: (error) => errors.push(error),
   });
-  return { port, applied, replica, errors };
+  return {
+    port,
+    applied,
+    replica,
+    errors,
+    setMembership: (value: OrderMembership) => {
+      membership = value;
+    },
+  };
 }
 test.each([
   [["a", "b", "c", "d"], "c", ["c", "a"], ["c", "a", "b", "d"]],
@@ -114,9 +126,37 @@ test("an accepted older response preserves a newer broadcast without replaying a
   expect(applied.at(-1)).toEqual([{ scope, revision: 3, order: ["a", "b"] }]);
 });
 
-test("a new scope establishes only the moved pair and never publishes the untouched cache", () => {
+test("a first explicit gesture initializes the complete relevant order at revision zero", () => {
   const { port, replica } = setup();
-  replica.reorder({ scope, move: createOrderMove({ moved: "a", order: ["untouched", "b", "a"] }) });
+  replica.reorder({ scope, move: createOrderMove({ moved: "d", order: ["a", "d", "b", "c"] }) });
   replica.snapshot([]);
-  expect(port.calls).toEqual([{ scope, expectedRevision: 0, order: ["b", "a"] }]);
+  expect(port.calls).toEqual([{ scope, expectedRevision: 0, order: ["a", "d", "b", "c"] }]);
+});
+
+test("a concurrent initializer discards its seed and replays only its move on the winning revision", async () => {
+  const { port, replica } = setup();
+  replica.reorder({ scope, move: createOrderMove({ moved: "d", order: ["a", "d", "b", "c"] }) });
+  replica.snapshot([]);
+  port.replies[0]!({
+    accepted: false,
+    record: { scope, revision: 1, order: ["c", "a", "b", "d"] },
+  });
+  await Promise.resolve();
+  expect(port.calls[1]).toEqual({ scope, expectedRevision: 1, order: ["c", "a", "d", "b"] });
+});
+
+test("unknown membership never drops intents; authoritative removal cancels only impossible moves and anchors", () => {
+  const { port, replica, errors, setMembership } = setup();
+  setMembership("pending");
+  replica.reorder({ scope, move: createOrderMove({ moved: "a", order: ["a", "b", "c", "d"] }) });
+  replica.reorder({ scope, move: createOrderMove({ moved: "c", order: ["c", "a", "b", "d"] }) });
+  replica.snapshot([{ scope, revision: 9, order: ["b", "c", "d"] }]);
+  replica.retry();
+  expect(port.calls).toEqual([]);
+  expect(errors).toEqual([]);
+  setMembership(new Set(["b", "c", "d"]));
+  replica.retry();
+  expect(port.calls).toEqual([{ scope, expectedRevision: 9, order: ["c", "b", "d"] }]);
+  expect(errors).toHaveLength(1);
+  expect(errors[0]).toBeInstanceOf(OrderItemsRemovedError);
 });

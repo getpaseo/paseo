@@ -1,7 +1,7 @@
 import type { z } from "zod";
 import type { OrderSetRequestSchema, OrderSetResponseSchema } from "@getpaseo/protocol/ordering";
 import { orderScopeKey, type OrderRecord, type OrderScope } from "@getpaseo/protocol/ordering";
-import { applyOrderMove, type OrderMove } from "./move";
+import { applyOrderMove, type OrderMove, type OrderAnchor } from "./move";
 export type SetOrderInput = Omit<z.infer<typeof OrderSetRequestSchema>, "type" | "requestId">;
 export type SetOrderResult = Omit<z.infer<typeof OrderSetResponseSchema>["payload"], "requestId">;
 export interface OrderingPort {
@@ -13,20 +13,32 @@ export class OrderConflictError extends Error {
     this.name = "OrderConflictError";
   }
 }
+export type OrderMembership = ReadonlySet<string> | "pending" | "all";
+export class OrderItemsRemovedError extends Error {
+  constructor(readonly keys: readonly string[]) {
+    super("Pending order items are no longer available in this scope");
+    this.name = "OrderItemsRemovedError";
+  }
+}
 export interface PendingOrder {
   scope: OrderScope;
   moves: OrderMove[];
 }
 export interface OrderReplicaInput {
   port: OrderingPort;
+  membership: (scope: OrderScope) => OrderMembership;
   apply: (records: readonly OrderRecord[]) => void;
   failed: (error: unknown) => void;
+}
+interface PreparedOrder {
+  moves: OrderMove[];
+  request: SetOrderInput;
 }
 export interface ReorderInput {
   scope: OrderScope;
   move: OrderMove;
 }
-/** Pending operations outlive sockets. Only acknowledgements remove operations. */
+/** Pending operations outlive sockets; only acknowledgements or authoritative removal retire them. */
 export class OrderReplica {
   private records = new Map<string, OrderRecord>();
   private readonly pending = new Map<string, PendingOrder>();
@@ -73,23 +85,70 @@ export class OrderReplica {
     this.blocked.delete(key);
     void this.flush(key);
   }
+  private prune(pending: PendingOrder, members: ReadonlySet<string>): void {
+    const removed = new Set<string>();
+    pending.moves = pending.moves.flatMap((move) => {
+      if (!members.has(move.moved)) {
+        removed.add(move.moved);
+        return [];
+      }
+      const anchors = [move.anchor, ...move.alternatives].filter((anchor) => {
+        if ("kind" in anchor) return true;
+        const id = "before" in anchor ? anchor.before : anchor.after;
+        if (members.has(id)) return true;
+        removed.add(id);
+        return false;
+      });
+      const anchor: OrderAnchor = anchors[0] ?? { kind: "end" };
+      return [
+        {
+          ...move,
+          anchor,
+          alternatives: anchors.slice(1),
+          initialOrder: move.initialOrder.filter((id) => members.has(id)),
+        },
+      ];
+    });
+    if (removed.size) this.input.failed(new OrderItemsRemovedError([...removed]));
+  }
+  private prepare(key: string, pending: PendingOrder): PreparedOrder | null {
+    const membership = this.input.membership(pending.scope);
+    if (membership === "pending") {
+      this.blocked.add(key);
+      return null;
+    }
+    if (membership !== "all") this.prune(pending, membership);
+    if (pending.moves.length === 0) {
+      this.pending.delete(key);
+      return null;
+    }
+    const moves = pending.moves.slice();
+    const current = this.records.get(key);
+    // Only a gesture can seed an uninitialized scope. A CAS loser replays moves on the winner.
+    const initial = (current?.revision ?? 0) === 0 ? moves[0]!.initialOrder : current!.order;
+    const base = membership === "all" ? initial : initial.filter((id) => membership.has(id));
+    return {
+      moves,
+      request: {
+        scope: pending.scope,
+        expectedRevision: current?.revision ?? 0,
+        order: moves.reduce(applyOrderMove, base),
+      },
+    };
+  }
   private async flush(key: string): Promise<void> {
     if (!this.ready || this.inFlight.has(key) || this.blocked.has(key)) return;
     const pending = this.pending.get(key);
     if (!pending) return;
+    if (this.input.membership(pending.scope) === "pending") return;
     const generation = this.generation;
     this.inFlight.set(key, generation);
     try {
       for (let attempt = 0; attempt < 3; attempt++) {
-        const moves = pending.moves.slice();
-        const current = this.records.get(key);
-        const base = current?.order ?? [];
-        const order = moves.reduce(applyOrderMove, base);
-        const result = await this.input.port.setOrder({
-          scope: pending.scope,
-          expectedRevision: current?.revision ?? 0,
-          order,
-        });
+        const prepared = this.prepare(key, pending);
+        if (!prepared) return;
+        const { moves, request } = prepared;
+        const result = await this.input.port.setOrder(request);
         if (generation !== this.generation) return;
         const latest = this.records.get(key);
         if (!latest || result.record.revision >= latest.revision)

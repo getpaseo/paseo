@@ -1,3 +1,4 @@
+import type { ServerInfoStatusPayload, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import type { OrderRecord } from "@getpaseo/protocol/ordering";
 import {
   collectAllPanes,
@@ -20,6 +21,19 @@ const host = "order-host";
 type Client = Pick<DaemonClient, "setOrder" | "observeOrders" | "setOrderTargets">;
 class FakeClient implements Client {
   records: OrderRecord[] | null = null;
+  permissions: ServerInfoStatusPayload["permissions"] = ["workspace.read", "workspace.manage"];
+  targetCalls = 0;
+  allowedPinned: string[] | null = null;
+  receive: (message: SessionOutboundMessage) => void = () => {};
+  getLastServerInfoMessage(): ServerInfoStatusPayload {
+    return {
+      status: "server_info",
+      serverId: host,
+      hostname: null,
+      version: null,
+      permissions: this.permissions,
+    };
+  }
   readonly calls: Parameters<Client["setOrder"]>[0][] = [];
   observeOrders() {
     return subscriptionFixture(
@@ -35,14 +49,24 @@ class FakeClient implements Client {
           { scope: { kind: "pinned" as const }, revision: 1, order: ["a", "b"] },
         ],
       }),
-      () => () => {},
+      (receive) => {
+        this.receive = receive;
+        return () => {};
+      },
     );
   }
   async setOrderTargets() {
+    this.targetCalls++;
     return { requestId: "targets", accepted: true, revision: 1 };
   }
   async setOrder(input: Parameters<Client["setOrder"]>[0]) {
     this.calls.push(input);
+    if (
+      input.scope.kind === "pinned" &&
+      this.allowedPinned &&
+      input.order.some((id) => !this.allowedPinned!.includes(id))
+    )
+      throw new Error("Order contains a workspace outside its scope");
     return {
       requestId: "set",
       accepted: true,
@@ -98,7 +122,7 @@ function populate(serverId = host) {
 test("a cold install applies shared workspace and pinned order without publishing an empty cache", async () => {
   const client = new FakeClient();
   useSessionStore.getState().initializeSession(host, null);
-  await sharedOrdering.connect({ serverId: host, client, supported: true });
+  await sharedOrdering.connect({ serverId: host, client, supported: true, directoryReady: true });
   populate();
   useSessionStore.getState().setHasHydratedWorkspaces(host, true);
   expect(useSidebarOrderStore.getState().getWorkspaceOrder("project-key")).toEqual([
@@ -128,7 +152,7 @@ test("an unsupported host receives no new ordering RPC", async () => {
   useSessionStore.getState().setHasHydratedWorkspaces(host, true);
   const errors: OrderError[] = [];
   const release = observeOrderErrors((error) => errors.push(error));
-  await sharedOrdering.connect({ serverId: host, client, supported: false });
+  await sharedOrdering.connect({ serverId: host, client, supported: false, directoryReady: true });
   useSidebarOrderStore.getState().setWorkspaceOrder({
     projectViewKey: "project-key",
     keys: [`${host}:b`, `${host}:a`],
@@ -155,7 +179,7 @@ test("a gesture before connect survives the first shared snapshot", async () => 
       movedKey: `${host}:a`,
     },
   });
-  await sharedOrdering.connect({ serverId: host, client, supported: true });
+  await sharedOrdering.connect({ serverId: host, client, supported: true, directoryReady: true });
   await expect
     .poll(() => client.calls)
     .toEqual([
@@ -171,8 +195,18 @@ test("pinned gestures publish only the moved host; cross-host interleaving stays
     populate(serverId);
     useSessionStore.getState().setHasHydratedWorkspaces(serverId, true);
   }
-  await sharedOrdering.connect({ serverId: host, client: first, supported: true });
-  await sharedOrdering.connect({ serverId: otherHost, client: second, supported: true });
+  await sharedOrdering.connect({
+    serverId: host,
+    client: first,
+    supported: true,
+    directoryReady: true,
+  });
+  await sharedOrdering.connect({
+    serverId: otherHost,
+    client: second,
+    supported: true,
+    directoryReady: true,
+  });
   const store = useSidebarOrderStore.getState();
   store.setPinnedWorkspaceOrder({
     keys: [`${host}:a`, `${host}:b`, `${otherHost}:a`, `${otherHost}:b`],
@@ -223,7 +257,7 @@ test("a split pane publishes the real moved target and never flattens unrelated 
     position: "right",
   })!;
   store.moveTabToPane(workspaceKey, ids[3]!, otherPane);
-  await sharedOrdering.connect({ serverId: host, client, supported: true });
+  await sharedOrdering.connect({ serverId: host, client, supported: true, directoryReady: true });
   store.reorderTabsInPane({
     workspaceKey,
     paneId: main.id,
@@ -241,6 +275,199 @@ test("a split pane publishes the real moved target and never flattens unrelated 
     ]);
   const layout = useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey]!;
   const pane = collectAllPanes(layout.root).find((candidate) => candidate.id === otherPane)!;
+  expect(collectAllTabs({ kind: "pane", pane }).map((tab) => tab.target)).toEqual([
+    { kind: "agent", agentId: "b" },
+    { kind: "agent", agentId: "d" },
+  ]);
+});
+
+test("read-only hydration and layout changes never write or toast, while subscribed updates still apply", async () => {
+  const client = new FakeClient();
+  client.permissions = ["workspace.read"];
+  const errors: OrderError[] = [];
+  const release = observeOrderErrors((error) => errors.push(error));
+  try {
+    useSessionStore.getState().initializeSession(host, null);
+    await sharedOrdering.connect({ serverId: host, client, supported: true, directoryReady: true });
+    populate();
+    useSessionStore.getState().setHasHydratedWorkspaces(host, true);
+    const workspaceKey = `${host}:a`;
+    const store = useWorkspaceLayoutStore.getState();
+    const ids = ["a", "b"].map(
+      (agentId) =>
+        store.openTab({
+          workspaceKey,
+          target: { kind: "agent", agentId },
+          intent: "new",
+        })!,
+    );
+    await Promise.resolve();
+    expect(client.targetCalls).toBe(0);
+    store.reorderTabs({ workspaceKey, tabIds: ids.toReversed(), movedTabId: ids[1]! });
+    await Promise.resolve();
+    expect(client.calls).toEqual([]);
+    expect(client.targetCalls).toBe(0);
+    expect(errors).toEqual([]);
+    client.receive({
+      type: "ui.order.update",
+      payload: {
+        scope: { kind: "pinned" },
+        record: { scope: { kind: "pinned" }, revision: 2, order: ["b", "a"] },
+      },
+    });
+    expect(useSidebarOrderStore.getState().pinnedWorkspaceOrder).toEqual([
+      `${host}:b`,
+      `${host}:a`,
+    ]);
+  } finally {
+    release();
+  }
+});
+
+test.each(["unpin", "archive"] as const)(
+  "offline pinned %s cancels only impossible moves and later gestures sync",
+  async (removal) => {
+    useSessionStore.getState().initializeSession(host, null);
+    populate();
+    const state = useSessionStore.getState();
+    const b = state.sessions[host]!.workspaces.get("b")!;
+    state.mergeWorkspaces(host, [{ ...b, id: "c" }]);
+    state.setHasHydratedWorkspaces(host, true);
+    const first = new FakeClient();
+    first.records = [{ scope: { kind: "pinned" }, revision: 1, order: ["b", "a", "c"] }];
+    await sharedOrdering.connect({
+      serverId: host,
+      client: first,
+      supported: true,
+      directoryReady: true,
+    });
+    sharedOrdering.disconnect(host);
+    const store = useSidebarOrderStore.getState();
+    store.setPinnedWorkspaceOrder({
+      keys: [`${host}:a`, `${host}:b`, `${host}:c`],
+      gesture: { userInitiated: true, movedKey: `${host}:a` },
+    });
+    store.setPinnedWorkspaceOrder({
+      keys: [`${host}:a`, `${host}:c`, `${host}:b`],
+      gesture: { userInitiated: true, movedKey: `${host}:c` },
+    });
+    const workspaces = new Map(useSessionStore.getState().sessions[host]!.workspaces);
+    if (removal === "archive") workspaces.delete("a");
+    else workspaces.set("a", { ...workspaces.get("a")!, pinnedAt: null });
+    state.setWorkspaces(host, workspaces);
+    const reconnected = new FakeClient();
+    reconnected.records = [{ scope: { kind: "pinned" }, revision: 2, order: ["b", "c"] }];
+    reconnected.allowedPinned = ["b", "c"];
+    const errors: OrderError[] = [];
+    const release = observeOrderErrors((error) => errors.push(error));
+    try {
+      await sharedOrdering.connect({
+        serverId: host,
+        client: reconnected,
+        supported: true,
+        directoryReady: true,
+      });
+      await expect
+        .poll(() => reconnected.calls)
+        .toEqual([{ scope: { kind: "pinned" }, expectedRevision: 2, order: ["c", "b"] }]);
+      store.setPinnedWorkspaceOrder({
+        keys: [`${host}:b`, `${host}:c`],
+        gesture: { userInitiated: true, movedKey: `${host}:b` },
+      });
+      await expect.poll(() => reconnected.calls.at(-1)?.order).toEqual(["b", "c"]);
+      expect(errors).toEqual([{ kind: "removed" }]);
+    } finally {
+      release();
+    }
+  },
+);
+
+test("reconnect cache hydration cannot cancel valid offline moves before this connection's directory is authoritative", async () => {
+  useSessionStore.getState().initializeSession(host, null);
+  populate();
+  useSessionStore.getState().setHasHydratedWorkspaces(host, true);
+  const original = new FakeClient();
+  await sharedOrdering.connect({
+    serverId: host,
+    client: original,
+    supported: true,
+    directoryReady: true,
+  });
+  sharedOrdering.disconnect(host);
+  useSidebarOrderStore.getState().setPinnedWorkspaceOrder({
+    keys: [`${host}:b`, `${host}:a`],
+    gesture: { userInitiated: true, movedKey: `${host}:b` },
+  });
+  useSessionStore.getState().setWorkspaces(host, new Map());
+  useSessionStore.getState().setHasHydratedWorkspaces(host, false);
+  const errors: OrderError[] = [];
+  const release = observeOrderErrors((error) => errors.push(error));
+  try {
+    const client = new FakeClient();
+    await sharedOrdering.connect({
+      serverId: host,
+      client,
+      supported: true,
+      directoryReady: false,
+    });
+    useSessionStore.getState().setHasHydratedWorkspaces(host, true);
+    await Promise.resolve();
+    expect(client.calls).toEqual([]);
+    expect(client.targetCalls).toBe(0);
+    expect(errors).toEqual([]);
+    populate();
+    sharedOrdering.directoryReady(host);
+    await expect
+      .poll(() => client.calls)
+      .toEqual([{ scope: { kind: "pinned" }, expectedRevision: 1, order: ["b", "a"] }]);
+    expect(errors).toEqual([]);
+  } finally {
+    release();
+  }
+});
+
+test("an initial tab gesture seeds its complete pane while leaving the other pane untouched", async () => {
+  const client = new FakeClient();
+  client.records = [];
+  useSessionStore.getState().initializeSession(host, null);
+  populate();
+  useSessionStore.getState().setHasHydratedWorkspaces(host, true);
+  const workspaceKey = `${host}:a`;
+  const store = useWorkspaceLayoutStore.getState();
+  const ids = ["a", "b", "c", "d", "e"].map(
+    (agentId) =>
+      store.openTab({
+        workspaceKey,
+        target: { kind: "agent", agentId },
+        intent: "new",
+      })!,
+  );
+  const initial = useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey]!;
+  const main = collectAllPanes(initial.root).find((pane) => pane.tabIds.includes(ids[0]!))!;
+  const other = store.splitPane(workspaceKey, {
+    tabId: ids[1]!,
+    targetPaneId: main.id,
+    position: "right",
+  })!;
+  store.moveTabToPane(workspaceKey, ids[3]!, other);
+  await sharedOrdering.connect({ serverId: host, client, supported: true, directoryReady: true });
+  store.reorderTabsInPane({
+    workspaceKey,
+    paneId: main.id,
+    tabIds: [ids[0]!, ids[4]!, ids[2]!],
+    movedTabId: ids[4]!,
+  });
+  await expect
+    .poll(() => client.calls)
+    .toEqual([
+      {
+        scope: { kind: "tabs", workspaceId: "a" },
+        expectedRevision: 0,
+        order: ["agent_a", "agent_e", "agent_c"],
+      },
+    ]);
+  const layout = useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey]!;
+  const pane = collectAllPanes(layout.root).find((candidate) => candidate.id === other)!;
   expect(collectAllTabs({ kind: "pane", pane }).map((tab) => tab.target)).toEqual([
     { kind: "agent", agentId: "b" },
     { kind: "agent", agentId: "d" },

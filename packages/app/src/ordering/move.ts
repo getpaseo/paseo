@@ -3,6 +3,7 @@ export interface OrderMove {
   moved: string;
   anchor: OrderAnchor;
   alternatives: OrderAnchor[];
+  initialOrder: string[];
 }
 export interface CreateOrderMoveInput {
   moved: string;
@@ -19,6 +20,7 @@ export function createOrderMove({ moved, order }: CreateOrderMoveInput): OrderMo
   }
   return {
     moved,
+    initialOrder: [...order],
     anchor: anchors[0] ?? { kind: "end" },
     alternatives: anchors.slice(1),
   };
@@ -33,7 +35,7 @@ export function applyOrderMove(order: readonly string[], move: OrderMove): strin
     next.splice(index + ("after" in anchor ? 1 : 0), 0, move.moved);
     return next;
   }
-  // Establish only the explicit pair in a new scope, never the rest of a cached pane.
+  // New keys in an established scope contribute only their explicit anchor relation.
   const anchor = move.anchor;
   if ("before" in anchor) next.push(move.moved, anchor.before);
   else if ("after" in anchor) next.push(anchor.after, move.moved);

@@ -523,6 +523,18 @@ permission. Its durable epoch fences previously admitted physical sources, inclu
 late target and order writes. A new connection with that `clientId` can register again.
 No device-management UI or pairing authority is implied by this operation.
 
+Only the first explicit gesture can initialize a scope at revision zero. Its seed is the
+complete dragged pane order for tabs, or the moved host's visible workspace/pinned order.
+Snapshots, cache hydration, and other panes never seed it. Initialization uses the same
+revision CAS as later writes: the losing initializer discards its seed and replays only
+its precise move on the winner's record. Later gestures never replace the whole order.
+
+The app waits for this connection's authoritative workspace refresh before replaying pending
+moves. Cache hydration is not membership authority. An unpinned or archived moved item is
+cancelled with visible feedback; removed anchors are discarded while remaining valid moves
+stay queued. Read subscriptions require `workspace.read`; inventory and gesture writes use
+the server-advertised `workspace.manage` permission.
+
 Inventory replacement and sorting use independent revisions in the same serialized
 owner. Cleaning a closed target checks the union of the principal's inventories inside
 that commit, so an offline device keeps its targets alive. Scope pruning reads the live

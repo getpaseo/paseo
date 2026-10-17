@@ -3,6 +3,7 @@ import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
   sharedOrdering: {
+    removed: "保留中の並び順から、利用できない項目を削除しました。",
     unsupported:
       "ワークスペースとタブの順序をデバイス間で同期するには、このホストを更新してください。",
     failed: "順序は同期待ちです。再接続するか、項目を移動して再試行してください。",

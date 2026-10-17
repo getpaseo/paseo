@@ -178,12 +178,24 @@ test("workspace and tab reorder propagate to an independent compact client and s
       workspaceId: seed.workspaceId,
       title: "Agent B",
     });
+    const c = await seed.client.createAgent({
+      provider: "mock",
+      cwd: seed.repoPath,
+      workspaceId: seed.workspaceId,
+      title: "Agent C",
+    });
+    const d = await seed.client.createAgent({
+      provider: "mock",
+      cwd: seed.repoPath,
+      workspaceId: seed.workspaceId,
+      title: "Agent D",
+    });
     await gotoWorkspace(page, seed.workspaceId);
     await waitForSidebarHydration(page);
     const independent = await openIndependentCompactClient({ browser, page });
     secondContext = independent.context;
     const compact = independent.page;
-    await expect.poll(() => agentTabIds(page)).toHaveLength(2);
+    await expect.poll(() => agentTabIds(page)).toHaveLength(4);
     const beforeTabs = await agentTabIds(page);
     await openCompactTabs(compact);
     await expect.poll(() => compactAgentTabIds(compact)).toEqual(beforeTabs);
@@ -203,17 +215,18 @@ test("workspace and tab reorder propagate to an independent compact client and s
     await closeMobileAgentSidebar(compact);
     const initialTabs = await agentTabIds(page);
     expect(initialTabs).toEqual(
-      expect.arrayContaining([`workspace-tab-agent_${a.id}`, `workspace-tab-agent_${b.id}`]),
+      expect.arrayContaining([a, b, c, d].map((agent) => `workspace-tab-agent_${agent.id}`)),
     );
-    await dragTabAfter({ page, sourceTestId: initialTabs[0]!, targetTestId: initialTabs[1]! });
-    await expect.poll(() => agentTabIds(page)).toEqual(initialTabs.toReversed());
+    const movedTabs = [initialTabs[0], initialTabs[3], initialTabs[1], initialTabs[2]];
+    await dragTabAfter({ page, sourceTestId: initialTabs[3]!, targetTestId: initialTabs[0]! });
+    await expect.poll(() => agentTabIds(page)).toEqual(movedTabs);
     await openCompactTabs(compact);
-    await expect.poll(() => compactAgentTabIds(compact)).toEqual(initialTabs.toReversed());
+    await expect.poll(() => compactAgentTabIds(compact)).toEqual(movedTabs);
     await captureOrderingScreenshot(page, testInfo, "desktop-shared-tab-order");
     await captureOrderingScreenshot(compact, testInfo, "compact-shared-tab-order");
     await compact.reload();
     await openCompactTabs(compact);
-    await expect.poll(() => compactAgentTabIds(compact)).toEqual(initialTabs.toReversed());
+    await expect.poll(() => compactAgentTabIds(compact)).toEqual(movedTabs);
     await closeCompactTabs(compact);
     await openMobileAgentSidebar(compact);
     await expectMobileAgentSidebarVisible(compact);

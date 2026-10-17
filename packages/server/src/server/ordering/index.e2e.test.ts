@@ -1,11 +1,11 @@
-import { OrderReplica } from "../../../../app/src/ordering/replica.js";
+import { OrderReplica, type OrderMembership } from "../../../../app/src/ordering/replica.js";
 import { createOrderMove } from "../../../../app/src/ordering/move.js";
 import { expect, test } from "vitest";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
-import type { OrderRecord } from "@getpaseo/protocol/ordering";
+import { applySharedOrder, type OrderRecord } from "@getpaseo/protocol/ordering";
 
 test("two clients share workspace and tab order, stale writes lose, reconnect reads authority", async () => {
   const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
@@ -162,6 +162,7 @@ test("real clients retain offline exact moves and file/browser inventories until
     await mobile.setOrderTargets({ expectedRevision: 0, workspaces });
     await desktop.setOrder({ scope, expectedRevision: 0, order: keys });
     const replica = new OrderReplica({
+      membership: () => "all",
       port: { setOrder: (input) => mobile.setOrder(input) },
       apply: () => {},
       failed: (error) => errors.push(error),
@@ -216,3 +217,201 @@ test("real clients retain offline exact moves and file/browser inventories until
     await daemon.close();
   }
 }, 60000);
+
+test("first explicit drag initializes four targets and concurrent initialization replays only the losing move", async () => {
+  const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
+  const clients = ["first", "second"].map(
+    (clientId) =>
+      new DaemonClient({
+        url: `ws://127.0.0.1:${daemon.port}/ws`,
+        clientId,
+        appVersion: "0.11.2",
+      }),
+  );
+  const errors: unknown[] = [];
+  try {
+    await Promise.all(clients.map((client) => client.connect()));
+    const [desktop, mobile] = clients;
+    const cwd = join(daemon.paseoHome, "first-drag");
+    await mkdir(cwd);
+    const created = await desktop!.createWorkspace({ source: { kind: "directory", path: cwd } });
+    const workspace = created.workspace!;
+    const scope = { kind: "tabs", workspaceId: workspace.id } as const;
+    const keys = ["a", "b", "c", "d"];
+    await Promise.all(
+      clients.map((client) =>
+        client.setOrderTargets({
+          expectedRevision: 0,
+          workspaces: [{ workspaceId: workspace.id, targets: keys }],
+        }),
+      ),
+    );
+    const replica = new OrderReplica({
+      membership: () => "all",
+      port: desktop!,
+      apply: () => {},
+      failed: (error) => errors.push(error),
+    });
+    replica.snapshot((await desktop!.listOrders()).records);
+    replica.reorder({ scope, move: createOrderMove({ moved: "d", order: ["a", "d", "b", "c"] }) });
+    await expect
+      .poll(async () => applySharedOrder(keys, (await mobile!.listOrders()).records[0]!.order))
+      .toEqual(["a", "d", "b", "c"]);
+    const second = await desktop!.createWorkspace({
+      source: { kind: "directory", path: cwd, projectId: workspace.projectId },
+    });
+    const raceScope = { kind: "workspaces", projectId: workspace.projectId } as const;
+    const a = workspace.id;
+    const b = second.workspace!.id;
+    const extra: string[] = [];
+    for (let index = 0; index < 2; index++) {
+      const next = await desktop!.createWorkspace({
+        source: { kind: "directory", path: cwd, projectId: workspace.projectId },
+      });
+      extra.push(next.workspace!.id);
+    }
+    const c = extra[0]!;
+    const d = extra[1]!;
+    const attempts: number[][] = [[], []];
+    const replicas = clients.map(
+      (client, index) =>
+        new OrderReplica({
+          membership: () => "all",
+          port: {
+            setOrder: (input) => {
+              attempts[index]!.push(input.expectedRevision);
+              return client.setOrder(input);
+            },
+          },
+          apply: () => {},
+          failed: (error) => errors.push(error),
+        }),
+    );
+    for (const peer of replicas) peer.snapshot([]);
+    replicas[0]!.reorder({
+      scope: raceScope,
+      move: createOrderMove({ moved: d, order: [a, d, b, c] }),
+    });
+    replicas[1]!.reorder({
+      scope: raceScope,
+      move: createOrderMove({ moved: c, order: [c, a, b, d] }),
+    });
+    await expect.poll(() => attempts.flat().filter((revision) => revision === 1).length).toBe(1);
+    await expect
+      .poll(
+        async () =>
+          (await desktop!.listOrders()).records.find((record) => record.scope.kind === "workspaces")
+            ?.revision,
+      )
+      .toBe(2);
+    const desktopRecord = (await desktop!.listOrders()).records;
+    expect(desktopRecord.find((record) => record.scope.kind === "workspaces")?.order).toEqual([
+      c,
+      a,
+      d,
+      b,
+    ]);
+    expect((await mobile!.listOrders()).records).toEqual(desktopRecord);
+    expect(attempts.map((values) => values[0])).toEqual([0, 0]);
+    expect(errors).toEqual([]);
+    await desktop!.removeProject(workspace.projectId);
+  } finally {
+    await Promise.all(clients.map((client) => client.close()));
+    await daemon.close();
+  }
+}, 60000);
+
+test.each(["unpin", "archive"] as const)(
+  "offline pinned %s uses fresh membership, retains valid moves and accepts the next gesture",
+  async (removal) => {
+    const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
+    const url = `ws://127.0.0.1:${daemon.port}/ws`;
+    const desktop = new DaemonClient({ url, clientId: "pin-desktop", appVersion: "0.11.2" });
+    let mobile = new DaemonClient({ url, clientId: "pin-mobile", appVersion: "0.11.2" });
+    const errors: unknown[] = [];
+    const writes: string[][] = [];
+    let membership: OrderMembership = "pending";
+    try {
+      await Promise.all([desktop.connect(), mobile.connect()]);
+      const cwd = join(daemon.paseoHome, "offline-pins");
+      await mkdir(cwd);
+      const first = await desktop.createWorkspace({ source: { kind: "directory", path: cwd } });
+      const projectId = first.workspace!.projectId;
+      const ids = [first.workspace!.id];
+      for (let index = 0; index < 2; index++) {
+        const next = await desktop.createWorkspace({
+          source: { kind: "directory", path: cwd, projectId },
+        });
+        ids.push(next.workspace!.id);
+      }
+      const [a, b, c] = ids;
+      for (const id of ids) await desktop.setWorkspacePinned(id, true);
+      const scope = { kind: "pinned" } as const;
+      await desktop.setOrder({ scope, expectedRevision: 0, order: [b!, a!, c!] });
+      const replica = new OrderReplica({
+        port: {
+          setOrder: (input) => {
+            writes.push(input.order);
+            return mobile.setOrder(input);
+          },
+        },
+        membership: () => membership,
+        apply: () => {},
+        failed: (error) => errors.push(error),
+      });
+      replica.snapshot((await mobile.listOrders()).records);
+      replica.pause();
+      await mobile.close();
+      replica.reorder({ scope, move: createOrderMove({ moved: a!, order: [a!, b!, c!] }) });
+      replica.reorder({ scope, move: createOrderMove({ moved: c!, order: [a!, c!, b!] }) });
+      if (removal === "unpin") await desktop.setWorkspacePinned(a!, false);
+      else await desktop.archiveWorkspace(a!);
+      await expect
+        .poll(
+          async () =>
+            (await desktop.listOrders()).records.find((record) => record.scope.kind === "pinned")
+              ?.order,
+        )
+        .toEqual([b, c]);
+      mobile = new DaemonClient({ url, clientId: "pin-mobile", appVersion: "0.11.2" });
+      await mobile.connect();
+      replica.snapshot((await mobile.listOrders()).records);
+      expect(writes).toEqual([]);
+      expect(errors).toEqual([]);
+      const directory = await mobile.fetchWorkspaces({});
+      membership = new Set(
+        directory.entries
+          .filter((workspace) => workspace.pinnedAt)
+          .map((workspace) => workspace.id),
+      );
+      replica.retry();
+      await expect
+        .poll(
+          async () =>
+            (await desktop.listOrders()).records.find((record) => record.scope.kind === "pinned")
+              ?.order,
+        )
+        .toEqual([c, b]);
+      expect(writes).toEqual([[c, b]]);
+      expect(errors).toHaveLength(1);
+      replica.reorder({ scope, move: createOrderMove({ moved: b!, order: [b!, c!] }) });
+      await expect
+        .poll(
+          async () =>
+            (await desktop.listOrders()).records.find((record) => record.scope.kind === "pinned")
+              ?.order,
+        )
+        .toEqual([b, c]);
+      expect(writes).toEqual([
+        [c, b],
+        [b, c],
+      ]);
+      expect(errors).toHaveLength(1);
+      await desktop.removeProject(projectId);
+    } finally {
+      await Promise.all([desktop.close(), mobile.close()]);
+      await daemon.close();
+    }
+  },
+  60000,
+);

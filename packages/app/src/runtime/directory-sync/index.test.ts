@@ -10,6 +10,8 @@ import type {
   DaemonClient,
   WorkspaceLabelListPayload,
 } from "@getpaseo/client/internal/daemon-client";
+import type { ServerInfoStatusPayload } from "@getpaseo/protocol/messages";
+import { observeOrderErrors, type OrderError } from "@/ordering/intents";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import {
   normalizeProjectDescriptor,
@@ -40,8 +42,18 @@ class FakeDirectoryClient {
 
   supportsWorkspaceLabels = false;
   orderingFailure = false;
+  sharedOrderingSupported = false;
+  permissions: ServerInfoStatusPayload["permissions"] = ["workspace.read", "workspace.manage"];
+  orderingTargetsCalls = 0;
   observeOrders() {
-    return subscriptionFixture(Promise.reject(new Error("ordering unavailable")), () => () => {});
+    const snapshot = this.orderingFailure
+      ? Promise.reject(new Error("ordering unavailable"))
+      : Promise.resolve({ requestId: "ordering", records: [], deviceRevision: 0 });
+    return subscriptionFixture(snapshot, () => () => {});
+  }
+  async setOrderTargets() {
+    this.orderingTargetsCalls++;
+    return { requestId: "targets", revision: this.orderingTargetsCalls, accepted: true };
   }
   listWorkspaceLabelsCalls = 0;
   fetchAgentsCalls = 0;
@@ -195,21 +207,28 @@ class FakeDirectoryClient {
   }
 
   getLastServerInfoMessage() {
-    return this.supportsWorkspaceLabels
-      ? { features: { workspaceLabels: true, sharedOrderingTargets: this.orderingFailure } }
-      : null;
+    return {
+      permissions: this.permissions,
+      features: {
+        workspaceLabels: this.supportsWorkspaceLabels,
+        sharedOrderingTargets: this.orderingFailure || this.sharedOrderingSupported,
+      },
+    };
   }
 }
 
 const serverIds = new Set<string>();
 
+interface DirectoryFixture {
+  client: FakeDirectoryClient;
+  directory: DirectorySync;
+  initializeSession: () => void;
+}
+
 function createDirectory(
   serverId: string,
   options?: { workspaceLabels?: boolean },
-): {
-  client: FakeDirectoryClient;
-  directory: DirectorySync;
-} {
+): DirectoryFixture {
   serverIds.add(serverId);
   const client = new FakeDirectoryClient();
   client.supportsWorkspaceLabels = options?.workspaceLabels === true;
@@ -219,12 +238,21 @@ function createDirectory(
     markAgentReady: () => undefined,
     markAgentError: () => undefined,
   });
+  const runtimeClient = client as unknown as DaemonClient;
   directory.connectionChanged({
-    client: client as unknown as DaemonClient,
+    client: runtimeClient,
     status: "online",
     source: { clientGeneration: 1, connectionEpoch: 1 },
   });
-  return { client, directory };
+  return {
+    client,
+    directory,
+    initializeSession: () => {
+      const store = useSessionStore.getState();
+      store.initializeSession(serverId, runtimeClient, 1);
+      store.updateSessionServerInfo(serverId, { serverId, hostname: null, version: "test" });
+    },
+  };
 }
 
 function createAgent(serverId: string, id: string) {
@@ -1828,6 +1856,24 @@ it("ordering failure still connects workspace labels independently", async () =>
     await expect(directory.connectWorkspaceLabels()).rejects.toThrow("ordering unavailable");
     expect(client.listWorkspaceLabelsCalls).toBeGreaterThan(0);
   } finally {
+    directory.dispose();
+  }
+});
+
+it("directory refresh preserves readonly ordering observation without automatic target writes or failure notifications", async () => {
+  const { client, directory, initializeSession } = createDirectory("readonly-order-directory");
+  client.permissions = ["workspace.read"];
+  client.sharedOrderingSupported = true;
+  initializeSession();
+  const errors: OrderError[] = [];
+  const release = observeOrderErrors((error) => errors.push(error));
+  try {
+    await directory.refreshAll();
+    directory.markWorkspacesHydrated(true);
+    expect(client.orderingTargetsCalls).toBe(0);
+    expect(errors).toEqual([]);
+  } finally {
+    release();
     directory.dispose();
   }
 });

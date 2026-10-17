@@ -1,5 +1,6 @@
 export const en = {
   sharedOrdering: {
+    removed: "Unavailable items were removed from the pending order.",
     unsupported: "Update this host to sync workspace and tab order across devices.",
     failed: "Order is still pending. Reconnect or move an item to retry.",
     conflict:

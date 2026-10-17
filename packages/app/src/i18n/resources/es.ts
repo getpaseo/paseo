@@ -3,6 +3,7 @@ import { pluginSettings } from "./plugin-settings";
 
 export const es: TranslationResources = {
   sharedOrdering: {
+    removed: "Se quitaron los elementos no disponibles del orden pendiente.",
     unsupported:
       "Actualiza este host para sincronizar el orden de espacios de trabajo y pestañas entre dispositivos.",
     failed: "El orden sigue pendiente. Vuelve a conectar o mueve un elemento para reintentar.",

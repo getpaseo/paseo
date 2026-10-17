@@ -5846,6 +5846,18 @@ test("ordering preferences isolate real sessions by admission principal and deny
   });
   try {
     const targets = [{ workspaceId: "w", targets: ["file_readme", "browser_1"] }];
+    expect(viewer.getPermissions()).toEqual(["workspace.read"]);
+    await viewer.handleMessage({
+      type: "ui.order.list.request",
+      requestId: "viewer-subscribe",
+      subscribe: {},
+    });
+    expect(viewerMessages).toContainEqual(
+      expect.objectContaining({
+        type: "ui.order.list.response",
+        payload: expect.objectContaining({ requestId: "viewer-subscribe", records: [] }),
+      }),
+    );
     await owner.handleMessage({
       type: "ui.order.targets.set.request",
       requestId: "targets",
@@ -5859,6 +5871,18 @@ test("ordering preferences isolate real sessions by admission principal and deny
       expectedRevision: 0,
       order: ["browser_1", "file_readme"],
     });
+    expect(viewerMessages).toContainEqual(
+      expect.objectContaining({
+        type: "ui.order.update",
+        payload: expect.objectContaining({
+          record: {
+            scope: { kind: "tabs", workspaceId: "w" },
+            revision: 1,
+            order: ["browser_1", "file_readme"],
+          },
+        }),
+      }),
+    );
     await other.handleMessage({ type: "ui.order.list.request", requestId: "other-list" });
     expect(otherMessages).toContainEqual({
       type: "ui.order.list.response",

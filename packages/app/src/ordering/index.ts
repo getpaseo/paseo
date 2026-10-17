@@ -13,7 +13,12 @@ import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { isOrderGesture, observeOrderIntents, reportOrderError, type OrderIntent } from "./intents";
 import { createOrderMove } from "./move";
 import { collectAllTabs, collectAllPanes } from "@/stores/workspace-layout-actions";
-import { OrderReplica, OrderConflictError } from "./replica";
+import {
+  OrderReplica,
+  OrderConflictError,
+  OrderItemsRemovedError,
+  type OrderMembership,
+} from "./replica";
 
 function projects() {
   return buildWorkspaceStructureProjects({
@@ -25,10 +30,15 @@ function projects() {
   });
 }
 
-type OrderingClient = Pick<DaemonClient, "setOrder" | "observeOrders" | "setOrderTargets">;
+type OrderingClient = Pick<
+  DaemonClient,
+  "setOrder" | "observeOrders" | "setOrderTargets" | "getLastServerInfoMessage"
+>;
 
 interface HostOrdering {
   client: OrderingClient;
+  canWrite: boolean;
+  directoryReady: boolean;
   replica: OrderReplica;
   release: () => void;
   ready: Promise<void>;
@@ -41,6 +51,7 @@ export interface ConnectOrderingInput {
   serverId: string;
   client: OrderingClient;
   supported: boolean;
+  directoryReady: boolean;
 }
 class SharedOrderingController {
   private readonly replicas = new Map<string, OrderReplica>();
@@ -50,6 +61,7 @@ class SharedOrderingController {
   private readonly hosts = new Map<string, HostOrdering>();
   private applying = false;
   private readonly unsupported = new Set<string>();
+  private readonly readOnly = new Set<string>();
 
   private observing = false;
 
@@ -84,6 +96,7 @@ class SharedOrderingController {
       ) {
         this.reapply();
         this.syncInventories();
+        for (const host of this.hosts.values()) host.replica.retry();
       }
     });
     useWorkspaceLayoutStore.persist.onFinishHydration(() => this.syncInventories());
@@ -91,7 +104,10 @@ class SharedOrderingController {
 
   async connect(input: ConnectOrderingInput): Promise<void> {
     const existing = this.hosts.get(input.serverId);
-    if (existing?.client === input.client) return existing.ready;
+    if (existing?.client === input.client) {
+      if (input.directoryReady) this.directoryReady(input.serverId);
+      return existing.ready;
+    }
     this.disconnect(input.serverId);
     this.observeStores();
     // COMPAT(sharedOrderingTargets): added in v0.11.x, remove gate after 2027-04-17 once daemon floor supports target inventories.
@@ -99,10 +115,16 @@ class SharedOrderingController {
       this.unsupported.add(input.serverId);
       return;
     }
+    const canWrite =
+      input.client.getLastServerInfoMessage()?.permissions?.includes("workspace.manage") === true;
+    if (canWrite) this.readOnly.delete(input.serverId);
+    else this.readOnly.add(input.serverId);
     const subscription = input.client.observeOrders();
     const replica = this.replica(input.serverId);
     const host: HostOrdering = {
       client: input.client,
+      canWrite,
+      directoryReady: input.directoryReady,
       replica,
       release: () => {
         replica.pause();
@@ -134,6 +156,14 @@ class SharedOrderingController {
       },
     });
     await host.ready;
+  }
+
+  directoryReady(serverId: string): void {
+    const host = this.hosts.get(serverId);
+    if (!host) return;
+    host.directoryReady = true;
+    host.replica.retry();
+    this.syncInventories();
   }
 
   disconnect(serverId: string): void {
@@ -210,6 +240,7 @@ class SharedOrderingController {
     let replica = this.replicas.get(serverId);
     if (replica) return replica;
     replica = new OrderReplica({
+      membership: (scope) => this.membership(serverId, scope),
       port: {
         setOrder: async (input) => {
           const host = this.hosts.get(serverId);
@@ -221,12 +252,37 @@ class SharedOrderingController {
       },
       apply: (records) => this.apply(serverId, records),
       failed: (error) => {
+        if (error instanceof OrderItemsRemovedError) {
+          reportOrderError({ kind: "removed" });
+          console.warn("[SharedOrdering] Cancelled unavailable moves or anchors", {
+            serverId,
+            keys: error.keys,
+          });
+          return;
+        }
         reportOrderError({ kind: error instanceof OrderConflictError ? "conflict" : "failed" });
         console.error("[SharedOrdering] Order remains pending", { serverId, error });
       },
     });
     this.replicas.set(serverId, replica);
     return replica;
+  }
+
+  private membership(serverId: string, scope: OrderScope): OrderMembership {
+    const host = this.hosts.get(serverId);
+    if (!host?.canWrite || !host.directoryReady || this.inventory(serverId) === null)
+      return "pending";
+    const session = useSessionStore.getState().sessions[serverId]!;
+    if (scope.kind === "tabs") return session.workspaces.has(scope.workspaceId) ? "all" : new Set();
+    return new Set(
+      [...session.workspaces.values()]
+        .filter((workspace) =>
+          scope.kind === "pinned"
+            ? Boolean(workspace.pinnedAt)
+            : workspace.projectId === scope.projectId,
+        )
+        .map((workspace) => workspace.id),
+    );
   }
 
   private inventory(serverId: string) {
@@ -250,7 +306,13 @@ class SharedOrderingController {
   }
   private syncInventories(): void {
     for (const [serverId, host] of this.hosts) {
-      if (host.deviceRevision === null || this.inventory(serverId) === null) continue;
+      if (
+        !host.canWrite ||
+        !host.directoryReady ||
+        host.deviceRevision === null ||
+        this.inventory(serverId) === null
+      )
+        continue;
       void this.syncInventory(serverId, host).catch((error) => {
         console.error("[SharedOrdering] Target inventory remains pending", { serverId, error });
         reportOrderError({ kind: "failed" });
@@ -299,6 +361,10 @@ class SharedOrderingController {
         (w) => `${serverId}:${w.id}` === intent.workspaceKey,
       );
       if (!workspace) continue;
+      if (this.readOnly.has(serverId)) {
+        this.reapply();
+        return;
+      }
       if (this.unsupported.has(serverId)) {
         reportOrderError({ kind: "unsupported" });
         return;
@@ -329,6 +395,10 @@ class SharedOrderingController {
         (w) => `${serverId}:${w.id}` === intent.moved,
       );
       if (!moved) continue;
+      if (this.readOnly.has(serverId)) {
+        this.reapply();
+        return;
+      }
       const projectId = moved.projectId;
       const project =
         intent.kind === "workspaces"

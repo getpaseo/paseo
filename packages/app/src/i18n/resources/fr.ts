@@ -3,6 +3,7 @@ import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
   sharedOrdering: {
+    removed: "Les éléments indisponibles ont été retirés de l’ordre en attente.",
     unsupported:
       "Mettez à jour cet hôte pour synchroniser l’ordre des espaces de travail et des onglets entre appareils.",
     failed:
