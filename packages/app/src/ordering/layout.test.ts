@@ -46,3 +46,25 @@ test("reordering keeps split panes, sizes and pane membership device-local", () 
   );
   expect(next).toBe(initial);
 });
+
+test.each(["working_diff", "pull_request"] as const)(
+  "repeated %s instances retain their local slots when shared targets reorder",
+  (kind) => {
+    const store = createWorkspaceLayoutStore();
+    const workspaceKey = "host:w";
+    const ids = [
+      { kind },
+      { kind: "agent" as const, agentId: "a" },
+      { kind },
+      { kind: "agent" as const, agentId: "b" },
+    ].map((target) => store.getState().openTab({ workspaceKey, target, intent: "new" })!);
+    const initial = store.getState().layoutByWorkspace[workspaceKey]!;
+    const focus = collectAllPanes(initial.root).map((pane) => [pane.id, pane.focusedTabId]);
+    const next = applyTabOrder(initial, [kind, "agent_b", "agent_a"]);
+    const reorderedPane = collectAllPanes(next.root).find((pane) => pane.tabIds.includes(ids[0]!))!;
+    expect(reorderedPane.tabIds).toEqual([ids[0], ids[3], ids[2], ids[1]]);
+    expect(collectAllTabs(next.root)).toHaveLength(collectAllTabs(initial.root).length);
+    expect(collectAllPanes(next.root).map((pane) => [pane.id, pane.focusedTabId])).toEqual(focus);
+    expect(applyTabOrder(next, [kind, "agent_b", "agent_a"])).toBe(next);
+  },
+);

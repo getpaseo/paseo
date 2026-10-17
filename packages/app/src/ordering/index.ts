@@ -1,4 +1,4 @@
-import { applyTabOrder, tabKey } from "./layout";
+import { applyTabOrder, paneTabKeys, tabKey } from "./layout";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import {
   applySharedOrder,
@@ -377,15 +377,16 @@ class SharedOrderingController {
       const pane = collectAllPanes(layout.root).find((p) => p.id === intent.paneId);
       if (!pane) return;
       const tabs = collectAllTabs({ kind: "pane", pane });
-      const moved = tabs.find((tab) => tab.tabId === intent.movedTabId);
-      if (!moved || tabKey(moved).startsWith("local:")) return;
+      const keys = paneTabKeys(tabs);
+      const moved = keys[tabs.findIndex((tab) => tab.tabId === intent.movedTabId)];
+      if (!moved || moved.startsWith("local:")) return;
       if (!this.hosts.has(serverId) || this.hosts.get(serverId)!.deviceRevision === null)
         reportOrderError({ kind: "failed" });
       this.replica(serverId).reorder({
         scope: { kind: "tabs", workspaceId: workspace.id },
         move: createOrderMove({
-          moved: tabKey(moved),
-          order: tabs.map(tabKey).filter((key) => !key.startsWith("local:")),
+          moved,
+          order: keys.filter((key) => !key.startsWith("local:")),
         }),
       });
     }

@@ -620,3 +620,58 @@ test("an initial tab gesture seeds its complete pane while leaving the other pan
     { kind: "agent", agentId: "d" },
   ]);
 });
+
+test.each(["working_diff", "pull_request"] as const)(
+  "duplicate %s tabs stay independent through local gestures and shared updates",
+  async (kind) => {
+    const client = new FakeClient();
+    client.records = [];
+    useSessionStore.getState().initializeSession(host, null);
+    populate();
+    useSessionStore.getState().setHasHydratedWorkspaces(host, true);
+    const workspaceKey = `${host}:a`;
+    const store = useWorkspaceLayoutStore.getState();
+    const ids = [
+      { kind },
+      { kind: "agent" as const, agentId: "a" },
+      { kind },
+      { kind: "agent" as const, agentId: "b" },
+    ].map((target) => store.openTab({ workspaceKey, target, intent: "new" })!);
+    const paneId = collectAllPanes(
+      useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey]!.root,
+    ).find((pane) => pane.tabIds.includes(ids[0]!))!.id;
+    const currentIds = () =>
+      collectAllPanes(
+        useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey]!.root,
+      ).find((pane) => pane.id === paneId)!.tabIds;
+    await sharedOrdering.connect({ serverId: host, client, supported: true, directoryReady: true });
+    const dragged = [ids[0]!, ids[3]!, ids[1]!, ids[2]!];
+    store.reorderTabsInPane({ workspaceKey, paneId, tabIds: dragged, movedTabId: ids[3]! });
+    await expect.poll(() => client.calls.length).toBe(1);
+    expect(client.calls[0]!.order).toEqual(["agent_b", "agent_a"]);
+    expect(currentIds()).toEqual(dragged);
+
+    client.receive({
+      type: "ui.order.update",
+      payload: {
+        scope: { kind: "tabs", workspaceId: "a" },
+        record: {
+          scope: { kind: "tabs", workspaceId: "a" },
+          revision: 2,
+          order: [kind, "agent_a", "agent_b"],
+        },
+      },
+    });
+    expect(currentIds()).toEqual([ids[0], ids[1], ids[3], ids[2]]);
+    const duplicateDragged = [ids[2]!, ids[0]!, ids[1]!, ids[3]!];
+    store.reorderTabsInPane({
+      workspaceKey,
+      paneId,
+      tabIds: duplicateDragged,
+      movedTabId: ids[2]!,
+    });
+    await Promise.resolve();
+    expect(client.calls).toHaveLength(1);
+    expect(currentIds()).toEqual(duplicateDragged);
+  },
+);
