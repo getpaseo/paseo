@@ -1,0 +1,7 @@
+{
+  "id": "math-render",
+  "requirements": {
+    "paseo": ">=0.8.0"
+  },
+  "build": [["npm", "install", "--omit=dev"]]
+}

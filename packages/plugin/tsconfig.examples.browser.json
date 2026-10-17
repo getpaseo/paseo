@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.examples.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM"]
+  },
+  "include": ["../../plugin-examples/**/*.browser.test.tsx"],
+  "exclude": []
+}

@@ -12,5 +12,6 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["../../plugin-examples/**/*.ts", "../../plugin-examples/**/*.tsx"]
+  "include": ["../../plugin-examples/**/*.ts", "../../plugin-examples/**/*.tsx"],
+  "exclude": ["../../plugin-examples/**/*.browser.test.tsx"]
 }
