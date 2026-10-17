@@ -43,6 +43,7 @@ type GiteaMergeFactsFixture = ForgeSpecificStatusFacts & {
   mergeable: boolean;
   hasMerged: boolean;
   ciStatus: string | null;
+  autoMergeScheduled: boolean;
 };
 
 function facts(overrides: Partial<GithubMergeFactsFixture> = {}): GithubMergeFactsFixture {
@@ -89,6 +90,7 @@ function giteaFacts(overrides: Partial<GiteaMergeFactsFixture> = {}): GiteaMerge
     mergeable: true,
     hasMerged: false,
     ciStatus: "success",
+    autoMergeScheduled: false,
     ...overrides,
   };
 }
@@ -290,11 +292,30 @@ describe("deriveMergeCapability (gitea)", () => {
     expect(deriveMergeCapability(giteaFacts({ hasMerged: true }))?.directMergeReady).toBe(false);
   });
 
-  it("offers direct merge styles without auto-merge", () => {
+  it("offers merge styles and reports no pending auto-merge by default", () => {
     const capability = deriveMergeCapability(giteaFacts());
     expect(capability?.allowedMethods).toEqual(["merge", "squash", "rebase"]);
     expect(capability?.canEnableAutoMerge).toBe(false);
     expect(capability?.autoMergeEnabled).toBe(false);
     expect(capability?.canDisableAutoMerge).toBe(false);
+  });
+
+  it("allows enabling auto-merge only while checks are pending", () => {
+    expect(deriveMergeCapability(giteaFacts({ ciStatus: "pending" }))?.canEnableAutoMerge).toBe(
+      true,
+    );
+    expect(deriveMergeCapability(giteaFacts({ ciStatus: "success" }))?.canEnableAutoMerge).toBe(
+      false,
+    );
+    expect(deriveMergeCapability(giteaFacts({ ciStatus: null }))?.canEnableAutoMerge).toBe(false);
+  });
+
+  it("reports auto-merge enabled and disableable once scheduled", () => {
+    const capability = deriveMergeCapability(
+      giteaFacts({ ciStatus: "pending", autoMergeScheduled: true }),
+    );
+    expect(capability?.autoMergeEnabled).toBe(true);
+    expect(capability?.canDisableAutoMerge).toBe(true);
+    expect(capability?.canEnableAutoMerge).toBe(false);
   });
 });
