@@ -8,18 +8,21 @@ interface SidebarOrderStoreState {
   projectOrder: string[];
   pinnedWorkspaceOrder: string[];
   workspaceOrderByProject: Record<string, string[]>;
+  workspaceOrderByStatus: Record<string, string[]>;
   getProjectOrder: () => string[];
   setProjectOrder: (keys: string[]) => void;
   getPinnedWorkspaceOrder: () => string[];
   setPinnedWorkspaceOrder: (keys: string[]) => void;
   getWorkspaceOrder: (projectViewKey: string) => string[];
   setWorkspaceOrder: (projectViewKey: string, keys: string[]) => void;
+  setStatusWorkspaceOrder: (bucket: string, keys: string[]) => void;
 }
 
 interface SidebarOrderPersistedState {
   projectOrder?: string[];
   pinnedWorkspaceOrder?: string[];
   workspaceOrderByProject?: Record<string, string[]>;
+  workspaceOrderByStatus?: Record<string, string[]>;
   projectOrderByServerId?: Record<string, string[]>;
   workspaceOrderByServerAndProject?: Record<string, string[]>;
 }
@@ -29,6 +32,7 @@ const SidebarOrderPersistedStateSchema = z.strictObject({
   projectOrder: z.array(z.string()).optional(),
   pinnedWorkspaceOrder: z.array(z.string()).optional(),
   workspaceOrderByProject: StringArrayRecordSchema.optional(),
+  workspaceOrderByStatus: StringArrayRecordSchema.optional(),
   projectOrderByServerId: StringArrayRecordSchema.optional(),
   workspaceOrderByServerAndProject: StringArrayRecordSchema.optional(),
 });
@@ -78,7 +82,7 @@ function dedupeKeys(keys: string[]): string[] {
   return deduped;
 }
 
-function normalizeWorkspaceOrderByProject(
+function normalizeWorkspaceOrders(
   workspaceOrderByProject: Record<string, string[]> | undefined,
 ): Record<string, string[]> {
   const normalized: Record<string, string[]> = {};
@@ -110,10 +114,16 @@ export function migrateSidebarOrderState(persistedState: unknown): {
   projectOrder: string[];
   pinnedWorkspaceOrder: string[];
   workspaceOrderByProject: Record<string, string[]>;
+  workspaceOrderByStatus: Record<string, string[]>;
 } {
   const result = SidebarOrderPersistedStateSchema.safeParse(persistedState);
   if (!result.success) {
-    return { projectOrder: [], pinnedWorkspaceOrder: [], workspaceOrderByProject: {} };
+    return {
+      projectOrder: [],
+      pinnedWorkspaceOrder: [],
+      workspaceOrderByProject: {},
+      workspaceOrderByStatus: {},
+    };
   }
   const state: SidebarOrderPersistedState = result.data;
 
@@ -127,7 +137,7 @@ export function migrateSidebarOrderState(persistedState: unknown): {
     }
   }
 
-  const workspaceOrderByProject = normalizeWorkspaceOrderByProject(state.workspaceOrderByProject);
+  const workspaceOrderByProject = normalizeWorkspaceOrders(state.workspaceOrderByProject);
   for (const [scopeKey, order] of Object.entries(state.workspaceOrderByServerAndProject ?? {})) {
     const scope = extractWorkspaceOrderScope(scopeKey);
     if (!scope) continue;
@@ -147,6 +157,7 @@ export function migrateSidebarOrderState(persistedState: unknown): {
     projectOrder,
     pinnedWorkspaceOrder: normalizeKeys(state.pinnedWorkspaceOrder ?? []),
     workspaceOrderByProject,
+    workspaceOrderByStatus: normalizeWorkspaceOrders(state.workspaceOrderByStatus),
   };
 }
 
@@ -156,6 +167,7 @@ export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
       projectOrder: [],
       pinnedWorkspaceOrder: [],
       workspaceOrderByProject: {},
+      workspaceOrderByStatus: {},
       getProjectOrder: () => get().projectOrder,
       setProjectOrder: (keys) => {
         set({ projectOrder: dedupeKeys(keys) });
@@ -167,6 +179,11 @@ export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
       getWorkspaceOrder: (projectViewKey) => {
         if (!projectViewKey.trim()) return [];
         return get().workspaceOrderByProject[projectViewKey] ?? [];
+      },
+      setStatusWorkspaceOrder: (bucket, keys) => {
+        set((state) => ({
+          workspaceOrderByStatus: { ...state.workspaceOrderByStatus, [bucket]: dedupeKeys(keys) },
+        }));
       },
       setWorkspaceOrder: (projectViewKey, keys) => {
         if (!projectViewKey.trim()) return;
@@ -185,8 +202,9 @@ export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
         projectOrder: state.projectOrder,
         pinnedWorkspaceOrder: state.pinnedWorkspaceOrder,
         workspaceOrderByProject: state.workspaceOrderByProject,
+        workspaceOrderByStatus: state.workspaceOrderByStatus,
       }),
-      version: 1,
+      version: 2,
       migrate: migrateSidebarOrderState,
     },
   ),

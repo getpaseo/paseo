@@ -208,6 +208,54 @@ export async function goBackInSettings(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Back", exact: true }).click();
 }
 
+// The app settings carry their own "Workspaces" section above the separate host
+// workspace-management section, so the first match is the app one.
+export async function openWorkspaceSettings(page: Page): Promise<void> {
+  await page.goto("/settings", { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "Workspaces", exact: true }).first().click();
+  await page.getByTestId("settings-workspaces-workspace-running").waitFor();
+}
+
+export type RunningFirstScope = "workspace" | "project";
+
+export interface RunningFirstExpectation {
+  enabled?: boolean;
+  checked?: boolean;
+  statusText?: string;
+}
+
+export async function expectRunningFirstSetting(
+  page: Page,
+  scope: RunningFirstScope,
+  expected: RunningFirstExpectation,
+): Promise<void> {
+  const setting = page.getByTestId(`settings-workspaces-${scope}-running`);
+  const toggle = setting.getByRole("switch");
+  if (expected.enabled !== undefined) {
+    if (expected.enabled) {
+      await expect(toggle).toBeEnabled();
+    } else {
+      await expect(toggle).toBeDisabled();
+    }
+  }
+  if (expected.checked !== undefined) {
+    await expect(toggle).toHaveAttribute("aria-checked", String(expected.checked));
+  }
+  if (expected.statusText !== undefined) {
+    await expect(setting).toContainText(expected.statusText);
+  }
+}
+
+export async function setRunningFirst(
+  page: Page,
+  scope: RunningFirstScope,
+  enabled: boolean,
+): Promise<void> {
+  const toggle = page.getByTestId(`settings-workspaces-${scope}-running`).getByRole("switch");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", String(enabled));
+}
+
 export async function closeCompactSettings(page: Page): Promise<void> {
   await goBackInSettings(page);
   await expect(page).not.toHaveURL(/\/settings(\/|$)/);

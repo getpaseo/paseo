@@ -1186,6 +1186,15 @@ export const fr: TranslationResources = {
       done: "Terminé",
     },
     display: {
+      sorting: {
+        projectGroupingOnly: "Groupement par projet",
+        name: "Nom",
+        workspaces: "Trier les espaces par",
+        projects: "Trier les projets par",
+        label: "Trier par",
+        recent: "Activité récente",
+        manual: "Ordre manuel",
+      },
       showBackground: "Afficher les espaces en arrière-plan",
       trigger: "Préférences d’affichage",
       heading: "Affichage",
@@ -2092,6 +2101,17 @@ export const fr: TranslationResources = {
     },
   },
   settings: {
+    workspaces: {
+      projectGroupingHint:
+        "Groupez par Projet pour activer le tri des projets par activité. Votre choix est conservé.",
+      sorting: "Tri par activité",
+      workspaceRunningFirst: "Priorité aux agents actifs dans les espaces",
+      projectRunningFirst: "Priorité aux agents actifs dans les projets",
+      runningFirstHint:
+        "Activé : les éléments avec des agents actifs passent devant et redescendent à la fin. Désactivé : seul le démarrage d’un agent fait avancer son espace ou projet.",
+      disabledHint:
+        "Choisissez Activité récente pour « {{sortLabel}} » afin d’activer cette option. Tri actuel : {{sortMode}}.",
+    },
     title: "Paramètres",
     loading: "Chargement des paramètres…",
     groups: {
@@ -2112,6 +2132,7 @@ export const fr: TranslationResources = {
     },
     groupInfo: "À propos de {{title}}",
     sections: {
+      workspaces: "Espaces de travail",
       general: "Général",
       chat: "Discussion",
       appearance: "Apparence",

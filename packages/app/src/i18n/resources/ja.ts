@@ -1171,6 +1171,15 @@ export const ja: TranslationResources = {
       done: "完了",
     },
     display: {
+      sorting: {
+        projectGroupingOnly: "プロジェクト別のみ",
+        name: "名前",
+        workspaces: "ワークスペースの並び順",
+        projects: "プロジェクトの並び順",
+        label: "並び順",
+        recent: "最近のアクティビティ",
+        manual: "手動順",
+      },
       showBackground: "バックグラウンドを表示",
       trigger: "表示設定",
       heading: "表示",
@@ -2066,6 +2075,17 @@ export const ja: TranslationResources = {
     },
   },
   settings: {
+    workspaces: {
+      projectGroupingHint:
+        "プロジェクトのアクティビティ順を有効にするには、プロジェクト別にグループ化してください。設定は保持されます。",
+      sorting: "アクティビティによる並び替え",
+      workspaceRunningFirst: "ワークスペース内の実行中エージェントを優先",
+      projectRunningFirst: "プロジェクト内の実行中エージェントを優先",
+      runningFirstHint:
+        "オン：実行中のエージェントがある項目を先頭に表示し、終了時に戻します。オフ：エージェント開始時のみ項目を上へ移動します。",
+      disabledHint:
+        "有効にするには「{{sortLabel}}」でアクティビティ順を選択してください。現在：{{sortMode}}。",
+    },
     title: "設定",
     loading: "設定を読み込み中...",
     groups: {
@@ -2086,6 +2106,7 @@ export const ja: TranslationResources = {
     },
     groupInfo: "{{title}}について",
     sections: {
+      workspaces: "ワークスペース",
       general: "一般",
       chat: "チャット",
       appearance: "外観",

@@ -27,6 +27,8 @@ function ws(
     currentBranch: input.currentBranch ?? null,
     statusBucket: input.statusBucket ?? "done",
     statusEnteredAt: input.statusEnteredAt ?? null,
+    lastStartedAt: input.lastStartedAt ?? null,
+    hasRunningAgent: input.hasRunningAgent ?? false,
     archivingAt: null,
     diffStat: null,
     prHint: null,
@@ -45,6 +47,117 @@ function d(iso: string): Date {
 const emptyProjectNames = new Map<string, string>();
 
 describe("buildStatusGroups", () => {
+  it("keeps status buckets fixed while names, starts, and running priority only order their rows", () => {
+    const rows = [
+      ws({
+        workspaceKey: "srv:older",
+        name: "Workspace 10",
+        lastStartedAt: new Date(10),
+        hasRunningAgent: true,
+        statusBucket: "attention",
+      }),
+      ws({
+        workspaceKey: "srv:latest",
+        name: "Workspace 2",
+        lastStartedAt: new Date(20),
+        statusBucket: "attention",
+      }),
+      ws({
+        workspaceKey: "srv:urgent",
+        name: "Z",
+        lastStartedAt: new Date(1),
+        statusBucket: "needs_input",
+      }),
+      ws({
+        workspaceKey: "srv:done",
+        name: "A",
+        lastStartedAt: new Date(30),
+        statusBucket: "done",
+      }),
+    ];
+    const groups = (sortMode: "manual" | "name" | "recent", runningFirst = false) =>
+      buildStatusGroups({
+        workspaces: rows,
+        projectNamesByViewKey: emptyProjectNames,
+        t: i18n.t,
+        sortMode,
+        runningFirst,
+      });
+    for (const mode of ["manual", "name", "recent"] as const) {
+      expect(groups(mode).map((g) => g.bucket)).toEqual(["needs_input", "attention", "done"]);
+    }
+    expect(groups("name")[1].rows.map((w) => w.name)).toEqual(["Workspace 2", "Workspace 10"]);
+    expect(groups("recent")[1].rows.map((w) => w.workspaceKey)).toEqual([
+      "srv:latest",
+      "srv:older",
+    ]);
+    expect(groups("recent", true)[1].rows.map((w) => w.workspaceKey)).toEqual([
+      "srv:older",
+      "srv:latest",
+    ]);
+    rows[0].hasRunningAgent = false;
+    rows[0].statusEnteredAt = new Date(9999);
+    expect(groups("recent", true)[1].rows.map((w) => w.workspaceKey)).toEqual([
+      "srv:latest",
+      "srv:older",
+    ]);
+    expect(groups("recent")[1].rows.map((w) => w.workspaceKey)).toEqual([
+      "srv:latest",
+      "srv:older",
+    ]);
+  });
+
+  it("sorts by the last start when selected, even if status has not changed", () => {
+    const workspaces = [
+      ws({
+        workspaceKey: "srv:first",
+        statusEnteredAt: d("2026-10-14T12:00:00Z"),
+        lastStartedAt: d("2026-10-14T10:00:00Z"),
+      }),
+      ws({
+        workspaceKey: "srv:second",
+        statusEnteredAt: d("2026-10-14T10:00:00Z"),
+        lastStartedAt: d("2026-10-14T13:00:00Z"),
+      }),
+    ];
+    expect(
+      buildStatusGroups({
+        workspaces: workspaces,
+        projectNamesByViewKey: emptyProjectNames,
+        t: i18n.t,
+        sortMode: "recent",
+      })[0].rows.map((row) => row.workspaceKey),
+    ).toEqual(["srv:second", "srv:first"]);
+    expect(
+      buildStatusGroups({
+        workspaces: workspaces,
+        projectNamesByViewKey: emptyProjectNames,
+        t: i18n.t,
+      })[0].rows.map((row) => row.workspaceKey),
+    ).toEqual(["srv:first", "srv:second"]);
+  });
+  it("preserves default status ordering for manual and sorts names inside fixed buckets", () => {
+    const rows = [
+      ws({ workspaceKey: "srv:z", name: "Workspace 10", statusEnteredAt: new Date(10) }),
+      ws({ workspaceKey: "srv:a", name: "Workspace 2", statusEnteredAt: new Date(20) }),
+    ];
+    expect(
+      buildStatusGroups({
+        workspaces: rows,
+        projectNamesByViewKey: emptyProjectNames,
+        t: i18n.t,
+        sortMode: "manual",
+      })[0].rows.map((w) => w.name),
+    ).toEqual(["Workspace 2", "Workspace 10"]);
+    expect(
+      buildStatusGroups({
+        workspaces: rows,
+        projectNamesByViewKey: emptyProjectNames,
+        t: i18n.t,
+        sortMode: "name",
+      })[0].rows.map((w) => w.name),
+    ).toEqual(["Workspace 2", "Workspace 10"]);
+  });
   it("groups workspaces by status bucket in fixed order", () => {
     const workspaces = [
       ws({ workspaceKey: "srv:done-ws", statusBucket: "done", name: "done-ws" }),
@@ -56,7 +169,11 @@ describe("buildStatusGroups", () => {
       ws({ workspaceKey: "srv:running-ws", statusBucket: "running", name: "running-ws" }),
     ];
 
-    const groups = buildStatusGroups(workspaces, emptyProjectNames, i18n.t);
+    const groups = buildStatusGroups({
+      workspaces: workspaces,
+      projectNamesByViewKey: emptyProjectNames,
+      t: i18n.t,
+    });
 
     expect(groups.map((g) => g.bucket)).toEqual(["needs_input", "running", "done"]);
     expect(groups[0]?.label).toBe("Needs input");
@@ -70,7 +187,11 @@ describe("buildStatusGroups", () => {
       ws({ workspaceKey: "srv:b", statusBucket: "running" }),
     ];
 
-    const groups = buildStatusGroups(workspaces, emptyProjectNames, i18n.t);
+    const groups = buildStatusGroups({
+      workspaces: workspaces,
+      projectNamesByViewKey: emptyProjectNames,
+      t: i18n.t,
+    });
 
     expect(groups.map((g) => g.bucket)).toEqual(["running", "done"]);
   });
@@ -94,7 +215,11 @@ describe("buildStatusGroups", () => {
       }),
     ];
 
-    const groups = buildStatusGroups(workspaces, emptyProjectNames, i18n.t);
+    const groups = buildStatusGroups({
+      workspaces: workspaces,
+      projectNamesByViewKey: emptyProjectNames,
+      t: i18n.t,
+    });
 
     expect(groups[0]?.rows.map((r) => r.workspaceKey)).toEqual(["srv:new", "srv:mid", "srv:old"]);
   });
@@ -110,7 +235,11 @@ describe("buildStatusGroups", () => {
       ws({ workspaceKey: "srv:null-b", statusBucket: "done", statusEnteredAt: null }),
     ];
 
-    const groups = buildStatusGroups(workspaces, emptyProjectNames, i18n.t);
+    const groups = buildStatusGroups({
+      workspaces: workspaces,
+      projectNamesByViewKey: emptyProjectNames,
+      t: i18n.t,
+    });
 
     expect(groups[0]?.rows.map((r) => r.workspaceKey)).toEqual([
       "srv:ts",
@@ -146,13 +275,21 @@ describe("buildStatusGroups", () => {
       }),
     ];
 
-    const groups = buildStatusGroups(workspaces, projectNames, i18n.t);
+    const groups = buildStatusGroups({
+      workspaces: workspaces,
+      projectNamesByViewKey: projectNames,
+      t: i18n.t,
+    });
 
     expect(groups[0]?.rows.map((r) => r.workspaceKey)).toEqual(["srv:2", "srv:3", "srv:1"]);
   });
 
   it("returns empty array for no workspaces", () => {
-    const groups = buildStatusGroups([], emptyProjectNames, i18n.t);
+    const groups = buildStatusGroups({
+      workspaces: [],
+      projectNamesByViewKey: emptyProjectNames,
+      t: i18n.t,
+    });
     expect(groups).toEqual([]);
   });
 
@@ -181,7 +318,11 @@ describe("buildStatusGroups", () => {
       ws({ workspaceKey: "srv:dn", statusBucket: "done", statusEnteredAt: null }),
     ];
 
-    const groups = buildStatusGroups(workspaces, emptyProjectNames, i18n.t);
+    const groups = buildStatusGroups({
+      workspaces: workspaces,
+      projectNamesByViewKey: emptyProjectNames,
+      t: i18n.t,
+    });
 
     expect(groups.map((g) => g.bucket)).toEqual(STATUS_BUCKET_ORDER);
     expect(groups.map((g) => g.label)).toEqual(

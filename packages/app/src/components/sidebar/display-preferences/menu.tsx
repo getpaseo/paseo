@@ -49,6 +49,7 @@ import {
   hasActiveSidebarLabelFilter,
   SIDEBAR_UNLABELLED_LABEL_KEY,
   type SidebarGroupMode,
+  type SidebarSortMode,
 } from "@/stores/sidebar-view-store";
 import { workspaceLabelKey, type WorkspaceLabelColor } from "@getpaseo/protocol/workspace-labels";
 import type { WorkspaceTitleSource } from "@/hooks/use-settings";
@@ -68,7 +69,7 @@ const ThemedCircle = withUnistyles(Circle);
 
 /** Fits the item's 16pt leading slot with a hair of room, matching the trailing check. */
 const OPTION_ICON_SIZE = 14;
-const MENU_WIDTH = 232;
+const MENU_WIDTH = 320;
 
 /**
  * Unlabelled's stand-in for a color dot: the same circle at the same size, hollow.
@@ -121,6 +122,17 @@ const TRAILING_ICONS: Record<SidebarTrailingChoice, OptionIcon> = {
 };
 
 const GROUPING_MODES: readonly SidebarGroupMode[] = ["project", "status"];
+const SORT_MODES: readonly SidebarSortMode[] = ["manual", "name", "recent"];
+const SORT_ICONS: Record<SidebarSortMode, OptionIcon> = {
+  manual: withUnistyles(Folder),
+  name: withUnistyles(Type),
+  recent: withUnistyles(Clock),
+};
+const SORT_LABEL_KEYS: Record<SidebarSortMode, string> = {
+  recent: "sidebar.display.sorting.recent",
+  manual: "sidebar.display.sorting.manual",
+  name: "sidebar.display.sorting.name",
+};
 const TITLE_SOURCES: readonly WorkspaceTitleSource[] = ["title", "branch"];
 const TRAILING_CHOICES: readonly SidebarTrailingChoice[] = ["diff", "timestamp"];
 
@@ -191,6 +203,34 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
 
   const pages = useMemo<MenuPageDefinition[]>(() => {
     const definitions: MenuPageDefinition[] = [
+      {
+        id: "workspaceSorting",
+        title: t("sidebar.display.sorting.workspaces"),
+        content: (
+          <OptionList
+            values={SORT_MODES}
+            icons={SORT_ICONS}
+            labelKeys={SORT_LABEL_KEYS}
+            selectedValue={preferences.sortMode}
+            onSelect={preferences.setSortMode}
+            testIDPrefix="sidebar-workspace-sorting"
+          />
+        ),
+      },
+      {
+        id: "projectSorting",
+        title: t("sidebar.display.sorting.projects"),
+        content: (
+          <OptionList
+            values={SORT_MODES}
+            icons={SORT_ICONS}
+            labelKeys={SORT_LABEL_KEYS}
+            selectedValue={preferences.projectSortMode}
+            onSelect={preferences.setProjectSortMode}
+            testIDPrefix="sidebar-project-sorting"
+          />
+        ),
+      },
       {
         id: "grouping",
         title: t("sidebar.display.grouping.label"),
@@ -307,6 +347,25 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
             testID="sidebar-display-grouping"
           >
             {t("sidebar.display.grouping.label")}
+          </MenuSubTrigger>
+          <MenuSubTrigger
+            id="projectSorting"
+            disabled={preferences.grouping !== "project"}
+            value={
+              preferences.grouping === "project"
+                ? t(SORT_LABEL_KEYS[preferences.projectSortMode])
+                : t("sidebar.display.sorting.projectGroupingOnly")
+            }
+            testID="sidebar-display-project-sorting"
+          >
+            {t("sidebar.display.sorting.projects")}
+          </MenuSubTrigger>
+          <MenuSubTrigger
+            id="workspaceSorting"
+            value={t(SORT_LABEL_KEYS[preferences.sortMode])}
+            testID="sidebar-display-workspace-sorting"
+          >
+            {t("sidebar.display.sorting.workspaces")}
           </MenuSubTrigger>
           <MenuSubTrigger
             id="titleSource"

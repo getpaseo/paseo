@@ -1150,6 +1150,15 @@ export const zhCN: TranslationResources = {
       done: "已完成",
     },
     display: {
+      sorting: {
+        projectGroupingOnly: "仅按项目分组",
+        name: "名称",
+        workspaces: "工作区排序方式",
+        projects: "项目排序方式",
+        label: "排序方式",
+        recent: "最近活动",
+        manual: "手动排序",
+      },
       showBackground: "显示后台工作区",
       trigger: "显示偏好",
       heading: "显示",
@@ -2023,6 +2032,15 @@ export const zhCN: TranslationResources = {
     },
   },
   settings: {
+    workspaces: {
+      projectGroupingHint: "按项目分组以启用项目活动排序。已保存的选择会保留。",
+      sorting: "活动排序",
+      workspaceRunningFirst: "优先显示有运行中代理的工作区",
+      projectRunningFirst: "优先显示有运行中代理的项目",
+      runningFirstHint:
+        "开启：有运行中代理的项目排在前面，代理结束后回落。关闭：仅启动代理时提升其工作区或项目的位置。",
+      disabledHint: "将“{{sortLabel}}”设为最近活动以启用此选项。当前排序：{{sortMode}}。",
+    },
     title: "设置",
     loading: "正在加载设置...",
     groups: {
@@ -2043,6 +2061,7 @@ export const zhCN: TranslationResources = {
     },
     groupInfo: "关于 {{title}}",
     sections: {
+      workspaces: "工作区",
       general: "通用",
       chat: "聊天",
       appearance: "外观",

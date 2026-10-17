@@ -30,8 +30,118 @@ function createMemoryStorage(entries: Record<string, string | null>): MemoryStor
 }
 
 describe("sidebar view store", () => {
+  it("keeps manual ordering by default for fresh and existing installations", () => {
+    expect(useSidebarViewStore.getInitialState()).toMatchObject({
+      sortMode: "manual",
+      projectSortMode: "manual",
+      workspaceActivityRunningFirst: false,
+      projectActivityRunningFirst: false,
+    });
+    expect(migrateSidebarViewState({}).sortMode).toBe("manual");
+    expect(migrateSidebarViewState({ groupMode: "status", hostFilters: ["host-a"] })).toMatchObject(
+      {
+        sortMode: "manual",
+        projectSortMode: "manual",
+        workspaceActivityRunningFirst: false,
+        projectActivityRunningFirst: false,
+        groupMode: "status",
+        hostFilters: ["host-a"],
+      },
+    );
+  });
+  it("preserves both levels for a saved activity preference from version 8", () => {
+    expect(migrateSidebarViewState({ sortMode: "recent" })).toMatchObject({
+      sortMode: "recent",
+      projectSortMode: "recent",
+    });
+  });
+
+  it("preserves an explicit activity choice alongside legacy grouping", () => {
+    expect(
+      migrateSidebarViewState({
+        groupModeByServerId: { "host-a": "status" },
+        sortMode: "recent",
+        projectSortMode: "manual",
+        workspaceActivityRunningFirst: false,
+        projectActivityRunningFirst: false,
+      }),
+    ).toMatchObject({ groupMode: "status", sortMode: "recent", projectSortMode: "manual" });
+  });
+
+  it("persists independent project and workspace preferences", () => {
+    for (const sortMode of ["manual", "name", "recent"] as const) {
+      for (const projectSortMode of ["manual", "name", "recent"] as const) {
+        expect(migrateSidebarViewState({ sortMode, projectSortMode })).toMatchObject({
+          sortMode,
+          projectSortMode,
+        });
+      }
+    }
+    const store = useSidebarViewStore.getState();
+    store.setSortMode("recent");
+    expect(useSidebarViewStore.getState()).toMatchObject({
+      sortMode: "recent",
+      projectSortMode: "manual",
+      workspaceActivityRunningFirst: false,
+      projectActivityRunningFirst: false,
+    });
+    store.setProjectSortMode("recent");
+    store.setSortMode("manual");
+    expect(useSidebarViewStore.getState()).toMatchObject({
+      sortMode: "manual",
+      projectSortMode: "recent",
+    });
+    store.setProjectSortMode("manual");
+    expect(useSidebarViewStore.getState()).toMatchObject({
+      sortMode: "manual",
+      projectSortMode: "manual",
+      workspaceActivityRunningFirst: false,
+      projectActivityRunningFirst: false,
+    });
+  });
+
+  it("stores running-first preferences independently and keeps them when sorting changes", () => {
+    const store = useSidebarViewStore.getState();
+    store.setWorkspaceActivityRunningFirst(true);
+    store.setProjectActivityRunningFirst(false);
+    store.setSortMode("name");
+    expect(useSidebarViewStore.getState()).toMatchObject({
+      workspaceActivityRunningFirst: true,
+      projectActivityRunningFirst: false,
+      sortMode: "name",
+    });
+    store.setSortMode("recent");
+    store.setProjectActivityRunningFirst(true);
+    expect(
+      migrateSidebarViewState({
+        sortMode: "recent",
+        projectSortMode: "name",
+        workspaceActivityRunningFirst: false,
+        projectActivityRunningFirst: true,
+      }),
+    ).toMatchObject({
+      sortMode: "recent",
+      projectSortMode: "name",
+      workspaceActivityRunningFirst: false,
+      projectActivityRunningFirst: true,
+    });
+  });
+
+  it("persists recent-activity sorting and allows manual order again", () => {
+    useSidebarViewStore.getState().setSortMode("recent");
+    expect(useSidebarViewStore.getState().sortMode).toBe("recent");
+    expect(migrateSidebarViewState({ sortMode: "recent", groupMode: "project" }).sortMode).toBe(
+      "recent",
+    );
+    useSidebarViewStore.getState().setSortMode("manual");
+    expect(useSidebarViewStore.getState().sortMode).toBe("manual");
+  });
   beforeEach(() => {
     useSidebarViewStore.setState({
+      sortMode: "manual",
+      projectSortMode: "manual",
+      workspaceActivityRunningFirst: false,
+      projectActivityRunningFirst: false,
       showBackground: false,
       groupMode: "project",
       hostFilters: [],
@@ -85,6 +195,10 @@ describe("sidebar view store", () => {
         },
       }),
     ).toEqual({
+      sortMode: "manual",
+      projectSortMode: "manual",
+      workspaceActivityRunningFirst: false,
+      projectActivityRunningFirst: false,
       showBackground: false,
       groupMode: "status",
       hostFilters: [],
@@ -100,6 +214,10 @@ describe("sidebar view store", () => {
         hostFilter: "host-a",
       }),
     ).toEqual({
+      sortMode: "manual",
+      projectSortMode: "manual",
+      workspaceActivityRunningFirst: false,
+      projectActivityRunningFirst: false,
       showBackground: false,
       groupMode: "status",
       hostFilters: ["host-a"],
@@ -115,6 +233,10 @@ describe("sidebar view store", () => {
         hostFilters: ["host-a", "host-b"],
       }),
     ).toEqual({
+      sortMode: "manual",
+      projectSortMode: "manual",
+      workspaceActivityRunningFirst: false,
+      projectActivityRunningFirst: false,
       showBackground: false,
       groupMode: "status",
       hostFilters: ["host-a", "host-b"],
@@ -226,6 +348,10 @@ describe("sidebar view store", () => {
         projectFilters: ["project-a", "project-b"],
       }),
     ).toEqual({
+      sortMode: "manual",
+      projectSortMode: "manual",
+      workspaceActivityRunningFirst: false,
+      projectActivityRunningFirst: false,
       showBackground: false,
       groupMode: "project",
       hostFilters: ["host-a"],
@@ -236,6 +362,10 @@ describe("sidebar view store", () => {
 
   it("never keeps project filters from state the schema rejects", () => {
     expect(migrateSidebarViewState({ projectFilters: "project-a" })).toEqual({
+      sortMode: "manual",
+      projectSortMode: "manual",
+      workspaceActivityRunningFirst: false,
+      projectActivityRunningFirst: false,
       showBackground: false,
       groupMode: "project",
       hostFilters: [],
