@@ -97,6 +97,11 @@ export type PluginPanelLocation = "workspace" | "explorer";
 
 export interface PluginOpenPanelOptions {
   location?: PluginPanelLocation;
+  /**
+   * Adds the panel without navigating to its workspace, showing Explorer, or changing a visible
+   * tab. A hidden Explorer selects it, so the user sees it when they next show Explorer.
+   */
+  background?: boolean;
 }
 
 interface PluginWorkspacePanelBase {
