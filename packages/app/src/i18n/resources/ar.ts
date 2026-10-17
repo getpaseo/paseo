@@ -2168,6 +2168,11 @@ export const ar: TranslationResources = {
         description: "يتم الاحتفاظ بالخطوط في المخزن المؤقت الطرفي المدمج",
         accessibilityLabel: "خطوط التمرير Terminal",
       },
+      terminalMacOptionIsMeta: {
+        label: "مفتاح Option كـ Meta (macOS)",
+        description:
+          "مفعّل: يرسل Option+المفتاح اختصارات Meta في الطرفية. معطّل: يكتب Option+المفتاح الحرف الخاص بتخطيط لوحة المفاتيح لديك (مثلاً Option+L ← @ في الألمانية).",
+      },
       autoExpandReasoning: {
         label: "عرض التفكير دائماً",
         description: "إظهار تفكير الوكيل وخطوات الاستدلال بشكل كامل بشكل افتراضي",

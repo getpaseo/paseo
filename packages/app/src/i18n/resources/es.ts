@@ -2219,6 +2219,11 @@ export const es: TranslationResources = {
         description: "Líneas mantenidas en el búfer de terminal incorporado",
         accessibilityLabel: "Líneas del historial de terminal",
       },
+      terminalMacOptionIsMeta: {
+        label: "Tecla Option como Meta (macOS)",
+        description:
+          "Activado: Option+tecla envía atajos Meta del terminal. Desactivado: Option+tecla escribe el carácter de tu distribución de teclado (p. ej. Option+L → @ en alemán).",
+      },
       autoExpandReasoning: {
         label: "Siempre expandir razonamiento",
         description:

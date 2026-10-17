@@ -56,6 +56,11 @@ export interface TerminalEmulatorRuntimeMountInput {
   host: HTMLDivElement;
   initialSnapshot: TerminalState | null;
   scrollback: number;
+  /**
+   * Whether the macOS Option key acts as Meta. Defaults to true, preserving the
+   * behavior terminals had before this was configurable.
+   */
+  macOptionIsMeta?: boolean;
   theme: ITheme;
   fontFamily?: string;
   fontSize?: number;
@@ -479,7 +484,7 @@ export class TerminalEmulatorRuntime {
       // OSC 8 hyperlinks; without a handler xterm prompts and calls window.open().
       linkHandler: { activate: openExternalLink },
       lineHeight: 1.0,
-      macOptionIsMeta: true,
+      macOptionIsMeta: input.macOptionIsMeta ?? true,
       minimumContrastRatio: 1,
       rescaleOverlappingGlyphs: true,
       scrollbar: {
@@ -889,6 +894,23 @@ export class TerminalEmulatorRuntime {
     }
 
     this.refreshVisibleRows();
+  }
+
+  setMacOptionIsMeta(input: { enabled: boolean }): void {
+    const terminal = this.terminal;
+    if (!terminal) {
+      return;
+    }
+
+    try {
+      terminal.options.macOptionIsMeta = input.enabled;
+    } catch {
+      // ignore
+      return;
+    }
+
+    // The option changes key handling only, so unlike setScrollback there is no
+    // repaint to force here.
   }
 
   setFont(input: { fontFamily?: string; fontSize?: number }): void {
