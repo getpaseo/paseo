@@ -32,17 +32,138 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 // `tools` — e.g. `tools.hzmcp.memory__write_note(...)` or
 // `tools["charlotte"].charlotte_tabs(...)`. Reconstruct the chain to label the
 // timeline row with the tool that actually ran.
-function extractCodeModeToolLabel(code: string): string | undefined {
-  const start = /\btools\b/.exec(code);
-  if (!start) {
-    return undefined;
+
+// Blank out comments and string literals (same length, newlines preserved) so
+// label extraction only sees executed code. Template-literal ${...}
+// interpolations stay visible: they are evaluated.
+
+function blankRange(chars: string[], start: number, end: number) {
+  for (let i = start; i < end && i < chars.length; i += 1) {
+    if (chars[i] !== "\n") {
+      chars[i] = " ";
+    }
   }
+}
+
+function skipQuotedString(chars: string[], start: number, quote: string): number {
+  let j = start + 1;
+  while (j < chars.length) {
+    if (chars[j] === "\\") {
+      j += 2;
+      continue;
+    }
+    if (chars[j] === quote) {
+      return j + 1;
+    }
+    j += 1;
+  }
+  return chars.length;
+}
+
+// start points at the opening backtick. Returns the index after the closing
+// backtick (or end of input when unterminated), with literal text blanked and
+// ${...} interpolation contents left as code.
+function maskTemplateLiteral(chars: string[], source: string, start: number): number {
+  let i = start + 1;
+  let literalStart = start;
+  while (i < chars.length) {
+    if (chars[i] === "\\") {
+      i += 2;
+      continue;
+    }
+    if (chars[i] === "`") {
+      blankRange(chars, literalStart, i);
+      return i + 1;
+    }
+    if (chars[i] === "$" && chars[i + 1] === "{") {
+      blankRange(chars, literalStart, i);
+      i = maskInterpolation(chars, source, i + 2);
+      literalStart = i;
+      continue;
+    }
+    i += 1;
+  }
+  blankRange(chars, literalStart, chars.length);
+  return chars.length;
+}
+
+// start is just after "${". Returns the index after the matching "}".
+function maskInterpolation(chars: string[], source: string, start: number): number {
+  let depth = 1;
+  let i = start;
+  while (i < chars.length && depth > 0) {
+    const character = chars[i];
+    if (character === "'" || character === '"') {
+      const end = skipQuotedString(chars, i, character);
+      blankRange(chars, i, end);
+      i = end;
+      continue;
+    }
+    if (character === "/" && chars[i + 1] === "/") {
+      const end = chars.indexOf("\n", i);
+      blankRange(chars, i, end === -1 ? chars.length : end);
+      i = end === -1 ? chars.length : end;
+      continue;
+    }
+    if (character === "/" && chars[i + 1] === "*") {
+      const end = source.indexOf("*/", i + 2);
+      blankRange(chars, i, end === -1 ? chars.length : end + 2);
+      i = end === -1 ? chars.length : end + 2;
+      continue;
+    }
+    if (character === "`") {
+      i = maskTemplateLiteral(chars, source, i);
+      continue;
+    }
+    if (character === "{") {
+      depth += 1;
+    } else if (character === "}") {
+      depth -= 1;
+    }
+    i += 1;
+  }
+  return i;
+}
+
+function maskNonCode(source: string): string {
+  const chars = [...source];
+  let i = 0;
+  while (i < chars.length) {
+    const character = chars[i];
+    if (character === "'" || character === '"') {
+      const end = skipQuotedString(chars, i, character);
+      blankRange(chars, i, end);
+      i = end;
+      continue;
+    }
+    if (character === "/" && chars[i + 1] === "/") {
+      const end = chars.indexOf("\n", i);
+      blankRange(chars, i, end === -1 ? chars.length : end);
+      i = end === -1 ? chars.length : end;
+      continue;
+    }
+    if (character === "/" && chars[i + 1] === "*") {
+      const end = source.indexOf("*/", i + 2);
+      blankRange(chars, i, end === -1 ? chars.length : end + 2);
+      i = end === -1 ? chars.length : end + 2;
+      continue;
+    }
+    if (character === "`") {
+      i = maskTemplateLiteral(chars, source, i);
+      continue;
+    }
+    i += 1;
+  }
+  return chars.join("");
+}
+
+function extractAccessorChain(masked: string, from: number): string | undefined {
   const segments: string[] = [];
   const accessor = /\s*(?:\.\s*([\w$]+)|\[\s*(["'`])([\s\S]*?)\2\s*\])/y;
-  let index = start.index + start[0].length;
+  let index = from;
   for (;;) {
     accessor.lastIndex = index;
-    const match = accessor.exec(code);
+    const match = accessor.exec(masked);
     if (!match) {
       break;
     }
@@ -53,10 +174,26 @@ function extractCodeModeToolLabel(code: string): string | undefined {
     segments.push(segment);
     index = accessor.lastIndex;
   }
-  if (segments.length === 0 || !/^\s*\(/.test(code.slice(index))) {
+  if (segments.length === 0 || !/^\s*\(/.test(masked.slice(index))) {
     return undefined;
   }
   return segments.join(".");
+}
+
+function extractCodeModeToolLabel(code: string): string | undefined {
+  // Offsets are preserved by the same-length mask, so candidates are found in
+  // the masked text (comments and string literals blanked) while the accessor
+  // chain itself is parsed from the original code — bracket accessors like
+  // `tools["charlotte"]` keep their string content.
+  const masked = maskNonCode(code);
+  const word = /\btools\b/g;
+  for (let match = word.exec(masked); match !== null; match = word.exec(masked)) {
+    const label = extractAccessorChain(code, match.index + match[0].length);
+    if (label) {
+      return label;
+    }
+  }
+  return undefined;
 }
 
 function normalizeSubAgentText(value: unknown): string | undefined {
@@ -403,7 +540,13 @@ export function deriveOpencodeToolDetail(
     const code = input.code;
     const label = typeof code === "string" ? extractCodeModeToolLabel(code) : undefined;
     if (label) {
-      const text = readOutputText(output);
+      // Keep the executed code alongside the output: the previous `unknown`
+      // detail exposed input and output, so the detail sheet must not lose
+      // the arguments the agent sent.
+      const outputText = readOutputText(output);
+      const text = [typeof code === "string" ? code : undefined, outputText]
+        .filter((part): part is string => Boolean(part))
+        .join("\n\n");
       return {
         type: "plain_text",
         label,
