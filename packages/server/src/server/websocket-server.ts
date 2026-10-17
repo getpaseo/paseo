@@ -3,7 +3,7 @@ import type { CreationSnapshot } from "@getpaseo/protocol/messages";
 import { CreationService } from "./creation/index.js";
 import { MessageReceipts } from "./message-receipts/index.js";
 import { WebSocket, WebSocketServer } from "ws";
-import type { IncomingMessage, Server as HTTPServer } from "http";
+import { IncomingMessage, type Server as HTTPServer } from "http";
 import { join } from "path";
 import { getHostName } from "./host-name.js";
 import { randomUUID } from "node:crypto";
@@ -158,6 +158,7 @@ interface WebSocketServerConfig {
   hostnames?: HostnamesConfig;
   getAllowedOrigins?: () => Set<string>;
   getHostnames?: () => HostnamesConfig | undefined;
+  getClientAddress?: (request: IncomingMessage) => string | undefined;
   daemonStatusRpc?: boolean;
   relayConfig?: boolean;
   startPaused?: boolean;
@@ -625,7 +626,7 @@ export class VoiceAssistantWebSocketServer {
     paseoHome: string,
     daemonConfigStore: DaemonConfigStore,
     mcpBaseUrl: string | null,
-    wsConfig: WebSocketServerConfig,
+    private readonly wsConfig: WebSocketServerConfig,
     workspaceAutoName: WorkspaceAutoName,
     auth?: DaemonAuthConfig,
     speech?: SpeechService | null,
@@ -891,7 +892,7 @@ export class VoiceAssistantWebSocketServer {
       return;
     }
 
-    const requestMetadata = extractSocketRequestMetadata(req);
+    const requestMetadata = extractSocketRequestMetadata(req, this.wsConfig.getClientAddress);
     const origin = requestMetadata.origin;
     const requestHost = requestMetadata.host ?? null;
     if (requestHost && !isHostnameAllowed(requestHost, hostnames)) {
@@ -929,7 +930,10 @@ export class VoiceAssistantWebSocketServer {
         extractHttpBearerToken(request.headers.authorization) ?? extractWsBearerToken(protocol);
       const hasHeaderCredential = token !== null;
       if (password && hasHeaderCredential) {
-        const requestMetadata = extractSocketRequestMetadata(request);
+        const requestMetadata = extractSocketRequestMetadata(
+          request,
+          this.wsConfig.getClientAddress,
+        );
         const isAuthorized = await isBearerTokenValidAsync({ password, token });
         if (!isAuthorized) {
           const reason = "Incorrect password";
@@ -1324,7 +1328,7 @@ export class VoiceAssistantWebSocketServer {
       return;
     }
 
-    const requestMetadata = extractSocketRequestMetadata(request);
+    const requestMetadata = extractSocketRequestMetadata(request, this.wsConfig.getClientAddress);
     const identity = createWebSocketConnectionIdentity(requestMetadata, metadata);
     this.socketIdentities.set(ws, identity);
     const connectionLogger = this.logger.child(toConnectionLogFields(identity));
@@ -2827,7 +2831,10 @@ function isLoopbackAddress(address: string): boolean {
   return ipv4.startsWith("127.");
 }
 
-function extractSocketRequestMetadata(request: unknown): SocketRequestMetadata {
+function extractSocketRequestMetadata(
+  request: unknown,
+  getClientAddress: WebSocketServerConfig["getClientAddress"],
+): SocketRequestMetadata {
   if (!request || typeof request !== "object") {
     return {};
   }
@@ -2848,8 +2855,11 @@ function extractSocketRequestMetadata(request: unknown): SocketRequestMetadata {
   const origin = typeof record.headers?.origin === "string" ? record.headers.origin : undefined;
   const userAgent =
     typeof record.headers?.["user-agent"] === "string" ? record.headers["user-agent"] : undefined;
-  const remoteAddress =
+  let remoteAddress =
     typeof record.socket?.remoteAddress === "string" ? record.socket.remoteAddress : undefined;
+  if (remoteAddress && request instanceof IncomingMessage && getClientAddress) {
+    remoteAddress = getClientAddress(request);
+  }
 
   return {
     ...(host ? { host } : {}),
