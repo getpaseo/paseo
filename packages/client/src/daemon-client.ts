@@ -994,6 +994,14 @@ type CorrelatedResponsePayloads = {
 type CorrelatedResponsePayload<TType extends CorrelatedResponseType> =
   CorrelatedResponsePayloads[TType];
 
+export class DaemonCapabilityError extends Error {
+  readonly code = "DAEMON_CAPABILITY_UNAVAILABLE";
+  constructor(readonly feature: "sendAgentMessageRejectBusy") {
+    super("This daemon does not support reject-if-busy sends. Update the daemon.");
+    this.name = "DaemonCapabilityError";
+  }
+}
+
 export class DaemonConnectionError extends Error {
   constructor(
     message: string,
@@ -3492,17 +3500,27 @@ export class DaemonClient {
   // Agent Interaction
   // ============================================================================
 
-  async sendAgentMessage(
-    agentId: string,
-    text: string,
-    options?: SendMessageOptions,
-  ): Promise<void> {
+  private assertSendMessageCapabilities(options: SendMessageOptions | undefined): void {
     if (
       options?.sourceAgentId &&
       this.lastServerInfoMessage?.features?.agentMessageProvenance !== true
     ) {
       throw new Error("Update the Paseo host to send messages with agent provenance.");
     }
+    if (
+      options?.activeTurnBehavior === "reject" &&
+      this.getLastServerInfoMessage()?.features?.sendAgentMessageRejectBusy !== true
+    ) {
+      throw new DaemonCapabilityError("sendAgentMessageRejectBusy");
+    }
+  }
+
+  async sendAgentMessage(
+    agentId: string,
+    text: string,
+    options?: SendMessageOptions,
+  ): Promise<void> {
+    this.assertSendMessageCapabilities(options);
     const requestId = this.createRequestId();
     const messageId = options?.messageId ?? crypto.randomUUID();
     const message = SessionInboundMessageSchema.parse({
