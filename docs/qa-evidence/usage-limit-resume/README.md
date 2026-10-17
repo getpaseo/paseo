@@ -37,7 +37,19 @@ Recordings: [wide interaction](wide.webm), [compact interaction](compact.webm), 
 | ![Wide light](limit-enabled-wide.png)       | ![Wide dark](limit-enabled-wide-dark.png)       |
 | ![Compact light](limit-enabled-compact.png) | ![Compact dark](limit-enabled-compact-dark.png) |
 
-## Automated checks
+## Review regression verification
+
+Added controlled storage/provider boundary adapters to reproduce cancellation during a durable claim and during cold session loading, plus a failed snapshot write. On the previously published `dabfb1b9f3` implementation, [the same regression tests failed in all three cases](review-before-fix.txt): both cancellation paths dispatched an unwanted prompt, and the failed write lost the live wait. These adapters are injected dependencies backed by the real temporary file store and mock-provider session; no module-export spies are used.
+
+Cancellation now marks the active attempt immediately before entering the serialized lifecycle queue. A failed durable claim restores the live wait only if no manual message, active run, or newer limit superseded it. Separate regression cases cover manual input and a newer limit during a failed write, and archiving during cold recovery. Tests use fixed scenarios without conditional assertions. Browser tests select the switch by its accessible role/name and keep interaction mechanics in shared helpers.
+
+```sh
+npm exec -- vitest run packages/server/src/server/agent/usage-limit-resume.test.ts packages/server/src/server/agent/agent-manager.test.ts packages/server/src/server/agent/providers/mock-load-test-agent.test.ts
+```
+
+[239 tests passed across these three files](review-regression.txt), including 17 usage-limit service/lifecycle tests. The four browser flows above were rerun after these fixes; their raw output, screenshots, and recordings are from that run. Typecheck, lint, and format logs were also refreshed.
+
+## Initial automated checks
 
 ```sh
 npm run build:server
@@ -48,7 +60,7 @@ npm run format
 npm exec -- vitest run packages/server/src/server/agent/usage-limit-resume.test.ts packages/server/src/server/agent/agent-manager.test.ts packages/server/src/server/agent/agent-archive.test.ts packages/server/src/server/agent/providers/claude/agent.redesign.test.ts packages/protocol/src/messages.test.ts packages/app/src/i18n/resources.test.ts
 ```
 
-Raw outputs: [server build](build.txt), [app dependency build](app-deps-build.txt), [typecheck](typecheck.txt), [lint](lint.txt), [format](format.txt), [338 targeted tests](tests.txt). No full test suite was run.
+Initial verification (before the review fixes): [server build](build.txt), [app dependency build](app-deps-build.txt), [338 targeted tests](tests.txt). Current follow-up outputs: [typecheck](typecheck.txt), [lint](lint.txt), [format](format.txt). No full test suite was run.
 
 Coverage includes same provider session, durable restart recovery, concurrent scans, default-off behavior, reset buffer, unknown reset, manual cancellation (including a manual turn completing during a paused durable claim), disabled/archived/blocked-workspace/shutdown guards, advisory/overage events, isolation of consecutive autonomous turns, invalid reset metadata, old-shaped protocol messages, and translation parity.
 

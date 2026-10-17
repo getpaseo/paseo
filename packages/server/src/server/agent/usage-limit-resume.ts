@@ -51,7 +51,10 @@ export class UsageLimitResumeService {
       if (resumeAt === null || resumeAt > Date.now()) continue;
       try {
         if (!(await this.options.canResumeWorkspace(record))) continue;
-        await this.options.agentManager.resumeAfterUsageLimit(record.id, record.usageLimit);
+        await this.options.agentManager.resumeAfterUsageLimit({
+          agentId: record.id,
+          expected: record.usageLimit,
+        });
       } catch (error) {
         this.options.logger.warn({ err: error, agentId: record.id }, "Usage limit resume failed");
       }

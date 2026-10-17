@@ -1,6 +1,14 @@
 import { expect, test } from "../support/fixtures";
 import { seedMockAgentWorkspace, openAgentRoute } from "../support/helpers/mock-agent";
-import { submitMessageWithButton as submitMessage } from "../support/helpers/composer";
+import { submitMessageWithButton } from "../support/helpers/composer";
+import {
+  captureUsageLimit,
+  emitSyntheticUsageLimit,
+  openUsageLimitChat,
+  reloadUsageLimitChat,
+  setUsageLimitResume,
+  usageLimitResumeSwitch,
+} from "../support/helpers/usage-limit-resume";
 
 for (const viewport of [
   { name: "wide", width: 1280, height: 900 },
@@ -9,38 +17,47 @@ for (const viewport of [
   test(`usage limit opt-in survives reload and can be cancelled (${viewport.name})`, async ({
     page,
   }, testInfo) => {
-    await page.setViewportSize(viewport);
     const agent = await seedMockAgentWorkspace({
       repoPrefix: "usage-limit-",
       title: "Interrupted task",
     });
     try {
-      await openAgentRoute(page, agent);
-      await submitMessage(
+      await openUsageLimitChat({ page, agent, viewport });
+      await emitSyntheticUsageLimit({
         page,
-        `Emit synthetic usage limit: ${new Date(Date.now() + 300_000).toISOString()}`,
-      );
-      const callout = page.getByTestId("usage-limit-callout");
-      const toggle = page.getByTestId("usage-limit-auto-resume");
-      await expect(callout).toContainText("Retry available at");
-      await expect(toggle).toHaveAttribute("aria-checked", "false");
-      await page.screenshot({ path: testInfo.outputPath(`limit-disabled-${viewport.name}.png`) });
-      await toggle.click();
-      await expect(toggle).toHaveAttribute("aria-checked", "true");
-      await expect(callout).toContainText("Will continue at");
-      await page.reload();
-      await expect(toggle).toHaveAttribute("aria-checked", "true");
-      await expect(callout).toContainText("Will continue at");
-      await page.screenshot({ path: testInfo.outputPath(`limit-enabled-${viewport.name}.png`) });
-      await page.emulateMedia({ colorScheme: "dark" });
-      await page.screenshot({
-        path: testInfo.outputPath(`limit-enabled-${viewport.name}-dark.png`),
+        resetsAt: new Date(Date.now() + 300_000).toISOString(),
       });
-      await toggle.click();
+      const toggle = usageLimitResumeSwitch(page);
+      await expect(page.getByText("Retry available at", { exact: false })).toBeVisible();
       await expect(toggle).toHaveAttribute("aria-checked", "false");
-      await expect(callout).toContainText("Retry available at");
-      await submitMessage(page, "Continue manually");
-      await expect(callout).toHaveCount(0);
+      await captureUsageLimit({
+        page,
+        testInfo,
+        name: `limit-disabled-${viewport.name}.png`,
+        colorScheme: "light",
+      });
+      await setUsageLimitResume({ page, enabled: true });
+      await expect(page.getByText("Will continue at", { exact: false })).toBeVisible();
+      await reloadUsageLimitChat(page);
+      await expect(toggle).toHaveAttribute("aria-checked", "true");
+      await expect(page.getByText("Will continue at", { exact: false })).toBeVisible();
+      await captureUsageLimit({
+        page,
+        testInfo,
+        name: `limit-enabled-${viewport.name}.png`,
+        colorScheme: "light",
+      });
+      await captureUsageLimit({
+        page,
+        testInfo,
+        name: `limit-enabled-${viewport.name}-dark.png`,
+        colorScheme: "dark",
+      });
+      await setUsageLimitResume({ page, enabled: false });
+      await expect(toggle).toHaveAttribute("aria-checked", "false");
+      await expect(page.getByText("Retry available at", { exact: false })).toBeVisible();
+      await submitMessageWithButton(page, "Continue manually");
+      await expect(toggle).toHaveCount(0);
     } finally {
       await agent.cleanup();
     }
@@ -54,20 +71,20 @@ test("overdue opt-in continues the same chat once", async ({ page }) => {
   });
   try {
     await openAgentRoute(page, agent);
-    await submitMessage(
+    await emitSyntheticUsageLimit({
       page,
-      `Emit synthetic usage limit: ${new Date(Date.now() - 120_000).toISOString()}`,
-    );
-    const toggle = page.getByTestId("usage-limit-auto-resume");
+      resetsAt: new Date(Date.now() - 120_000).toISOString(),
+    });
+    const toggle = usageLimitResumeSwitch(page);
     await expect(toggle).toHaveAttribute("aria-checked", "false");
-    await toggle.click();
-    await expect(page.getByTestId("usage-limit-callout")).toContainText("Enabled for this chat", {
+    await setUsageLimitResume({ page, enabled: true });
+    await expect(page.getByText("Enabled for this chat", { exact: false })).toBeVisible({
       timeout: 15_000,
     });
     await expect(page.getByText("The usage limit reset.", { exact: false })).toHaveCount(1);
     await expect(toggle).toHaveAttribute("aria-checked", "true");
-    await toggle.click();
-    await expect(page.getByTestId("usage-limit-callout")).toHaveCount(0);
+    await setUsageLimitResume({ page, enabled: false });
+    await expect(toggle).toHaveCount(0);
   } finally {
     await agent.cleanup();
   }
@@ -80,13 +97,11 @@ test("missing reset time leaves manual continuation available", async ({ page })
   });
   try {
     await openAgentRoute(page, agent);
-    await submitMessage(page, "Emit synthetic usage limit: unknown");
-    await expect(page.getByTestId("usage-limit-callout")).toContainText(
-      "did not report a reset time",
-    );
-    await expect(page.getByTestId("usage-limit-auto-resume")).toBeDisabled();
-    await submitMessage(page, "Continue manually");
-    await expect(page.getByTestId("usage-limit-callout")).toHaveCount(0);
+    await emitSyntheticUsageLimit({ page, resetsAt: null });
+    await expect(page.getByText("did not report a reset time", { exact: false })).toBeVisible();
+    await expect(usageLimitResumeSwitch(page)).toBeDisabled();
+    await submitMessageWithButton(page, "Continue manually");
+    await expect(usageLimitResumeSwitch(page)).toHaveCount(0);
   } finally {
     await agent.cleanup();
   }

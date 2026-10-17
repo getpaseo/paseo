@@ -193,6 +193,11 @@ function nextBurstSize(profile: BurstProfile, sequence: number): number {
   return profile.minTokens + ((hash >>> 0) % span);
 }
 
+interface FailedTurnInput {
+  turn: ActiveTurn;
+  usageLimit?: AgentUsageLimit;
+}
+
 interface ActiveTurn {
   turnId: string;
   assistantMessageId: string;
@@ -881,7 +886,7 @@ export class MockLoadTestAgentSession implements AgentSession {
     const usageLimit = parseUsageLimitPrompt(prompt);
     const scheduleTurn = () => {
       if (shouldEmitTurnFailure(prompt) || usageLimit) {
-        this.scheduleFailedTurn(turn, usageLimit);
+        this.scheduleFailedTurn({ turn, usageLimit });
       } else if (steeringReplayShape) {
         this.scheduleSteeringReplayTurn(turn, steeringReplayShape);
       } else if (this.streamingAssistantResponse !== null) {
@@ -1167,7 +1172,7 @@ export class MockLoadTestAgentSession implements AgentSession {
     turn.timer.unref?.();
   }
 
-  private scheduleFailedTurn(turn: ActiveTurn, usageLimit?: AgentUsageLimit): void {
+  private scheduleFailedTurn({ turn, usageLimit }: FailedTurnInput): void {
     turn.timer = setTimeout(() => {
       if (this.activeTurn !== turn) {
         return;

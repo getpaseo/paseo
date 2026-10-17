@@ -1,4 +1,4 @@
 npm notice run paseo@0.12.0-beta.1 lint
 npm notice run oxlint
 Found 0 warnings and 0 errors.
-Finished in 702ms on 4697 files with 177 rules using 32 threads.
+Finished in 506ms on 4698 files with 177 rules using 32 threads.
