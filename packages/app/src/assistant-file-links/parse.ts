@@ -30,6 +30,8 @@ export interface AssistantHrefParseOptions {
    * send a real file named `my%20file.md` to `my file.md`.
    */
   decodeHref?: boolean;
+  /** Explicit Markdown links can name nested folders without a filename extension. */
+  allowExtensionlessNestedPaths?: boolean;
 }
 
 export type AssistantFileLinkClassification =
@@ -278,6 +280,7 @@ export function parseAssistantFileLink(
   const relativeTarget = parseWorkspaceRelativeFileLink(trimmed, {
     workspaceRoot: options.workspaceRoot,
     decodeHref: options.decodeHref,
+    allowExtensionlessNestedPaths: options.allowExtensionlessNestedPaths,
   });
   if (relativeTarget) {
     return relativeTarget;
@@ -411,7 +414,7 @@ function parseWorkspaceRelativeFileLink(
 
 function parseLocalPathParts(
   value: string,
-  options: Pick<AssistantHrefParseOptions, "decodeHref"> = {},
+  options: Pick<AssistantHrefParseOptions, "decodeHref" | "allowExtensionlessNestedPaths"> = {},
 ): {
   path: string;
   lines: Pick<InlinePathTarget, "lineStart" | "lineEnd">;
@@ -437,7 +440,7 @@ function parseLocalPathParts(
     if (options.decodeHref) {
       pathPart = safeDecodeURIComponent(pathPart);
     }
-    if (!isPlausibleAssistantLocalPath(pathPart)) {
+    if (!isPlausibleAssistantLocalPath(pathPart, options)) {
       return null;
     }
     return {
@@ -458,7 +461,7 @@ function parseLocalPathParts(
     decodedBeforeHash = safeDecodeURIComponent(beforeHash);
   }
   const plausiblePath = parseInlinePathToken(decodedBeforeHash)?.path ?? decodedBeforeHash;
-  if (!isPlausibleAssistantLocalPath(plausiblePath)) {
+  if (!isPlausibleAssistantLocalPath(plausiblePath, options)) {
     return null;
   }
 
@@ -583,7 +586,10 @@ function getHeuristicLocalPath(value: string): string | null {
   return beforeHash;
 }
 
-function isPlausibleAssistantLocalPath(pathValue: string): boolean {
+function isPlausibleAssistantLocalPath(
+  pathValue: string,
+  options: Pick<AssistantHrefParseOptions, "allowExtensionlessNestedPaths"> = {},
+): boolean {
   const normalized = normalizePathToken(pathValue);
   if (!normalized) {
     return false;
@@ -607,7 +613,10 @@ function isPlausibleAssistantLocalPath(pathValue: string): boolean {
 
   if (segments.length > 1) {
     const lastSegment = segments[segments.length - 1];
-    return !isDomainLikePathSegment(firstSegment) && isPlausibleAssistantFileName(lastSegment);
+    return (
+      !isDomainLikePathSegment(firstSegment) &&
+      (options.allowExtensionlessNestedPaths === true || isPlausibleAssistantFileName(lastSegment))
+    );
   }
 
   return isPlausibleAssistantFileName(firstSegment);
