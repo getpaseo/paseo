@@ -32,6 +32,7 @@ import { HostPicker } from "@/components/hosts/host-picker";
 import { SidebarDisplayPreferencesMenu } from "@/components/sidebar/display-preferences/menu";
 import { SidebarSeparator } from "@/components/sidebar/sidebar-separator";
 import { SidebarNavRows } from "@/components/sidebar/sidebar-nav-rows";
+import { SidebarFooterIconHighlight } from "@/components/sidebar/sidebar-footer-icon-highlight";
 import { SidebarHelpMenu } from "@/components/sidebar/sidebar-help-menu";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import { DensityIcon } from "@/components/ui/density-icon";
@@ -317,13 +318,16 @@ function FooterIconButton({
           accessibilityRole="button"
           onPress={onPress}
         >
-          {({ hovered }) => (
-            <DensityIcon
-              icon={icon}
-              size="md"
-              sizeAdjustment={iconSizeAdjustment}
-              color={hovered ? "foreground" : "foregroundMuted"}
-            />
+          {({ hovered, pressed }) => (
+            <>
+              <SidebarFooterIconHighlight visible={pressed} />
+              <DensityIcon
+                icon={icon}
+                size="md"
+                sizeAdjustment={iconSizeAdjustment}
+                color={hovered ? "foreground" : "foregroundMuted"}
+              />
+            </>
           )}
         </Pressable>
       </TooltipTrigger>

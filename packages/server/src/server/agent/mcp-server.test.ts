@@ -5,7 +5,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it, vi } from "vitest";
 import { realpathSync } from "node:fs";
-import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve as resolvePath } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
@@ -15,6 +15,8 @@ import { createAgentMcpServer as createAgentMcpServerWithDependencies } from "./
 import { AgentManager, type ManagedAgent } from "./agent-manager.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
+import { OmpAgentClient } from "./providers/omp/agent.js";
+import { FakeOmp } from "./providers/omp/test-utils/fake-omp.js";
 import type {
   AgentClient,
   AgentMode,
@@ -840,6 +842,49 @@ function createAgentMcpServer(options: Parameters<typeof createAgentMcpServerWit
     ...options,
   });
 }
+
+describe("bundled Paseo skill", () => {
+  it("documents only advertised create_workspace input names", async () => {
+    const server = await createAgentMcpServer({
+      agentManager: new BoundaryAgentManagerFake() as AgentManager,
+      agentStorage: new BoundaryAgentStorageFake() as AgentStorage,
+      providerSnapshotManager:
+        new BoundaryProviderSnapshotManagerFake() as unknown as ProviderSnapshotManager,
+      logger: createTestLogger(),
+    });
+    const client = await connectInMemoryMcpClient(server);
+
+    try {
+      const skill = await readFile(
+        new URL("../../../../../skills/paseo/SKILL.md", import.meta.url),
+        "utf8",
+      );
+      const paragraph = skill.split("\n").find((line) => line.startsWith("**`create_workspace`**"));
+      expect(paragraph).toBeTypeOf("string");
+      // The final sentence describes output, rather than tool inputs.
+      const inputGuidance = paragraph!.split("Returns ")[0]!;
+      const documentedInputs = [...inputGuidance.matchAll(/`([a-zA-Z][a-zA-Z0-9]*)`/g)].map(
+        (match) => match[1]!,
+      );
+      expect(documentedInputs.length).toBeGreaterThan(0);
+      const { tools } = await client.listTools();
+      const tool = tools.find((entry) => entry.name === "create_workspace")!;
+      const properties = tool.inputSchema.properties!;
+      const advertisedNamesAndValues = new Set([
+        ...Object.keys(properties),
+        ...Object.values(properties).flatMap((property) =>
+          typeof property === "object" && property !== null && Array.isArray(property.enum)
+            ? property.enum
+            : [],
+        ),
+      ]);
+      expect(documentedInputs.filter((name) => !advertisedNamesAndValues.has(name))).toEqual([]);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+});
 
 describe("browser MCP tools", () => {
   const logger = createTestLogger();
@@ -3856,8 +3901,7 @@ class HeldTurnAgentSession implements AgentSession {
   }
 
   tryHandleOutOfBand(prompt: AgentPromptInput) {
-    const text = typeof prompt === "string" ? (parseAgentMessage(prompt)?.text ?? prompt) : null;
-    return text === "/side-command" ? { run: async () => {} } : null;
+    return prompt === "/side-command" ? { run: async () => {} } : null;
   }
 
   async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
@@ -4551,6 +4595,180 @@ describe("send_agent_prompt MCP tool", () => {
         expect(parentPrompts[0]).toContain(child.id);
         expect(parentPrompts[0]).toContain("finished");
       });
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
+});
+
+describe("send_agent_prompt MCP tool to an OMP child", () => {
+  const logger = createTestLogger();
+  const existingCwd = process.cwd();
+
+  async function setupOmpChild() {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-omp-child-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const parentClient = new HeldTurnAgentClient("claude", false);
+    const omp = new FakeOmp();
+    const agentManager = new AgentManager({
+      clients: {
+        claude: parentClient,
+        omp: new OmpAgentClient({
+          logger,
+          runtime: omp,
+          noTurnScheduler: { waitForSettle: async () => {} },
+          runtimeSettings: { command: { mode: "replace", argv: [process.execPath] } },
+        }),
+      },
+      registry: storage,
+      logger,
+    });
+    const parent = await agentManager.createAgent(
+      { provider: "claude", cwd: existingCwd },
+      undefined,
+      { workspaceId: "wks_parent" },
+    );
+    const child = await agentManager.createAgent(
+      { provider: "omp", cwd: existingCwd, title: "OMP child" },
+      undefined,
+      { workspaceId: "wks_parent" },
+    );
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage: storage,
+      callerAgentId: parent.id,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
+    return {
+      agentManager,
+      storage,
+      workdir,
+      parentClient,
+      ompSession: omp.latestSession(),
+      childId: child.id,
+      tool: registeredTool(server, "send_agent_prompt"),
+    };
+  }
+
+  async function expectOneFinishNotification(
+    agentManager: AgentManager,
+    parentClient: HeldTurnAgentClient,
+    childId: string,
+  ) {
+    await vi.waitFor(() => expect(agentManager.getAgent(childId)?.lifecycle).toBe("idle"));
+    await vi.waitFor(() => {
+      expect(parentClient.sessions[0]!.prompts).toHaveLength(1);
+      expect(parentClient.sessions[0]!.prompts[0]).toContain(
+        `Agent ${childId} (OMP child) finished.`,
+      );
+    });
+  }
+
+  it.each([
+    { command: "follow-up", streamingBehavior: "followUp" },
+    { command: "steer", streamingBehavior: "steer" },
+  ] as const)(
+    "delivers /$command into a turn OMP started on its own, without aborting it",
+    async ({ command, streamingBehavior }) => {
+      const { agentManager, storage, workdir, parentClient, ompSession, childId, tool } =
+        await setupOmpChild();
+      try {
+        ompSession.beginTurn();
+        ompSession.streamAssistantText("background job finished, working on it");
+        await vi.waitFor(() => {
+          expect(agentManager.getAgent(childId)?.activeTurnId).toMatch(/^autonomous-/);
+        });
+
+        const response = await invokeToolWithParsedInput(tool, {
+          agentId: childId,
+          prompt: `/${command} then summarize the logs`,
+        });
+
+        expect(response.structuredContent).toMatchObject({
+          success: true,
+          disposition: "out_of_band",
+          status: "running",
+        });
+        await vi.waitFor(() => {
+          expect(ompSession.prompts).toEqual([
+            { message: "then summarize the logs", imageCount: 0, streamingBehavior },
+          ]);
+        });
+        expect(ompSession.abortRequested).toBe(false);
+        expect(agentManager.getAgent(childId)?.lifecycle).toBe("running");
+
+        ompSession.finishTurn();
+        await expectOneFinishNotification(agentManager, parentClient, childId);
+      } finally {
+        await removeAgentStateDir(agentManager, storage, workdir);
+      }
+    },
+  );
+
+  it.each(["before ack", "after ack"])(
+    "reports an idle follow-up rejected %s and notifies its parent",
+    async (order) => {
+      const { agentManager, storage, workdir, parentClient, ompSession, childId, tool } =
+        await setupOmpChild();
+      try {
+        ompSession.promptAck = { requestId: "follow-up-rejected" };
+        const rejection = {
+          type: "prompt_result",
+          id: "follow-up-rejected",
+          agentInvoked: false,
+          status: "error",
+          sessionSettled: true,
+          error: { message: "Provider rejected the follow-up", retryable: false },
+        } as const;
+        const promptStarted = ompSession.nextPrompt();
+        const response = invokeToolWithParsedInput(tool, {
+          agentId: childId,
+          prompt: "/follow-up check the build",
+        });
+        await promptStarted;
+        if (order === "before ack") ompSession.emit(rejection);
+        await response;
+        if (order === "after ack") ompSession.emit(rejection);
+        await vi.waitFor(() => expect(agentManager.getAgent(childId)?.lifecycle).toBe("error"));
+        expect(agentManager.getAgent(childId)?.lastError).toContain(
+          "Provider rejected the follow-up",
+        );
+        await vi.waitFor(() => expect(parentClient.sessions[0]!.prompts).toHaveLength(1));
+        expect(parentClient.sessions[0]!.prompts[0]).toContain(
+          `Agent ${childId} (OMP child) errored.`,
+        );
+      } finally {
+        await removeAgentStateDir(agentManager, storage, workdir);
+      }
+    },
+  );
+
+  it("lets an idle child start a run with the follow-up", async () => {
+    const { agentManager, storage, workdir, parentClient, ompSession, childId, tool } =
+      await setupOmpChild();
+    try {
+      const response = await invokeToolWithParsedInput(tool, {
+        agentId: childId,
+        prompt: "/follow-up check the build",
+      });
+
+      expect(response.structuredContent).toMatchObject({
+        success: true,
+        disposition: "out_of_band",
+        status: "running",
+      });
+      await vi.waitFor(() => {
+        expect(ompSession.prompts).toEqual([
+          { message: "check the build", imageCount: 0, streamingBehavior: "followUp" },
+        ]);
+      });
+
+      ompSession.beginTurn();
+      ompSession.streamAssistantText("Build is green");
+      await vi.waitFor(() => expect(agentManager.getAgent(childId)?.lifecycle).toBe("running"));
+      ompSession.finishTurn();
+      await expectOneFinishNotification(agentManager, parentClient, childId);
     } finally {
       await removeAgentStateDir(agentManager, storage, workdir);
     }
