@@ -656,6 +656,7 @@ export const ko: TranslationResources = {
         close: "닫기",
         renameTerminal: "터미널 이름 변경",
         renameAgent: "에이전트 이름 변경",
+        aiRenameAgent: "AI로 이름 변경",
       },
       actions: {
         newTab: "새 탭",
@@ -694,6 +695,8 @@ export const ko: TranslationResources = {
         reloadingAgent: "에이전트 다시 로드 중...",
         reloadedAgent: "에이전트를 다시 로드했습니다",
         failedToReloadAgent: "에이전트를 다시 로드하지 못했습니다",
+        failedToRetitleAgent: "에이전트 이름을 변경하지 못했습니다",
+        updateHostToRetitleAgent: "AI로 이름을 변경하려면 호스트를 업데이트하세요.",
         failedToCloseAgent: "에이전트를 닫지 못했습니다",
       },
       confirmations: {

@@ -659,6 +659,7 @@ export const ptBR: TranslationResources = {
         close: "Fechar",
         renameTerminal: "Renomear terminal",
         renameAgent: "Renomear agente",
+        aiRenameAgent: "Renomear com IA",
       },
       actions: {
         newTab: "Nova aba",
@@ -697,6 +698,8 @@ export const ptBR: TranslationResources = {
         reloadingAgent: "Recarregando agente...",
         reloadedAgent: "Agente recarregado",
         failedToReloadAgent: "Falha ao recarregar agente",
+        failedToRetitleAgent: "Falha ao renomear agente",
+        updateHostToRetitleAgent: "Atualize o host para renomear com IA.",
         failedToCloseAgent: "Falha ao fechar agente",
       },
       confirmations: {

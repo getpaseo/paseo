@@ -3574,6 +3574,8 @@ export const ServerInfoStatusPayloadSchema = z
       .object({
         // COMPAT(agentRequestReceipts): added in v0.8.0; remove gate after 2027-03-05.
         agentRequestReceipts: z.boolean().optional(),
+        // COMPAT(agentRetitle): added in v0.11.2, remove gate after 2027-04-16.
+        agentRetitle: z.boolean().optional(),
         // COMPAT(workspaceRequestReceipts): added in v0.8.0; remove gate after 2027-03-07.
         workspaceRequestReceipts: z.boolean().optional(),
         creationLifecycle: z.boolean().optional(),

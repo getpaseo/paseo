@@ -1793,6 +1793,8 @@ export class VoiceAssistantWebSocketServer {
         usageSources: true,
         ownedSubscriptions: true,
         agentRequestReceipts: true,
+        // COMPAT(agentRetitle): added in v0.11.2, remove gate after 2027-04-16.
+        agentRetitle: true,
         workspaceRequestReceipts: true,
         creationLifecycle: true,
         hubAgentRpc: true,

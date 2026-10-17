@@ -316,6 +316,28 @@ describe("agent detach RPC", () => {
     expect(parsed.type).toBe("agent.detach.response");
   });
 
+  test("parses the agentRetitle server feature gate", () => {
+    const parsed = parseServerInfoStatusPayload({
+      status: "server_info",
+      serverId: "srv-test",
+      features: {
+        agentRetitle: true,
+      },
+    });
+
+    if (!parsed) {
+      throw new Error("Expected server info payload to parse");
+    }
+    expect(parsed.features?.agentRetitle).toBe(true);
+    expect(
+      parseServerInfoStatusPayload({
+        status: "server_info",
+        serverId: "old-host",
+        features: {},
+      })?.features?.agentRetitle,
+    ).toBeUndefined();
+  });
+
   test("parses the agentDetach server feature gate", () => {
     const parsed = parseServerInfoStatusPayload({
       status: "server_info",
