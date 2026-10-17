@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronRight, CircleAlert } from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { getStatusBucketLabel } from "@/hooks/sidebar-status-view-model";
-import { density, densityIconBox, densityIconProps } from "@/styles/density";
+import { densityIconBox, densityIconProps } from "@/styles/density";
 import type { Theme } from "@/styles/theme";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import {
@@ -24,6 +24,9 @@ import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 
 // Every surfaced status shares one badge shell, so the badge never changes size or position
 // between states. Only the thing inside it changes.
+// Matches the workspace title's lineHeight (sidebar-workspace-row-content's
+// workspaceBranchText) so the icon centers on the title rather than floating above it.
+const LEADING_SLOT_HEIGHT = 20;
 const STATUS_BADGE_SIZE = 12;
 // How far the badge overhangs the icon's bottom-right corner. Well short of half the badge:
 // centered on the corner it reads as hanging off the icon rather than sitting on it, and the
@@ -273,10 +276,10 @@ const styles = StyleSheet.create((theme) => {
     // The slot is as tall as the title's line box, not as tall as the icon, and centers the
     // icon inside it. Rows lay their leading visual out with alignItems:flex-start, so a slot
     // only as tall as the icon puts it above the title and the kebab — which is why the
-    // workspace status indicator shares the same `rowLineHeight`.
+    // workspace status indicator is as tall as `LEADING_SLOT_HEIGHT`.
     projectLeadingVisualSlot: {
       width: densityIconBox("md"),
-      height: density.rowLineHeight,
+      height: LEADING_SLOT_HEIGHT,
       flexShrink: 0,
       alignItems: "center",
       justifyContent: "center",

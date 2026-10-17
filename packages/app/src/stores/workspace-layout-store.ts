@@ -59,7 +59,12 @@ import {
   type WorkspaceTabSnapshot,
   type WorkspaceLayout,
 } from "@/stores/workspace-layout-actions";
-import { normalizeWorkspaceTabTarget } from "@/workspace-tabs/identity";
+import {
+  buildDeterministicWorkspaceTabId,
+  normalizeWorkspaceTabTarget,
+} from "@/workspace-tabs/identity";
+import { isSheetTabModified, resolveCompactSheetPolicy } from "@/workspace-tabs/compact-sheet";
+import { panelResourceKey, type CompactSheetPolicy } from "@/panels/panel-manifest";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 import { panelTargetSupportsHostForWorkspaceKey } from "@/plugins/workspace-panels/locations";
 
@@ -105,7 +110,29 @@ export interface OpenWorkspaceTabInput {
   state?: JsonValue;
 }
 
+/**
+ * How the app shell lays out a workspace: compact (one tab at a time, plus sheets), a single
+ * wide pane (touch tablets, which cannot render splits), or split panes.
+ */
+export type WorkspaceLayoutMode = "compact" | "single-pane" | "split-panes";
+
+/** A tab shown in a sheet over the compact workspace instead of in a pane. */
+export interface SheetTab {
+  tab: WorkspaceTab;
+  policy: CompactSheetPolicy;
+  parentTabId: string | null;
+}
+
 interface WorkspaceLayoutStore {
+  /** Published once by the app shell; callers never pass a form factor to open a tab. */
+  layoutMode: WorkspaceLayoutMode;
+  /**
+   * Each workspace's sheet tabs in the order they opened, so the last is the sheet on top. The
+   * list never reorders: the stack belongs to the sheet primitive, and moving a sheet would remount
+   * its panel. A workspace with no sheet has no entry. Not persisted: a reload returns to the tab
+   * strip.
+   */
+  sheetsByWorkspace: Record<string, readonly SheetTab[]>;
   layoutByWorkspace: Record<string, WorkspaceLayout>;
   splitSizesByWorkspace: Record<string, Record<string, number[]>>;
   explorerSidebarWidthByWorkspace: Record<string, number>;
@@ -116,7 +143,18 @@ interface WorkspaceLayoutStore {
   sidePaneIdByWorkspace: Record<string, string | null>;
   /** Workspaces where PR detection already added its tab once; a closed tab never returns. */
   pullRequestTabAutoOpenedByWorkspace: Record<string, true>;
+  /**
+   * The one entry point for showing a target. On compact layouts a target whose panel declares
+   * `compactSheet` opens in a sheet; the returned tab id is the sheet tab's id.
+   */
   openTab: (input: OpenWorkspaceTabInput) => string | null;
+  /** Whether `openTab` with this input would show the target in a sheet. */
+  opensInSheet: (
+    input: Pick<OpenWorkspaceTabInput, "workspaceKey" | "target" | "intent">,
+  ) => boolean;
+  setLayoutMode: (mode: WorkspaceLayoutMode) => void;
+  /** Moves a sheet's tab, keeping its tab id, into the focused pane. */
+  openSheetAsTab: (workspaceKey: string, tabId: string) => string | null;
   /** Placement resolves lazily so an already acknowledged workspace never creates a side pane. */
   autoOpenPullRequestTab: (
     workspaceKey: string,
@@ -472,6 +510,17 @@ export function selectExplorerSidebarPaneId(
   return resolveExplorerSidebarPaneId(layout, state.explorerSidebarPaneIdByWorkspace[workspaceKey]);
 }
 
+/** A workspace's panes give up keyboard focus while focus is parked or the sheet covers them. */
+export function selectPaneFocusSuspended(
+  state: Pick<WorkspaceLayoutStore, "focusRestorationByWorkspace" | "sheetsByWorkspace">,
+  workspaceKey: string,
+): boolean {
+  return (
+    Boolean(state.focusRestorationByWorkspace[workspaceKey]?.restorePaneId) ||
+    workspaceKey in state.sheetsByWorkspace
+  );
+}
+
 /** Whether the Explorer sidebar pane is currently on screen. */
 export function selectIsExplorerSidebarVisible(
   state: ExplorerSidebarState,
@@ -637,6 +686,245 @@ function attachParentTab(input: {
   });
 }
 
+const NO_SHEETS: readonly SheetTab[] = [];
+
+function getSheets(
+  state: Pick<WorkspaceLayoutStore, "sheetsByWorkspace">,
+  workspaceKey: string,
+): readonly SheetTab[] {
+  return state.sheetsByWorkspace[workspaceKey] ?? NO_SHEETS;
+}
+
+function findSheet(
+  state: Pick<WorkspaceLayoutStore, "sheetsByWorkspace">,
+  workspaceKey: string,
+  tabId: string,
+): SheetTab | undefined {
+  return getSheets(state, workspaceKey).find((sheet) => sheet.tab.tabId === tabId);
+}
+
+function withSheets(
+  state: Pick<WorkspaceLayoutStore, "sheetsByWorkspace">,
+  workspaceKey: string,
+  sheets: readonly SheetTab[],
+): Pick<WorkspaceLayoutStore, "sheetsByWorkspace"> {
+  if (sheets.length > 0) {
+    return { sheetsByWorkspace: { ...state.sheetsByWorkspace, [workspaceKey]: sheets } };
+  }
+  if (!(workspaceKey in state.sheetsByWorkspace)) {
+    return { sheetsByWorkspace: state.sheetsByWorkspace };
+  }
+  const { [workspaceKey]: _removed, ...sheetsByWorkspace } = state.sheetsByWorkspace;
+  return { sheetsByWorkspace };
+}
+
+function withoutSheet(
+  state: Pick<WorkspaceLayoutStore, "sheetsByWorkspace">,
+  workspaceKey: string,
+  tabId: string,
+): Pick<WorkspaceLayoutStore, "sheetsByWorkspace"> {
+  return withSheets(
+    state,
+    workspaceKey,
+    getSheets(state, workspaceKey).filter((sheet) => sheet.tab.tabId !== tabId),
+  );
+}
+
+function withSheetTab(
+  state: Pick<WorkspaceLayoutStore, "sheetsByWorkspace">,
+  workspaceKey: string,
+  tabId: string,
+  update: (sheet: SheetTab) => SheetTab,
+): Pick<WorkspaceLayoutStore, "sheetsByWorkspace"> {
+  return withSheets(
+    state,
+    workspaceKey,
+    getSheets(state, workspaceKey).map((sheet) =>
+      sheet.tab.tabId === tabId ? update(sheet) : sheet,
+    ),
+  );
+}
+
+function isTargetOpenAsTab(layout: WorkspaceLayout | undefined, target: WorkspaceTabTarget) {
+  if (!layout) return false;
+  const resourceKey = panelResourceKey(target);
+  return collectAllTabs(layout.root).some((tab) => panelResourceKey(tab.target) === resourceKey);
+}
+
+function resolveSheetPolicy(
+  state: Pick<WorkspaceLayoutStore, "layoutMode" | "layoutByWorkspace">,
+  workspaceKey: string,
+  target: WorkspaceTabTarget,
+  intent: WorkspaceTabOpenIntent,
+): CompactSheetPolicy | null {
+  if (state.layoutMode !== "compact" || intent === "background") return null;
+  if (intent === "reveal" && isTargetOpenAsTab(state.layoutByWorkspace[workspaceKey], target)) {
+    return null;
+  }
+  return resolveCompactSheetPolicy(workspaceKey, target);
+}
+
+/**
+ * The parent a newly opened tab links to. A sheet tab is not in the layout, so a target opened
+ * from inside a sheet inherits that sheet's own parent instead.
+ */
+function resolveOpenParentTabId(
+  state: Pick<WorkspaceLayoutStore, "sheetsByWorkspace">,
+  workspaceKey: string,
+  parentTabId: string | undefined,
+): string | null {
+  if (!parentTabId) return null;
+  return findSheet(state, workspaceKey, parentTabId)?.parentTabId ?? parentTabId;
+}
+
+function placeTargetInSheet(input: {
+  /** The sheet whose tab the target keeps, if any. */
+  kept: SheetTab | undefined;
+  target: WorkspaceTabTarget;
+  intent: WorkspaceTabOpenIntent;
+  policy: CompactSheetPolicy;
+  parentTabId: string | null;
+  state: JsonValue | undefined;
+}): SheetTab {
+  if (input.kept) {
+    return { ...input.kept, tab: { ...input.kept.tab, target: input.target } };
+  }
+  return {
+    tab: {
+      tabId:
+        input.intent === "reveal"
+          ? buildDeterministicWorkspaceTabId(input.target)
+          : createWorkspaceTabInstanceId(),
+      target: input.target,
+      createdAt: Date.now(),
+      ...(input.state !== undefined ? { state: input.state } : {}),
+    },
+    policy: input.policy,
+    parentTabId: input.parentTabId,
+  };
+}
+
+/**
+ * Moves one sheet's tab into the workspace's focused pane, keeping its tab id and state. The
+ * other sheets stay; callers that bring the tab to the front dismiss them.
+ */
+function promoteSheetToTab(
+  state: WorkspaceLayoutStore,
+  workspaceKey: string,
+  tabId: string,
+): { tabId: string; patch: Partial<WorkspaceLayoutStore> } | null {
+  const sheet = findSheet(state, workspaceKey, tabId);
+  if (!sheet) return null;
+  const { tab } = sheet;
+  const placement = getOpenTabPlacement(state, workspaceKey, tab.target, FOCUSED_PANE_PLACEMENT);
+  const input = {
+    ...placement,
+    target: tab.target,
+    now: tab.createdAt,
+    createTabId: () => tab.tabId,
+    state: tab.state,
+  };
+  const result = isTargetOpenAsTab(placement.layout, tab.target)
+    ? revealTargetInLayout(input)
+    : createTabInLayout(input);
+  if (!result) return null;
+  const nextLayout = attachParentTab({
+    layout: keepWorkspaceFocusOutOfExplorerSidebar(
+      result.layout,
+      placement.explorerSidebarPaneId,
+      placement.layout.focusedPaneId,
+    ),
+    childTabId: result.tabId,
+    parentTabId: sheet.parentTabId,
+  });
+  return {
+    tabId: result.tabId,
+    patch: {
+      ...withoutSheet(state, workspaceKey, tab.tabId),
+      ...withoutFocusRestoration(state, workspaceKey),
+      hiddenAgentIdsByWorkspace:
+        tab.target.kind === "agent"
+          ? removeAgentIdFromWorkspaceSet(
+              state.hiddenAgentIdsByWorkspace,
+              workspaceKey,
+              tab.target.agentId,
+            )
+          : state.hiddenAgentIdsByWorkspace,
+      layoutByWorkspace: { ...state.layoutByWorkspace, [workspaceKey]: nextLayout },
+    },
+  };
+}
+
+/**
+ * A sheet holding unsaved work is never implicitly displaced: moving its tab would remount the
+ * panel and drop the work. Only the explicit, guarded close removes it.
+ */
+function sheetHoldsUnsavedWork(workspaceKey: string, sheet: SheetTab): boolean {
+  return isSheetTabModified(workspaceKey, sheet.tab.tabId);
+}
+
+/**
+ * Where an open lands among the sheet tabs, or null when it opens as a tab. A new target goes on
+ * top. A reveal of a resource a sheet already shows keeps that sheet's tab and uncovers it by
+ * closing the sheets above it, except ones holding unsaved work, which stay where they are.
+ */
+function resolveSheetPlacement(
+  state: WorkspaceLayoutStore,
+  workspaceKey: string,
+  target: WorkspaceTabTarget,
+  intent: WorkspaceTabOpenIntent,
+): { policy: CompactSheetPolicy; keptIndex: number | null } | null {
+  const policy = resolveSheetPolicy(state, workspaceKey, target, intent);
+  if (!policy) return null;
+  if (intent !== "reveal") return { policy, keptIndex: null };
+  const sheets = getSheets(state, workspaceKey);
+  const resourceKey = panelResourceKey(target);
+  const index = sheets.findIndex((sheet) => panelResourceKey(sheet.tab.target) === resourceKey);
+  return { policy, keptIndex: index === -1 ? null : index };
+}
+
+/** Closes the sheets because navigation moved on underneath them, except ones with unsaved work. */
+function dismissSheets(
+  state: Pick<WorkspaceLayoutStore, "sheetsByWorkspace">,
+  workspaceKey: string,
+): Pick<WorkspaceLayoutStore, "sheetsByWorkspace"> {
+  return withSheets(
+    state,
+    workspaceKey,
+    getSheets(state, workspaceKey).filter((sheet) => sheetHoldsUnsavedWork(workspaceKey, sheet)),
+  );
+}
+
+/** Moves a sheet's tab to the front of the tab strip, dismissing the sheets that would cover it. */
+function openSheetTabInFront(
+  state: WorkspaceLayoutStore,
+  workspaceKey: string,
+  tabId: string,
+): { tabId: string; patch: Partial<WorkspaceLayoutStore> } | null {
+  const promoted = promoteSheetToTab(state, workspaceKey, tabId);
+  if (!promoted) return null;
+  const next = { ...state, ...promoted.patch };
+  return {
+    tabId: promoted.tabId,
+    patch: { ...promoted.patch, ...dismissSheets(next, workspaceKey) },
+  };
+}
+
+/**
+ * A sheet agent closes once the workspace no longer has it (archived or gone), like its tab would,
+ * and once it stops being a subagent: as a root agent, reconcile gives it its own tab, and the sheet
+ * would hold a second tab with the same id.
+ */
+function sheetAgentNoLongerFits(
+  workspaceKey: string,
+  sheet: SheetTab,
+  snapshot: WorkspaceTabSnapshot,
+): boolean {
+  if (sheet.tab.target.kind !== "agent" || !snapshot.agentsHydrated) return false;
+  if (!new Set(snapshot.activeAgentIds).has(sheet.tab.target.agentId)) return true;
+  return resolveCompactSheetPolicy(workspaceKey, sheet.tab.target) === null;
+}
+
 /**
  * Splits an Explorer sidebar out of the pane the user is in. Only reached by layouts saved
  * before the Explorer became part of the default tree; new ones are born with it.
@@ -676,6 +964,8 @@ export function createWorkspaceLayoutStore(
           }
           return tabId;
         },
+        layoutMode: "split-panes",
+        sheetsByWorkspace: {},
         layoutByWorkspace: {},
         splitSizesByWorkspace: {},
         explorerSidebarWidthByWorkspace: {},
@@ -690,6 +980,41 @@ export function createWorkspaceLayoutStore(
           const normalizedTarget = normalizeWorkspaceTabTarget(input.target);
           if (!normalizedWorkspaceKey || !normalizedTarget) {
             return null;
+          }
+          const parentTabId = resolveOpenParentTabId(
+            get(),
+            normalizedWorkspaceKey,
+            input.parentTabId,
+          );
+          const sheetPlacement = resolveSheetPlacement(
+            get(),
+            normalizedWorkspaceKey,
+            normalizedTarget,
+            input.intent,
+          );
+          if (sheetPlacement) {
+            const sheets = getSheets(get(), normalizedWorkspaceKey);
+            const { keptIndex } = sheetPlacement;
+            const sheet = placeTargetInSheet({
+              kept: keptIndex === null ? undefined : sheets[keptIndex],
+              target: normalizedTarget,
+              intent: input.intent,
+              policy: sheetPlacement.policy,
+              parentTabId,
+              state: input.state,
+            });
+            const next =
+              keptIndex === null
+                ? [...sheets, sheet]
+                : sheets.flatMap((existing, index) => {
+                    if (index === keptIndex) return [sheet];
+                    if (index < keptIndex) return [existing];
+                    return sheetHoldsUnsavedWork(normalizedWorkspaceKey, existing)
+                      ? [existing]
+                      : [];
+                  });
+            set((state) => withSheets(state, normalizedWorkspaceKey, next));
+            return sheet.tab.tabId;
           }
           const placement = getOpenTabPlacement(
             get(),
@@ -734,6 +1059,8 @@ export function createWorkspaceLayoutStore(
           const shouldPinAgent = input.pin === true && normalizedTarget.kind === "agent";
           set((state) => ({
             ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+            // A tab brought to the front dismisses the sheet over it.
+            ...(input.intent === "background" ? {} : dismissSheets(state, normalizedWorkspaceKey)),
             hiddenAgentIdsByWorkspace:
               normalizedTarget.kind !== "agent"
                 ? state.hiddenAgentIdsByWorkspace
@@ -751,16 +1078,52 @@ export function createWorkspaceLayoutStore(
               : state.pinnedAgentIdsByWorkspace,
             layoutByWorkspace: {
               ...state.layoutByWorkspace,
-              [normalizedWorkspaceKey]: input.parentTabId
+              [normalizedWorkspaceKey]: parentTabId
                 ? attachParentTab({
                     layout: nextLayout,
                     childTabId: result.tabId,
-                    parentTabId: input.parentTabId,
+                    parentTabId,
                   })
                 : nextLayout,
             },
           }));
           return result.tabId;
+        },
+        opensInSheet: (input) => {
+          const normalizedWorkspaceKey = trimNonEmpty(input.workspaceKey);
+          const normalizedTarget = normalizeWorkspaceTabTarget(input.target);
+          if (!normalizedWorkspaceKey || !normalizedTarget) return false;
+          return (
+            resolveSheetPlacement(get(), normalizedWorkspaceKey, normalizedTarget, input.intent) !==
+            null
+          );
+        },
+        setLayoutMode: (mode) => {
+          set((state) => {
+            if (state.layoutMode === mode) return state;
+            if (mode === "compact") return { layoutMode: mode };
+            // Widening keeps whatever the user had open in sheets as ordinary tabs.
+            const next: WorkspaceLayoutStore = { ...state, layoutMode: mode };
+            for (const [workspaceKey, sheets] of Object.entries(state.sheetsByWorkspace)) {
+              for (const sheet of sheets) {
+                const promoted = promoteSheetToTab(next, workspaceKey, sheet.tab.tabId);
+                Object.assign(
+                  next,
+                  promoted?.patch ?? withoutSheet(next, workspaceKey, sheet.tab.tabId),
+                );
+              }
+            }
+            return next;
+          });
+        },
+        openSheetAsTab: (workspaceKey, tabId) => {
+          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+          const normalizedTabId = trimNonEmpty(tabId);
+          if (!normalizedWorkspaceKey || !normalizedTabId) return null;
+          const promoted = openSheetTabInFront(get(), normalizedWorkspaceKey, normalizedTabId);
+          if (!promoted) return null;
+          set(promoted.patch);
+          return promoted.tabId;
         },
         showExplorerSidebar: (workspaceKey) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
@@ -881,6 +1244,9 @@ export function createWorkspaceLayoutStore(
           }
 
           set((state) => {
+            if (findSheet(state, normalizedWorkspaceKey, normalizedTabId)) {
+              return withoutSheet(state, normalizedWorkspaceKey, normalizedTabId);
+            }
             const layout = getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey);
             const explorerSidebarPaneId = resolveExplorerSidebarPaneId(
               layout,
@@ -988,6 +1354,8 @@ export function createWorkspaceLayoutStore(
 
             return {
               ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+              // Choosing a tab dismisses the sheets that cover it.
+              ...dismissSheets(state, normalizedWorkspaceKey),
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
                 [normalizedWorkspaceKey]: nextLayout,
@@ -1011,6 +1379,8 @@ export function createWorkspaceLayoutStore(
             });
             return nextLayout
               ? {
+                  // Choosing a tab dismisses the sheets that cover it.
+                  ...dismissSheets(state, normalizedWorkspaceKey),
                   layoutByWorkspace: {
                     ...state.layoutByWorkspace,
                     [normalizedWorkspaceKey]: nextLayout,
@@ -1024,6 +1394,29 @@ export function createWorkspaceLayoutStore(
           const normalizedTabId = trimNonEmpty(tabId);
           const normalizedTarget = normalizeWorkspaceTabTarget(target);
           if (!normalizedWorkspaceKey || !normalizedTabId || !normalizedTarget) return null;
+          if (findSheet(get(), normalizedWorkspaceKey, normalizedTabId)) {
+            const policy = resolveCompactSheetPolicy(normalizedWorkspaceKey, normalizedTarget);
+            const next: WorkspaceLayoutStore = {
+              ...get(),
+              ...withSheetTab(get(), normalizedWorkspaceKey, normalizedTabId, (sheet) => ({
+                ...sheet,
+                policy: policy ?? sheet.policy,
+                tab: {
+                  ...sheet.tab,
+                  target: normalizedTarget,
+                  ...(tabState !== undefined ? { state: tabState } : {}),
+                },
+              })),
+            };
+            if (policy) {
+              set({ sheetsByWorkspace: next.sheetsByWorkspace });
+              return normalizedTabId;
+            }
+            // A target sheets do not host becomes the tab it would have opened as.
+            const promoted = openSheetTabInFront(next, normalizedWorkspaceKey, normalizedTabId);
+            set(promoted?.patch ?? withoutSheet(next, normalizedWorkspaceKey, normalizedTabId));
+            return promoted?.tabId ?? null;
+          }
           const result = replaceTabTargetInLayout({
             layout: getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey),
             tabId: normalizedTabId,
@@ -1054,6 +1447,15 @@ export function createWorkspaceLayoutStore(
           const normalizedTabId = trimNonEmpty(tabId);
           if (!normalizedWorkspaceKey || !normalizedTabId) return;
           set((state) => {
+            if (findSheet(state, normalizedWorkspaceKey, normalizedTabId)) {
+              return withSheetTab(state, normalizedWorkspaceKey, normalizedTabId, (sheet) => {
+                const { state: _previous, ...tab } = sheet.tab;
+                return {
+                  ...sheet,
+                  tab: tabState === undefined ? tab : { ...tab, state: tabState },
+                };
+              });
+            }
             const layout = setTabStateInLayout({
               layout: getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey),
               tabId: normalizedTabId,
@@ -1148,15 +1550,22 @@ export function createWorkspaceLayoutStore(
                 );
               }
             }
+            const sheets = getSheets(state, normalizedWorkspaceKey);
+            const fittingSheets = sheets.filter(
+              (sheet) => !sheetAgentNoLongerFits(normalizedWorkspaceKey, sheet, snapshot),
+            );
+            const sheetAgentGone = fittingSheets.length !== sheets.length;
             if (
               state.layoutByWorkspace[normalizedWorkspaceKey] &&
               nextLayout === rawLayout &&
-              pinnedAgentIdsByWorkspace === state.pinnedAgentIdsByWorkspace
+              pinnedAgentIdsByWorkspace === state.pinnedAgentIdsByWorkspace &&
+              !sheetAgentGone
             ) {
               return state;
             }
 
             return {
+              ...(sheetAgentGone ? withSheets(state, normalizedWorkspaceKey, fittingSheets) : {}),
               pinnedAgentIdsByWorkspace,
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
@@ -1661,7 +2070,8 @@ export function createWorkspaceLayoutStore(
               normalizedWorkspaceKey in state.focusRestorationByWorkspace ||
               normalizedWorkspaceKey in state.explorerSidebarPaneIdByWorkspace ||
               normalizedWorkspaceKey in state.sidePaneIdByWorkspace ||
-              normalizedWorkspaceKey in state.pullRequestTabAutoOpenedByWorkspace;
+              normalizedWorkspaceKey in state.pullRequestTabAutoOpenedByWorkspace ||
+              normalizedWorkspaceKey in state.sheetsByWorkspace;
             if (!hasAny) {
               return state;
             }
@@ -1690,6 +2100,7 @@ export function createWorkspaceLayoutStore(
             const { [normalizedWorkspaceKey]: _sidePane, ...sidePaneIdByWorkspace } =
               state.sidePaneIdByWorkspace;
             return {
+              ...withSheets(state, normalizedWorkspaceKey, NO_SHEETS),
               pullRequestTabAutoOpenedByWorkspace,
               layoutByWorkspace,
               splitSizesByWorkspace,
@@ -1795,10 +2206,10 @@ export function createWorkspaceLayoutStore(
 export const useWorkspaceLayoutStore = createWorkspaceLayoutStore();
 
 /**
- * The agent tabs that exist right now, across every workspace of this host, independently
- * of which workspace views are mounted. Timeline sync uses this to release a chat when its
- * tab closes. It is not a subscription source: this layout is restored from disk at launch,
- * so subscribing to it would resume every agent the user has ever opened.
+ * The agent tabs that exist right now, including sheet tabs, across every workspace of this host,
+ * independently of which workspace views are mounted. Timeline sync uses this to release a chat
+ * when its tab closes. It is not a subscription source: this layout is restored from disk at
+ * launch, so subscribing to it would resume every agent the user has ever opened.
  */
 export function observeOpenWorkspaceAgentIds(
   serverId: string,
@@ -1806,11 +2217,21 @@ export function observeOpenWorkspaceAgentIds(
   store = useWorkspaceLayoutStore,
 ): () => void {
   let previous: string[] | undefined;
-  const publish = (state: Pick<WorkspaceLayoutStore, "layoutByWorkspace">) => {
+  const publish = (
+    state: Pick<WorkspaceLayoutStore, "layoutByWorkspace" | "sheetsByWorkspace">,
+  ) => {
     const ids = new Set<string>();
-    for (const [workspaceKey, layout] of Object.entries(state.layoutByWorkspace)) {
+    const tabsByWorkspace = [
+      ...Object.entries(state.layoutByWorkspace).map(
+        ([workspaceKey, layout]) => [workspaceKey, collectAllTabs(layout.root)] as const,
+      ),
+      ...Object.entries(state.sheetsByWorkspace).map(
+        ([workspaceKey, sheets]) => [workspaceKey, sheets.map((sheet) => sheet.tab)] as const,
+      ),
+    ];
+    for (const [workspaceKey, tabs] of tabsByWorkspace) {
       if (!workspaceKey.startsWith(`${serverId}:`)) continue;
-      for (const tab of collectAllTabs(layout.root)) {
+      for (const tab of tabs) {
         if (tab.target.kind === "agent") ids.add(tab.target.agentId);
       }
     }
@@ -1821,7 +2242,12 @@ export function observeOpenWorkspaceAgentIds(
     listener(next);
   };
   const unsubscribe = store.subscribe((state, before) => {
-    if (state.layoutByWorkspace !== before.layoutByWorkspace) publish(state);
+    if (
+      state.layoutByWorkspace !== before.layoutByWorkspace ||
+      state.sheetsByWorkspace !== before.sheetsByWorkspace
+    ) {
+      publish(state);
+    }
   });
   publish(store.getState());
   return unsubscribe;

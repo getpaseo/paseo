@@ -1121,3 +1121,50 @@ describe("plugin provider launch and status", () => {
     },
   );
 });
+
+test("config-required plugin membership is independent of enablement and other providers", async () => {
+  const logger = createTestLogger();
+  const plugins = new PluginAgentClientRegistry(logger);
+  const harness = createProviderHarness();
+  let connections = 0;
+  let probes = 0;
+  plugins.replace([
+    {
+      ...harness.registration,
+      requiresConfiguration: true,
+      async status() {
+        probes++;
+        return { available: true };
+      },
+      async connect(request) {
+        connections++;
+        return harness.registration.connect(request);
+      },
+    },
+  ]);
+  const build = (providerOverrides = {}) =>
+    buildProviderRegistry(logger, {
+      pluginProviders: plugins.definitions(),
+      providerOverrides,
+    });
+  try {
+    const before = build();
+    expect(before["plugin-direct"]).toBeUndefined();
+    expect({ probes, connections }).toEqual({ probes: 0, connections: 0 });
+    const added = build({ "plugin-direct": {} });
+    expect(added["plugin-direct"].enabled).toBe(true);
+    const client = added["plugin-direct"].createClient(logger);
+    expect(await client.isAvailable()).toBe(true);
+    const catalog = await client.fetchCatalog({ scope: "global" });
+    expect(catalog.models.map((model) => model.id)).toEqual(["plugin-model"]);
+    expect({ probes, connections }).toEqual({ probes: 1, connections: 1 });
+    const disabled = build({ "plugin-direct": { enabled: false } });
+    expect(disabled["plugin-direct"].enabled).toBe(false);
+    expect(Object.keys(build())).toEqual(Object.keys(before));
+    for (const id of Object.keys(before)) {
+      expect(added[id].enabled).toBe(before[id].enabled);
+    }
+  } finally {
+    await plugins.shutdown();
+  }
+});

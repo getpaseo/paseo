@@ -8,6 +8,7 @@ export interface AcpProviderCatalogEntry {
   iconSvg: string | null;
   installLink: string;
   command: readonly [string, ...string[]];
+  bundledProvider?: boolean;
   env?: Readonly<Record<string, string>>;
   params?: Readonly<Record<string, unknown>>;
 }
@@ -239,6 +240,16 @@ const CATALOG_DATA = [
     command: ["hermes", "acp"],
   },
   {
+    id: "hoplite",
+    bundledProvider: true,
+    title: "Hoplite",
+    description: "Cloud coding agent through the local hoplite acp bridge",
+    version: "manual",
+    iconId: "hoplite",
+    installLink: "https://hoplite.sh/docs/cli#install",
+    command: ["hoplite", "acp"],
+  },
+  {
     id: "junie",
     title: "Junie",
     description: "AI Coding Agent by JetBrains",
@@ -389,6 +400,7 @@ export const ACP_PROVIDER_CATALOG: AcpProviderCatalogEntry[] = CATALOG_DATA.map(
   version: entry.version,
   installLink: entry.installLink,
   command: entry.command,
+  bundledProvider: "bundledProvider" in entry ? entry.bundledProvider : undefined,
   env: "env" in entry ? entry.env : undefined,
   params: "params" in entry ? entry.params : undefined,
   iconSvg: entry.iconId ? (ACP_PROVIDER_ICON_SVGS[entry.iconId] ?? null) : null,

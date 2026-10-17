@@ -76,7 +76,7 @@ export function PluginSearch({
       onSubmit={handleSubmit}
       className={className}
     >
-      {scope.sort === "new" && <input type="hidden" name="sort" value="new" />}
+      {scope.sort !== "installs" && <input type="hidden" name="sort" value={scope.sort} />}
       {scope.sort === "installs" && scope.window !== DEFAULT_WINDOW && (
         <input type="hidden" name="window" value={scope.window} />
       )}

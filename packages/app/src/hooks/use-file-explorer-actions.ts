@@ -6,6 +6,8 @@ import {
   type ExplorerDirectory,
 } from "@/stores/session-store";
 import { explorerFileFromReadResult } from "@/file-explorer/read-result";
+import { usePanelStore } from "@/stores/panel-store";
+import { revealExplorerDirectory } from "@/file-explorer/tree";
 import { parentExplorerPath } from "@/utils/explorer-paths";
 
 function createExplorerState(): AgentFileExplorerState {
@@ -172,6 +174,27 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
     [client, normalizedWorkspaceRoot, t, updateExplorerState, workspaceStateKey],
   );
 
+  const revealDirectory = useCallback(
+    async (directoryPath: string) => {
+      if (!workspaceStateKey) return;
+      await revealExplorerDirectory({
+        directoryPath,
+        requestDirectoryListing,
+        showHiddenFiles: () => {
+          const panel = usePanelStore.getState();
+          if (!panel.explorerShowHiddenFiles) panel.toggleExplorerShowHiddenFiles();
+        },
+        expandPaths: (paths) =>
+          usePanelStore
+            .getState()
+            .setExpandedPathsForWorkspace(workspaceStateKey, (current) =>
+              Array.from(new Set([...current, ...paths])),
+            ),
+      });
+    },
+    [requestDirectoryListing, workspaceStateKey],
+  );
+
   const requestFilePreview = useCallback(
     async (path: string) => {
       if (!workspaceStateKey) {
@@ -249,6 +272,21 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
         throw new Error(payload.error);
       }
       return payload;
+    },
+    [client, normalizedWorkspaceRoot, t],
+  );
+
+  const requestFileBytes = useCallback(
+    async (path: string, maxBytes: number) => {
+      if (!normalizedWorkspaceRoot) {
+        throw new Error(t("workspace.fileExplorer.states.unavailable"));
+      }
+      if (!client) {
+        throw new Error(t("workspace.terminal.hostDisconnected"));
+      }
+      // No request timeout: a large file over a slow relay legitimately takes longer than the
+      // 60 s default, and a dead connection still rejects on disconnect.
+      return client.readFile(normalizedWorkspaceRoot, path, undefined, maxBytes, 0);
     },
     [client, normalizedWorkspaceRoot, t],
   );
@@ -339,9 +377,11 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
 
   return {
     workspaceStateKey,
+    revealDirectory,
     requestDirectoryListing,
     requestFilePreview,
     requestFileDownloadToken,
+    requestFileBytes,
     createEntry,
     renameEntry,
     duplicateEntry,

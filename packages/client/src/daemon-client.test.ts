@@ -1963,6 +1963,200 @@ test("gets a structured plugin log snapshot", async () => {
   ]);
 });
 
+test("keeps a plugin reload pending past the session RPC deadline", async () => {
+  useHeartbeatClock();
+  try {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger: createMockLogger(),
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const reload = client.reloadPlugin("example");
+    let settled: "pending" | "resolved" | "rejected" = "pending";
+    void reload.then(
+      () => {
+        settled = "resolved";
+        return null;
+      },
+      () => {
+        settled = "rejected";
+        return null;
+      },
+    );
+
+    const request = parseSentFrame(mock.sent[0]);
+    expect(request).toEqual({
+      type: "plugin.reload.request",
+      requestId: expect.any(String),
+      pluginId: "example",
+    });
+
+    // A daemon that reloads for almost two minutes is still reloading, not a failed request.
+    await vi.advanceTimersByTimeAsync(114_034);
+    expect(settled).toBe("pending");
+
+    // Another plugin's reload finishing early must not settle this request.
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "plugin.reload.response",
+        payload: {
+          requestId: "req-other-plugin",
+          plugin: { id: "other", path: "/plugins/other", enabled: true, status: "running" },
+        },
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe("pending");
+
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "plugin.reload.response",
+        payload: {
+          requestId: request.requestId,
+          plugin: { id: "example", path: "/plugins/example", enabled: true, status: "running" },
+        },
+      }),
+    );
+
+    await expect(reload).resolves.toEqual({
+      id: "example",
+      path: "/plugins/example",
+      enabled: true,
+      status: "running",
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("keeps enable and disable inside the session RPC deadline", async () => {
+  useHeartbeatClock();
+  try {
+    for (const action of ["enable", "disable"] as const) {
+      const mock = createMockTransport();
+      const client = new DaemonClient({
+        url: "ws://test",
+        clientId: "clsk_unit_test",
+        logger: createMockLogger(),
+        reconnect: { enabled: false },
+        transportFactory: () => mock.transport,
+      });
+      clients.push(client);
+
+      const connectPromise = client.connect();
+      mock.triggerOpen();
+      await connectPromise;
+
+      const pending =
+        action === "enable" ? client.enablePlugin("example") : client.disablePlugin("example");
+      let settled = false;
+      void pending.then(
+        () => {
+          settled = true;
+          return null;
+        },
+        () => {
+          settled = true;
+          return null;
+        },
+      );
+
+      expect(parseSentFrame(mock.sent[0])).toEqual({
+        type: `plugin.${action}.request`,
+        requestId: expect.any(String),
+        pluginId: "example",
+      });
+
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(pending).rejects.toThrow("Timeout waiting for message (60000ms)");
+    }
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("reports a plugin reload failure that arrives after the session RPC deadline", async () => {
+  useHeartbeatClock();
+  try {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger: createMockLogger(),
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const reload = client.reloadPlugin("example");
+    const request = parseSentFrame(mock.sent[0]);
+
+    await vi.advanceTimersByTimeAsync(114_034);
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "rpc_error",
+        payload: {
+          requestId: request.requestId,
+          requestType: "plugin.reload.request",
+          error: "Request failed: Plugin failed to start: example",
+          code: "handler_error",
+        },
+      }),
+    );
+
+    await expect(reload).rejects.toThrow(
+      "Request failed: Plugin failed to start: example requestType=plugin.reload.request code=handler_error",
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("rejects a pending plugin reload when the connection closes", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const reload = client.reloadPlugin("example");
+  expect(parseSentFrame(mock.sent[0])).toMatchObject({ type: "plugin.reload.request" });
+
+  mock.triggerClose({ code: 1006, reason: "network lost" });
+
+  await expect(reload).rejects.toThrow(/network lost|disconnected|closed/i);
+
+  // Reconnecting must not resend the lost reload: only the caller decides to reload again.
+  const reconnecting = client.connect();
+  mock.triggerOpen();
+  await reconnecting;
+  expect(mock.sent).toEqual([]);
+});
+
 test("keeps waitForAgentUpsert initial fetch inside the requested deadline", async () => {
   useHeartbeatClock();
   const logger = createMockLogger();
@@ -2799,6 +2993,102 @@ test("readFile drops an old daemon's over-budget binary chunks and reports the r
   );
 
   await expect(responsePromise).rejects.toThrow("File is too large to display");
+});
+
+async function connectFileClient(clientId: string) {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId,
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+  return { mock, client };
+}
+
+function sendBinaryFile(
+  mock: ReturnType<typeof createMockTransport>,
+  requestId: string,
+  announcedSize: number,
+  chunks: string[],
+) {
+  mock.triggerMessage(
+    encodeFileTransferFrame({
+      opcode: FileTransferOpcode.FileBegin,
+      requestId,
+      metadata: {
+        mime: "application/octet-stream",
+        size: announcedSize,
+        encoding: "binary",
+        modifiedAt: "2026-05-02T00:00:00.000Z",
+      },
+    }),
+  );
+  for (const chunk of chunks) {
+    mock.triggerMessage(
+      encodeFileTransferFrame({
+        opcode: FileTransferOpcode.FileChunk,
+        requestId,
+        payload: new TextEncoder().encode(chunk),
+      }),
+    );
+  }
+}
+
+test("readFile with timeout 0 outlives the default request timeout", async () => {
+  useHeartbeatClock();
+  const { mock, client } = await connectFileClient("clsk_file_no_timeout");
+
+  const responsePromise = client.readFile("/tmp/project", "slow.bin", "req-slow", undefined, 0);
+  await vi.advanceTimersByTimeAsync(60_001);
+
+  sendBinaryFile(mock, "req-slow", 5, ["hello"]);
+  mock.triggerMessage(
+    encodeFileTransferFrame({ opcode: FileTransferOpcode.FileEnd, requestId: "req-slow" }),
+  );
+
+  const result = await responsePromise;
+  expect(result.size).toBe(5);
+  expect(new TextDecoder().decode(result.bytes)).toBe("hello");
+});
+
+test("readFile rejects a binary transfer that ends before the announced size", async () => {
+  const { mock, client } = await connectFileClient("clsk_file_short");
+
+  const responsePromise = client.readFile("/tmp/project", "short.bin", "req-short");
+  sendBinaryFile(mock, "req-short", 10, ["hello"]);
+  mock.triggerMessage(
+    encodeFileTransferFrame({ opcode: FileTransferOpcode.FileEnd, requestId: "req-short" }),
+  );
+
+  await expect(responsePromise).rejects.toThrow(
+    "File transfer incomplete: expected 10 bytes, received 5.",
+  );
+});
+
+test("readFile rejects a binary transfer that exceeds the announced size", async () => {
+  const { mock, client } = await connectFileClient("clsk_file_long");
+
+  const responsePromise = client.readFile("/tmp/project", "long.bin", "req-long");
+  const settled = responsePromise.then(
+    () => null,
+    (error: unknown) => error,
+  );
+  sendBinaryFile(mock, "req-long", 4, ["hello!"]);
+
+  expect(() =>
+    mock.triggerMessage(
+      encodeFileTransferFrame({ opcode: FileTransferOpcode.FileEnd, requestId: "req-long" }),
+    ),
+  ).not.toThrow();
+  expect(await settled).toMatchObject({
+    message: "File transfer incomplete: expected 4 bytes, received 6.",
+  });
 });
 
 test("uploadFile sends metadata request and file bytes as binary chunks", async () => {
@@ -7527,3 +7817,29 @@ test.each([false, true])(
     await send;
   },
 );
+
+test("measures an outbound message in UTF-8 bytes against the daemon's message limit", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "message_limit_unit_test",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+  const mib = 1024 * 1024;
+
+  // "é" is one UTF-16 unit but two UTF-8 bytes, so this text is ~98 MiB on the wire.
+  void client.sendMessage("agent-1", "é".repeat(49 * mib)).catch(() => undefined);
+  expect(mock.sent).toHaveLength(1);
+
+  // ~60M characters is under the 100 MiB limit; ~120 MiB of UTF-8 is over it.
+  await expect(client.sendMessage("agent-1", "é".repeat(60 * mib))).rejects.toThrow(
+    "Message is too large to send (120.0 MiB). The limit is 100.0 MiB",
+  );
+  expect(mock.sent).toHaveLength(1);
+  expect(client.getConnectionState().status).toBe("connected");
+});

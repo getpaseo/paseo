@@ -1,13 +1,127 @@
 import { expect, test, type Page } from "../support/fixtures";
 import {
+  blurComposerInput,
+  composerLocator,
+  enterComposerFullscreen,
+  exitComposerFullscreen,
   expectComposerDraft,
   expectComposerFocused,
+  expectComposerFullscreenControls,
   expectComposerNotFocused,
   expectComposerVisible,
+  expectWorkspaceHeaderVisible,
+  resizeComposerViewport,
   submitMessage,
   typeIntoFocusedComposer,
 } from "../support/helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import { createMockIdleAgent, openWorkspaceWithAgents } from "../support/helpers/archive-tab";
+import { seedWorkspace } from "../support/helpers/seed-client";
+import { switchComposerTabWithKeyboard } from "../support/helpers/composer";
+import {
+  closeMobileAgentSidebar,
+  closeMobileExplorer,
+  expectMobileAgentSidebarHidden,
+  expectMobileAgentSidebarVisible,
+  expectMobileExplorerHidden,
+  expectMobileExplorerVisible,
+  swipeOpenMobileAgentSidebar,
+  swipeOpenMobileExplorer,
+} from "../support/helpers/sidebar";
+import { readScrollMetrics } from "../support/helpers/agent-bottom-anchor";
+import {
+  expectTimelinePromptPositionPreserved,
+  rememberTimelinePromptPosition,
+  seedLongMockAgentTimeline,
+  waitForTimelineGeometryToSettle,
+} from "../support/helpers/timeline-pagination";
+
+test("clicking chat text or background focuses the feed for keyboard paging", async ({
+  page,
+}, testInfo) => {
+  const agent = await seedLongMockAgentTimeline({ turns: 8 });
+
+  try {
+    await openAgentRoute(page, agent);
+    const composer = composerLocator(page);
+    const feed = page.getByTestId("agent-chat-scroll").filter({ visible: true });
+    await composer.fill("Keep this draft");
+    await feed.getByText(agent.newestPrompt, { exact: true }).click();
+    await expect(feed).toBeFocused();
+
+    const beforePaging = await readScrollMetrics(page);
+    expect(beforePaging.offsetY).toBeGreaterThan(beforePaging.viewportHeight);
+    await page.keyboard.press("PageUp");
+    await expect
+      .poll(async () => (await readScrollMetrics(page)).offsetY)
+      .toBeLessThan(beforePaging.offsetY - beforePaging.viewportHeight / 2);
+    await page.screenshot({ path: testInfo.outputPath("chat-keyboard-paging.png") });
+    await page.keyboard.press("PageDown");
+    await expect
+      .poll(async () => (await readScrollMetrics(page)).distanceFromBottom)
+      .toBeLessThanOrEqual(2);
+
+    await composer.click();
+    await expectComposerFocused(page);
+    await feed.click({ position: { x: 2, y: 40 } });
+    await expect(feed).toBeFocused();
+    await page.keyboard.press("PageUp");
+    await expect
+      .poll(async () => (await readScrollMetrics(page)).distanceFromBottom)
+      .toBeGreaterThan(beforePaging.viewportHeight / 2);
+    await waitForTimelineGeometryToSettle(page);
+    const readingPrompt = agent.prompts[4];
+    await expect(feed.getByText(readingPrompt, { exact: true })).toBeInViewport();
+    const readingPosition = await rememberTimelinePromptPosition(page, readingPrompt);
+    await agent.client.sendAgentMessage(agent.agentId, "emit 2 coalesced agent stream updates");
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+    // The daemon finishing does not mean its response has reached the browser.
+    await expect(feed.getByText(/stress-update-1/)).toHaveCount(1);
+    await waitForTimelineGeometryToSettle(page);
+    await expectTimelinePromptPositionPreserved(page, readingPosition);
+    await expectComposerDraft(page, "Keep this draft");
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+test("focusing the feed preserves assistant text selection and code copy controls", async ({
+  page,
+  context,
+}) => {
+  const sentence = "Select this assistant sentence.";
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "chat-focus-selection-",
+    title: "Chat focus selection",
+    initialPrompt: "Render text and code.",
+    featureValues: {
+      mockAssistantResponse: `${sentence}\n\n\`\`\`bash\necho example\n\`\`\``,
+    },
+  });
+
+  try {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+    await openAgentRoute(page, agent);
+    await composerLocator(page).fill("Keep this draft");
+
+    const feed = page.getByTestId("agent-chat-scroll").filter({ visible: true });
+    await feed.getByText(sentence, { exact: true }).click({ clickCount: 3 });
+    await expect(feed).toBeFocused();
+    expect(await page.evaluate(() => window.getSelection()?.toString().trim())).toBe(sentence);
+    await page.keyboard.press("ControlOrMeta+c");
+    expect((await page.evaluate(() => navigator.clipboard.readText())).trim()).toBe(sentence);
+
+    const code = feed.locator('[data-paseo-markdown-language="bash"]');
+    await code.hover();
+    await code.locator("[data-paseo-markdown-ignore]").click();
+    await expect(feed).not.toBeFocused();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("echo example");
+    await expectComposerDraft(page, "Keep this draft");
+  } finally {
+    await agent.cleanup();
+  }
+});
 
 test("submitting a message leaves the composer ready for the next message", async ({ page }) => {
   const agent = await seedMockAgentWorkspace({
@@ -56,6 +170,59 @@ test.describe("touch screen wide enough for the desktop layout", () => {
   // composer there raises the on-screen keyboard over the conversation.
   test.use({ viewport: { width: 1024, height: 768 }, isMobile: true, hasTouch: true });
 
+  test("remounting an inline composer does not restore focus on touch", async ({ page }) => {
+    const agent = await seedMockAgentWorkspace({
+      repoPrefix: "composer-touch-remount-",
+      title: "Touch remount",
+    });
+    try {
+      await openAgentRoute(page, agent);
+      await composerLocator(page).fill("Keep this draft through resize");
+      await expectComposerFocused(page);
+      await resizeComposerViewport(page, "portrait");
+      await expectComposerDraft(page, "Keep this draft through resize");
+      await expectComposerNotFocused(page);
+      await composerLocator(page).tap();
+      await expectComposerFocused(page);
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
+  test("returning to an inactive inline composer does not restore focus on touch", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "composer-touch-retained-" });
+    try {
+      const first = await createMockIdleAgent(workspace.client, {
+        cwd: workspace.repoPath,
+        workspaceId: workspace.workspaceId,
+        title: "First touch chat",
+      });
+      const second = await createMockIdleAgent(workspace.client, {
+        cwd: workspace.repoPath,
+        workspaceId: workspace.workspaceId,
+        title: "Second touch chat",
+      });
+      await openWorkspaceWithAgents(page, [first, second]);
+      await composerLocator(page).fill("Keep this touch draft");
+      await expectComposerFocused(page);
+      // An external keyboard changes tabs without a pointer click blurring the
+      // editor first. The device still has a touch-primary focus policy.
+      await switchComposerTabWithKeyboard(page, "previous");
+      await expectComposerDraft(page, "");
+      await switchComposerTabWithKeyboard(page, "next");
+      await expectComposerDraft(page, "Keep this touch draft");
+      await expectComposerNotFocused(page);
+      await composerLocator(page).tap();
+      await expectComposerFocused(page);
+      await typeIntoFocusedComposer(page, " after return");
+      await expectComposerDraft(page, "Keep this touch draft after return");
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   test("opening an agent leaves the composer unfocused", async ({ page }) => {
     const agent = await seedMockAgentWorkspace({
       repoPrefix: "composer-focus-touch-",
@@ -76,3 +243,76 @@ test.describe("touch screen wide enough for the desktop layout", () => {
     }
   });
 });
+
+const COMPACT_PANELS = [
+  {
+    name: "agent list",
+    open: swipeOpenMobileAgentSidebar,
+    expectOpen: expectMobileAgentSidebarVisible,
+    close: closeMobileAgentSidebar,
+    expectClosed: expectMobileAgentSidebarHidden,
+  },
+  {
+    name: "Explorer",
+    open: swipeOpenMobileExplorer,
+    expectOpen: expectMobileExplorerVisible,
+    close: closeMobileExplorer,
+    expectClosed: expectMobileExplorerHidden,
+  },
+] as const;
+
+for (const panel of COMPACT_PANELS) {
+  test(`closing the compact ${panel.name} does not restore composer focus`, async ({ page }) => {
+    const agent = await seedMockAgentWorkspace({
+      repoPrefix: "composer-focus-panel-",
+      title: `Composer focus under ${panel.name}`,
+    });
+    const draft = "Line one\nLine two\nLine three";
+    try {
+      await resizeComposerViewport(page, "portrait");
+      await openAgentRoute(page, agent);
+      await expectComposerVisible(page);
+
+      await test.step("an untouched editor stays untouched", async () => {
+        await expectComposerNotFocused(page);
+        await panel.open(page);
+        await panel.expectOpen(page);
+        await panel.close(page);
+        await panel.expectClosed(page);
+        await expectComposerNotFocused(page);
+      });
+
+      await test.step("an inline editor blurred under the panel stays blurred", async () => {
+        await composerLocator(page).fill(draft);
+        await composerLocator(page).click();
+        await expectComposerFocused(page);
+        await panel.open(page);
+        await panel.expectOpen(page);
+        await blurComposerInput(page);
+        await panel.close(page);
+        await panel.expectClosed(page);
+        await expectComposerNotFocused(page);
+        await expectComposerDraft(page, draft);
+      });
+
+      await test.step("a fullscreen editor blurred under the panel stays blurred", async () => {
+        await composerLocator(page).click();
+        await enterComposerFullscreen(page);
+        await expectComposerFullscreenControls(page);
+        await expectComposerFocused(page);
+        await panel.open(page);
+        await panel.expectOpen(page);
+        await blurComposerInput(page);
+        await panel.close(page);
+        await panel.expectClosed(page);
+        await expectComposerNotFocused(page);
+        await expectComposerFullscreenControls(page);
+        await expectComposerDraft(page, draft);
+        await exitComposerFullscreen(page);
+        await expectWorkspaceHeaderVisible(page);
+      });
+    } finally {
+      await agent.cleanup();
+    }
+  });
+}

@@ -11,10 +11,21 @@ import {
   addModelVisibleStructuredContent,
   serializePaseoToolInputParameters,
 } from "../../tools/paseo-tool-serialization.js";
-import type { PaseoToolCatalog } from "../../tools/types.js";
+import { PaseoToolInputError, type PaseoToolCatalog } from "../../tools/types.js";
 
 const INTERNAL_PREFIX = "/_internal/opencode";
 const MAX_REQUEST_BYTES = 1024 * 1024;
+
+class OpenCodeBridgeClientError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+    readonly details?: unknown,
+  ) {
+    super(message);
+    this.name = "OpenCodeBridgeClientError";
+  }
+}
 
 interface OpenCodeBridgeOptions {
   paseoHome: string;
@@ -187,10 +198,26 @@ export class OpenCodeBridge {
       sendJson(response, 404, { error: "Not found" });
     } catch (error) {
       this.logger.warn({ err: error }, "OpenCode bridge request failed");
+      const failure = error instanceof Error ? error : new Error(String(error));
       if (!response.headersSent) {
-        sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) });
+        if (error instanceof OpenCodeBridgeClientError) {
+          sendJson(response, error.status, {
+            error: error.message,
+            ...(error.details === undefined ? {} : { details: error.details }),
+          });
+        } else if (error instanceof PaseoToolInputError) {
+          sendJson(
+            response,
+            error.status,
+            error.issues
+              ? { error: "Invalid tool input", issues: error.issues }
+              : { error: error.message },
+          );
+        } else {
+          sendJson(response, 500, { error: failure.message });
+        }
       } else {
-        response.destroy(error instanceof Error ? error : new Error(String(error)));
+        response.destroy(failure);
       }
     }
   }
@@ -223,6 +250,9 @@ export class OpenCodeBridge {
     if (!binding.tools) {
       sendJson(input.response, 403, { error: "Paseo tools are disabled for this session" });
       return;
+    }
+    if (!binding.tools.getTool(input.toolName)) {
+      throw new OpenCodeBridgeClientError(404, `Paseo tool not found: ${input.toolName}`);
     }
     const body = await readJsonBody(input.request);
     const controller = new AbortController();
@@ -349,11 +379,17 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += buffer.byteLength;
-    if (size > MAX_REQUEST_BYTES) throw new Error("OpenCode bridge request body is too large");
+    if (size > MAX_REQUEST_BYTES) {
+      throw new OpenCodeBridgeClientError(413, "OpenCode bridge request body is too large");
+    }
     chunks.push(buffer);
   }
   if (chunks.length === 0) return {};
-  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+  } catch {
+    throw new OpenCodeBridgeClientError(400, "Malformed JSON request body");
+  }
 }
 
 function sendJson(response: ServerResponse, status: number, body: unknown): void {

@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { highlightCode, isLanguageSupported, type HighlightToken } from "@getpaseo/highlight";
+import { unquoteGitPath } from "../../utils/git-quoted-path.js";
 
 const MAX_DIFF_HIGHLIGHT_LINE_CHARS = 10_000;
 
@@ -53,7 +54,7 @@ function extractPathFromMetadata(lines: string[], prefix: "--- " | "+++ "): stri
     return null;
   }
 
-  const path = line.slice(prefix.length).replace(/\t.*$/, "").trimEnd();
+  const path = unquoteGitPath(line.slice(prefix.length).replace(/\t.*$/, ""));
   return path === "/dev/null" ? null : path;
 }
 
@@ -62,6 +63,17 @@ function extractPathFromDiffHeader(lines: string[]): string {
   const prefixedPathMatch = firstLine.match(/^a\/(.+) b\/(.+)$/);
   if (prefixedPathMatch) {
     return prefixedPathMatch[2];
+  }
+
+  const quotedPathMatch =
+    firstLine.match(/^("(?:\\.|[^"\\])*") (.+)$/) ?? firstLine.match(/^(.+) ("(?:\\.|[^"\\])*")$/);
+  if (quotedPathMatch) {
+    const oldPath = unquoteGitPath(quotedPathMatch[1]);
+    const newPath = unquoteGitPath(quotedPathMatch[2]);
+    if (usesDiffPathPrefixes(oldPath, newPath)) {
+      return newPath.slice(2);
+    }
+    return newPath;
   }
 
   const metadataPath =

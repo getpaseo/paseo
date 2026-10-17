@@ -4,7 +4,7 @@ import path from "path";
 import fs from "fs";
 
 // Set this before Vite resolves dependencies and Vitest starts its workers.
-process.env.NODE_ENV = "test";
+Object.assign(process.env, { NODE_ENV: "test" });
 
 const appNodeModules = path.resolve(__dirname, "node_modules");
 const rootNodeModules = path.resolve(__dirname, "../../node_modules");

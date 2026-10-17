@@ -100,6 +100,40 @@ function weeklyReport(sourceId: string, usedPct: number): UsageReportEntry {
   };
 }
 
+function installReversedUsageRefresh(page: Page) {
+  const initial = [weeklyReport("opencode", 31), weeklyReport("openai", 12)];
+  const refreshed = [weeklyReport("openai", 22), weeklyReport("opencode", 41)];
+  return installUsageReportsFixture(page, {
+    lists: [(request) => (request.forceRefresh ? refreshed : initial)],
+  });
+}
+
+async function openUsageSummaryAtWidth(page: Page, width: number) {
+  await page.setViewportSize({ width, height: 900 });
+  await gotoAppShell(page);
+  if (width === 390) await openCompactSidebar(page);
+  await expectPinnedUsage(page, ["31% Weekly", "12% Weekly"]);
+  await openUsageFromItem(page);
+}
+
+async function expectUsageProviderOrder(page: Page, summary: string[]) {
+  const group = page.getByTestId(`usage-host-${getServerId()}`);
+  await expect(group.getByText(/^(opencode|openai) plan$/)).toHaveText([
+    "opencode plan",
+    "openai plan",
+  ]);
+  await expectPinnedUsage(page, summary);
+}
+
+async function refreshUsageAndWaitForReports(page: Page, usage: UsageReportsFixture) {
+  const requestCount = usage.listRequests().length;
+  await refreshAllUsage(page);
+  await usage.waitForListRequests(requestCount + 1);
+  const group = page.getByTestId(`usage-host-${getServerId()}`);
+  await expect(group.getByText("41%", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Refresh all", exact: true })).toBeEnabled();
+}
+
 test.describe("usage modal", () => {
   test("opens from the sidebar on the host's reports, with no host filter for one host", async ({
     page,
@@ -151,6 +185,21 @@ test.describe("usage modal", () => {
     await expect(page.getByTestId("usage-freshness-tooltip")).toHaveText("Updated 2h ago");
     await expect(group.getByTestId("usage-freshness")).toHaveCount(0);
   });
+
+  for (const width of [1440, 390]) {
+    test(`keeps sidebar and modal provider order across a reversed refresh at width ${width}`, async ({
+      page,
+    }) => {
+      const usage = await installReversedUsageRefresh(page);
+      await openUsageSummaryAtWidth(page, width);
+      await expectUsageProviderOrder(page, ["31% Weekly", "12% Weekly"]);
+      await qaScreenshot(page, `usage-order-${width}-before-refresh`);
+
+      await refreshUsageAndWaitForReports(page, usage);
+      await expectUsageProviderOrder(page, ["41% Weekly", "22% Weekly"]);
+      await qaScreenshot(page, `usage-order-${width}-after-refresh`);
+    });
+  }
 
   test("refreshes one report from its card", async ({ page }) => {
     test.setTimeout(120_000);

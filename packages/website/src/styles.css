@@ -561,23 +561,6 @@
   margin-bottom: 2rem;
 }
 
-.docs-source-footer {
-  border-top: 1px solid var(--color-border);
-  margin-top: 3rem;
-  padding-top: 1.25rem;
-  font-size: 0.875rem;
-}
-
-.docs-source-footer a {
-  color: rgba(255, 255, 255, 0.5);
-  font-weight: 500;
-  text-decoration: none;
-}
-
-.docs-source-footer a:hover {
-  color: var(--color-foreground);
-}
-
 /* Blog post prose styles — adapted from moboudra.com */
 .blog-prose {
   color: rgba(250, 250, 250, 0.82);
