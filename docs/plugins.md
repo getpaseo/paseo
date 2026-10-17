@@ -554,7 +554,9 @@ Request observation with `client.paseo.agents.list({ subscribe: {} })` and consu
 demand. Provider and project `subscribe()` calls establish their own demand. On capable daemons, each
 list-and-subscribe call has its own server ID, even for the same query. Older daemons retain
 [shared delivery behavior](protocol-compatibility.md#owned-observations). Handle snapshots
-also run after reconnect; replace your view before applying its subsequent updates. The installation
+also run after reconnect; replace your view before applying its subsequent updates. An installation
+stays loaded while its host is disconnected, and reconnecting runs setup again only when the client
+bundle changed, so refresh state from those snapshots rather than from setup. The installation
 owns every observation created through its API and releases them on unload, including setup failure.
 Mounted surfaces and command invocations have shorter API lifetimes.
 
