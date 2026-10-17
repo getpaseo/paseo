@@ -35,6 +35,21 @@ export class TerminalActivityTracker {
     );
   }
 
+  // OSC 7501 idle: at rest. It never records finished attention, so an
+  // interrupted run does not look finished, but it keeps a finished mark the
+  // user has not seen yet (a program may report done, then idle).
+  setAtRest(): void {
+    if (this.attentionReason === "finished") {
+      return;
+    }
+    this.setState("idle", null);
+  }
+
+  // OSC 7501 done or error: a result to review.
+  finish(): void {
+    this.setState("idle", "finished");
+  }
+
   clear(): void {
     this.setState(null, null);
   }
