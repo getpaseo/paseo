@@ -46,6 +46,7 @@ interface RecordingFetch {
 const claudeProvider = AGENT_HOOK_PROVIDERS.claude;
 const codexProvider = AGENT_HOOK_PROVIDERS.codex;
 const opencodeProvider = AGENT_HOOK_PROVIDERS.opencode;
+const ompProvider = AGENT_HOOK_PROVIDERS.omp;
 
 function createFetch(): RecordingFetch {
   const calls: FetchCall[] = [];
@@ -124,6 +125,17 @@ describe("runHooksCommand", () => {
     ["permission.replied", "running"],
   ])("maps OpenCode %s to %s", async (event, state) => {
     const send = await runHook(opencodeProvider.id, event);
+
+    expectPostedState(send, state);
+  });
+
+  it.each([
+    ["agent_start", "running"],
+    ["agent_end", "idle"],
+    ["ask.started", "needs-input"],
+    ["ask.finished", "running"],
+  ])("maps omp %s to %s", async (event, state) => {
+    const send = await runHook(ompProvider.id, event);
 
     expectPostedState(send, state);
   });
