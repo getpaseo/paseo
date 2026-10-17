@@ -114,6 +114,29 @@ describe("daemon web UI config", () => {
     expect(config.webUi.distDir).toBe(path.join(home, "web-ui-dist"));
   });
 
+  test("expands ~ in persisted distDir", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      features: { webUi: { distDir: "~/web-ui-dist" } },
+    });
+
+    const config = loadConfig(home, { env: {} });
+
+    expect(config.webUi.distDir).toBe(
+      path.resolve(process.env.HOME || os.homedir(), "web-ui-dist"),
+    );
+  });
+
+  test("expands ~ in PASEO_WEB_UI_DIST_DIR", async () => {
+    const home = await createPaseoHome({ version: 1 });
+
+    const config = loadConfig(home, { env: { PASEO_WEB_UI_DIST_DIR: "~/env-web-ui-dist" } });
+
+    expect(config.webUi.distDir).toBe(
+      path.resolve(process.env.HOME || os.homedir(), "env-web-ui-dist"),
+    );
+  });
+
   test("PASEO_WEB_UI_DIST_DIR overrides persisted distDir", async () => {
     const home = await createPaseoHome({
       version: 1,
