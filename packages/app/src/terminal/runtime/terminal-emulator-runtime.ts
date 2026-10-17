@@ -112,6 +112,58 @@ export function createTerminalResizeEvent(input: {
   };
 }
 
+// xterm keeps the active renderer behind untyped internals; the visibility
+// repair only needs this slice (see repairTerminalAfterVisibilityRestore).
+interface TerminalRendererInternals {
+  _core?: {
+    _renderService?: {
+      _renderer?: {
+        value?: {
+          _canvas?: HTMLCanvasElement;
+          _gl?: { canvas?: HTMLCanvasElement };
+          _devicePixelRatio?: number;
+          dimensions?: {
+            device?: { canvas?: { width?: number; height?: number } };
+          };
+          handleDevicePixelRatioChange?: () => void;
+          handleResize?: (cols: number, rows: number) => void;
+        };
+      };
+    };
+  };
+}
+
+type ActiveTerminalRenderer = NonNullable<
+  NonNullable<
+    NonNullable<NonNullable<TerminalRendererInternals["_core"]>["_renderService"]>["_renderer"]
+  >["value"]
+>;
+
+function terminalRendererNeedsVisibilityRepair(input: {
+  renderer: ActiveTerminalRenderer | undefined;
+  dpr: number;
+}): boolean {
+  const renderer = input.renderer;
+  if (!renderer) {
+    return false;
+  }
+  if (typeof renderer._devicePixelRatio === "number" && renderer._devicePixelRatio !== input.dpr) {
+    return true;
+  }
+  const canvas = renderer._canvas ?? renderer._gl?.canvas;
+  const expected = renderer.dimensions?.device?.canvas;
+  if (!canvas || !expected?.width) {
+    return false;
+  }
+  // xterm rounds its CSS canvas size before converting to device pixels;
+  // tolerate that round trip instead of forcing a rebuild on every restore.
+  const tolerance = Math.max(1, Math.ceil(input.dpr / 2));
+  return (
+    Math.abs((canvas.width ?? 0) - expected.width) > tolerance ||
+    Math.abs((canvas.height ?? 0) - (expected.height ?? 0)) > tolerance
+  );
+}
+
 interface TerminalEmulatorRuntimeDisposables {
   disposeInput: () => void;
   disconnectResizeObserver: () => void;
@@ -253,6 +305,7 @@ export class TerminalEmulatorRuntime {
   private readonly inputModeTracker = new TerminalInputModeTracker();
   private lastInputModeState: TerminalInputModeState = this.inputModeTracker.getState();
   private themeBackgroundElements: HTMLElement[] = [];
+  private containerWasHidden = false;
 
   private handleVisibilityRestore = (): void => {
     if (typeof document !== "undefined" && document.visibilityState !== "visible") {
@@ -260,12 +313,44 @@ export class TerminalEmulatorRuntime {
     }
 
     this.fitAndEmitResize?.({ forceRefresh: true, shouldClaim: false });
+    this.repairTerminalAfterVisibilityRestore();
     if (typeof window.requestAnimationFrame === "function") {
       window.requestAnimationFrame(() => {
         this.fitAndEmitResize?.({ forceRefresh: true, shouldClaim: false });
+        this.repairTerminalAfterVisibilityRestore();
       });
     }
   };
+
+  // While the window is occluded, output can corrupt the WebGL glyph atlas
+  // without a context-loss event, and a devicePixelRatio change leaves the
+  // canvas backing store at the old scale — xterm's DPR observer misses
+  // changes that land while the element has no box. Both paint a smeared
+  // viewport until the next real resize; repair here on every restore.
+  private repairTerminalAfterVisibilityRestore(): void {
+    const terminal = this.terminal;
+    if (!terminal) {
+      return;
+    }
+
+    const renderer = (terminal as unknown as TerminalRendererInternals)._core?._renderService
+      ?._renderer?.value;
+    if (terminalRendererNeedsVisibilityRepair({ renderer, dpr: window.devicePixelRatio || 1 })) {
+      try {
+        renderer?.handleDevicePixelRatioChange?.();
+        renderer?.handleResize?.(terminal.cols, terminal.rows);
+      } catch {
+        // renderer may be mid-teardown; the next restore retries
+      }
+    }
+
+    try {
+      terminal.clearTextureAtlas();
+    } catch {
+      // ignore
+    }
+    this.refreshVisibleRows();
+  }
 
   setCallbacks(input: { callbacks: TerminalEmulatorRuntimeCallbacks }): void {
     this.callbacks = input.callbacks;
@@ -620,6 +705,10 @@ export class TerminalEmulatorRuntime {
       }
 
       if (input.root.offsetWidth === 0 || input.root.offsetHeight === 0) {
+        // A RetainedPanel sets display:none on inactive workspaces; remember
+        // we were hidden so the first real fit after reveal repairs the
+        // renderer — the same corruption the window-visibility path repairs.
+        this.containerWasHidden = true;
         return;
       }
 
@@ -629,10 +718,22 @@ export class TerminalEmulatorRuntime {
         return;
       }
 
+      const wasContainerHidden = this.containerWasHidden;
+      this.containerWasHidden = false;
+      if (wasContainerHidden) {
+        this.repairTerminalAfterVisibilityRestore();
+      }
+
       const nextRows = currentTerminal.rows;
       const nextCols = currentTerminal.cols;
       const previous = this.lastSize;
+      // A pane coming back from display:none must always emit, even when its
+      // grid size is unchanged: while it was hidden the daemon-side PTY size
+      // may have drifted (another claimant, snapshot restore, reconnect), and
+      // the TUI painted at that width — without the emit it stays desynced
+      // until the next manual resize.
       if (
+        !wasContainerHidden &&
         !forceRefresh &&
         !forceClaim &&
         previous &&
@@ -676,6 +777,29 @@ export class TerminalEmulatorRuntime {
     });
     resizeObserver.observe(input.root);
     resizeObserver.observe(input.host);
+
+    // Retained panels are hidden without changing the element's box — either
+    // display:none (zeroes it) or detached offscreen positioning (keeps it at
+    // e.g. top:30000). ResizeObserver never fires on reveal in either case, so
+    // nothing refits or resyncs the PTY until a manual resize. An offscreen or
+    // boxless element is not intersecting, so watch the viewport boundary
+    // instead and run the visibility-restore path on every reveal.
+    let wasIntersecting = true;
+    const intersectionObserver =
+      typeof IntersectionObserver === "undefined"
+        ? null
+        : new IntersectionObserver((entries) => {
+            const entry = entries[0];
+            if (!entry) {
+              return;
+            }
+            const isIntersecting = entry.isIntersecting;
+            if (isIntersecting && !wasIntersecting) {
+              this.handleVisibilityRestore();
+            }
+            wasIntersecting = isIntersecting;
+          });
+    intersectionObserver?.observe(input.root);
 
     const windowResizeHandler = () => {
       fitAndEmitResize({ shouldClaim: false });
@@ -733,6 +857,7 @@ export class TerminalEmulatorRuntime {
       },
       disconnectResizeObserver: () => {
         resizeObserver.disconnect();
+        intersectionObserver?.disconnect();
       },
       removeWindowResize: () => {
         window.removeEventListener("resize", windowResizeHandler);
@@ -1143,6 +1268,14 @@ export class TerminalEmulatorRuntime {
 
     try {
       terminal.write(data, () => {
+        if (operation.type === "snapshot") {
+          // The snapshot op resized the grid to the width recorded when the
+          // snapshot was produced — which can be stale (a cached snapshot from
+          // an older layout, or a daemon width owned by another client). Re-fit
+          // the grid to the real container and emit so the daemon can resync;
+          // same-size emits are deduplicated downstream.
+          this.fitAndEmitResize?.({ shouldClaim: false });
+        }
         finalizeOperation(operation);
       });
     } catch {
