@@ -66,4 +66,19 @@ describe("GenericACPAgentClient", () => {
       },
     ]);
   });
+
+  test("forwards the catalog provider id separately from the inner acp provider", () => {
+    const client = new GenericACPAgentClient({
+      logger: createTestLogger(),
+      command: ["grok", "agent", "stdio"],
+      providerId: "grok",
+    });
+    void client;
+
+    expect(mockState.superConstructorOptions.at(-1)).toMatchObject({
+      provider: "acp",
+      catalogProviderId: "grok",
+      defaultCommand: ["grok", "agent", "stdio"],
+    });
+  });
 });
