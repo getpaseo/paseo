@@ -90,8 +90,8 @@ import { AssistantSelectionCopySurface } from "@/assistant-selection-copy/surfac
 import {
   AssistantFileLinkResolverProvider,
   normalizeInlinePathTarget,
+  resolveInlinePathOpen,
 } from "@/assistant-file-links";
-import { planInlinePathOpen } from "./inline-path-open";
 import {
   createWorkspaceFileTabTarget,
   normalizeWorkspaceFileLocation,
@@ -388,7 +388,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     );
 
     const workspaceRoot = context.cwd?.trim() || "";
-    const { requestDirectoryListing } = useFileExplorerActions({
+    const { revealDirectory } = useFileExplorerActions({
       serverId: resolvedServerId,
       workspaceId: context.workspaceId,
       workspaceRoot,
@@ -469,7 +469,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         };
 
         const openFilesExplorerAt = (directoryPath: string) => {
-          void requestDirectoryListing(directoryPath);
+          void revealDirectory(directoryPath);
 
           openExplorerSidebarView({
             isCompact: isMobile,
@@ -486,31 +486,19 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           });
         };
 
-        const plan = planInlinePathOpen({
+        void resolveInlinePathOpen({
           file: normalized.file,
+          directory: normalized.directory,
           lineStart: target.lineStart,
           workspaceRoot,
+          client,
+        }).then((destination) => {
+          if (destination.kind === "directory") {
+            return openFilesExplorerAt(destination.directoryPath);
+          } else {
+            return openFileLocation();
+          }
         });
-
-        if (plan.kind === "file") {
-          openFileLocation();
-          return;
-        }
-
-        if (plan.kind === "directory") {
-          openFilesExplorerAt(normalized.directory || ".");
-          return;
-        }
-
-        if (!client) {
-          openFileLocation();
-          return;
-        }
-
-        void client.listDirectory(workspaceRoot, plan.directoryPath).then(
-          () => openFilesExplorerAt(plan.directoryPath),
-          () => openFileLocation(),
-        );
       },
     );
 

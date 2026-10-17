@@ -10,3 +10,5 @@ export {
 } from "./provider";
 export type { AssistantFileLinkSource } from "./resolver";
 export { useAssistantFileLinkActions, useFileLink } from "./use-file-link";
+
+export { resolveInlinePathOpen } from "./path-open";
