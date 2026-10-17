@@ -63,23 +63,39 @@ const REGEX_PRECEDING_KEYWORDS = new Set([
   "throw",
 ]);
 
-function startsRegexLiteral(chars: string[], index: number): boolean {
-  let j = index - 1;
-  while (j >= 0 && /\s/.test(chars[j])) {
-    j -= 1;
-  }
-  if (j < 0) {
+// Scanner state: the last significant unmasked code character and the
+// identifier/keyword ending at it. Tracked while scanning instead of read
+// back from the text, because earlier masking blanks characters and a
+// lookback would misread them (e.g. `"100" / 2` after the string is blanked).
+interface MaskState {
+  previous: string;
+  word: string;
+}
+
+function startsRegexLiteral(state: MaskState): boolean {
+  if (state.previous === "") {
     return true;
   }
-  const previous = chars[j];
-  if (!/[A-Za-z0-9_$]/.test(previous)) {
-    return "([{,;=:!&|?+-*%~^<>".includes(previous);
+  if (/[A-Za-z0-9_$]/.test(state.previous)) {
+    return REGEX_PRECEDING_KEYWORDS.has(state.word);
   }
-  let start = j;
-  while (start >= 0 && /[A-Za-z0-9_$]/.test(chars[start])) {
-    start -= 1;
+  return "([{,;=:!&|?+-*%~^<>".includes(state.previous);
+}
+
+// A finished string, template or regex literal is a value: a following `/` is
+// division.
+function noteValueToken(state: MaskState) {
+  state.previous = '"';
+  state.word = "";
+}
+
+function noteCodeCharacter(character: string, state: MaskState) {
+  if (/[A-Za-z0-9_$]/.test(character)) {
+    state.word += character;
+  } else {
+    state.word = "";
   }
-  return REGEX_PRECEDING_KEYWORDS.has(chars.slice(start + 1, j + 1).join(""));
+  state.previous = character;
 }
 
 // start points at the opening `/`. Returns the index after the flags, with the
@@ -121,12 +137,13 @@ function maskRegexLiteral(chars: string[], start: number): number {
 
 // Handles quotes, comments and regex literals at chars[i]; returns the new
 // index, or -1 when the character is none of these.
-function maskCodeToken(chars: string[], source: string, i: number): number {
+function maskCodeToken(chars: string[], source: string, i: number, state: MaskState): number {
   const character = chars[i];
   const next = chars[i + 1];
   if (character === "'" || character === '"') {
     const end = skipQuotedString(chars, i, character);
     blankRange(chars, i, end);
+    noteValueToken(state);
     return end;
   }
   if (character === "/" && next === "/") {
@@ -139,8 +156,10 @@ function maskCodeToken(chars: string[], source: string, i: number): number {
     blankRange(chars, i, end === -1 ? chars.length : end + 2);
     return end === -1 ? chars.length : end + 2;
   }
-  if (character === "/" && startsRegexLiteral(chars, i)) {
-    return maskRegexLiteral(chars, i);
+  if (character === "/" && startsRegexLiteral(state)) {
+    const end = maskRegexLiteral(chars, i);
+    noteValueToken(state);
+    return end;
   }
   return -1;
 }
@@ -163,7 +182,12 @@ function skipQuotedString(chars: string[], start: number, quote: string): number
 // start points at the opening backtick. Returns the index after the closing
 // backtick (or end of input when unterminated), with literal text blanked and
 // ${...} interpolation contents left as code.
-function maskTemplateLiteral(chars: string[], source: string, start: number): number {
+function maskTemplateLiteral(
+  chars: string[],
+  source: string,
+  start: number,
+  state: MaskState,
+): number {
   let i = start + 1;
   let literalStart = start;
   while (i < chars.length) {
@@ -173,11 +197,12 @@ function maskTemplateLiteral(chars: string[], source: string, start: number): nu
     }
     if (chars[i] === "`") {
       blankRange(chars, literalStart, i);
+      noteValueToken(state);
       return i + 1;
     }
     if (chars[i] === "$" && chars[i + 1] === "{") {
       blankRange(chars, literalStart, i);
-      i = maskInterpolation(chars, source, i + 2);
+      i = maskInterpolation(chars, source, i + 2, state);
       literalStart = i;
       continue;
     }
@@ -188,23 +213,34 @@ function maskTemplateLiteral(chars: string[], source: string, start: number): nu
 }
 
 // start is just after "${". Returns the index after the matching "}".
-function maskInterpolation(chars: string[], source: string, start: number): number {
+function maskInterpolation(
+  chars: string[],
+  source: string,
+  start: number,
+  state: MaskState,
+): number {
   let depth = 1;
   let i = start;
   while (i < chars.length && depth > 0) {
     if (chars[i] === "`") {
-      i = maskTemplateLiteral(chars, source, i);
+      i = maskTemplateLiteral(chars, source, i, state);
       continue;
     }
-    const tokenEnd = maskCodeToken(chars, source, i);
+    const tokenEnd = maskCodeToken(chars, source, i, state);
     if (tokenEnd !== -1) {
       i = tokenEnd;
       continue;
     }
-    if (chars[i] === "{") {
-      depth += 1;
-    } else if (chars[i] === "}") {
-      depth -= 1;
+    const character = chars[i];
+    if (character === "{" || character === "}") {
+      if (character === "{") {
+        depth += 1;
+      } else {
+        depth -= 1;
+      }
+      noteCodeCharacter(character, state);
+    } else if (!/\s/.test(character)) {
+      noteCodeCharacter(character, state);
     }
     i += 1;
   }
@@ -215,14 +251,22 @@ function maskNonCode(source: string): string {
   // UTF-16 units, not code points: the mask must preserve offsets into the
   // original string, and astral characters (emoji) span two units.
   const chars = source.split("");
+  const state: MaskState = { previous: "", word: "" };
   let i = 0;
   while (i < chars.length) {
     if (chars[i] === "`") {
-      i = maskTemplateLiteral(chars, source, i);
+      i = maskTemplateLiteral(chars, source, i, state);
       continue;
     }
-    const tokenEnd = maskCodeToken(chars, source, i);
-    i = tokenEnd === -1 ? i + 1 : tokenEnd;
+    const tokenEnd = maskCodeToken(chars, source, i, state);
+    if (tokenEnd !== -1) {
+      i = tokenEnd;
+      continue;
+    }
+    if (!/\s/.test(chars[i])) {
+      noteCodeCharacter(chars[i], state);
+    }
+    i += 1;
   }
   return chars.join("");
 }

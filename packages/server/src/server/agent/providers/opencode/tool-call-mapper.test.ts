@@ -189,6 +189,22 @@ describe("opencode tool-call mapper", () => {
     expect(item.detail).toMatchObject({ type: "plain_text", label: "hzmcp.memory__search_notes" });
   });
 
+  it("does not let masked strings change division-vs-regex detection", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-11",
+        status: "running",
+        input: {
+          code: 'const half = "100" / 2;\nawait tools.hzmcp.memory__search_notes({ query: "/tmp" });',
+        },
+        output: null,
+      }),
+    );
+
+    expect(item.detail).toMatchObject({ type: "plain_text", label: "hzmcp.memory__search_notes" });
+  });
+
   it("keeps the executed code in the detail text alongside the output", () => {
     const item = expectMapped(
       mapOpencodeToolCall({
