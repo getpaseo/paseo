@@ -125,6 +125,10 @@ function requireTimelineRow(storage: MemoryStorage): ReplicaRow {
   return row;
 }
 
+function storedServerIds(storage: MemoryStorage): string[] {
+  return [...new Set([...storage.rows.values()].map((row) => row.serverId))].sort();
+}
+
 function agent(id = "agent-1"): Agent {
   return {
     ...normalizeAgentSnapshot(
@@ -816,6 +820,61 @@ describe("ReplicaCache", () => {
     expect(restored.projects.get("project-1")?.projectDisplayName).toBe("Paseo");
     expect(storage.rows.has(`${SERVER_ID}:agent:agent-1`)).toBe(false);
     expect(storage.rows.has(`${SERVER_ID}:project:project-1`)).toBe(true);
+  });
+
+  describe("while a timeline streams multi-byte text", () => {
+    const otherServerId = "other-host";
+    // The row grows into one long line, and the emoji runs of opposite offset parity put a
+    // surrogate pair across a 16K-unit boundary of the persisted payload.
+    const chunks = [
+      "Read ",
+      "café ",
+      "日本語 ",
+      "🙂".repeat(20_000),
+      `x${"🙂".repeat(20_000)}`,
+      " done",
+    ];
+
+    async function streamTimeline(cache: ReplicaCache): Promise<void> {
+      cache.commitTimeline(otherServerId, "agent-1", timeline("other host"));
+      await cache.flush();
+      let text = "";
+      for (const chunk of chunks) {
+        text += chunk;
+        cache.commitTimeline(SERVER_ID, "agent-1", timeline(text));
+        await cache.flush();
+      }
+    }
+
+    async function streamedBytes(): Promise<number> {
+      const storage = new MemoryStorage();
+      const cache = new ReplicaCache(storage, noLegacyCleanup);
+      cache.setHosts([SERVER_ID, otherServerId]);
+      await streamTimeline(cache);
+      return [...storage.rows.values()].reduce(
+        (total, row) => total + Buffer.byteLength(row.payload, "utf8"),
+        0,
+      );
+    }
+
+    it.each([
+      { slack: 0, retained: [SERVER_ID, otherServerId] },
+      { slack: -1, retained: [SERVER_ID] },
+    ])("evicts on the exact UTF-8 size (budget slack $slack)", async ({ slack, retained }) => {
+      const storage = new MemoryStorage();
+      const cache = new ReplicaCache(storage, {
+        ...noLegacyCleanup,
+        maxBytes: (await streamedBytes()) + slack,
+      });
+      cache.setHosts([SERVER_ID, otherServerId]);
+
+      await streamTimeline(cache);
+
+      expect(storedServerIds(storage)).toEqual(retained);
+      expect((await cache.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual(
+        timeline(chunks.join("")).items,
+      );
+    });
   });
 
   it("removes a targeted corrupt row from eviction bookkeeping", async () => {
