@@ -1918,6 +1918,8 @@ export class VoiceAssistantWebSocketServer {
         hopliteProvider: this.providerSnapshotManager.supportsConfigRequiredProvider("hoplite"),
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
         importSessionWorkspaceTarget: true,
+        // COMPAT(importSessionMode): added after v0.11.4, remove gate after 2027-04-16.
+        importSessionMode: true,
         // COMPAT(importSessionSearch): added in v0.7.3, remove gate after 2027-03-02.
         importSessionSearch: true,
         // COMPAT(forgeProviders): added in v0.2.0-beta.1. Drop the gate after
