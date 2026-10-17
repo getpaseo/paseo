@@ -494,6 +494,36 @@ describe("MockLoadTestAgentClient", () => {
     unsubscribe();
   });
 
+  test("closes each code block in two arrivals with a pause after the first backtick", async () => {
+    vi.useFakeTimers();
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "e2e-fast-stream",
+    });
+    const deltas: string[] = [];
+    const unsubscribe = session.subscribe((event) => {
+      if (event.type === "timeline" && event.item.type === "assistant_message") {
+        deltas.push(event.item.text);
+      }
+    });
+
+    const resultPromise = session.run("Stream a code block with a split closing fence.");
+    await vi.advanceTimersByTimeAsync(100);
+    expect(deltas).toEqual([expect.stringContaining("```ts\n"), "`"]);
+    // The lone backtick is all there is for most of the pause.
+    await vi.advanceTimersByTimeAsync(600);
+    expect(deltas.at(-1)).toBe("`");
+    await vi.runAllTimersAsync();
+
+    const finalText = deltas.join("");
+    await expect(resultPromise).resolves.toMatchObject({ finalText, canceled: false });
+    expect(finalText.match(/^```$/gm)).toHaveLength(2);
+    expect(deltas.filter((delta) => delta === "`")).toHaveLength(2);
+    unsubscribe();
+  });
+
   test("agent manager coalesces adjacent assistant tokens into fewer messages", async () => {
     vi.useFakeTimers();
     const workdir = mkdtempSync(join(tmpdir(), "paseo-mock-load-test-"));

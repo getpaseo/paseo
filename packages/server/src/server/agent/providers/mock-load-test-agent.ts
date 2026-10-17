@@ -423,6 +423,25 @@ function parseLargeAgentStreamPayloadPrompt(
   };
 }
 
+/**
+ * A reply whose code blocks close in two arrivals: one backtick, a pause, then
+ * the other two. Providers and the daemon's coalescing window can end a delta
+ * anywhere, so this is the deterministic version of a closing fence that is
+ * still being typed when a frame paints.
+ */
+const SPLIT_CLOSING_FENCE_PAUSE_MS = 800;
+const SPLIT_CLOSING_FENCE_CHUNKS: ReadonlyArray<{ text: string; pauseMs?: number }> = [
+  { text: "Here is the first snippet:\n\n```ts\nconst answer = 42;\nconsole.log(answer);\n" },
+  { text: "`", pauseMs: SPLIT_CLOSING_FENCE_PAUSE_MS },
+  { text: "``\n\nAnd a second one:\n\n```sh\necho done\n" },
+  { text: "`", pauseMs: SPLIT_CLOSING_FENCE_PAUSE_MS },
+  { text: "``\n\nBoth blocks are closed." },
+];
+
+function isSplitClosingFencePrompt(prompt: AgentPromptInput): boolean {
+  return /stream a code block with a split closing fence/i.test(promptToText(prompt));
+}
+
 function parseAgentStreamStressPrompt(prompt: AgentPromptInput): AgentStreamStressRequest | null {
   const text = promptToText(prompt);
   const match = /emit\s+(\d+)\s+(coalesced\s+)?agent stream updates/i.exec(text);
@@ -865,6 +884,7 @@ export class MockLoadTestAgentSession implements AgentSession {
     this.activeTurn = turn;
     const largePayload = parseLargeAgentStreamPayloadPrompt(prompt);
     const stress = parseAgentStreamStressPrompt(prompt);
+    const splitClosingFence = isSplitClosingFencePrompt(prompt);
     const questionPrompt = parseMockQuestionPrompt(prompt);
     const structuredBranchName = parseStructuredBranchNamePrompt(prompt);
     const settledAssistantImageMarkdown = parseSettledAssistantImageMarkdown(prompt);
@@ -893,6 +913,8 @@ export class MockLoadTestAgentSession implements AgentSession {
         this.scheduleLargePayloadTurn(turn, largePayload);
       } else if (stress) {
         this.scheduleStressTurn(turn, stress);
+      } else if (splitClosingFence) {
+        this.scheduleSplitClosingFenceTurn(turn);
       } else {
         this.schedule(turn, 0);
       }
@@ -1224,6 +1246,33 @@ export class MockLoadTestAgentSession implements AgentSession {
       }, 5_000);
       turn.timer.unref?.();
     }, 0);
+    turn.timer.unref?.();
+  }
+
+  private scheduleSplitClosingFenceTurn(turn: ActiveTurn): void {
+    const chunks = [...SPLIT_CLOSING_FENCE_CHUNKS];
+    const finalText = chunks.map((chunk) => chunk.text).join("");
+    const emitNext = () => {
+      if (this.activeTurn !== turn) {
+        return;
+      }
+      this.clearTurnTimer(turn);
+      this.emitTurnStarted(turn);
+      const chunk = chunks.shift();
+      if (chunk === undefined) {
+        this.finishTurnWithText(turn, finalText);
+        return;
+      }
+      turn.emittedTokens += 1;
+      this.emitTimeline(turn.turnId, {
+        type: "assistant_message",
+        text: chunk.text,
+        messageId: turn.assistantMessageId,
+      });
+      turn.timer = setTimeout(emitNext, chunk.pauseMs ?? this.streamingAssistantIntervalMs);
+      turn.timer.unref?.();
+    };
+    turn.timer = setTimeout(emitNext, 0);
     turn.timer.unref?.();
   }
 
