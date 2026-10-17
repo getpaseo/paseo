@@ -2207,6 +2207,7 @@ export const ja: TranslationResources = {
         options: {
           system: "システム",
           ar: "アラビア語",
+          de: "ドイツ語",
           en: "英語",
           es: "スペイン語",
           fr: "フランス語",

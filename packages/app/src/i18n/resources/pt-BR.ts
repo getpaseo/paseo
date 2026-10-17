@@ -2222,6 +2222,7 @@ export const ptBR: TranslationResources = {
         options: {
           system: "Sistema",
           ar: "Árabe",
+          de: "alemão",
           en: "Inglês",
           es: "Espanhol",
           fr: "Francês",

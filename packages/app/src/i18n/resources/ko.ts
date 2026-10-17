@@ -2198,6 +2198,7 @@ export const ko: TranslationResources = {
         options: {
           system: "시스템",
           ar: "العربية",
+          de: "독일어",
           en: "English",
           es: "Español",
           fr: "Français",
