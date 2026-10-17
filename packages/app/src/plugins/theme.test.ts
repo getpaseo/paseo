@@ -2,7 +2,7 @@ import { QueryClient } from "@tanstack/react-query";
 import type { PluginThemeContribution } from "@getpaseo/plugin";
 import { describe, expect, it } from "vitest";
 import { darkTheme, lightTheme } from "@/styles/theme";
-import { collectPluginThemes, rememberPluginThemeHost } from "./themes";
+import { collectPluginThemes, rememberPluginThemeHost, resolveContributedTheme } from "./themes";
 import { toPluginTheme } from "./theme";
 import type { InstalledPlugin } from "./types";
 
@@ -211,5 +211,124 @@ describe("collectPluginThemes", () => {
     const withoutHostZ = collectPluginThemes([installed("host-a", [MOCHA])], SUPPORTED);
     expect(withoutHostZ[0]?.serverId).toBe("host-a");
     expect(withoutHostZ[0]?.theme.colors.surface0).toBe("#1e1e2e");
+  });
+});
+
+const MOCHA_ID = "catppuccin/theme/mocha";
+const STORED_MOCHA = { id: MOCHA_ID, serverId: "host-a", contribution: MOCHA };
+
+describe("resolveContributedTheme", () => {
+  // Plugin themes arrive with a host's plugin catalog, seconds after start on a slow connection.
+  it("keeps the stored theme while no host has loaded its plugins", () => {
+    expect(
+      resolveContributedTheme({
+        pluginThemeId: MOCHA_ID,
+        options: [],
+        stored: STORED_MOCHA,
+        loadedHosts: new Set(),
+      }),
+    ).toEqual({ selected: null, snapshot: STORED_MOCHA });
+  });
+
+  // A disconnected host's plugins are removed until it reconnects and sends its catalog again.
+  it("keeps the stored theme while its host reconnects and another host is loaded", () => {
+    expect(
+      resolveContributedTheme({
+        pluginThemeId: MOCHA_ID,
+        options: [],
+        stored: STORED_MOCHA,
+        loadedHosts: new Set(["host-b"]),
+      }),
+    ).toEqual({ selected: null, snapshot: STORED_MOCHA });
+  });
+
+  it("drops the stored theme once its host has loaded its plugins without it", () => {
+    expect(
+      resolveContributedTheme({
+        pluginThemeId: MOCHA_ID,
+        options: [],
+        stored: STORED_MOCHA,
+        loadedHosts: new Set(["host-a"]),
+      }),
+    ).toEqual({ selected: null, snapshot: null });
+  });
+
+  it("drops a stored theme that belongs to another selection", () => {
+    expect(
+      resolveContributedTheme({
+        pluginThemeId: "catppuccin/theme/latte",
+        options: [],
+        stored: STORED_MOCHA,
+        loadedHosts: new Set(),
+      }),
+    ).toEqual({ selected: null, snapshot: null });
+  });
+
+  it("selects the live theme and keeps a stored snapshot that matches it", () => {
+    const options = collectPluginThemes([installed("host-a", [MOCHA])], new Set(["host-a"]));
+    const stored = structuredClone(STORED_MOCHA);
+
+    const resolved = resolveContributedTheme({
+      pluginThemeId: MOCHA_ID,
+      options,
+      stored,
+      loadedHosts: new Set(["host-a"]),
+    });
+
+    expect(resolved.selected).toBe(options[0]);
+    expect(resolved.snapshot).toBe(stored);
+  });
+
+  it("replaces the snapshot when the plugin changes the theme's palette", () => {
+    const options = collectPluginThemes([installed("host-a", [MOCHA_FORK])], new Set(["host-a"]));
+
+    const resolved = resolveContributedTheme({
+      pluginThemeId: MOCHA_ID,
+      options,
+      stored: STORED_MOCHA,
+      loadedHosts: new Set(["host-a"]),
+    });
+
+    expect(resolved.selected).toBe(options[0]);
+    expect(resolved.snapshot).toEqual({
+      id: MOCHA_ID,
+      serverId: "host-a",
+      contribution: MOCHA_FORK,
+    });
+  });
+
+  // Two hosts can contribute the same theme id with different palettes; the one that answers
+  // first must not repaint the app or overwrite the palette saved from the other.
+  it("keeps the stored palette while its host loads and another host offers the same theme", () => {
+    const options = collectPluginThemes([installed("host-z", [MOCHA_FORK])], SUPPORTED);
+
+    expect(
+      resolveContributedTheme({
+        pluginThemeId: MOCHA_ID,
+        options,
+        stored: STORED_MOCHA,
+        loadedHosts: new Set(["host-z"]),
+      }),
+    ).toEqual({ selected: null, snapshot: STORED_MOCHA });
+  });
+
+  // The picked host lives in module state and is gone after a restart; the snapshot brings it back.
+  it("resolves to the stored snapshot's host once both hosts have loaded", () => {
+    rememberPluginThemeHost(STORED_MOCHA);
+    const options = collectPluginThemes(
+      [installed("host-a", [MOCHA]), installed("host-z", [MOCHA_FORK])],
+      SUPPORTED,
+    );
+    const stored = structuredClone(STORED_MOCHA);
+
+    const resolved = resolveContributedTheme({
+      pluginThemeId: MOCHA_ID,
+      options,
+      stored,
+      loadedHosts: new Set(["host-a", "host-z"]),
+    });
+
+    expect(resolved.selected?.serverId).toBe("host-a");
+    expect(resolved.snapshot).toBe(stored);
   });
 });

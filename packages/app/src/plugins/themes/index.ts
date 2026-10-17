@@ -1,122 +1,27 @@
 import { useMemo } from "react";
-import { z } from "zod";
 import type { PluginThemeContribution } from "@getpaseo/plugin";
 import { useHostFeatureMap } from "@/runtime/host-features";
-import {
-  buildDarkSemanticColors,
-  buildDarkTheme,
-  buildLightSemanticColors,
-  buildLightTheme,
-  darkTheme,
-  lightTheme,
-  type Theme,
-} from "@/styles/theme";
+import type { Theme } from "@/styles/theme";
 import {
   getPreferredPluginContributionHost,
   rememberPluginContributionHost,
 } from "../contribution-host";
 import { useInstalledPlugins } from "../registry";
 import type { InstalledPlugin } from "../types";
-
-const hexColorSchema = z
-  .string()
-  .regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/, "Must be a hex color");
-
-const contributionSchema: z.ZodType<PluginThemeContribution> = z.strictObject({
-  id: z.string(),
-  name: z.string().trim().min(1).max(60),
-  appearance: z.enum(["light", "dark"]),
-  colors: z.strictObject({
-    background: hexColorSchema,
-    foreground: hexColorSchema,
-    raised: hexColorSchema,
-    control: hexColorSchema,
-    border: hexColorSchema,
-    accent: hexColorSchema.optional(),
-    mutedForeground: hexColorSchema,
-    ring: hexColorSchema,
-  }),
-});
+import { buildPluginTheme, type PluginThemeSnapshot } from "./palette";
 
 export interface PluginThemeOption {
   id: string;
   serverId: string;
   name: string;
   swatch: string;
+  contribution: PluginThemeContribution;
   theme: Theme;
 }
 
 interface PluginThemeTarget {
   serverId: string;
   contribution: PluginThemeContribution;
-}
-
-export function parsePluginThemeContribution(value: unknown): PluginThemeContribution {
-  return contributionSchema.parse(value);
-}
-
-function buildDarkPluginTheme(contribution: PluginThemeContribution): Theme {
-  const colors = contribution.colors;
-  const accent = colors.accent ?? colors.foreground;
-  return buildDarkTheme(
-    buildDarkSemanticColors({
-      surface0: colors.background,
-      surface1: colors.raised,
-      surface2: colors.control,
-      surface3: colors.border,
-      surface4: colors.ring,
-      surfaceDiffEmpty: colors.raised,
-      surfaceSidebar: colors.background,
-      foreground: colors.foreground,
-      foregroundMuted: colors.mutedForeground,
-      foregroundExtraMuted: colors.ring,
-      border: colors.border,
-      borderAccent: colors.border,
-      accent,
-      accentBright: accent,
-      accentForeground: colors.background,
-      destructive: darkTheme.colors.destructive,
-      terminalBlack: colors.control,
-      terminalBrightBlack: colors.ring,
-      ring: colors.ring,
-    }),
-  );
-}
-
-function buildLightPluginTheme(contribution: PluginThemeContribution): Theme {
-  const colors = contribution.colors;
-  const accent = colors.accent ?? colors.foreground;
-  return buildLightTheme(
-    buildLightSemanticColors({
-      surface0: colors.background,
-      surface1: colors.raised,
-      surface2: colors.control,
-      surface3: colors.border,
-      surface4: colors.ring,
-      surfaceDiffEmpty: colors.raised,
-      surfaceSidebar: colors.control,
-      foreground: colors.foreground,
-      foregroundMuted: colors.mutedForeground,
-      foregroundExtraMuted: colors.ring,
-      border: colors.border,
-      borderAccent: colors.border,
-      accent,
-      accentBright: accent,
-      accentForeground: colors.background,
-      primary: colors.foreground,
-      primaryForeground: colors.background,
-      destructive: lightTheme.colors.destructive,
-      terminalBlack: colors.foreground,
-      terminalBrightBlack: colors.ring,
-      ring: colors.ring,
-    }),
-  );
-}
-
-function buildPluginTheme(contribution: PluginThemeContribution): Theme {
-  return contribution.appearance === "light"
-    ? buildLightPluginTheme(contribution)
-    : buildDarkPluginTheme(contribution);
 }
 
 function selectTarget(id: string, targets: PluginThemeTarget[]): PluginThemeTarget {
@@ -142,18 +47,79 @@ export function collectPluginThemes(
 
   return [...targetsById].map(([id, targets]) => {
     const target = selectTarget(id, targets);
-    return {
-      id,
-      serverId: target.serverId,
-      name: target.contribution.name,
-      swatch: target.contribution.colors.background,
-      theme: buildPluginTheme(target.contribution),
-    };
+    return pluginThemeOption({ id, serverId: target.serverId, contribution: target.contribution });
   });
 }
 
-export function rememberPluginThemeHost(option: PluginThemeOption): void {
-  rememberPluginContributionHost(option.id, option.serverId);
+/** Builds the option a picker lists, from a live contribution or from a stored snapshot. */
+export function pluginThemeOption(source: PluginThemeSnapshot): PluginThemeOption {
+  const { id, serverId, contribution } = source;
+  return {
+    id,
+    serverId,
+    name: contribution.name,
+    swatch: contribution.colors.background,
+    contribution,
+    theme: buildPluginTheme(contribution),
+  };
+}
+
+interface ContributedThemeSelection {
+  /** The catalog option `pluginThemeId` names, once a host has contributed it. */
+  selected: PluginThemeOption | null;
+  /** The snapshot to keep in app settings; the stored object itself while it still holds. */
+  snapshot: PluginThemeSnapshot | null;
+}
+
+/**
+ * Plugin themes only exist once a host's plugin catalog has loaded, which takes seconds on a slow
+ * connection and starts over after every reconnect. Until then the stored snapshot stands in for
+ * the selected theme. It is dropped only when the host that contributed it has loaded its catalog
+ * without the theme, so an offline or reconnecting host keeps it. Another host contributing the
+ * same id first does not replace it either: that host's palette can differ.
+ */
+export function resolveContributedTheme(input: {
+  pluginThemeId: string | null;
+  options: readonly PluginThemeOption[];
+  stored: PluginThemeSnapshot | null;
+  loadedHosts: ReadonlySet<string>;
+}): ContributedThemeSelection {
+  const { pluginThemeId, options, stored, loadedHosts } = input;
+  const selected = options.find((option) => option.id === pluginThemeId) ?? null;
+  const storedHostPending =
+    stored !== null && stored.id === pluginThemeId && !loadedHosts.has(stored.serverId);
+  if (selected && storedHostPending && selected.serverId !== stored.serverId) {
+    return { selected: null, snapshot: stored };
+  }
+  if (selected) {
+    const current =
+      stored?.id === selected.id &&
+      stored.serverId === selected.serverId &&
+      samePalette(stored.contribution, selected.contribution);
+    return { selected, snapshot: current ? stored : snapshotPluginTheme(selected) };
+  }
+  return { selected: null, snapshot: storedHostPending ? stored : null };
+}
+
+export function snapshotPluginTheme(option: PluginThemeOption): PluginThemeSnapshot {
+  return { id: option.id, serverId: option.serverId, contribution: option.contribution };
+}
+
+function samePalette(left: PluginThemeContribution, right: PluginThemeContribution): boolean {
+  if (left.id !== right.id || left.name !== right.name || left.appearance !== right.appearance) {
+    return false;
+  }
+  const keys = new Set([...Object.keys(left.colors), ...Object.keys(right.colors)]);
+  return [...keys].every(
+    (key) =>
+      left.colors[key as keyof typeof left.colors] ===
+      right.colors[key as keyof typeof right.colors],
+  );
+}
+
+/** Makes the catalog prefer this theme's host when several hosts contribute the same id. */
+export function rememberPluginThemeHost(theme: Pick<PluginThemeSnapshot, "id" | "serverId">): void {
+  rememberPluginContributionHost(theme.id, theme.serverId);
 }
 
 function supportedThemeHosts(support: ReadonlyMap<string, boolean>): Set<string> {
