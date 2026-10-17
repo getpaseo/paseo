@@ -76,6 +76,8 @@ export interface PluginAttachmentSourceContribution {
   icon: string;
   pickerTitle: string;
   searchPlaceholder: string;
+  /** Also show this source as a shortcut on New Agent drafts. */
+  newAgentShortcut?: boolean;
   search: PluginRpcContract;
 }
 
