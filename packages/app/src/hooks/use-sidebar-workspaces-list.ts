@@ -3,18 +3,24 @@ import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceDirectoryServerIds } from "@/stores/session-store-hooks";
-import { workspaceEqualityFns } from "@/stores/session-store-hooks/selectors";
+import {
+  selectCompleteWorkspaceListServerIds,
+  workspaceEqualityFns,
+} from "@/stores/session-store-hooks/selectors";
 import { useHostProjects } from "@/projects/host-projects";
 import { getHostRuntimeStore, useHostRegistryLoaded, useHosts } from "@/runtime/host-runtime";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import {
+  buildSidebarOrderLiveState,
   buildSidebarWorkspacePlacementModel,
   computeSidebarOrderUpdates,
   createSidebarWorkspaceEntry,
   deriveProjectStatusBucket,
   deriveSidebarLoadingState,
+  pruneSidebarOrder,
   type ProjectStatusSession,
+  type SidebarOrderState,
   type SidebarProjectEntry,
   type SidebarWorkspaceEntry,
   type SidebarWorkspacePlacement,
@@ -24,6 +30,8 @@ import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 export {
   appendMissingOrderKeys,
   applyStoredOrdering,
+  buildSidebarOrderLiveState,
+  pruneSidebarOrder,
   buildSidebarProjectsFromHostProjects,
   buildSidebarProjectsFromStructure,
   createSidebarWorkspaceEntry,
@@ -33,6 +41,8 @@ export {
   deriveSidebarLoadingState,
   shouldShowSidebarHostLabels,
   type SidebarLoadingState,
+  type SidebarOrderLiveState,
+  type SidebarOrderState,
   type SidebarOrderUpdates,
   type SidebarStatusWorkspacePlacement,
   type SidebarWorkspacePlacement,
@@ -156,6 +166,12 @@ export function useSidebarWorkspacesList(options?: {
       ? sidebarModel.projectNamesByViewKey
       : EMPTY_PROJECT_NAMES;
 
+  const completeWorkspaceListServerIds = useStoreWithEqualityFn(
+    useSessionStore,
+    selectCompleteWorkspaceListServerIds,
+    workspaceEqualityFns.deep,
+  );
+
   useEffect(() => {
     const orderStore = useSidebarOrderStore.getState();
     const updates = computeSidebarOrderUpdates({
@@ -165,13 +181,35 @@ export function useSidebarWorkspacesList(options?: {
         orderStore.workspaceOrderByProject[projectViewKey] ?? EMPTY_ORDER,
     });
 
-    if (updates.projectOrder) {
-      orderStore.setProjectOrder(updates.projectOrder);
+    // Reconcile only ever adds, so on a device that syncs the order the stored value
+    // would grow for the lifetime of the box. Prune what a server which reported its
+    // COMPLETE workspace list no longer has, in the same write as the reconcile, so a
+    // reload or a rehydrate never observes half of the transition. `pruneSidebarOrder`
+    // returns the same object when there is nothing to remove, and that identity is what
+    // keeps an unchanged tab from writing at all.
+    const reconciled: SidebarOrderState = {
+      projectOrder: updates.projectOrder ?? orderStore.projectOrder,
+      pinnedWorkspaceOrder: orderStore.pinnedWorkspaceOrder,
+      workspaceOrderByProject: {
+        ...orderStore.workspaceOrderByProject,
+        ...Object.fromEntries(
+          updates.workspaceOrders.map((item) => [item.projectViewKey, item.order]),
+        ),
+      },
+    };
+    const next = pruneSidebarOrder(
+      reconciled,
+      buildSidebarOrderLiveState({
+        projects,
+        registeredHostIds: allServerIds,
+        completeWorkspaceListServerIds,
+      }),
+    );
+    if (next === reconciled && !updates.projectOrder && updates.workspaceOrders.length === 0) {
+      return;
     }
-    for (const { projectViewKey, order } of updates.workspaceOrders) {
-      orderStore.setWorkspaceOrder(projectViewKey, order);
-    }
-  }, [persistedProjectOrder, projects]);
+    orderStore.setSidebarOrderState(next);
+  }, [persistedProjectOrder, projects, allServerIds, completeWorkspaceListServerIds]);
 
   const refreshAll = useCallback(() => {
     if (!isActive) return;

@@ -230,3 +230,36 @@ it("does not restore a targeted cached workspace while its archive is pending", 
     store.clearSession(serverId);
   }
 });
+
+it("records a complete workspace list only while it is actually complete", () => {
+  const serverId = "complete-workspace-list";
+  const store = useSessionStore.getState();
+  store.initializeSession(serverId, null as unknown as DaemonClient);
+  const replica = new WorkspaceDirectoryReplica(serverId);
+  const flag = () => useSessionStore.getState().sessions[serverId]?.hasCompleteWorkspaceList;
+
+  try {
+    expect(flag()).toBe(false);
+    // A checkpoint restore is not a directory sync.
+    replica.commitCached({ workspaces: new Map(), projects: new Map() });
+    expect(flag()).toBe(false);
+
+    replica.commitSnapshot({ workspaces: new Map(), projects: new Map() }, []);
+    expect(flag()).toBe(true);
+    expect(useSessionStore.getState().sessions[serverId]?.hasHydratedWorkspaces).toBe(true);
+
+    // `commitCached` merges the checkpoint UNDER this replica's own entries, so it can
+    // only add — the list is still a superset of the snapshot, and revoking here would
+    // leave the flag off with nothing scheduled to put it back.
+    replica.commitCached({ workspaces: new Map(), projects: new Map() });
+    expect(flag()).toBe(true);
+
+    // A FRESH replica for the same server has earned nothing, so its cache restore does
+    // withdraw. That is the page-load-from-checkpoint case.
+    const restarted = new WorkspaceDirectoryReplica(serverId);
+    restarted.commitCached({ workspaces: new Map(), projects: new Map() });
+    expect(flag()).toBe(false);
+  } finally {
+    store.clearSession(serverId);
+  }
+});
