@@ -49,22 +49,26 @@ export type TerminalWorkspaceContributionChangedListener = (
   event: TerminalWorkspaceContributionChangedEvent,
 ) => void;
 
+export interface TerminalManagerCreateOptions {
+  id?: string;
+  cwd: string;
+  workspaceId: string;
+  name?: string;
+  title?: string;
+  env?: Record<string, string>;
+  command?: string;
+  args?: string[];
+  rows?: number;
+  cols?: number;
+  activityToken?: string;
+  activityUrl?: string | null;
+  /** Keep the completed session available for later output inspection. */
+  retainOnExit?: boolean;
+}
+
 export interface TerminalManager {
   getTerminals(cwd: string, options?: { workspaceId?: string }): Promise<TerminalSession[]>;
-  createTerminal(options: {
-    id?: string;
-    cwd: string;
-    workspaceId: string;
-    name?: string;
-    title?: string;
-    env?: Record<string, string>;
-    command?: string;
-    args?: string[];
-    rows?: number;
-    cols?: number;
-    activityToken?: string;
-    activityUrl?: string | null;
-  }): Promise<TerminalSession>;
+  createTerminal(options: TerminalManagerCreateOptions): Promise<TerminalSession>;
   registerCwdEnv(options: { cwd: string; env: Record<string, string> }): void;
   validateTerminalActivityToken(terminalId: string, token: string): "valid" | "unknown" | "invalid";
   getTerminal(id: string): TerminalSession | undefined;
@@ -186,10 +190,15 @@ export function createTerminalManager(
     return bestMatchRoot ? defaultEnvByRootCwd.get(bestMatchRoot) : undefined;
   }
 
-  function registerSession(session: TerminalSession): TerminalSession {
+  function registerSession(
+    session: TerminalSession,
+    options: { retainOnExit: boolean },
+  ): TerminalSession {
     terminalsById.set(session.id, session);
     const unsubscribeExit = session.onExit(() => {
-      removeSessionById(session.id, { kill: false });
+      if (!options.retainOnExit) {
+        removeSessionById(session.id, { kill: false });
+      }
     });
     const unsubscribeTitle = session.onTitleChange(() => {
       emitTerminalsChanged({ cwd: session.cwd });
@@ -308,20 +317,7 @@ export function createTerminalManager(
       return sessions;
     },
 
-    async createTerminal(options: {
-      id?: string;
-      cwd: string;
-      workspaceId: string;
-      name?: string;
-      title?: string;
-      env?: Record<string, string>;
-      command?: string;
-      args?: string[];
-      rows?: number;
-      cols?: number;
-      activityToken?: string;
-      activityUrl?: string | null;
-    }): Promise<TerminalSession> {
+    async createTerminal(options: TerminalManagerCreateOptions): Promise<TerminalSession> {
       assertAbsolutePath(options.cwd);
 
       const terminals = terminalsByCwd.get(options.cwd) ?? [];
@@ -357,6 +353,7 @@ export function createTerminalManager(
             ...(mergedEnv ? { env: mergedEnv } : {}),
             activityEnv,
           }),
+          { retainOnExit: options.retainOnExit === true },
         );
       } catch (error) {
         terminalActivityTokenById.delete(terminalId);

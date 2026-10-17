@@ -31,6 +31,11 @@ import {
   useWorkspaceScriptsMenuPages,
   type UseWorkspaceScriptsMenuPagesInput,
 } from "@/screens/workspace/scripts";
+import {
+  useWorkspaceLaunchErrors,
+  WorkspaceLaunchesSection,
+  type WorkspaceLaunchesSectionProps,
+} from "@/screens/workspace/workspace-launches-button";
 
 const ThemedEllipsis = withUnistyles(Ellipsis);
 const ThemedCopy = withUnistyles(Copy);
@@ -204,8 +209,14 @@ function HeaderMenuProfileItem({
   );
 }
 
+export type WorkspaceHeaderLaunchesInput = Omit<
+  WorkspaceLaunchesSectionProps,
+  "launchErrors" | "onLaunchError" | "onClearLaunchError"
+>;
+
 export interface WorkspaceHeaderMenuMobileProps extends WorkspaceHeaderWorkspaceActions {
   normalizedServerId: string;
+  launches: WorkspaceHeaderLaunchesInput;
   scripts: UseWorkspaceScriptsMenuPagesInput;
   showCreateBrowserTab: boolean;
   createTerminalDisabled: boolean;
@@ -222,6 +233,7 @@ export interface WorkspaceHeaderMenuMobileProps extends WorkspaceHeaderWorkspace
  */
 export function WorkspaceHeaderMenuMobile({
   normalizedServerId,
+  launches,
   scripts,
   showCreateBrowserTab,
   createTerminalDisabled,
@@ -242,6 +254,10 @@ export function WorkspaceHeaderMenuMobile({
     router.push(buildSettingsHostSectionRoute(normalizedServerId, "terminals") as Href);
   }, [normalizedServerId, router]);
   const scriptsMenu = useWorkspaceScriptsMenuPages(scripts);
+  const { launchErrors, onLaunchError, onClearLaunchError } = useWorkspaceLaunchErrors(
+    launches.workspaceId,
+  );
+  const hasLaunches = launches.launches.length > 0;
 
   return (
     <DropdownMenu compactMode="sheet">
@@ -269,6 +285,15 @@ export function WorkspaceHeaderMenuMobile({
         pages={scriptsMenu.pages}
         sheetTitle={t("workspace.header.actions.workspaceActions")}
       >
+        {hasLaunches ? (
+          <WorkspaceLaunchesSection
+            {...launches}
+            launchErrors={launchErrors}
+            onLaunchError={onLaunchError}
+            onClearLaunchError={onClearLaunchError}
+          />
+        ) : null}
+        {hasLaunches && scriptsMenu.trigger ? <DropdownMenuSeparator /> : null}
         {scriptsMenu.trigger}
         {showCreateBrowserTab ? (
           <DropdownMenuItem

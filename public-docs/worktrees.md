@@ -80,7 +80,10 @@ Add `--forge <name>` when Paseo cannot infer the forge from the source checkout.
 
 ## paseo.json
 
-Drop a `paseo.json` in your repo root. Paseo reads it from the committed version of the base branch you picked, so uncommitted changes in other branches don't apply.
+Drop a `paseo.json` in your repo root. Worktree setup, scripts, and services use the version
+checked out in each worktree, initially the committed base branch version. Launches are
+project-scoped runtime definitions: Paseo reads them from the source checkout, the same file the
+Project Settings screen edits, so they are available from every workspace.
 
 ```json
 {
@@ -176,6 +179,25 @@ By default, Paseo asks the OS for an available ephemeral port. Configure a range
 The range is inclusive. A project `servicePorts` block replaces the global block. An explicit
 service `port` always wins over either setting.
 
+Set `blockSize` to opt configured scripts and services into a contiguous workspace-wide port
+block. Launches also receive a block; when no size is configured, they use `100` ports. This lets
+an existing Compose wrapper or host dev script choose its own ports without defining every process
+as a Paseo service.
+
+```json
+{
+  "worktree": {
+    "servicePorts": { "range": "20000-50000", "blockSize": 100 }
+  }
+}
+```
+
+Without `blockSize`, scripts and services keep their legacy per-service allocation, and Paseo does
+not invoke `portScript` with `@workspace`. When a block is configured, its lease lasts for the
+daemon lifetime and is reused by every opted-in command in the same workspace. Paseo keeps existing
+`$PASEO_PORT` allocation for individually declared services. Declared explicit service ports stay
+outside the workspace block.
+
 For an external allocator, configure `portScript` instead:
 
 ```json
@@ -192,6 +214,60 @@ are available as `PASEO_SCRIPTNAME`, `PASEO_WORKSPACE_ID`, `PASEO_BRANCH_NAME`, 
 `PASEO_WORKTREE_PATH`. It must print one valid TCP port to stdout. `portScript` wins over `range` in
 the same block. Paseo trusts the external allocator, so the returned port may already be in use, for
 example by a service Paseo will attach to.
+
+For a workspace block, Paseo invokes the same allocator once with the service name `@workspace`
+and sets `PASEO_PORT_COUNT` to the requested block size. Print the block's first port. This happens
+when `blockSize` is set for scripts and services, or when a launch starts.
+
+### Workspace launches
+
+Use `launches` for an existing command that starts a whole development configuration, such as a
+Docker Compose wrapper plus host processes. Scripts, services, and launches are named commands
+in the same **Run** menu. Choose the behavior that matches the command:
+
+| Kind    | Use it for                                                                        |
+| ------- | --------------------------------------------------------------------------------- |
+| Script  | An on-demand command, such as tests or migrations.                                |
+| Service | One long-running service with one assigned HTTP port.                             |
+| Launch  | Your existing dev entrypoint, with terminal output and multiple discovered ports. |
+
+A launch reuses your project’s orchestration:
+
+```json
+{
+  "worktree": {
+    "servicePorts": { "range": "20000-50000", "blockSize": 100 }
+  },
+  "launches": {
+    "dev": { "command": "./bin/dev" },
+    "full": { "command": "./bin/dev --full" }
+  }
+}
+```
+
+The command runs with the selected workspace as its working directory. Do not model this command
+as a `scripts` service: services receive one `$PASEO_PORT`, while launches receive the shared
+`$PASEO_PORT_BASE` through `$PASEO_PORT_END` block. A project launch takes precedence over a
+same-named worktree script; Paseo hides the legacy script and stops it before starting the launch.
+
+Only one launch runs per workspace. **Switch** stops the current launch and starts the selected
+one. **Output** opens its terminal tab, including stdout and stderr. The row shows running,
+stopped, or the last exit code; running does not imply every child service is ready.
+
+Paseo probes the leased block for live TCP listeners. HTTP listeners get a route
+through the existing reverse proxy; raw TCP listeners remain direct local ports. This works for
+host listeners and Docker-published ports.
+
+Your command owns Docker, dependencies, and restart policy. Launch commands use Bash on Unix
+and PowerShell on Windows, independent of your interactive shell. The launch stops when that
+command exits. Keep it in the foreground so Paseo can stop it; a bare `docker compose up -d` exits
+immediately and is not a useful launch command.
+
+```bash
+paseo launch ls
+paseo launch start dev
+paseo launch stop dev
+```
 
 ### Reverse proxy
 
@@ -244,6 +320,16 @@ Setup, teardown, scripts, and services all see:
 - `$PASEO_WORKTREE_PATH`, the worktree directory
 - `$PASEO_BRANCH_NAME`, the worktree's branch
 - `$PASEO_WORKTREE_PORT`, legacy per-worktree port (prefer `$PASEO_PORT` inside services)
+
+Launches, and scripts or services with `servicePorts.blockSize`, additionally see one shared
+workspace runtime environment:
+
+- `$PASEO_WORKSPACE_ID`
+- `$PASEO_PORT_BASE`, `$PASEO_PORT_END` (inclusive), and `$PASEO_PORT_COUNT`
+- `$PASEO_COMPOSE_PROJECT_NAME` and `$COMPOSE_PROJECT_NAME`, a stable name derived from the
+  workspace ID
+
+Launches also receive `$PASEO_LAUNCH_NAME`.
 
 Services additionally get:
 

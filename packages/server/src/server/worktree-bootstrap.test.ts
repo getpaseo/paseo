@@ -1,12 +1,16 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { execFileSync } from "child_process";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync, mkdirSync } from "fs";
+import { chmodSync, mkdtempSync, realpathSync, rmSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
 import type { AgentTimelineItem } from "./agent/agent-sdk-types.js";
 import { runAsyncWorktreeBootstrap, spawnWorkspaceScript } from "./worktree-bootstrap.js";
-import { ensureWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
+import {
+  ensureWorkspaceServicePortPlan,
+  releaseWorkspaceServicePortPlan,
+} from "./workspace-service-port-registry.js";
+import { WorkspaceRuntimeEnvironmentService } from "./workspace-runtime-environment.js";
 import { ScriptRouteStore } from "./script-proxy.js";
 import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
@@ -490,16 +494,20 @@ describe("runAsyncWorktreeBootstrap", () => {
     });
   }
 
-  function commitPaseoScripts(
-    scripts: Record<string, { command: string; type?: "script" | "service" }>,
-    message = "add script config",
-  ): void {
-    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify({ scripts }));
+  function commitPaseoConfig(config: Record<string, unknown>, message = "add script config"): void {
+    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(config));
     execFileSync("git", ["add", "paseo.json"], { cwd: repoDir, stdio: "pipe" });
     execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", message], {
       cwd: repoDir,
       stdio: "pipe",
     });
+  }
+
+  function commitPaseoScripts(
+    scripts: Record<string, { command: string; type?: "script" | "service" }>,
+    message = "add script config",
+  ): void {
+    commitPaseoConfig({ scripts }, message);
   }
 
   it("spawns plain scripts in persistent shell terminals without env injection or routes", async () => {
@@ -540,6 +548,266 @@ describe("runAsyncWorktreeBootstrap", () => {
       exitCode: null,
       terminalId: "term-1",
     });
+  });
+
+  it("injects the shared workspace runtime environment into plain scripts", async () => {
+    commitPaseoConfig({
+      worktree: {
+        servicePorts: { range: "21000-21099", blockSize: 100 },
+      },
+      scripts: {
+        compose: {
+          command: "docker compose ps",
+        },
+      },
+    });
+
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const terminalRecords: StubTerminalRecord[] = [];
+    const ensure = vi.fn().mockResolvedValue({
+      portBase: 21000,
+      portEnd: 21099,
+      portCount: 100,
+      composeProjectName: "paseo_workspace",
+      env: {
+        PASEO_WORKSPACE_ID: "workspace-runtime-env",
+        PASEO_PORT_BASE: "21000",
+        PASEO_PORT_END: "21099",
+        PASEO_PORT_COUNT: "100",
+        PASEO_COMPOSE_PROJECT_NAME: "paseo_workspace",
+        COMPOSE_PROJECT_NAME: "paseo_workspace",
+      },
+      reservedPorts: new Set([21000]),
+    });
+
+    await spawnWorkspaceScript({
+      repoRoot: repoDir,
+      workspaceId: "workspace-runtime-env",
+      projectSlug: "repo",
+      branchName: "feature-runtime-env",
+      scriptName: "compose",
+      daemonPort: null,
+      serviceProxy: routeStore,
+      runtimeStore,
+      terminalManager: createStubTerminalManager(createTerminalCalls, terminalRecords),
+      workspaceRuntimeEnvironment: { ensure },
+    });
+
+    expect(ensure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "workspace-runtime-env",
+        cwd: repoDir,
+        branchName: "feature-runtime-env",
+        allocation: { range: "21000-21099", blockSize: 100 },
+        excludedPorts: expect.any(Function),
+      }),
+    );
+    const ensureInput = ensure.mock.calls[0]?.[0] as {
+      excludedPorts: () => ReadonlySet<number>;
+    };
+    expect(ensureInput.excludedPorts()).toEqual(new Set());
+    expect(createTerminalCalls[0]?.env).toMatchObject({
+      PASEO_PORT_BASE: "21000",
+      PASEO_PORT_END: "21099",
+      PASEO_PORT_COUNT: "100",
+      PASEO_COMPOSE_PROJECT_NAME: "paseo_workspace",
+      COMPOSE_PROJECT_NAME: "paseo_workspace",
+    });
+  });
+
+  it("keeps legacy service port allocation when no workspace block is configured", async () => {
+    commitPaseoConfig({
+      worktree: {
+        servicePorts: { range: "3000-3001" },
+      },
+      scripts: {
+        compose: {
+          command: "docker compose ps",
+        },
+        api: {
+          type: "service",
+          command: "npm run api",
+          port: 39123,
+        },
+      },
+    });
+
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    let ensureCalls = 0;
+    const workspaceRuntimeEnvironment = {
+      ensure: async () => {
+        ensureCalls += 1;
+        throw new Error("Legacy scripts must not request a workspace port block");
+      },
+    };
+
+    await spawnWorkspaceScript({
+      repoRoot: repoDir,
+      workspaceId: "workspace-legacy-service-ports",
+      projectSlug: "repo",
+      branchName: "feature-legacy-service-ports",
+      scriptName: "compose",
+      daemonPort: null,
+      serviceProxy: routeStore,
+      runtimeStore,
+      terminalManager: createStubTerminalManager(createTerminalCalls),
+      workspaceRuntimeEnvironment,
+    });
+    await spawnWorkspaceScript({
+      repoRoot: repoDir,
+      workspaceId: "workspace-legacy-service-ports",
+      projectSlug: "repo",
+      branchName: "feature-legacy-service-ports",
+      scriptName: "api",
+      daemonPort: null,
+      serviceProxy: routeStore,
+      runtimeStore,
+      terminalManager: createStubTerminalManager(createTerminalCalls),
+      workspaceRuntimeEnvironment,
+    });
+
+    expect(ensureCalls).toBe(0);
+    expect(createTerminalCalls[0]?.env).toBeUndefined();
+    expect(createTerminalCalls[1]?.env).toMatchObject({ PASEO_PORT: "39123" });
+    expect(createTerminalCalls[1]?.env?.PASEO_PORT_BASE).toBeUndefined();
+    expect(createTerminalCalls[1]?.env?.COMPOSE_PROJECT_NAME).toBeUndefined();
+  });
+
+  it("keeps service allocation outside active launch blocks", async () => {
+    const reservedPort = 45_678;
+    const portScript = join(repoDir, "portmake");
+    writeFileSync(portScript, `#!/bin/sh\necho ${reservedPort}\n`);
+    chmodSync(portScript, 0o755);
+    commitPaseoConfig({
+      worktree: {
+        servicePorts: { portScript },
+      },
+      scripts: {
+        api: {
+          type: "service",
+          command: "npm run api",
+        },
+      },
+    });
+
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const workspaceRuntimeEnvironment = {
+      ensure: async () => {
+        throw new Error("Legacy service scripts must not request a workspace port block");
+      },
+      getReservedPorts: () => new Set([reservedPort]),
+    };
+
+    await expect(
+      spawnWorkspaceScript({
+        repoRoot: repoDir,
+        workspaceId: "workspace-service-after-launch",
+        projectSlug: "repo",
+        branchName: "feature-service-after-launch",
+        scriptName: "api",
+        daemonPort: null,
+        serviceProxy: routeStore,
+        runtimeStore,
+        terminalManager: createStubTerminalManager(createTerminalCalls),
+        workspaceRuntimeEnvironment,
+      }),
+    ).rejects.toThrow(`returned reserved port ${reservedPort}`);
+    expect(createTerminalCalls).toEqual([]);
+  });
+
+  it("rejects an explicit service port reserved by an active launch block", async () => {
+    const reservedPort = 45_678;
+    commitPaseoConfig({
+      scripts: {
+        api: {
+          type: "service",
+          command: "npm run api",
+          port: reservedPort,
+        },
+      },
+    });
+
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const workspaceRuntimeEnvironment = {
+      ensure: async () => {
+        throw new Error("Legacy service scripts must not request a workspace port block");
+      },
+      getReservedPorts: () => new Set([reservedPort]),
+    };
+
+    await expect(
+      spawnWorkspaceScript({
+        repoRoot: repoDir,
+        workspaceId: "workspace-explicit-service-after-launch",
+        projectSlug: "repo",
+        branchName: "feature-explicit-service-after-launch",
+        scriptName: "api",
+        daemonPort: null,
+        serviceProxy: new ScriptRouteStore(),
+        runtimeStore: new WorkspaceScriptRuntimeStore(),
+        terminalManager: createStubTerminalManager(createTerminalCalls),
+        workspaceRuntimeEnvironment,
+      }),
+    ).rejects.toThrow(
+      `Service 'api' has a port reserved by a workspace runtime block: ${reservedPort}`,
+    );
+    expect(createTerminalCalls).toEqual([]);
+  });
+
+  it("keeps script port blocks outside planned service leases", async () => {
+    const plannedServicePort = 44_000;
+    commitPaseoConfig({
+      worktree: {
+        servicePorts: { range: "44000-44200", blockSize: 100 },
+      },
+      scripts: {
+        compose: {
+          command: "docker compose ps",
+        },
+      },
+    });
+
+    const serviceWorkspaceId = "workspace-script-block-planned-service";
+    await ensureWorkspaceServicePortPlan({
+      workspaceId: serviceWorkspaceId,
+      services: [{ scriptName: "api" }],
+      allocatePort: async () => plannedServicePort,
+    });
+    const runtimeEnvironment = new WorkspaceRuntimeEnvironmentService({
+      random: () => 0,
+      checkPortAvailable: async () => true,
+    });
+    const workspaceId = "workspace-script-block";
+    const createTerminalCalls: CreateTerminalCall[] = [];
+
+    try {
+      await spawnWorkspaceScript({
+        repoRoot: repoDir,
+        workspaceId,
+        projectSlug: "repo",
+        branchName: "feature-script-block",
+        scriptName: "compose",
+        daemonPort: null,
+        serviceProxy: new ScriptRouteStore(),
+        runtimeStore: new WorkspaceScriptRuntimeStore(),
+        terminalManager: createStubTerminalManager(createTerminalCalls),
+        workspaceRuntimeEnvironment: runtimeEnvironment,
+      });
+
+      expect(createTerminalCalls[0]?.env).toMatchObject({
+        PASEO_PORT_BASE: String(plannedServicePort + 1),
+        PASEO_PORT_END: String(plannedServicePort + 100),
+      });
+    } finally {
+      runtimeEnvironment.release(workspaceId);
+      releaseWorkspaceServicePortPlan(serviceWorkspaceId);
+    }
   });
 
   it("records plain script exit codes from shell command completion without terminal exit", async () => {

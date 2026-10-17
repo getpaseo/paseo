@@ -136,6 +136,7 @@ function cloneTerminalInfo(info: RequiredWorkerTerminalInfo): RequiredWorkerTerm
     workspaceId: info.workspaceId,
     ...(info.title ? { title: info.title } : {}),
     activity: info.activity,
+    ...(info.retainOnExit ? { retainOnExit: true } : {}),
   };
 }
 
@@ -154,6 +155,7 @@ export function createWorkerTerminalManager(
   const requestTimeoutMs = managerOptions.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
   const pendingRequests = new Map<string, PendingRequest>();
   const recordsById = new Map<string, WorkerTerminalRecord>();
+  const closingRecordsById = new Map<string, WorkerTerminalRecord>();
   const terminalIdsByCwd = new Map<string, Set<string>>();
   const terminalActivityTokenById = new Map<string, string>();
   // Creation owns a reference to the session independently of the live-terminal
@@ -419,6 +421,27 @@ export function createWorkerTerminalManager(
     return record;
   }
 
+  function removeRecordAndEmit(terminalId: string): WorkerTerminalRecord | undefined {
+    const record = recordsById.get(terminalId);
+    if (!record) {
+      return undefined;
+    }
+    const previousBucket = deriveTerminalActivityStatusBucket(record.activity);
+    const removedRecord = removeRecord(terminalId);
+    if (previousBucket !== null && removedRecord) {
+      emitTerminalWorkspaceContributionChanged({
+        terminalId: removedRecord.info.id,
+        cwd: removedRecord.info.cwd,
+        workspaceId: removedRecord.info.workspaceId,
+      });
+    }
+    emitTerminalsChanged({
+      cwd: record.info.cwd,
+      terminals: listTerminalItemsForCwd(record.info.cwd),
+    });
+    return removedRecord;
+  }
+
   function handleTerminalMessageEvent(
     message: Extract<TerminalWorkerToParentMessage, { type: "terminalMessage" }>,
   ): void {
@@ -440,23 +463,23 @@ export function createWorkerTerminalManager(
   function handleTerminalExitEvent(
     message: Extract<TerminalWorkerToParentMessage, { type: "terminalExit" }>,
   ): void {
-    const record = recordsById.get(message.terminalId);
+    const record =
+      recordsById.get(message.terminalId) ?? closingRecordsById.get(message.terminalId);
     if (!record) {
       return;
     }
+    const wasExplicitlyClosed = closingRecordsById.delete(message.terminalId);
     record.exitInfo = message.info;
     for (const listener of Array.from(record.exitListeners)) {
       listener(message.info);
     }
     record.exitListeners.clear();
-    const previousBucket = deriveTerminalActivityStatusBucket(record.activity);
-    const removedRecord = removeRecord(message.terminalId);
-    if (previousBucket !== null && removedRecord) {
-      emitTerminalWorkspaceContributionChanged({
-        terminalId: removedRecord.info.id,
-        cwd: removedRecord.info.cwd,
-        workspaceId: removedRecord.info.workspaceId,
-      });
+    if (wasExplicitlyClosed) {
+      return;
+    }
+    if (!record.info.retainOnExit) {
+      removeRecordAndEmit(message.terminalId);
+      return;
     }
     emitTerminalsChanged({
       cwd: record.info.cwd,
@@ -786,6 +809,10 @@ export function createWorkerTerminalManager(
     },
 
     killTerminal(id: string): void {
+      const record = removeRecordAndEmit(id);
+      if (record && !record.exitInfo) {
+        closingRecordsById.set(id, record);
+      }
       void sendRequest({ type: "killTerminal", terminalId: id }).catch(() => {
         // no-op; kill is intentionally best-effort and synchronous in the public interface.
       });
@@ -795,11 +822,15 @@ export function createWorkerTerminalManager(
       id: string,
       options?: { gracefulTimeoutMs?: number; forceTimeoutMs?: number },
     ): Promise<void> {
-      await sendRequest({
-        type: "killTerminalAndWait",
-        terminalId: id,
-        ...(options ? { options } : {}),
-      });
+      try {
+        await sendRequest({
+          type: "killTerminalAndWait",
+          terminalId: id,
+          ...(options ? { options } : {}),
+        });
+      } finally {
+        removeRecordAndEmit(id);
+      }
     },
 
     async captureTerminal(
@@ -837,6 +868,7 @@ export function createWorkerTerminalManager(
       for (const terminalId of Array.from(recordsById.keys())) {
         removeRecord(terminalId);
       }
+      closingRecordsById.clear();
     },
 
     subscribeTerminalsChanged(listener: TerminalsChangedListener): () => void {
