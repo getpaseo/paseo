@@ -5,7 +5,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it, vi } from "vitest";
 import { realpathSync } from "node:fs";
-import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve as resolvePath } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
@@ -842,6 +842,49 @@ function createAgentMcpServer(options: Parameters<typeof createAgentMcpServerWit
     ...options,
   });
 }
+
+describe("bundled Paseo skill", () => {
+  it("documents only advertised create_workspace input names", async () => {
+    const server = await createAgentMcpServer({
+      agentManager: new BoundaryAgentManagerFake() as AgentManager,
+      agentStorage: new BoundaryAgentStorageFake() as AgentStorage,
+      providerSnapshotManager:
+        new BoundaryProviderSnapshotManagerFake() as unknown as ProviderSnapshotManager,
+      logger: createTestLogger(),
+    });
+    const client = await connectInMemoryMcpClient(server);
+
+    try {
+      const skill = await readFile(
+        new URL("../../../../../skills/paseo/SKILL.md", import.meta.url),
+        "utf8",
+      );
+      const paragraph = skill.split("\n").find((line) => line.startsWith("**`create_workspace`**"));
+      expect(paragraph).toBeTypeOf("string");
+      // The final sentence describes output, rather than tool inputs.
+      const inputGuidance = paragraph!.split("Returns ")[0]!;
+      const documentedInputs = [...inputGuidance.matchAll(/`([a-zA-Z][a-zA-Z0-9]*)`/g)].map(
+        (match) => match[1]!,
+      );
+      expect(documentedInputs.length).toBeGreaterThan(0);
+      const { tools } = await client.listTools();
+      const tool = tools.find((entry) => entry.name === "create_workspace")!;
+      const properties = tool.inputSchema.properties!;
+      const advertisedNamesAndValues = new Set([
+        ...Object.keys(properties),
+        ...Object.values(properties).flatMap((property) =>
+          typeof property === "object" && property !== null && Array.isArray(property.enum)
+            ? property.enum
+            : [],
+        ),
+      ]);
+      expect(documentedInputs.filter((name) => !advertisedNamesAndValues.has(name))).toEqual([]);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+});
 
 describe("browser MCP tools", () => {
   const logger = createTestLogger();
