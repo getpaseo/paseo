@@ -1,5 +1,11 @@
 import { memo, useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
-import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
+import {
+  Pressable,
+  Text,
+  View,
+  type LayoutChangeEvent,
+  type PressableStateCallbackType,
+} from "react-native";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -28,8 +34,8 @@ const CELL_SIZE = 6;
 const CELL_GAP = 2;
 const CELL_PITCH = CELL_SIZE + CELL_GAP;
 const MAX_ROWS = 8;
-const CELLS_PER_ROW = 35;
-const MAX_CELLS = CELLS_PER_ROW * MAX_ROWS;
+// Squares per row in a full-width card beside the chevron, until the grid measures itself.
+const DEFAULT_CELLS_PER_ROW = 34;
 // An agent that reports nothing for this long reads as stalled.
 const STALL_MS = 90_000;
 
@@ -60,16 +66,17 @@ const ThemedChevronRight = withUnistyles(ChevronRight);
 const chevronColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundExtraMuted });
 
 /**
- * Whether a Workflow call draws as a card: while its workflow runs, and before the workflow has
- * reported at all. Otherwise it keeps its ordinary tool call row.
+ * Whether a Workflow call draws as a card: while its workflow runs, and, when `beforeLaunch` is
+ * set, before the workflow has reported at all. Otherwise it keeps its ordinary tool call row.
  */
 export function useWorkflowCardShown(input: {
   serverId: string | undefined;
   parentAgentId: string | undefined;
   subagentId: string | undefined;
   toolStatus: string;
+  beforeLaunch: boolean;
 }): boolean {
-  const { serverId, parentAgentId, subagentId, toolStatus } = input;
+  const { serverId, parentAgentId, subagentId, toolStatus, beforeLaunch } = input;
   const status = useProviderSubagentStore((state) =>
     serverId && parentAgentId && subagentId
       ? (state.descriptors.get(providerSubagentKey(serverId, parentAgentId, subagentId))?.status ??
@@ -77,7 +84,9 @@ export function useWorkflowCardShown(input: {
       : undefined,
   );
   if (status === undefined) return false;
-  if (status === null) return toolStatus === "running" || toolStatus === "executing";
+  if (status === null) {
+    return beforeLaunch && (toolStatus === "running" || toolStatus === "executing");
+  }
   return status === "running";
 }
 
@@ -183,18 +192,25 @@ function WorkflowCard({
 
 function AgentCells({ cells, counts }: { cells: Cell[]; counts: CellCounts }): ReactElement {
   const { t } = useTranslation();
-  // Past what fits, Claude draws the mix of states rather than each agent.
+  const [cellsPerRow, setCellsPerRow] = useState(DEFAULT_CELLS_PER_ROW);
+  const handleLayout = useCallback((event: LayoutChangeEvent) => {
+    setCellsPerRow(Math.max(1, Math.floor(event.nativeEvent.layout.width / CELL_PITCH)));
+  }, []);
+  // Past what fits, Claude draws the mix of states rather than each agent. The ghost square
+  // keeps the last slot.
+  const maxCells = cellsPerRow * MAX_ROWS - 1;
   const shown = useMemo(() => {
     const drawn: Cell[] =
-      cells.length <= MAX_CELLS
+      cells.length <= maxCells
         ? cells
-        : apportionCells(counts, MAX_CELLS).map((state) => ({ state, label: null }));
+        : apportionCells(counts, maxCells).map((state) => ({ state, label: null }));
     // Agents never reorder or disappear: launch position is their identity.
     return drawn.map((cell, position) => ({ state: cell.state, label: cell.label, position }));
-  }, [cells, counts]);
+  }, [cells, counts, maxCells]);
   return (
     <View
       style={styles.grid}
+      onLayout={handleLayout}
       accessibilityRole="image"
       accessibilityLabel={summarize(t, counts)}
       testID="workflow-agents-grid"

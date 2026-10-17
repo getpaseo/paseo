@@ -6,8 +6,8 @@ import type { ProviderSubagentInputEvent } from "../../../provider-subagents/sto
  * Every progress frame carries the whole list, and a swarm of hundreds of agents produces one per
  * state change. Clients only need the latest list, so an upsert that carries nothing else goes
  * out at most once per interval per subagent, and the newest one held back goes out when the
- * interval ends. Any other event for the same subagent sends the held list first, so a terminal
- * status never overtakes the agents it settled.
+ * interval ends. A status change or removal sends the held list first, so a terminal status never
+ * overtakes the agents it settled; other events, such as a usage subtitle, pass it by.
  */
 export class WorkflowAgentsThrottle {
   private readonly lastSentAt = new Map<string, number>();
@@ -28,8 +28,13 @@ export class WorkflowAgentsThrottle {
     const ready: ProviderSubagentInputEvent[] = [];
     for (const event of events) {
       if (!isWorkflowAgentsOnly(event)) {
-        const held = this.take(event.id);
-        if (held) ready.push(held);
+        if (event.type === "upsert" && event.workflowAgents !== undefined) {
+          // A newer list rides along, so the held one is stale.
+          this.take(event.id);
+        } else if (event.type === "remove" || (event.type === "upsert" && event.status)) {
+          const held = this.take(event.id);
+          if (held) ready.push(held);
+        }
         ready.push(event);
         continue;
       }

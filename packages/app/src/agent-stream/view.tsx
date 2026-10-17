@@ -794,6 +794,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               workflowServerId={resolvedServerId}
               workflowParentAgentId={agentId}
               workflowSubagentId={data.name === "Workflow" ? data.callId : undefined}
+              workflowCardBeforeLaunch={context.provider === "claude"}
             />
           );
         }
@@ -813,7 +814,14 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           />
         );
       },
-      [context.cwd, setInlineDetailsExpanded, handleToolCallOpenFile, resolvedServerId, agentId],
+      [
+        context.cwd,
+        context.provider,
+        setInlineDetailsExpanded,
+        handleToolCallOpenFile,
+        resolvedServerId,
+        agentId,
+      ],
     );
 
     // Read through a stable event so live group updates do not change the renderer identity
@@ -1292,6 +1300,11 @@ interface ToolCallSlotProps extends Omit<
   workflowServerId?: string;
   workflowParentAgentId?: string;
   workflowSubagentId?: string;
+  /**
+   * Draw the card before the workflow reports. Only Claude has workflows; elsewhere a tool that
+   * happens to be named Workflow keeps its row until a workflow descriptor shows up for it.
+   */
+  workflowCardBeforeLaunch?: boolean;
 }
 
 interface ThoughtSlotProps {
@@ -1333,6 +1346,7 @@ function ToolCallSlot({
   workflowServerId,
   workflowParentAgentId,
   workflowSubagentId,
+  workflowCardBeforeLaunch = false,
   ...rest
 }: ToolCallSlotProps) {
   const handleExpandedChange = useCallback(
@@ -1344,6 +1358,7 @@ function ToolCallSlot({
     parentAgentId: workflowParentAgentId,
     subagentId: workflowSubagentId,
     toolStatus: rest.status,
+    beforeLaunch: workflowCardBeforeLaunch,
   });
   if (showWorkflowCard && workflowServerId && workflowParentAgentId && workflowSubagentId) {
     return (

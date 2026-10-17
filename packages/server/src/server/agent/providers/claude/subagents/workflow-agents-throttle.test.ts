@@ -48,12 +48,38 @@ describe("WorkflowAgentsThrottle", () => {
     expect(throttle.route([agentsUpsert("two", "a")])).toEqual([agentsUpsert("two", "a")]);
   });
 
-  it("sends a held list before any other event for the same subagent", () => {
+  it("sends a held list before a status change for the same subagent", () => {
     throttle.route([agentsUpsert("wf", "a")]);
     throttle.route([agentsUpsert("wf", "b")]);
     const status: ProviderSubagentInputEvent = { type: "upsert", id: "wf", status: "completed" };
 
     expect(throttle.route([status])).toEqual([agentsUpsert("wf", "b"), status]);
+    vi.advanceTimersByTime(1000);
+    expect(sent).toEqual([]);
+  });
+
+  it("lets a subtitle pass a held list without sending it early", () => {
+    throttle.route([agentsUpsert("wf", "a")]);
+    throttle.route([agentsUpsert("wf", "b")]);
+    const subtitle: ProviderSubagentInputEvent = { type: "upsert", id: "wf", subtitle: "1.2k" };
+
+    expect(throttle.route([subtitle])).toEqual([subtitle]);
+    expect(sent).toEqual([]);
+
+    now = 500;
+    vi.advanceTimersByTime(500);
+    expect(sent).toEqual([agentsUpsert("wf", "b")]);
+  });
+
+  it("drops a held list that a newer list in another event supersedes", () => {
+    throttle.route([agentsUpsert("wf", "a")]);
+    throttle.route([agentsUpsert("wf", "b")]);
+    const status: ProviderSubagentInputEvent = {
+      ...agentsUpsert("wf", "c"),
+      status: "completed",
+    };
+
+    expect(throttle.route([status])).toEqual([status]);
     vi.advanceTimersByTime(1000);
     expect(sent).toEqual([]);
   });
