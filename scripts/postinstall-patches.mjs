@@ -14,7 +14,8 @@ const patchedPackages = [
     cwd: "packages/app",
   },
   // Remove after react-native-unistyles ships
-  // https://github.com/jpudysz/react-native-unistyles/pull/1203.
+  // https://github.com/jpudysz/react-native-unistyles/pull/1203 and reads the colour
+  // scheme through fresh matchMedia lists (see docs/unistyles.md, "Patching The Web Runtime").
   {
     nodeModulesPath: "node_modules/react-native-unistyles",
     patchPrefix: "react-native-unistyles+",

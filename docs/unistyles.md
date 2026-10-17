@@ -362,6 +362,15 @@ Register every dependency patch in `scripts/postinstall-patches.mjs`. A file in
 `patches/` is inert unless that script knows which installed package activates
 it.
 
+The current patch also makes the runtime read the colour scheme through fresh
+`matchMedia` lists instead of the two lists its adaptive-theme listeners sit on.
+Chromium defers `MediaQueryList` change events while the document is hidden and
+drops the pending event of any list whose `matches` was read before the window
+came back. The app reads the theme while hidden, so a scheme change behind the
+lock screen or on another Space never reached `withUnistyles` subscribers and
+rendered text kept the old theme's inline colours while CSS-variable backgrounds
+switched. Do not reintroduce a read of `lightMedia.matches` or `darkMedia.matches`.
+
 ## Debugging
 
 To inspect what the Babel plugin sees, temporarily enable [`debug: true`](https://www.unistyl.es/v3/other/babel-plugin#debug) in `packages/app/babel.config.js`:
