@@ -2218,6 +2218,10 @@ export const fr: TranslationResources = {
         description: "Lignes conservées dans le tampon du terminal intégré",
         accessibilityLabel: "Lignes d’historique du terminal",
       },
+      terminalCopyOnSelect: {
+        label: "Copier à la sélection",
+        description: "Copie le texte du terminal dans le presse-papiers dès sa sélection",
+      },
       autoExpandReasoning: {
         label: "Toujours afficher le raisonnement",
         description: "Afficher par défaut le raisonnement de l’agent entièrement déplié",

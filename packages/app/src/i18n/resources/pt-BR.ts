@@ -2203,6 +2203,10 @@ export const ptBR: TranslationResources = {
         description: "Linhas mantidas no buffer do terminal integrado",
         accessibilityLabel: "Linhas do scrollback do terminal",
       },
+      terminalCopyOnSelect: {
+        label: "Copiar ao selecionar",
+        description: "Copia o texto do terminal para a área de transferência ao selecioná-lo",
+      },
       autoExpandReasoning: {
         label: "Sempre expandir raciocínio",
         description:

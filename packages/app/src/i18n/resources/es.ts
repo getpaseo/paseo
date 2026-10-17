@@ -2220,6 +2220,10 @@ export const es: TranslationResources = {
         description: "Líneas mantenidas en el búfer de terminal incorporado",
         accessibilityLabel: "Líneas del historial de terminal",
       },
+      terminalCopyOnSelect: {
+        label: "Copiar al seleccionar",
+        description: "Copia el texto de la terminal al portapapeles al seleccionarlo",
+      },
       autoExpandReasoning: {
         label: "Siempre expandir razonamiento",
         description:
