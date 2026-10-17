@@ -8,6 +8,8 @@ export type {
   PluginScreenLocation,
   PluginSidebarItemProps,
   PluginSidebarItemContribution,
+  PluginWorkspaceRowAccessoryContribution,
+  PluginWorkspaceRowAccessoryProps,
   PluginIconProps,
   PluginPanelLocation,
   PluginOpenPanelOptions,

@@ -31,6 +31,7 @@ import { resolveSidebarWorkspacePrimaryLabel } from "@/components/sidebar/sideba
 import { DensityIcon } from "@/components/ui/density-icon";
 import { TrailingActionScrim } from "@/components/ui/trailing-action-scrim";
 import { useWorkspaceLabelDefinitions } from "@/workspace-labels";
+import { useWorkspaceRowAccessory, WorkspaceRowLeading } from "@/plugins/workspace-row-accessory";
 
 const needsInputColorMapping = (theme: Theme) => ({
   color: theme.colors.surface0,
@@ -93,6 +94,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   serviceSummary = null,
   backdrop,
   isHovered,
+  isSelected = false,
   isLoading,
   isCreating = false,
   shortcutNumber = null,
@@ -109,6 +111,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   /** The row's current background, so the project status badge can knock out of it. */
   backdrop: SidebarSurfaceBackdrop;
   isHovered: boolean;
+  isSelected?: boolean;
   isLoading: boolean;
   isCreating?: boolean;
   shortcutNumber?: number | null;
@@ -124,6 +127,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   // The workspace carries label names; their colors live in its host's catalog, so the row is
   // where the two meet — the meta line is handed finished definitions.
   const labels = useWorkspaceLabelDefinitions(workspace.serverId, workspace.labels);
+  const accessories = useWorkspaceRowAccessory(workspace.serverId);
   const workspaceBranchTextStyle = useMemo(
     () => [
       styles.workspaceBranchText,
@@ -133,27 +137,40 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
     [isHovered, isCreating],
   );
 
+  // Hoisted rows lose their project icon to the accessory too: the meta line still names the
+  // project, and a row reads the same whether or not it is hoisted.
+  const nativeLeading = leadingProjectName ? (
+    <ProjectStatusIndicator
+      iconDataUri={leadingProjectIconDataUri}
+      displayName={leadingProjectName}
+      projectViewKey={workspace.projectViewKey}
+      statusBucket={workspace.statusBucket}
+      backdrop={backdrop}
+      loading={isLoading}
+      testID={`sidebar-row-project-icon-${workspace.workspaceKey}`}
+    />
+  ) : (
+    <WorkspaceStatusIndicator
+      bucket={workspace.statusBucket}
+      workspaceKind={workspace.workspaceKind}
+      loading={isLoading}
+      reserveIdleSpace={reserveIdleStatusIndicatorSpace}
+    />
+  );
+
   return (
     <View style={styles.workspaceRowContent}>
       <View style={styles.workspaceRowMain}>
-        {leadingProjectName ? (
-          <ProjectStatusIndicator
-            iconDataUri={leadingProjectIconDataUri}
-            displayName={leadingProjectName}
-            projectViewKey={workspace.projectViewKey}
-            statusBucket={workspace.statusBucket}
-            backdrop={backdrop}
-            loading={isLoading}
-            testID={`sidebar-row-project-icon-${workspace.workspaceKey}`}
-          />
-        ) : (
-          <WorkspaceStatusIndicator
-            bucket={workspace.statusBucket}
-            workspaceKind={workspace.workspaceKind}
-            loading={isLoading}
-            reserveIdleSpace={reserveIdleStatusIndicatorSpace}
-          />
-        )}
+        <WorkspaceRowLeading
+          accessories={accessories}
+          workspace={workspace}
+          isHovered={isHovered}
+          isSelected={isSelected}
+          backdrop={backdrop}
+          loading={isLoading}
+        >
+          {nativeLeading}
+        </WorkspaceRowLeading>
         <View style={styles.workspaceContentColumn}>
           <View style={styles.workspaceTitleRow}>
             <Text style={workspaceBranchTextStyle} numberOfLines={1}>

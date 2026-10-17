@@ -18,12 +18,19 @@ import type {
   PluginTimelineTransformerContribution,
   PluginPanelLocation,
   PluginWorkspacePanelContribution,
+  PluginWorkspaceRowAccessoryContribution,
 } from "@getpaseo/plugin/client";
 
 export type PluginSidebarSection = "header" | "footer";
 
 export type EvaluatedPluginWorkspacePanelContribution = PluginWorkspacePanelContribution & {
   locations: readonly PluginPanelLocation[];
+};
+
+/** `sequence` is the registration order across every plugin and host; the highest renders. */
+export type EvaluatedWorkspaceRowAccessory = PluginWorkspaceRowAccessoryContribution & {
+  size: "status" | "large";
+  sequence: number;
 };
 
 export interface EvaluatedPlugin {
@@ -42,6 +49,7 @@ export interface EvaluatedPlugin {
   themes: PluginThemeContribution[];
   timelineTransformers: PluginTimelineTransformerContribution[];
   timelineRenderers: PluginTimelineRendererContribution[];
+  workspaceRowAccessories: EvaluatedWorkspaceRowAccessory[];
 }
 
 export interface InstalledPlugin extends EvaluatedPlugin {

@@ -305,6 +305,42 @@ describe("evaluatePluginClientBundle", () => {
     ).toThrow("Duplicate sidebar header item: entry");
   });
 
+  it("collects workspace row accessories in registration order", () => {
+    const plugin = evaluatePluginClientBundle(
+      "row-accessories",
+      bundle(`
+        function Component() { return null; }
+        plugin.addWorkspaceRowAccessory({ id: "dot", Component });
+        plugin.addWorkspaceRowAccessory({ id: "avatar", Component, size: "large" });
+      `),
+    );
+    const [dot, avatar] = plugin.workspaceRowAccessories;
+    expect(dot).toMatchObject({ id: "dot", size: "status" });
+    expect(avatar).toMatchObject({ id: "avatar", size: "large" });
+    expect(avatar!.sequence).toBeGreaterThan(dot!.sequence);
+  });
+
+  it("rejects duplicate and malformed workspace row accessories", () => {
+    const attempts: [string, string][] = [
+      [
+        `plugin.addWorkspaceRowAccessory({ id: "a", Component }); plugin.addWorkspaceRowAccessory({ id: "a", Component })`,
+        "Duplicate",
+      ],
+      [
+        `plugin.addWorkspaceRowAccessory({ id: "a", Component, size: "huge" })`,
+        "Invalid workspace row accessory",
+      ],
+      [
+        `plugin.addWorkspaceRowAccessory({ id: "a", Component: "div-ish" })`,
+        "Invalid workspace row accessory",
+      ],
+    ];
+    for (const [body, error] of attempts) {
+      const source = bundle(`function Component() { return null; } ${body}`);
+      expect(() => evaluatePluginClientBundle("bad-accessory", source)).toThrow(error);
+    }
+  });
+
   it("collects a declarative attachment source", () => {
     const plugin = evaluatePluginClientBundle(
       "linear",
