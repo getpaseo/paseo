@@ -111,6 +111,9 @@ export function buildCheckoutPrStatusPayloadFromSnapshot({
     status: normalizeCheckoutPrStatusPayload(snapshot.forge.pullRequest, forge),
     githubFeaturesEnabled: snapshot.forge.featuresEnabled,
     authState: snapshot.forge.authState,
+    ...(snapshot.forge.repositoryWebUrl
+      ? { repositoryWebUrl: snapshot.forge.repositoryWebUrl }
+      : {}),
     ...(forge ? { forge } : {}),
     error: snapshot.forge.error
       ? {
