@@ -275,6 +275,12 @@ export const zhCN: TranslationResources = {
       callout: "此 Agent 已归档",
       unarchive: "取消归档",
     },
+    claudeAuthRefresh: {
+      callout: "AWS 凭据已过期",
+      refresh: "刷新 AWS 凭据",
+      dismiss: "忽略",
+      failedToast: "刷新 AWS 凭据失败",
+    },
   },
   sessions: {
     title: "历史",
@@ -649,6 +655,7 @@ export const zhCN: TranslationResources = {
         moveToMain: "移至主面板",
         reloadAgent: "重新加载 Agent",
         reloadAgentTooltip: "重新加载 Agent 以更新 skills、MCPs 或登录状态。",
+        refreshClaudeAuth: "刷新 AWS 凭据",
         close: "关闭",
         renameTerminal: "重命名 Terminal",
         renameAgent: "重命名 Agent",

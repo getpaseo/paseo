@@ -85,6 +85,10 @@ export function projectAgentSnapshot(agent: Agent): AgentSnapshotPayload {
     attentionReason: agent.attentionReason ?? null,
     attentionTimestamp: agent.attentionTimestamp?.toISOString() ?? null,
     archivedAt: agent.archivedAt?.toISOString() ?? null,
+    ...(agent.awsAuthRefreshRequired !== undefined
+      ? { awsAuthRefreshRequired: agent.awsAuthRefreshRequired }
+      : {}),
+    ...(agent.baseProvider ? { baseProvider: agent.baseProvider } : {}),
   };
 }
 
@@ -132,6 +136,8 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
     attentionReason: snapshot.attentionReason ?? null,
     attentionTimestamp,
     archivedAt,
+    awsAuthRefreshRequired: snapshot.awsAuthRefreshRequired,
+    baseProvider: snapshot.baseProvider,
     parentAgentId,
     labels: snapshot.labels,
   };

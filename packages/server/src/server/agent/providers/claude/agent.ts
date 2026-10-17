@@ -37,6 +37,10 @@ import {
   resolveConfiguredClaudeModel,
 } from "./models.js";
 import {
+  classifyAwsAuthRefreshFailure,
+  readClaudeAuthRefreshSettingsSync,
+} from "./auth-refresh.js";
+import {
   CLAUDE_DISABLED_THINKING_OPTION_ID,
   CLAUDE_ULTRACODE_THINKING_OPTION_ID,
   parseClaudeCodeVersion,
@@ -1651,6 +1655,10 @@ export class ClaudeAgentClient implements AgentClient {
 
   async resolveDefaultModeId({ env: launchEnv }: ResolveAgentDefaultModeInput): Promise<string> {
     return claudeModeCatalog(this.buildProviderEnv(launchEnv)).defaultModeId;
+  }
+
+  getProviderEnv(launchEnv?: Record<string, string>): NodeJS.ProcessEnv {
+    return this.buildProviderEnv(launchEnv);
   }
 
   private buildProviderEnv(launchEnv?: Record<string, string>): NodeJS.ProcessEnv {
@@ -3402,6 +3410,10 @@ class ClaudeAgentSession implements AgentSession {
     };
   }
 
+  getProviderEnv(): NodeJS.ProcessEnv {
+    return this.harnessEnvironment;
+  }
+
   private buildSdkEnv() {
     return createProviderEnv({
       baseEnv: process.env,
@@ -3640,12 +3652,29 @@ class ClaudeAgentSession implements AgentSession {
     const exitCodeMatch = normalized.match(/\bcode\s+(\d+)\b/i);
     const code = exitCodeMatch ? exitCodeMatch[1] : undefined;
     const diagnostic = this.getRecentStderrDiagnostic();
+    let awsAuthRefreshRequired: boolean | undefined;
+    try {
+      const env = this.buildSdkEnv();
+      const settings = readClaudeAuthRefreshSettingsSync(env);
+      if (
+        classifyAwsAuthRefreshFailure({
+          message: normalized,
+          recentStderr: diagnostic,
+          awsAuthRefresh: settings.awsAuthRefresh,
+        })
+      ) {
+        awsAuthRefreshRequired = true;
+      }
+    } catch {
+      // Best-effort check; never block failure event construction
+    }
     return {
       type: "turn_failed",
       provider: "claude",
       error: normalized,
       ...(code ? { code } : {}),
       ...(diagnostic ? { diagnostic } : {}),
+      ...(awsAuthRefreshRequired ? { awsAuthRefreshRequired: true } : {}),
     };
   }
 

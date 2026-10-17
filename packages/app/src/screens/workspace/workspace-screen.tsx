@@ -119,6 +119,7 @@ import { getDesktopHost } from "@/desktop/host";
 import { buildProviderCommand } from "@/utils/provider-command-templates";
 import { generateDraftId } from "@/stores/draft-keys";
 import { resolveWorkspaceRouteId } from "@/utils/workspace-identity";
+import { toErrorMessage } from "@/utils/error-messages";
 import { useOpenAgentTabLabels } from "@/subagents/use-open-agent-tab-labels";
 import { WorkspaceTabPresentationResolver } from "@/screens/workspace/workspace-tab-presentation";
 import {
@@ -1026,6 +1027,9 @@ function WorkspaceScreenContent({
   const isConnected = useHostRuntimeIsConnected(normalizedServerId);
   const supportsProvidersSnapshot = useSessionStore(
     (state) => state.sessions[normalizedServerId]?.serverInfo?.features?.providersSnapshot === true,
+  );
+  const supportsClaudeAuthRefresh = useSessionStore(
+    (state) => state.sessions[normalizedServerId]?.serverInfo?.features?.claudeAuthRefresh === true,
   );
   const workspaceDirectory = workspaceDescriptor?.workspaceDirectory || null;
   const isMissingWorkspaceDirectory = Boolean(workspaceDescriptor) && !workspaceDirectory;
@@ -2208,6 +2212,28 @@ function WorkspaceScreenContent({
     [client, isConnected, normalizedServerId, toast, t],
   );
 
+  const handleRefreshClaudeAuth = useCallback(
+    async (agentId: string) => {
+      if (!supportsClaudeAuthRefresh) {
+        return;
+      }
+      if (!client || !isConnected) {
+        toast.error(t("workspace.terminal.hostDisconnected"));
+        return;
+      }
+
+      try {
+        const response = await client.refreshClaudeAuth({ agentId, action: "refresh" });
+        if (response.terminalId) {
+          handleScriptTerminalSelected(response.terminalId);
+        }
+      } catch (error) {
+        toast.error(toErrorMessage(error));
+      }
+    },
+    [client, handleScriptTerminalSelected, isConnected, supportsClaudeAuthRefresh, t, toast],
+  );
+
   const handleCopyWorkspacePath = useCallback(async () => {
     if (!workspaceDirectory) {
       toast.error(t("workspace.header.toasts.workspacePathUnavailable"));
@@ -3381,6 +3407,7 @@ function WorkspaceScreenContent({
             onCopyTerminalId={handleCopyTerminalId}
             onCopyFilePath={handleCopyFilePath}
             onReloadAgent={handleReloadAgent}
+            onRefreshClaudeAuth={supportsClaudeAuthRefresh ? handleRefreshClaudeAuth : undefined}
             onRenameTab={handleRenameTab}
             onCloseTab={handleCloseTabById}
             onCloseTabsAbove={handleCloseTabsToLeft}
@@ -3426,6 +3453,7 @@ function WorkspaceScreenContent({
       handleCreateTerminal,
       handleCreateTerminalWithProfile,
       handleOpenSetupTab,
+      handleRefreshClaudeAuth,
       handleReloadAgent,
       handleRenameTab,
       handleSelectSwitcherTab,
@@ -3438,6 +3466,7 @@ function WorkspaceScreenContent({
       openImportSheet,
       showCreateBrowserTab,
       showWorkspaceSetup,
+      supportsClaudeAuthRefresh,
       tabs,
       workspaceDirectory,
       workspaceHeaderSubtitle,
@@ -3470,6 +3499,7 @@ function WorkspaceScreenContent({
         onCopyTerminalId={handleCopyTerminalId}
         onCopyFilePath={handleCopyFilePath}
         onReloadAgent={handleReloadAgent}
+        onRefreshClaudeAuth={supportsClaudeAuthRefresh ? handleRefreshClaudeAuth : undefined}
         onRenameTab={handleRenameTab}
         onCloseTabsToLeft={handleCloseTabsToLeftInPane}
         onCloseTabsToRight={handleCloseTabsToRightInPane}
@@ -3505,6 +3535,7 @@ function WorkspaceScreenContent({
     handleCopyAgentId,
     handleCopyTerminalId,
     handleCopyFilePath,
+    handleRefreshClaudeAuth,
     handleReloadAgent,
     handleRenameTab,
     handleCloseTabsToLeftInPane,
@@ -3519,6 +3550,7 @@ function WorkspaceScreenContent({
     selectTabInPane,
     handleResizePaneSplit,
     handleReorderTabsInPane,
+    supportsClaudeAuthRefresh,
   ]);
   const desktopContent = desktopSplitContent ?? content;
   const rendersDesktopSplitContent = !isMobile && desktopSplitContent !== null;
@@ -3579,6 +3611,7 @@ function WorkspaceScreenContent({
             onCopyTerminalId={handleCopyTerminalId}
             onCopyFilePath={handleCopyFilePath}
             onReloadAgent={handleReloadAgent}
+            onRefreshClaudeAuth={supportsClaudeAuthRefresh ? handleRefreshClaudeAuth : undefined}
             onRenameTab={handleRenameTab}
             onCloseTabsToLeft={handleCloseTabsToLeft}
             onCloseTabsToRight={handleCloseTabsToRight}

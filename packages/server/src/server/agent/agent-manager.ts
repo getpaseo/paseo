@@ -440,6 +440,11 @@ interface ManagedAgentBase {
    */
   internal?: boolean;
   /**
+   * AWS credentials refresh is required via device-code flow.
+   */
+  awsAuthRefreshRequired?: boolean;
+  baseProvider?: string;
+  /**
    * User-defined labels for categorizing agents (e.g., { surface: "workspace" }).
    */
   labels: Record<string, string>;
@@ -1349,6 +1354,8 @@ export class AgentManager {
       workspaceId?: string;
       owner?: AgentOwner;
       attention?: AttentionState;
+      awsAuthRefreshRequired?: boolean;
+      baseProvider?: string;
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
@@ -1381,6 +1388,8 @@ export class AgentManager {
       workspaceId?: string;
       owner?: AgentOwner;
       attention?: AttentionState;
+      awsAuthRefreshRequired?: boolean;
+      baseProvider?: string;
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
@@ -1631,6 +1640,8 @@ export class AgentManager {
         lastUsage: preservedLastUsage,
         lastError: preservedLastError,
         attention: preservedAttention,
+        awsAuthRefreshRequired: existing.awsAuthRefreshRequired,
+        baseProvider: existing.baseProvider,
         restoring: true,
       });
     } catch (error) {
@@ -2014,6 +2025,7 @@ export class AgentManager {
         lastError: record.lastError ?? undefined,
         attention,
         internal: record.internal,
+        ...(record.awsAuthRefreshRequired ? { awsAuthRefreshRequired: true } : {}),
         labels: record.labels,
       },
     });
@@ -2125,6 +2137,112 @@ export class AgentManager {
       const agent = this.requireAgent(agentId);
       await this.writeLabels(agent.id, labels);
     });
+  }
+
+  async clearAgentAwsAuthRefreshRequired(agentId: string): Promise<void> {
+    const liveAgent = this.agents.get(agentId);
+    if (liveAgent) {
+      if (liveAgent.awsAuthRefreshRequired) {
+        delete liveAgent.awsAuthRefreshRequired;
+        this.touchUpdatedAt(liveAgent);
+        this.emitState(liveAgent);
+      }
+      return;
+    }
+    if (this.registry) {
+      const record = await this.registry.get(agentId);
+      if (record?.awsAuthRefreshRequired) {
+        const nextRecord = {
+          ...record,
+          awsAuthRefreshRequired: undefined,
+          updatedAt: this.nextStoredUpdatedAt(record),
+        };
+        await this.registry.upsert(nextRecord);
+        this.dispatchStoredAgentState(nextRecord);
+      }
+    }
+  }
+
+  isClaudeProvider(provider: AgentProvider | string | undefined | null): boolean {
+    if (!provider) return false;
+    if (provider === "claude") return true;
+    const definition = this.providerDefinitions.get(provider as AgentProvider);
+    if (definition?.derivedFromProviderId === "claude") return true;
+    const client = this.clients.get(provider as AgentProvider);
+    if (client && (client as unknown as { provider?: string }).provider === "claude") {
+      return true;
+    }
+    return false;
+  }
+
+  isClaudeAgent(agentId: string): boolean {
+    const liveAgent = this.agents.get(agentId);
+    if (liveAgent) {
+      if (liveAgent.baseProvider === "claude") return true;
+      return this.isClaudeProvider(liveAgent.provider);
+    }
+    const agent = this.getAgent(agentId);
+    if (!agent) return false;
+    if (agent.baseProvider === "claude") return true;
+    return this.isClaudeProvider(agent.provider);
+  }
+
+  getBaseProvider(provider: AgentProvider | string): string | undefined {
+    if (provider === "claude") return "claude";
+    const definition = this.providerDefinitions.get(provider as AgentProvider);
+    if (definition?.derivedFromProviderId) return definition.derivedFromProviderId;
+    const client = this.clients.get(provider as AgentProvider);
+    if (client && (client as unknown as { provider?: string }).provider) {
+      return (client as unknown as { provider: string }).provider;
+    }
+    return undefined;
+  }
+
+  getAgentProviderEnv(
+    agentId: string,
+    provider?: AgentProvider | string,
+  ): NodeJS.ProcessEnv | undefined {
+    const liveAgent = this.agents.get(agentId);
+    if (
+      liveAgent &&
+      "session" in liveAgent &&
+      liveAgent.session &&
+      typeof (liveAgent.session as unknown as { getProviderEnv?: () => NodeJS.ProcessEnv })
+        .getProviderEnv === "function"
+    ) {
+      return (
+        liveAgent.session as unknown as { getProviderEnv: () => NodeJS.ProcessEnv }
+      ).getProviderEnv();
+    }
+    const resolvedProvider = (provider ??
+      liveAgent?.provider ??
+      this.getAgent(agentId)?.provider) as AgentProvider | undefined;
+    if (resolvedProvider) {
+      const client = this.clients.get(resolvedProvider);
+      if (
+        client &&
+        "getProviderEnv" in client &&
+        typeof (client as unknown as { getProviderEnv?: () => NodeJS.ProcessEnv })
+          .getProviderEnv === "function"
+      ) {
+        return (client as unknown as { getProviderEnv: () => NodeJS.ProcessEnv }).getProviderEnv();
+      }
+      const derivedFrom = this.providerDefinitions.get(resolvedProvider)?.derivedFromProviderId;
+      if (derivedFrom) {
+        const baseClient = this.clients.get(derivedFrom as AgentProvider);
+        if (
+          baseClient &&
+          "getProviderEnv" in baseClient &&
+          typeof (baseClient as unknown as { getProviderEnv?: () => NodeJS.ProcessEnv })
+            .getProviderEnv === "function"
+        ) {
+          return (
+            baseClient as unknown as { getProviderEnv: () => NodeJS.ProcessEnv }
+          ).getProviderEnv();
+        }
+      }
+    }
+    return undefined;
   }
 
   private async writeLabels(agentId: string, patch: AgentLabelPatch): Promise<WriteLabelsResult> {
@@ -3560,6 +3678,7 @@ export class AgentManager {
       lastUsage?: AgentUsage;
       lastError?: string;
       attention?: AttentionState;
+      awsAuthRefreshRequired?: boolean;
       /**
        * Bringing a known agent back, rather than starting a new one. Its timestamps and
        * attention come from what was already recorded, and installing the session is not
@@ -3570,6 +3689,7 @@ export class AgentManager {
       publishWhenReady?: boolean;
       workspaceId?: string;
       owner?: AgentOwner;
+      baseProvider?: string;
     },
   ): Promise<ManagedAgent> {
     let registered = false;
@@ -3746,23 +3866,32 @@ export class AgentManager {
           persistence?: AgentPersistenceHandle;
           workspaceId?: string;
           owner?: AgentOwner;
+          awsAuthRefreshRequired?: boolean;
+          baseProvider?: string;
         }
       | undefined;
   }): ActiveManagedAgent {
-    const { resolvedAgentId, session, config, now, durableTimelineHasRows, options } = params;
+    const {
+      resolvedAgentId,
+      session,
+      config,
+      now,
+      durableTimelineHasRows,
+      options: opt = {},
+    } = params;
     return {
       id: resolvedAgentId,
       provider: config.provider,
       cwd: config.cwd,
-      workspaceId: options?.workspaceId,
-      owner: options?.owner,
+      workspaceId: opt.workspaceId,
+      owner: opt.owner,
       session,
       capabilities: session.capabilities,
       config,
       runtimeInfo: undefined,
       lifecycle: "initializing",
-      createdAt: options?.createdAt ?? now,
-      updatedAt: options?.updatedAt ?? now,
+      createdAt: opt.createdAt ?? now,
+      updatedAt: opt.updatedAt ?? now,
       availableModes: [],
       currentModeId: null,
       pendingPermissions: new Map<string, AgentPermissionRequest>(),
@@ -3776,16 +3905,18 @@ export class AgentManager {
       finalizedForegroundTurnIds: new Set<string>(),
       unsubscribeSession: null,
       persistence: attachPersistenceCwd(
-        options?.persistence ?? session.describePersistence(),
+        opt.persistence ?? session.describePersistence(),
         config.cwd,
       ),
-      historyPrimed: options?.historyPrimed ?? durableTimelineHasRows,
-      lastUserMessageAt: options?.lastUserMessageAt ?? null,
-      lastUsage: options?.lastUsage,
-      lastError: options?.lastError,
-      attention: resolveInitialAttention(options?.attention),
+      historyPrimed: opt.historyPrimed ?? durableTimelineHasRows,
+      lastUserMessageAt: opt.lastUserMessageAt ?? null,
+      lastUsage: opt.lastUsage,
+      lastError: opt.lastError,
+      attention: resolveInitialAttention(opt.attention),
       internal: config.internal ?? false,
-      labels: options?.labels ?? {},
+      labels: opt.labels ?? {},
+      awsAuthRefreshRequired: opt.awsAuthRefreshRequired,
+      baseProvider: opt.baseProvider ?? this.getBaseProvider(config.provider),
     } as ActiveManagedAgent;
   }
 
@@ -4593,6 +4724,9 @@ export class AgentManager {
     // data accumulated during streaming isn't lost when the provider omits
     // it from the completion event.
     agent.lastError = undefined;
+    if (agent.awsAuthRefreshRequired) {
+      delete agent.awsAuthRefreshRequired;
+    }
     if (
       !isForegroundEvent &&
       !agent.activeForegroundTurnId &&
@@ -4634,6 +4768,9 @@ export class AgentManager {
       agent.lifecycle = "error";
     }
     agent.lastError = event.error;
+    if (event.awsAuthRefreshRequired) {
+      agent.awsAuthRefreshRequired = true;
+    }
     await this.appendSystemErrorTimelineMessage(
       agent,
       event.provider,

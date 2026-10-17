@@ -70,7 +70,7 @@ import {
 import { respondToAgentPermission } from "./agent/permission-response.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
 import type { ScriptHealthState } from "./script-health-monitor.js";
-import { spawnWorkspaceScript } from "./worktree-bootstrap.js";
+import { spawnWorkspaceScript, waitForTerminalBootstrapReadiness } from "./worktree-bootstrap.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import {
   createWorkspaceScriptsService,
@@ -145,6 +145,9 @@ import {
   listImportableProviderSessions,
   normalizeImportAgentRequest,
 } from "./agent/import-sessions.js";
+import { createProviderEnv } from "./agent/provider-launch-config.js";
+import { readClaudeAuthRefreshSettingsSync } from "./agent/providers/claude/auth-refresh.js";
+import { claudeConfigDir } from "./agent/providers/claude/project-dir.js";
 import {
   checkoutLiteFromGitSnapshot,
   checkoutFromPersistedWorkspacePlacement,
@@ -3048,6 +3051,8 @@ export class Session {
         return this.usageSession.handleLegacyList(msg);
       case "usage.list_reports.request":
         return this.usageSession.handleListReports(msg);
+      case "claude.auth.refresh.request":
+        return this.handleClaudeAuthRefreshRequest(msg);
       default:
         return undefined;
     }
@@ -4935,6 +4940,129 @@ export class Session {
     } catch (error) {
       this.sessionLogger.error({ err: error, agentIds }, "Failed to clear agent attention");
       // Don't throw - this is not critical
+    }
+  }
+
+  private async handleClaudeAuthRefreshRequest(
+    msg: Extract<SessionInboundMessage, { type: "claude.auth.refresh.request" }>,
+  ): Promise<void> {
+    try {
+      if (msg.action === "dismiss") {
+        await this.agentManager.clearAgentAwsAuthRefreshRequired(msg.agentId);
+        this.emit({
+          type: "claude.auth.refresh.response",
+          payload: {
+            requestId: msg.requestId,
+            agentId: msg.agentId,
+          },
+        });
+        return;
+      }
+
+      const agent = await ensureAgentLoaded(msg.agentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
+
+      if (!agent) {
+        this.emit({
+          type: "claude.auth.refresh.response",
+          payload: {
+            requestId: msg.requestId,
+            agentId: msg.agentId,
+            error: `Agent not found: ${msg.agentId}`,
+          },
+        });
+        return;
+      }
+
+      if (!isClaudeRefreshCandidate(agent, this.agentManager)) {
+        this.emit({
+          type: "claude.auth.refresh.response",
+          payload: {
+            requestId: msg.requestId,
+            agentId: msg.agentId,
+            error: `AWS credentials refresh is only supported for Claude agents (got ${agent.provider})`,
+          },
+        });
+        return;
+      }
+
+      if (!this.terminalManager) {
+        this.emit({
+          type: "claude.auth.refresh.response",
+          payload: {
+            requestId: msg.requestId,
+            agentId: msg.agentId,
+            error: "Terminals are not available",
+          },
+        });
+        return;
+      }
+
+      const baseEnv =
+        (typeof this.agentManager.getAgentProviderEnv === "function"
+          ? this.agentManager.getAgentProviderEnv(agent.id, agent.provider)
+          : undefined) ?? createProviderEnv();
+      const settings = readClaudeAuthRefreshSettingsSync(baseEnv);
+      if (!settings.awsAuthRefresh) {
+        const configDir = claudeConfigDir(baseEnv);
+        const displayPath = formatClaudeSettingsPath(configDir);
+        this.emit({
+          type: "claude.auth.refresh.response",
+          payload: {
+            requestId: msg.requestId,
+            agentId: msg.agentId,
+            error: `No AWS auth refresh command is configured in ${displayPath} (awsAuthRefresh)`,
+          },
+        });
+        return;
+      }
+
+      const cwd = agent.cwd;
+      const workspaceId = agent.workspaceId ?? (await this.findWorkspaceIdForCwd(cwd)) ?? agent.id;
+
+      const terminalEnv = createProviderEnv({
+        baseEnv,
+        overlays: [settings.env],
+      });
+
+      const terminal = await this.terminalManager.createTerminal({
+        cwd,
+        workspaceId,
+        name: "AWS credentials refresh",
+        title: "AWS credentials refresh",
+        env: terminalEnv,
+      });
+
+      if (typeof terminal.send === "function") {
+        if (typeof terminal.getState === "function" && typeof terminal.subscribe === "function") {
+          await waitForTerminalBootstrapReadiness(terminal, 500);
+        }
+        terminal.send({
+          type: "input",
+          data: `${settings.awsAuthRefresh}\r`,
+        });
+      }
+
+      this.emit({
+        type: "claude.auth.refresh.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          terminalId: terminal.id,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "claude.auth.refresh.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          error: error instanceof Error ? error.message : "Failed to handle Claude auth refresh",
+        },
+      });
     }
   }
 
@@ -8683,4 +8811,26 @@ function legacyWantsEvent(
     default:
       return true;
   }
+}
+
+function isClaudeRefreshCandidate(
+  agent: { provider: string; baseProvider?: string; id: string },
+  agentManager: SessionOptions["agentManager"],
+): boolean {
+  if (agent.provider === "claude" || agent.baseProvider === "claude") {
+    return true;
+  }
+  if (
+    typeof agentManager.isClaudeProvider === "function" &&
+    agentManager.isClaudeProvider(agent.provider)
+  ) {
+    return true;
+  }
+  return typeof agentManager.isClaudeAgent === "function" && agentManager.isClaudeAgent(agent.id);
+}
+
+function formatClaudeSettingsPath(configDir: string): string {
+  const settingsPath = join(configDir, "settings.json");
+  const home = homedir();
+  return settingsPath.startsWith(home) ? `~${settingsPath.slice(home.length)}` : settingsPath;
 }

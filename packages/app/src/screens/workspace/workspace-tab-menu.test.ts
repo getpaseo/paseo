@@ -365,4 +365,128 @@ describe("buildWorkspaceTabMenuEntries", () => {
     expect(agentSeparator?.key).toBe("rename-separator");
     expect(terminalSeparator?.key).toBe("rename-separator");
   });
+
+  it("includes refresh-claude-auth entry when onRefreshClaudeAuth is provided for claude agent tabs", () => {
+    const onRefreshClaudeAuth = vi.fn();
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab: createAgentTab(),
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context-agent_123",
+      agentProvider: "claude",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRefreshClaudeAuth,
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    const refreshEntry = entries.find(
+      (entry) => entry.kind === "item" && entry.key === "refresh-claude-auth",
+    );
+    expect(refreshEntry).toBeDefined();
+    if (!refreshEntry || refreshEntry.kind !== "item") {
+      throw new Error("Missing refresh-claude-auth entry");
+    }
+    expect(refreshEntry.label).toBe("Refresh AWS credentials");
+    expect(refreshEntry.testID).toBe("workspace-tab-context-agent_123-refresh-claude-auth");
+
+    refreshEntry.onSelect();
+    expect(onRefreshClaudeAuth).toHaveBeenCalledWith("agent-123");
+  });
+
+  it("omits refresh-claude-auth entry for non-claude agent tabs", () => {
+    const onRefreshClaudeAuth = vi.fn();
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab: createAgentTab(),
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context-agent_123",
+      agentProvider: "codex",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRefreshClaudeAuth,
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    const refreshEntry = entries.find(
+      (entry) => entry.kind === "item" && entry.key === "refresh-claude-auth",
+    );
+    expect(refreshEntry).toBeUndefined();
+  });
+
+  it("includes refresh-claude-auth entry for custom claude providers when isClaudeAgent is true", () => {
+    const onRefreshClaudeAuth = vi.fn();
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab: createAgentTab(),
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context-agent_123",
+      agentProvider: "bedrock",
+      isClaudeAgent: true,
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRefreshClaudeAuth,
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    const refreshEntry = entries.find(
+      (entry) => entry.kind === "item" && entry.key === "refresh-claude-auth",
+    );
+    expect(refreshEntry).toBeDefined();
+    if (!refreshEntry || refreshEntry.kind !== "item") {
+      throw new Error("Missing refresh-claude-auth entry");
+    }
+    refreshEntry.onSelect();
+    expect(onRefreshClaudeAuth).toHaveBeenCalledWith("agent-123");
+  });
+
+  it("omits refresh-claude-auth entry when onRefreshClaudeAuth is omitted", () => {
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab: createAgentTab(),
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context-agent_123",
+      agentProvider: "claude",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    const refreshEntry = entries.find(
+      (entry) => entry.kind === "item" && entry.key === "refresh-claude-auth",
+    );
+    expect(refreshEntry).toBeUndefined();
+  });
 });

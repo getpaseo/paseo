@@ -64,6 +64,19 @@ export function resolveEffectiveThinkingOptionId(options: {
   return normalizeThinkingOptionId(options.configuredThinkingOptionId);
 }
 
+function resolveAgentBaseProvider(agent: {
+  baseProvider?: string;
+  provider: string;
+}): string | undefined {
+  if (agent.baseProvider) {
+    return agent.baseProvider;
+  }
+  if (agent.provider === "claude") {
+    return "claude";
+  }
+  return undefined;
+}
+
 export function toStoredAgentRecord(
   agent: ManagedAgent,
   options?: ProjectionOptions,
@@ -72,6 +85,7 @@ export function toStoredAgentRecord(
   const config = buildSerializableConfig(agent.config);
   const persistence = sanitizePersistenceHandle(agent.persistence);
   const runtimeInfo = sanitizeRuntimeInfo(agent.runtimeInfo);
+  const baseProvider = resolveAgentBaseProvider(agent);
 
   return {
     id: agent.id,
@@ -97,6 +111,8 @@ export function toStoredAgentRecord(
       ? agent.attention.attentionTimestamp.toISOString()
       : null,
     internal: options?.internal,
+    ...(agent.awsAuthRefreshRequired ? { awsAuthRefreshRequired: true } : {}),
+    ...(baseProvider ? { baseProvider } : {}),
     owner: agent.owner,
   } satisfies StoredAgentRecord;
 }
@@ -112,6 +128,7 @@ export function toAgentPayload(
     configuredThinkingOptionId: thinkingOptionId,
   });
 
+  const baseProvider = resolveAgentBaseProvider(agent);
   const payload: AgentSnapshotPayload = {
     id: agent.id,
     provider: agent.provider,
@@ -140,6 +157,8 @@ export function toAgentPayload(
     title: options?.title ?? null,
     labels: agent.labels,
     ...(agent.internal ? { internal: true } : {}),
+    ...(agent.awsAuthRefreshRequired ? { awsAuthRefreshRequired: true } : {}),
+    ...(baseProvider ? { baseProvider: baseProvider as AgentProvider } : {}),
   };
 
   const usage = sanitizeUsage(agent.lastUsage);
@@ -196,6 +215,38 @@ function buildStoredPersistenceHandle(
   return toAgentPersistenceHandle(validProviders, record.persistence);
 }
 
+function buildStoredAgentOptionalFields(
+  record: StoredAgentRecord,
+  runtimeInfo: AgentRuntimeInfo | undefined,
+  providerAvailable: boolean,
+): Partial<AgentSnapshotPayload> {
+  const fields: Partial<AgentSnapshotPayload> = {};
+  if (record.workspaceId) {
+    fields.workspaceId = record.workspaceId;
+  }
+  if (runtimeInfo) {
+    fields.runtimeInfo = runtimeInfo;
+  }
+  if (record.internal) {
+    fields.internal = true;
+  }
+  if (record.awsAuthRefreshRequired) {
+    fields.awsAuthRefreshRequired = true;
+  }
+  if (record.baseProvider) {
+    fields.baseProvider = record.baseProvider as AgentProvider;
+  } else if (record.provider === "claude") {
+    fields.baseProvider = "claude";
+  }
+  if (typeof record.lastError === "string") {
+    fields.lastError = record.lastError;
+  }
+  if (!providerAvailable) {
+    fields.providerUnavailable = true;
+  }
+  return fields;
+}
+
 export function buildStoredAgentPayload(
   record: StoredAgentRecord,
   validProviders: Iterable<AgentProvider>,
@@ -226,14 +277,12 @@ export function buildStoredAgentPayload(
     id: record.id,
     provider: record.provider,
     cwd: record.cwd,
-    ...(record.workspaceId ? { workspaceId: record.workspaceId } : {}),
     model: record.config?.model ?? null,
     thinkingOptionId: record.config?.thinkingOptionId ?? null,
     effectiveThinkingOptionId: resolveEffectiveThinkingOptionId({
       runtimeInfo,
       configuredThinkingOptionId: record.config?.thinkingOptionId ?? null,
     }),
-    ...(runtimeInfo ? { runtimeInfo } : {}),
     createdAt: createdAt.toISOString(),
     updatedAt: updatedAt.toISOString(),
     lastUserMessageAt: lastUserMessageAt ? lastUserMessageAt.toISOString() : null,
@@ -248,10 +297,8 @@ export function buildStoredAgentPayload(
     attentionReason: record.attentionReason ?? null,
     attentionTimestamp: record.attentionTimestamp ?? null,
     archivedAt: record.archivedAt ?? null,
-    ...(record.internal ? { internal: true } : {}),
     labels: normalizeLabels(record.labels),
-    ...(typeof record.lastError === "string" ? { lastError: record.lastError } : {}),
-    ...(providerAvailable ? {} : { providerUnavailable: true }),
+    ...buildStoredAgentOptionalFields(record, runtimeInfo, providerAvailable),
   };
 }
 

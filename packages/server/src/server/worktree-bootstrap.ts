@@ -446,8 +446,9 @@ function buildTerminalTimelineItem(input: {
   };
 }
 
-async function waitForTerminalBootstrapReadiness(
+export async function waitForTerminalBootstrapReadiness(
   terminal: Pick<TerminalSession, "getState" | "subscribe">,
+  timeoutMs: number = WORKTREE_BOOTSTRAP_TERMINAL_READY_TIMEOUT_MS,
 ): Promise<void> {
   if (terminalHasOutput(terminal.getState())) {
     return;
@@ -487,7 +488,7 @@ async function waitForTerminalBootstrapReadiness(
       return;
     }
 
-    timeout = setTimeout(finish, WORKTREE_BOOTSTRAP_TERMINAL_READY_TIMEOUT_MS);
+    timeout = setTimeout(finish, timeoutMs);
   });
 }
 

@@ -11857,3 +11857,26 @@ test.each([false, true])(
     }
   },
 );
+
+test("isClaudeProvider, isClaudeAgent, and getBaseProvider identify custom Claude providers", () => {
+  const manager = new AgentManager({
+    clients: {
+      claude: new RecordingPersistedAgentsClient("claude"),
+    },
+    providerDefinitions: {
+      claude: { enabled: true, derivedFromProviderId: null },
+      bedrock: { enabled: true, derivedFromProviderId: "claude" },
+      codex: { enabled: true, derivedFromProviderId: null },
+    },
+    logger,
+  });
+
+  expect(manager.isClaudeProvider("claude")).toBe(true);
+  expect(manager.isClaudeProvider("bedrock")).toBe(true);
+  expect(manager.isClaudeProvider("codex")).toBe(false);
+  expect(manager.isClaudeProvider(undefined)).toBe(false);
+
+  expect(manager.getBaseProvider("claude")).toBe("claude");
+  expect(manager.getBaseProvider("bedrock")).toBe("claude");
+  expect(manager.getBaseProvider("codex")).toBeUndefined();
+});

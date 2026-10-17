@@ -742,6 +742,7 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
     error: z.string(),
     code: z.string().optional(),
     diagnostic: z.string().optional(),
+    awsAuthRefreshRequired: z.boolean().optional(),
   }),
   z.object({
     type: z.literal("turn_canceled"),
@@ -841,6 +842,8 @@ export const AgentSnapshotPayloadSchema = z.object({
   providerUnavailable: z.boolean().optional(),
   // Private helper marker, retained for exact-ID snapshots and older wire messages.
   internal: z.boolean().optional(),
+  awsAuthRefreshRequired: z.boolean().optional(),
+  baseProvider: AgentProviderSchema.optional(),
 });
 
 export type AgentSnapshotPayload = z.infer<typeof AgentSnapshotPayloadSchema>;
@@ -2050,6 +2053,34 @@ export const UpdateAgentResponseMessageSchema = z.object({
   payload: AgentActionResponsePayloadSchema,
 });
 
+export const ClaudeAuthRefreshRequestMessageSchema = z.object({
+  type: z.literal("claude.auth.refresh.request"),
+  agentId: z.string(),
+  requestId: z.string(),
+  provider: z.enum(["aws", "gcp"]).optional(),
+  action: z.enum(["refresh", "dismiss"]).optional(),
+});
+
+export const ClaudeAuthRefreshResponsePayloadSchema = z.object({
+  requestId: z.string(),
+  agentId: z.string(),
+  terminalId: z.string().nullable().optional(),
+  error: z.string().nullable().optional(),
+});
+
+export const ClaudeAuthRefreshResponseMessageSchema = z.object({
+  type: z.literal("claude.auth.refresh.response"),
+  payload: ClaudeAuthRefreshResponsePayloadSchema,
+});
+
+export type ClaudeAuthRefreshRequest = z.infer<typeof ClaudeAuthRefreshRequestMessageSchema>;
+export type ClaudeAuthRefreshResponse = z.infer<typeof ClaudeAuthRefreshResponseMessageSchema>;
+export type ClaudeAuthRefreshResponsePayload = z.infer<
+  typeof ClaudeAuthRefreshResponsePayloadSchema
+>;
+export type ClaudeAuthRefreshRequestMessage = ClaudeAuthRefreshRequest;
+export type ClaudeAuthRefreshResponseMessage = ClaudeAuthRefreshResponse;
+
 export const ProjectRenameResponsePayloadSchema = z.object({
   requestId: z.string(),
   projectId: z.string(),
@@ -3216,6 +3247,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ArchiveAgentRequestMessageSchema,
   CloseItemsRequestMessageSchema,
   UpdateAgentRequestMessageSchema,
+  ClaudeAuthRefreshRequestMessageSchema,
   ProjectRenameRequestSchema,
   ProjectIconSetRequestSchema,
   ProjectRemoveRequestSchema,
@@ -3747,6 +3779,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentProfiles: z.boolean().optional(),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: z.boolean().optional(),
+        // COMPAT(claudeAuthRefresh): added in v0.11.2, remove gate after 2027-10-15.
+        claudeAuthRefresh: z.boolean().optional(),
       })
       .optional(),
   })
@@ -6962,6 +6996,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentDetachResponseMessageSchema,
   AgentRewindResponseMessageSchema,
   UpdateAgentResponseMessageSchema,
+  ClaudeAuthRefreshResponseMessageSchema,
   ProjectRenameResponseSchema,
   ProjectIconSetResponseSchema,
   ProjectRemoveResponseSchema,

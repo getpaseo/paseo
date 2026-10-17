@@ -128,6 +128,7 @@ export interface ProviderSnapshotEntry {
   status: ProviderStatus;
   enabled: boolean;
   source?: "builtin" | "custom";
+  derivedFromProviderId?: string | null;
   error?: string;
   models?: AgentModelDefinition[];
   modes?: AgentMode[];
@@ -426,6 +427,7 @@ export type AgentStreamEvent =
       code?: string;
       diagnostic?: string;
       turnId?: string;
+      awsAuthRefreshRequired?: boolean;
     }
   | { type: "turn_canceled"; provider: AgentProvider; reason: string; turnId?: string }
   | {
