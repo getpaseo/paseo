@@ -204,7 +204,7 @@ const styles = StyleSheet.create((theme) => ({
   fieldValue: {
     minWidth: 0,
     flexShrink: 1,
-    fontSize: theme.fontSize.lg,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foreground,
   },
   detail: {
