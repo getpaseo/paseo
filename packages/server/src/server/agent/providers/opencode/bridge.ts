@@ -5,7 +5,6 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import type { Logger } from "pino";
-import { ZodError } from "zod";
 
 import { writeFileAtomic } from "../../../atomic-file.js";
 import {
@@ -205,10 +204,14 @@ export class OpenCodeBridge {
             error: error.message,
             ...(error.details === undefined ? {} : { details: error.details }),
           });
-        } else if (error instanceof ZodError) {
-          sendJson(response, 400, { error: "Invalid tool input", issues: error.issues });
         } else if (error instanceof PaseoToolInputError) {
-          sendJson(response, error.status, { error: error.message });
+          sendJson(
+            response,
+            error.status,
+            error.issues
+              ? { error: "Invalid tool input", issues: error.issues }
+              : { error: error.message },
+          );
         } else {
           sendJson(response, 500, { error: "Internal OpenCode bridge error" });
         }

@@ -40,8 +40,9 @@ function createCatalog(): PaseoToolCatalog {
       const parsed = z
         .object({ value: z.string().min(2, "value must be at least 2 characters") })
         .strict()
-        .parse(input);
-      return { content: [{ type: "text", text: parsed.value }] };
+        .safeParse(input);
+      if (!parsed.success) throw new PaseoToolInputError(parsed.error.message, parsed.error.issues);
+      return { content: [{ type: "text", text: parsed.data.value }] };
     },
   };
   const tools = new Map([[tool.name, tool]]);

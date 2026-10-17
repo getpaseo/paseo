@@ -25,7 +25,7 @@ import {
 import { curateAgentActivity } from "../activity-curator.js";
 import { selectItemsByProjectedLimit } from "../timeline-projection.js";
 import type { AgentStorage } from "../agent-storage.js";
-import { ensureAgentLoaded } from "../agent-loading.js";
+import { AgentNotFoundError, ensureAgentLoaded } from "../agent-loading.js";
 import { isStoredAgentProviderAvailable } from "../../persistence-hooks.js";
 import {
   archiveByScope,
@@ -479,6 +479,14 @@ function addScheduleCadenceIssue(
   }
 }
 
+function parseToolArguments<T>(schema: z.ZodType<T>, input: unknown): T {
+  const result = schema.safeParse(input);
+  if (!result.success) {
+    throw new PaseoToolInputError(result.error.message, result.error.issues);
+  }
+  return result.data;
+}
+
 function addScheduleDurationIssue(value: string, context: z.RefinementCtx): void {
   try {
     parseDurationString(value);
@@ -506,7 +514,7 @@ function resolveScheduleUpdateCadence(input: ScheduleUpdateToolInput): ScheduleC
   if (every !== undefined) {
     // COMPAT(scheduleEveryInput): accept the old hidden field and canonicalize it before write.
     // Added in v0.2.0; remove after 2027-01-17.
-    const everyMs = parseDurationString(scheduleDurationInputSchema.parse(every));
+    const everyMs = parseDurationString(parseToolArguments(scheduleDurationInputSchema, every));
     const expression = everyMsToFiveFieldCron(everyMs);
     if (expression) {
       return { type: "cron", expression };
@@ -647,7 +655,11 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       typeof (inputSchema as { safeParseAsync?: unknown }).safeParseAsync === "function"
         ? (inputSchema as z.ZodType)
         : z.object(inputSchema as z.ZodRawShape).passthrough();
-    return schema.parseAsync(input);
+    const result = await schema.safeParseAsync(input);
+    if (!result.success) {
+      throw new PaseoToolInputError(result.error.message, result.error.issues);
+    }
+    return result.data;
   };
 
   const tools = new Map<string, PaseoToolDefinition>();
@@ -1613,7 +1625,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       if (hasLegacyCreateAgentPlacement(args)) {
         // COMPAT(nestedCreateAgentPlacement): accept the old relationship/workspace shape without
         // advertising it to models. Added in v0.2.0; remove after 2027-01-17.
-        const parsed = legacyAgentToAgentCreateAgentArgsSchema.parse(args);
+        const parsed = parseToolArguments(legacyAgentToAgentCreateAgentArgsSchema, args);
         const { cwd, workspaceId, worktree } = await resolveCreateAgentWorkspace(parsed.workspace, {
           prompt: parsed.initialPrompt,
         });
@@ -1626,7 +1638,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           worktree,
         };
       }
-      const parsed = agentToAgentCreateAgentArgsSchema.parse(args);
+      const parsed = parseToolArguments(agentToAgentCreateAgentArgsSchema, args);
       const { cwd, workspaceId } = await resolveCanonicalCreateAgentWorkspace(parsed.workspaceId, {
         prompt: parsed.initialPrompt,
       });
@@ -1642,7 +1654,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     if (hasLegacyCreateAgentPlacement(args)) {
       // COMPAT(nestedCreateAgentPlacement): see the agent-scoped branch above.
       const parsedArgs = normalizeTopLevelCreateAgentArgs(
-        legacyTopLevelCreateAgentArgsSchema.parse(args),
+        parseToolArguments(legacyTopLevelCreateAgentArgsSchema, args),
       );
       if (parsedArgs.relationship?.kind === "subagent") {
         throw new PaseoToolInputError(
@@ -1665,7 +1677,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         worktree,
       };
     }
-    const parsedArgs = canonicalTopLevelCreateAgentArgsSchema.parse(args);
+    const parsedArgs = parseToolArguments(canonicalTopLevelCreateAgentArgsSchema, args);
     const { cwd, workspaceId } = await resolveCanonicalCreateAgentWorkspace(
       parsedArgs.workspaceId,
       { prompt: parsedArgs.initialPrompt },
@@ -1753,7 +1765,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     };
 
     if (canonicalCandidate.relationship && canonicalCandidate.workspace) {
-      return legacyTopLevelCreateAgentArgsSchema.parse({
+      return parseToolArguments(legacyTopLevelCreateAgentArgsSchema, {
         ...canonicalCandidate,
         ...(Object.keys(settings).length > 0 ? { settings } : {}),
       });
@@ -1791,7 +1803,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           },
         };
 
-    return legacyTopLevelCreateAgentArgsSchema.parse({
+    return parseToolArguments(legacyTopLevelCreateAgentArgsSchema, {
       ...canonicalCandidate,
       relationship: { kind: "detached" },
       workspace,
@@ -1976,6 +1988,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         logger: childLogger,
       }).catch((error) => {
         stopNotification?.();
+        if (error instanceof AgentNotFoundError) {
+          throw new PaseoToolInputError(error.message);
+        }
         throw error;
       });
 

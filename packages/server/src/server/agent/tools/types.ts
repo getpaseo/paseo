@@ -4,7 +4,10 @@ import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-confi
 export class PaseoToolInputError extends Error {
   readonly status = 400;
 
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly issues?: z.ZodError["issues"],
+  ) {
     super(message);
     this.name = "PaseoToolInputError";
   }

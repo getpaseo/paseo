@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test } from "vitest";
@@ -64,6 +64,10 @@ test("invalid create_agent input and malformed requests return actionable client
       tools.find((tool: { name: string }) => tool.name === "update_schedule").inputSchema
         .properties,
     ).not.toHaveProperty("every");
+    await writeFile(
+      path.join(paseoHome, "schedules", "broken.json"),
+      JSON.stringify({ id: "broken", prompt: 17 }),
+    );
     const observed = [];
     for (const [tool, body, expected] of [
       [
@@ -95,6 +99,8 @@ test("invalid create_agent input and malformed requests return actionable client
       ["update_schedule", JSON.stringify({ id: completed.id, name: "" }), 400],
       ["update_schedule", JSON.stringify({ id: completed.id, cron: "0 0 30 2 *" }), 400],
       ["update_schedule", JSON.stringify({ id: completed.id, expiresIn: "not-a-duration" }), 400],
+      ["send_agent_prompt", JSON.stringify({ agentId: "missing", prompt: "Hello" }), 400],
+      ["inspect_schedule", JSON.stringify({ id: "broken" }), 500],
     ] as const) {
       const response = await fetch(
         `${baseUrl}/_internal/opencode/sessions/diagnosis/tools/${tool}`,
@@ -113,7 +119,9 @@ test("invalid create_agent input and malformed requests return actionable client
       });
     }
 
-    for (const result of observed) expect(result.status, result.body).toBe(result.expected);
+    for (const result of observed) expect.soft(result.status, result.body).toBe(result.expected);
+    expect.soft(observed[12].payload).toEqual({ error: "Agent not found: missing" });
+    expect.soft(observed[13].payload).toEqual({ error: "Internal OpenCode bridge error" });
     expect(observed[3].payload).toEqual({ error: "Schedule not found: missing" });
     for (const result of observed.slice(4, 7))
       expect(result.payload).toEqual({ error: `Schedule ${completed.id} is already completed` });
