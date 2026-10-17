@@ -368,6 +368,7 @@ export const ar: TranslationResources = {
       details: "تفاصيل",
     },
     dictation: {
+      paused: "تمت مقاطعة الميكروفون. في انتظار الاستئناف…",
       start: "بدء الإملاء الصوتي",
       cancel: "إلغاء الإملاء",
       retry: "أعد محاولة الإملاء",
