@@ -48,10 +48,15 @@ test.runIf(process.env.PASEO_NATIVE_ARCHIVE_QA === "1").each([true, false])(
         thinkingOptionId: "low",
       };
       const initialProcesses: ChildProcessWithoutNullStreams[] = [];
-      const initial = new CodexAppServerAgentSession(config, null, logger, async () => {
-        const child = spawn("codex", ["app-server"], { stdio: ["pipe", "pipe", "pipe"] });
-        initialProcesses.push(child);
-        return child;
+      const initial = new CodexAppServerAgentSession({
+        config: config,
+        resumeHandle: null,
+        logger: logger,
+        spawnAppServer: async () => {
+          const child = spawn("codex", ["app-server"], { stdio: ["pipe", "pipe", "pipe"] });
+          initialProcesses.push(child);
+          return child;
+        },
       });
       active = initial;
       await initial.connect();
@@ -69,22 +74,21 @@ test.runIf(process.env.PASEO_NATIVE_ARCHIVE_QA === "1").each([true, false])(
 
       const nativePath = await readNativeThreadPath(handle.sessionId);
       expect(nativePath.includes(`${path.sep}archived_sessions${path.sep}`)).toBe(nativeArchived);
-      history = new CodexAppServerAgentSession(
-        config,
-        handle,
-        logger,
-        async () => {
+      history = new CodexAppServerAgentSession({
+        config: config,
+        resumeHandle: handle,
+        logger: logger,
+        spawnAppServer: async () => {
           const child = spawn("codex", ["app-server"], { stdio: ["pipe", "pipe", "pipe"] });
           spawned.push(child);
           return child;
         },
-        {},
-        false,
-        false,
-        false,
-        undefined,
-        "history",
-      );
+        deps: {},
+        ephemeral: false,
+        goalsEnabled: false,
+        autoReviewEnabled: false,
+        initialResumePurpose: "history",
+      });
       await history.connect();
       const text: string[] = [];
       for await (const event of history.streamHistory()) {
@@ -121,22 +125,21 @@ test.runIf(process.env.PASEO_NATIVE_ARCHIVE_QA === "1")(
   "a failed Codex history read releases its temporary process",
   async () => {
     const spawned: ChildProcessWithoutNullStreams[] = [];
-    const session = new CodexAppServerAgentSession(
-      { provider: "codex", cwd: tmpdir() },
-      { sessionId: "00000000-0000-4000-8000-000000000001" },
-      createTestLogger(),
-      async () => {
+    const session = new CodexAppServerAgentSession({
+      config: { provider: "codex", cwd: tmpdir() },
+      resumeHandle: { sessionId: "00000000-0000-4000-8000-000000000001" },
+      logger: createTestLogger(),
+      spawnAppServer: async () => {
         const child = spawn("codex", ["app-server"], { stdio: ["pipe", "pipe", "pipe"] });
         spawned.push(child);
         return child;
       },
-      {},
-      false,
-      false,
-      false,
-      undefined,
-      "history",
-    );
+      deps: {},
+      ephemeral: false,
+      goalsEnabled: false,
+      autoReviewEnabled: false,
+      initialResumePurpose: "history",
+    });
     try {
       await expect(session.connect()).rejects.toThrow();
       expect(spawned).toHaveLength(1);

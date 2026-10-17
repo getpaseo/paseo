@@ -62,6 +62,7 @@ class FakeSession implements AgentSession {
   readonly provider = "claude";
   id = "session-1";
   capabilities = CAPABILITIES;
+  idleBackendEvictionEligible = false;
   initialTimeline: ImportedTimelineEntry[] = [
     { item: { type: "assistant_message", id: "initial", text: "Provider setup" } },
   ];
@@ -176,6 +177,11 @@ class FakeSession implements AgentSession {
       },
     };
   }
+
+  async canEvictIdleBackend(): Promise<boolean> {
+    this.recordedCalls.push("canEvictIdleBackend");
+    return true;
+  }
 }
 
 async function* emptyHistory(): AsyncGenerator<AgentStreamEvent> {
@@ -199,6 +205,7 @@ describe("wrapSessionProvider", () => {
     await wrapped.revertBoth?.({ messageId: "message-1" });
     const handler = wrapped.tryHandleOutOfBand?.("/compact");
     await handler?.run({ emit: () => {} });
+    await wrapped.canEvictIdleBackend?.();
 
     expect(session.steers).toEqual([
       { prompt: "follow-up", options: { expectedTurnId: "turn-1" } },
@@ -214,6 +221,7 @@ describe("wrapSessionProvider", () => {
       "revertBoth",
       "tryHandleOutOfBand",
       "tryHandleOutOfBand.run",
+      "canEvictIdleBackend",
     ]);
   });
   test("keeps provider-owned session values live", () => {
@@ -221,9 +229,11 @@ describe("wrapSessionProvider", () => {
     const wrapped = wrapSessionProvider("custom-claude", session);
     session.id = "session-2";
     session.capabilities = { ...CAPABILITIES, supportsMcpServers: false };
+    session.idleBackendEvictionEligible = true;
     expect(wrapped.id).toBe("session-2");
     expect(wrapped.capabilities).toEqual(session.capabilities);
     expect(wrapped.initialTimeline).toEqual(session.initialTimeline);
+    expect(wrapped.idleBackendEvictionEligible).toBe(true);
   });
 
   test("propagates steering failure without interrupting or replacing the turn", async () => {
