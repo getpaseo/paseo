@@ -81,7 +81,9 @@ export function useFieldTriggerStyle(variant: FieldTriggerVariant, disabled: boo
     (state: PressableStateCallbackType & { hovered?: boolean }) => [
       variant === "field" ? styles.field : styles.badge,
       !disabled && Boolean(state.hovered) && styles.highlighted,
-      !disabled && state.pressed && styles.highlighted,
+      !disabled &&
+        state.pressed &&
+        (variant === "field" ? styles.highlighted : styles.badgePressed),
       disabled && styles.disabled,
     ],
     [disabled, variant],
@@ -160,6 +162,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   highlighted: {
     backgroundColor: theme.colors.surface2,
+  },
+  badgePressed: {
+    backgroundColor: theme.colors.surface0,
   },
   disabled: {
     opacity: 0.6,
