@@ -56,6 +56,7 @@ describe("opencode tool-call mapper", () => {
       type: "plain_text",
       label: "hzmcp.memory__write_note",
       icon: "wrench",
+      text: 'const r = await tools.hzmcp.memory__write_note({ project: "benjamin", title: "x" });\nreturn r;',
     });
   });
 
@@ -74,7 +75,7 @@ describe("opencode tool-call mapper", () => {
       type: "plain_text",
       label: "charlotte.charlotte_tabs",
       icon: "wrench",
-      text: "tab list",
+      text: 'const tabs = await tools["charlotte"].charlotte_tabs({});\n\ntab list',
     });
   });
 
@@ -90,6 +91,72 @@ describe("opencode tool-call mapper", () => {
     );
 
     expect(item.detail?.type).toBe("unknown");
+  });
+
+  it("ignores tools mentioned in comments and keeps the executed call label", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-4",
+        status: "running",
+        input: {
+          code: "// tools.old.lookup({})\n// use tools here\nawait tools.hzmcp.memory__write_note({});",
+        },
+        output: null,
+      }),
+    );
+
+    expect(item.detail).toMatchObject({ type: "plain_text", label: "hzmcp.memory__write_note" });
+  });
+
+  it("ignores tools mentioned in string literals", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-5",
+        status: "running",
+        input: {
+          code: 'const hint = "tools.fake.lookup({})";\nawait tools.hzmcp.memory__search_notes({});',
+        },
+        output: null,
+      }),
+    );
+
+    expect(item.detail).toMatchObject({ type: "plain_text", label: "hzmcp.memory__search_notes" });
+  });
+
+  it("keeps template-literal interpolations as executed code", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-6",
+        status: "running",
+        input: {
+          code: "const prefix = `result: ${tools.hzmcp.memory__search_notes({})}`;",
+        },
+        output: null,
+      }),
+    );
+
+    expect(item.detail).toMatchObject({ type: "plain_text", label: "hzmcp.memory__search_notes" });
+  });
+
+  it("keeps the executed code in the detail text alongside the output", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "execute",
+        callId: "opencode-execute-7",
+        status: "completed",
+        input: { code: "await tools.hzmcp.memory__search_notes({ query: 'paseo' });" },
+        output: "search results",
+      }),
+    );
+
+    expect(item.detail).toMatchObject({
+      type: "plain_text",
+      label: "hzmcp.memory__search_notes",
+      text: "await tools.hzmcp.memory__search_notes({ query: 'paseo' });\n\nsearch results",
+    });
   });
 
   it("maps running shell calls", () => {
