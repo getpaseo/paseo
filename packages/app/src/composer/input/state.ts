@@ -12,6 +12,13 @@ export function resolveActiveSendBehavior(
   return sendBehavior === "queue" && hasPendingPermission ? "interrupt" : sendBehavior;
 }
 
+export function resolveAgentRunning(
+  hasActiveTurn: boolean,
+  agentStatus: string | null | undefined,
+): boolean {
+  return hasActiveTurn || agentStatus === "running";
+}
+
 interface ComposerSurfaceState {
   opacity: 0 | 1;
   pointerEvents: "auto" | "none";
