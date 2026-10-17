@@ -231,6 +231,12 @@ export const en = {
     scrollToBottom: "Scroll to bottom",
     historyLoadFailed: "Couldn't load agent history",
     messageCapped: "This message was capped ({{bytes}} bytes).",
+    quote: {
+      action: "Quote",
+      noteLabel: "Note on the quote",
+      notePlaceholder: "Add a note",
+      hint: "Enter adds to the message · Shift+Enter new line · Esc cancels",
+    },
     permission: {
       rejectedPlan: "Rejected plan",
       approvedPlan: "Approved plan",

@@ -237,6 +237,12 @@ export const ja: TranslationResources = {
     scrollToBottom: "下にスクロール",
     historyLoadFailed: "エージェントの履歴を読み込めませんでした",
     messageCapped: "このメッセージは上限で切り詰められました（{{bytes}}バイト）。",
+    quote: {
+      action: "引用",
+      noteLabel: "引用へのメモ",
+      notePlaceholder: "メモを追加",
+      hint: "Enterでメッセージに追加 · Shift+Enterで改行 · Escでキャンセル",
+    },
     permission: {
       rejectedPlan: "却下されたプラン",
       approvedPlan: "承認されたプラン",
