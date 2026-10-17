@@ -1,6 +1,7 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
 import type { AgentWidgetBridge, WidgetAction } from "@getpaseo/protocol/desktop-agent-widget";
+import { createBackgroundAgentNavigation } from "@/plugins/navigation";
 import { pluginRegistry } from "@/plugins/registry";
 import { runPlanContribution } from "@/plugins/plan-actions/contribution";
 import { projectWidgetRequest } from "./model";
@@ -68,7 +69,8 @@ export async function handoffWidgetPlan(input: {
       signal: plugin.lifetime.signal,
       profileId: action.profileId,
       navigation: {
-        // External popup actions must not change the main window's navigation or tabs.
+        // Update tabs without routing or activating the main window.
+        ...createBackgroundAgentNavigation({ serverId, workspaceId: item.workspaceId }),
         openSettings() {},
         openSurface() {},
         openWorkspacePanel() {},

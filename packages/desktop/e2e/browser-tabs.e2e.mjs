@@ -16,6 +16,7 @@ import { chromium } from "playwright";
 import { runAppearanceFontSizeRegression } from "./appearance-font-size.electron.mjs";
 import { runSettingsMemoryRegression } from "./settings-memory.electron.mjs";
 
+import { seedWidgetHandoff, runWidgetHandoff } from "./widget-handoff.electron.mjs";
 import { seedPluginLinks, runPluginLinksRegression } from "./plugin-links.electron.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -3761,6 +3762,43 @@ async function runFocusedJourney(context) {
   console.log("Browser tab measurement and continuity journey passed.");
 }
 
+async function verifyFocusedDesktopJourney({
+  page,
+  browser,
+  daemonPort,
+  target,
+  status,
+  workspaceRoot,
+  artifactDir,
+  inspectorPort,
+}) {
+  if (process.env.PASEO_DESKTOP_WORKSPACE_NAVIGATION_ONLY === "1") {
+    await verifyWorkspaceNavigation({
+      page,
+      serverId: status.serverId,
+      target,
+      artifactDir,
+      inspectorPort,
+    });
+    console.log("Workspace navigation regression passed.");
+    return true;
+  }
+
+  if (process.env.PASEO_DESKTOP_WIDGET_HANDOFF_ONLY !== "1") return false;
+  await runWidgetHandoff({
+    page,
+    browser,
+    daemonPort,
+    serverId: status.serverId,
+    workspaceIds,
+    cwd: path.join(workspaceRoot, "workspace-1"),
+    artifactDir,
+    evaluateMain: (expression) => evaluateMain(inspectorPort, expression),
+  });
+  console.log("Widget handoff replacement passed without workspace or focus changes.");
+  return true;
+}
+
 async function main() {
   const artifactDir =
     process.env.PASEO_DESKTOP_BROWSER_E2E_ARTIFACT_DIR ??
@@ -3783,6 +3821,7 @@ async function main() {
   seedPaseoHome(paseoHome, listen, workspaceRoot);
   const target = await startTargetPage();
   seedPluginLinks(paseoHome, workspaceIds[0], target.url, workspaceIds[1]);
+  seedWidgetHandoff(paseoHome, rootDir, workspaceRoot);
   const remoteHome = path.join(runtimeDir, "remote-home");
   seedPaseoHome(remoteHome, `127.0.0.1:${remotePort}`, path.join(runtimeDir, "remote-workspaces"));
   const children = [];
@@ -3916,23 +3955,25 @@ async function main() {
 
     await verifyCometProfileBridge(page, artifactDir);
 
+    if (
+      await verifyFocusedDesktopJourney({
+        page,
+        browser,
+        daemonPort,
+        target,
+        status,
+        workspaceRoot,
+        artifactDir,
+        inspectorPort,
+      })
+    )
+      return;
+
     const reconnect = async () => {
       browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
       page = await waitForAppPage(browser, expoPort);
       return page;
     };
-
-    if (process.env.PASEO_DESKTOP_WORKSPACE_NAVIGATION_ONLY === "1") {
-      await verifyWorkspaceNavigation({
-        page,
-        serverId: status.serverId,
-        target,
-        artifactDir,
-        inspectorPort,
-      });
-      console.log("Workspace navigation regression passed.");
-      return;
-    }
 
     const checkPluginLinks = () =>
       runPluginLinksRegression({

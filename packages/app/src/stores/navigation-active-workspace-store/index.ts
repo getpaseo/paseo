@@ -35,8 +35,13 @@ const lastWorkspaceSelectionStore = createLastWorkspaceSelectionStore(
 function navigateDeps(): NavigateToWorkspaceDeps {
   return {
     getSessionWorkspaces: (serverId) => useSessionStore.getState().sessions[serverId]?.workspaces,
-    getSessionAgents: (serverId) =>
-      useSessionStore.getState().sessions[serverId]?.agents.values() ?? [],
+    getSessionAgents: (serverId) => {
+      const agents = useSessionStore.getState().sessions[serverId]?.agents.values() ?? [];
+      const hidden = useWorkspaceLayoutStore.getState().hiddenAgentIdsByWorkspace;
+      return Array.from(agents).filter(
+        (agent) => !hidden[`${serverId}:${agent.workspaceId}`]?.has(agent.id),
+      );
+    },
     isWorkspaceLayoutHydrated: () => useWorkspaceLayoutStore.persist.hasHydrated(),
     openTab: (input) => useWorkspaceLayoutStore.getState().openTab(input),
     rememberLastWorkspace: (selection) => lastWorkspaceSelectionStore.remember(selection),
