@@ -1,6 +1,8 @@
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { toNativeLinkRecognition } from "react-native-enriched-markdown/src/utils/regexParser";
 import { parseMarkdown } from "react-native-enriched-markdown/src/web/parseMarkdown";
+import { recognizeTextLinks } from "react-native-enriched-markdown/src/web/recognizeTextLinks";
+import { classifyAssistantFileLink } from "@/assistant-file-links";
 import { markInlineImages } from "react-native-enriched-markdown/src/web/utils";
 import type { ASTNode } from "react-native-enriched-markdown/src/web/types";
 import { QueryClient } from "@tanstack/react-query";
@@ -112,13 +114,79 @@ it.each([
   "src/file.ts:10-20",
   "src/file.ts(10,2)",
 ])("recognizes inline paths through the file resolver: %s", (path) => {
-  const prepared = prepareMarkdownSource(`Open \`${path}\`.`);
+  const prepared = prepareMarkdownSource(`Open \`${path}\`.`, "/repo");
   expect(prepared.linkRecognition.inlineCode?.test(path)).toBe(true);
   expect(prepared.linkSource(path, "inline-code")).toEqual({
     href: path,
     text: path,
     sourceType: "inline-code",
   });
+});
+
+it("preserves stable inline-code file classification through the library parser", async () => {
+  const paths = [
+    "src/app/[id].tsx",
+    "src/app/(tabs)/index.tsx",
+    "src/a$b.ts",
+    ".gitignore",
+    "src/index.ts#L10-L20",
+    "src/index.ts:10-20",
+    "src/index.ts:20-10",
+    "src/index.ts#L0",
+    "src/index.ts?raw",
+    "before/after",
+    "word.word",
+    "README.md",
+    "./scripts/run",
+    "src/file.ts(10,2)",
+    "src/file.ts lines 10-20",
+    "/tmp/[route].tsx",
+    "file:///tmp/file.ts#L10-L20",
+  ];
+  const source = paths.map((path) => `\`${path}\``).join(" and ");
+  const prepared = prepareMarkdownSource(source, "/repo");
+  const tree = recognizeTextLinks(
+    await parseMarkdown(prepared.render(), { latexMath: false }),
+    prepared.linkRecognition.text,
+    prepared.linkRecognition.inlineCode,
+  );
+  const links: string[] = [];
+  function collect(node: ASTNode) {
+    if (node.type === "Link") links.push(String(node.attributes?.url));
+    node.children?.forEach(collect);
+  }
+  collect(tree);
+  expect(links).toEqual([
+    "src/app/[id].tsx",
+    "src/app/(tabs)/index.tsx",
+    "src/a$b.ts",
+    ".gitignore",
+    "src/index.ts#L10-L20",
+    "src/index.ts:10-20",
+    "README.md",
+    "./scripts/run",
+    "src/file.ts(10,2)",
+    "/tmp/[route].tsx",
+    "file:///tmp/file.ts#L10-L20",
+  ]);
+  expect(
+    classifyAssistantFileLink("src/index.ts#L10-L20", { workspaceRoot: "/repo" }),
+  ).toMatchObject({ target: { path: "/repo/src/index.ts", lineStart: 10, lineEnd: 20 } });
+});
+
+it("requires workspace context for relative inline paths and escapes literal regex characters", () => {
+  const source = "`src/app/[id].tsx` and `src/a+b.ts` and `README.md` and `/tmp/file.ts`";
+  const withoutWorkspace = prepareMarkdownSource(source).linkRecognition.inlineCode;
+  expect(withoutWorkspace.test("src/app/[id].tsx")).toBe(false);
+  expect(withoutWorkspace.test("README.md")).toBe(false);
+  expect(withoutWorkspace.test("/tmp/file.ts")).toBe(true);
+  const prepared = prepareMarkdownSource(source, "/repo");
+  const native = toNativeLinkRecognition(prepared.linkRecognition);
+  const pattern = new RegExp(native.inlineCode.pattern);
+  expect(pattern.test("src/app/[id].tsx")).toBe(true);
+  expect(pattern.test("src/a+b.ts")).toBe(true);
+  expect(pattern.test("src/app/i.tsx")).toBe(false);
+  expect(pattern.test("src/ab.ts")).toBe(false);
 });
 
 it("recognizes bare Unicode filenames and preserves inline-code URLs", () => {
@@ -489,7 +557,7 @@ it.each([
   "×/÷",
   "２０２４/１０/１６",
 ])("leaves non-path tokens unlinked in prose and inline code: %s", (token) => {
-  const { linkRecognition } = prepareMarkdownSource(`Value ${token}, then continue.`);
+  const { linkRecognition } = prepareMarkdownSource(`Value ${token}, then \`${token}\`.`, "/repo");
   expect([...`Value ${token}, then continue.`.matchAll(linkRecognition.text)]).toEqual([]);
   expect(linkRecognition.inlineCode.test(token)).toBe(false);
 });
@@ -514,12 +582,11 @@ it.each([
   "123.ts",
   "FILE.TS",
   "https://example.com/path",
-])("recognizes complete paths and URLs in prose and inline code: %s", (token) => {
-  const { linkRecognition } = prepareMarkdownSource(`Open ${token} then continue.`);
+])("recognizes complete paths and URLs in prose: %s", (token) => {
+  const { linkRecognition } = prepareMarkdownSource(`Open ${token} then \`${token}\`.`, "/repo");
   expect(
     [...`Open ${token} then continue.`.matchAll(linkRecognition.text)].map(([text]) => text),
   ).toEqual([token]);
-  expect(linkRecognition.inlineCode.test(token)).toBe(true);
 });
 
 it.each([
@@ -530,10 +597,13 @@ it.each([
   "packages/app",
   "123/file",
   "src/123",
-])("requires stronger path intent in prose while preserving inline code: %s", (token) => {
-  const { linkRecognition } = prepareMarkdownSource(`Compare ${token}, then continue.`);
+])("leaves extensionless relative paths unlinked in prose and inline code: %s", (token) => {
+  const { linkRecognition } = prepareMarkdownSource(
+    `Compare ${token}, then \`${token}\`.`,
+    "/repo",
+  );
   expect([...`Compare ${token}, then continue.`.matchAll(linkRecognition.text)]).toEqual([]);
-  expect(linkRecognition.inlineCode.test(token)).toBe(true);
+  expect(linkRecognition.inlineCode.test(token)).toBe(false);
 });
 
 it("keeps prose and inline-code recognition enabled through the native regex adapter", () => {

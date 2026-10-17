@@ -1,3 +1,4 @@
+import { classifyAssistantFileLink } from "@/assistant-file-links";
 import { ASSISTANT_FILE_EXTENSIONS } from "@/assistant-file-links/extensions";
 import { normalizeMarkdownHtml } from "./html";
 import { gfmTable } from "micromark-extension-gfm-table";
@@ -22,7 +23,6 @@ const SEPARATED_PATH = String.raw`${PATH_SEGMENT}(?:[\\/]${PATH_SEGMENT})+`;
 const FILE_NAME = String.raw`${PATH_SEGMENT}\.(?:${FILE_EXTENSIONS})`;
 // Bare prose paths need a known extension, a line suffix, or at least two separators.
 const PROSE_PATH = String.raw`(?:${PATH_PREFIX}${HAS_PATH_LETTER}${SEPARATED_PATH}|${HAS_PATH_LETTER}(?:${PATH_SEGMENT}(?:[\\/]${PATH_SEGMENT})*[\\/]${FILE_NAME}|${PATH_SEGMENT}(?:[\\/]${PATH_SEGMENT}){2,}|${SEPARATED_PATH}(?=:)))`;
-const INLINE_CODE_PATH = String.raw`${PATH_PREFIX}?${HAS_PATH_LETTER}${SEPARATED_PATH}`;
 
 function createFilePattern(path: string): RegExp {
   // The native adapter mistakes a literal + in lookbehind for a quantifier; use its hex escape.
@@ -33,14 +33,17 @@ function createFilePattern(path: string): RegExp {
 }
 
 const FILE_PATTERN = createFilePattern(PROSE_PATH);
-const INLINE_CODE_FILE_PATTERN = createFilePattern(INLINE_CODE_PATH);
-
-function linkMetadata() {
+function linkMetadata(inlineCodePaths: ReadonlySet<string>) {
+  // The engine accepts regexes on both platforms. Classify complete code spans
+  // first, then pass literal matches rather than maintaining a second path grammar.
+  const alternatives = [...inlineCodePaths].map((path) =>
+    path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+  );
   return {
     linkRecognition: {
       text: FILE_PATTERN,
       inlineCode: new RegExp(
-        String.raw`^(?:${INLINE_CODE_FILE_PATTERN.source})(?:\(\d+(?:,\d+)?(?:-\d+(?:,\d+)?)?\)| lines? \d+(?:-\d+)?)?$`,
+        String.raw`^(?:https?://[^\s<>]+${alternatives.length ? `|${alternatives.join("|")}` : ""})$`,
       ),
     },
     linkSource: markdownLinkSource,
@@ -90,6 +93,16 @@ export function prepareMarkdownSource(
       extensions: [gfmTable()],
       mdastExtensions: [gfmTableFromMarkdown()],
     }));
+  const inlineCodePaths = new Set<string>();
+  function collectInlineCode(node: Nodes) {
+    if (node.type === "inlineCode") {
+      const classification = classifyAssistantFileLink(node.value, { workspaceRoot });
+      if (classification && classification.kind !== "external") inlineCodePaths.add(node.value);
+    }
+    if ("children" in node) node.children.forEach(collectInlineCode);
+  }
+  if (source.includes("`")) collectInlineCode(getTree());
+  const metadata = linkMetadata(inlineCodePaths);
   const edits: { start: number; end: number; text: string }[] = [];
   if (
     !source.includes("![") &&
@@ -97,7 +110,7 @@ export function prepareMarkdownSource(
     !source.includes("&") &&
     !(workspaceRoot && source.includes("]("))
   ) {
-    return { images, ...linkMetadata(), render: () => source };
+    return { images, ...metadata, render: () => source };
   }
 
   const definitions = new Map<string, { url: string; title?: string | null }>();
@@ -206,7 +219,7 @@ export function prepareMarkdownSource(
   visit(getTree());
   return {
     images,
-    ...linkMetadata(),
+    ...metadata,
     render(
       urls: ReadonlyMap<string, string> = new Map(),
       unavailableImages: ReadonlySet<string> = new Set(),
