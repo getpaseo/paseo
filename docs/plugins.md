@@ -284,6 +284,11 @@ import to any other code file in the plugin root is also rejected; move it into 
 or `shared/`. These are compile errors naming the importing file and boundary rule. Top-level React
 Native calls such as `StyleSheet.create` belong in `client/`.
 
+Client bundles run on Hermes, which cannot execute `class` syntax and fails silently on larger
+bundles. Metro never sees plugin code, so the compiler lowers classes in the esbuild output with
+Babel (class-only plugins, client target only). Plugin and dependency code can use classes freely;
+other syntax Hermes lacks (regex `v` flag, `Intl.Segmenter`, `toSorted`) is not polyfilled.
+
 The scaffold omits `"DOM"` from `tsconfig.json` and does not use `/// <reference lib="dom" />`, so
 browser globals are not available across the plugin. Put sanctioned web-only APIs in
 `client/web.ts`, declare only the globals that module uses, gate each export with
