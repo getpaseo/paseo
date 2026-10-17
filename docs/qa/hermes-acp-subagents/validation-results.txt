@@ -1,0 +1,44 @@
+Selected result lines from actual local command output. Full logs retained locally. No personal paths or credentials included.
+
+Paseo focused tests
+ Test Files  5 passed (5)
+      Tests  166 passed (166)
+
+Hermes ACP tests
+=== Summary: 3 files, 50 tests passed, 0 failed (100% complete) in 3.7s (16 workers) ===
+
+Hermes additional delegation tests
+  ║ 1 failed, 70 passed in 7.85s
+=== Summary: 3 files, 75 tests passed, 1 failed (100% complete) in 16.9s (16 workers) ===
+1 failed, 70 passed in 7.85s
+
+Hermes blocking checks
+code health: 8 files vs 8ac5c74432d1: 0 blocking, 0 advisory (0.7s)
+scripts/check: 11 checks, ok
+
+Paseo changed-file lint
+Found 0 warnings and 0 errors.
+
+Paseo final QA lint
+Found 0 warnings and 0 errors.
+
+Node no-model UI
+  4 passed (25.4s)
+
+Python no-model UI
+  4 passed (50.3s)
+
+Output notice viewport capture
+  1 passed (17.0s)
+
+Real-model success UI
+  1 passed (1.3m)
+
+Real-runtime failure injection UI
+  1 passed (6.3m)
+
+Paseo plugin typecheck: exit 0 (workspace script)
+
+Paseo server typecheck: exit 0 (workspace script)
+
+Paseo app typecheck: exit 0 (workspace script)

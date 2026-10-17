@@ -44,6 +44,8 @@ export type ProviderSubagentInputEvent =
     }
   | {
       type: "timeline";
+      /** Replace the bounded provider-owned record; epoch change invalidates client caches. */
+      reset?: boolean;
       id: string;
       item: AgentTimelineItem;
       timestamp?: string;
@@ -92,6 +94,7 @@ export class ProviderSubagentStore {
     }
 
     if (event.type === "timeline") {
+      if (event.reset) this.timelines.delete(key);
       if (!this.timelines.has(key)) {
         this.timelines.initialize(key);
       }
