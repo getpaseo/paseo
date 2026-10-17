@@ -1063,6 +1063,14 @@ export class HostRuntimeController {
             shouldCloseClient = shouldCloseClient && !activated;
 
             if (activeClient) {
+              if (activeClient.getConnectionState().status !== "connected") {
+                probeByConnectionId.set(connection.id, {
+                  status: "unavailable",
+                  latencyMs: null,
+                });
+                publishProbeState();
+                return;
+              }
               const rttMs = activeClient.getLastLivenessRttMs();
               if (!this.isCurrentProbeRequest(requestVersion)) {
                 return;

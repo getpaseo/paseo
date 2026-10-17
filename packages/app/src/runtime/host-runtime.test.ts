@@ -992,6 +992,50 @@ describe("HostRuntimeController", () => {
     expect(activeClient.latencyMeasurements()).toEqual([]);
   });
 
+  it.each([12, null])(
+    "falls back to relay when the direct client disconnects with heartbeat RTT %s",
+    async (heartbeatRtt) => {
+      useHostRuntimeClock();
+      const clients: FakeDaemonClient[] = [];
+      const latencies: Record<string, number | Error> = {
+        "direct:lan:6767": 12,
+        "relay:relay.paseo.sh:443": 65,
+      };
+      const controller = new HostRuntimeController({
+        host: makeHost(),
+        deps: makeDeps(latencies, clients),
+      });
+
+      await controller.start({ autoProbe: false });
+      expect(controller.getSnapshot().activeConnectionId).toBe("direct:lan:6767");
+      expect(controller.getSnapshot().connectionStatus).toBe("online");
+
+      const directClient = clients[0];
+      directClient.heartbeatReportsRtt(heartbeatRtt);
+      directClient.clearLatencyMeasurements();
+      latencies["direct:lan:6767"] = new Error("LAN unreachable");
+      directClient.setConnectionState({ status: "disconnected", reason: "network changed" });
+      expect(controller.getSnapshot().connectionStatus).toBe("error");
+      expect(directClient.getLastLivenessRttMs()).toBe(heartbeatRtt);
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      await controller.runProbeCycleNow();
+
+      const snapshot = controller.getSnapshot();
+      expect(snapshot.activeConnectionId).toBe("relay:relay.paseo.sh:443");
+      expect(snapshot.connectionStatus).toBe("online");
+      expect(snapshot.probeByConnectionId).toEqual(
+        new Map([
+          ["direct:lan:6767", { status: "unavailable", latencyMs: null }],
+          ["relay:relay.paseo.sh:443", { status: "available", latencyMs: 65 }],
+        ]),
+      );
+      expect(directClient.isDisposed()).toBe(true);
+      expect(directClient.latencyMeasurements()).toEqual([]);
+      await controller.stop();
+    },
+  );
+
   it("does not create a probe client for the selected connection while it reconnects", async () => {
     useHostRuntimeClock();
     const relay: HostConnection = {
