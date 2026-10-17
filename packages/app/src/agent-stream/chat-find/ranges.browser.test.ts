@@ -105,3 +105,20 @@ it("leaves rows without the plugin marker limited to marked message text", () =>
   document.body.append(row);
   expect(findRenderedMatches(row, "needle")).toEqual([]);
 });
+
+it("counts only drawn text in a plugin row, including an opened popover", () => {
+  const row = pluginRow(
+    '<div><span>visible needle</span><div hidden>hidden needle</div><div style="display:none">display needle</div><span style="visibility:hidden">visibility needle</span><span style="opacity:0">transparent needle</span><div popover="manual">popover needle</div></div>',
+  );
+  expect(findRenderedMatches(row, "needle").map((range) => range.toString())).toEqual(["needle"]);
+  row.querySelector<HTMLElement>("[popover]")!.showPopover();
+  expect(findRenderedMatches(row, "needle")).toHaveLength(2);
+});
+
+it("keeps text around nested plugin blocks in separate occurrences", () => {
+  const row = pluginRow("<div>alpha <div>details</div>beta</div><div>gamma <div></div>delta</div>");
+  expect(findRenderedMatches(row, "alpha beta")).toEqual([]);
+  expect(findRenderedMatches(row, "gamma delta")).toEqual([]);
+  expect(findRenderedMatches(row, "details").map((range) => range.toString())).toEqual(["details"]);
+  expect(findRenderedMatches(row, "beta").map((range) => range.toString())).toEqual(["beta"]);
+});
