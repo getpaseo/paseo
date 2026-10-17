@@ -24,7 +24,7 @@ import {
   forgeAuthStateFromError,
   hasOriginRemote,
   listBranchSuggestions,
-  resolveRepositoryDefaultBranch,
+  resolveWorktreeCreationBaseBranch,
   resolveBranchCheckout,
   resolveAbsoluteGitDir,
 } from "../utils/checkout-git.js";
@@ -371,7 +371,7 @@ interface WorkspaceGitServiceDependencies {
   getCheckoutDiff: typeof getCheckoutDiff;
   getPullRequestStatus: typeof getPullRequestStatus;
   resolveBranchCheckout: typeof resolveBranchCheckout;
-  resolveRepositoryDefaultBranch: typeof resolveRepositoryDefaultBranch;
+  resolveRepositoryDefaultBranch: typeof resolveWorktreeCreationBaseBranch;
   listBranchSuggestions: typeof listBranchSuggestions;
   listPaseoWorktrees: typeof listPaseoWorktrees;
   /**
@@ -564,7 +564,7 @@ function buildDefaultWorkspaceGitServiceDeps(
     getCheckoutDiff,
     getPullRequestStatus,
     resolveBranchCheckout,
-    resolveRepositoryDefaultBranch,
+    resolveRepositoryDefaultBranch: resolveWorktreeCreationBaseBranch,
     listBranchSuggestions,
     listPaseoWorktrees,
     resolveAbsoluteGitDir,
