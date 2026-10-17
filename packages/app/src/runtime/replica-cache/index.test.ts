@@ -1124,3 +1124,26 @@ it("retains semantic agent messages across disk-cache reconstruction", async () 
   await writer.flush();
   expect(await createCache(storage).readTimeline(SERVER_ID, "agent-1")).toEqual(value);
 });
+
+it("cross-client inline images survive a durable timeline cache round trip", async () => {
+  const storage = new MemoryStorage();
+  const writer = createCache(storage);
+  const message: StreamItem = {
+    kind: "user_message",
+    id: "image-message",
+    messageId: "image-message",
+    text: "",
+    timestamp: new Date("2026-10-12T00:00:00.000Z"),
+    timelineCursor: { epoch: "image-epoch", seq: 1 },
+    inlineImages: [{ data: "AA==", mimeType: "image/png" }],
+  };
+  const value = {
+    agentId: "agent-1",
+    items: [message],
+    range: { epoch: "image-epoch", startSeq: 1, endSeq: 1 },
+    hasOlder: false,
+  };
+  writer.commitTimeline(SERVER_ID, "agent-1", value);
+  await writer.flush();
+  expect(await createCache(storage).readTimeline(SERVER_ID, "agent-1")).toEqual(value);
+});

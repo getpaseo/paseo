@@ -677,6 +677,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             messageId={item.messageId}
             message={item.text}
             images={item.images}
+            inlineImages={item.inlineImages}
             attachments={item.attachments}
             timestamp={item.timestamp.getTime()}
             capabilities={context.capabilities}
