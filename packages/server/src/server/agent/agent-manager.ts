@@ -726,6 +726,17 @@ function detachedAgentLabelPatch(labels: Record<string, string>): AgentLabelPatc
 const RETIRED_INTERNAL_AGENT_TTL_MS = 10 * 60 * 1000;
 const RETIRED_INTERNAL_AGENT_LIMIT = 500;
 
+/**
+ * How recently a poll-backed Pi subagent row must have been updated to count as alive. Only the
+ * pi-subagents extension polls: it re-upserts every live row on each 250 ms follow tick and marks
+ * those upserts `liveness: "poll"`, so a marked row untouched for a whole window can never change
+ * again. The other Pi extensions (gotgenes/tintinweb pi-subagents and friends) are event-driven
+ * and may stay silent while a background child still runs, and Claude
+ * (providers/claude/agent.ts:4779,4805) and OpenCode (providers/opencode/v2/children.ts:64-68)
+ * settle their own rows at turn or child end. No row without the marker is ever swept.
+ */
+const PI_SUBAGENT_LIVENESS_MS = 5_000;
+
 export interface RetiredInternalAgent {
   record: ArchivedStoredAgentRecord;
   lastMessage: string | null;
@@ -743,6 +754,7 @@ export class AgentManager {
   private readonly agents = new Map<string, LiveManagedAgent>();
   private readonly timelineStore = new InMemoryAgentTimelineStore();
   private readonly providerSubagents = new ProviderSubagentStore();
+  private readonly providerSubagentSweepTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
   private readonly steerEventBarriers = new Map<string, SteerEventBarrier>();
@@ -1812,13 +1824,155 @@ export class AgentManager {
       if (subagent.status !== "running") {
         continue;
       }
-      const event = this.providerSubagents.apply(parentAgentId, subagent.provider, {
-        type: "upsert",
-        id: subagent.id,
-        status: "canceled",
-      });
-      this.dispatch({ type: "provider_subagent", event });
+      this.applyProviderSubagentStatus(parentAgentId, subagent.provider, subagent.id, "canceled");
     }
+  }
+
+  private applyProviderSubagentStatus(
+    parentAgentId: string,
+    provider: AgentProvider,
+    subagentId: string,
+    status: ProviderSubagentDescriptor["status"],
+  ): void {
+    const event = this.providerSubagents.apply(parentAgentId, provider, {
+      type: "upsert",
+      id: subagentId,
+      status,
+    });
+    this.dispatch({ type: "provider_subagent", event });
+  }
+
+  /**
+   * Poll-backed Pi subagent rows are born `running` and leave that state only through a provider
+   * update. A row whose poll is gone would keep its spinner forever, so a turn boundary settles
+   * only the rows that prove they had a poll and stopped reporting, as canceled — never completed,
+   * because nothing here proves they succeeded. A row a live poll keeps re-reporting is fresh and
+   * left alone, and a row without the marker belongs to an event-driven reporter that may still be
+   * running its child, so it is never swept.
+   *
+   * Gate: the poll marker plus no report inside the liveness window. The window is wall clock, so an
+   * event-loop stall, a GC pause, or a resume longer than it makes a live run's row look silent; this
+   * path is the only one that reads time — the replay settle (finalizeReplayedProviderSubagents) gates
+   * on the store's pre-replay state instead.
+   *
+   * A turn end can arrive inside that window, and for a spawn call a stop interrupted before it
+   * reported there is no later turn end to look again: the placeholder would stay `running` while the
+   * parent sits idle. So a row still inside the window schedules one re-check for the moment its
+   * silence becomes proof, instead of waiting for an event that may never come.
+   *
+   * That re-check is scoped to the rows it was armed for. A row born after it was armed belongs to a
+   * turn that is still running — a synchronous `subagent` call is poll-marked at spawn and only gets
+   * its poll when the result lands — so the timer must not judge it: that turn's own end sweeps it.
+   */
+  // ponytail: staleness is wall-clock — upgrade to a poll heartbeat (sequence/epoch from the adapter) if stalls prove real
+  private finalizeUnprovenProviderSubagents(
+    agentId: string,
+    scheduledRowIds?: ReadonlySet<string>,
+  ): void {
+    const now = Date.now();
+    let recheckAt: number | undefined;
+    const recheckRowIds: string[] = [];
+    for (const subagent of this.providerSubagents.list(agentId)) {
+      if (scheduledRowIds && !scheduledRowIds.has(subagent.id)) continue;
+      if (subagent.status !== "running" || subagent.liveness !== "poll") continue;
+      const updatedAt = Date.parse(subagent.updatedAt);
+      if (updatedAt >= now - PI_SUBAGENT_LIVENESS_MS) {
+        // A live poll may still own this row, so it stays. Look again once its silence is old enough.
+        recheckAt = Math.min(
+          recheckAt ?? Number.POSITIVE_INFINITY,
+          updatedAt + PI_SUBAGENT_LIVENESS_MS,
+        );
+        recheckRowIds.push(subagent.id);
+        continue;
+      }
+      this.applyProviderSubagentStatus(agentId, subagent.provider, subagent.id, "canceled");
+    }
+    this.scheduleProviderSubagentSweep(agentId, recheckAt, recheckRowIds);
+  }
+
+  /**
+   * The one pending re-check per agent: a turn end while a poll-backed row was still fresh reschedules
+   * it for the rows that were fresh then, and a sweep that finds nothing left to prove clears it. The
+   * timer stops itself once the agent is gone.
+   */
+  private scheduleProviderSubagentSweep(
+    agentId: string,
+    recheckAt: number | undefined,
+    recheckRowIds: readonly string[],
+  ): void {
+    const pending = this.providerSubagentSweepTimers.get(agentId);
+    if (pending) clearTimeout(pending);
+    this.providerSubagentSweepTimers.delete(agentId);
+    if (recheckAt === undefined) return;
+    const scheduledRowIds = new Set(recheckRowIds);
+    const timer = setTimeout(
+      () => {
+        this.providerSubagentSweepTimers.delete(agentId);
+        if (!this.agents.has(agentId)) return;
+        this.finalizeUnprovenProviderSubagents(agentId, scheduledRowIds);
+      },
+      Math.max(0, recheckAt - Date.now()) + 1,
+    );
+    timer.unref();
+    this.providerSubagentSweepTimers.set(agentId, timer);
+  }
+
+  /**
+   * Replay re-creates a row for every spawn in the transcript, including runs that never finished.
+   * Replay re-runs the pi-subagents adapter mapping, so a replayed running pi-subagents row carries
+   * the poll marker. Replay builds its host without `follow()`
+   * (providers/pi/extensions/host.ts:61-69), and the live host's `callsByRun` is per-adapter-session,
+   * so no live poll is behind that row and nothing would ever update it again: left running, it is a
+   * spinner that returns on every reload.
+   *
+   * Gate: the poll marker plus the row was not already `running` in the store before the replay. A
+   * row that was running pre-replay belongs to the live session's poll (rewind force-hydrates without
+   * recreating the session) and is left with it, or the settle would cancel a live run and the next
+   * tick would flip it back to running. Every other replayed running row settles as canceled, never
+   * completed: a row that was already canceled or completed before the replay settles again as
+   * canceled, because replay re-reports every unfinished run as running and the transcript holds no
+   * proof that it survived. That is the verdict for unproven rows, and it is still better than the
+   * spinner that stays until the next reload.
+   *
+   * Known limitation: a row replayed for a run that no live poll owns may still describe work that
+   * is writing status.json, and this cancel is final — such a run keeps working but its card can
+   * never recover. Making replay resumable needs the live host to adopt replayed runs, which this
+   * change does not attempt.
+   *
+   * Rows without the marker belong to a reporter that settles its own children — Claude
+   * (providers/claude/agent.ts:4779,4805), OpenCode (providers/opencode/v2/children.ts:64-68), the
+   * event-driven Pi extensions — so replay leaves them alone. A live turn is the other case where a
+   * replayed tool call may still be in flight, so it is left alone too. Normal callers clear the
+   * turn before hydrating, but the interrupt-timeout rescue (cancelAgentRunNow) settles the
+   * foreground run without a terminal event, so `activeTurnId` can linger; those rows are left to
+   * the next turn-end sweep rather than to a poll.
+   */
+  // ponytail: replay has no live poll; proper fix is letting the live host adopt replayed runs — revisit when host replay shares adapter state
+  private finalizeReplayedProviderSubagents(
+    agent: ActiveManagedAgent,
+    replayedRunningIds: ReadonlySet<string>,
+    preexistingRunningIds: ReadonlySet<string>,
+  ): void {
+    if (agent.activeForegroundTurnId != null || agent.activeTurnId != null) return;
+    for (const id of replayedRunningIds) {
+      if (preexistingRunningIds.has(id)) continue;
+      const subagent = this.providerSubagents.get(agent.id, id);
+      if (!subagent || subagent.status !== "running" || subagent.liveness !== "poll") continue;
+      this.applyProviderSubagentStatus(agent.id, subagent.provider, id, "canceled");
+    }
+  }
+
+  /**
+   * Ids the store reports running now. Before a replay applies, a running row belongs to the live
+   * session's poll; a terminal row belongs to nobody and is replayed evidence like any other.
+   */
+  private providerSubagentRunningIds(agentId: string): Set<string> {
+    return new Set(
+      this.providerSubagents
+        .list(agentId)
+        .filter((subagent) => subagent.status === "running")
+        .map((subagent) => subagent.id),
+    );
   }
 
   async archiveAgent(agentId: string): Promise<{ archivedAt: string }> {
@@ -4146,13 +4300,20 @@ export class AgentManager {
     this.timelineStore.initialize(agent.id, { timestamp: new Date().toISOString() });
     agent.historyPrimed = true;
 
+    // Rows the store already reports running are the live session's: a rewind replays history
+    // without recreating the session, so their poll keeps running.
+    const preexistingRunningRowIds = this.providerSubagentRunningIds(agent.id);
     for (const event of this.providerSubagents.deleteParent(agent.id)) {
       if (broadcast) {
         this.dispatch({ type: "provider_subagent", event });
       }
     }
+    const replayedRunningIds = new Set<string>();
     for (const event of providerSubagentEvents) {
       const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+      if (event.event.type === "upsert" && event.event.status === "running") {
+        replayedRunningIds.add(event.event.id);
+      }
       if (broadcast) {
         this.dispatch({ type: "provider_subagent", event: update });
       }
@@ -4171,6 +4332,7 @@ export class AgentManager {
         });
       }
     }
+    this.finalizeReplayedProviderSubagents(agent, replayedRunningIds, preexistingRunningRowIds);
     this.touchUpdatedAt(agent);
     this.emitState(agent);
   }
@@ -4217,8 +4379,15 @@ export class AgentManager {
       row: AgentTimelineRow;
     }> = [];
     const providerSubagentEvents: AgentManagerEvent[] = [];
+    const replayedRunningIds = new Set<string>();
+    // A row the store still reports running is not a fresh resume: it belongs to the live
+    // session's poll.
+    const preexistingRunningRowIds = this.providerSubagentRunningIds(agent.id);
     for (const event of historySubagentEvents) {
       const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+      if (event.event.type === "upsert" && event.event.status === "running") {
+        replayedRunningIds.add(event.event.id);
+      }
       const managerEvent: AgentManagerEvent = { type: "provider_subagent", event: update };
       if (deferredBroadcast) {
         providerSubagentEvents.push(managerEvent);
@@ -4245,6 +4414,7 @@ export class AgentManager {
     agent.historyPrimed = true;
 
     if (typeof broadcast !== "function" || !broadcast()) {
+      this.finalizeReplayedProviderSubagents(agent, replayedRunningIds, preexistingRunningRowIds);
       return;
     }
     for (const event of providerSubagentEvents) {
@@ -4257,6 +4427,7 @@ export class AgentManager {
         timestamp: row.timestamp,
       });
     }
+    this.finalizeReplayedProviderSubagents(agent, replayedRunningIds, preexistingRunningRowIds);
   }
 
   private notifyForegroundTurnWaiters(agentId: string, event: AgentStreamEvent): void {
@@ -4342,6 +4513,7 @@ export class AgentManager {
         if (isForegroundEvent) {
           this.finalizeForegroundTurn(agent, eventTurnId);
         }
+        this.finalizeUnprovenProviderSubagents(agent.id);
       }
 
       if (flags.shouldDispatchEvent) {
