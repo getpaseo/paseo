@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test, type Page } from "../support/fixtures";
 import {
+  expandFolder,
   openFileExplorer,
   openFileFromExplorer,
   expectFileTabOpen,
@@ -70,6 +71,14 @@ async function selectFileView(page: Page, view: "Preview" | "Source"): Promise<v
   await expect(option).toHaveAttribute("aria-selected", "true");
 }
 
+async function expectMarkdownImageLoaded(page: Page, name: string): Promise<void> {
+  const image = page.getByRole("button", { name, exact: true });
+  await expect(image).toBeVisible();
+  await expect
+    .poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth))
+    .toBeGreaterThan(0);
+}
+
 function watchRequestsTo(page: Page, origin: string): string[] {
   const requests: string[] = [];
   page.on("request", (request) => {
@@ -96,6 +105,95 @@ async function seedAgentWithFileLink(input: LinkedFile) {
 }
 
 test.describe("CodeMirror workspace file editing", () => {
+  test("opens explicit screenshot links and explains missing files", async ({ page }) => {
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "screenshot-markdown-link-",
+      title: "Screenshot file links",
+      initialPrompt: "Show screenshots",
+      featureValues: {
+        mockAssistantResponse:
+          "[Capture](.dev/tablet-review/capture.png) [Missing capture](.dev/tablet-review/missing.png)",
+      },
+    });
+    try {
+      await mkdir(path.join(session.cwd, ".dev/tablet-review"), { recursive: true });
+      await writeFile(path.join(session.cwd, ".dev/tablet-review/capture.png"), RED_PIXEL);
+      await openAgentRoute(page, session);
+      await test.step("Open the linked screenshot", async () => {
+        await openAssistantMarkdownLink(page, "Capture");
+        await expectFileTabOpen(page, ".dev/tablet-review/capture.png");
+        await expect(page.getByTestId("image-file-preview-canvas")).toBeVisible();
+      });
+      await test.step("Explain why the missing screenshot cannot open", async () => {
+        await returnToAssistant(page, session.agentId);
+        await openAssistantMarkdownLink(page, "Missing capture");
+        await expectFileTabOpen(page, ".dev/tablet-review/missing.png");
+        await expect(page.getByText(/ENOENT/)).toBeVisible();
+        await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+      });
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("opens the non-ASCII file named by an assistant markdown link", async ({ page }) => {
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "encoded-markdown-link-",
+      title: "Non-ASCII file link",
+      initialPrompt: "Show the report link",
+      featureValues: { mockAssistantResponse: "[报告](docs/reports/开户赠金.md)" },
+    });
+    try {
+      await mkdir(path.join(session.cwd, "docs/reports"), { recursive: true });
+      await writeFile(path.join(session.cwd, "docs/reports/开户赠金.md"), "# Report opened\n");
+      await openAgentRoute(page, session);
+      await openAssistantMarkdownLink(page, "报告");
+      await expectFileTabOpen(page, "docs/reports/开户赠金.md");
+      await expect(
+        page
+          .getByTestId("workspace-file-pane")
+          .filter({ visible: true })
+          .getByText("Report opened", { exact: true }),
+      ).toBeVisible();
+      await page.screenshot({ path: test.info().outputPath("non-ascii-file-opened.png") });
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  for (const order of ["raw-first", "href-first"] as const) {
+    test(`opens literal and encoded percent filenames independently ${order}`, async ({ page }) => {
+      const session = await seedMockAgentWorkspace({
+        repoPrefix: "percent-link-cache-",
+        title: "Distinct file links",
+        initialPrompt: "Show both filenames",
+        featureValues: {
+          mockAssistantResponse: "Raw `literal%20.md`. [Decoded](literal%20.md).",
+        },
+      });
+      try {
+        await writeFile(path.join(session.cwd, "literal%20.md"), "# Literal filename\n");
+        await writeFile(path.join(session.cwd, "literal .md"), "# Decoded filename\n");
+        await openAgentRoute(page, session);
+        const links = order === "raw-first" ? ["raw", "href"] : ["href", "raw"];
+        for (const link of links) {
+          await returnToAssistant(page, session.agentId);
+          if (link === "raw") {
+            await openAssistantInlinePath(page, "literal%20.md");
+            await expectFileTabOpen(page, "literal%20.md");
+            await expectPreviewText(page, "Literal filename");
+          } else {
+            await openAssistantMarkdownLink(page, "Decoded");
+            await expectFileTabOpen(page, "literal .md");
+            await expectPreviewText(page, "Decoded filename");
+          }
+        }
+      } finally {
+        await session.cleanup();
+      }
+    });
+  }
+
   test("jumps to each relative reference to the same file", async ({ page }) => {
     const session = await seedMockAgentWorkspace({
       repoPrefix: "relative-reference-qa-",
@@ -154,7 +252,7 @@ test.describe("CodeMirror workspace file editing", () => {
       const fileLink = page.getByRole("link", { name: "Open target" }).first();
       await expect(fileLink).toBeVisible({ timeout: 15_000 });
       await fileLink.hover();
-      await expect(page.getByText("src/target.ts:42-45", { exact: true })).toBeVisible();
+      await expect(fileLink).toHaveAttribute("title", "src/target.ts:42-45");
     } finally {
       await workspace.cleanup();
     }
@@ -626,6 +724,40 @@ test.describe("CodeMirror workspace file editing", () => {
     await expect.poll(() => image.getAttribute("src")).not.toBe(initialSource);
   });
 
+  test("renders local relative images inside Markdown preview", async ({ page, withWorkspace }) => {
+    test.setTimeout(90_000);
+    const workspace = await withWorkspace({ prefix: "file-md-relative-image-" });
+    await mkdir(path.join(workspace.repoPath, "docs"), { recursive: true });
+    await mkdir(path.join(workspace.repoPath, "data", "cache"), { recursive: true });
+    await writeFile(path.join(workspace.repoPath, "docs", "sibling.png"), RED_PIXEL);
+    await writeFile(path.join(workspace.repoPath, "data", "cache", "hero.png"), RED_PIXEL);
+    await writeFile(
+      path.join(workspace.repoPath, "docs", "guide.md"),
+      [
+        "# Guide",
+        "",
+        "![sibling](./sibling.png)",
+        "",
+        "![hero](../data/cache/hero.png?v=2#preview)",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await workspace.navigateTo();
+    await openFileExplorer(page);
+    await expandFolder(page, "docs");
+    await openFileFromExplorer(page, "guide.md");
+    await expectFileTabOpen(page, "docs/guide.md");
+
+    const visibleFilePane = page.getByTestId("workspace-file-pane").filter({ visible: true });
+    await expect(visibleFilePane.getByText("Guide", { exact: true })).toBeVisible();
+    await expectMarkdownImageLoaded(page, "sibling");
+    await expectMarkdownImageLoaded(page, "hero");
+    await visibleFilePane.screenshot({
+      path: test.info().outputPath("markdown-relative-images.png"),
+    });
+  });
+
   test("previews and refreshes an HTML plan while preserving source access", async ({
     page,
     withWorkspace,
@@ -757,3 +889,24 @@ test.describe("CodeMirror workspace file editing", () => {
     await expect(page.getByLabel("Vim mode NORMAL")).toBeVisible();
   });
 });
+
+async function openAssistantMarkdownLink(page: Page, name: string): Promise<void> {
+  await page.getByRole("link", { name, exact: true }).first().click();
+}
+
+async function returnToAssistant(page: Page, agentId: string): Promise<void> {
+  await page.getByTestId(`workspace-tab-agent_${agentId}`).filter({ visible: true }).click();
+}
+
+async function openAssistantInlinePath(page: Page, token: string): Promise<void> {
+  await page.getByText(token, { exact: true }).click();
+}
+
+async function expectPreviewText(page: Page, text: string): Promise<void> {
+  await expect(
+    page
+      .getByTestId("workspace-file-pane")
+      .filter({ visible: true })
+      .getByText(text, { exact: true }),
+  ).toBeVisible();
+}

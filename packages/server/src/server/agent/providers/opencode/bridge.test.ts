@@ -9,6 +9,11 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
+import { PaseoToolInputError } from "../../tools/types.js";
+import { createPaseoToolCatalog } from "../../tools/paseo-tools.js";
+import { AgentManager } from "../../agent-manager.js";
+import { AgentStorage } from "../../agent-storage.js";
+import { ProviderSnapshotManager } from "../../provider-snapshot-manager.js";
 import {
   OpenCodeBridge,
   loadOpenCodeBridgePluginArtifact,
@@ -32,8 +37,12 @@ function createCatalog(): PaseoToolCatalog {
     description: "Returns the supplied value.",
     inputSchema: { value: z.string() },
     async handler(input: unknown) {
-      const parsed = z.object({ value: z.string() }).parse(input);
-      return { content: [{ type: "text", text: parsed.value }] };
+      const parsed = z
+        .object({ value: z.string().min(2, "value must be at least 2 characters") })
+        .strict()
+        .safeParse(input);
+      if (!parsed.success) throw new PaseoToolInputError(parsed.error.message, parsed.error.issues);
+      return { content: [{ type: "text", text: parsed.data.value }] };
     },
   };
   const tools = new Map([[tool.name, tool]]);
@@ -189,6 +198,13 @@ describe("OpenCodeBridge", () => {
       expect(asked).toEqual([
         { permission: "paseo_echo_context", patterns: ["*"], always: ["*"], metadata: {} },
       ]);
+      asked.length = 0;
+      await expect(
+        hooks.tool.paseo_echo_context.execute(
+          { value: "x" },
+          { sessionID: "ses_one", ask: async () => undefined },
+        ),
+      ).rejects.toThrow("value: value must be at least 2 characters");
 
       executedInputs.length = 0;
       await expect(
@@ -291,12 +307,86 @@ describe("OpenCodeBridge", () => {
       ).resolves.toMatchObject({ content: [{ type: "text", text: "child result" }] });
       await expect(
         tools.get("paseo_echo_context")!.execute({ value: "blocked" }, { sessionID: "disabled" }),
-      ).rejects.toThrow("HTTP 403");
+      ).rejects.toMatchObject({
+        message: "Paseo tools are disabled for this session",
+        status: 403,
+      });
       await dispose();
     } finally {
       release();
       releaseDisabled();
       await bridge.close();
+    }
+  });
+
+  test("v2 plugin preserves create_agent validation errors from the daemon", async () => {
+    const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-opencode-v2-errors-"));
+    temporaryDirectories.push(paseoHome);
+    const logger = createTestLogger();
+    const providerSnapshotManager = new ProviderSnapshotManager({ logger });
+    const catalog = createPaseoToolCatalog({
+      agentManager: new AgentManager({ logger }),
+      agentStorage: new AgentStorage(paseoHome, logger),
+      providerSnapshotManager,
+      logger,
+    });
+    const bridge = new OpenCodeBridge({ paseoHome, logger });
+    bridge.setManifestCatalog(catalog);
+    await bridge.start();
+    const release = bridge.bindSession({ sessionId: "caller", env: {}, tools: catalog });
+    try {
+      const env = await bridge.decorateV2ServerEnv({});
+      const { plugins } = JSON.parse(env.OPENCODE_CONFIG_CONTENT);
+      const plugin = plugins[0];
+      const module = await import(
+        pathToFileURL(path.join(fileURLToPath(plugin.package), "server.js")).href
+      );
+      const tools = new Map<string, V2TestTool>();
+      const dispose = await module.default.setup({
+        options: plugin.options,
+        tool: {
+          transform: async (transform: (editor: { add(tool: V2TestTool): void }) => void) => {
+            transform({ add: (tool) => tools.set(tool.name, tool) });
+            return { dispose: async () => undefined };
+          },
+        },
+        session: {
+          context: async () => [],
+          get: async () => ({ parentID: "" }),
+          hook: async () => ({ dispose: async () => undefined }),
+        },
+      } satisfies V2TestPluginContext);
+      try {
+        const input = { provider: "codex", title: "Invalid provider", initialPrompt: "Hello" };
+        const response = await fetch(
+          `${plugin.options.baseUrl}/_internal/opencode/sessions/caller/tools/create_agent`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${plugin.options.token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(input),
+          },
+        );
+        expect(response.status).toBe(400);
+        const payload = await response.json();
+        expect(payload).toMatchObject({ error: "Invalid tool input", issues: expect.any(Array) });
+        await expect(
+          tools.get("paseo_create_agent")!.execute(input, { sessionID: "caller" }),
+        ).rejects.toMatchObject({
+          status: 400,
+          message: expect.stringContaining(
+            "Invalid tool input: provider: provider must be provider/model, for example codex/gpt-5.4",
+          ),
+        });
+      } finally {
+        await dispose();
+      }
+    } finally {
+      release();
+      await bridge.close();
+      await providerSnapshotManager.shutdown();
     }
   });
 
@@ -472,6 +562,104 @@ describe("OpenCodeBridge", () => {
       expect(entry).toContain('id: "paseo"');
       const manifest = JSON.parse(await readFile(path.join(directory, "package.json"), "utf8"));
       expect(manifest).toMatchObject({ type: "module", exports: { "./server": "./server.js" } });
+    } finally {
+      await bridge.close();
+    }
+  });
+
+  test("returns actionable 4xx responses for invalid bridge requests", async () => {
+    const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-opencode-bridge-errors-"));
+    temporaryDirectories.push(paseoHome);
+    const bridge = new OpenCodeBridge({ paseoHome, logger: createTestLogger() });
+    await bridge.start();
+    const catalog = createCatalog();
+    bridge.bindSession({ sessionId: "ses_errors", env: {}, tools: catalog });
+    const expectedErrorCatalog: PaseoToolCatalog = {
+      tools: new Map([
+        [
+          "expected_error",
+          {
+            name: "expected_error",
+            description: "Throws an expected tool error.",
+            inputSchema: {},
+            async handler() {
+              throw new PaseoToolInputError("Agent not found: missing-agent");
+            },
+          },
+        ],
+        [
+          "internal_error",
+          {
+            name: "internal_error",
+            description: "Throws an internal error.",
+            inputSchema: {},
+            async handler() {
+              throw new Error("Provider unavailable");
+            },
+          },
+        ],
+      ]),
+      getTool(name) {
+        return this.tools.get(name);
+      },
+      async executeTool(name, input, context) {
+        const tool = this.tools.get(name);
+        if (!tool) throw new Error(`Unknown tool: ${name}`);
+        return tool.handler(input, context ?? {});
+      },
+    };
+    bridge.bindSession({ sessionId: "ses_expected_error", env: {}, tools: expectedErrorCatalog });
+
+    try {
+      const plugin = readPluginOptions(bridge.decorateServerEnv({}));
+      const headers = {
+        Authorization: `Bearer ${plugin.token}`,
+        "Content-Type": "application/json",
+      };
+      const invalidInput = await fetch(
+        `${plugin.baseUrl}/_internal/opencode/sessions/ses_errors/tools/echo_context`,
+        { method: "POST", headers, body: JSON.stringify({ value: "ok", extra: true }) },
+      );
+      expect(invalidInput.status).toBe(400);
+      expect(await invalidInput.json()).toEqual({
+        error: "Invalid tool input",
+        issues: [
+          {
+            code: "unrecognized_keys",
+            keys: ["extra"],
+            path: [],
+            message: 'Unrecognized key: "extra"',
+          },
+        ],
+      });
+
+      const unknownTool = await fetch(
+        `${plugin.baseUrl}/_internal/opencode/sessions/ses_errors/tools/missing`,
+        { method: "POST", headers, body: "{}" },
+      );
+      expect(unknownTool.status).toBe(404);
+      expect(await unknownTool.json()).toEqual({ error: "Paseo tool not found: missing" });
+
+      const malformedBody = await fetch(
+        `${plugin.baseUrl}/_internal/opencode/sessions/ses_errors/tools/echo_context`,
+        { method: "POST", headers, body: "{" },
+      );
+      expect(malformedBody.status).toBe(400);
+      expect(await malformedBody.json()).toEqual({ error: "Malformed JSON request body" });
+
+      const expectedError = await fetch(
+        `${plugin.baseUrl}/_internal/opencode/sessions/ses_expected_error/tools/expected_error`,
+        { method: "POST", headers, body: "{}" },
+      );
+      expect(expectedError.status).toBe(400);
+      expect(await expectedError.json()).toEqual({ error: "Agent not found: missing-agent" });
+
+      const internalError = await fetch(
+        `${plugin.baseUrl}/_internal/opencode/sessions/ses_expected_error/tools/internal_error`,
+        { method: "POST", headers, body: "{}" },
+      );
+      expect(internalError.status).toBe(500);
+      expect(await internalError.json()).toEqual({ error: "Provider unavailable" });
     } finally {
       await bridge.close();
     }

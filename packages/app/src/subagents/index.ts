@@ -9,3 +9,4 @@ export {
   type ArchiveFinishedStatus,
   type UseArchiveFinishedSubagentsInput,
 } from "./use-archive-finished";
+export { useSubagentOpensInSheet } from "./opens-in-sheet";
