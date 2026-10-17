@@ -871,6 +871,22 @@ test("visible terminal restore sends bounded ANSI history", async () => {
     expect(restoreText).not.toContain("restore-line-1186");
     expect(restoreText).not.toContain("restore-line-0001");
     expect(restoredLines.length).toBeLessThanOrEqual(15);
+
+    // A client asking for its whole scrollback gets everything the daemon retains.
+    const fullRestoreFramePromise = waitForRawBinaryFrame(
+      ws,
+      (frame) => frame.opcode === TerminalStreamOpcode.Restore,
+      10000,
+    );
+    await subscribeRawTerminal(ws, terminalId, "subscribe-full", {
+      mode: "visible-snapshot",
+      scrollbackLines: 10_000,
+    });
+    const fullRestoredLines =
+      getFrameText(await fullRestoreFramePromise).match(/restore-line-\d{4}/g) ?? [];
+
+    expect(fullRestoredLines[0]).toBe("restore-line-0192");
+    expect(fullRestoredLines.at(-1)).toBe("restore-line-1200");
   } finally {
     await closeWebSocket(ws);
   }
