@@ -56,6 +56,16 @@ function toolCall(id: string, seed: number): StreamItem {
   };
 }
 
+function thought(id: string, text: string, seed: number): StreamItem {
+  return {
+    kind: "thought",
+    id,
+    text,
+    timestamp: createTimestamp(seed),
+    status: "ready",
+  };
+}
+
 describe("resolveStreamRenderStrategy", () => {
   it("uses forward_stream on web", () => {
     const strategy = resolveStreamRenderStrategy({
@@ -229,6 +239,127 @@ describe("neighbor and traversal semantics", () => {
         startIndex: 2,
       }),
     ).toBe("first turn\n\nsecond turn");
+  });
+
+  it("copies thought and tool text when a response has no assistant message", () => {
+    const chronological: StreamItem[] = [
+      userMessage("u1", "user-1", 1),
+      toolCall("tool-1", 2),
+      thought("thought-1", "considering the files", 3),
+    ];
+    const strategy = resolveStreamRenderStrategy({ platform: "web", isMobileBreakpoint: false });
+
+    expect(
+      collectAssistantResponseContentForStreamRenderStrategy({
+        strategy,
+        items: chronological,
+        startIndex: 2,
+      }),
+    ).toBe("Shell\necho hi\n\nconsidering the files");
+  });
+
+  it("copies thought and tool text with inverted stream traversal", () => {
+    const chronological: StreamItem[] = [
+      userMessage("u1", "user-1", 1),
+      toolCall("tool-1", 2),
+      thought("thought-1", "considering the files", 3),
+    ];
+    const strategy = resolveStreamRenderStrategy({
+      platform: "android",
+      isMobileBreakpoint: false,
+    });
+    const invertedItems = orderTailForStreamRenderStrategy({
+      strategy,
+      streamItems: chronological,
+    });
+    const invertedStartIndex = invertedItems.findIndex((item) => item.id === "thought-1");
+
+    expect(
+      collectAssistantResponseContentForStreamRenderStrategy({
+        strategy,
+        items: invertedItems,
+        startIndex: invertedStartIndex,
+      }),
+    ).toBe("Shell\necho hi\n\nconsidering the files");
+  });
+
+  it("keeps assistant copy text when thoughts and tools share the response", () => {
+    const chronological: StreamItem[] = [
+      userMessage("u1", "user-1", 1),
+      thought("thought-1", "private reasoning", 2),
+      toolCall("tool-1", 3),
+      assistantMessage("a1", "visible answer", 4),
+    ];
+    const strategy = resolveStreamRenderStrategy({ platform: "web", isMobileBreakpoint: false });
+
+    expect(
+      collectAssistantResponseContentForStreamRenderStrategy({
+        strategy,
+        items: chronological,
+        startIndex: 3,
+      }),
+    ).toBe("visible answer");
+  });
+
+  it("copies an agent tool title and existing detail text", () => {
+    const agentTool: StreamItem = {
+      kind: "tool_call",
+      id: "tool-1",
+      timestamp: createTimestamp(2),
+      payload: {
+        source: "agent",
+        data: {
+          provider: "claude",
+          callId: "tool-1",
+          name: "Bash",
+          status: "completed",
+          error: null,
+          detail: { type: "shell", command: "ls", output: "src" },
+        },
+      },
+    };
+    const chronological: StreamItem[] = [userMessage("u1", "user-1", 1), agentTool];
+    const strategy = resolveStreamRenderStrategy({ platform: "web", isMobileBreakpoint: false });
+
+    expect(
+      collectAssistantResponseContentForStreamRenderStrategy({
+        strategy,
+        items: chronological,
+        startIndex: 1,
+      }),
+    ).toBe("Bash\nls\nsrc");
+  });
+
+  it("returns empty copy content when a textless response has no thought or tool text", () => {
+    const emptyTool: StreamItem = {
+      kind: "tool_call",
+      id: "tool-1",
+      timestamp: createTimestamp(2),
+      payload: {
+        source: "orchestrator",
+        data: {
+          toolCallId: "tool-1",
+          toolName: "",
+          arguments: {},
+          result: null,
+          status: "completed",
+        },
+      },
+    };
+    const chronological: StreamItem[] = [
+      userMessage("u1", "user-1", 1),
+      emptyTool,
+      thought("thought-1", "   ", 3),
+    ];
+    const strategy = resolveStreamRenderStrategy({ platform: "web", isMobileBreakpoint: false });
+
+    expect(
+      collectAssistantResponseContentForStreamRenderStrategy({
+        strategy,
+        items: chronological,
+        startIndex: 2,
+      }),
+    ).toBe("");
   });
 
   it("returns undefined neighbor when index would be out of bounds", () => {

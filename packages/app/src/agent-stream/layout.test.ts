@@ -529,6 +529,51 @@ describe("layoutStream", () => {
   );
 
   it.each(["web", "android"] as const)(
+    "anchors the bottom footer on the last visible item of a tool-only response on %s",
+    (platform) => {
+      const tool = toolCall("tool-1", 2);
+      const thinking = thought("thought-1", 3);
+      const layout = layoutFor({
+        platform,
+        tail: [userMessage("u1", 1), tool, thinking],
+      });
+
+      expect(layout.auxiliaryTurnFooter?.itemId).toBe(thinking.id);
+      expect(footerOwners(layout)).toEqual([thinking.id]);
+      expect(footerAssistantIds(layout)).toEqual([thinking.id]);
+    },
+  );
+
+  it.each(["web", "android"] as const)(
+    "places a completed footer after a tool-only response before the next user on %s",
+    (platform) => {
+      const tool = toolCall("tool-1", 2);
+      const thinking = thought("thought-1", 3);
+      const layout = layoutFor({
+        platform,
+        tail: [userMessage("u1", 1), tool, thinking, userMessage("u2", 4)],
+      });
+
+      expect(layout.auxiliaryTurnFooter).toBeNull();
+      expect(findLayoutItem(layout, thinking.id).completedFooter?.itemId).toBe(thinking.id);
+      expect(footerOwners(layout)).toEqual([thinking.id]);
+    },
+  );
+
+  it.each(["web", "android"] as const)(
+    "renders no footer when the latest row is an unanswered user message on %s",
+    (platform) => {
+      const layout = layoutFor({
+        platform,
+        tail: [userMessage("u1", 1)],
+      });
+
+      expect(layout.auxiliaryTurnFooter).toBeNull();
+      expect(footerOwners(layout)).toEqual([]);
+    },
+  );
+
+  it.each(["web", "android"] as const)(
     "does not render a completed footer before tool rows while the turn is running on %s",
     (platform) => {
       const assistant = assistantMessage("a1", 2);

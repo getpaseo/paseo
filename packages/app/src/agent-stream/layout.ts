@@ -57,8 +57,8 @@ interface LayoutSegmentInput {
   phase: "streaming" | "complete";
 }
 
-interface AssistantFooterSource {
-  item: Extract<StreamItem, { kind: "assistant_message" }>;
+interface TurnFooterAnchorSource {
+  item: StreamItem;
   items: StreamItem[];
   index: number;
 }
@@ -83,7 +83,7 @@ function findLatestAssistantInResponse(input: {
   startIndex: number;
   boundaryAboveItems?: StreamItem[] | null;
   boundaryAboveIndex?: number | null;
-}): AssistantFooterSource | null {
+}): TurnFooterAnchorSource | null {
   let items = input.items;
   let index = input.startIndex;
   let canCrossBoundary = true;
@@ -120,6 +120,29 @@ function findLatestAssistantInResponse(input: {
   }
 }
 
+/**
+ * A response without any assistant text (tool calls and thoughts only) still
+ * anchors its footer on the response's last visible item so the copy and fork
+ * actions appear; a trailing user message means the agent has not answered.
+ */
+function findTurnFooterAnchor(input: {
+  strategy: StreamStrategy;
+  items: StreamItem[];
+  startIndex: number;
+  boundaryAboveItems?: StreamItem[] | null;
+  boundaryAboveIndex?: number | null;
+}): TurnFooterAnchorSource | null {
+  const assistant = findLatestAssistantInResponse(input);
+  if (assistant) {
+    return assistant;
+  }
+  const item = input.items[input.startIndex];
+  if (!item || item.kind === "user_message") {
+    return null;
+  }
+  return { item, items: input.items, index: input.startIndex };
+}
+
 function resolveAuxiliaryTurnFooter(input: StreamLayoutInput): TurnFooterHost | null {
   if (input.isTurnActive) {
     return null;
@@ -131,7 +154,7 @@ function resolveAuxiliaryTurnFooter(input: StreamLayoutInput): TurnFooterHost | 
     return null;
   }
 
-  const assistant = findLatestAssistantInResponse({
+  const assistant = findTurnFooterAnchor({
     strategy: input.strategy,
     items: footerItems,
     startIndex: latestIndex,
@@ -163,7 +186,7 @@ function resolveCompletedFooter(input: {
     return null;
   }
 
-  const assistant = findLatestAssistantInResponse({
+  const assistant = findTurnFooterAnchor({
     strategy: input.strategy,
     items: input.items,
     startIndex: input.index,

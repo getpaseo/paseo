@@ -93,11 +93,62 @@ describe("resolveAssistantTurnForkBoundary", () => {
     ).toBeUndefined();
   });
 
-  it("requires the selected item to be an assistant message", () => {
+  it("pins a tool-only response fork to the anchor row's timeline cursor", () => {
+    const toolCall = {
+      kind: "tool_call" as const,
+      id: "tool-1",
+      timestamp: timestamp(3),
+      timelineCursor: { epoch: "timeline-1", seq: 51 },
+      payload: {
+        source: "orchestrator" as const,
+        data: {
+          toolCallId: "tool-1",
+          toolName: "Shell",
+          arguments: "echo hi",
+          status: "completed" as const,
+        },
+      },
+    };
+
+    expect(
+      resolveAssistantTurnForkBoundary({
+        items: [userMessage("user-1", 1), toolCall],
+        startIndex: 1,
+        supportsTimelineCursor: true,
+      }),
+    ).toEqual({ boundaryCursor: { epoch: "timeline-1", seq: 51 } });
+  });
+
+  it("offers no fork boundary for a non-assistant anchor without a timeline cursor", () => {
+    const toolCall = {
+      kind: "tool_call" as const,
+      id: "tool-1",
+      timestamp: timestamp(3),
+      payload: {
+        source: "orchestrator" as const,
+        data: {
+          toolCallId: "tool-1",
+          toolName: "Shell",
+          arguments: "echo hi",
+          status: "completed" as const,
+        },
+      },
+    };
+
+    expect(
+      resolveAssistantTurnForkBoundary({
+        items: [userMessage("user-1", 1), toolCall],
+        startIndex: 1,
+        supportsTimelineCursor: true,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("requires the selected item to exist", () => {
     expect(
       resolveAssistantTurnForkBoundary({
         items: [userMessage("user-1", 1), assistantMessage("assistant-1", 2, "msg-assistant-1")],
-        startIndex: 0,
+        startIndex: 5,
         supportsTimelineCursor: false,
       }),
     ).toBeUndefined();

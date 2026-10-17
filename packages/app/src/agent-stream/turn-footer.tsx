@@ -171,7 +171,7 @@ function CompletedTurnFooter({
   supportsTimelineCursor: boolean;
   onForkAssistantTurn?: AssistantTurnForkHandler;
 }) {
-  const getContent = useCallback(
+  const content = useMemo(
     () =>
       collectAssistantResponseContentForStreamRenderStrategy({
         strategy,
@@ -180,6 +180,7 @@ function CompletedTurnFooter({
       }),
     [strategy, items, startIndex],
   );
+  const getContent = useCallback(() => content, [content]);
   const boundary = resolveAssistantTurnForkBoundary({
     items,
     startIndex,
@@ -197,7 +198,7 @@ function CompletedTurnFooter({
   return (
     <View style={stylesheet.turnFooterSlot}>
       <AssistantTurnFooter
-        getContent={getContent}
+        getContent={content.trim() ? getContent : undefined}
         completedAt={timing?.completedAt}
         durationMs={timing?.durationMs}
         onFork={boundary && onForkAssistantTurn ? handleFork : undefined}
