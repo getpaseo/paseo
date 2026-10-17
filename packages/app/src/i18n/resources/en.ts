@@ -1997,6 +1997,7 @@ export const en = {
     },
   },
   toolCallDetails: {
+    wrapLongLines: "Wrap long lines",
     error: "Error",
     empty: "No additional details available",
     subAgentActivity: "Sub-agent activity",

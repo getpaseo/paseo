@@ -1972,6 +1972,7 @@ export const ar: TranslationResources = {
     },
   },
   toolCallDetails: {
+    wrapLongLines: "التفاف الأسطر الطويلة",
     error: "خطأ",
     empty: "لا توجد تفاصيل إضافية متاحة",
     subAgentActivity: "نشاط الوكيل الفرعي",

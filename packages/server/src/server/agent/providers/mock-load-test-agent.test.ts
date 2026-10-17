@@ -109,6 +109,77 @@ describe("MockLoadTestAgentClient", () => {
     expect(events.at(-1)).toMatchObject({ type: "turn_completed", provider: "mock" });
   });
 
+  test("emits a configured shell detail through the normal timeline", async () => {
+    const shellDetail = {
+      type: "shell",
+      command: 'for file in *.ts; do\n  printf "%s\\n" "$file"\ndone',
+      output: "first.ts\n  indented output\n" + "long-token".repeat(30),
+    };
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "e2e-fast-stream",
+      featureValues: { mockToolCallDetail: shellDetail },
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.run("Show the configured shell command and output.");
+
+    expect(
+      events.flatMap((event) =>
+        event.type === "timeline" && event.item.type === "tool_call" ? [event.item] : [],
+      ),
+    ).toEqual([
+      {
+        type: "tool_call",
+        callId: expect.any(String),
+        name: "bash",
+        status: "completed",
+        error: null,
+        detail: { ...shellDetail, exitCode: 0 },
+      },
+    ]);
+    expect(events.at(-1)).toMatchObject({ type: "turn_completed", provider: "mock" });
+  });
+
+  test("emits a configured edit detail through the normal timeline", async () => {
+    const detail = {
+      type: "edit",
+      filePath: "src/example.ts",
+      oldString: 'const value = "before";',
+      newString: 'const value = "after";',
+    };
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "e2e-fast-stream",
+      featureValues: { mockToolCallDetail: detail },
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.run("Show the configured edit.");
+
+    expect(
+      events.flatMap((event) =>
+        event.type === "timeline" && event.item.type === "tool_call" ? [event.item] : [],
+      ),
+    ).toEqual([
+      {
+        type: "tool_call",
+        callId: expect.any(String),
+        name: "edit",
+        status: "completed",
+        error: null,
+        detail,
+      },
+    ]);
+    expect(events.at(-1)).toMatchObject({ type: "turn_completed", provider: "mock" });
+  });
+
   test("can withhold the provider user-message echo until an immediate interrupt", async () => {
     vi.useFakeTimers();
     const client = new MockLoadTestAgentClient();

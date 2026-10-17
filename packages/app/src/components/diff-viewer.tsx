@@ -18,9 +18,19 @@ interface DiffViewerProps {
   maxHeight?: number;
   emptyLabel?: string;
   fillAvailableHeight?: boolean;
+  wrapLines?: boolean;
 }
 
-function DiffLineRow({ line }: { line: DiffLine }) {
+interface DiffLineRowProps {
+  line: DiffLine;
+  wrapLines: boolean;
+}
+
+function DiffLineRow({ line, wrapLines }: DiffLineRowProps) {
+  const lineTextStyle = React.useMemo(
+    () => [styles.lineText, wrapLines && styles.wrappedLineText],
+    [wrapLines],
+  );
   const lineContainerStyle = React.useMemo(
     () => [
       styles.line,
@@ -33,13 +43,13 @@ function DiffLineRow({ line }: { line: DiffLine }) {
   );
   const plainLineTextStyle = React.useMemo(
     () => [
-      styles.lineText,
+      ...lineTextStyle,
       line.type === "header" && styles.headerText,
       line.type === "add" && styles.addText,
       line.type === "remove" && styles.removeText,
       line.type === "context" && styles.contextText,
     ],
-    [line.type],
+    [line.type, lineTextStyle],
   );
 
   const prefixStyle = React.useMemo(
@@ -54,7 +64,7 @@ function DiffLineRow({ line }: { line: DiffLine }) {
   if (line.tokens) {
     return (
       <View style={lineContainerStyle}>
-        <Text style={styles.lineText}>
+        <Text selectable style={lineTextStyle}>
           <Text style={prefixStyle}>{diffLinePrefix(line)}</Text>
           <DiffTokens tokens={line.tokens} />
         </Text>
@@ -65,7 +75,7 @@ function DiffLineRow({ line }: { line: DiffLine }) {
   return (
     <View style={lineContainerStyle}>
       {line.segments ? (
-        <Text style={styles.lineText}>
+        <Text selectable style={lineTextStyle}>
           <Text style={line.type === "add" ? styles.addText : styles.removeText}>
             {line.content[0]}
           </Text>
@@ -78,7 +88,9 @@ function DiffLineRow({ line }: { line: DiffLine }) {
           ))}
         </Text>
       ) : (
-        <Text style={plainLineTextStyle}>{line.content}</Text>
+        <Text selectable style={plainLineTextStyle}>
+          {line.content}
+        </Text>
       )}
     </View>
   );
@@ -122,6 +134,7 @@ export function DiffViewer({
   maxHeight,
   emptyLabel,
   fillAvailableHeight = false,
+  wrapLines = false,
 }: DiffViewerProps) {
   const { t } = useTranslation();
   const [scrollViewWidth, setScrollViewWidth] = React.useState(0);
@@ -140,13 +153,12 @@ export function DiffViewer({
     ],
     [maxHeight, fillAvailableHeight],
   );
-  const linesContainerStyle = React.useMemo(
-    () => [
-      styles.linesContainer,
-      scrollViewWidth > 0 && inlineUnistylesStyle({ minWidth: scrollViewWidth }),
-    ],
-    [scrollViewWidth],
-  );
+  const linesContainerStyle = React.useMemo(() => {
+    const minimumWidthStyle =
+      scrollViewWidth > 0 && inlineUnistylesStyle({ minWidth: scrollViewWidth });
+    const widthStyle = wrapLines ? styles.wrappedLinesContainer : minimumWidthStyle;
+    return [styles.linesContainer, widthStyle];
+  }, [scrollViewWidth, wrapLines]);
   const keyedDiffLines = React.useMemo(
     () => diffLines.map((line, index) => ({ key: `${index}-${line.type}-${line.content}`, line })),
     [diffLines],
@@ -165,9 +177,9 @@ export function DiffViewer({
   }
 
   const lines = (
-    <View style={linesContainerStyle} dataSet={CODE_SURFACE_DATASET}>
+    <View style={linesContainerStyle} dataSet={CODE_SURFACE_DATASET} testID="diff-viewer-content">
       {keyedDiffLines.map(({ key, line }) => (
-        <DiffLineRow key={key} line={line} />
+        <DiffLineRow key={key} line={line} wrapLines={wrapLines} />
       ))}
     </View>
   );
@@ -175,6 +187,7 @@ export function DiffViewer({
   const horizontalScroll = (
     <ScrollView
       horizontal
+      testID="diff-viewer-horizontal-scroll"
       nestedScrollEnabled
       showsHorizontalScrollIndicator
       contentContainerStyle={styles.horizontalContent}
@@ -191,7 +204,7 @@ export function DiffViewer({
       nestedScrollEnabled
       showsVerticalScrollIndicator
     >
-      {horizontalScroll}
+      {wrapLines ? lines : horizontalScroll}
     </ScrollView>
   );
 
@@ -218,6 +231,14 @@ const styles = StyleSheet.create((theme) => {
     linesContainer: {
       alignSelf: "flex-start",
       padding: insets.padding,
+    },
+    wrappedLinesContainer: {
+      alignSelf: "stretch",
+      minWidth: 0,
+    },
+    wrappedLineText: {
+      minWidth: 0,
+      ...(isWeb ? { whiteSpace: "pre-wrap" as const, overflowWrap: "anywhere" as const } : null),
     },
     line: {
       minWidth: "100%",

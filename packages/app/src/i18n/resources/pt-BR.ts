@@ -2005,6 +2005,7 @@ export const ptBR: TranslationResources = {
     },
   },
   toolCallDetails: {
+    wrapLongLines: "Quebrar linhas longas",
     error: "Erro",
     empty: "Nenhum detalhe adicional disponível",
     subAgentActivity: "Atividade do subagente",

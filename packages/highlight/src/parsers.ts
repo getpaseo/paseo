@@ -1,5 +1,6 @@
 import { defineLanguageFacet, Language, StreamLanguage } from "@codemirror/language";
 import { dart } from "@codemirror/legacy-modes/mode/clike";
+import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { swift } from "@codemirror/legacy-modes/mode/swift";
 import { parser as jsParser } from "@lezer/javascript";
 import { parser as jsonParser } from "@lezer/json";
@@ -27,7 +28,12 @@ function language(parser: Parser): Language {
   return new Language(defineLanguageFacet(), parser);
 }
 
+const shellLanguage = StreamLanguage.define(shell);
+
 const languagesByExtension: Record<string, Language> = {
+  sh: shellLanguage,
+  bash: shellLanguage,
+  zsh: shellLanguage,
   // JavaScript/TypeScript
   js: language(jsParser),
   jsx: language(jsParser.configure({ dialect: "jsx" })),
