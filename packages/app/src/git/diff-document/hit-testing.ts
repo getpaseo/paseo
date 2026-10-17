@@ -1,4 +1,9 @@
-import { fileAtDocumentOffset, fragmentWidthForRange } from "./model";
+import { fileAtDocumentOffset } from "./model";
+import {
+  firstRangeEndingAfter,
+  fragmentRangeBounds,
+  type RangeMeasurements,
+} from "./range-geometry";
 import type {
   DiffCell,
   DiffCharacterPosition,
@@ -218,28 +223,50 @@ export function selectionRectangles(input: {
 }): SelectionRectangle[] {
   const rectangles: SelectionRectangle[] = [];
   for (const range of selectedCellRanges(input.model, input.selection)) {
-    const row = input.model.rows[range.rowIndex];
-    if (!row || row.kind !== "line") continue;
-    const file = input.model.files[row.fileIndex];
-    if (!file) continue;
-    const columnWidth = input.model.viewportWidth / row.cells.length;
-    const cell = range.cell;
-    for (const fragment of cell.fragments) {
-      const partStart = Math.max(fragment.start, range.start);
-      const partEnd = Math.min(fragment.end, range.end);
-      if (partEnd <= partStart) continue;
-      const before = fragmentWidthForRange(fragment, fragment.start, partStart);
-      const selected = fragmentWidthForRange(fragment, partStart, partEnd);
-      rectangles.push({
-        x: range.cellIndex * columnWidth + file.gutterWidth + CODE_LEFT_PADDING + before,
-        y: row.top + fragment.top,
-        width: selected,
-        height: input.model.lineHeight,
-        fileIndex: row.fileIndex,
-        clipX: range.cellIndex * columnWidth + file.gutterWidth + CODE_LEFT_PADDING,
-        clipWidth: columnWidth - file.gutterWidth - CODE_LEFT_PADDING,
-      });
-    }
+    rectangles.push(...cellRangeRectangles({ model: input.model, ...range }));
+  }
+  return rectangles;
+}
+
+/** Shared geometry for source selection and Find; neither owns the other's state. */
+export function cellRangeRectangles(input: {
+  model: DiffDocumentModel;
+  rowIndex: number;
+  cellIndex: number;
+  start: number;
+  end: number;
+  measurements?: RangeMeasurements;
+}): SelectionRectangle[] {
+  const row = input.model.rows[input.rowIndex];
+  if (!row || row.kind !== "line") return [];
+  const file = input.model.files[row.fileIndex];
+  const cell = row.cells[input.cellIndex];
+  if (!file || !cell) return [];
+  const columnWidth = input.model.viewportWidth / row.cells.length;
+  const rectangles: SelectionRectangle[] = [];
+  const first = firstRangeEndingAfter(cell.fragments, input.start);
+  for (let index = first; index < cell.fragments.length; index++) {
+    const fragment = cell.fragments[index];
+    if (fragment.start >= input.end) break;
+    const start = Math.max(fragment.start, input.start);
+    const end = Math.min(fragment.end, input.end);
+    if (end <= start) continue;
+    const { before, width } = fragmentRangeBounds({
+      fragment,
+      start,
+      end,
+      measurements: input.measurements,
+    });
+    const clipX = input.cellIndex * columnWidth + file.gutterWidth + CODE_LEFT_PADDING;
+    rectangles.push({
+      x: clipX + before,
+      y: row.top + fragment.top,
+      width,
+      height: input.model.lineHeight,
+      fileIndex: row.fileIndex,
+      clipX,
+      clipWidth: columnWidth - file.gutterWidth - CODE_LEFT_PADDING,
+    });
   }
   return rectangles;
 }
