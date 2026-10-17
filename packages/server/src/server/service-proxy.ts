@@ -1,5 +1,6 @@
 import http, { createServer as createHTTPServer } from "node:http";
 import net from "node:net";
+import type { Duplex } from "node:stream";
 import { connectToLocalService, requestLocalService } from "./local-service-connection.js";
 import { createHash } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
@@ -363,7 +364,7 @@ function proxyUpgradeRequest({
   logger,
 }: {
   req: IncomingMessage;
-  socket: net.Socket;
+  socket: Duplex;
   head: Buffer;
   route: ServiceProxyRoute;
   logger: Logger;
@@ -399,6 +400,20 @@ function proxyUpgradeRequest({
   socket.on("error", () => {
     targetSocket.destroy();
   });
+}
+
+function rejectUpgrade({ socket, status }: { socket: Duplex; status: number }): void {
+  if (!socket.writable) {
+    socket.destroy();
+    return;
+  }
+  // End the socket so the response flushes before it closes. Destroying
+  // immediately can drop the queued bytes and leave the client with a reset
+  // instead of the status line.
+  socket.once("finish", () => socket.destroy());
+  socket.on("error", () => socket.destroy());
+  const reason = http.STATUS_CODES[status] ?? "";
+  socket.end(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
 }
 
 function sameRouteOwner(left: ServiceProxyRouteEntry, right: ServiceProxyRouteEntry): boolean {
@@ -776,6 +791,36 @@ export function createScriptProxyMiddleware({
   };
 }
 
+// One classification decides whether an upgrade belongs to a service. Both the
+// standalone proxy listener and the daemon dispatcher route through this, so the
+// "who owns this host" rule lives in one place.
+function claimScriptProxyUpgrade({
+  routeStore,
+  logger,
+  req,
+  socket,
+  head,
+}: {
+  routeStore: ServiceProxyRouteRegistry;
+  logger: Logger;
+  req: IncomingMessage;
+  socket: Duplex;
+  head: Buffer;
+}): boolean {
+  const classification = routeStore.classifyHost(req.headers.host);
+  if (classification.type === "registered-service") {
+    proxyUpgradeRequest({ req, socket, head, route: classification.route, logger });
+    return true;
+  }
+  if (classification.type === "known-service-miss") {
+    // A hostname in the service namespace with no route is a 404, matching the
+    // HTTP middleware. It must not fall through to the daemon server.
+    rejectUpgrade({ socket, status: 404 });
+    return true;
+  }
+  return false;
+}
+
 export function createScriptProxyUpgradeHandler({
   routeStore,
   logger,
@@ -784,16 +829,14 @@ export function createScriptProxyUpgradeHandler({
   routeStore: ServiceProxyRouteRegistry;
   logger: Logger;
   passthroughUnknown?: boolean;
-}): (req: IncomingMessage, socket: net.Socket, head: Buffer) => void {
+}): (req: IncomingMessage, socket: Duplex, head: Buffer) => void {
   return (req, socket, head) => {
-    const classification = routeStore.classifyHost(req.headers.host);
-    if (classification.type !== "registered-service") {
-      if (!passthroughUnknown) {
-        socket.destroy();
-      }
+    if (claimScriptProxyUpgrade({ routeStore, logger, req, socket, head })) {
       return;
     }
-    proxyUpgradeRequest({ req, socket, head, route: classification.route, logger });
+    if (!passthroughUnknown) {
+      socket.destroy();
+    }
   };
 }
 
@@ -828,9 +871,13 @@ export interface ServiceProxySubsystem {
     publicBaseUrl?: string | null;
   }): ServiceProxyWorkspaceScriptProjection;
   middleware(): RequestHandler;
+  // Owns the socket when this proxy answers the upgrade (service-bound host, or
+  // a service-namespace host with no route). Returns false for daemon hosts so
+  // the caller can hand the socket to the daemon WebSocket server.
+  claimUpgrade(input: { req: IncomingMessage; socket: Duplex; head: Buffer }): boolean;
   upgradeHandler(options: {
     passthroughUnknown: boolean;
-  }): (req: IncomingMessage, socket: net.Socket, head: Buffer) => void;
+  }): (req: IncomingMessage, socket: Duplex, head: Buffer) => void;
   startStandalone(options: {
     listenTarget: ServiceProxyListenTarget;
   }): Promise<ServiceProxyListenTarget>;
@@ -922,9 +969,27 @@ class NodeServiceProxySubsystem implements ServiceProxySubsystem {
     return createScriptProxyMiddleware({ routeStore: this.routes, logger: this.logger });
   }
 
+  claimUpgrade({
+    req,
+    socket,
+    head,
+  }: {
+    req: IncomingMessage;
+    socket: Duplex;
+    head: Buffer;
+  }): boolean {
+    return claimScriptProxyUpgrade({
+      routeStore: this.routes,
+      logger: this.logger,
+      req,
+      socket,
+      head,
+    });
+  }
+
   upgradeHandler(options: {
     passthroughUnknown: boolean;
-  }): (req: IncomingMessage, socket: net.Socket, head: Buffer) => void {
+  }): (req: IncomingMessage, socket: Duplex, head: Buffer) => void {
     // Pass passthroughUnknown explicitly: the factory defaults it to true, the
     // subsystem requires callers to choose.
     return createScriptProxyUpgradeHandler({
