@@ -6,10 +6,17 @@ import type {
   MarkdownRenderers,
 } from "react-native-enriched-markdown";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { useFileLink } from "@/assistant-file-links";
+import {
+  useAssistantFileLinkEnvironment,
+  useFileLink,
+} from "@/assistant-file-links";
+import { AssistantFileLinkContextMenuContent } from "@/assistant-file-links/file-context-menu";
+import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { isWeb } from "@/constants/platform";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import type { Theme } from "@/styles/theme";
+import type { ViewStyle } from "react-native";
 import { MermaidFence } from "./fence/mermaid";
 import { markdownLinkSource } from "./source";
 
@@ -27,8 +34,14 @@ function WebCodeBlock({ code, language }: CodeBlockRendererProps) {
   return <ThemedCodeBlock code={code} language={language} uniProps={codeStyle} />;
 }
 
+const LINK_CONTEXT_TRIGGER_STYLE: ViewStyle = {
+  display: "inline-flex" as ViewStyle["display"],
+};
+
 function WebLink({ link, anchorProps, children }: LinkRendererProps) {
-  const { tooltipPath, onHoverIn } = useFileLink(markdownLinkSource(link.url, link.sourceType));
+  const source = markdownLinkSource(link.url, link.sourceType);
+  const { target, open, tooltipPath, onHoverIn } = useFileLink(source);
+  const { workspaceRoot, serverId } = useAssistantFileLinkEnvironment();
   const anchorStyle = useMemo(
     () => ({ ...anchorProps.style, overflowWrap: "anywhere" as const }),
     [anchorProps.style],
@@ -38,10 +51,28 @@ function WebLink({ link, anchorProps, children }: LinkRendererProps) {
       {children}
     </a>
   );
+  const anchorWithContextMenu =
+    target && isWeb ? (
+      <ContextMenu>
+        <ContextMenuTrigger contextOnly style={LINK_CONTEXT_TRIGGER_STYLE}>
+          {anchor}
+        </ContextMenuTrigger>
+        <AssistantFileLinkContextMenuContent
+          source={source}
+          target={target}
+          serverId={serverId ?? ""}
+          workspaceRoot={workspaceRoot}
+          onOpen={open}
+          testIDPrefix="assistant-file-link"
+        />
+      </ContextMenu>
+    ) : (
+      anchor
+    );
   return (
     <Tooltip delayDuration={400}>
       <TooltipTrigger asChild onHoverIn={onHoverIn}>
-        <InlineLinkTrigger>{anchor}</InlineLinkTrigger>
+        <InlineLinkTrigger>{anchorWithContextMenu}</InlineLinkTrigger>
       </TooltipTrigger>
       {tooltipPath ? (
         <TooltipContent side="top" align="start" maxWidth={520}>

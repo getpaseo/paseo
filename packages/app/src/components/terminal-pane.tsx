@@ -21,6 +21,7 @@ import {
   type TerminalInputModeState,
 } from "@getpaseo/protocol/terminal-input-mode";
 import { useTranslation } from "react-i18next";
+import { useToast } from "@/contexts/toast-context";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useKeyboardShiftStyle } from "@/keyboard/shift";
 import { useAppActivelyVisible } from "@/hooks/use-app-visible";
@@ -69,6 +70,12 @@ import {
 } from "./terminal-resize-debouncer";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
+import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
+import { useWorkspaceFields } from "@/stores/session-store-hooks";
+import { openDesktopTarget, useFileManagerOpenTarget } from "@/workspace/desktop-open-targets";
+import { openInlinePathPlan, planInlinePathOpen } from "@/workspace/inline-path-open";
+import { openExplorerSidebarView } from "@/workspace-tabs/explorer-sidebar";
+import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import {
   applyTerminalRendererReadyChange,
   resolveTerminalStreamTarget,
@@ -84,12 +91,14 @@ import type {
 } from "@/terminal/local-links/terminal-local-link-provider";
 import {
   normalizeWorkspaceFileLocation,
+  toNativeAbsolutePath,
   type OpenFileDisposition,
   type WorkspaceFileOpenRequest,
 } from "@/workspace/file-open";
 
 interface TerminalPaneProps {
   serverId: string;
+  workspaceId: string | null;
   cwd: string;
   terminalId: string;
   isWorkspaceFocused: boolean;
@@ -226,6 +235,7 @@ function KeyboardToggleButton({
 
 export function TerminalPane({
   serverId,
+  workspaceId,
   cwd,
   terminalId,
   isWorkspaceFocused,
@@ -234,10 +244,24 @@ export function TerminalPane({
   onOpenWorkspaceFile,
 }: TerminalPaneProps) {
   const { t } = useTranslation();
+  const toast = useToast();
   const retainedPanelActive = useRetainedPanelActive();
   const isAppActivelyVisible = useAppActivelyVisible();
   const { theme } = useUnistyles();
   const { settings } = useAppSettings();
+  const isGitCheckout = useWorkspaceFields(
+    serverId,
+    workspaceId,
+    (workspace) => workspace.projectKind === "git",
+  );
+  const { requestDirectoryListing } = useFileExplorerActions({
+    serverId,
+    workspaceId,
+    workspaceRoot: cwd,
+  });
+  // External folders are handed to the OS file manager, which only makes sense for the
+  // local machine's own daemon.
+  const fileManagerTarget = useFileManagerOpenTarget(serverId);
   const xtermTheme = useMemo(() => toXtermTheme(theme.colors.terminal), [theme]);
   const terminalFontFamily = useMemo(() => {
     const trimmed = settings.monoFontFamily.trim();
@@ -940,9 +964,66 @@ export function TerminalPane({
       if (!location) {
         return;
       }
-      onOpenWorkspaceFile({ location, disposition });
+
+      const openAsFile = () => {
+        onOpenWorkspaceFile({ location, disposition });
+      };
+
+      const openFilesExplorerAt = (directoryPath: string) => {
+        void requestDirectoryListing(directoryPath);
+        openExplorerSidebarView({
+          isCompact: isMobile,
+          workspaceKey: buildWorkspaceTabPersistenceKey({
+            serverId,
+            workspaceId: workspaceId ?? "",
+          }),
+          checkout: { serverId, cwd, isGit: isGitCheckout ?? true },
+          view: "files",
+        });
+      };
+
+      const revealInFileManager = (absolutePath: string) => {
+        if (!fileManagerTarget) {
+          // Outside the workspace there is no file tab to fall back to for a folder;
+          // say so instead of doing nothing.
+          toast.error(t("workspace.fileExplorer.errors.externalFolderUnavailable"));
+          return;
+        }
+        void openDesktopTarget({
+          editorId: fileManagerTarget.id,
+          workspacePath: cwd,
+          filePath: toNativeAbsolutePath(absolutePath),
+        }).catch(() => {
+          toast.error(t("workspace.fileExplorer.errors.revealFailed"));
+        });
+      };
+
+      const plan = planInlinePathOpen({
+        file: location.path,
+        lineStart: location.lineStart,
+        workspaceRoot: cwd,
+      });
+
+      void openInlinePathPlan(plan, cwd, {
+        client,
+        openFile: openAsFile,
+        openExplorerAt: openFilesExplorerAt,
+        revealInFileManager,
+      });
     },
-    [onOpenWorkspaceFile],
+    [
+      client,
+      cwd,
+      fileManagerTarget,
+      isGitCheckout,
+      isMobile,
+      onOpenWorkspaceFile,
+      requestDirectoryListing,
+      serverId,
+      t,
+      toast,
+      workspaceId,
+    ],
   );
 
   const toggleModifier = useCallback(

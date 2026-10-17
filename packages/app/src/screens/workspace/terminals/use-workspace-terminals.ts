@@ -39,6 +39,9 @@ interface UseWorkspaceTerminalsInput {
   hasHydratedWorkspaces: boolean;
   isMissingWorkspaceDirectory: boolean;
   onTerminalCreated: (input: { terminalId: string; destination: TerminalTabDestination }) => void;
+  /** A script spawned its terminal: an implicit open that follows the Open location preference. */
+  onScriptTerminalStarted: (terminalId: string) => void;
+  /** The user asked to see a script terminal: an explicit reveal in the focused pane. */
   onScriptTerminalSelected: (terminalId: string) => void;
   onWorkspacePathUnavailable: () => void;
   onTerminalCreateQueued: () => void;
@@ -57,6 +60,7 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
     hasHydratedWorkspaces,
     isMissingWorkspaceDirectory,
     onTerminalCreated,
+    onScriptTerminalStarted,
     onScriptTerminalSelected,
     onWorkspacePathUnavailable,
     onTerminalCreateQueued,
@@ -253,10 +257,10 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
         nextTerminalIds.set(terminalId, query.dataUpdatedAt);
         return nextTerminalIds;
       });
-      onScriptTerminalSelected(terminalId);
+      onScriptTerminalStarted(terminalId);
       void queryClient.invalidateQueries({ queryKey });
     },
-    [onScriptTerminalSelected, query.dataUpdatedAt, queryClient, queryKey],
+    [onScriptTerminalStarted, query.dataUpdatedAt, queryClient, queryKey],
   );
 
   const handleViewScriptTerminal = useCallback(
