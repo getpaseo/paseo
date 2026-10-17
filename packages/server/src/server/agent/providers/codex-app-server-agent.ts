@@ -77,6 +77,7 @@ import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mappe
 import {
   buildCodexFeatures,
   CodexServiceTierSchema,
+  filterCodexServiceTiers,
   readCodexServiceTier,
   type CodexServiceTier,
 } from "./codex-feature-definitions.js";
@@ -3459,6 +3460,8 @@ export class CodexAppServerAgentSession implements AgentSession {
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
   private serviceTier: string | null = null;
   private speedModels: CodexModel[] = [];
+  private supportsIndependentSpeedModes = false;
+  private codexConfigFeatures: { fast_mode?: boolean; ultrafast_mode?: boolean } = {};
   private planModeEnabled = false;
   private historyPending = false;
   private persistedHistory: PersistedTimelineEntry[] = [];
@@ -3642,8 +3645,8 @@ export class CodexAppServerAgentSession implements AgentSession {
 
       this.speedModels =
         CodexModelListResponseSchema.parse(await client.request("model/list", {})).data ?? [];
+      await this.loadCodexConfig();
       this.reconcileServiceTier();
-      await this.loadResolvedWorkspaceWrite();
       await this.loadCollaborationModes();
       await this.loadSkills();
 
@@ -3674,16 +3677,33 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
-  private async loadResolvedWorkspaceWrite(): Promise<void> {
+  private async loadCodexConfig(): Promise<void> {
     if (!this.client) return;
+    this.supportsIndependentSpeedModes = false;
+    this.codexConfigFeatures = {};
+    try {
+      const requirements = toObjectRecord(await this.client.request("configRequirements/read", {}));
+      this.supportsIndependentSpeedModes = requirements?.supportsIndependentSpeedModes === true;
+    } catch (error) {
+      this.logger.debug({ error }, "Failed to read Codex config requirements");
+      this.supportsIndependentSpeedModes = false;
+    }
+
     try {
       const response = toObjectRecord(
         await this.client.request("config/read", { cwd: this.config.cwd ?? null }),
       );
       const config = toObjectRecord(response?.config);
       this.resolvedWorkspaceWrite = readSandboxWorkspaceWrite(config?.sandbox_workspace_write);
+      const features = toObjectRecord(config?.features);
+      this.codexConfigFeatures = {
+        fast_mode: typeof features?.fast_mode === "boolean" ? features.fast_mode : undefined,
+        ultrafast_mode:
+          typeof features?.ultrafast_mode === "boolean" ? features.ultrafast_mode : undefined,
+      };
     } catch (error) {
-      this.logger.debug({ error }, "Failed to read resolved Codex workspace-write config");
+      this.logger.debug({ error }, "Failed to read resolved Codex config");
+      this.codexConfigFeatures = {};
     }
   }
 
@@ -3853,7 +3873,11 @@ export class CodexAppServerAgentSession implements AgentSession {
           (model) => model.id === this.config.model || model.model === this.config.model,
         )
       : (this.speedModels.find((model) => model.isDefault) ?? this.speedModels[0]);
-    return selectedModel?.serviceTiers ?? [];
+    const tiers = selectedModel?.serviceTiers ?? [];
+    return filterCodexServiceTiers(tiers, {
+      supportsIndependentSpeedModes: this.supportsIndependentSpeedModes,
+      features: this.codexConfigFeatures,
+    });
   }
 
   private reconcileServiceTier(): void {
