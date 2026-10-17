@@ -1557,6 +1557,81 @@ describe("handleCreatePaseoWorktreeRequest", () => {
     expect(branch).toBe("feature/review-pr");
   });
 
+  test("agent worktree creation reports skipped worktree includes once", async () => {
+    const logger = createLogger();
+    const skipped = {
+      lineNumber: 0,
+      message: "Unable to read .worktreeinclude: EISDIR",
+      raw: ".worktreeinclude",
+      reason: "materialization" as const,
+    };
+    const worktreePath = "/tmp/worktrees/agent-include-warning";
+    const createPaseoWorktree = vi.fn(async () => ({
+      worktree: {
+        branchName: "agent-include-warning",
+        worktreePath,
+      },
+      worktreeIncludeSummary: { materialized: 0, skipped: [skipped] },
+      intent: {
+        kind: "branch-off" as const,
+        baseBranch: "main",
+        branchName: "agent-include-warning",
+      },
+      workspace: {
+        workspaceId: "ws-agent-include-warning",
+        projectId: "/tmp/repo",
+        cwd: worktreePath,
+        kind: "worktree" as const,
+        displayName: "agent-include-warning",
+        createdAt: "2026-04-30T00:00:00.000Z",
+        updatedAt: "2026-04-30T00:00:00.000Z",
+        title: null,
+        archivedAt: null,
+      },
+      repoRoot: "/tmp/repo",
+      created: true,
+    }));
+
+    await createPaseoWorktreeWorkflow(
+      {
+        paseoHome: "/tmp/paseo",
+        createPaseoWorktree,
+        warmWorkspaceGitData: async () => {},
+        autoNameWorkspaceBranchForFirstAgent: () => {},
+        emitWorkspaceUpdateForWorkspaceId: async () => {},
+        cacheWorkspaceSetupSnapshot: () => {},
+        emit: () => {},
+        sessionLogger: logger,
+        terminalManager: null,
+        serviceProxy: null,
+        scriptRuntimeStore: null,
+        getDaemonTcpPort: null,
+        getDaemonTcpHost: null,
+        onScriptsChanged: null,
+      },
+      { cwd: "/tmp/repo", worktreeSlug: "agent-include-warning", runSetup: false },
+      {
+        setupContinuation: {
+          kind: "agent",
+          terminalManager: null,
+          appendTimelineItem: async () => true,
+          emitLiveTimelineItem: async () => true,
+          logger,
+        },
+      },
+    );
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      {
+        materialized: 0,
+        skipped: [skipped],
+        worktreePath,
+      },
+      "Worktree include completed with skipped entries",
+    );
+  });
+
   test("buildAgentSessionConfig uses the normalized new branch name as the worktree slug fallback", async () => {
     const { tempDir, repoDir } = createGitRepo();
     cleanupPaths.push(tempDir);

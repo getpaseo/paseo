@@ -643,6 +643,27 @@ export async function handleCreatePaseoWorktreeRequest(
   }
 }
 
+function logWorktreeIncludeSkips(
+  logger: Logger,
+  createdWorktree: Pick<
+    CreatePaseoWorktreeResult,
+    "created" | "worktree" | "worktreeIncludeSummary"
+  >,
+): void {
+  if (!createdWorktree.created || !createdWorktree.worktreeIncludeSummary?.skipped.length) {
+    return;
+  }
+
+  logger.warn(
+    {
+      materialized: createdWorktree.worktreeIncludeSummary.materialized,
+      skipped: createdWorktree.worktreeIncludeSummary.skipped,
+      worktreePath: createdWorktree.worktree.worktreePath,
+    },
+    "Worktree include completed with skipped entries",
+  );
+}
+
 export async function createPaseoWorktreeWorkflow(
   dependencies: CreatePaseoWorktreeWorkflowDependencies,
   input: CreatePaseoWorktreeInput,
@@ -665,6 +686,8 @@ export async function createPaseoWorktreeWorkflow(
   const slug = basename(createdWorktree.worktree.worktreePath);
   const workspace = createdWorktree.workspace;
   const setupContinuation = options?.setupContinuation ?? { kind: "workspace" };
+
+  logWorktreeIncludeSkips(dependencies.sessionLogger, createdWorktree);
 
   try {
     await dependencies.assertWorkspaceAutomationAllowed?.(workspace.workspaceId);
