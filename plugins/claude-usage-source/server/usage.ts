@@ -15,6 +15,7 @@ import {
   windowFromUsedPct,
   type UsageReport,
   type UsageWindow,
+  type UsageBalance,
   type UsageDetail,
 } from "@getpaseo/plugin/server/usage";
 
@@ -57,6 +58,36 @@ const ClaudeLimitSchema = z.object({
   scope: z.object({ model: ClaudeScopeLabelSchema, surface: ClaudeScopeLabelSchema }).nullish(),
 });
 
+// Enterprise usage-based orgs are spend-metered: the rolling windows come back
+// null and a `spend` block carries the dollar meter. Each amount is expressed
+// in minor units with an exponent (USD cents -> { amount_minor, exponent: 2 }).
+const ClaudeSpendAmountSchema = z
+  .object({
+    amount_minor: ApiNumberSchema.nullish(),
+    currency: z.string().nullish(),
+    exponent: ApiNumberSchema.nullish(),
+  })
+  .nullish();
+
+const ClaudeSpendSchema = z
+  .object({
+    used: ClaudeSpendAmountSchema,
+    limit: ClaudeSpendAmountSchema,
+    percent: ApiNumberSchema.nullish(),
+  })
+  .nullish();
+
+const ClaudeExtraSpendSchema = z
+  .object({
+    is_enabled: z.boolean().optional(),
+    monthly_limit: ApiNumberSchema.nullish(),
+    used_credits: ApiNumberSchema.nullish(),
+    currency: z.string().nullish(),
+    decimal_places: ApiNumberSchema.nullish(),
+    utilization: ApiNumberSchema.nullish(),
+  })
+  .nullish();
+
 const ClaudeUsageResponseSchema = z.object({
   five_hour: ClaudeUsageWindowSchema.nullish(),
   seven_day: ClaudeUsageWindowSchema.nullish(),
@@ -65,11 +96,8 @@ const ClaudeUsageResponseSchema = z.object({
   // Deliberately permissive: an additive section must never regress the top-level
   // windows, so shape validation happens per entry rather than here.
   limits: z.array(z.unknown()).nullish(),
-  extra_usage: z
-    .object({
-      is_enabled: z.boolean().optional(),
-    })
-    .nullish(),
+  extra_usage: z.object({ is_enabled: z.boolean().optional() }).passthrough().nullish(),
+  spend: z.unknown().optional(),
 });
 
 type ClaudeCredentials = z.infer<typeof ClaudeCredentialsSchema>;
@@ -89,6 +117,8 @@ function buildClaudePlan(
 ): string | null {
   if (!subscriptionType) return null;
   const label = subscriptionType.charAt(0).toUpperCase() + subscriptionType.slice(1);
+  // Enterprise rate-limit tiers are internal quota plumbing, not plan variants.
+  if (subscriptionType.toLowerCase() === "enterprise") return label;
   const tier = rateLimitTier?.split("_").pop();
   return tier ? `${label} ${tier}` : label;
 }
@@ -491,6 +521,42 @@ function toCredentialRecord(credentials: ClaudeCredentials): ClaudeCredentialRec
     : null;
 }
 
+function buildReport(input: {
+  resp: ClaudeUsageResponse;
+  plan: string | null;
+  windows: UsageWindow[];
+}): UsageReport {
+  const { resp, plan, windows } = input;
+  // Pro/Max accounts carry a spend block too, but it is only their extra-usage cap
+  // and must never hide live session/weekly usage; use it only with no windows.
+  const spend = windows.length === 0 ? spendUsageFromResponse(resp) : null;
+
+  if (windows.length === 0 && !spend) {
+    // The response parsed but described nothing. That silence is how the previous
+    // shape change went unnoticed, so make it greppable. `warn` and not `debug`
+    // because file logging defaults to `info`.
+    console.warn("Claude usage response parsed but produced no windows");
+  }
+
+  const details: UsageDetail[] = [];
+  const extraUsageEnabled = resp.extra_usage?.is_enabled;
+  if (extraUsageEnabled !== undefined) {
+    details.push({
+      id: "extra_usage",
+      label: "Extra usage",
+      value: extraUsageEnabled ? "Enabled" : "Disabled",
+    });
+  }
+
+  return {
+    status: "available",
+    planLabel: plan ?? undefined,
+    windows: spend ? [spend.window] : windows,
+    balances: spend?.balance ? [spend.balance] : [],
+    details,
+  };
+}
+
 export async function fetchUsage(
   input: UsageInput,
   fetchApi: typeof fetch = fetch,
@@ -586,30 +652,110 @@ export async function fetchUsage(
   );
   const windows = [...unscopedWindows(resp), ...scopedWindows(scoped)];
 
-  if (windows.length === 0) {
-    // The response parsed but described nothing. That silence is how the previous
-    // shape change went unnoticed, so make it greppable. `warn` and not `debug`
-    // because file logging defaults to `info`.
-    console.warn("Claude usage response parsed but produced no windows");
-  }
+  return buildReport({ resp, plan, windows });
+}
 
-  const details: UsageDetail[] = [];
-  const extraUsageEnabled = resp.extra_usage?.is_enabled;
-  if (extraUsageEnabled !== undefined) {
-    details.push({
-      id: "extra_usage",
-      label: "Extra usage",
-      value: extraUsageEnabled ? "Enabled" : "Disabled",
-    });
-  }
+/**
+ * The spend cap for enterprise usage-based orgs resets at 00:00 UTC on the first
+ * of each calendar month. The usage API does not expose this instant, so it is
+ * computed locally.
+ */
+export function nextMonthlyResetUtc(now: Date = new Date()): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0));
+}
 
+function usdAmount(amount: z.infer<typeof ClaudeSpendAmountSchema>): number | null {
+  if (amount?.amount_minor == null) return null;
+  return amount.amount_minor / 10 ** (amount.exponent ?? 2);
+}
+
+interface SpendAmounts {
+  used: number | null;
+  limit: number | null;
+  reportedPercent: number | null;
+}
+
+function isUsdOrAbsent(amount: z.infer<typeof ClaudeSpendAmountSchema>): boolean {
+  return amount == null || amount.currency === "USD";
+}
+
+function spendBlockAmounts(resp: ClaudeUsageResponse): SpendAmounts | null | undefined {
+  const parsedSpend = ClaudeSpendSchema.safeParse(resp.spend);
+  if (!parsedSpend.success) console.warn("Skipping unparseable Claude spend block");
+  const spend = parsedSpend.success ? parsedSpend.data : null;
+  if (!spend || (spend.used?.amount_minor == null && spend.limit?.amount_minor == null)) {
+    return undefined;
+  }
+  if (!isUsdOrAbsent(spend.used) || !isUsdOrAbsent(spend.limit)) {
+    console.warn("Skipping Claude spend with unsupported currency");
+    return null;
+  }
   return {
-    status: "available",
-    planLabel: plan ?? undefined,
-    windows,
-    balances: [],
-    details,
+    used: usdAmount(spend.used),
+    limit: usdAmount(spend.limit),
+    reportedPercent: spend.percent ?? null,
   };
+}
+
+function extraSpendAmounts(resp: ClaudeUsageResponse): SpendAmounts | null {
+  const parsedExtra = ClaudeExtraSpendSchema.safeParse(resp.extra_usage);
+  if (!parsedExtra.success) console.warn("Skipping unparseable Claude extra-usage spend fields");
+  const extra = parsedExtra.success ? parsedExtra.data : null;
+  if (!extra?.is_enabled || extra.monthly_limit == null) return null;
+  if (extra.currency !== "USD") {
+    console.warn("Skipping Claude extra-usage spend with unsupported currency");
+    return null;
+  }
+  const scale = 10 ** (extra.decimal_places ?? 2);
+  return {
+    used: extra.used_credits == null ? null : extra.used_credits / scale,
+    limit: extra.monthly_limit / scale,
+    reportedPercent: extra.utilization ?? null,
+  };
+}
+
+function spendAmountsFromResponse(resp: ClaudeUsageResponse): SpendAmounts | null {
+  const fromSpend = spendBlockAmounts(resp);
+  return fromSpend === undefined ? extraSpendAmounts(resp) : fromSpend;
+}
+
+/**
+ * Normalize the spend-metered (Enterprise usage-based) shape. Percent is computed
+ * from used/limit and preferred over the reported percent, which has been observed
+ * to lag. A null or zero limit yields 0% and is never "exhausted".
+ */
+function spendUsageFromResponse(
+  resp: ClaudeUsageResponse,
+): { window: UsageWindow; balance: UsageBalance | null } | null {
+  const amounts = spendAmountsFromResponse(resp);
+  if (!amounts) return null;
+  const { used, limit } = amounts;
+  let percent = 0;
+  if (limit != null && limit !== 0) {
+    percent = used != null ? Math.min(100, (used / limit) * 100) : (amounts.reportedPercent ?? 0);
+  }
+  const resetsAt = nextMonthlyResetUtc().toISOString();
+  const window = windowFromUsedPct({
+    id: "spend",
+    label: "Monthly spend",
+    utilizationPct: percent,
+    resetsAt,
+    tone: toneFromUsedPct(percent),
+  });
+  const balance: UsageBalance | null =
+    used != null && limit != null
+      ? {
+          id: "spend",
+          label: "Monthly spend",
+          used,
+          remaining: limit - used,
+          limit,
+          unit: "usd",
+          resetsAt,
+          tone: toneFromUsedPct(percent),
+        }
+      : null;
+  return { window, balance };
 }
 
 // A 429 from the usage endpoint carries Retry-After, observed in the tens of minutes. Until it
