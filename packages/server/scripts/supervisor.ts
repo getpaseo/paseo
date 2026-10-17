@@ -1,9 +1,11 @@
 import { fork, spawn, type ChildProcess } from "child_process";
+import { mkdirSync } from "node:fs";
 import path from "node:path";
 import {
   createStream as createRotatingFileStream,
   type RotatingFileStream,
 } from "rotating-file-stream";
+import { ensurePrivateFile, PRIVATE_FILE_MODE } from "../src/server/private-files.js";
 import { signalProcessTree } from "../src/utils/tree-kill.js";
 
 const WORKER_HEARTBEAT_INTERVAL_MS = 1_000;
@@ -123,10 +125,13 @@ function createDurableLog(
   let failing = false;
 
   const open = (logFile: SupervisorLogFileOptions): RotatingFileStream => {
+    mkdirSync(path.dirname(logFile.path), { recursive: true });
+    ensurePrivateFile(logFile.path);
     const next = createRotatingFileStream(path.basename(logFile.path), {
       path: path.dirname(logFile.path),
       size: toRotatingFileStreamSize(logFile.rotate.maxSize),
       maxFiles: logFile.rotate.maxFiles,
+      mode: PRIVATE_FILE_MODE,
     });
     next.on("error", (error) => {
       if (stream === next) {
