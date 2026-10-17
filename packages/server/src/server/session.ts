@@ -886,6 +886,7 @@ export class Session {
       sessionId: this.sessionId,
     });
     this.workspaceFilesSession = new WorkspaceFilesSession({
+      getMaxUploadFileBytes: () => daemonConfigStore.get().uploads?.maxFileBytes ?? null,
       host: {
         emit: (msg, source) => this.emitForSource(msg, source),
         emitBinary: (frame, source) => this.emitBinaryForFileTransfer(frame, source),

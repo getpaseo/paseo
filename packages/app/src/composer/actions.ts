@@ -122,18 +122,30 @@ export async function pickAndPersistImages(input: {
   );
 }
 
+function formatUploadLimit(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${Number((bytes / (1024 * 1024)).toFixed(2))}MB`;
+  if (bytes >= 1024) return `${Number((bytes / 1024).toFixed(2))}KB`;
+  return `${bytes}B`;
+}
+
 export async function uploadFileAttachments(input: {
   client: ComposerSendClient;
   files: SelectedFile[];
+  /** Undefined preserves the legacy client cap; null means no total-file limit. */
+  maxFileBytes?: number | null;
 }): Promise<Extract<ComposerAttachment, { kind: "file" }>[]> {
+  const maxFileBytes = input.maxFileBytes === undefined ? 50 * 1024 * 1024 : input.maxFileBytes;
   const result: Extract<ComposerAttachment, { kind: "file" }>[] = [];
   const prepared: Array<{ fileName: string; mimeType: string; bytes: Uint8Array }> = [];
 
   for (const file of input.files) {
     const bytes = await file.readBytes();
-    if (bytes.byteLength > 50 * 1024 * 1024) {
+    if (maxFileBytes !== null && bytes.byteLength > maxFileBytes) {
       throw new Error(
-        i18n.t("composer.errors.fileTooLarge", { size: "50MB", fileName: file.fileName }),
+        i18n.t("composer.errors.fileTooLarge", {
+          size: formatUploadLimit(maxFileBytes),
+          fileName: file.fileName,
+        }),
       );
     }
     prepared.push({

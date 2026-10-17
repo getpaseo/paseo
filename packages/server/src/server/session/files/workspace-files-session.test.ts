@@ -42,6 +42,7 @@ function makeSubsystem(
   options: {
     hasBinaryChannel?: boolean;
     emitBinary?: (frame: Uint8Array) => Promise<void> | void;
+    getMaxUploadFileBytes?: () => number | null;
   } = {},
 ) {
   const emitted: SessionOutboundMessage[] = [];
@@ -57,6 +58,7 @@ function makeSubsystem(
   };
   const paseoHome = makeDir("workspace-files-home-");
   const subsystem = new WorkspaceFilesSession({
+    getMaxUploadFileBytes: options.getMaxUploadFileBytes,
     host,
     downloadTokenStore: new DownloadTokenStore({ ttlMs: 60_000 }),
     paseoHome,
@@ -82,6 +84,34 @@ function uploadFrame(args: Parameters<typeof encodeFileTransferFrame>[0]): FileT
 }
 
 describe("WorkspaceFilesSession", () => {
+  test("replies immediately when an upload exceeds the live upload limit", async () => {
+    const { subsystem, emitted, paseoHome } = makeSubsystem({ getMaxUploadFileBytes: () => 5 });
+    const source = {};
+    const ownership = new SessionDelivery((_source, message) => emitted.push(message));
+    ownership.attach(source, true);
+    const request = {
+      type: "file.upload.request",
+      fileName: "large.txt",
+      mimeType: "text/plain",
+      size: 6,
+      modifiedAt: "2026-05-02T00:00:00.000Z",
+      requestId: "over-limit",
+    } as const;
+    await ownership.request(source, request, async () =>
+      subsystem.handleFileUploadRequest(request, ownership),
+    );
+    expect(emitted).toMatchObject([
+      {
+        type: "file.upload.response",
+        payload: {
+          requestId: "over-limit",
+          file: null,
+          error: expect.stringContaining("upload limit is 5 bytes"),
+        },
+      },
+    ]);
+    expect(existsSync(join(paseoHome, "uploads"))).toBe(false);
+  });
   test("creates an entry and emits the complete success response", async () => {
     const cwd = makeDir("workspace-files-create-");
     const { subsystem, emitted } = makeSubsystem();

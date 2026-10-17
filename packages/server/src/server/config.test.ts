@@ -5,11 +5,29 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { loadConfig, resolveBundledWebUiDistDir, resolveConfigFromPersisted } from "./config.js";
-import { loadPersistedConfig } from "./persisted-config.js";
+import { loadPersistedConfig, PersistedConfigSchema } from "./persisted-config.js";
 
 const roots: string[] = [];
 
 describe("server config", () => {
+  test("resolves the optional upload limit and validates byte counts", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-upload-limit-"));
+    roots.push(paseoHome);
+    expect(loadConfig(paseoHome, { env: {} }).uploads?.maxFileBytes).toBeNull();
+    await writeFile(
+      path.join(paseoHome, "config.json"),
+      JSON.stringify({ daemon: { uploads: { maxFileBytes: 1024 } } }),
+    );
+    expect(loadConfig(paseoHome, { env: {} }).uploads?.maxFileBytes).toBe(1024);
+    for (const maxFileBytes of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(
+        PersistedConfigSchema.safeParse({ daemon: { uploads: { maxFileBytes } } }).success,
+      ).toBe(false);
+    }
+    expect(
+      PersistedConfigSchema.safeParse({ daemon: { uploads: { maxFileBytes: null } } }).success,
+    ).toBe(true);
+  });
   afterEach(async () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   });

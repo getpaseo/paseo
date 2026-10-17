@@ -22,6 +22,7 @@ function reloadableConfig(
     },
     mcp: { enabled: true, injectIntoAgents: false },
     browserTools: { enabled: daemon.browserTools?.enabled ?? false },
+    uploads: daemon.uploads,
     providers: (agents.providers ?? {}) as MutableDaemonConfig["providers"],
     metadataGeneration: { providers: agents.metadataGeneration?.providers ?? [] },
     autoArchiveAfterMerge: daemon.autoArchiveAfterMerge ?? false,
@@ -42,6 +43,34 @@ function reloadableConfig(
 }
 
 describe("applyMutableProviderConfigToOverrides", () => {
+  test("persists, reloads and unsets the upload limit without a restart", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-upload-config-"));
+    const initial = loadPersistedConfig(paseoHome);
+    try {
+      const store = new DaemonConfigStore(paseoHome, reloadableConfig(initial), undefined, {
+        reloadSource: {
+          resolve: (persisted) => ({
+            mutable: reloadableConfig(persisted),
+            overrideControlledPaths: [],
+          }),
+        },
+      });
+      store.patch({ uploads: { maxFileBytes: 1024 } });
+      expect(loadPersistedConfig(paseoHome).daemon?.uploads?.maxFileBytes).toBe(1024);
+      const next = loadPersistedConfig(paseoHome);
+      writeFileSync(
+        path.join(paseoHome, "config.json"),
+        JSON.stringify({ ...next, daemon: { ...next.daemon, uploads: { maxFileBytes: 2048 } } }),
+      );
+      expect(store.reload().appliedPaths).toContain("daemon.uploads.maxFileBytes");
+      expect(store.get().uploads?.maxFileBytes).toBe(2048);
+      store.patch({ uploads: { maxFileBytes: null } });
+      expect(store.get().uploads?.maxFileBytes).toBeNull();
+      expect(loadPersistedConfig(paseoHome).daemon?.uploads?.maxFileBytes).toBeNull();
+    } finally {
+      rmSync(paseoHome, { recursive: true, force: true });
+    }
+  });
   test("merges mutable provider fields onto provider overrides", () => {
     expect(
       applyMutableProviderConfigToOverrides(

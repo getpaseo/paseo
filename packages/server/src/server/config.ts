@@ -610,6 +610,7 @@ export function resolveConfigFromPersisted(
     listen,
     paseoHome,
     desktopManaged: env.PASEO_DESKTOP_MANAGED === "1",
+    uploads: { maxFileBytes: persisted.daemon?.uploads?.maxFileBytes ?? null },
     worktreesRoot: resolveWorktreesRoot(paseoHome, persisted),
     corsAllowedOrigins: resolveCorsAllowedOrigins(env, persisted),
     hostnames,

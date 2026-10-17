@@ -257,6 +257,21 @@ export const PersistedConfigSchema = z
           })
           .passthrough()
           .optional(),
+        uploads: z
+          .object({
+            maxFileBytes: z
+              .number()
+              .int()
+              .positive()
+              .max(Number.MAX_SAFE_INTEGER)
+              .nullable()
+              .optional()
+              .describe(
+                "Maximum bytes per uploaded file. Unset or null preserves unlimited file uploads.",
+              ),
+          })
+          .strict()
+          .optional(),
         git: z
           .object({
             maxProcessesPerSecond: z.number().int().positive().optional(),
