@@ -1,0 +1,40 @@
+npm notice run paseo@0.12.0-beta.1 build:server
+npm notice run npm run build:server-deps && npm run build --workspace=@getpaseo/server && npm run build --workspace=@getpaseo/cli
+npm notice run paseo@0.12.0-beta.1 build:server-deps
+npm notice run npm run build:client && concurrently --kill-others-on-fail --names highlight,plugin,relay --prefix-colors yellow,green,blue "npm run build:highlight" "npm run build:plugin" "npm run build:relay"
+npm notice run paseo@0.12.0-beta.1 build:client
+npm notice run npm run build --workspace=@getpaseo/client
+npm notice run @getpaseo/client@0.12.0-beta.1 build
+npm notice run npm run build --workspace=@getpaseo/protocol && npm run build --workspace=@getpaseo/relay && tsc -p tsconfig.json --incremental false
+npm notice run @getpaseo/protocol@0.12.0-beta.1 prebuild
+npm notice run npm run generate:validators
+npm notice run @getpaseo/protocol@0.12.0-beta.1 generate:validators
+npm notice run node scripts/generate-validation-aot.mjs
+generated src/generated/validation/ws-outbound.aot.ts: envelope + 224 session message validators
+npm notice run @getpaseo/protocol@0.12.0-beta.1 build
+npm notice run tsc -p tsconfig.json --incremental false
+npm notice run @getpaseo/relay@0.12.0-beta.1 build
+npm notice run tsc -p tsconfig.json --incremental false
+[highlight] npm notice run paseo@0.12.0-beta.1 build:highlight
+[highlight] npm notice run npm run build --workspace=@getpaseo/highlight
+[plugin] npm notice run paseo@0.12.0-beta.1 build:plugin
+[plugin] npm notice run npm run build --workspace=@getpaseo/plugin
+[relay] npm notice run paseo@0.12.0-beta.1 build:relay
+[relay] npm notice run npm run build --workspace=@getpaseo/relay
+[highlight] npm notice run @getpaseo/highlight@0.12.0-beta.1 build
+[highlight] npm notice run tsc -p tsconfig.json --incremental false
+[plugin] npm notice run @getpaseo/plugin@0.12.0-beta.1 build
+[plugin] npm notice run tsc -p tsconfig.json --incremental false
+[relay] npm notice run @getpaseo/relay@0.12.0-beta.1 build
+[relay] npm notice run tsc -p tsconfig.json --incremental false
+[highlight] npm run build:highlight exited with code 0
+[relay] npm run build:relay exited with code 0
+[plugin] npm run build:plugin exited with code 0
+npm notice run @getpaseo/server@0.12.0-beta.1 build
+npm notice run npm run build:lib && npm run build:scripts
+npm notice run @getpaseo/server@0.12.0-beta.1 build:lib
+npm notice run tsc -p tsconfig.server.json --incremental false && node scripts/build-opencode-bridge-plugin.mjs && node -e "const fs=require('node:fs'); fs.mkdirSync('dist/server/server/speech/providers/local/sherpa/assets',{recursive:true}); fs.copyFileSync('src/server/speech/providers/local/sherpa/assets/silero_vad.onnx','dist/server/server/speech/providers/local/sherpa/assets/silero_vad.onnx'); fs.cpSync('src/terminal/shell-integration','dist/server/terminal/shell-integration',{recursive:true}); fs.cpSync('src/terminal/shell-integration','dist/src/terminal/shell-integration',{recursive:true}); fs.copyFileSync('src/terminal/terminal-ts-loader.mjs','dist/server/terminal/terminal-ts-loader.mjs'); fs.rmSync('dist/server/skills',{recursive:true,force:true}); fs.cpSync('../../skills','dist/server/skills',{recursive:true}); fs.rmSync('dist/server/builtin-plugins',{recursive:true,force:true}); fs.cpSync('../../plugins','dist/server/builtin-plugins',{recursive:true,filter:(source)=>!source.split(require('node:path').sep).some((segment)=>segment==='node_modules'||segment==='test')&&!/\.(test|spec)\.[cm]?[jt]sx?$/.test(source)&&!source.endsWith('.tsbuildinfo')});"
+npm notice run @getpaseo/server@0.12.0-beta.1 build:scripts
+npm notice run tsc -p tsconfig.scripts.json --incremental false && node -e "const fs=require('node:fs'); fs.mkdirSync('dist/scripts',{recursive:true}); fs.copyFileSync('scripts/mcp-stdio-socket-bridge-cli.mjs','dist/scripts/mcp-stdio-socket-bridge-cli.mjs');"
+npm notice run @getpaseo/cli@0.12.0-beta.1 build
+npm notice run tsc -p tsconfig.json --incremental false

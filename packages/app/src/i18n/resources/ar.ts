@@ -250,6 +250,14 @@ export const ar: TranslationResources = {
     },
   },
   agentPanel: {
+    usageLimit: {
+      label: "المتابعة بعد إعادة تعيين حد الاستخدام",
+      enabled: "مفعّل لهذه المحادثة. أبقِ المضيف قيد التشغيل.",
+      available: "تم بلوغ حد الاستخدام. تتاح إعادة المحاولة في {{at}}.",
+      scheduled: "ستستأنف المحادثة في {{at}} إذا كان المضيف يعمل.",
+      unknownReset: "لم يحدد المزوّد وقت إعادة التعيين. تابع يدويًا.",
+      saving: "جارٍ الحفظ…",
+    },
     states: {
       notFound: "لم يتم العثور على Agent",
       failedToLoad: "فشل تحميل الوكيل",

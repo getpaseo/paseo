@@ -1,3 +1,4 @@
+import type { AgentUsageLimit } from "@getpaseo/protocol/agent-usage-limit";
 import { validateProviderOptions } from "../../provider-options.js";
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -2291,6 +2292,7 @@ class ClaudeAgentSession implements AgentSession {
   private mainTurnInFlight = false;
   private foregroundHasVisibleActivity = false;
   private activeTurnHasAssistantText = false;
+  private activeUsageLimit: AgentUsageLimit | undefined;
   private readonly contextUsage: ClaudeContextUsageState;
   private userMessageIds: string[] = [];
   private readonly emittedUserMessageIds = new Set<string>();
@@ -2432,6 +2434,7 @@ class ClaudeAgentSession implements AgentSession {
     this.activeForegroundTurnId = turnId;
     this.foregroundHasVisibleActivity = false;
     this.activeTurnHasAssistantText = false;
+    this.activeUsageLimit = undefined;
     this.contextUsage.beginTurn();
     this.transitionTurnState("foreground", "foreground turn started");
     this.clearRecentStderr();
@@ -3729,6 +3732,7 @@ class ClaudeAgentSession implements AgentSession {
       error: normalized,
       ...(code ? { code } : {}),
       ...(diagnostic ? { diagnostic } : {}),
+      ...(this.activeUsageLimit ? { usageLimit: this.activeUsageLimit } : {}),
     };
   }
 
@@ -3845,6 +3849,7 @@ class ClaudeAgentSession implements AgentSession {
     this.activeForegroundTurnId = null;
     this.activeForegroundQuery = null;
     this.activeForegroundInput = null;
+    this.activeUsageLimit = undefined;
     this.cancelCurrentTurn = null;
     this.activeTurnHasAssistantText = false;
     this.compactionMarkerOpen = false;
@@ -3859,6 +3864,7 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     if (terminalSeen) {
+      this.activeUsageLimit = undefined;
       this.compactionMarkerOpen = false;
       if (this.activeForegroundTurnId) {
         this.activeForegroundTurnId = null;
@@ -3897,6 +3903,7 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     this.notifySubscribers({ type: "turn_completed", provider: "claude" });
+    this.activeUsageLimit = undefined;
     this.autonomousTurn = null;
     this.activeForegroundQuery = null;
     this.activeForegroundInput = null;
@@ -4379,6 +4386,7 @@ class ClaudeAgentSession implements AgentSession {
       return this.translateSidechainFrameToEvents(message, parentToolUseId);
     }
 
+    this.observeUsageLimit(message);
     const events: AgentStreamEvent[] = [];
     this.appendTaskStateEvent(message, events);
 
@@ -4457,6 +4465,24 @@ class ClaudeAgentSession implements AgentSession {
     if (!lifecycle || lifecycle.state === "queued") return;
     this.unstartedMessageUuids.delete(lifecycle.commandUuid);
     this.permissionClearingSteerUuids.delete(lifecycle.commandUuid);
+  }
+
+  private observeUsageLimit(message: SDKMessage): void {
+    if (message.type === "assistant" && message.error === "rate_limit") {
+      this.activeUsageLimit ??= { resetsAt: null };
+      return;
+    }
+    if (message.type !== "rate_limit_event") return;
+    const info = message.rate_limit_info;
+    const usingOverage = info.isUsingOverage || info.overageInUse;
+    if (info.status !== "rejected" || usingOverage) {
+      this.activeUsageLimit = undefined;
+      return;
+    }
+    const resetMs = (info.resetsAt ?? 0) * 1000;
+    const reset = new Date(resetMs);
+    const hasFutureReset = Number.isFinite(reset.getTime()) && resetMs > Date.now();
+    this.activeUsageLimit = { resetsAt: hasFutureReset ? reset.toISOString() : null };
   }
 
   private appendTaskStateEvent(message: SDKMessage, events: AgentStreamEvent[]): void {
@@ -4781,6 +4807,12 @@ class ClaudeAgentSession implements AgentSession {
     events: AgentStreamEvent[],
   ): void {
     const usage = this.convertUsage(message);
+    if (this.activeUsageLimit && (message.is_error || message.subtype !== "success")) {
+      const error = message.subtype === "success" ? message.result : message.errors.join("\n");
+      events.push(...this.sidechainTracker.finishAll("failed"));
+      events.push(this.buildTurnFailedEvent(error || "Usage limit reached"));
+      return;
+    }
     if (message.subtype === "success") {
       events.push(...this.sidechainTracker.finishAll("completed"));
       // Built-in slash commands (e.g. /voice, /usage, "Unknown command: …")

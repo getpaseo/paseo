@@ -250,6 +250,14 @@ export const ko: TranslationResources = {
     },
   },
   agentPanel: {
+    usageLimit: {
+      label: "사용량 제한 해제 후 계속",
+      enabled: "이 채팅에서 활성화되었습니다. 호스트를 켜 두세요.",
+      available: "사용량 제한에 도달했습니다. {{at}}부터 다시 시도할 수 있습니다.",
+      scheduled: "호스트가 실행 중이면 {{at}}에 계속합니다.",
+      unknownReset: "공급자가 제한 해제 시각을 제공하지 않았습니다. 수동으로 계속하세요.",
+      saving: "저장 중…",
+    },
     states: {
       notFound: "에이전트를 찾을 수 없습니다",
       failedToLoad: "에이전트를 불러오지 못했습니다",

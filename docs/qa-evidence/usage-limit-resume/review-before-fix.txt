@@ -1,0 +1,77 @@
+npm notice run paseo@0.12.0-beta.1 npx
+npm notice run 'vitest' run packages/server/src/server/agent/usage-limit-resume.test.ts
+
+ RUN  v4.1.7 /home/bobik/src/paseo-worktrees/resume-after-usage-limit
+
+ ❯ packages/server/src/server/agent/usage-limit-resume.test.ts (14 tests | 3 failed) 150ms
+   × switch-off received during a durable claim prevents automatic dispatch 4ms
+   × switch-off received during cold provider recovery prevents automatic dispatch 3ms
+   × a failed durable claim preserves the wait and retries after storage recovers 2ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/server/src/server/agent/usage-limit-resume.test.ts > switch-off received during a durable claim prevents automatic dispatch
+AssertionError: expected [ { type: 'user_message', …(3) } ] to have a length of +0 but got 1
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ packages/server/src/server/agent/usage-limit-resume.test.ts:249:61
+    247|   await Promise.all([tick, disable]);
+    248|   await fixture.manager.flushForShutdown();
+    249|   expect(resumedMessages(fixture.manager, fixture.agentId)).toHaveLeng…
+       |                                                             ^
+    250|   expect((await fixture.registry.get(fixture.agentId))?.labels[AUTO_RE…
+    251| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  packages/server/src/server/agent/usage-limit-resume.test.ts > switch-off received during cold provider recovery prevents automatic dispatch
+AssertionError: expected [ { type: 'user_message', …(3) } ] to have a length of +0 but got 1
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ packages/server/src/server/agent/usage-limit-resume.test.ts:266:61
+    264|   await Promise.all([tick, disable]);
+    265|   await fixture.manager.flushForShutdown();
+    266|   expect(resumedMessages(fixture.manager, fixture.agentId)).toHaveLeng…
+       |                                                             ^
+    267|   expect((await fixture.registry.get(fixture.agentId))?.labels[AUTO_RE…
+    268| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  packages/server/src/server/agent/usage-limit-resume.test.ts > a failed durable claim preserves the wait and retries after storage recovers
+AssertionError: expected undefined to deeply equal { Object (resetsAt) }
+
+- Expected:
+{
+  "resetsAt": "2026-10-17T03:26:41.290Z",
+}
+
++ Received:
+undefined
+
+ ❯ packages/server/src/server/agent/usage-limit-resume.test.ts:278:65
+    276|   await service.tick();
+    277|   expect(resumedMessages(fixture.manager, fixture.agentId)).toHaveLeng…
+    278|   expect(fixture.manager.getAgent(fixture.agentId)?.usageLimit).toEqua…
+       |                                                                 ^
+    279|   expect((await fixture.registry.get(fixture.agentId))?.usageLimit).to…
+    280|   await service.tick();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 11 passed (14)
+   Start at  06:28:40
+   Duration  527ms (transform 188ms, setup 0ms, import 317ms, tests 150ms, environment 0ms)
+

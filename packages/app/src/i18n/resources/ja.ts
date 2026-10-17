@@ -252,6 +252,14 @@ export const ja: TranslationResources = {
     },
   },
   agentPanel: {
+    usageLimit: {
+      label: "利用制限の解除後に再開",
+      enabled: "このチャットで有効です。ホストを起動したままにしてください。",
+      available: "利用制限に達しました。{{at}}から再試行できます。",
+      scheduled: "ホストが稼働していれば{{at}}に再開します。",
+      unknownReset: "プロバイダーから解除時刻が通知されませんでした。手動で再開してください。",
+      saving: "保存中…",
+    },
     states: {
       notFound: "エージェントが見つかりません",
       failedToLoad: "エージェントの読み込みに失敗しました",

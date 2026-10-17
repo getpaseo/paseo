@@ -2060,3 +2060,141 @@ test("does not use stream_event uuid as assistant message identity when message_
 
   await session.close();
 });
+
+test.each(["success", "error_during_execution"])(
+  "exposes a rejected subscription limit on a %s result",
+  async (subtype) => {
+    const resetsAt = Math.ceil(Date.now() / 1000) + 18_000;
+    const frames = [
+      { type: "system", subtype: "init", session_id: "limited-session", model: "opus" },
+      {
+        type: "rate_limit_event",
+        rate_limit_info: { status: "rejected", resetsAt, rateLimitType: "five_hour" },
+      },
+      {
+        type: "assistant",
+        error: "rate_limit",
+        message: { content: [{ type: "text", text: "You've hit your session limit" }] },
+      },
+      {
+        type: "result",
+        subtype,
+        is_error: true,
+        result: "You've hit your session limit",
+        errors: ["Usage limit reached"],
+        usage: buildUsage(),
+      },
+    ];
+    sdkQueryFactory.mockImplementation(() =>
+      createBaseQueryMock(
+        vi.fn(async () => {
+          const value = frames.shift();
+          return value ? { done: false, value } : { done: true, value: undefined };
+        }),
+      ),
+    );
+    const session = await createSession();
+    try {
+      const events = await collectUntilTerminal(streamSession(session, "continue the task"));
+      expect(events.at(-1)).toMatchObject({
+        type: "turn_failed",
+        provider: "claude",
+        usageLimit: { resetsAt: new Date(resetsAt * 1000).toISOString() },
+      });
+      expect(events.filter((event) => event.type === "turn_completed")).toHaveLength(0);
+    } finally {
+      await session.close();
+    }
+  },
+);
+
+test.each([
+  { status: "allowed_warning", resetsAt: 4_000_000_000 },
+  { status: "rejected", resetsAt: 4_000_000_000, isUsingOverage: true },
+])("does not turn an advisory or overage event into a failure: %j", async (info) => {
+  const frames = [
+    { type: "system", subtype: "init", session_id: "allowed-session", model: "opus" },
+    { type: "rate_limit_event", rate_limit_info: info },
+    { type: "result", subtype: "success", is_error: false, result: "done", usage: buildUsage() },
+  ];
+  sdkQueryFactory.mockImplementation(() =>
+    createBaseQueryMock(
+      vi.fn(async () => {
+        const value = frames.shift();
+        return value ? { done: false, value } : { done: true, value: undefined };
+      }),
+    ),
+  );
+  const session = await createSession();
+  try {
+    const events = await collectUntilTerminal(streamSession(session, "hello"));
+    expect(events.at(-1)).toMatchObject({ type: "turn_completed" });
+  } finally {
+    await session.close();
+  }
+});
+
+test.each([undefined, 1, Number.NaN, Number.MAX_VALUE])(
+  "does not guess a reset time from error prose: %s",
+  async (resetsAt) => {
+    const frames = [
+      { type: "system", subtype: "init", session_id: "unknown-reset-session", model: "opus" },
+      { type: "rate_limit_event", rate_limit_info: { status: "rejected", resetsAt } },
+      {
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        errors: ["You've hit your session limit · resets 9:40am (Europe/Moscow)"],
+        usage: buildUsage(),
+      },
+    ];
+    sdkQueryFactory.mockImplementation(() =>
+      createBaseQueryMock(
+        vi.fn(async () => {
+          const value = frames.shift();
+          return value ? { done: false, value } : { done: true, value: undefined };
+        }),
+      ),
+    );
+    const session = await createSession();
+    try {
+      const events = await collectUntilTerminal(streamSession(session, "hello"));
+      expect(events.at(-1)).toMatchObject({ type: "turn_failed", usageLimit: { resetsAt: null } });
+    } finally {
+      await session.close();
+    }
+  },
+);
+
+test("an autonomous turn's usage limit does not leak into a later unrelated failure", async () => {
+  const session = await createSession();
+  const internal: SessionStateInternals = asInternals(session);
+  const query = createPendingQueryMock();
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  const failure = {
+    ...successResult(),
+    subtype: "error_during_execution",
+    is_error: true,
+    errors: ["Request failed"],
+  };
+  try {
+    await internal.routeSdkMessageFromPump(claudeTurnInit(), query);
+    await internal.routeSdkMessageFromPump(
+      {
+        ...rateLimitEvent,
+        rate_limit_info: { status: "rejected", resetsAt: Math.ceil(Date.now() / 1000) + 18_000 },
+      },
+      query,
+    );
+    await internal.routeSdkMessageFromPump(failure, query);
+    await internal.routeSdkMessageFromPump(claudeTurnInit(), query);
+    await internal.routeSdkMessageFromPump(failure, query);
+    const failures = events.filter((event) => event.type === "turn_failed");
+    expect(failures).toHaveLength(2);
+    expect(failures[0]).toHaveProperty("usageLimit.resetsAt");
+    expect(failures[1]).not.toHaveProperty("usageLimit");
+  } finally {
+    await session.close();
+  }
+});
