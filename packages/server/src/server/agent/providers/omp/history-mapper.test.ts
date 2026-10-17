@@ -1244,4 +1244,57 @@ describe("OMP history mapper", () => {
       ]),
     );
   });
+
+  test("replays grep and semantic find results with their extracted text", async () => {
+    const events = await collectHistory([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "grep-1",
+            name: "grep",
+            arguments: { pattern: "parseToolResult", path: "src" },
+          },
+          {
+            type: "toolCall",
+            id: "find-1",
+            name: "find",
+            arguments: { query: "handleToolResult", grep_keywords: ["parseToolResult"] },
+          },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "grep-1",
+        toolName: "grep",
+        content: [{ type: "text", text: "src/detail.ts:240:export function parseToolResult" }],
+        details: { matchCount: 1, fileCount: 1, truncated: false },
+        isError: false,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "find-1",
+        toolName: "find",
+        content: [{ type: "text", text: "src/agent.ts:1871:parseToolResult(event.result)" }],
+        details: { matchCount: 1, fileCount: 1, truncated: false },
+        isError: false,
+      },
+    ]);
+    const details = events.flatMap((event) =>
+      event.item.type === "tool_call" ? [event.item.detail] : [],
+    );
+    expect(details).toContainEqual({
+      type: "search",
+      query: "parseToolResult",
+      toolName: "grep",
+      content: "src/detail.ts:240:export function parseToolResult",
+    });
+    expect(details).toContainEqual({
+      type: "search",
+      query: "handleToolResult",
+      toolName: "search",
+      content: "src/agent.ts:1871:parseToolResult(event.result)",
+    });
+  });
 });

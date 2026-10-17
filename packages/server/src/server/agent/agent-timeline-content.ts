@@ -52,9 +52,29 @@ function limitPlainText(item: AgentTimelineItem): AgentTimelineItem {
   };
 }
 
+function limitSearchDetail(item: AgentTimelineItem): AgentTimelineItem {
+  if (
+    item.type !== "tool_call" ||
+    item.detail.type !== "search" ||
+    typeof item.detail.content !== "string" ||
+    item.detail.content.length <= TOOL_CALL_CONTENT_MAX_LENGTH
+  ) {
+    return item;
+  }
+  return {
+    ...item,
+    detail: {
+      ...item.detail,
+      content: item.detail.content.slice(0, TOOL_CALL_CONTENT_MAX_LENGTH),
+      truncated: true,
+    },
+  };
+}
+
 export function limitAgentTimelineItemContent(item: AgentTimelineItem): AgentTimelineItem {
   item = limitFailedShellError(item);
   item = limitPlainText(item);
+  item = limitSearchDetail(item);
   if (
     item.type !== "tool_call" ||
     item.detail.type !== "shell" ||
