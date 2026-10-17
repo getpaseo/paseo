@@ -16,6 +16,7 @@ import { isPlatform } from "../test-utils/platform.js";
 import { startPathContainmentMetrics, stopPathContainmentMetrics } from "./path.js";
 import { startGitCommandMetrics, stopGitCommandMetrics } from "./run-git-command.js";
 import {
+  type DirectoryListingEntry,
   searchDirectoryEntries,
   WORKSPACE_SEARCH_HIDDEN_DIRECTORIES,
 } from "./directory-suggestions.js";
@@ -77,6 +78,15 @@ async function searchRelativeDirectoryEntries(options: {
 function initGitRepo(directory: string, ignorePatterns: string): void {
   execFileSync("git", ["init", "-q"], { cwd: directory });
   writeFileSync(path.join(directory, ".gitignore"), ignorePatterns);
+}
+
+function listingEntry(name: string, kind: "file" | "directory"): DirectoryListingEntry {
+  return {
+    name,
+    isDirectory: () => kind === "directory",
+    isFile: () => kind === "file",
+    isSymbolicLink: () => false,
+  };
 }
 
 describe("searchDirectoryEntries", () => {
@@ -352,6 +362,75 @@ describe("searchDirectoryEntries", () => {
         maxEntriesScanned: 2,
       }),
     ).resolves.toEqual([{ path: "z-projects/paseo-target", kind: "directory" }]);
+  });
+
+  it("caps the entries read from one directory", async () => {
+    const capRoot = path.join(searchRoot, "entry-cap");
+    mkdirSync(capRoot);
+    for (let index = 0; index < 10; index += 1) {
+      writeFileSync(path.join(capRoot, `entry-${index}.txt`), "");
+    }
+    const options = {
+      root: capRoot,
+      query: "~",
+      rootAliases: ["~"],
+      pathFormat: "relative" as const,
+      includeFiles: true,
+    };
+
+    await expect(
+      searchDirectoryEntries({ ...options, maxEntriesPerDirectory: 3 }),
+    ).resolves.toHaveLength(3);
+    // The truncated listing above was not cached as the whole directory.
+    await expect(
+      searchDirectoryEntries({ ...options, maxEntriesPerDirectory: 100 }),
+    ).resolves.toHaveLength(10);
+  });
+
+  it("keeps searching sibling directories after capping a large one", async () => {
+    const capRoot = path.join(searchRoot, "sibling-cap");
+    mkdirSync(path.join(capRoot, "a-files"), { recursive: true });
+    mkdirSync(path.join(capRoot, "b-folders", "target-folder"), { recursive: true });
+    for (let index = 0; index < 10; index += 1) {
+      writeFileSync(path.join(capRoot, "a-files", `entry-${index}.txt`), "");
+    }
+
+    await expect(
+      searchDirectoryEntries({
+        root: capRoot,
+        query: "target-folder",
+        pathFormat: "relative",
+        includeFiles: false,
+        maxEntriesPerDirectory: 5,
+      }),
+    ).resolves.toEqual([{ path: "b-folders/target-folder", kind: "directory" }]);
+  });
+
+  it("counts excluded files toward the per-directory cap", async () => {
+    const capRoot = path.join(searchRoot, "file-cap");
+    mkdirSync(path.join(capRoot, "target-folder"), { recursive: true });
+    // Listing order depends on the filesystem, so the injected listing puts ten files first.
+    const openDirectory = async (directory: string) =>
+      (async function* () {
+        if (directory !== capRoot) return;
+        for (let index = 0; index < 10; index += 1)
+          yield listingEntry(`entry-${index}.txt`, "file");
+        yield listingEntry("target-folder", "directory");
+      })();
+    const options = {
+      root: capRoot,
+      query: "target-folder",
+      pathFormat: "relative" as const,
+      includeFiles: false,
+      openDirectory,
+    };
+
+    await expect(
+      searchDirectoryEntries({ ...options, maxEntriesPerDirectory: 5 }),
+    ).resolves.toEqual([]);
+    await expect(
+      searchDirectoryEntries({ ...options, maxEntriesPerDirectory: 11 }),
+    ).resolves.toEqual([{ path: "target-folder", kind: "directory" }]);
   });
 
   it("applies ignored-directory policy to parent-scoped queries", async () => {
