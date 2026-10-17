@@ -4,6 +4,17 @@ import path from "node:path";
 import pLimit from "p-limit";
 import { scorePathMatch, type MatchScore } from "@getpaseo/protocol/search/text-match";
 import { isPathInsideRoot } from "./path.js";
+import {
+  characterMask,
+  compactQuery,
+  containsCompact,
+  isAscii,
+  keepBest,
+  mayMatch,
+  type BuildIndex,
+  type IndexedEntry,
+  type PathIndexes,
+} from "./path-index.js";
 import { runGitCommand } from "./run-git-command.js";
 
 export type DirectorySuggestionKind = "file" | "directory";
@@ -36,6 +47,7 @@ export interface SearchDirectoryEntriesOptions {
   // Absolute paths that discovery never walks into. A path the caller types explicitly still
   // resolves, and browsing inside one lists a single level at a time.
   excludedDiscoveryPaths?: readonly string[];
+  pathIndexes?: PathIndexes;
 }
 
 interface QueryPlan {
@@ -111,6 +123,11 @@ const NO_SEGMENT_INDEX = Number.MAX_SAFE_INTEGER;
 const NO_MATCH_OFFSET = Number.MAX_SAFE_INTEGER;
 const NO_FUZZY_SCORE = Number.MAX_SAFE_INTEGER;
 const NO_MATCH_TIER = 5;
+const FALLBACK_TIER = 4;
+const INDEX_BUILD_YIELD_MS = 5;
+const URGENT_INDEX_BUILD_CONCURRENCY = 2;
+const INDEX_BUILD_MAX_YIELD_MS = 10_000;
+const INDEX_BUILD_BATCH = 64;
 
 // Each pending fs call holds one of libuv's shared threadpool threads (4 by default), and a read on
 // a hung mount or a protected folder never returns. Searches pile up while the user types, so they
@@ -119,6 +136,7 @@ const NO_MATCH_TIER = 5;
 // thread between them instead of both.
 const filesystemCalls = pLimit(2);
 const pendingFilesystemCalls = new Map<string, Promise<unknown>>();
+let activeWalks = 0;
 
 function sharedFilesystemCall<T>(key: string, call: () => Promise<T>): Promise<T> {
   const pending = pendingFilesystemCalls.get(key);
@@ -271,6 +289,8 @@ function buildSearchInput(
     confidentResultScanThreshold: options.confidentResultScanThreshold,
     gitIgnoredPaths,
     excludedDiscoveryPaths,
+    respectGitIgnore: options.respectGitIgnore ?? false,
+    pathIndexes: options.pathIndexes,
   };
 }
 
@@ -307,6 +327,8 @@ interface SearchInput {
   confidentResultScanThreshold: number | undefined;
   gitIgnoredPaths: Set<string>;
   excludedDiscoveryPaths: Set<string>;
+  respectGitIgnore: boolean;
+  pathIndexes: PathIndexes | undefined;
 }
 
 async function searchChildren(input: SearchInput): Promise<RankedEntry[]> {
@@ -336,6 +358,30 @@ async function searchTree(
   start: WalkStart = { visiblePath: input.root, resolvedPath: input.root },
 ): Promise<RankedEntry[]> {
   if (!(input.maxEntriesScanned > 0)) return [];
+  const pathIndexes = input.pathIndexes;
+  if (!pathIndexes || start.resolvedPath !== input.root || start.visiblePath !== input.root) {
+    return walkTree(input, start);
+  }
+  const key = indexKey(input);
+  const signature = ignoreSignature(input.gitIgnoredPaths);
+  const build: BuildIndex = (isUrgent) => buildIndex(input, pathIndexes.maxEntries, isUrgent);
+  const entries = await pathIndexes.get(key, signature, build);
+  if (entries && pathIndexes.watched) return searchIndex(entries, input);
+  const walked = await walkTree(input, start);
+  pathIndexes.prepare(key, input.root, signature, build);
+  return entries ? [...walked, ...searchIndex(entries, input)] : walked;
+}
+
+async function walkTree(input: SearchInput, start: WalkStart): Promise<RankedEntry[]> {
+  activeWalks += 1;
+  try {
+    return await walkTreeBranches(input, start);
+  } finally {
+    activeWalks -= 1;
+  }
+}
+
+async function walkTreeBranches(input: SearchInput, start: WalkStart): Promise<RankedEntry[]> {
   const roots = (await readChildren(start.resolvedPath)).filter((entry) =>
     staysInsideRoot(entry, input.root),
   );
@@ -366,6 +412,239 @@ async function searchTree(
       break;
   }
   return ranked;
+}
+
+function indexKey(input: SearchInput): string {
+  return JSON.stringify([
+    input.root,
+    input.includeFiles,
+    input.maxDepth,
+    input.respectGitIgnore,
+    [...input.hiddenDirectoryNames].sort(),
+    [...input.excludedDiscoveryPaths].sort(),
+  ]);
+}
+
+const ignoreSignatures = new WeakMap<Set<string>, string>();
+
+function ignoreSignature(gitIgnoredPaths: Set<string>): string {
+  let signature = ignoreSignatures.get(gitIgnoredPaths);
+  if (signature === undefined) {
+    signature = [...gitIgnoredPaths].sort().join("\0");
+    ignoreSignatures.set(gitIgnoredPaths, signature);
+  }
+  return signature;
+}
+
+interface IndexedDirectory {
+  resolvedPath: string;
+  relativePath: string;
+  depth: number;
+}
+
+interface IndexBuild {
+  entries: IndexedEntry[];
+  visited: Set<string>;
+  next: IndexedDirectory[];
+  links: IndexedDirectory[];
+}
+
+async function buildIndex(
+  input: SearchInput,
+  maxEntries: number,
+  isUrgent: () => boolean,
+): Promise<IndexedEntry[] | null> {
+  const yieldUntil = Date.now() + INDEX_BUILD_MAX_YIELD_MS;
+  const into: IndexBuild = { entries: [], visited: new Set([input.root]), next: [], links: [] };
+  let level: IndexedDirectory[] = [{ resolvedPath: input.root, relativePath: "", depth: 0 }];
+  while (level.length > 0) {
+    for (let start = 0; start < level.length; start += INDEX_BUILD_BATCH) {
+      const batch = level.slice(start, start + INDEX_BUILD_BATCH);
+      const listings = await listBatch(batch, isUrgent, yieldUntil);
+      for (const [index, children] of listings.entries()) {
+        if (!indexChildren(batch[index], children, input, into, maxEntries)) return null;
+      }
+    }
+    level = into.next.length > 0 ? into.next : unvisitedLinks(into);
+    into.next = [];
+  }
+  return into.entries;
+}
+
+function unvisitedLinks(into: IndexBuild): IndexedDirectory[] {
+  const links = into.links.filter((link) => !into.visited.has(link.resolvedPath));
+  for (const link of links) into.visited.add(link.resolvedPath);
+  into.links = [];
+  return links;
+}
+
+async function listBatch(
+  batch: IndexedDirectory[],
+  isUrgent: () => boolean,
+  yieldUntil: number,
+): Promise<ChildEntry[][]> {
+  const listings: ChildEntry[][] = [];
+  let next = 0;
+  const worker = async () => {
+    while (next < batch.length) {
+      const index = next;
+      next += 1;
+      listings[index] = await listWhenSearchesIdle(batch[index].resolvedPath, isUrgent, yieldUntil);
+    }
+  };
+  const workers = isUrgent() ? URGENT_INDEX_BUILD_CONCURRENCY : 1;
+  await Promise.all(Array.from({ length: workers }, worker));
+  return listings;
+}
+
+function searchesAreWaiting(): boolean {
+  return activeWalks > 0 || filesystemCalls.pendingCount > 0;
+}
+
+async function listWhenSearchesIdle(
+  directory: string,
+  isUrgent: () => boolean,
+  yieldUntil: number,
+): Promise<ChildEntry[]> {
+  while (!isUrgent() && searchesAreWaiting() && Date.now() < yieldUntil) {
+    await new Promise((resolve) => setTimeout(resolve, INDEX_BUILD_YIELD_MS));
+  }
+  return listForIndex(directory);
+}
+
+async function listForIndex(directory: string): Promise<ChildEntry[]> {
+  const dirents = await readdir(directory).catch(() => [] as Dirent[]);
+  const prefix = directory.endsWith(path.sep) ? directory : directory + path.sep;
+  const children: ChildEntry[] = [];
+  const links: Array<Promise<ChildEntry | null>> = [];
+  for (const dirent of dirents) {
+    const entry = toRawChildEntry(dirent);
+    if (!entry) continue;
+    if (entry.kind === "symlink") {
+      links.push(resolveChild(directory, entry));
+      continue;
+    }
+    children.push({
+      name: entry.name,
+      resolvedPath: prefix + entry.name,
+      kind: entry.kind,
+      viaSymlink: false,
+    });
+  }
+  for (const link of await Promise.all(links)) {
+    if (link) children.push(link);
+  }
+  return children;
+}
+
+function indexChildren(
+  parent: IndexedDirectory,
+  children: ChildEntry[],
+  input: SearchInput,
+  into: IndexBuild,
+  maxEntries: number,
+): boolean {
+  for (const child of children) {
+    if (!staysInsideRoot(child, input.root) || !shouldDiscover(child, input)) continue;
+    const relativePath = parent.relativePath ? `${parent.relativePath}/${child.name}` : child.name;
+    if (!child.name.startsWith(".")) {
+      const lowerPath = relativePath.toLowerCase();
+      into.entries.push({
+        kind: child.kind,
+        relativePath,
+        lowerPath,
+        mask: characterMask(lowerPath),
+        ascii: isAscii(relativePath),
+      });
+      if (into.entries.length > maxEntries) return false;
+    }
+    const depth = parent.depth + 1;
+    if (
+      child.kind !== "directory" ||
+      into.visited.has(child.resolvedPath) ||
+      depth >= input.maxDepth
+    )
+      continue;
+    const directory = { resolvedPath: child.resolvedPath, relativePath, depth };
+    if (child.viaSymlink) {
+      into.links.push(directory);
+      continue;
+    }
+    into.visited.add(child.resolvedPath);
+    into.next.push(directory);
+  }
+  return true;
+}
+
+interface IndexQuery {
+  suffix: boolean;
+  rankQuery: string;
+  query: string;
+  compact: string;
+  mask: number;
+  rootPrefix: string;
+}
+
+function searchIndex(entries: IndexedEntry[], input: SearchInput): RankedEntry[] {
+  const suffix = input.matchMode === "suffix";
+  const rankQuery = getRankQuery(input);
+  const query = suffix ? input.plan.normalizedQuery.toLowerCase() : rankQuery;
+  const compact = compactQuery(query);
+  const search: IndexQuery = {
+    suffix,
+    rankQuery,
+    query,
+    compact,
+    mask: characterMask(compact),
+    rootPrefix: input.root.endsWith(path.sep) ? input.root : input.root + path.sep,
+  };
+  const best: RankedEntry[] = [];
+  for (const entry of entries) {
+    if (entry.kind === "directory" ? !input.includeDirectories : !input.includeFiles) continue;
+    if (!mayMatch(entry, compact, search.mask)) continue;
+    const worst = best.length === input.limit ? best[best.length - 1] : null;
+    if (worst && onlyFallbackMatch(entry, worst, input, search)) continue;
+    const fields = rankFields(entry.relativePath, entry.lowerPath, input, rankQuery);
+    if (!matchesIndexQuery(entry, fields, input, search)) continue;
+    if (worst && compareFields(fields, entry.kind, worst) > 0) continue;
+    const ranked = { path: indexedVisiblePath(entry, search), kind: entry.kind, ...fields };
+    keepBest(best, ranked, input.limit, compareRank);
+  }
+  return best;
+}
+
+function onlyFallbackMatch(
+  entry: IndexedEntry,
+  worst: RankedEntry,
+  input: SearchInput,
+  search: IndexQuery,
+): boolean {
+  return (
+    worst.matchTier < FALLBACK_TIER &&
+    entry.ascii &&
+    !search.suffix &&
+    !input.plan.isPathQuery &&
+    !entry.lowerPath.includes(search.rankQuery) &&
+    !containsCompact(entry.lowerPath, search.compact)
+  );
+}
+
+function matchesIndexQuery(
+  entry: IndexedEntry,
+  fields: RankedFields,
+  input: SearchInput,
+  search: IndexQuery,
+): boolean {
+  if (!input.plan.normalizedQuery) return true;
+  return search.suffix
+    ? suffixMatchesRelative(entry.lowerPath, search.query)
+    : fields.matchTier !== NO_MATCH_TIER;
+}
+
+function indexedVisiblePath(entry: IndexedEntry, search: IndexQuery): string {
+  const relative =
+    path.sep === "/" ? entry.relativePath : entry.relativePath.replaceAll("/", path.sep);
+  return search.rootPrefix + relative;
 }
 
 async function* walkBranch(
@@ -478,19 +757,32 @@ function shouldSuggest(entry: TraversedEntry, input: SearchInput): boolean {
 
 function rank(entry: TraversedEntry, input: SearchInput): RankedEntry {
   const relativePath = normalizeRelativePath(input.root, entry.visiblePath);
-  const lowerPath = relativePath.toLowerCase();
-  const query = getRankQuery(input);
-  const segments = lowerPath === "." ? [] : lowerPath.split("/");
-  const pathScore = query ? scorePathMatch(query, relativePath) : null;
-  const rankFields = input.plan.isPathQuery
-    ? rankPathMatch(pathScore)
-    : rankTextMatch({ query, lowerPath, pathFormat: input.pathFormat, pathScore, segments });
-  return {
-    path: entry.visiblePath,
-    kind: entry.kind,
-    ...rankFields,
-    depth: relativePath === "." ? 0 : segments.length,
-  };
+  const fields = rankFields(relativePath, relativePath.toLowerCase(), input, getRankQuery(input));
+  return { path: entry.visiblePath, kind: entry.kind, ...fields };
+}
+
+interface RankedFields extends RankFields {
+  depth: number;
+}
+
+function rankFields(
+  relativePath: string,
+  lowerPath: string,
+  input: SearchInput,
+  query: string,
+): RankedFields {
+  const fields = input.plan.isPathQuery
+    ? rankPathMatch(query ? scorePathMatch(query, relativePath) : null)
+    : rankTextMatch(query, relativePath, lowerPath, input.pathFormat);
+  return { ...fields, depth: relativePath === "." ? 0 : countSegments(lowerPath) };
+}
+
+function countSegments(lowerPath: string): number {
+  let count = 1;
+  for (let index = lowerPath.indexOf("/"); index >= 0; index = lowerPath.indexOf("/", index + 1)) {
+    count += 1;
+  }
+  return count;
 }
 
 function getRankQuery(input: SearchInput): string {
@@ -508,16 +800,15 @@ function rankPathMatch(pathScore: MatchScore | null): RankFields {
   };
 }
 
-function rankTextMatch(input: {
-  query: string;
-  lowerPath: string;
-  pathFormat: DirectorySuggestionPathFormat;
-  pathScore: MatchScore | null;
-  segments: string[];
-}): RankFields {
-  const { query, lowerPath, pathFormat, pathScore, segments } = input;
+function rankTextMatch(
+  query: string,
+  relativePath: string,
+  lowerPath: string,
+  pathFormat: DirectorySuggestionPathFormat,
+): RankFields {
   const offset = lowerPath.indexOf(query);
-  const fuzzyScore = scoreFuzzySubsequence(query, segments.at(-1) ?? "");
+  const lastSegment = lowerPath === "." ? "" : lowerPath.slice(lowerPath.lastIndexOf("/") + 1);
+  const fuzzyScore = scoreFuzzySubsequence(query, lastSegment);
   if (!query) {
     return {
       matchTier: 3,
@@ -526,7 +817,7 @@ function rankTextMatch(input: {
       fuzzyScore: NO_FUZZY_SCORE,
     };
   }
-  const segmentRank = rankSegmentMatch({ query, segments, offset, fuzzyScore });
+  const segmentRank = offset >= 0 ? rankSegmentMatch(query, lowerPath, offset, fuzzyScore) : null;
   if (segmentRank) return segmentRank;
   if (pathFormat === "relative" ? lowerPath.startsWith(query) : offset >= 0) {
     return {
@@ -544,50 +835,44 @@ function rankTextMatch(input: {
       fuzzyScore,
     };
   }
-  return {
-    matchTier: pathScore ? Math.min(pathScore.tier, 4) : NO_MATCH_TIER,
-    segmentIndex: NO_SEGMENT_INDEX,
-    matchOffset: pathScore?.offset ?? NO_MATCH_OFFSET,
-    fuzzyScore: pathScore?.spread ?? NO_FUZZY_SCORE,
-  };
+  return rankPathMatch(scorePathMatch(query, relativePath));
 }
 
-function rankSegmentMatch(input: {
-  query: string;
-  segments: string[];
-  offset: number;
-  fuzzyScore: number | null;
-}): RankFields | null {
-  const { query, segments, offset, fuzzyScore } = input;
-  const matchOffset = offset >= 0 ? offset : NO_MATCH_OFFSET;
-  const exact = findSegmentMatchIndex(segments, (segment) => segment === query);
-  if (exact >= 0) {
-    return {
-      matchTier: 0,
-      segmentIndex: exact,
-      matchOffset,
-      fuzzyScore: fuzzyScore ?? NO_FUZZY_SCORE,
-    };
+function rankSegmentMatch(
+  query: string,
+  lowerPath: string,
+  offset: number,
+  fuzzyScore: number | null,
+): RankFields | null {
+  if (lowerPath === "." || query.includes("/")) return null;
+  let exact = -1;
+  let prefix = -1;
+  let substring = -1;
+  let segment = 0;
+  let start = 0;
+  while (exact < 0) {
+    const separator = lowerPath.indexOf("/", start);
+    const end = separator < 0 ? lowerPath.length : separator;
+    const startsWithQuery = end - start >= query.length && lowerPath.startsWith(query, start);
+    if (startsWithQuery && end - start === query.length) exact = segment;
+    if (startsWithQuery && prefix < 0) prefix = segment;
+    if (substring < 0) {
+      const found = lowerPath.indexOf(query, start);
+      if (found >= 0 && found + query.length <= end) substring = segment;
+    }
+    if (separator < 0) break;
+    start = separator + 1;
+    segment += 1;
   }
-  const prefix = findSegmentMatchIndex(segments, (segment) => segment.startsWith(query));
-  if (prefix >= 0) {
-    return {
-      matchTier: 1,
-      segmentIndex: prefix,
-      matchOffset,
-      fuzzyScore: fuzzyScore ?? NO_FUZZY_SCORE,
-    };
-  }
-  const substring = findSegmentMatchIndex(segments, (segment) => segment.includes(query));
-  if (substring >= 0) {
-    return {
-      matchTier: 2,
-      segmentIndex: substring,
-      matchOffset,
-      fuzzyScore: fuzzyScore ?? NO_FUZZY_SCORE,
-    };
-  }
-  return null;
+  const found = [exact, prefix, substring];
+  const matchTier = found.findIndex((index) => index >= 0);
+  if (matchTier < 0) return null;
+  return {
+    matchTier,
+    segmentIndex: found[matchTier],
+    matchOffset: offset,
+    fuzzyScore: fuzzyScore ?? NO_FUZZY_SCORE,
+  };
 }
 
 function sortAndFormat(
@@ -616,14 +901,21 @@ function formatEntry(
 }
 
 function compareRank(left: RankedEntry, right: RankedEntry): number {
+  return compareFields(left, left.kind, right) || left.path.localeCompare(right.path);
+}
+
+function compareFields(
+  left: RankedFields,
+  kind: DirectorySuggestionKind,
+  right: RankedEntry,
+): number {
   return (
     left.matchTier - right.matchTier ||
     left.segmentIndex - right.segmentIndex ||
     left.matchOffset - right.matchOffset ||
     left.fuzzyScore - right.fuzzyScore ||
     left.depth - right.depth ||
-    compareKinds(left.kind, right.kind) ||
-    left.path.localeCompare(right.path)
+    compareKinds(kind, right.kind)
   );
 }
 
@@ -640,12 +932,13 @@ function hasConfidentResult(entries: RankedEntry[], query: string): boolean {
 }
 
 function suffixMatches(visiblePath: string, root: string, query: string): boolean {
+  return suffixMatchesRelative(normalizeRelativePath(root, visiblePath).toLowerCase(), query);
+}
+
+function suffixMatchesRelative(lowerRelativePath: string, query: string): boolean {
   const querySegments = query.toLowerCase().split("/").filter(Boolean);
   if (querySegments.length === 0) return false;
-  const pathSegments = normalizeRelativePath(root, visiblePath)
-    .toLowerCase()
-    .split("/")
-    .filter(Boolean);
+  const pathSegments = lowerRelativePath.split("/").filter(Boolean);
   const offset = pathSegments.length - querySegments.length;
   return (
     offset >= 0 && querySegments.every((segment, index) => pathSegments[offset + index] === segment)
@@ -880,13 +1173,6 @@ function scoreFuzzySubsequence(query: string, candidate: string): number | null 
     queryIndex += 1;
   }
   return queryIndex === query.length && first >= 0 ? first + gaps : null;
-}
-
-function findSegmentMatchIndex(
-  segments: string[],
-  predicate: (segment: string) => boolean,
-): number {
-  return segments.findIndex((segment) => predicate(segment));
 }
 
 function sameEntry(left: DirectorySuggestionEntry, right: DirectorySuggestionEntry): boolean {

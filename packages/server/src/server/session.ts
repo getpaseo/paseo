@@ -220,6 +220,7 @@ import {
   searchDirectoryEntries,
   WORKSPACE_SEARCH_HIDDEN_DIRECTORIES,
 } from "../utils/directory-suggestions.js";
+import { PathIndexes } from "../utils/path-index.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import type { Resolvable } from "./speech/provider-resolver.js";
 import type { SpeechReadinessSnapshot } from "./speech/speech-runtime.js";
@@ -282,6 +283,21 @@ type ProviderSubagentManagerEvent = Extract<
   AgentManagerEvent,
   { type: "provider_subagent" }
 >["event"];
+
+const HOME_PATH_INDEXES = new PathIndexes();
+const workspacePathIndexes = new WeakMap<WorkspaceGitService, PathIndexes>();
+
+function pathIndexesFor(workspaceGitService: WorkspaceGitService): PathIndexes {
+  let indexes = workspacePathIndexes.get(workspaceGitService);
+  if (!indexes) {
+    indexes = new PathIndexes({
+      watch: async (root, onChange) =>
+        (await workspaceGitService.requestWorkingTreeWatch(root, onChange)).unsubscribe,
+    });
+    workspacePathIndexes.set(workspaceGitService, indexes);
+  }
+  return indexes;
+}
 
 // TODO: Remove once all app store clients are on >=0.1.45 and understand arbitrary provider strings.
 // Clients before 0.1.45 validate providers with z.enum(["claude", "codex", "opencode"]) and reject
@@ -5147,6 +5163,9 @@ export class Session {
         includeDirectories,
         matchMode,
         limit,
+        pathIndexes: searchesWorkspace
+          ? pathIndexesFor(this.workspaceGitService)
+          : HOME_PATH_INDEXES,
       });
       const directories = entries
         .filter((entry) => entry.kind === "directory")
