@@ -1381,14 +1381,14 @@ export const zhCN: TranslationResources = {
         pid: "PID {{pid}}",
       },
       management: {
-        title: "管理内置 daemon",
-        hint: "让 Paseo 启动和停止内置 daemon",
+        title: "自动启动 daemon",
+        hint: "打开 Paseo 时启动内置 daemon",
         pauseTitle: "暂停内置 daemon",
         pauseMessage:
           "这会立即停止内置 daemon。连接到内置 daemon 的运行中 agents 和 terminals 会被停止。",
         pauseAndStop: "暂停并停止",
         registrationFailed:
-          "内置 daemon 已启动，但 Paseo 无法保存 localhost 连接。请关闭后重新开启 daemon 管理，或手动添加 localhost。",
+          "内置 daemon 已启动，但 Paseo 无法保存 localhost 连接。请重新启动一次，或手动添加 localhost。",
         pausedStopFailed: "内置 daemon 管理已暂停，但 Paseo 无法停止 daemon。",
         updateFailed: "无法更新内置 daemon 管理设置。",
       },

@@ -1421,14 +1421,14 @@ export const fr: TranslationResources = {
         pid: "PID {{pid}}",
       },
       management: {
-        title: "Gérer le daemon intégré",
-        hint: "Laisser Paseo démarrer et arrêter le daemon intégré",
+        title: "Démarrer le daemon automatiquement",
+        hint: "Le daemon intégré démarre à l’ouverture de Paseo",
         pauseTitle: "Suspendre le daemon intégré",
         pauseMessage:
           "Le daemon intégré sera arrêté immédiatement. Les agents en cours et les terminaux connectés au daemon intégré seront arrêtés.",
         pauseAndStop: "Suspendre et arrêter",
         registrationFailed:
-          "Le daemon intégré a démarré, mais Paseo n’a pas pu enregistrer la connexion localhost. Désactivez puis réactivez la gestion du daemon, ou ajoutez localhost manuellement.",
+          "Le daemon intégré a démarré, mais Paseo n’a pas pu enregistrer la connexion localhost. Réessayez de le démarrer, ou ajoutez localhost manuellement.",
         pausedStopFailed:
           "La gestion du daemon intégré a été suspendue, mais Paseo n’a pas pu arrêter le daemon.",
         updateFailed: "Impossible de mettre à jour la gestion du daemon intégré.",

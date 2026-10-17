@@ -1406,14 +1406,14 @@ export const ja: TranslationResources = {
         pid: "PID {{pid}}",
       },
       management: {
-        title: "組み込みデーモンを管理",
-        hint: "Paseoが組み込みデーモンを起動・停止できるようにする",
+        title: "デーモンを自動的に開始",
+        hint: "Paseo を開くと組み込みデーモンが起動します",
         pauseTitle: "組み込みデーモンを一時停止",
         pauseMessage:
           "これにより組み込みデーモンが即座に停止します。組み込みデーモンに接続されている実行中のエージェントとターミナルが停止されます。",
         pauseAndStop: "一時停止して停止",
         registrationFailed:
-          "組み込みデーモンは起動しましたが、Paseoがlocalhostの接続を保存できませんでした。デーモン管理をオフにしてから再度オンにするか、localhostを手動で追加してください。",
+          "組み込みデーモンは起動しましたが、Paseoがlocalhostの接続を保存できませんでした。もう一度起動するか、localhostを手動で追加してください。",
         pausedStopFailed:
           "組み込みデーモン管理は一時停止されましたが、Paseoがデーモンを停止できませんでした。",
         updateFailed: "組み込みデーモン管理を更新できません。",

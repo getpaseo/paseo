@@ -155,6 +155,54 @@ describe("daemon-manager commands", () => {
     expect(status.error).toBeTruthy();
   });
 
+  it("refuses a launch start when daemon management is disabled", async () => {
+    mocks.settings = {
+      releaseChannel: "stable",
+      daemon: { manageBuiltInDaemon: false, keepRunningAfterQuit: false },
+    };
+    const handlers = createDaemonCommandHandlers();
+
+    await expect(handlers.start_desktop_daemon({ reason: "launch" })).rejects.toThrow(
+      "Built-in daemon management is disabled.",
+    );
+  });
+
+  it("allows a manual start even when daemon management is disabled", async () => {
+    mocks.settings = {
+      releaseChannel: "stable",
+      daemon: { manageBuiltInDaemon: false, keepRunningAfterQuit: false },
+    };
+    // The daemon is already running, so start resolves without spawning.
+    mkdirSync(mocks.paseoHome);
+    writeFileSync(path.join(mocks.paseoHome, "server-id"), "srv_existing\n");
+    const lock = {
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+      hostname: hostname(),
+      uid: process.getuid?.() ?? 0,
+      listen: "127.0.0.1:6799",
+      desktopManaged: false,
+    };
+    writeFileSync(path.join(mocks.paseoHome, "paseo.pid"), JSON.stringify(lock));
+    mocks.runExternalCliJsonCommand.mockResolvedValue({
+      home: mocks.paseoHome,
+      serverId: "srv_existing",
+      pid: process.pid,
+      startedAt: lock.startedAt,
+      listen: "127.0.0.1:6799",
+      hostname: hostname(),
+      localDaemon: "running",
+      desktopManaged: false,
+      connectedDaemon: "not_probed",
+    });
+
+    const status = await createDaemonCommandHandlers().start_desktop_daemon({
+      reason: "manual",
+    });
+
+    expect(status).toMatchObject({ serverId: "srv_existing", status: "running", pid: process.pid });
+  });
+
   it("returns a local credential only for its live managed daemon listen", async () => {
     mkdirSync(mocks.paseoHome);
     const token = "a".repeat(43);
