@@ -156,12 +156,14 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     ...TimelineItemBaseShape,
     kind: z.literal("tool_call"),
+    latestTimestamp: IsoDateSchema.optional(),
     provider: AgentProviderSchema,
     item: AgentTimelineItemPayloadSchema.refine((item) => item.type === "tool_call"),
   }),
   z.strictObject({
     ...TimelineItemBaseShape,
     kind: z.literal("plugin"),
+    latestTimestamp: IsoDateSchema.optional(),
     pluginId: z.string(),
     pluginItemId: z.string(),
     itemKind: z.string(),
@@ -484,6 +486,7 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
       return {
         ...base,
         kind: item.kind,
+        ...(item.latestTimestamp ? { latestTimestamp: item.latestTimestamp.toISOString() } : {}),
         provider: item.payload.data.provider,
         item: serializeAgentToolCall(item.payload.data),
       };
@@ -491,6 +494,7 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
       return {
         ...base,
         kind: item.kind,
+        ...(item.latestTimestamp ? { latestTimestamp: item.latestTimestamp.toISOString() } : {}),
         pluginId: item.pluginId,
         pluginItemId: item.pluginItemId,
         itemKind: item.itemKind,
@@ -508,6 +512,7 @@ function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
       ...(item.turnId ? { turnId: item.turnId } : {}),
       timestamp: new Date(item.timestamp),
       kind: item.kind,
+      ...(item.latestTimestamp ? { latestTimestamp: new Date(item.latestTimestamp) } : {}),
       pluginId: item.pluginId,
       pluginItemId: item.pluginItemId,
       itemKind: item.itemKind,
@@ -577,6 +582,7 @@ function deserializeBuiltinTimelineItem(
       return {
         ...base,
         kind: item.kind,
+        ...(item.latestTimestamp ? { latestTimestamp: new Date(item.latestTimestamp) } : {}),
         payload: {
           source: "agent",
           data: {
