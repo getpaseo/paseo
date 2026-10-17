@@ -69,6 +69,7 @@ function toTerminalInfo(session: TerminalSession): WorkerTerminalInfo {
     workspaceId: session.workspaceId,
     ...(session.getTitle() ? { title: session.getTitle() } : {}),
     activity: session.getActivity(),
+    foreground: session.getForeground(),
   };
 }
 
@@ -184,6 +185,9 @@ function watchTerminal(session: TerminalSession): void {
       previous: transition.previous,
     });
   });
+  const unsubscribeForeground = session.onForegroundChange((foreground) => {
+    sendToParent({ type: "terminalForegroundChange", terminalId: session.id, foreground });
+  });
 
   unsubscribeByTerminalId.set(session.id, [
     unsubscribeMessage,
@@ -191,6 +195,7 @@ function watchTerminal(session: TerminalSession): void {
     unsubscribeTitle,
     unsubscribeCommandFinished,
     unsubscribeActivity,
+    unsubscribeForeground,
   ]);
 }
 

@@ -1543,4 +1543,76 @@ describe("OMP agent client and session", () => {
       { type: "user_message", text: "hello OMP", messageId: "user-1" },
     ]);
   });
+
+  test("a non-terminal agent_end reports background work until the session settles", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const session = omp.requireSession();
+    const promptStarted = omp.runtime().nextPrompt();
+    const run = session.run("start a long job");
+    await promptStarted;
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.acceptPrompt("start a long job", "user-1");
+    runtime.streamAssistantText("working on it");
+    runtime.emit({
+      type: "agent_end",
+      messages: [{ role: "assistant", content: [] }],
+      isTerminal: false,
+    });
+
+    // The turn still completes as today even though background work is pending.
+    await expect(run).resolves.toMatchObject({ finalText: "working on it" });
+    expect(omp.completedTurnCount()).toBe(1);
+    expect(omp.backgroundWorkChanges()).toEqual([true]);
+
+    runtime.emit({ type: "session_settled" });
+    await waitForImmediate();
+    expect(omp.backgroundWorkChanges()).toEqual([true, false]);
+  });
+
+  test("a prompt_result with sessionSettled false reports pending background work", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.emit({
+      type: "prompt_result",
+      id: "prompt-1",
+      agentInvoked: true,
+      sessionSettled: false,
+    });
+    await waitForImmediate();
+    expect(omp.backgroundWorkChanges()).toEqual([true]);
+
+    await omp.close();
+    expect(omp.backgroundWorkChanges()).toEqual([true, false]);
+  });
+
+  test("an agent_end without settle fields reports no background work change", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await expect(omp.runPrompt("hello OMP", "hello from OMP")).resolves.toMatchObject({
+      finalText: "hello from OMP",
+    });
+    expect(omp.completedTurnCount()).toBe(1);
+    expect(omp.backgroundWorkChanges()).toEqual([]);
+  });
+
+  test("a process exit while background work is pending clears it", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.emit({
+      type: "prompt_result",
+      id: "prompt-1",
+      agentInvoked: true,
+      sessionSettled: false,
+    });
+    await waitForImmediate();
+    expect(omp.backgroundWorkChanges()).toEqual([true]);
+
+    omp.processExit("OMP RPC process exited with code 1 and signal null");
+    await waitForImmediate();
+    expect(omp.backgroundWorkChanges()).toEqual([true, false]);
+    expect(omp.turnFailures()).toEqual(["OMP RPC process exited with code 1 and signal null"]);
+  });
 });

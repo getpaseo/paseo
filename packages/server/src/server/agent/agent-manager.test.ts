@@ -1675,6 +1675,39 @@ test("does not register a session that finishes starting after shutdown begins",
   });
 });
 
+test("counts an agent as registering until it is listed", async () => {
+  const client = new HeldAgentCreationClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000101",
+  });
+  const seen: Array<{ pending: number; listed: number }> = [];
+  manager.subscribeAgentRegistrations(() => {
+    seen.push({
+      pending: manager.pendingAgentRegistrationCount(),
+      listed: manager.listAgents().length,
+    });
+  });
+
+  const creation = manager.createAgent({ provider: "codex", cwd: process.cwd() }, undefined, {
+    workspaceId: undefined,
+  });
+  await client.waitForCreationToStart();
+  expect(manager.pendingAgentRegistrationCount()).toBe(1);
+  expect(manager.listAgents()).toEqual([]);
+
+  client.finishCreating();
+  await creation;
+  await manager.flushForShutdown();
+
+  // No notification shows the agent neither pending nor listed.
+  expect(seen).toEqual([
+    { pending: 1, listed: 0 },
+    { pending: 0, listed: 1 },
+  ]);
+});
+
 test("flush waits for rejected session cleanup that starts after shutdown", async () => {
   const client = new HeldAgentCreationAndCloseClient();
   const manager = new AgentManager({
@@ -5134,6 +5167,61 @@ test("session config drift events update state through the stream channel", asyn
   const persisted = await storage.get(snapshot.id);
   expect(persisted?.lastModeId).toBe("build");
   expect(persisted?.config?.modeId).toBe("build");
+});
+
+test("background work changes update state without dispatching to stream subscribers", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-background-work-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let capturedSession: TestAgentSession | null = null;
+  class BackgroundWorkClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      capturedSession = new TestAgentSession(config);
+      return capturedSession;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: {
+      codex: new BackgroundWorkClient(),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000001134",
+  });
+
+  const snapshot = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      modeId: "plan",
+      model: "gpt-5.2-codex",
+      thinkingOptionId: "low",
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+  const streams: AgentStreamEvent[] = [];
+  manager.subscribe(
+    (event) => {
+      if (event.type === "agent_stream") {
+        streams.push(event.event);
+      }
+    },
+    { agentId: snapshot.id, replayState: false },
+  );
+
+  expect(manager.getAgent(snapshot.id)?.backgroundWorkPending).toBe(false);
+  capturedSession?.pushEvent({ type: "background_work_changed", provider: "codex", pending: true });
+  await manager.flush();
+  expect(manager.getAgent(snapshot.id)?.backgroundWorkPending).toBe(true);
+  capturedSession?.pushEvent({
+    type: "background_work_changed",
+    provider: "codex",
+    pending: false,
+  });
+  await manager.flush();
+  expect(manager.getAgent(snapshot.id)?.backgroundWorkPending).toBe(false);
+  expect(streams.map((event) => event.type)).toEqual([]);
 });
 
 test("setLabels merges and persists labels", async () => {

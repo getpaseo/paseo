@@ -37,6 +37,8 @@ work is gone. Report that exit as a turn failure so the agent lands in `error` w
 Claude and OMP report exits between turns. OMP relaunches from its session file on the next prompt;
 the unfinished turn is lost.
 
+An OMP turn completes at the end of its stream even when it leaves async jobs running; the job's completion wakes the agent into a new autonomous run. OMP says so explicitly: an `agent_end` with `isTerminal: false` or a `prompt_result` with `sessionSettled: false` means work can still wake the session, and `session_settled` means nothing can. `AgentManager` keeps that as the internal `backgroundWorkPending` flag, which feeds host activity but not the agent's status, so the app still shows such an agent as `idle`.
+
 ### Cancellation
 
 Provider interruption is idempotent at the `AgentSession` boundary. It resolves when the prior
@@ -260,6 +262,41 @@ A parent that spawns many subagents will see the panel's list grow; the pill onl
 ### Cross-client tab dismissal
 
 Closing a subagent's tab on one client doesn't affect other clients' layouts. This is the expected behavior of decoupled tabs and is consistent with how layouts have always worked. Archive remains the global gesture for cross-client cleanup.
+
+## Host activity
+
+`GET /api/host-activity` reports what is happening on the host, for tools outside Paseo: an idle shutdown for a sandbox or cloud dev box, a sleep inhibitor, a notifier. It uses the daemon's bearer auth, like `/api/status`, and answers 503 until the daemon can see its agents:
+
+```json
+{
+  "state": "busy",
+  "since": "2026-10-12T09:14:03.120Z",
+  "busy": [{ "kind": "agent", "id": "…", "reason": "background_work" }],
+  "commands": [{ "terminalId": "…", "reason": "running" }],
+  "services": [{ "terminalId": "…", "workspaceId": "…", "scriptName": "web" }],
+  "waiting": [{ "kind": "agent", "id": "…", "reason": "permission" }],
+  "clients": {
+    "connected": 1,
+    "visible": 1,
+    "present": false,
+    "lastActivityAt": "2026-10-12T09:10:00.000Z"
+  }
+}
+```
+
+`state` and `since` cover explicit program-reported work. `since` is the time of the last change between `busy` and `quiescent`; until the first change it is the daemon start time. The host is busy while any of these hold:
+
+- an agent is `initializing` or `running` and has no pending permission request (`reason: "running"`)
+- an agent has `backgroundWorkPending` (`reason: "background_work"`)
+- an agent is being created, resumed, imported or reloaded and is not listed yet, for example while its provider process starts (`kind: "agent_registration"`, `reason: "starting"`, with a `count`)
+- a terminal's activity is `working` (`reason: "working"`), which comes from hook reports, see [`docs/terminal-activity.md`](./terminal-activity.md)
+
+The other fields are read when the request arrives and leave the policy to the caller:
+
+- `commands`: terminals whose foreground is not a shell prompt, so a build or a dev server that reports no status still shows. `running` means Paseo's shell integration marked a command start (OSC 633 `C`) with no prompt since; `unknown` means no prompt mark yet, which is permanent in shells without the integration (only zsh has it) and in terminals launched straight into a program. An agent harness waiting at its own prompt also stays listed, because its shell still reports the command as running; use `state` and `waiting` to tell whether it is doing work.
+- `services`: running workspace service scripts from `paseo.json`. They run indefinitely by design, so they are kept out of `commands`.
+- `waiting`: agents with a pending permission and terminals that need input, service terminals included. Waiting on a person never makes `state` busy; the list is for callers that want to notify or hold off.
+- `clients`: connected clients, how many have the app visible, and the latest input time across clients. `present` is true when a visible client had input within the attention policy's presence window (`PRESENCE_THRESHOLD_MS`, 180 s); callers wanting another window use `lastActivityAt`. On desktop, input is OS-wide, so a visible Paseo window keeps `present` true while the user works in other apps.
 
 ## Storage
 

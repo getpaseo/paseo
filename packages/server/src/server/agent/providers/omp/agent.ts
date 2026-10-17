@@ -732,6 +732,13 @@ export class OmpAgentSession implements AgentSession {
   private closed = false;
   private live: boolean;
   private readonly emittedUserMessageIds = new Set<string>();
+  /**
+   * Explicit settle tracking from OMP's status frames: true once an `agent_end`
+   * reports `isTerminal: false` or a `prompt_result` reports
+   * `sessionSettled: false`, back to false on `session_settled`, runtime exit,
+   * or session close. Never inferred from output or turn state.
+   */
+  private backgroundWorkPending = false;
 
   private readonly usageSessionKey = randomUUID();
 
@@ -1177,6 +1184,7 @@ export class OmpAgentSession implements AgentSession {
       return;
     }
     this.closed = true;
+    this.setBackgroundWorkPending(false);
     this.unsubscribeRuntime?.();
     this.usagePoller.close();
     this.cancelNoTurnPromptCompletion();
@@ -1311,6 +1319,14 @@ export class OmpAgentSession implements AgentSession {
     for (const subscriber of this.subscribers) {
       subscriber(event);
     }
+  }
+
+  private setBackgroundWorkPending(pending: boolean): void {
+    if (this.backgroundWorkPending === pending) {
+      return;
+    }
+    this.backgroundWorkPending = pending;
+    this.emit({ type: "background_work_changed", provider: this.provider, pending });
   }
 
   private currentTurnIdForEvent(): string | undefined {
@@ -1753,7 +1769,14 @@ export class OmpAgentSession implements AgentSession {
       this.handleCommandOutput(event.text);
       return;
     }
+    if (event.type === "session_settled") {
+      this.setBackgroundWorkPending(false);
+      return;
+    }
     if (event.type === "prompt_result") {
+      if (event.sessionSettled === false) {
+        this.setBackgroundWorkPending(true);
+      }
       const requestId = optionalString("id" in event ? event.id : undefined);
       const agentInvoked =
         "agentInvoked" in event && typeof event.agentInvoked === "boolean"
@@ -1795,6 +1818,7 @@ export class OmpAgentSession implements AgentSession {
 
   private handleProcessExit(error: string): void {
     this.runtimeDead = true;
+    this.setBackgroundWorkPending(false);
     void this.hostTools?.close();
     this.usagePoller.stopTurn();
     if (!this.activeTurnId) {
@@ -1873,28 +1897,37 @@ export class OmpAgentSession implements AgentSession {
       case "compaction_end":
         this.handleCompactionEvent(event, turnId);
         return;
-      case "agent_end": {
-        const messages = event.messages ?? [];
-        let terminalMessages: OmpAgentMessage[] | null = null;
-        if (messages.some((message) => message.role === "assistant")) {
-          terminalMessages = messages;
-        } else if (this.activeTurnTerminalAssistantMessage) {
-          terminalMessages = [this.activeTurnTerminalAssistantMessage];
-        }
-        // OMP can end an internal extension-notice cycle before it starts the
-        // model turn for the same prompt. Ignore only cycles where neither the
-        // terminal payload nor the live stream contained an assistant message.
-        if (!terminalMessages) {
-          return;
-        }
-        // A state request is processed after OMP's RPC loop becomes promptable,
-        // so do not advertise Paseo idle until it reports that transition.
-        void this.completeTurnAfterProviderIdle(turnId, terminalMessages);
+      case "agent_end":
+        this.handleAgentEnd(event, turnId);
         return;
-      }
       default:
         return;
     }
+  }
+
+  private handleAgentEnd(
+    event: Extract<OmpAgentSessionEvent, { type: "agent_end" }>,
+    turnId: string | undefined,
+  ): void {
+    if (event.isTerminal === false) {
+      this.setBackgroundWorkPending(true);
+    }
+    const messages = event.messages ?? [];
+    let terminalMessages: OmpAgentMessage[] | null = null;
+    if (messages.some((message) => message.role === "assistant")) {
+      terminalMessages = messages;
+    } else if (this.activeTurnTerminalAssistantMessage) {
+      terminalMessages = [this.activeTurnTerminalAssistantMessage];
+    }
+    // OMP can end an internal extension-notice cycle before it starts the
+    // model turn for the same prompt. Ignore only cycles where neither the
+    // terminal payload nor the live stream contained an assistant message.
+    if (!terminalMessages) {
+      return;
+    }
+    // A state request is processed after OMP's RPC loop becomes promptable,
+    // so do not advertise Paseo idle until it reports that transition.
+    void this.completeTurnAfterProviderIdle(turnId, terminalMessages);
   }
 
   private handleToolExecutionEnd(
