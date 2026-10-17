@@ -8,6 +8,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -77,6 +78,17 @@ describe("worktree-path-script", () => {
     expect(env.PASEO_BASE_REF).toBe("");
     expect(env.PASEO_BRANCH_NAME).toBe("feature/x");
     expect(env.PASEO_WORKTREE_SLUG).toBe("feature-x");
+  });
+
+  it("derives the repo hash the CLI preview does (sha256, 8 base36 chars)", () => {
+    // Independently recomputed, not via deriveWorktreeRepoHash, so this
+    // fails if the server algorithm drifts from the CLI's known-answer test.
+    const digest = createHash("sha256").update("/src/acme/widgets").digest();
+    let value = 0n;
+    for (let i = 0; i < 8; i += 1) value = (value << 8n) | BigInt(digest[i]!);
+    const expected = value.toString(36).padStart(13, "0").slice(0, 8);
+    expect(deriveWorktreeRepoHash("/src/acme/widgets")).toBe(expected);
+    expect(expected).toHaveLength(8);
   });
 
   it("passes all 10 values to the script as argv and env, in the script's cwd", async () => {

@@ -11,7 +11,6 @@ import {
 import { copyFile, rm, stat } from "fs/promises";
 import { join, basename, dirname, isAbsolute, resolve, sep } from "path";
 import net from "node:net";
-import { createHash } from "node:crypto";
 import stripAnsi from "strip-ansi";
 import {
   buildStringCommandShellInvocation,
@@ -42,6 +41,7 @@ import {
 import { runGitCommand } from "./run-git-command.js";
 import {
   deriveWorktreePathScriptContext,
+  deriveWorktreeRepoHash,
   resolveWorktreePathFromScript,
   type WorktreePathScriptMode,
 } from "./worktree-path-script.js";
@@ -849,26 +849,19 @@ export async function getGitCommonDir(cwd: string): Promise<string> {
   return commonDir;
 }
 
-const WORKTREE_PROJECT_HASH_LENGTH = 8;
-
-function deriveShortAlphanumericHash(value: string): string {
-  const digest = createHash("sha256").update(value).digest();
-  let hashValue = 0n;
-  for (let index = 0; index < 8; index += 1) {
-    hashValue = (hashValue << 8n) | BigInt(digest[index] ?? 0);
-  }
-  return hashValue.toString(36).padStart(13, "0").slice(0, WORKTREE_PROJECT_HASH_LENGTH);
-}
-
 export async function deriveWorktreeProjectHash(cwd: string): Promise<string> {
+  // The hash itself lives in ./worktree-path-script.js (deriveWorktreeRepoHash)
+  // so server code has one copy; the CLI keeps its own quarantined copy
+  // because it cannot import server internals. Both sides pin the algorithm
+  // with an independently recomputed known-answer test.
   try {
     const commonDir = await getGitCommonDir(cwd);
     const normalizedCommonDir = normalizePathForOwnership(commonDir);
     const repoRoot =
       basename(normalizedCommonDir) === ".git" ? dirname(normalizedCommonDir) : normalizedCommonDir;
-    return deriveShortAlphanumericHash(repoRoot);
+    return deriveWorktreeRepoHash(repoRoot);
   } catch {
-    return deriveShortAlphanumericHash(normalizePathForOwnership(cwd));
+    return deriveWorktreeRepoHash(normalizePathForOwnership(cwd));
   }
 }
 

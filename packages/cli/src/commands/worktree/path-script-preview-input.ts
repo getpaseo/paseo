@@ -54,9 +54,11 @@ export function buildPathScriptPreviewInputs(
   };
 }
 
-// Same derivation as deriveShortAlphanumericHash in packages/server/src/utils/worktree.ts
+// Same derivation as deriveWorktreeRepoHash in packages/server/src/utils/worktree-path-script.ts
 // (SHA-256 of the repo root, first 8 digest bytes as base36, 8 chars). Duplicated
-// because the CLI must not import server internals for this; keep the two in sync.
+// because the CLI cannot import server internals and protocol source must stay
+// free of node:crypto for the mobile bundle; both sides pin the algorithm with
+// an independently recomputed known-answer test.
 function deriveRepoHash(repoPath: string): string {
   const digest = createHash("sha256").update(repoPath).digest();
   let hashValue = 0n;

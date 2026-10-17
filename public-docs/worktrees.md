@@ -58,18 +58,18 @@ The path must be absolute, must not already exist, and must not be the source ch
 
 Paseo passes the same context as positional arguments and as environment variables. Absent values (no remote, no base ref) are empty strings.
 
-| #   | Environment variable  | Value                                                                               |
-| --- | --------------------- | ----------------------------------------------------------------------------------- |
-| $1  | `PASEO_REPO_PATH`     | Source checkout path                                                                |
-| $2  | `PASEO_REPO`          | Source checkout directory name                                                      |
-| $3  | `PASEO_OWNER`         | Remote owner path (`origin`, else first remote)                                     |
-| $4  | `PASEO_REMOTE_REPO`   | Remote repository name                                                              |
-| $5  | `PASEO_BRANCH_NAME`   | Branch being created or checked out                                                 |
-| $6  | `PASEO_WORKTREE_SLUG` | Worktree slug                                                                       |
-| $7  | `PASEO_REPO_HASH`     | 8-character hash of the source checkout path                                        |
-| $8  | `PASEO_WORKTREE_MODE` | `branch-off`, `checkout-branch`, `checkout-change-request`, or `checkout-github-pr` |
-| $9  | `PASEO_BASE_REF`      | Base ref for `branch-off`; empty otherwise                                          |
-| $10 | `PASEO_HOME`          | Paseo home directory                                                                |
+| #   | Environment variable  | Value                                                                                                     |
+| --- | --------------------- | --------------------------------------------------------------------------------------------------------- |
+| $1  | `PASEO_REPO_PATH`     | Main source checkout (parent of the shared git dir; same even when creating from inside another worktree) |
+| $2  | `PASEO_REPO`          | Source checkout directory name                                                                            |
+| $3  | `PASEO_OWNER`         | Remote owner path (`origin`, else first remote)                                                           |
+| $4  | `PASEO_REMOTE_REPO`   | Remote repository name                                                                                    |
+| $5  | `PASEO_BRANCH_NAME`   | Branch being created or checked out                                                                       |
+| $6  | `PASEO_WORKTREE_SLUG` | Worktree slug                                                                                             |
+| $7  | `PASEO_REPO_HASH`     | 8-character hash of the source checkout path                                                              |
+| $8  | `PASEO_WORKTREE_MODE` | `branch-off`, `checkout-branch`, `checkout-change-request`, or `checkout-github-pr`                       |
+| $9  | `PASEO_BASE_REF`      | Base ref for `branch-off`; empty otherwise                                                                |
+| $10 | `PASEO_HOME`          | Paseo home directory                                                                                      |
 
 For example, this script reproduces a sibling layout next to each checkout:
 

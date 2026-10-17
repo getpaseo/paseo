@@ -74,9 +74,12 @@ export function buildWorktreePathScriptEnv(
   };
 }
 
-// Same derivation as deriveWorktreeProjectHash in worktree.ts (SHA-256 of the
-// repo root, first 8 digest bytes as base36, 8 chars). Duplicated here because
-// worktree.ts imports this module; keep the two in sync.
+// Canonical server-side repo hash (SHA-256 of the repo root, first 8 digest
+// bytes as base36, 8 chars). Used for both the legacy layout hash and the
+// pathScript PASEO_REPO_HASH input. The CLI keeps its own copy because it
+// cannot import server internals and protocol source must stay free of
+// node:crypto for the mobile bundle; both sides pin the algorithm with an
+// independently recomputed known-answer test.
 export function deriveWorktreeRepoHash(repoPath: string): string {
   const digest = createHash("sha256").update(repoPath).digest();
   let hashValue = 0n;
