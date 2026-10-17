@@ -69,6 +69,7 @@ import { resolveStreamRenderStrategy } from "./strategy-resolver";
 import { type StreamSegmentRenderers, type StreamViewportHandle } from "./strategy";
 import { ChatOutlineRail } from "@/agent-stream/chat-outline/rail";
 import { useChatOutline } from "@/agent-stream/chat-outline/use-chat-outline";
+import { resolveReadingPosition } from "@/agent-stream/chat-outline/model";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import {
@@ -603,7 +604,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       timelineEpoch,
       tail: effectiveStreamItems,
       head: effectiveStreamHead,
-      enabled: supportsChatOutline && chatOutlineEnabled,
+      enabled: chatOutlineEnabled,
+      supportsPromptIndex: supportsChatOutline,
       viewportRef,
       onJumpError: handleTimelineHistoryLoadError,
       mountedHistoryMessageIds,
@@ -995,12 +997,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       return itemById;
     }, [streamLayout.liveHead]);
 
+    const getLayoutRow = useStableEvent(
+      (rowId: string) => layoutHistoryItemById.get(rowId) ?? layoutLiveHeadItemById.get(rowId),
+    );
     const handleReadingPositionChange = useStableEvent((rowId: string | null) => {
-      const row =
-        rowId === null
-          ? undefined
-          : (layoutHistoryItemById.get(rowId) ?? layoutLiveHeadItemById.get(rowId));
-      chatOutline.reportReadingPosition(row?.item.timelineCursor?.seq ?? null);
+      chatOutline.reportReadingPosition(resolveReadingPosition(rowId, getLayoutRow));
     });
 
     const renderHistoryRow = useCallback(
@@ -1103,6 +1104,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                 isAuthoritativeHistoryReady,
                 onNearBottomChange: setIsNearBottom,
                 onReadingPositionChange: handleReadingPositionChange,
+                onUserScrollStart: chatOutline.cancelSelection,
                 onNearHistoryStart: loadOlder,
                 isLoadingOlderHistory: isLoadingOlder,
                 hasOlderHistory: hasOlder,
@@ -1118,6 +1120,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               prompts={chatOutline.prompts}
               activePrompt={chatOutline.activePrompt}
               onJumpToPrompt={chatOutline.jumpToPrompt}
+              onStepToPrompt={chatOutline.stepToPrompt}
+              onScrubStart={chatOutline.cancelSelection}
             />
             {(!isNearBottom || isTimelineDetached) && (
               <View style={scrollToBottomContainerStyle} pointerEvents="box-none">

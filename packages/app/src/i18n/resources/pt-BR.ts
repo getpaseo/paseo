@@ -235,6 +235,10 @@ export const ptBR: TranslationResources = {
     empty: "Comece a conversar com este agente...",
     scrollToBottom: "Rolar para o fim",
     historyLoadFailed: "Não foi possível carregar o histórico do agente",
+    chatOutline: {
+      label: "Estrutura do chat",
+      position: "{{index}} de {{count}}: {{preview}}",
+    },
     messageCapped: "Esta mensagem foi truncada ({{bytes}} bytes).",
     permission: {
       rejectedPlan: "Plano rejeitado",
