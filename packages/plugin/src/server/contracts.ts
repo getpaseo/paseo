@@ -28,6 +28,13 @@ export interface PluginSettings<Schema extends ZodType> {
 }
 
 export interface PluginServerContext extends PluginLifecycleRegistration {
+  /**
+   * The plugin's own Paseo API, already connected when the contribution runs.
+   * Hook handlers receive this per call; exposing it here as well lets a plugin
+   * act at startup — e.g. resume work a daemon restart interrupted — instead of
+   * waiting for the first lifecycle event to arrive.
+   */
+  paseo: PaseoApi;
   registerSettings<Schema extends ZodType>(
     definition: import("../settings.js").SettingsDefinition<Schema>,
   ): PluginSettings<Schema>;
