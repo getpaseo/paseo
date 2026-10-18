@@ -559,7 +559,13 @@ function ResultContent({ result, query }: { result: CommandCenterResult; query: 
     return (
       <View style={styles.rowContent} testID={`command-center-workspace-${key}`}>
         <View style={styles.rowMain}>
-          <View style={styles.iconSlot}>
+          {/* Decorative: the fallback icon's initial must not prefix the row's accessible name. */}
+          <View
+            style={styles.iconSlot}
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            aria-hidden
+          >
             <WorkspaceProjectIcon project={result.project} />
           </View>
           <View style={styles.textContent}>
