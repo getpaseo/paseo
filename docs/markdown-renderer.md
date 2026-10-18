@@ -4,6 +4,10 @@ Use `MarkdownRenderer` for chat replies, file previews, plans, pull requests and
 
 Native selection belongs to the library's text view. Keep an assistant message in one row so selection can cross paragraphs, headings and lists. Code blocks and tables use the library's native views and their selection behavior. Web uses browser selection over semantic HTML. Once its WASM parser is initialized, the library parses synchronously for the first commit of each mounted row; an empty interim row would corrupt virtualized measurements and move the reader. Chat owns paced reveal, the web render cap, message identity and list measurement. Native renders completed messages together. While streaming, it keeps closed blocks in one head view and updates a separate tail, then reunites the text on completion. See [native parsing cost](agent-stream-performance.md#native-parsing-cost) for the boundary and pacing constraints.
 
+## Block spacing
+
+Every block is separated by one gap, `density.blockGap`: 12 on compact layouts, 16 wider. Inside the library's text, every element style ends with that gap and the library drops it after the last block. Views stacked outside the library (Mermaid segments, streaming head and tail) use the same gap through `MarkdownBlockStack`. Do not give a block type its own margins; change the gap.
+
 ## Links and images
 
 Workspace file links use the shared file-link resolver. The workspace supplies its client, root and open-file action once; chat can supply the agent's more specific context. URLs use the same link press path. Recognized inline-code paths stay tappable. The library callback carries the tapped occurrence’s syntax context. Preserve it when opening files: explicit Markdown links decode URL escapes, while recognized inline-code paths preserve literal percent characters and use suffix lookup. Identical URL strings in different occurrences must stay distinct. Explicit absolute workspace links receive a relative hover title; existing authored titles remain intact.

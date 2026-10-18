@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.12.0-beta.2 - 2026-10-17
+## 0.12.0-beta.3 - 2026-10-18
 
 Background workspaces, a new Markdown renderer with selection across paragraphs on phones, a reworked phone layout, and close to 100 fixes.
 
@@ -27,6 +27,9 @@ Background workspaces, a new Markdown renderer with selection across paragraphs 
 - Changed phones to open files and subagents in a closable sheet, with Open as tab for subagents ([#6827](https://github.com/getpaseo/paseo/pull/6827), [#6885](https://github.com/getpaseo/paseo/pull/6885), [#6958](https://github.com/getpaseo/paseo/pull/6958))
 - Changed diff comments on phones to open in a sheet instead of an editor inside the code ([#6455](https://github.com/getpaseo/paseo/pull/6455))
 - Changed Settings on phones to large tiles grouped into App and Host ([#7129](https://github.com/getpaseo/paseo/pull/7129))
+- Changed Command Center to rank workspaces and agents by match and then recency, and to show timestamps, project icons, and highlighted matches ([#7277](https://github.com/getpaseo/paseo/pull/7277))
+- Added each Paseo subagent's model, thinking, mode, and context under its title in the subagents list ([#7290](https://github.com/getpaseo/paseo/pull/7290))
+- Changed Paseo tool calls in chats to lead with the action and its context, such as Send message · the first line of the prompt ([#7283](https://github.com/getpaseo/paseo/pull/7283))
 - Changed the New workspace form on phones to full-width fields, with Import session in the header ([#7239](https://github.com/getpaseo/paseo/pull/7239))
 - Reduced rendering work in long chats while a reply streams ([#7052](https://github.com/getpaseo/paseo/pull/7052) by [@colonelpanic8](https://github.com/colonelpanic8))
 - Made reopening the sidebar about 45% faster ([#7157](https://github.com/getpaseo/paseo/pull/7157))
@@ -41,6 +44,8 @@ Background workspaces, a new Markdown renderer with selection across paragraphs 
 - Fixed the chat outline not jumping to prompts rendered by a timeline plugin ([#6690](https://github.com/getpaseo/paseo/pull/6690) by [@lukeRRD](https://github.com/lukeRRD))
 - Fixed Escape stopping the running agent instead of first closing an open plugin preview ([#7110](https://github.com/getpaseo/paseo/pull/7110) by [@RRD-dev](https://github.com/RRD-dev), [@luoph](https://github.com/luoph))
 - Fixed `paseo plugin reload` failing with a 60-second timeout while the reload was still running ([#6306](https://github.com/getpaseo/paseo/pull/6306) by [@Mtuchel](https://github.com/Mtuchel))
+- Fixed follow-ups sent while a plugin ACP agent runs failing with "Provider does not support prompt.steer" ([#7270](https://github.com/getpaseo/paseo/pull/7270) by [@simonepri](https://github.com/simonepri))
+- Fixed Find showing no matches for prompt text drawn by a timeline plugin ([#7253](https://github.com/getpaseo/paseo/pull/7253) by [@a-grasso](https://github.com/a-grasso))
 
 ### Fixed
 
@@ -54,7 +59,11 @@ Background workspaces, a new Markdown renderer with selection across paragraphs 
 - Fixed an incomplete font name in Appearance breaking the app's styling ([#6695](https://github.com/getpaseo/paseo/pull/6695))
 - Fixed the Linux desktop window never appearing when the hidden window renders no frames ([#6726](https://github.com/getpaseo/paseo/pull/6726) by [@EhEo](https://github.com/EhEo))
 - Fixed opening another agent or workspace stalling while a different agent on the same host is streaming ([#7074](https://github.com/getpaseo/paseo/pull/7074) by [@colonelpanic8](https://github.com/colonelpanic8))
+- Fixed the daemon running out of memory when several directory searches overlap on a large folder tree ([#7265](https://github.com/getpaseo/paseo/pull/7265))
+- Fixed dragging the Explorer edge stuttering with several panes open ([#7284](https://github.com/getpaseo/paseo/pull/7284) by [@colonelpanic8](https://github.com/colonelpanic8))
 - Fixed agent creation showing an error and a retry draft when the provider rejected the first prompt ([#6379](https://github.com/getpaseo/paseo/pull/6379))
+- Fixed new agent drafts staying on "Loading…" when the host is disconnected; they now say "Host is not connected" and keep your draft ([#7303](https://github.com/getpaseo/paseo/pull/7303) by [@colonelpanic8](https://github.com/colonelpanic8))
+- Fixed reloading a chat during a streaming reply showing a frozen copy above the live one and dropping the ending ([#7256](https://github.com/getpaseo/paseo/pull/7256))
 - Fixed question cards spinning forever when an answer fails to send; they now show the error and keep your answers ([#7098](https://github.com/getpaseo/paseo/pull/7098) by [@xzthemeofsss](https://github.com/xzthemeofsss))
 - Fixed parent agents missing the finish notification when a child finished its first turn very quickly ([#6008](https://github.com/getpaseo/paseo/pull/6008) by [@ahmet-izgi](https://github.com/ahmet-izgi))
 - Fixed parent agents being told a child finished when its task was stopped or reloaded ([#6660](https://github.com/getpaseo/paseo/pull/6660) by [@Mar-garet](https://github.com/Mar-garet))
@@ -68,7 +77,7 @@ Background workspaces, a new Markdown renderer with selection across paragraphs 
 - Fixed rewinding a Claude conversation failing with "Session not found" when the provider sets `CLAUDE_CONFIG_DIR` ([#6325](https://github.com/getpaseo/paseo/pull/6325))
 - Fixed changing a running Claude agent's thinking level and then its mode killing its running command ([#7179](https://github.com/getpaseo/paseo/pull/7179))
 - Fixed Claude models that need a recent Claude Code being hidden when the provider command is a wrapper script ([#7209](https://github.com/getpaseo/paseo/pull/7209) by [@SulthanZahran1](https://github.com/SulthanZahran1))
-- Fixed background Claude subagent cards staying empty while the subagent works ([#6242](https://github.com/getpaseo/paseo/pull/6242))
+- Fixed background Claude subagent cards staying empty while the subagent works, including after the parent finishes ([#6242](https://github.com/getpaseo/paseo/pull/6242), [#7266](https://github.com/getpaseo/paseo/pull/7266))
 - Fixed Copilot staying in Plan mode and refusing edits after you select Allow All ([#7234](https://github.com/getpaseo/paseo/pull/7234))
 - Fixed imported Claude Code sessions taking their first prompt as the name instead of their `/rename` title ([#6930](https://github.com/getpaseo/paseo/pull/6930) by [@platanus-kr](https://github.com/platanus-kr))
 - Fixed a wrongly shaped answer to a Claude question reporting success and discarding the question ([#6936](https://github.com/getpaseo/paseo/pull/6936) by [@thomasvan](https://github.com/thomasvan))
@@ -91,6 +100,7 @@ Background workspaces, a new Markdown renderer with selection across paragraphs 
 - Fixed workspace service URLs returning 502 when the service listens only on IPv6 localhost ([#6753](https://github.com/getpaseo/paseo/pull/6753) by [@marcelocastrobarbosa](https://github.com/marcelocastrobarbosa))
 - Fixed terminals that could not be closed when their command was missing or exited immediately ([#6792](https://github.com/getpaseo/paseo/pull/6792) by [@KiraPC](https://github.com/KiraPC))
 - Fixed CJK terminal text gaining spaces between characters after returning to a workspace ([#6452](https://github.com/getpaseo/paseo/pull/6452) by [@jasonhnd](https://github.com/jasonhnd), [@liujin0506](https://github.com/liujin0506), [@seob717](https://github.com/seob717))
+- Fixed copying Korean text from the terminal on iOS and Android adding spaces between characters or dropping the first one ([#7254](https://github.com/getpaseo/paseo/pull/7254), [#7260](https://github.com/getpaseo/paseo/pull/7260) by [@helloimdevman](https://github.com/helloimdevman))
 - Fixed the self-hosted web app failing to connect through a reverse proxy on port 80 or 443 ([#6638](https://github.com/getpaseo/paseo/pull/6638) by [@kiawin](https://github.com/kiawin))
 - Fixed assistant file links with spaces or non-ASCII characters failing with ENOENT ([#6520](https://github.com/getpaseo/paseo/pull/6520) by [@apple-ouyang](https://github.com/apple-ouyang), [@sunshinehomeyu-blip](https://github.com/sunshinehomeyu-blip))
 - Fixed local images in agent replies failing to load when their path contains spaces or non-ASCII characters ([#6877](https://github.com/getpaseo/paseo/pull/6877))
@@ -102,7 +112,7 @@ Background workspaces, a new Markdown renderer with selection across paragraphs 
 - Fixed sidebar rows, footer buttons, and Settings items showing no feedback when tapped on touch devices ([#7150](https://github.com/getpaseo/paseo/pull/7150))
 - Fixed home screen actions being cut off on short phone screens ([#7167](https://github.com/getpaseo/paseo/pull/7167))
 - Fixed Android dictation stopping with "Dictation was interrupted by another audio source" when another app plays audio ([#7200](https://github.com/getpaseo/paseo/pull/7200))
-- Fixed Page Up and Page Down not scrolling the chat after clicking a message ([#7033](https://github.com/getpaseo/paseo/pull/7033) by [@panta82](https://github.com/panta82))
+- Fixed Page Up and Page Down not scrolling the chat after clicking a message or closing Find ([#7033](https://github.com/getpaseo/paseo/pull/7033), [#7263](https://github.com/getpaseo/paseo/pull/7263) by [@panta82](https://github.com/panta82))
 - Fixed Add Project keyboard selection moving to directories scrolled out of view ([#7081](https://github.com/getpaseo/paseo/pull/7081) by [@superheher](https://github.com/superheher))
 - Fixed Enter replacing an email address in the composer with a file mention ([#6471](https://github.com/getpaseo/paseo/pull/6471) by [@jasonhnd](https://github.com/jasonhnd))
 - Fixed letter shortcuts not running with non-Latin keyboard layouts such as Russian ([#6755](https://github.com/getpaseo/paseo/pull/6755))
@@ -147,6 +157,7 @@ Background workspaces, a new Markdown renderer with selection across paragraphs 
 - Fixed Google Play listing Android devices without a camera as incompatible ([#6339](https://github.com/getpaseo/paseo/pull/6339))
 - Fixed `nix build .#desktop` running out of memory on Macs with less than 15 GB of RAM ([#6537](https://github.com/getpaseo/paseo/pull/6537) by [@truelecter](https://github.com/truelecter))
 - Fixed usage providers changing places after Refresh all ([#6947](https://github.com/getpaseo/paseo/pull/6947) by [@sleroq](https://github.com/sleroq))
+- Fixed usage cards losing their last values and showing "Updated" when a refresh fails ([#7246](https://github.com/getpaseo/paseo/pull/7246))
 - Fixed the OpenCode Go usage icon being nearly invisible on dark themes ([#6362](https://github.com/getpaseo/paseo/pull/6362) by [@az33zy](https://github.com/az33zy))
 
 ## 0.11.4 - 2026-10-15

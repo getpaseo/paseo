@@ -307,7 +307,7 @@ describe("shared Markdown theme colours", () => {
     ["dark", darkTheme],
     ["light", lightTheme],
   ] as const)("uses %s theme colours for tables and task labels", (_name, theme) => {
-    const { markdownStyle: style } = createMarkdownStyles(theme);
+    const { markdownStyle: style } = createMarkdownStyles(theme, { blockGap: 16 });
     expect(style.table).toMatchObject({
       color: theme.colors.foreground,
       headerTextColor: theme.colors.foreground,
@@ -337,7 +337,7 @@ it.each([
 ] as const)(
   "uses %s theme colours for quotes, admonitions, code, links and dividers",
   (_name, theme) => {
-    const { markdownStyle: style } = createMarkdownStyles(theme);
+    const { markdownStyle: style } = createMarkdownStyles(theme, { blockGap: 16 });
     expect(style.blockquote).toMatchObject({
       color: `${theme.colors.foreground}cc`,
       backgroundColor: theme.colors.surface1,
@@ -364,7 +364,7 @@ it.each([
 );
 
 it.each([darkTheme, lightTheme])("supplies the theme selection colour to the renderer", (theme) => {
-  expect(createMarkdownStyles(theme)).toHaveProperty(
+  expect(createMarkdownStyles(theme, { blockGap: 16 })).toHaveProperty(
     "selectionColor",
     theme.colors.terminal.selectionBackground,
   );
@@ -431,7 +431,7 @@ it("preserves backslashes and decodes entities inside HTML code", () => {
 it.each([false, true])(
   "caps inline images to the paragraph line height (compact: %s)",
   (compact) => {
-    const { markdownStyle } = createMarkdownStyles(darkTheme, compact);
+    const { markdownStyle } = createMarkdownStyles(darkTheme, { compact, blockGap: 16 });
     expect(markdownStyle.inlineImage?.size).toBe(markdownStyle.paragraph?.lineHeight);
   },
 );

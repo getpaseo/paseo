@@ -1333,6 +1333,18 @@ index dd70713..ca0385a 100644
    const label = language ? `Code block: ${language}` : 'Code block';
    if (callbacks.onCodeBlockPress == null) {
      return /*#__PURE__*/_jsx("pre", {
+@@ -214,7 +230,10 @@ function ImageRenderer({
+     src: url,
+     alt: alt,
+     title: title,
+-    style: imgStyle,
++    style: {
++      ...imgStyle,
++      cursor: 'zoom-in'
++    },
+     role: "button",
+     tabIndex: 0,
+     "aria-label": alt,
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/BlockRenderers.js.map b/node_modules/react-native-enriched-markdown/lib/module/web/renderers/BlockRenderers.js.map
 index dc917c4..cf59150 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/BlockRenderers.js.map
