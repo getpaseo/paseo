@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasDraftContent, resolveDraftKey } from "./input-draft-core";
+import { hasDraftContent, resolveDraftKey, resolveDraftSelectionSource } from "./input-draft-core";
 import {
   buildDraftCommandTarget,
   resolveEffectiveComposerModelId,
@@ -174,5 +174,34 @@ describe("buildDraftCommandTarget", () => {
         thinkingOptionId: "high",
       },
     });
+  });
+});
+
+describe("resolveDraftSelectionSource", () => {
+  it("treats untouched fields as implicit", () => {
+    expect(
+      resolveDraftSelectionSource({
+        userModified: { model: false, modeId: false, thinkingOptionId: false },
+        initialValues: null,
+      }),
+    ).toEqual({ model: "implicit", modeId: "implicit", thinkingOptionId: "implicit" });
+  });
+
+  it("treats user-modified fields as explicit", () => {
+    expect(
+      resolveDraftSelectionSource({
+        userModified: { model: true, modeId: true, thinkingOptionId: false },
+        initialValues: null,
+      }),
+    ).toEqual({ model: "explicit", modeId: "explicit", thinkingOptionId: "implicit" });
+  });
+
+  it("treats seeded initial values as explicit", () => {
+    expect(
+      resolveDraftSelectionSource({
+        userModified: { model: false, modeId: false, thinkingOptionId: false },
+        initialValues: { model: "gpt-5.4", modeId: null },
+      }),
+    ).toEqual({ model: "explicit", modeId: "implicit", thinkingOptionId: "implicit" });
   });
 });

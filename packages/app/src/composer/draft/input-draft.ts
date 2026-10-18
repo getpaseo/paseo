@@ -13,7 +13,9 @@ import { useDraftProviderOptions } from "@/hooks/use-draft-provider-options";
 import {
   buildDraftAgentControls,
   resolveDraftKey,
+  resolveDraftSelectionSource,
   type DraftKeyInput,
+  type DraftSelectionSourceFlags,
 } from "@/composer/draft/input-draft-core";
 import {
   buildDraftCommandTarget,
@@ -57,6 +59,7 @@ type DraftComposerState = UseAgentFormStateResult & {
   providerOptions: Record<string, unknown> | undefined;
   /** What plugins set on the agent this draft creates. */
   metadata: Record<string, JsonValue>;
+  selectionSource: DraftSelectionSourceFlags;
   agentControls: DraftAgentControlsProps;
   commandDraft: DraftCommandTarget;
 };
@@ -338,6 +341,10 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       effectiveThinkingOptionId,
       providerOptions: draftOptions,
       metadata,
+      selectionSource: resolveDraftSelectionSource({
+        userModified: formState.userModified,
+        initialValues: composerOptions.initialValues,
+      }),
       agentControls: buildDraftAgentControls({
         formState,
         optionControls: draftOptionControls,
@@ -386,6 +393,7 @@ export const __private__ = {
   resolveEffectiveComposerModeId,
   resolveEffectiveComposerModelId,
   resolveEffectiveComposerThinkingOptionId,
+  resolveDraftSelectionSource,
   buildDraftCommandTarget,
   buildDraftAgentControls,
 };
