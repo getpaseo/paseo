@@ -1,3 +1,4 @@
+import type { Logger } from "pino";
 import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -20,13 +21,14 @@ import {
 import { getCurrentBranch, localBranchExists, renameCurrentBranch } from "../utils/checkout-git.js";
 import {
   markPaseoWorktreeFirstAgentBranchAutoNameAttempted,
+  markPaseoWorktreeFirstAgentBranchAutoNameSucceeded,
   readPaseoWorktreeMetadata,
   writePaseoWorktreeFirstAgentBranchAutoNameMetadata,
 } from "../utils/worktree-metadata.js";
 import type { WorktreeCreationIntent } from "./resolve-worktree-creation-intent.js";
 import { buildAgentBranchNameSeed } from "./agent/prompt-attachments.js";
 import type { FirstAgentContext } from "@getpaseo/protocol/messages";
-import { runWithGitCommandPriority } from "../utils/run-git-command.js";
+import { createRunGitCommand, runWithGitCommandPriority } from "../utils/run-git-command.js";
 
 export interface CreatePaseoWorktreeInput extends CreateWorktreeCoreInput {
   workspaceId?: string;
@@ -75,7 +77,7 @@ async function createPaseoWorktreeWithPriority(
   const workspaceCwdPlan = await planWorkspaceCwdForWorktree(input.cwd, deps.workspaceGitService);
   const createdWorktree = await createWorktreeCore(input, deps);
   try {
-    maybeMarkFirstAgentBranchAutoNameEligible({ createdWorktree });
+    if (!input.branchName?.trim()) maybeMarkFirstAgentBranchAutoNameEligible({ createdWorktree });
     const workspaceCwd = mapWorkspaceRelativeCwdToWorktree({
       relativeWorkspaceCwd: workspaceCwdPlan.relativeWorkspaceCwd,
       targetWorktreePath: createdWorktree.worktree.worktreePath,
@@ -163,7 +165,7 @@ async function planWorkspaceCwdForWorktree(
   return { inputCwd: normalizedInputCwd, relativeWorkspaceCwd };
 }
 
-export async function attemptFirstAgentBranchAutoName(options: {
+interface AutoNameOptions {
   cwd: string;
   firstAgentContext: FirstAgentContext | undefined;
   generateBranchNameFromContext: (input: {
@@ -173,31 +175,61 @@ export async function attemptFirstAgentBranchAutoName(options: {
   getCurrentBranch?: typeof getCurrentBranch;
   renameCurrentBranch?: typeof renameCurrentBranch;
   localBranchExists?: typeof localBranchExists;
-}): Promise<AttemptFirstAgentBranchAutoNameResult> {
+  isBranchPublished?: typeof isAutoNameBranchPublished;
+  logger?: Pick<Logger, "info">;
+}
+
+const autoNameInFlight = new Map<string, Promise<AttemptFirstAgentBranchAutoNameResult>>();
+
+export function attemptFirstAgentBranchAutoName(
+  options: AutoNameOptions,
+): Promise<AttemptFirstAgentBranchAutoNameResult> {
+  const key = resolve(options.cwd);
+  const existing = autoNameInFlight.get(key);
+  if (existing) return existing;
+  const operation = attemptAutoName(options).finally(() => autoNameInFlight.delete(key));
+  autoNameInFlight.set(key, operation);
+  return operation;
+}
+
+const runAutoNameGit = createRunGitCommand("workspace-auto-name");
+
+export async function isAutoNameBranchPublished(cwd: string, branch: string): Promise<boolean> {
+  const upstream = await runAutoNameGit(
+    ["for-each-ref", "--format=%(upstream)", `refs/heads/${branch}`],
+    { cwd },
+  );
+  if (upstream.stdout.trim()) return true;
+  const remotes = await runAutoNameGit(["remote"], { cwd });
+  for (const remote of remotes.stdout.trim().split("\n").filter(Boolean)) {
+    // Query the remote itself: a push without -u need not have a tracking ref.
+    const refs = await runAutoNameGit(["ls-remote", "--heads", remote, `refs/heads/${branch}`], {
+      cwd,
+    });
+    if (refs.stdout.trim()) return true;
+  }
+  return false;
+}
+
+async function attemptAutoName(
+  options: AutoNameOptions,
+): Promise<AttemptFirstAgentBranchAutoNameResult> {
   const firstAgentContext = options.firstAgentContext;
   if (!firstAgentContext || !buildAgentBranchNameSeed(firstAgentContext)) {
-    return { attempted: false, renamed: false, branchName: null };
+    return skipAutoName(options, "First message unavailable", false);
   }
 
-  let metadata: ReturnType<typeof readPaseoWorktreeMetadata>;
-  try {
-    metadata = readPaseoWorktreeMetadata(options.cwd);
-  } catch {
-    return { attempted: false, renamed: false, branchName: null };
-  }
-  if (
-    !metadata ||
-    metadata.version !== 2 ||
-    metadata.firstAgentBranchAutoName?.status !== "pending"
-  ) {
-    return { attempted: false, renamed: false, branchName: null };
-  }
+  const autoName = readEligibleAutoNameMetadata(options.cwd);
+  if (!autoName) return skipAutoName(options, "No pending provisional branch metadata", false);
 
   const getCurrentBranchImpl = options.getCurrentBranch ?? getCurrentBranch;
-  const placeholderBranchName = metadata.firstAgentBranchAutoName.placeholderBranchName;
-  if ((await getCurrentBranchImpl(options.cwd)) !== placeholderBranchName) {
+  const placeholderBranchName = autoName.placeholderBranchName;
+  if (
+    ["main", "paseo-local"].includes(placeholderBranchName) ||
+    (await getCurrentBranchImpl(options.cwd)) !== placeholderBranchName
+  ) {
     markPaseoWorktreeFirstAgentBranchAutoNameAttempted(options.cwd);
-    return { attempted: true, renamed: false, branchName: null };
+    return skipAutoName(options, "Provisional branch changed or protected", true);
   }
 
   markPaseoWorktreeFirstAgentBranchAutoNameAttempted(options.cwd);
@@ -207,16 +239,12 @@ export async function attemptFirstAgentBranchAutoName(options: {
     firstAgentContext,
   });
   if (!branchName) {
-    return { attempted: true, renamed: false, branchName: null };
+    return skipAutoName(options, "Generation returned no branch", true);
   }
   const validation = validateBranchSlug(branchName);
   if (!validation.valid || branchName === placeholderBranchName) {
-    return { attempted: true, renamed: false, branchName: null };
+    return skipAutoName(options, "Generated branch is invalid or unchanged", true);
   }
-  if ((await getCurrentBranchImpl(options.cwd)) !== placeholderBranchName) {
-    return { attempted: true, renamed: false, branchName: null };
-  }
-
   const localBranchExistsImpl = options.localBranchExists ?? localBranchExists;
   const targetName = await findAvailableBranchName({
     cwd: options.cwd,
@@ -225,16 +253,49 @@ export async function attemptFirstAgentBranchAutoName(options: {
     localBranchExists: localBranchExistsImpl,
   });
   if (!targetName) {
-    return { attempted: true, renamed: false, branchName: null };
+    return skipAutoName(options, "No available branch name", true);
   }
 
+  if (
+    (await (options.isBranchPublished ?? isAutoNameBranchPublished)(
+      options.cwd,
+      placeholderBranchName,
+    )) ||
+    (await getCurrentBranchImpl(options.cwd)) !== placeholderBranchName
+  ) {
+    return skipAutoName(options, "Branch published or concurrently changed", true);
+  }
   const renameCurrentBranchImpl = options.renameCurrentBranch ?? renameCurrentBranch;
   const renamedBranch = await renameCurrentBranchImpl(options.cwd, targetName);
+  markPaseoWorktreeFirstAgentBranchAutoNameSucceeded(
+    options.cwd,
+    renamedBranch.currentBranch ?? targetName,
+  );
   return {
     attempted: true,
     renamed: true,
     branchName: renamedBranch.currentBranch ?? targetName,
   };
+}
+
+function skipAutoName(
+  options: AutoNameOptions,
+  reason: string,
+  attempted: boolean,
+): AttemptFirstAgentBranchAutoNameResult {
+  options.logger?.info({ cwd: options.cwd, reason }, "Worktree branch naming skipped");
+  return { attempted, renamed: false, branchName: null };
+}
+
+function readEligibleAutoNameMetadata(cwd: string) {
+  try {
+    const metadata = readPaseoWorktreeMetadata(cwd);
+    if (metadata?.version !== 2 || metadata.firstAgentBranchAutoName?.status === "succeeded")
+      return null;
+    return metadata.firstAgentBranchAutoName ?? null;
+  } catch {
+    return null;
+  }
 }
 
 const MAX_BRANCH_NAME_SUFFIX_ATTEMPTS = 50;

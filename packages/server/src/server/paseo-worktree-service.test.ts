@@ -580,7 +580,7 @@ test("renames an eligible unnamed branch-off worktree once on first agent contex
   expect(readPaseoWorktreeMetadata(created.worktree.worktreePath)).toMatchObject({
     version: 2,
     firstAgentBranchAutoName: {
-      status: "attempted",
+      status: "succeeded",
       placeholderBranchName: "dazzling-yak",
     },
   });
@@ -1360,3 +1360,142 @@ function createGitHubPrRemoteRepo(): { tempDir: string; repoDir: string } {
   execFileSync("git", ["fetch", "origin"], { cwd: repoDir, stdio: "pipe" });
   return { tempDir, repoDir };
 }
+
+test("retries a failed generation after restart using eligible metadata", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const created = await createPaseoWorktree(
+    {
+      cwd: repoDir,
+      worktreeSlug: "dazzling-yak",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    createDeps(),
+  );
+  const options = {
+    cwd: created.worktree.worktreePath,
+    firstAgentContext: { prompt: "Réparer les titres des espaces existants" },
+  };
+  await attemptFirstAgentBranchAutoName({
+    ...options,
+    generateBranchNameFromContext: async () => null,
+  });
+  const result = await attemptFirstAgentBranchAutoName({
+    ...options,
+    generateBranchNameFromContext: async () => "repair-existing-workspace-automatic-title",
+  });
+  expect(result).toEqual({
+    attempted: true,
+    renamed: true,
+    branchName: "repair-existing-workspace-automatic-title",
+  });
+});
+
+test("deduplicates concurrent branch renames", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const created = await createPaseoWorktree(
+    {
+      cwd: repoDir,
+      worktreeSlug: "dazzling-yak",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    createDeps(),
+  );
+  let calls = 0;
+  const options = {
+    cwd: created.worktree.worktreePath,
+    firstAgentContext: { prompt: "Réparer les titres des espaces existants" },
+    generateBranchNameFromContext: async () => {
+      calls++;
+      return "repair-existing-workspace-automatic-title";
+    },
+  };
+  const [first, second] = await Promise.all([
+    attemptFirstAgentBranchAutoName(options),
+    attemptFirstAgentBranchAutoName(options),
+  ]);
+  expect(first).toEqual(second);
+  expect(first.renamed).toBe(true);
+  expect(calls).toBe(1);
+});
+
+test("preserves a branch published without an upstream", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const remote = path.join(tempDir, "remote.git");
+  execFileSync("git", ["init", "--bare", remote], { stdio: "pipe" });
+  execFileSync("git", ["remote", "add", "origin", remote], { cwd: repoDir, stdio: "pipe" });
+  const created = await createPaseoWorktree(
+    {
+      cwd: repoDir,
+      worktreeSlug: "dazzling-yak",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    createDeps(),
+  );
+  execFileSync("git", ["push", "origin", "dazzling-yak"], {
+    cwd: created.worktree.worktreePath,
+    stdio: "pipe",
+  });
+  const result = await attemptFirstAgentBranchAutoName({
+    cwd: created.worktree.worktreePath,
+    firstAgentContext: { prompt: "Do not rename published branches" },
+    generateBranchNameFromContext: async () => "repair-existing-workspace-automatic-title",
+  });
+  expect(result.renamed).toBe(false);
+  expect(
+    execFileSync("git", ["branch", "--show-current"], {
+      cwd: created.worktree.worktreePath,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe("dazzling-yak");
+});
+
+test("rechecks the branch after publication and collision checks", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const created = await createPaseoWorktree(
+    {
+      cwd: repoDir,
+      worktreeSlug: "dazzling-yak",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    createDeps(),
+  );
+  const cwd = created.worktree.worktreePath;
+  const result = await attemptFirstAgentBranchAutoName({
+    cwd,
+    firstAgentContext: { prompt: "Keep the concurrent manual branch" },
+    generateBranchNameFromContext: async () => "repair-existing-workspace-automatic-title",
+    isBranchPublished: async () => {
+      execFileSync("git", ["branch", "-m", "manual-branch"], { cwd, stdio: "pipe" });
+      return false;
+    },
+  });
+  expect(result.renamed).toBe(false);
+  expect(execFileSync("git", ["branch", "--show-current"], { cwd, encoding: "utf8" }).trim()).toBe(
+    "manual-branch",
+  );
+});
+
+test("does not mark explicitly named branches eligible", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const created = await createPaseoWorktree(
+    {
+      cwd: repoDir,
+      branchName: "manual-branch",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    createDeps(),
+  );
+  expect(readPaseoWorktreeMetadata(created.worktree.worktreePath)).not.toHaveProperty(
+    "firstAgentBranchAutoName",
+  );
+});

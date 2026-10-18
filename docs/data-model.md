@@ -30,6 +30,11 @@ Workspace archive runs lifecycle teardown from the exact `cwd` but removes only 
 `worktreeRoot` after its last active reference disappears. Worktree recovery recreates that backing
 checkout from `mainRepoRoot`, then restores the relative path from `worktreeRoot` to `cwd`.
 
+Workspace naming keeps its initial context and model selection in optional local `autoName` metadata.
+Keep that context across failed attempts so later messages cannot change the recovery seed. The
+worktree's `attempted` marker is retryable; only `succeeded` records a completed branch rename.
+Older attempted records are eligible only while Git still has their recorded provisional branch.
+
 Paseo uses **file-based JSON persistence** instead of a traditional database. All data is validated at runtime with Zod schemas. Most stores write atomically (write to temp file, then rename); a few still use plain `writeFile` — see each section. There is no schema-versioning/migration framework — schemas rely on optional fields with defaults for forward compatibility, with a small amount of inline normalization in `persisted-config.ts` for legacy provider/speech entries.
 
 All server-side stores live under `$PASEO_HOME` (defaults to `~/.paseo`).

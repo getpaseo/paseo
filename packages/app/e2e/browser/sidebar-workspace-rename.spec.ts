@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { test, expect, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { seedWorkspace } from "../support/helpers/seed-client";
@@ -72,4 +73,54 @@ test.describe("Sidebar workspace rename", () => {
       await workspace.cleanup();
     }
   });
+});
+
+test("automatically renames an empty worktree after its first message without reloading", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000);
+  const seeded = await seedWorkspace({ repoPrefix: "automatic-workspace-name-" });
+  try {
+    const created = await seeded.client.createWorkspace({
+      source: {
+        kind: "worktree",
+        cwd: seeded.repoPath,
+        projectId: seeded.projectId,
+        worktreeSlug: "dazzling-yak",
+        refName: "main",
+      },
+    });
+    expect(created.error).toBeNull();
+    if (!created.workspace) throw new Error("Missing worktree");
+    const workspace = created.workspace;
+    await gotoAppShell(page);
+    const row = page.getByTestId(workspaceRowTestId(workspace.id));
+    await expect(row).toContainText("dazzling-yak");
+    await row.click();
+    const agent = await seeded.client.createAgent({
+      provider: "mock",
+      model: "e2e-fast-stream",
+      cwd: workspace.workspaceDirectory,
+      workspaceId: workspace.id,
+    });
+    await seeded.client.sendAgentMessage(agent.id, "Corriger les titres des espaces existants");
+    await expect(row).toContainText("Corriger les titres des espaces existants", {
+      timeout: 30_000,
+    });
+    expect(
+      execFileSync("git", ["branch", "--show-current"], {
+        cwd: workspace.workspaceDirectory,
+        encoding: "utf8",
+      }).trim(),
+    ).toBe("corriger-les-titres-des-espaces-existants");
+    await expect(
+      page.getByTestId("workspace-header-branch").filter({ visible: true }).first(),
+    ).toHaveText("corriger-les-titres-des-espaces-existants", { timeout: 30_000 });
+    await page.screenshot({
+      path: testInfo.outputPath("automatic-workspace-name.png"),
+      fullPage: true,
+    });
+  } finally {
+    await seeded.cleanup();
+  }
 });

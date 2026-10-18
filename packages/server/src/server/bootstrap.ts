@@ -211,6 +211,7 @@ import {
 } from "./auth.js";
 import { deleteLocalCredential, writeLocalCredential } from "./local-credential.js";
 import { createWebUiMiddleware } from "./web-ui.js";
+import { isSystemInjectedEnvelope } from "./agent/agent-prompt.js";
 import { WorkspaceAutoName } from "./workspace-auto-name.js";
 import { createGitMutationService } from "./session/git-mutation/git-mutation-service.js";
 import { workspaceIdsOnCheckout } from "./workspace-directory.js";
@@ -982,6 +983,7 @@ export async function createPaseoDaemon(
         daemonConfig: { metadataGeneration: daemonConfigStore.get().metadataGeneration },
         logger,
       }),
+    onFirstUserPrompt: (agentId, prompt) => workspaceAutoName.captureFirstPrompt(agentId, prompt),
     onWorkspaceStateMayHaveChanged: ({ cwd }) => {
       workspaceGitService.onWorkspaceStateMayHaveChanged(cwd);
     },
@@ -1148,6 +1150,37 @@ export async function createPaseoDaemon(
       await emitWorkspaceUpdatesExternal([workspaceId]);
     },
     logger,
+  });
+
+  const unsubscribeWorkspaceAutoName = workspaceAutoName.start({
+    workspaceRegistry,
+    listAgents: () => agentStorage.list(),
+    readFirstContext: async (record) => {
+      if (!record.persistence) return null;
+      const client =
+        providerSnapshotManager.getAgentManagerProviderState().clients[record.provider];
+      if (!client) throw new Error(`Naming history provider unavailable: ${record.provider}`);
+      const session = await client.resumeSession(
+        record.persistence,
+        { cwd: record.cwd },
+        undefined,
+        { purpose: "history" },
+      );
+      try {
+        for await (const event of session.streamHistory()) {
+          if (
+            event.type === "timeline" &&
+            event.item.type === "user_message" &&
+            !isSystemInjectedEnvelope(event.item.text)
+          ) {
+            return { prompt: event.item.text };
+          }
+        }
+        return null;
+      } finally {
+        await session.close();
+      }
+    },
   });
 
   setupAutoArchiveOnMerge({
@@ -1409,6 +1442,12 @@ export async function createPaseoDaemon(
   logger.info({ elapsed: elapsed() }, "Schedule service initialized");
   logger.info({ elapsed: elapsed() }, "Loading persisted agent registry");
   const persistedRecords = await agentStorage.list();
+  // Keep recovery off the startup and message admission paths.
+  const autoNameRecoveryTimer = setTimeout(() => {
+    void workspaceAutoName
+      .recover()
+      .catch((err) => logger.warn({ err }, "Workspace naming recovery failed"));
+  }, 0);
   logger.info(
     { elapsed: elapsed() },
     `Agent registry loaded (${persistedRecords.length} record${persistedRecords.length === 1 ? "" : "s"}); agents will initialize on demand`,
@@ -1847,6 +1886,8 @@ export async function createPaseoDaemon(
     // that is still open. Plugins themselves are stopped once every session
     // they serve has been closed, further down.
     unsubscribePluginProviders();
+    clearTimeout(autoNameRecoveryTimer);
+    unsubscribeWorkspaceAutoName();
     unsubscribeDesktopControl();
     await hubRelationships.stop();
     workspaceReconciliation.dispose();

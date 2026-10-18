@@ -357,6 +357,7 @@ export interface AgentManagerOptions {
   providerDefinitions?: ProviderEnabledMap;
   idFactory?: () => string;
   registry?: AgentStorage;
+  onFirstUserPrompt?: (agentId: string, prompt: AgentPromptInput) => void;
   onAgentAttention?: AgentAttentionCallback;
   onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
   durableTimelineStore?: AgentTimelineStore;
@@ -801,6 +802,7 @@ export class AgentManager {
     provider: AgentProvider,
   ) => ProviderPaseoToolsPolicy | undefined;
   private appendSystemPrompt: string;
+  private readonly onFirstUserPrompt?: AgentManagerOptions["onFirstUserPrompt"];
   private onAgentAttention?: AgentAttentionCallback;
   private onAgentArchived?: AgentArchivedCallback;
   private onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
@@ -811,6 +813,7 @@ export class AgentManager {
   private acceptingAgentRegistrations = true;
 
   constructor(options: AgentManagerOptions) {
+    this.onFirstUserPrompt = options.onFirstUserPrompt;
     this.resolveLaunchProfile = options.resolveLaunchProfile;
     this.pluginLifecycle = options.pluginLifecycle;
     this.idFactory = options?.idFactory ?? (() => randomUUID());
@@ -2594,6 +2597,24 @@ export class AgentManager {
     });
   }
 
+  private notifyFirstUserPrompt(agentId: string, prompt: AgentPromptInput): void {
+    const agent = this.requireAgent(agentId);
+    if (!agent.historyPrimed || agent.lastUserMessageAt) return;
+    if (
+      !this.onFirstUserPrompt ||
+      this.timelineStore
+        .getItems(agentId)
+        .some((item) => item.type === "user_message" && !isSystemInjectedEnvelope(item.text))
+    )
+      return;
+    if (isSystemInjectedEnvelope(submittedPromptText(prompt))) return;
+    try {
+      this.onFirstUserPrompt(agentId, prompt);
+    } catch (err) {
+      this.logger.warn({ err, agentId }, "First prompt observer failed");
+    }
+  }
+
   private async startPendingForegroundTurn(params: {
     agent: ActiveManagedAgent;
     agentId: string;
@@ -2688,6 +2709,7 @@ export class AgentManager {
       if (isReplacement) {
         agent.pendingReplacement = false;
       }
+      this.notifyFirstUserPrompt(agentId, prompt);
       const turnStartedAt = new Date();
       pendingRun.start = { status: "started", turnId };
       agent.activeForegroundTurnId = turnId;

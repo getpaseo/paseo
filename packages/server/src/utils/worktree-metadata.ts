@@ -25,17 +25,12 @@ const PaseoWorktreeMetadataV2Schema = z.object({
   baseRef: z.string().min(1).optional(),
   changeRequestLookupTarget: ChangeRequestLookupTargetSchema.optional(),
   firstAgentBranchAutoName: z
-    .discriminatedUnion("status", [
-      z.object({
-        status: z.literal("pending"),
-        placeholderBranchName: z.string().min(1),
-      }),
-      z.object({
-        status: z.literal("attempted"),
-        placeholderBranchName: z.string().min(1),
-        attemptedAt: z.string().min(1),
-      }),
-    ])
+    .object({
+      status: z.enum(["pending", "attempted", "succeeded"]),
+      placeholderBranchName: z.string().min(1),
+      attemptedAt: z.string().optional(),
+      branchName: z.string().optional(),
+    })
     .optional(),
   runtime: z
     .object({
@@ -305,6 +300,22 @@ export function markPaseoWorktreeFirstAgentBranchAutoNameAttempted(
   };
   writePaseoWorktreeMetadataFile(worktreeRoot, next);
   return next;
+}
+
+export function markPaseoWorktreeFirstAgentBranchAutoNameSucceeded(
+  worktreeRoot: string,
+  branchName: string,
+): void {
+  const current = readPaseoWorktreeMetadata(worktreeRoot);
+  if (!current || current.version !== 2 || !current.firstAgentBranchAutoName) return;
+  writePaseoWorktreeMetadataFile(worktreeRoot, {
+    ...current,
+    firstAgentBranchAutoName: {
+      ...current.firstAgentBranchAutoName,
+      status: "succeeded",
+      branchName,
+    },
+  });
 }
 
 export function readPaseoWorktreeMetadata(worktreeRoot: string): PaseoWorktreeMetadata | null {

@@ -12022,3 +12022,39 @@ test("usage session is a pure read of the live adapter and disappears on close",
   }
   expect(manager.usageSession(agent.id)).toBeNull();
 });
+
+test.each([false, true])(
+  "observes the first accepted prompt with attachments without blocking messages (observer throws: %s)",
+  async (throws) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-first-prompt-"));
+    const observer = vi.fn(() => {
+      if (throws) throw new Error("Observer failed");
+    });
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      logger,
+      onFirstUserPrompt: observer,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      const prompt: AgentPromptInput = [
+        { type: "text", text: "Réparer les titres des espaces existants" },
+        { type: "text", mimeType: "text/plain", text: "Attached context" },
+      ];
+      await drainAsyncGenerator(
+        manager.streamAgent(agent.id, prompt, { clientMessageId: "first" }),
+      );
+      await drainAsyncGenerator(
+        manager.streamAgent(agent.id, "Later message", { clientMessageId: "second" }),
+      );
+      expect(observer).toHaveBeenCalledTimes(1);
+      expect(observer).toHaveBeenCalledWith(agent.id, prompt);
+      expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+    } finally {
+      await manager.closeAgent(agent.id);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);

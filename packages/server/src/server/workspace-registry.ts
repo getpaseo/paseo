@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 
 import type { Logger } from "pino";
 import { z } from "zod";
+import { FirstAgentContextSchema } from "@getpaseo/protocol/messages";
 
 import { writeJsonFileAtomic } from "./atomic-file.js";
 import { areEquivalentPaths } from "../utils/path.js";
@@ -68,6 +69,18 @@ const PersistedWorkspaceRecordSchema = z.object({
     .optional()
     .transform((value) => value ?? null),
   intent: z.string().optional(),
+  autoName: z
+    .object({
+      firstAgentContext: FirstAgentContextSchema,
+      selection: z
+        .object({
+          provider: z.string(),
+          model: z.string().nullable().optional(),
+          thinkingOptionId: z.string().nullable().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
   // The worktree's git branch. Decoupled from displayName/title by construction:
   // displayName holds the human name (title), branch holds the git branch. Only
   // worktree workspaces carry a branch; directory/local_checkout leave it null.
