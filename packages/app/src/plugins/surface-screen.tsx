@@ -8,6 +8,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { HeaderIconBadge } from "@/components/headers/header-icon-badge";
 import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
 import { CompactHeader } from "@/components/headers/compact-header";
+import { SidebarMenuToggle } from "@/components/headers/sidebar-menu-toggle";
 import { ScreenHeader } from "@/components/headers/screen-header";
 import { ScreenTitle } from "@/components/headers/screen-title";
 import { HostFilter } from "@/components/hosts/host-filter";
@@ -172,6 +173,7 @@ export function PluginSurfaceScreen() {
   const headerLeft = useMemo(
     () => (
       <>
+        <SidebarMenuToggle />
         {Icon ? (
           <HeaderIconBadge>
             <ThemedPluginHeaderIcon Icon={Icon} uniProps={mutedColorMapping} />
