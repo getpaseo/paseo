@@ -66,11 +66,17 @@ function mountCard(question: Record<string, unknown>) {
   const view = within(container);
   const optionRole = question.multiSelect ? "checkbox" : "radio";
   const otherInput = () =>
-    view.getByRole<HTMLInputElement>("textbox", { name: String(question.question) });
+    view.getByRole<HTMLInputElement | HTMLTextAreaElement>("textbox", {
+      name: String(question.question),
+    });
   const check = (label: string) => act(() => view.getByRole(optionRole, { name: label }).click());
   const type = (text: string) => {
     const input = otherInput();
-    const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    const prototype =
+      input instanceof HTMLTextAreaElement
+        ? HTMLTextAreaElement.prototype
+        : HTMLInputElement.prototype;
+    const valueSetter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
     if (!valueSetter) throw new Error("HTML input value setter is unavailable");
     act(() => {
       valueSetter.call(input, text);
@@ -103,6 +109,27 @@ const singleSelectQuestion = {
 };
 
 describe("QuestionFormCard other answers", () => {
+  it("grows for line breaks and wrapped text, then shrinks when cleared", async () => {
+    const card = mountCard(singleSelectQuestion);
+    const input = card.otherInput();
+    input.style.width = "300px";
+    const initialHeight = input.getBoundingClientRect().height;
+
+    const answer = "First line\nSecond line\nThird line";
+    card.type(answer);
+    await expect.poll(() => input.getBoundingClientRect().height).toBeGreaterThan(initialHeight);
+    expect(input.scrollHeight).toBeLessThanOrEqual(input.clientHeight);
+    card.submit();
+    expect(card.submittedAnswers()).toEqual({ Provider: answer });
+
+    card.type("A long answer that wraps naturally across several lines. ".repeat(5));
+    await expect.poll(() => input.getBoundingClientRect().height).toBeGreaterThan(initialHeight);
+    expect(input.scrollHeight).toBeLessThanOrEqual(input.clientHeight);
+
+    card.check("Codex");
+    await expect.poll(() => input.getBoundingClientRect().height).toBe(initialHeight);
+  });
+
   it("keeps checked options when the other answer is typed afterwards (multi-select)", () => {
     const card = mountCard(multiSelectQuestion);
 

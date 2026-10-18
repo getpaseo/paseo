@@ -102,8 +102,8 @@ npm run dev:app                      # Start Expo against the dev daemon
 npm run dev:desktop                  # Start Electron desktop dev
 npm run cli -- ls -a -g              # List all agents
 npm run cli -- daemon status         # Check daemon status
-npm run typecheck                    # Always run after changes
-npm run lint                         # Always run after changes
+npm run typecheck                    # Run once on final code state
+npm run lint                         # Run once on final code state
 npm run format                       # Auto-format with Biome
 npm run format:check                 # Check formatting without writing
 ```
@@ -115,7 +115,11 @@ See [docs/development.md](docs/development.md) for full setup, build sync requir
 ## Local delivery branch
 
 Use `main` as the default PR target and the source of local Mac builds in `sylvaindiv/paseo`.
-Keep agent work on its own branches and integrate it into `main` before delivery.
+Keep agent work on its own branches. A correction ends with validated local code by default;
+it does not require a commit, publication, or rebuild. Publish or deliver only when the request
+or approved plan includes it, and integrate into `main` within those authorizations before local delivery.
+The automatic builder continues to follow `origin/main`. Without a full-delivery request, do not
+routinely monitor installation or activation.
 
 ## Release branches
 
@@ -126,9 +130,9 @@ and updating `next`, integrating it after a release, and releasing a hotfix from
 
 ## Critical rules
 
-- **Local delivery is complete only after publication, installation, and active-version verification.** Follow the [complete-source gate](docs/paseo-local-auto-build.md#complete-source-gate); a tested commit alone is not a delivery.
+- **An explicitly requested local rebuild requires complete sources, publication, installation, and separate active UI and daemon verification.** Follow the [delivery scope and complete-source gate](docs/paseo-local-auto-build.md#complete-source-gate).
 
-- **NEVER restart the main Paseo daemon on port 6767 without permission** — it manages all running agents. If you're an agent, restarting it kills your own process.
+- **NEVER restart the main Paseo daemon on port 6767 without permission** — it manages all running agents. An explicit Mac rebuild request authorizes the required daemon restart; warn Sylvain first because it can interrupt agents and this conversation.
 - **NEVER assume a timeout means the service needs restarting** — timeouts can be transient.
 - **NEVER add auth checks to tests** — agent providers handle their own auth.
 - **Before changing app routes, startup routing, remembered workspace restore, or active workspace selection, read [docs/expo-router.md](docs/expo-router.md).**
@@ -136,10 +140,11 @@ and updating `next`, integrating it after a release, and releasing a hotfix from
   - Run only the specific test file you changed: `npx vitest run <file> --bail=1`
   - Never run `npm run test` for an entire workspace unless explicitly asked.
   - If you must run a broad suite, pipe output to a file and read it afterward: `npx vitest run <file> --bail=1 > /tmp/test-output.txt 2>&1` then read the file.
-  - Never re-run a test suite that another agent already ran and reported green — trust the result.
-  - For full suite verification, push to CI and check GitHub Actions instead.
+  - Reuse successful results, including another agent’s, for the same code state; repeat only checks a relevant change can invalidate.
+  - Use CI for full-suite verification when publication is authorized; this rule does not authorize a push.
 - Add tests to existing suites and reuse their npm scripts and CI jobs instead of creating feature-specific ones.
-- **Always run typecheck and lint after every change.**
+- During development, run targeted behavior tests; after a coherent batch, run checks appropriate to the affected packages.
+- **Before finishing a code change, run `npm run typecheck`, `npm run lint`, and a formatting check once on the final state.** After another change, repeat only checks it can invalidate. Reuse results already obtained on that state. For documentation-only changes, check formatting and the diff. See [testing cadence and browser prerequisites](docs/testing.md#validation-cadence).
 - **Build workspace packages before diagnosing cross-package type errors.** This repo consumes generated declarations across workspaces. If typecheck fails in a package that depends on another workspace, rebuild the owning stack first so `dist` declarations are current:
   - `npm run build:client` — rebuild protocol and client declarations.
   - `npm run build:server` — rebuild highlight, relay, protocol, client, server, and CLI when server/CLI types may be stale.
