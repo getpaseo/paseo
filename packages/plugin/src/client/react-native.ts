@@ -58,6 +58,19 @@ export declare const Modal: ModalComponent;
 export declare function useToast(): ToastApi;
 export declare function useRevealedText(text: string, phase: "streaming" | "complete"): string;
 
+export interface SafeAreaInsets {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
+/**
+ * The window's safe-area insets: status bar, navigation bar, notch, home indicator. A screen's
+ * body runs under the navigation bar; pad the end of its scrolling content by `bottom`.
+ */
+export declare function useSafeAreaInsets(): SafeAreaInsets;
+
 export type { PluginIconProps } from "./contracts.js";
 
 /** React Native scrolling with the host's sheet gestures when rendered inside a sheet. */

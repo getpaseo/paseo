@@ -1,3 +1,4 @@
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { describe, expect, it } from "vitest";
 import { runPluginClientBundle, type PluginClientRuntime } from "./evaluate";
 
@@ -620,6 +621,27 @@ describe("evaluatePluginClientBundle", () => {
     );
 
     expect(plugin.surfaces.map((surface) => surface.id)).toEqual(["main"]);
+  });
+
+  it("hands plugins the app's own safe-area hook through @getpaseo/plugin/client/react-native", () => {
+    const plugin = evaluatePluginClientBundle(
+      "example",
+      `(function(require) {
+        const { useSafeAreaInsets } = require("@getpaseo/plugin/client/react-native");
+        const module = { exports: {} };
+        module.exports.default = function(plugin) {
+          plugin.addScreen({ id: "viewer", title: "Viewer", Component: function Viewer() {
+            return useSafeAreaInsets;
+          } });
+          return function() {};
+        };
+        return module.exports;
+      })`,
+    );
+
+    // The same function, so plugins read the app's live insets, including after rotation.
+    const Viewer = plugin.surfaces[0]?.Component as unknown as () => unknown;
+    expect(Viewer()).toBe(useSafeAreaInsets);
   });
 
   it("keeps shared and client runtime exports separate", () => {
