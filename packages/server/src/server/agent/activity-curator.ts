@@ -181,7 +181,9 @@ function curateProjectedActivityEntries(
         entries.push(activityEntry(`[Error] ${item.message}`));
         break;
       case "compaction":
-        entries.push(activityEntry("[Compacted]"));
+        entries.push(
+          activityEntry(item.status === "failed" ? "[Compaction failed]" : "[Compacted]"),
+        );
         break;
     }
   }

@@ -1294,13 +1294,16 @@ export class Session {
     return owner;
   }
 
-  // COMPAT(timelineItemCapabilities): plugin items added in v0.8.0, notifications in v0.7.2.
-  // Remove after 2027-03-07 once the supported client floor is >= v0.8.0.
-  private supportsTimelineItem(item: { type: string }, source?: object): boolean {
+  // COMPAT(timelineItemCapabilities): plugin items added in v0.8.0, notifications in v0.7.2,
+  // failed compactions after v0.11.4. Remove after 2027-04-16 once the supported client floor
+  // includes failed_compactions.
+  private supportsTimelineItem(item: { type: string; status?: unknown }, source?: object): boolean {
     let capability: ClientCapability;
     if (item.type === "notification") capability = CLIENT_CAPS.timelineNotifications;
     else if (item.type === "plugin") capability = CLIENT_CAPS.pluginTimelineItems;
-    else return true;
+    else if (item.type === "compaction" && item.status === "failed") {
+      capability = CLIENT_CAPS.failedCompactions;
+    } else return true;
     return source ? this.supportsForSource(capability, source) : this.supports(capability);
   }
 

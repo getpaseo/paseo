@@ -422,7 +422,7 @@ function todoTimeline(
 }
 
 function compactionTimeline(
-  status: "loading" | "completed",
+  status: "loading" | "completed" | "failed",
   trigger?: "auto" | "manual",
 ): AgentStreamEventPayload {
   return {
@@ -1407,6 +1407,28 @@ describe("stream reducer canonical tool calls", () => {
     assert.strictEqual(compactions[0].trigger, "auto");
     assert.strictEqual(
       state.some((item) => item.kind === "compaction" && item.status === "loading"),
+      false,
+    );
+  });
+
+  it("removes the loading compaction when the compaction fails", () => {
+    const state = hydrateStreamState([
+      {
+        event: compactionTimeline("loading", "manual"),
+        timestamp: new Date("2025-01-01T10:50:00Z"),
+      },
+      {
+        event: compactionTimeline("failed"),
+        timestamp: new Date("2025-01-01T10:50:01Z"),
+      },
+      {
+        event: { type: "turn_completed", provider: "claude" },
+        timestamp: new Date("2025-01-01T10:50:02Z"),
+      },
+    ]);
+
+    assert.strictEqual(
+      state.some((item) => item.kind === "compaction"),
       false,
     );
   });
