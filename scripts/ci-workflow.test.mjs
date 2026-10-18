@@ -18,6 +18,10 @@ const gatedCiJobs = new Map([
   ["typecheck", { name: "typecheck", contract: "quality" }],
   ["server-tests-ubuntu", { name: "server-tests (ubuntu-latest)", contracts: ["server", "hub"] }],
   ["server-tests-windows", { name: "server-tests (windows-latest)", contracts: ["server", "hub"] }],
+  [
+    "server-integration-windows",
+    { name: "server-integration (windows-latest)", contract: "server" },
+  ],
   ["server-tests-macos", { name: "server-tests (macos-14, file observation)", contract: "server" }],
   ["desktop-tests-ubuntu", { name: "desktop-tests (ubuntu-latest)", contract: "desktop" }],
   ["desktop-tests-windows", { name: "desktop-tests (windows-latest)", contract: "desktop" }],
@@ -338,7 +342,7 @@ test("stable iOS releases upload once and distribute to external testers before 
 test("eight Playwright shards share two-worker coverage and a real result gate", () => {
   const source = readFileSync(ciWorkflowPath, "utf8");
   const jobs = jobBlocks(source);
-  assert.equal(jobs.size, 21);
+  assert.equal(jobs.size, 22);
   for (let shard = 1; shard <= 8; shard++) {
     const job = jobs.get(`playwright-${shard}`).join("\n");
     assert.match(job, new RegExp(`PLAYWRIGHT_SHARD: "${shard}/8"`));
@@ -467,4 +471,88 @@ test("quality preserves commands and routes each domain independently after fail
   const gateCondition = /    if: \$\{\{ (.+) \}\}/.exec(jobs.get("playwright").join("\n"))[1];
   assert.equal(accepts(gateCondition, {}), true, "gate runs despite a failed child");
   assert.equal(accepts(gateCondition, {}, { cancelled: true }), false);
+});
+
+test("Windows units and integration run independently with complete routed coverage", () => {
+  const source = readFileSync(ciWorkflowPath, "utf8");
+  const jobs = jobBlocks(source);
+  const ubuntu = jobs.get("server-tests-ubuntu").join("\n");
+  const windows = jobs.get("server-tests-windows").join("\n");
+  const integration = jobs.get("server-integration-windows").join("\n");
+  assert.match(ubuntu, /run: npm run test --workspace=@getpaseo\/server/);
+  assert.match(windows, /run: npm run test:unit --workspace=@getpaseo\/server/);
+  assert.doesNotMatch(windows, /run: npm run test(?: |:integration)/);
+  assert.match(integration, /run: npm run test:integration --workspace=@getpaseo\/server/);
+  assert.doesNotMatch(integration, /test:unit|server_plugin_tests|server_hub_contract/);
+  for (const job of [windows, integration]) {
+    assert.match(job, /^    needs: changes$/m, "both phases become eligible independently");
+    assert.match(job, /^    runs-on: windows-latest$/m);
+    assert.doesNotMatch(job, /continue-on-error|maxWorkers|--exclude/);
+    for (const step of [
+      "server_capacity",
+      "server_checkout",
+      "server_node",
+      "server_fetch",
+      "server_install",
+      "server_agent_clis",
+      "server_build",
+    ]) {
+      assert.match(ubuntu, new RegExp(`&${step}\\b`));
+      assert.match(job, new RegExp(`- \\*${step}\\b`));
+    }
+    assert.match(job, /env: \*server_test_env/);
+  }
+  assert.match(windows, /- \*server_plugin_tests/);
+  assert.match(windows, /- \*server_hub_contract/);
+  assert.match(ubuntu, /run: npm run test --workspace=@getpaseo\/builtin-plugins/);
+  assert.match(ubuntu, /run: npm run test:hub-cli-contract --workspace=@getpaseo\/server/);
+
+  const scripts = JSON.parse(
+    readFileSync(new URL("packages/server/package.json", repoRoot), "utf8"),
+  ).scripts;
+  assert.equal(scripts.test, "npm run test:unit && npm run test:integration");
+  assert.equal(scripts["test:unit"], 'vitest run --fileParallelism --exclude "**/*.e2e.test.ts"');
+  const invocations = scripts["test:integration"].split(" && ");
+  assert.equal(invocations.length, 5);
+  assert.ok(invocations.every((command) => command.startsWith("vitest run --maxWorkers=1 ")));
+  const serverConfig = readFileSync(new URL("packages/server/vitest.config.ts", repoRoot), "utf8");
+  assert.doesNotMatch(serverConfig, /maxWorkers/);
+
+  function condition(job) {
+    return /    if: \$\{\{ (.+) \}\}/.exec(job)[1];
+  }
+  function selected(expression, outputs, cancelled = false) {
+    return runInNewContext(expression, {
+      needs: { changes: { outputs } },
+      cancelled: () => cancelled,
+    });
+  }
+  const unitCondition = condition(windows);
+  const integrationCondition = condition(integration);
+  const unitStep = /      - name: Run server unit tests\n        if: \$\{\{ (.+) \}\}/.exec(
+    windows,
+  )[1];
+  const hubStep =
+    /      - &server_hub_contract\n        name: Run Hub CLI\/daemon contract\n        if: \$\{\{ (.+) \}\}/.exec(
+      ubuntu,
+    )[1];
+  const pluginStep =
+    /      - &server_plugin_tests\n        name: Run built-in plugin tests\n        if: \$\{\{ (.+) \}\}/.exec(
+      ubuntu,
+    )[1];
+  for (const [outputs, units, integrations, hub] of [
+    [{ full: "true", server: "false", hub: "false" }, true, true, false],
+    [{ full: "false", server: "true", hub: "false" }, true, true, false],
+    [{ full: "false", server: "false", hub: "true" }, true, false, true],
+    [{ full: "false", server: "false", hub: "false" }, false, false, false],
+    [{}, true, true, false],
+  ]) {
+    assert.equal(selected(unitCondition, outputs), units);
+    assert.equal(selected(integrationCondition, outputs), integrations);
+    assert.equal(selected(unitStep, outputs), integrations);
+    assert.equal(selected(pluginStep, outputs), integrations);
+    assert.equal(selected(hubStep, outputs), hub);
+    assert.equal(selected(unitCondition, outputs, true), false);
+    assert.equal(selected(integrationCondition, outputs, true), false);
+  }
 });

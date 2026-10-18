@@ -170,47 +170,56 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' || needs.changes.outputs.hub != 'false') }}
     runs-on: ubuntu-latest
-    steps: &server_test_steps
-      - name: Log runner capacity
+    steps:
+      - &server_capacity
+        name: Log runner capacity
         run: |
           node -e "const os = require('node:os'); console.log(JSON.stringify({cpus: os.cpus().length, model: os.cpus()[0].model, ramGiB: os.totalmem() / 2 ** 30}))"
 
-      - uses: actions/checkout@v4
+      - &server_checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - &server_node
+        uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "npm"
 
-      - name: Fetch origin/main (worktree tests)
+      - &server_fetch
+        name: Fetch origin/main (worktree tests)
         if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}
         run: git fetch --no-tags origin main:refs/remotes/origin/main
 
-      - name: Install dependencies
+      - &server_install
+        name: Install dependencies
         run: node scripts/npm-retry.mjs ci
 
-      - name: Install agent CLIs for provider tests
+      - &server_agent_clis
+        name: Install agent CLIs for provider tests
         if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}
         run: node scripts/npm-retry.mjs install -g @anthropic-ai/claude-code opencode-ai
 
-      - name: Build server dependencies
+      - &server_build
+        name: Build server dependencies
         run: npm run build:server-deps
 
       - name: Run server tests
         if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}
         run: npm run test --workspace=@getpaseo/server
-        env:
+        env: &server_test_env
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 
-      - name: Run built-in plugin tests
+      - &server_plugin_tests
+        name: Run built-in plugin tests
         if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}
         run: npm run test --workspace=@getpaseo/builtin-plugins
 
-      - name: Run Hub CLI/daemon contract
+      - &server_hub_contract
+        name: Run Hub CLI/daemon contract
         if: ${{ needs.changes.outputs.full == 'false' && needs.changes.outputs.server == 'false' && needs.changes.outputs.hub != 'false' }}
         run: npm run test:hub-cli-contract --workspace=@getpaseo/server
 
@@ -219,7 +228,41 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' || needs.changes.outputs.hub != 'false') }}
     runs-on: windows-latest
-    steps: *server_test_steps
+    steps:
+      - *server_capacity
+      - *server_checkout
+      - *server_node
+      - *server_fetch
+      - *server_install
+      - *server_agent_clis
+      - *server_build
+
+      - name: Run server unit tests
+        if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}
+        run: npm run test:unit --workspace=@getpaseo/server
+        env: *server_test_env
+
+      - *server_plugin_tests
+      - *server_hub_contract
+
+  # Keep the serial integration chain off the Windows unit critical path.
+  server-integration-windows:
+    name: server-integration (windows-latest)
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false') }}
+    runs-on: windows-latest
+    steps:
+      - *server_capacity
+      - *server_checkout
+      - *server_node
+      - *server_fetch
+      - *server_install
+      - *server_agent_clis
+      - *server_build
+
+      - name: Run server integration tests
+        run: npm run test:integration --workspace=@getpaseo/server
+        env: *server_test_env
 
   # native-recursive.ts serves darwin and win32, but windows-latest above is the only
   # runner that exercises it. macOS — the platform the reported watcher bug was on —
