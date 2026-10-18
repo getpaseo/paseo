@@ -6,6 +6,7 @@ import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 export interface WorkspaceAgentVisibility {
   activeAgentIds: Set<string>;
   autoOpenAgentIds: Set<string>;
+  otherWorkspaceAgentIds: Set<string>;
 }
 
 function agentBelongsToWorkspace(agent: Agent, workspaceId: string): boolean {
@@ -23,15 +24,23 @@ export function deriveWorkspaceAgentVisibility(input: {
     return {
       activeAgentIds: new Set<string>(),
       autoOpenAgentIds: new Set<string>(),
+      otherWorkspaceAgentIds: new Set<string>(),
     };
   }
 
   const activeAgentIds = new Set<string>();
   const autoOpenAgentIds = new Set<string>();
+  const otherWorkspaceAgentIds = new Set<string>();
   const agentsById = new Map<string, Agent>([
     ...(agentDetails?.entries() ?? []),
     ...(sessionAgents?.entries() ?? []),
   ]);
+  for (const agent of agentsById.values()) {
+    const ownerId = normalizeWorkspaceOpaqueId(agent.workspaceId);
+    if (ownerId && ownerId !== workspaceId) {
+      otherWorkspaceAgentIds.add(agent.id);
+    }
+  }
   for (const agent of sessionAgents?.values() ?? []) {
     if (!agentBelongsToWorkspace(agent, workspaceId)) {
       continue;
@@ -44,7 +53,7 @@ export function deriveWorkspaceAgentVisibility(input: {
       }
     }
   }
-  return { activeAgentIds, autoOpenAgentIds };
+  return { activeAgentIds, autoOpenAgentIds, otherWorkspaceAgentIds };
 }
 
 export function buildWorkspaceTabSnapshot(input: {
@@ -61,6 +70,7 @@ export function buildWorkspaceTabSnapshot(input: {
     terminalsHydrated: input.terminalsHydrated,
     activeAgentIds: input.agentVisibility.activeAgentIds,
     autoOpenAgentIds: input.agentVisibility.autoOpenAgentIds,
+    otherWorkspaceAgentIds: input.agentVisibility.otherWorkspaceAgentIds,
     knownTerminalIds: input.knownTerminalIds,
     standaloneTerminalIds: input.standaloneTerminalIds,
     hasActivePendingTerminalCreate: input.hasActivePendingTerminalCreate,
@@ -74,7 +84,8 @@ export function workspaceAgentVisibilityEqual(
 ): boolean {
   return (
     setsEqual(a.activeAgentIds, b.activeAgentIds) &&
-    setsEqual(a.autoOpenAgentIds, b.autoOpenAgentIds)
+    setsEqual(a.autoOpenAgentIds, b.autoOpenAgentIds) &&
+    setsEqual(a.otherWorkspaceAgentIds, b.otherWorkspaceAgentIds)
   );
 }
 

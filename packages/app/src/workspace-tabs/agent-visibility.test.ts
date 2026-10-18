@@ -61,6 +61,40 @@ function makeAgent(input: {
 const WORKSPACE_ID = "ws-1";
 
 describe("workspace agent visibility", () => {
+  it("tracks foreign ownership from details and gives live metadata precedence", () => {
+    const foreign = makeAgent({ id: "foreign", cwd: "/repo", workspaceId: "ws-other" });
+    const stale = makeAgent({ id: "moved", cwd: "/repo", workspaceId: "ws-other" });
+    const moved = makeAgent({ id: "moved", cwd: "/repo", workspaceId: WORKSPACE_ID });
+    const ownerless = makeAgent({ id: "ownerless", cwd: "/repo" });
+    const result = deriveWorkspaceAgentVisibility({
+      workspaceId: WORKSPACE_ID,
+      sessionAgents: new Map([
+        [moved.id, moved],
+        [ownerless.id, ownerless],
+      ]),
+      agentDetails: new Map([
+        [foreign.id, foreign],
+        [stale.id, stale],
+      ]),
+    });
+    expect(result.otherWorkspaceAgentIds).toEqual(new Set(["foreign"]));
+    expect(result.activeAgentIds).toEqual(new Set(["moved"]));
+  });
+
+  it("notifies consumers when only foreign ownership changes", () => {
+    const result = {
+      activeAgentIds: new Set<string>(),
+      autoOpenAgentIds: new Set<string>(),
+      otherWorkspaceAgentIds: new Set<string>(),
+    };
+    expect(
+      workspaceAgentVisibilityEqual(result, {
+        ...result,
+        otherWorkspaceAgentIds: new Set(["foreign"]),
+      }),
+    ).toBe(false);
+  });
+
   it("keeps subagents active while excluding them from auto-open", () => {
     const parent = makeAgent({
       id: "parent-agent",
@@ -312,6 +346,8 @@ describe("workspace agent visibility", () => {
     const agentVisibility = {
       activeAgentIds: new Set(["active-agent"]),
       autoOpenAgentIds: new Set(["root-agent"]),
+
+      otherWorkspaceAgentIds: new Set<string>(),
     };
 
     expect(
@@ -329,6 +365,8 @@ describe("workspace agent visibility", () => {
       terminalsHydrated: true,
       activeAgentIds: agentVisibility.activeAgentIds,
       autoOpenAgentIds: agentVisibility.autoOpenAgentIds,
+
+      otherWorkspaceAgentIds: new Set<string>(),
       knownTerminalIds: ["terminal-1", "script-terminal"],
       standaloneTerminalIds: ["terminal-1"],
       hasActivePendingTerminalCreate: false,
@@ -341,10 +379,14 @@ describe("workspace agent visibility", () => {
       const a = {
         activeAgentIds: new Set(["a", "b"]),
         autoOpenAgentIds: new Set(["a"]),
+
+        otherWorkspaceAgentIds: new Set<string>(),
       };
       const b = {
         activeAgentIds: new Set(["a", "b"]),
         autoOpenAgentIds: new Set(["a"]),
+
+        otherWorkspaceAgentIds: new Set<string>(),
       };
       expect(workspaceAgentVisibilityEqual(a, b)).toBe(true);
     });
@@ -353,10 +395,14 @@ describe("workspace agent visibility", () => {
       const a = {
         activeAgentIds: new Set(["a"]),
         autoOpenAgentIds: new Set(["a"]),
+
+        otherWorkspaceAgentIds: new Set<string>(),
       };
       const b = {
         activeAgentIds: new Set(["b"]),
         autoOpenAgentIds: new Set(["a"]),
+
+        otherWorkspaceAgentIds: new Set<string>(),
       };
       expect(workspaceAgentVisibilityEqual(a, b)).toBe(false);
     });
@@ -365,10 +411,14 @@ describe("workspace agent visibility", () => {
       const a = {
         activeAgentIds: new Set(["a", "b"]),
         autoOpenAgentIds: new Set(["a"]),
+
+        otherWorkspaceAgentIds: new Set<string>(),
       };
       const b = {
         activeAgentIds: new Set(["a", "b"]),
         autoOpenAgentIds: new Set(["b"]),
+
+        otherWorkspaceAgentIds: new Set<string>(),
       };
       expect(workspaceAgentVisibilityEqual(a, b)).toBe(false);
     });
@@ -377,10 +427,14 @@ describe("workspace agent visibility", () => {
       const a = {
         activeAgentIds: new Set<string>(),
         autoOpenAgentIds: new Set<string>(),
+
+        otherWorkspaceAgentIds: new Set<string>(),
       };
       const b = {
         activeAgentIds: new Set<string>(),
         autoOpenAgentIds: new Set<string>(),
+
+        otherWorkspaceAgentIds: new Set<string>(),
       };
       expect(workspaceAgentVisibilityEqual(a, b)).toBe(true);
     });
