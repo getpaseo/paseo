@@ -63,7 +63,9 @@ describe("findHighlightRanges", () => {
     );
   });
   it("uses the search matcher for typo and scattered-character matches", () => {
-    expect(marked("billing", findHighlightRanges("bulling", "billing"))).toBe("[billing]");
+    expect(
+      marked("billing", findHighlightRanges("bulling", "billing", { typoTolerant: true })),
+    ).toBe("[billing]");
     expect(marked("paseo-babysit", findHighlightRanges("pasbab", "paseo-babysit"))).toBe(
       "[pas]eo-[bab]ysit",
     );
@@ -78,6 +80,9 @@ describe("findHighlightRanges", () => {
     expect(marked("check configuration", findHighlightRanges("confg", "check configuration"))).toBe(
       "check [conf]i[g]uration",
     );
+  });
+  it("marks typos only when the list was matched typo-tolerantly", () => {
+    expect(findHighlightRanges("bulling", "billing")).toEqual([]);
   });
   it("merges overlapping tokens and ignores empty or unmatched queries", () => {
     expect(marked("billing", findHighlightRanges("bill billing", "billing"))).toBe("[billing]");
