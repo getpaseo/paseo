@@ -1121,6 +1121,10 @@ describe("home-tree scan cost", () => {
     return stopPathContainmentMetrics();
   }
 
+  // Creating the 27,000-directory fixture alone takes about 20 s on Windows
+  // runners under parallel load, and it has crossed the default 30 s deadline.
+  // The heap bound is enforced by the child's --max-old-space-size and its own
+  // 20 s timeout, so the test deadline only has to cover fixture setup.
   it("finishes overlapping broad-tree searches within a bounded heap", async () => {
     const broadRoot = path.join(scanRoot, "broad");
     mkdirSync(broadRoot);
@@ -1191,7 +1195,7 @@ describe("home-tree scan cost", () => {
       outOfMemory: false,
     });
     expect(JSON.parse(stdout)).toEqual(Array.from({ length: 14 }, () => []));
-  });
+  }, 120_000);
 
   it("derives no containment for a tree that cannot leave the root", async () => {
     const checks = await countContainmentChecks(scanWholeTree);
