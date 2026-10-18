@@ -179,6 +179,22 @@ Codex MultiAgentV2 real tests use local Codex authentication rather than the Ope
 - Server: `packages/server/src/test-utils/vitest-setup.ts` loads `.env.test`, sets `PASEO_SUPERVISED=0`, and disables Git/SSH prompts. Add new global env shims here, not in individual tests.
 - App: `packages/app/vitest.setup.ts` provides `expo`/`__DEV__` shims and stubs a few native-only modules (`react-native-unistyles`, `react-native-svg`, `expo-linking`, `@xterm/addon-ligatures`). Stubbing here is for modules that have no meaningful Node behavior — not a license to mock app code.
 
+## Validation cadence
+
+During development, run targeted tests for the behavior you changed. After a coherent batch,
+run checks appropriate to the affected packages. Before finishing a code change, run
+`npm run typecheck`, `npm run lint`, and `npm run format:check` once on the final state.
+After another change, repeat only checks it can invalidate. Reuse results already obtained on
+the same code state, including results reported by another agent. Repeat a check only after
+a relevant change, a failure, or an identified uncertainty.
+
+For documentation-only changes, check the diff and formatting of the modified files with
+`npm run format:check:files -- <paths>`; no application tests or Mac build are required.
+
+Before an E2E run, verify that the expected browser is available. If missing, attempt its
+installation once. If installation blocks, use a known workaround or report the blocker.
+Do not reshape tests to compensate for a broken environment.
+
 ## Running tests locally
 
 Test suites in this repo are heavy. Running them in bulk freezes the machine, especially with multiple agents in parallel.
@@ -186,8 +202,8 @@ Test suites in this repo are heavy. Running them in bulk freezes the machine, es
 - Run only the file you changed: `npx vitest run <path> --bail=1`
 - Never run `npm run test` for a whole workspace unless asked.
 - For a broad sweep, redirect to a file and read it after: `npx vitest run <path> --bail=1 > /tmp/test-output.txt 2>&1`
-- Never re-run a suite another agent already reported green.
-- For full-suite confidence, push to CI and check GitHub Actions.
+- Reuse successful results on the same code state as described in [validation cadence](#validation-cadence).
+- Use CI for full-suite verification when publication is authorized; this rule does not authorize a push.
 - Never run the full Playwright E2E suite locally — defer whole-suite verification to CI. Targeted Playwright specs are allowed when you changed or need to prove that specific flow.
 - App Playwright shares one warmed Metro server per run and gives every Playwright worker its own isolated daemon and `PASEO_HOME`. Spec files run concurrently without exposing one file's projects, agents, terminals, history, or provider configuration to another worker; tests within a file remain together so file-level setup is not repeated.
 - Playwright specs that exercise only the daemon import `daemonTest` from the shared fixtures so they do not create a browser context or page.

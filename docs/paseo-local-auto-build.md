@@ -42,10 +42,19 @@ notice when that report contains failures. A later successful audit clears it. I
 with `npm run prepare` in development repositories; the builder gate remains required even when a
 push came from a checkout with older hooks.
 
-Treat development, publication, installation, and activation as separate states. A passing test or
-commit completes development only. Record the remote commit, installed manifest, and verified
-running desktop identity before marking a delivery complete. A required daemon update stays pending
-until its interruption has been authorized separately.
+Treat development, publication, installation, and activation as separate states. A correction
+ends with validated local code by default; it does not require a commit, publication, or rebuild.
+Publish or deliver only when the request or approved plan includes it. For publication, integrate
+into `main` within the given authorizations; the builder continues to follow `origin/main`.
+Without a full-delivery request, do not routinely monitor installation or activation.
+
+An explicit Mac rebuild request requires complete sources, publication, installation of the latest
+published version, and separate verification of the active UI and main daemon build identities and
+relevant capabilities. Build from `main` and record the remote commit, installed manifest, and both
+active identities before marking the rebuild complete. That request authorizes the required main
+daemon restart; warn Sylvain first because it can interrupt agents and the conversation.
+The automatic builder itself never restarts the daemon. Preserve existing work and do not delete
+`paseo-local` without Sylvain’s explicit approval.
 
 ## Existing builder migration
 
