@@ -1,6 +1,7 @@
 import type { PaneTabOrderInput } from "@/workspace-tabs/model";
 import {
   Fragment,
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -89,7 +90,8 @@ import {
   type WorkspaceLayout,
 } from "@/stores/workspace-layout-store";
 import type { WorkspaceTab } from "@/workspace-tabs/model";
-import { RenderProfile } from "@/utils/render-profiler";
+import { recordRenderProfileReasons, RenderProfile } from "@/utils/render-profiler";
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { isNative } from "@/constants/platform";
 import { panelTargetSupportsHost } from "@/plugins/workspace-panels/locations";
 
@@ -436,7 +438,7 @@ export function SplitContainer({
     : inheritedWindowChromeCorners;
   const mainColumnStyle = styles.mainColumn;
   const explorerSidebarDockStyle = useMemo(
-    () => [styles.explorerSidebarDock, { width: explorerSidebarWidth }],
+    () => [styles.explorerSidebarDock, inlineUnistylesStyle({ width: explorerSidebarWidth })],
     [explorerSidebarWidth],
   );
   const handleWorkspaceShellLayout = useCallback((event: LayoutChangeEvent) => {
@@ -1127,7 +1129,7 @@ function SplitNodeView({
   );
 }
 
-function SplitPaneView({
+const SplitPaneView = memo(function SplitPaneView({
   pane,
   uiTabs,
   isFocused,
@@ -1164,6 +1166,7 @@ function SplitPaneView({
   focusModeEnabled,
   onExitFocusMode,
 }: SplitPaneViewProps) {
+  recordRenderProfileReasons(`SplitPaneView:${pane.id}`, ["render"]);
   const paneRef = useRef<View | null>(null);
   const stableOnFocusPane = useStableEvent(onFocusPane);
   const paneState = useMemo(
@@ -1315,7 +1318,7 @@ function SplitPaneView({
       </View>
     </RenderProfile>
   );
-}
+});
 
 function collectPanesById(node: SplitNode): Map<string, SplitPane> {
   const next = new Map<string, SplitPane>();

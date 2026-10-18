@@ -45,7 +45,8 @@ test("opening the command center keeps its first result fully visible", async ({
     await expectCommandCenterToRemainAtTheTop(page);
     await expectPrimaryCommandCenterActions(panel);
     await expectVisibleKeyboardNavigationNotToScroll(page, panel);
-    await expectTightTwoLineResultSpacing(panel, "Command Center Scroll 00");
+    // The empty query lists the most recent workspaces, so the last one seeded leads it.
+    await expectTightTwoLineResultSpacing(panel, "Command Center Scroll 08");
     await expectWorkspaceResultsToBeLimitedUntilSearch(panel);
   } finally {
     await seeded.cleanup();
