@@ -107,6 +107,12 @@ test("gated checks are statically named jobs with real job-level gating", () => 
 });
 
 test("change gating allows superseded workflow runs to cancel", () => {
+  const ci = readFileSync(ciWorkflowPath, "utf8");
+  assert.match(
+    ci,
+    /^concurrency:\n  group: ci-\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}\n  cancel-in-progress: true$/m,
+    "a newer push to any ref, main included, cancels the superseded run",
+  );
   for (const workflowPath of [ciWorkflowPath, dockerWorkflowPath, nixWorkflowPath]) {
     const source = readFileSync(workflowPath, "utf8");
     assert.doesNotMatch(
@@ -513,8 +519,15 @@ test("Windows units and integration run independently with complete routed cover
   assert.equal(scripts.test, "npm run test:unit && npm run test:integration");
   assert.equal(scripts["test:unit"], 'vitest run --fileParallelism --exclude "**/*.e2e.test.ts"');
   const invocations = scripts["test:integration"].split(" && ");
-  assert.equal(invocations.length, 5);
+  // Each vitest start costs about half a minute on Windows, so the four
+  // name-filtered files share one invocation and one combined filter.
+  assert.equal(invocations.length, 2);
   assert.ok(invocations.every((command) => command.startsWith("vitest run --maxWorkers=1 ")));
+  assert.doesNotMatch(invocations[0], / -t /);
+  assert.equal(
+    invocations[1],
+    'vitest run --maxWorkers=1 src/server/daemon-e2e/git-operations.e2e.test.ts src/server/session.create-agent-worktree-autoarchive.e2e.test.ts src/server/agent/providers/opencode-bridge.local.e2e.test.ts src/server/daemon-e2e/relay-transport.e2e.test.ts -t "merges into|creates a worktree and auto-archives both|versioned runtime|oversized attachments"',
+  );
   const serverConfig = readFileSync(new URL("packages/server/vitest.config.ts", repoRoot), "utf8");
   assert.doesNotMatch(serverConfig, /maxWorkers/);
 
