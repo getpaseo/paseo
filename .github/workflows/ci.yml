@@ -145,6 +145,9 @@ jobs:
       - name: Install dependencies
         run: node scripts/npm-retry.mjs ci
 
+      - name: Verify dependency patch recovery
+        run: node --test scripts/postinstall-patches.test.mjs
+
       - name: Build server stack
         run: npm run build:server
 
