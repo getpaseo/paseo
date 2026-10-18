@@ -37,9 +37,15 @@ Each default is a match on the model id or name, so the first enabled provider t
 
 The intent of the default order is to prefer small, fast, cheap models for these short tasks before falling back to whatever you have selected.
 
+### Agents on a custom provider
+
+The prompt for a workspace title is the first agent's message, and commit and pull request text carry the changes in that worktree. When the first agent runs on a provider you added, a [custom provider](/docs/custom-providers) or one from a plugin, only that provider is tried: your configured entries for it, the built-in defaults matched against its own models, then the model currently selected if it is on that provider, or the provider's default model if it is not. Entries and defaults on other providers are skipped, so a message you send through a custom provider (a zero-data-retention endpoint, another account) never reaches a built-in one for its metadata. If that provider cannot generate, or is disabled or removed from your config, nothing is generated and the workspace keeps the title taken from the message.
+
+A commit or pull request covers the whole worktree, so its text stays on a custom provider the same way when any agent working in that worktree runs on one, in any folder of it, focused or not. An agent in a checkout nested inside the folder (a worktree or submodule with its own `.git`) is not counted: git leaves its changes out of the diff. When agents in one worktree run on two different custom providers, nothing is generated and the commit or pull request gets Paseo's placeholder text, so neither agent's changes reach the other's provider. When nothing is tried because the provider is disabled or removed, or because two custom providers share a worktree, the daemon log says which provider and why. Agents on built-in providers keep the order above.
+
 ## Choose a model
 
-Open **Settings → Host → Metadata** and select **Automatic** or **Manual**. In Manual mode, Paseo tries the model you choose first, then falls back to the remaining configured models and built-in candidates. Choosing a model replaces the first entry in `agents.metadataGeneration.providers` and preserves the rest of the list.
+Open **Settings → Host → Metadata** and select **Automatic** or **Manual**. In Manual mode, Paseo tries the model you choose first, then falls back to the remaining configured models and built-in candidates. Choosing a model replaces the first entry in `agents.metadataGeneration.providers` and preserves the rest of the list. For an agent on a custom provider, a model you choose on another provider is skipped (see [Agents on a custom provider](#agents-on-a-custom-provider)).
 
 ## Configure a custom fallback order
 

@@ -1,14 +1,17 @@
+import { existsSync } from "node:fs";
+import nodePath from "node:path";
 import { z } from "zod";
 import {
   StructuredAgentFallbackError,
   StructuredAgentResponseError,
   generateStructuredAgentResponseWithFallback,
+  type StructuredGenerationLogger,
 } from "../../agent/agent-response-loop.js";
 import type { AgentManager } from "../../agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "../../agent/provider-snapshot-manager.js";
 import {
+  readAgentGenerationSelection,
   resolveStructuredGenerationProviders,
-  type ResolveStructuredGenerationProvidersOptions,
   type StructuredGenerationDaemonConfig,
 } from "../../agent/structured-generation-providers.js";
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
@@ -16,6 +19,7 @@ import {
   buildMetadataPrompt,
   type MetadataConfigKey,
 } from "../../../utils/build-metadata-prompt.js";
+import { getRealpathAwareRelativePath } from "../../../utils/path.js";
 
 export interface PullRequestText {
   title: string;
@@ -177,17 +181,30 @@ export function createAgentStructuredTextGeneration(deps: {
   agentManager: AgentManager;
   providerSnapshotManager: Pick<ProviderSnapshotManager, "listProviders">;
   readDaemonConfig: () => StructuredGenerationDaemonConfig;
-  getFocusedSelection: (
-    cwd: string,
-  ) => ResolveStructuredGenerationProvidersOptions["currentSelection"];
+  /**
+   * The worktree root of the checkout at cwd. The diff is read at the root and a commit stages
+   * the whole worktree, so the agents whose changes it carries are the ones working in that
+   * worktree, wherever the pane's directory sits.
+   */
+  resolveCheckoutRoot: (cwd: string) => Promise<string>;
+  getFocusedAgentId: () => string | null | undefined;
+  logger?: StructuredGenerationLogger;
 }): StructuredTextGeneration {
   return {
     async generate({ cwd, prompt, schema, schemaName, agentTitle }) {
+      const checkoutRoot = await deps.resolveCheckoutRoot(cwd);
+      const checkoutAgents = deps.agentManager
+        .listAgents()
+        .filter((agent) => worksInCheckout(checkoutRoot, agent.cwd));
+      const focusedAgentId = deps.getFocusedAgentId();
+      const focusedAgent = checkoutAgents.find((agent) => agent.id === focusedAgentId);
       const providers = await resolveStructuredGenerationProviders({
         cwd,
         providerSnapshotManager: deps.providerSnapshotManager,
         daemonConfig: deps.readDaemonConfig(),
-        currentSelection: deps.getFocusedSelection(cwd),
+        currentSelection: focusedAgent ? readAgentGenerationSelection(focusedAgent) : undefined,
+        sourceProviders: checkoutAgents.map((agent) => agent.provider),
+        logger: deps.logger,
       });
       return generateStructuredAgentResponseWithFallback({
         manager: deps.agentManager,
@@ -205,6 +222,26 @@ export function createAgentStructuredTextGeneration(deps: {
       });
     },
   };
+}
+
+/**
+ * Whether cwd is at or under the checkout root with no `.git` of its own on the way down. Git
+ * stops at a nested checkout (a worktree or submodule inside the folder), so the root's diff
+ * does not carry the changes of an agent working there.
+ */
+function worksInCheckout(checkoutRoot: string, cwd: string): boolean {
+  const relativePath = getRealpathAwareRelativePath(checkoutRoot, cwd);
+  if (relativePath === null) {
+    return false;
+  }
+  let directory = checkoutRoot;
+  for (const segment of relativePath.split(/[\\/]/).filter(Boolean)) {
+    directory = nodePath.join(directory, segment);
+    if (existsSync(nodePath.join(directory, ".git"))) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function renderFileList(structured: CheckoutDiff["structured"]): string {

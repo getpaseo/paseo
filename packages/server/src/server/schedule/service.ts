@@ -1062,7 +1062,7 @@ export class ScheduleService {
     config: Extract<ScheduleTarget, { type: "new-agent" }>["config"],
     prompt: string,
   ): Promise<PersistedWorkspaceRecord> {
-    const firstAgentContext = { prompt };
+    const firstAgentContext = { prompt, provider: config.provider };
     switch (config.isolation ?? "local") {
       case "local":
         return this.createDirectoryWorkspace({ cwd: config.cwd, firstAgentContext });

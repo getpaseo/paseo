@@ -1421,7 +1421,7 @@ describe("create_agent MCP tool", () => {
 
     expect(ensureWorkspace).toHaveBeenCalledWith(
       existingCwd,
-      { prompt: "Do work" },
+      { prompt: "Do work", provider: "codex" },
       { callerWorkspaceId: undefined },
     );
     expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
@@ -2659,7 +2659,7 @@ describe("create_agent MCP tool", () => {
     expect(createPaseoWorktree).toHaveBeenCalledWith(
       expect.objectContaining({
         githubPrNumber: 123,
-        firstAgentContext: { prompt: "Rename this PR branch from prompt" },
+        firstAgentContext: { prompt: "Rename this PR branch from prompt", provider: "codex" },
       }),
       expect.objectContaining({
         setupContinuation: expect.objectContaining({ kind: "agent" }),

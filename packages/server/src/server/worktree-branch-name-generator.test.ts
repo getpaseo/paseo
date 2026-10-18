@@ -227,6 +227,48 @@ describe("generateBranchNameFromFirstAgentContext", () => {
     ]);
   });
 
+  test("names on the first agent's custom provider alone, whatever is focused", async () => {
+    const structured = createStructuredGenerator({
+      title: "Private task",
+      branch: "private-task",
+    });
+
+    await generateBranchNameFromFirstAgentContext({
+      agentManager: {} as AgentManager,
+      cwd: "/tmp/repo",
+      providerSnapshotManager: {
+        listProviders: vi.fn(async () => [
+          {
+            provider: "claude",
+            status: "ready" as const,
+            enabled: true,
+            source: "builtin" as const,
+            models: [
+              { provider: "claude", id: "claude-haiku-4-5", label: "Haiku", isDefault: true },
+            ],
+          },
+          {
+            provider: "claude-zdr",
+            status: "ready" as const,
+            enabled: true,
+            source: "custom" as const,
+            models: [
+              { provider: "claude-zdr", id: "claude-haiku-5-5", label: "Haiku", isDefault: true },
+            ],
+          },
+        ]),
+      },
+      currentSelection: { provider: "claude", model: "claude-haiku-4-5" },
+      firstAgentContext: { prompt: "Sort the seed list", provider: "claude-zdr" },
+      logger: createLogger(),
+      deps: { generateStructuredAgentResponseWithFallback: structured.generateStructured },
+    });
+
+    expect(structured.calls[0]?.providers).toEqual([
+      { provider: "claude-zdr", model: "claude-haiku-5-5" },
+    ]);
+  });
+
   test.each([
     ["paseo.json missing", undefined],
     ["paseo.json exists but invalid JSON", "{ nope"],

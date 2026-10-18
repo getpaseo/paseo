@@ -2530,6 +2530,9 @@ export const PaseoWorktreeArchiveRequestSchema = z.object({
 export const FirstAgentContextSchema = z.object({
   prompt: z.string().optional(),
   attachments: AgentAttachmentsSchema,
+  // The first agent's provider. Naming the workspace from this context stays on it when it is
+  // a custom provider, so the prompt never reaches a provider the user did not pick.
+  provider: AgentProviderSchema.optional(),
 });
 
 export const CreatePaseoWorktreeRequestSchema = z.object({

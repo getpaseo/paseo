@@ -795,6 +795,42 @@ describe("ScheduleService", () => {
     expect(storedAgent?.title).toBe("Audit flaky checkout flow");
   });
 
+  test("gives a run's workspace the scheduled agent's provider", async () => {
+    const { createDirectoryWorkspace: createScheduleDirectoryWorkspace } =
+      await createRegistryBackedScheduleWorkspaceDeps(tempDir);
+    const createDirectoryWorkspace = vi.fn(createScheduleDirectoryWorkspace);
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({
+        logger: createTestLogger(),
+        clients: createTestAgentClients(),
+        registry: agentStorage,
+      }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      createDirectoryWorkspace,
+      now: () => now,
+    });
+
+    await service.create({
+      prompt: "Review the private notes",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: { provider: "claude", model: "test-model", cwd: tempDir },
+      },
+      maxRuns: 1,
+    });
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    expect(createDirectoryWorkspace).toHaveBeenCalledWith({
+      cwd: tempDir,
+      firstAgentContext: { prompt: "Review the private notes", provider: "claude" },
+    });
+  });
+
   test("new-agent schedule records create no workspace until run time", async () => {
     const { workspaceRegistry, createDirectoryWorkspace: createScheduleDirectoryWorkspace } =
       await createRegistryBackedScheduleWorkspaceDeps(tempDir);

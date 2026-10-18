@@ -129,7 +129,10 @@ import { assertPluginTimelineDataSize } from "./agent/agent-timeline-content.js"
 import { parsePluginClientId } from "./plugins/plugin-session-identity.js";
 import { buildAgentForkContextAttachment } from "./agent/activity-curator.js";
 import { buildAgentPrompt } from "./agent/prompt-attachments.js";
-import type { StructuredGenerationDaemonConfig } from "./agent/structured-generation-providers.js";
+import {
+  readAgentGenerationSelection,
+  type StructuredGenerationDaemonConfig,
+} from "./agent/structured-generation-providers.js";
 import {
   getAgentStreamEventTurnId,
   type AgentPersistenceHandle,
@@ -947,7 +950,10 @@ export class Session {
           agentManager: this.agentManager,
           providerSnapshotManager,
           readDaemonConfig: () => this.readStructuredGenerationDaemonConfig(),
-          getFocusedSelection: (cwd) => this.getFocusedAgentSelectionForCwd(cwd),
+          resolveCheckoutRoot: async (cwd) =>
+            (await this.workspaceGitService.getSnapshot(cwd)).git.repoRoot ?? cwd,
+          getFocusedAgentId: () => this.getClientActivity()?.focusedAgentId,
+          logger: this.sessionLogger,
         }),
       }),
       paseoHome: this.paseoHome,
@@ -1537,12 +1543,7 @@ export class Session {
       return undefined;
     }
 
-    return {
-      provider: agent.provider,
-      model: agent.runtimeInfo?.model ?? agent.config.model ?? null,
-      thinkingOptionId:
-        agent.runtimeInfo?.thinkingOptionId ?? agent.config.thinkingOptionId ?? null,
-    };
+    return readAgentGenerationSelection(agent);
   }
 
   private readStructuredGenerationDaemonConfig(): StructuredGenerationDaemonConfig {
@@ -4102,7 +4103,11 @@ export class Session {
               {
                 ...request,
                 firstAgentContext: agentInput
-                  ? { prompt: agentInput.initialPrompt, attachments: agentInput.attachments }
+                  ? {
+                      prompt: agentInput.initialPrompt,
+                      attachments: agentInput.attachments,
+                      provider: agentInput.config.provider,
+                    }
                   : request.firstAgentContext,
               },
               id,
@@ -4303,6 +4308,7 @@ export class Session {
       const firstAgentContext: FirstAgentContext = {
         ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}),
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
+        provider: config.provider,
       };
       const workspacePromptTitle = resolveFirstAgentPromptTitle(firstAgentContext);
       const createdWorktree = await this.createAgentLifecycleDispatch.createWorktreeForRequest({

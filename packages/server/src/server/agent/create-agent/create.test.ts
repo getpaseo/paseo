@@ -227,6 +227,43 @@ test("mcp create accepts provider-only internal input and leaves model undefined
   );
 });
 
+test("mcp create with no workspace or caller gives the new workspace its agent's provider", async () => {
+  const snapshot = {
+    id: "agent-1",
+    provider: "claude-zdr",
+    cwd: "/tmp/paseo-create-test",
+    runtimeInfo: null,
+  } as ManagedAgent;
+  const ensureWorkspaceForCreate = vi.fn(async () => "ws-created");
+  const dependencies: Parameters<typeof createAgentCommand>[0] = {
+    agentManager: {
+      createAgent: vi.fn(async () => snapshot),
+      getAgent: vi.fn(() => snapshot),
+    } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
+    agentStorage: {} as Parameters<typeof createAgentCommand>[0]["agentStorage"],
+    logger: createTestLogger(),
+    providerSnapshotManager: {
+      resolveCreateConfig: vi.fn(async () => ({})),
+    } as Parameters<typeof createAgentCommand>[0]["providerSnapshotManager"],
+    ensureWorkspaceForCreate,
+  };
+
+  await createAgentCommand(dependencies, {
+    kind: "mcp",
+    provider: "claude-zdr/claude-haiku-5-5",
+    cwd: "/tmp/paseo-create-test",
+    title: "hub step",
+    initialPrompt: "Summarize the notes",
+    notifyOnFinish: false,
+  });
+
+  expect(ensureWorkspaceForCreate).toHaveBeenCalledWith(
+    "/tmp/paseo-create-test",
+    { prompt: "Summarize the notes", provider: "claude-zdr" },
+    { callerWorkspaceId: undefined },
+  );
+});
+
 test("session create stamps the requested workspaceId when no worktree setup runs", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "create-agent-test-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);

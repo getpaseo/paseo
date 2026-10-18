@@ -2538,7 +2538,7 @@ diff --git a/file.txt b/file.txt
           },
         ],
       }),
-      getSnapshot: vi.fn().mockResolvedValue({}),
+      getSnapshot: vi.fn().mockResolvedValue(createWorkspaceGitSnapshot(repoRoot)),
       resolveRepoRoot: vi.fn().mockResolvedValue(repoRoot),
     };
     agentResponseMocks.generateStructuredAgentResponseWithFallback.mockResolvedValue({
@@ -2614,7 +2614,7 @@ diff --git a/file.txt b/file.txt
           },
         ],
       }),
-      getSnapshot: vi.fn().mockResolvedValue({}),
+      getSnapshot: vi.fn().mockResolvedValue(createWorkspaceGitSnapshot("/tmp/request-worktree")),
     };
     agentResponseMocks.generateStructuredAgentResponseWithFallback.mockResolvedValue({
       message: "Update file",
@@ -2718,7 +2718,7 @@ diff --git a/file.txt b/file.txt
         diff: "diff --git a/file.txt b/file.txt\n+hello\n",
         structured: [],
       }),
-      getSnapshot: vi.fn().mockResolvedValue({}),
+      getSnapshot: vi.fn().mockResolvedValue(createWorkspaceGitSnapshot("/tmp/request-worktree")),
       resolveRepoRoot: vi.fn().mockResolvedValue(makeRoot()),
     };
     agentResponseMocks.generateStructuredAgentResponseWithFallback.mockRejectedValue(
@@ -2834,6 +2834,7 @@ diff --git a/file.txt b/file.txt
           },
         ],
       }),
+      getSnapshot: vi.fn().mockResolvedValue(createWorkspaceGitSnapshot(repoRoot)),
       resolveRepoRoot: vi.fn().mockResolvedValue(repoRoot),
     };
     agentResponseMocks.generateStructuredAgentResponseWithFallback.mockResolvedValue({
@@ -2880,6 +2881,7 @@ diff --git a/file.txt b/file.txt
           },
         ],
       }),
+      getSnapshot: vi.fn().mockResolvedValue(createWorkspaceGitSnapshot("/tmp/request-worktree")),
     };
     agentResponseMocks.generateStructuredAgentResponseWithFallback.mockResolvedValue({
       title: "Update file",
@@ -3020,6 +3022,7 @@ diff --git a/file.txt b/file.txt
         diff: "diff --git a/file.txt b/file.txt\n+hello\n",
         structured: [],
       }),
+      getSnapshot: vi.fn().mockResolvedValue(createWorkspaceGitSnapshot("/tmp/request-worktree")),
       resolveRepoRoot: vi.fn().mockResolvedValue(makeRoot()),
     };
     agentResponseMocks.generateStructuredAgentResponseWithFallback.mockRejectedValue(

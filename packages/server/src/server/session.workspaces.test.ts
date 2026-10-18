@@ -48,7 +48,10 @@ import {
   writePaseoWorktreeMetadata,
 } from "../utils/worktree-metadata.js";
 import type { WorkspaceGitRuntimeSnapshot } from "./workspace-git-service.js";
-import type { GeneratedWorkspaceName } from "./worktree-branch-name-generator.js";
+import type {
+  GeneratedWorkspaceName,
+  GenerateBranchNameFromFirstAgentContextOptions,
+} from "./worktree-branch-name-generator.js";
 import { WorkspaceAutoName } from "./workspace-auto-name.js";
 import type { ForgeService } from "../services/forge-service.js";
 import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
@@ -570,7 +573,9 @@ function createSessionForWorkspaceTests(
       cwd: string,
       newName: string,
     ) => Promise<{ previousBranch: string | null; currentBranch: string | null }>;
-    generateWorkspaceName?: () => Promise<GeneratedWorkspaceName | null>;
+    generateWorkspaceName?: (
+      options: GenerateBranchNameFromFirstAgentContextOptions,
+    ) => Promise<GeneratedWorkspaceName | null>;
   } = {},
 ): TestSession {
   const logger = {
@@ -9339,6 +9344,57 @@ test("checkout.rename_branch.request renames the branch without a denormalized b
   const persisted = workspaces.get(workspace.workspaceId);
   expect(persisted?.displayName).toBe("Refactor auth flow");
   expect(persisted?.title).toBe("Refactor auth flow");
+});
+
+test("workspace.create with an initial agent names the workspace with that agent's provider", async () => {
+  vi.useFakeTimers();
+  const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
+  const namingContexts: Array<GenerateBranchNameFromFirstAgentContextOptions["firstAgentContext"]> =
+    [];
+  const session = createSessionForWorkspaceTests({
+    workspaceRegistry: {
+      initialize: async () => {},
+      existsOnDisk: async () => true,
+      list: async () => Array.from(workspaces.values()),
+      get: async (workspaceId: string) => workspaces.get(workspaceId) ?? null,
+      upsert: async (workspace) => {
+        workspaces.set(workspace.workspaceId, workspace);
+      },
+      update: async (workspaceId, updater) => {
+        const current = workspaces.get(workspaceId);
+        if (!current) return null;
+        const updated = updater(current);
+        workspaces.set(workspaceId, updated);
+        return updated;
+      },
+      archive: async () => {},
+      remove: async () => {},
+    },
+    generateWorkspaceName: async (options) => {
+      namingContexts.push(options.firstAgentContext);
+      return null;
+    },
+  });
+  session.listAgentPayloads = async () => [];
+
+  try {
+    await session.handleMessage({
+      type: "workspace.create.request",
+      requestId: "req-create-private-first-agent",
+      source: { kind: "directory", path: REPO_CWD },
+      agent: {
+        config: { provider: "claude-zdr", cwd: REPO_CWD },
+        initialPrompt: "Sort the seed list",
+      },
+    });
+    await vi.runAllTimersAsync();
+
+    expect(namingContexts).toEqual([
+      expect.objectContaining({ prompt: "Sort the seed list", provider: "claude-zdr" }),
+    ]);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test("workspace.create.response persists the first prompt as the initial title", async () => {
