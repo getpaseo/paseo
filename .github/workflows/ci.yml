@@ -54,10 +54,10 @@ jobs:
       - name: Validate CI contracts
         run: node --test scripts/ci-workflow.test.mjs scripts/daemon-launch-contract.test.mjs scripts/sync-fdroid-changelogs.test.mjs scripts/upload-release-assets.test.mjs
 
-  format:
-    name: format
+  quality:
+    name: quality
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.format != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.format != 'false' || needs.changes.outputs.quality != 'false' || needs.changes.outputs.relay != 'false' || needs.changes.outputs.sdk != 'false') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -68,35 +68,62 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
+        id: install
         run: node scripts/npm-retry.mjs ci
 
+      # Explicit status checks keep independent domains running after a failure.
+      # A failed step still fails quality; no continue-on-error or success shim.
       - name: Check formatting
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.format != 'false') }}
         run: npm run format:check
 
-  lint:
-    name: lint
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.quality != 'false') }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: node scripts/npm-retry.mjs ci
-
       - name: Lint lockfile
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.quality != 'false') }}
         run: npx --yes lockfile-lint --path package-lock.json --type npm --allowed-hosts npm --validate-https --validate-integrity
 
       - name: Verify dependency signatures
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.quality != 'false') }}
         run: npm audit signatures
 
       - name: Lint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.quality != 'false') }}
         run: npm run lint
+
+      - name: Build relay
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.relay != 'false') }}
+        run: npm run build:relay
+
+      - name: Run relay tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.relay != 'false') }}
+        run: npm run test --workspace=@getpaseo/relay
+
+      - name: Build client dependencies
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.sdk != 'false') }}
+        run: npm run build:relay && npm run build:client
+
+      - name: Build plugin SDK
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.sdk != 'false') }}
+        run: npm run build:plugin
+
+      - name: Run plugin SDK tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.sdk != 'false') }}
+        run: npm run test --workspace=@getpaseo/plugin
+
+      - name: Run protocol tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.sdk != 'false') }}
+        run: npm run test --workspace=@getpaseo/protocol
+
+      - name: Run client tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.sdk != 'false') }}
+        run: npm run test --workspace=@getpaseo/client
+
+      - name: Run highlight tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.sdk != 'false') }}
+        run: npm run test --workspace=@getpaseo/highlight
+
+      - name: Typecheck client examples
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.sdk != 'false') }}
+        run: npm run typecheck:examples --workspace=@getpaseo/client
 
   typecheck:
     name: typecheck
@@ -144,6 +171,10 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' || needs.changes.outputs.hub != 'false') }}
     runs-on: ubuntu-latest
     steps: &server_test_steps
+      - name: Log runner capacity
+        run: |
+          node -e "const os = require('node:os'); console.log(JSON.stringify({cpus: os.cpus().length, model: os.cpus()[0].model, ramGiB: os.totalmem() / 2 ** 30}))"
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -332,52 +363,19 @@ jobs:
       - name: Run app unit tests
         run: npm run test --workspace=@getpaseo/app
 
-  sdk-tests:
-    name: sdk-tests
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.sdk != 'false') }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: node scripts/npm-retry.mjs ci
-
-      - name: Build client dependencies
-        run: npm run build:relay && npm run build:client
-
-      - name: Build plugin SDK
-        run: npm run build:plugin
-
-      - name: Run plugin SDK tests
-        run: npm run test --workspace=@getpaseo/plugin
-
-      - name: Run protocol tests
-        run: npm run test --workspace=@getpaseo/protocol
-
-      - name: Run client tests
-        run: npm run test --workspace=@getpaseo/client
-
-      - name: Run highlight tests
-        run: npm run test --workspace=@getpaseo/highlight
-
-      - name: Typecheck client examples
-        run: npm run typecheck:examples --workspace=@getpaseo/client
-
   playwright-1:
-    name: playwright (shard 1/4)
+    name: playwright (shard 1/8)
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.browser != 'false') }}
     runs-on: ubuntu-latest
     env:
-      PLAYWRIGHT_SHARD: "1/4"
+      PLAYWRIGHT_SHARD: "1/8"
       PLAYWRIGHT_ARTIFACT: "1"
     steps: &playwright_test_steps
+      - name: Log runner capacity
+        run: |
+          node -e "const os = require('node:os'); console.log(JSON.stringify({cpus: os.cpus().length, model: os.cpus()[0].model, ramGiB: os.totalmem() / 2 ** 30}))"
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
@@ -405,9 +403,9 @@ jobs:
         run: npm run test:e2e --workspace=@getpaseo/app -- --shard=${{ env.PLAYWRIGHT_SHARD }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          # Weight file groups by observed duration; raw test counts overload
-          # early agent/Changes specs. Required check names remain unchanged.
-          PWTEST_SHARD_WEIGHTS: "111:172:137:160"
+          E2E_WORKERS: "2"
+          # File groups are weighted by observed reporter durations.
+          PWTEST_SHARD_WEIGHTS: "93:100:101:104:91:94:122:110"
 
       - name: Upload test artifacts
         uses: actions/upload-artifact@v4
@@ -420,56 +418,105 @@ jobs:
           retention-days: 7
 
   playwright-2:
-    name: playwright (shard 2/4)
+    name: playwright (shard 2/8)
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.browser != 'false') }}
     runs-on: ubuntu-latest
     env:
-      PLAYWRIGHT_SHARD: "2/4"
+      PLAYWRIGHT_SHARD: "2/8"
       PLAYWRIGHT_ARTIFACT: "2"
     steps: *playwright_test_steps
 
   playwright-3:
-    name: playwright (shard 3/4)
+    name: playwright (shard 3/8)
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.browser != 'false') }}
     runs-on: ubuntu-latest
     env:
-      PLAYWRIGHT_SHARD: "3/4"
+      PLAYWRIGHT_SHARD: "3/8"
       PLAYWRIGHT_ARTIFACT: "3"
     steps: *playwright_test_steps
 
   playwright-4:
-    name: playwright (shard 4/4)
+    name: playwright (shard 4/8)
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.browser != 'false') }}
     runs-on: ubuntu-latest
     env:
-      PLAYWRIGHT_SHARD: "4/4"
+      PLAYWRIGHT_SHARD: "4/8"
       PLAYWRIGHT_ARTIFACT: "4"
     steps: *playwright_test_steps
 
-  relay-tests:
-    name: relay-tests
+  playwright-5:
+    name: playwright (shard 5/8)
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.relay != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.browser != 'false') }}
+    runs-on: ubuntu-latest
+    env:
+      PLAYWRIGHT_SHARD: "5/8"
+      PLAYWRIGHT_ARTIFACT: "5"
+    steps: *playwright_test_steps
+
+  playwright-6:
+    name: playwright (shard 6/8)
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.browser != 'false') }}
+    runs-on: ubuntu-latest
+    env:
+      PLAYWRIGHT_SHARD: "6/8"
+      PLAYWRIGHT_ARTIFACT: "6"
+    steps: *playwright_test_steps
+
+  playwright-7:
+    name: playwright (shard 7/8)
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.browser != 'false') }}
+    runs-on: ubuntu-latest
+    env:
+      PLAYWRIGHT_SHARD: "7/8"
+      PLAYWRIGHT_ARTIFACT: "7"
+    steps: *playwright_test_steps
+
+  playwright-8:
+    name: playwright (shard 8/8)
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.browser != 'false') }}
+    runs-on: ubuntu-latest
+    env:
+      PLAYWRIGHT_SHARD: "8/8"
+      PLAYWRIGHT_ARTIFACT: "8"
+    steps: *playwright_test_steps
+
+  playwright:
+    name: playwright
+    needs:
+      [
+        changes,
+        playwright-1,
+        playwright-2,
+        playwright-3,
+        playwright-4,
+        playwright-5,
+        playwright-6,
+        playwright-7,
+        playwright-8,
+      ]
+    # Run after failed children, but let superseded workflows cancel promptly.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: node scripts/npm-retry.mjs ci
-
-      - name: Build relay
-        run: npm run build:relay
-
-      - name: Run relay tests
-        run: npm run test --workspace=@getpaseo/relay
+      - name: Require all routed Playwright shards
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          node --input-type=module <<'NODE'
+          const needs = JSON.parse(process.env.NEEDS_JSON);
+          const routed = needs.changes.outputs.full !== 'false' || needs.changes.outputs.browser !== 'false';
+          const failures = Object.entries(needs).filter(([name, job]) =>
+            job.result !== (name === 'changes' || routed ? 'success' : 'skipped'));
+          for (const [name, job] of failures) console.error(`${name}: ${job.result}`);
+          process.exitCode = failures.length ? 1 : 0;
+          NODE
 
   cli-tests-1:
     name: cli-tests (shard 1/3)

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { relative as relativePath } from "node:path";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
+import { spawnSync } from "node:child_process";
 
 const repoRoot = new URL("../", import.meta.url);
 const ciWorkflowPath = new URL(".github/workflows/ci.yml", repoRoot);
@@ -12,8 +14,7 @@ const serverTsconfigPath = new URL("packages/server/tsconfig.server.json", repoR
 const desktopPackagePath = new URL("packages/desktop/package.json", repoRoot);
 
 const gatedCiJobs = new Map([
-  ["format", { name: "format", contract: "format" }],
-  ["lint", { name: "lint", contract: "quality" }],
+  ["quality", { name: "quality", contracts: ["format", "quality", "relay", "sdk"] }],
   ["typecheck", { name: "typecheck", contract: "quality" }],
   ["server-tests-ubuntu", { name: "server-tests (ubuntu-latest)", contracts: ["server", "hub"] }],
   ["server-tests-windows", { name: "server-tests (windows-latest)", contracts: ["server", "hub"] }],
@@ -21,12 +22,14 @@ const gatedCiJobs = new Map([
   ["desktop-tests-ubuntu", { name: "desktop-tests (ubuntu-latest)", contract: "desktop" }],
   ["desktop-tests-windows", { name: "desktop-tests (windows-latest)", contract: "desktop" }],
   ["app-tests", { name: "app-tests", contract: "app" }],
-  ["sdk-tests", { name: "sdk-tests", contract: "sdk" }],
-  ["playwright-1", { name: "playwright (shard 1/4)", contract: "browser" }],
-  ["playwright-2", { name: "playwright (shard 2/4)", contract: "browser" }],
-  ["playwright-3", { name: "playwright (shard 3/4)", contract: "browser" }],
-  ["playwright-4", { name: "playwright (shard 4/4)", contract: "browser" }],
-  ["relay-tests", { name: "relay-tests", contract: "relay" }],
+  ["playwright-1", { name: "playwright (shard 1/8)", contract: "browser" }],
+  ["playwright-2", { name: "playwright (shard 2/8)", contract: "browser" }],
+  ["playwright-3", { name: "playwright (shard 3/8)", contract: "browser" }],
+  ["playwright-4", { name: "playwright (shard 4/8)", contract: "browser" }],
+  ["playwright-5", { name: "playwright (shard 5/8)", contract: "browser" }],
+  ["playwright-6", { name: "playwright (shard 6/8)", contract: "browser" }],
+  ["playwright-7", { name: "playwright (shard 7/8)", contract: "browser" }],
+  ["playwright-8", { name: "playwright (shard 8/8)", contract: "browser" }],
   ["cli-tests-1", { name: "cli-tests (shard 1/3)", contract: "cli" }],
   ["cli-tests-2", { name: "cli-tests (shard 2/3)", contract: "cli" }],
   ["cli-tests-3", { name: "cli-tests (shard 3/3)", contract: "cli" }],
@@ -36,7 +39,7 @@ function jobBlocks(source) {
   const jobs = new Map();
   let currentJob;
 
-  for (const line of source.split("\n")) {
+  for (const line of (source.split("\njobs:\n")[1] ?? source).split("\n")) {
     const jobMatch = /^  ([a-z0-9_-]+):\s*$/.exec(line);
     if (jobMatch) {
       currentJob = jobMatch[1];
@@ -330,4 +333,138 @@ test("stable iOS releases upload once and distribute to external testers before 
     /APP_BUILD_VERSION="\$\{\{ needs\.build_ios\.outputs\.app_build_version \}\}"/,
   );
   assert.match(review, /bundle exec fastlane ios submit_review/);
+});
+
+test("eight Playwright shards share two-worker coverage and a real result gate", () => {
+  const source = readFileSync(ciWorkflowPath, "utf8");
+  const jobs = jobBlocks(source);
+  assert.equal(jobs.size, 21);
+  for (let shard = 1; shard <= 8; shard++) {
+    const job = jobs.get(`playwright-${shard}`).join("\n");
+    assert.match(job, new RegExp(`PLAYWRIGHT_SHARD: "${shard}/8"`));
+    assert.match(job, new RegExp(`PLAYWRIGHT_ARTIFACT: "${shard}"`));
+    assert.match(
+      job,
+      shard === 1 ? /steps: &playwright_test_steps/ : /steps: \*playwright_test_steps/,
+    );
+  }
+  const shared = jobs.get("playwright-1").join("\n");
+  assert.match(shared, /E2E_WORKERS: "2"/);
+  const weights = /PWTEST_SHARD_WEIGHTS: "([\d:]+)"/.exec(shared)[1].split(":").map(Number);
+  assert.equal(weights.length, 8);
+  assert.ok(weights.every((weight) => weight > 0));
+  assert.match(shared, /npm run test:e2e --workspace=@getpaseo\/app -- --shard=/);
+
+  const gate = jobs.get("playwright").join("\n");
+  assert.match(gate, /^    name: playwright$/m);
+  assert.match(gate, /^    if: \$\{\{ !cancelled\(\) \}\}$/m);
+  assert.match(gate, /NEEDS_JSON: \$\{\{ toJSON\(needs\) \}\}/);
+  const dependencies = /needs:\s*\[([^\]]+)\]/
+    .exec(gate)[1]
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
+  assert.deepEqual(dependencies, [
+    "changes",
+    ...Array.from({ length: 8 }, (_, i) => `playwright-${i + 1}`),
+  ]);
+
+  // Execute the actual gate command, including its shell/Node boundary.
+  const command = gate
+    .split("        run: |\n")[1]
+    .split("\n")
+    .map((line) => line.slice(10))
+    .join("\n");
+  function result({
+    full = "false",
+    browser = "true",
+    changes = "success",
+    shards = {},
+    outputs = { full, browser },
+  } = {}) {
+    const needs = { changes: { result: changes, outputs } };
+    for (let i = 1; i <= 8; i++) {
+      needs[`playwright-${i}`] = {
+        result:
+          shards[i] ??
+          (outputs.full !== "false" || outputs.browser !== "false" ? "success" : "skipped"),
+      };
+    }
+    return spawnSync("bash", ["-e", "-c", command], {
+      encoding: "utf8",
+      env: { ...process.env, NEEDS_JSON: JSON.stringify(needs) },
+    });
+  }
+  assert.equal(result().status, 0);
+  assert.equal(result({ browser: "false" }).status, 0);
+  assert.equal(result({ full: "true", browser: "false" }).status, 0);
+  assert.equal(result({ outputs: {} }).status, 0);
+  for (const status of ["failure", "cancelled", "skipped"]) {
+    const failed = result({ shards: { 5: status } });
+    assert.equal(failed.status, 1, failed.stderr);
+    assert.match(failed.stderr, /playwright-5/);
+  }
+  assert.equal(result({ browser: "false", shards: { 2: "failure" } }).status, 1);
+  assert.equal(result({ changes: "failure" }).status, 1);
+});
+
+test("quality preserves commands and routes each domain independently after failures", () => {
+  const jobs = jobBlocks(readFileSync(ciWorkflowPath, "utf8"));
+  const quality = jobs.get("quality").join("\n");
+  assert.doesNotMatch(quality, /^\s+continue-on-error:/m);
+  const commands = {
+    format: ["npm run format:check"],
+    quality: [
+      "npx --yes lockfile-lint --path package-lock.json --type npm --allowed-hosts npm --validate-https --validate-integrity",
+      "npm audit signatures",
+      "npm run lint",
+    ],
+    relay: ["npm run build:relay", "npm run test --workspace=@getpaseo/relay"],
+    sdk: [
+      "npm run build:relay && npm run build:client",
+      "npm run build:plugin",
+      "npm run test --workspace=@getpaseo/plugin",
+      "npm run test --workspace=@getpaseo/protocol",
+      "npm run test --workspace=@getpaseo/client",
+      "npm run test --workspace=@getpaseo/highlight",
+      "npm run typecheck:examples --workspace=@getpaseo/client",
+    ],
+  };
+  const checks = [...quality.matchAll(/        if: \$\{\{ (.+) \}\}\n        run: (.+)/g)];
+  assert.deepEqual(
+    checks.map(([, , command]) => command),
+    Object.values(commands).flat(),
+  );
+  const domains = Object.keys(commands);
+  function accepts(expression, outputs, { cancelled = false, installed = true } = {}) {
+    // Prior checks have failed: success() is false. Explicit !cancelled() must
+    // override Actions' default success condition so later domains still run.
+    assert.match(expression, /!cancelled\(\)/);
+    return runInNewContext(expression, {
+      needs: { changes: { outputs } },
+      steps: { install: { outcome: installed ? "success" : "failure" } },
+      cancelled: () => cancelled,
+      success: () => false,
+    });
+  }
+  const disabled = { full: "false", ...Object.fromEntries(domains.map((key) => [key, "false"])) };
+  const jobCondition = /    if: \$\{\{ (.+) \}\}/.exec(quality)[1];
+  assert.equal(accepts(jobCondition, disabled), false);
+  for (const selected of domains) {
+    const outputs = { ...disabled, [selected]: "true" };
+    assert.equal(accepts(jobCondition, outputs), true);
+    for (const [, expression, command] of checks) {
+      assert.equal(accepts(expression, outputs), commands[selected].includes(command), command);
+    }
+  }
+  for (const [, expression] of checks) {
+    assert.equal(accepts(expression, { ...disabled, full: "true" }), true);
+    assert.equal(accepts(expression, {}), true, "missing routing outputs fail open");
+    assert.equal(accepts(expression, {}, { cancelled: true }), false);
+    assert.equal(accepts(expression, {}, { installed: false }), false);
+  }
+  assert.equal(accepts(jobCondition, {}, { cancelled: true }), false);
+  const gateCondition = /    if: \$\{\{ (.+) \}\}/.exec(jobs.get("playwright").join("\n"))[1];
+  assert.equal(accepts(gateCondition, {}), true, "gate runs despite a failed child");
+  assert.equal(accepts(gateCondition, {}, { cancelled: true }), false);
 });
