@@ -161,6 +161,7 @@ export default defineConfig({
       "i18next",
       "@marijn/find-cluster-break",
       "tiny-invariant",
+      "react/jsx-dev-runtime",
       "react-native-gesture-handler > hoist-non-react-statics",
       "react-native-gesture-handler > invariant",
     ],
