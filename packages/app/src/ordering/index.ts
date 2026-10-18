@@ -32,12 +32,13 @@ function projects() {
 
 type OrderingClient = Pick<
   DaemonClient,
-  "setOrder" | "observeOrders" | "setOrderTargets" | "getLastServerInfoMessage"
+  "setOrder" | "observeOrders" | "setOrderTargets" | "getLastServerInfoMessage" | "subscribe"
 >;
 
 interface HostOrdering {
   client: OrderingClient;
   canWrite: boolean;
+  permissionGeneration: number;
   directoryReady: boolean;
   replica: OrderReplica;
   release: () => void;
@@ -121,15 +122,18 @@ class SharedOrderingController {
     else this.readOnly.add(input.serverId);
     const subscription = input.client.observeOrders();
     const replica = this.replica(input.serverId);
+    let releasePermissions = () => {};
     // A confirmed read-only connection cannot publish its offline gestures. Unknown permissions retain them.
     if (permissions !== undefined && !canWrite && replica.cancelPending())
       reportOrderError({ kind: "permissionLost" });
     const host: HostOrdering = {
       client: input.client,
       canWrite,
+      permissionGeneration: 0,
       directoryReady: input.directoryReady,
       replica,
       release: () => {
+        releasePermissions();
         replica.pause();
         void subscription.release().catch(() => undefined);
       },
@@ -139,6 +143,14 @@ class SharedOrderingController {
       syncing: null,
     };
     this.hosts.set(input.serverId, host);
+    releasePermissions = input.client.subscribe((event) => {
+      if (
+        this.hosts.get(input.serverId) === host &&
+        event.type === "status" &&
+        event.payload.status === "server_info"
+      )
+        this.updatePermissions(input.serverId, host);
+    });
     subscription.subscribe({
       snapshot: (snapshot) => {
         if (this.hosts.get(input.serverId) !== host) return;
@@ -159,6 +171,22 @@ class SharedOrderingController {
       },
     });
     await host.ready;
+  }
+
+  private updatePermissions(serverId: string, host: HostOrdering): void {
+    const permissions = host.client.getLastServerInfoMessage()?.permissions;
+    if (permissions === undefined) return;
+    const canWrite = permissions.includes("workspace.manage");
+    if (canWrite !== host.canWrite) host.permissionGeneration++;
+    host.canWrite = canWrite;
+    if (!canWrite) {
+      this.readOnly.add(serverId);
+      if (host.replica.cancelPending()) reportOrderError({ kind: "permissionLost" });
+      return;
+    }
+    this.readOnly.delete(serverId);
+    this.syncInventories();
+    host.replica.retry();
   }
 
   directoryReady(serverId: string): void {
@@ -248,8 +276,11 @@ class SharedOrderingController {
         setOrder: async (input) => {
           const host = this.hosts.get(serverId);
           if (!host) throw new Error("Ordering host is offline");
+          const permissionGeneration = host.permissionGeneration;
           await this.syncInventory(serverId, host);
           if (this.hosts.get(serverId) !== host) throw new Error("Ordering connection changed");
+          if (!host.canWrite || permissionGeneration !== host.permissionGeneration)
+            throw new Error("Ordering permissions changed");
           return host.client.setOrder(input);
         },
       },
@@ -317,12 +348,14 @@ class SharedOrderingController {
       )
         continue;
       void this.syncInventory(serverId, host).catch((error) => {
+        if (this.hosts.get(serverId) !== host || !host.canWrite) return;
         console.error("[SharedOrdering] Target inventory remains pending", { serverId, error });
         reportOrderError({ kind: "failed" });
       });
     }
   }
   private async syncInventory(serverId: string, host: HostOrdering): Promise<void> {
+    if (!host.canWrite) return;
     if (host.syncing) {
       await host.syncing;
       return this.syncInventory(serverId, host);

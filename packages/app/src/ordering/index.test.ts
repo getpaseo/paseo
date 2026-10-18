@@ -7,7 +7,7 @@ import {
 } from "@/stores/workspace-layout-store";
 import { observeOrderErrors, type OrderError } from "./intents";
 import { afterEach, expect, test } from "vitest";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { DaemonClient, DaemonEventHandler } from "@getpaseo/client/internal/daemon-client";
 import { subscriptionFixture } from "@/runtime/subscription-fixture";
 import {
   normalizeProjectDescriptor,
@@ -20,6 +20,20 @@ import { sharedOrdering } from "./index";
 const host = "order-host";
 type Client = Pick<DaemonClient, "setOrder" | "observeOrders" | "setOrderTargets">;
 class FakeClient implements Client {
+  private readonly listeners = new Set<DaemonEventHandler>();
+  orderGate: Promise<void> = Promise.resolve();
+  targetsGate: Promise<void> = Promise.resolve();
+  subscribe(listener: DaemonEventHandler) {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+  changePermissions(permissions: ServerInfoStatusPayload["permissions"]) {
+    this.permissions = permissions;
+    for (const listener of this.listeners)
+      listener({ type: "status", payload: this.getLastServerInfoMessage() });
+  }
   records: OrderRecord[] | null = null;
   permissions: ServerInfoStatusPayload["permissions"] = ["workspace.read", "workspace.manage"];
   targetCalls = 0;
@@ -57,10 +71,12 @@ class FakeClient implements Client {
   }
   async setOrderTargets() {
     this.targetCalls++;
+    await this.targetsGate;
     return { requestId: "targets", accepted: true, revision: 1 };
   }
   async setOrder(input: Parameters<Client["setOrder"]>[0]) {
     this.calls.push(input);
+    await this.orderGate;
     if (
       input.scope.kind === "pinned" &&
       this.allowedPinned &&
@@ -81,6 +97,112 @@ afterEach(() => {
   useWorkspaceLayoutStore.setState({ layoutByWorkspace: {}, sheetsByWorkspace: {} });
   useSessionStore.getState().clearSession(host);
   useSidebarOrderStore.setState({ workspaceOrderByProject: {}, pinnedWorkspaceOrder: [] });
+});
+
+test("live permission changes grant ordering without reconnecting", async () => {
+  const client = new FakeClient();
+  client.permissions = ["workspace.read"];
+  useSessionStore.getState().initializeSession(host, null);
+  populate();
+  useSessionStore.getState().setHasHydratedWorkspaces(host, true);
+  await sharedOrdering.connect({ serverId: host, client, supported: true, directoryReady: true });
+  expect(client.calls).toEqual([]);
+  client.changePermissions(["workspace.read", "workspace.manage"]);
+  useSidebarOrderStore.getState().setPinnedWorkspaceOrder({
+    keys: [`${host}:b`, `${host}:a`],
+    gesture: { userInitiated: true, movedKey: `${host}:b` },
+  });
+  await expect
+    .poll(() => client.calls)
+    .toEqual([{ scope: { kind: "pinned" }, expectedRevision: 1, order: ["b", "a"] }]);
+});
+
+test("live permission changes cancel pending moves and ignore late acknowledgements", async () => {
+  const client = new FakeClient();
+  useSessionStore.getState().initializeSession(host, null);
+  populate();
+  useSessionStore.getState().setHasHydratedWorkspaces(host, true);
+  const errors: OrderError[] = [];
+  const releaseErrors = observeOrderErrors((error) => errors.push(error));
+  let acknowledge = () => {};
+  client.orderGate = new Promise<void>((resolve) => {
+    acknowledge = resolve;
+  });
+  try {
+    await sharedOrdering.connect({ serverId: host, client, supported: true, directoryReady: true });
+    useSidebarOrderStore.getState().setPinnedWorkspaceOrder({
+      keys: [`${host}:b`, `${host}:a`],
+      gesture: { userInitiated: true, movedKey: `${host}:b` },
+    });
+    await expect.poll(() => client.calls.length).toBe(1);
+    client.changePermissions(["workspace.read"]);
+    expect(errors).toEqual([{ kind: "permissionLost" }]);
+    expect(useSidebarOrderStore.getState().pinnedWorkspaceOrder).toEqual([
+      `${host}:a`,
+      `${host}:b`,
+    ]);
+    client.receive({
+      type: "ui.order.update",
+      payload: {
+        scope: { kind: "pinned" },
+        record: { scope: { kind: "pinned" }, revision: 3, order: ["b", "a"] },
+      },
+    });
+    acknowledge();
+    await client.orderGate;
+    expect(useSidebarOrderStore.getState().pinnedWorkspaceOrder).toEqual([
+      `${host}:b`,
+      `${host}:a`,
+    ]);
+    client.changePermissions(["workspace.read", "workspace.manage"]);
+    useSidebarOrderStore.getState().setPinnedWorkspaceOrder({
+      keys: [`${host}:a`, `${host}:b`],
+      gesture: { userInitiated: true, movedKey: `${host}:a` },
+    });
+    await expect
+      .poll(() => client.calls.at(-1))
+      .toEqual({ scope: { kind: "pinned" }, expectedRevision: 3, order: ["a", "b"] });
+    expect(client.calls).toHaveLength(2);
+  } finally {
+    acknowledge();
+    releaseErrors();
+  }
+});
+
+test("live permission changes fence a move waiting for target inventory", async () => {
+  const client = new FakeClient();
+  let acknowledgeTargets = () => {};
+  client.targetsGate = new Promise<void>((resolve) => {
+    acknowledgeTargets = resolve;
+  });
+  useSessionStore.getState().initializeSession(host, null);
+  populate();
+  useSessionStore.getState().setHasHydratedWorkspaces(host, true);
+  const errors: OrderError[] = [];
+  const releaseErrors = observeOrderErrors((error) => errors.push(error));
+  try {
+    await sharedOrdering.connect({ serverId: host, client, supported: true, directoryReady: true });
+    const store = useSidebarOrderStore.getState();
+    store.setPinnedWorkspaceOrder({
+      keys: [`${host}:b`, `${host}:a`],
+      gesture: { userInitiated: true, movedKey: `${host}:b` },
+    });
+    await expect.poll(() => client.targetCalls).toBe(1);
+    client.changePermissions(["workspace.read"]);
+    client.changePermissions(["workspace.read", "workspace.manage"]);
+    store.setPinnedWorkspaceOrder({
+      keys: [`${host}:b`, `${host}:a`],
+      gesture: { userInitiated: true, movedKey: `${host}:b` },
+    });
+    acknowledgeTargets();
+    await expect
+      .poll(() => client.calls)
+      .toEqual([{ scope: { kind: "pinned" }, expectedRevision: 1, order: ["b", "a"] }]);
+    expect(errors).toEqual([{ kind: "permissionLost" }]);
+  } finally {
+    acknowledgeTargets();
+    releaseErrors();
+  }
 });
 function populate(serverId = host) {
   const store = useSessionStore.getState();

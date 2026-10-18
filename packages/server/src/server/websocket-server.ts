@@ -1053,6 +1053,8 @@ export class VoiceAssistantWebSocketServer {
     for (const connection of new Set(this.externalSessionsByKey.values())) {
       if (connection.principalId === principalId) {
         connection.session.setPermissions(permissions);
+        const message = this.createServerInfoMessage(connection.session);
+        for (const socket of connection.sockets) this.sendToClient(socket, message);
       }
     }
   }
