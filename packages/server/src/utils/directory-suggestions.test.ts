@@ -1,5 +1,5 @@
 import { createHook } from "node:async_hooks";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import {
   mkdtempSync,
   mkdirSync,
@@ -1071,6 +1071,11 @@ interface SearchProcessExit {
   signal: string | null;
 }
 
+interface SearchProcess {
+  child: ChildProcess;
+  exited: Promise<SearchProcessExit>;
+}
+
 // Reading a tree is cheap; re-deriving each entry's path state is not. A scan that asks whether
 // every ancestor of every entry is inside the root, or is Git-ignored, costs multiples of the
 // read and is what made large home directories exceed the client request timeout.
@@ -1078,6 +1083,7 @@ describe("home-tree scan cost", () => {
   const DEPTH = 8;
   const CHAINS = 40;
   let scanRoot: string;
+  let searchProcess: SearchProcess | null = null;
 
   beforeEach(() => {
     scanRoot = realpathSync.native(mkdtempSync(path.join(tmpdir(), "directory-scan-cost-")));
@@ -1088,8 +1094,16 @@ describe("home-tree scan cost", () => {
     }
   });
 
-  afterEach(() => {
-    rmSync(scanRoot, { recursive: true, force: true });
+  afterEach(async () => {
+    try {
+      if (searchProcess) {
+        searchProcess.child.kill();
+        await searchProcess.exited;
+      }
+    } finally {
+      searchProcess = null;
+      rmSync(scanRoot, { recursive: true, force: true });
+    }
   });
 
   // Nothing matches, so the scan walks the whole tree instead of stopping at a confident result.
@@ -1153,7 +1167,7 @@ describe("home-tree scan cost", () => {
         "--eval",
         source,
       ],
-      { stdio: ["ignore", "pipe", "pipe"] },
+      { stdio: ["ignore", "pipe", "pipe"], timeout: 20_000 },
     );
     let stdout = "";
     let stderr = "";
@@ -1165,10 +1179,12 @@ describe("home-tree scan cost", () => {
     child.stderr.on("data", (chunk: string) => {
       stderr += chunk;
     });
-    const exit = await new Promise<SearchProcessExit>((resolve, reject) => {
+    const exited = new Promise<SearchProcessExit>((resolve, reject) => {
       child.on("error", reject);
       child.on("close", (code, signal) => resolve({ code, signal }));
     });
+    searchProcess = { child, exited };
+    const exit = await exited;
     expect({ ...exit, outOfMemory: stderr.includes("heap out of memory") }).toEqual({
       code: 0,
       signal: null,
