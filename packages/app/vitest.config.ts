@@ -147,12 +147,56 @@ export default defineConfig({
         find: /^react-native\/Libraries\/Renderer\/shims\/ReactFabric$/,
         replacement: path.resolve(__dirname, "test-stubs/react-native-fabric-shim.ts"),
       },
+      // react-native-gesture-handler's lib/module deep-imports react-native/Libraries paths,
+      // which bypass the `react-native` alias above and cannot bundle in the browser build.
+      // Browser tests that mount sidebar rows pull its module graph in.
+      {
+        find: /^react-native\/Libraries\/Utilities\/codegenNativeComponent$/,
+        replacement: path.resolve(__dirname, "test-stubs/react-native-codegen-native-component.ts"),
+      },
+      {
+        find: /^react-native\/Libraries\/Renderer\/shims\/ReactNative$/,
+        replacement: path.resolve(__dirname, "test-stubs/react-native-renderer-shim.ts"),
+      },
+      {
+        find: /^react-native\/Libraries\/Renderer\/shims\/ReactNativeViewConfigRegistry$/,
+        replacement: path.resolve(__dirname, "test-stubs/react-native-view-config-registry.ts"),
+      },
+      {
+        find: /^react-native\/Libraries\/Utilities\/getShadowNodeFromRef$/,
+        replacement: path.resolve(__dirname, "test-stubs/react-native-get-shadow-node-from-ref.ts"),
+      },
+      // expo-router's build ships uncompiled JSX in .js files, which the browser build cannot
+      // parse. The sidebar module graph only needs its hooks to exist and the router to no-op.
+      {
+        find: /^expo-router$/,
+        replacement: path.resolve(__dirname, "test-stubs/expo-router.ts"),
+      },
+      // Same class of problem: expo-clipboard's ClipboardPasteButton ships JSX in .js. Sidebar
+      // clipboard actions only ever write strings.
+      {
+        find: /^expo-clipboard$/,
+        replacement: path.resolve(__dirname, "test-stubs/expo-clipboard.ts"),
+      },
+      // expo-haptics pulls expo-modules-core, whose TurboModuleRegistry import has no
+      // react-native-web answer. Haptics never fire under test.
+      {
+        find: /^expo-haptics$/,
+        replacement: path.resolve(__dirname, "test-stubs/expo-haptics.ts"),
+      },
+      // Several expo packages reach expo-modules-core through their own imports; stub the core
+      // itself so the whole family bundles. Tests never touch a native module.
+      {
+        find: /^expo-modules-core$/,
+        replacement: path.resolve(__dirname, "test-stubs/expo-modules-core.ts"),
+      },
       // Point to the ESM build so Vite can transform its imports and apply the
       // react alias below (the CJS build uses require('react') which bypasses
-      // Vite alias resolution).
+      // Vite alias resolution). The wrapper re-exports react-native-web and adds
+      // the native-only exports some app modules import (ToastAndroid).
       {
         find: "react-native",
-        replacement: path.resolve(rootNodeModules, "react-native-web/dist/index.js"),
+        replacement: path.resolve(__dirname, "test-stubs/react-native.ts"),
       },
       { find: "react", replacement: resolvePackageEntry("react") },
       {

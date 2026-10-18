@@ -14,15 +14,19 @@ export function getSidebarRowBackdrop({
   isDragging = false,
   isPressed = false,
   selected = false,
+  multiSelected = false,
   isHovered = false,
 }: {
   isDragging?: boolean;
   isPressed?: boolean;
   selected?: boolean;
+  /** Inside a multi-selection without being the active workspace. */
+  multiSelected?: boolean;
   isHovered?: boolean;
 }): SidebarSurfaceBackdrop {
   if (isDragging || isPressed) return "surface2";
   if (selected) return "surfaceSidebarSelected";
+  if (multiSelected) return isHovered ? "surface2" : "surfaceSidebarHover";
   if (isHovered) return "surfaceSidebarHover";
   return "surfaceSidebar";
 }

@@ -1338,6 +1338,18 @@ export const es: TranslationResources = {
         archiving: "Archivando...",
         hiding: "Ocultación...",
       },
+      batch: {
+        pin_one: "Fijar {{count}} espacio de trabajo",
+        pin_other: "Fijar {{count}} espacios de trabajo",
+        unpin_one: "Dejar de fijar {{count}} espacio de trabajo",
+        unpin_other: "Dejar de fijar {{count}} espacios de trabajo",
+        markUnread_one: "Marcar {{count}} espacio de trabajo como no leído",
+        markUnread_other: "Marcar {{count}} espacios de trabajo como no leídos",
+        archive_one: "Archivar {{count}} espacio de trabajo",
+        archive_other: "Archivar {{count}} espacios de trabajo",
+        addLabel: "Añadir etiqueta",
+        deselect: "Deseleccionar todo",
+      },
       confirmations: {
         hideTitle: "¿Ocultar espacio de trabajo?",
         hideMessage:
@@ -1357,6 +1369,11 @@ export const es: TranslationResources = {
         hostDisconnected: "Hostno está conectado",
         hideFailed: "No se pudo ocultar el espacio de trabajo",
         archiveFailed: "No se pudo archivar el espacio de trabajo",
+        batchPinFailed: "No se pudieron fijar {{count}} espacios de trabajo",
+        batchMarkUnreadFailed: "No se pudieron marcar {{count}} espacios de trabajo como no leídos",
+        batchArchiveFailed_one: "No se pudo archivar 1 de {{total}} espacios de trabajo",
+        batchArchiveFailed_other:
+          "No se pudieron archivar {{count}} de {{total}} espacios de trabajo",
       },
     },
   },

@@ -1,4 +1,10 @@
-import { useMemo, type ComponentProps, type PropsWithChildren, type ReactNode } from "react";
+import {
+  useCallback,
+  useMemo,
+  type ComponentProps,
+  type PropsWithChildren,
+  type ReactNode,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -17,12 +23,18 @@ import { isWeb } from "@/constants/platform";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { useAppSettings } from "@/hooks/use-settings";
+import {
+  useSidebarBatchAffordances,
+  useSidebarBatchWorkspaceActions,
+} from "@/hooks/use-sidebar-batch-actions";
+import { useSidebarSelectionStore } from "@/stores/sidebar-selection-store";
 import type { Theme } from "@/styles/theme";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -44,6 +56,10 @@ import {
   WORKSPACE_LABEL_PAGE_ID,
   type WorkspaceLabelTarget,
 } from "@/workspace-labels/picker";
+import {
+  useSidebarBatchLabelMenuPages,
+  WORKSPACE_LABEL_BATCH_PAGE_ID,
+} from "@/workspace-labels/batch-picker";
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -127,6 +143,102 @@ function WorkspaceMenuItem({
   return <DropdownMenuItem {...props}>{children}</DropdownMenuItem>;
 }
 
+/**
+ * A workspace menu is a batch menu when the row it belongs to sits inside a multi-selection: the
+ * single-workspace actions would act on one row of many, so the menu switches to actions over the
+ * whole selection, each labelled with how many rows it will reach.
+ */
+function useIsSidebarBatchMenu(workspaceKey: string): boolean {
+  return useSidebarSelectionStore(
+    (state) => state.selected.length > 1 && state.selectedKeys.has(workspaceKey),
+  );
+}
+
+function SidebarBatchWorkspaceMenuItems({
+  surface,
+  workspaceKey,
+  labelPages,
+}: {
+  surface: MenuSurface;
+  workspaceKey: string;
+  labelPages: ReturnType<typeof useSidebarBatchLabelMenuPages>;
+}): ReactNode {
+  const { t } = useTranslation();
+  const targets = useSidebarSelectionStore((state) => state.selected);
+  const affordances = useSidebarBatchAffordances(targets);
+  const { pin, unpin, markUnread, archive, clearSelection } = useSidebarBatchWorkspaceActions();
+  const labelLeading = useMemo(
+    () => <ThemedTag size={14} uniProps={foregroundMutedColorMapping} />,
+    [],
+  );
+  const handlePin = useCallback(() => pin(targets), [pin, targets]);
+  const handleUnpin = useCallback(() => unpin(targets), [targets, unpin]);
+  const handleMarkUnread = useCallback(() => void markUnread(targets), [markUnread, targets]);
+  const handleArchive = useCallback(() => void archive(targets), [archive, targets]);
+
+  return (
+    <>
+      {affordances.pinCapableCount > 0 ? (
+        <WorkspaceMenuItem
+          surface={surface}
+          testID={`sidebar-workspace-menu-batch-pin-${workspaceKey}`}
+          leading={pinLeadingIcon}
+          onSelect={handlePin}
+        >
+          {t("sidebar.workspace.batch.pin", { count: affordances.pinCapableCount })}
+        </WorkspaceMenuItem>
+      ) : null}
+      {affordances.pinCapableCount > 0 ? (
+        <WorkspaceMenuItem
+          surface={surface}
+          testID={`sidebar-workspace-menu-batch-unpin-${workspaceKey}`}
+          leading={unpinLeadingIcon}
+          onSelect={handleUnpin}
+        >
+          {t("sidebar.workspace.batch.unpin", { count: affordances.pinCapableCount })}
+        </WorkspaceMenuItem>
+      ) : null}
+      {affordances.unreadCount > 0 ? (
+        <WorkspaceMenuItem
+          surface={surface}
+          testID={`sidebar-workspace-menu-batch-mark-unread-${workspaceKey}`}
+          leading={markAsUnreadLeadingIcon}
+          onSelect={handleMarkUnread}
+        >
+          {t("sidebar.workspace.batch.markUnread", { count: affordances.unreadCount })}
+        </WorkspaceMenuItem>
+      ) : null}
+      {labelPages.length > 0 ? (
+        <DropdownMenuSubTrigger
+          id={WORKSPACE_LABEL_BATCH_PAGE_ID}
+          leading={labelLeading}
+          testID={`sidebar-workspace-menu-batch-labels-${workspaceKey}`}
+        >
+          {t("sidebar.workspace.batch.addLabel")}
+        </DropdownMenuSubTrigger>
+      ) : null}
+      <WorkspaceMenuItem
+        surface={surface}
+        testID={`sidebar-workspace-menu-batch-archive-${workspaceKey}`}
+        leading={archiveLeadingIcon}
+        destructive
+        disabled={affordances.archivableCount === 0}
+        onSelect={handleArchive}
+      >
+        {t("sidebar.workspace.batch.archive", { count: affordances.archivableCount })}
+      </WorkspaceMenuItem>
+      <DropdownMenuSeparator />
+      <WorkspaceMenuItem
+        surface={surface}
+        testID={`sidebar-workspace-menu-batch-deselect-${workspaceKey}`}
+        onSelect={clearSelection}
+      >
+        {t("sidebar.workspace.batch.deselect")}
+      </WorkspaceMenuItem>
+    </>
+  );
+}
+
 function SidebarWorkspaceMenuItems({
   surface,
   workspaceKey,
@@ -145,8 +257,14 @@ function SidebarWorkspaceMenuItems({
   isPinned,
   onTogglePin,
   openInFileManagerPath,
-}: SidebarWorkspaceMenuItemsProps & { surface: MenuSurface }): ReactNode {
+  batchLabelPages,
+}: SidebarWorkspaceMenuItemsProps & {
+  surface: MenuSurface;
+  /** The batch label page, built by the menu's parent when the menu is in batch mode. */
+  batchLabelPages: ReturnType<typeof useSidebarBatchLabelMenuPages>;
+}): ReactNode {
   const { t } = useTranslation();
+  const isBatch = useIsSidebarBatchMenu(workspaceKey);
   const archiveTrailing = useMemo(
     () => (archiveShortcutKeys ? <Shortcut chord={archiveShortcutKeys} /> : null),
     [archiveShortcutKeys],
@@ -155,6 +273,16 @@ function SidebarWorkspaceMenuItems({
     () => <ThemedTag size={14} uniProps={foregroundMutedColorMapping} />,
     [],
   );
+
+  if (isBatch) {
+    return (
+      <SidebarBatchWorkspaceMenuItems
+        surface={surface}
+        workspaceKey={workspaceKey}
+        labelPages={batchLabelPages}
+      />
+    );
+  }
 
   return (
     <>
@@ -271,12 +399,15 @@ export function SidebarWorkspaceMenu({
   onOpenChange,
 }: SidebarWorkspaceMenuProps) {
   const { t } = useTranslation();
+  const isBatch = useIsSidebarBatchMenu(workspaceKey);
   const workspaceTarget = useMemo<WorkspaceLabelTarget | null>(
     () =>
       serverId && workspaceId ? { serverId, workspaceId, labels: workspaceLabels ?? [] } : null,
     [serverId, workspaceId, workspaceLabels],
   );
-  const pages = useWorkspaceLabelMenuPages(workspaceTarget);
+  const singlePages = useWorkspaceLabelMenuPages(isBatch ? null : workspaceTarget);
+  const batchLabelPages = useSidebarBatchLabelMenuPages(isBatch ? (serverId ?? null) : null);
+  const pages = isBatch ? batchLabelPages : singlePages;
   return (
     <DropdownMenu compactMode="sheet" open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger
@@ -313,6 +444,7 @@ export function SidebarWorkspaceMenu({
           isPinned={isPinned}
           onTogglePin={onTogglePin}
           openInFileManagerPath={openInFileManagerPath}
+          batchLabelPages={batchLabelPages}
         />
       </DropdownMenuContent>
     </DropdownMenu>
@@ -390,7 +522,10 @@ export function SidebarWorkspaceContextMenu({
     }),
     [workspace],
   );
-  const pages = useWorkspaceLabelMenuPages(workspaceTarget);
+  const isBatch = useIsSidebarBatchMenu(workspaceKey);
+  const singlePages = useWorkspaceLabelMenuPages(isBatch ? null : workspaceTarget);
+  const batchLabelPages = useSidebarBatchLabelMenuPages(isBatch ? workspace.serverId : null);
+  const pages = isBatch ? batchLabelPages : singlePages;
 
   return (
     <ContextMenu open={contextMenuOpen} onOpenChange={onContextMenuOpenChange}>
@@ -427,6 +562,7 @@ export function SidebarWorkspaceContextMenu({
           isPinned={isPinned}
           onTogglePin={onTogglePin}
           openInFileManagerPath={openInFileManagerPath}
+          batchLabelPages={batchLabelPages}
         />
       </ContextMenuContent>
     </ContextMenu>

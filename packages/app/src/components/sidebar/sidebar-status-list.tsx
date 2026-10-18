@@ -61,6 +61,17 @@ import {
 } from "@/components/sidebar/sidebar-workspace-row-content";
 import { useOpenKebabMenuVisibility } from "@/components/sidebar/use-open-kebab-menu-visibility";
 import { getSidebarRowBackdrop } from "@/components/sidebar/sidebar-row-backdrop";
+import {
+  captureWorkspaceRowPointerModifiers,
+  consumeWorkspaceRowPointerUpIntent,
+  consumeWorkspaceRowPressSuppression,
+} from "@/components/sidebar/press-modifiers";
+import type { SidebarSelectionTarget } from "@/stores/sidebar-selection-store";
+import {
+  useSidebarSelectionSegment,
+  useSidebarSelectionStore,
+} from "@/stores/sidebar-selection-store";
+import { useSidebarBatchWorkspaceActions } from "@/hooks/use-sidebar-batch-actions";
 import { getStatusDotColor } from "@/utils/status-dot-color";
 import { selectWorkspaceServiceSummary } from "@/components/sidebar/workspace-meta-row";
 import {
@@ -112,6 +123,14 @@ function statusWorkspaceKeyExtractor(workspace: SidebarWorkspaceEntry): string {
   return workspace.workspaceKey;
 }
 
+function toSidebarSelectionTarget(workspace: SidebarWorkspaceEntry): SidebarSelectionTarget {
+  return {
+    serverId: workspace.serverId,
+    workspaceId: workspace.workspaceId,
+    workspaceKey: workspace.workspaceKey,
+  };
+}
+
 interface StatusWorkspaceListProps {
   groups: SidebarWorkspaceGroup[];
   pinnedWorkspaces: SidebarWorkspaceEntry[];
@@ -160,6 +179,14 @@ export function SidebarStatusWorkspaceList({
     canToggle: canTogglePinnedWorkspaces,
     toggleExpanded: togglePinnedWorkspacesExpanded,
   } = useLimitedSidebarGroup(pinnedWorkspaces);
+
+  // Each section registers only the rows it actually renders at its visual position, so a Shift
+  // range can never reach past a "show more" boundary or into a collapsed section.
+  const pinnedSelectionTargets = useMemo(
+    () => (pinnedCollapsed ? [] : visiblePinnedWorkspaces.map(toSidebarSelectionTarget)),
+    [pinnedCollapsed, visiblePinnedWorkspaces],
+  );
+  useSidebarSelectionSegment("status:pinned", 0, pinnedSelectionTargets);
 
   const statusShortcutIndex = showShortcutBadges
     ? shortcutIndexByWorkspaceKey
@@ -301,11 +328,12 @@ function StatusGroupList({
 }) {
   return (
     <>
-      {groups.map((group) => (
+      {groups.map((group, index) => (
         <StatusGroupRows
           key={group.key}
           group={group}
           collapsed={collapsedWorkspaceGroupKeys.has(group.key)}
+          selectionPosition={index + 1}
           projectIconByProjectViewKey={projectIconByProjectViewKey}
           shortcutIndex={shortcutIndex}
           showShortcutBadges={showShortcutBadges}
@@ -322,6 +350,7 @@ function StatusGroupList({
 function StatusGroupRows({
   group,
   collapsed,
+  selectionPosition,
   projectIconByProjectViewKey,
   shortcutIndex,
   showShortcutBadges,
@@ -332,6 +361,7 @@ function StatusGroupRows({
 }: {
   group: SidebarWorkspaceGroup;
   collapsed: boolean;
+  selectionPosition: number;
   projectIconByProjectViewKey: ReadonlyMap<string, string | null>;
   shortcutIndex: Map<string, number>;
   showShortcutBadges: boolean;
@@ -346,6 +376,11 @@ function StatusGroupRows({
     canToggle: canToggleWorkspaces,
     toggleExpanded: toggleWorkspacesExpanded,
   } = useLimitedSidebarGroup(group.rows);
+  const selectionTargets = useMemo(
+    () => (collapsed ? [] : visibleWorkspaces.map(toSidebarSelectionTarget)),
+    [collapsed, visibleWorkspaces],
+  );
+  useSidebarSelectionSegment(`status:${group.key}`, selectionPosition, selectionTargets);
 
   return (
     <View style={collapsed ? undefined : styles.statusGroupBlockExpanded}>
@@ -665,12 +700,23 @@ function StatusWorkspaceRowWithMenu({
     });
   }, [markUnread, toast]);
 
+  // With a multi-selection that includes this row, the archive shortcut archives the whole
+  // selection — each worktree still gets its risk confirmation — instead of just the active row.
+  const isBatchRow = useSidebarSelectionStore(
+    (state) => state.selected.length > 1 && state.selectedKeys.has(workspace.workspaceKey),
+  );
+  const { archive: batchArchive } = useSidebarBatchWorkspaceActions();
+
   useKeyboardActionHandler({
     handlerId: `workspace-archive-${workspace.workspaceKey}`,
     actions: ["workspace.archive"],
     enabled: selected && !isArchiving,
     priority: 0,
     handle: () => {
+      if (isBatchRow) {
+        void batchArchive(useSidebarSelectionStore.getState().selected);
+        return true;
+      }
       handleArchive();
       return true;
     },
@@ -812,13 +858,45 @@ function StatusWorkspaceRowInnerContent({
   const startDragPress = dragInteraction?.handlePressIn;
   const moveDragPress = dragInteraction?.handleTouchMove;
   const endDragPress = dragInteraction?.handlePressOut;
+  const multiSelected = useSidebarSelectionStore((state) =>
+    state.selectedKeys.has(workspace.workspaceKey),
+  );
   const handlePress = useCallback(() => {
     if (didLongPressRef?.current) {
       didLongPressRef.current = false;
       return;
     }
+    // Same rule as project mode: modifier presses were applied at pointerup (suppression says
+    // this synthesized press is one of them); a plain press navigates, clears the selection,
+    // and becomes the next range anchor.
+    if (platformIsWeb) {
+      if (consumeWorkspaceRowPressSuppression()) {
+        return;
+      }
+      useSidebarSelectionStore.getState().handleNavigatePress({
+        serverId: workspace.serverId,
+        workspaceId: workspace.workspaceId,
+        workspaceKey: workspace.workspaceKey,
+      });
+    }
     onPress();
-  }, [didLongPressRef, onPress]);
+  }, [didLongPressRef, onPress, workspace]);
+  const handleRowPointerUp = useCallback(() => {
+    if (!platformIsWeb) {
+      return;
+    }
+    const intent = consumeWorkspaceRowPointerUpIntent();
+    if (intent) {
+      useSidebarSelectionStore.getState().handleSelectPress(
+        {
+          serverId: workspace.serverId,
+          workspaceId: workspace.workspaceId,
+          workspaceKey: workspace.workspaceKey,
+        },
+        { range: intent.kind === "range" },
+      );
+    }
+  }, [workspace]);
   const handlePressIn = useCallback(
     (event: GestureResponderEvent) => {
       setIsPressed(true);
@@ -854,15 +932,24 @@ function StatusWorkspaceRowInnerContent({
           selected,
           isHovered,
           inStatusGroup,
+          multiSelected,
           isDragging,
         });
-        const backdrop = getSidebarRowBackdrop({ isDragging, isPressed, selected, isHovered });
+        const backdrop = getSidebarRowBackdrop({
+          isDragging,
+          isPressed,
+          selected,
+          multiSelected,
+          isHovered,
+        });
         return (
           <View
             {...dragAttributes}
             {...dragHandleProps?.listeners}
             ref={dragHandleProps?.setActivatorNodeRef as unknown as Ref<View>}
             style={styles.workspaceRowContainer}
+            onPointerDown={captureWorkspaceRowPointerModifiers}
+            onPointerUp={handleRowPointerUp}
             {...hoverHandlers}
           >
             <SidebarWorkspaceContextMenu
@@ -1024,18 +1111,25 @@ function getStatusWorkspaceRowStyle({
   selected,
   isHovered,
   inStatusGroup,
+  multiSelected,
   isDragging,
 }: {
   isPressed: boolean;
   selected: boolean;
   isHovered: boolean;
   inStatusGroup: boolean;
+  multiSelected: boolean;
   isDragging: boolean;
 }) {
   return [
     styles.workspaceRow,
     inStatusGroup && sidebarWorkspaceRowStyles.rowIndented,
     isHovered && styles.workspaceRowHovered,
+    // Multi-selected first: the active row's selected surface must win when a row is both
+    // (a plain press single-selects the active row), and it is the brighter of the two — the
+    // meta label colours are tuned against it.
+    multiSelected &&
+      (isHovered ? styles.sidebarRowMultiSelectedHovered : styles.sidebarRowMultiSelected),
     selected && styles.sidebarRowSelected,
     isDragging && styles.workspaceRowDragging,
     isPressed && styles.workspaceRowPressed,
@@ -1142,5 +1236,13 @@ const styles = StyleSheet.create((theme) => ({
   },
   sidebarRowSelected: {
     backgroundColor: theme.colors.surfaceSidebarSelected,
+  },
+  // Same rule as project mode: a multi-selected row rests at hover strength and hover hands it
+  // the pressed surface. See sidebarRowMultiSelected in sidebar-workspace-list.tsx.
+  sidebarRowMultiSelected: {
+    backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  sidebarRowMultiSelectedHovered: {
+    backgroundColor: theme.colors.surface2,
   },
 }));
