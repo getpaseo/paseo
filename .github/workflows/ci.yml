@@ -8,9 +8,13 @@ on:
   merge_group:
   workflow_dispatch:
 
+# A newer push to the same ref cancels the run still in progress, main included.
+# A full run costs about 200 runner-minutes against the org's 20 concurrent
+# jobs, and superseded main runs only ever answered a question the newer
+# commit answers again.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 env:
   # CI does not use the CUDA execution provider, and the onnxruntime-node
