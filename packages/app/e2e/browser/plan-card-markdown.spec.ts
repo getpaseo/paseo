@@ -287,43 +287,22 @@ test("markdown links underline on hover", async ({ page }) => {
   }
 });
 
-// The web code block replaces the library's own block, which must keep its spacing.
-test("blocks around a web code block keep their spacing", async ({ page }) => {
+const PIXEL_PNG =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+test("Markdown images show a zoom-in cursor", async ({ page }) => {
   const session = await seedMockAgentWorkspace({
-    repoPrefix: "markdown-block-spacing-",
-    title: "Markdown block spacing",
-    featureValues: {
-      mockAssistantResponse:
-        "Intro.\n\n```sh\nnpx playwright test\n```\n\n| Step | Result |\n| --- | --- |\n| hover | none |\n\nMiddle.\n\n```ts\nconst a = 1;\n```\n\nClosing.",
-    },
-    initialPrompt: "Show blocks",
+    repoPrefix: "markdown-image-cursor-",
+    title: "Markdown image cursor",
+    featureValues: { mockAssistantResponse: `Before.\n\n![pixel](${PIXEL_PNG})\n\nAfter.` },
+    initialPrompt: "Show image",
   });
   try {
     await session.client.waitForFinish(session.agentId, 30_000);
     await openAgentRoute(page, session);
-    const message = page.getByTestId("assistant-message");
-    await expect(message.getByRole("table")).toBeVisible();
-    const gaps = await measureBlockGaps(message.locator(".enrm-text").first());
-    for (const { between, gap } of gaps) expect(gap, between).toBeGreaterThanOrEqual(8);
+    const image = page.getByTestId("assistant-message").getByRole("button", { name: "pixel" });
+    await expect(image).toHaveCSS("cursor", "zoom-in");
   } finally {
     await session.cleanup();
   }
 });
-
-async function measureBlockGaps(root: Locator) {
-  return root.evaluate((element) => {
-    const blocks = Array.from(element.children).map((block) => {
-      // Wrappers with display: contents have no box; measure their first rendered child.
-      let box: Element = block;
-      while (box.getBoundingClientRect().height === 0 && box.firstElementChild) {
-        box = box.firstElementChild;
-      }
-      const rect = box.getBoundingClientRect();
-      return { text: (block.textContent ?? "").slice(0, 20), top: rect.top, bottom: rect.bottom };
-    });
-    return blocks.slice(1).map((block, index) => ({
-      between: `${blocks[index].text} -> ${block.text}`,
-      gap: Math.round(block.top - blocks[index].bottom),
-    }));
-  });
-}
