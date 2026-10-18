@@ -66,6 +66,7 @@ import type { ForgeService } from "../../services/forge-service.js";
 import { areEquivalentPaths } from "../../utils/path.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
+import { PASEO_TOOL_NAMES } from "@getpaseo/protocol/paseo-tool-presentation/index";
 import { MutableDaemonConfigSchema, type AgentProfile } from "@getpaseo/protocol/messages";
 import type { DaemonConfigStore } from "../daemon-config-store.js";
 import type { BrowserToolsBroker, BrowserToolsExecuteInput } from "../browser-tools/broker.js";
@@ -881,6 +882,40 @@ describe("bundled Paseo skill", () => {
         ),
       ]);
       expect(documentedInputs.filter((name) => !advertisedNamesAndValues.has(name))).toEqual([]);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+});
+
+describe("Paseo tool timeline presentation", () => {
+  it("catalogs a timeline label for every advertised tool", async () => {
+    const server = await createAgentMcpServer({
+      agentManager: new BoundaryAgentManagerFake() as AgentManager,
+      agentStorage: new BoundaryAgentStorageFake() as AgentStorage,
+      providerSnapshotManager:
+        new BoundaryProviderSnapshotManagerFake() as unknown as ProviderSnapshotManager,
+      browserToolsEnabled: true,
+      browserToolsBroker: new FakeBrowserToolsBroker({
+        requestId: "req-catalog",
+        ok: true,
+        result: { command: "list_tabs", tabs: [] },
+      }) as BrowserToolsBroker,
+      callerAgentId: "agent-1",
+      logger: createTestLogger(),
+    });
+    const client = await connectInMemoryMcpClient(server);
+
+    try {
+      const { tools } = await client.listTools();
+      const cataloged = new Set<string>(PASEO_TOOL_NAMES);
+      // speak renders as a voice message, not a tool call row.
+      const uncataloged = tools
+        .map((tool) => tool.name)
+        .filter((name) => name !== "speak" && !cataloged.has(name));
+      expect(tools.length).toBeGreaterThan(40);
+      expect(uncataloged).toEqual([]);
     } finally {
       await client.close();
       await server.close();

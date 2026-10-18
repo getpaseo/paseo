@@ -1,4 +1,5 @@
-import { getPaseoToolLeafName } from "./tool-name-normalization.js";
+import { getPaseoToolLeafName } from "../tool-name-normalization.js";
+import { getPaseoToolEntry, type PaseoToolDetailSpec } from "./catalog.js";
 
 export interface PaseoToolDetailField {
   label: string;
@@ -16,161 +17,6 @@ export type PaseoToolDetailSection =
       title: string;
       fields: PaseoToolDetailField[];
     };
-
-interface ToolDetailSpec {
-  promptField?: string;
-  inputOrder?: readonly string[];
-  outputFields?: readonly string[];
-}
-
-const WORKSPACE_FIELDS = [
-  "title",
-  "workspaceId",
-  "projectId",
-  "isolation",
-  "path",
-  "mode",
-  "worktreeSlug",
-  "branchName",
-  "baseBranch",
-  "branch",
-  "prNumber",
-  "forge",
-] as const;
-const AGENT_FIELDS = [
-  "title",
-  "agentId",
-  "provider",
-  "workspaceId",
-  "cwd",
-  "sessionMode",
-  "modeId",
-  "background",
-  "notifyOnFinish",
-  "internal",
-  "settings",
-  "labels",
-] as const;
-const AUTOMATION_FIELDS = [
-  "name",
-  "id",
-  "cron",
-  "timezone",
-  "provider",
-  "cwd",
-  "isolation",
-  "maxRuns",
-  "expiresIn",
-  "clearExpires",
-] as const;
-const BROWSER_FIELDS = [
-  "browserId",
-  "url",
-  "ref",
-  "sourceRef",
-  "targetRef",
-  "value",
-  "text",
-  "key",
-  "button",
-  "doubleClick",
-  "modifiers",
-  "filePaths",
-  "fullPage",
-  "maxEntries",
-  "timeoutMs",
-  "deltaX",
-  "deltaY",
-  "width",
-  "height",
-  "function",
-] as const;
-
-const TOOL_SPECS: Readonly<Record<string, ToolDetailSpec>> = {
-  create_workspace: {
-    inputOrder: WORKSPACE_FIELDS,
-    outputFields: ["workspaceId", "projectId"],
-  },
-  list_workspaces: {},
-  archive_workspace: {
-    inputOrder: ["workspaceId"],
-    outputFields: ["workspaceId", "archivedAgentIds", "removedDirectory"],
-  },
-  rename_workspace: { inputOrder: ["title", "workspaceId"] },
-  create_agent: {
-    promptField: "initialPrompt",
-    inputOrder: AGENT_FIELDS,
-    outputFields: ["agentId", "status", "currentModeId", "cwd"],
-  },
-  send_agent_prompt: {
-    promptField: "prompt",
-    inputOrder: AGENT_FIELDS,
-    outputFields: ["status", "lastMessage", "permission"],
-  },
-  get_agent_status: { inputOrder: ["agentId"] },
-  list_agents: { inputOrder: ["cwd", "statuses", "sinceHours", "limit", "includeArchived"] },
-  cancel_agent: { inputOrder: ["agentId"] },
-  archive_agent: { inputOrder: ["agentId"] },
-  kill_agent: { inputOrder: ["agentId"] },
-  update_agent: { inputOrder: AGENT_FIELDS },
-  get_agent_activity: { inputOrder: ["agentId", "limit"] },
-  set_agent_mode: { inputOrder: ["agentId", "modeId"] },
-  list_workspace_scripts: { inputOrder: ["workspaceId"] },
-  start_workspace_script: { inputOrder: ["workspaceId", "scriptName"] },
-  stop_workspace_script: { inputOrder: ["workspaceId", "scriptName"] },
-  list_terminals: { inputOrder: ["cwd", "all"] },
-  create_terminal: { inputOrder: ["cwd", "workspaceId", "name", "command"] },
-  kill_terminal: { inputOrder: ["terminalId"] },
-  capture_terminal: { inputOrder: ["terminalId", "lines"] },
-  send_terminal_keys: { inputOrder: ["terminalId", "keys", "literal"] },
-  create_schedule: {
-    promptField: "prompt",
-    inputOrder: AUTOMATION_FIELDS,
-    outputFields: ["id", "status", "nextRunAt", "expiresAt"],
-  },
-  create_heartbeat: {
-    promptField: "prompt",
-    inputOrder: AUTOMATION_FIELDS,
-    outputFields: ["id", "status", "nextRunAt", "expiresAt"],
-  },
-  delete_heartbeat: { inputOrder: ["id"] },
-  list_schedules: {},
-  inspect_schedule: { inputOrder: ["id"] },
-  pause_schedule: { inputOrder: ["id"] },
-  resume_schedule: { inputOrder: ["id"] },
-  delete_schedule: { inputOrder: ["id"] },
-  update_schedule: { promptField: "prompt", inputOrder: AUTOMATION_FIELDS },
-  schedule_logs: { inputOrder: ["id"] },
-  run_schedule_once: { inputOrder: ["id"] },
-  list_providers: {},
-  list_models: { inputOrder: ["provider"] },
-  list_profiles: {},
-  inspect_provider: { inputOrder: ["provider", "cwd", "settings"] },
-  list_pending_permissions: {},
-  respond_to_permission: { inputOrder: ["agentId", "requestId", "response"] },
-  browser_list_tabs: {},
-  browser_new_tab: { inputOrder: BROWSER_FIELDS },
-  browser_snapshot: { inputOrder: BROWSER_FIELDS },
-  browser_click: { inputOrder: BROWSER_FIELDS },
-  browser_fill: { inputOrder: BROWSER_FIELDS },
-  browser_wait: { inputOrder: BROWSER_FIELDS },
-  browser_type: { inputOrder: BROWSER_FIELDS },
-  browser_keypress: { inputOrder: BROWSER_FIELDS },
-  browser_navigate: { inputOrder: BROWSER_FIELDS },
-  browser_back: { inputOrder: BROWSER_FIELDS },
-  browser_forward: { inputOrder: BROWSER_FIELDS },
-  browser_reload: { inputOrder: BROWSER_FIELDS },
-  browser_screenshot: { inputOrder: BROWSER_FIELDS },
-  browser_upload: { inputOrder: BROWSER_FIELDS },
-  browser_hover: { inputOrder: BROWSER_FIELDS },
-  browser_select: { inputOrder: BROWSER_FIELDS },
-  browser_drag: { inputOrder: BROWSER_FIELDS },
-  browser_logs: { inputOrder: BROWSER_FIELDS },
-  browser_evaluate: { inputOrder: BROWSER_FIELDS },
-  browser_scroll: { inputOrder: BROWSER_FIELDS },
-  browser_resize: { inputOrder: BROWSER_FIELDS },
-  browser_close_tab: { inputOrder: BROWSER_FIELDS },
-};
 
 const FIELD_LABELS: Readonly<Record<string, string>> = {
   agentId: "Agent",
@@ -330,7 +176,7 @@ export function buildPaseoToolDetailSections(
   const leafName = getPaseoToolLeafName(toolName);
   if (!leafName) return null;
 
-  const spec = TOOL_SPECS[leafName] ?? {};
+  const spec: PaseoToolDetailSpec = getPaseoToolEntry(leafName)?.detail ?? {};
   const sections: PaseoToolDetailSection[] = [];
   if (spec.promptField && isRecord(input)) {
     const prompt = input[spec.promptField];
