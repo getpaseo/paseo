@@ -61,6 +61,50 @@ function makeAgent(input: {
 const WORKSPACE_ID = "ws-1";
 
 describe("workspace agent visibility", () => {
+  it("marks only positively identified foreign workspace agents, including loaded details", () => {
+    const own = makeAgent({ id: "own", cwd: "/repo", workspaceId: WORKSPACE_ID });
+    const foreign = makeAgent({ id: "foreign", cwd: "/repo", workspaceId: "other" });
+    const unknown = makeAgent({ id: "unknown", cwd: "/repo/other" });
+    const result = deriveWorkspaceAgentVisibility({
+      sessionAgents: new Map([
+        [own.id, own],
+        [unknown.id, unknown],
+      ]),
+      agentDetails: new Map([[foreign.id, foreign]]),
+      workspaceId: WORKSPACE_ID,
+    });
+    expect(result.foreignAgentIds).toEqual(new Set([foreign.id]));
+    const snapshot = buildWorkspaceTabSnapshot({
+      agentVisibility: result,
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      knownTerminalIds: [],
+      standaloneTerminalIds: [],
+      hasActivePendingTerminalCreate: false,
+      hasActivePendingDraftCreate: false,
+    });
+    expect(snapshot.foreignAgentIds).toBe(result.foreignAgentIds);
+  });
+
+  it("uses authoritative session ownership over stale cached details", () => {
+    const own = makeAgent({ id: "moved", cwd: "/repo", workspaceId: WORKSPACE_ID });
+    const result = deriveWorkspaceAgentVisibility({
+      sessionAgents: new Map([[own.id, own]]),
+      agentDetails: new Map([[own.id, { ...own, workspaceId: "old" }]]),
+      workspaceId: WORKSPACE_ID,
+    });
+    expect(result.foreignAgentIds?.size).toBe(0);
+    expect(result.activeAgentIds.has(own.id)).toBe(true);
+  });
+
+  it("detects foreign ownership changes even when the active directory is unchanged", () => {
+    const base = { activeAgentIds: new Set<string>(), autoOpenAgentIds: new Set<string>() };
+    expect(
+      workspaceAgentVisibilityEqual(base, { ...base, foreignAgentIds: new Set(["foreign"]) }),
+    ).toBe(false);
+    expect(workspaceAgentVisibilityEqual(base, { ...base, foreignAgentIds: new Set() })).toBe(true);
+  });
+
   it("keeps subagents active while excluding them from auto-open", () => {
     const parent = makeAgent({
       id: "parent-agent",

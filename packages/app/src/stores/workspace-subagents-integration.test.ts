@@ -133,6 +133,89 @@ afterEach(() => {
 });
 
 describe("workspace subagents integration", () => {
+  it("preserves unresolved pins until ownership is known and hydration completes", () => {
+    initializeAgents([]);
+    const key = buildWorkspaceTabPersistenceKey({
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+    })!;
+    const store = useWorkspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey: key,
+      target: { kind: "agent", agentId: "unresolved" },
+      intent: "reveal",
+      pin: true,
+    });
+    reconcileWorkspaceTabs(key, deriveVisibilityFromSession());
+    expect(getWorkspaceAgentTabIds(key)).toHaveLength(1);
+    appendAgent(makeAgent({ id: "unresolved", workspaceId: "other" }));
+    const visibility = deriveVisibilityFromSession();
+    store.reconcileTabs(
+      key,
+      buildWorkspaceTabSnapshot({
+        agentVisibility: visibility,
+        agentsHydrated: false,
+        terminalsHydrated: true,
+        knownTerminalIds: [],
+        standaloneTerminalIds: [],
+        hasActivePendingTerminalCreate: false,
+        hasActivePendingDraftCreate: false,
+      }),
+    );
+    expect(getWorkspaceAgentTabIds(key)).toHaveLength(1);
+    reconcileWorkspaceTabs(key, visibility);
+    expect(getWorkspaceAgentTabIds(key)).toHaveLength(0);
+    reconcileWorkspaceTabs(key, visibility);
+    expect(getWorkspaceAgentTabIds(key)).toHaveLength(0);
+    expect(
+      useSessionStore.getState().sessions[SERVER_ID].agents.get("unresolved")?.archivedAt,
+    ).toBeNull();
+  });
+
+  it("repairs cross-workspace pinned tabs without changing the agents or their home tabs", () => {
+    const own = makeAgent({ id: "own" });
+    const foreign = makeAgent({ id: "foreign", workspaceId: "ws-other", cwd: "/repo/other" });
+    initializeAgents([own, foreign]);
+    const key = buildWorkspaceTabPersistenceKey({
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+    })!;
+    const otherKey = buildWorkspaceTabPersistenceKey({
+      serverId: SERVER_ID,
+      workspaceId: "ws-other",
+    })!;
+    const store = useWorkspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey: key,
+      target: { kind: "agent", agentId: own.id },
+      intent: "reveal",
+    });
+    store.openTab({
+      workspaceKey: key,
+      target: { kind: "agent", agentId: foreign.id },
+      intent: "reveal",
+      pin: true,
+    });
+    store.openTab({
+      workspaceKey: otherKey,
+      target: { kind: "agent", agentId: foreign.id },
+      intent: "reveal",
+    });
+    reconcileWorkspaceTabs(key, deriveVisibilityFromSession());
+    const ids = (workspaceKey: string) =>
+      useWorkspaceLayoutStore
+        .getState()
+        .getWorkspaceTabs(workspaceKey)
+        .flatMap((tab) => (tab.target.kind === "agent" ? [tab.target.agentId] : []));
+    expect(ids(key)).toEqual([own.id]);
+    expect(ids(otherKey)).toEqual([foreign.id]);
+    expect(
+      useWorkspaceLayoutStore.getState().pinnedAgentIdsByWorkspace[key]?.has(foreign.id) ?? false,
+    ).toBe(false);
+    expect(useSessionStore.getState().sessions[SERVER_ID].agents.get(foreign.id)).toBe(foreign);
+    expect(foreign.archivedAt).toBeNull();
+  });
+
   it("keeps a child ingested before its parent out of auto-tabs, then exposes it in the parent section", () => {
     const workspaceKey = buildWorkspaceTabPersistenceKey({
       serverId: SERVER_ID,
