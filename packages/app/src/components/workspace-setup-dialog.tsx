@@ -13,6 +13,8 @@ import { ProjectIconView } from "@/components/project-icon-view";
 import { ICON_SIZE } from "@/styles/theme";
 import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
+import { resolveDraftSubmitSelection } from "@/composer/draft/workspace-tab-core";
+import type { DraftSelectionSourceFlags } from "@/composer/draft/input-draft-core";
 import { useProjectIcon } from "@/projects/icons";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import {
@@ -128,6 +130,7 @@ function buildCreateAgentOptions({
     effectiveModeId: string;
     effectiveModelId: string | null;
     effectiveThinkingOptionId: string | null;
+    selectionSource: DraftSelectionSourceFlags;
   };
   text: string;
   attachments: NonNullable<CreateAgentRequestOptions["attachments"]>;
@@ -136,15 +139,18 @@ function buildCreateAgentOptions({
   workspaceId: string;
   provider: CreateAgentRequestOptions["provider"];
 }): CreateAgentRequestOptions {
+  const submitSelection = resolveDraftSubmitSelection({
+    autoSubmitConfig: null,
+    selectionSource: composerState.selectionSource,
+    effectiveModelId: composerState.effectiveModelId,
+    effectiveModeId: composerState.effectiveModeId,
+    effectiveThinkingOptionId: composerState.effectiveThinkingOptionId,
+  });
   return {
     provider,
     cwd: workspaceDirectory,
     workspaceId,
-    ...(composerState.effectiveModeId ? { modeId: composerState.effectiveModeId } : {}),
-    ...(composerState.effectiveModelId ? { model: composerState.effectiveModelId } : {}),
-    ...(composerState.effectiveThinkingOptionId
-      ? { thinkingOptionId: composerState.effectiveThinkingOptionId }
-      : {}),
+    ...submitSelection,
     ...(text.trim() ? { initialPrompt: text.trim() } : {}),
     ...(encodedImages && encodedImages.length > 0 ? { images: encodedImages } : {}),
     ...(attachments.length > 0 ? { attachments } : {}),

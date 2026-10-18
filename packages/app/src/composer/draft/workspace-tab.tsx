@@ -12,6 +12,7 @@ import { ComposerImportPill } from "@/composer/draft/import-pill";
 import { COMPOSER_PILL_CLEARANCE } from "@/composer/pill-styles";
 import { composerWorkspaceAttachment } from "@/composer/attachments/workspace";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
+import type { DraftSelectionSourceFlags } from "@/composer/draft/input-draft-core";
 import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { useDraftAgentCreateFlow, type DraftCreateAttempt } from "@/composer/draft/create-flow";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
@@ -26,6 +27,7 @@ import { encodeImages } from "@/utils/encode-images";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
 import {
   resolveDraftWorkingDirectory,
+  resolveDraftSubmitSelection,
   shouldAllowEmptyDraftText,
   validateDraftSubmission,
 } from "@/composer/draft/workspace-tab-core";
@@ -75,20 +77,6 @@ function resolveAutoSubmitConfig(
   };
 }
 
-function resolveDraftModeIdOverride(input: {
-  autoSubmitConfig: AutoSubmitConfig | null;
-  effectiveModeId: string;
-}): { modeId: string } | Record<string, never> {
-  const { autoSubmitConfig, effectiveModeId } = input;
-  if (autoSubmitConfig?.modeId) {
-    return { modeId: autoSubmitConfig.modeId };
-  }
-  if (effectiveModeId !== "") {
-    return { modeId: effectiveModeId };
-  }
-  return {};
-}
-
 function resolveDraftModeId(input: {
   autoSubmitConfig: AutoSubmitConfig | null;
   effectiveModeId: string;
@@ -121,6 +109,7 @@ async function submitDraftCreateRequest(input: {
     effectiveThinkingOptionId: string | null;
     providerOptions: Record<string, unknown> | undefined;
     metadata: Record<string, JsonValue>;
+    selectionSource: DraftSelectionSourceFlags;
   };
   hostDisconnectedMessage: string;
   selectModelMessage: string;
@@ -148,17 +137,17 @@ async function submitDraftCreateRequest(input: {
   if (!provider) {
     throw new Error(input.selectModelMessage);
   }
-  const modeIdOverride = resolveDraftModeIdOverride({
+  const submitSelection = resolveDraftSubmitSelection({
     autoSubmitConfig,
+    selectionSource: composerState.selectionSource,
+    effectiveModelId: composerState.effectiveModelId,
     effectiveModeId: composerState.effectiveModeId,
+    effectiveThinkingOptionId: composerState.effectiveThinkingOptionId,
   });
   const config = buildWorkspaceDraftAgentConfig({
     provider,
     cwd,
-    ...modeIdOverride,
-    model: autoSubmitConfig?.model ?? (composerState.effectiveModelId || undefined),
-    thinkingOptionId:
-      autoSubmitConfig?.thinkingOptionId ?? (composerState.effectiveThinkingOptionId || undefined),
+    ...submitSelection,
     providerOptions: autoSubmitConfig?.providerOptions ?? composerState.providerOptions,
   });
 
