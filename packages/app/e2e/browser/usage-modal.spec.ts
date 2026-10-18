@@ -16,6 +16,7 @@ import {
 } from "../support/helpers/usage-reports";
 import {
   installLoginUsage,
+  expectLoginUsageFreshness,
   installCodexWindowUsage,
   expectCodexReportedWindows,
   refreshLoginUsage,
@@ -588,6 +589,69 @@ async function expectLoginErrors(page: Page, lines: string[]) {
 
 async function expectLoginUsageOnly(page: Page, percentage: string) {
   const card = page.getByTestId("usage-report-login-journey:account");
-  await expect(card.getByText(percentage, { exact: true })).toBeVisible();
+  await expect(card.getByText(new RegExp(`^${percentage}(?:$| ·)`))).toBeVisible();
   await expect(card.getByTestId("usage-login-error")).toHaveCount(0);
+}
+
+for (const compact of [false, true]) {
+  test(`failed polls retain usage and successful freshness (${compact ? "footer" : "tooltip"})`, async ({
+    page,
+  }) => {
+    const fixture = await installLoginUsage({ status: "error", error: "Initial failure" });
+    try {
+      await page.setViewportSize(
+        compact ? { width: 390, height: 844 } : { width: 1440, height: 900 },
+      );
+      await gotoAppShell(page);
+      if (compact) await openCompactSidebar(page);
+      await openUsageFromIcon(page);
+      await expectLoginErrors(page, ["Claude: Initial failure"]);
+      await expectLoginUsageFreshness(page, "No successful update", compact);
+
+      await fixture.setReport({
+        status: "available",
+        windows: [{ id: "weekly", label: "Weekly", usedPct: 42, resetsAt: "2000-01-01T00:00:00Z" }],
+      });
+      // Move only the browser clock; real daemon fetches continue using the host clock.
+      await page.clock.setFixedTime(new Date(Date.now() + 3_900_000));
+      await refreshLoginUsage(page);
+      await expectLoginUsageOnly(page, "42%");
+      await expectLoginUsageFreshness(page, "Updated 1h ago", compact);
+
+      await fixture.setReport({ status: "error", error: "Rate limited" });
+      await refreshLoginUsage(page);
+      await expectRetainedLoginUsage(page, "Claude: Rate limited");
+      await expectLoginUsageFreshness(page, "Last updated 1h ago", compact);
+      await refreshLoginUsage(page);
+      await expectRetainedLoginUsage(page, "Claude: Rate limited");
+      await expectLoginUsageFreshness(page, "Last updated 1h ago", compact);
+
+      await fixture.setReport({
+        status: "unavailable",
+        problem: { kind: "no_quota", detail: "No active quota" },
+      });
+      await refreshLoginUsage(page);
+      await expectRetainedLoginUsage(page, "Claude: No active quota");
+      await expectLoginUsageFreshness(page, "Last updated 1h ago", compact);
+
+      await fixture.setReport({
+        status: "available",
+        windows: [{ id: "weekly", label: "Weekly", usedPct: 43 }],
+      });
+      await page.clock.setFixedTime(new Date(Date.now() + 150_000));
+      await refreshLoginUsage(page);
+      await expectLoginUsageOnly(page, "43%");
+      await expect(page.getByText("42%", { exact: true })).toHaveCount(0);
+      await expectLoginUsageFreshness(page, "Updated 2m ago", compact);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+}
+
+async function expectRetainedLoginUsage(page: Page, message: string) {
+  const card = page.getByTestId("usage-report-login-journey:account");
+  await expect(card.getByText(/^42%(?:$| ·)/)).toBeVisible();
+  await expect(card.getByTestId("usage-login-error")).toHaveText(message);
+  await expect(card.getByText("Reset time passed", { exact: false })).toBeVisible();
 }
