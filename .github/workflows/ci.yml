@@ -452,7 +452,9 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           E2E_WORKERS: "2"
           # File groups are weighted by observed reporter durations.
-          PWTEST_SHARD_WEIGHTS: "93:100:101:104:91:94:122:110"
+          # Share of the test list per shard, rebalanced from the Playwright step
+          # minutes of five eight-shard runs so the slowest and fastest shards meet.
+          PWTEST_SHARD_WEIGHTS: "85:94:117:128:91:103:127:85"
 
       - name: Upload test artifacts
         uses: actions/upload-artifact@v4
