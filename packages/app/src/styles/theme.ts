@@ -204,6 +204,8 @@ const lightStatusDotColors = {
   statusDotDanger: "#f12e2f",
   statusDotWarning: "#b37824",
   statusDotRunning: "#268ae0",
+  statusIndicatorActivity: "#D4A800",
+  statusIndicatorNeedsInput: "#EA8800",
 };
 
 const darkStatusDotColors = {
@@ -212,6 +214,8 @@ const darkStatusDotColors = {
   statusDotDanger: "#f7796d",
   statusDotWarning: "#db932e",
   statusDotRunning: "#5caaf6",
+  statusIndicatorActivity: "#D4A800",
+  statusIndicatorNeedsInput: "#FB923C",
 };
 
 export interface LightThemeConfig {

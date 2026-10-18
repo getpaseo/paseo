@@ -27,7 +27,7 @@ interface AttachmentLightboxProps {
 }
 
 const ModalRoot = isNative ? GestureHandlerRootView : View;
-const LIGHTBOX_FIT = { padding: SPACING[4], maxWidth: 960, maxHeight: 640 };
+const LIGHTBOX_FIT = { padding: SPACING[4] };
 
 export function AttachmentLightbox({
   source,

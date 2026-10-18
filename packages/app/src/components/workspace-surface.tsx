@@ -6,17 +6,20 @@ import { StyleSheet } from "react-native-unistyles";
 export function WorkspaceSurface({
   children,
   framed = true,
+  size = "default",
   testID,
 }: {
   children: ReactNode;
   framed?: boolean;
+  size?: "default" | "small";
   testID?: string;
 }) {
   const isCompact = useIsCompactFormFactor();
   const showFrame = framed && !isCompact;
+  const radiusStyle = showFrame && size === "small" ? styles.smallRadius : undefined;
   return (
-    <View style={showFrame ? styles.frame : styles.container} testID={testID}>
-      <View style={showFrame ? styles.content : styles.container}>{children}</View>
+    <View style={[showFrame ? styles.frame : styles.container, radiusStyle]} testID={testID}>
+      <View style={[showFrame ? styles.content : styles.container, radiusStyle]}>{children}</View>
     </View>
   );
 }
@@ -28,6 +31,9 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
     minHeight: 0,
+  },
+  smallRadius: {
+    borderRadius: theme.workspaceFrame.radius * 0.8,
   },
   frame: {
     position: "relative",

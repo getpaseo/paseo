@@ -1,7 +1,7 @@
 import { memo, useMemo, useCallback, useState, type ReactNode } from "react";
 import { Text, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { CircleAlert, Folder, FolderGit2, Monitor } from "lucide-react-native";
+import { Folder, FolderGit2, Monitor } from "lucide-react-native";
 import { ProjectStatusIndicator } from "@/components/sidebar/project-leading-visual";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 import {
@@ -20,24 +20,17 @@ import type { Theme } from "@/styles/theme";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { getStatusDotColor } from "@/utils/status-dot-color";
 import {
-  STATUS_INDICATOR_ALERT_SIZE,
   STATUS_INDICATOR_DOT_SIZE,
   STATUS_INDICATOR_FILLED_DOT_SIZE,
 } from "@/utils/status-indicator-geometry";
 import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
-import { StatusRing } from "@/components/status-ring";
+import { ConversationStatusIndicator } from "@/components/conversation-status-indicator";
 import { resolveSidebarWorkspacePrimaryLabel } from "@/components/sidebar/sidebar-workspace-title";
 import { TrailingActionScrim } from "@/components/ui/trailing-action-scrim";
 import { useWorkspaceLabelDefinitions } from "@/workspace-labels";
 import type { ProjectIconRenderData } from "@/projects/icons";
 
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-const needsInputColorMapping = (theme: Theme) => ({
-  color: theme.colors.surface0,
-  fill: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,
-});
-
-const ThemedCircleAlert = withUnistyles(CircleAlert);
 const ThemedMonitor = withUnistyles(Monitor);
 const ThemedFolder = withUnistyles(Folder);
 const ThemedFolderGit2 = withUnistyles(FolderGit2);
@@ -205,14 +198,11 @@ function WorkspaceStatusIndicator({
   loading?: boolean;
   reserveIdleSpace?: boolean;
 }) {
-  // Busy is the only status that moves, and it is the ring rather than a dot for the same
-  // reason it is a dot elsewhere: every status in the sidebar sits in this one slot, so busy
-  // has to fill it without displacing anything. A row starting up and a row working are both
-  // busy, so they share the ring and differ only in testID.
+  // A row starting up and a row working share the activity grid in the same reserved slot.
   if (loading) {
     return (
       <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-loading">
-        <StatusRing />
+        <ConversationStatusIndicator kind="activity" testID="workspace-status-activity-grid" />
       </View>
     );
   }
@@ -220,7 +210,7 @@ function WorkspaceStatusIndicator({
   if (shouldRenderSyncedStatusLoader({ bucket })) {
     return (
       <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-running">
-        <StatusRing />
+        <ConversationStatusIndicator kind="activity" testID="workspace-status-activity-grid" />
       </View>
     );
   }
@@ -228,7 +218,10 @@ function WorkspaceStatusIndicator({
   if (bucket === "needs_input") {
     return (
       <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-needs_input">
-        <ThemedCircleAlert size={STATUS_INDICATOR_ALERT_SIZE} uniProps={needsInputColorMapping} />
+        <ConversationStatusIndicator
+          kind="needs_input"
+          testID="workspace-status-needs-input-pulse"
+        />
       </View>
     );
   }
@@ -236,7 +229,7 @@ function WorkspaceStatusIndicator({
   if (bucket === "attention") {
     return (
       <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-attention">
-        <View style={styles.standaloneStatusDot} />
+        <ConversationStatusIndicator kind="attention" testID="workspace-status-attention-pulse" />
       </View>
     );
   }

@@ -11,6 +11,7 @@ import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import { ResizeHandle } from "@/components/resize-handle";
 import { TerminalPane } from "@/components/terminal-pane";
+import { WorkspaceSurface } from "@/components/workspace-surface";
 import { useReplicaQuery } from "@/data/query";
 import { workspaceTerminalsPushRoute } from "@/data/push-router";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
@@ -161,7 +162,11 @@ export function ExplorerTerminalDock({
   );
   return (
     <View style={styles.root} onLayout={onLayout}>
-      <View style={topStyle}>{children}</View>
+      <View style={topStyle}>
+        <WorkspaceSurface size="small" testID="explorer-upper-surface">
+          {children}
+        </WorkspaceSurface>
+      </View>
       <ResizeHandle
         testID="explorer-terminal-resize"
         direction="vertical"
@@ -195,7 +200,7 @@ export function ExplorerTerminalDock({
             </Pressable>
           ) : null}
         </View>
-        <View style={styles.content}>
+        <WorkspaceSurface size="small" testID="explorer-terminal-surface">
           {terminalId && directory ? (
             <TerminalPane
               key={terminalId}
@@ -217,7 +222,7 @@ export function ExplorerTerminalDock({
               <Text style={styles.emptyText}>{emptyLabel}</Text>
             </Pressable>
           )}
-        </View>
+        </WorkspaceSurface>
       </View>
     </View>
   );
@@ -227,9 +232,7 @@ const styles = StyleSheet.create((theme) => ({
   root: { flex: 1, minHeight: 0 },
   bottom: {
     minHeight: 0,
-    backgroundColor: theme.colors.surfaceWorkspace,
-    borderTopWidth: theme.borderWidth[1],
-    borderTopColor: theme.colors.border,
+    backgroundColor: theme.colors.surfaceWorkspaceFrame,
   },
   tabs: {
     height: theme.workspaceTabs.dockRailHeight,
@@ -254,7 +257,6 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.workspaceTabs.dockSelected,
   },
   tabText: { color: theme.colors.foreground, fontSize: theme.fontSize.sm },
-  content: { flex: 1, minHeight: 0 },
   empty: { flex: 1, alignItems: "center", justifyContent: "center" },
   emptyText: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm },
 }));

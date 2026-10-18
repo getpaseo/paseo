@@ -1,5 +1,5 @@
 import { expect, type Page } from "@playwright/test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -35,6 +35,58 @@ test.describe("Sidebar project visibility", () => {
   test.describe.configure({ timeout: 180_000 });
   test.beforeEach(async ({ page }) => {
     page.setDefaultTimeout(15_000);
+  });
+
+  test("closes after held drag selection and persists hide and restore", async ({ page }) => {
+    const project = await seedWorkspace({ repoPrefix: "visibility-drag-", title: "Drag project" });
+    const projectRow = page.getByTestId(`sidebar-project-row-${project.projectKey}`);
+    const choice = page.getByTestId(`sidebar-project-filter-${project.projectKey}`);
+    const artifacts = path.join(process.cwd(), ".artifacts", "project-filter-drag");
+
+    async function dragFilterChoice(testID: string): Promise<void> {
+      const trigger = page.getByTestId("sidebar-display-preferences-menu");
+      const triggerBox = await trigger.boundingBox();
+      if (!triggerBox) throw new Error("Could not measure display preferences trigger");
+      await page.mouse.move(
+        triggerBox.x + triggerBox.width / 2,
+        triggerBox.y + triggerBox.height / 2,
+      );
+      await page.mouse.down();
+      const target = page.getByTestId(testID);
+      await expect(target).toBeVisible();
+      const targetBox = await target.boundingBox();
+      if (!targetBox) throw new Error(`Could not measure ${testID}`);
+      await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2);
+      await page.mouse.up();
+      await expect(page.getByTestId("sidebar-display-preferences-content")).toHaveCount(0);
+    }
+
+    try {
+      await gotoAppShell(page);
+      await expect(projectRow).toBeVisible({ timeout: 30_000 });
+      await dragFilterChoice(`sidebar-project-filter-${project.projectKey}`);
+      await expect(projectRow).toHaveCount(0);
+
+      await openProjectPopover(page);
+      await expect(choice).toHaveAttribute("aria-checked", "false");
+      await mkdir(artifacts, { recursive: true });
+      await page.waitForTimeout(600);
+      await page.screenshot({ path: path.join(artifacts, "hidden.png") });
+      await page.keyboard.press("Escape");
+      await expect(page.getByTestId("sidebar-display-preferences-content")).toHaveCount(0);
+
+      await dragFilterChoice(`sidebar-project-filter-${project.projectKey}`);
+      await expect(projectRow).toBeVisible();
+      await page.reload();
+      await expect(projectRow).toBeVisible({ timeout: 30_000 });
+
+      await openProjectPopover(page);
+      await expect(choice).toHaveAttribute("aria-checked", "true");
+      await page.waitForTimeout(600);
+      await page.screenshot({ path: path.join(artifacts, "restored.png") });
+    } finally {
+      await project.cleanup();
+    }
   });
 
   for (const compact of [false, true]) {

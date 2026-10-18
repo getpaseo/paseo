@@ -87,7 +87,15 @@ it("opens before mouseup and selects the option under the held pointer exactly o
   expect(element("trigger").getAttribute("aria-expanded")).toBe("false");
 });
 
-function MenuFixture({ select, keepOpen = false }: { select: () => void; keepOpen?: boolean }) {
+function MenuFixture({
+  select,
+  keepOpen = false,
+  closeOnDragSelect,
+}: {
+  select: () => void;
+  keepOpen?: boolean;
+  closeOnDragSelect?: boolean;
+}) {
   return (
     <MenuRoot>
       <MenuTrigger testID="trigger">
@@ -108,7 +116,12 @@ function MenuFixture({ select, keepOpen = false }: { select: () => void; keepOpe
           },
         ]}
       >
-        <MenuItem testID="option" closeOnSelect={!keepOpen} onSelect={select}>
+        <MenuItem
+          testID="option"
+          closeOnSelect={!keepOpen}
+          closeOnDragSelect={closeOnDragSelect}
+          onSelect={select}
+        >
           Choose
         </MenuItem>
         <MenuItem testID="disabled" disabled onSelect={select}>
@@ -219,6 +232,27 @@ it("selects custom rows and preserves keep-open selections", async () => {
   const rect = element("custom").getBoundingClientRect();
   await mouse("mouseMoved", rect.left + 10, rect.top + 10);
   await mouse("mouseReleased", rect.left + 10, rect.top + 10);
+  expect(select).toHaveBeenCalledTimes(2);
+  expect(element("trigger").getAttribute("aria-expanded")).toBe("false");
+});
+
+it("can close after drag selection while ordinary selections keep the menu open", async () => {
+  const select = vi.fn();
+  mount(<MenuFixture select={select} keepOpen closeOnDragSelect />);
+
+  await openHeld();
+  await point("mouseReleased", "trigger");
+  await userEvent.click(element("option"));
+  expect(select).toHaveBeenCalledTimes(1);
+  expect(element("trigger").getAttribute("aria-expanded")).toBe("true");
+
+  await point("mousePressed", "trigger");
+  await expect.poll(() => element("trigger").getAttribute("aria-expanded")).toBe("false");
+  await point("mouseReleased", "trigger");
+  await openHeld();
+  await point("mouseMoved", "option");
+  await point("mouseReleased", "option");
+
   expect(select).toHaveBeenCalledTimes(2);
   expect(element("trigger").getAttribute("aria-expanded")).toBe("false");
 });

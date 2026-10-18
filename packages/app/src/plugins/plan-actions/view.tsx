@@ -19,7 +19,7 @@ import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
 import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-default-environment";
 import { createPluginAgentActionContext } from "../actions";
 import { createPluginClientStateSource } from "../client-state/source";
-import { createPluginNavigation } from "../navigation";
+import { createBackgroundAgentNavigation, createPluginNavigation } from "../navigation";
 import { useInstalledPlugins } from "../registry";
 import { PlanActionState, resolvePlanActions, type PlanAction } from "./model";
 import { runPlanContribution } from "./contribution";
@@ -259,7 +259,10 @@ export function PlanActions({
         serverId,
         workspaceId,
         agentId,
-        navigation: createPluginNavigation({ serverId, workspaceId }),
+        navigation: {
+          ...createPluginNavigation({ serverId, workspaceId }),
+          ...createBackgroundAgentNavigation({ serverId, workspaceId }),
+        },
         signal: lifetime.signal,
         profileId,
         plan: { ...plan, permissionRequestId: permission.id },

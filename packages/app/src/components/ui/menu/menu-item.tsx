@@ -251,8 +251,13 @@ export interface MenuItemProps {
   /** Label to show on success (e.g. "Pushed") */
   successLabel?: string;
   closeOnSelect?: boolean;
+  closeOnDragSelect?: boolean;
   testID?: string;
   tooltip?: string;
+}
+
+function resolveDragCloseOnSelect(closeOnDragSelect: boolean | undefined, closeOnSelect: boolean) {
+  return closeOnDragSelect ?? closeOnSelect;
 }
 
 export function MenuItem({
@@ -272,10 +277,12 @@ export function MenuItem({
   pendingLabel,
   successLabel,
   closeOnSelect = true,
+  closeOnDragSelect,
   testID,
   tooltip,
 }: PropsWithChildren<MenuItemProps>): ReactElement {
   const { selectItem } = useMenuContext("MenuItem");
+  const dragCloseOnSelect = resolveDragCloseOnSelect(closeOnDragSelect, closeOnSelect);
   const isPending = status === "pending" || loading;
   const isSuccess = status === "success";
   const isDisabled = disabled || isPending || isSuccess;
@@ -300,7 +307,11 @@ export function MenuItem({
     [isDisabled, selectItem, onSelect, closeOnSelect],
   );
 
-  const drag = usePressDragTarget({ onSelect: handleItemPress, disabled: Boolean(isDisabled) });
+  const handleDragSelect = useCallback(() => {
+    selectItem(onSelect, dragCloseOnSelect);
+  }, [selectItem, onSelect, dragCloseOnSelect]);
+
+  const drag = usePressDragTarget({ onSelect: handleDragSelect, disabled: Boolean(isDisabled) });
 
   // A row that draws a check has to say so as well: a multi-select page is a list of things that
   // are on or off, and the check is the only thing telling a sighted user which. Rows that answer

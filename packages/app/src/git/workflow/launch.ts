@@ -315,7 +315,7 @@ async function resolveWorkflowFeatureValues(input: {
   profile: WorkflowProfile;
 }): Promise<Record<string, unknown>> {
   const { action, client, cwd, profile } = input;
-  if (action === "review") return profile.featureValues;
+  if (action === "review" || action === "resolve-conflicts") return profile.featureValues;
   if (!client) throw new Error("The host is disconnected.");
 
   const payload = await client.listProviderFeatures({

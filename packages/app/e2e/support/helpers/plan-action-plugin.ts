@@ -1,11 +1,14 @@
+import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pluginRequirements } from "./plugin-fixture";
 
 /** A real plugin subprocess echoes the exact action context; its first review fails. */
-export async function createPlanActionPlugin() {
+export async function createPlanActionPlugin(options: { deferHandoff?: boolean } = {}) {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-plan-actions-"));
+  const handoffDirectory = JSON.stringify(directory);
+  const deferHandoff = options.deferHandoff ?? false;
   await mkdir(path.join(directory, "shared"));
   await writeFile(
     path.join(directory, "paseo-plugin.json"),
@@ -24,6 +27,9 @@ export const actionRpc = defineRpc({ name: "plan.action", input: context, output
     path.join(directory, "index.server.ts"),
     `
 import { actionRpc } from "./shared/action";
+import { existsSync, writeFileSync } from "node:fs";
+import path from "node:path";
+const handoffDirectory = ${handoffDirectory};
 export default function contribute(server) {
   let reviews = 0;
   server.handle(actionRpc, async (input) => {
@@ -32,7 +38,11 @@ export default function contribute(server) {
       await new Promise(resolve => setTimeout(resolve, 8000));
     }
     if (input.action === "handoff") {
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      if (${deferHandoff}) {
+        writeFileSync(path.join(handoffDirectory, "handoff-started"), "started");
+        while (!existsSync(path.join(handoffDirectory, "handoff-release")))
+          await new Promise(resolve => setTimeout(resolve, 50));
+      } else await new Promise(resolve => setTimeout(resolve, 1000));
       if (input.profileId === "unavailable") throw new Error("Handoff unavailable; retry another profile");
     }
     return input;
@@ -47,15 +57,13 @@ export default function contribute(server) {
 import { actionRpc } from "./shared/action";
 export default function contribute(client) {
   for (const [id, title, order] of [["review", "Revue", 10], ["handoff", "Handoff", 20]]) {
-    client.addPlanAction({ id, title, order, requiresAgentProfile: id === "handoff", ...(id === "review" ? { async onAvailable() { throw new Error("Ignored availability failure"); } } : {}), async onPress({ rpc, plan, agent, workspace, signal, navigation, profileId }) {
+    client.addPlanAction({ id, title, order, requiresAgentProfile: id === "handoff", ...(id === "review" ? { async onAvailable() { throw new Error("Ignored availability failure"); } } : {}), async onPress({ rpc, plan, agent, workspace, navigation, profileId }) {
       const result = await rpc(actionRpc, { ...plan, action: id, agentId: agent.id, workspaceId: workspace.id, profileId });
       sessionStorage.setItem("plan-action-result", JSON.stringify(result));
       const executorId = sessionStorage.getItem("plan-action-executor");
       if (id === "handoff" && executorId) {
-        while (!signal.aborted && !sessionStorage.getItem("plan-action-release"))
-          await new Promise(resolve => setTimeout(resolve, 50));
-        if (!signal.aborted)
-          (navigation.replaceAgent ?? navigation.openAgent)({ agentId: executorId });
+        (navigation.replaceAgent ?? navigation.openAgent)({ agentId: executorId });
+        sessionStorage.setItem("plan-action-complete", "true");
       }
     } });
   }
@@ -63,5 +71,10 @@ export default function contribute(client) {
 }
 `,
   );
-  return { directory, cleanup: () => rm(directory, { recursive: true, force: true }) };
+  return {
+    directory,
+    handoffStarted: () => existsSync(path.join(directory, "handoff-started")),
+    releaseHandoff: () => writeFile(path.join(directory, "handoff-release"), "released"),
+    cleanup: () => rm(directory, { recursive: true, force: true }),
+  };
 }

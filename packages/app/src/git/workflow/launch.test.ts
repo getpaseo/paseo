@@ -246,7 +246,7 @@ describe("workspace workflow launch", () => {
     },
   );
 
-  it.each(["create-pr", "commit-and-push", "repair-checks", "resolve-conflicts"] as const)(
+  it.each(["create-pr", "commit-and-push", "repair-checks"] as const)(
     "enables the advertised Codex Fast tier for %s",
     async (action) => {
       calls.features.mockResolvedValue({
@@ -284,6 +284,57 @@ describe("workspace workflow launch", () => {
       });
     },
   );
+
+  it("keeps conflict resolution at standard speed in the draft and submission", async () => {
+    calls.features.mockResolvedValue({
+      provider: "codex",
+      fetchedAt: "now",
+      features: [
+        {
+          type: "select",
+          id: "service_tier",
+          label: "Speed",
+          value: "default",
+          options: [
+            { id: "default", label: "Normal" },
+            { id: "priority-v2", label: "Fast" },
+          ],
+        },
+        { type: "toggle", id: "fast_mode", label: "Fast", value: false },
+      ],
+    });
+
+    await launchWorkspaceWorkflowAction({
+      ...context,
+      action: "resolve-conflicts",
+      prUrl: "https://example.com/pr/8",
+      config: {
+        conflictModel: { provider: "codex", model: "pr", thinkingOptionId: "high" },
+      },
+    });
+
+    expect(calls.features).not.toHaveBeenCalled();
+    expect(calls.submitting.mock.calls[0][0]).toMatchObject({
+      provider: "codex",
+      model: "pr",
+      thinkingOptionId: "high",
+      featureValues: {},
+    });
+    expect(calls.submitting.mock.calls[0][0].featureValues).not.toHaveProperty("service_tier");
+    expect(calls.submitting.mock.calls[0][0].featureValues).not.toHaveProperty("fast_mode");
+    expect(calls.navigate.mock.calls[0][0].target.setup).toMatchObject({
+      provider: "codex",
+      model: "pr",
+      thinkingOptionId: "high",
+      featureValues: {},
+    });
+    expect(calls.navigate.mock.calls[0][0].target.setup.featureValues).not.toHaveProperty(
+      "service_tier",
+    );
+    expect(calls.navigate.mock.calls[0][0].target.setup.featureValues).not.toHaveProperty(
+      "fast_mode",
+    );
+  });
 
   it("enables a fast_mode toggle while preserving legacy profile options", async () => {
     calls.features.mockResolvedValue({

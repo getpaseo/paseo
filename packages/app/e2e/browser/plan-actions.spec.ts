@@ -5,6 +5,11 @@ import { seedMockAgentWorkspace, openAgentRoute } from "../support/helpers/mock-
 import { createPlanActionPlugin } from "../support/helpers/plan-action-plugin";
 import { readReplicaCache } from "../support/helpers/replica-cache-storage";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
+import {
+  archiveWorkspaceFromDaemon,
+  createWorktreeViaDaemon,
+} from "../support/helpers/new-workspace";
+import { getServerId } from "../support/helpers/server-id";
 
 const profiles = [
   {
@@ -93,14 +98,130 @@ test("received handoff plans render as readable plans with opt-in technical deta
   }
 });
 
-test("handoff returns to the executor workspace after the source plan closes", async ({
-  page,
-}, testInfo) => {
-  const plugin = await createPlanActionPlugin();
+test("handoff keeps the current route after the source plan closes", async ({ page }, testInfo) => {
+  const plugin = await createPlanActionPlugin({ deferHandoff: true });
   const client = await connectDaemonClient<DaemonClient>({ clientIdPrefix: "handoff-focus" });
   const previous = await client.getDaemonConfig();
   const session = await seedMockAgentWorkspace({
     repoPrefix: "handoff-focus-",
+    title: "Source plan",
+    initialPrompt: "Emit synthetic plan approval.",
+  });
+  const otherProject = await seedMockAgentWorkspace({
+    repoPrefix: "handoff-focus-other-project-",
+    title: "Other project",
+  });
+  const worktree = await createWorktreeViaDaemon(client, {
+    cwd: session.cwd,
+    slug: `handoff-focus-${Date.now()}`,
+  });
+  try {
+    await client.patchDaemonConfig({ pluginsEnabled: true, agentProfiles: profiles });
+    await client.installDirectoryPlugin(plugin.directory);
+    await openAgentRoute(page, session);
+    const executor = await session.client.createAgent({
+      provider: "mock",
+      cwd: session.cwd,
+      workspaceId: session.workspaceId,
+      title: "Handoff executor",
+      modeId: "load-test",
+      model: "e2e-fast-stream",
+    });
+    const otherTab = await session.client.createAgent({
+      provider: "mock",
+      cwd: session.cwd,
+      workspaceId: session.workspaceId,
+      title: "Other source tab",
+      modeId: "load-test",
+      model: "e2e-fast-stream",
+    });
+    await openAgentRoute(page, { workspaceId: session.workspaceId, agentId: otherTab.id });
+    await openAgentRoute(page, session);
+    await page.evaluate((id) => sessionStorage.setItem("plan-action-executor", id), executor.id);
+    await page.getByRole("button", { name: "Implementation", exact: true }).click();
+    await expect.poll(() => plugin.handoffStarted()).toBe(true);
+    const snapshot = await client.fetchAgent({ agentId: session.agentId });
+    const permission = snapshot!.agent.pendingPermissions.find((entry) => entry.kind === "plan")!;
+    await client.respondToPermissionAndWait(session.agentId, permission.id, {
+      behavior: "deny",
+      interrupt: true,
+    });
+    await expect(page.getByTestId("plan-handoff-profiles")).toHaveCount(0);
+    await page
+      .getByTestId("sidebar-global-new-workspace")
+      .filter({ visible: true })
+      .first()
+      .click();
+    await expect(page).toHaveURL(/\/new(?:\?.*)?$/);
+    const serverId = getServerId();
+    await page.getByTestId(`sidebar-workspace-row-${serverId}:${otherProject.workspaceId}`).click();
+    await expect(page).toHaveURL(new RegExp(`/workspace/${otherProject.workspaceId}(?:\\?.*)?$`));
+    await page.screenshot({ path: testInfo.outputPath("handoff-focus-other-project.png") });
+    await page.getByTestId(`sidebar-workspace-row-${serverId}:${worktree.workspaceId}`).click();
+    await expect(page).toHaveURL(new RegExp(`/workspace/${worktree.workspaceId}(?:\\?.*)?$`));
+    await page.screenshot({ path: testInfo.outputPath("handoff-focus-other-worktree.png") });
+    await page.getByTestId(`sidebar-workspace-row-${serverId}:${session.workspaceId}`).click();
+    await expect(page).toHaveURL(new RegExp(`/workspace/${session.workspaceId}(?:\\?.*)?$`));
+    await page.getByTestId(`workspace-tab-agent_${otherTab.id}`).first().click();
+    await expect(page.getByTestId(`workspace-tab-agent_${otherTab.id}`).first()).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await page.screenshot({ path: testInfo.outputPath("handoff-focus-other-tab.png") });
+    await page
+      .getByTestId("sidebar-global-new-workspace")
+      .filter({ visible: true })
+      .first()
+      .click();
+    await expect(page).toHaveURL(/\/new(?:\?.*)?$/);
+    await page.screenshot({ path: testInfo.outputPath("handoff-focus.png") });
+    expect(await page.evaluate(() => sessionStorage.getItem("plan-action-result"))).toBeNull();
+    await plugin.releaseHandoff();
+    await expect
+      .poll(() => page.evaluate(() => sessionStorage.getItem("plan-action-result")))
+      .not.toBeNull();
+    await expect
+      .poll(() => page.evaluate(() => sessionStorage.getItem("plan-action-complete")))
+      .toBe("true");
+    await expect(page).toHaveURL(/\/new(?:\?.*)?$/);
+    await page.screenshot({ path: testInfo.outputPath("handoff-focus-new-workspace.png") });
+    await page.getByTestId(`sidebar-workspace-row-${serverId}:${session.workspaceId}`).click();
+    await expect(page).toHaveURL(new RegExp(`/workspace/${session.workspaceId}(?:\\?.*)?$`));
+    await expect(page.getByTestId(`workspace-tab-agent_${otherTab.id}`).first()).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect(page.getByTestId(`workspace-tab-agent_${session.agentId}`)).toHaveCount(0);
+    await expect(page.getByTestId(`workspace-tab-agent_${executor.id}`)).toHaveCount(1);
+    await page.screenshot({ path: testInfo.outputPath("handoff-focus-replaced-tab.png") });
+    await page.getByTestId(`workspace-tab-agent_${executor.id}`).click();
+    await expect(page.getByTestId(`workspace-tab-agent_${executor.id}`).first()).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  } finally {
+    await plugin.releaseHandoff();
+    await archiveWorkspaceFromDaemon(client, worktree.workspaceDirectory);
+    await client.removePlugin("plan-actions-test");
+    await client.patchDaemonConfig({
+      pluginsEnabled: previous.config.pluginsEnabled ?? false,
+      agentProfiles: previous.config.agentProfiles ?? [],
+    });
+    await client.close();
+    await otherProject.cleanup();
+    await session.cleanup();
+    await plugin.cleanup();
+  }
+});
+
+test("handoff shows the executor when the source tab stays selected", async ({
+  page,
+}, testInfo) => {
+  const plugin = await createPlanActionPlugin({ deferHandoff: true });
+  const client = await connectDaemonClient<DaemonClient>({ clientIdPrefix: "handoff-source-tab" });
+  const previous = await client.getDaemonConfig();
+  const session = await seedMockAgentWorkspace({
+    repoPrefix: "handoff-source-tab-",
     title: "Source plan",
     initialPrompt: "Emit synthetic plan approval.",
   });
@@ -118,9 +239,7 @@ test("handoff returns to the executor workspace after the source plan closes", a
     });
     await page.evaluate((id) => sessionStorage.setItem("plan-action-executor", id), executor.id);
     await page.getByRole("button", { name: "Implementation", exact: true }).click();
-    await expect
-      .poll(() => page.evaluate(() => sessionStorage.getItem("plan-action-result")))
-      .not.toBeNull();
+    await expect.poll(() => plugin.handoffStarted()).toBe(true);
     const snapshot = await client.fetchAgent({ agentId: session.agentId });
     const permission = snapshot!.agent.pendingPermissions.find((entry) => entry.kind === "plan")!;
     await client.respondToPermissionAndWait(session.agentId, permission.id, {
@@ -128,21 +247,22 @@ test("handoff returns to the executor workspace after the source plan closes", a
       interrupt: true,
     });
     await expect(page.getByTestId("plan-handoff-profiles")).toHaveCount(0);
-    await page
-      .getByTestId("sidebar-global-new-workspace")
-      .filter({ visible: true })
-      .first()
-      .click();
-    await expect(page).toHaveURL(/\/new(?:\?.*)?$/);
-    await page.evaluate(() => sessionStorage.setItem("plan-action-release", "true"));
+    await plugin.releaseHandoff();
+    await expect
+      .poll(() => page.evaluate(() => sessionStorage.getItem("plan-action-result")))
+      .not.toBeNull();
+    await expect
+      .poll(() => page.evaluate(() => sessionStorage.getItem("plan-action-complete")))
+      .toBe("true");
     await expect(page).toHaveURL(new RegExp(`/workspace/${session.workspaceId}(?:\\?.*)?$`));
     await expect(page.getByTestId(`workspace-tab-agent_${executor.id}`).first()).toHaveAttribute(
       "aria-selected",
       "true",
     );
     await expect(page.getByTestId(`workspace-tab-agent_${session.agentId}`)).toHaveCount(0);
-    await page.screenshot({ path: testInfo.outputPath("handoff-focus.png") });
+    await page.screenshot({ path: testInfo.outputPath("handoff-source-tab-executor.png") });
   } finally {
+    await plugin.releaseHandoff();
     await client.removePlugin("plan-actions-test");
     await client.patchDaemonConfig({
       pluginsEnabled: previous.config.pluginsEnabled ?? false,

@@ -597,6 +597,7 @@ function ProjectFilterItems({
       <MenuItem
         selected={resolvedHiddenProjectKeys.length === 0}
         closeOnSelect={false}
+        closeOnDragSelect
         onSelect={preferences.showAllProjects}
         testID="sidebar-project-filter-all"
       >
@@ -649,6 +650,7 @@ function ProjectFilterItem({
       selected={selected}
       leading={leading}
       closeOnSelect={false}
+      closeOnDragSelect
       onSelect={handleSelect}
       testID={`sidebar-project-filter-${viewKey}`}
     >

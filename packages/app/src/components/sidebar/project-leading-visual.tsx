@@ -1,7 +1,7 @@
 import { ActivityIndicator, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, ChevronRight, CircleAlert } from "lucide-react-native";
+import { ChevronDown, ChevronRight } from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { getStatusBucketLabel } from "@/hooks/sidebar-status-view-model";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -13,12 +13,8 @@ import {
 } from "@/utils/project-status-badge-content";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import { getStatusDotColor } from "@/utils/status-dot-color";
-import {
-  STATUS_INDICATOR_ALERT_SIZE,
-  STATUS_INDICATOR_FILLED_DOT_SIZE,
-} from "@/utils/status-indicator-geometry";
-import { StatusRing } from "@/components/status-ring";
-import { getStatusRingOffset } from "@/components/status-ring/geometry";
+import { STATUS_INDICATOR_FILLED_DOT_SIZE } from "@/utils/status-indicator-geometry";
+import { ConversationStatusIndicator } from "@/components/conversation-status-indicator";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 
 // Every surfaced status shares one badge shell, so the badge never changes size or position
@@ -40,14 +36,8 @@ const STATUS_BADGE_OFFSET = -4;
 const LEADING_SLOT_HEIGHT = 20;
 
 const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
-const ThemedCircleAlert = withUnistyles(CircleAlert);
-
 const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
-});
-const needsInputColorMapping = (theme: Theme) => ({
-  color: theme.colors.surface0,
-  fill: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,
 });
 
 /**
@@ -107,9 +97,8 @@ export function ProjectLeadingVisual({
 
 // The project icon (the lettered box) is what marks a row as a *project* rather than a
 // workspace, so it always stays and status annotates it instead of replacing it. Every
-// surfaced bucket lands in the identical corner badge — an amber alert glyph for needs_input,
-// a colored disc for the rest, nothing for done — so the badge reads as one fixed shell and
-// only its contents change.
+// surfaced bucket lands in the same corner: activity grid, attention/input pulse, red failure
+// dot, or nothing for done.
 export function ProjectStatusIndicator({
   iconDataUri,
   emoji,
@@ -178,10 +167,9 @@ function ProjectStatusBadge({
   backdrop: SidebarSurfaceBackdrop;
 }) {
   const { t } = useTranslation();
-  // Running skips the shell. The ring is wider than the 12pt shell and carries its own knockout,
-  // so nesting it inside would clip it against the very thing that was meant to separate it from
-  // the icon. It anchors to the same corner instead, growing around the centre the dot had.
-  if (content.kind === "dot" && content.bucket === "running") {
+  // Animated marks are larger than the 12pt shell, so anchor them around the same badge center
+  // without clipping their edges.
+  if (content.kind === "grid" || content.kind === "pulse") {
     return (
       <View
         role="status"
@@ -189,7 +177,11 @@ function ProjectStatusBadge({
         style={styles.statusRingAnchor}
         testID="project-status-badge"
       >
-        <StatusRing backdrop={backdrop} />
+        <View style={[styles.statusBadge, getStatusBadgeBackdropStyle(backdrop)]} />
+        <ConversationStatusIndicator
+          kind={content.kind === "grid" ? "activity" : content.bucket}
+          testID="project-status-badge-indicator"
+        />
       </View>
     );
   }
@@ -200,11 +192,7 @@ function ProjectStatusBadge({
       style={[styles.statusBadge, getStatusBadgeBackdropStyle(backdrop)]}
       testID="project-status-badge"
     >
-      {content.kind === "alert" ? (
-        <ThemedCircleAlert size={STATUS_INDICATOR_ALERT_SIZE} uniProps={needsInputColorMapping} />
-      ) : (
-        <ProjectStatusDot bucket={content.bucket} />
-      )}
+      {content.kind === "dot" ? <ProjectStatusDot /> : null}
     </View>
   );
 }
@@ -222,8 +210,8 @@ function getStatusBadgeBackdropStyle(backdrop: SidebarSurfaceBackdrop): ViewStyl
   }
 }
 
-function ProjectStatusDot({ bucket }: { bucket: ProjectStatusBadgeDotBucket }) {
-  return <View testID="project-status-dot" style={getStatusDotColorStyle(bucket)} />;
+function ProjectStatusDot() {
+  return <View testID="project-status-dot" style={getStatusDotColorStyle()} />;
 }
 
 function ProjectIcon({
@@ -259,10 +247,8 @@ function ProjectInlineChevron({ chevron }: { chevron: "expand" | "collapse" | nu
   return <ChevronRight size={14} color="#9ca3af" />;
 }
 
-function getStatusDotColorStyle(bucket: ProjectStatusBadgeDotBucket): ViewStyle {
-  if (bucket === "failed") return styles.statusDotFailed;
-  if (bucket === "running") return styles.statusDotRunning;
-  return styles.statusDotAttention;
+function getStatusDotColorStyle(): ViewStyle {
+  return styles.statusDotFailed;
 }
 
 const styles = StyleSheet.create((theme) => {
@@ -317,15 +303,13 @@ const styles = StyleSheet.create((theme) => {
     // Same corner as the shell, re-centred for the wider ring.
     statusRingAnchor: {
       position: "absolute",
-      right: getStatusRingOffset(STATUS_BADGE_OFFSET, STATUS_BADGE_SIZE),
-      bottom: getStatusRingOffset(STATUS_BADGE_OFFSET, STATUS_BADGE_SIZE),
+      right: STATUS_BADGE_OFFSET - (14 - STATUS_BADGE_SIZE) / 2,
+      bottom: STATUS_BADGE_OFFSET - (14 - STATUS_BADGE_SIZE) / 2,
     },
     statusBadgeOnSidebar: { backgroundColor: theme.colors.surfaceSidebar },
     statusBadgeOnSidebarHover: { backgroundColor: theme.colors.surfaceSidebarHover },
     statusBadgeOnSidebarSelected: { backgroundColor: theme.colors.surfaceSidebarSelected },
     statusBadgeOnSurface2: { backgroundColor: theme.colors.surface2 },
-    statusDotRunning: statusDot("running"),
     statusDotFailed: statusDot("failed"),
-    statusDotAttention: statusDot("attention"),
   };
 });
