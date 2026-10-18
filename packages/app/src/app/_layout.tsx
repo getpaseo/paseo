@@ -1,3 +1,4 @@
+import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { ComposerEditingSessionsProvider } from "@/composer/editing-session";
 import "@/styles/unistyles";
 import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
@@ -130,11 +131,7 @@ import {
   WindowChromeRegion,
   WindowChromeSafeArea,
 } from "@/utils/desktop-window";
-import {
-  buildOpenProjectRoute,
-  parseHostWorkspaceRouteFromPathname,
-  parseServerIdFromPathname,
-} from "@/utils/host-routes";
+import { buildOpenProjectRoute, parseServerIdFromPathname } from "@/utils/host-routes";
 import { buildNotificationRoute, resolveNotificationTarget } from "@/utils/notification-routing";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { PluginCatalogSync } from "@/plugins";
@@ -486,7 +483,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const usesCompactExplorerHost = explorerSidebarPresentation !== "pane";
   useCompactWebViewportZoomLock(isCompactLayout);
   const pathname = usePathname();
-  const workspaceRoute = parseHostWorkspaceRouteFromPathname(pathname);
+  const workspaceRoute = useActiveWorkspaceSelection();
   const isWorkspaceRoute = workspaceRoute !== null;
   const workspaceKey = workspaceRoute ? buildWorkspaceTabPersistenceKey(workspaceRoute) : null;
   const isExplorerOpen = useIsExplorerSidebarOpen({
