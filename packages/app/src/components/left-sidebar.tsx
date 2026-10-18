@@ -21,8 +21,14 @@ import { Gesture } from "react-native-gesture-handler";
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
+import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
+import {
+  IconButtonChromeProvider,
+  iconButtonChromeGlyphSize,
+  mutedIconColorMapping,
+} from "@/components/ui/icon-button-chrome";
 import { resolveDesktopSidebarWidth } from "@/components/desktop-sidebar-layout";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
@@ -62,6 +68,7 @@ import { usePanelStore } from "@/stores/panel-store";
 import { useOwnsWindowChromeCorner, WindowChromeSafeArea } from "@/utils/desktop-window";
 import { useCloseAgentListGesture } from "@/mobile-panels/gestures";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
+import type { ShortcutKey } from "@/utils/format-shortcut";
 import { buildSettingsAddHostRoute, buildSettingsRoute } from "@/utils/host-routes";
 import { openHostOverview } from "@/navigation/settings-navigation";
 import {
@@ -73,6 +80,8 @@ import {
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { SidebarCalloutSlot } from "./sidebar-callout-slot";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
+
+const ThemedX = withUnistyles(X);
 
 type SidebarTheme = ReturnType<typeof useUnistyles>["theme"];
 
@@ -545,6 +554,11 @@ function MobileSidebar({
     closeSidebar();
   }, [closeSidebar]);
 
+  const closeButton = useMemo(
+    () => <SidebarCloseButton label={labels.closeSidebar} onPress={closeSidebar} />,
+    [labels.closeSidebar, closeSidebar],
+  );
+
   const mobileSidebarInsetStyle = useMemo(
     () => ({
       paddingTop: insetsTop,
@@ -562,30 +576,11 @@ function MobileSidebar({
     >
       <View style={styles.sidebarContent} pointerEvents="auto">
         <WindowChromeSafeArea placement="below" />
-        <SidebarNavRows style={styles.sidebarHeaderGroup} onBeforeNavigate={closeSidebar} />
-        <WindowChromeSafeArea
-          placement="inline"
-          pointerEvents="box-none"
-          style={styles.mobileCloseButtonRow}
-        >
-          <Pressable
-            style={styles.mobileCloseButton}
-            onPress={closeSidebar}
-            testID="sidebar-close"
-            nativeID="sidebar-close"
-            accessible
-            accessibilityRole="button"
-            accessibilityLabel={labels.closeSidebar}
-            hitSlop={8}
-          >
-            {({ hovered, pressed }) => (
-              <X
-                size={theme.iconSize.md}
-                color={hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted}
-              />
-            )}
-          </Pressable>
-        </WindowChromeSafeArea>
+        <SidebarNavRows
+          style={styles.sidebarHeaderGroup}
+          onBeforeNavigate={closeSidebar}
+          firstRowTrailing={closeButton}
+        />
 
         {isInitialLoad && !hasActiveHostFilter ? (
           <SidebarAgentListSkeleton />
@@ -623,6 +618,34 @@ function MobileSidebar({
         />
       </View>
     </MobilePanelOverlay>
+  );
+}
+
+const NO_SHORTCUT: ShortcutKey[] = [];
+
+/** The compact header's icon button, so the sidebar's close reads like the header it covers. */
+function SidebarCloseButton({ label, onPress }: { label: string; onPress: () => void }) {
+  return (
+    <IconButtonChromeProvider value="header-island">
+      <HeaderToggleButton
+        onPress={onPress}
+        tooltipLabel={label}
+        tooltipKeys={NO_SHORTCUT}
+        tooltipSide="bottom"
+        style={styles.mobileCloseButton}
+        testID="sidebar-close"
+        nativeID="sidebar-close"
+        accessible
+        accessibilityRole="button"
+        accessibilityLabel={label}
+      >
+        <ThemedX
+          size={iconButtonChromeGlyphSize("large")}
+          strokeWidth={1.5}
+          uniProps={mutedIconColorMapping}
+        />
+      </HeaderToggleButton>
+    </IconButtonChromeProvider>
   );
 }
 
@@ -856,24 +879,8 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minHeight: 0,
   },
-  mobileCloseButtonRow: {
-    position: "absolute",
-    top: theme.spacing[3],
-    left: 0,
-    right: 0,
-    zIndex: 2,
-    alignItems: "flex-end",
-  },
   mobileCloseButton: {
-    // The 16px X paints farther inside its 32px hit target than the 14px Settings2 glyph.
-    // This optical inset puts their painted right edges on the same sidebar rail.
-    marginRight: theme.spacing[2] + 1.5,
-    width: 32,
-    height: 32,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: theme.borderRadius.lg,
-    backgroundColor: theme.colors.surfaceSidebar,
+    marginRight: theme.spacing[2],
   },
   desktopSidebarBorder: {
     borderRightWidth: 1,

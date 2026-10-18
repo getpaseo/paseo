@@ -289,8 +289,11 @@ Use the recipient's agent ID from `paseo ls`, or [copy it from the agent's tab](
 ```bash
 paseo send <id> "now run the tests"
 paseo send <id> --image screenshot.png "what's wrong here?"
-paseo send <id> --no-wait "queue this task"
+paseo send <id> --no-wait "run this task"
+paseo send <id> --behavior interrupt "stop and do this instead"
 ```
+
+Agent-originated sends (`PASEO_AGENT_ID` set) default to steering the running turn. Other sends default to interrupting it. Use `--behavior steer` or `--behavior interrupt` to override the default. Steering uses the same fallback as the client: if steering is unavailable, the running turn is interrupted and replaced.
 
 ## Viewing logs
 

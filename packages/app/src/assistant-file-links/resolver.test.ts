@@ -50,7 +50,7 @@ it.each([{ markup: "linkify" }, { sourceInfo: "auto" }])(
   },
 );
 
-it.each(["example.com/guides", "docs/guides?view=all"])(
+it.each(["docs/guides?view=all"])(
   "does not turn URL-like hrefs into workspace paths: %s",
   (href) => {
     expect(classifyForResolution({ href }, CONTEXT)).toEqual({
@@ -59,6 +59,21 @@ it.each(["example.com/guides", "docs/guides?view=all"])(
     });
   },
 );
+
+it.each([
+  ".dev/tablet-review/tablet-agent-draft.png",
+  "images/capture.jpg",
+  "downloads/archive.custom",
+  "assets/LICENSE",
+  "example.com/guides",
+  "capture.png",
+  "missing.png",
+])("opens explicit file link %s without filename guessing", (href) => {
+  expect(classifyForResolution({ href }, CONTEXT)).toMatchObject({
+    kind: "resolved",
+    value: { kind: "file", target: { path: `${CONTEXT.workspaceRoot}/${href}` } },
+  });
+});
 
 it("opens the existing non-ASCII file named by a rendered markdown link", async () => {
   const workspaceRoot = await mkdtemp(path.join(tmpdir(), "assistant-file-link-"));
