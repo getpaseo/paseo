@@ -1363,8 +1363,9 @@ export const ru: TranslationResources = {
     },
     fields: {
       project: "Проект",
-      base: "Базовая ветка",
+      branch: "Ветка",
       baseNotApplicable: "Неприменимо",
+      host: "Хост",
     },
     titlePlaceholder: "Заголовок (необязательно)",
     errors: {

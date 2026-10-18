@@ -1,4 +1,5 @@
-import { type Command } from "commander";
+import { type Command, Option } from "commander";
+import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 import { collectMultiple } from "../../utils/command-options.js";
 import { connectToDaemon } from "../../utils/client.js";
 import type {
@@ -28,6 +29,7 @@ export const agentSendSchema: OutputSchema<AgentSendResult> = {
 };
 
 export interface AgentSendOptions extends CommandOptions {
+  behavior?: ActiveTurnBehavior;
   wait?: boolean;
   image?: string[];
   prompt?: string;
@@ -42,6 +44,12 @@ export function addSendOptions(cmd: Command): Command {
     .option("--prompt <text>", "Provide the message inline as a flag")
     .option("--prompt-file <path>", "Read the message from a UTF-8 text file")
     .option("--image <path>", "Attach image(s) to the message", collectMultiple, [])
+    .addOption(
+      new Option(
+        "--behavior <behavior>",
+        "Active-turn behavior (agent default: steer; otherwise: interrupt)",
+      ).choices(["interrupt", "steer"]),
+    )
     .option("--no-wait", "Return immediately without waiting for completion");
 }
 
@@ -191,10 +199,12 @@ export async function runSendCommand(
     const images =
       options.image && options.image.length > 0 ? await readImageFiles(options.image) : undefined;
 
+    const sourceAgentId = process.env.PASEO_AGENT_ID?.trim() || undefined;
     // Send the message
     await client.sendAgentMessage(agentIdArg, promptInput, {
       images,
-      sourceAgentId: process.env.PASEO_AGENT_ID?.trim() || undefined,
+      sourceAgentId,
+      activeTurnBehavior: options.behavior ?? (sourceAgentId ? "steer" : "interrupt"),
     });
 
     // If --no-wait, return immediately

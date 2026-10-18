@@ -1349,8 +1349,9 @@ export const ko: TranslationResources = {
     },
     fields: {
       project: "프로젝트",
-      base: "기준",
+      branch: "브랜치",
       baseNotApplicable: "해당 없음",
+      host: "호스트",
     },
     titlePlaceholder: "제목(선택 사항)",
     errors: {
