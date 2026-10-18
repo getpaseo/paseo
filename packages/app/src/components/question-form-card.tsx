@@ -294,7 +294,14 @@ function QuestionOtherInput({
           color: theme.colors.foreground,
           backgroundColor: theme.colors.surface2,
         },
-        IS_WEB ? { outlineStyle: "none", outlineWidth: 0, outlineColor: "transparent" } : null,
+        IS_WEB
+          ? {
+              outlineStyle: "none",
+              outlineWidth: 0,
+              outlineColor: "transparent",
+              fieldSizing: "content",
+            }
+          : null,
       ] as const,
     [
       value.length,
@@ -313,6 +320,10 @@ function QuestionOtherInput({
       placeholder={placeholder}
       placeholderTextColor={theme.colors.foregroundMuted}
       initialValue={value}
+      multiline
+      numberOfLines={IS_WEB ? 1 : undefined}
+      textAlignVertical="top"
+      submitBehavior="newline"
       onChangeText={handleChange}
       onSubmitEditing={onSubmit}
       editable={!isResponding}
