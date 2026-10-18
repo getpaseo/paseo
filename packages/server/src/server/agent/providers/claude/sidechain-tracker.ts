@@ -199,7 +199,7 @@ export class ClaudeSidechainTracker {
   finishAll(status: "completed" | "failed" | "canceled"): AgentStreamEvent[] {
     const events: AgentStreamEvent[] = [];
     if (this.isDescriptorOwnedElsewhere()) {
-      this.activeSidechains.clear();
+      // The task protocol owns child completion; the parent finishing does not end its children.
       return events;
     }
     for (const [id, state] of this.activeSidechains) {
