@@ -171,6 +171,8 @@ export default defineConfig({
       "react-native-keyboard-controller",
     ],
   },
+  // babel-preset-expo compiles JSX with the automatic runtime, so app modules don't import React.
+  esbuild: { jsx: "automatic" },
   // The globals a React Native bundler defines, which esbuild is no longer there to supply for
   // the package excluded above.
   define: {

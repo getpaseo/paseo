@@ -37,6 +37,7 @@ import {
   Files,
   Smartphone,
   Sparkles,
+  Mic,
   Blocks,
   Globe,
   PanelLeft,
@@ -118,6 +119,7 @@ import { PluginSettingsContent } from "@/plugins/settings";
 import { useInstalledPlugins } from "@/plugins/registry";
 import { HostPluginsPage } from "@/screens/settings/plugins-page";
 import { MetadataGenerationPage } from "@/screens/settings/metadata-generation-page";
+import { HostVoicePage } from "@/screens/settings/voice/voice-page";
 import ProjectsScreen from "@/screens/projects-screen";
 import ProjectSettingsScreen from "@/screens/project-settings-screen";
 import { SETTINGS_DESKTOP_SIDEBAR_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
@@ -236,6 +238,7 @@ const HOST_SECTION_ITEMS: HostSectionItem[] = [
   { id: "pair-device", labelKey: "openProject.tiles.pairDevice.title", icon: Smartphone },
   { id: "agents", labelKey: "settings.hostSections.agents", icon: Bot },
   { id: "metadata", labelKey: "settings.hostSections.metadata", icon: Sparkles },
+  { id: "voice", labelKey: "settings.hostSections.voice", icon: Mic },
   { id: "workspaces", labelKey: "settings.hostSections.workspaces", icon: FolderGit2 },
   { id: "providers", labelKey: "settings.hostSections.providers", icon: Boxes },
   { id: "usage", labelKey: "settings.hostSections.usage", icon: Gauge },
@@ -258,6 +261,8 @@ function renderHostSettingsContent(
       return <HostAgentsPage serverId={view.serverId} />;
     case "metadata":
       return <MetadataGenerationPage serverId={view.serverId} />;
+    case "voice":
+      return <HostVoicePage serverId={view.serverId} />;
     case "workspaces":
       return <HostWorkspacesPage serverId={view.serverId} />;
     case "providers":

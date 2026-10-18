@@ -6,15 +6,18 @@ import { mutedIconColorMapping } from "@/components/ui/icon-color";
 import { isWeb } from "@/constants/platform";
 import { settingsStyles } from "@/styles/settings";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
+import { NestedSettingsRows, useSettingsRowLayout } from "./row-density";
 
 const ThemedChevron = withUnistyles(ChevronRight);
 const hoveredIconColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 
 interface SettingsCollapsibleRowProps {
   label: string;
+  /** A short status shown before the chevron, so the row says something while collapsed. */
+  summary?: string;
   defaultExpanded?: boolean;
   testID?: string;
-  /** The rows revealed underneath, separated like the rows of a `SettingsCard`. */
+  /** The rows revealed underneath, separated like the rows of a `SettingsCard` and laid out as nested rows. */
   children: ReactNode;
 }
 
@@ -25,6 +28,7 @@ interface SettingsCollapsibleRowProps {
  */
 export function SettingsCollapsibleRow({
   label,
+  summary,
   defaultExpanded = false,
   testID,
   children,
@@ -37,13 +41,14 @@ export function SettingsCollapsibleRow({
     () => (isWeb ? ({ "aria-expanded": expanded } as const) : null),
     [expanded],
   );
+  const layout = useSettingsRowLayout();
   const headerStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
-      settingsStyles.row,
+      layout.row,
       hovered && styles.headerHovered,
       pressed && styles.headerPressed,
     ],
-    [],
+    [layout],
   );
   const chevronStyle = useMemo(
     () => [styles.chevron, expanded && styles.chevronExpanded],
@@ -55,7 +60,7 @@ export function SettingsCollapsibleRow({
       <Pressable
         {...webExpandedProps}
         accessibilityRole="button"
-        accessibilityLabel={label}
+        accessibilityLabel={summary ? `${label}, ${summary}` : label}
         accessibilityState={accessibilityState}
         onPress={toggle}
         style={headerStyle}
@@ -64,8 +69,9 @@ export function SettingsCollapsibleRow({
         {({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => (
           <>
             <View style={settingsStyles.rowContent}>
-              <Text style={settingsStyles.rowTitle}>{label}</Text>
+              <Text style={layout.title}>{label}</Text>
             </View>
+            {summary ? <Text style={styles.summary}>{summary}</Text> : null}
             <View style={chevronStyle}>
               <ThemedChevron
                 size={ICON_SIZE.sm}
@@ -75,18 +81,34 @@ export function SettingsCollapsibleRow({
           </>
         )}
       </Pressable>
-      {expanded
-        ? Children.toArray(children).map((child, index) => (
-            <View key={isValidElement(child) ? child.key : index} style={settingsStyles.rowBorder}>
-              {child}
-            </View>
-          ))
-        : null}
+      {expanded ? (
+        <View style={styles.children}>
+          <NestedSettingsRows>
+            {Children.toArray(children).map((child, index) => (
+              <View
+                key={isValidElement(child) ? child.key : index}
+                style={settingsStyles.rowBorder}
+              >
+                {child}
+              </View>
+            ))}
+          </NestedSettingsRows>
+        </View>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
+  summary: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    marginRight: theme.spacing[2],
+  },
+  // The revealed rows keep the card's rails; the tint is what groups them under their header.
+  children: {
+    backgroundColor: theme.colors.surface0,
+  },
   headerHovered: {
     backgroundColor: theme.colors.surface2,
   },
