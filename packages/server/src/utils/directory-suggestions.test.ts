@@ -1,5 +1,5 @@
 import { createHook } from "node:async_hooks";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import {
   mkdtempSync,
   mkdirSync,
@@ -1066,6 +1066,11 @@ describe("relative typed-entry configuration", () => {
   });
 });
 
+interface SearchProcessExit {
+  code: number | null;
+  signal: string | null;
+}
+
 // Reading a tree is cheap; re-deriving each entry's path state is not. A scan that asks whether
 // every ancestor of every entry is inside the root, or is Git-ignored, costs multiples of the
 // read and is what made large home directories exceed the client request timeout.
@@ -1101,6 +1106,76 @@ describe("home-tree scan cost", () => {
     await run();
     return stopPathContainmentMetrics();
   }
+
+  it("finishes overlapping broad-tree searches within a bounded heap", async () => {
+    const broadRoot = path.join(scanRoot, "broad");
+    mkdirSync(broadRoot);
+    for (let branch = 0; branch < 30; branch += 1) {
+      const branchRoot = path.join(broadRoot, `branch-${branch}`);
+      mkdirSync(branchRoot);
+      for (let group = 0; group < 30; group += 1) {
+        const groupRoot = path.join(branchRoot, `group-${group}`);
+        mkdirSync(groupRoot);
+        for (let leaf = 0; leaf < 30; leaf += 1) {
+          mkdirSync(path.join(groupRoot, `leaf-${leaf}`));
+        }
+      }
+    }
+    // A smaller real tree and explicit heap budget keep the million-directory repro cheap in CI.
+    const moduleUrl = new URL("./directory-suggestions.ts", import.meta.url).href;
+    const source = `
+      const { searchDirectoryEntries } = await import(${JSON.stringify(moduleUrl)});
+      const results = await Promise.all(Array.from({ length: 14 }, (_, index) =>
+        searchDirectoryEntries({
+          root: ${JSON.stringify(broadRoot)},
+          query: "z".repeat(index + 1),
+          pathFormat: "absolute",
+          includeFiles: false,
+          includeDirectories: true,
+          pathQueryPolicy: "rooted",
+          rootAliases: ["~"],
+          blankQueryBehavior: "none",
+          confidentResultScanThreshold: 5000,
+          maxEntriesScanned: 2000,
+          limit: 30,
+        })
+      ));
+      process.stdout.write(JSON.stringify(results));
+    `;
+    const child = spawn(
+      process.execPath,
+      [
+        "--max-old-space-size=128",
+        "--conditions=source",
+        "--import",
+        "tsx",
+        "--input-type=module",
+        "--eval",
+        source,
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    const exit = await new Promise<SearchProcessExit>((resolve, reject) => {
+      child.on("error", reject);
+      child.on("close", (code, signal) => resolve({ code, signal }));
+    });
+    expect({ ...exit, outOfMemory: stderr.includes("heap out of memory") }).toEqual({
+      code: 0,
+      signal: null,
+      outOfMemory: false,
+    });
+    expect(JSON.parse(stdout)).toEqual(Array.from({ length: 14 }, () => []));
+  });
 
   it("derives no containment for a tree that cannot leave the root", async () => {
     const checks = await countContainmentChecks(scanWholeTree);
