@@ -602,6 +602,13 @@ export interface AgentSessionConfig {
   daemonAppendSystemPrompt?: string;
   modeId?: string;
   model?: string;
+  /**
+   * How the caller chose the model. "implicit" means the caller did not
+   * explicitly select a model and wants the provider's own configured default
+   * to apply; agent creation then skips filling in a catalog default model.
+   * Omitted behaves as "explicit".
+   */
+  selectionSource?: "explicit" | "implicit";
   thinkingOptionId?: string;
   featureValues?: Record<string, unknown>;
   title?: string | null;

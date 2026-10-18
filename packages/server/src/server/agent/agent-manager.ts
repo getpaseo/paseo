@@ -199,6 +199,9 @@ function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
     return config;
   }
   if (record.config.model != null) config.model = record.config.model;
+  if (record.config.selectionSource != null) {
+    config.selectionSource = record.config.selectionSource;
+  }
   if (record.config.thinkingOptionId != null) {
     config.thinkingOptionId = record.config.thinkingOptionId;
   }
@@ -5240,7 +5243,11 @@ export class AgentManager {
       normalized.model = trimmed.length > 0 && trimmed !== "default" ? trimmed : undefined;
     }
 
-    const shouldResolveDefaultModel = options.resolveDefaultModel ?? true;
+    // An implicit selection means the caller deliberately omitted the model so
+    // the provider's own configured default applies (issue #623). Only fill in
+    // a catalog default when the caller did not signal that intent.
+    const shouldResolveDefaultModel =
+      (options.resolveDefaultModel ?? true) && normalized.selectionSource !== "implicit";
     if (shouldResolveDefaultModel && !normalized.model) {
       const defaultModelId = await this.resolveDefaultModelId(normalized);
       if (defaultModelId) {

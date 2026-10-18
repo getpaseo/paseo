@@ -35,11 +35,15 @@ import {
   type FormInitialValues,
   type FormState,
   type ProviderModelsByProvider,
+  type UserModifiedFields,
 } from "@/provider-selection/resolve-agent-form";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import type { MaterializedAgentProfile } from "@/agent-profiles";
 
-export type { FormInitialValues } from "@/provider-selection/resolve-agent-form";
+export type {
+  FormInitialValues,
+  UserModifiedFields,
+} from "@/provider-selection/resolve-agent-form";
 
 export interface UseAgentFormStateOptions {
   serverId: string | null;
@@ -58,6 +62,8 @@ export interface UseAgentFormStateResult {
   setModelFromUser: (modelId: string) => void;
   selectedThinkingOptionId: string;
   setThinkingOptionFromUser: (thinkingOptionId: string) => void;
+  /** Tracks which fields the user (or an applied profile) explicitly set. */
+  userModified: UserModifiedFields;
   workingDir: string;
   providerDefinitions: AgentProviderDefinition[];
   providerDefinitionMap: Map<AgentProvider, AgentProviderDefinition>;
@@ -485,6 +491,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
       setModelFromUser,
       selectedThinkingOptionId: formState.thinkingOptionId,
       setThinkingOptionFromUser,
+      userModified,
       workingDir,
       providerDefinitions,
       providerDefinitionMap,
@@ -513,6 +520,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
       formState.modeId,
       formState.model,
       formState.thinkingOptionId,
+      userModified,
       workingDir,
       setModeFromUser,
       setModelFromUser,
