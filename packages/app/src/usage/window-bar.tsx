@@ -26,7 +26,9 @@ export function UsageWindowBar({
   onTogglePin,
   pinLabel,
   pinTestID,
+  retained = false,
 }: {
+  retained?: boolean;
   window: UsageWindow;
   displayAs: UsageDisplayAs;
   /** Whether the row pins the window to the sidebar. When false the row is a plain bar. */
@@ -40,10 +42,13 @@ export function UsageWindowBar({
   const shownPct = displayPercent(window, displayAs);
   const tone = windowTone(window);
 
-  const isAtRisk = window.runsOutAt != null && window.shortfallPct != null;
+  const isAtRisk =
+    window.runsOutAt != null &&
+    window.shortfallPct != null &&
+    (!retained || Date.parse(window.runsOutAt) > Date.now());
   const trailing = isAtRisk
     ? `runs out ${formatResetLabel(window.runsOutAt)?.replace("resets ", "") ?? ""}`.trim()
-    : formatResetLabel(window.resetsAt);
+    : formatResetLabel(window.resetsAt, retained);
 
   const value = shownPct != null ? formatDisplayPct(shownPct, displayAs) : "—";
   const accessibilityState = useMemo(() => ({ checked: pinned }), [pinned]);

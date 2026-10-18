@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildPaseoToolDetailSections } from "./paseo-tool-call-detail.js";
+import { buildPaseoToolDetailSections } from "./index.js";
 
 describe("Paseo tool-call detail presentation", () => {
   it.each(["mcp__paseo__create_agent", "paseo.create_agent", "paseo_remote.create_agent"])(

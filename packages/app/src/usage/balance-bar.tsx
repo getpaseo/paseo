@@ -41,11 +41,17 @@ function fillToneStyle(tone: UsageTone) {
   }
 }
 
-export function UsageBalanceBar({ balance }: { balance: UsageBalance }) {
+export function UsageBalanceBar({
+  balance,
+  retained = false,
+}: {
+  balance: UsageBalance;
+  retained?: boolean;
+}) {
   const { i18n } = useTranslation();
   const { amountText, usedPct } = resolveBalance(balance, i18n.language);
   const tone = balance.tone ?? "default";
-  const resetLabel = formatResetLabel(balance.resetsAt);
+  const resetLabel = formatResetLabel(balance.resetsAt, retained);
 
   const fillStyle = useMemo<StyleProp<ViewStyle>>(
     () => [styles.fill, fillToneStyle(tone), { width: `${clampPct(usedPct ?? 0)}%` }],
