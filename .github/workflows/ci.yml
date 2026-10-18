@@ -534,37 +534,6 @@ jobs:
       PLAYWRIGHT_ARTIFACT: "8"
     steps: *playwright_test_steps
 
-  playwright:
-    name: playwright
-    needs:
-      [
-        changes,
-        playwright-1,
-        playwright-2,
-        playwright-3,
-        playwright-4,
-        playwright-5,
-        playwright-6,
-        playwright-7,
-        playwright-8,
-      ]
-    # Run after failed children, but let superseded workflows cancel promptly.
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require all routed Playwright shards
-        env:
-          NEEDS_JSON: ${{ toJSON(needs) }}
-        run: |
-          node --input-type=module <<'NODE'
-          const needs = JSON.parse(process.env.NEEDS_JSON);
-          const routed = needs.changes.outputs.full !== 'false' || needs.changes.outputs.browser !== 'false';
-          const failures = Object.entries(needs).filter(([name, job]) =>
-            job.result !== (name === 'changes' || routed ? 'success' : 'skipped'));
-          for (const [name, job] of failures) console.error(`${name}: ${job.result}`);
-          process.exitCode = failures.length ? 1 : 0;
-          NODE
-
   cli-tests-1:
     name: cli-tests (shard 1/3)
     needs: changes

@@ -3,7 +3,6 @@ import { readFileSync, readdirSync } from "node:fs";
 import { relative as relativePath } from "node:path";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
-import { spawnSync } from "node:child_process";
 
 const repoRoot = new URL("../", import.meta.url);
 const ciWorkflowPath = new URL(".github/workflows/ci.yml", repoRoot);
@@ -345,10 +344,10 @@ test("stable iOS releases upload once and distribute to external testers before 
   assert.match(review, /bundle exec fastlane ios submit_review/);
 });
 
-test("eight Playwright shards share two-worker coverage and a real result gate", () => {
+test("eight Playwright shards share two-worker coverage", () => {
   const source = readFileSync(ciWorkflowPath, "utf8");
   const jobs = jobBlocks(source);
-  assert.equal(jobs.size, 22);
+  assert.equal(jobs.size, 21);
   for (let shard = 1; shard <= 8; shard++) {
     const job = jobs.get(`playwright-${shard}`).join("\n");
     assert.match(job, new RegExp(`PLAYWRIGHT_SHARD: "${shard}/8"`));
@@ -365,57 +364,9 @@ test("eight Playwright shards share two-worker coverage and a real result gate",
   assert.ok(weights.every((weight) => weight > 0));
   assert.match(shared, /npm run test:e2e --workspace=@getpaseo\/app -- --shard=/);
 
-  const gate = jobs.get("playwright").join("\n");
-  assert.match(gate, /^    name: playwright$/m);
-  assert.match(gate, /^    if: \$\{\{ !cancelled\(\) \}\}$/m);
-  assert.match(gate, /NEEDS_JSON: \$\{\{ toJSON\(needs\) \}\}/);
-  const dependencies = /needs:\s*\[([^\]]+)\]/
-    .exec(gate)[1]
-    .split(",")
-    .map((name) => name.trim())
-    .filter(Boolean);
-  assert.deepEqual(dependencies, [
-    "changes",
-    ...Array.from({ length: 8 }, (_, i) => `playwright-${i + 1}`),
-  ]);
-
-  // Execute the actual gate command, including its shell/Node boundary.
-  const command = gate
-    .split("        run: |\n")[1]
-    .split("\n")
-    .map((line) => line.slice(10))
-    .join("\n");
-  function result({
-    full = "false",
-    browser = "true",
-    changes = "success",
-    shards = {},
-    outputs = { full, browser },
-  } = {}) {
-    const needs = { changes: { result: changes, outputs } };
-    for (let i = 1; i <= 8; i++) {
-      needs[`playwright-${i}`] = {
-        result:
-          shards[i] ??
-          (outputs.full !== "false" || outputs.browser !== "false" ? "success" : "skipped"),
-      };
-    }
-    return spawnSync("bash", ["-e", "-c", command], {
-      encoding: "utf8",
-      env: { ...process.env, NEEDS_JSON: JSON.stringify(needs) },
-    });
-  }
-  assert.equal(result().status, 0);
-  assert.equal(result({ browser: "false" }).status, 0);
-  assert.equal(result({ full: "true", browser: "false" }).status, 0);
-  assert.equal(result({ outputs: {} }).status, 0);
-  for (const status of ["failure", "cancelled", "skipped"]) {
-    const failed = result({ shards: { 5: status } });
-    assert.equal(failed.status, 1, failed.stderr);
-    assert.match(failed.stderr, /playwright-5/);
-  }
-  assert.equal(result({ browser: "false", shards: { 2: "failure" } }).status, 1);
-  assert.equal(result({ changes: "failure" }).status, 1);
+  // No fan-in result job: a gate needs its own runner and under contention it
+  // queued 8m08s behind the last shard. Required checks name the shards directly.
+  assert.equal(jobs.has("playwright"), false);
 });
 
 test("quality preserves commands and routes each domain independently after failures", () => {
@@ -474,9 +425,6 @@ test("quality preserves commands and routes each domain independently after fail
     assert.equal(accepts(expression, {}, { installed: false }), false);
   }
   assert.equal(accepts(jobCondition, {}, { cancelled: true }), false);
-  const gateCondition = /    if: \$\{\{ (.+) \}\}/.exec(jobs.get("playwright").join("\n"))[1];
-  assert.equal(accepts(gateCondition, {}), true, "gate runs despite a failed child");
-  assert.equal(accepts(gateCondition, {}, { cancelled: true }), false);
 });
 
 test("Windows units and integration run independently with complete routed coverage", () => {
