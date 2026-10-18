@@ -1304,7 +1304,7 @@ diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/renderer
 index dd70713..ca0385a 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/BlockRenderers.js
 +++ b/node_modules/react-native-enriched-markdown/lib/module/web/renderers/BlockRenderers.js
-@@ -101,12 +101,20 @@ function AdmonitionRenderer({
+@@ -101,12 +101,28 @@ function AdmonitionRenderer({
    });
  }
  function CodeBlockRenderer({
@@ -1317,14 +1317,34 @@ index dd70713..ca0385a 100644
    const language = node.attributes?.language;
 +  const CustomCodeBlock = capabilities.renderers?.codeBlock;
 +  if (CustomCodeBlock) {
-+    return /*#__PURE__*/_jsx(CustomCodeBlock, {
-+      code: extractNodeText(node),
-+      language: language ?? ''
++    // The custom renderer owns the block's look; the library keeps its spacing,
++    // including the zeroed trailing margin of the last block.
++    return /*#__PURE__*/_jsx("div", {
++      style: {
++        marginTop: styles.codeBlock.marginTop,
++        marginBottom: styles.codeBlock.marginBottom
++      },
++      children: /*#__PURE__*/_jsx(CustomCodeBlock, {
++        code: extractNodeText(node),
++        language: language ?? ''
++      })
 +    });
 +  }
    const label = language ? `Code block: ${language}` : 'Code block';
    if (callbacks.onCodeBlockPress == null) {
      return /*#__PURE__*/_jsx("pre", {
+@@ -214,7 +230,10 @@ function ImageRenderer({
+     src: url,
+     alt: alt,
+     title: title,
+-    style: imgStyle,
++    style: {
++      ...imgStyle,
++      cursor: 'zoom-in'
++    },
+     role: "button",
+     tabIndex: 0,
+     "aria-label": alt,
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/BlockRenderers.js.map b/node_modules/react-native-enriched-markdown/lib/module/web/renderers/BlockRenderers.js.map
 index dc917c4..cf59150 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/BlockRenderers.js.map

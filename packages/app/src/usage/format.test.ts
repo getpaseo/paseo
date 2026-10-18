@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatAmount } from "./format";
+import { formatAmount, formatResetLabel } from "./format";
 
 describe("formatAmount", () => {
   it("groups thousands in the app's language", () => {
@@ -12,4 +12,11 @@ describe("formatAmount", () => {
     expect(formatAmount(1234.5, "usd", "en")).toBe("$1,234.50");
     expect(formatAmount(1234.5, "usd", "fr").replace(/\s/g, " ")).toBe("1 234,50 $US");
   });
+});
+
+it("retained reset times that have passed do not claim the quota is resetting", () => {
+  const past = "2000-01-01T00:00:00.000Z";
+  expect(formatResetLabel(past, true)).toBe("Reset time passed");
+  expect(formatResetLabel(past)).toBe("resetting now");
+  expect(formatResetLabel(null, true)).toBeNull();
 });

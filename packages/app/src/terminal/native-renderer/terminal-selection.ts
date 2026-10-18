@@ -324,10 +324,17 @@ export function extractTerminalSelectedText(input: TerminalSelectedTextInput): s
     const cells = window.rows[offset] ?? [];
     const startsOnThisRow = row === selection.start.row;
     const endsOnThisRow = row === selection.end.row;
-    const startCol = startsOnThisRow ? selection.start.col : 0;
+    let startCol = Math.max(0, startsOnThisRow ? selection.start.col : 0);
+    // Selecting either half highlights the whole wide character, so copy its leading cell too.
+    if (startCol > 0 && cells[startCol]?.width === 0) {
+      startCol -= 1;
+    }
     const endCol = endsOnThisRow ? selection.end.col : cells.length - 1;
-    const selectedCells = cells.slice(Math.max(0, startCol), Math.max(0, endCol) + 1);
-    const line = selectedCells.map((cell) => cell.char || " ").join("");
+    const selectedCells = cells.slice(startCol, Math.max(0, endCol) + 1);
+    const line = selectedCells
+      .filter((cell) => cell.width !== 0)
+      .map((cell) => cell.char)
+      .join("");
     if (offset > 0 && window.wrappedRows[offset] !== true) {
       text += "\n";
     }

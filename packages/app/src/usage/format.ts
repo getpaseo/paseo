@@ -27,10 +27,11 @@ function relativeDuration(iso: string): string | null {
   return `${diffMinutes}m`;
 }
 
-export function formatResetLabel(iso: string | null | undefined): string | null {
+export function formatResetLabel(iso: string | null | undefined, retained = false): string | null {
   if (!iso) return null;
   const rel = relativeDuration(iso);
   if (!rel) return null;
+  if (rel === "now" && retained) return "Reset time passed";
   return rel === "now" ? "resetting now" : `resets ${rel}`;
 }
 

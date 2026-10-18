@@ -8,9 +8,13 @@ on:
   merge_group:
   workflow_dispatch:
 
+# A newer push to the same ref cancels the run still in progress, main included.
+# A full run costs about 200 runner-minutes against the org's 20 concurrent
+# jobs, and a superseded main run only answers a question the newer commit
+# answers again.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 env:
   # CI does not use the CUDA execution provider, and the onnxruntime-node
@@ -54,10 +58,10 @@ jobs:
       - name: Validate CI contracts
         run: node --test scripts/ci-workflow.test.mjs scripts/daemon-launch-contract.test.mjs scripts/sync-fdroid-changelogs.test.mjs scripts/upload-release-assets.test.mjs
 
-  format:
-    name: format
+  quality:
+    name: quality
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.format != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.format != 'false' || needs.changes.outputs.quality != 'false' || needs.changes.outputs.relay != 'false' || needs.changes.outputs.sdk != 'false') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -68,35 +72,62 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
+        id: install
         run: node scripts/npm-retry.mjs ci
 
+      # Explicit status checks keep independent domains running after a failure.
+      # A failed step still fails quality; no continue-on-error or success shim.
       - name: Check formatting
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.format != 'false') }}
         run: npm run format:check
 
-  lint:
-    name: lint
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.quality != 'false') }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: node scripts/npm-retry.mjs ci
-
       - name: Lint lockfile
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.quality != 'false') }}
         run: npx --yes lockfile-lint --path package-lock.json --type npm --allowed-hosts npm --validate-https --validate-integrity
 
       - name: Verify dependency signatures
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.quality != 'false') }}
         run: npm audit signatures
 
       - name: Lint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.quality != 'false') }}
         run: npm run lint
+
+      - name: Build relay
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.relay != 'false') }}
+        run: npm run build:relay
+
+      - name: Run relay tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.relay != 'false') }}
+        run: npm run test --workspace=@getpaseo/relay
+
+      - name: Build client dependencies
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.sdk != 'false') }}
+        run: npm run build:relay && npm run build:client
+
+      - name: Build plugin SDK
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.sdk != 'false') }}
+        run: npm run build:plugin
+
+      - name: Run plugin SDK tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.sdk != 'false') }}
+        run: npm run test --workspace=@getpaseo/plugin
+
+      - name: Run protocol tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.sdk != 'false') }}
+        run: npm run test --workspace=@getpaseo/protocol
+
+      - name: Run client tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.sdk != 'false') }}
+        run: npm run test --workspace=@getpaseo/client
+
+      - name: Run highlight tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.sdk != 'false') }}
+        run: npm run test --workspace=@getpaseo/highlight
+
+      - name: Typecheck client examples
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.sdk != 'false') }}
+        run: npm run typecheck:examples --workspace=@getpaseo/client
 
   typecheck:
     name: typecheck
@@ -113,6 +144,9 @@ jobs:
 
       - name: Install dependencies
         run: node scripts/npm-retry.mjs ci
+
+      - name: Verify dependency patch recovery
+        run: node --test scripts/postinstall-patches.test.mjs
 
       - name: Build server stack
         run: npm run build:server
@@ -143,43 +177,56 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' || needs.changes.outputs.hub != 'false') }}
     runs-on: ubuntu-latest
-    steps: &server_test_steps
-      - uses: actions/checkout@v4
+    steps:
+      - &server_capacity
+        name: Log runner capacity
+        run: |
+          node -e "const os = require('node:os'); console.log(JSON.stringify({cpus: os.cpus().length, model: os.cpus()[0].model, ramGiB: os.totalmem() / 2 ** 30}))"
+
+      - &server_checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - &server_node
+        uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "npm"
 
-      - name: Fetch origin/main (worktree tests)
+      - &server_fetch
+        name: Fetch origin/main (worktree tests)
         if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}
         run: git fetch --no-tags origin main:refs/remotes/origin/main
 
-      - name: Install dependencies
+      - &server_install
+        name: Install dependencies
         run: node scripts/npm-retry.mjs ci
 
-      - name: Install agent CLIs for provider tests
+      - &server_agent_clis
+        name: Install agent CLIs for provider tests
         if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}
         run: node scripts/npm-retry.mjs install -g @anthropic-ai/claude-code opencode-ai
 
-      - name: Build server dependencies
+      - &server_build
+        name: Build server dependencies
         run: npm run build:server-deps
 
       - name: Run server tests
         if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}
         run: npm run test --workspace=@getpaseo/server
-        env:
+        env: &server_test_env
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 
-      - name: Run built-in plugin tests
+      - &server_plugin_tests
+        name: Run built-in plugin tests
         if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}
         run: npm run test --workspace=@getpaseo/builtin-plugins
 
-      - name: Run Hub CLI/daemon contract
+      - &server_hub_contract
+        name: Run Hub CLI/daemon contract
         if: ${{ needs.changes.outputs.full == 'false' && needs.changes.outputs.server == 'false' && needs.changes.outputs.hub != 'false' }}
         run: npm run test:hub-cli-contract --workspace=@getpaseo/server
 
@@ -188,7 +235,41 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' || needs.changes.outputs.hub != 'false') }}
     runs-on: windows-latest
-    steps: *server_test_steps
+    steps:
+      - *server_capacity
+      - *server_checkout
+      - *server_node
+      - *server_fetch
+      - *server_install
+      - *server_agent_clis
+      - *server_build
+
+      - name: Run server unit tests
+        if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}
+        run: npm run test:unit --workspace=@getpaseo/server
+        env: *server_test_env
+
+      - *server_plugin_tests
+      - *server_hub_contract
+
+  # Keep the serial integration chain off the Windows unit critical path.
+  server-integration-windows:
+    name: server-integration (windows-latest)
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false') }}
+    runs-on: windows-latest
+    steps:
+      - *server_capacity
+      - *server_checkout
+      - *server_node
+      - *server_fetch
+      - *server_install
+      - *server_agent_clis
+      - *server_build
+
+      - name: Run server integration tests
+        run: npm run test:integration --workspace=@getpaseo/server
+        env: *server_test_env
 
   # native-recursive.ts serves darwin and win32, but windows-latest above is the only
   # runner that exercises it. macOS — the platform the reported watcher bug was on —
@@ -332,52 +413,19 @@ jobs:
       - name: Run app unit tests
         run: npm run test --workspace=@getpaseo/app
 
-  sdk-tests:
-    name: sdk-tests
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.sdk != 'false') }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: node scripts/npm-retry.mjs ci
-
-      - name: Build client dependencies
-        run: npm run build:relay && npm run build:client
-
-      - name: Build plugin SDK
-        run: npm run build:plugin
-
-      - name: Run plugin SDK tests
-        run: npm run test --workspace=@getpaseo/plugin
-
-      - name: Run protocol tests
-        run: npm run test --workspace=@getpaseo/protocol
-
-      - name: Run client tests
-        run: npm run test --workspace=@getpaseo/client
-
-      - name: Run highlight tests
-        run: npm run test --workspace=@getpaseo/highlight
-
-      - name: Typecheck client examples
-        run: npm run typecheck:examples --workspace=@getpaseo/client
-
   playwright-1:
-    name: playwright (shard 1/4)
+    name: playwright (shard 1/8)
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.browser != 'false') }}
     runs-on: ubuntu-latest
     env:
-      PLAYWRIGHT_SHARD: "1/4"
+      PLAYWRIGHT_SHARD: "1/8"
       PLAYWRIGHT_ARTIFACT: "1"
     steps: &playwright_test_steps
+      - name: Log runner capacity
+        run: |
+          node -e "const os = require('node:os'); console.log(JSON.stringify({cpus: os.cpus().length, model: os.cpus()[0].model, ramGiB: os.totalmem() / 2 ** 30}))"
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
@@ -405,9 +453,11 @@ jobs:
         run: npm run test:e2e --workspace=@getpaseo/app -- --shard=${{ env.PLAYWRIGHT_SHARD }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          # Weight file groups by observed duration; raw test counts overload
-          # early agent/Changes specs. Required check names remain unchanged.
-          PWTEST_SHARD_WEIGHTS: "111:172:137:160"
+          E2E_WORKERS: "2"
+          # File groups are weighted by observed reporter durations.
+          # Share of the test list per shard, rebalanced from the Playwright step
+          # minutes of five eight-shard runs so the slowest and fastest shards meet.
+          PWTEST_SHARD_WEIGHTS: "85:94:117:128:91:103:127:85"
 
       - name: Upload test artifacts
         uses: actions/upload-artifact@v4
@@ -420,56 +470,74 @@ jobs:
           retention-days: 7
 
   playwright-2:
-    name: playwright (shard 2/4)
+    name: playwright (shard 2/8)
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.browser != 'false') }}
     runs-on: ubuntu-latest
     env:
-      PLAYWRIGHT_SHARD: "2/4"
+      PLAYWRIGHT_SHARD: "2/8"
       PLAYWRIGHT_ARTIFACT: "2"
     steps: *playwright_test_steps
 
   playwright-3:
-    name: playwright (shard 3/4)
+    name: playwright (shard 3/8)
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.browser != 'false') }}
     runs-on: ubuntu-latest
     env:
-      PLAYWRIGHT_SHARD: "3/4"
+      PLAYWRIGHT_SHARD: "3/8"
       PLAYWRIGHT_ARTIFACT: "3"
     steps: *playwright_test_steps
 
   playwright-4:
-    name: playwright (shard 4/4)
+    name: playwright (shard 4/8)
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.browser != 'false') }}
     runs-on: ubuntu-latest
     env:
-      PLAYWRIGHT_SHARD: "4/4"
+      PLAYWRIGHT_SHARD: "4/8"
       PLAYWRIGHT_ARTIFACT: "4"
     steps: *playwright_test_steps
 
-  relay-tests:
-    name: relay-tests
+  playwright-5:
+    name: playwright (shard 5/8)
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.relay != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.browser != 'false') }}
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+    env:
+      PLAYWRIGHT_SHARD: "5/8"
+      PLAYWRIGHT_ARTIFACT: "5"
+    steps: *playwright_test_steps
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
+  playwright-6:
+    name: playwright (shard 6/8)
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.browser != 'false') }}
+    runs-on: ubuntu-latest
+    env:
+      PLAYWRIGHT_SHARD: "6/8"
+      PLAYWRIGHT_ARTIFACT: "6"
+    steps: *playwright_test_steps
 
-      - name: Install dependencies
-        run: node scripts/npm-retry.mjs ci
+  playwright-7:
+    name: playwright (shard 7/8)
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.browser != 'false') }}
+    runs-on: ubuntu-latest
+    env:
+      PLAYWRIGHT_SHARD: "7/8"
+      PLAYWRIGHT_ARTIFACT: "7"
+    steps: *playwright_test_steps
 
-      - name: Build relay
-        run: npm run build:relay
-
-      - name: Run relay tests
-        run: npm run test --workspace=@getpaseo/relay
+  playwright-8:
+    name: playwright (shard 8/8)
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.browser != 'false') }}
+    runs-on: ubuntu-latest
+    env:
+      PLAYWRIGHT_SHARD: "8/8"
+      PLAYWRIGHT_ARTIFACT: "8"
+    steps: *playwright_test_steps
 
   cli-tests-1:
     name: cli-tests (shard 1/3)

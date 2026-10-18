@@ -1,7 +1,9 @@
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
+import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
 import { isLikelyExternalToolName } from "@getpaseo/protocol/tool-name-normalization";
+import { buildAgentMessageDisplay } from "@getpaseo/protocol/paseo-tool-presentation/index";
 import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display";
 import { projectTimelineRows } from "./timeline-projection.js";
 
@@ -119,6 +121,17 @@ function formatToolCallEntry(
   return activityEntry(summary ? `[${displayName}] ${summary}` : `[${displayName}]`);
 }
 
+function appendAgentMessageEntries(entries: ActivityEntry[], message: AgentMessage) {
+  const display = buildAgentMessageDisplay(message);
+  entries.push(
+    activityEntry(
+      display.summary ? `[${display.displayName}] ${display.summary}` : `[${display.displayName}]`,
+    ),
+  );
+  const body = message.text.trim();
+  if (body) entries.push(activityEntry(body));
+}
+
 function curateProjectedActivityEntries(
   items: readonly AgentTimelineItem[],
   options?: ActivityCuratorOptions,
@@ -146,6 +159,10 @@ function curateProjectedActivityEntries(
         appendTextEntry(entries, item, options);
         break;
       case "tool_call": {
+        if (item.agentMessage) {
+          appendAgentMessageEntries(entries, item.agentMessage);
+          break;
+        }
         entries.push(formatToolCallEntry(item, options));
         if (item.detail.type === "sub_agent" && item.detail.log.trim()) {
           entries.push(activityEntry(item.detail.log.trim()));
