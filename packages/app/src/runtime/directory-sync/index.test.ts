@@ -1207,6 +1207,60 @@ describe("DirectorySync session readiness", () => {
     directory.dispose();
   });
 
+  it.each(["projects", "workspaces"] as const)(
+    "requests projects and workspaces together and commits once when %s responds first",
+    async (firstResponse) => {
+      const serverId = `parallel-directory-${firstResponse}`;
+      const { client, directory } = createDirectory(serverId);
+      const store = useSessionStore.getState();
+      store.initializeSession(serverId, client as unknown as DaemonClient, 1);
+      store.updateSessionServerInfo(serverId, {
+        serverId,
+        hostname: null,
+        version: "test",
+        features: { workspaceMultiplicity: true, projectList: true },
+      });
+      const releaseProjects = client.holdProjectFetch();
+      const releaseWorkspaces = client.holdWorkspaceFetch();
+      const project = {
+        projectId: "parallel-project",
+        projectDisplayName: "Project baseline",
+        projectRootPath: "/repo/parallel",
+        projectKind: "git" as const,
+      };
+      const projects: ProjectListResult = { requestId: "projects", projects: [project] };
+      const workspaces: WorkspaceFetchResult = {
+        requestId: "workspaces",
+        entries: [createWorkspaceEntry("parallel-workspace")],
+        emptyProjects: [{ ...project, projectDisplayName: "Newer workspace overlay" }],
+        pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+      };
+      const refresh = directory.refreshWorkspaces();
+      try {
+        await expect.poll(() => client.listProjectsCalls).toBe(1);
+        await expect.poll(() => client.fetchWorkspacesCalls).toBe(1);
+        if (firstResponse === "projects") releaseProjects(projects);
+        else releaseWorkspaces(workspaces);
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        expect(useSessionStore.getState().sessions[serverId].workspaces.size).toBe(0);
+        expect(useSessionStore.getState().sessions[serverId].projects.size).toBe(0);
+        releaseProjects(projects);
+        releaseWorkspaces(workspaces);
+        await refresh;
+        const session = useSessionStore.getState().sessions[serverId];
+        expect(session.workspaces.has("parallel-workspace")).toBe(true);
+        expect(session.projects.get(project.projectId)?.projectDisplayName).toBe(
+          "Newer workspace overlay",
+        );
+      } finally {
+        releaseProjects(projects);
+        releaseWorkspaces(workspaces);
+        await refresh;
+        directory.dispose();
+      }
+    },
+  );
+
   it("keeps the accepted baseline when an old connection finishes its workspace request", async () => {
     const serverId = "superseded-workspace-baseline";
     const { client, directory } = createDirectory(serverId);

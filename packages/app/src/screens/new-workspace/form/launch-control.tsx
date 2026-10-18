@@ -1,8 +1,8 @@
 import { useCallback, useMemo, useState, type ReactElement } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { useRouter } from "expo-router";
-import { ChevronDown, MessageCircle, SquareTerminal } from "lucide-react-native";
+import { MessageCircle, SquareTerminal } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   DropdownMenu,
@@ -30,14 +30,17 @@ import {
   resolveLaunchProfile,
   terminalLaunchTarget,
   type LaunchTarget,
-} from "./target";
+} from "@/new-workspace-launch/target";
+import {
+  FieldTriggerContent,
+  useFieldTriggerStyle,
+  type FieldTriggerVariant,
+} from "./field-trigger";
 
 const ThemedMessageCircle = withUnistyles(MessageCircle);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
-const ThemedChevronDown = withUnistyles(ChevronDown);
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-const extraMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundExtraMuted });
 
 const chatIcon = <ThemedMessageCircle size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
 const blankTerminalIcon = <ThemedSquareTerminal size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
@@ -83,12 +86,7 @@ export interface LaunchControlProps {
   onChange: (target: LaunchTarget) => void;
   profiles: readonly TerminalProfile[];
   disabled?: boolean;
-  /**
-   * The meta row's shared badge style. Passed in rather than redeclared so this
-   * trigger stays pixel-identical to the project, host, and branch triggers it
-   * sits beside; a local copy drifts the moment one of them changes.
-   */
-  badgePressableStyle: React.ComponentProps<typeof Pressable>["style"];
+  variant: FieldTriggerVariant;
 }
 
 function TriggerIcon({
@@ -108,8 +106,8 @@ function TriggerIcon({
 }
 
 /**
- * The meta-row control choosing what New workspace submits to: the chat agent,
- * or a terminal. One trigger shaped like every other chip on that row, opening
+ * The form control choosing what New workspace submits to: the chat agent,
+ * or a terminal. One trigger shaped like every other field trigger, opening
  * a menu whose Chat and Terminal groups are what keep a terminal profile named
  * "Codex" from reading as a chat Codex agent.
  */
@@ -119,13 +117,18 @@ export function LaunchControl({
   onChange,
   profiles,
   disabled = false,
-  badgePressableStyle,
+  variant,
 }: LaunchControlProps) {
   const { t } = useTranslation();
   const router = useRouter();
   const [open, setOpen] = useState(false);
 
   const selectedProfile = useMemo(() => resolveLaunchProfile(target, profiles), [target, profiles]);
+  const triggerStyle = useFieldTriggerStyle(variant, disabled);
+  const triggerIcon = useMemo(
+    () => <TriggerIcon target={target} profile={selectedProfile} />,
+    [selectedProfile, target],
+  );
 
   // A profile's own name and logo say nothing about where it runs: a row
   // reading "(openai logo) Codex" is indistinguishable from a chat Codex agent.
@@ -149,32 +152,26 @@ export function LaunchControl({
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen} compactMode="sheet">
-      {/* The trigger is the Pressable itself, styled by the meta row's shared
-          badge style, so it lands pixel-identical to the project, host, and
-          branch chips it sits beside. */}
       {/* MenuTrigger is not a forwardRef component and pins its own ref, so the
           tooltip anchors to a wrapping View instead. Suppressed while the menu
           is open so the two surfaces never overlap. */}
-      <Tooltip delayDuration={300} enabledOnDesktop={!open}>
+      <Tooltip delayDuration={300} enabledOnDesktop={!open && variant === "badge"}>
         <TooltipTrigger asChild>
           <View>
             <DropdownMenuTrigger
               testID="new-workspace-launch-trigger"
               disabled={disabled}
-              style={badgePressableStyle}
+              style={triggerStyle}
               accessibilityRole="button"
               accessibilityLabel={t("newWorkspace.tooltips.launch")}
             >
-              <View style={styles.iconBox}>
-                <TriggerIcon target={target} profile={selectedProfile} />
-              </View>
-              <Text style={styles.label} numberOfLines={1}>
-                {triggerLabel}
-                {selectedProfile ? (
-                  <Text style={styles.profileName}> {selectedProfile.name}</Text>
-                ) : null}
-              </Text>
-              <ThemedChevronDown size={ICON_SIZE.sm} uniProps={extraMutedColorMapping} />
+              <FieldTriggerContent
+                variant={variant}
+                label={t("newWorkspace.launch.title")}
+                icon={triggerIcon}
+                value={triggerLabel}
+                detail={selectedProfile?.name}
+              />
             </DropdownMenuTrigger>
           </View>
         </TooltipTrigger>
@@ -232,26 +229,9 @@ export function LaunchControl({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  iconBox: {
-    width: theme.iconSize.md,
-    height: theme.iconSize.md,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  label: {
-    minWidth: 0,
-    fontSize: theme.fontSize.base,
-    color: theme.colors.foregroundMuted,
-    flexShrink: 1,
-  },
   tooltipText: {
     fontSize: theme.fontSize.base,
     color: theme.colors.popoverForeground,
-  },
-  profileName: {
-    fontSize: theme.fontSize.base,
-    color: theme.colors.foregroundExtraMuted,
   },
   command: {
     fontFamily: theme.fontFamily.mono,
