@@ -1307,7 +1307,15 @@ describe("runAcpProvider streamed chunks without messageId (#4699)", () => {
     const items = events.flatMap((event) =>
       event.type === "timeline.item" &&
       (event.item.type === "assistant_message" || event.item.type === "reasoning")
-        ? [{ id: event.item.id, text: event.item.text }]
+        ? [
+            {
+              id: event.item.id,
+              text: event.item.text,
+              ...(event.item.type === "assistant_message" && event.item.messageId
+                ? { messageId: event.item.messageId }
+                : {}),
+            },
+          ]
         : [],
     );
     expect(items).toEqual([
@@ -1315,7 +1323,11 @@ describe("runAcpProvider streamed chunks without messageId (#4699)", () => {
       { id: "agent_message_chunk:1", text: "- **Current temperature**: 25°C" },
       { id: "agent_message_chunk:2", text: "next turn" },
       { id: "agent_thought_chunk:3", text: "think A" },
-      { id: "m-explicit", text: "say" },
+      {
+        id: JSON.stringify(["agent_message_chunk", "m-explicit"]),
+        messageId: "m-explicit",
+        text: "say",
+      },
       { id: "agent_thought_chunk:4", text: "think B" },
     ]);
     await connection.close();
@@ -1402,6 +1414,21 @@ async function streamChunkTurns(
 }
 
 describe("ACP streamed message boundaries", () => {
+  it("keeps reasoning separate from a reply sharing its native message ID", async () => {
+    expect(
+      await streamChunkTurns([
+        textChunk("private ", "agent_thought_chunk", "shared-id"),
+        textChunk("reasoning", "agent_thought_chunk", "shared-id"),
+        textChunk("public ", "agent_message_chunk", "shared-id"),
+        textChunk("reply", "agent_message_chunk", "shared-id"),
+      ]),
+    ).toEqual([
+      { type: "reasoning", text: "private reasoning" },
+      { type: "assistant_message", text: "public reply" },
+      { type: "assistant_message", text: "Next turn" },
+    ]);
+  });
+
   it.each([
     {
       name: "tool call",
