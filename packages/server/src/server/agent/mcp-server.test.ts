@@ -65,6 +65,7 @@ import type { GeneratedWorkspaceName } from "../worktree-branch-name-generator.j
 import type { ForgeService } from "../../services/forge-service.js";
 import { areEquivalentPaths } from "../../utils/path.js";
 import { createTerminalManager, type TerminalManager } from "../../terminal/terminal-manager.js";
+import { createWorkerTerminalManager } from "../../terminal/worker-terminal-manager.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { PASEO_TOOL_NAMES } from "@getpaseo/protocol/paseo-tool-presentation/index";
 import { MutableDaemonConfigSchema, type AgentProfile } from "@getpaseo/protocol/messages";
@@ -1327,57 +1328,91 @@ describe("terminal MCP tools", () => {
     },
   );
 
-  it("delivers MCP key tokens to a real terminal in application cursor mode", async () => {
-    const { agentManager, agentStorage } = createTestDeps();
-    const terminalManager = createTerminalManager();
-    const terminal = await terminalManager.createTerminal({
-      cwd: process.cwd(),
-      workspaceId: "ws-terminal-keys",
-      command: process.execPath,
-      args: [
-        "-e",
-        `process.stdin.setRawMode(true);
-         process.stdout.write("\\x1b[?1hREADY\\r\\n");
+  it.each([
+    ["in-process", createTerminalManager],
+    ["worker", createWorkerTerminalManager],
+  ] as const)(
+    "delivers MCP key tokens through %s after terminal input modes change",
+    async (_name, createManager) => {
+      const { agentManager, agentStorage } = createTestDeps();
+      const terminalManager = createManager();
+      const terminal = await terminalManager.createTerminal({
+        cwd: process.cwd(),
+        workspaceId: "ws-terminal-keys",
+        command: process.execPath,
+        args: [
+          "-e",
+          `process.stdin.setRawMode(true);
+         process.stdout.write("READY\\r\\n");
          process.stdin.on("data", data => {
+           if (data.toString() === "application") {
+             process.stdout.write("\\x1b[?1hAPPLICATION_READY\\r\\n");
+             return;
+           }
+           if (data.toString() === "normal") {
+             process.stdout.write("\\x1b[?1lNORMAL_READY\\r\\n");
+             return;
+           }
            process.stdout.write("HEX:" + data.toString("hex") + "\\r\\n");
          });`,
-      ],
-    });
-    const server = await createAgentMcpServer({
-      agentManager,
-      agentStorage,
-      providerSnapshotManager: createClaudeOnlyManager(),
-      terminalManager,
-      logger,
-    });
+        ],
+      });
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        providerSnapshotManager: createClaudeOnlyManager(),
+        terminalManager,
+        logger,
+      });
 
-    try {
-      await vi.waitFor(
-        async () => {
-          const capture = await terminalManager.captureTerminal(terminal.id);
-          expect(capture.lines).toContain("READY");
-        },
-        { timeout: 5000 },
-      );
-      const tool = registeredTool(server, "send_terminal_keys");
-      for (const [keys, hex] of [
-        ["Down", "1b4f42"],
-        ["PageDown", "1b5b367e"],
-        ["S-Tab", "1b5b5a"],
-        ["C-r", "12"],
-        ["M-b", "1b62"],
-      ]) {
-        await tool.handler({ terminalId: terminal.id, keys });
+      let output = "";
+      const unsubscribe = terminal.subscribe((message) => {
+        if (message.type === "output") {
+          output += message.data;
+        }
+      });
+      try {
+        await vi.waitFor(
+          async () => {
+            const capture = await terminalManager.captureTerminal(terminal.id);
+            expect(capture.lines).toContain("READY");
+          },
+          { timeout: 5000 },
+        );
+        const tool = registeredTool(server, "send_terminal_keys");
+        await tool.handler({ terminalId: terminal.id, keys: "application", literal: true });
+        await vi.waitFor(() => expect(output).toContain("APPLICATION_READY"));
+        for (const [keys, hex] of [
+          ["Down", "1b4f42"],
+          ["Up", "1b4f41"],
+          ["Left", "1b4f44"],
+          ["Right", "1b4f43"],
+          ["PageDown", "1b5b367e"],
+          ["S-Tab", "1b5b5a"],
+          ["C-r", "12"],
+          ["M-b", "1b62"],
+        ]) {
+          await tool.handler({ terminalId: terminal.id, keys });
+          await vi.waitFor(async () => {
+            const capture = await terminalManager.captureTerminal(terminal.id);
+            expect(capture.lines.join("\n")).toContain(`HEX:${hex}`);
+          });
+        }
+        await tool.handler({ terminalId: terminal.id, keys: "normal", literal: true });
+        await vi.waitFor(() => expect(output).toContain("NORMAL_READY"));
+        await tool.handler({ terminalId: terminal.id, keys: "Down" });
         await vi.waitFor(async () => {
           const capture = await terminalManager.captureTerminal(terminal.id);
-          expect(capture.lines).toContain(`HEX:${hex}`);
+          expect(capture.lines).toContain("HEX:1b5b42");
         });
+      } finally {
+        unsubscribe();
+        await server.close();
+        await terminalManager.killTerminalAndWait(terminal.id);
+        terminalManager.killAll();
       }
-    } finally {
-      await server.close();
-      await terminalManager.killTerminalAndWait(terminal.id);
-    }
-  });
+    },
+  );
 
   it("captures terminal output through the terminal manager authority", async () => {
     const { agentManager, agentStorage } = createTestDeps();
