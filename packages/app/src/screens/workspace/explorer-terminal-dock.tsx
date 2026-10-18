@@ -163,7 +163,7 @@ export function ExplorerTerminalDock({
   return (
     <View style={styles.root} onLayout={onLayout}>
       <View style={topStyle}>
-        <WorkspaceSurface size="small" testID="explorer-upper-surface">
+        <WorkspaceSurface framed={false} testID="explorer-upper-surface">
           {children}
         </WorkspaceSurface>
       </View>
@@ -200,7 +200,7 @@ export function ExplorerTerminalDock({
             </Pressable>
           ) : null}
         </View>
-        <WorkspaceSurface size="small" testID="explorer-terminal-surface">
+        <WorkspaceSurface framed={false} testID="explorer-terminal-surface">
           {terminalId && directory ? (
             <TerminalPane
               key={terminalId}
@@ -210,6 +210,7 @@ export function ExplorerTerminalDock({
               isWorkspaceFocused={isWorkspaceFocused}
               isPaneFocused
               autoFocus={false}
+              transparentSurface
               onOpenFileExplorer={noAction}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
             />
@@ -232,7 +233,6 @@ const styles = StyleSheet.create((theme) => ({
   root: { flex: 1, minHeight: 0 },
   bottom: {
     minHeight: 0,
-    backgroundColor: theme.colors.surfaceWorkspaceFrame,
   },
   tabs: {
     height: theme.workspaceTabs.dockRailHeight,

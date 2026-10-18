@@ -184,6 +184,7 @@ export function ExplorerSidebarDock({
                 normalizedWorkspaceId={normalizedWorkspaceId}
                 isWorkspaceFocused={isWorkspaceFocused}
                 isPaneFocused
+                transparentSurface
                 buildPaneContentModel={buildPaneContentModel}
               />
             </ExplorerTerminalDock>

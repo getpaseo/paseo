@@ -151,15 +151,19 @@ test.describe("Terminal activity indicators", () => {
   test("terminal activity follows the tab and clears when the terminal is focused", async ({
     page,
   }) => {
+    const artifacts = join(process.cwd(), ".artifacts/conversation-indicators");
+    await mkdir(artifacts, { recursive: true });
     await withTerminalActivityFixture(harness, async ({ activityTerminal, focusTerminal }) => {
       await harness.openTerminal(page, { terminalId: activityTerminal.terminal.id });
       await harness.openTerminal(page, { terminalId: focusTerminal.id });
 
       await activityTerminal.report("running");
       await expectTerminalTabStatus(page, activityTerminal.terminal.id, tabStatusBucket("running"));
+      await page.screenshot({ path: join(artifacts, "activity.png") });
 
       await activityTerminal.report("idle");
       await expectTerminalTabStatus(page, activityTerminal.terminal.id, tabStatusBucket("idle"));
+      await page.screenshot({ path: join(artifacts, "attention.png") });
 
       await activityTerminal.report("needs-input");
       await expectTerminalTabStatus(
@@ -167,6 +171,9 @@ test.describe("Terminal activity indicators", () => {
         activityTerminal.terminal.id,
         tabStatusBucket("needs-input"),
       );
+      await page.screenshot({ path: join(artifacts, "needs-input.png") });
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await page.screenshot({ path: join(artifacts, "needs-input-reduced-motion.png") });
 
       await focusTerminalTab(page, activityTerminal.terminal.id);
       await harness.waitForTerminalActivity({

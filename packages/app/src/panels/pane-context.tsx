@@ -10,6 +10,7 @@ export interface PaneContextValue {
   serverId: string;
   workspaceId: string;
   host: PaneHost;
+  transparentSurface?: boolean;
   tabId: string;
   target: WorkspaceTabTarget;
   state?: JsonValue;

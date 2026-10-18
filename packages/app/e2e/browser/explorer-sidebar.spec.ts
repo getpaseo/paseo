@@ -1,4 +1,6 @@
 import { expect, test } from "../support/fixtures";
+import { mkdirSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   gotoWorkspace,
   pressNewTabShortcut,
@@ -55,9 +57,33 @@ test.describe("Explorer sidebar", () => {
 
       await expectExplorerActiveTabForeground(page);
       await expect(explorer.getByTestId("file-explorer-tree-scroll")).toBeVisible();
+      for (const testId of ["explorer-upper-surface", "explorer-terminal-surface"]) {
+        const surface = explorer.getByTestId(testId);
+        await expect(surface).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+        await expect(surface).toHaveCSS("box-shadow", "none");
+      }
+      await expect(explorer.getByTestId("files-pane-header")).toHaveCSS(
+        "background-color",
+        "rgba(0, 0, 0, 0)",
+      );
 
       await explorer.getByTestId("workspace-tab-changes_tree").click();
       await expect(explorer.getByTestId("changes-tree-panel")).toBeVisible();
+      await expect(explorer.getByTestId("changes-tree-panel")).toHaveCSS(
+        "background-color",
+        "rgba(0, 0, 0, 0)",
+      );
+      for (const testId of ["changes-repository-header", "changes-header"]) {
+        await expect(explorer.getByTestId(testId)).toHaveCSS(
+          "background-color",
+          "rgba(0, 0, 0, 0)",
+        );
+      }
+      const artifacts = resolve(process.cwd(), ".artifacts");
+      mkdirSync(artifacts, { recursive: true });
+      await page.screenshot({ path: resolve(artifacts, "right-dock-light.png") });
+      await page.emulateMedia({ colorScheme: "dark" });
+      await page.screenshot({ path: resolve(artifacts, "right-dock-dark.png") });
 
       await page.getByTestId("workspace-explorer-toggle").first().click();
       await expect(explorerSidebar(page)).toHaveCount(0);

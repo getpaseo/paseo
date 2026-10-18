@@ -400,6 +400,7 @@ interface FileExplorerPaneProps {
   serverId: string;
   workspaceId?: string | null;
   workspaceRoot: string;
+  transparentSurface?: boolean;
   onOpenFile?: (filePath: string) => void;
   onOpenFileToSide?: (filePath: string) => void;
   onAddToChat?: (path: string) => void;
@@ -409,6 +410,7 @@ export function FileExplorerPane({
   serverId,
   workspaceId,
   workspaceRoot,
+  transparentSurface = false,
   onOpenFile,
   onOpenFileToSide,
   onAddToChat,
@@ -1060,6 +1062,7 @@ export function FileExplorerPane({
       <FileExplorerPaneContent
         error={error}
         isCompact={isCompact}
+        transparentSurface={transparentSurface}
         showInitialLoading={showInitialLoading}
         showBackFromError={showBackFromError}
         listRows={listRows}
@@ -1134,6 +1137,7 @@ function RootCreationContextTarget({
 interface FileExplorerPaneContentProps {
   error: string | null;
   isCompact: boolean;
+  transparentSurface: boolean;
   showInitialLoading: boolean;
   showBackFromError: boolean;
   listRows: ExplorerListRow[];
@@ -1157,6 +1161,7 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
   const {
     error,
     isCompact,
+    transparentSurface,
     showInitialLoading,
     showBackFromError,
     listRows,
@@ -1222,6 +1227,7 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
       <PaneContentToolbar
         style={[
           styles.paneHeader,
+          transparentSurface && styles.transparentSurface,
           { paddingRight: paneContentToolbarTrailingPadding(isCompact, "glyph") },
         ]}
         testID="files-pane-header"
@@ -1685,6 +1691,7 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "space-between",
     backgroundColor: theme.colors.surfaceWorkspace,
   },
+  transparentSurface: { backgroundColor: "transparent" },
   sortTrigger: {
     flexDirection: "row",
     alignItems: "center",

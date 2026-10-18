@@ -18,6 +18,7 @@ interface WorkspacePanelHostProps {
   normalizedWorkspaceId: string;
   isWorkspaceFocused: boolean;
   isPaneFocused: boolean;
+  transparentSurface?: boolean;
   onFocusPane?: (paneId: string) => void;
   buildPaneContentModel: (input: {
     paneId: string;
@@ -33,6 +34,7 @@ interface MountedTabProps {
   isWorkspaceFocused: boolean;
   onFocusPane?: (paneId: string) => void;
   buildPaneContentModel: WorkspacePanelHostProps["buildPaneContentModel"];
+  transparentSurface: boolean;
 }
 
 const MountedTab = memo(function MountedTab({
@@ -43,11 +45,14 @@ const MountedTab = memo(function MountedTab({
   isWorkspaceFocused,
   onFocusPane,
   buildPaneContentModel,
+  transparentSurface,
 }: MountedTabProps) {
-  const content = useMemo(
-    () => buildPaneContentModel({ paneId, tab }),
-    [buildPaneContentModel, paneId, tab],
-  );
+  const content = useMemo(() => {
+    const model = buildPaneContentModel({ paneId, tab });
+    return transparentSurface
+      ? { ...model, paneContextValue: { ...model.paneContextValue, transparentSurface: true } }
+      : model;
+  }, [buildPaneContentModel, paneId, tab, transparentSurface]);
   const handleFocusPane = useCallback(() => onFocusPane?.(paneId), [onFocusPane, paneId]);
   return (
     <RenderProfile id={`DesktopMountedTab:${tab.kind}:${tab.tabId}`}>
@@ -97,6 +102,7 @@ export function WorkspacePanelHost({
   normalizedWorkspaceId,
   isWorkspaceFocused,
   isPaneFocused,
+  transparentSurface = false,
   onFocusPane,
   buildPaneContentModel,
 }: WorkspacePanelHostProps) {
@@ -132,6 +138,7 @@ export function WorkspacePanelHost({
         isWorkspaceFocused={isWorkspaceFocused}
         onFocusPane={onFocusPane}
         buildPaneContentModel={buildPaneContentModel}
+        transparentSurface={transparentSurface}
       />
     );
   });

@@ -95,6 +95,7 @@ interface TerminalPaneProps {
   isWorkspaceFocused: boolean;
   isPaneFocused: boolean;
   autoFocus?: boolean;
+  transparentSurface?: boolean;
   onOpenFileExplorer: () => void;
   onOpenWorkspaceFile: (request: WorkspaceFileOpenRequest) => void;
 }
@@ -232,6 +233,7 @@ export function TerminalPane({
   isWorkspaceFocused,
   isPaneFocused,
   autoFocus = true,
+  transparentSurface = false,
   onOpenFileExplorer,
   onOpenWorkspaceFile,
 }: TerminalPaneProps) {
@@ -240,7 +242,10 @@ export function TerminalPane({
   const isAppActivelyVisible = useAppActivelyVisible();
   const { theme } = useUnistyles();
   const { settings } = useAppSettings();
-  const xtermTheme = useMemo(() => toXtermTheme(theme.colors.terminal), [theme]);
+  const xtermTheme = useMemo(() => {
+    const terminalTheme = toXtermTheme(theme.colors.terminal);
+    return transparentSurface ? { ...terminalTheme, background: "transparent" } : terminalTheme;
+  }, [theme, transparentSurface]);
   const terminalFontFamily = useMemo(() => {
     const trimmed = settings.monoFontFamily.trim();
     return trimmed.length > 0 ? trimmed : undefined;
@@ -989,8 +994,8 @@ export function TerminalPane({
   );
 
   const containerStyle = useMemo(
-    () => [styles.container, keyboardPaddingStyle],
-    [keyboardPaddingStyle],
+    () => [styles.container, transparentSurface && styles.transparentSurface, keyboardPaddingStyle],
+    [keyboardPaddingStyle, transparentSurface],
   );
 
   const handleKeyBarLayout = useCallback((event: LayoutChangeEvent) => {
@@ -1075,7 +1080,7 @@ export function TerminalPane({
 
   return (
     <Animated.View style={containerStyle}>
-      <View style={styles.outputContainer}>
+      <View style={[styles.outputContainer, transparentSurface && styles.transparentSurface]}>
         <View style={styles.terminalGestureContainer}>
           <TerminalEmulator
             ref={emulatorRef}
@@ -1176,6 +1181,7 @@ const styles = StyleSheet.create((theme) => ({
     position: "relative",
     backgroundColor: theme.colors.background,
   },
+  transparentSurface: { backgroundColor: "transparent" },
   terminalGestureContainer: {
     flex: 1,
     minHeight: 0,

@@ -180,6 +180,7 @@ interface ChangesSurfaceProps {
   cwd: string;
   enabled?: boolean;
   presentation?: ChangesPresentation;
+  transparentSurface?: boolean;
   focusPath?: string;
   focusRequestId?: number;
   onOpenFile?: (path: string) => void;
@@ -341,6 +342,13 @@ export function DiffModeMenu({
 
 type ChangesPresentation = "combined" | "tree" | "diff";
 
+function resolveChangesSidebarSurface(
+  presentation: ChangesPresentation,
+  transparentSurface?: boolean,
+): boolean {
+  return presentation === "tree" && !transparentSurface;
+}
+
 interface ChangesToolbarRefreshAction {
   isRefreshing: boolean;
   onRefresh: () => void;
@@ -478,6 +486,7 @@ interface ChangesHeaderProps {
   repository: ChangesRepositoryToolbarModel;
   comparison: ChangesComparisonToolbarModel;
   sidebarSurface: boolean;
+  transparentSurface: boolean;
 }
 
 interface BuildChangesHeaderModelInput {
@@ -525,13 +534,20 @@ function buildChangesHeaderModel(input: BuildChangesHeaderModelInput): {
 
 // Presentation resolves into these two capability models before rendering. The rows
 // never infer which host or Changes presentation produced them.
-function ChangesHeader({ compact, repository, comparison, sidebarSurface }: ChangesHeaderProps) {
+function ChangesHeader({
+  compact,
+  repository,
+  comparison,
+  sidebarSurface,
+  transparentSurface,
+}: ChangesHeaderProps) {
   if (comparison.mode.kind === "diff") {
     return (
       <ChangesDiffOnlyToolbar
         compact={compact}
         mode={comparison.mode}
         sidebarSurface={sidebarSurface}
+        transparentSurface={transparentSurface}
       />
     );
   }
@@ -541,11 +557,13 @@ function ChangesHeader({ compact, repository, comparison, sidebarSurface }: Chan
         compact={compact}
         model={repository}
         sidebarSurface={sidebarSurface}
+        transparentSurface={transparentSurface}
       />
       <ChangesComparisonToolbar
         compact={compact}
         model={comparison}
         sidebarSurface={sidebarSurface}
+        transparentSurface={transparentSurface}
       />
     </View>
   );
@@ -555,15 +573,18 @@ function ChangesDiffOnlyToolbar({
   compact,
   mode,
   sidebarSurface,
+  transparentSurface,
 }: {
   compact: boolean;
   mode: Extract<ChangesToolbarMode, { kind: "diff" }>;
   sidebarSurface: boolean;
+  transparentSurface: boolean;
 }) {
   return (
     <ChangesToolbarRow
       compact={compact}
       sidebarSurface={sidebarSurface}
+      transparentSurface={transparentSurface}
       testID="changes-header"
       trailing="glyph"
     >
@@ -579,12 +600,14 @@ function ChangesToolbarRow({
   children,
   compact,
   sidebarSurface,
+  transparentSurface,
   testID,
   trailing,
 }: {
   children: ReactNode;
   compact: boolean;
   sidebarSurface: boolean;
+  transparentSurface: boolean;
   testID: string;
   /** What the row's last control paints, so it can pad to the shared trailing rail. */
   trailing: ToolbarTrailingControl;
@@ -594,8 +617,9 @@ function ChangesToolbarRow({
       styles.changesToolbar,
       { paddingRight: paneContentToolbarTrailingPadding(compact, trailing) },
       sidebarSurface ? styles.changesToolbarSidebar : null,
+      transparentSurface ? styles.changesToolbarTransparent : null,
     ],
-    [compact, sidebarSurface, trailing],
+    [compact, sidebarSurface, trailing, transparentSurface],
   );
   return (
     <PaneContentToolbar style={toolbarStyle} testID={testID}>
@@ -616,15 +640,18 @@ function ChangesRepositoryToolbar({
   compact,
   model,
   sidebarSurface,
+  transparentSurface,
 }: {
   compact: boolean;
   model: ChangesRepositoryToolbarModel;
   sidebarSurface: boolean;
+  transparentSurface: boolean;
 }) {
   return (
     <ChangesToolbarRow
       compact={compact}
       sidebarSurface={sidebarSurface}
+      transparentSurface={transparentSurface}
       testID="changes-repository-header"
       trailing={model.gitActions ? "framed" : "glyph"}
     >
@@ -719,15 +746,18 @@ function ChangesComparisonToolbar({
   compact,
   model,
   sidebarSurface,
+  transparentSurface,
 }: {
   compact: boolean;
   model: ChangesComparisonToolbarModel;
   sidebarSurface: boolean;
+  transparentSurface: boolean;
 }) {
   return (
     <ChangesToolbarRow
       compact={compact}
       sidebarSurface={sidebarSurface}
+      transparentSurface={transparentSurface}
       testID="changes-header"
       trailing="glyph"
     >
@@ -1444,6 +1474,7 @@ export function ChangesSurface({
   cwd,
   enabled,
   presentation = "combined",
+  transparentSurface,
   focusPath,
   focusRequestId,
   onOpenFile,
@@ -1918,7 +1949,8 @@ export function ChangesSurface({
           compact={isMobile}
           repository={changesHeaderModel.repository}
           comparison={changesHeaderModel.comparison}
-          sidebarSurface={presentation === "tree"}
+          sidebarSurface={resolveChangesSidebarSurface(presentation, transparentSurface)}
+          transparentSurface={Boolean(transparentSurface)}
         />
       ) : null}
 
@@ -1962,6 +1994,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   changesToolbarSidebar: {
     backgroundColor: theme.colors.surfaceWorkspace,
+  },
+  changesToolbarTransparent: {
+    backgroundColor: "transparent",
   },
   changesToolbarIdentity: {
     flex: 1,
