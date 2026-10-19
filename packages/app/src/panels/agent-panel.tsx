@@ -394,6 +394,7 @@ function DraftPanel() {
     tabId,
     target,
     openFileInWorkspace,
+    openChatWebLink,
     openImportSheet,
     retargetCurrentTab,
   } = usePaneContext();
@@ -419,6 +420,7 @@ function DraftPanel() {
       initialSetup={target.setup}
       isPaneFocused={isInteractive}
       onOpenWorkspaceFile={openFileInWorkspace}
+      onOpenChatWebLink={openChatWebLink}
       onCreated={handleCreated}
       onOpenImportSheet={openImportSheet}
     />
@@ -1412,6 +1414,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
   toast: ReturnType<typeof useToastHost>["api"];
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }) {
+  const { openChatWebLink } = usePaneContext();
   const isCompactFormFactor = useIsCompactFormFactor();
   const hasWorkspaceDiffStat = useWorkspaceHasDiffStat(serverId, workspaceId);
   const hasVisibleComposerTracks =
@@ -1483,6 +1486,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
       pendingMessageSubmissions={pendingMessageSubmissions}
       turnPresentation={turnPresentation}
       onOpenWorkspaceFile={onOpenWorkspaceFile}
+      onOpenChatWebLink={openChatWebLink}
     />
   );
 });

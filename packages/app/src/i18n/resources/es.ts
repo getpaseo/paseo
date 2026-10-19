@@ -60,6 +60,7 @@ export const es: TranslationResources = {
       downloadFailed: "Descarga fallida",
     },
     errors: {
+      unableToOpenLink: "No se pudo abrir este enlace. Inténtalo de nuevo.",
       error: "Error",
       unableToSave: "No se puede guardar",
       unableToCopy: "No se pudo copiar",
@@ -2208,6 +2209,7 @@ export const es: TranslationResources = {
           queue: "Cola",
         },
       },
+      chatWebLinks: { label: "Enlaces web del chat" },
       serviceUrls: {
         options: {
           ask: "Preguntar",

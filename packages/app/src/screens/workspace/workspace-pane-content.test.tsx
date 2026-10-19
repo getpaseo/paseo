@@ -68,6 +68,7 @@ function buildContent(tab: WorkspaceTabDescriptor = agentTab, host: "main" | "ex
     onRetargetCurrentTab: vi.fn(),
     onSetCurrentTabState: vi.fn(),
     onOpenWorkspaceFile: vi.fn(),
+    onOpenChatWebLink: async () => {},
     onOpenImportSheet: vi.fn(),
   });
 }

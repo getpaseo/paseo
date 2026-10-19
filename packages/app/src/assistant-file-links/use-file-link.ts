@@ -3,6 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import type { OpenFileDisposition } from "@/workspace/file-open";
+import { dispatchWebUrl } from "./dispatch-web-url";
+import type { OpenChatWebLink } from "@/utils/open-chat-url";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { formatFileLinkTooltipPath } from "./tooltip-path";
 import type { InlinePathTarget } from "./parse";
@@ -100,6 +102,7 @@ export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult 
         disposition,
         context,
         queryClient,
+        openFailedMessage: t("common.errors.unableToOpenLink"),
         formatNoFileFoundMessage: (token) => t("common.errors.noFileFound", { token }),
       });
     },
@@ -171,6 +174,7 @@ function openAssistantFileLink(input: {
   disposition: OpenFileDisposition;
   context: AssistantFileLinkResolverContextValue;
   queryClient: ReturnType<typeof useQueryClient>;
+  openFailedMessage: string;
   formatNoFileFoundMessage: (token: string) => string;
 }): void {
   const capturedConfig = input.context.configRef.current;
@@ -184,7 +188,14 @@ function openAssistantFileLink(input: {
       disposition: input.disposition,
       capturedServerId: capturedConfig.serverId,
       capturedWorkspaceRoot: capturedConfig.workspaceRoot,
+      capturedOpenWebUrl: capturedConfig.onOpenWebUrl,
       context: input.context,
+    }).catch(() => {
+      capturedConfig.toast?.show(input.openFailedMessage, {
+        variant: "error",
+        durationMs: null,
+        testID: "assistant-web-link-open-error",
+      });
     });
     return;
   }
@@ -215,6 +226,7 @@ function openAssistantFileLink(input: {
         disposition: input.disposition,
         capturedServerId: capturedConfig.serverId,
         capturedWorkspaceRoot: capturedConfig.workspaceRoot,
+        capturedOpenWebUrl: capturedConfig.onOpenWebUrl,
         context: input.context,
       });
     } catch (error) {
@@ -223,6 +235,7 @@ function openAssistantFileLink(input: {
         noFileFoundMessage: input.formatNoFileFoundMessage(capturedResolution.token),
         capturedServerId: capturedConfig.serverId,
         capturedWorkspaceRoot: capturedConfig.workspaceRoot,
+        capturedOpenWebUrl: capturedConfig.onOpenWebUrl,
         context: input.context,
       });
     }
@@ -278,6 +291,7 @@ async function dispatchResolvedLink(input: {
   disposition: OpenFileDisposition;
   capturedServerId?: string;
   capturedWorkspaceRoot?: string;
+  capturedOpenWebUrl?: OpenChatWebLink;
   context: AssistantFileLinkResolverContextValue;
 }) {
   const { value } = input.resolution;
@@ -287,16 +301,21 @@ async function dispatchResolvedLink(input: {
       disposition: input.disposition,
       capturedServerId: input.capturedServerId,
       capturedWorkspaceRoot: input.capturedWorkspaceRoot,
+      capturedOpenWebUrl: input.capturedOpenWebUrl,
       context: input.context,
     });
     return;
   }
   if (value.kind === "external") {
-    await dispatchExternalUrl({
+    await dispatchWebUrl({
       url: value.url,
-      capturedServerId: input.capturedServerId,
-      capturedWorkspaceRoot: input.capturedWorkspaceRoot,
-      context: input.context,
+      captured: {
+        serverId: input.capturedServerId,
+        workspaceRoot: input.capturedWorkspaceRoot,
+        onOpenWebUrl: input.capturedOpenWebUrl,
+      },
+      current: input.context.configRef.current,
+      openExternal: openExternalUrl,
     });
   }
 }
@@ -306,32 +325,18 @@ async function dispatchFileTarget(input: {
   disposition: OpenFileDisposition;
   capturedServerId?: string;
   capturedWorkspaceRoot?: string;
+  capturedOpenWebUrl?: OpenChatWebLink;
   context: AssistantFileLinkResolverContextValue;
 }) {
   const current = input.context.configRef.current;
   if (
     current.serverId !== input.capturedServerId ||
-    current.workspaceRoot !== input.capturedWorkspaceRoot
+    current.workspaceRoot !== input.capturedWorkspaceRoot ||
+    current.onOpenWebUrl !== input.capturedOpenWebUrl
   ) {
     return;
   }
   current.onOpenWorkspaceFile?.(input.target, input.disposition);
-}
-
-async function dispatchExternalUrl(input: {
-  url: string;
-  capturedServerId?: string;
-  capturedWorkspaceRoot?: string;
-  context: AssistantFileLinkResolverContextValue;
-}) {
-  const current = input.context.configRef.current;
-  if (
-    current.serverId !== input.capturedServerId ||
-    current.workspaceRoot !== input.capturedWorkspaceRoot
-  ) {
-    return;
-  }
-  await openExternalUrl(input.url);
 }
 
 async function dispatchUnresolvedError(input: {
@@ -339,12 +344,14 @@ async function dispatchUnresolvedError(input: {
   noFileFoundMessage: string;
   capturedServerId?: string;
   capturedWorkspaceRoot?: string;
+  capturedOpenWebUrl?: OpenChatWebLink;
   context: AssistantFileLinkResolverContextValue;
 }) {
   const current = input.context.configRef.current;
   if (
     current.serverId !== input.capturedServerId ||
-    current.workspaceRoot !== input.capturedWorkspaceRoot
+    current.workspaceRoot !== input.capturedWorkspaceRoot ||
+    current.onOpenWebUrl !== input.capturedOpenWebUrl
   ) {
     return;
   }

@@ -36,6 +36,7 @@ export const APP_SETTINGS_QUERY_KEY = ["app-settings"];
 export type SendBehavior = ActiveTurnBehavior | "queue";
 export type ReleaseChannel = "stable" | "beta";
 export type ServiceUrlBehavior = "ask" | "in-app" | "external";
+export type ChatLinkBehavior = "external" | "in-app";
 export type WorkspaceTitleSource = "title" | "branch";
 export type PullRequestOpenLocation = "main" | "side" | "explorer";
 /** What a sidebar workspace row shows in the space to the right of its title. */
@@ -80,6 +81,7 @@ export interface AppSettings {
   language: AppLanguage;
   sendBehavior: SendBehavior;
   serviceUrlBehavior: ServiceUrlBehavior;
+  chatLinkBehavior: ChatLinkBehavior;
   terminalScrollbackLines: number;
   useLegacyTerminalRenderer: boolean;
   uiFontFamily: string; // "" = platform default UI stack
@@ -140,6 +142,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   language: "system",
   sendBehavior: "steer",
   serviceUrlBehavior: "ask",
+  chatLinkBehavior: "external",
   terminalScrollbackLines: DEFAULT_TERMINAL_SCROLLBACK_LINES,
   useLegacyTerminalRenderer: false,
   uiFontFamily: "",
@@ -218,6 +221,7 @@ const StoredAppSettingsSchema = z
       .catch("system"),
     sendBehavior: z.enum(["interrupt", "steer", "queue"]).catch("steer"),
     serviceUrlBehavior: z.enum(["ask", "in-app", "external"]).catch("ask"),
+    chatLinkBehavior: z.enum(["external", "in-app"]).catch("external"),
     terminalScrollbackLines: clampedNumber(
       MIN_TERMINAL_SCROLLBACK_LINES,
       MAX_TERMINAL_SCROLLBACK_LINES,

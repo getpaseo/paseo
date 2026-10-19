@@ -59,6 +59,7 @@ export const ko: TranslationResources = {
       downloadFailed: "다운로드 실패",
     },
     errors: {
+      unableToOpenLink: "이 링크를 열 수 없습니다. 다시 시도하세요.",
       error: "오류",
       unableToSave: "저장할 수 없습니다",
       unableToCopy: "복사할 수 없습니다",
@@ -2168,6 +2169,7 @@ export const ko: TranslationResources = {
           queue: "대기열",
         },
       },
+      chatWebLinks: { label: "채팅 웹 링크" },
       serviceUrls: {
         options: {
           ask: "물어보기",

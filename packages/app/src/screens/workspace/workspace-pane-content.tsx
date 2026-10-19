@@ -14,6 +14,7 @@ import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-
 import { RenderProfile } from "@/utils/render-profiler";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import type { OpenInSidePaneSource } from "@/workspace-tabs/open-beside";
+import type { OpenChatWebLink } from "@/utils/open-chat-url";
 import type { PaneHost } from "@/panels/panel-manifest";
 
 export interface WorkspacePaneContentModel {
@@ -38,6 +39,7 @@ export interface BuildWorkspacePaneContentModelInput {
   onRetargetCurrentTab: (target: WorkspaceTabDescriptor["target"]) => void;
   onSetCurrentTabState: (state: WorkspaceTabDescriptor["state"]) => void;
   onOpenWorkspaceFile: (request: WorkspaceFileOpenRequest) => void;
+  onOpenChatWebLink: OpenChatWebLink;
   onOpenImportSheet: () => void;
 }
 
@@ -54,6 +56,7 @@ export function buildWorkspacePaneContentModel({
   onRetargetCurrentTab,
   onSetCurrentTabState,
   onOpenWorkspaceFile,
+  onOpenChatWebLink,
   onOpenImportSheet,
 }: BuildWorkspacePaneContentModelInput): WorkspacePaneContentModel {
   ensurePanelsRegistered();
@@ -77,6 +80,7 @@ export function buildWorkspacePaneContentModel({
       retargetCurrentTab: onRetargetCurrentTab,
       setCurrentTabState: onSetCurrentTabState,
       openFileInWorkspace: onOpenWorkspaceFile,
+      openChatWebLink: onOpenChatWebLink,
       openImportSheet: onOpenImportSheet,
     },
   };
@@ -120,6 +124,7 @@ export function WorkspacePaneContent({
       retargetCurrentTab,
       setCurrentTabState,
       openFileInWorkspace,
+      openChatWebLink: paneContextValue.openChatWebLink,
       openImportSheet,
     }),
     [
@@ -136,6 +141,7 @@ export function WorkspacePaneContent({
       paneContextValue.state,
       paneContextValue.workspaceId,
       paneContextValue.host,
+      paneContextValue.openChatWebLink,
       paneContextValue.openTargetToSide,
       retargetCurrentTab,
       setCurrentTabState,

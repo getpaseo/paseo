@@ -117,13 +117,17 @@ new target and never yanks an existing tab out of a user-selected pane.
 
 ## Routing preferences
 
-Desktop **Settings → Layout → Open location** has independent Main panel or On the side choices for
+Desktop **Settings → General → Open location** has independent Main panel or On the side choices for
 Explorer Files, diffs, chat files, files opened from diffs, and subagents. They default to Main
 panel. Mobile ignores them.
 
 Pull requests have a three-way open location: Main panel, On the side, or Explorer sidebar. Explorer
 sidebar is the default. Compact layouts always open pull requests in Explorer regardless of this
 desktop preference.
+
+Chat web links have a separate External browser or In Paseo choice. External browser is the
+default. In Paseo uses the originating workspace's focused pane on desktop. Other clients open
+externally. This choice covers chat replies and plans, not Markdown file previews or script URLs.
 
 Panels request an implicit open through the narrow `openPreferredTarget(target, source)` pane
 contract. Entry points outside panels use `openPreferredWorkspaceTarget`. Do not branch on a

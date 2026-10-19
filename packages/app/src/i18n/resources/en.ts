@@ -55,6 +55,7 @@ export const en = {
       downloadFailed: "Download failed",
     },
     errors: {
+      unableToOpenLink: "Couldn't open this link. Try again.",
       error: "Error",
       unableToSave: "Unable to save",
       unableToCopy: "Unable to copy",
@@ -2281,6 +2282,7 @@ export const en = {
           queue: "Queue",
         },
       },
+      chatWebLinks: { label: "Chat web links" },
       serviceUrls: {
         options: {
           ask: "Ask",

@@ -44,6 +44,41 @@ function makeDeps(
 }
 
 describe("loadAppSettingsFromStorage", () => {
+  it.each([undefined, "ask", "internal-side", null, 42])(
+    "defaults missing or unsupported chat link choices to external: %s",
+    async (chatLinkBehavior) => {
+      const deps = makeDeps({
+        storage: createInMemoryKeyValueStorage({
+          [APP_SETTINGS_KEY]: JSON.stringify({ chatLinkBehavior }),
+        }),
+      });
+      expect((await loadAppSettingsFromStorage(deps)).chatLinkBehavior).toBe("external");
+    },
+  );
+
+  it("persists chat link choices independently of script URLs and chat files", async () => {
+    const deps = makeDeps();
+    const queryClient = new QueryClient();
+    await saveAppSettings({
+      queryClient,
+      updates: {
+        chatLinkBehavior: "in-app",
+        serviceUrlBehavior: "ask",
+        openInSidePane: { ...DEFAULT_CLIENT_SETTINGS.openInSidePane, chatFiles: true },
+      },
+      deps,
+    });
+    const reloaded = await loadAppSettingsFromStorage(deps);
+    expect(reloaded.chatLinkBehavior).toBe("in-app");
+    expect(reloaded.serviceUrlBehavior).toBe("ask");
+    expect(reloaded.openInSidePane.chatFiles).toBe(true);
+    await saveAppSettings({ queryClient, updates: { chatLinkBehavior: "external" }, deps });
+    const restored = await loadAppSettingsFromStorage(deps);
+    expect(restored.chatLinkBehavior).toBe("external");
+    expect(restored.serviceUrlBehavior).toBe("ask");
+    expect(restored.openInSidePane.chatFiles).toBe(true);
+  });
+
   it("preserves a persisted steer send behavior", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({

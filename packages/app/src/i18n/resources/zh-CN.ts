@@ -59,6 +59,7 @@ export const zhCN: TranslationResources = {
       downloadFailed: "下载失败",
     },
     errors: {
+      unableToOpenLink: "无法打开此链接，请重试。",
       error: "错误",
       unableToSave: "无法保存",
       unableToCopy: "无法复制",
@@ -2132,6 +2133,7 @@ export const zhCN: TranslationResources = {
           queue: "排队",
         },
       },
+      chatWebLinks: { label: "聊天网页链接" },
       serviceUrls: {
         options: {
           ask: "询问",

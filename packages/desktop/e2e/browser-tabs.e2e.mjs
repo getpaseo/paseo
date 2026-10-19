@@ -12,6 +12,8 @@ import { fileURLToPath } from "node:url";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { chromium } from "playwright";
+import { expect } from "@playwright/test";
+import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { runAppearanceFontSizeRegression } from "./appearance-font-size.electron.mjs";
 import { runSettingsMemoryRegression } from "./settings-memory.electron.mjs";
 
@@ -1072,6 +1074,82 @@ async function runRegression({
   };
 }
 
+async function runChatLinksRegression({ page, daemonPort, serverId, url, artifactDir }) {
+  const daemon = new DaemonClient({
+    url: `ws://127.0.0.1:${daemonPort}/ws`,
+    clientId: "desktop-chat-links-regression",
+    clientType: "cli",
+  });
+  await daemon.connect();
+  try {
+    await page.waitForLoadState("load");
+    await expect(page.locator("#root")).not.toBeEmpty({ timeout: timeoutMs });
+    await page.evaluate(() => {
+      const key = "@paseo:app-settings";
+      const settings = JSON.parse(localStorage.getItem(key) ?? "{}");
+      localStorage.setItem(key, JSON.stringify({ ...settings, language: "en" }));
+    });
+    await page.reload();
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    const sidebar = page.locator('[data-testid="settings-sidebar"]:visible');
+    await sidebar.getByRole("button", { name: "General", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Chat web links: External browser", exact: true })
+      .click();
+    await page.getByRole("menuitem", { name: "In Paseo", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Chat web links: In Paseo", exact: true }),
+    ).toBeVisible();
+    await page.reload();
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await sidebar.getByRole("button", { name: "General", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Chat web links: In Paseo", exact: true }),
+    ).toBeVisible({ timeout: timeoutMs });
+    await page
+      .getByRole("button", { name: "Chat web links: In Paseo", exact: true })
+      .scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(artifactDir, "chat-web-links-setting.png") });
+    await page.locator('[data-testid="settings-back-to-workspace"]:visible').click();
+
+    const workspaceId = workspaceIds[0];
+    const agent = await daemon.createAgent({
+      provider: "mock",
+      model: "e2e-fast-stream",
+      cwd: (await daemon.fetchWorkspaces({ filter: { projectId: `project-${workspaceId}` } }))
+        .entries[0].workspaceDirectory,
+      workspaceId,
+      title: "Chat web links regression",
+      modeId: "load-test",
+      initialPrompt: "Show the workspace browser link.",
+      featureValues: { mockAssistantResponse: `[Open chat destination](${url})` },
+    });
+    await daemon.waitForFinish(agent.id, 30_000);
+    const route = `/h/${encodeURIComponent(serverId)}/workspace/${workspaceId}?open=${encodeURIComponent(`agent:${agent.id}`)}`;
+    await page.goto(new URL(route, page.url()).href);
+    await page
+      .getByTestId("assistant-message")
+      .getByRole("link", { name: "Open chat destination", exact: true })
+      .click();
+    await expect
+      .poll(() =>
+        page
+          .locator("webview")
+          .evaluateAll((views) =>
+            views
+              .filter((view) => view.parentElement?.getAttribute("aria-hidden") === "false")
+              .map((view) => view.getURL()),
+          ),
+      )
+      .toEqual([url]);
+    await expect(page).toHaveURL(new RegExp(`/workspace/${workspaceId}`));
+    await page.screenshot({ path: path.join(artifactDir, "chat-web-links-guest.png") });
+    return { preferencePersisted: true, sourceWorkspaceId: workspaceId, presentedUrl: url };
+  } finally {
+    await daemon.close();
+  }
+}
+
 async function main() {
   const artifactDir =
     process.env.PASEO_DESKTOP_BROWSER_E2E_ARTIFACT_DIR ??
@@ -1205,6 +1283,18 @@ async function main() {
       console.log("Plugin external links and workspace browser passed.");
       return;
     }
+    if (process.env.PASEO_DESKTOP_CHAT_LINKS_ONLY === "1") {
+      const chatLinks = await runChatLinksRegression({
+        page,
+        daemonPort,
+        serverId: status.serverId,
+        url: target.url,
+        artifactDir,
+      });
+      writeJson(path.join(artifactDir, "result.json"), { chatLinks });
+      console.log("Chat web-link preference and real workspace guest passed.");
+      return;
+    }
     const settingsMemory = await runSettingsMemoryRegression(page);
     if (process.env.PASEO_DESKTOP_SETTINGS_MEMORY_ONLY === "1") {
       writeJson(path.join(artifactDir, "result.json"), { settingsMemory });
@@ -1213,6 +1303,14 @@ async function main() {
       );
       return;
     }
+
+    await runChatLinksRegression({
+      page,
+      daemonPort,
+      serverId: status.serverId,
+      url: target.url,
+      artifactDir,
+    });
 
     await runAppearanceFontSizeRegression(page);
 

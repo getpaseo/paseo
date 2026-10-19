@@ -60,6 +60,7 @@ export const ptBR: TranslationResources = {
       downloadFailed: "Falha no download",
     },
     errors: {
+      unableToOpenLink: "Não foi possível abrir este link. Tente novamente.",
       error: "Erro",
       unableToSave: "Não foi possível salvar",
       unableToCopy: "Não foi possível copiar",
@@ -2191,6 +2192,7 @@ export const ptBR: TranslationResources = {
           queue: "Fila",
         },
       },
+      chatWebLinks: { label: "Links da web no chat" },
       serviceUrls: {
         options: {
           ask: "Perguntar",

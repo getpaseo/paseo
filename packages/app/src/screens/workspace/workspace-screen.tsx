@@ -95,6 +95,8 @@ import {
   type WorkspaceTab,
   type WorkspaceTabTarget,
 } from "@/workspace-tabs/model";
+import { openChatUrl } from "@/utils/open-chat-url";
+import { openExternalUrl } from "@/utils/open-external-url";
 import { useSettings } from "@/hooks/use-settings";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { buildWorkspaceKeyboardHandlerId } from "@/keyboard/handler-id";
@@ -1339,6 +1341,7 @@ function WorkspaceScreenContent({
       openTab({ workspaceKey, target, intent: "background", placement }),
     [openTab],
   );
+  const chatLinkBehavior = useSettings((settings) => settings.chatLinkBehavior);
   const openInSidePane = useSettings((settings) => settings.openInSidePane);
   const pullRequestOpenLocation = useSettings((settings) => settings.pullRequestOpenLocation);
   const focusWorkspaceTab = useWorkspaceLayoutStore((state) => state.focusTab);
@@ -1933,6 +1936,16 @@ function WorkspaceScreenContent({
       );
     },
     [openWorkspaceTabFocused, persistenceKey],
+  );
+
+  const openChatWebLink = useCallback(
+    (url: string) =>
+      openChatUrl(url, {
+        behavior: chatLinkBehavior,
+        openInBrowser: getIsElectron() && persistenceKey ? handleOpenUrlInBrowserTab : undefined,
+        openExternal: openExternalUrl,
+      }),
+    [chatLinkBehavior, persistenceKey, handleOpenUrlInBrowserTab],
   );
 
   useDesktopBrowserNewTabRequests({
@@ -3053,6 +3066,7 @@ function WorkspaceScreenContent({
             focusPaneBeforeOpen: input.focusPaneBeforeOpen,
           });
         },
+        onOpenChatWebLink: openChatWebLink,
         onOpenImportSheet: openImportSheet,
       }),
     [
@@ -3064,6 +3078,7 @@ function WorkspaceScreenContent({
       normalizedWorkspaceId,
       canRenderDesktopPaneSplits,
       openImportSheet,
+      openChatWebLink,
       openInSidePane,
       requestFileNavigation,
       revealWorkspaceChildTab,
