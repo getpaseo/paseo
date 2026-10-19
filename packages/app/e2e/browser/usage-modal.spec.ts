@@ -715,11 +715,15 @@ test("open usage clocks advance without refreshing or reopening", async ({ page 
     const card = page.getByTestId("usage-report-login-journey:account");
     await expect(card.getByTestId("usage-freshness")).toHaveText("Updated just now");
     await expect(card.getByText("resets 30m", { exact: false }).first()).toBeVisible();
+    // The shared minute clock is wall-aligned, and the daemon timestamps use real time.
+    // After two browser minutes the latest displayed tick is one or two minutes old.
     await advanceUsageClock(page, 120_000);
-    await expect(card.getByTestId("usage-freshness")).toHaveText("Updated 2m ago");
-    await expect(card.getByText("resets 28m", { exact: false }).first()).toBeVisible();
-    await expect(card.getByText("runs out 28m", { exact: false })).toBeVisible();
-    await expect(card.getByTestId("provider-usage-balance-credits-reset")).toHaveText("resets 28m");
+    await expect(card.getByTestId("usage-freshness")).toHaveText(/^Updated [12]m ago$/);
+    await expect(card.getByText(/resets (28|29)m/).first()).toBeVisible();
+    await expect(card.getByText(/runs out (28|29)m/)).toBeVisible();
+    await expect(card.getByTestId("provider-usage-balance-credits-reset")).toHaveText(
+      /^resets (28|29)m$/,
+    );
   } finally {
     await login.cleanup();
   }
