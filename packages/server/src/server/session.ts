@@ -677,12 +677,12 @@ export class Session {
   isRouted(): boolean {
     return this.routed;
   }
-  getPrincipalId(): string {
-    return this.hostPrincipalId;
+  getHostSourceId(): string {
+    return this.hostSourceId;
   }
-  private hostPrincipalId: string;
+  private hostSourceId: string;
   setHostSource(sourceId: string): void {
-    this.hostPrincipalId = sourceId;
+    this.hostSourceId = sourceId;
     this.connectedHostSession?.setSource(sourceId);
   }
   setRouted(routed: boolean): void {
@@ -882,7 +882,7 @@ export class Session {
     this.appVersion = appVersion ?? null;
     this.clientCapabilities = parseClientCapabilities(clientCapabilities);
     this.sessionId = uuidv4();
-    this.hostPrincipalId = hostSource(options);
+    this.hostSourceId = hostSource(options);
     this.connectedHostSession = createHostSession(options, this);
     this.onMessage = onMessage;
     this.onMessageToSource = onMessageToSource ?? null;

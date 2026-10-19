@@ -64,7 +64,7 @@ function parse(input: string): HostTarget {
   }
   if (input.startsWith("tcp://")) return tcpTarget(input);
   if (/^wss?:\/\//.test(input)) return websocketTarget(input);
-  const endpoint = normalizeHostPort(/^\d+$/.test(input) ? `127.0.0.1:${input}` : input);
+  const endpoint = validatedEndpoint(/^\d+$/.test(input) ? `127.0.0.1:${input}` : input);
   return {
     kind: "socket",
     url: buildDaemonWebSocketUrl(endpoint, { useTls: false }),
@@ -72,23 +72,27 @@ function parse(input: string): HostTarget {
   };
 }
 function relayTarget(offer: ConnectionOffer, password?: string): HostTarget {
+  const endpoint = validatedEndpoint(offer.relay.endpoint);
   return {
     kind: "socket",
     url: buildRelayWebSocketUrl({
-      endpoint: offer.relay.endpoint,
+      endpoint,
       serverId: offer.serverId,
       role: "client",
       useTls: offer.relay.useTls ?? shouldUseTlsForDefaultHostedRelay(offer.relay.endpoint),
     }),
     offer,
     password,
-    description: `relay://${offer.relay.endpoint}/${offer.serverId}`,
+    description: `relay://${endpoint}/${encodeURIComponent(offer.serverId)}`,
   };
 }
 
 function tcpTarget(input: string): HostTarget {
+  const uri = new URL(input);
+  if (uri.pathname && uri.pathname !== "/") throw new Error("Unexpected TCP path");
+  if (uri.hash) throw new Error("Unexpected TCP fragment");
   const parts = parseConnectionUri(input);
-  const endpoint = normalizeHostPort(
+  const endpoint = validatedEndpoint(
     `${parts.isIpv6 ? `[${parts.host}]` : parts.host}:${parts.port}`,
   );
   return {
@@ -118,6 +122,16 @@ function sshTarget(input: string): HostTarget {
     kind: "ssh",
     ssh,
     ...(password ? { password } : {}),
-    description: `ssh://${ssh.host}${ssh.sshPort ? `:${ssh.sshPort}` : ""} (daemon port ${ssh.daemonPort})`,
+    description: `ssh://${uri.hostname}${ssh.sshPort ? `:${ssh.sshPort}` : ""} (daemon port ${ssh.daemonPort})`,
   };
+}
+
+/** A bare endpoint has exactly one authority; URL syntax must use an explicit supported scheme. */
+function validatedEndpoint(input: string): string {
+  if (!/^(?:[a-zA-Z0-9_][a-zA-Z0-9_.-]*|\[[0-9a-fA-F:.]+\]):[0-9]{1,5}$/.test(input))
+    throw new Error("Invalid endpoint");
+  // URL parsing validates IPv6 literals and rejects invalid authority/port encodings.
+  const url = new URL(`http://${input}`);
+  if (!url.hostname) throw new Error("Missing endpoint host");
+  return normalizeHostPort(input);
 }

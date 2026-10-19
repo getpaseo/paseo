@@ -25,6 +25,7 @@ permissions closes existing routes. A routed API cannot select a second hop.
 A producer that registers a host through a routed API is qualified on B as
 `route:<B principal>:<A serverId>:<A producer>`, with each component percent-encoded. This namespace belongs to the authenticated link
 principal. An ordinary direct B consumer does not become that producer by supplying a source key.
+The optional `server_info.sourceId` reports this producer identity for source-owner controls; it does not describe the authenticated admission principal.
 Trusted server plugins retain the authority of their runtime; they are not sandboxed by this feature.
 
 ## Connections and recovery

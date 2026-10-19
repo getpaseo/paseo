@@ -19,6 +19,8 @@ async function api(instance: TestPaseoDaemon) {
     reconnect: { enabled: false },
   });
   await client.connect();
+  expect(client.getLastServerInfoMessage()).toMatchObject({ sourceId: "owner" });
+  expect(client.getLastServerInfoMessage()).not.toHaveProperty("principalId");
   const paseo = createPaseoApi(client);
   cleanup.push(async () => {
     await paseo.dispose();
@@ -46,6 +48,16 @@ test("SDK saves unreachable hosts, rejects syntax and preserves source identity 
   await expect(paseo.hosts.add({ connection: "ssh://-bad" })).rejects.toMatchObject({
     code: "invalid_connection",
   });
+  for (const connection of [
+    "alice:example-secret@localhost:6767",
+    "not-a-scheme://localhost:6767",
+    "localhost/path:6767",
+  ]) {
+    const failure = await paseo.hosts.add({ connection }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: "invalid_connection" });
+    expect(String(failure)).not.toContain("example-secret");
+    expect((await paseo.hosts.list()).hosts).toEqual([]);
+  }
   const saved = await paseo.hosts.add({
     connection: "tcp://127.0.0.1:1?password=private-secret",
     label: "Unavailable",
@@ -241,6 +253,14 @@ class RoutePeer {
           ).length,
       )
       .toBe(1);
+    const info = peer.messages.find(
+      (message) => message.type === "status" && message.payload.status === "server_info",
+    );
+    if (info?.type !== "status") throw new Error("Missing routed server info");
+    expect(info.payload).toMatchObject({
+      sourceId: `route:owner:${origin.getLastServerInfoMessage()!.serverId}:owner`,
+    });
+    expect(info.payload).not.toHaveProperty("principalId");
     return peer;
   }
   send(message: SessionInboundMessage) {
@@ -436,6 +456,13 @@ test("CLI host commands manage the selected daemon and emit secret-free structur
         )
       ).stdout,
     );
+  const malformed = await cli("add", "alice:example-secret@localhost:6767").catch(
+    (error: unknown) => error,
+  );
+  expect(malformed).toHaveProperty("stderr");
+  expect((malformed as { stderr: string }).stderr).toContain("invalid_connection");
+  expect((malformed as { stderr: string }).stderr).not.toContain("example-secret");
+  expect(await cli("ls")).toEqual([]);
   const saved = await cli(
     "add",
     "tcp://127.0.0.1:1?password=cli-secret",

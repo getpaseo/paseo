@@ -1,6 +1,10 @@
 import { test, expect } from "vitest";
 import { selectDaemonTarget, describeDaemonTarget } from "./daemon-target.js";
-import { resolveDaemonCredential, resolveClientPaseoHome } from "./client.js";
+import {
+  resolveDaemonCredential,
+  resolveClientPaseoHome,
+  buildDaemonConnectionCommandError,
+} from "./client.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -42,6 +46,18 @@ test("endpoint descriptions redact pairing material and credentials", () => {
   expect(
     describeDaemonTarget({ kind: "endpoint", host: "https://app.paseo.sh/#offer=private" }),
   ).not.toContain("private");
+});
+
+test("malformed endpoint diagnostics never expose the supplied credential", () => {
+  const target = { kind: "endpoint" as const, host: "alice:example-secret@localhost:6767" };
+  expect(describeDaemonTarget(target)).not.toContain("example-secret");
+  for (const message of [
+    `Invalid connection ${target.host}`,
+    `Cannot connect to daemon at ${target.host}`,
+  ]) {
+    const diagnostic = buildDaemonConnectionCommandError({ target, error: new Error(message) });
+    expect(JSON.stringify(diagnostic)).not.toContain("example-secret");
+  }
 });
 
 test("CLI selects an explicit password before a matching local credential and never sends the latter remotely", async () => {

@@ -42,15 +42,15 @@ export function buildDaemonConnectionCommandError(options: ConnectOptions & { er
   if (error && typeof error === "object" && "message" in error) message = String(error.message);
   if (options.target.kind === "endpoint")
     message = message.replaceAll(options.target.host, describeDaemonTarget(options.target));
-  if (message.startsWith("Cannot connect to daemon at "))
-    return error as { code: string; message: string; details: string };
   let code = "DAEMON_UNREACHABLE";
   if (typeof error === "object" && error !== null && "code" in error) code = String(error.code);
   else if (message === "Password required") code = "AUTH_REQUIRED";
   else if (message === "Incorrect password") code = "AUTH_FAILED";
   return {
     code,
-    message: `Cannot connect to daemon at ${describeDaemonTarget(options.target)}: ${message}`,
+    message: message.startsWith("Cannot connect to daemon at ")
+      ? message
+      : `Cannot connect to daemon at ${describeDaemonTarget(options.target)}: ${message}`,
     details: describeConnectionRemedy(code, options.target),
   };
 }

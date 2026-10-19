@@ -28,6 +28,9 @@ export async function correctConnection(page: Page, value: string) {
   await saveConnectedHost(page);
 }
 export async function inspectConnectedHost(page: Page, label: string) {
+  await expect(
+    page.getByText(/^(connecting|offline|error|online|disabled) · (Enabled|Disabled) · User$/),
+  ).toBeVisible();
   await page.getByRole("button", { name: `Details for ${label}`, exact: true }).click();
   await expect(page.getByText("Connected host details", { exact: true })).toBeVisible();
 }

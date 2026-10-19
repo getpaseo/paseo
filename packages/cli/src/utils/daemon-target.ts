@@ -1,3 +1,4 @@
+import { parseHostTarget } from "@getpaseo/protocol/host-target";
 import { resolvePaseoHome } from "@getpaseo/server/daemon-control";
 
 export type DaemonTarget = { kind: "instance"; home: string } | { kind: "endpoint"; host: string };
@@ -39,13 +40,8 @@ export function selectDaemonTarget(
 export function describeDaemonTarget(target: DaemonTarget): string {
   if (target.kind === "instance") return `home ${target.home}`;
   try {
-    const url = new URL(target.host);
-    if (url.password) url.password = "REDACTED";
-    for (const key of url.searchParams.keys())
-      if (/password|token|secret/i.test(key)) url.searchParams.set(key, "REDACTED");
-    if (url.hash) url.hash = "REDACTED";
-    return url.toString();
+    return parseHostTarget(target.host).description;
   } catch {
-    return target.host.replace(/([?&](?:password|token|secret)=)[^&]*/gi, "$1REDACTED");
+    return "<invalid endpoint>";
   }
 }

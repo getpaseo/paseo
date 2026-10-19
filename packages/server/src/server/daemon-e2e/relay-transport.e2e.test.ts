@@ -1,3 +1,14 @@
+import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
+import { createHostClient } from "@getpaseo/client/node";
+import { hashSync } from "bcryptjs";
+import { once } from "node:events";
+import {
+  decodeTerminalStreamFrame,
+  encodeTerminalStreamFrame,
+  TerminalStreamOpcode,
+} from "@getpaseo/protocol/binary-frames/index";
+import type { DaemonClient as HostClient } from "@getpaseo/client/internal/daemon-client";
+import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { describe, expect, test } from "vitest";
 import { withTimeout } from "../../utils/promise-timeout.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
@@ -194,9 +205,9 @@ async function waitForCapturedLog(
   let relayProcess: ChildProcess | null = null;
   let relayStdoutLines: string[] = [];
 
-  const startRelay = async (options: { useLocalRelay?: boolean } = {}) => {
+  const startRelay = async (options: { useLocalRelay?: boolean; port?: number } = {}) => {
     relayStdoutLines = [];
-    relayPort = await getAvailablePort();
+    relayPort = options.port ?? (await getAvailablePort());
     const relayDir = path.resolve(process.cwd(), "../relay");
     const relayArgs = [
       "wrangler",
@@ -255,9 +266,141 @@ async function waitForCapturedLog(
 
   const stopRelay = async () => {
     if (!relayProcess) return;
-    relayProcess.kill("SIGTERM");
+    const process = relayProcess;
     relayProcess = null;
+    const exited = once(process, "exit");
+    process.kill("SIGTERM");
+    await withTimeout(exited, 10000, "Local relay did not stop");
   };
+
+  test("connected hosts route RPC and binary traffic through local E2EE relay and recover scopes", async () => {
+    let a: Awaited<ReturnType<typeof createTestPaseoDaemon>> | undefined;
+    let b: Awaited<ReturnType<typeof createTestPaseoDaemon>> | undefined;
+    let origin: ReturnType<typeof createHostClient> | undefined;
+    let api: PaseoApi | undefined;
+    let remote: PaseoApi | undefined;
+    let sibling: PaseoApi | undefined;
+    let terminalRoute: Awaited<ReturnType<typeof openConnectedHostTerminal>> | undefined;
+    try {
+      await startRelay({ useLocalRelay: true });
+      const port = relayPort;
+      b = await createTestPaseoDaemon({
+        relayEnabled: true,
+        relayEndpoint: `127.0.0.1:${port}`,
+        relayUseTls: false,
+        relayPublicUseTls: false,
+        auth: { password: hashSync("relay-password", 4) },
+      });
+      a = await createTestPaseoDaemon();
+      origin = createHostClient(`127.0.0.1:${a.port}`, { clientId: crypto.randomUUID() });
+      await origin.connect();
+      api = createPaseoApi(origin);
+      const offerUrl = await getPairingOfferUrl({
+        paseoHome: b.paseoHome,
+        relayEnabled: true,
+        relayEndpoint: b.config.relayEndpoint,
+      });
+      const { serverId, daemonPublicKeyB64 } = decodeOfferFromFragmentUrl(offerUrl);
+      const connection = new URL(`relay://127.0.0.1:${port}/${serverId}`);
+      connection.searchParams.set("key", daemonPublicKeyB64);
+      connection.searchParams.set("password", "wrong-password");
+      const saved = await api.hosts.add({ connection: connection.toString() });
+      await expect
+        .poll(async () => (await api!.hosts.list()).hosts[0]?.error?.code, { timeout: 20000 })
+        .toBe("authentication_failed");
+      expect(JSON.stringify(await api.hosts.list())).not.toMatch(/wrong-password|relay-password/);
+      connection.searchParams.set("password", "relay-password");
+      await api.hosts.update(saved.registrationId, { connection: connection.toString() });
+      await expect
+        .poll(async () => (await api!.hosts.list()).hosts[0]?.status, { timeout: 20000 })
+        .toBe("online");
+      remote = await api.hosts.client(serverId);
+      sibling = await api.hosts.client(serverId);
+      expect((await remote.workspaces.list()).entries).toEqual([]);
+      const observed = await remote.workspaces.list({ subscribe: {} });
+      let snapshots = 0;
+      observed.subscription.subscribe({
+        snapshot: () => {
+          snapshots++;
+        },
+      });
+      const workspace = await remote.workspaces.create({
+        source: { kind: "directory", path: b.staticDir },
+        title: "Relayed workspace",
+      });
+      const terminal = await workspace.terminals.create({
+        command: process.execPath,
+        args: ["-e", "process.stdin.on('data', data => process.stdout.write(data))"],
+      });
+      terminalRoute = await openConnectedHostTerminal(origin, serverId, terminal.id);
+      terminalRoute.write("ENCRYPTED_BINARY_BEFORE\n");
+      await expect.poll(() => terminalRoute!.output()).toContain("ENCRYPTED_BINARY_BEFORE");
+      terminalRoute.close();
+      terminalRoute = undefined;
+      const before = snapshots;
+      await stopRelay();
+      await expect
+        .poll(
+          async () => {
+            try {
+              await remote!.workspaces.list();
+              return "online";
+            } catch (error) {
+              return (error as { code: string }).code;
+            }
+          },
+          { timeout: 15000 },
+        )
+        .toBe("host_offline");
+      await startRelay({ useLocalRelay: true, port });
+      await expect
+        .poll(
+          async () => {
+            try {
+              return (await remote!.workspaces.list()).entries.length;
+            } catch {
+              return -1;
+            }
+          },
+          { timeout: 30000 },
+        )
+        .toBe(1);
+      await expect.poll(() => snapshots, { timeout: 15000 }).toBeGreaterThan(before);
+      terminalRoute = await openConnectedHostTerminal(origin, serverId, terminal.id);
+      terminalRoute.write("ENCRYPTED_BINARY_AFTER\n");
+      await expect.poll(() => terminalRoute!.output()).toContain("ENCRYPTED_BINARY_AFTER");
+      terminalRoute.close();
+      terminalRoute = undefined;
+      await remote.dispose();
+      remote = undefined;
+      expect((await sibling.workspaces.list()).entries).toHaveLength(1);
+      await sibling.terminals.ref(terminal.id).kill();
+      await api.dispose();
+      await expect(sibling.workspaces.list()).rejects.toThrow();
+      const direct = createHostClient(`127.0.0.1:${b.port}`, {
+        clientId: crypto.randomUUID(),
+        password: "relay-password",
+        reconnect: { enabled: false },
+      });
+      try {
+        await direct.connect();
+        const directApi = createPaseoApi(direct);
+        expect((await directApi.workspaces.list()).entries).toHaveLength(1);
+        await directApi.dispose();
+      } finally {
+        await direct.close();
+      }
+    } finally {
+      terminalRoute?.close();
+      await remote?.dispose();
+      await sibling?.dispose();
+      await api?.dispose();
+      await origin?.close();
+      await a?.close();
+      await b?.close();
+      await stopRelay();
+    }
+  }, 120000);
 
   test("oversized attachments fail without disconnecting or resubmitting over the relay", async () => {
     await startRelay({ useLocalRelay: true });
@@ -932,3 +1075,73 @@ async function waitForCapturedLog(
     }
   }, 90000);
 });
+
+async function openConnectedHostTerminal(origin: HostClient, serverId: string, terminalId: string) {
+  const routeId = await origin.openHostRoute(serverId, crypto.randomUUID());
+  const messages: SessionOutboundMessage[] = [];
+  let output = "";
+  const detach = origin.subscribeRawMessages((message) => {
+    if (message.type !== "hosts.route.frame" || message.payload.subscriptionId !== routeId) return;
+    if (message.payload.binary) {
+      const frame = decodeTerminalStreamFrame(Buffer.from(message.payload.data, "base64"));
+      if (frame?.opcode === TerminalStreamOpcode.Output)
+        output += new TextDecoder().decode(frame.payload);
+    } else {
+      const frame = WSOutboundMessageSchema.parse(JSON.parse(message.payload.data));
+      if (frame.type === "session") messages.push(frame.message);
+    }
+  });
+  const close = () => {
+    detach();
+    origin.closeHostRoute(routeId);
+  };
+  try {
+    origin.sendHostFrame(
+      routeId,
+      JSON.stringify({
+        type: "hello",
+        clientId: "relay-binary",
+        clientType: "cli",
+        protocolVersion: 1,
+      }),
+      false,
+    );
+    await expect
+      .poll(() =>
+        messages.some(
+          (message) => message.type === "status" && message.payload.status === "server_info",
+        ),
+      )
+      .toBe(true);
+    origin.sendHostFrame(
+      routeId,
+      JSON.stringify({
+        type: "session",
+        message: { type: "subscribe_terminal_request", terminalId, requestId: "binary" },
+      }),
+      false,
+    );
+    await expect
+      .poll(() => messages.some((message) => message.type === "subscribe_terminal_response"))
+      .toBe(true);
+    const response = messages.find((message) => message.type === "subscribe_terminal_response");
+    if (response?.type !== "subscribe_terminal_response" || response.payload.slot == null)
+      throw new Error("Missing binary stream slot");
+    const slot = response.payload.slot;
+    return {
+      close,
+      output: () => output,
+      write: (payload: string) =>
+        origin.sendHostFrame(
+          routeId,
+          Buffer.from(
+            encodeTerminalStreamFrame({ opcode: TerminalStreamOpcode.Input, slot, payload }),
+          ).toString("base64"),
+          true,
+        ),
+    };
+  } catch (error) {
+    close();
+    throw error;
+  }
+}

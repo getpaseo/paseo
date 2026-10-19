@@ -85,7 +85,7 @@ function ConnectedHosts({ client, connected }: { client: DaemonClient; connected
           model={model}
           canManage={canManage}
           manageSources={info?.permissions?.includes("access.manage") === true}
-          sourceId={info?.principalId}
+          sourceId={info?.sourceId}
           pending={state.pending !== null}
         />
       ) : null}
@@ -151,7 +151,7 @@ function HostRow({
   return (
     <SettingsRow
       label={host.label ?? host.serverId ?? host.registrationId}
-      hint={`${host.status} · ${host.enabled ? "Enabled" : "Disabled"} · ${host.source.id}/${host.source.key}`}
+      hint={`${host.status} · ${host.enabled ? "Enabled" : "Disabled"} · ${sourceLabel(host.source.id)}`}
     >
       <View style={styles.actions}>
         <Button
@@ -180,7 +180,9 @@ function HostDetails({ host }: { host: HostSummary }) {
       <SettingsRow label="Connection" hint={host.targetDescription} />
       <SettingsRow label="Metadata" hint={JSON.stringify(host.metadata)} />
       <SettingsRow label="Status" hint={host.status} />
-      <SettingsRow label="Source" hint={`${host.source.id}/${host.source.key}`} />
+      <SettingsRow label="Source" hint={sourceLabel(host.source.id)} />
+      <SettingsRow label="Source identity" hint={host.source.id} />
+      <SettingsRow label="Source key" hint={host.source.key} />
       <SettingsRow label="Last online" hint={host.lastOnlineAt ?? "Never"} />
       <SettingsRow label="Next retry" hint={host.nextRetryAt ?? "None scheduled"} />
       {host.error ? <SettingsRow label={host.error.code} error={host.error.message} /> : null}
@@ -293,3 +295,21 @@ const styles = StyleSheet.create((theme) => ({
   section: { gap: theme.spacing[3] },
   actions: { flexDirection: "row", flexWrap: "wrap", gap: theme.spacing[2] },
 }));
+
+function sourceLabel(sourceId: string): string {
+  if (sourceId === "owner") return "User";
+  if (sourceId.startsWith("plugin:")) return `Plugin: ${sourceId.slice("plugin:".length)}`;
+  if (sourceId.startsWith("route:")) {
+    const components = sourceId.split(":");
+    let producer: string;
+    try {
+      producer = decodeURIComponent(components[3] ?? "");
+    } catch {
+      return "User (via host)";
+    }
+    return producer.startsWith("plugin:")
+      ? `Plugin: ${producer.slice("plugin:".length)} (via host)`
+      : "User (via host)";
+  }
+  return "User";
+}
