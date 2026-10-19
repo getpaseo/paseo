@@ -125,6 +125,7 @@ function watchTerminal(session: TerminalSession): void {
         type: "terminalMessage",
         terminalId: session.id,
         message: { type: "output", data: payload.toString("utf8"), revision },
+        replayPreamble: session.getReplayPreamble(),
       });
     },
   });
@@ -144,6 +145,7 @@ function watchTerminal(session: TerminalSession): void {
         type: "terminalMessage",
         terminalId: session.id,
         message,
+        replayPreamble: session.getReplayPreamble(),
       });
     },
     // Creation already sends an authoritative state in terminalCreated. A second
