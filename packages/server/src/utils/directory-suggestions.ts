@@ -311,6 +311,10 @@ async function searchConfiguredRoots(
         });
       }),
   );
+  const nestedSearchRoots = new Set<string>();
+  for (const root of uniqueRoots) {
+    if (!roots.includes(root)) nestedSearchRoots.add(root);
+  }
   const budget = Math.max(0, Math.floor(options.maxEntriesScanned ?? DEFAULT_MAX_ENTRIES_SCANNED));
   const rankedByRoot = await Promise.all(
     roots.map(async (root, index) => {
@@ -325,7 +329,7 @@ async function searchConfiguredRoots(
         gitIgnoredPaths,
         excludedDiscoveryPaths,
       );
-      return input ? searchTree(input) : [];
+      return input ? searchTree({ ...input, nestedSearchRoots }) : [];
     }),
   );
   const limit = normalizeLimit(options.limit);
@@ -403,6 +407,7 @@ interface SearchInput {
   confidentResultScanThreshold: number | undefined;
   gitIgnoredPaths: Set<string>;
   excludedDiscoveryPaths: Set<string>;
+  nestedSearchRoots?: ReadonlySet<string>;
 }
 
 async function searchChildren(input: SearchInput): Promise<RankedEntry[]> {
@@ -458,14 +463,12 @@ async function* walkBranch(
   visited: Set<string>,
 ): AsyncGenerator<TraversedEntry> {
   yield entry;
-  if (
-    entry.kind !== "directory" ||
-    visited.has(entry.resolvedPath) ||
-    entry.depth >= input.maxDepth
-  )
+  // An overlapping explicit root shares this walk and budget, but keeps its own depth allowance.
+  const depth = input.nestedSearchRoots?.has(entry.resolvedPath) ? 0 : entry.depth;
+  if (entry.kind !== "directory" || visited.has(entry.resolvedPath) || depth >= input.maxDepth)
     return;
   visited.add(entry.resolvedPath);
-  yield* roundRobin(walkChildren({ parent: entry, depth: entry.depth + 1, input, visited }));
+  yield* roundRobin(walkChildren({ parent: entry, depth: depth + 1, input, visited }));
 }
 
 // Create a child's path and iterator only when its branch gets a turn. Eagerly constructing every

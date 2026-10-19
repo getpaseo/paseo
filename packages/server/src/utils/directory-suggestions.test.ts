@@ -581,15 +581,56 @@ describe("absolute directory-path configuration", () => {
   });
 
   it("does not divide the scan budget for overlapping roots", async () => {
-    const nested = path.join(outsideDir, "nested");
-    const target = path.join(nested, "bridge");
+    const root = path.join(tempRoot, "budget-root");
+    const nested = path.join(root, "nested");
+    const target = path.join(nested, "deep", "bridge");
     mkdirSync(target, { recursive: true });
-    const options = { homeDir, query: "bridge", maxEntriesScanned: 2 };
-    const expected = await searchAbsoluteDirectoryPaths({ ...options, searchRoots: [outsideDir] });
-    expect(expected).toEqual([target]);
+    const options = { homeDir, query: "bridge", maxDirectoriesScanned: 3 };
     expect(
-      await searchAbsoluteDirectoryPaths({ ...options, searchRoots: [nested, outsideDir] }),
-    ).toEqual(expected);
+      await searchAbsoluteDirectoryPaths({
+        ...options,
+        searchRoots: [root],
+        maxDirectoriesScanned: 2,
+      }),
+    ).toEqual([]);
+    const expected = await searchAbsoluteDirectoryPaths({ ...options, searchRoots: [root] });
+    expect(expected).toEqual([target]);
+    expect(await searchAbsoluteDirectoryPaths({ ...options, searchRoots: [root, nested] })).toEqual(
+      expected,
+    );
+  });
+
+  it("preserves each overlapping root's depth limit without widening sibling searches", async () => {
+    const nested = path.join(outsideDir, "nested");
+    const target = path.join(nested, "deep", "bridge");
+    mkdirSync(target, { recursive: true });
+    mkdirSync(path.join(outsideDir, "sibling", "deep", "bridge"), { recursive: true });
+    const options = { homeDir, query: "bridge", maxDepth: 2 };
+    expect(await searchAbsoluteDirectoryPaths({ ...options, searchRoots: [outsideDir] })).toEqual(
+      [],
+    );
+    expect(await searchAbsoluteDirectoryPaths({ ...options, searchRoots: [nested] })).toEqual([
+      target,
+    ]);
+    expect(
+      await searchAbsoluteDirectoryPaths({ ...options, searchRoots: [outsideDir, nested] }),
+    ).toEqual([target]);
+  });
+
+  it("preserves the depth limit through chained overlapping roots", async () => {
+    const nested = path.join(outsideDir, "nested");
+    const deeper = path.join(nested, "deeper");
+    const target = path.join(deeper, "leaf", "bridge");
+    mkdirSync(target, { recursive: true });
+    mkdirSync(path.join(nested, "sibling", "leaf", "bridge"), { recursive: true });
+    expect(
+      await searchAbsoluteDirectoryPaths({
+        homeDir,
+        query: "bridge",
+        maxDepth: 2,
+        searchRoots: [deeper, nested, outsideDir],
+      }),
+    ).toEqual([target]);
   });
 
   it("preserves literal backslashes in configured POSIX roots", async () => {
