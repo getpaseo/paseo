@@ -37,6 +37,34 @@ work is gone. Report that exit as a turn failure so the agent lands in `error` w
 Claude and OMP report exits between turns. OMP relaunches from its session file on the next prompt;
 the unfinished turn is lost.
 
+### Switching providers within a chat
+
+The model picker can select another enabled provider on hosts that advertise
+`features.agentProviderSwitching`. Switching keeps the Paseo agent ID, workspace,
+labels, title and canonical timeline. Finish the active response and resolve pending
+approvals before switching. Provider-specific modes, thinking settings and options
+reset to the new provider's defaults; shared instructions and explicit MCP policy
+remain attached to the chat.
+
+The manager prepares the new session before closing the old one. Failed target
+initialization leaves the original runtime usable. Once the previous runtime has
+closed, a failed replacement remains recoverable through the old persisted session.
+Messages are blocked while a switch is in progress.
+
+The next accepted turn carries text history and tool evidence from the canonical
+timeline. This context is bounded for the selected model, persisted across restart,
+and retained if the provider rejects the turn before accepting it. Historical images
+and private runtime state are not transferred. A timeline notice identifies the
+switch and warns when context was shortened. The injected context is hidden from
+user-message echoes. Reload and rewind preserve earlier provider segments; messages
+from before the most recent switch cannot be rewound by the current provider.
+
+Earlier provider segments are saved atomically in an agent-storage sidecar, including
+switch notices. This preserves visible history on the default daemon, whose current
+provider session files contain only the latest segment. A target with no native
+session handle yet restores its pending handoff without repeating agent-creation
+hooks or clearing the canonical timeline. Deleting the chat removes its sidecar.
+
 ### Cancellation
 
 Provider interruption is idempotent at the `AgentSession` boundary. It resolves when the prior

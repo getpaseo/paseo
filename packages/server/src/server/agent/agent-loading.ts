@@ -122,9 +122,9 @@ export async function ensureAgentLoaded(
       );
       deps.logger.info({ agentId, provider: record.provider }, "Agent resumed from persistence");
     } else {
-      // No provider handle to resume: this starts the agent's first session rather than
-      // bringing one back, so it stamps activity and carries no stored attention. Records
-      // without a handle never got far enough to accumulate either.
+      // A freshly switched provider may not have a native handle until its first
+      // turn. Restore that chat without clearing its canonical history or running
+      // creation hooks again. Ordinary never-started agents retain creation behavior.
       const config = buildSessionConfig(record, {
         validProviders,
       });
@@ -135,6 +135,9 @@ export async function ensureAgentLoaded(
         labels: record.labels,
         workspaceId: record.workspaceId,
         owner: record.owner,
+        ...(config.providerHandoff
+          ? { restoreState: { ...extractTimestamps(record), attention: extractAttention(record) } }
+          : {}),
       });
       deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");
     }

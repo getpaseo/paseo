@@ -3626,10 +3626,14 @@ export class DaemonClient {
     return payload.notice ?? null;
   }
 
-  async setAgentModel(agentId: string, modelId: string | null): Promise<void> {
+  async setAgentModel(agentId: string, modelId: string | null, provider?: string): Promise<void> {
+    if (provider && this.getLastServerInfoMessage()?.features?.agentProviderSwitching !== true) {
+      throw new Error("Update this host to switch agents within a chat");
+    }
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "set_agent_model_request",
+      ...(provider ? { provider } : {}),
       agentId,
       modelId,
       requestId,
