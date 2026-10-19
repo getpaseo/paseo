@@ -100,6 +100,7 @@ export const zhCN: TranslationResources = {
       home: "首页",
       groupByProject: "按项目分组",
       groupByStatus: "按状态分组",
+      groupByDay: "Group by activity day",
       modelGroupLabel: "模型",
       modelSearchKeywords: "切换模型 更改模型 设置模型 选择模型",
       thinkingGroupLabel: "思考",
@@ -1154,6 +1155,11 @@ export const zhCN: TranslationResources = {
       working: "运行中",
       done: "已完成",
     },
+    dayBucket: {
+      today: "Today",
+      yesterday: "Yesterday",
+      older: "Older",
+    },
     display: {
       showBackground: "显示后台工作区",
       trigger: "显示偏好",
@@ -1168,6 +1174,7 @@ export const zhCN: TranslationResources = {
         label: "分组",
         project: "项目",
         status: "状态",
+        day: "Activity day",
         labels: "标签",
       },
       titleSource: {

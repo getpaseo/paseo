@@ -101,6 +101,7 @@ export const ja: TranslationResources = {
       home: "ホーム",
       groupByProject: "プロジェクトでグループ化",
       groupByStatus: "ステータスでグループ化",
+      groupByDay: "アクティビティ日でグループ化",
       modelGroupLabel: "モデル",
       modelSearchKeywords: "モデルを切り替え モデルを変更 モデルを設定 モデルを選択",
       thinkingGroupLabel: "思考",
@@ -1175,6 +1176,11 @@ export const ja: TranslationResources = {
       working: "実行中",
       done: "完了",
     },
+    dayBucket: {
+      today: "今日",
+      yesterday: "昨日",
+      older: "それ以前",
+    },
     display: {
       showBackground: "バックグラウンドを表示",
       trigger: "表示設定",
@@ -1189,6 +1195,7 @@ export const ja: TranslationResources = {
         label: "グループ化",
         project: "プロジェクト",
         status: "ステータス",
+        day: "アクティビティ日",
         labels: "ラベル",
       },
       titleSource: {
