@@ -2105,6 +2105,7 @@ export const ar: TranslationResources = {
       projects: "المشاريع",
       connections: "اتصالات",
       agents: "Agents",
+      notifications: "الإشعارات",
       metadata: "البيانات الوصفية",
       workspaces: "Workspaces",
       providers: "مقدمي الخدمات",
@@ -2549,6 +2550,16 @@ export const ar: TranslationResources = {
       },
       agents: {
         unavailable: "Connect to this host to manage agents",
+      },
+      notifications: {
+        agentFinished: {
+          title: "الإشعار عند انتهاء الوكيل",
+          hint: "أوقف هذا الخيار لتلقي الإشعارات فقط عندما يحتاج الوكيل إلى إذن أو إدخال",
+          accessibilityLabel: "الإشعار عند انتهاء الوكيل",
+          updateFailed: "تعذر تحديث الإشعارات",
+          saving: "جارٍ الحفظ…",
+          loadFailed: "تعذر تحميل إعداد الإشعارات لهذا المضيف",
+        },
       },
       workspaces: {
         unavailable: "Connect to this host to manage workspaces",

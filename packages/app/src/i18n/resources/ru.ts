@@ -2138,6 +2138,7 @@ export const ru: TranslationResources = {
       projects: "Проекты",
       connections: "Подключения",
       agents: "Агенты",
+      notifications: "Уведомления",
       metadata: "Метаданные",
       workspaces: "Рабочие пространства",
       providers: "Провайдеры",
@@ -2595,6 +2596,16 @@ export const ru: TranslationResources = {
       },
       agents: {
         unavailable: "Подключитесь к этому хосту, чтобы управлять агентами",
+      },
+      notifications: {
+        agentFinished: {
+          title: "Уведомлять, когда агент завершает работу",
+          hint: "Выключите, чтобы получать уведомления только когда агенту нужно разрешение или ввод",
+          accessibilityLabel: "Уведомлять, когда агент завершает работу",
+          updateFailed: "Не удалось обновить уведомления",
+          saving: "Сохранение…",
+          loadFailed: "Не удалось загрузить настройку уведомлений этого хоста",
+        },
       },
       workspaces: {
         unavailable: "Подключитесь к этому хосту, чтобы управлять рабочими пространствами",
