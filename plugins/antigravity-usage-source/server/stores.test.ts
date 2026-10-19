@@ -30,7 +30,10 @@ describe("antigravity stores", () => {
       }),
     );
 
-    const accounts = await discover({ kind: "global" }, { home: tempHome, env: {} });
+    const accounts = await discover(
+      { kind: "global" },
+      { home: tempHome, platform: "linux", env: {} },
+    );
     expect(accounts).toHaveLength(1);
     expect(accounts[0]).toMatchObject({
       label: "user@example.com",
@@ -61,11 +64,16 @@ describe("antigravity stores", () => {
         provider: "antigravity",
         env: { GEMINI_HOME: customHome },
       },
-      { home: tempHome },
+      { home: tempHome, platform: "linux" },
     );
 
     expect(accounts).toHaveLength(1);
-    expect(accounts[0]?.input.route.path).toBe(join(tokenDir, "antigravity-oauth-token"));
+    expect(accounts[0]?.input).toEqual({
+      route: {
+        store: "antigravity",
+        path: join(tokenDir, "antigravity-oauth-token"),
+      },
+    });
   });
 
   it("ignores session scope for non-antigravity providers", async () => {
@@ -75,7 +83,7 @@ describe("antigravity stores", () => {
         provider: "codex",
         env: {},
       },
-      { home: tempHome },
+      { home: tempHome, platform: "linux" },
     );
     expect(accounts).toEqual([]);
   });
@@ -144,17 +152,19 @@ describe("antigravity stores", () => {
       }),
     );
 
-    const accounts = await discover({ kind: "global" }, { home: tempHome, env: {} });
+    const accounts = await discover(
+      { kind: "global" },
+      { home: tempHome, platform: "linux", env: {} },
+    );
     expect(accounts).toHaveLength(2);
     expect(accounts[0]?.key).toBe(accounts[1]?.key);
     expect(accounts[0]?.label).toBe("shared@google.com");
     expect(accounts[1]?.label).toBe("shared@google.com");
     expect(
-      accounts.map((a) =>
-        (a.input as AntigravityUsageInput).route.store === "antigravity"
-          ? (a.input as AntigravityUsageInput).route.path
-          : "",
-      ),
+      accounts.map((a) => {
+        const input = a.input as AntigravityUsageInput;
+        return input.route.store === "antigravity" ? input.route.path : "";
+      }),
     ).toEqual([join(cliDir, "antigravity-oauth-token"), join(rootGemini, "oauth_creds.json")]);
   });
 
@@ -219,7 +229,7 @@ describe("antigravity stores", () => {
 
     expect(readKeychainSecret).toHaveBeenCalled();
     expect(accounts).toHaveLength(1);
-    expect(accounts[0]?.input.route.store).toBe("keychain");
+    expect((accounts[0]?.input as AntigravityUsageInput | undefined)?.route.store).toBe("keychain");
     expect(accounts[0]?.label).toBe("mac@example.com");
   });
 
@@ -247,7 +257,9 @@ describe("antigravity stores", () => {
     );
 
     expect(accounts).toHaveLength(1);
-    expect(accounts[0]?.input.route.store).toBe("antigravity");
+    expect((accounts[0]?.input as AntigravityUsageInput | undefined)?.route.store).toBe(
+      "antigravity",
+    );
     expect(accounts[0]?.label).toBe("fallback@example.com");
   });
 });
