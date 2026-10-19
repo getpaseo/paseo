@@ -2,6 +2,7 @@ import { createInstance } from "i18next";
 import { initReactI18next } from "react-i18next";
 import { observeI18nInit } from "./init";
 import { ar } from "./resources/ar";
+import { de } from "./resources/de";
 import { en } from "./resources/en";
 import { es } from "./resources/es";
 import { fr } from "./resources/fr";
@@ -20,6 +21,7 @@ observeI18nInit(
     lng: "en",
     resources: {
       ar: { translation: ar },
+      de: { translation: de },
       en: { translation: en },
       es: { translation: es },
       fr: { translation: fr },
