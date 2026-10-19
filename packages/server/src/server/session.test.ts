@@ -94,7 +94,6 @@ interface SessionHandlerInternals {
   handleStashPopRequest(params: unknown): Promise<unknown>;
   createPaseoWorktree(params: unknown): Promise<unknown>;
   handleStartWorkspaceScriptRequest(params: unknown): Promise<unknown>;
-  resolveWorkspaceLaunchContextById(workspaceId: string): Promise<unknown>;
 }
 
 function asSessionInternals(session: Session): SessionHandlerInternals {
@@ -4927,24 +4926,70 @@ describe("session workspace launch handling", () => {
     });
   });
 
-  test("rejects archived workspaces before resolving a launch context", async () => {
+  test("rejects archived workspaces before starting a launch", async () => {
+    const messages: SessionOutboundMessage[] = [];
     const projectRegistry = { get: vi.fn() };
+    const launch = {
+      launchName: "dev",
+      lifecycle: "running" as const,
+      active: true,
+      portBase: 41000,
+      portEnd: 41099,
+      portCount: 100,
+      composeProjectName: "paseo-test",
+      endpoints: [],
+      exitCode: null,
+      terminalId: "launch-terminal",
+    };
+    const start = vi.fn(async () => launch);
+    const workspaceLaunchManager: WorkspaceLaunchService = {
+      buildSnapshot: () => [],
+      start,
+      async stop() {
+        return launch;
+      },
+      async disposeWorkspace() {},
+    };
     const session = createSessionForTest({
+      messages,
       workspaceRegistry: {
-        get: vi.fn().mockResolvedValue({
-          workspaceId: "archived-workspace",
-          cwd: "/tmp/archived-workspace",
-          projectId: "project-1",
-          archivedAt: "2026-09-01T00:00:00.000Z",
-        }),
+        get: vi.fn().mockResolvedValue(
+          createPersistedWorkspaceRecord({
+            workspaceId: "archived-workspace",
+            projectId: "project-1",
+            cwd: "/tmp/archived-workspace",
+            kind: "worktree",
+            displayName: "archived-workspace",
+            branch: "archived-workspace",
+            createdAt: "2026-09-01T00:00:00.000Z",
+            updatedAt: "2026-09-01T00:00:00.000Z",
+            archivedAt: "2026-09-01T00:00:00.000Z",
+          }),
+        ),
       },
       projectRegistry,
+      workspaceLaunchManager,
     });
 
-    await expect(
-      asSessionInternals(session).resolveWorkspaceLaunchContextById("archived-workspace"),
-    ).rejects.toThrow("Workspace not found: archived-workspace");
+    await session.handleMessage({
+      type: "workspace.launch.start.request",
+      requestId: "start-archived-launch",
+      workspaceId: "archived-workspace",
+      launchName: "dev",
+    });
+
+    expect(start).not.toHaveBeenCalled();
     expect(projectRegistry.get).not.toHaveBeenCalled();
+    expect(messages).toContainEqual({
+      type: "workspace.launch.start.response",
+      payload: {
+        requestId: "start-archived-launch",
+        workspaceId: "archived-workspace",
+        launchName: "dev",
+        launch: null,
+        error: "Workspace not found: archived-workspace",
+      },
+    });
   });
 });
 
