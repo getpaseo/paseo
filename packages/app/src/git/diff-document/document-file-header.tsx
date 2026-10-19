@@ -5,9 +5,13 @@ import type { DiffDocumentProps } from "./types";
 
 interface DocumentFileHeaderProps {
   file: DiffFileSection;
+  isViewed: boolean;
+  viewedActionDisabled: boolean;
+  viewedActionPending: boolean;
   selectedPath: string | null;
   mode: DiffDocumentProps["mode"];
   onToggleFile: (path: string) => void;
+  onToggleFileViewed: (file: DiffFileSection["file"]) => void;
   onSelectPath: (path: string) => void;
   canvasRendered?: boolean;
   onActiveChange?: (active: boolean) => void;
@@ -15,9 +19,13 @@ interface DocumentFileHeaderProps {
 
 export const DocumentFileHeader = memo(function DocumentFileHeader({
   file,
+  isViewed,
+  viewedActionDisabled,
+  viewedActionPending,
   selectedPath,
   mode,
   onToggleFile,
+  onToggleFileViewed,
   onSelectPath,
   canvasRendered = false,
   onActiveChange,
@@ -31,10 +39,17 @@ export const DocumentFileHeader = memo(function DocumentFileHeader({
     [mode, onToggleFile],
   );
   const working = mode.kind === "working" ? mode : null;
+  const toggleViewed = useCallback(
+    () => onToggleFileViewed(file.file),
+    [file.file, onToggleFileViewed],
+  );
   return (
     <FileHeader
       file={file.file}
       bodyVisible={!file.isCollapsed}
+      isViewed={isViewed}
+      viewedActionDisabled={viewedActionDisabled}
+      viewedActionPending={viewedActionPending}
       isSelected={selectedPath === file.path}
       interactive={mode.kind === "working"}
       workspaceFileDragScope={working?.workspaceFileDragScope}
@@ -50,8 +65,9 @@ export const DocumentFileHeader = memo(function DocumentFileHeader({
       onDownload={working?.onDownload}
       onDuplicate={working?.onDuplicate}
       onRevert={working?.onRevert}
+      onToggleViewed={working ? toggleViewed : undefined}
       testID={`diff-file-${file.fileIndex}`}
-      canvasRendered={canvasRendered}
+      canvasRendered={canvasRendered && !working}
       onActiveChange={onActiveChange}
     />
   );
@@ -87,8 +103,12 @@ function documentFileHeaderIdentityMatches(
     previous.file.file !== next.file.file ||
     previous.file.fileIndex !== next.file.fileIndex ||
     previous.file.isCollapsed !== next.file.isCollapsed ||
+    previous.isViewed !== next.isViewed ||
+    previous.viewedActionDisabled !== next.viewedActionDisabled ||
+    previous.viewedActionPending !== next.viewedActionPending ||
     (previous.selectedPath === previous.file.path) !== (next.selectedPath === next.file.path) ||
     previous.onToggleFile !== next.onToggleFile ||
+    previous.onToggleFileViewed !== next.onToggleFileViewed ||
     previous.onSelectPath !== next.onSelectPath ||
     previous.canvasRendered !== next.canvasRendered ||
     previous.onActiveChange !== next.onActiveChange ||

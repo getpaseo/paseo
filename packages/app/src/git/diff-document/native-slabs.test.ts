@@ -52,12 +52,12 @@ describe("native canvas slabs", () => {
     );
 
     expect(slabs.map(({ path, top, height }) => ({ path, top, height }))).toEqual([
-      { path: "small.ts", top: 30, height: 200 },
-      { path: "large.ts", top: 260, height: 768 },
-      { path: "large.ts", top: 1028, height: 768 },
-      { path: "large.ts", top: 1796, height: 768 },
-      { path: "large.ts", top: 2564, height: 768 },
-      { path: "large.ts", top: 3332, height: 128 },
+      { path: "small.ts", top: FILE_HEADER_HEIGHT, height: 200 },
+      { path: "large.ts", top: FILE_HEADER_HEIGHT * 2 + 200, height: 768 },
+      { path: "large.ts", top: FILE_HEADER_HEIGHT * 2 + 968, height: 768 },
+      { path: "large.ts", top: FILE_HEADER_HEIGHT * 2 + 1736, height: 768 },
+      { path: "large.ts", top: FILE_HEADER_HEIGHT * 2 + 2504, height: 768 },
+      { path: "large.ts", top: FILE_HEADER_HEIGHT * 2 + 3272, height: 128 },
     ]);
   });
 
@@ -70,7 +70,9 @@ describe("native canvas slabs", () => {
     );
 
     expect(nativeCanvasSlabsForViewport(slabs, 1700, 600).map((slab) => slab.top)).toEqual([
-      798, 1566, 2334,
+      FILE_HEADER_HEIGHT + 768,
+      FILE_HEADER_HEIGHT + 1536,
+      FILE_HEADER_HEIGHT + 2304,
     ]);
     expect(nativeCanvasWindowBucket(899, 600)).toBe(2);
     expect(nativeCanvasWindowTop(2, 600)).toBe(600);
@@ -79,15 +81,23 @@ describe("native canvas slabs", () => {
   it("keeps slab identities stable when inline review geometry moves files", () => {
     const before = buildNativeCanvasSlabs(
       modelWithBodies([
-        { path: "first.ts", bodyTop: 30, bottom: 230 },
-        { path: "second.ts", bodyTop: 260, bottom: 3460 },
+        { path: "first.ts", bodyTop: FILE_HEADER_HEIGHT, bottom: FILE_HEADER_HEIGHT + 200 },
+        {
+          path: "second.ts",
+          bodyTop: FILE_HEADER_HEIGHT * 2 + 200,
+          bottom: FILE_HEADER_HEIGHT * 2 + 3400,
+        },
       ]),
       600,
     );
     const after = buildNativeCanvasSlabs(
       modelWithBodies([
-        { path: "first.ts", bodyTop: 30, bottom: 378 },
-        { path: "second.ts", bodyTop: 408, bottom: 3608 },
+        { path: "first.ts", bodyTop: FILE_HEADER_HEIGHT, bottom: FILE_HEADER_HEIGHT + 348 },
+        {
+          path: "second.ts",
+          bodyTop: FILE_HEADER_HEIGHT * 2 + 348,
+          bottom: FILE_HEADER_HEIGHT * 2 + 3548,
+        },
       ]),
       600,
     );
