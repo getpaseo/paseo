@@ -773,7 +773,13 @@ function ControlledAgentControls({
 
   return (
     <ComposerControlLayoutProvider value={layoutContextValue}>
-      <View style={styles.container} onLayout={handleLayout}>
+      <View
+        style={[
+          styles.container,
+          (isCompact || presentation.wrapControls) && styles.compactContainer,
+        ]}
+        onLayout={handleLayout}
+      >
         {!isCompact ? (
           <DesktopAgentControlsContent
             provider={provider}
@@ -1162,6 +1168,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
             openSelector={openSelector}
             handleOpenChange={handleOpenChange}
             onSetFeature={onSetFeature}
+            showLabel={presentation.showFeatureLabels}
             onActionComplete={onDropdownClose}
           />
         ))
@@ -1283,14 +1290,41 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
     [handleCloseSheet, handleOpenSheet],
   );
 
-  const sheetControls = (
-    <View style={styles.combinedSheetControls} testID="agent-controls-combined-sheet-controls">
+  return (
+    <View style={styles.compactControls} testID="agent-controls-mobile">
+      {canSelectModel ? (
+        <CompactModelSheet
+          providers={modelSelectorProviders}
+          selectedProvider={provider}
+          selectedModel={selectedModelId ?? ""}
+          thinkingLabel={null}
+          onSelect={handleSheetModelSelect}
+          profiles={agentProfiles}
+          onApplyProfile={onApplyAgentProfile}
+          onEditProfiles={onEditAgentProfiles}
+          onCreateProfile={onCreateAgentProfile}
+          onEditProfile={onEditAgentProfile}
+          isLoading={isModelLoading}
+          disabled={modelDisabled}
+          onOpen={onModelSelectorOpen}
+          onClose={onDropdownClose}
+          onRetryProvider={onRetryModelProvider}
+          isRetryingProvider={isRetryingModelProvider}
+          serverId={modelSelectorServerId}
+          glyphSize={glyphSize}
+          canSwitchProvider={canSwitchProvider}
+          autoRouting={autoRouting}
+        >
+          {null}
+        </CompactModelSheet>
+      ) : null}
+
       {hasThinking ? (
         <>
           <AgentControlTrigger
             ref={thinkingAnchorRef}
             icon={ThinkingIcon}
-            surface="sheet"
+            surface="toolbar"
             label={t("agentControls.thinking.title")}
             value={displayThinking}
             open={activeSheet === "thinking"}
@@ -1330,33 +1364,6 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
       ))}
     </View>
   );
-
-  return canSelectModel ? (
-    <CompactModelSheet
-      providers={modelSelectorProviders}
-      selectedProvider={provider}
-      selectedModel={selectedModelId ?? ""}
-      thinkingLabel={hasThinking ? displayThinking : null}
-      onSelect={handleSheetModelSelect}
-      profiles={agentProfiles}
-      onApplyProfile={onApplyAgentProfile}
-      onEditProfiles={onEditAgentProfiles}
-      onCreateProfile={onCreateAgentProfile}
-      onEditProfile={onEditAgentProfile}
-      isLoading={isModelLoading}
-      disabled={modelDisabled}
-      onOpen={onModelSelectorOpen}
-      onClose={onDropdownClose}
-      onRetryProvider={onRetryModelProvider}
-      isRetryingProvider={isRetryingModelProvider}
-      serverId={modelSelectorServerId}
-      glyphSize={glyphSize}
-      canSwitchProvider={canSwitchProvider}
-      autoRouting={autoRouting}
-    >
-      {sheetControls}
-    </CompactModelSheet>
-  ) : null;
 }
 
 function DesktopFeatureItem({
@@ -1365,6 +1372,7 @@ function DesktopFeatureItem({
   openSelector,
   handleOpenChange,
   onSetFeature,
+  showLabel,
   onActionComplete,
 }: {
   feature: AgentFeature;
@@ -1372,6 +1380,7 @@ function DesktopFeatureItem({
   openSelector: AgentControlSelector | null;
   handleOpenChange: (selector: AgentControlSelector) => (nextOpen: boolean) => void;
   onSetFeature?: (featureId: string, value: unknown) => void;
+  showLabel: boolean;
   onActionComplete?: () => void;
 }) {
   const { theme } = useUnistyles();
@@ -1446,7 +1455,7 @@ function DesktopFeatureItem({
   if (feature.type === "select") {
     const FeatureIcon = getAgentFeatureIcon(feature.icon);
     const selectedOption = feature.options.find((o) => o.id === feature.value);
-    const iconOnly = feature.desktopTrigger === "icon";
+    const iconOnly = feature.desktopTrigger === "icon" || !showLabel;
     const tooltip = iconOnly
       ? `${feature.label}: ${selectedOption?.label ?? feature.label}`
       : getFeatureTooltip(feature);
@@ -2060,6 +2069,21 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[1],
     overflow: "hidden",
+  },
+  compactContainer: {
+    height: "auto",
+    flexWrap: "wrap",
+    overflow: "visible",
+    rowGap: theme.spacing[1],
+  },
+  compactControls: {
+    minWidth: 0,
+    flexShrink: 1,
+    flexGrow: 1,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: theme.spacing[1],
   },
   modeBadge: {
     height: { xs: 28, md: 24 },
