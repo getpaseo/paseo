@@ -16,6 +16,7 @@ import type { ManagedProcessRegistry } from "../../../../managed-processes/manag
 import { resolveOpenCodeHomeDir } from "../paths.js";
 import { OpenCodeHttpError } from "../http-error.js";
 import { raceProviderRefreshAbort } from "../../../provider-refresh-deadline.js";
+import { resolveExternalOpenCodeServer, type ExternalOpenCodeServer } from "./external-server.js";
 
 export interface V2Connection {
   client: V2Api;
@@ -34,6 +35,7 @@ export interface V2RuntimeOptions {
   settings?: ProviderRuntimeSettings;
   managedProcesses?: ManagedProcessRegistry;
   decorateEnv?: (env: Record<string, string>) => Promise<Record<string, string>>;
+  externalServer?: ExternalOpenCodeServer;
 }
 
 export interface V2RuntimeAcquireOptions {
@@ -49,14 +51,25 @@ export class V2Runtime {
   private generations = new Set<Generation>();
   private starts = new Set<Promise<Generation>>();
   private closed = false;
+  private readonly externalServer?: ExternalOpenCodeServer;
 
-  constructor(private readonly options: V2RuntimeOptions) {}
+  constructor(private readonly options: V2RuntimeOptions) {
+    this.externalServer =
+      options.externalServer ??
+      resolveExternalOpenCodeServer({
+        ...globalThis.process.env,
+        ...options.settings?.env,
+      });
+  }
 
   async acquire(input: V2RuntimeAcquireOptions = {}): Promise<V2Connection> {
     if (this.closed) throw new Error("OpenCode runtime is closed");
     input.signal?.throwIfAborted();
     let pending: Promise<Generation>;
-    if (input.env || input.dedicated) {
+    if (this.externalServer) {
+      this.current ??= this.startTracked();
+      pending = this.current;
+    } else if (input.env || input.dedicated) {
       pending = this.startTracked(input.env);
     } else {
       if (input.fresh || !this.current) this.current = this.startTracked();
@@ -146,6 +159,8 @@ export class V2Runtime {
   }
 
   private async start(env: Record<string, string> = {}): Promise<Generation> {
+    if (this.externalServer) return await this.startExternal(this.externalServer);
+
     const { settings, managedProcesses, logger } = this.options;
     const launch = await resolveProviderLaunch({
       commandConfig: settings?.command,
@@ -266,5 +281,57 @@ export class V2Runtime {
       await stop();
       throw error;
     }
+  }
+
+  private async startExternal(server: ExternalOpenCodeServer): Promise<Generation> {
+    const { logger } = this.options;
+    const lifetime = new AbortController();
+    const closed = new Error(`OpenCode external server connection closed (${server.url})`);
+    let resolveExited!: (error: Error) => void;
+    const exited = new Promise<Error>((resolve) => {
+      resolveExited = resolve;
+    });
+    const authorization = server.password
+      ? `Basic ${Buffer.from(`opencode:${server.password}`).toString("base64")}`
+      : undefined;
+    const client = OpenCode.make({
+      baseUrl: server.url,
+      ...(authorization ? { headers: { Authorization: authorization } } : {}),
+      fetch: async (request, init) => {
+        const signal = init?.signal
+          ? AbortSignal.any([init.signal, lifetime.signal])
+          : lifetime.signal;
+        const response = await fetch(request, { ...init, signal });
+        const html = response.headers.get("content-type")?.includes("text/html") ?? false;
+        if (!response.ok || html) {
+          const requestUrl = request instanceof Request ? request.url : String(request);
+          throw new OpenCodeHttpError(new URL(requestUrl).pathname, response.status, html);
+        }
+        return response;
+      },
+    });
+    try {
+      await client.server.info({
+        signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(30_000)]),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Cannot reach OpenCode v2 server at ${server.url}: ${message}`, {
+        cause: error,
+      });
+    }
+    const generation: Generation = {
+      client,
+      users: 0,
+      stop: async () => {
+        if (lifetime.signal.aborted) return;
+        lifetime.abort(closed);
+        resolveExited(closed);
+      },
+      exited,
+    };
+    this.generations.add(generation);
+    logger.info({ url: server.url }, "Using existing OpenCode v2 server");
+    return generation;
   }
 }
