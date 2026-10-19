@@ -2,10 +2,13 @@ import type { MarkdownStyle } from "react-native-enriched-markdown";
 import type { Theme } from "@/styles/theme";
 import { isWeb } from "@/constants/platform";
 
+// iOS Safari needs the prefix to override the gesture host's selection suppression.
+const WEB_CONTAINER = { userSelect: "text", WebkitUserSelect: "text" } as const;
+
 export function createMarkdownStyles(
   theme: Theme,
   { compact = false, blockGap }: { compact?: boolean; blockGap: number },
-): { markdownStyle: MarkdownStyle; selectionColor: string } {
+): { markdownStyle: MarkdownStyle; selectionColor: string; containerStyle?: typeof WEB_CONTAINER } {
   const fontSize = compact ? theme.fontSize.base : theme.fontSize.content;
   // Every block is followed by the same gap; the library drops it after the last block.
   const block = { marginTop: 0, marginBottom: blockGap };
@@ -23,6 +26,7 @@ export function createMarkdownStyles(
     fontWeight: "bold",
   });
   return {
+    containerStyle: isWeb ? WEB_CONTAINER : undefined,
     selectionColor: theme.colors.terminal.selectionBackground,
     markdownStyle: {
       paragraph,

@@ -1,5 +1,72 @@
 import { expect, test } from "vitest";
 import { UsageSourceRegistry } from "./index.js";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  discoverSession as discoverCursorSession,
+  fetchUsage as fetchCursorUsage,
+} from "../../../../../../plugins/cursor-usage-source/server/usage.js";
+import { inputSchema as cursorInputSchema } from "../../../../../../plugins/cursor-usage-source/shared/input.js";
+
+test("#7142: host usage retains distinct Cursor accounts after their individual details are read", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cursor-accounts-"));
+  try {
+    const sessions = new Map<
+      string,
+      { provider: string; sessionKey: string; env: Record<string, string> }
+    >();
+    const spends = new Map<string, number>();
+    for (const [agentId, account, spend] of [
+      ["a", "user-a", 100],
+      ["b", "user-b", 200],
+      ["a-copy", "user-a", 100],
+    ] as const) {
+      const configHome = join(root, agentId);
+      const token = `e30.${Buffer.from(JSON.stringify({ sub: account, nonce: agentId })).toString("base64url")}.signature`;
+      await mkdir(join(configHome, "cursor"), { recursive: true });
+      await writeFile(
+        join(configHome, "cursor", "auth.json"),
+        JSON.stringify({ accessToken: token }),
+      );
+      spends.set(`Bearer ${token}`, spend);
+      sessions.set(agentId, {
+        provider: "cursor",
+        sessionKey: agentId,
+        env: { XDG_CONFIG_HOME: configHome },
+      });
+    }
+    const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+      hasAgent: (id) => sessions.has(id),
+      usageSession: (id) => sessions.get(id) ?? null,
+    });
+    const fetchApi: typeof fetch = async (_url, init) => {
+      const authorization = new Headers(init?.headers).get("Authorization") ?? "";
+      const spend = spends.get(authorization);
+      if (spend === undefined) throw new Error("Unexpected fixture login");
+      return new Response(JSON.stringify({ planUsage: { totalSpend: spend, limit: 1000 } }));
+    };
+    registry.register({
+      id: "cursor",
+      label: "Cursor",
+      discover: (scope) =>
+        scope.kind === "session" ? discoverCursorSession(scope, "linux") : Promise.resolve([]),
+      fetch: (input) => fetchCursorUsage(cursorInputSchema.parse(input), fetchApi),
+    });
+    const spent = (reports: Awaited<ReturnType<typeof registry.listReports>>) =>
+      reports.map((entry) => {
+        if (entry.report.status !== "available")
+          throw new Error("Expected available fixture usage");
+        return entry.report.balances?.[0]?.used;
+      });
+    expect(spent(await registry.listReports({ agentId: "a" }))).toEqual([1]);
+    expect(spent(await registry.listReports({ agentId: "b" }))).toEqual([2]);
+    expect(spent(await registry.listReports({ agentId: "a-copy" }))).toEqual([1]);
+    expect(spent(await registry.listReports())).toEqual([1, 2]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 function source(input: {
   id: string;

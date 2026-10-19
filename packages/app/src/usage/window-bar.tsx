@@ -1,15 +1,21 @@
 import { Pin } from "lucide-react-native";
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { Pressable, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { usageCopy } from "./copy";
-import { formatDisplayPct, formatResetLabel } from "./format";
+import {
+  formatDisplayPct,
+  formatProviderUsageLabel,
+  formatResetLabel,
+  formatRunsOutLabel,
+} from "./format";
 import { UsageMeter } from "./meter";
 import { displayPercent, usageWindowRowLabel } from "./model";
 import type { UsageDisplayAs } from "./preferences";
 import { windowTone } from "./tone";
 import type { UsageTone, UsageWindow } from "./types";
+import { useRelativeTimeTick } from "./use-relative-time-tick";
 
 // Pinned rows carry the pinned surface; hovering an unpinned row previews it at half strength,
 // so a hover never reads as the selection. Pinned rows do not react to hover.
@@ -39,21 +45,24 @@ export function UsageWindowBar({
   pinLabel: string;
   pinTestID: string;
 }) {
+  const { t, i18n } = useTranslation();
   const shownPct = displayPercent(window, displayAs);
   const tone = windowTone(window);
 
+  const now = useRelativeTimeTick({ enabled: window.runsOutAt != null || window.resetsAt != null });
   const isAtRisk =
     window.runsOutAt != null &&
     window.shortfallPct != null &&
-    (!retained || Date.parse(window.runsOutAt) > Date.now());
+    (!retained || Date.parse(window.runsOutAt) > now);
   const trailing = isAtRisk
-    ? `runs out ${formatResetLabel(window.runsOutAt)?.replace("resets ", "") ?? ""}`.trim()
-    : formatResetLabel(window.resetsAt, retained);
+    ? formatRunsOutLabel(window.runsOutAt, now, t)
+    : formatResetLabel(window.resetsAt, retained, now, t);
 
-  const value = shownPct != null ? formatDisplayPct(shownPct, displayAs) : "—";
+  const value =
+    shownPct != null ? formatDisplayPct(shownPct, displayAs, i18n.resolvedLanguage, t) : "—";
   const accessibilityState = useMemo(() => ({ checked: pinned }), [pinned]);
   const content = {
-    label: window.label,
+    label: formatProviderUsageLabel(window.id, window.label, t),
     value,
     trailing,
     isAtRisk,
@@ -124,7 +133,7 @@ function WindowRowContent({
             <Text style={styles.label} numberOfLines={1}>
               {label}
             </Text>
-            <Text style={styles.value}>
+            <Text style={styles.value} numberOfLines={1} ellipsizeMode="tail">
               {value}
               {trailing ? (
                 <Text style={isAtRisk ? styles.atRisk : styles.reset}>{` · ${trailing}`}</Text>
@@ -142,6 +151,7 @@ function WindowRowContent({
 const ThemedPin = withUnistyles(Pin);
 
 function UsagePinGlyph({ pinned }: { pinned: boolean }) {
+  const { t } = useTranslation();
   const iconMapping = useMemo(
     () => (theme: { colors: { foregroundMuted: string } }) => ({
       color: theme.colors.foregroundMuted,
@@ -160,7 +170,9 @@ function UsagePinGlyph({ pinned }: { pinned: boolean }) {
         </View>
       </TooltipTrigger>
       <TooltipContent side="top">
-        <Text style={styles.tooltipText}>{pinned ? usageCopy.unpin : usageCopy.pin}</Text>
+        <Text style={styles.tooltipText}>
+          {pinned ? t("providerUsage.unpin") : t("providerUsage.pin")}
+        </Text>
       </TooltipContent>
     </Tooltip>
   );
@@ -209,6 +221,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
   },
   value: {
+    flexShrink: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,

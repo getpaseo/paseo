@@ -93,6 +93,10 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.quality != 'false') }}
         run: npm run lint
 
+      - name: Test lint rules
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.quality != 'false') }}
+        run: node --test scripts/oxlint/paseo-plugin.test.mjs
+
       - name: Build relay
         if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.relay != 'false') }}
         run: npm run build:relay

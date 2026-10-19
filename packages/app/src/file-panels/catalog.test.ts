@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { filePreviewRenderKind, isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
+import { builtinFilePanels, isRenderedMarkdownFile } from "./catalog";
+import { resolveFilePanel } from "./resolve";
+
+function filePreviewRenderKind(path: string) {
+  const { panel } = resolveFilePanel({
+    file: { path, kind: "text", size: 100, hasBytes: false },
+    candidates: builtinFilePanels,
+    associations: {},
+  });
+  return panel ? panel.id.slice("builtin:".length) : null;
+}
 
 describe("isRenderedMarkdownFile", () => {
   it("detects .md files", () => {
@@ -36,5 +46,41 @@ describe("filePreviewRenderKind", () => {
     expect(filePreviewRenderKind("src/index.ts")).toBe(null);
     expect(filePreviewRenderKind("page.mdx")).toBe(null);
     expect(filePreviewRenderKind("index.html.erb")).toBe(null);
+  });
+});
+
+describe("built-in file panels", () => {
+  it.each(["png", "jpg", "jpeg", "gif", "webp", "svg"])(
+    "registers the image extension %s",
+    (extension) => {
+      const resolution = resolveFilePanel({
+        file: {
+          path: `/capture.${extension.toUpperCase()}`,
+          kind: "image",
+          size: 512,
+          hasBytes: true,
+        },
+        candidates: builtinFilePanels,
+        associations: { [`ext:${extension}`]: "builtin:markdown" },
+      });
+      expect(resolution.panel?.id).toBe("builtin:image");
+      expect(
+        resolveFilePanel({
+          file: { path: "capture.png", kind: "binary", size: 512, hasBytes: false },
+          candidates: builtinFilePanels,
+          associations: {},
+        }).panel,
+      ).toBeNull();
+    },
+  );
+
+  it("does not impose a new preview size limit on built-in text panels", () => {
+    expect(
+      resolveFilePanel({
+        file: { path: "notes.md", kind: "text", size: 11 * 1024 * 1024, hasBytes: false },
+        candidates: builtinFilePanels,
+        associations: {},
+      }).panel?.id,
+    ).toBe("builtin:markdown");
   });
 });

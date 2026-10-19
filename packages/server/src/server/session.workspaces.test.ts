@@ -175,6 +175,7 @@ interface SessionTestAccess {
   emitWorkspaceUpdatesForWorkspaceIds(...args: unknown[]): Promise<unknown>;
   emitWorkspaceUpdatesForExternalWorkspaceIds(workspaceIds: Iterable<string>): Promise<void>;
   updateClientCapabilities(capabilities: Record<string, unknown> | null, source?: object): void;
+  publish: Session["publish"];
   emit(message: unknown): void;
   onMessage(message: unknown): void;
   paseoHome: string;
@@ -9602,3 +9603,82 @@ test("workspace.create.request reports an archived explicit project", async () =
     errorCode: "archived_project",
   });
 });
+
+test.each(["failed", "blocked"] as const)(
+  "workspace setup %s catches up from an existing directory cursor after releasing observation",
+  async (status) => {
+    const emitted: SessionOutboundMessage[] = [];
+    const session = createSessionForWorkspaceTests({
+      onMessage: (message) => emitted.push(message),
+    });
+    const source = {};
+    const capabilities = {
+      [CLIENT_CAPS.ownedSubscriptions]: true,
+      [CLIENT_CAPS.workspaceSetupObservation]: true,
+    };
+    session.updateClientCapabilities(capabilities, source);
+    await session.handleMessage(
+      { type: "fetch_workspaces_request", requestId: "before-setup", subscribe: {}, sync: {} },
+      source,
+    );
+    const initial = findByType(emitted, "fetch_workspaces_response")!.payload;
+    expect(initial.entries).toEqual([
+      expect.objectContaining({ id: "ws-repo-running", setupStatus: null }),
+    ]);
+    expect(initial.sync?.mode).toBe("snapshot");
+    await session.handleMessage(
+      {
+        type: "subscription.release.request",
+        requestId: "release-directory",
+        subscriptionId: initial.subscriptionId,
+      },
+      source,
+    );
+    emitted.length = 0;
+    session.publish({
+      type: "workspace_setup_progress",
+      payload: {
+        workspaceId: "ws-repo-running",
+        status,
+        error: status === "failed" ? "setup failed" : null,
+        detail: {
+          type: "worktree_setup",
+          worktreePath: REPO_CWD,
+          branchName: "main",
+          log: "output never requested",
+          commands: [],
+        },
+      },
+    });
+    await flushWorkspaceUpdateBackgroundWork();
+    expect(emitted).toEqual([]);
+    const reconnectSource = {};
+    session.updateClientCapabilities(capabilities, reconnectSource);
+    await session.handleMessage(
+      {
+        type: "fetch_workspaces_request",
+        requestId: "catch-up-setup",
+        subscribe: {},
+        sync: { generation: initial.sync!.generation, afterSeq: initial.sync!.headSeq },
+      },
+      reconnectSource,
+    );
+    const caughtUp = findByType(emitted, "fetch_workspaces_response")!.payload;
+    expect(caughtUp.sync?.mode).toBe("changes");
+    expect(caughtUp.entries).toEqual([
+      expect.objectContaining({ id: "ws-repo-running", setupStatus: status }),
+    ]);
+    expect(caughtUp.entries[0].syncSeq).toBeGreaterThan(initial.sync!.headSeq);
+    expect(filterByType(emitted, "workspace_setup_progress")).toEqual([]);
+    emitted.length = 0;
+    await session.handleMessage(
+      {
+        type: "fetch_workspaces_request",
+        requestId: "after-catch-up",
+        sync: { generation: caughtUp.sync!.generation, afterSeq: caughtUp.sync!.headSeq },
+      },
+      reconnectSource,
+    );
+    expect(findByType(emitted, "fetch_workspaces_response")!.payload.entries).toEqual([]);
+  },
+);

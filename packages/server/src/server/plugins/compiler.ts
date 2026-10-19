@@ -393,6 +393,8 @@ async function compileTarget(entryPath: string, target: PluginBuildTarget): Prom
     bundle: true,
     format: "cjs",
     jsx: "automatic",
+    // `import icon from "./icon.svg"` yields the markup for an inline `{ svg }` icon.
+    loader: { ".svg": "text" },
     platform: target === "server" ? "node" : "neutral",
     target: target === "server" ? "node20" : "es2020",
     // The neutral platform reads no package.json entry fields, so packages without

@@ -379,6 +379,7 @@ test("quality preserves commands and routes each domain independently after fail
       "npx --yes lockfile-lint --path package-lock.json --type npm --allowed-hosts npm --validate-https --validate-integrity",
       "npm audit signatures",
       "npm run lint",
+      "node --test scripts/oxlint/paseo-plugin.test.mjs",
     ],
     relay: ["npm run build:relay", "npm run test --workspace=@getpaseo/relay"],
     sdk: [

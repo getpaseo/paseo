@@ -9,6 +9,7 @@ import type {
   PluginSidebarItemContribution,
   PluginSidebarSection,
 } from "./types";
+import type { PluginIcon } from "@getpaseo/plugin/client";
 
 export interface PluginSidebarTarget {
   plugin: InstalledPlugin;
@@ -36,7 +37,7 @@ export type PluginSidebarGroup =
   | (PluginSidebarGroupBase & { kind: "item"; targets: PluginSidebarTarget[] })
   | (PluginSidebarGroupBase & {
       kind: "legacy";
-      icon: string;
+      icon: PluginIcon;
       targets: PluginLegacySidebarTarget[];
     });
 
