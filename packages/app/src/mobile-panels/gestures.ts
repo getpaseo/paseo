@@ -2,7 +2,8 @@ import { useCallback, useMemo } from "react";
 import { Gesture } from "react-native-gesture-handler";
 import { useSharedValue } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
-import { isWeb } from "@/constants/platform";
+import { getIsElectron, isWeb } from "@/constants/platform";
+import { mobilePanelGesturesAvailable } from "@/constants/input-behavior";
 import { useHorizontalScrollOptional } from "@/contexts/horizontal-scroll-context";
 import { usePanelStore } from "@/stores/panel-store";
 import { canBeginMobilePanelGesture, isMobilePanelGestureCurrent } from "./model";
@@ -35,6 +36,7 @@ function useRevisionCommit(action: () => void) {
 }
 
 export function useOpenAgentListGesture(enabled: boolean) {
+  enabled = enabled && mobilePanelGesturesAvailable({ isElectron: getIsElectron() });
   const {
     beginGesture,
     finishGesture,
@@ -131,6 +133,7 @@ export function useOpenAgentListGesture(enabled: boolean) {
 }
 
 export function useCloseAgentListGesture() {
+  const enabled = mobilePanelGesturesAvailable({ isElectron: getIsElectron() });
   const {
     beginGesture,
     finishGesture,
@@ -148,6 +151,7 @@ export function useCloseAgentListGesture() {
     () =>
       Gesture.Pan()
         .withRef(leftCloseGestureRef)
+        .enabled(enabled)
         .manualActivation(true)
         .onTouchesDown((event) => {
           const touch = event.changedTouches[0];
@@ -209,6 +213,7 @@ export function useCloseAgentListGesture() {
       commit,
       finishGesture,
       leftCloseGestureRef,
+      enabled,
       motionState,
       position,
       startedRevision,
@@ -228,6 +233,7 @@ interface OpenFileExplorerGestureOptions {
 }
 
 export function useOpenFileExplorerGesture({ enabled, onOpen }: OpenFileExplorerGestureOptions) {
+  enabled = enabled && mobilePanelGesturesAvailable({ isElectron: getIsElectron() });
   const {
     beginGesture,
     finishGesture,
@@ -325,6 +331,7 @@ export function useOpenFileExplorerGesture({ enabled, onOpen }: OpenFileExplorer
 }
 
 export function useCloseFileExplorerGesture() {
+  const enabled = mobilePanelGesturesAvailable({ isElectron: getIsElectron() });
   const {
     beginGesture,
     finishGesture,
@@ -343,6 +350,7 @@ export function useCloseFileExplorerGesture() {
     () =>
       Gesture.Pan()
         .withRef(rightCloseGestureRef)
+        .enabled(enabled)
         .manualActivation(true)
         .onTouchesDown((event) => {
           const touch = event.changedTouches[0];
@@ -408,6 +416,7 @@ export function useCloseFileExplorerGesture() {
       motionState,
       position,
       rightCloseGestureRef,
+      enabled,
       startedRevision,
       touchStartX,
       touchStartY,

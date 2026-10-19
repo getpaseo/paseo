@@ -78,6 +78,7 @@ definition, no longer eligible to begin.
 
 - Callers request semantic targets through `panel-store`; they never write shared values.
 - Gesture behavior comes from the four explicit hooks in `mobile-panels/gestures.ts`.
+- Electron uses compact panel buttons at narrow widths, but disables panel drag gestures so mouse selection keeps ownership of pointer drags.
 - A focused interactive surface may block panel-opening gestures through
   `useBlockMobilePanelOpenGestures`. Register only while the conflicting interaction is active and
   unregister when the surface is hidden or unfocused. The blocker never disables gestures that close
