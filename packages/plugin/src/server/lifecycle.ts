@@ -51,6 +51,8 @@ export interface PluginLifecycleEvents {
     turnId: string | null;
     outcome: PluginTurnOutcome;
     timeline: readonly AgentTimelineItem[];
+    /** Latest provider-native turn diff. Undefined means unavailable; null means no diff was emitted. */
+    nativeDiff?: string | null;
   };
   "agent.permission_requested": { agent: PluginHookAgent; request: AgentPermissionRequest };
   "agent.permission_resolved": {
