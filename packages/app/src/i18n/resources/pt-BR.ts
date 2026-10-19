@@ -279,6 +279,12 @@ export const ptBR: TranslationResources = {
       callout: "Este agente está arquivado",
       unarchive: "Desarquivar",
     },
+    claudeAuthRefresh: {
+      callout: "Credenciais da AWS expiradas",
+      refresh: "Atualizar credenciais da AWS",
+      dismiss: "Dispensar",
+      failedToast: "Falha ao atualizar as credenciais da AWS",
+    },
   },
   sessions: {
     title: "Histórico de agentes",
@@ -657,6 +663,7 @@ export const ptBR: TranslationResources = {
         moveToMain: "Mover para o painel principal",
         reloadAgent: "Recarregar agente",
         reloadAgentTooltip: "Recarregue o agente para atualizar skills, MCPs ou status de login.",
+        refreshClaudeAuth: "Atualizar credenciais da AWS",
         close: "Fechar",
         renameTerminal: "Renomear terminal",
         renameAgent: "Renomear agente",

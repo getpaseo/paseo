@@ -199,3 +199,47 @@ test("loads an archived agent's history after its working directory is removed",
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("resuming a stored agent restores its awsAuthRefreshRequired flag", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "agent-loading-aws-auth-"));
+  const logger = createTestLogger();
+  const storage = new AgentStorage(path.join(root, "agents"), logger);
+  const manager = new AgentManager({
+    clients: createTestAgentClients(),
+    registry: storage,
+    logger,
+  });
+
+  const agentId = "00000000-0000-4000-8000-000000000501";
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: root }, agentId, {
+      workspaceId: "workspace-aws",
+    });
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    await storage.flush();
+
+    const stored = await storage.get(agent.id);
+    expect(stored).not.toBeNull();
+    await storage.upsert({
+      ...stored!,
+      awsAuthRefreshRequired: true,
+    });
+
+    const loaded = await ensureAgentLoaded(agentId, {
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+
+    expect(loaded.id).toBe(agentId);
+    expect(loaded.awsAuthRefreshRequired).toBe(true);
+    expect(manager.getAgent(agentId)?.awsAuthRefreshRequired).toBe(true);
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+  }
+});

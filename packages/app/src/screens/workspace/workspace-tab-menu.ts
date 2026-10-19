@@ -18,6 +18,7 @@ export interface WorkspaceTabMenuLabels {
   closeOthers: string;
   reloadAgent: string;
   reloadAgentTooltip: string;
+  refreshClaudeAuth?: string;
   close: string;
 }
 
@@ -34,6 +35,7 @@ export const DEFAULT_WORKSPACE_TAB_MENU_LABELS: WorkspaceTabMenuLabels = {
   closeOthers: i18n.t("workspace.tabs.menu.closeOthers"),
   reloadAgent: i18n.t("workspace.tabs.menu.reloadAgent"),
   reloadAgentTooltip: i18n.t("workspace.tabs.menu.reloadAgentTooltip"),
+  refreshClaudeAuth: i18n.t("workspace.tabs.menu.refreshClaudeAuth"),
   close: i18n.t("workspace.tabs.menu.close"),
 };
 
@@ -68,11 +70,14 @@ interface BuildWorkspaceTabMenuEntriesInput {
   index: number;
   tabCount: number;
   menuTestIDBase: string;
+  agentProvider?: string;
+  isClaudeAgent?: boolean;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
+  onRefreshClaudeAuth?: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   onCloseTabsBefore: (tabId: string) => Promise<void> | void;
@@ -85,11 +90,14 @@ interface BuildWorkspaceDesktopTabActionsInput {
   tab: WorkspaceTabDescriptor;
   index: number;
   tabCount: number;
+  agentProvider?: string;
+  isClaudeAgent?: boolean;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
+  onRefreshClaudeAuth?: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
@@ -177,6 +185,7 @@ export function buildWorkspaceTabMenuEntries(
     onCopyTerminalId,
     onCopyFilePath,
     onReloadAgent,
+    onRefreshClaudeAuth,
     onRenameTab,
     onCloseTab,
     onCloseTabsBefore,
@@ -306,6 +315,22 @@ export function buildWorkspaceTabMenuEntries(
         void onReloadAgent(agentId);
       },
     });
+    const isClaude = input.isClaudeAgent ?? input.agentProvider === "claude";
+    if (isClaude && onRefreshClaudeAuth) {
+      entries.push({
+        kind: "item",
+        key: "refresh-claude-auth",
+        label:
+          labels.refreshClaudeAuth ??
+          DEFAULT_WORKSPACE_TAB_MENU_LABELS.refreshClaudeAuth ??
+          "Refresh AWS credentials",
+        icon: "rotate-cw",
+        testID: `${menuTestIDBase}-refresh-claude-auth`,
+        onSelect: () => {
+          void onRefreshClaudeAuth(agentId);
+        },
+      });
+    }
   }
   entries.push({
     kind: "item",
@@ -333,11 +358,14 @@ export function buildWorkspaceDesktopTabActions(
       index: input.index,
       tabCount: input.tabCount,
       menuTestIDBase: contextMenuTestId,
+      agentProvider: input.agentProvider,
+      isClaudeAgent: input.isClaudeAgent,
       onCopyResumeCommand: input.onCopyResumeCommand,
       onCopyAgentId: input.onCopyAgentId,
       onCopyTerminalId: input.onCopyTerminalId,
       onCopyFilePath: input.onCopyFilePath,
       onReloadAgent: input.onReloadAgent,
+      onRefreshClaudeAuth: input.onRefreshClaudeAuth,
       onRenameTab: input.onRenameTab,
       onCloseTab: input.onCloseTab,
       onCloseTabsBefore: input.onCloseTabsToLeft,

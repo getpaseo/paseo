@@ -2088,6 +2088,26 @@ export class DaemonClient {
     });
   }
 
+  async refreshClaudeAuth(input: {
+    agentId: string;
+    action?: "refresh" | "dismiss";
+    requestId?: string;
+  }): Promise<{ terminalId?: string | null }> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"claude.auth.refresh.response">({
+        requestId: input.requestId,
+        message: {
+          type: "claude.auth.refresh.request",
+          agentId: input.agentId,
+          action: input.action ?? "refresh",
+        },
+      });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    return { terminalId: payload.terminalId };
+  }
+
   async clearWorkspaceAttention(workspaceId: string | string[]): Promise<void> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({

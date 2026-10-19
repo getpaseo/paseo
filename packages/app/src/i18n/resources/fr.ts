@@ -280,6 +280,12 @@ export const fr: TranslationResources = {
       callout: "Cet agent est archivé",
       unarchive: "Désarchiver",
     },
+    claudeAuthRefresh: {
+      callout: "Identifiants AWS expirés",
+      refresh: "Actualiser les identifiants AWS",
+      dismiss: "Ignorer",
+      failedToast: "Échec de l'actualisation des identifiants AWS",
+    },
   },
   sessions: {
     title: "Historique",
@@ -659,6 +665,7 @@ export const fr: TranslationResources = {
         reloadAgent: "Recharger l’agent",
         reloadAgentTooltip:
           "Rechargez l’agent pour mettre à jour les skills, les MCP ou l’état de connexion.",
+        refreshClaudeAuth: "Actualiser les identifiants AWS",
         close: "Fermer",
         renameTerminal: "Renommer le terminal",
         renameAgent: "Renommer l’agent",

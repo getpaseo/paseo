@@ -279,6 +279,12 @@ export const ru: TranslationResources = {
       callout: "Этот агент находится в архиве",
       unarchive: "Разархивировать",
     },
+    claudeAuthRefresh: {
+      callout: "Срок действия учетных данных AWS истек",
+      refresh: "Обновить учетные данные AWS",
+      dismiss: "Отклонить",
+      failedToast: "Не удалось обновить учетные данные AWS",
+    },
   },
   sessions: {
     title: "История",
@@ -659,6 +665,7 @@ export const ru: TranslationResources = {
         moveToMain: "Переместить на основную панель",
         reloadAgent: "Перезагрузить агента",
         reloadAgentTooltip: "Перезагрузите агента, чтобы обновить навыки, MCP или статус входа.",
+        refreshClaudeAuth: "Обновить учетные данные AWS",
         close: "Закрыть",
         renameTerminal: "Переименовать терминал",
         renameAgent: "Переименовать агента",

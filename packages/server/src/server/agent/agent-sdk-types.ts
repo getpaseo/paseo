@@ -129,6 +129,7 @@ export interface ProviderSnapshotEntry {
   status: ProviderStatus;
   enabled: boolean;
   source?: "builtin" | "custom";
+  derivedFromProviderId?: string | null;
   error?: string;
   models?: AgentModelDefinition[];
   modes?: AgentMode[];
@@ -429,6 +430,7 @@ export type AgentStreamEvent =
       code?: string;
       diagnostic?: string;
       turnId?: string;
+      awsAuthRefreshRequired?: boolean;
     }
   | { type: "turn_canceled"; provider: AgentProvider; reason: string; turnId?: string }
   | {
@@ -714,6 +716,7 @@ export interface AgentSession {
   tryHandleOutOfBand?(prompt: AgentPromptInput): {
     run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void>;
   } | null;
+  getProviderEnv?(): NodeJS.ProcessEnv;
 }
 
 export type FetchCatalogOptions = { providerOptions?: ProviderOptions } & (
@@ -812,4 +815,5 @@ export interface AgentClient {
    * shuts down. Must be idempotent.
    */
   shutdown?(): Promise<void>;
+  getProviderEnv?(launchEnv?: Record<string, string>): NodeJS.ProcessEnv;
 }

@@ -853,6 +853,7 @@ export class ProviderSnapshotManager {
           status: definition.enabled ? "loading" : "unavailable",
           enabled: definition.enabled,
           source: custom ? "custom" : "builtin",
+          derivedFromProviderId: definition.derivedFromProviderId ?? null,
           label: definition.label,
           description: definition.description,
           iconSvg: definition.iconSvg,

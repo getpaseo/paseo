@@ -223,6 +223,32 @@ describe("toStoredAgentRecord", () => {
       expect(record.lastStatus).toBe(status);
     }
   });
+
+  it("propagates awsAuthRefreshRequired when true and omits when unset", () => {
+    const withFlag = createManagedAgent({ awsAuthRefreshRequired: true });
+    expect(toStoredAgentRecord(withFlag).awsAuthRefreshRequired).toBe(true);
+
+    const withoutFlag = createManagedAgent();
+    expect(toStoredAgentRecord(withoutFlag).awsAuthRefreshRequired).toBeUndefined();
+  });
+
+  it("propagates baseProvider for claude and custom claude providers", () => {
+    const claudeAgent = createManagedAgent();
+    expect(toStoredAgentRecord(claudeAgent).baseProvider).toBe("claude");
+
+    const bedrockAgent = createManagedAgent({
+      provider: "bedrock",
+      baseProvider: "claude",
+      config: { provider: "bedrock" },
+    });
+    expect(toStoredAgentRecord(bedrockAgent).baseProvider).toBe("claude");
+
+    const codexAgent = createManagedAgent({
+      provider: "codex",
+      config: { provider: "codex" },
+    });
+    expect(toStoredAgentRecord(codexAgent).baseProvider).toBeUndefined();
+  });
 });
 
 describe("toAgentPayload", () => {
@@ -481,6 +507,62 @@ describe("toAgentPayload", () => {
     const payload = toAgentPayload(agent);
 
     expect(payload.features).toEqual(features);
+  });
+
+  it("propagates awsAuthRefreshRequired when true and omits when unset", () => {
+    const withFlag = createManagedAgent({ awsAuthRefreshRequired: true });
+    expect(toAgentPayload(withFlag).awsAuthRefreshRequired).toBe(true);
+
+    const withoutFlag = createManagedAgent();
+    expect(toAgentPayload(withoutFlag).awsAuthRefreshRequired).toBeUndefined();
+  });
+
+  it("propagates awsAuthRefreshRequired in buildStoredAgentPayload", () => {
+    const record = toStoredAgentRecord(createManagedAgent({ awsAuthRefreshRequired: true }));
+    const payload = buildStoredAgentPayload(record, ["claude"]);
+    expect(payload.awsAuthRefreshRequired).toBe(true);
+
+    const unflaggedRecord = toStoredAgentRecord(createManagedAgent());
+    const unflaggedPayload = buildStoredAgentPayload(unflaggedRecord, ["claude"]);
+    expect(unflaggedPayload.awsAuthRefreshRequired).toBeUndefined();
+  });
+
+  it("propagates baseProvider in toAgentPayload and buildStoredAgentPayload", () => {
+    const claudePayload = toAgentPayload(createManagedAgent());
+    expect(claudePayload.baseProvider).toBe("claude");
+
+    const bedrockPayload = toAgentPayload(
+      createManagedAgent({
+        provider: "bedrock",
+        baseProvider: "claude",
+        config: { provider: "bedrock" },
+      }),
+    );
+    expect(bedrockPayload.baseProvider).toBe("claude");
+
+    const codexPayload = toAgentPayload(
+      createManagedAgent({
+        provider: "codex",
+        config: { provider: "codex" },
+      }),
+    );
+    expect(codexPayload.baseProvider).toBeUndefined();
+
+    const storedClaudePayload = buildStoredAgentPayload(toStoredAgentRecord(createManagedAgent()), [
+      "claude",
+    ]);
+    expect(storedClaudePayload.baseProvider).toBe("claude");
+
+    const storedCodexPayload = buildStoredAgentPayload(
+      toStoredAgentRecord(
+        createManagedAgent({
+          provider: "codex",
+          config: { provider: "codex" },
+        }),
+      ),
+      ["codex"],
+    );
+    expect(storedCodexPayload.baseProvider).toBeUndefined();
   });
 });
 

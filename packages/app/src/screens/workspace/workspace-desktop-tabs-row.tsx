@@ -529,6 +529,7 @@ export interface WorkspaceDesktopTabsRowProps {
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
+  onRefreshClaudeAuth?: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
@@ -1027,6 +1028,7 @@ function ResolvedWorkspaceDesktopTabsRow({
   onCopyTerminalId,
   onCopyFilePath,
   onReloadAgent,
+  onRefreshClaudeAuth,
   onRenameTab,
   onCloseTabsToLeft,
   onCloseTabsToRight,
@@ -1114,6 +1116,7 @@ function ResolvedWorkspaceDesktopTabsRow({
       closeOthers: t("workspace.tabs.menu.closeOthers"),
       reloadAgent: t("workspace.tabs.menu.reloadAgent"),
       reloadAgentTooltip: t("workspace.tabs.menu.reloadAgentTooltip"),
+      refreshClaudeAuth: t("workspace.tabs.menu.refreshClaudeAuth"),
       close: t("workspace.tabs.menu.close"),
     }),
     [t],
@@ -1286,6 +1289,7 @@ function ResolvedWorkspaceDesktopTabsRow({
           onCopyTerminalId={onCopyTerminalId}
           onCopyFilePath={onCopyFilePath}
           onReloadAgent={onReloadAgent}
+          onRefreshClaudeAuth={onRefreshClaudeAuth}
           onRenameTab={onRenameTab}
           onCloseTabsToLeft={onCloseTabsToLeft}
           onCloseTabsToRight={onCloseTabsToRight}
@@ -1319,6 +1323,7 @@ function ResolvedWorkspaceDesktopTabsRow({
       onCopyResumeCommand,
       onNavigateTab,
       onReloadAgent,
+      onRefreshClaudeAuth,
       onRenameTab,
       setHoveredCloseTabKey,
       tabMenuLabels,
@@ -1439,6 +1444,7 @@ function ResolvedDesktopTabChip({
   onCopyTerminalId,
   onCopyFilePath,
   onReloadAgent,
+  onRefreshClaudeAuth,
   onRenameTab,
   onCloseTabsToLeft,
   onCloseTabsToRight,
@@ -1465,6 +1471,7 @@ function ResolvedDesktopTabChip({
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
+  onRefreshClaudeAuth?: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
@@ -1482,17 +1489,33 @@ function ResolvedDesktopTabChip({
 }) {
   const { t } = useTranslation();
   const presentation = item.presentation;
+  const agent = useSessionStore((state) => {
+    if (item.tab.target.kind !== "agent") return undefined;
+    const session = state.sessions[serverId];
+    return (
+      session?.agents.get(item.tab.target.agentId) ??
+      session?.agentDetails.get(item.tab.target.agentId)
+    );
+  });
+  const agentProvider = agent?.provider;
+  const isClaudeAgent =
+    agent?.provider === "claude" ||
+    agent?.baseProvider === "claude" ||
+    agent?.awsAuthRefreshRequired === true;
   const resolvedTab = useMemo(
     () =>
       buildWorkspaceDesktopTabActions({
         tab: item.tab,
         index,
         tabCount,
+        agentProvider,
+        isClaudeAgent,
         onCopyResumeCommand,
         onCopyAgentId,
         onCopyTerminalId,
         onCopyFilePath,
         onReloadAgent,
+        onRefreshClaudeAuth,
         onRenameTab,
         onCloseTab,
         onCloseTabsToLeft,
@@ -1501,7 +1524,9 @@ function ResolvedDesktopTabChip({
         labels,
       }),
     [
+      agentProvider,
       index,
+      isClaudeAgent,
       item.tab,
       onCloseOtherTabs,
       onCloseTab,
@@ -1513,6 +1538,7 @@ function ResolvedDesktopTabChip({
       onCopyResumeCommand,
       labels,
       onReloadAgent,
+      onRefreshClaudeAuth,
       onRenameTab,
       tabCount,
     ],

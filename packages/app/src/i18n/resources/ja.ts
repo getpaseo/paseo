@@ -280,6 +280,12 @@ export const ja: TranslationResources = {
       callout: "このエージェントはアーカイブされています",
       unarchive: "アーカイブ解除",
     },
+    claudeAuthRefresh: {
+      callout: "AWS認証情報の有効期限が切れました",
+      refresh: "AWS認証情報を更新",
+      dismiss: "閉じる",
+      failedToast: "AWS認証情報の更新に失敗しました",
+    },
   },
   sessions: {
     title: "履歴",
@@ -659,6 +665,7 @@ export const ja: TranslationResources = {
         reloadAgent: "エージェントを再読み込み",
         reloadAgentTooltip:
           "スキル、MCP、ログイン状態を更新するためにエージェントを再読み込みします。",
+        refreshClaudeAuth: "AWS認証情報を更新",
         close: "閉じる",
         renameTerminal: "ターミナルの名前を変更",
         renameAgent: "エージェントの名前を変更",

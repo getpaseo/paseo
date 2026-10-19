@@ -477,6 +477,7 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     revertFiles: inner.revertFiles?.bind(inner),
     revertBoth: inner.revertBoth?.bind(inner),
     tryHandleOutOfBand: inner.tryHandleOutOfBand?.bind(inner),
+    getProviderEnv: inner.getProviderEnv?.bind(inner),
   } satisfies ForwardedAgentSession;
 }
 
@@ -609,6 +610,7 @@ function wrapClientProvider(
     getCatalogCacheKey: inner.getCatalogCacheKey?.bind(inner),
     isAvailable: (signal, options) => inner.isAvailable(signal, options),
     getDiagnostic: inner.getDiagnostic?.bind(inner),
+    getProviderEnv: inner.getProviderEnv?.bind(inner),
   };
 }
 

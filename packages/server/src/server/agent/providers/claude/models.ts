@@ -9,6 +9,11 @@ import {
   normalizeClaudeManifestModelId,
   normalizeClaudeRuntimeModelId as normalizeClaudeManifestRuntimeModelId,
 } from "./model-manifest.js";
+export {
+  classifyAwsAuthRefreshFailure,
+  readClaudeAuthRefreshSettingsSync,
+  type ClaudeAuthRefreshSettings,
+} from "./auth-refresh.js";
 
 const CLAUDE_SETTINGS_MODEL_ENV_KEYS = [
   "ANTHROPIC_MODEL",

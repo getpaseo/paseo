@@ -17,6 +17,7 @@ import {
   type WorkspaceTabMenuLabels,
 } from "@/screens/workspace/workspace-tab-menu";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
+import { useSessionStore } from "@/stores/session-store";
 
 // The trigger draws at 32pt beside its island neighbours, so only vertical slop is free.
 const TAB_SWITCHER_TRIGGER_HIT_SLOP = { top: 8, bottom: 8 } as const;
@@ -135,6 +136,7 @@ interface MobileWorkspaceTabSwitcherProps {
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
+  onRefreshClaudeAuth?: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   onCloseTabsAbove: (tabId: string) => Promise<void> | void;
@@ -156,6 +158,7 @@ function MobileWorkspaceTabOption({
   onCopyTerminalId,
   onCopyFilePath,
   onReloadAgent,
+  onRefreshClaudeAuth,
   onRenameTab,
   onCloseTab,
   onCloseTabsAbove,
@@ -175,6 +178,7 @@ function MobileWorkspaceTabOption({
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
+  onRefreshClaudeAuth?: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   onCloseTabsAbove: (tabId: string) => Promise<void> | void;
@@ -196,22 +200,36 @@ function MobileWorkspaceTabOption({
       closeOthers: t("workspace.tabs.menu.closeOthers"),
       reloadAgent: t("workspace.tabs.menu.reloadAgent"),
       reloadAgentTooltip: t("workspace.tabs.menu.reloadAgentTooltip"),
+      refreshClaudeAuth: t("workspace.tabs.menu.refreshClaudeAuth"),
       close: t("workspace.tabs.menu.close"),
     }),
     [t],
   );
   const menuTestIDBase = `workspace-tab-menu-${tab.tabId}`;
+  const agent = useSessionStore((state) => {
+    if (tab.target.kind !== "agent") return undefined;
+    const session = state.sessions[normalizedServerId];
+    return session?.agents.get(tab.target.agentId) ?? session?.agentDetails.get(tab.target.agentId);
+  });
+  const agentProvider = agent?.provider;
+  const isClaudeAgent =
+    agent?.provider === "claude" ||
+    agent?.baseProvider === "claude" ||
+    agent?.awsAuthRefreshRequired === true;
   const menuEntries = buildWorkspaceTabMenuEntries({
     surface: "mobile",
     tab,
     index: tabIndex,
     tabCount,
     menuTestIDBase,
+    agentProvider,
+    isClaudeAgent,
     onCopyResumeCommand,
     onCopyAgentId,
     onCopyTerminalId,
     onCopyFilePath,
     onReloadAgent,
+    onRefreshClaudeAuth,
     onRenameTab,
     onCloseTab,
     onCloseTabsBefore: onCloseTabsAbove,
@@ -284,6 +302,7 @@ export const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitch
   onCopyTerminalId,
   onCopyFilePath,
   onReloadAgent,
+  onRefreshClaudeAuth,
   onRenameTab,
   onCloseTab,
   onCloseTabsAbove,
@@ -406,6 +425,7 @@ export const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitch
           onCopyTerminalId={onCopyTerminalId}
           onCopyFilePath={onCopyFilePath}
           onReloadAgent={onReloadAgent}
+          onRefreshClaudeAuth={onRefreshClaudeAuth}
           onRenameTab={onRenameTab}
           onCloseTab={onCloseTab}
           onCloseTabsAbove={onCloseTabsAbove}
@@ -425,6 +445,7 @@ export const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitch
       onCopyTerminalId,
       onCopyFilePath,
       onReloadAgent,
+      onRefreshClaudeAuth,
       onRenameTab,
       onCloseTab,
       onCloseTabsAbove,

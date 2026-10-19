@@ -275,6 +275,12 @@ export const ar: TranslationResources = {
       callout: "تمت أرشفة هذا الوكيل",
       unarchive: "إلغاء الأرشفة",
     },
+    claudeAuthRefresh: {
+      callout: "انتهت صلاحية بيانات اعتماد AWS",
+      refresh: "تحديث بيانات اعتماد AWS",
+      dismiss: "تجاهل",
+      failedToast: "فشل تحديث بيانات اعتماد AWS",
+    },
   },
   sessions: {
     title: "السجل",
@@ -652,6 +658,7 @@ export const ar: TranslationResources = {
         moveToMain: "Move to main panel",
         reloadAgent: "إعادة تحميل الوكيل",
         reloadAgentTooltip: "قم بإعادة تحميل الوكيل لتحديث المهارات أو MCPs أو حالة تسجيل الدخول.",
+        refreshClaudeAuth: "تحديث بيانات اعتماد AWS",
         close: "يغلق",
         renameTerminal: "إعادة تسمية المحطة",
         renameAgent: "إعادة تسمية الوكيل",

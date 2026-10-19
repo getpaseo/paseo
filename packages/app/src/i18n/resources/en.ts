@@ -272,6 +272,12 @@ export const en = {
       callout: "This agent is archived",
       unarchive: "Unarchive",
     },
+    claudeAuthRefresh: {
+      callout: "AWS credentials expired",
+      refresh: "Refresh AWS credentials",
+      dismiss: "Dismiss",
+      failedToast: "Failed to refresh AWS credentials",
+    },
   },
   sessions: {
     title: "History",
@@ -649,6 +655,7 @@ export const en = {
         moveToMain: "Move to main panel",
         reloadAgent: "Reload agent",
         reloadAgentTooltip: "Reload agent to update skills, MCPs or login status.",
+        refreshClaudeAuth: "Refresh AWS credentials",
         close: "Close",
         renameTerminal: "Rename terminal",
         renameAgent: "Rename agent",

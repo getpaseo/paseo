@@ -31,6 +31,8 @@ function createSnapshot(
     pendingPermissions: input.pendingPermissions ?? [],
     persistence: input.persistence ?? null,
     title: input.title ?? null,
+    awsAuthRefreshRequired: input.awsAuthRefreshRequired,
+    baseProvider: input.baseProvider,
     labels: (input.labels ?? {}) as AgentSnapshotPayload["labels"],
   };
 }
@@ -113,5 +115,27 @@ describe("normalizeAgentSnapshot", () => {
     expect(missing.parentAgentId).toBeNull();
     expect(empty.parentAgentId).toBeNull();
     expect(nonString.parentAgentId).toBeNull();
+  });
+
+  it("round-trips awsAuthRefreshRequired flag through snapshot normalization", () => {
+    const snapshot = createSnapshot({
+      awsAuthRefreshRequired: true,
+    });
+    const agent = normalizeAgentSnapshot(snapshot, "server-1");
+    expect(agent.awsAuthRefreshRequired).toBe(true);
+
+    const projected = projectAgentSnapshot(agent);
+    expect(projected.awsAuthRefreshRequired).toBe(true);
+  });
+
+  it("round-trips baseProvider through snapshot normalization", () => {
+    const snapshot = createSnapshot({
+      baseProvider: "claude",
+    });
+    const agent = normalizeAgentSnapshot(snapshot, "server-1");
+    expect(agent.baseProvider).toBe("claude");
+
+    const projected = projectAgentSnapshot(agent);
+    expect(projected.baseProvider).toBe("claude");
   });
 });

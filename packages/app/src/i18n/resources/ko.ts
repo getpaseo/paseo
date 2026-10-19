@@ -276,6 +276,12 @@ export const ko: TranslationResources = {
       callout: "이 에이전트는 보관되었습니다",
       unarchive: "보관 해제",
     },
+    claudeAuthRefresh: {
+      callout: "AWS 자격 증명이 만료되었습니다",
+      refresh: "AWS 자격 증명 새로고침",
+      dismiss: "닫기",
+      failedToast: "AWS 자격 증명 새로고침 실패",
+    },
   },
   sessions: {
     title: "기록",
@@ -654,6 +660,7 @@ export const ko: TranslationResources = {
         reloadAgent: "에이전트 다시 로드",
         reloadAgentTooltip:
           "스킬, MCP 또는 로그인 상태를 업데이트하려면 에이전트를 다시 로드하세요.",
+        refreshClaudeAuth: "AWS 자격 증명 새로고침",
         close: "닫기",
         renameTerminal: "터미널 이름 변경",
         renameAgent: "에이전트 이름 변경",

@@ -36,6 +36,8 @@ export function asAgentManager(stub: {
   return createStub<SessionOptions["agentManager"]>({
     listProviderSubagentActivity: () => [],
     getRetiredInternalAgent: () => null,
+    isClaudeProvider: (provider: string) => provider === "claude",
+    isClaudeAgent: (_agentId: string) => false,
     ...stub,
   });
 }

@@ -11892,3 +11892,112 @@ test.each([false, true])(
     }
   },
 );
+
+test("isClaudeProvider, isClaudeAgent, and getBaseProvider identify custom Claude providers", async () => {
+  const manager = new AgentManager({
+    clients: {
+      claude: new TestAgentClient("claude"),
+      bedrock: new TestAgentClient("bedrock"),
+      codex: new TestAgentClient("codex"),
+    },
+    providerDefinitions: {
+      claude: { enabled: true, derivedFromProviderId: null },
+      bedrock: { enabled: true, derivedFromProviderId: "claude" },
+      codex: { enabled: true, derivedFromProviderId: null },
+    },
+    logger,
+  });
+
+  expect(manager.isClaudeProvider("claude")).toBe(true);
+  expect(manager.isClaudeProvider("bedrock")).toBe(true);
+  expect(manager.isClaudeProvider("codex")).toBe(false);
+  expect(manager.isClaudeProvider(undefined)).toBe(false);
+
+  expect(manager.getBaseProvider("claude")).toBe("claude");
+  expect(manager.getBaseProvider("bedrock")).toBe("claude");
+  expect(manager.getBaseProvider("codex")).toBeUndefined();
+
+  const claudeAgent = await manager.createAgent({ provider: "claude", cwd: "/tmp" }, undefined, {
+    workspaceId: undefined,
+  });
+  const bedrockAgent = await manager.createAgent({ provider: "bedrock", cwd: "/tmp" }, undefined, {
+    workspaceId: undefined,
+  });
+  const codexAgent = await manager.createAgent({ provider: "codex", cwd: "/tmp" }, undefined, {
+    workspaceId: undefined,
+  });
+
+  expect(manager.isClaudeAgent(claudeAgent.id)).toBe(true);
+  expect(manager.isClaudeAgent(bedrockAgent.id)).toBe(true);
+  expect(manager.isClaudeAgent(codexAgent.id)).toBe(false);
+  expect(manager.isClaudeAgent("unknown-id")).toBe(false);
+});
+
+test("getAgentProviderEnv resolves environment from live session, provider client, and base provider", async () => {
+  const sessionEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    CLAUDE_CONFIG_DIR: "/live/session/claude",
+    AWS_PROFILE: "session-profile",
+  };
+  const clientEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    CLAUDE_CONFIG_DIR: "/client/claude",
+    AWS_PROFILE: "client-profile",
+  };
+  const baseClientEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    CLAUDE_CONFIG_DIR: "/base/claude",
+    AWS_PROFILE: "base-profile",
+  };
+
+  const sessionWithEnv = new (class extends TestAgentSession {
+    override getProviderEnv(): NodeJS.ProcessEnv {
+      return sessionEnv;
+    }
+  })({ provider: "live", cwd: "/tmp" });
+
+  const liveClient = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return sessionWithEnv;
+    }
+  })("live");
+
+  const inactiveClient = new (class extends TestAgentClient {
+    override getProviderEnv(): NodeJS.ProcessEnv {
+      return clientEnv;
+    }
+  })("inactive");
+
+  const baseClient = new (class extends TestAgentClient {
+    override getProviderEnv(): NodeJS.ProcessEnv {
+      return baseClientEnv;
+    }
+  })("claude");
+
+  const manager = new AgentManager({
+    clients: {
+      claude: baseClient,
+      live: liveClient,
+      inactive: inactiveClient,
+      codex: new TestAgentClient("codex"),
+    },
+    providerDefinitions: {
+      claude: { enabled: true, derivedFromProviderId: null },
+      live: { enabled: true, derivedFromProviderId: "claude" },
+      inactive: { enabled: true, derivedFromProviderId: "claude" },
+      derivedNoClient: { enabled: true, derivedFromProviderId: "claude" },
+      codex: { enabled: true, derivedFromProviderId: null },
+    },
+    logger,
+  });
+
+  const liveAgent = await manager.createAgent({ provider: "live", cwd: "/tmp" }, undefined, {
+    workspaceId: undefined,
+  });
+  expect(manager.getAgentProviderEnv(liveAgent.id)).toBe(sessionEnv);
+
+  expect(manager.getAgentProviderEnv("not-running", "inactive")).toBe(clientEnv);
+  expect(manager.getAgentProviderEnv("not-running", "derivedNoClient")).toBe(baseClientEnv);
+  expect(manager.getAgentProviderEnv("not-running", "codex")).toBeUndefined();
+  expect(manager.getAgentProviderEnv("not-running")).toBeUndefined();
+});
