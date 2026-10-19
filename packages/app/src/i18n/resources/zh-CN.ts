@@ -434,6 +434,7 @@ export const zhCN: TranslationResources = {
     },
     row: {
       importing: "正在导入...",
+      cwdMissing: "文件夹已不存在",
     },
   },
   workspace: {

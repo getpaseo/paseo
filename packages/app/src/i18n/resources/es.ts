@@ -439,6 +439,7 @@ export const es: TranslationResources = {
     },
     row: {
       importing: "Importador...",
+      cwdMissing: "La carpeta ya no existe",
     },
   },
   workspace: {

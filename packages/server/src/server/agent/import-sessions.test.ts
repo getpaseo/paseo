@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type {
@@ -65,6 +66,10 @@ function makeImportableSession(args: {
     firstPromptPreview: args.firstPrompt ?? null,
     lastPromptPreview: args.lastPrompt ?? args.firstPrompt ?? null,
   };
+}
+
+async function isDirectoryOnDisk(target: string): Promise<boolean> {
+  return (await stat(target).catch(() => null))?.isDirectory() ?? false;
 }
 
 function makeImportableSessionsResult(sessions: ManagedImportableProviderSession[]) {
@@ -147,7 +152,8 @@ function makeRequest(
 }
 
 test("listImportableProviderSessions filters, sorts, limits, and projects importable sessions", async () => {
-  const cwd = "/tmp/project";
+  const cwd = mkdtempSync(path.join(tmpdir(), "paseo-import-list-"));
+  importTestDirectories.push(cwd);
   const sessions = [
     makeImportableSession({
       sessionId: "outside-cwd",
@@ -243,6 +249,7 @@ test("listImportableProviderSessions filters, sorts, limits, and projects import
     agentManager,
     agentStorage,
     providerSnapshotManager: { getProviderLabel: () => "Codex" },
+    isDirectory: isDirectoryOnDisk,
   });
 
   expect(listImportableSessions).toHaveBeenCalledWith({
@@ -263,6 +270,7 @@ test("listImportableProviderSessions filters, sorts, limits, and projects import
         firstPromptPreview: "newer first prompt",
         lastPromptPreview: "newer last prompt",
         lastActivityAt: "2026-04-30T12:02:00.000Z",
+        cwdMissing: false,
       },
       {
         providerId: "codex",
@@ -273,6 +281,7 @@ test("listImportableProviderSessions filters, sorts, limits, and projects import
         firstPromptPreview: "second prompt",
         lastPromptPreview: "second prompt",
         lastActivityAt: "2026-04-30T12:00:00.000Z",
+        cwdMissing: false,
       },
     ],
   });
@@ -311,6 +320,7 @@ test("listImportableProviderSessions looks past already-imported rows to fill th
       ],
     },
     providerSnapshotManager: { getProviderLabel: () => "Claude Code" },
+    isDirectory: isDirectoryOnDisk,
   });
 
   expect(listImportableSessions).toHaveBeenCalledWith({
@@ -362,6 +372,7 @@ test("listImportableProviderSessions requests a bounded deep scan for search res
     agentManager: { listAgents: () => [], listImportableSessions },
     agentStorage: { list: async () => [] },
     providerSnapshotManager: { getProviderLabel: (provider) => provider },
+    isDirectory: isDirectoryOnDisk,
   });
 
   expect(listImportableSessions).toHaveBeenCalledWith({
@@ -409,6 +420,7 @@ test("listImportableProviderSessions includes a provider session after its Paseo
       ],
     },
     providerSnapshotManager: { getProviderLabel: () => "Claude" },
+    isDirectory: isDirectoryOnDisk,
   });
 
   expect(result.entries.map((entry) => entry.providerHandleId)).toEqual(["archived-session"]);
@@ -454,6 +466,7 @@ test("listImportableProviderSessions includes an archived provider session still
       ],
     },
     providerSnapshotManager: { getProviderLabel: () => "Claude" },
+    isDirectory: isDirectoryOnDisk,
   });
 
   expect(result.entries.map((entry) => entry.providerHandleId)).toEqual(["archived-live-session"]);
@@ -492,6 +505,7 @@ test("listImportableProviderSessions filters out metadata generation sessions", 
       list: async () => [],
     } satisfies Pick<AgentStorage, "list">,
     providerSnapshotManager: { getProviderLabel: () => "Codex" },
+    isDirectory: isDirectoryOnDisk,
   });
 
   expect(result.entries).toHaveLength(1);
@@ -528,9 +542,60 @@ test("listImportableProviderSessions keeps realpath-equivalent cwd matches", asy
       list: async () => [],
     } satisfies Pick<AgentStorage, "list">,
     providerSnapshotManager: { getProviderLabel: () => "Pi" },
+    isDirectory: isDirectoryOnDisk,
   });
 
   expect(result.entries.map((entry) => entry.providerHandleId)).toEqual(["pi-handle"]);
+});
+
+test("listImportableProviderSessions flags sessions whose cwd no longer exists", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "paseo-import-missing-cwd-"));
+  importTestDirectories.push(root);
+  const presentCwd = path.join(root, "present-project");
+  const removedCwd = path.join(root, "removed-project");
+  const fileCwd = path.join(root, "not-a-directory");
+  mkdirSync(presentCwd);
+  mkdirSync(removedCwd);
+  rmSync(removedCwd, { recursive: true });
+  writeFileSync(fileCwd, "");
+
+  const result = await listImportableProviderSessions({
+    request: makeRequest({ providers: ["codex"] }),
+    agentManager: {
+      listAgents: () => [],
+      listImportableSessions: async () =>
+        makeImportableSessionsResult([
+          makeImportableSession({
+            sessionId: "present",
+            cwd: presentCwd,
+            lastActivityAt: "2026-04-30T12:02:00.000Z",
+          }),
+          makeImportableSession({
+            sessionId: "removed",
+            cwd: removedCwd,
+            lastActivityAt: "2026-04-30T12:01:00.000Z",
+          }),
+          makeImportableSession({
+            sessionId: "file",
+            cwd: fileCwd,
+            lastActivityAt: "2026-04-30T12:00:00.000Z",
+          }),
+        ]),
+    } satisfies Pick<AgentManager, "listAgents" | "listImportableSessions">,
+    agentStorage: {
+      list: async () => [],
+    } satisfies Pick<AgentStorage, "list">,
+    providerSnapshotManager: { getProviderLabel: () => "Codex" },
+    isDirectory: isDirectoryOnDisk,
+  });
+
+  expect(
+    result.entries.map((entry) => ({ id: entry.providerHandleId, cwdMissing: entry.cwdMissing })),
+  ).toEqual([
+    { id: "present", cwdMissing: false },
+    { id: "removed", cwdMissing: true },
+    { id: "file", cwdMissing: true },
+  ]);
 });
 
 test("listImportableProviderSessions rejects invalid since values", async () => {
@@ -545,6 +610,7 @@ test("listImportableProviderSessions rejects invalid since values", async () => 
         list: async () => [],
       } satisfies Pick<AgentStorage, "list">,
       providerSnapshotManager: { getProviderLabel: () => "" },
+      isDirectory: isDirectoryOnDisk,
     }),
   ).rejects.toMatchObject(
     new ImportSessionsRequestError("invalid_since", "Invalid recent provider sessions since"),
