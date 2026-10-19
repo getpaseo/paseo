@@ -306,7 +306,9 @@ describe("antigravity usage fetcher", () => {
       }),
     );
 
+    let recordedUrl: string | undefined;
     let recordedHeaders: Headers | undefined;
+    let recordedBody: string | undefined;
     const mockFetch = async (url: string | URL | Request, init?: RequestInit) => {
       const urlStr = String(url);
       if (urlStr.includes("loadCodeAssist")) {
@@ -318,7 +320,9 @@ describe("antigravity usage fetcher", () => {
         );
       }
       if (urlStr.includes("retrieveUserQuotaSummary")) {
+        recordedUrl = urlStr;
         recordedHeaders = new Headers(init?.headers);
+        recordedBody = typeof init?.body === "string" ? init.body : undefined;
         return new Response(
           JSON.stringify({
             groups: [
@@ -414,7 +418,13 @@ describe("antigravity usage fetcher", () => {
       }),
     ]);
 
-    expect(recordedHeaders?.get("User-Agent")).toContain("antigravity/1.107.0 darwin/");
+    expect(recordedUrl).toBe(
+      "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
+    );
+    expect(recordedHeaders?.get("User-Agent")).toContain(
+      "antigravity/cli/1.4.2 (aidev_client; os_type=darwin;",
+    );
+    expect(recordedBody).toBe(JSON.stringify({ project: "aicode-consumers" }));
   });
 
   it("falls back to fetchAvailableModels when retrieveUserQuotaSummary returns 404", async () => {

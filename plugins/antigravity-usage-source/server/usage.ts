@@ -55,7 +55,7 @@ const fetchAvailableModelsSchema = z.object({
   models: z.record(z.string(), modelQuotaSchema).nullish(),
 });
 
-export const CLOUDCODE_BASE_URL = "https://cloudcode-pa.googleapis.com";
+export const CLOUDCODE_BASE_URL = "https://daily-cloudcode-pa.googleapis.com";
 export const DEFAULT_PROJECT_ID = "aicode-consumers";
 
 export function formatPlanLabel(rawTierId?: string): string | undefined {
@@ -78,7 +78,8 @@ export function buildUserAgent(
   } else if (platform === "win32") {
     osName = "windows";
   }
-  return `antigravity/1.107.0 ${osName}/${arch}`;
+  const archName = arch === "x64" ? "amd64" : arch;
+  return `antigravity/cli/1.4.2 (aidev_client; os_type=${osName}; arch=${archName})`;
 }
 
 export const DEFAULT_USER_AGENT = buildUserAgent();
@@ -314,6 +315,7 @@ interface QuotaSummaryResult {
 async function resolveUserQuotaSummary(
   fetchApi: typeof fetch,
   headers: Record<string, string>,
+  projectId: string,
 ): Promise<QuotaSummaryResult> {
   try {
     const summaryResponse = await fetchApi(
@@ -321,7 +323,7 @@ async function resolveUserQuotaSummary(
       {
         method: "POST",
         headers,
-        body: JSON.stringify({}),
+        body: JSON.stringify({ project: projectId }),
         signal: AbortSignal.timeout(15_000),
       },
     );
@@ -423,7 +425,7 @@ export async function fetchUsage(
 
   const planLabel = formatPlanLabel(assistResult.planLabel);
 
-  const summaryResult = await resolveUserQuotaSummary(fetchApi, headers);
+  const summaryResult = await resolveUserQuotaSummary(fetchApi, headers, assistResult.projectId);
   if (summaryResult.rejectedStatus !== undefined) {
     return unavailable({ kind: "rejected", status: summaryResult.rejectedStatus, refreshedBy });
   }
