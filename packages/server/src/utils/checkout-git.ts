@@ -624,7 +624,10 @@ function normalizeNumstatPath(pathField: string): string {
   const braceRenameMatch = pathField.match(/^(.*)\{(.*) => (.*)\}(.*)$/);
   if (braceRenameMatch) {
     const [, prefix, , renamed, suffix] = braceRenameMatch;
-    return unquoteGitPath(`${prefix}${renamed}${suffix}`);
+    // Moving out of a directory prints `src/{nested => }/a.ts`, so an empty
+    // destination leaves a separator from each side behind.
+    const destination = renamed ? `${prefix}${renamed}${suffix}` : `${prefix}${suffix.slice(1)}`;
+    return unquoteGitPath(destination);
   }
 
   const inlineRenameMatch = pathField.match(/^(.*) => (.*)$/);
