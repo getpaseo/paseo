@@ -71,6 +71,14 @@ test("compact opens files and subagents in a sheet, leaving the tabs for agents"
       await closeSheet(page, "linked.ts");
     });
 
+    await test.step("a subagent's row shows the facts its sheet shows", async () => {
+      await page.getByTestId("subagents-track-header").click();
+      await expect(page.getByTestId(`subagents-track-row-facts-${child.id}`)).toHaveText(
+        "Ten second stream · Low · Load test",
+      );
+      await tapSheetBackdrop(page);
+    });
+
     await test.step("a subagent opens in a sheet over the subagents list", async () => {
       await openSubagentFromCompactTrack(page, child.id);
 

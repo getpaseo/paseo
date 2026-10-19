@@ -20,6 +20,7 @@ import {
   buildKeyboardShortcutHelpSections,
   getBindingIdForAction,
   normalizeCapturedShortcutCombo,
+  isShortcutCaptureComplete,
   getDefaultKeysForAction,
   resolveShortcutKeysForAction,
   type KeyboardShortcutHelpRow,
@@ -269,6 +270,8 @@ function ShortcutRow({
 
   const isBindable = bindingId !== null;
   const showDone = isCapturing && capturedCombos.length > 0;
+  const captureComplete =
+    bindingId !== null && isShortcutCaptureComplete(bindingId, capturedCombos);
   const showClear = displayChord !== null;
   // Reset restores the default, so it is only meaningful when there is a
   // default to restore. A binding that ships without one would otherwise show a
@@ -288,11 +291,14 @@ function ShortcutRow({
             capturedCombos={capturedCombos}
             heldModifiers={heldModifiers}
           />
+          {showDone && !captureComplete && (
+            <Text style={styles.capturingText}>{t("settings.shortcuts.captureIndexPrompt")}</Text>
+          )}
         </View>
         {isCapturing ? (
           <>
             {showDone && (
-              <Button variant="ghost" size="sm" onPress={onDone}>
+              <Button variant="ghost" size="sm" disabled={!captureComplete} onPress={onDone}>
                 {t("settings.shortcuts.actions.done")}
               </Button>
             )}
@@ -357,7 +363,10 @@ export function KeyboardShortcutsSection() {
   );
 
   const saveCapture = useCallback(() => {
-    if (capturingBindingId === null || capturedCombos.length === 0) {
+    if (
+      capturingBindingId === null ||
+      !isShortcutCaptureComplete(capturingBindingId, capturedCombos)
+    ) {
       return;
     }
     void setOverride(capturingBindingId, capturedCombos.join(" "));

@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useState } from "react";
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { persist, type StateStorage } from "zustand/middleware";
 import type { z } from "zod";
 import { WorkspaceLayoutPersistedStateSchema } from "./workspace-layout-storage";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
@@ -224,6 +224,7 @@ const MAX_TREE_DEPTH = 5;
 
 const LEGACY_EXPLORER_SIDEBAR_REFERENCE_WIDTH = 1440;
 const WORKSPACE_LAYOUT_PERSIST_VERSION = 2;
+type WorkspaceLayoutPersistedState = z.infer<typeof WorkspaceLayoutPersistedStateSchema>;
 
 function convertLegacyExplorerSidebarRatios(
   ratiosByWorkspace: Record<string, number>,
@@ -939,8 +940,57 @@ function createExplorerSidebarPane(
   return targetPaneId ? splitPaneEmpty(workspaceKey, { targetPaneId, position: "right" }) : null;
 }
 
+const PERSISTED_SLICES = [
+  "layoutByWorkspace",
+  "pinnedAgentIdsByWorkspace",
+  "splitSizesByWorkspace",
+  "explorerSidebarWidthByWorkspace",
+  "explorerSidebarPaneIdByWorkspace",
+  "sidePaneIdByWorkspace",
+  "pullRequestTabAutoOpenedByWorkspace",
+] as const;
+
+// Zustand persist re-runs partialize after every set, including ones that return the state
+// untouched. Reusing the previous projection while every persisted slice is the same
+// reference lets validated storage skip unchanged writes before validation and serialization.
+function createPersistedStateProjection() {
+  let previous: { source: WorkspaceLayoutStore; state: WorkspaceLayoutPersistedState } | null =
+    null;
+  return (source: WorkspaceLayoutStore): WorkspaceLayoutPersistedState => {
+    const last = previous;
+    if (last && PERSISTED_SLICES.every((slice) => last.source[slice] === source[slice])) {
+      return last.state;
+    }
+    const layoutByWorkspace: Record<string, WorkspaceLayout> = {};
+    for (const key in source.layoutByWorkspace) {
+      // Strip ephemeral (commit diff) tabs before persisting so they are
+      // dropped on reload rather than restored pointing at a rebased SHA.
+      layoutByWorkspace[key] = stripEphemeralTabsFromLayout(
+        normalizeLayout(source.layoutByWorkspace[key]),
+      );
+    }
+    const state: WorkspaceLayoutPersistedState = {
+      layoutByWorkspace,
+      pinnedAgentIdsByWorkspace: Object.fromEntries(
+        Object.entries(source.pinnedAgentIdsByWorkspace).map(([key, agentIds]) => [
+          key,
+          Array.from(agentIds),
+        ]),
+      ),
+      splitSizesByWorkspace: source.splitSizesByWorkspace,
+      explorerSidebarWidthByWorkspace: source.explorerSidebarWidthByWorkspace,
+      explorerPaneIdByWorkspace: source.explorerSidebarPaneIdByWorkspace,
+      sidePaneIdByWorkspace: source.sidePaneIdByWorkspace,
+      pullRequestTabAutoOpenedByWorkspace: source.pullRequestTabAutoOpenedByWorkspace,
+    };
+    previous = { source, state };
+    return state;
+  };
+}
+
 export function createWorkspaceLayoutStore(
   ids: WorkspaceLayoutIdSource = defaultWorkspaceLayoutIds,
+  storage: StateStorage = AsyncStorage,
 ) {
   return create<WorkspaceLayoutStore>()(
     persist(
@@ -2117,33 +2167,12 @@ export function createWorkspaceLayoutStore(
       {
         name: "workspace-layout-state",
         version: WORKSPACE_LAYOUT_PERSIST_VERSION,
-        storage: createValidatedPersistStorage(AsyncStorage, WorkspaceLayoutPersistedStateSchema),
+        storage: createValidatedPersistStorage(storage, WorkspaceLayoutPersistedStateSchema, {
+          skipUnchanged: true,
+        }),
         migrate: (persistedState, version) =>
           migrateWorkspaceLayoutPersistedState(persistedState, version, ids),
-        partialize: (state) => {
-          const layoutByWorkspace: Record<string, WorkspaceLayout> = {};
-          for (const key in state.layoutByWorkspace) {
-            // Strip ephemeral (commit diff) tabs before persisting so they are
-            // dropped on reload rather than restored pointing at a rebased SHA.
-            layoutByWorkspace[key] = stripEphemeralTabsFromLayout(
-              normalizeLayout(state.layoutByWorkspace[key]),
-            );
-          }
-          return {
-            layoutByWorkspace,
-            pinnedAgentIdsByWorkspace: Object.fromEntries(
-              Object.entries(state.pinnedAgentIdsByWorkspace).map(([key, agentIds]) => [
-                key,
-                Array.from(agentIds),
-              ]),
-            ),
-            splitSizesByWorkspace: state.splitSizesByWorkspace,
-            explorerSidebarWidthByWorkspace: state.explorerSidebarWidthByWorkspace,
-            explorerPaneIdByWorkspace: state.explorerSidebarPaneIdByWorkspace,
-            sidePaneIdByWorkspace: state.sidePaneIdByWorkspace,
-            pullRequestTabAutoOpenedByWorkspace: state.pullRequestTabAutoOpenedByWorkspace,
-          };
-        },
+        partialize: createPersistedStateProjection(),
         merge: (persistedState, currentState) => {
           const result = WorkspaceLayoutPersistedStateSchema.safeParse(persistedState);
           if (!result.success) {

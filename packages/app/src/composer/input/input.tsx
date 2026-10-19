@@ -1295,7 +1295,12 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     // Read pointer capability when restoring, without making a pointer change itself
     // a focus trigger.
     useLayoutEffect(() => {
-      if (isPaneFocused && focusIntentRef.current && hasFinePointer()) {
+      const finePointer = hasFinePointer();
+      if (!isPaneFocused && isWeb && !finePointer) {
+        // Hiding a retained tab only blurs its editor after the browser renders.
+        // A quick return before that frame would otherwise keep touch focus.
+        textInputRef.current?.blur();
+      } else if (isPaneFocused && focusIntentRef.current && finePointer) {
         textInputRef.current?.focus();
       }
     }, [isPaneFocused]);

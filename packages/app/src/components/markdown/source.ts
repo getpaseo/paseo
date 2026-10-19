@@ -1,3 +1,4 @@
+import { classifyAssistantFileLink } from "@/assistant-file-links";
 import { ASSISTANT_FILE_EXTENSIONS } from "@/assistant-file-links/extensions";
 import { normalizeMarkdownHtml } from "./html";
 import { gfmTable } from "micromark-extension-gfm-table";
@@ -22,7 +23,6 @@ const SEPARATED_PATH = String.raw`${PATH_SEGMENT}(?:[\\/]${PATH_SEGMENT})+`;
 const FILE_NAME = String.raw`${PATH_SEGMENT}\.(?:${FILE_EXTENSIONS})`;
 // Bare prose paths need a known extension, a line suffix, or at least two separators.
 const PROSE_PATH = String.raw`(?:${PATH_PREFIX}${HAS_PATH_LETTER}${SEPARATED_PATH}|${HAS_PATH_LETTER}(?:${PATH_SEGMENT}(?:[\\/]${PATH_SEGMENT})*[\\/]${FILE_NAME}|${PATH_SEGMENT}(?:[\\/]${PATH_SEGMENT}){2,}|${SEPARATED_PATH}(?=:)))`;
-const INLINE_CODE_PATH = String.raw`${PATH_PREFIX}?${HAS_PATH_LETTER}${SEPARATED_PATH}`;
 
 function createFilePattern(path: string): RegExp {
   // The native adapter mistakes a literal + in lookbehind for a quantifier; use its hex escape.
@@ -33,18 +33,44 @@ function createFilePattern(path: string): RegExp {
 }
 
 const FILE_PATTERN = createFilePattern(PROSE_PATH);
-const INLINE_CODE_FILE_PATTERN = createFilePattern(INLINE_CODE_PATH);
-
-function linkMetadata() {
+function linkMetadata(inlineCodePaths: ReadonlySet<string>) {
+  // The engine accepts regexes on both platforms. Classify complete code spans
+  // first, then pass literal matches rather than maintaining a second path grammar.
+  const alternatives = [...inlineCodePaths].map((path) =>
+    path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+  );
   return {
     linkRecognition: {
       text: FILE_PATTERN,
       inlineCode: new RegExp(
-        String.raw`^(?:${INLINE_CODE_FILE_PATTERN.source})(?:\(\d+(?:,\d+)?(?:-\d+(?:,\d+)?)?\)| lines? \d+(?:-\d+)?)?$`,
+        String.raw`^(?:https?://[^\s<>]+${alternatives.length ? `|${alternatives.join("|")}` : ""})$`,
       ),
     },
     linkSource: markdownLinkSource,
   };
+}
+
+function collectInlineCodePaths(source: string, workspaceRoot?: string): ReadonlySet<string> {
+  const paths = new Set<string>();
+  const previousEnds = new Map<number, number>();
+  // Collect candidates between consecutive runs of equal length. The engine owns
+  // Markdown context (escapes, fences, authored links); extra candidates are harmless
+  // because recognition only applies to complete Code nodes. This avoids an AST
+  // parse on every streaming reveal, including updates inside long code fences.
+  for (const match of source.matchAll(/`+/g)) {
+    const length = match[0].length;
+    const previousEnd = previousEnds.get(length);
+    previousEnds.set(length, match.index + length);
+    if (previousEnd === undefined) continue;
+    let value = source.slice(previousEnd, match.index).replace(/\r\n?|\n/g, " ");
+    // CommonMark code spans replace line endings and strip one surrounding space.
+    if (value.startsWith(" ") && value.endsWith(" ") && /[^ ]/.test(value)) {
+      value = value.slice(1, -1);
+    }
+    const classification = classifyAssistantFileLink(value, { workspaceRoot });
+    if (classification && classification.kind !== "external") paths.add(value);
+  }
+  return paths;
 }
 
 export function markdownLinkSource(
@@ -90,6 +116,7 @@ export function prepareMarkdownSource(
       extensions: [gfmTable()],
       mdastExtensions: [gfmTableFromMarkdown()],
     }));
+  const metadata = linkMetadata(collectInlineCodePaths(source, workspaceRoot));
   const edits: { start: number; end: number; text: string }[] = [];
   if (
     !source.includes("![") &&
@@ -97,7 +124,7 @@ export function prepareMarkdownSource(
     !source.includes("&") &&
     !(workspaceRoot && source.includes("]("))
   ) {
-    return { images, ...linkMetadata(), render: () => source };
+    return { images, ...metadata, render: () => source };
   }
 
   const definitions = new Map<string, { url: string; title?: string | null }>();
@@ -206,7 +233,7 @@ export function prepareMarkdownSource(
   visit(getTree());
   return {
     images,
-    ...linkMetadata(),
+    ...metadata,
     render(
       urls: ReadonlyMap<string, string> = new Map(),
       unavailableImages: ReadonlySet<string> = new Set(),

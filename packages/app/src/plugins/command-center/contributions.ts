@@ -1,7 +1,7 @@
 import type { PluginClientStateSource } from "@getpaseo/plugin/client/host";
 import type { CommandCenterContribution } from "@/command-center/contributions";
 import { getCommandCenterIcon } from "@/command-center/icon";
-import { resolvePluginIcon } from "../icons";
+import { pluginIconComponent } from "../icons";
 import { resolvePluginPanelOpenLocation } from "../workspace-panels/locations";
 import type { InstalledPlugin } from "../types";
 import { createPluginCapabilities, type PluginNavigation } from "../actions";
@@ -83,7 +83,7 @@ export function buildPluginCommandCenterContributions(
           kind: "action",
           title: item.title,
           sectionTitle: plugin.id,
-          icon: getCommandCenterIcon(resolvePluginIcon(item.icon)),
+          icon: getCommandCenterIcon(pluginIconComponent(item.icon)),
         },
         run,
       });

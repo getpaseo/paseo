@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { withPreviewCsp } from "@/file-pane/html-preview-csp";
+import { withPreviewCsp } from "./html-preview-csp";
 
 describe("withPreviewCsp", () => {
   it("places the policy before the complete source document", () => {

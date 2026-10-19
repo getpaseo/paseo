@@ -261,3 +261,35 @@ test("rebinding Jump to tab preserves the number group after reload", async ({
   await openSettingsSection(page, "shortcuts");
   await expectTabNumberRange(page);
 });
+
+async function expectNumberRequiredBeforeSaving(page: Page, label: string) {
+  const row = page.getByText(label, { exact: true }).locator("..");
+  await expect(row.getByRole("button", { name: "Done", exact: true })).toBeDisabled();
+  await expect(row.getByText("End with a number from 1 to 9.", { exact: true })).toBeVisible();
+}
+
+async function completeNumberShortcut(page: Page, label: string) {
+  const row = page.getByText(label, { exact: true }).locator("..");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.press("Control+2");
+  await expect(row.getByRole("button", { name: "Done", exact: true })).toBeEnabled();
+  await row.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(row.getByText("⌃K", { exact: true })).toBeVisible();
+  await expect(row.getByText("⌃1-9", { exact: true })).toBeVisible();
+}
+
+for (const { label, action } of [
+  { label: "Jump to tab", action: "workspace-tab-jump-index" },
+  { label: "Jump to workspace", action: "workspace-jump-index" },
+]) {
+  test(`${label} requires a final number before a recorded shortcut can be saved`, async ({
+    page,
+  }) => {
+    await openShortcutsSettings(page);
+    await captureShortcut(page, label, action, "Control+K");
+    await expectNumberRequiredBeforeSaving(page, label);
+    await page.keyboard.press("Control+0");
+    await expectNumberRequiredBeforeSaving(page, label);
+    await completeNumberShortcut(page, label);
+  });
+}
