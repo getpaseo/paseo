@@ -42,7 +42,7 @@ export default defineConfig({
       // to Node, which cannot resolve the resource modules. Bundle this boundary
       // so unit and browser consumers exercise the same deferred module loading.
       async transform(_source, id) {
-        if (id !== path.resolve(__dirname, "src/i18n/i18next.ts")) return;
+        if (path.resolve(id) !== path.resolve(__dirname, "src/i18n/i18next.ts")) return;
         const result = await build({
           entryPoints: [id],
           bundle: true,
