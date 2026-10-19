@@ -267,6 +267,7 @@ test("createPaseoApi borrows daemon capabilities without exposing connection own
     "agents",
     "config",
     "dispose",
+    "hosts",
     "observeEvents",
     "projects",
     "providers",

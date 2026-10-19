@@ -1,3 +1,4 @@
+import { ConnectedHosts } from "./connected-hosts/index.js";
 import { stat } from "node:fs/promises";
 import type { CreationSnapshot } from "@getpaseo/protocol/messages";
 import { CreationService } from "./creation/index.js";
@@ -437,6 +438,7 @@ export interface WebSocketLike {
 }
 
 interface SessionConnectionBase {
+  permissionCeiling?: readonly DaemonPermission[];
   session: Session;
   principalId: string;
   sessionKey: string;
@@ -460,6 +462,7 @@ interface PluginSessionConnection extends SessionConnectionBase {
 type SessionConnection = ReconnectableSessionConnection | PluginSessionConnection;
 
 interface SocketSessionOptions {
+  sourceId?: string;
   clientId: string;
   appVersion: string | null;
   clientCapabilities: Record<string, unknown> | null;
@@ -550,6 +553,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly workspaceAutoName: WorkspaceAutoName;
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly paseoHome: string;
+  private readonly connectedHosts: ConnectedHosts;
   private readonly passwordHash: string | undefined;
   private readonly credentialSource: DaemonAuthConfig | undefined;
   private readonly worktreesRoot: string | undefined;
@@ -701,6 +705,7 @@ export class VoiceAssistantWebSocketServer {
     this.workspaceAutoName = workspaceAutoName;
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
+    this.connectedHosts = new ConnectedHosts(paseoHome, { serverId, label: getHostName() });
     this.passwordHash = auth?.password;
     this.worktreesRoot = daemonRuntimeConfig?.worktreesRoot;
     this.daemonConfigStore = daemonConfigStore;
@@ -1054,7 +1059,11 @@ export class VoiceAssistantWebSocketServer {
     }
     for (const connection of new Set(this.externalSessionsByKey.values())) {
       if (connection.principalId === principalId) {
-        connection.session.setPermissions(permissions);
+        connection.session.setPermissions(
+          connection.permissionCeiling
+            ? permissions.filter((permission) => connection.permissionCeiling!.includes(permission))
+            : permissions,
+        );
       }
     }
   }
@@ -1071,6 +1080,7 @@ export class VoiceAssistantWebSocketServer {
 
   public async close(): Promise<void> {
     this.prepareForShutdown();
+    await this.connectedHosts.close();
     this.unsubscribeSpeechReadiness?.();
     this.unsubscribeSpeechReadiness = null;
     this.unsubscribeDaemonConfigChange?.();
@@ -1394,6 +1404,10 @@ export class VoiceAssistantWebSocketServer {
       appVersion,
       clientCapabilities,
       permissions: admission.permissions,
+      sourceId:
+        lifecycle.kind === "ephemeral-plugin"
+          ? `plugin:${lifecycle.pluginId}`
+          : admission.principalId,
       connectionLogger,
       onMessage: (msg) => {
         if (!connection) {
@@ -1463,6 +1477,16 @@ export class VoiceAssistantWebSocketServer {
 
   private createSocketSession(options: SocketSessionOptions): Session {
     return new Session({
+      connectedHosts: this.connectedHosts,
+      getConnectedHostBufferedAmount: () => {
+        let total = 0;
+        for (const socket of this.sessions.keys()) {
+          if (typeof socket.bufferedAmount !== "number") return null;
+          total += socket.bufferedAmount;
+        }
+        return total;
+      },
+      sourceId: options.sourceId,
       browserToolsBroker: this.browserToolsBroker,
       clientId: options.clientId,
       appVersion: options.appVersion,
@@ -1616,8 +1640,16 @@ export class VoiceAssistantWebSocketServer {
     }
 
     this.clearPendingConnection(ws);
-    const admitted = pending.admission;
+    let admitted = pending.admission;
     if (!admitted) throw new Error("Admitted hello has no session admission");
+    if (message.sessionPermissions)
+      admitted = {
+        ...admitted,
+        permissions: admitted.permissions.filter((permission) =>
+          message.sessionPermissions!.includes(permission),
+        ),
+      };
+    pending.admission = admitted;
     pending.identity.clientId = clientId;
     if (message.appVersion) {
       pending.identity.appVersion = message.appVersion;
@@ -1640,6 +1672,9 @@ export class VoiceAssistantWebSocketServer {
       lifecycle: pluginId ? { kind: "ephemeral-plugin", pluginId } : { kind: "reconnectable" },
       admission: admitted,
     });
+    connection.permissionCeiling = message.sessionPermissions;
+    connection.session.setRouted(message.routed === true);
+    this.assignHostSource(connection, message, admitted.principalId, pluginId);
     this.sessions.set(ws, connection);
     if (connection.lifecycle === "reconnectable") {
       this.externalSessionsByKey.set(sessionKey, connection);
@@ -1755,6 +1790,10 @@ export class VoiceAssistantWebSocketServer {
       clearTimeout(existing.externalDisconnectCleanupTimeout);
       existing.externalDisconnectCleanupTimeout = null;
     }
+    existing.permissionCeiling = message.sessionPermissions;
+    existing.session.setPermissions(pending.admission!.permissions);
+    existing.session.setRouted(message.routed === true);
+    this.assignHostSource(existing, message, pending.admission!.principalId);
     const newAppVersion = message.appVersion ?? null;
     if (newAppVersion && newAppVersion !== existing.appVersion) {
       existing.appVersion = newAppVersion;
@@ -1785,6 +1824,21 @@ export class VoiceAssistantWebSocketServer {
     );
   }
 
+  private assignHostSource(
+    connection: SessionConnection,
+    hello: WSHelloMessage,
+    principalId: string,
+    pluginId?: string,
+  ): void {
+    if (pluginId) return;
+    const producer = hello.producer;
+    const sourceId =
+      hello.routed && producer
+        ? `route:${[principalId, producer.serverId, producer.sourceId].map(encodeURIComponent).join(":")}`
+        : principalId;
+    connection.session.setHostSource(sourceId);
+  }
+
   private buildServerInfoStatusPayload(session: Session): ServerInfoStatusPayload {
     return {
       status: "server_info",
@@ -1792,11 +1846,13 @@ export class VoiceAssistantWebSocketServer {
       serverId: this.serverId,
       hostname: getHostName(),
       version: this.daemonVersion,
+      principalId: session.getPrincipalId(),
       permissions: session.getPermissions(),
       // COMPAT(desktopManaged): added in v0.1.X, remove optional parsing after 2027-01-16.
       desktopManaged: this.daemonRuntimeConfig?.desktopManaged === true,
       ...(this.serverCapabilities ? { capabilities: this.serverCapabilities } : {}),
       features: {
+        connectedHosts: true,
         usageSources: true,
         ownedSubscriptions: true,
         agentRequestReceipts: true,
@@ -2086,6 +2142,10 @@ export class VoiceAssistantWebSocketServer {
         this.pluginSocketIds.delete(ws);
         await this.cleanupConnection(connection, "Plugin session disconnected");
         this.finishPluginSocketCleanup(ws);
+        return;
+      }
+      if (connection.session.isRouted()) {
+        await this.cleanupConnection(connection, "Routed session disconnected");
         return;
       }
       this.incrementRuntimeCounter("sessionDisconnectedWaitingReconnect");

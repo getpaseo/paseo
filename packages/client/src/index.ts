@@ -1,3 +1,6 @@
+import { createHostActions, type PaseoHostActions } from "./hosts/index.js";
+export type { PaseoHostActions } from "./hosts/index.js";
+export type { HostAdd, HostUpdate, HostSummary, HostDirectory } from "@getpaseo/protocol/hosts";
 import type { OwnedSubscription } from "./connection/index.js";
 export type { OwnedSubscription, SubscriptionObserver } from "./connection/index.js";
 import type { DaemonClientConfig } from "./daemon-client.js";
@@ -484,6 +487,7 @@ export interface PaseoConfigActions {
 }
 
 export interface PaseoApi {
+  readonly hosts: PaseoHostActions;
   dispose(): Promise<void>;
   observeEvents: DaemonClient["observeEvents"];
   readonly terminals: PaseoTerminalActions;
@@ -695,6 +699,7 @@ export function createPaseoApi(
 
   return {
     dispose,
+    hosts: createHostActions(daemonClient, { own, signal: lifetime.signal, api: createPaseoApi }),
     observeEvents,
     terminals,
     projects: {
@@ -1034,6 +1039,7 @@ function listProviderUsage(
   daemonClient: DaemonClient,
   options?: PaseoProviderUsageOptions,
 ): Promise<PaseoProviderUsageResult> {
+  daemonClient.ensureConnected();
   // COMPAT(providerUsageList): added in v0.1.98, remove after 2027-02-28 once daemon floor >= v0.1.98.
   if (daemonClient.getLastServerInfoMessage()?.features?.providerUsageList !== true) {
     return Promise.reject(new Error("Update the host to list provider usage."));

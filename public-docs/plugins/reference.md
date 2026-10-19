@@ -27,6 +27,26 @@ Local plugins are directory sources installed into one Paseo daemon. A plugin ca
 
 Plugin code is trusted and unsandboxed. Client surfaces run in the Paseo app. Backend contributions run in a subprocess with access to the daemon machine, including its files, processes, credentials, and network.
 
+## Connected hosts
+
+`usePaseo().hosts` in a client surface and `context.paseo.hosts` in a server handler or lifecycle hook
+use the same [SDK host API](/sdk/reference#clienthosts). They describe the selected daemon's saved
+connections. Existing `useHosts()` and `getPaseoClient(serverId)` keep describing app-known hosts.
+
+```ts
+const remote = await context.paseo.hosts.client("srv_build_box");
+try {
+  return await remote.workspaces.list();
+} finally {
+  await remote.dispose();
+}
+```
+
+A returned API owns its observations. Teardown of the plugin API also disposes derived scopes.
+Keep remote calls inside the handler or lifecycle scope that owns them. Calling B does not forward
+B's plugin lifecycle hooks to A. Registrations created by a routed plugin retain a source qualified
+by the authenticated link and originating plugin.
+
 ## Project files
 
 `paseo plugin init /absolute/path/to/my-plugin` creates:

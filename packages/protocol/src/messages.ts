@@ -1,4 +1,21 @@
 import { AgentMessageSchema } from "./agent-message.js";
+import {
+  HostsListRequestSchema,
+  HostsAddRequestSchema,
+  HostsUpdateRequestSchema,
+  HostsRemoveRequestSchema,
+  HostsRouteOpenRequestSchema,
+  HostsRouteFrameRequestSchema,
+  HostsRouteCloseRequestSchema,
+  HostsListResponseSchema,
+  HostsChangedSchema,
+  HostsAddResponseSchema,
+  HostsUpdateResponseSchema,
+  HostsRemoveResponseSchema,
+  HostsRouteOpenResponseSchema,
+  HostsRouteFrameSchema,
+  HostsRouteClosedSchema,
+} from "./hosts.js";
 import { PluginRegistryIdentitySchema } from "./plugin-registry.js";
 import { AgentProfileSchema, AgentSkillSelectionSchema } from "./agent-profile.js";
 export {
@@ -885,10 +902,8 @@ export type RecentProviderSessionDescriptorPayload = z.infer<
   typeof RecentProviderSessionDescriptorPayloadSchema
 >;
 
-// ============================================================================
-// Session Inbound Messages (Session receives these)
-// ============================================================================
-
+// =====================================================================// Session Inbound Messages (Session receives these)
+// =====================================================================
 export const VoiceAudioChunkMessageSchema = z.object({
   type: z.literal("voice_audio_chunk"),
   audio: z.string(), // base64 encoded
@@ -1214,10 +1229,8 @@ export const SendAgentMessageSchema = z.object({
   attachments: AgentAttachmentsSchema,
 });
 
-// ============================================================================
-// Agent RPCs (requestId-correlated)
-// ============================================================================
-
+// =====================================================================// Agent RPCs (requestId-correlated)
+// =====================================================================
 const DirectorySyncRequestSchema = z.object({
   generation: z.string().optional(),
   afterSeq: z.number().int().nonnegative().optional(),
@@ -1641,10 +1654,8 @@ export const WriteProjectConfigRequestMessageSchema = z.object({
   expectedRevision: PaseoConfigRevisionSchema.nullable(),
 });
 
-// ============================================================================
-// Dictation Streaming (lossless, resumable)
-// ============================================================================
-
+// =====================================================================// Dictation Streaming (lossless, resumable)
+// =====================================================================
 export const DictationStreamStartMessageSchema = z.object({
   type: z.literal("dictation_stream_start"),
   dictationId: z.string(),
@@ -2941,10 +2952,8 @@ export const PushUnregisterResponseSchema = z.object({
   }),
 });
 
-// ============================================================================
-// Terminal Messages
-// ============================================================================
-
+// =====================================================================// Terminal Messages
+// =====================================================================
 export const ListTerminalsRequestSchema = z.object({
   type: z.literal("list_terminals_request"),
   cwd: z.string().optional(),
@@ -3208,6 +3217,14 @@ export const SubscriptionReleaseResponseSchema = z.object({
 });
 
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
+  HostsListRequestSchema,
+  HostsAddRequestSchema,
+  HostsUpdateRequestSchema,
+  HostsRemoveRequestSchema,
+  HostsRouteOpenRequestSchema,
+  HostsRouteFrameRequestSchema,
+  HostsRouteCloseRequestSchema,
+
   BrowserHostRegisterRequestSchema,
   SubscriptionReleaseRequestSchema,
   SessionEventsSetSubscriptionRequestSchema,
@@ -3419,10 +3436,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
 
-// ============================================================================
-// Session Outbound Messages (Session emits these)
-// ============================================================================
-
+// =====================================================================// Session Outbound Messages (Session emits these)
+// =====================================================================
 export const ActivityLogPayloadSchema = z.object({
   subscriptionId: z.string().optional(),
   id: z.string(),
@@ -3578,6 +3593,7 @@ export const ServerInfoStatusPayloadSchema = z
     hostname: ServerInfoHostnameSchema.optional(),
     version: ServerInfoVersionSchema.optional(),
     // COMPAT(sessionPermissions): optional while clients support older daemons.
+    principalId: z.string().optional(),
     permissions: z.array(DaemonPermissionSchema).optional(),
     // COMPAT(desktopManaged): added in v0.1.X, remove optional parsing after 2027-01-16.
     desktopManaged: z.boolean().optional(),
@@ -3598,6 +3614,7 @@ export const ServerInfoStatusPayloadSchema = z
         internalWorkspaces: z.boolean().optional(),
         backgroundWorkspaces: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
+        connectedHosts: z.boolean().optional(),
         usageSources: z.boolean().optional(),
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: z.boolean().optional(),
@@ -6397,10 +6414,8 @@ export const ListCommandsResponseSchema = z.object({
   }),
 });
 
-// ============================================================================
-// Terminal Outbound Messages
-// ============================================================================
-
+// =====================================================================// Terminal Outbound Messages
+// =====================================================================
 const TerminalInfoSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -6879,6 +6894,15 @@ export const AgentSkillsImportLegacySelectionResponseSchema = z.object({
 });
 
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
+  HostsListResponseSchema,
+  HostsChangedSchema,
+  HostsAddResponseSchema,
+  HostsUpdateResponseSchema,
+  HostsRemoveResponseSchema,
+  HostsRouteOpenResponseSchema,
+  HostsRouteFrameSchema,
+  HostsRouteClosedSchema,
+
   BrowserHostRegisterResponseSchema,
   SubscriptionReleaseResponseSchema,
   SessionEventsSetSubscriptionResponseSchema,
@@ -7556,10 +7580,8 @@ export type CaptureTerminalRequest = z.infer<typeof CaptureTerminalRequestSchema
 export type CaptureTerminalResponse = z.infer<typeof CaptureTerminalResponseSchema>;
 export type TerminalStreamExit = z.infer<typeof TerminalStreamExitSchema>;
 
-// ============================================================================
-// WebSocket Level Messages (wraps session messages)
-// ============================================================================
-
+// =====================================================================// WebSocket Level Messages (wraps session messages)
+// =====================================================================
 // WebSocket-only messages (not session messages)
 export const WSPingMessageSchema = z.object({
   type: z.literal("ping"),
@@ -7571,6 +7593,11 @@ export const WSPongMessageSchema = z.object({
 
 export const WSHelloMessageSchema = z.object({
   type: z.literal("hello"),
+  sessionPermissions: z.array(DaemonPermissionSchema).optional(),
+  routed: z.boolean().optional(),
+  producer: z
+    .object({ serverId: z.string().min(1).max(256), sourceId: z.string().min(1).max(1024) })
+    .optional(),
   clientId: z.string().min(1),
   clientType: z.enum(["mobile", "browser", "cli", "mcp", "hub"]),
   protocolVersion: z.number().int(),
@@ -7644,10 +7671,8 @@ export type WSInboundMessage = z.infer<typeof WSInboundMessageSchema>;
 export type WSOutboundMessage = z.infer<typeof WSOutboundMessageSchema>;
 export type WSHelloMessage = z.infer<typeof WSHelloMessageSchema>;
 
-// ============================================================================
-// Helper functions for message conversion
-// ============================================================================
-
+// =====================================================================// Helper functions for message conversion
+// =====================================================================
 /**
  * Extract session message from WebSocket message
  * Returns null if message should be handled at WS level only

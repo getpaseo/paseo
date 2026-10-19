@@ -203,6 +203,57 @@ Use `workspace.terminals.create(options?)` and `workspace.terminals.list(options
 
 `config.patch(patch, requestId?)` validates, persists, and returns an updated configuration. Use this administrative surface for host configuration, not per-agent choices. A patch affects every client and future agent using that daemon.
 
+## `client.hosts`
+
+Manage hosts connected to the selected daemon. Both the managing daemon and destination must support connected hosts.
+
+```ts
+const directory = await client.hosts.list();
+const registration = await client.hosts.add({
+  connection: "ssh://deploy@build-box",
+  label: "Build box",
+  metadata: { team: "infra" },
+  sourceKey: "build-box",
+});
+await client.hosts.update(registration.registrationId, { enabled: false });
+await client.hosts.remove(registration.registrationId);
+```
+
+`list()` returns `{ self: { serverId, label }, hosts }`. Each host includes its registration and server
+IDs, label, authenticated source, string metadata, enabled state, connection status, safe target
+description, last-online/retry timestamps, and an actionable error. Credentials are never returned.
+A valid but unreachable connection is saved and retried. Invalid syntax fails without saving.
+
+`update(registrationId, patch)` accepts `label`, `metadata`, `enabled`, `connection`, and
+`replaceIdentity`. Metadata replaces the whole map. Replacing a connection preserves the expected
+server ID unless `replaceIdentity: true` explicitly accepts a new destination.
+
+`observe()` returns an owned subscription. Await `ready`, subscribe for snapshots and `hosts.changed`
+updates, then call `release()`. Observations restore a current snapshot after reconnect.
+
+```ts
+const remote = await client.hosts.client("srv_build_box");
+try {
+  const workspaces = await remote.workspaces.list();
+  const providers = await remote.providers.listAvailable();
+  await remote.agents.ref("agent_on_build_box").send("Continue the investigation");
+} finally {
+  await remote.dispose();
+}
+```
+
+`client(serverId)` returns a caller-owned `PaseoApi` bound to that destination through the selected
+daemon. The ordinary APIs keep their signatures. Paths and IDs belong to the destination. Selecting
+the local server ID returns a local scope. Routing supports one hop.
+
+Disposing one scope releases its observations without closing siblings or deleting the saved host.
+Origin disposal cascades. Offline operations fail; observations recover. A lost result reports
+`outcome_unknown` and the destination server ID. Inspect before retrying a mutation.
+
+Host failures expose a stable `code`: `host_unknown`, `host_disabled`, `host_offline`,
+`permission_denied`, `unsupported_capability`, `authentication_failed`, `server_id_mismatch`,
+`self_host`, or `duplicate_host`. Discovery does not grant execution authority.
+
 ## Errors and cleanup
 
 Connection, validation, rejection, and timeout failures reject their promise. Turn outcomes are returned through `PaseoAgentRunResult.status` because permission and provider errors are expected agent states.

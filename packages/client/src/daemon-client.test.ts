@@ -910,9 +910,12 @@ test("keeps relay upgrade credentials out of the socket request", async () => {
     },
   });
   clients.push(client);
-  void client.connect();
+  const connecting = client.connect();
+  void connecting.catch(() => {});
   await vi.waitFor(() => expect(requests).toHaveLength(1));
   expect(requests[0]).toEqual({ url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2" });
+  await client.close();
+  await expect(connecting).rejects.toThrow("Daemon client closed");
 });
 
 test("refuses relay password auth without an encrypted hello", async () => {
