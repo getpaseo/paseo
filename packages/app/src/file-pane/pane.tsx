@@ -33,6 +33,7 @@ import { FileMarkdownPreview } from "./markdown-preview";
 import { FileEditorModel, getFileConflictCallout, type FileConflictCallout } from "./editor/model";
 import { createFileObservationSource } from "./editor/observation-source";
 import { FileEditorView } from "./editor/view";
+import { FilePreviewFind } from "./find/preview";
 import { FileSourceView } from "./source/view";
 import type { FileConflictAlertState } from "./conflict-alert";
 import type { LiveFileModel } from "./live-file/model";
@@ -152,6 +153,7 @@ function FilePreviewBody({
       : null;
 
   const previewScrollRef = useRef<RNScrollView>(null);
+  const previewHostRef = useRef<View>(null);
 
   if (isLoading && !preview) {
     return (
@@ -182,7 +184,7 @@ function FilePreviewBody({
 
     if (renderKind === "markdown") {
       return (
-        <View style={styles.previewScrollContainer}>
+        <View ref={previewHostRef} style={styles.previewScrollContainer}>
           <RNScrollView
             ref={previewScrollRef}
             style={styles.previewContent}
@@ -196,6 +198,7 @@ function FilePreviewBody({
               serverId={serverId}
             />
           </RNScrollView>
+          <FilePreviewFind host={previewHostRef} />
         </View>
       );
     }
