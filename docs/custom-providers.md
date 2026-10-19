@@ -65,6 +65,7 @@ per-agent examples and provider-specific keys.
 ## Table of Contents
 
 - [Extending a built-in provider](#extending-a-built-in-provider)
+- [OpenCode with an existing v2 server](#opencode-with-an-existing-v2-server)
 - [Z.AI (Zhipu) coding plan](#zai-zhipu-coding-plan)
 - [Alibaba Cloud (Qwen) coding plan](#alibaba-cloud-qwen-coding-plan)
 - [Codex with a custom OpenAI-compatible endpoint](#codex-with-a-custom-openai-compatible-endpoint)
@@ -104,6 +105,31 @@ Required fields for custom providers:
 - `label` — display name in the UI
 
 See [Codex with a custom OpenAI-compatible endpoint](#codex-with-a-custom-openai-compatible-endpoint) below for the dedicated Codex example.
+
+---
+
+## OpenCode with an existing v2 server
+
+Paseo normally starts and stops its own OpenCode server. To connect to an OpenCode v2 server you already run, set its URL in the provider environment:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "opencode": {
+        "env": {
+          "PASEO_OPENCODE_SERVER_URL": "http://127.0.0.1:4096",
+          "PASEO_OPENCODE_SERVER_PASSWORD": "<server password>"
+        }
+      }
+    }
+  }
+}
+```
+
+`PASEO_OPENCODE_SERVER_URL` must be an absolute `http` or `https` URL. Omit `PASEO_OPENCODE_SERVER_PASSWORD` when the server has no authentication; when set, Paseo authenticates with HTTP Basic auth as `opencode`.
+
+A configured URL skips the local `opencode --version` probe, so the binary does not need to be on the daemon's `PATH`. Paseo connects to the external server for catalogs and sessions and never starts or stops it. Two limitations follow from sharing one server: Paseo does not install its tool bridge on an external server, so `supportsNativePaseoTools` is off for this provider, and per-agent `env` or custom MCP servers cannot be isolated from other agents using the same server.
 
 ---
 

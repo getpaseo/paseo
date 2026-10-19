@@ -19,6 +19,7 @@ import {
 import { execCommand } from "../../../../utils/spawn.js";
 import { OpenCodeAgentClient } from "../opencode-agent.js";
 import type { OpenCodeV2AgentClient } from "./v2/agent.js";
+import { resolveExternalOpenCodeServer } from "./v2/external-server.js";
 import { withOpenCodeRuntimeNotice } from "./runtime-notice.js";
 
 // Keep the minimum aligned with the SDK and binary exercised by CI.
@@ -56,6 +57,7 @@ export class OpenCodeRuntimeClient implements AgentClient {
   readonly isCreateConfigUnattended;
   private selected: Promise<OpenCodeAgentClient | OpenCodeV2AgentClient> | null = null;
   private legacySelected = false;
+  private readonly usesExternalServer: boolean;
   private readonly legacy: OpenCodeAgentClient;
   constructor(
     private readonly logger: Logger,
@@ -63,12 +65,28 @@ export class OpenCodeRuntimeClient implements AgentClient {
     private readonly options: OpenCodeRuntimeClientOptions = {},
   ) {
     this.legacy = new OpenCodeAgentClient(logger, settings, options);
-    this.capabilities = this.legacy.capabilities;
+    this.usesExternalServer = Boolean(
+      resolveExternalOpenCodeServer({
+        ...globalThis.process.env,
+        ...settings?.env,
+      }),
+    );
+    this.capabilities = this.usesExternalServer
+      ? { ...this.legacy.capabilities, supportsNativePaseoTools: false }
+      : this.legacy.capabilities;
     this.resolveCreateConfig = this.legacy.resolveCreateConfig;
     this.isCreateConfigUnattended = this.legacy.isCreateConfigUnattended;
   }
   private client(): Promise<OpenCodeAgentClient | OpenCodeV2AgentClient> {
     this.selected ??= (async () => {
+      if (this.usesExternalServer) {
+        const { OpenCodeV2AgentClient } = await import("./v2/agent.js");
+        return new OpenCodeV2AgentClient({
+          logger: this.logger,
+          settings: this.settings,
+          managedProcesses: this.options.managedProcesses,
+        });
+      }
       let output: string;
       try {
         const launch = await resolveProviderLaunch({
