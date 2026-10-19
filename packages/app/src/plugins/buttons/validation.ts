@@ -22,6 +22,11 @@ function requireText(value: string, field: string): string {
   return value.trim();
 }
 
+function requireTone(value: PluginButton["tone"]): "danger" {
+  if (value !== "danger") throw new Error('Plugin button tone must be "danger"');
+  return value;
+}
+
 function isComponent(value: unknown): boolean {
   return (
     typeof value === "function" ||
@@ -90,6 +95,7 @@ export function validateButton(
     label: button.label === undefined ? undefined : requireText(button.label, "label"),
     visible: optionalBoolean(button.visible, true),
     disabled: optionalBoolean(button.disabled, false),
+    tone: button.tone === undefined ? undefined : requireTone(button.tone),
     behavior: validateBehavior(button.behavior, validation),
   };
 }
