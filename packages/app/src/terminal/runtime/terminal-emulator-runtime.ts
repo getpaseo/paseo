@@ -156,6 +156,11 @@ const isAppleHandheld =
   });
 
 const DEFAULT_TOUCH_SCROLL_LINE_HEIGHT_PX = 18;
+// The screen canvas covers the scrollable viewport, and the page itself does
+// not scroll. `pan-y` lets the browser claim a vertical drag and then drop it,
+// so a finger swipe never reaches the scrollback. `none` keeps the gesture in
+// the touch handler below.
+export const TERMINAL_SURFACE_TOUCH_ACTION = "none";
 const FIT_TIMEOUT_DELAYS_MS = [0, 16, 48, 120, 250, 500, 1_000, 2_000];
 const OUTPUT_OPERATION_TIMEOUT_MS = 5_000;
 const EMPTY_TERMINAL_OUTPUT = new Uint8Array(0);
@@ -685,6 +690,7 @@ export class TerminalEmulatorRuntime {
       root: input.root,
     });
     const restoreViewportStyles = this.applyViewportTouchStyles({
+      root: input.root,
       host: input.host,
     });
 
@@ -1387,9 +1393,15 @@ export class TerminalEmulatorRuntime {
     };
   }
 
-  private applyViewportTouchStyles(input: { host: HTMLDivElement }): () => void {
+  private applyViewportTouchStyles(input: {
+    root: HTMLDivElement;
+    host: HTMLDivElement;
+  }): () => void {
     const viewportElement = input.host.querySelector<HTMLElement>(".xterm-viewport");
+    const screenElement = input.host.querySelector<HTMLElement>(".xterm-screen");
 
+    const previousRootTouchAction = input.root.style.touchAction;
+    const previousScreenTouchAction = screenElement?.style.touchAction ?? "";
     const previousViewportOverscroll = viewportElement?.style.overscrollBehavior ?? "";
     const previousViewportTouchAction = viewportElement?.style.touchAction ?? "";
     const previousViewportOverflowY = viewportElement?.style.overflowY ?? "";
@@ -1397,9 +1409,14 @@ export class TerminalEmulatorRuntime {
     const previousViewportPointerEvents = viewportElement?.style.pointerEvents ?? "";
     const previousViewportWebkitOverflowScrolling =
       viewportElement?.style.getPropertyValue("-webkit-overflow-scrolling") ?? "";
+
+    input.root.style.touchAction = TERMINAL_SURFACE_TOUCH_ACTION;
+    if (screenElement) {
+      screenElement.style.touchAction = TERMINAL_SURFACE_TOUCH_ACTION;
+    }
     if (viewportElement) {
       viewportElement.style.overscrollBehavior = "none";
-      viewportElement.style.touchAction = "pan-y";
+      viewportElement.style.touchAction = TERMINAL_SURFACE_TOUCH_ACTION;
       viewportElement.style.overflowY = "auto";
       viewportElement.style.overflowX = "hidden";
       viewportElement.style.pointerEvents = "auto";
@@ -1407,6 +1424,10 @@ export class TerminalEmulatorRuntime {
     }
 
     return () => {
+      input.root.style.touchAction = previousRootTouchAction;
+      if (screenElement) {
+        screenElement.style.touchAction = previousScreenTouchAction;
+      }
       if (viewportElement) {
         viewportElement.style.overscrollBehavior = previousViewportOverscroll;
         viewportElement.style.touchAction = previousViewportTouchAction;
@@ -1421,17 +1442,25 @@ export class TerminalEmulatorRuntime {
     };
   }
 
+  private touchScrollLineHeightPx(input: { host: HTMLDivElement; terminal: Terminal }): number {
+    const screen = input.host.querySelector<HTMLElement>(".xterm-screen");
+    const rows = input.terminal.rows;
+    if (screen && rows > 0) {
+      const height = screen.getBoundingClientRect().height / rows;
+      if (height > 0) {
+        return height;
+      }
+    }
+    return DEFAULT_TOUCH_SCROLL_LINE_HEIGHT_PX;
+  }
+
   private setupTouchScrollHandlers(input: {
     root: HTMLDivElement;
     host: HTMLDivElement;
     terminal: Terminal;
   }): () => void {
     let touchScrollRemainderPx = 0;
-    const measuredLineHeight =
-      input.host.querySelector<HTMLElement>(".xterm-rows > div")?.getBoundingClientRect().height ??
-      0;
-    const touchScrollLineHeightPx =
-      measuredLineHeight > 0 ? measuredLineHeight : DEFAULT_TOUCH_SCROLL_LINE_HEIGHT_PX;
+    let touchScrollLineHeightPx = this.touchScrollLineHeightPx(input);
 
     const activeTouch = {
       identifier: -1,
@@ -1465,6 +1494,7 @@ export class TerminalEmulatorRuntime {
       activeTouch.lastY = touch.clientY;
       activeTouch.mode = null;
       touchScrollRemainderPx = 0;
+      touchScrollLineHeightPx = this.touchScrollLineHeightPx(input);
     };
 
     const touchMoveHandler = (event: TouchEvent) => {
@@ -1504,7 +1534,10 @@ export class TerminalEmulatorRuntime {
         touchScrollRemainderPx -= lineDelta * touchScrollLineHeightPx;
       }
 
+      // xterm also turns this touch into a scroll on document. Handling it
+      // twice jumps about two lines per cell.
       event.preventDefault();
+      event.stopPropagation();
     };
 
     const touchEndHandler = (event: TouchEvent) => {
