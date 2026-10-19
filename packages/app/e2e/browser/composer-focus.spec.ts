@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "../support/fixtures";
 import {
   blurComposerInput,
+  roundTripComposerTabBeforePaint,
   composerLocator,
   enterComposerFullscreen,
   exitComposerFullscreen,
@@ -17,7 +18,6 @@ import {
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { createMockIdleAgent, openWorkspaceWithAgents } from "../support/helpers/archive-tab";
 import { seedWorkspace } from "../support/helpers/seed-client";
-import { switchComposerTabWithKeyboard } from "../support/helpers/composer";
 import {
   closeMobileAgentSidebar,
   closeMobileExplorer,
@@ -212,9 +212,7 @@ test.describe("touch screen wide enough for the desktop layout", () => {
         await expectComposerFocused(page);
         // An external keyboard changes tabs without a pointer click blurring the
         // editor first. The device still has a touch-primary focus policy.
-        await switchComposerTabWithKeyboard(page, "previous");
-        await expectComposerDraft(page, "");
-        await switchComposerTabWithKeyboard(page, "next");
+        await roundTripComposerTabBeforePaint(page, "Second touch chat");
         await expectComposerDraft(page, draft);
         await expectComposerNotFocused(page);
         await composerLocator(page).tap();
