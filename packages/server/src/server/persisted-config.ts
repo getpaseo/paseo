@@ -81,6 +81,7 @@ const ProvidersSchema = z
 const WorktreesConfigSchema = z
   .object({
     root: z.string().min(1).optional(),
+    pathScript: z.string().trim().min(1).optional(),
     servicePorts: PaseoServicePortAllocationSchema.optional(),
   })
   .strict();

@@ -1487,6 +1487,7 @@ export class VoiceAssistantWebSocketServer {
       pushNotifications: this.pushNotifications,
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
+      worktreesPathScript: this.daemonRuntimeConfig?.worktreesPathScript,
       agentManager: this.agentManager,
       agentStorage: this.agentStorage,
       messageReceipts: this.messageReceipts,

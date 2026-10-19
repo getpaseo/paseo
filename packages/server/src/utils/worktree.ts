@@ -11,7 +11,6 @@ import {
 import { copyFile, rm, stat } from "fs/promises";
 import { join, basename, dirname, isAbsolute, resolve, sep } from "path";
 import net from "node:net";
-import { createHash } from "node:crypto";
 import stripAnsi from "strip-ansi";
 import {
   buildStringCommandShellInvocation,
@@ -33,12 +32,19 @@ import {
   normalizeBaseRefName,
   isQualifiedRef,
   type PaseoWorktreeChangeRequestHint,
+  hasPaseoWorktreeMetadata,
   readPaseoWorktreeMetadata,
   readPaseoWorktreeRuntimePort,
   writePaseoWorktreeMetadata,
   writePaseoWorktreeRuntimeMetadata,
 } from "./worktree-metadata.js";
 import { runGitCommand } from "./run-git-command.js";
+import {
+  deriveWorktreePathScriptContext,
+  deriveWorktreeRepoHash,
+  resolveWorktreePathFromScript,
+  type WorktreePathScriptMode,
+} from "./worktree-path-script.js";
 import { getCurrentBranch, resolveRepositoryDefaultBranch } from "./checkout-git.js";
 import { spawnProcess } from "./spawn.js";
 import { resolvePaseoHome } from "../server/paseo-home.js";
@@ -220,6 +226,13 @@ export interface CreateWorktreeOptions {
   runSetup: boolean;
   paseoHome?: string;
   worktreesRoot?: string;
+  // Explicit target path. Bypasses both the legacy layout and pathScript;
+  // restores use it to recreate a worktree at its recorded path.
+  worktreePath?: string;
+  // Absolute path to the worktrees.pathScript executable. When set (and no
+  // explicit worktreePath, and the source is not a restore), the script
+  // chooses the worktree path. See utils/worktree-path-script.ts.
+  pathScript?: string;
 }
 
 export class BranchAlreadyCheckedOutError extends Error {
@@ -836,26 +849,19 @@ export async function getGitCommonDir(cwd: string): Promise<string> {
   return commonDir;
 }
 
-const WORKTREE_PROJECT_HASH_LENGTH = 8;
-
-function deriveShortAlphanumericHash(value: string): string {
-  const digest = createHash("sha256").update(value).digest();
-  let hashValue = 0n;
-  for (let index = 0; index < 8; index += 1) {
-    hashValue = (hashValue << 8n) | BigInt(digest[index] ?? 0);
-  }
-  return hashValue.toString(36).padStart(13, "0").slice(0, WORKTREE_PROJECT_HASH_LENGTH);
-}
-
 export async function deriveWorktreeProjectHash(cwd: string): Promise<string> {
+  // The hash itself lives in ./worktree-path-script.js (deriveWorktreeRepoHash)
+  // so server code has one copy; the CLI keeps its own quarantined copy
+  // because it cannot import server internals. Both sides pin the algorithm
+  // with an independently recomputed known-answer test.
   try {
     const commonDir = await getGitCommonDir(cwd);
     const normalizedCommonDir = normalizePathForOwnership(commonDir);
     const repoRoot =
       basename(normalizedCommonDir) === ".git" ? dirname(normalizedCommonDir) : normalizedCommonDir;
-    return deriveShortAlphanumericHash(repoRoot);
+    return deriveWorktreeRepoHash(repoRoot);
   } catch {
-    return deriveShortAlphanumericHash(normalizePathForOwnership(cwd));
+    return deriveWorktreeRepoHash(normalizePathForOwnership(cwd));
   }
 }
 
@@ -966,30 +972,75 @@ export async function isPaseoOwnedWorktreeCwd(
   // The <hash>/<slug> prefix is Paseo-private — nothing else writes there — so the
   // path shape alone is sufficient proof of ownership, even when git has already
   // forgotten about the worktree.
-  if (relativePath === null) {
-    return {
-      allowed: false,
-      ...(repoRoot !== undefined ? { repoRoot } : {}),
-      worktreePath: resolvedCwd,
-    };
+  if (relativePath !== null) {
+    const parts = relativePath.split(sep).filter((part) => part.length > 0);
+    if (parts.length >= 2) {
+      const worktreesRoot = join(worktreesBaseRoot, parts[0]);
+      return {
+        allowed: true,
+        ...(repoRoot !== undefined ? { repoRoot } : {}),
+        worktreeRoot: worktreesRoot,
+        worktreePath: join(worktreesRoot, parts[1]),
+      };
+    }
   }
 
-  const parts = relativePath.split(sep).filter((part) => part.length > 0);
-  if (parts.length < 2) {
-    return {
-      allowed: false,
-      ...(repoRoot !== undefined ? { repoRoot } : {}),
-      worktreePath: resolvedCwd,
-    };
+  // Worktrees placed outside the legacy root (worktrees.pathScript) are
+  // proven by the marker createWorktree writes unconditionally: a
+  // paseo/worktree.json in the worktree's git admin dir, with the path
+  // still registered in the repo's `git worktree list`. The marker alone
+  // is not proof — it lives in a git admin dir a user can copy into a
+  // hand-made directory that git does not know about.
+  if (options?.knownGitCommonDir !== null) {
+    const metadataProof = await resolveMetadataOwnedWorktree(cwd, repoRoot);
+    if (metadataProof) {
+      return {
+        allowed: true,
+        ...(repoRoot !== undefined ? { repoRoot } : {}),
+        worktreeRoot: metadataProof.worktreeRoot,
+        worktreePath: metadataProof.worktreePath,
+      };
+    }
   }
 
-  const worktreesRoot = join(worktreesBaseRoot, parts[0]);
   return {
-    allowed: true,
+    allowed: false,
     ...(repoRoot !== undefined ? { repoRoot } : {}),
-    worktreeRoot: worktreesRoot,
-    worktreePath: join(worktreesRoot, parts[1]),
+    worktreePath: resolvedCwd,
   };
+}
+
+async function resolveMetadataOwnedWorktree(
+  cwd: string,
+  repoRoot: string | undefined,
+): Promise<{ worktreePath: string; worktreeRoot: string } | null> {
+  try {
+    const { stdout } = await runGitCommand(["rev-parse", "--show-toplevel"], {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+    });
+    const candidate = normalizePathForOwnership(stdout.trim());
+    // The main checkout is not a Paseo worktree, marker or not.
+    if (repoRoot !== undefined && candidate === normalizePathForOwnership(repoRoot)) {
+      return null;
+    }
+    if (!hasPaseoWorktreeMetadata(candidate)) {
+      return null;
+    }
+    const { stdout: listOutput } = await runGitCommand(["worktree", "list", "--porcelain"], {
+      cwd: candidate,
+      envOverlay: READ_ONLY_GIT_ENV,
+    });
+    const isListed = parseWorktreeList(listOutput).some(
+      (entry) => normalizePathForOwnership(entry.path) === candidate,
+    );
+    if (!isListed) {
+      return null;
+    }
+    return { worktreePath: candidate, worktreeRoot: dirname(candidate) };
+  } catch {
+    return null;
+  }
 }
 
 type ParsedPaseoWorktreeInfo = Omit<PaseoWorktreeInfo, "createdAt">;
@@ -1058,9 +1109,26 @@ export async function listPaseoWorktrees({
     envOverlay: READ_ONLY_GIT_ENV,
   });
 
+  // Entries come from `git worktree list`, so a path here is already
+  // git-registered; the filter only decides which ones are Paseo's. Legacy
+  // shape under the per-project root, or the paseo/worktree.json marker in
+  // the worktree's git admin dir (pathScript-placed worktrees). The main
+  // checkout is never a Paseo worktree.
+  let mainCheckoutPath: string | null = null;
+  try {
+    const commonDir = await getGitCommonDir(cwd);
+    mainCheckoutPath = normalizePathForOwnership(resolveRepoRootFromGitCommonDir(commonDir));
+  } catch {
+    // ignore; the marker check below still applies
+  }
+
   return parseWorktreeList(stdout)
     .map((entry) => Object.assign({}, entry, { path: normalizePathForOwnership(entry.path) }))
-    .filter((entry) => getRealpathAwareRelativePath(projectWorktreesRoot, entry.path) !== null)
+    .filter(
+      (entry) =>
+        getRealpathAwareRelativePath(projectWorktreesRoot, entry.path) !== null ||
+        (entry.path !== mainCheckoutPath && hasPaseoWorktreeMetadata(entry.path)),
+    )
     .map((entry) =>
       Object.assign({}, entry, { createdAt: resolveWorktreeCreatedAtIso(entry.path) }),
     );
@@ -1074,6 +1142,30 @@ export interface DeletePaseoWorktreeOptions {
   worktreesRoot?: string;
   paseoHome?: string;
   worktreesBaseRoot?: string;
+  // The caller has a workspace registry record backing worktreePath (the
+  // record's cwd is this path). Registry membership is an ownership proof
+  // in its own right: it covers worktrees whose git admin dir is already
+  // gone, where the marker proof can no longer be verified. Only pass
+  // this when the record was matched against the path by the caller.
+  registryProven?: boolean;
+}
+
+// Project scoping for delete: a proof for some other repo's worktree must
+// not make this repo's delete remove it. Only refuses on a positive
+// mismatch — when git has forgotten either side, the ownership proof the
+// caller already established stands.
+async function assertWorktreeBelongsToRepo(cwd: string, worktreePath: string): Promise<void> {
+  let callerRepoRoot: string;
+  let targetRepoRoot: string;
+  try {
+    callerRepoRoot = resolveRepoRootFromGitCommonDir(await getGitCommonDir(cwd));
+    targetRepoRoot = resolveRepoRootFromGitCommonDir(await getGitCommonDir(worktreePath));
+  } catch {
+    return;
+  }
+  if (normalizePathForOwnership(callerRepoRoot) !== normalizePathForOwnership(targetRepoRoot)) {
+    throw new Error("Refusing to delete non-Paseo worktree");
+  }
 }
 
 export async function deletePaseoWorktree({
@@ -1084,6 +1176,7 @@ export async function deletePaseoWorktree({
   worktreesRoot,
   paseoHome,
   worktreesBaseRoot,
+  registryProven,
 }: DeletePaseoWorktreeOptions): Promise<void> {
   if (!worktreePath && !worktreeSlug) {
     throw new Error("worktreePath or worktreeSlug is required");
@@ -1102,20 +1195,25 @@ export async function deletePaseoWorktree({
   }
 
   const requestedPath = worktreePath ?? join(resolvedWorktreesRoot, worktreeSlug!);
-  const resolvedRequested = normalizePathForOwnership(requestedPath);
   const ownership = await isPaseoOwnedWorktreeCwd(requestedPath, {
     paseoHome,
     worktreesRoot: worktreesBaseRoot,
   });
-  const resolvedWorktree =
-    ownership.allowed && ownership.worktreePath ? ownership.worktreePath : resolvedRequested;
-
-  const relativeWorktreePath = getRealpathAwareRelativePath(
-    resolvedWorktreesRoot,
-    resolvedWorktree,
-  );
-  if (relativeWorktreePath === null || relativeWorktreePath === "") {
+  // Deletion is gated on the ownership proof set (legacy shape, the
+  // paseo/worktree.json marker verified against `git worktree list`, or a
+  // caller-asserted registry record), not on living under the per-project
+  // hashed root: pathScript-placed worktrees live anywhere.
+  let resolvedWorktree: string;
+  if (ownership.allowed && ownership.worktreePath) {
+    resolvedWorktree = ownership.worktreePath;
+  } else if (registryProven) {
+    resolvedWorktree = normalizePathForOwnership(requestedPath);
+  } else {
     throw new Error("Refusing to delete non-Paseo worktree");
+  }
+
+  if (cwd) {
+    await assertWorktreeBelongsToRepo(cwd, resolvedWorktree);
   }
 
   if (await pathExists(resolvedWorktree)) {
@@ -1214,6 +1312,94 @@ async function removeDirectoryWithRetries(path: string): Promise<void> {
   }
 }
 
+async function listLocalBranchNames(cwd: string): Promise<Set<string>> {
+  const { stdout } = await runGitCommand(
+    ["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+    { cwd },
+  );
+  return new Set(
+    stdout
+      .split("\n")
+      .map((name) => name.trim())
+      .filter((name) => name.length > 0),
+  );
+}
+
+// The one local branch a source plan can create while resolving: a
+// checkout-branch plan fetches refs/heads/<source.branchName>, and a
+// change-request/PR plan fetches refs/heads/<localBranchName> (which is
+// the plan's branchName). branch-off creates no local branch. Only this
+// ref may be rolled back when the path script fails — never any other
+// branch that appeared in the meantime; other creators own those.
+function planCreatedLocalBranch(
+  source: WorktreeSource,
+  sourcePlan: WorktreeSourcePlan,
+): string | null {
+  switch (source.kind) {
+    case "checkout-branch":
+      return source.branchName;
+    case "checkout-change-request":
+    case "checkout-github-pr":
+      return sourcePlan.branchName;
+    default:
+      return null;
+  }
+}
+
+async function readLocalBranchTip(cwd: string, branchName: string): Promise<string | null> {
+  try {
+    const { stdout } = await runGitCommand(
+      ["rev-parse", "--verify", `refs/heads/${branchName}^{commit}`],
+      { cwd },
+    );
+    const tip = stdout.trim();
+    return tip.length > 0 ? tip : null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveScriptWorktreePath(options: {
+  cwd: string;
+  source: WorktreeSource;
+  sourcePlan: WorktreeSourcePlan;
+  worktreeSlug: string;
+  paseoHome?: string;
+  pathScript: string;
+  branchesBefore: Set<string> | null;
+}): Promise<string> {
+  // Capture the plan-created branch and its tip now, so a script failure
+  // can delete exactly that ref, and only if nobody has moved it since.
+  const createdBranch = planCreatedLocalBranch(options.source, options.sourcePlan);
+  const createdBranchTip =
+    createdBranch && options.branchesBefore && !options.branchesBefore.has(createdBranch)
+      ? await readLocalBranchTip(options.cwd, createdBranch)
+      : null;
+  try {
+    const context = await deriveWorktreePathScriptContext({
+      cwd: options.cwd,
+      branchName: options.sourcePlan.branchName,
+      slug: options.worktreeSlug,
+      mode: options.source.kind as WorktreePathScriptMode,
+      baseRef:
+        options.source.kind === "branch-off"
+          ? (options.sourcePlan.metadataBaseRef ?? options.sourcePlan.metadataBaseRefName)
+          : "",
+      paseoHome: options.paseoHome ? resolve(options.paseoHome) : resolvePaseoHome(),
+    });
+    return await resolveWorktreePathFromScript({ script: options.pathScript, context });
+  } catch (error) {
+    if (createdBranch && createdBranchTip) {
+      const currentTip = await readLocalBranchTip(options.cwd, createdBranch).catch(() => null);
+      if (currentTip === createdBranchTip) {
+        // Fails if the branch is checked out somewhere; best-effort.
+        await runGitCommand(["branch", "-D", createdBranch], { cwd: options.cwd }).catch(() => {});
+      }
+    }
+    throw error;
+  }
+}
+
 /**
  * Create a git worktree with proper naming conventions
  */
@@ -1224,17 +1410,53 @@ export const createWorktree = async ({
   runSetup,
   paseoHome,
   worktreesRoot,
+  worktreePath: explicitWorktreePath,
+  pathScript,
 }: CreateWorktreeOptions): Promise<CreatedWorktree> => {
+  const isRestore = source.kind === "restore" || source.kind === "restore-from-base";
+  // Resolving a checkout source plan can create local branches (fetching a
+  // PR head or an origin branch). If the path script then fails, those
+  // branches would linger and the next attempt would uniquify to a
+  // different name. Snapshot branch names so a script failure can undo
+  // exactly the refs the plan created.
+  const willUsePathScript = Boolean(pathScript) && !explicitWorktreePath && !isRestore;
+  const branchesBefore = willUsePathScript
+    ? await listLocalBranchNames(cwd).catch(() => null)
+    : null;
   const sourcePlan = await resolveWorktreeSourcePlan({ cwd, source, desiredSlug: worktreeSlug });
-  let worktreePath = join(await getPaseoWorktreesRoot(cwd, paseoHome, worktreesRoot), worktreeSlug);
+
+  let worktreePath: string;
+  let useSuffixLoop = false;
+  if (explicitWorktreePath) {
+    // Explicit paths (including restores recreating a recorded path) are
+    // used verbatim: no suffixing, no pathScript.
+    worktreePath = resolve(explicitWorktreePath);
+  } else if (pathScript && !isRestore) {
+    worktreePath = await resolveScriptWorktreePath({
+      cwd,
+      source,
+      sourcePlan,
+      worktreeSlug,
+      paseoHome,
+      pathScript,
+      branchesBefore,
+    });
+  } else {
+    worktreePath = join(await getPaseoWorktreesRoot(cwd, paseoHome, worktreesRoot), worktreeSlug);
+    useSuffixLoop = true;
+  }
   mkdirSync(dirname(worktreePath), { recursive: true });
 
-  // Also handle worktree path collision
+  // Also handle worktree path collision (legacy layout only; explicit and
+  // script-resolved paths fail on collision inside git worktree add or in
+  // the script path validation instead of being silently suffixed).
   let finalWorktreePath = worktreePath;
-  let pathSuffix = 1;
-  while (existsSync(finalWorktreePath)) {
-    finalWorktreePath = `${worktreePath}-${pathSuffix}`;
-    pathSuffix++;
+  if (useSuffixLoop) {
+    let pathSuffix = 1;
+    while (existsSync(finalWorktreePath)) {
+      finalWorktreePath = `${worktreePath}-${pathSuffix}`;
+      pathSuffix++;
+    }
   }
 
   // Primitive owner for `git worktree add`; callers route through createWorktreeCore.

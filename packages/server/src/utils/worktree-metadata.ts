@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
-import { isAbsolute, join, resolve } from "path";
+import { dirname, isAbsolute, join, resolve } from "path";
 import { z } from "zod";
 
 const ChangeRequestLookupTargetSchema = z.object({
@@ -305,6 +305,34 @@ export function markPaseoWorktreeFirstAgentBranchAutoNameAttempted(
   };
   writePaseoWorktreeMetadataFile(worktreeRoot, next);
   return next;
+}
+
+export function hasPaseoWorktreeMetadata(worktreeRoot: string): boolean {
+  try {
+    return readPaseoWorktreeMetadata(worktreeRoot) !== null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Filesystem-only search for a Paseo worktree root at or above cwd: the
+ * first directory containing a .git entry wins, and it only counts when
+ * its git admin dir holds the paseo/worktree.json marker. Lets callers
+ * cheaply rule out plain directories before running git ownership checks.
+ */
+export function findPaseoWorktreeRootForCwd(cwd: string): string | null {
+  let current = resolve(cwd);
+  for (;;) {
+    if (existsSync(join(current, ".git"))) {
+      return hasPaseoWorktreeMetadata(current) ? current : null;
+    }
+    const parent = dirname(current);
+    if (parent === current) {
+      return null;
+    }
+    current = parent;
+  }
 }
 
 export function readPaseoWorktreeMetadata(worktreeRoot: string): PaseoWorktreeMetadata | null {

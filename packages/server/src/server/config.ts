@@ -611,6 +611,7 @@ export function resolveConfigFromPersisted(
     paseoHome,
     desktopManaged: env.PASEO_DESKTOP_MANAGED === "1",
     worktreesRoot: resolveWorktreesRoot(paseoHome, persisted),
+    worktreesPathScript: persisted.worktrees?.pathScript,
     corsAllowedOrigins: resolveCorsAllowedOrigins(env, persisted),
     hostnames,
     trustedProxies,
