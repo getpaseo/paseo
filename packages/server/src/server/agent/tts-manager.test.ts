@@ -22,6 +22,70 @@ class FakeTts implements TextToSpeechProvider {
 }
 
 describe("TTSManager", () => {
+  it("preserves PCM samples split across odd-sized provider chunks", async () => {
+    const pcm = Buffer.from([0, 1, 2, 3, 4, 5]);
+    const tts: TextToSpeechProvider = {
+      async synthesizeSpeech() {
+        return {
+          stream: Readable.from([pcm.subarray(0, 1), pcm.subarray(1, 4), pcm.subarray(4)]),
+          format: "pcm",
+        };
+      },
+    };
+    const manager = new TTSManager("pcm", pino({ level: "silent" }), tts);
+    const emitted: Buffer[] = [];
+    await manager.generateAndWaitForPlayback(
+      "hello",
+      (message) => {
+        if (message.type === "audio_output") {
+          emitted.push(Buffer.from(message.payload.audio, "base64"));
+          manager.confirmAudioPlayed(message.payload.id);
+        }
+      },
+      new AbortController().signal,
+      true,
+    );
+    expect(emitted).toEqual([pcm]);
+  });
+
+  it("cancels synthesis before the provider returns an audio stream", async () => {
+    let started!: () => void;
+    const synthesisStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let cancelled = false;
+    const tts: TextToSpeechProvider = {
+      async synthesizeSpeech(_text, signal) {
+        return new Promise((_, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () => {
+              cancelled = true;
+              reject(new Error("aborted"));
+            },
+            { once: true },
+          );
+          started();
+        });
+      },
+    };
+    const manager = new TTSManager("cancel", pino({ level: "silent" }), tts);
+    const controller = new AbortController();
+    const emitted: SessionOutboundMessage[] = [];
+    const task = manager.generateAndWaitForPlayback(
+      "hello",
+      (message) => {
+        emitted.push(message);
+      },
+      controller.signal,
+      true,
+    );
+    await synthesisStarted;
+    controller.abort();
+    await task;
+    expect(cancelled).toBe(true);
+    expect(emitted).toEqual([]);
+  });
   it("emits chunks and resolves once confirmed", async () => {
     const manager = new TTSManager("s1", pino({ level: "silent" }), new FakeTts());
     const abort = new AbortController();

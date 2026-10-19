@@ -2106,6 +2106,11 @@ export const zhCN: TranslationResources = {
       saveError: "无法更新元数据生成设置",
     },
     general: {
+      voice: "语音",
+      voiceWaitingSound: {
+        label: "等待提示音",
+        description: "等待语音回复时循环播放提示音。",
+      },
       title: "通用",
       sending: "发送",
       browserData: {

@@ -11,6 +11,7 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { useSessionStore } from "@/stores/session-store";
 import { createAudioEngine } from "@/audio";
 import type { AudioEngine } from "@/audio";
+import { useAppSettings } from "@/hooks/use-settings";
 import {
   createVoiceRuntime,
   type VoiceRuntime,
@@ -113,6 +114,7 @@ interface VoiceProviderProps {
 }
 
 export function VoiceProvider({ children }: VoiceProviderProps) {
+  const { settings } = useAppSettings();
   const engineRef = useRef<AudioEngine | null>(null);
   const runtimeRef = useRef<VoiceRuntime | null>(null);
 
@@ -153,6 +155,10 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
 
   const engine = engineRef.current;
   const runtime = runtimeRef.current!;
+
+  useEffect(() => {
+    runtime.setWaitingSoundEnabled(settings.voiceWaitingSoundEnabled);
+  }, [runtime, settings.voiceWaitingSoundEnabled]);
 
   useEffect(() => {
     return () => {

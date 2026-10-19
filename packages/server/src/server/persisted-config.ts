@@ -2,6 +2,7 @@ import { PluginRegistriesSchema } from "@getpaseo/protocol/plugin-registry";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { OpenAiSpeechEndpointSchema } from "./speech/providers/openai/config.js";
 
 import {
   AgentProviderRuntimeSettingsMapSchema,
@@ -46,13 +47,6 @@ const LogConfigSchema = z
       })
       .strict()
       .optional(),
-  })
-  .strict();
-
-const OpenAiSpeechEndpointSchema = z
-  .object({
-    apiKey: z.string().trim().min(1).optional(),
-    baseUrl: z.string().trim().min(1).optional(),
   })
   .strict();
 

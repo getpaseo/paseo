@@ -175,6 +175,7 @@ export interface VoiceRuntime {
   stopVoice(): Promise<void>;
   destroy(): Promise<void>;
   toggleMute(): void;
+  setWaitingSoundEnabled(enabled: boolean): void;
   isVoiceModeForAgent(serverId: string, agentId: string): boolean;
   shouldPlayVoiceAudio(serverId: string): boolean;
   onAssistantAudioStarted(serverId: string): void;
@@ -207,6 +208,7 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
     processing: false,
     generation: 0,
   };
+  let waitingSoundEnabled = true;
   const cue: CueState = {
     controller: null,
     timeout: null,
@@ -431,6 +433,7 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
 
   function canPlayCue(): boolean {
     return (
+      waitingSoundEnabled &&
       state.snapshot.isVoiceMode &&
       state.snapshot.phase === "waiting" &&
       !state.telemetry.isSpeaking
@@ -578,6 +581,11 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
   }
 
   const api: VoiceRuntime = {
+    setWaitingSoundEnabled(enabled) {
+      if (waitingSoundEnabled === enabled) return;
+      waitingSoundEnabled = enabled;
+      reconcileCue();
+    },
     subscribe(listener) {
       listeners.add(listener);
       return () => {

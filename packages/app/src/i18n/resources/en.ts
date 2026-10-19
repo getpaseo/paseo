@@ -2254,6 +2254,11 @@ export const en = {
       saveError: "Unable to update metadata generation",
     },
     general: {
+      voice: "Voice",
+      voiceWaitingSound: {
+        label: "Waiting sound",
+        description: "Play a repeating tone while waiting for a spoken reply.",
+      },
       title: "General",
       sending: "Sending",
       browserData: {

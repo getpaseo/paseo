@@ -2150,6 +2150,11 @@ export const ja: TranslationResources = {
       saveError: "メタデータ生成を更新できません",
     },
     general: {
+      voice: "音声",
+      voiceWaitingSound: {
+        label: "待機音",
+        description: "音声の返答を待つ間、繰り返しトーンを再生します。",
+      },
       title: "一般",
       sending: "送信",
       browserData: {

@@ -263,7 +263,7 @@ export class TTSManager {
     }
 
     const synthStart = Date.now();
-    const { stream, format } = await tts.synthesizeSpeech(segment.text);
+    const { stream, format } = await tts.synthesizeSpeech(segment.text, abortSignal);
     this.logger.info(
       {
         segmentIndex: segment.index,
