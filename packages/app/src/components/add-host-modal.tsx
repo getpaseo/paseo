@@ -195,6 +195,12 @@ function draftFromConnectionUri(uri: string): DirectConnectionDraft {
   };
 }
 
+// The Password field stays visible under Advanced, so it fills in a URI that carries none.
+function draftFromAdvancedUri(uri: string, fieldPassword: string): DirectConnectionDraft {
+  const draft = draftFromConnectionUri(uri);
+  return draft.password ? draft : { ...draft, password: fieldPassword };
+}
+
 function normalizeTransportMessage(message: string | null | undefined): string | null {
   if (!message) return null;
   const trimmed = message.trim();
@@ -401,18 +407,18 @@ function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostMod
   const handleSave = useCallback(async () => {
     if (isSaving) return;
 
-    const relayUri = isAdvancedOpen ? advancedUri.trim() : "";
-    if (relayUri.startsWith("relay://") || relayUri.includes("#connect=")) {
-      await handleSaveRelay(relayUri);
+    const advancedInput = isAdvancedOpen ? advancedUri.trim() : "";
+    if (advancedInput.startsWith("relay://") || advancedInput.includes("#connect=")) {
+      await handleSaveRelay(advancedInput);
       return;
     }
 
     let connection: PreparedDirectConnection;
     try {
-      connection = prepareDirectConnection(
-        { host, port, useTls, password },
-        directConnectionLabels,
-      );
+      const draft = advancedInput
+        ? draftFromAdvancedUri(advancedInput, password)
+        : { host, port, useTls, password };
+      connection = prepareDirectConnection(draft, directConnectionLabels);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : directConnectionLabels.invalidConnection;
