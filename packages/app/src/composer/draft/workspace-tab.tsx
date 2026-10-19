@@ -10,6 +10,7 @@ import { useComposerEditingSession, useComposerFullscreen } from "@/composer/edi
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { ComposerImportPill } from "@/composer/draft/import-pill";
 import { COMPOSER_PILL_CLEARANCE } from "@/composer/pill-styles";
+import type { OpenChatWebLink } from "@/utils/open-chat-url";
 import { AgentStreamView } from "@/agent-stream/view";
 import { composerWorkspaceAttachment } from "@/composer/attachments/workspace";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
@@ -279,6 +280,7 @@ interface WorkspaceDraftAgentTabProps {
   isPaneFocused: boolean;
   onCreated: (snapshot: AgentSnapshotPayload) => void;
   onOpenWorkspaceFile: (request: WorkspaceFileOpenRequest) => void;
+  onOpenChatWebLink?: OpenChatWebLink;
   onOpenImportSheet?: () => void;
 }
 
@@ -301,6 +303,7 @@ export function WorkspaceDraftAgentTab({
   isPaneFocused,
   onCreated,
   onOpenWorkspaceFile,
+  onOpenChatWebLink,
   onOpenImportSheet,
 }: WorkspaceDraftAgentTabProps) {
   const { t } = useTranslation();
@@ -614,6 +617,7 @@ export function WorkspaceDraftAgentTab({
             turnPresentation={turnPresentation}
             pendingPermissions={EMPTY_PENDING_PERMISSIONS}
             onOpenWorkspaceFile={onOpenWorkspaceFile}
+            onOpenChatWebLink={onOpenChatWebLink}
           />
         </View>
       ) : (

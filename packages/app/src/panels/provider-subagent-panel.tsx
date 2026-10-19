@@ -115,7 +115,8 @@ function useProviderSubagentDescriptor(
 
 function ProviderSubagentPanel() {
   const { t } = useTranslation();
-  const { serverId, workspaceId, target, openFileInWorkspace, openTab } = usePaneContext();
+  const { serverId, workspaceId, target, openFileInWorkspace, openChatWebLink, openTab } =
+    usePaneContext();
   invariant(target.kind === "provider_subagent", "ProviderSubagentPanel requires provider target");
   const key = providerSubagentKey(serverId, target.parentAgentId, target.subagentId);
   const streamId = `provider:${encodeURIComponent(target.parentAgentId)}:${encodeURIComponent(target.subagentId)}`;
@@ -263,6 +264,7 @@ function ProviderSubagentPanel() {
         pendingPermissions={EMPTY_PERMISSIONS}
         isAuthoritativeHistoryReady
         onOpenWorkspaceFile={openFileInWorkspace}
+        onOpenChatWebLink={openChatWebLink}
         readOnly
         historyPagination={historyPagination}
         bottomOverlayTailClearance={childTrackClearance.tail}

@@ -60,6 +60,7 @@ export const fr: TranslationResources = {
       downloadFailed: "Échec du téléchargement",
     },
     errors: {
+      unableToOpenLink: "Impossible d’ouvrir ce lien. Réessayez.",
       error: "Erreur",
       unableToSave: "Impossible d’enregistrer",
       unableToCopy: "Impossible de copier",
@@ -2206,6 +2207,7 @@ export const fr: TranslationResources = {
           queue: "File d’attente",
         },
       },
+      chatWebLinks: { label: "Liens web du chat" },
       serviceUrls: {
         options: {
           ask: "Demander",

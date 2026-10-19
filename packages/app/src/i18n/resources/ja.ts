@@ -60,6 +60,7 @@ export const ja: TranslationResources = {
       downloadFailed: "ダウンロード失敗",
     },
     errors: {
+      unableToOpenLink: "このリンクを開けませんでした。もう一度お試しください。",
       error: "エラー",
       unableToSave: "保存できません",
       unableToCopy: "コピーできません",
@@ -2177,6 +2178,7 @@ export const ja: TranslationResources = {
           queue: "キュー",
         },
       },
+      chatWebLinks: { label: "チャットのウェブリンク" },
       serviceUrls: {
         options: {
           ask: "確認する",

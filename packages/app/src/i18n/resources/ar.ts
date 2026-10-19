@@ -59,6 +59,7 @@ export const ar: TranslationResources = {
       downloadFailed: "فشل التنزيل",
     },
     errors: {
+      unableToOpenLink: "تعذر فتح هذا الرابط. حاول مرة أخرى.",
       error: "خطأ",
       unableToSave: "غير قادر على الحفظ",
       unableToCopy: "تعذر النسخ",
@@ -2157,6 +2158,7 @@ export const ar: TranslationResources = {
           queue: "طابور",
         },
       },
+      chatWebLinks: { label: "روابط الويب في المحادثة" },
       serviceUrls: {
         options: {
           ask: "بسأل",

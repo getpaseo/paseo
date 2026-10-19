@@ -4,6 +4,7 @@ import { SettingsSection, SettingsCard, SettingsSelect } from "@/components/sett
 import {
   useAppSettings,
   type OpenInSidePanePreferences,
+  type ChatLinkBehavior,
   type PullRequestOpenLocation,
   type ServiceUrlBehavior,
 } from "@/hooks/use-settings";
@@ -83,7 +84,33 @@ function ServiceUrlRow() {
   );
 }
 
-/** Where things open: files, diffs, subagents, pull requests, and script URLs. Desktop only. */
+const CHAT_LINK_BEHAVIORS: readonly ChatLinkBehavior[] = ["external", "in-app"];
+const CHAT_LINK_LABEL_KEYS: Record<ChatLinkBehavior, string> = {
+  external: "settings.general.serviceUrls.options.external",
+  "in-app": "settings.general.serviceUrls.options.inApp",
+};
+
+function ChatWebLinksRow() {
+  const { t } = useTranslation();
+  const { settings, updateSettings } = useAppSettings();
+  const options = useMemo(
+    () => CHAT_LINK_BEHAVIORS.map((value) => ({ value, label: t(CHAT_LINK_LABEL_KEYS[value]) })),
+    [t],
+  );
+  const change = useCallback(
+    (chatLinkBehavior: ChatLinkBehavior) => void updateSettings({ chatLinkBehavior }),
+    [updateSettings],
+  );
+  return (
+    <SettingsSelect
+      label={t("settings.general.chatWebLinks.label")}
+      value={settings.chatLinkBehavior}
+      options={options}
+      onValueChange={change}
+    />
+  );
+}
+
 export function OpenLocationSection() {
   const { t } = useTranslation();
   const { settings, updateSettings } = useAppSettings();
@@ -116,6 +143,7 @@ export function OpenLocationSection() {
           allowExplorer
           onDestinationChange={handleDestinationChange}
         />
+        <ChatWebLinksRow />
         <ServiceUrlRow />
       </SettingsCard>
     </SettingsSection>

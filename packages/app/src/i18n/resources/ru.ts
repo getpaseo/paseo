@@ -60,6 +60,7 @@ export const ru: TranslationResources = {
       downloadFailed: "Загрузка не удалась",
     },
     errors: {
+      unableToOpenLink: "Не удалось открыть ссылку. Повторите попытку.",
       error: "Ошибка",
       unableToSave: "Не удалось сохранить",
       unableToCopy: "Не удалось скопировать",
@@ -2192,6 +2193,7 @@ export const ru: TranslationResources = {
           queue: "Поставить в очередь",
         },
       },
+      chatWebLinks: { label: "Веб-ссылки в чате" },
       serviceUrls: {
         options: {
           ask: "Спрашивать",

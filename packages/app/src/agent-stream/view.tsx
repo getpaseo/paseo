@@ -87,6 +87,7 @@ import {
 } from "./bottom-anchor-controller";
 import { createAssistantImageOccurrenceKey } from "@/assistant-image/acquisition-cache";
 import { AssistantSelectionCopySurface } from "@/assistant-selection-copy/surface";
+import type { OpenChatWebLink } from "@/utils/open-chat-url";
 import { AssistantFileLinkResolverProvider, createInlinePathOpener } from "@/assistant-file-links";
 import {
   createWorkspaceFileTabTarget,
@@ -272,6 +273,7 @@ export interface AgentStreamViewProps {
   bottomOverlayControlClearance?: number;
   toast?: ToastApi | null;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
+  onOpenChatWebLink?: OpenChatWebLink;
   readOnly?: boolean;
   historyPagination?: {
     hasOlder: boolean;
@@ -326,6 +328,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       bottomOverlayControlClearance,
       toast,
       onOpenWorkspaceFile,
+      onOpenChatWebLink,
       readOnly = false,
       historyPagination,
     },
@@ -696,32 +699,24 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const renderAssistantMessageItem = useCallback(
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "assistant_message" }>) => {
         return (
-          <AssistantFileLinkResolverProvider
-            client={client}
-            serverId={resolvedServerId}
-            workspaceRoot={workspaceRoot}
-            onOpenWorkspaceFile={handleInlinePathPress}
-            toast={toast}
-          >
-            <ChatFindExpansion messageId={getStreamItemMessageId(item)}>
-              {(renderFullContent) => (
-                <AssistantMessage
-                  renderFullContent={renderFullContent}
-                  occurrenceKey={createAssistantImageOccurrenceKey({ agentId, itemId: item.id })}
-                  message={item.text}
-                  timestamp={item.timestamp.getTime()}
-                  workspaceRoot={workspaceRoot}
-                  serverId={resolvedServerId}
-                  client={client}
-                  spacing={layoutItem.assistantSpacing}
-                  phase={layoutItem.phase}
-                />
-              )}
-            </ChatFindExpansion>
-          </AssistantFileLinkResolverProvider>
+          <ChatFindExpansion messageId={getStreamItemMessageId(item)}>
+            {(renderFullContent) => (
+              <AssistantMessage
+                renderFullContent={renderFullContent}
+                occurrenceKey={createAssistantImageOccurrenceKey({ agentId, itemId: item.id })}
+                message={item.text}
+                timestamp={item.timestamp.getTime()}
+                workspaceRoot={workspaceRoot}
+                serverId={resolvedServerId}
+                client={client}
+                spacing={layoutItem.assistantSpacing}
+                phase={layoutItem.phase}
+              />
+            )}
+          </ChatFindExpansion>
         );
       },
-      [agentId, client, handleInlinePathPress, resolvedServerId, toast, workspaceRoot],
+      [agentId, client, resolvedServerId, workspaceRoot],
     );
 
     const renderThoughtItem = useCallback(
@@ -1078,7 +1073,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       () => [...effectiveStreamItems, ...(effectiveStreamHead ?? [])],
       [effectiveStreamItems, effectiveStreamHead],
     );
-    return (
+    const timeline = (
       <ChatFind
         agentId={agentId}
         serverId={resolvedServerId}
@@ -1138,6 +1133,18 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           </AssistantSelectionCopySurface>
         </ToolCallSheetProvider>
       </ChatFind>
+    );
+    return (
+      <AssistantFileLinkResolverProvider
+        client={client}
+        serverId={resolvedServerId}
+        workspaceRoot={workspaceRoot}
+        onOpenWorkspaceFile={handleInlinePathPress}
+        onOpenWebUrl={onOpenChatWebLink}
+        toast={toast}
+      >
+        {timeline}
+      </AssistantFileLinkResolverProvider>
     );
   },
 );
@@ -1260,6 +1267,7 @@ function agentStreamViewPropsEqual(
   }
   if (left.toast !== right.toast) reasons.push("toast");
   if (left.onOpenWorkspaceFile !== right.onOpenWorkspaceFile) reasons.push("onOpenWorkspaceFile");
+  if (left.onOpenChatWebLink !== right.onOpenChatWebLink) reasons.push("onOpenChatWebLink");
   if (left.readOnly !== right.readOnly) reasons.push("readOnly");
   if (!historyPaginationPropsEqual(left.historyPagination, right.historyPagination)) {
     reasons.push("historyPagination");

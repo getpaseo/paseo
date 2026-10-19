@@ -4,6 +4,7 @@ import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import type { OpenInSidePaneSource } from "@/workspace-tabs/open-beside";
+import type { OpenChatWebLink } from "@/utils/open-chat-url";
 import type { PaneHost } from "@/panels/panel-manifest";
 
 export interface PaneContextValue {
@@ -21,6 +22,7 @@ export interface PaneContextValue {
   retargetCurrentTab: (target: WorkspaceTabTarget) => void;
   setCurrentTabState: (state: JsonValue) => void;
   openFileInWorkspace: (request: WorkspaceFileOpenRequest) => void;
+  openChatWebLink: OpenChatWebLink;
   openImportSheet: () => void;
 }
 
