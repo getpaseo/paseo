@@ -357,7 +357,9 @@ test("disabled host configuration and source survive a fresh daemon instance", a
     sourceKey: "stable",
   });
   await paseo.hosts.update(host.registrationId, { enabled: false });
-  expect((await stat(join(a.paseoHome, "hosts.json"))).mode & 0o777).toBe(0o600);
+  // Windows exposes inherited ACLs, not POSIX owner/group/other mode bits.
+  if (process.platform !== "win32")
+    expect((await stat(join(a.paseoHome, "hosts.json"))).mode & 0o777).toBe(0o600);
   await a.close();
   const restarted = await createTestPaseoDaemon({ paseoHomeRoot: root, cleanup: false });
   cleanup.push(() => restarted.close());

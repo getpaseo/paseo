@@ -7,7 +7,7 @@ or through `paseo.hosts`. Consumers select B by its learned `serverId`; manageme
 
 ## Ownership and authority
 
-Credentials live in A's `hosts.json`, written atomically with mode `0600`. Discovery returns a safe
+Credentials live in A's `hosts.json`, written atomically with mode `0600` on POSIX systems. Discovery returns a safe
 target description. Replacement inputs never come back through a read API. Keep this file private
 when collecting diagnostics or backing up daemon state.
 
