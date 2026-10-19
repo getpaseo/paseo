@@ -332,6 +332,21 @@ describe("listCheckoutCommits", () => {
     ]);
   });
 
+  it("keeps the destination path when a file moves up out of a directory", async () => {
+    const { repoDir } = initRepoOnMain();
+    git(["checkout", "-b", "feature"], repoDir);
+    mkdirSync(join(repoDir, "src", "nested"), { recursive: true });
+    commitFile(repoDir, "src/nested/a.txt", "content\n", "Add nested file");
+    git(["mv", "src/nested/a.txt", "src/a.txt"], repoDir);
+    commit(repoDir, "Move file up");
+
+    const { commits } = await listCheckoutCommits({ cwd: repoDir });
+
+    expect(commits[0]?.files).toEqual([
+      { path: "src/a.txt", additions: 0, deletions: 0, status: "renamed" },
+    ]);
+  });
+
   it("derives status for modified and deleted files", async () => {
     const { repoDir } = initRepoOnMain();
     git(["checkout", "-b", "feature"], repoDir);
