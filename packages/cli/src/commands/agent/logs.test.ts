@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
-import { createFollowTranscriptWriter, formatAgentActivityTranscript } from "./logs.js";
+import {
+  createFollowJsonWriter,
+  createFollowTranscriptWriter,
+  formatAgentActivityTranscript,
+} from "./logs.js";
 
 function collect(items: readonly AgentTimelineItem[], turnId?: string): string {
   let output = "";
@@ -147,5 +151,33 @@ describe("createFollowTranscriptWriter", () => {
     ]);
 
     expect(output).toBe("# Title\n\nBody\n");
+  });
+});
+
+describe("createFollowJsonWriter", () => {
+  it("writes one JSON item per line and honours the filter", () => {
+    let output = "";
+    const writer = createFollowJsonWriter("tools", (chunk) => {
+      output += chunk;
+    });
+    const toolCall = {
+      type: "tool_call",
+      callId: "call_1",
+      name: "shell",
+      status: "completed",
+      detail: { type: "unknown", input: null, output: null },
+      error: null,
+    } as AgentTimelineItem;
+
+    writer.push({ type: "assistant_message", text: "Running it.", messageId: "msg_1" });
+    writer.push(toolCall);
+    writer.end();
+
+    expect(
+      output
+        .trimEnd()
+        .split("\n")
+        .map((line) => JSON.parse(line)),
+    ).toEqual([toolCall]);
   });
 });

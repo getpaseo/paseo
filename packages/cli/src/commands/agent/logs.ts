@@ -70,6 +70,31 @@ export function formatAgentActivityTranscript(
   );
 }
 
+/**
+ * Picks the items `--tail` keeps, the same way the transcript does: the last n
+ * timeline items, before any of them are dropped from the curated view.
+ */
+export function selectTailItems(
+  timelineItems: AgentTimelineItem[],
+  tailCount?: number,
+): AgentTimelineItem[] {
+  if (tailCount === undefined) {
+    return timelineItems;
+  }
+  if (tailCount === 0) {
+    return [];
+  }
+  return timelineItems.slice(-tailCount);
+}
+
+export function formatAgentLogsJson(
+  agentId: string,
+  timelineItems: AgentTimelineItem[],
+  tailCount?: number,
+): string {
+  return JSON.stringify({ agentId, items: selectTailItems(timelineItems, tailCount) }, null, 2);
+}
+
 type StreamingTextType = "assistant_message" | "reasoning";
 
 const THOUGHT_PREFIX = "[Thought] ";
@@ -198,6 +223,21 @@ export function createFollowTranscriptWriter(
   };
 }
 
+/** Follow mode with `--json`: one JSON timeline item per line (NDJSON). */
+export function createFollowJsonWriter(
+  filter?: string,
+  write: (chunk: string) => void = (chunk) => void process.stdout.write(chunk),
+): FollowTranscriptWriter {
+  return {
+    push(item) {
+      if (matchesFilter(item, filter)) {
+        write(`${JSON.stringify(item)}\n`);
+      }
+    },
+    end() {},
+  };
+}
+
 function parseTailCount(raw: string | undefined): number | undefined {
   if (raw === undefined) return undefined;
   const parsed = Number.parseInt(raw, 10);
@@ -306,6 +346,11 @@ export async function runLogsCommand(
 
     await client.close();
 
+    if (options.json) {
+      console.log(formatAgentLogsJson(resolvedId, timelineItems, tailCount));
+      return;
+    }
+
     // Use curateAgentActivity to format the transcript
     if (tailCount === 0) {
       return;
@@ -350,8 +395,14 @@ async function runFollowMode({
     existingItems = existingItems.filter((item) => matchesFilter(item, options.filter));
   }
 
+  const json = options.json === true;
+
   // Print existing transcript (tail-like behavior)
-  if (tailCount > 0) {
+  if (json) {
+    for (const item of selectTailItems(existingItems, tailCount)) {
+      console.log(JSON.stringify(item));
+    }
+  } else if (tailCount > 0) {
     const existingTranscript = formatAgentActivityTranscript(existingItems, tailCount);
     if (existingTranscript !== NO_ACTIVITY_MESSAGE) {
       console.log(existingTranscript);
@@ -362,12 +413,16 @@ async function runFollowMode({
   const tailLabel =
     tailCount === 0 ? "no history" : `last ${tailCount} entr${tailCount === 1 ? "y" : "ies"}`;
 
-  const writer = createFollowTranscriptWriter(undefined, options.filter);
+  const writer = json
+    ? createFollowJsonWriter(options.filter)
+    : createFollowTranscriptWriter(undefined, options.filter);
+  // Keep stdout parseable in JSON mode: one timeline item per line, notices on stderr.
+  const notice = json ? console.error : console.log;
 
   const unsubscribe = client.subscribeAgentTimeline(agentId, (message) => {
     if (message.type === "agent.timeline.replacement") {
       writer.end();
-      console.log("\n[Timeline replaced; earlier output is no longer current]");
+      notice("\n[Timeline replaced; earlier output is no longer current]");
       return;
     }
 
@@ -378,7 +433,7 @@ async function runFollowMode({
     }
     if (message.type === "agent.timeline.subscription_restored") {
       writer.end();
-      console.log("\n[Reconnected; live output resumed. Events may have been missed.]");
+      notice("\n[Reconnected; live output resumed. Events may have been missed.]");
       return;
     }
     if (message.payload.event.type === "timeline") {
@@ -399,7 +454,7 @@ async function runFollowMode({
   });
 
   await unsubscribe.ready;
-  console.log(`\n--- Following logs (${tailLabel}; Ctrl+C to stop) ---\n`);
+  notice(`\n--- Following logs (${tailLabel}; Ctrl+C to stop) ---\n`);
 
   await waitForStop();
   writer.end();
