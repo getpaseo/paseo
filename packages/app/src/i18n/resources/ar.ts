@@ -655,6 +655,7 @@ export const ar: TranslationResources = {
         close: "يغلق",
         renameTerminal: "إعادة تسمية المحطة",
         renameAgent: "إعادة تسمية الوكيل",
+        aiRenameAgent: "إعادة تسمية بالذكاء الاصطناعي",
       },
       actions: {
         newTab: "علامة تبويب جديدة",
@@ -693,6 +694,8 @@ export const ar: TranslationResources = {
         reloadingAgent: "وكيل إعادة التحميل...",
         reloadedAgent: "وكيل إعادة تحميل",
         failedToReloadAgent: "فشل في إعادة تحميل الوكيل",
+        failedToRetitleAgent: "فشل في إعادة تسمية الوكيل",
+        updateHostToRetitleAgent: "حدّث المضيف لإعادة التسمية بالذكاء الاصطناعي.",
         failedToCloseAgent: "فشل في إغلاق الوكيل",
       },
       confirmations: {

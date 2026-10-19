@@ -655,6 +655,7 @@ export const zhCN: TranslationResources = {
         close: "关闭",
         renameTerminal: "重命名 Terminal",
         renameAgent: "重命名 Agent",
+        aiRenameAgent: "AI 重命名",
       },
       actions: {
         newTab: "新建标签页",
@@ -693,6 +694,8 @@ export const zhCN: TranslationResources = {
         reloadingAgent: "正在重新加载 Agent...",
         reloadedAgent: "已重新加载 Agent",
         failedToReloadAgent: "重新加载 Agent 失败",
+        failedToRetitleAgent: "重命名 Agent 失败",
+        updateHostToRetitleAgent: "请更新 Host 以使用 AI 重命名。",
         failedToCloseAgent: "关闭 Agent 失败",
       },
       confirmations: {

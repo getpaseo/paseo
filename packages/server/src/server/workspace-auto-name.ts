@@ -176,6 +176,25 @@ export class WorkspaceAutoName {
     await this.emitWorkspaceUpdateForWorkspaceId(input.workspaceId);
   }
 
+  /**
+   * Generate a fresh agent title from a prompt context. Unlike the scheduled
+   * first-prompt flows, this is a manual action: it returns the generated title
+   * and never writes it — the caller decides whether to persist it.
+   */
+  async generateAgentTitle(input: {
+    cwd: string;
+    prompt: string;
+    currentSelection?: CurrentSelection;
+  }): Promise<string | null> {
+    const generated = await this.generateFromContext({
+      cwd: input.cwd,
+      firstAgentContext: { prompt: input.prompt, attachments: [] },
+      currentSelection: input.currentSelection ?? null,
+    });
+    const title = generated?.title?.trim() ?? "";
+    return title === "" ? null : title;
+  }
+
   private async applyGeneratedWorkspaceTitle(
     workspaceId: string,
     input: { title: string; branch?: string | null; promptTitle?: string | null },

@@ -1138,6 +1138,7 @@ describe("relay external socket reconnect behavior", () => {
       clientId: "cid-stable-project-identity",
     });
 
+    expect(serverInfo.features?.agentRetitle).toBe(true);
     expect(serverInfo.features?.stableProjectIdentity).toBe(true);
     expect(serverInfo.features?.canonicalSubmittedPrompts).toBe(true);
     expect(serverInfo.features?.providersSnapshotCwd).toBe(true);

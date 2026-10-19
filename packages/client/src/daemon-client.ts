@@ -1053,6 +1053,8 @@ const DEFAULT_RECONNECT_BASE_DELAY_MS = 1500;
 const DEFAULT_RECONNECT_MAX_DELAY_MS = 30000;
 const DEFAULT_SESSION_RPC_TIMEOUT_MS = 60_000;
 const PUSH_TOKEN_REVOCATION_TIMEOUT_MS = 2_000;
+/** Structured generation retries providers with no shared deadline. */
+const AGENT_RETITLE_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
 const DEFAULT_LIVENESS_TIMEOUT_MS = 5000;
 const LIVENESS_HEARTBEAT_INTERVAL_MS = 10_000;
@@ -3046,6 +3048,38 @@ export class DaemonClient {
     });
     if (!payload.accepted) {
       throw new Error(payload.error ?? "detachAgent rejected");
+    }
+  }
+
+  async retitleAgent(agentId: string): Promise<void> {
+    // COMPAT(agentRetitle): added in v0.11.2, remove after 2027-04-16.
+    if (this.lastServerInfoMessage?.features?.agentRetitle !== true) {
+      throw new Error("Update the host to rename with AI.");
+    }
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "update_agent_request",
+      agentId,
+      labels: { "paseo.retitle": "1" },
+      requestId,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      timeout: AGENT_RETITLE_TIMEOUT_MS,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "update_agent_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "retitleAgent rejected");
     }
   }
 

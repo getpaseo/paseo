@@ -652,6 +652,7 @@ export const en = {
         close: "Close",
         renameTerminal: "Rename terminal",
         renameAgent: "Rename agent",
+        aiRenameAgent: "Rename with AI",
       },
       actions: {
         newTab: "New tab",
@@ -690,6 +691,8 @@ export const en = {
         reloadingAgent: "Reloading agent...",
         reloadedAgent: "Reloaded agent",
         failedToReloadAgent: "Failed to reload agent",
+        failedToRetitleAgent: "Failed to rename agent",
+        updateHostToRetitleAgent: "Update the host to rename with AI.",
         failedToCloseAgent: "Failed to close agent",
       },
       confirmations: {
