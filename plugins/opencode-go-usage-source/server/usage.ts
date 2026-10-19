@@ -1,6 +1,3 @@
-import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { z } from "zod";
 import {
   hashAccountKey,
@@ -11,15 +8,7 @@ import {
   type UsageReport,
 } from "@getpaseo/plugin/server/usage";
 import type { Input } from "../shared/input.js";
-
-const authSchema = z
-  .object({
-    "opencode-go": z
-      .object({ type: z.literal("api"), key: z.string().min(1) })
-      .passthrough()
-      .optional(),
-  })
-  .passthrough();
+import { defaultStorePaths, readDatabaseLogin, readFileKey } from "./stores.js";
 const windowSchema = z.object({
   status: z.enum(["ok", "rate-limited"]),
   percent: z.number().finite(),
@@ -29,32 +18,30 @@ const responseSchema = z.object({
   usage: z.object({ rolling: windowSchema, weekly: windowSchema, monthly: windowSchema }),
 });
 
-function authPath(env: NodeJS.ProcessEnv = process.env): string {
-  return join(
-    env.XDG_DATA_HOME || join(env.HOME || homedir(), ".local", "share"),
-    "opencode",
-    "auth.json",
-  );
-}
-
-export async function readDefaultKey(path = authPath()): Promise<string | null> {
-  try {
-    const auth = authSchema.parse(JSON.parse(await readFile(path, "utf8")));
-    return auth["opencode-go"]?.key ?? null;
-  } catch {
-    return null;
+export async function discover(paths = defaultStorePaths()): Promise<UsageAccount[]> {
+  const login = readDatabaseLogin(paths.database);
+  if (login) {
+    return login.key
+      ? [
+          {
+            key: hashAccountKey(paths.database),
+            input: { store: "database", path: paths.database },
+          },
+        ]
+      : [];
   }
-}
-
-export async function discover(path = authPath()): Promise<UsageAccount[]> {
-  return (await readDefaultKey(path)) ? [{ key: hashAccountKey(path), input: { path } }] : [];
+  const key = await readFileKey(paths.file);
+  return key
+    ? [{ key: hashAccountKey(paths.file), input: { store: "file", path: paths.file } }]
+    : [];
 }
 
 export async function fetchUsage(
   input: Input,
   fetchApi: typeof fetch = fetch,
 ): Promise<UsageReport> {
-  const apiKey = await readDefaultKey(input.path);
+  const apiKey =
+    input.store === "database" ? readDatabaseLogin(input.path)?.key : await readFileKey(input.path);
   if (!apiKey) throw new Error("OpenCode Go login store no longer exists");
   const response = await fetchApi("https://opencode.ai/zen/go/v1/usage", {
     headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
