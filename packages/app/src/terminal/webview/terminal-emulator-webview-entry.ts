@@ -136,6 +136,7 @@ body,
   display: flex;
   min-width: 0;
   min-height: 0;
+  touch-action: none;
 }
 #terminal-host {
   flex: 1;

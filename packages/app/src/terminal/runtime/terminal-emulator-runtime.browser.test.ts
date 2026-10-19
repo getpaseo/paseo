@@ -181,6 +181,56 @@ function getBrowserTerminal(): BrowserTerminal {
   return terminal;
 }
 
+interface ScrollbackTerminal {
+  rows: number;
+  buffer: {
+    active: {
+      viewportY: number;
+      baseY: number;
+    };
+  };
+}
+
+function getScrollbackTerminal(): ScrollbackTerminal {
+  const terminal = window.__paseoTerminal as ScrollbackTerminal | undefined;
+  if (!terminal?.buffer?.active) {
+    throw new Error("Expected xterm scrollback buffer");
+  }
+  return terminal;
+}
+
+function dispatchTouch(input: {
+  target: HTMLElement;
+  type: "touchstart" | "touchmove" | "touchend";
+  x: number;
+  y: number;
+}): void {
+  const touch = new Touch({
+    identifier: 1,
+    target: input.target,
+    clientX: input.x,
+    clientY: input.y,
+    pageX: input.x,
+    pageY: input.y,
+    screenX: input.x,
+    screenY: input.y,
+    radiusX: 1,
+    radiusY: 1,
+    rotationAngle: 0,
+    force: 0.5,
+  });
+  const ended = input.type === "touchend";
+  input.target.dispatchEvent(
+    new TouchEvent(input.type, {
+      bubbles: true,
+      cancelable: true,
+      touches: ended ? [] : [touch],
+      targetTouches: ended ? [] : [touch],
+      changedTouches: [touch],
+    }),
+  );
+}
+
 interface DispatchTerminalKeyInput {
   host: HTMLElement;
   key: string;
@@ -282,6 +332,59 @@ describe("terminal emulator runtime in a real browser", () => {
 
     expect(window.__paseoTerminal).toBe(terminal);
     expect(window.__paseoTerminal?.options.scrollback).toBe(42_000);
+  });
+
+  it("scrolls terminal history when a finger drags downward", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360, scrollback: 1_000 });
+
+    await waitFor({
+      predicate: () => mounted.sizes.length > 0 && (window.__paseoTerminal?.rows ?? 0) > 0,
+    });
+    await writeLines(
+      mounted,
+      Array.from({ length: 80 }, (_, index) => `history-line-${index}`),
+    );
+
+    const screen = mounted.host.querySelector<HTMLElement>(".xterm-screen");
+    const viewport = mounted.host.querySelector<HTMLElement>(".xterm-viewport");
+    if (!screen || !viewport) {
+      throw new Error("Expected xterm screen and viewport");
+    }
+    await waitFor({
+      predicate: () => screen.getBoundingClientRect().height > 0,
+    });
+
+    expect(mounted.root.style.touchAction).toBe("none");
+    expect(screen.style.touchAction).toBe("none");
+    expect(viewport.style.touchAction).toBe("none");
+
+    const terminal = getScrollbackTerminal();
+    const before = terminal.buffer.active.viewportY;
+    expect(before).toBe(terminal.buffer.active.baseY);
+
+    const rect = screen.getBoundingClientRect();
+    const lineHeight = rect.height / terminal.rows;
+    const startX = rect.left + rect.width / 2;
+    const startY = rect.top + rect.height / 2;
+    const draggedLines = 4;
+    dispatchTouch({ target: screen, type: "touchstart", x: startX, y: startY });
+    dispatchTouch({
+      target: screen,
+      type: "touchmove",
+      x: startX,
+      y: startY + lineHeight * draggedLines,
+    });
+    dispatchTouch({
+      target: screen,
+      type: "touchend",
+      x: startX,
+      y: startY + lineHeight * draggedLines,
+    });
+
+    const scrolledLines = before - terminal.buffer.active.viewportY;
+    expect(scrolledLines).toBeGreaterThanOrEqual(draggedLines - 1);
+    expect(scrolledLines).toBeLessThanOrEqual(draggedLines);
   });
 
   it("does not claim PTY ownership from passive mount refits", async () => {
