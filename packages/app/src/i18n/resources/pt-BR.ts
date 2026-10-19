@@ -1338,6 +1338,7 @@ export const ptBR: TranslationResources = {
         rename: "Renomear workspace",
         pin: "Fixar no topo",
         unpin: "Desafixar",
+        revealInSidebar: "Mostrar na barra lateral",
         archive: "Arquivar",
         archiveWorkspace: "Arquivar workspace",
         hideFromSidebar: "Ocultar da barra lateral",

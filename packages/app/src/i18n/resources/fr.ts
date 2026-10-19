@@ -1342,6 +1342,7 @@ export const fr: TranslationResources = {
         rename: "Renommer l’espace de travail",
         pin: "Épingler en haut",
         unpin: "Désépingler",
+        revealInSidebar: "Afficher dans la barre latérale",
         archive: "Archiver",
         archiveWorkspace: "Archiver l’espace de travail",
         hideFromSidebar: "Masquer de la barre latérale",

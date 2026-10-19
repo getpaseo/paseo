@@ -1319,6 +1319,7 @@ export const ko: TranslationResources = {
         rename: "워크스페이스 이름 변경",
         pin: "상단에 고정",
         unpin: "고정 해제",
+        revealInSidebar: "사이드바에서 표시",
         archive: "보관",
         archiveWorkspace: "워크스페이스 보관",
         hideFromSidebar: "사이드바에서 숨기기",

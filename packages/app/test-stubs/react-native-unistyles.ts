@@ -150,4 +150,5 @@ export const useUnistyles = () => ({
 export const UnistylesRuntime = {
   setTheme: () => undefined,
   themeName: "light",
+  breakpoint: undefined as string | undefined,
 };

@@ -1302,6 +1302,7 @@ export const zhCN: TranslationResources = {
         rename: "重命名 workspace",
         pin: "置顶",
         unpin: "取消置顶",
+        revealInSidebar: "在侧边栏中显示",
         archive: "归档",
         archiveWorkspace: "归档工作区",
         hideFromSidebar: "从侧边栏隐藏",

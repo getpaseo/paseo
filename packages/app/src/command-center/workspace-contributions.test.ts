@@ -74,6 +74,7 @@ function source(gitActions: GitActions): {
         pin: "Pin to top",
         unpin: "Unpin",
         showSetup: "Show setup",
+        revealInSidebar: "Reveal in sidebar",
         labelsGroup: "Labels",
       },
       icons: {},
@@ -99,6 +100,7 @@ function source(gitActions: GitActions): {
       copyBranchName: () => {
         counters.copiedBranchNames += 1;
       },
+      revealInSidebar: null,
       toggleLabel: (name, assigned) => {
         toggledLabels.push({ name, assigned });
       },
