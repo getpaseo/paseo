@@ -222,3 +222,51 @@ export async function revealExplorerDirectory(input: {
   }
   input.expandPaths(paths);
 }
+
+/**
+ * Files Refresh: re-lists the expanded directories (and the root), and drops the cached
+ * listing of every other directory. Expanding a directory only fetches when it has no
+ * cached listing, so keeping a collapsed directory's old listing would show it as it was
+ * before the refresh.
+ */
+export async function refreshExplorerDirectories({
+  hasWorkspaceScope,
+  expandedPaths,
+  cachedDirectoryPaths,
+  showHiddenFiles,
+  requestDirectoryListing,
+  discardDirectoryListings,
+}: {
+  hasWorkspaceScope: boolean;
+  expandedPaths: Set<string>;
+  cachedDirectoryPaths: Iterable<string>;
+  showHiddenFiles: boolean;
+  requestDirectoryListing: (
+    path: string,
+    opts?: { recordHistory?: boolean; setCurrentPath?: boolean },
+  ) => Promise<ExplorerDirectory | null>;
+  discardDirectoryListings: (paths: readonly string[]) => void;
+}): Promise<null> {
+  if (!hasWorkspaceScope) {
+    return null;
+  }
+  const directoryPaths = Array.from(expandedPaths).filter(
+    (path) => showHiddenFiles || !isHiddenExplorerPath(path),
+  );
+  if (!directoryPaths.includes(".")) {
+    directoryPaths.unshift(".");
+  }
+  const refreshedPaths = new Set(directoryPaths);
+  discardDirectoryListings(
+    Array.from(cachedDirectoryPaths).filter((path) => !refreshedPaths.has(path)),
+  );
+  await Promise.all(
+    directoryPaths.map((path) =>
+      requestDirectoryListing(path, {
+        recordHistory: false,
+        setCurrentPath: false,
+      }),
+    ),
+  );
+  return null;
+}
