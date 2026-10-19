@@ -12,19 +12,25 @@ describe("composer control layout", () => {
       showCarets: false,
       showThinkingLabel: true,
       showModeLabel: true,
+      showFeatureLabels: true,
       aggregateFeatures: false,
+      wrapControls: false,
     });
     expect(resolveComposerControlPresentation("condensed")).toEqual({
       showCarets: false,
       showThinkingLabel: false,
       showModeLabel: true,
-      aggregateFeatures: true,
+      showFeatureLabels: false,
+      aggregateFeatures: false,
+      wrapControls: false,
     });
     expect(resolveComposerControlPresentation("tight")).toEqual({
       showCarets: false,
       showThinkingLabel: false,
       showModeLabel: false,
-      aggregateFeatures: true,
+      showFeatureLabels: false,
+      aggregateFeatures: false,
+      wrapControls: true,
     });
   });
 

@@ -98,6 +98,7 @@ vi.mock("@/components/ui/button", () => ({
     loading,
     testID,
     accessibilityLabel,
+    size,
   }: {
     children?: React.ReactNode;
     onPress?: () => void;
@@ -105,12 +106,14 @@ vi.mock("@/components/ui/button", () => ({
     loading?: boolean;
     testID?: string;
     accessibilityLabel?: string;
+    size?: string;
   }) => (
     <button
       type="button"
       data-testid={testID}
       aria-label={accessibilityLabel}
       data-loading={loading ? "true" : "false"}
+      data-size={size}
       disabled={disabled}
       onClick={onPress}
     >
@@ -153,13 +156,19 @@ function useScenario(workflowState: WorkspaceWorkflowState, actions: GitAction[]
   });
 }
 
-function render(hideLabels = false): { unmount: () => void } {
+function render(hideLabels = false, mobile = false): { unmount: () => void } {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
   act(() => {
     root.render(
-      <WorkspaceActions serverId="host" workspaceId="ws" cwd="/repo" hideLabels={hideLabels} />,
+      <WorkspaceActions
+        serverId="host"
+        workspaceId="ws"
+        cwd="/repo"
+        hideLabels={hideLabels}
+        mobile={mobile}
+      />,
     );
   });
   return {
@@ -221,6 +230,24 @@ describe("WorkspaceActions", () => {
     current = render(true);
     expect(primaryCta().textContent).toBe("");
     expect(primaryCta().getAttribute("aria-label")).toBe("Create PR");
+  });
+
+  it("shows labeled 44 px actions on mobile", () => {
+    useScenario({ action: "create-pr" }, [gitAction({ id: "pr", label: "View PR" })]);
+    current = render(false, true);
+
+    expect(document.querySelector('[data-testid="workspace-git-review"]')?.textContent).toBe(
+      "Review",
+    );
+    expect(document.querySelector('[data-testid="workspace-git-commit"]')?.textContent).toBe(
+      "Commit",
+    );
+    expect(document.querySelector('[data-testid="workspace-git-view-pr"]')?.textContent).toBe(
+      "View PR",
+    );
+    for (const button of document.querySelectorAll("button")) {
+      expect(button.getAttribute("data-size")).toBe("md");
+    }
   });
 
   it("launches local check repair and shows View PR beside it", () => {

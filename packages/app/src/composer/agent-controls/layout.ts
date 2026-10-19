@@ -14,7 +14,9 @@ export interface ComposerControlPresentation {
   showCarets: boolean;
   showThinkingLabel: boolean;
   showModeLabel: boolean;
+  showFeatureLabels: boolean;
   aggregateFeatures: boolean;
+  wrapControls: boolean;
 }
 
 export const COMPOSER_TOOLBAR_GEOMETRY = {
@@ -62,7 +64,7 @@ function resolveCondensedFloor(controls: ComposerControlPresence): number {
   if (controls.hasModel) widths.push(36 + 60 * fontScale);
   if (controls.hasThinking) widths.push(COMPOSER_TOOLBAR_GEOMETRY.controlSize);
   if (controls.hasMode) widths.push(36 + 96 * fontScale);
-  if (controls.features.length > 0) widths.push(COMPOSER_TOOLBAR_GEOMETRY.controlSize);
+  for (const _feature of controls.features) widths.push(COMPOSER_TOOLBAR_GEOMETRY.controlSize);
   return sumControlWidths(widths);
 }
 
@@ -110,7 +112,9 @@ export function resolveComposerControlPresentation(
       showCarets: false,
       showThinkingLabel: true,
       showModeLabel: true,
+      showFeatureLabels: true,
       aggregateFeatures: false,
+      wrapControls: false,
     };
   }
   if (density === "condensed") {
@@ -118,14 +122,18 @@ export function resolveComposerControlPresentation(
       showCarets: false,
       showThinkingLabel: false,
       showModeLabel: true,
-      aggregateFeatures: true,
+      showFeatureLabels: false,
+      aggregateFeatures: false,
+      wrapControls: false,
     };
   }
   return {
     showCarets: false,
     showThinkingLabel: false,
     showModeLabel: false,
-    aggregateFeatures: true,
+    showFeatureLabels: false,
+    aggregateFeatures: false,
+    wrapControls: true,
   };
 }
 

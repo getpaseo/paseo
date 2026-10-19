@@ -4389,6 +4389,16 @@ function WorkspaceScreenContent({
   const workspaceCenterColumn = (
     <View style={styles.centerColumn}>
       {rendersDesktopSplitContent ? null : renderWorkspaceScreenHeader()}
+      {isMobile && workspaceDirectory ? (
+        <View style={styles.mobileWorkspaceActions} testID="workspace-mobile-actions">
+          <WorkspaceActions
+            mobile
+            serverId={normalizedServerId}
+            workspaceId={normalizedWorkspaceId}
+            cwd={workspaceDirectory}
+          />
+        </View>
+      ) : null}
       {browserOpenError?.input.workspaceKey === persistenceKey ? (
         <Alert
           variant="error"
@@ -4641,6 +4651,15 @@ const styles = StyleSheet.create((theme) => ({
       xs: theme.spacing[1],
       md: theme.spacing[2],
     },
+  },
+  mobileWorkspaceActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+    backgroundColor: theme.colors.workspace.chrome,
   },
   compactHeaderActionButton: {
     marginRight: {

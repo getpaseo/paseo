@@ -4,7 +4,6 @@ import { ImageAddon } from "@xterm/addon-image";
 import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { WebglAddon } from "@xterm/addon-webgl";
 import { LigaturesAddon } from "@xterm/addon-ligatures/lib/addon-ligatures.mjs";
 import { Terminal, type ITheme, type IMarker } from "@xterm/xterm";
 import type { TerminalState } from "@getpaseo/protocol/messages";
@@ -125,7 +124,7 @@ interface TerminalEmulatorRuntimeDisposables {
   restoreDocumentStyles: () => void;
   restoreViewportStyles: () => void;
   disposeFitAddon: () => void;
-  disposeWebglAddon: () => void;
+  disposeImageAddon: () => void;
   disposeTerminal: () => void;
 }
 
@@ -478,7 +477,7 @@ export class TerminalEmulatorRuntime {
       fontSize: resolveTerminalFontSize(input.fontSize),
       // OSC 8 hyperlinks; without a handler xterm prompts and calls window.open().
       linkHandler: { activate: openExternalLink },
-      lineHeight: 1.0,
+      lineHeight: 1.2,
       macOptionIsMeta: true,
       minimumContrastRatio: 1,
       rescaleOverlappingGlyphs: true,
@@ -490,7 +489,6 @@ export class TerminalEmulatorRuntime {
     });
     const fitAddon = new FitAddon();
     const unicode11Addon = new Unicode11Addon();
-    let webglAddon: WebglAddon | null = null;
     let imageAddon: ImageAddon | null = null;
     terminal.loadAddon(fitAddon);
     terminal.loadAddon(unicode11Addon);
@@ -542,21 +540,6 @@ export class TerminalEmulatorRuntime {
       }
       imageAddon = null;
     };
-    const disposeWebglRenderer = (): void => {
-      if (!webglAddon) {
-        return;
-      }
-      try {
-        webglAddon.dispose();
-      } catch {
-        // ignore
-      }
-      webglAddon = null;
-      disposeImageAddon();
-      // WebGL and DOM renderers can have different cell dimensions.
-      this.fitAndEmitResize?.({ forceRefresh: true, shouldClaim: false });
-    };
-
     // Browser xterm is a renderer only; it never replies to terminal protocol queries.
     // Replies live on the daemon (one process boundary from the PTY) so they arrive
     // before the foreground app exits, instead of racing back over the websocket.
@@ -580,21 +563,15 @@ export class TerminalEmulatorRuntime {
     };
     registerProtocolQuerySuppression();
 
-    let webglAddonRaf: number | null = requestAnimationFrame(() => {
-      webglAddonRaf = null;
+    // Keep text in the DOM so browser font smoothing survives display scaling.
+    let imageAddonRaf: number | null = requestAnimationFrame(() => {
+      imageAddonRaf = null;
       try {
-        disposeWebglRenderer();
-        webglAddon = new WebglAddon();
-        webglAddon.onContextLoss(() => {
-          disposeWebglRenderer();
-        });
-        terminal.loadAddon(webglAddon);
         imageAddon = new ImageAddon();
         terminal.loadAddon(imageAddon);
         registerProtocolQuerySuppression();
-        this.fitAndEmitResize?.({ forceRefresh: true, shouldClaim: false });
       } catch {
-        disposeWebglRenderer();
+        disposeImageAddon();
       }
     });
 
@@ -760,12 +737,11 @@ export class TerminalEmulatorRuntime {
       disposeFitAddon: () => {
         fitAddon.dispose();
       },
-      disposeWebglAddon: () => {
-        if (webglAddonRaf !== null) {
-          cancelAnimationFrame(webglAddonRaf);
-          webglAddonRaf = null;
+      disposeImageAddon: () => {
+        if (imageAddonRaf !== null) {
+          cancelAnimationFrame(imageAddonRaf);
+          imageAddonRaf = null;
         }
-        disposeWebglRenderer();
         disposeImageAddon();
       },
       disposeTerminal: () => {
@@ -785,7 +761,7 @@ export class TerminalEmulatorRuntime {
       disposables.removeFontListeners();
       disposables.removeTouchListeners();
       disposables.disposeFitAddon();
-      disposables.disposeWebglAddon();
+      disposables.disposeImageAddon();
       disposables.disposeTerminal();
       disposables.restoreDocumentStyles();
       disposables.restoreViewportStyles();

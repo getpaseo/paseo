@@ -26,6 +26,7 @@ const reviewIcon = <ThemedEye size={13} strokeWidth={1.5} uniProps={reviewIconMa
 
 interface WorkspaceActionsProps {
   hideLabels?: boolean;
+  mobile?: boolean;
   serverId: string;
   workspaceId: string;
   cwd: string;
@@ -40,12 +41,22 @@ function workflowButtonVariant(
   return "outline";
 }
 
+function resolveActionLabel(mobile: boolean, hideLabels: boolean | undefined, label: string) {
+  return mobile || !hideLabels ? label : null;
+}
+
+function resolveCommitLabel(mobile: boolean) {
+  return mobile ? "Commit" : null;
+}
+
 export function WorkspaceActions({
   serverId,
   workspaceId,
   cwd,
   hideLabels,
+  mobile = false,
 }: WorkspaceActionsProps) {
+  const buttonSize = mobile ? "md" : "xs";
   const router = useRouter();
   const { t } = useTranslation();
   const toast = useToast();
@@ -177,7 +188,7 @@ export function WorkspaceActions({
   return (
     <>
       <Button
-        size="xs"
+        size={buttonSize}
         variant="ghost"
         leftIcon={reviewIcon}
         textStyle={styles.reviewText}
@@ -187,12 +198,12 @@ export function WorkspaceActions({
         loading={launchingAction === "review"}
         onPress={handleReview}
       >
-        {hideLabels ? null : "Review"}
+        {resolveActionLabel(mobile, hideLabels, "Review")}
       </Button>
       <Tooltip delayDuration={250}>
         <TooltipTrigger asChild>
           <Button
-            size="xs"
+            size={buttonSize}
             variant="ghost"
             leftIcon={GitCommitHorizontal}
             testID="workspace-git-commit"
@@ -200,7 +211,9 @@ export function WorkspaceActions({
             disabled={commitAction.disabled}
             loading={commitAction.status === "pending"}
             onPress={handleCommit}
-          />
+          >
+            {resolveCommitLabel(mobile)}
+          </Button>
         </TooltipTrigger>
         <TooltipContent side="bottom">
           <Text style={styles.tooltipText}>Commit</Text>
@@ -208,7 +221,7 @@ export function WorkspaceActions({
       </Tooltip>
       {viewPrAction && workflowState.action !== "view-pr" ? (
         <Button
-          size="xs"
+          size={buttonSize}
           variant="secondary"
           testID="workspace-git-view-pr"
           disabled={!viewPrAction || viewPrAction.disabled}
@@ -219,7 +232,7 @@ export function WorkspaceActions({
         </Button>
       ) : null}
       <Button
-        size="xs"
+        size={buttonSize}
         variant={workflowButtonVariant(workflowState.action)}
         leftIcon={GitPullRequest}
         style={
@@ -237,7 +250,7 @@ export function WorkspaceActions({
         }
         onPress={handlePr}
       >
-        {hideLabels ? null : workflowLabel}
+        {resolveActionLabel(mobile, hideLabels, workflowLabel)}
       </Button>
     </>
   );

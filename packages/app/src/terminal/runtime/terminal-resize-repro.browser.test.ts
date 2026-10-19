@@ -2,6 +2,7 @@ import { page } from "@vitest/browser/context";
 import { afterEach, describe, expect, it } from "vitest";
 import type { TerminalState } from "@getpaseo/protocol/messages";
 import { encodeTerminalOutput, TerminalEmulatorRuntime } from "./terminal-emulator-runtime";
+import "@xterm/xterm/css/xterm.css";
 
 // Regression: "streaming pino log, resized the Paseo terminal, old logs stayed
 // narrow and new logs drew on top of the old ones."
@@ -141,6 +142,24 @@ afterEach(() => {
 });
 
 describe("terminal resize reflow repro (Paseo terminal)", () => {
+  it("keeps narrow terminal text in readable browser rows", async () => {
+    const m = mount(286, 450);
+    m.runtime.setTheme({ theme: { background: "#eff0f3", foreground: "#18191b" } });
+    m.runtime.setFont({ fontSize: 12 });
+    await writeCommitted(m.runtime, encodeTerminalOutput("npm run build\r\ntsc -p tsconfig.json"));
+    await waitFor(
+      () => m.host.querySelector(".xterm-rows")?.textContent?.includes("tsconfig.json") === true,
+    );
+
+    const rows = m.host.querySelectorAll<HTMLElement>(".xterm-rows > div");
+    expect(rows[0]?.textContent?.trimEnd()).toBe("npm run build");
+    expect(rows[1]?.textContent?.trimEnd()).toBe("tsc -p tsconfig.json");
+    const first = rows[0]!.getBoundingClientRect();
+    const second = rows[1]!.getBoundingClientRect();
+    expect(second.top).toBeGreaterThanOrEqual(first.bottom);
+    expect(first.height).toBeGreaterThan(12);
+  });
+
   it("snapshot-restored rows stay frozen at the snapshot width after the terminal grows", async () => {
     await page.viewport(1600, 700);
     const m = mount(560, 360); // ~70 cols
