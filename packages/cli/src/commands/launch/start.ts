@@ -13,7 +13,7 @@ export async function runStartCommand(
   options: WorkspaceLaunchCommandOptions,
   _command: Command,
 ): Promise<SingleResult<WorkspaceLaunchRow>> {
-  const client = await connectWorkspaceLaunchClient(options.host);
+  const client = await connectWorkspaceLaunchClient(options.daemonTarget);
   try {
     const workspaceId = await resolveWorkspaceLaunchWorkspaceId(client, options);
     const payload = await client.startWorkspaceLaunch(workspaceId, launchName);

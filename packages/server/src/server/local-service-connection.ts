@@ -14,10 +14,7 @@ export function connectToLocalService(port: number): net.Socket {
 }
 
 export function requestLocalService(
-  options: Pick<
-    http.RequestOptions,
-    "port" | "path" | "method" | "headers" | "timeout" | "agent"
-  >,
+  options: Pick<http.RequestOptions, "port" | "path" | "method" | "headers" | "timeout" | "agent">,
   onResponse: (response: http.IncomingMessage) => void,
 ): http.ClientRequest {
   const requestOptions = {

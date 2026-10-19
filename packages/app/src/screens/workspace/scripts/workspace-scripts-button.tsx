@@ -545,8 +545,7 @@ export function WorkspaceScriptsButton({
     onScriptTerminalStarted,
   });
   const liveTerminalIdSet = useMemo(() => new Set(liveTerminalIds), [liveTerminalIds]);
-  const { launchErrors, onLaunchError, onClearLaunchError } =
-    useWorkspaceLaunchErrors(workspaceId);
+  const { launchErrors, onLaunchError, onClearLaunchError } = useWorkspaceLaunchErrors(workspaceId);
 
   const triggerStyle = useCallback(
     ({ hovered, pressed, open }: { hovered: boolean; pressed: boolean; open: boolean }) => [
@@ -588,12 +587,7 @@ export function WorkspaceScriptsButton({
       onViewTerminal,
       onOpenUrlInBrowserTab,
     }),
-    [
-      liveTerminalIdSet,
-      actions,
-      onViewTerminal,
-      onOpenUrlInBrowserTab,
-    ],
+    [liveTerminalIdSet, actions, onViewTerminal, onOpenUrlInBrowserTab],
   );
 
   if (scripts.length === 0 && launches.length === 0) {

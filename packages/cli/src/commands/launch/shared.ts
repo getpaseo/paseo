@@ -1,4 +1,5 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { DaemonTarget } from "../../utils/daemon-target.js";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type { CommandError } from "../../output/index.js";
 import {
@@ -9,10 +10,10 @@ import {
 
 export type WorkspaceLaunchCommandOptions = WorkspaceScriptCommandOptions;
 
-export async function connectWorkspaceLaunchClient(host?: string): Promise<DaemonClient> {
-  const daemonHost = getDaemonHost({ host });
+export async function connectWorkspaceLaunchClient(target: DaemonTarget): Promise<DaemonClient> {
+  const daemonHost = getDaemonHost({ target });
   try {
-    const client = await connectToDaemon({ host });
+    const client = await connectToDaemon({ target });
     // COMPAT(workspaceLaunchManagement): added in v0.7.0, remove gate after 2027-08-29.
     if (!client.getLastServerInfoMessage()?.features?.workspaceLaunchManagement) {
       await client.close().catch(() => {});

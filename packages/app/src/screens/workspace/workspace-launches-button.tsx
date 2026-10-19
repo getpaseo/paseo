@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState, type ReactElement } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { useMutation } from "@tanstack/react-query";
 import { ChevronDown, Globe, Play, Square, SquareTerminal } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -14,7 +14,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/contexts/toast-context";
 import { openServiceUrl } from "@/utils/open-service-url";
@@ -58,11 +58,9 @@ const ThemedGlobe = withUnistyles(Globe);
 const ThemedPlay = withUnistyles(Play);
 const ThemedSquare = withUnistyles(Square);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
-const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 
 const playFillTransparent = { fill: "transparent" };
-const pendingAccessibilityState = { busy: true, disabled: true };
 const EMPTY_LAUNCH_ERRORS: Readonly<Record<string, WorkspaceLaunchError | undefined>> = {};
 
 export function useWorkspaceLaunchErrors(workspaceId: string): WorkspaceLaunchErrors {
@@ -113,23 +111,16 @@ const blueColorMapping = (theme: Theme) => ({
   color: theme.colors.palette.blue[500],
 });
 
-function LaunchActionIconElement({
-  hovered,
-  icon,
-}: {
-  hovered?: boolean;
-  icon: LaunchActionIcon;
-}): ReactElement {
-  const colorMapping = hovered ? foregroundColorMapping : mutedColorMapping;
+function LaunchActionIconElement({ icon }: { icon: LaunchActionIcon }): ReactElement {
   switch (icon) {
     case "open":
-      return <ThemedGlobe size={12} uniProps={colorMapping} />;
+      return <ThemedGlobe size={12} uniProps={mutedColorMapping} />;
     case "start":
-      return <ThemedPlay size={11} uniProps={colorMapping} {...playFillTransparent} />;
+      return <ThemedPlay size={11} uniProps={mutedColorMapping} {...playFillTransparent} />;
     case "stop":
-      return <ThemedSquare size={11} uniProps={colorMapping} />;
+      return <ThemedSquare size={11} uniProps={mutedColorMapping} />;
     case "terminal":
-      return <ThemedSquareTerminal size={12} uniProps={colorMapping} />;
+      return <ThemedSquareTerminal size={12} uniProps={mutedColorMapping} />;
   }
 }
 
@@ -152,39 +143,26 @@ function LaunchActionButton({
   testID: string;
   tooltipLabel: string;
 }): ReactElement {
+  const leading = useMemo(() => (icon ? <LaunchActionIconElement icon={icon} /> : null), [icon]);
+
   return (
     <Tooltip delayDuration={250} enabledOnDesktop enabledOnMobile={false}>
       <TooltipTrigger asChild triggerRefProp="ref">
-        <Pressable
-          accessibilityRole="button"
+        <Button
+          variant="ghost"
+          size="xs"
           accessibilityLabel={accessibilityLabel}
           testID={testID}
-          hitSlop={6}
+          hitSlop={8}
           disabled={disabled}
-          accessibilityState={pending ? pendingAccessibilityState : undefined}
+          loading={pending}
           onPress={onPress}
           style={label ? styles.labeledActionButton : styles.iconActionButton}
+          textStyle={styles.actionLabel}
+          leftIcon={leading}
         >
-          {({ hovered }) => {
-            let actionIcon: ReactElement | null = null;
-            if (pending) {
-              actionIcon = (
-                <View testID={`${testID}-pending`} accessibilityRole="progressbar">
-                  <ThemedLoadingSpinner size={12} uniProps={mutedColorMapping} />
-                </View>
-              );
-            } else if (icon) {
-              actionIcon = <LaunchActionIconElement hovered={hovered} icon={icon} />;
-            }
-
-            return (
-              <>
-                {actionIcon}
-                {label ? <Text style={styles.actionLabel}>{label}</Text> : null}
-              </>
-            );
-          }}
-        </Pressable>
+          {label}
+        </Button>
       </TooltipTrigger>
       <TooltipContent testID={`${testID}-tooltip`} side="top" align="center" offset={8}>
         <Text style={styles.tooltipText}>{tooltipLabel}</Text>
@@ -750,15 +728,18 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
   },
   iconActionButton: {
-    width: 22,
-    height: 22,
+    width: 28,
+    height: 28,
+    minHeight: 28,
+    paddingHorizontal: 0,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: theme.borderRadius.sm,
   },
   labeledActionButton: {
-    height: 22,
-    paddingHorizontal: theme.spacing[1],
+    height: 28,
+    minHeight: 28,
+    paddingHorizontal: theme.spacing[2],
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
