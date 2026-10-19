@@ -7,8 +7,13 @@ import type { TTSConfig } from "./tts.js";
 
 export const DEFAULT_OPENAI_TTS_MODEL = "tts-1";
 
+/** The features that transcribe through OpenAI; each picks its own model. */
+export type OpenAiSttFeature = "dictation" | "voiceMode";
+
 export interface OpenAiSpeechProviderConfig {
-  stt?: Partial<STTConfig> & { apiKey?: string };
+  /** The transcription endpoint the features share. */
+  stt?: Omit<Partial<STTConfig>, "model"> & { apiKey?: string };
+  sttModels?: Partial<Record<OpenAiSttFeature, string>>;
   tts?: Partial<TTSConfig> & { apiKey?: string };
 }
 
@@ -37,7 +42,8 @@ const OpenAiEndpointKeysSchema = z.object({
 
 const OpenAiSttOptionsSchema = z.object({
   sttConfidenceThreshold: OptionalFiniteNumberSchema,
-  sttModel: OptionalTrimmedStringSchema,
+  dictationSttModel: OptionalTrimmedStringSchema,
+  voiceModeSttModel: OptionalTrimmedStringSchema,
 });
 
 // Voice and model are free-form so a self-hosted server can use its own ids; the
@@ -85,10 +91,14 @@ function buildOpenAiSttInput(params: {
       env.STT_CONFIDENCE_THRESHOLD,
       persisted.features?.dictation?.stt?.confidenceThreshold,
     ]),
-    sttModel: firstDefined<string>([
+    // STT_MODEL is host-wide: it overrides the model of every feature that uses OpenAI.
+    dictationSttModel: firstDefined<string>([
+      env.STT_MODEL,
+      pickIfOpenAi(providers.dictationStt, persisted.features?.dictation?.stt?.model),
+    ]),
+    voiceModeSttModel: firstDefined<string>([
       env.STT_MODEL,
       pickIfOpenAi(providers.voiceStt, persisted.features?.voiceMode?.stt?.model),
-      pickIfOpenAi(providers.dictationStt, persisted.features?.dictation?.stt?.model),
     ]),
   };
 }
@@ -163,7 +173,7 @@ export function resolveOpenAiSpeechConfig(params: {
   }
 
   return {
-    ...(keys.sttApiKey ? { stt: buildSttConfig(keys.sttApiKey, keys.sttBaseUrl, input) } : {}),
+    ...(keys.sttApiKey ? buildSttConfig(keys.sttApiKey, keys.sttBaseUrl, input) : {}),
     ...(keys.ttsApiKey ? { tts: buildTtsConfig(keys.ttsApiKey, keys.ttsBaseUrl, input) } : {}),
   };
 }
@@ -172,15 +182,20 @@ function buildSttConfig(
   apiKey: string,
   baseUrl: string | undefined,
   input: Record<string, unknown>,
-): OpenAiSpeechProviderConfig["stt"] {
+): Pick<OpenAiSpeechProviderConfig, "stt" | "sttModels"> {
   const options = OpenAiSttOptionsSchema.parse(input);
   return {
-    apiKey,
-    ...(baseUrl ? { baseUrl } : {}),
-    ...(options.sttConfidenceThreshold !== undefined
-      ? { confidenceThreshold: options.sttConfidenceThreshold }
-      : {}),
-    ...(options.sttModel ? { model: options.sttModel } : {}),
+    stt: {
+      apiKey,
+      ...(baseUrl ? { baseUrl } : {}),
+      ...(options.sttConfidenceThreshold !== undefined
+        ? { confidenceThreshold: options.sttConfidenceThreshold }
+        : {}),
+    },
+    sttModels: {
+      ...(options.dictationSttModel ? { dictation: options.dictationSttModel } : {}),
+      ...(options.voiceModeSttModel ? { voiceMode: options.voiceModeSttModel } : {}),
+    },
   };
 }
 

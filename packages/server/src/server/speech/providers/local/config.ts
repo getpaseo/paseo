@@ -29,6 +29,7 @@ export interface LocalSpeechProviderConfig {
 
 export interface ResolvedLocalSpeechConfig {
   local: LocalSpeechProviderConfig | undefined;
+  modelsDir: string;
   sttLanguages: LocalSpeechSttLanguageConfig;
 }
 
@@ -200,11 +201,10 @@ export function resolveLocalSpeechConfig(params: {
     buildLocalSpeechResolutionInput({ ...params, includeProviderConfig }),
   );
 
-  const resolvedVoiceTtsSpeakerId =
-    parsed.voiceLocalTtsSpeakerId ??
-    (parsed.voiceLocalTtsModel === "kokoro-en-v0_19" ? 0 : undefined);
+  const resolvedVoiceTtsSpeakerId = parsed.voiceLocalTtsSpeakerId ?? 0;
 
   return {
+    modelsDir: parsed.modelsDir,
     sttLanguages: {
       dictation: parsed.dictationLanguage,
       voice: parsed.voiceLanguage,

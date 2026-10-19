@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test } from "vitest";
 
 import { DaemonConfigStore, applyMutableProviderConfigToOverrides } from "./daemon-config-store.js";
 import { loadPersistedConfig } from "./persisted-config.js";
+import { readSpeechSettings } from "./speech/speech-settings.js";
 import type { PersistedConfig } from "./persisted-config.js";
 import type { MutableDaemonConfig } from "@getpaseo/protocol/messages";
 
@@ -1191,5 +1192,112 @@ describe("DaemonConfigStore reload", () => {
       restartRequiredPaths: [],
       overrideControlledPaths: [],
     });
+  });
+});
+
+describe("DaemonConfigStore speech settings", () => {
+  const tempDirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function createSpeechStore(initialPersisted?: PersistedConfig) {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-speech-"));
+    tempDirs.push(paseoHome);
+    if (initialPersisted) {
+      writeFileSync(
+        path.join(paseoHome, "config.json"),
+        `${JSON.stringify(initialPersisted, null, 2)}\n`,
+      );
+    }
+    const persisted = loadPersistedConfig(paseoHome);
+    const applied: PersistedConfig[] = [];
+    const speech = {
+      read: (next: PersistedConfig) => readSpeechSettings(next, {}),
+      apply: (next: PersistedConfig) => applied.push(next),
+    };
+    const store = new DaemonConfigStore(paseoHome, reloadableConfig(persisted), undefined, {
+      speech,
+      reloadSource: {
+        resolve: (next) => ({ mutable: reloadableConfig(next), overrideControlledPaths: [] }),
+      },
+    });
+    return { paseoHome, store, applied, persisted };
+  }
+
+  test("keeps voice mode off until it is turned on", () => {
+    const { paseoHome, store } = createSpeechStore();
+
+    expect(store.get().speech?.dictation.enabled).toBe(true);
+    expect(store.get().speech?.voiceMode.enabled).toBe(false);
+
+    const result = store.patch({ speech: { voiceMode: { enabled: true } } });
+
+    expect(result.speech?.voiceMode.enabled).toBe(true);
+    expect(loadPersistedConfig(paseoHome).features?.voiceMode?.enabled).toBe(true);
+  });
+
+  test("stores the OpenAI key without ever returning it", () => {
+    const { paseoHome, store, applied } = createSpeechStore();
+
+    const result = store.patch({
+      speech: { dictation: { stt: { provider: "openai" } }, openai: { apiKey: " sk-test " } },
+    });
+
+    expect(result.speech?.openai).toEqual({ apiKeyConfigured: true });
+    expect(JSON.stringify(result)).not.toContain("sk-test");
+    expect(loadPersistedConfig(paseoHome).providers?.openai?.apiKey).toBe("sk-test");
+    expect(applied).toHaveLength(1);
+  });
+
+  test("applies a replaced key even though the visible settings do not change", () => {
+    const { store, applied } = createSpeechStore({
+      version: 1,
+      providers: { openai: { apiKey: "sk-old" } },
+    });
+
+    store.patch({ speech: { openai: { apiKey: "sk-new" } } });
+
+    expect(applied.map((next) => next.providers?.openai?.apiKey)).toEqual(["sk-new"]);
+  });
+
+  test("switching provider clears the previous provider's model", () => {
+    const { paseoHome, store } = createSpeechStore({
+      version: 1,
+      features: { dictation: { stt: { provider: "local", model: "parakeet-tdt-0.6b-v3-int8" } } },
+    });
+
+    const result = store.patch({ speech: { dictation: { stt: { provider: "openai" } } } });
+
+    expect(result.speech?.dictation.stt).toEqual({ provider: "openai" });
+    expect(loadPersistedConfig(paseoHome).features?.dictation?.stt).toEqual({
+      provider: "openai",
+    });
+  });
+
+  test("rejects a local model id outside the catalog without persisting it", () => {
+    const { paseoHome, store, applied } = createSpeechStore();
+
+    expect(() =>
+      store.patch({ speech: { voiceMode: { tts: { provider: "local", model: "nope" } } } }),
+    ).toThrow("Unknown local voice model: nope");
+    expect(loadPersistedConfig(paseoHome).features?.voiceMode).toBeUndefined();
+    expect(applied).toEqual([]);
+  });
+
+  test("reload applies hand-edited speech settings without a restart", () => {
+    const { paseoHome, store, applied, persisted } = createSpeechStore();
+    writeFileSync(
+      path.join(paseoHome, "config.json"),
+      `${JSON.stringify({ ...persisted, features: { voiceMode: { enabled: false } } }, null, 2)}\n`,
+    );
+
+    const result = store.reload();
+
+    expect(result.appliedPaths).toContain("features.voiceMode");
+    expect(result.restartRequiredPaths).toEqual([]);
+    expect(store.get().speech?.voiceMode.enabled).toBe(false);
+    expect(applied).toHaveLength(1);
   });
 });

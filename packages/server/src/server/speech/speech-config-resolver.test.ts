@@ -6,7 +6,7 @@ import { PersistedConfigSchema } from "../persisted-config.js";
 import { resolveSpeechConfig } from "./speech-config-resolver.js";
 
 describe("resolveSpeechConfig", () => {
-  test("resolves local-first defaults without env overrides", () => {
+  test("resolves local-first defaults with voice mode off until turned on", () => {
     const paseoHome = "/tmp/paseo-home";
     const persisted = PersistedConfigSchema.parse({});
     const env = {} as NodeJS.ProcessEnv;
@@ -26,17 +26,17 @@ describe("resolveSpeechConfig", () => {
     expect(result.speech.providers.voiceTurnDetection).toEqual({
       provider: "local",
       explicit: false,
-      enabled: true,
+      enabled: false,
     });
     expect(result.speech.providers.voiceStt).toEqual({
       provider: "local",
       explicit: false,
-      enabled: true,
+      enabled: false,
     });
     expect(result.speech.providers.voiceTts).toEqual({
       provider: "local",
       explicit: false,
-      enabled: true,
+      enabled: false,
     });
     expect(result.speech.local).toEqual({
       modelsDir: path.join(paseoHome, "models", "local-speech"),
@@ -61,6 +61,7 @@ describe("resolveSpeechConfig", () => {
     const persisted = PersistedConfigSchema.parse({
       features: {
         voiceMode: {
+          enabled: true,
           turnDetection: { provider: "local" },
           stt: { provider: "openai", model: "gpt-4o-transcribe" },
         },
@@ -131,7 +132,7 @@ describe("resolveSpeechConfig", () => {
     });
     expect(result.openai?.stt?.apiKey).toBe("persisted-key");
     expect(result.openai?.tts?.apiKey).toBe("persisted-key");
-    expect(result.openai?.stt?.model).toBe("gpt-4o-transcribe");
+    expect(result.openai?.sttModels).toEqual({ voiceMode: "gpt-4o-transcribe" });
   });
 
   test("resolves STT language from env, settings, and voice-to-dictation fallback", () => {

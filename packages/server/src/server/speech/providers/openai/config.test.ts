@@ -224,6 +224,23 @@ describe("resolveOpenAiSpeechConfig", () => {
     expect(resolved?.tts?.voice).toBe("Aiden");
   });
 
+  test("lets STT_MODEL override the model of every feature on OpenAI", () => {
+    const persisted = PersistedConfigSchema.parse({
+      features: {
+        dictation: { stt: { provider: "openai", model: "gpt-4o-mini-transcribe" } },
+        voiceMode: { stt: { provider: "openai", model: "whisper-1" } },
+      },
+    });
+    const env = { OPENAI_API_KEY: "sk-test", STT_MODEL: "gpt-4o-transcribe" } as NodeJS.ProcessEnv;
+
+    const resolved = resolveOpenAiSpeechConfig({ env, persisted, providers: ALL_OPENAI });
+
+    expect(resolved?.sttModels).toEqual({
+      dictation: "gpt-4o-transcribe",
+      voiceMode: "gpt-4o-transcribe",
+    });
+  });
+
   test("accepts OpenAI's own gpt-4o-mini-tts model", () => {
     const persisted = PersistedConfigSchema.parse({
       providers: { openai: { tts: { apiKey: "tts-key" } } },
