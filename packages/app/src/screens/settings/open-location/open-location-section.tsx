@@ -111,7 +111,6 @@ function ChatWebLinksRow() {
   );
 }
 
-/** Where things open: files, diffs, subagents, pull requests, and web links. Desktop only. */
 export function OpenLocationSection() {
   const { t } = useTranslation();
   const { settings, updateSettings } = useAppSettings();

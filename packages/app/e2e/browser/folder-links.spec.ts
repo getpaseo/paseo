@@ -116,53 +116,56 @@ test("chat web links fall back externally on web without changing file links", a
     response.end("<h1>Chat link destination</h1>");
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("Link target did not listen");
-  const url = `http://127.0.0.1:${address.port}/chat`;
-  const session = await seedMockAgentWorkspace({
-    repoPrefix: "chat-web-links-",
-    title: "Chat web links",
-    initialPrompt: "Show links",
-    featureValues: { mockAssistantResponse: `[Open web](${url}) and [Open file](guide.md).` },
-  });
   try {
-    await writeFile(path.join(session.cwd, "guide.md"), "# Chat file still opens\n");
-    await session.client.waitForFinish(session.agentId, 30_000);
-    await openAgentRoute(page, session);
-    const link = page
-      .getByTestId("assistant-message")
-      .getByRole("link", { name: "Open web", exact: true });
-    const defaultPopup = page.waitForEvent("popup");
-    await link.click();
-    const external = await defaultPopup;
-    await expect(external.getByRole("heading", { name: "Chat link destination" })).toBeVisible();
-    await external.close();
-
-    await page.evaluate(() => {
-      const key = "@paseo:app-settings";
-      const current = JSON.parse(localStorage.getItem(key) ?? "{}");
-      localStorage.setItem(key, JSON.stringify({ ...current, chatLinkBehavior: "in-app" }));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Link target did not listen");
+    const url = `http://127.0.0.1:${address.port}/chat`;
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "chat-web-links-",
+      title: "Chat web links",
+      initialPrompt: "Show links",
+      featureValues: { mockAssistantResponse: `[Open web](${url}) and [Open file](guide.md).` },
     });
-    await page.reload();
-    const fallbackPopup = page.waitForEvent("popup");
-    await link.click();
-    const fallback = await fallbackPopup;
-    await expect(fallback.getByRole("heading", { name: "Chat link destination" })).toBeVisible();
-    await fallback.close();
-    const modifiedPopup = page.context().waitForEvent("page");
-    await link.click({ modifiers: ["ControlOrMeta"] });
-    const modified = await modifiedPopup;
-    await expect(modified.getByRole("heading", { name: "Chat link destination" })).toBeVisible();
-    await modified.close();
+    try {
+      await writeFile(path.join(session.cwd, "guide.md"), "# Chat file still opens\n");
+      await session.client.waitForFinish(session.agentId, 30_000);
+      await openAgentRoute(page, session);
+      const link = page
+        .getByTestId("assistant-message")
+        .getByRole("link", { name: "Open web", exact: true });
+      const defaultPopup = page.waitForEvent("popup");
+      await link.click();
+      const external = await defaultPopup;
+      await expect(external.getByRole("heading", { name: "Chat link destination" })).toBeVisible();
+      await external.close();
 
-    await page
-      .getByTestId("assistant-message")
-      .getByRole("link", { name: "Open file", exact: true })
-      .click();
-    await expect(page.getByText("Chat file still opens", { exact: true })).toBeVisible();
-    await page.screenshot({ path: test.info().outputPath("chat-web-links-browser.png") });
+      await page.evaluate(() => {
+        const key = "@paseo:app-settings";
+        const current = JSON.parse(localStorage.getItem(key) ?? "{}");
+        localStorage.setItem(key, JSON.stringify({ ...current, chatLinkBehavior: "in-app" }));
+      });
+      await page.reload();
+      const fallbackPopup = page.waitForEvent("popup");
+      await link.click();
+      const fallback = await fallbackPopup;
+      await expect(fallback.getByRole("heading", { name: "Chat link destination" })).toBeVisible();
+      await fallback.close();
+      const modifiedPopup = page.context().waitForEvent("page");
+      await link.click({ modifiers: ["ControlOrMeta"] });
+      const modified = await modifiedPopup;
+      await expect(modified.getByRole("heading", { name: "Chat link destination" })).toBeVisible();
+      await modified.close();
+
+      await page
+        .getByTestId("assistant-message")
+        .getByRole("link", { name: "Open file", exact: true })
+        .click();
+      await expect(page.getByText("Chat file still opens", { exact: true })).toBeVisible();
+      await page.screenshot({ path: test.info().outputPath("chat-web-links-browser.png") });
+    } finally {
+      await session.cleanup();
+    }
   } finally {
-    await session.cleanup();
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) => {
       server.close((error) => {
