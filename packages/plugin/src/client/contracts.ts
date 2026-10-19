@@ -17,6 +17,7 @@ import type {
   PluginTimelineTransformResult,
   PluginCleanup,
 } from "../contracts.js";
+import type { PluginIconProps, PluginSerializableIcon } from "../icons.js";
 
 export interface PluginHostProps {
   theme: PluginTheme;
@@ -87,11 +88,13 @@ export interface PluginSidebarItemContribution {
   Component: ComponentType<PluginSidebarItemProps>;
 }
 
-export interface PluginIconProps {
-  name: string;
-  size?: number;
-  color?: string;
-}
+/**
+ * A Lucide icon name, inline SVG markup, or a component. Components receive the surface's size
+ * and color; buttons widen the props with their host and target context.
+ */
+export type PluginIcon<Props extends PluginIconProps = PluginIconProps> =
+  | PluginSerializableIcon
+  | ComponentType<Props>;
 
 export type PluginPanelLocation = "workspace" | "explorer";
 
@@ -102,7 +105,7 @@ export interface PluginOpenPanelOptions {
 interface PluginWorkspacePanelBase {
   id: string;
   title: string;
-  icon: string;
+  icon: PluginIcon;
   locations?: readonly PluginPanelLocation[];
 }
 
@@ -168,7 +171,7 @@ export type PluginWorkspacePanelContribution =
 export interface PluginSettingsScreenContribution {
   id: string;
   title: string;
-  icon: string;
+  icon: PluginIcon;
   Component: ComponentType<PluginSurfaceProps>;
 }
 
@@ -190,7 +193,7 @@ export interface PluginSurfaceContribution {
 export interface PluginSidebarContribution {
   id: string;
   title: string;
-  icon: string;
+  icon: PluginIcon;
   surface: string;
 }
 
@@ -259,7 +262,7 @@ export interface PluginAgentCommandContext extends PluginCommandCapabilities {
 interface PluginCommandCenterItemBase {
   id: string;
   title: string;
-  icon: string;
+  icon: PluginIcon;
   keywords?: readonly string[];
 }
 

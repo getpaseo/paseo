@@ -13,6 +13,7 @@ import { CreationService, type CreatedAgent } from "./creation/index.js";
 import type { CreationSnapshot, AgentCreateRequest } from "@getpaseo/protocol/messages";
 import type { MessageReceipts } from "./message-receipts/index.js";
 import equal from "fast-deep-equal";
+import { WorkspaceSetupObservation } from "./workspace-setup-observation.js";
 import { SessionDelivery, type OwnedSubscription } from "./session/owned-subscriptions/index.js";
 import { v4 as uuidv4 } from "uuid";
 import { lstat, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
@@ -540,7 +541,7 @@ export interface SessionOptions {
   scriptRuntimeStore?: WorkspaceScriptRuntimeStore;
   workspaceRuntimeEnvironment?: WorkspaceRuntimeEnvironmentService;
   workspaceLaunchManager?: WorkspaceLaunchService;
-  workspaceSetupSnapshots?: Map<string, WorkspaceSetupSnapshot>;
+  workspaceSetupObservation?: WorkspaceSetupObservation;
   workspaceSetupRuntime?: WorkspaceSetupRuntime;
   onBranchChanged?: (
     workspaceId: string,
@@ -794,7 +795,8 @@ export class Session {
   private readonly terminalController: TerminalSessionController;
   private inflightRequests = 0;
   private peakInflightRequests = 0;
-  private readonly workspaceSetupSnapshots: Map<string, WorkspaceSetupSnapshot>;
+  private readonly workspaceSetupObservation: WorkspaceSetupObservation;
+  private readonly unsubscribeSetupObservation: () => void;
   private readonly workspaceSetupRuntime: WorkspaceSetupRuntime;
   private readonly workspaceGitObserver: WorkspaceGitObserverService;
   private readonly workspaceDirectory: WorkspaceDirectory;
@@ -855,7 +857,7 @@ export class Session {
       providerSnapshotManager,
       serviceProxy,
       scriptRuntimeStore,
-      workspaceSetupSnapshots,
+      workspaceSetupObservation,
       workspaceSetupRuntime,
       onBranchChanged,
       getDaemonTcpPort,
@@ -1173,7 +1175,19 @@ export class Session {
     this.serviceProxy = serviceProxy ?? null;
     this.scriptRuntimeStore = scriptRuntimeStore ?? null;
     this.initializeWorkspaceLaunchServices(options);
-    this.workspaceSetupSnapshots = workspaceSetupSnapshots ?? new Map();
+    this.workspaceSetupObservation = workspaceSetupObservation ?? new WorkspaceSetupObservation();
+    this.unsubscribeSetupObservation = this.workspaceSetupObservation.subscribe(
+      (workspaceId, snapshot, statusChanged) => {
+        if (statusChanged)
+          void this.emitWorkspaceUpdateForWorkspaceId(workspaceId).catch((error) =>
+            this.sessionLogger.warn({ err: error, workspaceId }, "Failed to publish setup status"),
+          );
+        this.emitSubscribedEvent({
+          type: "workspace_setup_progress",
+          payload: { workspaceId, ...snapshot },
+        });
+      },
+    );
     this.workspaceSetupRuntime = resolveWorkspaceSetupRuntime(workspaceSetupRuntime);
     this.getDaemonTcpPort = getDaemonTcpPort ?? null;
     this.getDaemonTcpHost = getDaemonTcpHost ?? null;
@@ -2323,10 +2337,50 @@ export class Session {
     }
   }
 
+  private async subscribeWorkspaceSetup(
+    request: Extract<SessionInboundMessage, { type: "workspace.setup.subscribe.request" }>,
+  ): Promise<void> {
+    if (
+      !this.supports(CLIENT_CAPS.workspaceSetupObservation) ||
+      !this.delivery.isModern(this.delivery.currentSource)
+    )
+      throw new Error("Workspace setup observation requires owned subscriptions");
+    // Resolve persisted blocked state first. Register and read the current cache in one
+    // synchronous turn afterward, so a setup transition during this read cannot be lost.
+    let initial: WorkspaceSetupSnapshot | null = null;
+    await handleWorkspaceSetupStatusRequestMessage(
+      {
+        workspaceSetupSnapshots: this.workspaceSetupObservation,
+        getWorkspace: (id) => this.workspaceRegistry.get(id),
+        emit: (message) => {
+          if (message.type === "workspace_setup_status_response")
+            initial = message.payload.snapshot;
+        },
+      },
+      { ...request, type: "workspace_setup_status_request" },
+    );
+    let stop: (() => void) | undefined;
+    const owner = this.delivery.begin("workspace-setup", undefined, () => stop?.());
+    stop = this.workspaceSetupObservation.subscribe((workspaceId, snapshot) => {
+      if (workspaceId === request.workspaceId)
+        owner.emit({ type: "workspace_setup_progress", payload: { workspaceId, ...snapshot } });
+    });
+    this.emit({
+      type: "workspace.setup.subscribe.response",
+      payload: {
+        requestId: request.requestId,
+        subscriptionId: owner.responseId,
+        workspaceId: request.workspaceId,
+        snapshot: this.workspaceSetupObservation.get(request.workspaceId) ?? initial,
+      },
+    });
+  }
+
   private dispatchSubscriptionMessage(
     msg: SessionInboundMessage,
     source?: object,
   ): Promise<void> | undefined {
+    if (msg.type === "workspace.setup.subscribe.request") return this.subscribeWorkspaceSetup(msg);
     if (msg.type === "browser.host.register.request") return this.registerBrowserHost(msg);
     if (msg.type === "browser.automation.execute.response") {
       if (source)
@@ -5638,6 +5692,7 @@ export class Session {
       projectCustomIconRevision: resolvedProjectRecord?.customIconRevision ?? null,
       projectRootPath: resolvedProjectRecord?.rootPath ?? workspace.cwd,
       workspaceDirectory: workspace.cwd,
+      setupStatus: this.workspaceSetupObservation.status(workspace),
       worktreeSlug,
       projectKind: (resolvedProjectRecord?.kind ?? "directory") === "git" ? "git" : "non_git",
       workspaceKind: workspace.kind,
@@ -5729,6 +5784,7 @@ export class Session {
       projectCustomIconRevision: projectRecord?.customIconRevision ?? null,
       projectRootPath: projectRecord?.rootPath ?? result.repoRoot,
       workspaceDirectory: result.workspace.cwd,
+      setupStatus: this.workspaceSetupObservation.status(result.workspace),
       worktreeSlug: basename(result.worktree.worktreePath),
       projectKind: projectRecord?.kind ?? "git",
       workspaceKind: result.workspace.kind,
@@ -7544,7 +7600,7 @@ export class Session {
         emitWorkspaceUpdateForWorkspaceId: (workspaceId) =>
           this.emitWorkspaceUpdateForWorkspaceId(workspaceId),
         cacheWorkspaceSetupSnapshot: (workspaceId, snapshot) => {
-          this.workspaceSetupSnapshots.set(workspaceId, snapshot);
+          this.workspaceSetupObservation.cache(workspaceId, snapshot);
         },
         emit: (message) => this.emit(message),
         sessionLogger: this.sessionLogger,
@@ -7569,7 +7625,7 @@ export class Session {
     return handleWorkspaceSetupStatusRequestMessage(
       {
         emit: (message) => this.emit(message),
-        workspaceSetupSnapshots: this.workspaceSetupSnapshots,
+        workspaceSetupSnapshots: this.workspaceSetupObservation,
         getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
       },
       request,
@@ -7591,7 +7647,7 @@ export class Session {
         emitWorkspaceUpdateForWorkspaceId: (workspaceId) =>
           this.emitWorkspaceUpdateForWorkspaceId(workspaceId),
         cacheWorkspaceSetupSnapshot: (workspaceId, snapshot) =>
-          this.workspaceSetupSnapshots.set(workspaceId, snapshot),
+          this.workspaceSetupObservation.cache(workspaceId, snapshot),
         emit: (message) => this.emit(message),
         sessionLogger: this.sessionLogger,
         terminalManager: this.terminalManager,
@@ -8571,8 +8627,22 @@ export class Session {
    */
   // COMPAT(explicitEventSubscriptions): added in v0.8.0, remove legacy broadcasts after 2027-03-08.
   private wantsEvent(event: SessionEventSubscription, source?: object): boolean {
+    // COMPAT(workspaceSetupObservation): added in v0.12.0, remove global setup delivery after 2027-04-19 once client floor >= v0.12.0.
+    if (
+      event === "workspace_setup_progress" &&
+      source &&
+      this.supportsForSource(CLIENT_CAPS.workspaceSetupObservation, source)
+    )
+      return false;
     for (const subscription of this.eventSubscriptions.values()) {
-      if ((!source || subscription.owner.source === source) && subscription.events.has(event))
+      if (
+        (!source || subscription.owner.source === source) &&
+        subscription.events.has(event) &&
+        !(
+          event === "workspace_setup_progress" &&
+          this.supportsForSource(CLIENT_CAPS.workspaceSetupObservation, subscription.owner.source)
+        )
+      )
         return true;
     }
     if (!source && this.clientSources.size > 0) {
@@ -8620,6 +8690,11 @@ export class Session {
     for (const subscription of this.eventSubscriptions.values()) {
       if (
         !subscription.events.has(event) ||
+        (event === "workspace_setup_progress" &&
+          this.supportsForSource(
+            CLIENT_CAPS.workspaceSetupObservation,
+            subscription.owner.source,
+          )) ||
         (onlySource && subscription.owner.source !== onlySource)
       )
         continue;
@@ -8643,6 +8718,11 @@ export class Session {
 
   private emit(msg: SessionOutboundMessage): void {
     if (!this.authorization.allowsOutbound(msg)) return;
+    if (msg.type === "workspace_setup_progress") {
+      const { workspaceId, subscriptionId: _subscriptionId, ...snapshot } = msg.payload;
+      this.workspaceSetupObservation.publish(workspaceId, snapshot);
+      return;
+    }
     if (this.delivery.reply(msg)) return;
     if (this.emitSubscribedEvent(msg)) return;
     // JSON.stringify(msg) is only computed when trace is enabled — it runs for
@@ -8657,7 +8737,7 @@ export class Session {
         "agent.session.outbound",
       );
     }
-    if (msg.type === "workspace_setup_progress" || msg.type === "workspace_setup_status_response") {
+    if (msg.type === "workspace_setup_status_response") {
       if (this.clientSources.size > 0 && this.onMessageToSource) {
         for (const [source] of this.clientSources) {
           this.onMessageToSource(source, this.workspaceSetupMessageForClient(msg, source));
@@ -8731,6 +8811,7 @@ export class Session {
   public async cleanup(): Promise<void> {
     this.sessionLogger.trace({}, "agent.session.lifecycle.cleanup");
     this.isCleanedUp = true;
+    this.unsubscribeSetupObservation();
     await this.delivery.close();
 
     if (this.unsubscribeAgentEvents) {

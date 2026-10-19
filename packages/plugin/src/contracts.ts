@@ -1,4 +1,5 @@
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
+import type { PluginSerializableIcon } from "./icons.js";
 import type { PluginRpcContract } from "./rpc.js";
 
 export interface PluginTheme {
@@ -73,7 +74,7 @@ export interface PluginThemeContribution {
 export interface PluginAttachmentSourceContribution {
   id: string;
   title: string;
-  icon: string;
+  icon: PluginSerializableIcon;
   pickerTitle: string;
   searchPlaceholder: string;
   search: PluginRpcContract;

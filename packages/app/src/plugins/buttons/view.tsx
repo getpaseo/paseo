@@ -32,7 +32,7 @@ import { useToast } from "@/contexts/toast-context";
 import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import { createPluginClientStateSource } from "../client-state/source";
-import { Icon } from "../icons";
+import { pluginIconComponent } from "../icons";
 import {
   PluginEnvironmentProvider,
   PluginPopoverContent,
@@ -79,6 +79,7 @@ function ButtonEnvironment({ view, children }: { view: ButtonView; children: Rea
 function ButtonIcon({ view, icon }: { view: ButtonView; icon: PluginButtonIcon }) {
   const color = view.props.theme.colors.foregroundMuted;
   const size = view.entry.placement === "composer" ? 14 : 16;
+  const Icon = pluginIconComponent(icon);
   return (
     <View
       style={styles.icon}
@@ -87,22 +88,9 @@ function ButtonIcon({ view, icon }: { view: ButtonView; icon: PluginButtonIcon }
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
     >
-      {typeof icon === "string" ? (
-        <Icon name={icon} size={size} color={color} />
-      ) : (
-        renderCustomIcon(icon, view, size, color)
-      )}
+      <Icon {...view.props} size={size} color={color} />
     </View>
   );
-}
-
-function renderCustomIcon(
-  CustomIcon: Exclude<PluginButtonIcon, string>,
-  view: ButtonView,
-  size: number,
-  color: string,
-) {
-  return <CustomIcon {...view.props} size={size} color={color} />;
 }
 
 function pressButton(view: ButtonView, path: readonly string[]) {

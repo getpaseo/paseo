@@ -5,6 +5,7 @@ import {
   seedMockAgentWorkspace,
   type MockAgentWorkspace,
 } from "../support/helpers/mock-agent";
+import { waitForTimelineGeometryToSettle } from "../support/helpers/timeline-pagination";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import {
   expectReconnectingToastGone,
@@ -123,6 +124,49 @@ async function closeFind(page: Page) {
     )
     .toEqual([]);
 }
+
+async function expectChatKeyboardScroll(page: Page, key: "PageUp" | "PageDown") {
+  // The scrolling surface has no accessible name; use its existing test id.
+  const viewport = page.getByTestId("agent-chat-scroll");
+  await waitForTimelineGeometryToSettle(page);
+  const before = await viewport.evaluate((element) => element.scrollTop);
+  await page.keyboard.press(key);
+  const direction = key === "PageUp" ? -1 : 1;
+  await expect
+    .poll(
+      async () => direction * ((await viewport.evaluate((element) => element.scrollTop)) - before),
+    )
+    .toBeGreaterThan(100);
+}
+
+test("keeps keyboard scrolling the chat after closing Find", async ({ page }, testInfo) => {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "chat-find-scroll-focus-",
+    title: "Chat Find keyboard scrolling",
+    initialPrompt: "Render the response",
+    featureValues: { mockAssistantResponse: TALL_RESPONSE },
+  });
+  try {
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+    await openAgentRoute(page, agent);
+    await expect(page.getByTestId("assistant-message").first()).toBeVisible();
+    await searchChat(page, "Closing paragraph");
+    await expectHighlight(page, "Closing paragraph");
+    await waitForTimelineGeometryToSettle(page);
+    await closeFind(page);
+    await expectChatKeyboardScroll(page, "PageUp");
+    await page.screenshot({ path: testInfo.outputPath("chat-after-find-page-up.png") });
+    await expectChatKeyboardScroll(page, "PageDown");
+    await searchChat(page, "Closing paragraph");
+    await expectHighlight(page, "Closing paragraph");
+    await waitForTimelineGeometryToSettle(page);
+    await page.getByRole("button", { name: "Close Find", exact: true }).click();
+    await expect(query(page)).toHaveCount(0);
+    await expectChatKeyboardScroll(page, "PageUp");
+  } finally {
+    await agent.cleanup();
+  }
+});
 
 test("loads older history through prompt navigation and finds repeated rendered Markdown", async ({
   page,

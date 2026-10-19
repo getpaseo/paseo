@@ -381,6 +381,72 @@ describe("evaluatePluginClientBundle", () => {
     ).toEqual([{ id: "open-review", title: "Open review", icon: "Scan", context: "agent" }]);
   });
 
+  it("registers inline SVG and component icons", () => {
+    const svg = '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 4h16v16H4z" /></svg>';
+    const plugin = evaluatePluginClientBundle(
+      "review",
+      bundle(`
+        function ReviewPanel() { return null; }
+        function BadgeIcon() { return null; }
+        plugin.addWorkspacePanel({
+          id: "review",
+          title: "Review",
+          icon: { svg: ${JSON.stringify(`  ${svg}\n`)} },
+          context: "workspace",
+          Component: ReviewPanel,
+        });
+        plugin.addCommandCenterItem({
+          id: "open-review",
+          title: "Open review",
+          icon: BadgeIcon,
+          context: "global",
+          onSelect() {},
+        });
+        plugin.addAttachmentSource({
+          id: "issues",
+          title: "Issues",
+          icon: { svg: ${JSON.stringify(svg)} },
+          pickerTitle: "Attach issue",
+          searchPlaceholder: "Search",
+          search: { name: "issues.search", input: {}, output: {} },
+        });
+      `),
+    );
+
+    expect(plugin.workspacePanels[0]?.icon).toEqual({ svg });
+    expect(plugin.commandCenterItems[0]?.icon).toHaveProperty("name", "BadgeIcon");
+    expect(plugin.attachmentSources[0]?.icon).toEqual({ svg });
+  });
+
+  it.each([
+    [
+      "workspace panel",
+      `plugin.addWorkspacePanel({ id: "review", title: "Review", icon: ICON, context: "workspace", Component() { return null; } })`,
+      "Workspace panel review has an invalid icon: script elements are not allowed",
+    ],
+    [
+      "Command Center item",
+      `plugin.addCommandCenterItem({ id: "review", title: "Review", icon: ICON, context: "global", onSelect() {} })`,
+      "Command Center item review has an invalid icon: script elements are not allowed",
+    ],
+    [
+      "settings screen",
+      `plugin.addSettingsScreen({ id: "review", title: "Review", icon: ICON, Component() { return null; } })`,
+      "Settings screen review has an invalid icon: script elements are not allowed",
+    ],
+    [
+      "attachment source",
+      `plugin.addAttachmentSource({ id: "review", title: "Review", icon: ICON, pickerTitle: "Pick", searchPlaceholder: "Search", search: { name: "issues.search", input: {}, output: {} } })`,
+      "Attachment source review has an invalid icon: script elements are not allowed",
+    ],
+  ])("fails the plugin when a %s registers an unsafe SVG", (_kind, registration, message) => {
+    const icon = JSON.stringify({ svg: "<svg><script>run()</script></svg>" });
+
+    expect(() =>
+      evaluatePluginClientBundle("review", bundle(registration.replace("ICON", icon))),
+    ).toThrow(message);
+  });
+
   it("normalizes and validates workspace panel locations", () => {
     const plugin = evaluatePluginClientBundle(
       "review",

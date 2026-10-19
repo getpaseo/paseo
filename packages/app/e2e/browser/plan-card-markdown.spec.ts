@@ -259,3 +259,50 @@ async function openInlineRegressionFile(page: Page, path: string) {
     .getByRole("link", { name: path, exact: true })
     .click();
 }
+
+// Web links are styled inline by the library, so hover state has to restyle the anchor.
+test("markdown links underline on hover", async ({ page }) => {
+  const session = await seedMockAgentWorkspace({
+    repoPrefix: "markdown-link-hover-",
+    title: "Markdown link hover",
+    featureValues: {
+      mockAssistantResponse: "See [the docs](https://example.com/docs) and [README](README.md).",
+    },
+    initialPrompt: "Show links",
+  });
+  try {
+    await session.client.waitForFinish(session.agentId, 30_000);
+    await openAgentRoute(page, session);
+    const message = page.getByTestId("assistant-message");
+    for (const name of ["the docs", "README"]) {
+      const link = message.getByRole("link", { name, exact: true });
+      await expect(link).toHaveCSS("text-decoration-line", "none");
+      await link.hover();
+      await expect(link).toHaveCSS("text-decoration-line", "underline");
+      await page.mouse.move(0, 0);
+      await expect(link).toHaveCSS("text-decoration-line", "none");
+    }
+  } finally {
+    await session.cleanup();
+  }
+});
+
+const PIXEL_PNG =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+test("Markdown images show a zoom-in cursor", async ({ page }) => {
+  const session = await seedMockAgentWorkspace({
+    repoPrefix: "markdown-image-cursor-",
+    title: "Markdown image cursor",
+    featureValues: { mockAssistantResponse: `Before.\n\n![pixel](${PIXEL_PNG})\n\nAfter.` },
+    initialPrompt: "Show image",
+  });
+  try {
+    await session.client.waitForFinish(session.agentId, 30_000);
+    await openAgentRoute(page, session);
+    const image = page.getByTestId("assistant-message").getByRole("button", { name: "pixel" });
+    await expect(image).toHaveCSS("cursor", "zoom-in");
+  } finally {
+    await session.cleanup();
+  }
+});

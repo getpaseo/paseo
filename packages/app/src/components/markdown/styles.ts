@@ -2,27 +2,31 @@ import type { MarkdownStyle } from "react-native-enriched-markdown";
 import type { Theme } from "@/styles/theme";
 import { isWeb } from "@/constants/platform";
 
+// iOS Safari needs the prefix to override the gesture host's selection suppression.
+const WEB_CONTAINER = { userSelect: "text", WebkitUserSelect: "text" } as const;
+
 export function createMarkdownStyles(
   theme: Theme,
-  compact = false,
-): { markdownStyle: MarkdownStyle; selectionColor: string } {
+  { compact = false, blockGap }: { compact?: boolean; blockGap: number },
+): { markdownStyle: MarkdownStyle; selectionColor: string; containerStyle?: typeof WEB_CONTAINER } {
   const fontSize = compact ? theme.fontSize.base : theme.fontSize.content;
+  // Every block is followed by the same gap; the library drops it after the last block.
+  const block = { marginTop: 0, marginBottom: blockGap };
   const paragraph = {
     fontSize,
     fontFamily: theme.fontFamily.ui,
     lineHeight: Math.round(fontSize * 1.4),
     color: theme.colors.foreground,
-    marginTop: 0,
-    marginBottom: theme.spacing[3],
+    ...block,
   };
   const heading = (scale: number) => ({
     ...paragraph,
     fontSize: Math.round(fontSize * scale),
     lineHeight: Math.round(fontSize * scale * 1.3),
     fontWeight: "bold",
-    marginTop: theme.spacing[3],
   });
   return {
+    containerStyle: isWeb ? WEB_CONTAINER : undefined,
     selectionColor: theme.colors.terminal.selectionBackground,
     markdownStyle: {
       paragraph,
@@ -93,8 +97,8 @@ export function createMarkdownStyles(
         borderColor: theme.colors.foregroundMuted,
       },
       inlineImage: { size: paragraph.lineHeight },
-      image: { height: 320, resizeMode: "contain", borderRadius: 8 },
-      thematicBreak: { color: theme.colors.border, height: 1, marginTop: 12, marginBottom: 12 },
+      image: { ...block, height: 320, resizeMode: "contain", borderRadius: 8 },
+      thematicBreak: { ...block, color: theme.colors.border, height: 1 },
     },
   };
 }

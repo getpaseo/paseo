@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from "expo-router";
-import type { PluginScreenParams, PluginScreenProps } from "@getpaseo/plugin/client";
+import type { PluginIcon, PluginScreenParams, PluginScreenProps } from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
 import { X } from "lucide-react-native";
 import { useCallback, useMemo, type ComponentType } from "react";
@@ -17,7 +17,7 @@ import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { usePluginHostNavigation } from "./host-navigation";
-import { resolvePluginIcon } from "./icons";
+import { PluginIconView } from "./icons";
 import { toPluginTheme } from "./theme";
 import { useInstalledPlugin, usePluginInstallations } from "./registry";
 import { buildPluginSurfaceRoute, pluginScreenParamsFromRoute } from "./routes";
@@ -47,14 +47,8 @@ function routeParam(value: string | string[] | undefined): string {
   return typeof value === "string" ? value : "";
 }
 
-function PluginHeaderIcon({
-  Icon,
-  color = "",
-}: {
-  Icon: ReturnType<typeof resolvePluginIcon>;
-  color?: string;
-}) {
-  return <Icon size={16} color={color} />;
+function PluginHeaderIcon({ icon, color = "" }: { icon: PluginIcon; color?: string }) {
+  return <PluginIconView icon={icon} size={16} color={color} />;
 }
 
 const ThemedPluginHeaderIcon = withUnistyles(PluginHeaderIcon);
@@ -162,7 +156,7 @@ export function PluginSurfaceScreen() {
         : (sidebarItem?.title ?? (pluginId || "Plugin")),
     [params, pluginId, sidebarItem, surface],
   );
-  const Icon = sidebarItem ? resolvePluginIcon(sidebarItem.icon) : null;
+  const icon = sidebarItem?.icon ?? null;
   const close = useCallback(() => {
     if (router.canGoBack()) router.back();
     else router.replace(`/h/${encodeURIComponent(serverId)}`);
@@ -172,15 +166,15 @@ export function PluginSurfaceScreen() {
   const headerLeft = useMemo(
     () => (
       <>
-        {Icon ? (
+        {icon ? (
           <HeaderIconBadge>
-            <ThemedPluginHeaderIcon Icon={Icon} uniProps={mutedColorMapping} />
+            <ThemedPluginHeaderIcon icon={icon} uniProps={mutedColorMapping} />
           </HeaderIconBadge>
         ) : null}
         <ScreenTitle testID="plugin-surface-title">{title}</ScreenTitle>
       </>
     ),
-    [Icon, title],
+    [icon, title],
   );
   const hostFilter = useMemo(
     () =>
