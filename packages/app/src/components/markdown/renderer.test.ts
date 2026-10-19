@@ -718,3 +718,10 @@ it("replaces the native placeholder only after the resolved URL decodes", () => 
   const prepared = prepareMarkdownSource("![image](shot.png)", undefined, { supportsSvg: false });
   expect(prepared.render(new Map([["shot.png", url]]))).toBe(`![image](<${url}>)`);
 });
+
+it("makes the web Markdown container selectable in Safari as well as unprefixed browsers", () => {
+  expect(createMarkdownStyles(lightTheme, { blockGap: 12 }).containerStyle).toEqual({
+    userSelect: "text",
+    WebkitUserSelect: "text",
+  });
+});
