@@ -74,6 +74,9 @@ vi.mock("react-native", () => {
     Pressable: passthrough,
     Image: ({ source }: { source?: { uri?: string } }) =>
       React.createElement("img", { src: source?.uri ?? "" }),
+    StyleSheet: {
+      create: <T,>(styles: T): T => styles,
+    },
     Platform: {
       OS: "web",
       select: <T,>(options: { web?: T; default?: T }) => options.web ?? options.default,
