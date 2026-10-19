@@ -6,6 +6,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { BackHeader } from "@/components/headers/back-header";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { SPACING } from "@/styles/theme";
 
 const PageScrollView = Platform.OS === "android" ? KeyboardAwareScrollView : ScrollView;
 
@@ -46,6 +47,8 @@ export function PageLayout({
         <MenuHeader borderless />
       )}
       <PageScrollView
+        // Leave room for field borders and padding around the focused native input.
+        {...(Platform.OS === "android" ? { bottomOffset: SPACING[4] } : {})}
         style={styles.scroll}
         contentContainerStyle={scrollContentStyle}
         testID={testID}
