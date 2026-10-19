@@ -1277,6 +1277,7 @@ export const zhCN: TranslationResources = {
         pending: "等待中: {{count}}",
       },
       actions: {
+        changeRoot: "更改工作区根目录",
         menu: "Workspace 操作",
         newWorkspace: "新建 workspace",
         showMore: "显示更多",
@@ -1298,6 +1299,10 @@ export const zhCN: TranslationResources = {
         hideMessage: "从侧边栏隐藏「{{workspaceName}}」？\n\n磁盘上的文件不会被更改。",
         hideConfirm: "隐藏",
         cancel: "取消",
+      },
+      root: {
+        title: "更改工作区根目录",
+        submit: "更改根目录",
       },
       rename: {
         title: "重命名 workspace",

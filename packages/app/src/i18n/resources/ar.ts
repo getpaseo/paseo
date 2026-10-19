@@ -1287,6 +1287,7 @@ export const ar: TranslationResources = {
         pending: "قيد الانتظار: {{count}}",
       },
       actions: {
+        changeRoot: "تغيير جذر مساحة العمل",
         menu: "إجراءات Workspace",
         newWorkspace: "مساحة عمل جديدة",
         showMore: "عرض المزيد",
@@ -1309,6 +1310,10 @@ export const ar: TranslationResources = {
           'إخفاء "{{workspaceName}}" من الشريط الجانبي؟\n\n لن يتم تغيير الملفات الموجودة على القرص.',
         hideConfirm: "يخفي",
         cancel: "يلغي",
+      },
+      root: {
+        title: "تغيير جذر مساحة العمل",
+        submit: "تغيير الجذر",
       },
       rename: {
         title: "إعادة تسمية مساحة العمل",

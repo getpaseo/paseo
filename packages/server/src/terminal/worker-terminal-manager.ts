@@ -645,7 +645,32 @@ export function createWorkerTerminalManager(
     });
   }
 
+  const changingWorkspaceRoots = new Set<string>();
+  const creatingTerminalsByWorkspace = new Map<string, number>();
+  function finishCreatingTerminal(workspaceId: string): void {
+    const remaining = (creatingTerminalsByWorkspace.get(workspaceId) ?? 1) - 1;
+    if (remaining === 0) creatingTerminalsByWorkspace.delete(workspaceId);
+    else creatingTerminalsByWorkspace.set(workspaceId, remaining);
+  }
+
   return {
+    async withWorkspaceRootChange<T>(workspaceId: string, change: () => Promise<T>): Promise<T> {
+      if (changingWorkspaceRoots.has(workspaceId)) {
+        throw new Error("The workspace root is already being changed.");
+      }
+      if (
+        creatingTerminalsByWorkspace.has(workspaceId) ||
+        [...recordsById.values()].some((record) => record.info.workspaceId === workspaceId)
+      ) {
+        throw new Error("Close all terminals and stop workspace scripts before changing its root.");
+      }
+      changingWorkspaceRoots.add(workspaceId);
+      try {
+        return await change();
+      } finally {
+        changingWorkspaceRoots.delete(workspaceId);
+      }
+    },
     async getTerminals(
       cwd: string,
       options?: { workspaceId?: string },
@@ -681,12 +706,19 @@ export function createWorkerTerminalManager(
     async createTerminal(
       options: WorkerCreateTerminalOptions & { workspaceId: string },
     ): Promise<TerminalSession> {
+      if (changingWorkspaceRoots.has(options.workspaceId)) {
+        throw new Error("The workspace root is being changed. Retry when it finishes.");
+      }
       const terminalId = options.id ?? randomUUID();
       const activityToken = createActivityToken();
       const terminalActivityUrl = managerOptions.getTerminalActivityUrl?.() ?? null;
       terminalActivityTokenById.set(terminalId, activityToken);
       const creation = { session: null as TerminalSession | null };
       pendingCreationsById.set(terminalId, creation);
+      creatingTerminalsByWorkspace.set(
+        options.workspaceId,
+        (creatingTerminalsByWorkspace.get(options.workspaceId) ?? 0) + 1,
+      );
       try {
         await sendRequest({
           type: "createTerminal",
@@ -706,6 +738,7 @@ export function createWorkerTerminalManager(
         throw error;
       } finally {
         pendingCreationsById.delete(terminalId);
+        finishCreatingTerminal(options.workspaceId);
       }
     },
 

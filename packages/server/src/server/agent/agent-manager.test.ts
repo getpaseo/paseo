@@ -5,7 +5,7 @@ import {
 } from "./agent-messages/index.js";
 import { expect, test, vi } from "vitest";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -667,6 +667,108 @@ async function startAndSteerThroughManager(
   });
   return { manager, agentId: agent.id, workdir };
 }
+
+test("workspace root changes preserve chat IDs and history while leaving sibling workspaces open", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "workspace-root-"));
+  const nextCwd = join(workdir, "next");
+  mkdirSync(nextCwd);
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  try {
+    const moved = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Keep this chat" },
+      undefined,
+      { workspaceId: "ws-moved" },
+    );
+    const sibling = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: "ws-sibling",
+    });
+    await manager.appendTimelineItem(moved.id, {
+      type: "assistant_message",
+      text: "Preserved history",
+    });
+    let committed = false;
+    await manager.changeWorkspaceRoot("ws-moved", nextCwd, async () => {
+      committed = true;
+    });
+    expect(committed).toBe(true);
+    expect(await storage.get(moved.id)).toMatchObject({
+      id: moved.id,
+      cwd: nextCwd,
+      workspaceId: "ws-moved",
+      title: "Keep this chat",
+    });
+    expect(manager.getAgent(moved.id)).toBeNull();
+    expect(manager.getAgent(sibling.id)?.cwd).toBe(workdir);
+    const resumed = await ensureAgentLoaded(moved.id, {
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+    expect(resumed.cwd).toBe(nextCwd);
+    expect(await manager.getTimelineRows(moved.id)).toContainEqual(
+      expect.objectContaining({ item: { type: "assistant_message", text: "Preserved history" } }),
+    );
+  } finally {
+    for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("workspace root changes roll back chat placement when the workspace commit fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "workspace-root-rollback-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: "ws-moved",
+    });
+    await expect(
+      manager.changeWorkspaceRoot("ws-moved", join(workdir, "next"), async () => {
+        throw new Error("Workspace write failed");
+      }),
+    ).rejects.toThrow("Workspace write failed");
+    expect((await storage.get(agent.id))?.cwd).toBe(workdir);
+    await manager.changeWorkspaceRoot("ws-moved", workdir, async () => {});
+  } finally {
+    for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("workspace root changes reject running turns without closing the agent", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "workspace-root-running-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: "ws-moved",
+    });
+    manager.streamAgent(agent.id, "Keep running");
+    await expect(manager.changeWorkspaceRoot("ws-moved", workdir, async () => {})).rejects.toThrow(
+      "Finish or stop all running agents",
+    );
+    expect(manager.getAgent(agent.id)?.cwd).toBe(workdir);
+  } finally {
+    for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
 
 test("uses an injected timeline store without making it a production requirement", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-store-"));

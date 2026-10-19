@@ -1301,6 +1301,7 @@ export const ja: TranslationResources = {
         pending: "保留中: {{count}}",
       },
       actions: {
+        changeRoot: "ワークスペースのルートを変更",
         menu: "ワークスペースアクション",
         newWorkspace: "新しいワークスペース",
         showMore: "さらに表示",
@@ -1323,6 +1324,10 @@ export const ja: TranslationResources = {
           '"{{workspaceName}}"をサイドバーから非表示にしますか？\n\nディスク上のファイルは変更されません。',
         hideConfirm: "非表示",
         cancel: "キャンセル",
+      },
+      root: {
+        title: "ワークスペースのルートを変更",
+        submit: "ルートを変更",
       },
       rename: {
         title: "ワークスペースの名前を変更",

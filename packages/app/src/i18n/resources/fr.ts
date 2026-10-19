@@ -1317,6 +1317,7 @@ export const fr: TranslationResources = {
         pending: "En attente : {{count}}",
       },
       actions: {
+        changeRoot: "Changer le dossier du workspace",
         menu: "Actions de l’espace de travail",
         newWorkspace: "Nouvel espace de travail",
         showMore: "Afficher plus",
@@ -1339,6 +1340,10 @@ export const fr: TranslationResources = {
           "Masquer « {{workspaceName}} » de la barre latérale ?\n\nLes fichiers sur le disque ne seront pas modifiés.",
         hideConfirm: "Masquer",
         cancel: "Annuler",
+      },
+      root: {
+        title: "Changer le dossier du workspace",
+        submit: "Changer le dossier",
       },
       rename: {
         title: "Renommer l’espace de travail",

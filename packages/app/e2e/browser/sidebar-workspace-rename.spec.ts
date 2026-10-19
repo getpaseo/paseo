@@ -3,6 +3,48 @@ import { gotoAppShell } from "../support/helpers/app";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { openAgentRoute } from "../support/helpers/mock-agent";
 import { getServerId } from "../support/helpers/server-id";
+import { createTempDirectory } from "../support/helpers/workspace";
+
+test("changing a workspace root validates the path and preserves its sidebar identity", async ({
+  page,
+}) => {
+  const workspace = await seedWorkspace({ repoPrefix: "sidebar-root-", title: "Root change" });
+  const directory = await createTempDirectory("sidebar-root-target-");
+  try {
+    await gotoAppShell(page);
+    const row = page.getByTestId(workspaceRowTestId(workspace.workspaceId));
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    await row.hover();
+    await page
+      .getByTestId(`sidebar-workspace-kebab-${getServerId()}:${workspace.workspaceId}`)
+      .click();
+    await page
+      .getByTestId(`sidebar-workspace-menu-root-${getServerId()}:${workspace.workspaceId}`)
+      .click();
+    const input = page.getByTestId("workspace-root-modal-input");
+    await expect(input).toHaveValue(workspace.repoPath);
+    await input.fill(`${directory.path}/missing`);
+    await page.getByTestId("workspace-root-modal-submit").click();
+    await expect(page.getByTestId("workspace-root-modal-error")).toBeVisible();
+    await input.fill(directory.path);
+    await page.getByTestId("workspace-root-modal-submit").click();
+    await expect(input).toHaveCount(0, { timeout: 15_000 });
+    await expect(row).toContainText("Root change");
+    await expect
+      .poll(
+        async () =>
+          (await workspace.client.fetchWorkspaces()).entries.find(
+            (entry) => entry.id === workspace.workspaceId,
+          )?.workspaceDirectory,
+      )
+      .toBe(directory.path);
+    await page.reload();
+    await expect(row).toContainText("Root change", { timeout: 30_000 });
+  } finally {
+    await workspace.cleanup();
+    await directory.cleanup();
+  }
+});
 
 function workspaceRowTestId(workspaceId: string): string {
   return `sidebar-workspace-row-${getServerId()}:${workspaceId}`;

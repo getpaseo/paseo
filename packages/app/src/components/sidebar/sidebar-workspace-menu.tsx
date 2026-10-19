@@ -1,4 +1,10 @@
-import { useMemo, type ComponentProps, type PropsWithChildren, type ReactNode } from "react";
+import {
+  useCallback,
+  useMemo,
+  type ComponentProps,
+  type PropsWithChildren,
+  type ReactNode,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -35,6 +41,8 @@ import {
 import { Shortcut } from "@/components/ui/shortcut";
 import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
 import { resolveSidebarWorkspaceAccessibilityLabel } from "@/components/sidebar/sidebar-workspace-title";
+import { openWorkspaceRootDialog } from "@/components/workspace-root-host";
+import { useHostFeature } from "@/runtime/host-features";
 import {
   workspaceServiceLabelKey,
   type WorkspaceServiceSummary,
@@ -147,6 +155,12 @@ function SidebarWorkspaceMenuItems({
   openInFileManagerPath,
 }: SidebarWorkspaceMenuItemsProps & { surface: MenuSurface }): ReactNode {
   const { t } = useTranslation();
+  const supportsRootChange = useHostFeature(serverId, "workspaceRootChange");
+  const handleRootChange = useCallback(() => {
+    if (serverId && workspaceId && openInFileManagerPath) {
+      openWorkspaceRootDialog({ serverId, workspaceId, cwd: openInFileManagerPath });
+    }
+  }, [serverId, workspaceId, openInFileManagerPath]);
   const archiveTrailing = useMemo(
     () => (archiveShortcutKeys ? <Shortcut chord={archiveShortcutKeys} /> : null),
     [archiveShortcutKeys],
@@ -186,6 +200,16 @@ function SidebarWorkspaceMenuItems({
           onSelect={onRename}
         >
           {t("sidebar.workspace.actions.rename")}
+        </WorkspaceMenuItem>
+      ) : null}
+      {supportsRootChange && serverId && workspaceId && openInFileManagerPath ? (
+        <WorkspaceMenuItem
+          surface={surface}
+          testID={`sidebar-workspace-menu-root-${workspaceKey}`}
+          leading={renameLeadingIcon}
+          onSelect={handleRootChange}
+        >
+          {t("sidebar.workspace.actions.changeRoot")}
         </WorkspaceMenuItem>
       ) : null}
       {onMarkAsRead ? (
