@@ -15,7 +15,7 @@ describe("CLI SSH transport", () => {
     expect(parseHostTarget("ssh://deploy@build-box:2222?daemonPort=7777")).toEqual({
       kind: "ssh",
       ssh: { host: "deploy@build-box", sshPort: 2222, daemonPort: 7777 },
-      description: "ssh://deploy@build-box:2222 (daemon port 7777)",
+      description: "ssh://build-box:2222 (daemon port 7777)",
     });
     expect(() => parseHostTarget("ssh://deploy:secret@build-box")).toThrow(
       "Invalid host connection",

@@ -445,6 +445,7 @@ test("CLI host commands manage the selected daemon and emit secret-free structur
         await promisify(execFile)(
           process.execPath,
           [
+            "--conditions=source",
             "--import",
             "tsx",
             fileURLToPath(new URL("../../../../cli/src/index.ts", import.meta.url)),

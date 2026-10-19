@@ -40,7 +40,25 @@ export function selectDaemonTarget(
 export function describeDaemonTarget(target: DaemonTarget): string {
   if (target.kind === "instance") return `home ${target.home}`;
   try {
-    return parseHostTarget(target.host).description;
+    const input = target.host.trim();
+    const parsed = parseHostTarget(input);
+    // Discovery descriptions are display text; command hints must preserve the address syntax.
+    if (parsed.kind === "ssh" || (!parsed.offer && !parsed.socketPath && input.includes("://"))) {
+      const url = new URL(input);
+      if (decodeURIComponent(url.username).includes(":")) url.username = "REDACTED";
+      for (const key of new Set(url.searchParams.keys())) {
+        const routingOption =
+          (parsed.kind === "ssh" && key === "daemonPort") ||
+          (key === "ssl" &&
+            url.searchParams.getAll(key).every((value) => value === "true" || value === "false"));
+        if (!routingOption) url.searchParams.set(key, "REDACTED");
+      }
+      return url.toString();
+    }
+    // Pairing offers must always use safe display text, including prefix-free fragments.
+    return parsed.kind === "socket" && !parsed.offer && !input.includes("://")
+      ? input
+      : parsed.description;
   } catch {
     return "<invalid endpoint>";
   }
