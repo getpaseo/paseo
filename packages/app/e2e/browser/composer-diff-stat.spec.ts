@@ -310,7 +310,7 @@ async function sendFeedback(page: Page, count: number) {
 }
 
 async function expectFeedbackSent(page: Page, recipient: string) {
-  await expect(page.getByText(`Feedback sent to ${recipient}`, { exact: true })).toBeVisible();
+  await expect(page.getByTestId("app-toast")).toHaveText(`Feedback sent to ${recipient}`);
   await expect(page.getByTestId("working-diff-panel")).toBeVisible();
 }
 
@@ -340,6 +340,9 @@ test.describe("send review feedback", () => {
         await expectFeedbackSent(page, "Composer diff stat");
         await expectReviewAbsent(page, "Please simplify this.");
         await captureFeedback(page, "single");
+        await expect(
+          page.getByText("Feedback sent to Composer diff stat", { exact: true }),
+        ).toHaveCount(0);
       });
       await test.step("Return to the untouched composer draft", async () => {
         await showWideLayout(page);
@@ -375,11 +378,7 @@ test.describe("send review feedback", () => {
         ).toBeDisabled();
         expect(gate.requestCount()).toBe(1);
         gate.accept();
-        await expect(
-          compactReviewSurface(page).getByText("Feedback sent to Composer diff stat", {
-            exact: true,
-          }),
-        ).toBeVisible();
+        await expectFeedbackSent(page, "Composer diff stat");
       });
     } finally {
       await workspace.cleanup();

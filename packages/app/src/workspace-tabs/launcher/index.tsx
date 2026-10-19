@@ -11,7 +11,7 @@ import { useTranslation } from "react-i18next";
 import { Globe, SquarePen, SquareTerminal } from "lucide-react-native";
 import invariant from "tiny-invariant";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
-import { resolvePluginIcon } from "@/plugins/icons";
+import { pluginIconComponent } from "@/plugins/icons";
 import { useInstalledPlugins } from "@/plugins/registry";
 import { pluginPanelSupportsLocation } from "@/plugins/workspace-panels/locations";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
@@ -212,7 +212,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
         pluginItems.push({
           id: `plugin:${plugin.id}:${panel.id}`,
           label: panel.title,
-          Icon: resolvePluginIcon(panel.icon),
+          Icon: pluginIconComponent(panel.icon),
           disabled: false,
           panelKind: "plugin",
           launch: launchSelection(selection),

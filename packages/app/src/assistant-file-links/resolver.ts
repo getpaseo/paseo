@@ -117,6 +117,7 @@ export function classifyForResolution(
   const classification = classifyAssistantFileLink(token, {
     workspaceRoot: context.workspaceRoot,
     decodeHref: tokenInfo.fromHref,
+    explicitLink: source.sourceType !== "inline-code" && !isLinkifiedSource(source),
   });
   if (!classification) {
     return { kind: "resolved", value: { kind: "ignored" } };

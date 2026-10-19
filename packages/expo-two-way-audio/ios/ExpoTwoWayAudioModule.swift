@@ -59,6 +59,12 @@ public class ExpoTwoWayAudioModule: Module {
             return audioEngine.isRecording
         }
 
+        Function("startDictation") { () -> Bool in
+            let isRecording = self.audioEngine?.toggleRecording(true) ?? false
+            self.sendEvent(ON_RECORDING_CHANGE_EVENT_NAME, ["data": isRecording])
+            return isRecording
+        }
+
         Function("toggleRecording") { (val: Bool) -> Bool in
             guard let audioEngine = self.audioEngine else {
                 print("AudioEngine not initialized")

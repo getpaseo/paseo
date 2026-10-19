@@ -12,7 +12,7 @@ import { CreationClient } from "./creation/index.js";
 import type { CreationSnapshot } from "@getpaseo/protocol/messages";
 import type { z } from "zod";
 import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
-import type { ClientCapability } from "@getpaseo/protocol/client-capabilities";
+import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import type { AgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
 import { MAX_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/websocket-message-limit";
 import {
@@ -2313,6 +2313,8 @@ export class DaemonClient {
       message,
       async (query, accept) => {
         resetSource = false;
+        if (query.type === "workspace.setup.subscribe.request")
+          this.requireWorkspaceSetupObservation();
         const requestId = this.createRequestId(options?.requestId);
         const request = SessionInboundMessageSchema.parse({ ...query, requestId });
         try {
@@ -2779,6 +2781,27 @@ export class DaemonClient {
       },
       responseType: "archive_workspace_response",
     });
+  }
+
+  observeWorkspaceSetup(
+    workspaceId: string,
+    options?: { signal?: AbortSignal },
+  ): OwnedSubscription<CorrelatedResponsePayload<"workspace.setup.subscribe.response">> {
+    return this.observe(
+      "workspace.setup.subscribe.response",
+      { type: "workspace.setup.subscribe.request", workspaceId },
+      options,
+    );
+  }
+
+  private requireWorkspaceSetupObservation(): void {
+    if (
+      this.lastServerInfoMessage?.features?.workspaceSetupObservation !== true ||
+      this.lastServerInfoMessage.features.ownedSubscriptions !== true ||
+      this.config.capabilities?.[CLIENT_CAPS.workspaceSetupObservation] === false ||
+      this.config.capabilities?.[CLIENT_CAPS.ownedSubscriptions] === false
+    )
+      throw new Error("Update the host to view workspace setup details");
   }
 
   async fetchWorkspaceSetupStatus(
@@ -5692,6 +5715,10 @@ export class DaemonClient {
       requestId,
       message: { type: `plugin.${action}.request`, requestId, pluginId },
       responseType: `plugin.${action}.response`,
+      // Reload tears the plugin down and starts it again before the daemon answers, and it queues
+      // behind other plugin lifecycle work. Wait for that answer instead of failing the reload at
+      // the request deadline while the daemon keeps loading it.
+      ...(action === "reload" ? { timeout: 0 } : {}),
     });
     return payload.plugin;
   }

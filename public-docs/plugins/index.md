@@ -222,7 +222,8 @@ client.addCommandCenterItem({
 });
 ```
 
-`icon` is a [Lucide](https://lucide.dev/icons/) icon name.
+`icon` is a [Lucide](https://lucide.dev/icons/) icon name, inline SVG, or a component. See
+[Icons](/docs/plugins/reference#icons).
 
 ## Edit and reload
 

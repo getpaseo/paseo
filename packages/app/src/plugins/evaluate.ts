@@ -33,7 +33,7 @@ import {
 } from "@getpaseo/plugin/client";
 import type { EvaluatedPlugin, PluginSidebarSection } from "./types";
 import type { ComponentType } from "react";
-import { resolvePluginIcon } from "./icons";
+import { parsePluginIcon, parseSerializablePluginIcon } from "./icons";
 import { pluginReactNativeRuntime } from "./react-native/runtime";
 import { parsePluginThemeContribution } from "./themes";
 
@@ -199,9 +199,9 @@ export function runPluginClientBundle(
       if (settingsScreenIds.has(screenId))
         throw new Error(`Duplicate settings screen: ${screenId}`);
       if (!contribution.title.trim()) throw new Error(`Invalid settings screen: ${screenId}`);
-      resolvePluginIcon(contribution.icon);
+      const icon = parsePluginIcon(`Settings screen ${screenId}`, contribution.icon);
       settingsScreenIds.add(screenId);
-      return register(collector.settingsScreens, { ...contribution, id: screenId }, () =>
+      return register(collector.settingsScreens, { ...contribution, id: screenId, icon }, () =>
         settingsScreenIds.delete(screenId),
       );
     },
@@ -241,12 +241,10 @@ export function runPluginClientBundle(
     // COMPAT(pluginSidebarAliases): added in v0.11.0, remove after 2027-03-29
     addSidebarItem(contribution: PluginSidebarContribution) {
       const normalizedId = requireId(contribution.id, "sidebar item id");
-      if (!contribution.icon.trim()) throw new Error(`Sidebar item ${normalizedId} has no icon`);
-      resolvePluginIcon(contribution.icon.trim());
       const legacy = {
         id: normalizedId,
         title: contribution.title.trim(),
-        icon: contribution.icon.trim(),
+        icon: parsePluginIcon(`Sidebar item ${normalizedId}`, contribution.icon),
         surface: requireId(contribution.surface, "sidebar surface id"),
       };
       // Shares the header's ids: the sidebar orders both kinds of item under one key.
@@ -262,16 +260,14 @@ export function runPluginClientBundle(
         throw new Error(`Duplicate workspace panel: ${normalizedId}`);
       }
       const title = contribution.title.trim();
-      const icon = contribution.icon.trim();
       if (!title) throw new Error(`Workspace panel ${normalizedId} has no title`);
-      if (!icon) throw new Error(`Workspace panel ${normalizedId} has no icon`);
+      const icon = parsePluginIcon(`Workspace panel ${normalizedId}`, contribution.icon);
       if (contribution.context !== "workspace" && contribution.context !== "agent") {
         throw new Error(`Workspace panel ${normalizedId} has invalid context`);
       }
       if (typeof contribution.Component !== "function") {
         throw new Error(`Workspace panel ${normalizedId} is not a component`);
       }
-      resolvePluginIcon(icon);
       const locations = normalizePanelLocations(normalizedId, contribution.locations);
       workspacePanelIds.add(normalizedId);
       return register(
@@ -292,9 +288,8 @@ export function runPluginClientBundle(
         throw new Error(`Duplicate Command Center item: ${normalizedId}`);
       }
       const title = contribution.title.trim();
-      const icon = contribution.icon.trim();
       if (!title) throw new Error(`Command Center item ${normalizedId} has no title`);
-      if (!icon) throw new Error(`Command Center item ${normalizedId} has no icon`);
+      const icon = parsePluginIcon(`Command Center item ${normalizedId}`, contribution.icon);
       if (
         contribution.context !== "global" &&
         contribution.context !== "workspace" &&
@@ -305,7 +300,6 @@ export function runPluginClientBundle(
       if (typeof contribution.onSelect !== "function") {
         throw new Error(`Command Center item ${normalizedId} has no callback`);
       }
-      resolvePluginIcon(icon);
       commandCenterItemIds.add(normalizedId);
       return register(
         collector.commandCenterItems,
@@ -350,18 +344,19 @@ export function runPluginClientBundle(
         throw new Error(`Duplicate attachment source: ${normalizedId}`);
       }
       const title = contribution.title.trim();
-      const icon = contribution.icon.trim();
       const pickerTitle = contribution.pickerTitle.trim();
       const searchPlaceholder = contribution.searchPlaceholder.trim();
       const method = contribution.search.name.trim();
       if (!title) throw new Error(`Attachment source ${normalizedId} has no title`);
-      if (!icon) throw new Error(`Attachment source ${normalizedId} has no icon`);
+      const icon = parseSerializablePluginIcon(
+        `Attachment source ${normalizedId}`,
+        contribution.icon,
+      );
       if (!pickerTitle) throw new Error(`Attachment source ${normalizedId} has no picker title`);
       if (!searchPlaceholder) {
         throw new Error(`Attachment source ${normalizedId} has no search placeholder`);
       }
       if (!method) throw new Error(`Attachment source ${normalizedId} has no search RPC`);
-      resolvePluginIcon(icon);
       attachmentSourceIds.add(normalizedId);
       return register(
         collector.attachmentSources,

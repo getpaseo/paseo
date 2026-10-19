@@ -212,6 +212,14 @@ export async function scrollUsage(page: Page, deltaY: number): Promise<void> {
   await page.mouse.wheel(0, deltaY);
 }
 
+/** Reach a window with the wheel even when other reports follow its card. */
+export async function scrollUsageToWindow(page: Page, label: string): Promise<void> {
+  const target = await usageModal(page).getByText(label, { exact: true }).boundingBox();
+  const viewport = page.viewportSize();
+  if (!target || !viewport) throw new Error("Usage window must exist before scrolling to it.");
+  await scrollUsage(page, target.y + target.height / 2 - viewport.height / 2);
+}
+
 /** The modal's own Close button. */
 export async function closeUsage(page: Page): Promise<void> {
   await visible(page, "usage-modal").getByRole("button", { name: "Close", exact: true }).click();

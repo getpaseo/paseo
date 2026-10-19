@@ -48,6 +48,8 @@ const DATE_SECTION_ORDER = [
   "older",
 ] as const satisfies readonly DateSectionKey[];
 
+const HISTORY_MATCH_OPTIONS = { typoTolerant: true } as const;
+
 type FlatListItem =
   | { type: "header"; key: string; section: DateSectionKey }
   | { type: "agent"; key: string; agent: AggregatedAgent };
@@ -190,10 +192,11 @@ function SessionRow({
   const pendingPermissionCount = agent.pendingPermissionCount ?? 0;
   const ranges = useMemo(
     () => ({
-      workspace: findHighlightRanges(search ?? "", workspaceName),
-      title: findHighlightRanges(search ?? "", agent.title ?? ""),
-      branch: findHighlightRanges(search ?? "", branch),
-      project: findHighlightRanges(search ?? "", projectName),
+      // History search matches typo-tolerantly on the daemon, so the marks do too.
+      workspace: findHighlightRanges(search ?? "", workspaceName, HISTORY_MATCH_OPTIONS),
+      title: findHighlightRanges(search ?? "", agent.title ?? "", HISTORY_MATCH_OPTIONS),
+      branch: findHighlightRanges(search ?? "", branch, HISTORY_MATCH_OPTIONS),
+      project: findHighlightRanges(search ?? "", projectName, HISTORY_MATCH_OPTIONS),
     }),
     [search, workspaceName, agent.title, branch, projectName],
   );

@@ -2,6 +2,8 @@ import { defineConfig, configDefaults } from "vitest/config";
 import { playwright } from "@vitest/browser-playwright";
 import path from "path";
 import fs from "fs";
+import { transformSync } from "@babel/core";
+import { build } from "esbuild";
 
 // Set this before Vite resolves dependencies and Vitest starts its workers.
 Object.assign(process.env, { NODE_ENV: "test" });
@@ -16,6 +18,43 @@ const resolvePackageEntry = (packageName: string) => {
 };
 
 export default defineConfig({
+  plugins: [
+    {
+      name: "compile-usage-components",
+      enforce: "pre",
+      transform(source, id) {
+        // These labels must react to time and language in the compiled app too.
+        if (!id.includes("/src/usage/") || !id.endsWith(".tsx") || id.includes(".test.")) return;
+        const result = transformSync(source, {
+          filename: id,
+          babelrc: false,
+          configFile: false,
+          parserOpts: { plugins: ["typescript", "jsx"] },
+          plugins: [["babel-plugin-react-compiler", { target: "19" }]],
+          sourceMaps: true,
+        });
+        if (result?.code) return { code: result.code, map: result.map };
+      },
+    },
+    {
+      name: "bundle-i18n-resources",
+      // Metro resolves literal requires lazily. Vite's TS transform leaves them
+      // to Node, which cannot resolve the resource modules. Bundle this boundary
+      // so unit and browser consumers exercise the same deferred module loading.
+      async transform(_source, id) {
+        if (path.resolve(id) !== path.resolve(__dirname, "src/i18n/i18next.ts")) return;
+        const result = await build({
+          entryPoints: [id],
+          bundle: true,
+          format: "esm",
+          platform: "neutral",
+          external: ["i18next", "react-i18next"],
+          write: false,
+        });
+        return { code: result.outputFiles[0].text, map: null };
+      },
+    },
+  ],
   test: {
     environment: "node",
     exclude: [...configDefaults.exclude, "e2e/**"],
@@ -82,6 +121,7 @@ export default defineConfig({
     // Bundle the CJS dependencies of the excluded gesture-handler package for the browser.
     include: [
       "react/jsx-runtime",
+      "react/compiler-runtime",
       "react-native-gesture-handler > hoist-non-react-statics",
       "react-native-gesture-handler > invariant",
     ],
