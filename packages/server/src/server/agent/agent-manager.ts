@@ -1,3 +1,4 @@
+import { AgentBusyError } from "./busy-error.js";
 import { projectTimelineRows } from "./timeline-projection.js";
 import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
 import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/index.js";
@@ -2580,6 +2581,21 @@ export class AgentManager {
       this.runs.settleForegroundRun(agentId, pendingRun.token);
       throw error;
     }
+  }
+
+  streamAgentIfIdle(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): AsyncGenerator<AgentStreamEvent> {
+    const agent = this.requireSessionAgent(agentId);
+    const busy =
+      agent.lifecycle === "initializing" ||
+      agent.pendingReplacement ||
+      this.hasInFlightRun(agentId);
+    if (busy) throw new AgentBusyError(agentId);
+    // No await between admission and streamAgent's shared pending-run reservation.
+    return this.streamAgent(agentId, prompt, options);
   }
 
   streamAgent(

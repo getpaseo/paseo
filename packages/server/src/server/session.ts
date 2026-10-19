@@ -1,4 +1,5 @@
 import { AgentDirectory } from "./agent/directory.js";
+import { AgentBusyError } from "./agent/busy-error.js";
 import { searchTimeline } from "./agent/chat-search/index.js";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { BrowserAutomationHostCapabilitySchema } from "@getpaseo/protocol/browser-automation/capabilities";
@@ -8304,7 +8305,9 @@ export class Session {
       });
     } catch (error) {
       if (this.delivery.requestSignal.aborted) return;
-      this.handleAgentRunError(resolved.agentId, error, "Failed to send agent message");
+      if (!(error instanceof AgentBusyError)) {
+        this.handleAgentRunError(resolved.agentId, error, "Failed to send agent message");
+      }
       this.emit({
         type: "send_agent_message_response",
         payload: {

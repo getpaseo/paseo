@@ -1,3 +1,4 @@
+export { DaemonCapabilityError } from "./daemon-client.js";
 import type { OwnedSubscription } from "./connection/index.js";
 export type { OwnedSubscription, SubscriptionObserver } from "./connection/index.js";
 import type { DaemonClientConfig } from "./daemon-client.js";
@@ -363,6 +364,11 @@ export interface PaseoAgentHandle {
   current(): PaseoAgent | null;
   refresh(requestId?: string): Promise<PaseoAgentRefetchResult | null>;
   send(text: string, options?: PaseoAgentSendOptions): Promise<void>;
+  /** Requires atomic reject-if-busy support; never interrupts or steers an active turn. */
+  sendIfIdle(
+    text: string,
+    options?: Omit<PaseoAgentSendOptions, "activeTurnBehavior">,
+  ): Promise<void>;
   respondToPermission(options: PaseoAgentRespondToPermissionOptions): Promise<void>;
   /** Sends a prompt and resolves when that turn finishes or needs attention. */
   run(text: string, options?: PaseoAgentRunOptions): Promise<PaseoAgentRunResult>;
@@ -944,6 +950,9 @@ function createAgentHandleFactory(
       },
       send: async (text, options) => {
         await daemonClient.sendAgentMessage(id, text, options);
+      },
+      sendIfIdle: async (text, options) => {
+        await daemonClient.sendAgentMessage(id, text, { ...options, activeTurnBehavior: "reject" });
       },
       respondToPermission: async ({ requestId, response }) => {
         await daemonClient.respondToPermission(id, requestId, response);

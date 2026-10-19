@@ -11,6 +11,8 @@ function connection(
     broadcasts?: boolean;
     browserHost?: { hostKind: string; supportedCommands: string[] };
     acknowledgeTimelineReads?: boolean;
+    rejectBusyCapability?: boolean;
+    agentBusy?: boolean;
   } = {},
 ) {
   const sent: Array<{
@@ -47,6 +49,7 @@ function connection(
                   workspaceMultiplicity: options.workspaceMultiplicity ?? true,
                   selectiveAgentTimeline: !options.broadcasts,
                   explicitEventSubscriptions: !options.broadcasts,
+                  sendAgentMessageRejectBusy: options.rejectBusyCapability,
                 },
               },
             },
@@ -79,6 +82,22 @@ function connection(
           JSON.stringify({
             type: "session",
             message: timelinePage(frame.message.requestId, "epoch", 0),
+          }),
+        );
+      }
+      if (frame.message?.type === "send_agent_message_request") {
+        receive(
+          JSON.stringify({
+            type: "session",
+            message: {
+              type: "send_agent_message_response",
+              payload: {
+                requestId: frame.message.requestId,
+                agentId: frame.message.agentId,
+                accepted: !options.agentBusy,
+                error: options.agentBusy ? "agent_busy" : null,
+              },
+            },
           }),
         );
       }
@@ -1024,6 +1043,72 @@ test("subscribeFile returns its initial version without calling the change callb
     expect(changes).toEqual([version]);
     await file.unsubscribe();
   } finally {
+    await h.client.close();
+  }
+});
+
+test("idle-only SDK sends reject old daemons before any message is transmitted", async () => {
+  const { createPaseoApi } = await import("./index");
+  const h = connection();
+  const api = createPaseoApi(h.client);
+  try {
+    const ready = h.client.connect();
+    h.open();
+    await ready;
+    await expect(
+      api.agents.ref("agent").sendIfIdle("hello", { messageId: "saved" }),
+    ).rejects.toThrow("does not support reject-if-busy");
+    await expect(
+      api.agents.ref("agent").send("hello", { messageId: "saved", activeTurnBehavior: "reject" }),
+    ).rejects.toThrow("does not support reject-if-busy");
+    expect(h.sent.filter((frame) => frame.type === "session")).toEqual([]);
+  } finally {
+    await api.dispose();
+    await h.client.close();
+  }
+});
+
+test("idle-only SDK sends forward the stable ID and reject behavior on capable daemons", async () => {
+  const { createPaseoApi } = await import("./index");
+  const h = connection({ rejectBusyCapability: true });
+  const api = createPaseoApi(h.client);
+  try {
+    const ready = h.client.connect();
+    h.open();
+    await ready;
+    await api.agents.ref("agent").sendIfIdle("hello", { messageId: "saved" });
+    expect(h.sent.filter((frame) => frame.message?.type === "send_agent_message_request")).toEqual([
+      expect.objectContaining({
+        message: expect.objectContaining({
+          agentId: "agent",
+          text: "hello",
+          messageId: "saved",
+          activeTurnBehavior: "reject",
+        }),
+      }),
+    ]);
+  } finally {
+    await api.dispose();
+    await h.client.close();
+  }
+});
+
+test("busy rejection surfaces to the SDK caller without falling back to another send", async () => {
+  const { createPaseoApi } = await import("./index");
+  const h = connection({ rejectBusyCapability: true, agentBusy: true });
+  const api = createPaseoApi(h.client);
+  try {
+    const ready = h.client.connect();
+    h.open();
+    await ready;
+    await expect(
+      api.agents.ref("agent").sendIfIdle("hello", { messageId: "saved" }),
+    ).rejects.toThrow("agent_busy");
+    expect(
+      h.sent.filter((frame) => frame.message?.type === "send_agent_message_request"),
+    ).toHaveLength(1);
+  } finally {
+    await api.dispose();
     await h.client.close();
   }
 });

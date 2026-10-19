@@ -349,3 +349,35 @@ it("npm metadata leaves legacy plugin rows parseable without extending their clo
     payload: { requestId: "npm", plugins: [plugin] },
   });
 });
+
+describe("idle-only send compatibility", () => {
+  it.each([undefined, "interrupt", "steer", "reject"])(
+    "accepts active turn behavior %s",
+    (activeTurnBehavior) => {
+      expect(
+        SessionInboundMessageSchema.parse({
+          type: "send_agent_message_request",
+          requestId: "r",
+          agentId: "a",
+          text: "hello",
+          activeTurnBehavior,
+        }),
+      ).toMatchObject({ type: "send_agent_message_request" });
+    },
+  );
+  it.each([undefined, true])(
+    "accepts an absent or advertised reject capability: %s",
+    (capability) => {
+      expect(
+        StatusMessageSchema.parse({
+          type: "status",
+          payload: {
+            status: "server_info",
+            serverId: "s",
+            features: { sendAgentMessageRejectBusy: capability },
+          },
+        }).payload,
+      ).toMatchObject({ status: "server_info" });
+    },
+  );
+});

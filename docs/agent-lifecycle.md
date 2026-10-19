@@ -37,6 +37,16 @@ work is gone. Report that exit as a turn failure so the agent lands in `error` w
 Claude and OMP report exits between turns. OMP relaunches from its session file on the next prompt;
 the unfinished turn is lost.
 
+### Idle-only prompt admission
+
+For an action that must not interrupt existing work, use the SDK's
+[`sendIfIdle`](../public-docs/sdk/reference.md#agent-handle) or reject-mode send.
+The manager checks idle admission and reserves the shared foreground run in one
+synchronous operation, before provider startup. Status checks in a caller cannot
+supply that guarantee. Busy refusal is control flow: it does not emit an agent
+failure and its receipt may be retried. A timeout after provider dispatch is
+still ambiguous; preserve its request identity rather than assuming refusal.
+
 ### Cancellation
 
 Provider interruption is idempotent at the `AgentSession` boundary. It resolves when the prior
