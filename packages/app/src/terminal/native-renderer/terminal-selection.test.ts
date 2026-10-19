@@ -151,6 +151,61 @@ describe("native terminal selection", () => {
     });
   });
 
+  it.each([
+    { col: 0, expected: "한글", startCol: 0, endCol: 3 },
+    { col: 1, expected: "한글", startCol: 0, endCol: 3 },
+    { col: 2, expected: "한글", startCol: 0, endCol: 3 },
+    { col: 3, expected: "한글", startCol: 0, endCol: 3 },
+    { col: 5, expected: "문장", startCol: 5, endCol: 8 },
+    { col: 6, expected: "문장", startCol: 5, endCol: 8 },
+    { col: 7, expected: "문장", startCol: 5, endCol: 8 },
+    { col: 8, expected: "문장", startCol: 5, endCol: 8 },
+  ])(
+    "selects the whole Korean word from column $col, including continuation cells",
+    async ({ col, expected, startCol, endCol }) => {
+      const terminal = createNativeHeadlessTerminal({ rows: 3, cols: 30 });
+      try {
+        await terminal.write("한글 문장");
+        const bounds = terminal.getBufferBounds();
+        const row = bounds.cursorRow;
+        const selection = resolveTerminalWordSelection({ terminal, coordinate: { row, col } });
+
+        expect({ selection, text: extractTerminalSelectedText({ terminal, selection }) }).toEqual({
+          selection: {
+            start: { row, col: startCol },
+            end: { row, col: endCol },
+            coordinateEpoch: bounds.coordinateEpoch,
+          },
+          text: expected,
+        });
+      } finally {
+        terminal.dispose();
+      }
+    },
+  );
+
+  it.each([
+    { text: "한글 문장", col: 4, expected: "" },
+    { text: "(한글)", col: 2, expected: "한글" },
+    { text: "漢字 test", col: 1, expected: "漢字" },
+    { text: "a한b x", col: 2, expected: "a한b" },
+    { text: "🙂🙂 ok", col: 1, expected: "🙂🙂" },
+    { text: "e\u0301한 ok", col: 2, expected: "e\u0301한" },
+    { text: "한글", col: 3, expected: "한글" },
+  ])("preserves word boundaries in $text at column $col", async ({ text, col, expected }) => {
+    const terminal = createNativeHeadlessTerminal({ rows: 3, cols: 30 });
+    try {
+      await terminal.write(text);
+      const selection = resolveTerminalWordSelection({
+        terminal,
+        coordinate: { row: terminal.getBufferBounds().cursorRow, col },
+      });
+      expect(extractTerminalSelectedText({ terminal, selection })).toBe(expected);
+    } finally {
+      terminal.dispose();
+    }
+  });
+
   it("maps screen coordinates through the current visible window", () => {
     expect(
       hitTestTerminalSelectionCell({
