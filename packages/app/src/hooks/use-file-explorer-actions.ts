@@ -6,6 +6,8 @@ import {
   type ExplorerDirectory,
 } from "@/stores/session-store";
 import { explorerFileFromReadResult } from "@/file-explorer/read-result";
+import { usePanelStore } from "@/stores/panel-store";
+import { revealExplorerDirectory } from "@/file-explorer/tree";
 import { parentExplorerPath } from "@/utils/explorer-paths";
 
 function createExplorerState(): AgentFileExplorerState {
@@ -170,6 +172,27 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       }
     },
     [client, normalizedWorkspaceRoot, t, updateExplorerState, workspaceStateKey],
+  );
+
+  const revealDirectory = useCallback(
+    async (directoryPath: string) => {
+      if (!workspaceStateKey) return;
+      await revealExplorerDirectory({
+        directoryPath,
+        requestDirectoryListing,
+        showHiddenFiles: () => {
+          const panel = usePanelStore.getState();
+          if (!panel.explorerShowHiddenFiles) panel.toggleExplorerShowHiddenFiles();
+        },
+        expandPaths: (paths) =>
+          usePanelStore
+            .getState()
+            .setExpandedPathsForWorkspace(workspaceStateKey, (current) =>
+              Array.from(new Set([...current, ...paths])),
+            ),
+      });
+    },
+    [requestDirectoryListing, workspaceStateKey],
   );
 
   const requestFilePreview = useCallback(
@@ -354,6 +377,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
 
   return {
     workspaceStateKey,
+    revealDirectory,
     requestDirectoryListing,
     requestFilePreview,
     requestFileDownloadToken,

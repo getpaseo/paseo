@@ -39,6 +39,19 @@ const ABORTED_TERMINAL_RESPONSE: OmpAgentMessage = {
   errorMessage: "Interrupted by user",
 };
 
+test("an idle follow-up is submitted as a prompt so OMP can start a turn", async () => {
+  const runtime = new FakeOmp();
+  const client = new OmpAgentClient({ logger: createTestLogger(), runtime });
+  const session = await client.createSession({ provider: "omp", cwd: process.cwd() });
+  onTestFinished(() => session.close());
+  const handler = session.tryHandleOutOfBand?.("/follow-up check the build");
+  expect(handler).not.toBeNull();
+  await handler!.run({ emit: () => {} });
+  expect(runtime.latestSession().prompts).toEqual([
+    { message: "check the build", imageCount: 0, streamingBehavior: "followUp" },
+  ]);
+});
+
 test("OMP ready timeout defaults to 20 seconds and RPC timeout overrides both", () => {
   expect(resolveOmpProviderOptions({}).runtimeOptions).toMatchObject({
     readyTimeoutMs: 20_000,

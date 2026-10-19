@@ -132,10 +132,10 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
             <TurnkeySection />
             <AutomationSection />
             <ExtensibleSection />
-            <FAQ />
-            <PhilosophySection />
             <SponsorsSection placement="page" />
             <SponsorSection />
+            <PhilosophySection />
+            <FAQ />
           </div>
         </main>
         <SiteFooter sponsors={false} />
@@ -468,46 +468,35 @@ function TurnkeySection() {
       title="Run it anywhere"
       description="Use Paseo locally, from another machine, or with a team"
     >
-      <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
-        <div className="flex flex-col gap-6 border-b border-white/10 p-6 sm:flex-row sm:items-center sm:justify-between md:p-8">
-          <div className="flex items-start gap-4">
-            <div className="rounded-xl border border-white/10 bg-white/[0.06] p-3 text-muted-foreground">
-              <Monitor className="h-6 w-6" strokeWidth={1.5} />
-            </div>
-            <div className="space-y-0.5">
-              <h3 className="text-xl font-medium text-white/90">Desktop app</h3>
-              <p className="max-w-lg text-sm leading-relaxed text-white/50">
-                The one click experience, download the app and it just works, no server required
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="p-6 md:p-8">
-          <div className="grid gap-4 md:grid-cols-3">
-            <TurnkeyExtensionCard
-              icon={Smartphone}
-              title="Mobile"
-              description="Full client and native, not a WebView"
-              ctaHref="/download"
-              ctaLabel="Download"
-            />
-            <TurnkeyExtensionCard
-              icon={Laptop}
-              title="Remote machines"
-              description="Run Paseo on a home lab, or a cloud machine"
-              ctaHref="/docs#server--cli"
-              ctaLabel="Docs"
-            />
-            <TurnkeyExtensionCard
-              icon={Users}
-              title="Teams and triggers"
-              description="Share access or start work from GitHub, Slack, and Discord"
-              ctaHref="/hub"
-              ctaLabel="Paseo Hub"
-              showIntegrationIcons
-            />
-          </div>
+      <div className="space-y-8">
+        <ProductLead
+          icon={Monitor}
+          title="Desktop app"
+          description="The one click experience, download the app and it just works, no server required"
+        />
+        <div className="grid gap-4 md:grid-cols-3">
+          <TurnkeyExtensionCard
+            icon={Smartphone}
+            title="Mobile"
+            description="Full client and native, not a WebView"
+            ctaHref="/download"
+            ctaLabel="Download"
+          />
+          <TurnkeyExtensionCard
+            icon={Laptop}
+            title="Remote machines"
+            description="Run Paseo on a home lab, or a cloud machine"
+            ctaHref="/docs#server--cli"
+            ctaLabel="Docs"
+          />
+          <TurnkeyExtensionCard
+            icon={Users}
+            title="Teams and triggers"
+            description="Share access or start work from GitHub, Slack, and Discord"
+            ctaHref="/hub"
+            ctaLabel="Paseo Hub"
+            showIntegrationIcons
+          />
         </div>
       </div>
     </FeatureSection>
@@ -530,20 +519,8 @@ function TurnkeyExtensionCard({
   showIntegrationIcons?: boolean;
 }) {
   return (
-    <div className="flex min-h-48 flex-col rounded-xl border border-white/10 bg-white/[0.025] p-5">
-      <div className="mb-5 flex items-center gap-3 text-muted-foreground">
-        <Icon className="h-5 w-5" strokeWidth={1.5} />
-        {showIntegrationIcons ? (
-          <>
-            <GitHubIcon className="h-4 w-4" />
-            <SlackIcon className="h-4 w-4" />
-            <DiscordIcon className="h-4 w-4" />
-          </>
-        ) : null}
-      </div>
-      <h3 className="font-medium text-white/85">{title}</h3>
-      <p className="mt-2 text-sm leading-relaxed text-white/45">{description}</p>
-      <div className="mt-auto pt-5">
+    <FeatureCard icon={Icon} title={title} description={description}>
+      <div className="flex items-center justify-between">
         <a
           href={ctaHref}
           className="inline-flex items-center gap-1.5 rounded-full bg-foreground px-2.5 py-1.5 text-xs text-background transition-colors hover:bg-foreground/90"
@@ -551,7 +528,70 @@ function TurnkeyExtensionCard({
           {ctaLabel}
           <ArrowRight className="h-3.5 w-3.5" />
         </a>
+        {showIntegrationIcons ? INTEGRATION_ICONS : null}
       </div>
+    </FeatureCard>
+  );
+}
+
+const INTEGRATION_ICONS = (
+  <span className="flex items-center gap-2 text-extra-muted-foreground">
+    <GitHubIcon className="h-4 w-4" />
+    <SlackIcon className="h-4 w-4" />
+    <DiscordIcon className="h-4 w-4" />
+  </span>
+);
+
+/** The lead product of a section: an icon tile and title on the page background. */
+function ProductLead({
+  icon: Icon,
+  title,
+  description,
+  actions,
+}: {
+  icon: LucideIcon;
+  title: string;
+  description?: string;
+  actions?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex items-center gap-4">
+        <div className="rounded-xl border border-white/10 bg-white/[0.06] p-3 text-muted-foreground">
+          <Icon className="h-6 w-6" strokeWidth={1.5} />
+        </div>
+        <div className="space-y-0.5">
+          <h3 className="text-xl font-medium text-white/90">{title}</h3>
+          {description ? (
+            <p className="text-sm leading-relaxed text-white/50">{description}</p>
+          ) : null}
+        </div>
+      </div>
+      {actions ? <div className="flex shrink-0 items-center gap-3">{actions}</div> : null}
+    </div>
+  );
+}
+
+/** A small card: icon and title on one line, the blurb below, an optional action last. */
+function FeatureCard({
+  icon: Icon,
+  title,
+  description,
+  children,
+}: {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col rounded-xl border border-white/10 bg-white/[0.025] p-5">
+      <div className="flex items-center gap-3">
+        <Icon className="h-5 w-5 shrink-0 text-extra-muted-foreground" strokeWidth={1.5} />
+        <h3 className="font-medium text-white/85">{title}</h3>
+      </div>
+      <p className="mt-3 text-sm leading-relaxed text-white/45">{description}</p>
+      {children ? <div className="mt-auto pt-5">{children}</div> : null}
     </div>
   );
 }
@@ -797,41 +837,14 @@ function ExtensibleSection() {
       title="Extend it with plugins"
       description="Add new panels and functionality that work in desktop, web and mobile"
     >
-      <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
-        <div className="flex flex-col gap-6 border-b border-white/10 p-6 sm:flex-row sm:items-center sm:justify-between md:p-8">
-          <div className="flex items-center gap-4">
-            <div className="rounded-xl border border-white/10 bg-white/[0.06] p-3 text-muted-foreground">
-              <Puzzle className="h-6 w-6" strokeWidth={1.5} />
-            </div>
-            <h3 className="text-xl font-medium text-white/90">Plugins</h3>
-          </div>
-          <div className="flex shrink-0 items-center gap-3">
-            <a
-              href={PLUGINS_BROWSE.href}
-              {...(PLUGINS_BROWSE.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-              className="inline-flex items-center gap-1.5 rounded-full bg-foreground px-3 py-1.5 text-xs text-background transition-colors hover:bg-foreground/90"
-            >
-              Browse plugins
-              <ArrowRight className="h-3.5 w-3.5" />
-            </a>
-            <a
-              href="/docs/plugins"
-              className="inline-flex items-center gap-1.5 rounded-full border border-white/12 px-3 py-1.5 text-xs text-white/80 transition-colors hover:bg-white/10"
-            >
-              Plugin docs
-            </a>
-          </div>
+      <div className="space-y-8">
+        <ProductLead icon={Puzzle} title="Plugins" actions={PLUGIN_ACTIONS} />
+        <div className="grid gap-4 md:grid-cols-3">
+          {PLUGIN_CAPABILITIES.map((capability) => (
+            <FeatureCard key={capability.title} {...capability} />
+          ))}
         </div>
-
-        <div className="p-6 md:p-8">
-          <div className="grid gap-4 md:grid-cols-3">
-            {PLUGIN_CAPABILITIES.map((capability) => (
-              <PluginCapabilityCard key={capability.title} {...capability} />
-            ))}
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-3 border-t border-white/10 px-6 py-5 sm:flex-row sm:items-center sm:justify-between md:px-8">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-white/45">Paseo is Apache 2.0.</p>
           <a
             href="https://github.com/getpaseo/paseo"
@@ -853,6 +866,25 @@ const PLUGINS_BROWSE = PLUGINS_LINKED
   ? { href: "/plugins", external: false }
   : { href: "https://paseo.cafe", external: true };
 
+const PLUGIN_ACTIONS = (
+  <>
+    <a
+      href={PLUGINS_BROWSE.href}
+      {...(PLUGINS_BROWSE.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+      className="inline-flex items-center gap-1.5 rounded-full bg-foreground px-3 py-1.5 text-xs text-background transition-colors hover:bg-foreground/90"
+    >
+      Browse plugins
+      <ArrowRight className="h-3.5 w-3.5" />
+    </a>
+    <a
+      href="/docs/plugins"
+      className="inline-flex items-center gap-1.5 rounded-full border border-white/12 px-3 py-1.5 text-xs text-white/80 transition-colors hover:bg-white/10"
+    >
+      Plugin docs
+    </a>
+  </>
+);
+
 const PLUGIN_CAPABILITIES: ReadonlyArray<{
   icon: LucideIcon;
   title: string;
@@ -866,35 +898,14 @@ const PLUGIN_CAPABILITIES: ReadonlyArray<{
   {
     icon: Workflow,
     title: "Agent lifecycle",
-    description:
-      "Change configuration, environment, and MCP servers. Answer permissions. Follow up when a turn ends",
+    description: "Change config and MCP servers, answer permissions, and follow up",
   },
   {
     icon: Bot,
     title: "Providers",
-    description: "Add a coding agent as a provider, used the same way as the built-in ones",
+    description: "Add a coding agent as a provider, used like the built-in ones",
   },
 ];
-
-function PluginCapabilityCard({
-  icon: Icon,
-  title,
-  description,
-}: {
-  icon: LucideIcon;
-  title: string;
-  description: string;
-}) {
-  return (
-    <div className="flex flex-col rounded-xl border border-white/10 bg-white/[0.025] p-5">
-      <div className="mb-5 text-muted-foreground">
-        <Icon className="h-5 w-5" strokeWidth={1.5} />
-      </div>
-      <h3 className="font-medium text-white/85">{title}</h3>
-      <p className="mt-2 text-sm leading-relaxed text-white/45">{description}</p>
-    </div>
-  );
-}
 
 const PRINCIPLES: ReadonlyArray<{ icon: LucideIcon; title: string; description: string }> = [
   {
@@ -920,7 +931,7 @@ const PRINCIPLES: ReadonlyArray<{ icon: LucideIcon; title: string; description: 
   {
     icon: Blocks,
     title: "Composable",
-    description: "Run agents on your laptop or a server, and connect from any device.",
+    description: "Run agents on a laptop or a server, and connect from any device.",
   },
   {
     icon: Puzzle,
@@ -937,16 +948,7 @@ function PhilosophySection() {
     >
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {PRINCIPLES.map((principle) => (
-          <div
-            key={principle.title}
-            className="rounded-xl border border-white/10 bg-white/[0.025] p-5"
-          >
-            <div className="flex items-center gap-3">
-              <principle.icon className="h-5 w-5 text-extra-muted-foreground" strokeWidth={1.5} />
-              <h3 className="font-medium text-white/85">{principle.title}</h3>
-            </div>
-            <p className="mt-3 text-sm leading-relaxed text-white/45">{principle.description}</p>
-          </div>
+          <FeatureCard key={principle.title} {...principle} />
         ))}
       </div>
     </FeatureSection>

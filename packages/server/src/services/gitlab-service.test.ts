@@ -477,6 +477,7 @@ describe("createGitLabService", () => {
       headRepositorySshUrl: null,
       headRepositoryUrl: null,
       isCrossRepository: false,
+      headRefKind: "branch",
     });
     expect(calls[0]).toEqual(["mr", "view", "14", "-F", "json"]);
   });

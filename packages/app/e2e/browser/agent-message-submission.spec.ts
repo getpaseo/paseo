@@ -1154,17 +1154,15 @@ test.describe("Agent message submission", () => {
       page,
       page.getByTestId("assistant-message").last(),
     );
-    const assistantMessageCount = await page.getByTestId("assistant-message").count();
-    const toolCallCount = await page.getByTestId("tool-call-badge").count();
     await composer.press("Enter");
     const userMessage = page.getByTestId("user-message").filter({ hasText: prompt }).last();
     await expect(userMessage).toBeVisible();
-    await expect
-      .poll(async () => page.getByTestId("assistant-message").count())
-      .toBeGreaterThan(assistantMessageCount);
-    await expect
-      .poll(async () => page.getByTestId("tool-call-badge").count())
-      .toBeGreaterThan(toolCallCount);
+    await expect(
+      page.getByTestId("assistant-message").filter({
+        hasText: "I'll take a look at the scroll anchor behavior you described.",
+      }),
+    ).toBeVisible();
+    await awaitToolCall(page, "Read");
     await finishTimelineRowStabilityCheck();
   });
 

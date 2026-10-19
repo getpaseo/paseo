@@ -1,4 +1,4 @@
-import { ArrowRight, Check, ExternalLink } from "lucide-react";
+import { ArrowRight, Check, ExternalLink, Heart } from "lucide-react";
 import { BuyMeACoffeeIcon, GitHubIcon, OpenCollectiveIcon } from "~/components/brand-icons";
 import {
   BUY_ME_A_COFFEE_URL,
@@ -243,18 +243,18 @@ export function SponsorSection() {
 
 const SPONSORS_PLACEMENTS = {
   page: {
-    title: "Sponsors",
     section: "space-y-10",
-    heading: "text-3xl font-medium tracking-tight",
+    heading: "gap-2.5 text-3xl font-medium tracking-tight",
+    heart: "size-6",
     link: "",
     logo: "h-14",
     description: "mt-2 text-sm text-white/55",
     button: "h-12 px-5 text-sm",
   },
   footer: {
-    title: "Sponsored by",
     section: "space-y-5 border-t border-white/10 py-8",
-    heading: "text-sm text-extra-muted-foreground",
+    heading: "gap-1.5 text-sm text-extra-muted-foreground",
+    heart: "size-3",
     link: "opacity-85 transition-opacity hover:opacity-100",
     logo: "h-10",
     description: "mt-1.5 text-xs text-white/45",
@@ -276,8 +276,13 @@ export function SponsorsSection({ placement }: SponsorsSectionProps) {
   const open = openSpotCount();
   return (
     <section aria-labelledby="sponsors-heading" className={style.section}>
-      <h2 id="sponsors-heading" className={style.heading}>
-        {style.title}
+      <h2 id="sponsors-heading" className={`flex items-center ${style.heading}`}>
+        <Heart
+          aria-hidden="true"
+          className={`fill-rose-300/80 text-rose-300/80 ${style.heart}`}
+          strokeWidth={1.5}
+        />
+        Sponsors
       </h2>
       <ul className="flex flex-wrap items-center gap-x-14 gap-y-8">
         {SPONSORS.map((sponsor) => (
@@ -285,7 +290,7 @@ export function SponsorsSection({ placement }: SponsorsSectionProps) {
             <a
               href={sponsorHref(sponsor, "website")}
               target="_blank"
-              rel="noopener noreferrer sponsored"
+              rel="noopener noreferrer"
               className={`block ${style.link}`}
             >
               <img

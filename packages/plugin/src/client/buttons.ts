@@ -1,16 +1,16 @@
 import type { ComponentType } from "react";
-import type { PluginHostProps } from "./contracts.js";
+import type { PluginIconProps } from "../icons.js";
+import type { PluginHostProps, PluginIcon } from "./contracts.js";
 
 export type PluginButtonContext =
   | { context: "workspace"; workspaceId: string }
   | { context: "agent"; workspaceId: string; agentId: string };
 
-export type PluginButtonIconProps = PluginHostProps &
-  PluginButtonContext & { size: number; color: string };
+export type PluginButtonIconProps = PluginHostProps & PluginButtonContext & PluginIconProps;
 
 export type PluginButtonContentProps = PluginHostProps & PluginButtonContext & { close(): void };
 
-export type PluginButtonIcon = string | ComponentType<PluginButtonIconProps>;
+export type PluginButtonIcon = PluginIcon<PluginButtonIconProps>;
 
 export type PluginButtonBehavior =
   | { kind: "action"; onPress(): void | Promise<void> }
