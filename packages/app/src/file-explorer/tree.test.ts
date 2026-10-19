@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { ExplorerEntry } from "@/stores/session-store";
+import type { ExplorerDirectory, ExplorerEntry } from "@/stores/session-store";
 import {
   MAX_AUTO_EXPANDED_DIRECTORY_DEPTH,
   flattenExplorerTree,
   reconcileRestoredExpandedPaths,
+  refreshExplorerDirectories,
   restoreExpandedDirectories,
   setExpandedDirectoryPath,
   showHiddenFilesAndRestoreExpandedDirectories,
@@ -193,5 +194,79 @@ describe("file explorer tree", () => {
     expect(hiddenFilesAreShown).toBe(true);
     resolveDirectory({ path: ".hidden", entries: [] });
     await expect(restoration).resolves.toEqual([".", ".hidden"]);
+  });
+});
+
+describe("refreshExplorerDirectories", () => {
+  function makeListing(path: string, names: string[]): ExplorerDirectory {
+    return {
+      path,
+      entries: names.map((name) => ({
+        name,
+        path: path === "." ? name : `${path}/${name}`,
+        kind: "file" as const,
+        size: 0,
+        modifiedAt: "2026-01-01T00:00:00.000Z",
+      })),
+    };
+  }
+
+  function createExplorer(disk: Record<string, string[]>, cached: Record<string, string[]>) {
+    const directories = new Map(
+      Object.entries(cached).map(([path, names]) => [path, makeListing(path, names)]),
+    );
+    return {
+      directories,
+      requestDirectoryListing: async (path: string) => {
+        const listing = makeListing(path, disk[path] ?? []);
+        directories.set(path, listing);
+        return listing;
+      },
+      discardDirectoryListings: (paths: readonly string[]) => {
+        for (const path of paths) directories.delete(path);
+      },
+    };
+  }
+
+  it("does not keep a stale listing for a collapsed folder", async () => {
+    // docs/ was expanded and collapsed earlier, then NEW.md was created in it.
+    const explorer = createExplorer(
+      { ".": ["docs"], docs: ["README.md", "NEW.md"] },
+      { ".": ["docs"], docs: ["README.md"] },
+    );
+
+    await refreshExplorerDirectories({
+      hasWorkspaceScope: true,
+      expandedPaths: new Set(["."]),
+      cachedDirectoryPaths: explorer.directories.keys(),
+      showHiddenFiles: false,
+      requestDirectoryListing: explorer.requestDirectoryListing,
+      discardDirectoryListings: explorer.discardDirectoryListings,
+    });
+
+    // Expanding docs/ only fetches when it has no cached listing.
+    expect(explorer.directories.has("docs")).toBe(false);
+    expect(explorer.directories.get(".")?.entries.map((entry) => entry.name)).toEqual(["docs"]);
+  });
+
+  it("refreshes expanded folders and keeps their listings", async () => {
+    const explorer = createExplorer(
+      { ".": ["src"], src: ["a.ts", "b.ts"] },
+      { ".": ["src"], src: ["a.ts"] },
+    );
+
+    await refreshExplorerDirectories({
+      hasWorkspaceScope: true,
+      expandedPaths: new Set([".", "src"]),
+      cachedDirectoryPaths: explorer.directories.keys(),
+      showHiddenFiles: false,
+      requestDirectoryListing: explorer.requestDirectoryListing,
+      discardDirectoryListings: explorer.discardDirectoryListings,
+    });
+
+    expect(explorer.directories.get("src")?.entries.map((entry) => entry.name)).toEqual([
+      "a.ts",
+      "b.ts",
+    ]);
   });
 });
