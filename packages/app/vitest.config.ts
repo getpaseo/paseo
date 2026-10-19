@@ -199,6 +199,10 @@ export default defineConfig({
       "react/jsx-dev-runtime",
       "react-native-gesture-handler > hoist-non-react-statics",
       "react-native-gesture-handler > invariant",
+      // Imported by test-stubs/reanimated-web-utils.ts. Discovered mid-run, they make Vite reload
+      // and fail the browser test that was importing at that moment.
+      "react-native-web/dist/exports/StyleSheet/compiler/createReactDOMStyle",
+      "react-native-web/dist/exports/StyleSheet/preprocess",
     ],
     exclude: [
       "react-native-enriched-markdown",
