@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { i18n } from "@/i18n/i18next";
 import {
   resolveUsageReport,
   displayPercent,
-  formatUsageFreshness,
   resolveAgentUsageView,
   replaceReport,
   resolveUsageRefresh,
@@ -65,6 +65,18 @@ describe("resolveUsageView", () => {
     ).toEqual({ kind: "unavailable", message: "Connect to Laptop to see usage" });
   });
 
+  it("localizes unavailable host messages while retaining the host name", async () => {
+    await i18n.changeLanguage("ko");
+    expect(
+      resolveUsageView({
+        hostLabel: "Laptop",
+        isConnected: false,
+        supportsUsage: false,
+        query: undefined,
+      }),
+    ).toEqual({ kind: "unavailable", message: "Laptop에 연결하여 제공업체 사용량을 확인하세요" });
+  });
+
   it("moves from loading to ready to error", () => {
     const base = { hostLabel: "Laptop", isConnected: true, supportsUsage: true };
     expect(resolveUsageView({ ...base, query: undefined })).toEqual({ kind: "loading" });
@@ -78,6 +90,10 @@ describe("resolveUsageView", () => {
       }),
     ).toEqual({ kind: "error", message: "boom" });
   });
+});
+
+afterEach(async () => {
+  await i18n.changeLanguage("en");
 });
 
 const hosts: UsageHost[] = [
@@ -182,14 +198,6 @@ describe("displayPercent", () => {
 
   it("has no percent when the window reports none", () => {
     expect(displayPercent(window({}), "remaining")).toBeNull();
-  });
-});
-
-describe("formatUsageFreshness", () => {
-  it("says when the report was fetched", () => {
-    expect(formatUsageFreshness("now")).toBe("Updated just now");
-    expect(formatUsageFreshness("3m")).toBe("Updated 3m ago");
-    expect(formatUsageFreshness("Jan 15")).toBe("Updated Jan 15");
   });
 });
 
@@ -338,7 +346,7 @@ it("resolves retained usage and successful time without inventing old-daemon his
       report: success.report as Extract<UsageReportEntry["report"], { status: "available" }>,
     },
   };
-  expect(resolveUsageReport(failure)).toEqual({
+  expect(resolveUsageReport(failure, i18n.t)).toEqual({
     windows: success.report.status === "available" ? success.report.windows : [],
     balances: [],
     details: [],
@@ -347,7 +355,7 @@ it("resolves retained usage and successful time without inventing old-daemon his
     retained: true,
     messages: ["Rate limited"],
   });
-  expect(resolveUsageReport({ ...failure, lastSuccessful: undefined })).toEqual({
+  expect(resolveUsageReport({ ...failure, lastSuccessful: undefined }, i18n.t)).toEqual({
     windows: [],
     balances: [],
     details: [],
@@ -356,7 +364,7 @@ it("resolves retained usage and successful time without inventing old-daemon his
     retained: false,
     messages: ["Rate limited"],
   });
-  expect(resolveUsageReport(success)).toEqual({
+  expect(resolveUsageReport(success, i18n.t)).toEqual({
     windows: success.report.status === "available" ? success.report.windows : [],
     balances: [],
     details: [],
@@ -384,7 +392,7 @@ it("orders failed polls by attempt time even when successful data is older", () 
 it("available and retained usage show the same successful completion time", () => {
   const success: UsageReportEntry = { ...entry({}), successfulAt: "2026-01-01T00:00:15.000Z" };
   if (success.report.status !== "available") throw new Error("fixture must be available");
-  expect(resolveUsageReport(success).successfulAt).toBe("2026-01-01T00:00:15.000Z");
+  expect(resolveUsageReport(success, i18n.t).successfulAt).toBe("2026-01-01T00:00:15.000Z");
   const failure: UsageReportEntry = {
     ...success,
     successfulAt: undefined,
@@ -392,6 +400,8 @@ it("available and retained usage show the same successful completion time", () =
     report: { status: "error", error: "Rate limited" },
     lastSuccessful: { fetchedAt: success.successfulAt!, report: success.report },
   };
-  expect(resolveUsageReport(failure).successfulAt).toBe(resolveUsageReport(success).successfulAt);
+  expect(resolveUsageReport(failure, i18n.t).successfulAt).toBe(
+    resolveUsageReport(success, i18n.t).successfulAt,
+  );
   expect(upsertReport([failure], success)).toEqual([failure]);
 });

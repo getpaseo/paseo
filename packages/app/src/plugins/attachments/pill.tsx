@@ -3,19 +3,14 @@ import { withUnistyles } from "react-native-unistyles";
 import { AttachmentLabel, AttachmentPill } from "@/components/attachment-pill";
 import type { ComposerAttachment } from "@/attachments/types";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
-import { resolvePluginIcon } from "../icons";
+import type { PluginSerializableIcon } from "@getpaseo/plugin";
+import { PluginIconView } from "../icons";
 import type { PluginResourceComposerAttachment } from "./model";
 
 const iconColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
-function ResourceIcon({
-  Icon,
-  color = "",
-}: {
-  Icon: ReturnType<typeof resolvePluginIcon>;
-  color?: string;
-}) {
-  return <Icon size={ICON_SIZE.sm} color={color} />;
+function ResourceIcon({ icon, color = "" }: { icon: PluginSerializableIcon; color?: string }) {
+  return <PluginIconView icon={icon} size={ICON_SIZE.sm} color={color} />;
 }
 
 const ThemedResourceIcon = withUnistyles(ResourceIcon);
@@ -39,12 +34,11 @@ export function PluginResourceAttachmentPill({
   openLabel,
   removeLabel,
 }: PluginResourceAttachmentPillProps) {
-  const Icon = resolvePluginIcon(attachment.sourceIcon);
   const handleOpen = useCallback(() => onOpen(attachment), [attachment, onOpen]);
   const handleRemove = useCallback(() => onRemove(index), [index, onRemove]);
   const icon = useMemo(
-    () => <ThemedResourceIcon Icon={Icon} uniProps={iconColorMapping} />,
-    [Icon],
+    () => <ThemedResourceIcon icon={attachment.sourceIcon} uniProps={iconColorMapping} />,
+    [attachment.sourceIcon],
   );
   return (
     <AttachmentPill

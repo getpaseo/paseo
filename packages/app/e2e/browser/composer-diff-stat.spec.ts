@@ -125,7 +125,7 @@ test("composer diff stat opens the compact explorer instead of a Changes tab", a
     });
 
     const closeExplorer = page
-      .getByTestId("explorer-header")
+      .getByTestId("workspace-explorer-sidebar")
       .getByRole("button", { name: "Close Explorer sidebar" });
     await expect(closeExplorer).not.toBeInViewport();
 
@@ -809,7 +809,7 @@ async function expectUnmatchedFeedback(page: Page) {
 }
 
 function compactReviewSurface(page: Page) {
-  return page.getByTestId("explorer-content-area").filter({ visible: true });
+  return page.getByTestId("workspace-explorer-sidebar").filter({ visible: true });
 }
 async function openCompactReviewExplorer(
   page: Page,
@@ -847,7 +847,10 @@ async function scrollReviewToLastLine(page: Page) {
 
 async function revealCompactChanges(page: Page) {
   await page.getByTestId("workspace-explorer-toggle").first().click();
-  await page.getByTestId("explorer-header").getByText("Changes", { exact: true }).click();
+  await page
+    .getByTestId("workspace-explorer-sidebar")
+    .getByTestId("workspace-tab-changes_tree")
+    .click();
   await expect(compactReviewSurface(page).getByTestId("diff-file-0-body")).toBeVisible();
 }
 async function expectReviewEditorBody(page: Page, body: string) {

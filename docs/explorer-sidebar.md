@@ -11,7 +11,7 @@ contracts.
 
 ## Panel host contract
 
-Every desktop panel registers its supported `PaneHost` values and presentation. Launchers derive
+Every panel registers its supported `PaneHost` values and presentation. Launchers derive
 fixed-target labels and icons from that registration, filter by host, and never substitute one
 panel type for another. Tab moves reject unsupported destinations, and placement resolves only to
 a compatible pane.
@@ -21,7 +21,10 @@ so a pane’s + menu omits each while that pane already contains it. Closing one
 item available again. Other compatible tabs, including agents, terminals, files, and diffs,
 can move between Explorer and main panes.
 Keep panel implementations independent of either shell. `WorkspacePanelHost` owns mounting and
-retention, while each shell owns its tabs, focus, dragging, resizing, and shortcuts.
+retention. The shared Explorer owns its tab rail; its shared frame owns visibility, activity and
+close-gesture lifetime. Platform adapters own resizing and inset geometry.
+The host keeps three recently used tabs plus modified tabs; unmodified tabs beyond that budget
+can remount. Native retained content stays live, while web chat uses its existing deferred Freeze.
 
 ## Sheets
 
@@ -40,11 +43,11 @@ remounts its panel. Revealing a target that already has a sheet uncovers that sh
 ones above it, except ones holding unsaved work, which stay where they are. Opening a sheet as a tab
 dismisses the sheets above it, since the tab would sit under them. The stack is not persisted.
 
-Sheets are modal and cover the whole compact column, header included. A sheet's header is its drag
+Sheets are modal and cover the whole compact workspace, including the header and Explorer. A sheet's header is its drag
 handle, because the panel scrolls on its own and content panning would fight it. Its trailing rail
 holds icon buttons only (`SheetHeaderIconButton`): Open as tab is the full-screen glyph beside
 Close, so the title keeps its width. The sheets present
-from inside the compact column's `SheetHostScope`, so their panels read the navigator and every
+from the shared workspace's `SheetHostScope`, so their panels read the navigator and every
 workspace provider an ordinary pane has without a context bridge
 ([floating-panels.md Gotcha 6](floating-panels.md#gotcha-6--bottom-sheet-refs-are-not-lifecycle-truth)).
 
@@ -56,12 +59,16 @@ the sheet's tab into a pane, and edits the autosave has not started writing are 
 ## Explorer sidebar
 
 `packages/app/src/workspace-tabs/explorer-sidebar.ts` owns show, hide, toggle, and view selection.
-On desktop, the shell is rendered outside the workspace split canvas so it divides the full
-workspace, including the header. It has its own persisted width and resize handle. Main-pane splits
+One Explorer host stays beside the center column across compact overlays and docks. Keep its
+providers and gesture roots at the same React position when width or appearance changes. The
+workspace route preserves panel ancestry during appearance updates. Appearance-dependent leaves
+subscribe to theme changes; the file editor reconfigures its existing editor theme compartment.
+Ordinary leaf routes retain the stack appearance policy.
+The shell is outside the workspace split canvas so it divides the full workspace, including the header. It has its own persisted width and resize handle. Main-pane splits
 never read or modify that width.
 
 `packages/app/src/workspace-tabs/open-supporting-view.ts` owns semantic Changes and pull-request
-opens. Compact and wide native layouts select the matching Explorer tab. Desktop Changes opens
+opens. Compact and wide native layouts select the matching workspace tab in Explorer. Desktop Changes opens
 follow the shared diff preference. Desktop pull requests use their Main panel, On the side, or
 Explorer sidebar setting. Automatic PR discovery follows that preference once per workspace without
 interrupting the user's work. Closing the tab opts that workspace out of future automatic opens,
@@ -76,18 +83,37 @@ literal `"explorer"` pane id and `explorerPaneIdByWorkspace` key for compatibili
 
 Explorer uses the shared workspace tab row and ordinary tab context menus. Files and Changes
 hide their close buttons through the panel manifest; close them from the tab context menu.
-Other tabs reveal the close control on hover. The + menu opens compatible panels in the dock and
-omits Agent and terminal profiles. Agents and terminals can still be dragged into Explorer.
+Other tabs reveal the close control on hover. The + menu opens compatible panels in the dock, including Agent and terminal profiles.
+Web also supports dragging agents and terminals into Explorer.
 Bulk-close actions apply only to the dock's tabs. Explorer tabs can be reordered and dragged
 between compatible panes, but the dock cannot be split or maximized. Selecting an Explorer tab
-does not change workspace focus.
+does not change workspace focus. Web dragging shares the workspace drag scope; compact layouts
+accept only reordering inside the source pane.
 
-Cmd+E shows or hides Explorer without changing its selected view. Compact layouts use the combined
-full-screen Explorer overlay for Changes, Files, and pull requests, and close it after a file opens. Compact Changes has no tree rail; its overview is the Jump to file action (`packages/app/src/git/jump-to-file/`), a sheet over the same changed-files tree the desktop rail renders.
-Wide native layouts without pane splits use the same combined content in a resizable inline dock;
-opening a file leaves that dock visible. Both presentations keep their selection in the panel store
-and reuse the layout store's per-workspace Explorer width. They do not create a second Explorer
-lifecycle.
+Cmd+E shows or hides Explorer without changing its selected view. All layouts use the same
+workspace tabs, launcher, and panel host. Below 600 points the shell is the swipeable Explorer
+overlay; at 600 points and above it reserves width beside the workspace. Native docking keeps its
+touch resize handle. Full workspace splits remain a separate web-only capability.
+
+The dock reserves at least 240 points and the workspace 360. App navigation yields when it cannot
+share the remaining width with both. This keeps a portrait tablet from rendering three unusably
+narrow columns; widening restores navigation without changing its saved open state.
+
+Compact panel gestures own overlay visibility; the workspace layout owns its tab selection and
+contents on every platform. Explicit pane destinations bypass compact sheet placement, so choosing
+a panel in Explorer's + menu keeps it there. Ordinary compact file and subagent look-ups still use
+the sheet policy. Resolving an existing main tab reveals center immediately; a new file sheet
+keeps Explorer underneath and closing the sheet uncovers it. Semantic navigation resolves the
+actual destination before revealing it, including deduplicated targets.
+
+Compact overlay selection and saved dock visibility are independent. Folding changes geometry,
+not either mode’s visibility intent. Native workspace retention remains one workspace; web retains
+up to ten with its existing inactive TTL.
+
+PR discovery belongs to the active workspace: split layouts discover while active, and other
+layouts discover while Explorer is active. The rail requests summary status; selected visible PR
+content also requests timeline data. Inactive consumers read cached data without request demand.
+Discovery uses ordinary PR tabs and their existing once-per-workspace close opt-out.
 
 ## Side pane
 

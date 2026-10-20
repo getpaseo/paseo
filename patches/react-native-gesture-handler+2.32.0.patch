@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/GestureHandlerOrchestrator.kt b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/GestureHandlerOrchestrator.kt
-index a532cf6..7b66222 100644
+index 8d78aea..02e3ea6 100644
 --- a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/GestureHandlerOrchestrator.kt
 +++ b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/GestureHandlerOrchestrator.kt
 @@ -2,6 +2,7 @@ package com.swmansion.gesturehandler.core
@@ -10,7 +10,7 @@ index a532cf6..7b66222 100644
  import android.view.MotionEvent
  import android.view.View
  import android.view.ViewGroup
-@@ -24,6 +25,10 @@ class GestureHandlerOrchestrator(
+@@ -28,6 +29,10 @@ class GestureHandlerOrchestrator(
    private val awaitingHandlers = arrayListOf<GestureHandler>()
    private val preparedHandlers = arrayListOf<GestureHandler>()
  
@@ -21,7 +21,7 @@ index a532cf6..7b66222 100644
    // In `onHandlerStateChange` method we iterate through `awaitingHandlers`, but calling `tryActivate` may modify this list.
    // To avoid `ConcurrentModificationException` we iterate through copy. There is one more problem though - if handler was
    // removed from `awaitingHandlers`, it was still present in copy of original list. This hashset helps us identify which handlers
-@@ -42,6 +47,7 @@ class GestureHandlerOrchestrator(
+@@ -46,6 +51,7 @@ class GestureHandlerOrchestrator(
    fun onTouchEvent(event: MotionEvent): Boolean {
      isHandlingTouch = true
      val action = event.actionMasked
@@ -29,9 +29,9 @@ index a532cf6..7b66222 100644
      if (action == MotionEvent.ACTION_DOWN ||
        action == MotionEvent.ACTION_POINTER_DOWN ||
        action == MotionEvent.ACTION_HOVER_MOVE
-@@ -562,6 +568,107 @@ class GestureHandlerOrchestrator(
-     extractGestureHandlers(wrapperView, tempCoords, pointerId, event)
-   }
+@@ -579,6 +585,107 @@ class GestureHandlerOrchestrator(
+   private fun shouldIgnoreSubtreeIfGestureHandlerRootView(view: View) =
+     view is RNGestureHandlerRootView && view != wrapperView && view.isRootViewEnabled()
  
 +  private fun trackPointerDownPoints(event: MotionEvent) {
 +    val index = event.actionIndex
@@ -138,7 +138,7 @@ index a532cf6..7b66222 100644
      viewGroup: ViewGroup,
      coords: FloatArray,
 diff --git a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt
-index d8f8fd6..ed101b9 100644
+index 629c155..e1909ff 100644
 --- a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt
 +++ b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt
 @@ -19,6 +19,7 @@ class RNGestureHandlerRootHelper(private val context: ReactContext, wrappedView:
@@ -149,9 +149,9 @@ index d8f8fd6..ed101b9 100644
    private var passingTouch = false
  
    init {
-@@ -117,6 +118,14 @@ class RNGestureHandlerRootHelper(private val context: ReactContext, wrappedView:
+@@ -118,6 +119,14 @@ class RNGestureHandlerRootHelper(private val context: ReactContext, wrappedView:
      passingTouch = true
-     orchestrator!!.onTouchEvent(ev)
+     orchestrator!!.onTouchEvent(event)
      passingTouch = false
 +
 +    // On the transition into interception, cancel the native views the pointers landed on - the
@@ -164,6 +164,21 @@ index d8f8fd6..ed101b9 100644
      return shouldIntercept
    }
  
+diff --git a/node_modules/react-native-gesture-handler/lib/commonjs/web/handlers/GestureHandler.js b/node_modules/react-native-gesture-handler/lib/commonjs/web/handlers/GestureHandler.js
+index 96c5227..cbf1a88 100644
+--- a/node_modules/react-native-gesture-handler/lib/commonjs/web/handlers/GestureHandler.js
++++ b/node_modules/react-native-gesture-handler/lib/commonjs/web/handlers/GestureHandler.js
+@@ -58,7 +58,9 @@ class GestureHandler {
+     manager.setOnPointerMoveOver(this.onPointerMoveOver.bind(this));
+     manager.setOnPointerMoveOut(this.onPointerMoveOut.bind(this));
+     manager.setOnWheel(this.onWheel.bind(this));
+-    manager.registerListeners();
++    if (this.enabled) {
++      manager.registerListeners();
++    }
+   }
+ 
+   //
 diff --git a/node_modules/react-native-gesture-handler/lib/commonjs/web/tools/PointerEventManager.js b/node_modules/react-native-gesture-handler/lib/commonjs/web/tools/PointerEventManager.js
 index 76eb808..7c40526 100644
 --- a/node_modules/react-native-gesture-handler/lib/commonjs/web/tools/PointerEventManager.js
@@ -184,6 +199,21 @@ index 76eb808..7c40526 100644
      }
      this.markAsOutOfBounds(adaptedEvent.pointerId);
      this.trackedPointers.delete(adaptedEvent.pointerId);
+diff --git a/node_modules/react-native-gesture-handler/lib/module/web/handlers/GestureHandler.js b/node_modules/react-native-gesture-handler/lib/module/web/handlers/GestureHandler.js
+index 0791c66..2f41c77 100644
+--- a/node_modules/react-native-gesture-handler/lib/module/web/handlers/GestureHandler.js
++++ b/node_modules/react-native-gesture-handler/lib/module/web/handlers/GestureHandler.js
+@@ -52,7 +52,9 @@ export default class GestureHandler {
+     manager.setOnPointerMoveOver(this.onPointerMoveOver.bind(this));
+     manager.setOnPointerMoveOut(this.onPointerMoveOut.bind(this));
+     manager.setOnWheel(this.onWheel.bind(this));
+-    manager.registerListeners();
++    if (this.enabled) {
++      manager.registerListeners();
++    }
+   }
+ 
+   //
 diff --git a/node_modules/react-native-gesture-handler/lib/module/web/tools/PointerEventManager.js b/node_modules/react-native-gesture-handler/lib/module/web/tools/PointerEventManager.js
 index 6ce3b8f..8fe28bc 100644
 --- a/node_modules/react-native-gesture-handler/lib/module/web/tools/PointerEventManager.js
@@ -204,6 +234,21 @@ index 6ce3b8f..8fe28bc 100644
      }
      this.markAsOutOfBounds(adaptedEvent.pointerId);
      this.trackedPointers.delete(adaptedEvent.pointerId);
+diff --git a/node_modules/react-native-gesture-handler/src/web/handlers/GestureHandler.ts b/node_modules/react-native-gesture-handler/src/web/handlers/GestureHandler.ts
+index ddb79a3..4e1274c 100644
+--- a/node_modules/react-native-gesture-handler/src/web/handlers/GestureHandler.ts
++++ b/node_modules/react-native-gesture-handler/src/web/handlers/GestureHandler.ts
+@@ -79,7 +79,9 @@ export default abstract class GestureHandler implements IGestureHandler {
+     manager.setOnPointerMoveOut(this.onPointerMoveOut.bind(this));
+     manager.setOnWheel(this.onWheel.bind(this));
+ 
+-    manager.registerListeners();
++    if (this.enabled) {
++      manager.registerListeners();
++    }
+   }
+ 
+   //
 diff --git a/node_modules/react-native-gesture-handler/src/web/tools/PointerEventManager.ts b/node_modules/react-native-gesture-handler/src/web/tools/PointerEventManager.ts
 index 18d3627..769b0fe 100644
 --- a/node_modules/react-native-gesture-handler/src/web/tools/PointerEventManager.ts

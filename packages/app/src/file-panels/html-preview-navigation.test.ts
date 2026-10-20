@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { htmlPreviewNavigationKind } from "@/file-pane/html-preview-navigation";
+import { htmlPreviewNavigationKind } from "./html-preview-navigation";
 
 describe("htmlPreviewNavigationKind", () => {
   it("allows the WebView's initial document URLs", () => {

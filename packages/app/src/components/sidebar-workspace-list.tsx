@@ -2761,7 +2761,7 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
   },
   workspaceArchivingOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     borderRadius: theme.borderRadius.lg,
     backgroundColor: `${theme.colors.surface0}cc`,
     alignItems: "center",
