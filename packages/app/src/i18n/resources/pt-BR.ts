@@ -1918,6 +1918,13 @@ export const ptBR: TranslationResources = {
     externalBrowser: "Navegador externo",
     dontAskAgain: "Não perguntar novamente",
   },
+  linkPopover: {
+    openInNewTab: "Abrir em nova aba",
+    openInDefaultBrowser: "Abrir no navegador padrão",
+    copyLink: "Copiar link",
+    click: "Clique",
+    settings: "Configurações de links",
+  },
   downloads: {
     requestTokenFailed: "Falha ao solicitar token de download.",
     hostUnavailable: "Host de download indisponível.",
@@ -2255,6 +2262,11 @@ export const ptBR: TranslationResources = {
           steer: "Orientar",
           queue: "Fila",
         },
+      },
+      linkPopover: {
+        label: "Perguntar onde abrir links",
+        description:
+          "Vale para links do terminal e do chat. {{paseoShortcut}} sempre abre uma nova aba e {{systemShortcut}}, o navegador padrão.",
       },
       serviceUrls: {
         options: {

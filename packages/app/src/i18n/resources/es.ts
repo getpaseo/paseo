@@ -1933,6 +1933,13 @@ export const es: TranslationResources = {
     externalBrowser: "Navegador externo",
     dontAskAgain: "no vuelvas a preguntar",
   },
+  linkPopover: {
+    openInNewTab: "Abrir en una pestaña nueva",
+    openInDefaultBrowser: "Abrir en el navegador predeterminado",
+    copyLink: "Copiar enlace",
+    click: "Clic",
+    settings: "Ajustes de enlaces",
+  },
   downloads: {
     requestTokenFailed: "No se pudo solicitar el token de descarga.",
     hostUnavailable: "El host de descarga no está disponible.",
@@ -2272,6 +2279,11 @@ export const es: TranslationResources = {
           steer: "Dirigir",
           queue: "Cola",
         },
+      },
+      linkPopover: {
+        label: "Preguntar dónde abrir los enlaces",
+        description:
+          "Se aplica a los enlaces de la terminal y del chat. {{paseoShortcut}} siempre abre una pestaña nueva y {{systemShortcut}}, el navegador predeterminado.",
       },
       serviceUrls: {
         options: {

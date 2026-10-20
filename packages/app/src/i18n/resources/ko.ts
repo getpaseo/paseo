@@ -1895,6 +1895,13 @@ export const ko: TranslationResources = {
     externalBrowser: "외부 브라우저",
     dontAskAgain: "다시 묻지 않기",
   },
+  linkPopover: {
+    openInNewTab: "새 탭에서 열기",
+    openInDefaultBrowser: "기본 브라우저에서 열기",
+    copyLink: "링크 복사",
+    click: "클릭",
+    settings: "링크 설정",
+  },
   downloads: {
     requestTokenFailed: "다운로드 토큰을 요청하지 못했습니다.",
     hostUnavailable: "다운로드 호스트를 사용할 수 없습니다.",
@@ -2232,6 +2239,11 @@ export const ko: TranslationResources = {
           steer: "지시",
           queue: "대기열",
         },
+      },
+      linkPopover: {
+        label: "링크를 열 위치 묻기",
+        description:
+          "터미널과 채팅의 링크에 적용됩니다. {{paseoShortcut}}은(는) 항상 새 탭에서, {{systemShortcut}}은(는) 기본 브라우저에서 엽니다.",
       },
       serviceUrls: {
         options: {

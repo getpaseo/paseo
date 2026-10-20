@@ -1931,6 +1931,13 @@ export const fr: TranslationResources = {
     externalBrowser: "Navigateur externe",
     dontAskAgain: "Ne plus demander",
   },
+  linkPopover: {
+    openInNewTab: "Ouvrir dans un nouvel onglet",
+    openInDefaultBrowser: "Ouvrir dans le navigateur par défaut",
+    copyLink: "Copier le lien",
+    click: "Clic",
+    settings: "Paramètres des liens",
+  },
   downloads: {
     requestTokenFailed: "Impossible d’obtenir le token de téléchargement.",
     hostUnavailable: "L’hôte de téléchargement est indisponible.",
@@ -2271,6 +2278,11 @@ export const fr: TranslationResources = {
           steer: "Réorienter",
           queue: "File d’attente",
         },
+      },
+      linkPopover: {
+        label: "Demander où ouvrir les liens",
+        description:
+          "S'applique aux liens du terminal et du chat. {{paseoShortcut}} ouvre toujours un nouvel onglet et {{systemShortcut}} le navigateur par défaut.",
       },
       serviceUrls: {
         options: {

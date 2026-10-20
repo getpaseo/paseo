@@ -1,6 +1,13 @@
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { SettingsSection, SettingsCard, SettingsSelect } from "@/components/settings";
+import {
+  SettingsSection,
+  SettingsCard,
+  SettingsSelect,
+  SettingsSwitch,
+} from "@/components/settings";
+import { formatShortcut } from "@/utils/format-shortcut";
+import { getShortcutOs } from "@/utils/shortcut-platform";
 import {
   useAppSettings,
   type OpenInSidePanePreferences,
@@ -83,7 +90,29 @@ function ServiceUrlRow() {
   );
 }
 
-/** Where things open: files, diffs, subagents, pull requests, and script URLs. Desktop only. */
+function LinkPopoverRow() {
+  const { t } = useTranslation();
+  const { settings, updateSettings } = useAppSettings();
+  const change = useCallback(
+    (linkPopoverEnabled: boolean) => void updateSettings({ linkPopoverEnabled }),
+    [updateSettings],
+  );
+  const click = t("linkPopover.click");
+  const shortcutOs = getShortcutOs();
+  return (
+    <SettingsSwitch
+      label={t("settings.general.linkPopover.label")}
+      hint={t("settings.general.linkPopover.description", {
+        paseoShortcut: formatShortcut(["mod", click], shortcutOs),
+        systemShortcut: formatShortcut(["shift", "mod", click], shortcutOs),
+      })}
+      value={settings.linkPopoverEnabled}
+      onValueChange={change}
+    />
+  );
+}
+
+/** Where things open: files, diffs, subagents, pull requests, script URLs, and links. Desktop only. */
 export function OpenLocationSection() {
   const { t } = useTranslation();
   const { settings, updateSettings } = useAppSettings();
@@ -117,6 +146,7 @@ export function OpenLocationSection() {
           onDestinationChange={handleDestinationChange}
         />
         <ServiceUrlRow />
+        <LinkPopoverRow />
       </SettingsCard>
     </SettingsSection>
   );

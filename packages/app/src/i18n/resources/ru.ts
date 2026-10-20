@@ -1917,6 +1917,13 @@ export const ru: TranslationResources = {
     externalBrowser: "Внешний браузер",
     dontAskAgain: "Больше не спрашивать",
   },
+  linkPopover: {
+    openInNewTab: "Открыть в новой вкладке",
+    openInDefaultBrowser: "Открыть в браузере по умолчанию",
+    copyLink: "Копировать ссылку",
+    click: "Клик",
+    settings: "Настройки ссылок",
+  },
   downloads: {
     requestTokenFailed: "Не удалось запросить токен загрузки.",
     hostUnavailable: "Хост загрузки недоступен.",
@@ -2256,6 +2263,11 @@ export const ru: TranslationResources = {
           steer: "Направить",
           queue: "Поставить в очередь",
         },
+      },
+      linkPopover: {
+        label: "Спрашивать, где открывать ссылки",
+        description:
+          "Относится к ссылкам в терминале и чате. {{paseoShortcut}} всегда открывает новую вкладку, а {{systemShortcut}} — браузер по умолчанию.",
       },
       serviceUrls: {
         options: {

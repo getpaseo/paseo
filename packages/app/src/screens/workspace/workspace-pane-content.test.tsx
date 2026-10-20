@@ -16,6 +16,11 @@ vi.mock("@/panels/register-panels", () => ({
   ensurePanelsRegistered: vi.fn(),
 }));
 
+// Link opening is incidental to pane context plumbing; its UI pulls in native modules.
+vi.mock("@/links/provider", () => ({
+  ExternalLinkProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
+
 vi.mock("@/panels/panel-registry", () => ({
   getPanelRegistration: () => ({
     kind: "agent",

@@ -1,5 +1,12 @@
 import { Text } from "react-native";
-import { forwardRef, useCallback, useMemo, useState, type ComponentProps } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useMemo,
+  useState,
+  type ComponentProps,
+  type MouseEvent,
+} from "react";
 import type {
   CodeBlockRendererProps,
   LinkRendererProps,
@@ -7,6 +14,10 @@ import type {
 } from "react-native-enriched-markdown";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useFileLink } from "@/assistant-file-links";
+import { readExternalLinkClick } from "@/links/external-link-action";
+import { useOpenExternalLink } from "@/links/provider";
+import { isHttpUrl } from "@/utils/http-url";
+import { getShortcutOs } from "@/utils/shortcut-platform";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import type { Theme } from "@/styles/theme";
@@ -35,6 +46,32 @@ function WebLink({ link, anchorProps, children }: LinkRendererProps) {
   const [hovered, setHovered] = useState(false);
   const handleMouseEnter = useCallback(() => setHovered(true), []);
   const handleMouseLeave = useCallback(() => setHovered(false), []);
+  const openExternalLink = useOpenExternalLink();
+  const { onClick } = anchorProps;
+  // The click point and modifiers decide how an http(s) link opens. The library press event
+  // carries neither, so these links bypass it.
+  const handleClick = useCallback(
+    (event: MouseEvent<HTMLAnchorElement>) => {
+      if (!isHttpUrl(link.url)) {
+        onClick?.(event);
+        return;
+      }
+      event.preventDefault();
+      const click = readExternalLinkClick({
+        url: link.url,
+        event,
+        isMac: getShortcutOs() === "mac",
+      });
+      // A keyboard-activated click (detail 0) has no pointer position; anchor under the link.
+      if (event.detail === 0) {
+        const rect = event.currentTarget.getBoundingClientRect();
+        click.clientX = rect.left;
+        click.clientY = rect.bottom;
+      }
+      openExternalLink(click);
+    },
+    [link.url, onClick, openExternalLink],
+  );
   const anchorStyle = useMemo(
     () => ({
       ...anchorProps.style,
@@ -47,6 +84,7 @@ function WebLink({ link, anchorProps, children }: LinkRendererProps) {
     <a
       {...anchorProps}
       style={anchorStyle}
+      onClick={handleClick}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >

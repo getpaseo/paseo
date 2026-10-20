@@ -1885,6 +1885,13 @@ export const ar: TranslationResources = {
     externalBrowser: "متصفح خارجي",
     dontAskAgain: "لا تسأل مرة أخرى",
   },
+  linkPopover: {
+    openInNewTab: "فتح في علامة تبويب جديدة",
+    openInDefaultBrowser: "فتح في المتصفح الافتراضي",
+    copyLink: "نسخ الرابط",
+    click: "نقرة",
+    settings: "إعدادات الروابط",
+  },
   downloads: {
     requestTokenFailed: "فشل طلب رمز التنزيل.",
     hostUnavailable: "مضيف التنزيل غير متاح.",
@@ -2257,6 +2264,11 @@ export const ar: TranslationResources = {
           steer: "توجيه",
           queue: "طابور",
         },
+      },
+      linkPopover: {
+        label: "السؤال عن مكان فتح الروابط",
+        description:
+          "ينطبق على الروابط في الطرفية والدردشة. {{paseoShortcut}} يفتح دائمًا علامة تبويب جديدة و{{systemShortcut}} يفتح المتصفح الافتراضي.",
       },
       serviceUrls: {
         options: {

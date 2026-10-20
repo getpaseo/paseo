@@ -32,6 +32,7 @@ import {
 } from "../local-links/terminal-local-link-provider";
 import { isFindShortcut, type FindShortcutPlatform } from "@/pane-find/find-shortcut";
 import { isMacUserAgent } from "@/utils/mac-user-agent";
+import { readExternalLinkClick, type ExternalLinkClick } from "@/links/external-link-action";
 import { resolveTerminalFontFamily, resolveTerminalFontSize } from "./terminal-font";
 
 export type TerminalOutputData = Uint8Array;
@@ -74,7 +75,7 @@ export interface TerminalEmulatorRuntimeCallbacks {
     meta: boolean;
   }) => Promise<void> | void;
   onPendingModifiersConsumed?: () => Promise<void> | void;
-  onOpenExternalUrl?: (url: string) => Promise<void> | void;
+  onExternalLinkClick?: (click: ExternalLinkClick) => Promise<void> | void;
   onResolveLocalFileLink?: (
     source: TerminalLocalFileLinkSource,
   ) => Promise<TerminalLocalFileLinkTarget | null> | TerminalLocalFileLinkTarget | null;
@@ -467,7 +468,9 @@ export class TerminalEmulatorRuntime {
 
     const openExternalLink = (event: MouseEvent, uri: string) => {
       event.preventDefault();
-      void this.callbacks.onOpenExternalUrl?.(uri);
+      void this.callbacks.onExternalLinkClick?.(
+        readExternalLinkClick({ url: uri, event, isMac: this.options.isMac }),
+      );
     };
     const terminal = new Terminal({
       allowProposedApi: true,
