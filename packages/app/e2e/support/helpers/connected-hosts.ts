@@ -115,3 +115,18 @@ export async function editConnectedHost(page: Page) {
     page.getByRole("textbox", { name: "Replacement connection", exact: true }),
   ).toHaveValue("");
 }
+
+export async function expectConnectedHostControlsFit(page: Page, label: string, enabled: boolean) {
+  const details = page.getByRole("button", { name: `Details for ${label}`, exact: true });
+  const toggle = page.getByRole("button", { name: enabled ? "Disable" : "Enable", exact: true });
+  await details.scrollIntoViewIfNeeded();
+  await expect(details).toBeInViewport({ ratio: 1 });
+  await expect(toggle).toBeInViewport({ ratio: 1 });
+}
+export async function closeConnectedHostDetails(page: Page) {
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+}
+export async function toggleConnectedHost(page: Page, enabled: boolean) {
+  await page.getByRole("button", { name: enabled ? "Disable" : "Enable", exact: true }).click();
+  await expect(page.getByText(enabled ? /disabled · Disabled/ : /online · Enabled/)).toBeVisible();
+}

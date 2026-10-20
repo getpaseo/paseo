@@ -31,6 +31,7 @@ export { SettingsCollapsibleRow } from "./collapsible-row";
 interface AppSettingsRowProps extends Omit<SettingsRowProps, "hint"> {
   hint?: ReactNode;
   labelAccessory?: ReactNode;
+  stacked?: boolean;
 }
 
 export function SettingsCard({ children, testID }: { children: ReactNode; testID?: string }) {
@@ -55,12 +56,16 @@ export function SettingsRow({
   error,
   children,
   testID,
+  stacked = false,
 }: AppSettingsRowProps) {
   const compact = useIsCompactFormFactor();
-  const rowStyle = useMemo(() => [settingsStyles.row, compact && styles.compactRow], [compact]);
+  const rowStyle = useMemo(
+    () => [settingsStyles.row, compact && styles.compactRow, stacked && styles.stackedRow],
+    [compact, stacked],
+  );
   return (
     <View style={rowStyle} testID={testID}>
-      <View style={styles.label}>
+      <View style={[styles.label, stacked && styles.stackedLabel]}>
         {labelAccessory ? (
           <View style={styles.labelRow}>
             <Text style={[settingsStyles.rowTitle, styles.accessoryLabel]}>{label}</Text>
@@ -76,7 +81,9 @@ export function SettingsRow({
           </Text>
         ) : null}
       </View>
-      {children ? <View style={styles.control}>{children}</View> : null}
+      {children ? (
+        <View style={[styles.control, stacked && styles.stackedControl]}>{children}</View>
+      ) : null}
     </View>
   );
 }
@@ -193,6 +200,9 @@ export function SettingsAction({ actionLabel, onPress, disabled, ...row }: Setti
 }
 
 const styles = StyleSheet.create((theme) => ({
+  stackedRow: { flexDirection: "column", alignItems: "stretch", gap: theme.spacing[3] },
+  stackedLabel: { flexBasis: "auto", marginRight: 0, minWidth: 0 },
+  stackedControl: { width: "100%" },
   compactRow: { flexWrap: "wrap", gap: theme.spacing[3] },
   label: { flexGrow: 1, flexShrink: 1, flexBasis: 160, marginRight: theme.spacing[3] },
   labelRow: {

@@ -146,10 +146,12 @@ function HostRow({
   canManage: boolean;
   pending: boolean;
 }) {
+  const compact = useIsCompactFormFactor();
   const edit = useCallback(() => model.edit(host), [host, model]);
   const toggle = useCallback(() => void model.setEnabled(host), [host, model]);
   return (
     <SettingsRow
+      stacked={compact}
       label={host.label ?? host.serverId ?? host.registrationId}
       hint={`${host.status} · ${host.enabled ? "Enabled" : "Disabled"} · ${sourceLabel(host.source.id)}`}
     >

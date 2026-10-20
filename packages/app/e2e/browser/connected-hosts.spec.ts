@@ -1,5 +1,8 @@
 import { test } from "../support/fixtures";
 import {
+  expectConnectedHostControlsFit,
+  closeConnectedHostDetails,
+  toggleConnectedHost,
   openRestartableConnectedHosts,
   beginConnectedHostDraft,
   reconnectManagingHost,
@@ -63,4 +66,34 @@ test("connection loss retains the unsaved name and credential input", async ({ p
   } finally {
     await host.close();
   }
+});
+
+import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
+
+test.describe("compact connected host controls", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+  test("long host names keep both actions visible with details open and closed", async ({
+    page,
+  }, testInfo) => {
+    const destination = await startIsolatedHostDaemon("srv_connected_layout");
+    const label = "Production build host — development-infrastructure-europe-west";
+    try {
+      await openCompactConnectedHosts(page);
+      await addConnectedHost(page, `127.0.0.1:${destination.port}`, label);
+      await expectConnectedHostControlsFit(page, label, true);
+      await inspectConnectedHost(page, label);
+      await expectConnectedHostControlsFit(page, label, true);
+      await closeConnectedHostDetails(page);
+      await toggleConnectedHost(page, true);
+      await expectConnectedHostControlsFit(page, label, false);
+      await inspectConnectedHost(page, label);
+      await expectConnectedHostControlsFit(page, label, false);
+      await page.screenshot({ path: testInfo.outputPath("connected-host-controls.png") });
+      await closeConnectedHostDetails(page);
+      await toggleConnectedHost(page, false);
+      await expectConnectedHostControlsFit(page, label, true);
+    } finally {
+      await destination.close();
+    }
+  });
 });
