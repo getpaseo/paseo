@@ -983,7 +983,7 @@ describe("runWorktreeSetupInBackground", () => {
       const setupOutputMessage = runningMessages.find((message) =>
         message.payload.detail.commands[0]?.log.includes("phase-one"),
       );
-      expect(setupOutputMessage?.payload.detail.log).toContain("phase-one");
+      expect(setupOutputMessage?.payload.detail.log).toBe("");
       expect(setupOutputMessage?.payload.detail.commands[0]).toMatchObject({
         index: 1,
         command: "sh -c \"printf 'phase-one\\\\n'; sleep 0.1; printf 'phase-two\\\\n'\"",
@@ -1001,7 +1001,7 @@ describe("runWorktreeSetupInBackground", () => {
           branchName: "feature-running-setup",
         },
       });
-      expect(progressMessages.at(-1)?.payload.detail.log).toContain("phase-two");
+      expect(progressMessages.at(-1)?.payload.detail.log).toBe("");
       expect(progressMessages.at(-1)?.payload.detail.commands[0]).toMatchObject({
         index: 1,
         command: "sh -c \"printf 'phase-one\\\\n'; sleep 0.1; printf 'phase-two\\\\n'\"",

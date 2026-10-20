@@ -325,18 +325,15 @@ export function buildWorktreeSetupDetail(input: {
       ...(result.durationMs > 0 ? { durationMs: result.durationMs } : {}),
     };
   });
-  const renderedLog = buildWorktreeSetupLog({
-    results: input.results,
-    outputAccumulatorsByIndex: input.outputAccumulatorsByIndex,
-  });
-
   return {
     type: "worktree_setup",
     worktreePath: input.worktree.worktreePath,
     branchName: input.worktree.branchName,
-    log: renderedLog.log,
+    // COMPAT(workspaceSetupCombinedLog): added in v0.12.0, remove after 2027-04-20 once legacy wire schemas no longer require log.
+    // Setup clients render commands[].log; retain the required wire field without duplicating output.
+    log: "",
     commands,
-    ...(renderedLog.truncated || anyCommandTruncated ? { truncated: true } : {}),
+    ...(anyCommandTruncated ? { truncated: true } : {}),
   };
 }
 
@@ -353,6 +350,10 @@ function buildSetupTimelineItem(input: {
     results: input.results,
     outputAccumulatorsByIndex: input.outputAccumulatorsByIndex,
   });
+
+  // Legacy agent creation still emits timeline cards whose released renderers read only detail.log.
+  // Keep their output here rather than concatenating every workspace setup snapshot.
+  detail.log = buildWorktreeSetupLog(input).log;
 
   if (input.status === "running") {
     return {

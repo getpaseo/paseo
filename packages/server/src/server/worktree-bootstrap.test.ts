@@ -5,7 +5,11 @@ import { join } from "path";
 import { tmpdir } from "os";
 
 import type { AgentTimelineItem } from "./agent/agent-sdk-types.js";
-import { runAsyncWorktreeBootstrap, spawnWorkspaceScript } from "./worktree-bootstrap.js";
+import {
+  buildWorktreeSetupDetail,
+  runAsyncWorktreeBootstrap,
+  spawnWorkspaceScript,
+} from "./worktree-bootstrap.js";
 import { ensureWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { ScriptRouteStore } from "./script-proxy.js";
 import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js";
@@ -62,6 +66,30 @@ async function createBootstrapWorktreeForTest(
   });
   return { worktree, shouldBootstrap: true };
 }
+
+describe("workspace setup detail", () => {
+  it("serializes output only in command logs while retaining the legacy string field", () => {
+    const detail = buildWorktreeSetupDetail({
+      worktree: { worktreePath: "/workspace", branchName: "feature" },
+      results: [
+        {
+          command: "echo ready",
+          cwd: "/workspace",
+          stdout: "ready\n",
+          stderr: "",
+          exitCode: 0,
+          durationMs: 10,
+        },
+      ],
+    });
+    const serialized = JSON.stringify(detail);
+    expect(JSON.parse(serialized)).toMatchObject({
+      log: "",
+      commands: [{ log: "ready\n", status: "completed", exitCode: 0 }],
+    });
+    expect(serialized.split("ready\\n")).toHaveLength(2);
+  });
+});
 
 describe("runAsyncWorktreeBootstrap", () => {
   let tempDir: string;
