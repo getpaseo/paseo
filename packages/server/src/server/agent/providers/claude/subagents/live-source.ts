@@ -48,9 +48,9 @@ interface TaskStartedMessage {
 }
 
 /** Task-tool subagents. Backgrounded shell commands announce as `local_bash`. */
-const CLAUDE_SUBAGENT_TASK_TYPE = "local_agent";
+export const CLAUDE_SUBAGENT_TASK_TYPE = "local_agent";
 /** Workflow executions use the same announced task lifecycle as Task-tool subagents. */
-const CLAUDE_WORKFLOW_TASK_TYPE = "local_workflow";
+export const CLAUDE_WORKFLOW_TASK_TYPE = "local_workflow";
 
 /**
  * Not every announced task belongs in the subagents track. Verified on the wire:
