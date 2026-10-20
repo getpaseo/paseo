@@ -1975,6 +1975,7 @@ export const ptBR: TranslationResources = {
       binaryPreviewUnavailable: "Prévia binária indisponível",
       tooLargeToDisplay: "Este arquivo é grande demais para exibir",
       failedToLoad: "Falha ao carregar arquivo",
+      notFound: "Arquivo não encontrado",
       failedToLoadPreview: "Falha ao carregar prévia do arquivo",
       editor: {
         fileSize: "Tamanho {{size}}",
@@ -1987,7 +1988,6 @@ export const ptBR: TranslationResources = {
         vimMode: "Modo Vim {{mode}}",
         cursor: "Linha {{line}}, coluna {{column}}",
         deletedTitle: "Arquivo excluído do disco",
-        checkFailedTitle: "Não foi possível verificar o arquivo no disco",
         preservedDescription: "A cópia aberta foi preservada.",
         conflictDescription: "O conteúdo local foi preservado. Escolha qual versão manter.",
         overwrite: "Sobrescrever",

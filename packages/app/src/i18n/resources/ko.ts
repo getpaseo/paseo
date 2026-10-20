@@ -1952,6 +1952,7 @@ export const ko: TranslationResources = {
       binaryPreviewUnavailable: "바이너리 미리보기를 사용할 수 없습니다",
       tooLargeToDisplay: "이 파일은 너무 커서 표시할 수 없습니다",
       failedToLoad: "파일을 불러오지 못했습니다",
+      notFound: "파일을 찾을 수 없습니다",
       failedToLoadPreview: "파일 미리보기를 불러오지 못했습니다",
       editor: {
         fileSize: "파일 크기 {{size}}",
@@ -1964,7 +1965,6 @@ export const ko: TranslationResources = {
         vimMode: "Vim 모드 {{mode}}",
         cursor: "{{line}} 라인, {{column}} 열",
         deletedTitle: "디스크에서 파일이 삭제되었습니다.",
-        checkFailedTitle: "디스크의 파일을 확인할 수 없습니다.",
         preservedDescription: "열린 복사본은 보존됩니다.",
         conflictDescription: "로컬 버퍼가 보존되었습니다. 유지할 버전을 선택하세요.",
         overwrite: "덮어쓰기",

@@ -7,8 +7,6 @@ const rich: FilePanelCandidate = {
   id: "plugin:notes/rich",
   builtin: false,
   files: { extensions: ["md", "markdown"] },
-  document: "text",
-  maxBytes: Infinity,
 };
 const markdown = "builtin:markdown";
 const source = sourceFilePanel.id;
@@ -31,7 +29,7 @@ function openTab(
   let lineNavigation = options.lineNavigation ?? null;
   const resolve = () =>
     resolveFilePanel({
-      file: { path: targetKey.split(":")[1]!, kind: "text", size: 10, hasBytes: true },
+      file: { path: targetKey.split(":")[1]!, kind: "text" },
       candidates,
       associations,
       choice: chosenPanelFor(model.getSnapshot(), targetKey),

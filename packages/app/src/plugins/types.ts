@@ -27,10 +27,6 @@ export type EvaluatedPluginWorkspacePanelContribution = PluginWorkspacePanelCont
   locations: readonly PluginPanelLocation[];
 };
 
-export type EvaluatedPluginFilePanelContribution = PluginFilePanelContribution & {
-  maxBytes: number;
-};
-
 export interface EvaluatedPlugin {
   id: string;
   cleanup: PluginCleanup;
@@ -40,7 +36,7 @@ export interface EvaluatedPlugin {
   // COMPAT(pluginSidebarAliases): added in v0.11.0, remove after 2027-03-29
   /** `addSidebarItem` registrations, so `/plugin/<id>/sidebar/<item>` routes keep resolving. */
   legacySidebarItems: PluginSidebarContribution[];
-  filePanels: EvaluatedPluginFilePanelContribution[];
+  filePanels: PluginFilePanelContribution[];
   workspacePanels: EvaluatedPluginWorkspacePanelContribution[];
   commandCenterItems: PluginCommandCenterItemContribution[];
   clientSlashCommands: PluginClientSlashCommandContribution[];

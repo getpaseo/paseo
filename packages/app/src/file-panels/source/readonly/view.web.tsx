@@ -6,63 +6,34 @@ import { getLanguageForFile } from "@getpaseo/highlight";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import type { EditorVisualTheme } from "../editor/extensions.web";
 import { editorTheme } from "../editor/extensions.web";
-import { selectSourcePresentation, type SourcePresentation } from "./presentation";
+import { FilePanelLoading } from "../../loading";
+import type { SourcePresentation } from "./presentation";
 
 interface FileSourceViewProps {
   content: string;
   filename: string;
   location: WorkspaceFileLocation;
   navigationRevision: number;
-  size: number;
+  presentation: Exclude<SourcePresentation, "unsupported">;
   theme: EditorVisualTheme;
-  tooLargeMessage: string;
 }
 
 const languageCompartment = new Compartment();
 const themeCompartment = new Compartment();
 
+/** A read-only source view for files Source does not edit. Shows Loading until the editor exists. */
 export function FileSourceView({
-  content,
-  filename,
-  location,
-  navigationRevision,
-  size,
-  theme,
-  tooLargeMessage,
-}: FileSourceViewProps) {
-  const presentation = selectSourcePresentation({ size, platform: "web" });
-  if (presentation === "unsupported") {
-    return (
-      <div data-testid="file-source-too-large" style={UNSUPPORTED_STYLE}>
-        {tooLargeMessage}
-      </div>
-    );
-  }
-  return (
-    <ReadonlyCodeMirror
-      content={content}
-      filename={filename}
-      location={location}
-      navigationRevision={navigationRevision}
-      presentation={presentation}
-      theme={theme}
-    />
-  );
-}
-
-function ReadonlyCodeMirror({
   content,
   filename,
   location,
   navigationRevision,
   presentation,
   theme,
-}: Omit<FileSourceViewProps, "size" | "tooLargeMessage"> & {
-  presentation: Exclude<SourcePresentation, "unsupported">;
-}) {
+}: FileSourceViewProps) {
   const [find] = useState(() => new FileFindModel());
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const [ready, setReady] = useState(false);
   const initial = useRef({ content, filename, presentation, theme });
 
   useEffect(() => {
@@ -88,6 +59,7 @@ function ReadonlyCodeMirror({
       }),
     });
     viewRef.current = view;
+    setReady(true);
     return () => {
       view.destroy();
       viewRef.current = null;
@@ -121,6 +93,7 @@ function ReadonlyCodeMirror({
     <div style={FRAME_STYLE}>
       <div ref={hostRef} data-testid="file-source-editor" style={HOST_STYLE} />
       <FileFind model={find} editor={viewRef} />
+      {ready ? null : <FilePanelLoading />}
     </div>
   );
 }
@@ -142,9 +115,3 @@ const FRAME_STYLE = {
   minWidth: 0,
 } as const;
 const HOST_STYLE = { flex: 1, minHeight: 0, overflow: "hidden" } as const;
-const UNSUPPORTED_STYLE = {
-  alignItems: "center",
-  display: "flex",
-  flex: 1,
-  justifyContent: "center",
-} as const;

@@ -1920,6 +1920,7 @@ export const zhCN: TranslationResources = {
       binaryPreviewUnavailable: "二进制预览不可用",
       tooLargeToDisplay: "此文件过大，无法显示",
       failedToLoad: "加载文件失败",
+      notFound: "找不到文件",
       failedToLoadPreview: "加载文件预览失败",
       editor: {
         fileSize: "文件大小 {{size}}",
@@ -1932,7 +1933,6 @@ export const zhCN: TranslationResources = {
         vimMode: "Vim 模式 {{mode}}",
         cursor: "第 {{line}} 行，第 {{column}} 列",
         deletedTitle: "文件已从磁盘删除",
-        checkFailedTitle: "无法检查磁盘上的文件",
         preservedDescription: "打开的副本已保留。",
         conflictDescription: "本地内容已保留。请选择要保留的版本。",
         overwrite: "覆盖",

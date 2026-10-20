@@ -1988,6 +1988,7 @@ export const fr: TranslationResources = {
       binaryPreviewUnavailable: "Aperçu indisponible pour un fichier binaire",
       tooLargeToDisplay: "Ce fichier est trop volumineux pour être affiché",
       failedToLoad: "Impossible de charger le fichier",
+      notFound: "Fichier introuvable",
       failedToLoadPreview: "Impossible de charger l’aperçu du fichier",
       editor: {
         fileSize: "Taille du fichier : {{size}}",
@@ -2000,7 +2001,6 @@ export const fr: TranslationResources = {
         vimMode: "Mode Vim {{mode}}",
         cursor: "Ligne {{line}}, colonne {{column}}",
         deletedTitle: "Fichier supprimé du disque",
-        checkFailedTitle: "Impossible de vérifier le fichier sur le disque",
         preservedDescription: "La copie ouverte est conservée.",
         conflictDescription: "Le contenu local a été conservé. Choisissez la version à garder.",
         overwrite: "Écraser",

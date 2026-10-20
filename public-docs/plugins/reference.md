@@ -1758,23 +1758,22 @@ Paseo owns tab focus, splitting, closing, persistence, query state, the API/RPC 
 
 ## File panels
 
-Register a component that renders a file as the body of its file tab. Paseo loads the document
-from the selected host, including remote hosts. Your plugin receives its contents and edits
-through the host document. The tab's bar keeps the file's size, line count, save state, and
-conflict alerts, and switches between every panel that can open the file.
+Register a component that renders a file as the body of its file tab. Your component receives a
+handle to the file on the selected host, including remote hosts. It reads the file, shows its own
+loading state, and writes the file when the user edits it. The tab's bar shows the panel
+switcher, the overflow menu, and a dot while your panel reports unsaved changes.
 
 ```tsx
 import type { PluginClientContext } from "@getpaseo/plugin/client";
-import { RichMarkdownPanel } from "./client/rich-markdown";
+import { PdfPanel } from "./client/pdf-panel";
 
 export default function contribute(client: PluginClientContext) {
   return client.addFilePanel({
-    id: "rich-markdown",
-    title: "Rich Markdown",
-    icon: "FileType",
-    files: { extensions: ["md", "markdown"] },
-    document: "text",
-    Component: RichMarkdownPanel,
+    id: "pdf",
+    title: "PDF",
+    icon: "FileText",
+    files: { extensions: ["pdf"] },
+    Component: PdfPanel,
   });
 }
 ```
@@ -1782,15 +1781,13 @@ export default function contribute(client: PluginClientContext) {
 `addFilePanel` takes a `PluginFilePanelContribution` and returns an idempotent cleanup function.
 Paseo also removes the registration when the client entry is unloaded.
 
-| Field       | Required | Meaning                                                                                |
-| ----------- | -------- | -------------------------------------------------------------------------------------- |
-| `id`        | Yes      | Plugin-local ID matching `^[a-z][a-z0-9-]*$`.                                          |
-| `title`     | Yes      | Non-empty label in the panel switcher, the picker, and the Open with menu.             |
-| `icon`      | Yes      | Lucide name, `{ svg }`, or component. See [Icons](#icons).                             |
-| `files`     | Yes      | `{ extensions: readonly string[]; filenames?: readonly string[] }`.                    |
-| `document`  | Yes      | `"text"` or `"bytes"`; selects the document passed to the component.                   |
-| `maxBytes`  | No       | Positive finite size limit in bytes. Defaults to 10 MiB. Larger files skip this panel. |
-| `Component` | Yes      | Component receiving `PluginFilePanelProps`.                                            |
+| Field       | Required | Meaning                                                                    |
+| ----------- | -------- | -------------------------------------------------------------------------- |
+| `id`        | Yes      | Plugin-local ID matching `^[a-z][a-z0-9-]*$`.                              |
+| `title`     | Yes      | Non-empty label in the panel switcher, the picker, and the Open with menu. |
+| `icon`      | Yes      | Lucide name, `{ svg }`, or component. See [Icons](#icons).                 |
+| `files`     | Yes      | `{ extensions: readonly string[]; filenames?: readonly string[] }`.        |
+| `Component` | Yes      | Component receiving `PluginFilePanelProps`.                                |
 
 Extensions have no leading dot and match without case sensitivity. Filenames match the exact
 basename, including case. Selectors contain no paths, globs, or wildcards. Use `extensions: []`
@@ -1801,51 +1798,92 @@ for a filename-only selector. At least one extension or filename is required.
 `PluginFilePanelProps` includes the common `theme`, `host`, `layout`, and optional `navigation`
 props described under [Theme and layout](#theme-and-layout), plus:
 
-| Prop                             | Type                                          | Meaning                                                                      |
-| -------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------- |
-| `workspaceId`                    | `string`                                      | Workspace containing the file tab.                                           |
-| `file.path`                      | `string`                                      | Absolute path on the selected host.                                          |
-| `file.name`                      | `string`                                      | Basename.                                                                    |
-| `file.extension`                 | `string`                                      | Lowercase extension without the dot, or `""`.                                |
-| `file.mimeType`                  | `string`                                      | Host-reported MIME type; binary files can report `application/octet-stream`. |
-| `file.size`                      | `number`                                      | Size in bytes.                                                               |
-| `file.modifiedAt`                | `string`                                      | Modification timestamp.                                                      |
-| `file.lineStart`, `file.lineEnd` | `number` (optional)                           | Requested line range.                                                        |
-| `navigationRevision`             | `number`                                      | Increments when the same tab receives another line navigation.               |
-| `document`                       | `PluginTextDocument` or `PluginBytesDocument` | Matches the registration's `document` field.                                 |
+| Prop          | Type                 | Meaning                                                                         |
+| ------------- | -------------------- | ------------------------------------------------------------------------------- |
+| `workspaceId` | `string`             | Workspace containing the file tab.                                              |
+| `file`        | `PluginFile`         | Handle to the file. Stable while the tab shows this file.                       |
+| `tab`         | `PluginFileTab`      | `setModified(modified)` shows the tab's unsaved dot and confirms before close.  |
+| `location`    | `PluginFileLocation` | `lineStart?`, `lineEnd?`, and `revision`, which increments on every navigation. |
 
-A `PluginTextDocument` keeps the text owned by Paseo:
+Paseo mounts your panel once it knows the file exists and its size, without reading it. The
+`PluginFile` stat fields refresh when the file changes on disk:
 
-| Field      | Type                     | Meaning                                                                                |
-| ---------- | ------------------------ | -------------------------------------------------------------------------------------- |
-| `kind`     | `"text"`                 | Document discriminator.                                                                |
-| `text`     | `string`                 | Current editor text, including external updates.                                       |
-| `editable` | `boolean`                | False on native, daemons without file editing, or files above 1 MiB. Render read-only. |
-| `setText`  | `(next: string) => void` | Replace editor text. Paseo owns autosave, dirty state, and conflict handling.          |
+| Member                           | Meaning                                                                                     |
+| -------------------------------- | ------------------------------------------------------------------------------------------- |
+| `path`, `name`, `extension`      | Absolute path on the host, basename, and lowercase extension without the dot (or `""`).     |
+| `size`, `modifiedAt`, `mimeType` | Size in bytes, modification timestamp, and host-reported MIME type.                         |
+| `readText()`                     | Reads the file as UTF-8. A byte order mark is dropped and written back by `writeText`.      |
+| `readBytes()`                    | Reads the file's bytes.                                                                     |
+| `url()`                          | A local `blob:` (web) or `file:` (native) URL of the current bytes, for `DocumentFrame`.    |
+| `writeText(text, options?)`      | Writes UTF-8 text if the file has not changed on disk since this handle last read or wrote. |
+| `writeBytes(bytes, options?)`    | The same for bytes.                                                                         |
+| `watch(listener)`                | Calls `listener("changed")` or `listener("deleted")`; returns the unsubscribe function.     |
 
-Call `document.setText(next)` from your editor's change callback when `editable` is true.
-Update your editor when `document.text` changes; do not send that update back as a user edit.
-Do not write the file through RPCs or maintain a second save workflow. The **Source** panel in
-the switcher opens Paseo's text editor on the same document.
+Your panel stays mounted when the file is deleted. `watch` reports `"deleted"` once a read confirms
+the file is gone, so a program that removes the file and writes it back reports only `"changed"`.
+A deleted file that comes back reports `"changed"`.
 
-A `PluginBytesDocument` is read-only:
+A write rejects with `PluginFileConflictError` when the file changed on disk after the handle's
+last read or write. Pass `{ force: true }` to write anyway. The handle's own writes do not notify
+its watchers. Paseo owns the URL from `url()`: it stays valid until a URL for a newer version
+resolves or the tab closes. Do not build daemon URLs from `file.path`; local URLs also work when
+the daemon is remote.
 
-| Field   | Type         | Meaning                                                                               |
-| ------- | ------------ | ------------------------------------------------------------------------------------- |
-| `kind`  | `"bytes"`    | Document discriminator.                                                               |
-| `bytes` | `Uint8Array` | Loaded file bytes.                                                                    |
-| `url`   | `string`     | Host-owned local preview URL: `blob:` on web, `file:` on native. Valid while mounted. |
+### Read the file
 
-Use `bytes` for your own renderer or pass `url` to `DocumentFrame`. Do not reconstruct a daemon
-URL from `file.path`; local document URLs also work when the daemon is remote.
+Most panels read through a hook. Each hook reads when mounted, re-reads when the file changes on
+disk, and keeps the current value during a re-read:
+
+| Hook                 | Ready state                              |
+| -------------------- | ---------------------------------------- |
+| `useFileText(file)`  | `{ status: "ready", text: string }`      |
+| `useFileBytes(file)` | `{ status: "ready", bytes: Uint8Array }` |
+| `useFileUrl(file)`   | `{ status: "ready", url: string }`       |
+
+Each also returns `{ status: "loading" }` before the first read and `{ status: "error", error }`
+when a read fails or the file is deleted. Show `Loading` from `@getpaseo/plugin/client/ui` until
+your content is on screen; it fills the panel, so render it over content that is still laying out.
+
+```tsx
+import { type PluginFilePanelProps, useFileUrl } from "@getpaseo/plugin/client";
+import { DocumentFrame, Loading } from "@getpaseo/plugin/client/ui";
+import { Text } from "react-native";
+
+export function PdfPanel({ file, theme }: PluginFilePanelProps) {
+  const url = useFileUrl(file);
+  if (url.status === "loading") return <Loading />;
+  if (url.status === "error") {
+    return <Text style={{ color: theme.colors.statusDanger }}>{url.error.message}</Text>;
+  }
+  return <DocumentFrame url={url.url} testID="pdf-panel" />;
+}
+```
+
+### Edit the file
+
+A hook's re-read adopts the version on disk, so the next write overwrites whatever changed there.
+A panel that holds unsaved edits reads with `readText()` once, then handles `watch` itself:
+
+1. Read with `file.readText()` and show the text.
+2. On each edit, call `tab.setModified(true)` and write with `file.writeText(text)`, debounced.
+3. When the write resolves and no newer edit is pending, call `tab.setModified(false)`.
+4. On `"changed"` with nothing unsaved, read again. With unsaved edits, show a conflict and let the
+   user reload or overwrite with `{ force: true }`.
+5. On `PluginFileConflictError`, show the same conflict.
+6. On `"deleted"`, tell the user the file is gone.
+
+Write pending edits before the component unmounts: switching panels or closing the tab unmounts
+it. Paseo asks before closing a tab whose panel reports unsaved changes. The
+[Markdown panel](https://github.com/getpaseo/paseo/tree/main/plugin-examples/markdown-panel)
+example implements these steps.
 
 ### Selection and Open with
 
-Text panels require a text file. Bytes panels accept any file with loaded bytes. Paseo filters
-matching panels by document kind and size before selecting one. Candidates are ordered: the
-built-in Markdown, HTML, and Image panels, then plugin panels in host catalog order, then the
-built-in **Source** panel, which every text file has. Source opens a file by default only when
-nothing else claims it.
+A plugin panel is a candidate for every file its selector matches, text or binary. The built-in
+panels require the host's file kind: Markdown, HTML, and **Source** open text files; Image opens
+images. Candidates are ordered: the built-in Markdown, HTML, and Image panels, then plugin panels
+in host catalog order, then **Source**, which every text file has. Source opens a file by default
+only when nothing else claims it.
 
 A remembered association selects its panel when that panel is available on the current host.
 Otherwise Paseo opens the first candidate. When a plugin panel is among several candidates and no
@@ -1853,58 +1891,49 @@ association applies, Paseo asks once per tab open, over the panel it already ope
 panels alone never ask: a Markdown file opens with Markdown and offers Source in the switcher. With
 a Markdown plugin installed, the picker offers **Markdown — Paseo**, **Rich Markdown —
 markdown-panel**, and **Source — Paseo**. A plugin that claims a text extension competes with
-Source, so its first open asks; a bytes plugin that alone claims a binary file opens without
-asking.
+Source, so its first open asks; a plugin that alone claims a binary file opens without asking.
 
 **Don't ask me again** remembers the choice on this device for the extension. When a candidate
 matches an exact filename, the choice applies to that basename instead. An unavailable association
 is ignored on that host and retained for hosts where its panel is installed.
 
 Users switch the current tab with the bar's panel switcher, which shows up to three panels side by
-side (two on a phone) and a menu beyond that, or with **Open with…** in the tab menu. That choice wins over the
-remembered association for this tab until it is retargeted. **Always use**, in the bar's overflow
-menu and in Open with, remembers the shown panel. Opening a file at a line, from a link or a
-search result, switches the tab to Source. Files with no candidate show **Binary preview
+side (two on a phone) and a menu beyond that, or with **Open with…** in the tab menu. That choice
+wins over the remembered association for this tab until it is retargeted. **Always use**, in the
+bar's overflow menu and in Open with, remembers the shown panel. Opening a file at a line, from a
+link or a search result, switches the tab to Source. Files with no candidate show **Binary preview
 unavailable**; binary files have no Source panel.
 
 ### DocumentFrame
 
-Import `DocumentFrame` from `@getpaseo/plugin/client/ui` to display a local document URL:
+Import `DocumentFrame` from `@getpaseo/plugin/client/ui` to display a local file URL from
+`file.url()` or `useFileUrl`:
 
-```tsx
-import type { PluginFilePanelProps } from "@getpaseo/plugin/client";
-import { DocumentFrame } from "@getpaseo/plugin/client/ui";
+| Prop     | Required | Meaning                                                                          |
+| -------- | -------- | -------------------------------------------------------------------------------- |
+| `url`    | Yes      | Local file URL; `blob:` on web or `file:` on native. Other schemes are rejected. |
+| `testID` | No       | Test identifier for the frame.                                                   |
 
-export function PdfPanel({ document }: PluginFilePanelProps) {
-  if (document.kind !== "bytes") return null;
-  return <DocumentFrame url={document.url} testID="pdf-panel" />;
-}
-```
-
-| Prop     | Required | Meaning                                                                             |
-| -------- | -------- | ----------------------------------------------------------------------------------- |
-| `url`    | Yes      | Host document URL; `blob:` on web or `file:` on native. Other schemes are rejected. |
-| `testID` | No       | Test identifier for the frame.                                                      |
-
-Web inspects the local document URL’s media type before mounting the iframe. PDF uses the
-browser’s PDF viewer without a sandbox; every other type, including HTML and unknown types,
-keeps a full sandbox with no scripts or same-origin access. Native uses a WebView with
-JavaScript, storage, and further navigation disabled. iOS supports inline PDF rendering; Android's
-WebView does not. Provide an Android fallback or bundle your own renderer.
+Web inspects the local URL’s media type before mounting the iframe. PDF uses the browser’s PDF
+viewer without a sandbox; every other type, including HTML and unknown types, keeps a full sandbox
+with no scripts or same-origin access. Native uses a WebView with JavaScript, storage, and further
+navigation disabled. iOS supports inline PDF rendering; Android's WebView does not. Provide an
+Android fallback or bundle your own renderer.
 
 Inline PDF rendering needs a daemon from Paseo 0.13.0 or later; older daemons report PDFs as
 `application/octet-stream`.
 
 ### Version requirement and examples
 
-File panels and `DocumentFrame` require Paseo 0.13.0 or later. Declare
+File panels, `DocumentFrame`, and `Loading` require Paseo 0.13.0 or later. Declare
 `"requirements": { "paseo": ">=0.13.0" }` in `paseo-plugin.json`. Both daemon and app check the
 [version requirement](#requirements); older apps skip the client bundle before evaluation.
+Writing with `writeBytes` needs a daemon from Paseo 0.13.0 or later.
 
 Complete directory examples:
 
-- [PDF panel](https://github.com/getpaseo/paseo/tree/main/plugin-examples/pdf-panel): bytes with `DocumentFrame` and an Android fallback.
-- [Markdown panel](https://github.com/getpaseo/paseo/tree/main/plugin-examples/markdown-panel): a bundled CodeMirror editor that calls the host document's `setText`, with read-only native text.
+- [PDF panel](https://github.com/getpaseo/paseo/tree/main/plugin-examples/pdf-panel): `useFileUrl` with `DocumentFrame` and an Android fallback.
+- [Markdown panel](https://github.com/getpaseo/paseo/tree/main/plugin-examples/markdown-panel): a bundled CodeMirror editor that reads once, saves with `writeText`, and resolves conflicts, with read-only native text.
 
 ## Command Center items
 

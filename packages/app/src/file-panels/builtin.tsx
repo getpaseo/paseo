@@ -1,92 +1,94 @@
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { useFileText, useFileUrl } from "@getpaseo/plugin/client";
+import { useCallback, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { useTranslation } from "react-i18next";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { StyleSheet } from "react-native-unistyles";
 import { ZoomableImage } from "@/components/zoomable-viewport/image";
-import type { Theme } from "@/styles/theme";
+import { useSessionStore } from "@/stores/session-store";
 import { FileHtmlPreview } from "./html-preview";
+import { FilePanelLoading } from "./loading";
 import { FileMarkdownPreview } from "./markdown-preview";
-import type { RenderingFilePanel } from "./catalog";
+import type { BuiltinFilePanelProps } from "./panels";
+import { SourcePanel } from "./source/panel";
+import type { RenderingFilePanel, SourceFilePanel } from "./catalog";
 
-interface BuiltinFilePanelProps {
-  content: string;
-  filePath: string;
-  workspaceRoot: string;
-  client: DaemonClient | null;
-  serverId: string;
-  documentPreviewUri: string | null;
-}
-
-function MarkdownPanel(props: BuiltinFilePanelProps) {
+/** Shows Loading until the rendered Markdown has laid out once; later re-reads keep the content. */
+function MarkdownPanel({ file, target }: BuiltinFilePanelProps) {
+  const text = useFileText(file);
+  const client = useSessionStore((state) => state.sessions[target.serverId]?.client ?? null);
+  const [rendered, setRendered] = useState(false);
+  const handleLayout = useCallback(() => setRendered(true), []);
+  if (text.status === "loading") return <FilePanelLoading />;
+  if (text.status === "error") return <FilePanelError message={text.error.message} />;
   return (
-    <View style={styles.previewScrollContainer}>
-      <ScrollView style={styles.previewContent} showsVerticalScrollIndicator>
-        <FileMarkdownPreview
-          source={props.content}
-          filePath={props.filePath}
-          workspaceRoot={props.workspaceRoot}
-          client={props.client}
-          serverId={props.serverId}
-        />
+    <View style={styles.container}>
+      <ScrollView style={styles.container} showsVerticalScrollIndicator>
+        <View onLayout={handleLayout}>
+          <FileMarkdownPreview
+            source={text.text}
+            filePath={target.path}
+            workspaceRoot={target.workspaceRoot}
+            client={client}
+            serverId={target.serverId}
+          />
+        </View>
       </ScrollView>
+      {rendered ? null : <FilePanelLoading />}
     </View>
   );
 }
 
-function HtmlPanel({ content }: BuiltinFilePanelProps) {
+function HtmlPanel({ file }: BuiltinFilePanelProps) {
+  const text = useFileText(file);
+  if (text.status === "loading") return <FilePanelLoading />;
+  if (text.status === "error") return <FilePanelError message={text.error.message} />;
   return (
-    <View style={styles.previewScrollContainer}>
-      <FileHtmlPreview html={content} testID="file-html-preview" />
+    <View style={styles.container}>
+      <FileHtmlPreview html={text.text} testID="file-html-preview" />
     </View>
   );
 }
 
-const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
-const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+function ImagePanel({ file }: BuiltinFilePanelProps) {
+  const url = useFileUrl(file);
+  if (url.status === "loading") return <FilePanelLoading />;
+  if (url.status === "error") return <FilePanelError message={url.error.message} />;
+  return <ZoomableImage uri={url.url} testID="image-file-preview" />;
+}
 
-function ImagePanel({ documentPreviewUri }: BuiltinFilePanelProps) {
-  const { t } = useTranslation();
-  if (!documentPreviewUri) {
-    return (
-      <View style={styles.centerState}>
-        <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
-        <Text style={styles.loadingText}>{t("panels.file.loading")}</Text>
-      </View>
-    );
-  }
-  return <ZoomableImage uri={documentPreviewUri} testID="image-file-preview" />;
+function FilePanelError({ message }: { message: string }) {
+  return (
+    <View style={styles.centerState}>
+      <Text style={styles.errorText}>{message}</Text>
+    </View>
+  );
 }
 
 const components = {
   "builtin:markdown": MarkdownPanel,
   "builtin:html": HtmlPanel,
   "builtin:image": ImagePanel,
+  "builtin:source": SourcePanel,
 };
 
 export function BuiltinFilePanelView({
   panel,
   ...props
-}: BuiltinFilePanelProps & {
-  panel: RenderingFilePanel;
-}) {
+}: BuiltinFilePanelProps & { panel: RenderingFilePanel | SourceFilePanel }) {
   const Component = components[panel.id];
   return <Component {...props} />;
 }
 
 const styles = StyleSheet.create((theme) => ({
-  previewScrollContainer: { flex: 1, minHeight: 0 },
-  previewContent: { flex: 1, minHeight: 0 },
+  container: { flex: 1, minHeight: 0 },
   centerState: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    gap: theme.spacing[3],
     padding: theme.spacing[4],
   },
-  loadingText: {
-    marginTop: theme.spacing[2],
-    color: theme.colors.foregroundMuted,
+  errorText: {
+    color: theme.colors.destructive,
     fontSize: theme.fontSize.base,
+    textAlign: "center",
   },
 }));

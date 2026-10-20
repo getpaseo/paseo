@@ -7,7 +7,6 @@ export default function contribute(client: PluginClientContext) {
     title: "Rich Markdown",
     icon: "FileType",
     files: { extensions: ["md", "markdown"] },
-    document: "text",
     Component: RichMarkdownPanel,
   });
   return () => {};

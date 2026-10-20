@@ -12,9 +12,11 @@ Open a `.md` or `.markdown` file in Files. Choose **Rich Markdown — markdown-p
 picker. Check **Don't ask me again** to remember the choice on this device.
 
 The panel is a CodeMirror editor with Markdown highlighting, line numbers, undo, redo, and line
-wrapping. Edits call the host document's `setText`; Paseo owns autosave, the dirty dot, and
-external-change conflicts. The bar's switcher still offers Paseo's Markdown and Source panels. Files above 1 MiB or hosts
-without editing support render read-only. Native shows selectable, read-only text.
+wrapping. It reads the file once with `readText`, saves 500 ms after the last edit with
+`writeText`, and reports unsaved edits with `tab.setModified`. When the file changes on disk with
+nothing unsaved, it reads again; with unsaved edits, or when a write rejects with
+`PluginFileConflictError`, it offers **Reload** and **Overwrite**. The bar's switcher still offers
+Paseo's Markdown and Source panels. Native shows selectable, read-only text through `useFileText`.
 
 Paseo bundles the editor dependencies into this plugin. They are loaded only on web; the native
 path uses React Native primitives. DOM integration lives in `client/web.ts`.

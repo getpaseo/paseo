@@ -1961,6 +1961,7 @@ export const ja: TranslationResources = {
       binaryPreviewUnavailable: "バイナリプレビューが利用できません",
       tooLargeToDisplay: "このファイルは大きすぎて表示できません",
       failedToLoad: "ファイルの読み込みに失敗しました",
+      notFound: "ファイルが見つかりません",
       failedToLoadPreview: "ファイルプレビューの読み込みに失敗しました",
       editor: {
         fileSize: "ファイルサイズ {{size}}",
@@ -1973,7 +1974,6 @@ export const ja: TranslationResources = {
         vimMode: "Vim モード {{mode}}",
         cursor: "{{line}} 行、{{column}} 列",
         deletedTitle: "ファイルはディスク上から削除されました",
-        checkFailedTitle: "ディスク上のファイルを確認できませんでした",
         preservedDescription: "開いているコピーは保持されています。",
         conflictDescription: "ローカルの内容は保持されています。残すバージョンを選択してください。",
         overwrite: "上書き",

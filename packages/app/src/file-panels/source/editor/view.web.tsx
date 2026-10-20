@@ -17,6 +17,8 @@ interface FileEditorViewProps {
   theme: EditorVisualTheme;
   onCursorChange(position: { line: number; column: number }): void;
   onVimModeChange(mode: string | null): void;
+  /** The editor shows the file's content. */
+  onReady(): void;
 }
 
 const languageCompartment = new Compartment();
@@ -41,12 +43,20 @@ export function FileEditorView({
   theme,
   onCursorChange,
   onVimModeChange,
+  onReady,
 }: FileEditorViewProps) {
   const [find] = useState(() => new FileFindModel());
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const snapshot = useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot);
-  const initial = useRef({ filename, model, theme, vimEnabled, content: snapshot.content });
+  const initial = useRef({
+    filename,
+    model,
+    theme,
+    vimEnabled,
+    content: snapshot.content,
+    onReady,
+  });
   const onCursorChangeRef = useRef(onCursorChange);
   onCursorChangeRef.current = onCursorChange;
 
@@ -83,6 +93,7 @@ export function FileEditorView({
     });
     viewRef.current = view;
     onCursorChangeRef.current({ line: 1, column: 1 });
+    values.onReady();
     return () => {
       view.destroy();
       viewRef.current = null;

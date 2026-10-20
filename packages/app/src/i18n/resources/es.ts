@@ -1990,6 +1990,7 @@ export const es: TranslationResources = {
       binaryPreviewUnavailable: "Vista previa binaria no disponible",
       tooLargeToDisplay: "Este archivo es demasiado grande para mostrarlo",
       failedToLoad: "No se pudo cargar el archivo",
+      notFound: "No se encontró el archivo",
       failedToLoadPreview: "No se pudo cargar la vista previa del archivo",
       editor: {
         fileSize: "Tamaño {{size}}",
@@ -2002,7 +2003,6 @@ export const es: TranslationResources = {
         vimMode: "Modo Vim {{mode}}",
         cursor: "Línea {{line}}, columna {{column}}",
         deletedTitle: "Archivo eliminado del disco",
-        checkFailedTitle: "No se pudo comprobar el archivo en disco",
         preservedDescription: "La copia abierta se ha conservado.",
         conflictDescription: "Se conservó el búfer local. Elige qué versión mantener.",
         overwrite: "Sobrescribir",

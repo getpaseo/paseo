@@ -1,14 +1,20 @@
-import type { PluginFilePanelProps, PluginTextDocument } from "@getpaseo/plugin/client";
+import type { PluginFilePanelProps } from "@getpaseo/plugin/client";
 import type { EditorView, EditorViewConfig } from "@codemirror/view";
 import { Platform } from "react-native";
+
+export interface MarkdownEditorHandle {
+  /** Replaces the editor's text without reporting it as an edit. */
+  setText(text: string): void;
+  destroy(): void;
+}
 
 /** DOM code stays here; native never evaluates the editor dependencies. */
 export function mountEditor(
   parent: unknown,
-  document: PluginTextDocument,
+  text: string,
   theme: PluginFilePanelProps["theme"],
   onChange: (text: string) => void,
-) {
+): MarkdownEditorHandle | null {
   if (Platform.OS !== "web" || !parent) return null;
   const { EditorState } = require("@codemirror/state") as typeof import("@codemirror/state");
   const { EditorView, keymap, lineNumbers } =
@@ -23,7 +29,7 @@ export function mountEditor(
   const view: EditorView = new EditorView({
     parent: parent as EditorViewConfig["parent"],
     state: EditorState.create({
-      doc: document.text,
+      doc: text,
       extensions: [
         markdown(),
         syntaxHighlighting(defaultHighlightStyle),
@@ -31,8 +37,6 @@ export function mountEditor(
         history(),
         keymap.of([...defaultKeymap, ...historyKeymap]),
         EditorView.lineWrapping,
-        EditorState.readOnly.of(!document.editable),
-        EditorView.editable.of(document.editable),
         EditorView.contentAttributes.of({ "aria-label": "Rich Markdown editor" }),
         EditorView.theme({
           "&": {
@@ -55,11 +59,11 @@ export function mountEditor(
     }),
   });
   return {
-    setText(text: string) {
-      if (view.state.doc.toString() === text) return;
+    setText(next) {
+      if (view.state.doc.toString() === next) return;
       applyingHostText = true;
       try {
-        view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
+        view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: next } });
       } finally {
         applyingHostText = false;
       }

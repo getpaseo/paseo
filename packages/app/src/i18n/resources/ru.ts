@@ -1974,6 +1974,7 @@ export const ru: TranslationResources = {
       binaryPreviewUnavailable: "Предварительный просмотр двоичного файла недоступен.",
       tooLargeToDisplay: "Этот файл слишком велик для отображения",
       failedToLoad: "Не удалось загрузить файл",
+      notFound: "Файл не найден",
       failedToLoadPreview: "Не удалось загрузить предварительный просмотр файла.",
       editor: {
         fileSize: "Размер файла {{size}}",
@@ -1986,7 +1987,6 @@ export const ru: TranslationResources = {
         vimMode: "Режим Vim {{mode}}",
         cursor: "Строка {{line}}, столбец {{column}}",
         deletedTitle: "Файл удалён с диска",
-        checkFailedTitle: "Не удалось проверить файл на диске",
         preservedDescription: "Открытая копия сохранена в редакторе.",
         conflictDescription:
           "Локальный буфер сохранён в редакторе. Выберите, какую версию оставить.",

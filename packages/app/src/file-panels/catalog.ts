@@ -5,22 +5,19 @@ const renderingPanels = [
     id: "builtin:markdown",
     builtin: true,
     files: { extensions: ["md", "markdown"] },
-    document: "text",
-    maxBytes: Infinity,
+    fileKind: "text",
   },
   {
     id: "builtin:html",
     builtin: true,
     files: { extensions: ["html", "htm"] },
-    document: "text",
-    maxBytes: Infinity,
+    fileKind: "text",
   },
   {
     id: "builtin:image",
     builtin: true,
     files: { extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg"] },
-    document: "bytes",
-    maxBytes: Infinity,
+    fileKind: "image",
   },
 ] as const satisfies readonly FilePanelCandidate[];
 
@@ -29,8 +26,7 @@ export const sourceFilePanel = {
   id: "builtin:source",
   builtin: true,
   files: "all",
-  document: "text",
-  maxBytes: Infinity,
+  fileKind: "text",
 } as const satisfies FilePanelCandidate;
 
 export type RenderingFilePanel = (typeof renderingPanels)[number];

@@ -130,7 +130,7 @@ test.describe("CodeMirror workspace file editing", () => {
         await returnToAssistant(page, session.agentId);
         await openAssistantMarkdownLink(page, "Missing capture");
         await expectFileTabOpen(page, ".dev/tablet-review/missing.png");
-        await expect(page.getByText(/ENOENT/)).toBeVisible();
+        await expect(page.getByText("File not found", { exact: true })).toBeVisible();
         await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
       });
     } finally {
@@ -319,11 +319,7 @@ test.describe("CodeMirror workspace file editing", () => {
       title: "Unsupported large source",
       initialPrompt: "Generate a title and a git branch name. Return JSON only.",
     });
-    await writeFile(
-      path.join(session.cwd, "too-large.txt"),
-      Buffer.alloc(51 * 1024 * 1024),
-      "utf8",
-    );
+    await writeFile(path.join(session.cwd, "too-large.txt"), "x".repeat(51 * 1024 * 1024), "utf8");
 
     try {
       await openAgentRoute(page, session);

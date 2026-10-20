@@ -20,7 +20,7 @@ function RichMarkdown({ file }) {
 }
 export default function contribute(client) {
   client.addFilePanel({ id: "rich-markdown", title: "Rich Markdown", icon: "FileType",
-    files: { extensions: ["md"] }, document: "text", Component: RichMarkdown });
+    files: { extensions: ["md"] }, Component: RichMarkdown });
   return () => {};
 }`;
 

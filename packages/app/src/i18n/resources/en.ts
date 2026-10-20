@@ -1967,6 +1967,7 @@ export const en = {
       binaryPreviewUnavailable: "Binary preview unavailable",
       tooLargeToDisplay: "This file is too large to display",
       failedToLoad: "Failed to load file",
+      notFound: "File not found",
       failedToLoadPreview: "Failed to load file preview",
       editor: {
         fileSize: "File size {{size}}",
@@ -1979,7 +1980,6 @@ export const en = {
         vimMode: "Vim mode {{mode}}",
         cursor: "Line {{line}}, column {{column}}",
         deletedTitle: "File deleted on disk",
-        checkFailedTitle: "Couldn't check file on disk",
         preservedDescription: "The open copy is preserved.",
         conflictDescription: "The local buffer was preserved. Choose which version to keep.",
         overwrite: "Overwrite",

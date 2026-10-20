@@ -1,123 +1,40 @@
-import type { ReactNode } from "react";
-import { Text, View } from "react-native";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { View } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { PaneContentToolbar } from "@/components/ui/pane-content-toolbar";
-import { FilePanelBarMenu, FilePanelSwitcher, type FilePanelChoice } from "@/file-panels";
-import type { Theme } from "@/styles/theme";
-import { FileConflictAlert, type FileConflictAlertState } from "./conflict-alert";
-import type { FileEditorStatus } from "./editor/model";
-
-const ThemedSpinner = withUnistyles(LoadingSpinner);
-const spinnerMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+import {
+  FilePanelBarMenu,
+  FilePanelSwitcher,
+  useFilePanelChoiceSnapshot,
+  type FilePanelChoice,
+} from "@/file-panels";
 
 /**
- * The file tab's bar: the document's status, which the host owns whatever panel shows it, and the
- * switcher between the file's panels. `trailing` is the active panel's own status.
+ * The file tab's bar: the switcher between the file's panels, "Open with…", and whether the panel
+ * has unsaved changes. Shown only when the file has more than one panel; the panel shows the rest.
  */
-export function FilePanelBar({
-  size,
-  lineCount,
-  editorStatus,
-  conflict,
-  choice,
-  trailing,
-}: {
-  size: number;
-  lineCount?: number;
-  editorStatus?: FileEditorStatus;
-  conflict?: FileConflictAlertState;
-  choice: FilePanelChoice;
-  trailing?: ReactNode;
-}) {
+export function FilePanelBar({ choice, modified }: { choice: FilePanelChoice; modified: boolean }) {
   const { t } = useTranslation();
+  const { openWith } = useFilePanelChoiceSnapshot(choice);
+  if (!openWith) return null;
   return (
     <View style={styles.chrome}>
       <PaneContentToolbar testID="file-panel-bar">
         <View style={styles.row}>
-          <View style={styles.metadata}>
-            <Text
-              style={styles.whisper}
-              numberOfLines={1}
-              accessibilityLabel={t("panels.file.editor.fileSize", { size: formatFileSize(size) })}
-            >
-              {formatFileSize(size)}
-            </Text>
-            {lineCount !== undefined ? (
-              <Text
-                style={styles.whisper}
-                numberOfLines={1}
-                accessibilityLabel={t("panels.file.editor.lines", { count: lineCount })}
-              >
-                {t("panels.file.editor.lines", { count: lineCount })}
-              </Text>
-            ) : null}
-          </View>
-          <View
-            style={styles.status}
-            accessibilityLabel={
-              editorStatus
-                ? t("panels.file.editor.editorStatus", { status: editorStatus })
-                : undefined
-            }
-          >
-            {editorStatus === "dirty" ? (
-              <View
-                style={styles.dirtyDot}
-                accessibilityLabel={t("panels.file.editor.unsavedChanges")}
-              />
-            ) : null}
-            {editorStatus === "saving" ? (
-              <>
-                <ThemedSpinner size={14} uniProps={spinnerMapping} />
-                <Text style={styles.secondary}>{t("panels.file.editor.saving")}</Text>
-              </>
-            ) : null}
-            {editorStatus === "error" ? (
-              <Text style={styles.error}>{t("panels.file.editor.saveFailed")}</Text>
-            ) : null}
-            {trailing}
-          </View>
+          <View style={styles.spacer} />
+          {modified ? (
+            <View
+              style={styles.modifiedDot}
+              accessibilityLabel={t("panels.file.editor.unsavedChanges")}
+              testID="file-panel-modified"
+            />
+          ) : null}
           <FilePanelSwitcher choice={choice} />
           <FilePanelBarMenu choice={choice} />
         </View>
       </PaneContentToolbar>
-      {conflict ? <FileConflictAlert state={conflict} /> : null}
     </View>
   );
-}
-
-/** Source's status in the bar: the vim mode and the cursor position. */
-export function FileSourceStatus({
-  cursor,
-  vimMode,
-}: {
-  cursor: { line: number; column: number };
-  vimMode: string | null;
-}) {
-  const { t } = useTranslation();
-  return (
-    <>
-      {vimMode ? (
-        <Text
-          style={styles.vim}
-          accessibilityLabel={t("panels.file.editor.vimMode", { mode: vimMode })}
-        >
-          {vimMode}
-        </Text>
-      ) : null}
-      <Text style={styles.whisper} accessibilityLabel={t("panels.file.editor.cursor", cursor)}>
-        Ln {cursor.line}, Col {cursor.column}
-      </Text>
-    </>
-  );
-}
-
-function formatFileSize(size: number): string {
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -131,31 +48,11 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[3],
     paddingHorizontal: theme.spacing[3],
   },
-  metadata: {
-    flex: 1,
-    minWidth: 0,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
-  secondary: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm },
-  whisper: { color: theme.colors.foregroundExtraMuted, fontSize: theme.fontSize.sm },
-  error: { color: theme.colors.palette.red[300], fontSize: theme.fontSize.sm },
-  dirtyDot: {
+  spacer: { flex: 1 },
+  modifiedDot: {
     width: 6,
     height: 6,
     borderRadius: theme.borderRadius.full,
     backgroundColor: theme.colors.foregroundExtraMuted,
-  },
-  status: {
-    flexShrink: 0,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
-  vim: {
-    color: theme.colors.foregroundMuted,
-    fontFamily: theme.fontFamily.mono,
-    fontSize: theme.fontSize.sm,
   },
 }));

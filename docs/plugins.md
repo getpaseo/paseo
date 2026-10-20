@@ -558,13 +558,20 @@ one section's order from built-ins, plugin groups, and the section's preference
 
 ## Contribute file panels
 
-Client `addFilePanel` registrations become the body of a file tab, rendering host-owned text or
-bytes. The tab's bar owns the document's status (size, lines, save state, conflicts) and switches
-between the file's panels; Source, Paseo's editor, is a built-in panel for every text file and
-always the last choice. Keep editing in the host document so autosave and conflicts have one
-owner. See the
-[public file panel reference](../public-docs/plugins/reference.md#file-panels) for selectors,
-selection, document props, `DocumentFrame`, and the version requirement. The examples live in
+Client `addFilePanel` registrations become the body of a file tab. The tab stats the file, picks a
+panel, and mounts it with a `PluginFile` handle; the panel reads, shows its own `Loading`, writes,
+and resolves conflicts. The bar only switches panels and shows the dot the panel sets through
+`tab.setModified`. Built-in panels (Markdown, HTML, Image, and Source, Paseo's editor) take the
+same handle as plugin panels, so a fix to reading, watching, or writing lands in one place:
+`packages/app/src/file-panels/file/`. Do not add a host-side read or loading gate for one panel;
+make that panel faster instead. Source highlights a large file on native in idle-time slices,
+the lines around the opening line first.
+
+The handle checks every write against the version it last read or wrote, so two panels or a panel
+and an agent cannot silently overwrite each other. The daemon reports the file's kind (text,
+image, binary) with its stat from a bounded sniff, which is how Source claims text files without a
+read. See the [public file panel reference](../public-docs/plugins/reference.md#file-panels) for
+the author API, selection, `DocumentFrame`, and the version requirement. The examples live in
 `plugin-examples/pdf-panel` and `plugin-examples/markdown-panel`.
 
 ## Contribute buttons

@@ -2,6 +2,7 @@ import type { ComponentType } from "react";
 import type { PaseoApi } from "@getpaseo/client";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
+import type { PluginFile, PluginFileLocation, PluginFileTab } from "./file.js";
 import type { PluginRpcContract } from "../rpc.js";
 import type {
   PluginButtonRegistration,
@@ -120,45 +121,20 @@ export interface PluginAgentPanelProps extends PluginNavigableHostProps {
   agentId: string;
 }
 
-export interface PluginTextDocument {
-  kind: "text";
-  text: string;
-  /** Paseo owns autosave, dirty state, and conflicts. False on native, old daemons, and files above 1 MiB. */
-  editable: boolean;
-  setText(next: string): void;
-}
-
-export interface PluginBytesDocument {
-  kind: "bytes";
-  bytes: Uint8Array;
-  /** Local URL owned by the host. */
-  url: string;
-}
-
 export interface PluginFilePanelProps extends PluginNavigableHostProps {
   workspaceId: string;
-  file: {
-    path: string;
-    name: string;
-    extension: string;
-    mimeType: string;
-    size: number;
-    modifiedAt: string;
-    lineStart?: number;
-    lineEnd?: number;
-  };
-  navigationRevision: number;
-  document: PluginTextDocument | PluginBytesDocument;
+  /** The file itself. The panel decides how to read it, show it, and save it. */
+  file: PluginFile;
+  tab: PluginFileTab;
+  location: PluginFileLocation;
 }
 
 export interface PluginFilePanelContribution {
   id: string;
   title: string;
   icon: PluginIcon;
+  /** Extensions without the dot, case-insensitive, and exact filenames. */
   files: { extensions: readonly string[]; filenames?: readonly string[] };
-  document: "text" | "bytes";
-  /** Defaults to 10 MiB. */
-  maxBytes?: number;
   Component: ComponentType<PluginFilePanelProps>;
 }
 

@@ -86,5 +86,8 @@ export declare const SidebarRow: ComponentType<SidebarRowProps>;
 /** A line between groups of rows. Render it from a sidebar item's `Component`. */
 export declare const SidebarSeparator: ComponentType;
 
+/** Paseo's loading state. Fills the panel; the panel decides when to show it. */
+export declare const Loading: ComponentType;
+
 /** Render a local document URL in an isolated frame. */
 export declare const DocumentFrame: ComponentType<{ url: string; testID?: string }>;

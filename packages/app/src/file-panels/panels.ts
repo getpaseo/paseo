@@ -1,18 +1,30 @@
 import { useMemo } from "react";
+import type {
+  PluginFile,
+  PluginFileLocation,
+  PluginFilePanelContribution,
+  PluginFileTab,
+} from "@getpaseo/plugin/client";
 import { useInstalledPlugins } from "@/plugins/registry";
-import type { InstalledPlugin, EvaluatedPluginFilePanelContribution } from "@/plugins/types";
+import type { InstalledPlugin } from "@/plugins/types";
 import { filePanelCatalog, type RenderingFilePanel, type SourceFilePanel } from "./catalog";
 
 export interface PluginFilePanel {
   id: string;
   builtin: false;
-  files: EvaluatedPluginFilePanelContribution["files"];
-  document: "text" | "bytes";
-  maxBytes: number;
+  files: PluginFilePanelContribution["files"];
   plugin: InstalledPlugin;
-  contribution: EvaluatedPluginFilePanelContribution;
+  contribution: PluginFilePanelContribution;
 }
 export type FilePanel = RenderingFilePanel | PluginFilePanel | SourceFilePanel;
+
+/** A built-in panel gets the plugin panel's file, tab and location, plus where the file lives. */
+export interface BuiltinFilePanelProps {
+  file: PluginFile;
+  tab: PluginFileTab;
+  location: PluginFileLocation;
+  target: { serverId: string; workspaceRoot: string; path: string };
+}
 
 export function useFilePanels(serverId: string): readonly FilePanel[] {
   const plugins = useInstalledPlugins();
@@ -35,8 +47,6 @@ function hostFilePanels(plugins: readonly InstalledPlugin[]): readonly FilePanel
         id: `plugin:${plugin.id}/${contribution.id}`,
         builtin: false,
         files: contribution.files,
-        document: contribution.document,
-        maxBytes: contribution.maxBytes,
         plugin,
         contribution,
       })),

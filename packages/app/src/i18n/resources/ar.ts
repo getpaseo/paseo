@@ -1942,6 +1942,7 @@ export const ar: TranslationResources = {
       binaryPreviewUnavailable: "المعاينة الثنائية غير متاحة",
       tooLargeToDisplay: "هذا الملف كبير جدًا بحيث لا يمكن عرضه",
       failedToLoad: "فشل تحميل الملف",
+      notFound: "الملف غير موجود",
       failedToLoadPreview: "فشل تحميل معاينة الملف",
       editor: {
         fileSize: "حجم الملف {{size}}",
@@ -1954,7 +1955,6 @@ export const ar: TranslationResources = {
         vimMode: "وضع Vim ‏{{mode}}",
         cursor: "السطر {{line}}، العمود {{column}}",
         deletedTitle: "تم حذف الملف من القرص",
-        checkFailedTitle: "تعذّر التحقق من الملف على القرص",
         preservedDescription: "تم الاحتفاظ بالنسخة المفتوحة.",
         conflictDescription: "تم الاحتفاظ بالمحتوى المحلي. اختر الإصدار الذي تريد إبقاءه.",
         overwrite: "استبدال",

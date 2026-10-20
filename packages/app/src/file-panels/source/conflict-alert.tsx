@@ -10,14 +10,12 @@ const warningIconMapping = (theme: Theme) => ({ color: theme.colors.palette.ambe
 
 export type FileConflictAlertState =
   | { kind: "changed"; canOverwrite: boolean; onReload(): void; onOverwrite(): void }
-  | { kind: "deleted" }
-  | { kind: "checkFailed"; retrying: boolean; onRetry(): void };
+  | { kind: "deleted" };
 
 export function FileConflictAlert({ state }: { state: FileConflictAlertState }) {
   const { t } = useTranslation();
   let title = t("panels.file.editor.changedOnDisk");
   if (state.kind === "deleted") title = t("panels.file.editor.deletedTitle");
-  else if (state.kind === "checkFailed") title = t("panels.file.editor.checkFailedTitle");
   let description: string | undefined;
   if (state.kind !== "changed") description = t("panels.file.editor.preservedDescription");
   else if (state.canOverwrite) description = t("panels.file.editor.conflictDescription");
@@ -29,23 +27,16 @@ export function FileConflictAlert({ state }: { state: FileConflictAlertState }) 
         <Text style={styles.title}>{title}</Text>
         {description ? <Text style={styles.description}>{description}</Text> : null}
       </View>
-      {state.kind !== "deleted" ? (
+      {state.kind === "changed" ? (
         <View style={styles.actions}>
-          {state.kind === "changed" && state.canOverwrite ? (
+          {state.canOverwrite ? (
             <Button variant="outline" size="sm" onPress={state.onOverwrite}>
               {t("panels.file.editor.overwrite")}
             </Button>
           ) : null}
-          {state.kind === "changed" ? (
-            <Button variant="outline" size="sm" onPress={state.onReload}>
-              {t("panels.file.editor.reload")}
-            </Button>
-          ) : null}
-          {state.kind === "checkFailed" ? (
-            <Button variant="outline" size="sm" onPress={state.onRetry} loading={state.retrying}>
-              {t("common.actions.retry")}
-            </Button>
-          ) : null}
+          <Button variant="outline" size="sm" onPress={state.onReload}>
+            {t("panels.file.editor.reload")}
+          </Button>
         </View>
       ) : null}
     </View>

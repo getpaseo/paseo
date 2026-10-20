@@ -1,7 +1,11 @@
 export { isSourceFilePanel } from "./catalog";
 export { FilePanelView } from "./view";
 export type { FilePanel } from "./panels";
-export { useFilePanelChoice, type FilePanelChoice } from "./choice/hook";
+export {
+  useFilePanelChoice,
+  useFilePanelChoiceSnapshot,
+  type FilePanelChoice,
+} from "./choice/hook";
 export { FilePanelPicker } from "./choice/picker";
 export { FilePanelSwitcher } from "./choice/switcher";
 export {

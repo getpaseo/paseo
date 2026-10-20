@@ -127,7 +127,7 @@ async function expectMarkdownEditor(page: Page, text: string) {
   await expect(filePanelSwitcher(page)).toBeInViewport({ ratio: 1 });
 }
 
-test("directory examples mount the PDF frame and edit Markdown through Paseo's document", async ({
+test("directory examples mount the PDF frame and write Markdown through the file handle", async ({
   page,
 }, testInfo) => {
   test.setTimeout(180_000);
@@ -204,26 +204,26 @@ test("directory examples mount the PDF frame and edit Markdown through Paseo's d
       "Markdown panel example",
     );
     gate.holdNextClientRequest("fs.file.write.request");
-    await replaceMarkdown(page, "# Edited by Rich Markdown\n\nAutosaved by Paseo.\n");
+    await replaceMarkdown(page, "# Edited by Rich Markdown\n\nSaved by the panel.\n");
     await gate.waitForHeldClientRequest();
     await expect(page.getByTestId("workspace-tab-modified-file_notes.md")).toBeVisible();
     await capture(page, testInfo, "markdown-example-dirty-wide");
     gate.releaseHeldClientRequest();
     await expect
       .poll(() => readFile(path.join(workspace.repoPath, "notes.md"), "utf8"))
-      .toBe("# Edited by Rich Markdown\n\nAutosaved by Paseo.\n");
+      .toBe("# Edited by Rich Markdown\n\nSaved by the panel.\n");
     await expect(page.getByTestId("workspace-tab-modified-file_notes.md")).toBeHidden();
     await expectPanels(page, ["Rich Markdown", "Markdown", "Source"]);
     await captureWideAndCompact(page, testInfo, "markdown-example-rich-markdown", async () => {
       await expectMarkdownEditor(page, "Edited by Rich Markdown");
     });
 
-    // Source is Paseo's editor; its cursor and vim mode join the bar's status.
+    // Source is Paseo's editor; its cursor and vim mode are in its own status row.
     await selectPanel(page, "Source");
     const source = page.getByTestId("file-source-editor").filter({ visible: true });
     await expect(source.locator(".cm-content")).toContainText("Edited by Rich Markdown");
     await source.locator(".cm-line").nth(2).click();
-    const bar = page.getByTestId("file-panel-bar").filter({ visible: true });
+    const bar = page.getByTestId("file-source-status").filter({ visible: true });
     await expect(bar.getByText("NORMAL", { exact: true })).toBeVisible();
     await expect(bar.getByText(/^Ln 3, Col \d+$/)).toBeVisible();
     await capture(page, testInfo, "markdown-example-source-wide");
@@ -245,7 +245,7 @@ test("directory examples mount the PDF frame and edit Markdown through Paseo's d
     );
     await replaceMarkdown(page, "# Local edit\n");
     await writeFile(path.join(workspace.repoPath, "notes.md"), "# Conflicting external edit\n");
-    await expect(page.getByTestId("file-conflict-alert")).toBeVisible();
+    await expect(page.getByTestId("rich-markdown-conflict")).toBeVisible();
     await capture(page, testInfo, "markdown-example-conflict-wide");
     await page.getByRole("button", { name: "Overwrite", exact: true }).click();
     await expect

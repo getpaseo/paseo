@@ -695,9 +695,10 @@ describe("evaluatePluginClientBundle", () => {
         `(function(require) {
       const shared = require("@getpaseo/plugin");
       const client = require("@getpaseo/plugin/client");
-      const { ExternalLink } = require("@getpaseo/plugin/client/ui");
+      const { ExternalLink, Loading } = require("@getpaseo/plugin/client/ui");
       if (typeof ExternalLink !== "function") throw new Error("ExternalLink");
-      for (const name of ["usePaseo", "useRpc", "useSettings", "useAgent", "useWorkspace", "openExternalUrl"]) {
+      if (typeof Loading !== "function") throw new Error("Loading");
+      for (const name of ["usePaseo", "useRpc", "useSettings", "useAgent", "useWorkspace", "openExternalUrl", "useFileText", "useFileBytes", "useFileUrl", "PluginFileConflictError"]) {
         if (name in shared || typeof client[name] !== "function") throw new Error(name);
       }
       if ("Icon" in shared || typeof shared.PluginAttachmentItemSchema.parse !== "function") throw new Error("shared exports");
@@ -815,18 +816,11 @@ it("binds imported getters to each originating installation across delayed callb
 
 describe("file panels", () => {
   const panel =
-    '{ id: "pdf", title: "PDF", icon: "FileText", files: { extensions: ["pdf"] }, document: "bytes", Component() { return null; } }';
-  it("registers a panel with the default limit and removes it on cleanup", async () => {
+    '{ id: "pdf", title: "PDF", icon: "FileText", files: { extensions: ["pdf"] }, Component() { return null; } }';
+  it("registers a panel and removes it on cleanup", async () => {
     const plugin = evaluatePluginClientBundle("files", bundle(`plugin.addFilePanel(${panel})`));
-    expect(
-      plugin.filePanels.map(({ id, files, document, maxBytes }) => ({
-        id,
-        files,
-        document,
-        maxBytes,
-      })),
-    ).toEqual([
-      { id: "pdf", files: { extensions: ["pdf"] }, document: "bytes", maxBytes: 10 * 1024 * 1024 },
+    expect(plugin.filePanels.map(({ id, title, files }) => ({ id, title, files }))).toEqual([
+      { id: "pdf", title: "PDF", files: { extensions: ["pdf"] } },
     ]);
     await plugin.cleanup();
     expect(plugin.filePanels).toEqual([]);
@@ -838,11 +832,8 @@ describe("file panels", () => {
     ['files: { extensions: ["pdf"] }', 'files: { extensions: ["foo/bar"] }', "selector"],
     ['files: { extensions: ["pdf"] }', "files: { extensions: [] }", "selector"],
     ['files: { extensions: ["pdf"] }', 'files: { extensions: [], filenames: ["a/b"] }', "selector"],
-    ['document: "bytes"', 'document: "binary"', "document"],
     ['id: "pdf"', 'id: "Bad"', "file panel id"],
     ['title: "PDF"', 'title: " "', "title"],
-    ['document: "bytes"', 'document: "bytes", maxBytes: 0', "maxBytes"],
-    ['document: "bytes"', 'document: "bytes", maxBytes: Infinity', "maxBytes"],
     ["Component() { return null; }", "Component: {}", "component"],
     ['icon: "FileText"', 'icon: ""', "icon"],
   ])("rejects invalid registration %s → %s", (from, to, error) => {

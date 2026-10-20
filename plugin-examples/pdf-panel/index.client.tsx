@@ -7,8 +7,6 @@ export default function contribute(client: PluginClientContext) {
     title: "PDF",
     icon: "FileText",
     files: { extensions: ["pdf"] },
-    document: "bytes",
-    maxBytes: 50 * 1024 * 1024,
     Component: PdfPanel,
   });
   return () => {};

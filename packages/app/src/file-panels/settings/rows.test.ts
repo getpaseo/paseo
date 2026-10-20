@@ -18,8 +18,6 @@ function richMarkdown(serverId: string): HostedCandidate {
     id: "plugin:markdown-panel/rich-markdown",
     builtin: false,
     files: { extensions: ["MD"] },
-    document: "text",
-    maxBytes: 10 * 1024 * 1024,
     serverId,
   };
 }
@@ -28,8 +26,6 @@ const dockerfile: HostedCandidate = {
   id: "plugin:docker/dockerfile",
   builtin: false,
   files: { extensions: [], filenames: ["Dockerfile"] },
-  document: "text",
-  maxBytes: Infinity,
   serverId: "host-a",
 };
 
@@ -53,18 +49,21 @@ describe("buildFilePanelSettingsRows", () => {
     ]);
   });
 
-  it("offers Source only on keys a text panel claims, and asks only between several", () => {
+  it("offers Source only on keys a built-in text panel claims, and asks only between several", () => {
     const pdf: HostedCandidate = {
       id: "plugin:pdf-panel/pdf",
       builtin: false,
       files: { extensions: ["pdf"] },
-      document: "bytes",
-      maxBytes: Infinity,
     };
     expect(rows(catalog(pdf))).toEqual([]);
     expect(rows(catalog(pdf), { "ext:pdf": pdf.id })).toEqual([
       { selectorKey: "ext:pdf", candidates: [pdf], associatedPanelId: pdf.id },
     ]);
+  });
+
+  it("does not offer Source on a key only plugin panels claim: their files' kind is unknown", () => {
+    const other: HostedCandidate = { ...dockerfile, id: "plugin:other/dockerfile" };
+    expect(rows(catalog(dockerfile, other))[0]?.candidates).toEqual([dockerfile, other]);
   });
 
   it("offers a panel installed on several hosts once, as the first host has it", () => {

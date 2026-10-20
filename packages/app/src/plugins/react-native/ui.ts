@@ -14,3 +14,5 @@ export { ExternalLink } from "@/components/ui/external-link";
 export { SidebarRow, SidebarSeparator } from "@/plugins/sidebar-items/kit";
 
 export { DocumentFrame } from "@/file-panels/document-frame";
+
+export { FilePanelLoading as Loading } from "@/file-panels/loading";

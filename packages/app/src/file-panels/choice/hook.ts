@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import type { FileReadResult } from "@getpaseo/client/internal/daemon-client";
 import { usePaneContext } from "@/panels/pane-context";
 import type { PanelInstanceIdentity } from "@/panels/panel-instance-attributes";
 import { useFilePanelAssociations } from "../associations";
 import { sourceFilePanel } from "../catalog";
 import { useFilePanels, type FilePanel } from "../panels";
-import { resolveFileReadPanels } from "../resolve";
+import { resolveFilePanel, type FilePanelFileKind } from "../resolve";
 import { chosenPanelFor, FilePanelChoiceModel, type FilePanelChoiceSnapshot } from "./model";
 import { getFilePanelChoice, registerFilePanelChoice, subscribeFilePanelChoices } from "./registry";
 
@@ -19,13 +18,14 @@ export function useFilePanelChoice(input: {
   serverId: string;
   targetKey: string | null;
   path: string;
-  file: FileReadResult | null;
+  /** The kind the file's stat reports, or null before the stat. */
+  fileKind: FilePanelFileKind | null;
   /** The tab is on screen. */
   presentable: boolean;
   /** Identifies the tab's latest request to show a line, or null when it targets no line. */
   lineNavigation: number | null;
 }): { panel: FilePanel | null; choice: FilePanelChoice } {
-  const { targetKey, path, file, presentable, lineNavigation } = input;
+  const { targetKey, path, fileKind, presentable, lineNavigation } = input;
   const { serverId, workspaceId, tabId } = usePaneContext();
   const candidates = useFilePanels(input.serverId);
   const { associations, remember } = useFilePanelAssociations();
@@ -35,8 +35,16 @@ export function useFilePanelChoice(input: {
   // From the subscribed snapshot: React Compiler caches reads off the stable model object.
   const chosenPanelId = chosenPanelFor(useFilePanelChoiceSnapshot(choice), targetKey);
   const resolution = useMemo(
-    () => resolveFileReadPanels({ file, path, candidates, associations, choice: chosenPanelId }),
-    [associations, candidates, chosenPanelId, file, path],
+    () =>
+      fileKind
+        ? resolveFilePanel({
+            file: { path, kind: fileKind },
+            candidates,
+            associations,
+            choice: chosenPanelId,
+          })
+        : null,
+    [associations, candidates, chosenPanelId, fileKind, path],
   );
 
   useEffect(() => {

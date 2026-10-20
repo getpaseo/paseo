@@ -22,6 +22,7 @@ export function FileEditorView(_props: {
   };
   onCursorChange(position: { line: number; column: number }): void;
   onVimModeChange(mode: string | null): void;
+  onReady(): void;
 }) {
   return (
     <View style={styles.container}>

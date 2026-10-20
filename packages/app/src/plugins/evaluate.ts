@@ -282,13 +282,6 @@ export function runPluginClientBundle(
       ) {
         throw new Error(`File panel ${panelId} has invalid selector`);
       }
-      if (contribution.document !== "text" && contribution.document !== "bytes")
-        throw new Error(`File panel ${panelId} has invalid document`);
-      if (
-        contribution.maxBytes !== undefined &&
-        (!Number.isFinite(contribution.maxBytes) || contribution.maxBytes <= 0)
-      )
-        throw new Error(`File panel ${panelId} has invalid maxBytes`);
       if (typeof contribution.Component !== "function")
         throw new Error(`File panel ${panelId} is not a component`);
       filePanelIds.add(panelId);
@@ -303,7 +296,6 @@ export function runPluginClientBundle(
             extensions: [...files.extensions],
             ...(files.filenames ? { filenames: [...files.filenames] } : {}),
           },
-          maxBytes: contribution.maxBytes ?? 10 * 1024 * 1024,
         },
         () => filePanelIds.delete(panelId),
       );

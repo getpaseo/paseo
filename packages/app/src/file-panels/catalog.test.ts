@@ -8,12 +8,10 @@ const richMarkdown: FilePanelCandidate = {
   id: "plugin:notes/rich",
   builtin: false,
   files: { extensions: ["md"] },
-  document: "text",
-  maxBytes: Infinity,
 };
 
 function textFile(path: string): FilePanelFile {
-  return { path, kind: "text", size: 100, hasBytes: true };
+  return { path, kind: "text" };
 }
 
 function candidateIds(file: FilePanelFile, candidates: readonly FilePanelCandidate[] = builtins) {
@@ -52,39 +50,25 @@ describe("built-in file panels", () => {
   });
 
   it("has no Source for files that are not text", () => {
-    expect(
-      candidateIds({ path: "archive.zip", kind: "binary", size: 512, hasBytes: true }),
-    ).toEqual([]);
+    expect(candidateIds({ path: "archive.zip", kind: "binary" })).toEqual([]);
   });
 
   it.each(["png", "jpg", "jpeg", "gif", "webp", "svg"])(
     "registers the image extension %s",
     (extension) => {
       const resolution = resolveFilePanel({
-        file: {
-          path: `/capture.${extension.toUpperCase()}`,
-          kind: "image",
-          size: 512,
-          hasBytes: true,
-        },
+        file: { path: `/capture.${extension.toUpperCase()}`, kind: "image" },
         candidates: builtins,
         associations: { [`ext:${extension}`]: "builtin:markdown" },
       });
       expect(resolution.panel?.id).toBe("builtin:image");
       expect(
         resolveFilePanel({
-          file: { path: "capture.png", kind: "binary", size: 512, hasBytes: false },
+          file: { path: "capture.png", kind: "binary" },
           candidates: builtins,
           associations: {},
         }).panel,
       ).toBeNull();
     },
   );
-
-  it("does not impose a size limit on built-in text panels", () => {
-    expect(candidateIds({ ...textFile("notes.md"), size: 11 * 1024 * 1024 })).toEqual([
-      "builtin:markdown",
-      "builtin:source",
-    ]);
-  });
 });

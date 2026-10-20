@@ -17,39 +17,61 @@ const PLUGIN_ID = "file-panel-e2e";
 const PDF = Buffer.from("%PDF-1.4\n%\x00\xff\n1 0 obj<</Type/Catalog>>endobj\n%%EOF", "binary");
 const SOURCE = `import React, { useEffect, useState } from "react";
 import { Text, View, Pressable } from "react-native";
-import { usePaseo, useWorkspace } from "@getpaseo/plugin/client";
+import {
+  PluginFileConflictError,
+  useFileBytes,
+  useFileUrl,
+  usePaseo,
+  useWorkspace,
+} from "@getpaseo/plugin/client";
 import { useQueryClient } from "@tanstack/react-query";
-import { DocumentFrame } from "@getpaseo/plugin/client/ui";
-function Pdf({ document, file, workspaceId }) {
+import { DocumentFrame, Loading } from "@getpaseo/plugin/client/ui";
+function Pdf({ file, workspaceId }) {
   usePaseo();
   useQueryClient();
   const workspace = useWorkspace(workspaceId, value => ({ id: value.id }));
+  const bytes = useFileBytes(file);
+  const url = useFileUrl(file);
   const [urlBytes, setUrlBytes] = useState(-1);
+  const href = url.status === "ready" ? url.url : null;
   useEffect(() => {
-    fetch(document.url).then(response => response.arrayBuffer()).then(bytes => setUrlBytes(bytes.byteLength));
-  }, [document.url]);
+    if (href) fetch(href).then(response => response.arrayBuffer()).then(body => setUrlBytes(body.byteLength));
+  }, [href]);
+  if (bytes.status !== "ready" || !href) return <Loading />;
   return <View style={{ flex: 1 }}>
     <Text>PDF plugin: {file.name}</Text>
     <Text>Path {file.path}</Text>
-    <Text>Bytes {document.bytes.length}; URL bytes {urlBytes}</Text>
+    <Text>Bytes {bytes.bytes.length}; URL bytes {urlBytes}</Text>
     <Text>Workspace {workspace?.id}</Text>
-    <DocumentFrame url={document.url} testID="plugin-pdf-frame" />
+    <DocumentFrame url={href} testID="plugin-pdf-frame" />
   </View>;
 }
-function Markdown({ document }) {
+// Reads once and writes on demand, so a change on disk since that read rejects the write.
+function Markdown({ file, tab }) {
+  const [text, setText] = useState(null);
+  const [status, setStatus] = useState("");
+  useEffect(() => { file.readText().then(setText); }, [file]);
+  const save = (next) => {
+    tab.setModified(true);
+    file.writeText(next).then(
+      () => { tab.setModified(false); setText(next); },
+      (error) => setStatus(error instanceof PluginFileConflictError ? "Write rejected: changed on disk" : String(error)),
+    );
+  };
+  if (text === null) return <Loading />;
   return <View>
-    <Text>Plugin Markdown: {document.text}</Text>
-    <Text>{document.editable ? "Plugin document editable" : "Plugin document readonly"}</Text>
-    <Pressable accessibilityRole="button" onPress={() => document.setText("# Saved by plugin\\n")}>
+    <Text>Plugin Markdown: {text}</Text>
+    <Pressable accessibilityRole="button" onPress={() => save("# Saved by plugin\\n")}>
       <Text>Edit Markdown through plugin</Text>
     </Pressable>
+    <Text>{status}</Text>
   </View>;
 }
 export default function contribute(client) {
   client.addFilePanel({ id: "pdf", title: "PDF", icon: "FileText",
-    files: { extensions: ["pdf", "txt"] }, document: "bytes", Component: Pdf });
+    files: { extensions: ["pdf", "txt"] }, Component: Pdf });
   client.addFilePanel({ id: "markdown", title: "Plugin Markdown", icon: "FileText",
-    files: { extensions: ["md"] }, document: "text", Component: Markdown });
+    files: { extensions: ["md"] }, Component: Markdown });
   return () => {};
 }`;
 
@@ -77,7 +99,7 @@ async function selectSource(page: Page) {
     .click();
 }
 
-test("directory plugins render PDF bytes and edit associated Markdown through the host document", async ({
+test("directory plugins render PDF bytes and write Markdown through the file handle", async ({
   page,
 }, testInfo) => {
   test.setTimeout(120_000);
@@ -151,7 +173,9 @@ test("directory plugins render PDF bytes and edit associated Markdown through th
     ).toBeVisible();
     await expect(page.getByRole("button", { name: "Edit Markdown through plugin" })).toHaveCount(0);
     await associateMarkdownWithPlugin(page);
-    await expect(page.getByText("Plugin document editable", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("Plugin Markdown: # Built-in Markdown", { exact: true }),
+    ).toBeVisible();
     gate.holdNextClientRequest("fs.file.write.request");
     await editMarkdownThroughPlugin(page);
     await gate.waitForHeldClientRequest();
@@ -163,10 +187,33 @@ test("directory plugins render PDF bytes and edit associated Markdown through th
     await expect
       .poll(() => readFile(path.join(workspace.repoPath, "notes.md"), "utf8"))
       .toBe("# Saved by plugin\n");
+    await expect(page.getByTestId("workspace-tab-modified-file_notes.md")).toBeHidden();
+
+    // The disk changed since the plugin's last read or write: the write is rejected, not applied.
+    await writeFile(path.join(workspace.repoPath, "notes.md"), "# Changed outside\n");
+    await editMarkdownThroughPlugin(page);
+    await expect(page.getByText("Write rejected: changed on disk", { exact: true })).toBeVisible();
+    expect(await readFile(path.join(workspace.repoPath, "notes.md"), "utf8")).toBe(
+      "# Changed outside\n",
+    );
+    await expect(page.getByTestId("workspace-tab-modified-file_notes.md")).toBeVisible();
+    let closePrompt = "";
+    page.once("dialog", async (dialog) => {
+      closePrompt = dialog.message();
+      await dialog.dismiss();
+    });
+    await page
+      .getByTestId("workspace-tab-file_notes.md")
+      .filter({ visible: true })
+      .first()
+      .click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Close", exact: true }).click();
+    await expect.poll(() => closePrompt).toContain("discard");
+
     await selectSource(page);
     await expect(
       page.getByTestId("file-source-editor").filter({ visible: true }).locator(".cm-content"),
-    ).toHaveText("# Saved by plugin");
+    ).toHaveText("# Changed outside");
     const markdownScreenshot = testInfo.outputPath("plugin-markdown-source-web.png");
     await page.screenshot({ path: markdownScreenshot });
     await testInfo.attach("plugin-markdown-source-web", {

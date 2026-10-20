@@ -134,6 +134,62 @@ describe("file explorer service", () => {
     }
   });
 
+  it("classifies a file version from its extension and first bytes", async () => {
+    const root = await createTempDir("paseo-file-version-kind-");
+    try {
+      await writeFile(path.join(root, "notes.md"), "# Notes\n", "utf8");
+      await writeFile(path.join(root, "pixel.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+      await writeFile(path.join(root, "report.pdf"), "%PDF-1.4\n", "utf8");
+      await writeFile(path.join(root, "blob.dat"), Buffer.from([0x00, 0x01, 0x02]));
+      // A multi-byte character split by the sample boundary is still text.
+      await writeFile(path.join(root, "wide.txt"), `${"a".repeat(8191)}é tail`, "utf8");
+
+      const kinds = await Promise.all(
+        ["notes.md", "pixel.png", "report.pdf", "blob.dat", "wide.txt"].map(
+          async (relativePath) => {
+            const version = await getExplorerFileVersion({ root, relativePath });
+            return version.status === "ready" ? [version.kind, version.mimeType] : version.status;
+          },
+        ),
+      );
+
+      expect(kinds).toEqual([
+        ["text", "text/plain"],
+        ["image", "image/png"],
+        ["binary", "application/pdf"],
+        ["binary", "application/octet-stream"],
+        ["text", "text/plain"],
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("writes base64 content as bytes, including over a binary file", async () => {
+    const root = await createTempDir("paseo-file-write-bytes-");
+    try {
+      const filePath = path.join(root, "blob.dat");
+      await writeFile(filePath, Buffer.from([0x00, 0x01, 0x02]));
+      const current = await getExplorerFileVersion({ root, relativePath: "blob.dat" });
+      expect(current.status).toBe("ready");
+      if (current.status !== "ready") return;
+
+      const result = await writeExplorerFile({
+        root,
+        relativePath: "blob.dat",
+        content: Buffer.from([0xff, 0x00, 0xfe]).toString("base64"),
+        contentEncoding: "base64",
+        expectedModifiedAt: current.modifiedAt,
+        expectedRevision: current.revision,
+      });
+
+      expect(result).toMatchObject({ status: "written", size: 3 });
+      expect([...(await readFile(filePath))]).toEqual([0xff, 0x00, 0xfe]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("never creates a missing file through the write API", async () => {
     const root = await createTempDir("paseo-file-missing-");
     try {

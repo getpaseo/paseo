@@ -1,10 +1,9 @@
-import type { FileReadResult } from "@getpaseo/client/internal/daemon-client";
+export type FilePanelFileKind = "text" | "image" | "binary";
 
+/** What resolution knows about a file: its path and the kind its stat reports, never contents. */
 export interface FilePanelFile {
   path: string;
-  kind: "text" | "image" | "binary";
-  size: number;
-  hasBytes: boolean;
+  kind: FilePanelFileKind;
 }
 
 export interface FilePanelSelector {
@@ -12,7 +11,7 @@ export interface FilePanelSelector {
   filenames?: readonly string[];
 }
 
-/** A selector, or `"all"`: every file whose document the panel can read. */
+/** A selector, or `"all"`: every file of the panel's `fileKind`. */
 export type FilePanelFiles = FilePanelSelector | "all";
 
 export interface FilePanelCandidate {
@@ -20,8 +19,8 @@ export interface FilePanelCandidate {
   /** Paseo's own panel. Paseo asks which panel opens a file only when a plugin panel claims it. */
   builtin: boolean;
   files: FilePanelFiles;
-  document: "text" | "bytes";
-  maxBytes: number;
+  /** The only kind of file a built-in panel reads. Plugin panels are offered for any kind. */
+  fileKind?: FilePanelFileKind;
 }
 
 export interface FilePanelResolution<Candidate> {
@@ -87,8 +86,8 @@ export function filePanelClaimedSelectorKeys(files: FilePanelFiles): string[] {
 }
 
 /**
- * Whether a panel is offered for files under `selectorKey`, by the resolver's matching rule. Size
- * and document kind depend on the file, so they are not part of the answer.
+ * Whether a panel is offered for files under `selectorKey`, by the resolver's matching rule. The
+ * file kind depends on the file, so it is not part of the answer.
  */
 export function claimsFilePanelSelectorKey(
   selector: FilePanelSelector,
@@ -113,12 +112,11 @@ export function resolveFilePanel<Candidate extends FilePanelCandidate>(input: {
   choice?: string | null;
 }): FilePanelResolution<Candidate> {
   const { file, associations } = input;
-  const candidates = input.candidates.filter((candidate) => {
-    const documentAvailable = candidate.document === "text" ? file.kind === "text" : file.hasBytes;
-    return (
-      documentAvailable && file.size <= candidate.maxBytes && matchesFiles(file, candidate.files)
-    );
-  });
+  const candidates = input.candidates.filter(
+    (candidate) =>
+      (candidate.fileKind === undefined || candidate.fileKind === file.kind) &&
+      matchesFiles(file, candidate.files),
+  );
   const filename = filePanelBasename(file.path);
   const matchedFilename = candidates.some((candidate) => claimsFilename(candidate.files, filename));
   const selectorKey = matchedFilename
@@ -128,22 +126,4 @@ export function resolveFilePanel<Candidate extends FilePanelCandidate>(input: {
   const chosen = candidates.find((candidate) => candidate.id === input.choice);
   const panel = chosen ?? associated ?? candidates[0] ?? null;
   return { panel, candidates, selectorKey, associatedPanelId: associated?.id ?? null };
-}
-
-/** Raw reads always carry bytes, independently of whether a panel will retain them. */
-export function resolveFileReadPanels<Candidate extends FilePanelCandidate>(input: {
-  file: FileReadResult | null;
-  path: string;
-  candidates: readonly Candidate[];
-  associations: Readonly<Record<string, string>>;
-  choice?: string | null;
-}): FilePanelResolution<Candidate> | null {
-  const { file, path } = input;
-  if (!file) return null;
-  return resolveFilePanel({
-    file: { path, kind: file.kind, size: file.size, hasBytes: true },
-    candidates: input.candidates,
-    associations: input.associations,
-    choice: input.choice,
-  });
 }
