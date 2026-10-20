@@ -1172,7 +1172,7 @@ function buildClaudePlanPermissionActions(
     },
   ];
 
-  if (resumeMode === "bypassPermissions") {
+  if (resumeMode === "bypassPermissions" || resumeMode === "auto") {
     actions.push({
       id: "implement_resume",
       label: `Implement with ${getClaudeModeLabel(resumeMode)}`,
@@ -2813,11 +2813,11 @@ class ClaudeAgentSession implements AgentSession {
     if (response.behavior === "allow") {
       if (pending.request.kind === "plan") {
         const selectedActionId = response.selectedActionId;
+        const resumeMode = this.planResumeMode;
         const shouldResumePriorMode =
-          selectedActionId === "implement_resume" && this.planResumeMode === "bypassPermissions";
-        const targetMode: PermissionMode = shouldResumePriorMode
-          ? "bypassPermissions"
-          : "acceptEdits";
+          selectedActionId === "implement_resume" &&
+          (resumeMode === "bypassPermissions" || resumeMode === "auto");
+        const targetMode: PermissionMode = shouldResumePriorMode ? resumeMode : "acceptEdits";
         await this.setMode(targetMode);
         this.pushToolCall(
           mapClaudeCompletedToolCall({
