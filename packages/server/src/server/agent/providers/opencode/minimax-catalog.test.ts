@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { Config } from "@opencode-ai/sdk/v2/client";
+import type { ConfigEntry, PluginInfo } from "@opencode/client";
+import { applyV2MiniMaxCatalog } from "./v2/minimax-catalog.js";
 import type { AgentModelDefinition, ProviderSnapshotEntry } from "../../agent-sdk-types.js";
 import { filterPickerAgentModels } from "../../agent-sdk-types.js";
 import { validateAgentConfigurationAgainstProvider } from "../../agent-configuration-validator.js";
@@ -26,6 +28,67 @@ const routes = [
   ["opencode", "minimax-m2.5-free", "minimax-m3", "minimax-m3.1-flash-free"],
   ["openrouter", "minimax/minimax-m2.7", "minimax/minimax-m3", "minimax/minimax-m3.1-flash:free"],
 ];
+
+describe("OpenCode v2 MiniMax provenance", () => {
+  const owned = "file:///paseo/runtime/opencode/paseo-v2-exact";
+  const isOwned = (specifier: string) => specifier === owned;
+  const models = [model("minimax", "MiniMax-M2.7"), model("minimax", "MiniMax-M3.1-Flash")];
+
+  test.each<ConfigEntry[]>([
+    [{ type: "document", info: { providers: { minimax: {} } } }],
+    [
+      {
+        type: "document",
+        info: {
+          providers: {
+            minimax: {
+              settings: { baseURL: "https://api.minimax.io/anthropic" },
+              models: { "MiniMax-M2.7": { modelID: "MiniMax-M2.7" } },
+            },
+          },
+        },
+      },
+    ],
+    [{ type: "document", info: { plugins: ["custom-plugin"] } }],
+    [{ type: "document", info: { plugins: [{ package: `${owned}-custom` }] } }],
+  ])("preserves native configured overrides", (...config) => {
+    expect(
+      filterPickerAgentModels(applyV2MiniMaxCatalog(models, config, [], isOwned)),
+    ).toHaveLength(2);
+  });
+
+  test.each<PluginInfo["source"]>([
+    { type: "local", path: "/custom/paseo-v2-exact" },
+    { type: "package", target: "paseo" },
+    { type: "sdk" },
+  ])("does not trust a plugin by its name or ID: %j", (source) => {
+    const plugins: PluginInfo[] = [
+      { id: "paseo", source, features: {}, state: { status: "active" } },
+    ];
+    expect(applyV2MiniMaxCatalog(models, [], plugins, isOwned)).toBe(models);
+  });
+
+  test("exempts only the owned local bridge alongside native built-ins", () => {
+    const plugins: PluginInfo[] = [
+      { id: "native", source: { type: "builtin" }, features: {}, state: { status: "active" } },
+      {
+        id: "paseo",
+        source: { type: "local", path: owned },
+        features: {},
+        state: { status: "active" },
+      },
+    ];
+    const config: ConfigEntry[] = [
+      { type: "directory", path: "/workspace/.opencode" },
+      { type: "document", info: { plugins: [{ package: owned }] } },
+    ];
+    expect(
+      filterPickerAgentModels(applyV2MiniMaxCatalog(models, config, plugins, isOwned)).map(
+        (entry) => entry.id,
+      ),
+    ).toEqual(["minimax/MiniMax-M3.1-Flash"]);
+  });
+});
 
 describe("OpenCode MiniMax catalog visibility", () => {
   test.each(routes)(

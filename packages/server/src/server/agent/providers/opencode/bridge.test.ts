@@ -277,6 +277,14 @@ describe("OpenCodeBridge", () => {
       expect(bridge.isPaseoPlugin(plugin.pluginUrl)).toBe(true);
       expect(bridge.isPaseoPlugin(`${plugin.pluginUrl}.custom`)).toBe(false);
       expect(bridge.isPaseoPlugin("file:///custom/paseo-bridge.mjs")).toBe(false);
+      expect(bridge.isPaseoV2Plugin("file:///custom/paseo-v2-exact")).toBe(false);
+      const v2Env = await bridge.decorateV2ServerEnv({});
+      const v2Config = JSON.parse(v2Env.OPENCODE_CONFIG_CONTENT!);
+      const v2Url: string = v2Config.plugins[0].package;
+      expect(bridge.isPaseoV2Plugin(v2Url)).toBe(true);
+      expect(bridge.isPaseoV2Plugin(fileURLToPath(v2Url))).toBe(true);
+      expect(bridge.isPaseoV2Plugin(`${v2Url}-custom`)).toBe(false);
+      expect(bridge.isPaseoV2Plugin(`file:///custom/${path.basename(v2Url)}`)).toBe(false);
 
       const unauthorized = await fetch(
         `${plugin.baseUrl}/_internal/opencode/sessions/ses_one/context`,

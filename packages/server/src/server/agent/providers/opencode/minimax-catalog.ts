@@ -22,6 +22,18 @@ export function applyOpenCodeMiniMaxCatalog(
   )
     return models;
 
+  return projectMiniMaxCatalog(models, (model, providerId) => {
+    if (config.provider?.[providerId] || model.metadata?.providerSource === "config")
+      return "custom";
+    const source = model.metadata?.providerSource;
+    return source === "api" || source === "env" || source === "custom" ? "builtin" : "unknown";
+  });
+}
+
+export function projectMiniMaxCatalog(
+  models: AgentModelDefinition[],
+  origin: (model: AgentModelDefinition, providerId: string) => "builtin" | "custom" | "unknown",
+): AgentModelDefinition[] {
   const managed = new Map<AgentModelDefinition, number>();
   const mapped = models.map((model) => {
     const providerId = model.metadata?.providerId;
@@ -31,13 +43,11 @@ export function applyOpenCodeMiniMaxCatalog(
     if (!active) return model;
     const textModelId = providerId === "openrouter" ? modelId.replace(/^minimax\//, "") : modelId;
     if (!/^minimax-m\d/i.test(textModelId)) return model;
-    // Config presence, not endpoint inequality, proves an explicit native override.
-    if (config.provider?.[providerId] || model.metadata?.providerSource === "config") {
-      return { ...model, metadata: { ...model.metadata, catalogOrigin: "custom" } };
+    const catalogOrigin = origin(model, providerId);
+    if (catalogOrigin === "unknown") return model;
+    if (catalogOrigin === "custom") {
+      return { ...model, metadata: { ...model.metadata, catalogOrigin } };
     }
-    const source = model.metadata?.providerSource;
-    const knownSource = source === "api" || source === "env" || source === "custom";
-    if (!knownSource) return model;
     const rank = active.indexOf(modelId);
     const next = {
       ...model,
