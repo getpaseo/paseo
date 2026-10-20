@@ -29,7 +29,6 @@ import {
   type SessionInboundMessage,
   type SessionOutboundMessage,
   type ScriptStatusUpdateMessage,
-  type GitSetupOptions,
   type StartWorkspaceScriptRequest,
   type WorkspaceScriptListRequest,
   type WorkspaceScriptStartRequest,
@@ -122,10 +121,6 @@ import {
   updateAgentCommand,
 } from "./agent/lifecycle-command.js";
 import { buildStoredAgentPayload, toAgentPayload } from "./agent/agent-projections.js";
-import {
-  appendTimelineItemIfAgentKnown,
-  emitLiveTimelineItemIfAgentKnown,
-} from "./agent/timeline-append.js";
 import { assertPluginTimelineDataSize } from "./agent/agent-timeline-content.js";
 import { parsePluginClientId } from "./plugins/plugin-session-identity.js";
 import { buildAgentForkContextAttachment } from "./agent/activity-curator.js";
@@ -249,10 +244,7 @@ import {
 } from "./paseo-worktree-service.js";
 import { WorkspaceAutoName } from "./workspace-auto-name.js";
 import {
-  buildAgentSessionConfig as buildWorktreeAgentSessionConfig,
-  normalizeAgentCreationGitOptions,
   createPaseoWorktreeWorkflow as createWorktreeWorkflow,
-  type CreatePaseoWorktreeSetupContinuationInput,
   type CreatePaseoWorktreeWorkflowResult,
   handleCreatePaseoWorktreeRequest as handleCreateWorktreeRequest,
   handlePaseoWorktreeArchiveRequest as handleWorktreeArchiveRequest,
@@ -4293,17 +4285,19 @@ export class Session {
     }
   }
 
-  private validatePublicAgentWorkspaceIntent(
-    request: CreateAgentRequestMessage,
-    createsWorktree: boolean,
-  ): void {
+  private validatePublicAgentWorkspaceIntent(request: CreateAgentRequestMessage): void {
+    if (request.git !== undefined || request.worktreeName !== undefined) {
+      throw new Error(
+        "Legacy git/worktreeName agent placement was removed. Use createWorkspace({ source, agent, idempotencyKey }) to create a workspace with an agent, or create the workspace first and pass workspaceId.",
+      );
+    }
     if (request.internal)
       throw new Error(
         "Public internal agents were removed; create a background workspace instead.",
       );
     if (
       request.background !== undefined &&
-      (request.workspaceId || (request.callerAgentId && !createsWorktree))
+      (request.workspaceId || (request.callerAgentId && !request.worktree))
     ) {
       throw new Error(
         "background is workspace creation intent; configure the selected workspace at creation.",
@@ -4322,7 +4316,6 @@ export class Session {
       initialPrompt,
       clientMessageId,
       outputSchema,
-      git,
       worktree,
       autoArchive,
       images,
@@ -4340,14 +4333,11 @@ export class Session {
     let createdAgentId: string | null = null;
     try {
       const requestedCwd = resolve(config.cwd);
-      const needsRequestedDirectory =
-        Boolean(worktreeName || git || worktree) || (!msg.workspaceId && !msg.callerAgentId);
+      const needsRequestedDirectory = Boolean(worktree) || (!msg.workspaceId && !msg.callerAgentId);
       if (needsRequestedDirectory && !(await this.filesystem.isDirectory(requestedCwd))) {
         throw new Error(`Working directory does not exist or is not a directory: ${requestedCwd}`);
       }
-      // Resolve all supported worktree input forms before provisioning workspace ownership.
-      const gitIntent = normalizeAgentCreationGitOptions(git, worktreeName, worktree);
-      this.validatePublicAgentWorkspaceIntent(msg, gitIntent?.createWorktree === true);
+      this.validatePublicAgentWorkspaceIntent(msg);
       const trimmedPrompt = initialPrompt?.trim();
       const { provisionalTitle } = resolveCreateAgentTitles({
         configTitle: config.title,
@@ -4361,9 +4351,8 @@ export class Session {
       const workspacePromptTitle = resolveFirstAgentPromptTitle(firstAgentContext);
       const createdWorktree = await this.createAgentLifecycleDispatch.createWorktreeForRequest({
         cwd: config.cwd,
-        target: gitIntent,
+        target: worktree,
         firstAgentContext,
-        setupContinuation: worktree ? undefined : this.agentWorktreeSetupContinuation(),
         background: msg.background,
         callerWorkspaceId: this.getCallerWorkspaceId(msg.callerAgentId),
       });
@@ -4396,7 +4385,6 @@ export class Session {
           agentId,
           config: resolvedIntent.config,
           workspaceId: resolvedIntent.intent.workspaceId,
-          worktreeName,
           initialPrompt,
           source: msg.callerAgentId
             ? { kind: "agent-message", agentId: msg.callerAgentId }
@@ -4405,19 +4393,10 @@ export class Session {
           outputSchema,
           images,
           attachments,
-          git,
           labels: resolvedIntent.intent.labels,
           env,
           provisionalTitle,
           firstAgentContext,
-          buildSessionConfig: async (sessionConfig, gitOptions, legacyWorktreeName, ctx) =>
-            createdWorktree
-              ? {
-                  sessionConfig,
-                  setupContinuation: createdWorktree.setupContinuation,
-                  createdWorkspaceId: createdWorktree.workspace.workspaceId,
-                }
-              : this.buildAgentSessionConfig(sessionConfig, gitOptions, legacyWorktreeName, ctx),
         },
       );
       createdAgentId = snapshot.id;
@@ -4885,58 +4864,6 @@ export class Session {
         source,
       );
     }
-  }
-
-  private agentWorktreeSetupContinuation(): CreatePaseoWorktreeSetupContinuationInput {
-    return {
-      kind: "agent",
-      terminalManager: this.terminalManager,
-      appendTimelineItem: ({ agentId, item }) =>
-        appendTimelineItemIfAgentKnown({
-          agentManager: this.agentManager,
-          agentId,
-          item,
-        }),
-      emitLiveTimelineItem: ({ agentId, item }) =>
-        emitLiveTimelineItemIfAgentKnown({
-          agentManager: this.agentManager,
-          agentId,
-          item,
-        }),
-      logger: this.sessionLogger,
-    };
-  }
-
-  private async buildAgentSessionConfig(
-    config: AgentSessionConfig,
-    gitOptions?: GitSetupOptions,
-    legacyWorktreeName?: string,
-    firstAgentContext?: FirstAgentContext,
-  ): Promise<{
-    sessionConfig: AgentSessionConfig;
-    setupContinuation?: CreatePaseoWorktreeWorkflowResult["setupContinuation"];
-    createdWorkspaceId?: string;
-  }> {
-    return buildWorktreeAgentSessionConfig(
-      {
-        paseoHome: this.paseoHome,
-        worktreesRoot: this.worktreesRoot,
-        sessionLogger: this.sessionLogger,
-        workspaceGitService: this.workspaceGitService,
-        createPaseoWorktree: (input, serviceOptions) =>
-          this.createPaseoWorktreeWorkflow(input, {
-            ...serviceOptions,
-            setupContinuation: this.agentWorktreeSetupContinuation(),
-          }),
-        checkoutExistingBranch: (cwd, branch) =>
-          this.gitMutation.checkoutExistingBranch(cwd, branch),
-        createBranchFromBase: (params) => this.gitMutation.createBranchFromBase(params),
-      },
-      config,
-      gitOptions,
-      legacyWorktreeName,
-      firstAgentContext,
-    );
   }
 
   private isPathWithinRoot(rootPath: string, candidatePath: string): boolean {
@@ -7400,7 +7327,6 @@ export class Session {
     input: CreatePaseoWorktreeInput,
     options?: {
       resolveDefaultBranch?: (repoRoot: string) => Promise<string>;
-      setupContinuation?: CreatePaseoWorktreeSetupContinuationInput;
     },
   ): Promise<CreatePaseoWorktreeWorkflowResult> {
     return createWorktreeWorkflow(

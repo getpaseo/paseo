@@ -3372,62 +3372,6 @@ test("sends create_agent_request with workspace and caller identity", async () =
   await expect(createPromise).rejects.toThrow("compat test sentinel");
 });
 
-test("sends worktree target and autoArchive in create_agent_request", async () => {
-  const logger = createMockLogger();
-  const mock = createMockTransport();
-
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "clsk_unit_test",
-    logger,
-    reconnect: { enabled: false },
-    transportFactory: () => mock.transport,
-  });
-  clients.push(client);
-
-  const connectPromise = client.connect();
-  mock.triggerOpen();
-  await connectPromise;
-
-  const createPromise = client.createAgent({
-    provider: "codex",
-    cwd: "/tmp/project",
-    worktree: {
-      mode: "branch-off",
-      newBranch: "agent-lifecycle-dispatch",
-      base: "main",
-    },
-    autoArchive: true,
-  });
-
-  expect(mock.sent).toHaveLength(1);
-  const request = parseSentFrame(mock.sent[0]);
-  expect(request).toEqual(
-    expect.objectContaining({
-      type: "create_agent_request",
-      worktree: {
-        mode: "branch-off",
-        newBranch: "agent-lifecycle-dispatch",
-        base: "main",
-      },
-      autoArchive: true,
-    }),
-  );
-
-  mock.triggerMessage(
-    wrapSessionMessage({
-      type: "status",
-      payload: {
-        status: "agent_create_failed",
-        requestId: request.requestId,
-        error: "worktree auto archive sentinel",
-      },
-    }),
-  );
-
-  await expect(createPromise).rejects.toThrow("worktree auto archive sentinel");
-});
-
 test("sends internal in create_agent_request when the host advertises internal agents", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -3644,120 +3588,6 @@ test("sends structured attachments with create_agent_request", async () => {
   );
 
   await expect(createPromise).rejects.toThrow("attachment test sentinel");
-});
-
-test("sends worktree base-ref fields in create_agent_request git options", async () => {
-  const logger = createMockLogger();
-  const mock = createMockTransport();
-
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "clsk_unit_test",
-    logger,
-    reconnect: { enabled: false },
-    transportFactory: () => mock.transport,
-  });
-  clients.push(client);
-
-  const connectPromise = client.connect();
-  mock.triggerOpen();
-  await connectPromise;
-
-  const createPromise = client.createAgent({
-    provider: "codex",
-    cwd: "/tmp/project",
-    requestId: "req-agent-ref",
-    git: {
-      createWorktree: true,
-      worktreeSlug: "review-pr-123",
-      refName: "feature/worktree-base-ref",
-      action: "checkout",
-      githubPrNumber: 123,
-    },
-  });
-
-  expect(mock.sent).toHaveLength(1);
-  const request = parseSentFrame(mock.sent[0]);
-  expect(request.git).toEqual({
-    createWorktree: true,
-    worktreeSlug: "review-pr-123",
-    refName: "feature/worktree-base-ref",
-    action: "checkout",
-    githubPrNumber: 123,
-  });
-
-  mock.triggerMessage(
-    wrapSessionMessage({
-      type: "status",
-      payload: {
-        status: "agent_create_failed",
-        requestId: request.requestId,
-        error: "git ref fields sentinel",
-      },
-    }),
-  );
-
-  await expect(createPromise).rejects.toThrow("git ref fields sentinel");
-});
-
-test("omitting create_agent_request worktree base-ref fields preserves legacy wire shape", async () => {
-  const logger = createMockLogger();
-  const mock = createMockTransport();
-
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "clsk_unit_test",
-    logger,
-    reconnect: { enabled: false },
-    transportFactory: () => mock.transport,
-  });
-  clients.push(client);
-
-  const connectPromise = client.connect();
-  mock.triggerOpen();
-  await connectPromise;
-
-  const createPromise = client.createAgent({
-    provider: "codex",
-    cwd: "/tmp/project",
-    requestId: "req-agent-legacy",
-    git: {
-      createWorktree: true,
-      worktreeSlug: "feature-a",
-    },
-  });
-
-  expect(assertStr(mock.sent[0])).toBe(
-    JSON.stringify({
-      type: "session",
-      message: {
-        type: "create_agent_request",
-        config: {
-          provider: "codex",
-          cwd: "/tmp/project",
-        },
-        git: {
-          createWorktree: true,
-          worktreeSlug: "feature-a",
-        },
-        labels: {},
-        requestId: "req-agent-legacy",
-      },
-    }),
-  );
-
-  mock.triggerMessage(
-    wrapSessionMessage({
-      type: "status",
-      payload: {
-        status: "agent_create_failed",
-        requestId: "req-agent-legacy",
-        error: "legacy git shape sentinel",
-      },
-    }),
-  );
-
-  await expect(createPromise).rejects.toThrow("legacy git shape sentinel");
 });
 
 test("sends structured first-agent context attachments with create_paseo_worktree_request", async () => {
@@ -7880,4 +7710,60 @@ test("measures an outbound message in UTF-8 bytes against the daemon's message l
   );
   expect(mock.sent).toHaveLength(1);
   expect(client.getConnectionState().status).toBe("connected");
+});
+
+test("sends worktree target and autoArchive in create_agent_request", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const createPromise = client.createAgent({
+    provider: "codex",
+    cwd: "/tmp/project",
+    worktree: {
+      mode: "branch-off",
+      newBranch: "agent-lifecycle-dispatch",
+      base: "main",
+    },
+    autoArchive: true,
+  });
+
+  expect(mock.sent).toHaveLength(1);
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toEqual(
+    expect.objectContaining({
+      type: "create_agent_request",
+      worktree: {
+        mode: "branch-off",
+        newBranch: "agent-lifecycle-dispatch",
+        base: "main",
+      },
+      autoArchive: true,
+    }),
+  );
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "status",
+      payload: {
+        status: "agent_create_failed",
+        requestId: request.requestId,
+        error: "worktree auto archive sentinel",
+      },
+    }),
+  );
+
+  await expect(createPromise).rejects.toThrow("worktree auto archive sentinel");
 });

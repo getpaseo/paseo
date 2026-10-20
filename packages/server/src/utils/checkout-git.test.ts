@@ -67,7 +67,7 @@ interface LegacyCreateWorktreeTestOptions {
   cwd: string;
   baseBranch: string;
   worktreeSlug: string;
-  runSetup?: boolean;
+
   paseoHome?: string;
 }
 
@@ -86,7 +86,7 @@ function createLegacyWorktreeForTest(
       baseBranch: options.baseBranch,
       branchName: options.branchName,
     },
-    runSetup: options.runSetup ?? true,
+
     paseoHome: options.paseoHome,
   });
 }

@@ -33,7 +33,7 @@ import {
   requireActiveWorkspaceForArchive,
   type ArchiveDependencies,
 } from "../../workspace-archive-service.js";
-import { createAgentCommand, type CreateAgentFromMcpInput } from "../create-agent/create.js";
+import { createAgentCommand } from "../create-agent/create.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../../voice-types.js";
 import type { FirstAgentContext } from "../../messages.js";
 import { everyMsToFiveFieldCron } from "@getpaseo/protocol/schedule/cadence";
@@ -1030,43 +1030,6 @@ function createToolCatalog(
       .strict()
       .describe("Create a root agent that does not appear in this agent's subagent track."),
   ]);
-  const AgentCreateWorktreeTargetInputSchema = z.discriminatedUnion("kind", [
-    z
-      .object({
-        kind: z.literal("branch-off"),
-        worktreeSlug: z
-          .string()
-          .min(1)
-          .optional()
-          .describe("Optional worktree slug/path label. Omit to let Paseo generate one."),
-        branchName: z
-          .string()
-          .min(1)
-          .optional()
-          .describe("Optional git branch name. Defaults to the worktree slug."),
-        baseBranch: z
-          .string()
-          .min(1)
-          .optional()
-          .describe("Optional base branch. Defaults to the repository default branch."),
-      })
-      .strict()
-      .describe("Create a new branch in a new Paseo worktree."),
-    z
-      .object({
-        kind: z.literal("checkout-branch"),
-        branch: z.string().min(1).describe("Existing branch to check out."),
-      })
-      .strict()
-      .describe("Check out an existing branch in a new Paseo worktree."),
-    z
-      .object({
-        kind: z.literal("checkout-pr"),
-        githubPrNumber: z.number().int().positive().describe("GitHub pull request number."),
-      })
-      .strict()
-      .describe("Check out a GitHub pull request in a new Paseo worktree."),
-  ]);
   const AgentWorkspaceInputSchema = z.discriminatedUnion("kind", [
     z
       .object({
@@ -1097,16 +1060,6 @@ function createToolCatalog(
                 .string()
                 .optional()
                 .describe("Optional directory path. Defaults to the caller's cwd."),
-            })
-            .strict(),
-          z
-            .object({
-              kind: z.literal("worktree"),
-              cwd: z
-                .string()
-                .optional()
-                .describe("Optional source repository. Defaults to the caller's cwd."),
-              target: AgentCreateWorktreeTargetInputSchema,
             })
             .strict(),
         ]),
@@ -1195,32 +1148,6 @@ function createToolCatalog(
       .record(z.string(), z.unknown())
       .optional()
       .describe("Legacy feature values. Prefer settings.features."),
-    worktreeName: z
-      .string()
-      .min(1)
-      .optional()
-      .describe("Legacy worktree slug. Prefer workspace.source.target.worktreeSlug."),
-    branchName: z
-      .string()
-      .min(1)
-      .optional()
-      .describe("Legacy branch name. Prefer workspace.source.target.branchName."),
-    baseBranch: z
-      .string()
-      .min(1)
-      .optional()
-      .describe("Legacy base branch. Prefer workspace.source.target.baseBranch."),
-    refName: z
-      .string()
-      .min(1)
-      .optional()
-      .describe("Legacy branch/ref to check out. Prefer workspace.source.target.branch."),
-    githubPrNumber: z
-      .number()
-      .int()
-      .positive()
-      .optional()
-      .describe("Legacy GitHub PR number. Prefer workspace.source.target.githubPrNumber."),
   };
   const createAgentInputSchema = z
     .object(scope === "agent" ? agentToAgentInputSchema : canonicalTopLevelInputSchema)
@@ -1560,7 +1487,7 @@ function createToolCatalog(
     },
     async (args: unknown) => {
       const resolvedArgs = await resolveCreateAgentToolArgs(args);
-      const { parsedArgs, worktree } = resolvedArgs;
+      const { parsedArgs } = resolvedArgs;
       let notifyOnFinish: boolean;
       if (resolvedArgs.kind === "agent-scoped") {
         notifyOnFinish = parsedArgs.notifyOnFinish;
@@ -1600,7 +1527,6 @@ function createToolCatalog(
           detached: resolvedArgs.detached,
           callerAgentId,
           callerContext,
-          worktree,
         },
       );
 
@@ -1634,7 +1560,6 @@ function createToolCatalog(
         detached: boolean;
         cwd: string | undefined;
         workspaceId: string | undefined;
-        worktree: CreateAgentFromMcpInput["worktree"];
       }
     | {
         kind: "top-level";
@@ -1642,16 +1567,38 @@ function createToolCatalog(
         detached: boolean;
         cwd: string | undefined;
         workspaceId: string | undefined;
-        worktree: CreateAgentFromMcpInput["worktree"];
       };
 
   async function resolveCreateAgentToolArgs(args: unknown): Promise<ResolvedCreateAgentToolArgs> {
+    const placement = args as {
+      worktreeName?: unknown;
+      branchName?: unknown;
+      baseBranch?: unknown;
+      refName?: unknown;
+      githubPrNumber?: unknown;
+      workspace?: { source?: { kind?: unknown } };
+    };
+    if (
+      placement &&
+      (placement.workspace?.source?.kind === "worktree" ||
+        [
+          placement.worktreeName,
+          placement.branchName,
+          placement.baseBranch,
+          placement.refName,
+          placement.githubPrNumber,
+        ].some((value) => value !== undefined))
+    ) {
+      throw new PaseoToolInputError(
+        "Agent worktree placement was removed. Use create_workspace first, then create_agent with workspaceId.",
+      );
+    }
     if (callerAgentId) {
       if (hasLegacyCreateAgentPlacement(args)) {
         // COMPAT(nestedCreateAgentPlacement): accept the old relationship/workspace shape without
         // advertising it to models. Added in v0.2.0; remove after 2027-01-17.
         const parsed = parseToolArguments(legacyAgentToAgentCreateAgentArgsSchema, args);
-        const { cwd, workspaceId, worktree } = await resolveCreateAgentWorkspace(parsed.workspace, {
+        const { cwd, workspaceId } = await resolveCreateAgentWorkspace(parsed.workspace, {
           prompt: parsed.initialPrompt,
         });
         return {
@@ -1660,7 +1607,6 @@ function createToolCatalog(
           detached: parsed.relationship.kind === "detached",
           cwd,
           workspaceId,
-          worktree,
         };
       }
       const parsed = parseToolArguments(agentToAgentCreateAgentArgsSchema, args);
@@ -1673,7 +1619,6 @@ function createToolCatalog(
         detached: false,
         cwd,
         workspaceId,
-        worktree: undefined,
       };
     }
     if (hasLegacyCreateAgentPlacement(args)) {
@@ -1689,17 +1634,15 @@ function createToolCatalog(
       if (!parsedArgs.workspace) {
         throw new PaseoToolInputError("Legacy create_agent placement could not be resolved");
       }
-      const { cwd, workspaceId, worktree } = await resolveCreateAgentWorkspace(
-        parsedArgs.workspace,
-        { prompt: parsedArgs.initialPrompt },
-      );
+      const { cwd, workspaceId } = await resolveCreateAgentWorkspace(parsedArgs.workspace, {
+        prompt: parsedArgs.initialPrompt,
+      });
       return {
         kind: "top-level",
         parsedArgs,
         detached: true,
         cwd,
         workspaceId,
-        worktree,
       };
     }
     const parsedArgs = parseToolArguments(canonicalTopLevelCreateAgentArgsSchema, args);
@@ -1713,7 +1656,6 @@ function createToolCatalog(
       detached: false,
       cwd,
       workspaceId,
-      worktree: undefined,
     };
   }
 
@@ -1770,18 +1712,7 @@ function createToolCatalog(
   function normalizeTopLevelCreateAgentArgs(
     args: LegacyTopLevelCreateAgentArgs,
   ): LegacyTopLevelCreateAgentArgs {
-    const {
-      cwd,
-      mode,
-      thinking,
-      features,
-      worktreeName,
-      branchName,
-      baseBranch,
-      refName,
-      githubPrNumber,
-      ...canonicalCandidate
-    } = args;
+    const { cwd, mode, thinking, features, ...canonicalCandidate } = args;
     const settings = {
       ...canonicalCandidate.settings,
       ...(mode ? { modeId: mode } : {}),
@@ -1804,29 +1735,10 @@ function createToolCatalog(
       throw new PaseoToolInputError("cwd is required for legacy top-level create_agent calls");
     }
 
-    const legacyWorktreeTarget = resolveLegacyCreateAgentWorktreeTarget({
-      worktreeName,
-      branchName,
-      baseBranch,
-      refName,
-      githubPrNumber,
-    });
-    const workspace = legacyWorktreeTarget
-      ? {
-          kind: "create" as const,
-          source: {
-            kind: "worktree" as const,
-            cwd,
-            target: legacyWorktreeTarget,
-          },
-        }
-      : {
-          kind: "create" as const,
-          source: {
-            kind: "directory" as const,
-            path: cwd,
-          },
-        };
+    const workspace = {
+      kind: "create" as const,
+      source: { kind: "directory" as const, path: cwd },
+    };
 
     return parseToolArguments(legacyTopLevelCreateAgentArgsSchema, {
       ...canonicalCandidate,
@@ -1834,39 +1746,6 @@ function createToolCatalog(
       workspace,
       ...(Object.keys(settings).length > 0 ? { settings } : {}),
     });
-  }
-
-  function resolveLegacyCreateAgentWorktreeTarget(input: {
-    worktreeName?: string;
-    branchName?: string;
-    baseBranch?: string;
-    refName?: string;
-    githubPrNumber?: number;
-  }): z.infer<typeof AgentCreateWorktreeTargetInputSchema> | null {
-    if (input.githubPrNumber !== undefined) {
-      return {
-        kind: "checkout-pr",
-        githubPrNumber: input.githubPrNumber,
-      };
-    }
-
-    if (input.refName) {
-      return {
-        kind: "checkout-branch",
-        branch: input.refName,
-      };
-    }
-
-    if (input.worktreeName || input.branchName || input.baseBranch) {
-      return {
-        kind: "branch-off",
-        worktreeSlug: input.worktreeName,
-        branchName: input.branchName,
-        baseBranch: input.baseBranch,
-      };
-    }
-
-    return null;
   }
 
   async function resolveCreateAgentWorkspace(
@@ -1877,7 +1756,6 @@ function createToolCatalog(
   ): Promise<{
     cwd: string | undefined;
     workspaceId: string | undefined;
-    worktree: CreateAgentFromMcpInput["worktree"];
   }> {
     if (workspace.kind === "current") {
       if (!callerAgentId) {
@@ -1890,7 +1768,6 @@ function createToolCatalog(
       return {
         cwd: workspace.cwd,
         workspaceId: callerAgent.workspaceId,
-        worktree: undefined,
       };
     }
 
@@ -1916,7 +1793,6 @@ function createToolCatalog(
       return {
         cwd,
         workspaceId: workspace.workspaceId,
-        worktree: undefined,
       };
     }
 
@@ -1930,42 +1806,12 @@ function createToolCatalog(
         workspaceId: await options.ensureWorkspaceForCreate(cwd, firstAgentContext, {
           callerWorkspaceId: resolveCallerAgent()?.workspaceId,
         }),
-        worktree: undefined,
       };
     }
 
-    const cwd = resolveScopedCwd(workspace.source.cwd, { required: true });
-    return {
-      cwd,
-      workspaceId: undefined,
-      worktree: resolveCreateAgentWorktree(workspace.source.target),
-    };
-  }
-
-  function resolveCreateAgentWorktree(
-    target: z.infer<typeof AgentCreateWorktreeTargetInputSchema>,
-  ): NonNullable<CreateAgentFromMcpInput["worktree"]> {
-    switch (target.kind) {
-      case "branch-off":
-        return {
-          action: "branch-off",
-          worktreeName: target.worktreeSlug,
-          branchName: target.branchName,
-          baseBranch: target.baseBranch,
-        };
-      case "checkout-branch":
-        return {
-          action: "checkout",
-          refName: target.branch,
-        };
-      case "checkout-pr":
-        return {
-          action: "checkout",
-          githubPrNumber: target.githubPrNumber,
-        };
-      default:
-        throw new Error("unreachable");
-    }
+    throw new PaseoToolInputError(
+      "Use create_workspace first, then create_agent with workspaceId.",
+    );
   }
 
   const PROMPTED_AGENT_NOTIFICATION_GUIDANCE =

@@ -459,12 +459,12 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   outputSchema?: Record<string, unknown>;
   images?: CreateAgentRequestMessage["images"];
   attachments?: CreateAgentRequestMessage["attachments"];
+  /** @deprecated Use createWorkspace({ source, agent, idempotencyKey }); rejected by createAgent. */
   git?: GitSetupOptions;
   worktree?: CreateAgentRequestMessage["worktree"];
   autoArchive?: CreateAgentRequestMessage["autoArchive"];
   background?: CreateAgentRequestMessage["background"];
-  // COMPAT(createAgentWorktree): low-level old callers may still send the
-  // create-agent worktree field. Added in v0.2.0; remove after 2027-01-17.
+  /** @deprecated Use createWorkspace({ source, agent, idempotencyKey }); rejected by createAgent. */
   worktreeName?: string;
   requestId?: string;
   labels?: Record<string, string>;
@@ -2963,6 +2963,11 @@ export class DaemonClient {
   }
 
   async createAgent(options: CreateAgentRequestOptions): Promise<AgentSnapshotPayload> {
+    if (options.git !== undefined || options.worktreeName !== undefined) {
+      throw new Error(
+        "Legacy git/worktreeName agent placement was removed. Use createWorkspace({ source, agent, idempotencyKey }) or create a workspace first and pass workspaceId.",
+      );
+    }
     if (options.background !== undefined) this.requireBackgroundWorkspaces();
     const result = await this.creations.createAgent({
       ...options,

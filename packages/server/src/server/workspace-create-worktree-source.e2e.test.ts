@@ -902,54 +902,26 @@ const timer = setInterval(() => {
   }
 }, 180000);
 
-test("legacy agent git creation retains setup output in its readable chat timeline", async () => {
+test("agent creation rejects legacy worktree intent without provisioning or executing setup", async () => {
   const daemon = await createTestPaseoDaemon();
   const { repoDir, tempRoot } = createGitRepoWithBranch();
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
   try {
-    writeFileSync(
-      path.join(repoDir, "paseo.json"),
-      JSON.stringify({ worktree: { setup: ["echo legacy-setup-output"] } }),
-    );
-    execFileSync("git", ["add", "paseo.json"], { cwd: repoDir });
-    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "setup fixture"], {
-      cwd: repoDir,
-      stdio: "pipe",
-    });
     await client.connect();
-    const agent = await client.createAgent({
-      provider: "codex",
-      cwd: repoDir,
-      git: {
-        createWorktree: true,
-        createNewBranch: true,
-        baseBranch: "main",
-        newBranchName: "legacy-setup",
-        worktreeSlug: "legacy-setup",
-      },
-    });
-    await expect
-      .poll(
-        async () => {
-          const timeline = await client.fetchAgentTimeline(agent.id, { limit: 100 });
-          return timeline.entries
-            .map((entry) => entry.item)
-            .find(
-              (item) =>
-                item.type === "tool_call" &&
-                item.name === "paseo_worktree_setup" &&
-                item.status === "completed",
-            );
+    await expect(
+      client.createAgent({
+        provider: "codex",
+        cwd: repoDir,
+        git: {
+          createWorktree: true,
+          createNewBranch: true,
+          baseBranch: "main",
+          newBranchName: "legacy-setup",
+          worktreeSlug: "legacy-setup",
         },
-        { timeout: 10000 },
-      )
-      .toMatchObject({
-        detail: {
-          type: "worktree_setup",
-          log: expect.stringContaining("legacy-setup-output"),
-          commands: [expect.objectContaining({ log: "legacy-setup-output\n" })],
-        },
-      });
+      }),
+    ).rejects.toThrow("createWorkspace");
+    expect((await client.fetchWorkspaces()).entries).toEqual([]);
   } finally {
     await client.close();
     await daemon.close();

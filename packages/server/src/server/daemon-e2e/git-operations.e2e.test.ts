@@ -12,72 +12,12 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "os";
 import path from "path";
 import { createDaemonTestContext, type DaemonTestContext } from "../test-utils/index.js";
-import { createMessageCollector, type MessageCollector } from "../test-utils/message-collector.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
 import { deriveWorktreeProjectHash } from "../../utils/worktree.js";
 import { isPlatform } from "../../test-utils/platform.js";
-import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
-import type { SessionOutboundMessage } from "../messages.js";
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-e2e-"));
-}
-
-function findTimelineToolCall(
-  messages: SessionOutboundMessage[],
-  agentId: string,
-  predicate: (item: AgentTimelineItem) => boolean,
-): AgentTimelineItem | null {
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const msg = messages[i];
-    if (msg?.type !== "agent_stream") {
-      continue;
-    }
-    if (msg.payload.agentId !== agentId) {
-      continue;
-    }
-    const event = msg.payload.event as { type?: string; item?: AgentTimelineItem };
-    if (event?.type !== "timeline") {
-      continue;
-    }
-    const item = event.item as AgentTimelineItem;
-    if (item?.type === "tool_call" && predicate(item)) {
-      return item;
-    }
-  }
-  return null;
-}
-
-async function waitForTimelineToolCall(
-  messages: SessionOutboundMessage[],
-  agentId: string,
-  predicate: (item: AgentTimelineItem) => boolean,
-  timeoutMs = 10000,
-): Promise<Extract<AgentTimelineItem, { type: "tool_call" }>> {
-  const startTime = Date.now();
-  while (Date.now() - startTime < timeoutMs) {
-    const existing = findTimelineToolCall(messages, agentId, predicate);
-    if (existing && existing.type === "tool_call") {
-      return existing;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  const recentToolCalls: Array<{ name: string; status?: string; callId?: string }> = [];
-  for (let i = messages.length - 1; i >= 0 && recentToolCalls.length < 10; i -= 1) {
-    const msg = messages[i];
-    if (msg?.type !== "agent_stream") continue;
-    if (msg.payload.agentId !== agentId) continue;
-    const event = msg.payload.event as { type?: string; item?: AgentTimelineItem };
-    if (event?.type !== "timeline") continue;
-    const item = event.item as AgentTimelineItem;
-    if (item?.type !== "tool_call") continue;
-    recentToolCalls.push({ name: item.name, status: item.status, callId: item.callId });
-  }
-  throw new Error(
-    `Timed out waiting for timeline tool_call (${agentId}). Recent tool_calls: ${JSON.stringify(
-      recentToolCalls,
-    )}`,
-  );
 }
 
 async function waitForPathExists(options: {
@@ -121,43 +61,17 @@ async function withShell<T>(shell: string, run: () => Promise<T>): Promise<T> {
   }
 }
 
-interface WorktreeTerminalBootstrapEntry {
-  name: string | null;
-  command: string;
-  status: "started" | "failed";
-  terminalId: string | null;
-  error: string | null;
-}
-
-function getWorktreeTerminalBootstrapEntries(
-  item: Extract<AgentTimelineItem, { type: "tool_call" }>,
-): WorktreeTerminalBootstrapEntry[] | null {
-  const detail = item.detail;
-  if (!detail || detail.type !== "unknown" || !detail.output) {
-    return null;
-  }
-  const output = detail.output as Record<string, unknown>;
-  const terminals = output.terminals;
-  if (!Array.isArray(terminals)) {
-    return null;
-  }
-  return terminals as WorktreeTerminalBootstrapEntry[];
-}
-
 // Use gpt-5.4-mini with low thinking preset for faster test execution
 const CODEX_TEST_MODEL = "gpt-5.4-mini";
 const CODEX_TEST_THINKING_OPTION_ID = "low";
 
 let ctx: DaemonTestContext;
-let collector: MessageCollector;
 
 beforeEach(async () => {
   ctx = await createDaemonTestContext();
-  collector = createMessageCollector(ctx.client);
 });
 
 afterEach(async () => {
-  collector.unsubscribe();
   await ctx.cleanup();
 }, 60000);
 
@@ -423,7 +337,7 @@ test("returns isGit false for non-git directory", async () => {
   rmSync(cwd, { recursive: true, force: true });
 }, 60000); // 1 minute timeout
 
-test("runs paseo.json setup asynchronously and reports status via timeline tool_call", async () => {
+test("runs paseo.json setup asynchronously and reports workspace status", async () => {
   const repoRoot = tmpCwd();
 
   const { execSync } = await import("child_process");
@@ -461,13 +375,7 @@ test("runs paseo.json setup asynchronously and reports status via timeline tool_
       thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
       cwd: repoRoot,
       title: "Async Worktree Setup Test",
-      git: {
-        createWorktree: true,
-        createNewBranch: true,
-        baseBranch: "main",
-        newBranchName: "async-setup-test",
-        worktreeSlug: "async-setup-test",
-      },
+      worktree: { mode: "branch-off", newBranch: "async-setup-test", base: "main" },
     }),
     timeoutMs: 2500,
     label: "createAgent should not block on setup",
@@ -478,19 +386,11 @@ test("runs paseo.json setup asynchronously and reports status via timeline tool_
 
   writeFileSync(path.join(agent.cwd, "allow-setup"), "ok\n");
 
-  const completed = await waitForTimelineToolCall(
-    collector.messages,
-    agent.id,
-    (item) => item.name === "paseo_worktree_setup" && item.status === "completed",
-    20000,
-  );
-
-  expect(completed.callId).toBeTruthy();
-  expect(completed.detail.type).toBe("worktree_setup");
-  if (completed.detail.type === "worktree_setup") {
-    expect(completed.detail.commands.length).toBeGreaterThan(0);
-    expect(completed.detail.log.length).toBeGreaterThan(0);
-  }
+  const completed = await waitForWorkspaceSetup(agent.workspaceId!, "completed");
+  expect(completed.detail.log).toBe("");
+  expect(completed.detail.commands).toEqual([
+    expect.objectContaining({ status: "completed", exitCode: 0 }),
+  ]);
   expect(existsSync(path.join(agent.cwd, "setup-done.txt"))).toBe(true);
 
   await ctx.client.deleteAgent(agent.id);
@@ -549,13 +449,7 @@ test("bootstraps configured worktree terminals after setup succeeds", async () =
         thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
         cwd: repoRoot,
         title: "Async Worktree Setup + Terminals Test",
-        git: {
-          createWorktree: true,
-          createNewBranch: true,
-          baseBranch: "main",
-          newBranchName: "async-setup-terminals-test",
-          worktreeSlug: "async-setup-terminals-test",
-        },
+        worktree: { mode: "branch-off", newBranch: "async-setup-terminals-test", base: "main" },
       }),
       timeoutMs: 2500,
       label: "createAgent should not block on setup",
@@ -568,25 +462,12 @@ test("bootstraps configured worktree terminals after setup succeeds", async () =
 
     writeFileSync(path.join(agent.cwd, "allow-setup"), "ok\n");
 
-    await waitForTimelineToolCall(
-      collector.messages,
-      agent.id,
-      (item) => item.name === "paseo_worktree_setup" && item.status === "completed",
-      20000,
-    );
-    const terminalsBootstrapToolCall = await waitForTimelineToolCall(
-      collector.messages,
-      agent.id,
-      (item) => item.name === "paseo_worktree_terminals" && item.status === "completed",
-      30000,
-    );
-    const bootstrappedTerminals = getWorktreeTerminalBootstrapEntries(terminalsBootstrapToolCall);
-    expect(bootstrappedTerminals).toBeTruthy();
-    expect(bootstrappedTerminals?.length ?? 0).toBeGreaterThanOrEqual(2);
-    const failedBootstraps =
-      bootstrappedTerminals?.filter((terminal) => terminal.status === "failed") ?? [];
-    expect(failedBootstraps).toEqual([]);
-
+    await waitForWorkspaceSetup(agent.workspaceId!, "completed");
+    await expect
+      .poll(async () => (await ctx.client.listTerminals(agent.cwd)).terminals.length, {
+        timeout: 30000,
+      })
+      .toBe(2);
     const list = await ctx.client.listTerminals(agent.cwd);
     expect(list.error).toBeUndefined();
     expect(list.terminals.some((terminal) => terminal.name === "Dev Server")).toBe(true);
@@ -639,7 +520,7 @@ test("bootstraps configured worktree terminals after setup succeeds", async () =
   });
 }, 60000);
 
-test("reports failures via timeline tool_call without deleting the created worktree", async () => {
+test("reports workspace setup failures without deleting the created worktree", async () => {
   const repoRoot = tmpCwd();
 
   const { execSync } = await import("child_process");
@@ -687,13 +568,7 @@ test("reports failures via timeline tool_call without deleting the created workt
       thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
       cwd: repoRoot,
       title: "Async Worktree Setup Failure Test",
-      git: {
-        createWorktree: true,
-        createNewBranch: true,
-        baseBranch: "main",
-        newBranchName: "async-setup-failure-test",
-        worktreeSlug: "async-setup-failure-test",
-      },
+      worktree: { mode: "branch-off", newBranch: "async-setup-failure-test", base: "main" },
     }),
     timeoutMs: 2500,
     label: "createAgent should not block on failing setup",
@@ -702,23 +577,7 @@ test("reports failures via timeline tool_call without deleting the created workt
   expect(agent.cwd).toContain(path.join(".paseo", "worktrees"));
   expect(existsSync(agent.cwd)).toBe(true);
 
-  const started = await waitForTimelineToolCall(
-    collector.messages,
-    agent.id,
-    (item) => item.name === "paseo_worktree_setup" && item.status === "running",
-    10000,
-  );
-
-  const failed = await waitForTimelineToolCall(
-    collector.messages,
-    agent.id,
-    (item) =>
-      item.name === "paseo_worktree_setup" &&
-      item.callId === started.callId &&
-      item.status === "failed",
-    20000,
-  );
-
+  const failed = await waitForWorkspaceSetup(agent.workspaceId!, "failed");
   expect(existsSync(path.join(agent.cwd, "setup-start.txt"))).toBe(true);
   expect(existsSync(path.join(agent.cwd, "should-not-run.txt"))).toBe(false);
 
@@ -726,7 +585,8 @@ test("reports failures via timeline tool_call without deleting the created workt
   if (failed.detail.type === "worktree_setup") {
     expect(Array.isArray(failed.detail.commands)).toBe(true);
     expect(failed.detail.commands[0]?.exitCode).toBe(7);
-    expect(failed.detail.log).toContain("Exit 7");
+    expect(failed.detail.log).toBe("");
+    expect(failed.detail.commands[0]?.log).toContain("boom");
   }
 
   await ctx.client.deleteAgent(agent.id);
@@ -756,13 +616,7 @@ test("creates agent in ~/.paseo/worktrees/{hash} when worktree is requested", as
     thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
     cwd,
     title: "Worktree Agent Test",
-    git: {
-      createWorktree: true,
-      createNewBranch: true,
-      newBranchName: "worktree-test",
-      worktreeSlug: "worktree-test",
-      baseBranch: "main",
-    },
+    worktree: { mode: "branch-off", newBranch: "worktree-test", base: "main" },
   });
 
   expect(agent.id).toBeTruthy();
@@ -776,7 +630,7 @@ test("creates agent in ~/.paseo/worktrees/{hash} when worktree is requested", as
   rmSync(cwd, { recursive: true, force: true });
 }, 60000);
 
-test("archiving a worktree shuts down its terminals but leaves the worktree on disk", async () => {
+test("archiving a worktree shuts down terminals and removes its final workspace backing", async () => {
   const repoRoot = tmpCwd();
 
   const { execSync } = await import("child_process");
@@ -823,13 +677,7 @@ test("archiving a worktree shuts down its terminals but leaves the worktree on d
       thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
       cwd: repoRoot,
       title: "Worktree Archive Cleanup Test",
-      git: {
-        createWorktree: true,
-        createNewBranch: true,
-        baseBranch: "main",
-        newBranchName: "archive-cleanup-test",
-        worktreeSlug: "archive-cleanup-test",
-      },
+      worktree: { mode: "branch-off", newBranch: "archive-cleanup-test", base: "main" },
     }),
     timeoutMs: 2500,
     label: "createAgent should not block on setup",
@@ -858,14 +706,23 @@ test("archiving a worktree shuts down its terminals but leaves the worktree on d
   expect(archive.success).toBe(true);
   expect(archive.removedAgents).toContain(agent.id);
 
-  // Archiving tears down the workspace's terminals but never deletes the
-  // worktree from disk and never runs teardown commands — on-disk removal is a
-  // separate, explicit step.
-  expect(existsSync(agent.cwd)).toBe(true);
-  expect(existsSync(teardownMarkerPath)).toBe(false);
+  // The final workspace reference owns teardown and backing-worktree removal.
+  expect(existsSync(agent.cwd)).toBe(false);
+  expect(readFileSync(teardownMarkerPath, "utf8").trim()).toBe(agent.cwd);
 
   const afterArchiveDirectories = ctx.daemon.daemon.terminalManager.listDirectories();
   expect(afterArchiveDirectories).not.toContain(agent.cwd);
 
   rmSync(repoRoot, { recursive: true, force: true });
 }, 60000);
+
+async function waitForWorkspaceSetup(workspaceId: string, status: "completed" | "failed") {
+  await expect
+    .poll(async () => (await ctx.client.fetchWorkspaceSetupStatus(workspaceId)).snapshot?.status, {
+      timeout: 20000,
+    })
+    .toBe(status);
+  const snapshot = (await ctx.client.fetchWorkspaceSetupStatus(workspaceId)).snapshot;
+  if (!snapshot) throw new Error("Expected workspace setup snapshot");
+  return snapshot;
+}
