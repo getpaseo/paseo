@@ -141,11 +141,10 @@ function zaiPlanLabel(input: {
   return level.charAt(0).toUpperCase() + level.slice(1);
 }
 
-// Z.ai's error-code table (https://docs.z.ai/api-reference/api-code) documents these as
-// HTTP 401: authentication failed, missing credentials, expired token, two-factor
-// authentication required. The usage endpoints deliver them inside an HTTP 200 envelope,
-// so the report carries the documented 401 rather than the transport's 200.
-const ZAI_AUTH_FAILURE_CODES = new Set([1000, 1001, 1003, 1005]);
+// Z.ai documents business codes 1000, 1001, 1003 and 1005 as HTTP 401:
+// https://docs.z.ai/api-reference/api-code. The usage endpoints can also return
+// code 401 inside an HTTP 200 failure envelope. Both forms mean login was rejected.
+const ZAI_AUTH_FAILURE_CODES = new Set([401, 1000, 1001, 1003, 1005]);
 
 // undici reports network failures as a TypeError and AbortSignal.timeout as a
 // DOMException named TimeoutError (AbortError on an externally aborted signal). Only

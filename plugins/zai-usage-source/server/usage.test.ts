@@ -271,7 +271,7 @@ describe("zai usage source", () => {
     await expect(service().listUsage()).rejects.toThrow("Z.ai usage API returned 500");
   });
 
-  it.each([1000, 1001, 1003, 1005])(
+  it.each([401, 1000, 1001, 1003, 1005])(
     "reports a Z.ai HTTP 200 envelope with auth code %i as a rejected login",
     async (code) => {
       process.env["ZAI_API_KEY"] = "zai_bad_token";
@@ -285,7 +285,7 @@ describe("zai usage source", () => {
 
       const zai = findProvider(await service().listUsage(), "zai");
 
-      // Z.ai documents these codes as HTTP 401; the 200 is only the envelope's transport.
+      // Authentication failure codes inside HTTP 200 still represent a rejected login.
       expect(zai).toMatchObject({
         status: "unavailable",
         problem: { kind: "rejected", status: 401 },
