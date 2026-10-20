@@ -86,6 +86,6 @@ const styles = StyleSheet.create({
     minHeight: 0,
   },
   host: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
 });

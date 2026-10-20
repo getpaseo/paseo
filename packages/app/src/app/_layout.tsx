@@ -1,3 +1,4 @@
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { ComposerEditingSessionsProvider } from "@/composer/editing-session";
 import "@/styles/unistyles";
@@ -42,7 +43,7 @@ import { DesktopWindowControls } from "@/components/desktop/window-controls";
 import { SidebarModelProvider } from "@/components/sidebar/sidebar-model";
 import { WorkspacePinShortcutHandler } from "@/components/workspace-pin-shortcut-handler";
 import { WorkspaceRenameHost } from "@/components/workspace-rename-host";
-import { CompactExplorerSidebarHost } from "@/components/compact-explorer-sidebar-host";
+import { WorkspaceExplorerOpenGesture } from "@/mobile-panels/explorer-open-gesture";
 import { ProviderSettingsHost } from "@/components/provider-settings-host";
 import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
 import { WorkspaceShortcutTargetsSubscriber } from "@/components/workspace-shortcut-targets-subscriber";
@@ -91,10 +92,7 @@ import { useGlobalNewWorkspaceAction } from "@/hooks/use-global-new-workspace-ac
 import { useLatchedBoolean } from "@/hooks/use-latched-boolean";
 import { useFaviconStatus } from "@/hooks/use-favicon-status";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
-import {
-  resolveExplorerSidebarPresentation,
-  useIsExplorerSidebarOpen,
-} from "@/workspace-tabs/explorer-sidebar";
+import { useIsExplorerSidebarOpen } from "@/workspace-tabs/explorer-sidebar";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { KeyboardShiftProvider } from "@/keyboard/shift";
@@ -470,17 +468,15 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const isFocusModeEnabled = usePanelStore((state) => state.desktop.focusModeEnabled);
   const isDesktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
-  const { width: viewportWidth } = useWindowDimensions();
+  const { width: windowWidth } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const viewportWidth = windowWidth - insets.left - insets.right;
 
   const cycleTheme = useCallback(() => {
     void updateSettings({ theme: getNextThemePreference(settings.theme) });
   }, [settings.theme, updateSettings]);
 
   const isCompactLayout = useIsCompactFormFactor();
-  const explorerSidebarPresentation = resolveExplorerSidebarPresentation({
-    isCompact: isCompactLayout,
-  });
-  const usesCompactExplorerHost = explorerSidebarPresentation !== "pane";
   useCompactWebViewportZoomLock(isCompactLayout);
   const pathname = usePathname();
   const workspaceRoute = useActiveWorkspaceSelection();
@@ -564,28 +560,25 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   if (isWeb) {
     themedSidebarChrome = <AppearanceStyleBoundary>{sidebarChrome}</AppearanceStyleBoundary>;
   }
+  const workspaceChromeStyle = useMemo(
+    () => [rowStyle, !isCompactLayout && { paddingLeft: insets.left, paddingRight: insets.right }],
+    [insets.left, insets.right, isCompactLayout],
+  );
   const workspaceChrome = (
-    <View style={rowStyle}>
+    <View style={workspaceChromeStyle}>
       <WorkspaceLayoutModePublisher />
       {!isCompactLayout ? (
         <WindowChromeRegion corners={appChromeLayout.sidebarCorners}>
           {themedSidebarChrome}
         </WindowChromeRegion>
       ) : null}
-      {usesCompactExplorerHost ? (
-        <CompactExplorerSidebarHost
-          enabled={chromeEnabled}
-          presentation={explorerSidebarPresentation === "dock" ? "dock" : "overlay"}
+      <WorkspaceExplorerOpenGesture enabled={chromeEnabled && isCompactLayout}>
+        <WindowChromeRegion
+          corners={isCompactLayout && chromeEnabled ? "both" : appChromeLayout.contentCorners}
         >
-          <WindowChromeRegion corners={chromeEnabled ? "both" : appChromeLayout.contentCorners}>
-            <View style={flexStyle}>{children}</View>
-          </WindowChromeRegion>
-        </CompactExplorerSidebarHost>
-      ) : (
-        <WindowChromeRegion corners={appChromeLayout.contentCorners}>
           <View style={flexStyle}>{children}</View>
         </WindowChromeRegion>
-      )}
+      </WorkspaceExplorerOpenGesture>
     </View>
   );
 
@@ -636,15 +629,27 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     </View>
   );
 
-  const content = isCompactLayout ? (
-    <MobileGestureWrapper chromeEnabled={chromeEnabled}>{surface}</MobileGestureWrapper>
-  ) : (
-    surface
+  return (
+    <AppContainerLifetime compactGesturesEnabled={chromeEnabled && isCompactLayout}>
+      {surface}
+    </AppContainerLifetime>
   );
+}
 
+function AppContainerLifetime({
+  children,
+  compactGesturesEnabled,
+}: {
+  children: ReactNode;
+  compactGesturesEnabled: boolean;
+}) {
   return (
     <ComposerEditingSessionsProvider>
-      <CommandCenterProvider>{content}</CommandCenterProvider>
+      <CommandCenterProvider>
+        <MobileGestureWrapper chromeEnabled={compactGesturesEnabled}>
+          {children}
+        </MobileGestureWrapper>
+      </CommandCenterProvider>
     </ComposerEditingSessionsProvider>
   );
 }
@@ -678,10 +683,15 @@ function MobileGestureWrapper({
   chromeEnabled: boolean;
 }) {
   const openGesture = useOpenAgentListGesture(chromeEnabled);
+  const isCompactLayout = useIsCompactFormFactor();
 
   return (
     <GestureDetector gesture={openGesture} touchAction={MOBILE_WEB_GESTURE_TOUCH_ACTION}>
-      <View collapsable={false} style={layoutStyles.surfaceFill} testID="compact-shell">
+      <View
+        collapsable={false}
+        style={layoutStyles.surfaceFill}
+        testID={isCompactLayout ? "compact-shell" : "wide-shell"}
+      >
         {children}
       </View>
     </GestureDetector>

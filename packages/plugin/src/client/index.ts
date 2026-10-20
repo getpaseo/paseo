@@ -8,7 +8,7 @@ export type {
   PluginScreenLocation,
   PluginSidebarItemProps,
   PluginSidebarItemContribution,
-  PluginIconProps,
+  PluginIcon,
   PluginPanelLocation,
   PluginOpenPanelOptions,
   PluginWorkspacePanelProps,
@@ -45,6 +45,7 @@ export type {
   PluginComposerPillContribution,
   PluginHeaderButtonContribution,
 } from "./buttons.js";
+export type { PluginIconProps, PluginSerializableIcon, PluginSvgIcon } from "../icons.js";
 export { usePaseo } from "./paseo-context.js";
 export { useAgent, useWorkspace } from "./client-state.js";
 export { useRpc } from "./rpc-context.js";

@@ -363,10 +363,11 @@ export async function resizeComposerViewport(
   await page.setViewportSize(sizes[orientation]);
   // Before the app has loaded there is no layout to wait for.
   if (page.url() === "about:blank") return;
-  // Crossing the compact breakpoint remounts the shell and the editor. Anything that
-  // follows (a shortcut, a locator) belongs to the layout the new size implies, so
-  // wait for that layout before returning.
-  await expect(page.getByTestId("compact-shell")).toHaveCount(orientation === "landscape" ? 0 : 1);
+  // The shell and editor survive the breakpoint. Wait for the shell's layout
+  // marker to update before interacting with the resized composer.
+  await expect(
+    page.getByTestId(orientation === "landscape" ? "wide-shell" : "compact-shell"),
+  ).toBeVisible();
 }
 export async function selectComposerDraftRange(
   page: Page,
@@ -500,4 +501,60 @@ export async function expectNoCollapsedVisibleComposer(page: Page): Promise<void
   });
   expect(frames.length).toBeGreaterThan(0);
   expect(frames.filter((frame) => frame.root < 42 || frame.input < 42)).toEqual([]);
+}
+
+/** Exercise the quick-return race before a hidden pane gets a rendering frame. */
+export async function roundTripComposerTabBeforePaint(
+  page: Page,
+  activeChatTitle: string,
+): Promise<void> {
+  const activeTab = page.getByRole("button", { name: activeChatTitle, exact: true });
+  await expect(activeTab).toHaveAttribute("aria-selected", "true");
+  const result = await activeTab.evaluate((tab) => {
+    const editor = document.activeElement;
+    return new Promise<{ returnedBeforePaint: boolean; focused: boolean }>((resolve) => {
+      let switchedAway = false;
+      let painted = false;
+      let frame = 0;
+      const shortcut = (code: "BracketLeft" | "BracketRight") => {
+        document.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: code === "BracketLeft" ? "{" : "}",
+            code,
+            altKey: true,
+            shiftKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      };
+      // Watch selection commits without reading layout: a layout read could make
+      // Chromium blur the hidden editor and erase the condition under test.
+      const observer = new MutationObserver(() => {
+        if (!switchedAway && tab.getAttribute("aria-selected") === "false") {
+          switchedAway = true;
+          frame = requestAnimationFrame(() => {
+            painted = true;
+          });
+          // Deliver the return shortcut before rendering, without a Playwright
+          // round trip allowing the browser to paint the inactive tab first.
+          shortcut("BracketRight");
+        } else if (switchedAway && tab.getAttribute("aria-selected") === "true") {
+          observer.disconnect();
+          cancelAnimationFrame(frame);
+          return resolve({
+            returnedBeforePaint: !painted,
+            focused: document.activeElement === editor,
+          });
+        }
+      });
+      observer.observe(tab, { attributes: true, attributeFilter: ["aria-selected"] });
+      shortcut("BracketLeft");
+    });
+  });
+  expect(
+    result.returnedBeforePaint,
+    "tab round trip must finish before rendering the hidden pane",
+  ).toBe(true);
+  expect(result.focused, "returning on touch must leave the composer unfocused").toBe(false);
 }

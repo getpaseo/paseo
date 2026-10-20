@@ -255,7 +255,7 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
-Icons are Lucide icon names. `theme` is a typed `PluginTheme` on every screen and panel. Primary text uses `theme.colors.foreground`; labels use `theme.colors.foregroundMuted`; the root view uses `theme.colors.surface0`. `layout.compact` is true on mobile and narrow windows. Paseo owns the route, header, host picker, close action, error boundary, and per-installation query client.
+Icons are Lucide icon names, inline SVG (`{ svg }`), or components; see [Icons](https://paseo.sh/docs/plugins/reference.md#icons). `theme` is a typed `PluginTheme` on every screen and panel. Primary text uses `theme.colors.foreground`; labels use `theme.colors.foregroundMuted`; the root view uses `theme.colors.surface0`. `layout.compact` is true on mobile and narrow windows. Paseo owns the route, header, host picker, close action, error boundary, and per-installation query client.
 
 Before writing imports, classify each module as shared, client, or server. Follow the
 [SDK import boundaries](https://paseo.sh/docs/plugins/reference.md#runtime-modules), including
@@ -724,7 +724,7 @@ After a change:
 
 Common failures:
 
-- Missing sidebar item: wrong host, plugin not `running`, the item is hidden in Settings > Sidebar, or its component throws (an invalid Lucide icon name throws).
+- Missing sidebar item: wrong host, plugin not `running`, the item is hidden in Settings > Sidebar, or its component throws (a `SidebarRow` with an unknown Lucide name or unsafe SVG throws).
 - Unavailable client module: client bundles can use only the host-provided modules listed above.
 - RPC rejection: input or output failed its Zod schema, or the handler threw. Inspect `paseo plugin logs <id>` for handler output.
 - Plugin exits or reload fails: inspect `paseo plugin ls` for status and `paseo plugin logs <id>` for initialization, cleanup, or crash output.

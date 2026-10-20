@@ -275,3 +275,29 @@ it("keeps unavailable and error reports out of the sidebar summary even with ret
   };
   expect(resolvePinnedUsage([expired, failed], preferences(null))).toEqual([]);
 });
+
+it("localizes pinned labels and meanings while preserving custom window names", async () => {
+  const { i18n } = await import("@/i18n/i18next");
+  await i18n.changeLanguage("ja");
+  try {
+    const entries = [
+      report({
+        sourceId: "test",
+        sourceLabel: "Test",
+        windows: [
+          { id: "session", label: "Session", summary: true, usedPct: 70 },
+          { id: "weekly", label: "My allowance", summary: true, usedPct: 20 },
+        ],
+      }),
+    ];
+    expect(windows(entries, preferences(null)).map((w) => [w.label, w.shortLabel])).toEqual([
+      ["Test セッション 70% 使用済み", "セッション"],
+      ["Test My allowance 20% 使用済み", "My allowance"],
+    ]);
+    expect(windows(entries, preferences(null, "remaining"))[0].label).toBe(
+      "Test セッション 残り 30%",
+    );
+  } finally {
+    await i18n.changeLanguage("en");
+  }
+});

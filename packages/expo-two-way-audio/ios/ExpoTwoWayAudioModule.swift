@@ -152,7 +152,7 @@ public class ExpoTwoWayAudioModule: Module {
             EXPermissionsMethodsDelegate.getPermissionWithPermissionsManager(
                 self.appContext?.permissions,
                 withRequester: MicrophonePermissionRequester.self,
-                resolve: promise.resolver,
+                resolve: promise.legacyResolver,
                 reject: promise.legacyRejecter
             )
         }
@@ -161,7 +161,7 @@ public class ExpoTwoWayAudioModule: Module {
             EXPermissionsMethodsDelegate.askForPermission(
                 withPermissionsManager: self.appContext?.permissions,
                 withRequester: MicrophonePermissionRequester.self,
-                resolve: promise.resolver,
+                resolve: promise.legacyResolver,
                 reject: promise.legacyRejecter
             )
         }

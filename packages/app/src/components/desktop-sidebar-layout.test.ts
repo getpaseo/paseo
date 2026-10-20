@@ -292,3 +292,27 @@ describe("desktop sidebar layout", () => {
     ).toBe(true);
   });
 });
+
+it("reserves room for Explorer and the workspace before showing app navigation", () => {
+  const contentMinimumWidth = resolveDesktopAppContentMinimum({
+    isSettingsRoute: false,
+    isWorkspaceExplorerOpen: true,
+    requestedSidebarWidth: 320,
+    viewportWidth: 1040,
+  });
+  expect(contentMinimumWidth).toBe(720);
+  expect(
+    canDesktopAppSidebarShare({
+      contentMinimumWidth,
+      requestedSidebarWidth: 320,
+      viewportWidth: 744,
+    }),
+  ).toBe(false);
+  expect(
+    canDesktopAppSidebarShare({
+      contentMinimumWidth,
+      requestedSidebarWidth: 320,
+      viewportWidth: 1040,
+    }),
+  ).toBe(true);
+});

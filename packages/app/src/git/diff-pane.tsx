@@ -1427,10 +1427,9 @@ function useDiffTabNavigation({
     openWorkspacePullRequest({
       isCompact: isMobile,
       workspaceKey: persistenceKey,
-      checkout: { serverId, cwd, isGit: true },
       destination: pullRequestOpenLocation,
     });
-  }, [cwd, isMobile, persistenceKey, pullRequestOpenLocation, serverId]);
+  }, [isMobile, persistenceKey, pullRequestOpenLocation]);
   return {
     openDiff,
     openCommit,
