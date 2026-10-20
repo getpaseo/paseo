@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/GestureHandlerOrchestrator.kt b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/GestureHandlerOrchestrator.kt
-index 8d78aea..02e3ea6 100644
+index 8d78aea..6623797 100644
 --- a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/GestureHandlerOrchestrator.kt
 +++ b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/GestureHandlerOrchestrator.kt
 @@ -2,6 +2,7 @@ package com.swmansion.gesturehandler.core
@@ -97,7 +97,7 @@ index 8d78aea..02e3ea6 100644
 +    var found = false
 +    if (view is ViewGroup && pointerEvents != PointerEventsConfig.BOX_ONLY) {
 +      for (i in view.childCount - 1 downTo 0) {
-+        val child = viewConfigHelper.getChildInDrawingOrderAtIndex(view, i)
++        val child = view.getChildAt(i)
 +        if (!canReceiveEvents(child)) {
 +          continue
 +        }
@@ -138,7 +138,7 @@ index 8d78aea..02e3ea6 100644
      viewGroup: ViewGroup,
      coords: FloatArray,
 diff --git a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt
-index 629c155..e1909ff 100644
+index 629c155..dc0790d 100644
 --- a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt
 +++ b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt
 @@ -19,6 +19,7 @@ class RNGestureHandlerRootHelper(private val context: ReactContext, wrappedView:
@@ -157,7 +157,7 @@ index 629c155..e1909ff 100644
 +    // On the transition into interception, cancel the native views the pointers landed on - the
 +    // framework's ACTION_CANCEL never reaches them since RNGH ignores `onInterceptTouchEvent`.
 +    if (shouldIntercept && !wasIntercepting) {
-+      orchestrator!!.cancelTouchesInInterceptedViews(ev)
++      orchestrator!!.cancelTouchesInInterceptedViews(event)
 +    }
 +    wasIntercepting = shouldIntercept
 +
