@@ -85,7 +85,12 @@ function MarkdownEditor({ file, tab, theme }: PluginFilePanelProps) {
       unwatch();
       clearTimeout(saveTimer.current);
       // Switching panels keeps the edit. Closing the tab asks first and drops it if discarded.
-      if (unsaved.current !== null) void file.writeText(unsaved.current).catch(() => {});
+      // The panel is gone, so a failed write (a conflict, a lost connection) can only be reported.
+      if (unsaved.current !== null) {
+        void file.writeText(unsaved.current).catch((cause) => {
+          console.warn(`Unsaved edits to ${file.name} were not written: ${messageOf(cause)}`);
+        });
+      }
     };
   }, [file, load]);
 

@@ -41,10 +41,3 @@ export function filePanelCatalog<Plugin extends FilePanelCandidate>(
 ): readonly (RenderingFilePanel | Plugin | SourceFilePanel)[] {
   return [...renderingPanels, ...pluginPanels, sourceFilePanel];
 }
-
-/** Source is Paseo's own editor, so the file tab renders it rather than the panel host. */
-export function isSourceFilePanel<Panel extends { id: string }>(
-  panel: Panel | SourceFilePanel,
-): panel is SourceFilePanel {
-  return panel.id === sourceFilePanel.id;
-}

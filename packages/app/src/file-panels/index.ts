@@ -1,4 +1,3 @@
-export { isSourceFilePanel } from "./catalog";
 export { FilePanelView } from "./view";
 export type { FilePanel } from "./panels";
 export {

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 
 /**
- * The file a file panel shows. Stable for the life of the tab's target. The stat fields are
- * refreshed when the file changes on disk.
+ * The file a file panel shows. Stable for the life of the tab's target. The stat fields hold the
+ * latest version Paseo knows; read them while rendering. Changing them does not re-render the
+ * panel: `watch`, or a re-render from the read hooks, is how a panel learns they changed.
  */
 export interface PluginFile {
   /** Absolute path on the host. */

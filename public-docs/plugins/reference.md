@@ -1806,7 +1806,9 @@ props described under [Theme and layout](#theme-and-layout), plus:
 | `location`    | `PluginFileLocation` | `lineStart?`, `lineEnd?`, and `revision`, which increments on every navigation. |
 
 Paseo mounts your panel once it knows the file exists and its size, without reading it. The
-`PluginFile` stat fields refresh when the file changes on disk:
+`file` object is stable, and its stat fields hold the latest version Paseo knows. Read them while
+rendering; changing them does not re-render your panel. A `watch` listener, or a re-render from
+`useFileText`, `useFileBytes`, or `useFileUrl`, is how your panel learns they changed:
 
 | Member                           | Meaning                                                                                     |
 | -------------------------------- | ------------------------------------------------------------------------------------------- |

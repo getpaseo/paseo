@@ -6,6 +6,7 @@ import { buildFilePanelSettingsRows } from "./rows";
 type HostedCandidate = FilePanelCandidate & { serverId?: string };
 
 const builtinMarkdown: HostedCandidate = filePanelCatalog([])[0];
+const builtinImage: HostedCandidate = filePanelCatalog([])[2];
 const source: HostedCandidate = sourceFilePanel;
 
 /** What Settings reads: the built-ins and every host's plugin panels, in catalog order. */
@@ -49,21 +50,28 @@ describe("buildFilePanelSettingsRows", () => {
     ]);
   });
 
-  it("offers Source only on keys a built-in text panel claims, and asks only between several", () => {
-    const pdf: HostedCandidate = {
-      id: "plugin:pdf-panel/pdf",
+  it("offers Source on a key only a plugin panel claims, as the picker does for a text file", () => {
+    const toml: HostedCandidate = {
+      id: "plugin:toml/toml",
       builtin: false,
-      files: { extensions: ["pdf"] },
+      files: { extensions: ["toml"] },
     };
-    expect(rows(catalog(pdf))).toEqual([]);
-    expect(rows(catalog(pdf), { "ext:pdf": pdf.id })).toEqual([
-      { selectorKey: "ext:pdf", candidates: [pdf], associatedPanelId: pdf.id },
+    expect(rows(catalog(toml))).toEqual([
+      { selectorKey: "ext:toml", candidates: [toml, source], associatedPanelId: null },
     ]);
+    const other: HostedCandidate = { ...dockerfile, id: "plugin:other/dockerfile" };
+    expect(rows(catalog(dockerfile, other))[0]?.candidates).toEqual([dockerfile, other, source]);
   });
 
-  it("does not offer Source on a key only plugin panels claim: their files' kind is unknown", () => {
-    const other: HostedCandidate = { ...dockerfile, id: "plugin:other/dockerfile" };
-    expect(rows(catalog(dockerfile, other))[0]?.candidates).toEqual([dockerfile, other]);
+  it("does not offer Source on a key the built-in image panel claims", () => {
+    const viewer: HostedCandidate = {
+      id: "plugin:viewer/png",
+      builtin: false,
+      files: { extensions: ["png"] },
+    };
+    expect(rows(catalog(viewer))).toEqual([
+      { selectorKey: "ext:png", candidates: [builtinImage, viewer], associatedPanelId: null },
+    ]);
   });
 
   it("offers a panel installed on several hosts once, as the first host has it", () => {
@@ -84,7 +92,7 @@ describe("buildFilePanelSettingsRows", () => {
 
   it("keeps a remembered key whose panel is on no connected host", () => {
     expect(rows(catalog(), { "ext:pdf": "plugin:pdf-panel/pdf" })).toEqual([
-      { selectorKey: "ext:pdf", candidates: [], associatedPanelId: "plugin:pdf-panel/pdf" },
+      { selectorKey: "ext:pdf", candidates: [source], associatedPanelId: "plugin:pdf-panel/pdf" },
     ]);
   });
 
