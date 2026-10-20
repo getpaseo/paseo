@@ -1350,7 +1350,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
         </>
       ) : null}
 
-      {modeControl ? <AgentModeControl {...modeControl} surface="sheet" /> : null}
+      {modeControl ? <AgentModeControl {...modeControl} surface="toolbar" /> : null}
 
       {(features ?? []).map((feature) => (
         <SheetFeatureItem
@@ -1560,13 +1560,14 @@ function SheetFeatureItem({
       <AgentControlTrigger
         icon={FeatureIcon}
         iconColor={getFeatureIconColor(feature, theme.colors.palette, theme.colors.foregroundMuted)}
-        surface="sheet"
+        surface="toolbar"
         label={feature.label}
         value={
           isFeatureActive(feature)
             ? t("agentControls.features.on")
             : t("agentControls.features.off")
         }
+        showToolbarLabel={false}
         disabled={disabled}
         onPress={handleTogglePress}
         accessibilityState={accessibilityState}
@@ -1590,9 +1591,10 @@ function SheetFeatureItem({
             theme.colors.palette,
             theme.colors.foregroundMuted,
           )}
-          surface="sheet"
+          surface="toolbar"
           label={feature.label}
           value={selectedOption?.label ?? feature.label}
+          showToolbarLabel={false}
           open={openSelector === featureSelector}
           disabled={disabled}
           onPress={handleSelectPress}
