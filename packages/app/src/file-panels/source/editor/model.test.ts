@@ -188,6 +188,18 @@ describe("FileEditorModel", () => {
     expect(clock.scheduled).toBe(false);
   });
 
+  test("a save over a deletion it has not heard about shows the deleted notice", async () => {
+    const { session, handle, model } = await openEditor();
+
+    handle.setObserving(false);
+    session.remove("source.ts");
+    model.edit("local\n");
+    await model.save();
+
+    expect(getFileConflictCallout(model.getSnapshot())).toEqual({ kind: "deleted" });
+    expect(model.getSnapshot().content).toBe("local\n");
+  });
+
   test("an external change during a save is reconciled after it", async () => {
     const { session, handle, model } = await openEditor();
 

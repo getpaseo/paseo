@@ -1,5 +1,6 @@
 import {
   PluginFileConflictError,
+  PluginFileDeletedError,
   type PluginFilePanelProps,
   useFileText,
 } from "@getpaseo/plugin/client";
@@ -47,6 +48,7 @@ function MarkdownEditor({ file, tab, theme }: PluginFilePanelProps) {
         await file.writeText(next, { force });
       } catch (cause) {
         if (cause instanceof PluginFileConflictError) setState("conflict");
+        else if (cause instanceof PluginFileDeletedError) setState("deleted");
         else setError(messageOf(cause));
         return;
       }
@@ -77,7 +79,7 @@ function MarkdownEditor({ file, tab, theme }: PluginFilePanelProps) {
   useEffect(() => {
     void load();
     const unwatch = file.watch((event) => {
-      if (event === "deleted") setState("deleted");
+      if (event.type === "deleted") setState("deleted");
       else if (unsaved.current === null) void load();
       else setState("conflict");
     });

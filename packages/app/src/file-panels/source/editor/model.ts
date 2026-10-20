@@ -1,5 +1,6 @@
 import {
   PluginFileConflictError,
+  PluginFileDeletedError,
   type PluginFile,
   type PluginFileEvent,
 } from "@getpaseo/plugin/client";
@@ -145,14 +146,14 @@ export class FileEditorModel {
   private receiveFileEvent(event: PluginFileEvent): void {
     if (this.disposed) return;
     if (!this.isLoaded()) {
-      if (event === "changed") void this.reload();
+      if (event.type === "changed") void this.reload();
       return;
     }
     if (this.saving) {
       this.eventDuringSave = event;
       return;
     }
-    if (event === "deleted") {
+    if (event.type === "deleted") {
       this.enterConflict("deleted");
       return;
     }
@@ -170,7 +171,7 @@ export class FileEditorModel {
     }
     if (this.disposed || sequence !== this.readSequence) return;
     if (this.saving) {
-      this.eventDuringSave = "changed";
+      this.eventDuringSave = { type: "changed" };
       return;
     }
     if (content === this.persisted) {
@@ -198,6 +199,7 @@ export class FileEditorModel {
       this.saving = false;
       if (this.disposed || sequence !== this.saveSequence) return;
       if (error instanceof PluginFileConflictError) this.enterConflict("changed");
+      else if (error instanceof PluginFileDeletedError) this.enterConflict("deleted");
       else this.setSnapshot({ ...this.snapshot, status: "error", error: errorMessage(error) });
       this.receivePendingEvent();
       return;

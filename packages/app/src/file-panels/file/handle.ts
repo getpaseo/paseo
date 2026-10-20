@@ -1,5 +1,6 @@
 import {
   PluginFileConflictError,
+  PluginFileDeletedError,
   type PluginFile,
   type PluginFileEvent,
   type PluginFileWriteOptions,
@@ -253,7 +254,7 @@ export class FileHandle {
     this.deleted = false;
     if (this.seen.has(key) && !restored) return;
     this.seen.add(key);
-    this.emit("changed");
+    this.emit({ type: "changed" });
   }
 
   private async confirmDeletion(): Promise<void> {
@@ -274,7 +275,7 @@ export class FileHandle {
     }
     if (this.latest?.status !== "missing") return;
     this.deleted = true;
-    this.emit("deleted");
+    this.emit({ type: "deleted" });
   }
 
   private emit(event: PluginFileEvent): void {
@@ -359,9 +360,8 @@ export class FileHandle {
           expected = disk;
           continue;
         }
-        throw new PluginFileConflictError(
-          disk.status === "missing" ? "The file was deleted." : undefined,
-        );
+        if (disk.status === "missing") throw new PluginFileDeletedError();
+        throw new PluginFileConflictError();
       }
     } finally {
       this.writing -= 1;

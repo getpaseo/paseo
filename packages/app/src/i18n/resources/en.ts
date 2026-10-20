@@ -1966,6 +1966,7 @@ export const en = {
       noPreview: "No preview available",
       binaryPreviewUnavailable: "Binary preview unavailable",
       tooLargeToDisplay: "This file is too large to display",
+      documentUnsupported: "{{type}} files can't be shown on this device",
       failedToLoad: "Failed to load file",
       notFound: "File not found",
       failedToLoadPreview: "Failed to load file preview",

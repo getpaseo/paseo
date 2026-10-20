@@ -1,4 +1,8 @@
-import { PluginFileConflictError, type PluginFileEvent } from "@getpaseo/plugin/client";
+import {
+  PluginFileConflictError,
+  PluginFileDeletedError,
+  type PluginFileEvent,
+} from "@getpaseo/plugin/client";
 import { describe, expect, it } from "vitest";
 import { FileHandle } from "./handle";
 import { InMemoryFileSession } from "./testing";
@@ -9,8 +13,8 @@ async function openFile(content: string | Uint8Array = "first\n") {
   const handle = new FileHandle(session, { cwd: "/repo", path: "notes.md" }, "/repo/notes.md");
   handle.setObserving(true);
   await settle();
-  const events: PluginFileEvent[] = [];
-  handle.file.watch((event) => events.push(event));
+  const events: PluginFileEvent["type"][] = [];
+  handle.file.watch((event) => events.push(event.type));
   return { session, handle, file: handle.file, events };
 }
 
@@ -54,6 +58,18 @@ describe("FileHandle", () => {
     await file.writeText("mine\n", { force: true });
     expect(session.text("notes.md")).toBe("mine\n");
     expect(events).toEqual(["changed"]);
+  });
+
+  it("rejects a write over a deleted file it has not observed yet", async () => {
+    const { session, handle, file } = await openFile();
+    await file.readText();
+    handle.setObserving(false);
+    session.remove("notes.md");
+
+    await expect(file.writeText("mine\n")).rejects.toBeInstanceOf(PluginFileDeletedError);
+    await expect(file.writeText("mine\n", { force: true })).rejects.toBeInstanceOf(
+      PluginFileDeletedError,
+    );
   });
 
   it("forces over a change it has not observed yet", async () => {
