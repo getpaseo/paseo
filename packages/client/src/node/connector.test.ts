@@ -51,3 +51,24 @@ test("a slow consumer cannot exceed the shared byte budget and close releases re
   transport.close();
   await expect.poll(() => budget.bufferedBytes).toBe(0);
 });
+test("direct connector preserves 25 MiB binary frames in both directions", async () => {
+  const server = await endpoint();
+  const connected = once(server.wss, "connection");
+  const transport = createHostTransportFactory(server.url)({ url: server.url });
+  cleanup.push(async () => transport.close());
+  const ready = new Promise<void>((resolve) => transport.onOpen(resolve));
+  const received = new Promise<Uint8Array>((resolve, reject) => {
+    transport.onMessage((bytes, binary) => binary && resolve(bytes as Uint8Array));
+    transport.onError(reject);
+  });
+  const [socket] = (await connected) as [WebSocket];
+  await ready;
+  const bytes = new Uint8Array(25 * 1024 * 1024).fill(173);
+  const echoed = once(socket, "message");
+  transport.send(bytes);
+  const [sent, binary] = await echoed;
+  expect(binary).toBe(true);
+  expect(Buffer.from(sent as Uint8Array).equals(bytes)).toBe(true);
+  socket.send(bytes);
+  expect(Buffer.from(await received).equals(bytes)).toBe(true);
+});

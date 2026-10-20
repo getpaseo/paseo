@@ -66,8 +66,8 @@ export const HostsRouteOpenRequestSchema = z.object({
 export const HostsRouteFrameRequestSchema = z.object({
   type: z.literal("hosts.route.frame.request"),
   routeId: z.string(),
-  data: z.string().max(24 * 1024 * 1024),
-  binary: z.boolean(),
+  data: z.string().max(100 * 1024 * 1024),
+  binary: z.literal(false),
 });
 export const HostsRouteCloseRequestSchema = z.object({
   type: z.literal("hosts.route.close.request"),
@@ -104,9 +104,20 @@ export const HostsRouteOpenResponseSchema = z.object({
 });
 export const HostsRouteFrameSchema = z.object({
   type: z.literal("hosts.route.frame"),
-  payload: z.object({ subscriptionId: z.string(), data: z.string(), binary: z.boolean() }),
+  payload: z.object({ subscriptionId: z.string(), data: z.string(), binary: z.literal(false) }),
 });
 export const HostsRouteClosedSchema = z.object({
   type: z.literal("hosts.route.closed"),
   payload: z.object({ subscriptionId: z.string(), code: z.string(), message: z.string() }),
+});
+
+// Logical B sessions are admitted under the authenticated physical link, never hello auth.
+export const HostsLinkOpenRequestSchema = z.object({
+  type: z.literal("hosts.link.open.request"),
+  requestId: z.string(),
+  channelId: z.string().min(1).max(256),
+});
+export const HostsLinkOpenResponseSchema = z.object({
+  type: z.literal("hosts.link.open.response"),
+  payload: z.object({ requestId: z.string(), routeId: z.string() }),
 });

@@ -281,6 +281,7 @@ async function waitForCapturedLog(
     let remote: PaseoApi | undefined;
     let sibling: PaseoApi | undefined;
     let terminalRoute: Awaited<ReturnType<typeof openConnectedHostTerminal>> | undefined;
+    let wire: Awaited<ReturnType<typeof relayWire>> | undefined;
     try {
       await startRelay({ useLocalRelay: true });
       const port = relayPort;
@@ -301,7 +302,8 @@ async function waitForCapturedLog(
         relayEndpoint: b.config.relayEndpoint,
       });
       const { serverId, daemonPublicKeyB64 } = decodeOfferFromFragmentUrl(offerUrl);
-      const connection = new URL(`relay://127.0.0.1:${port}/${serverId}`);
+      wire = await relayWire(port);
+      const connection = new URL(`relay://127.0.0.1:${wire.port}/${serverId}`);
       connection.searchParams.set("key", daemonPublicKeyB64);
       connection.searchParams.set("password", "wrong-password");
       const saved = await api.hosts.add({ connection: connection.toString() });
@@ -314,8 +316,12 @@ async function waitForCapturedLog(
       await expect
         .poll(async () => (await api!.hosts.list()).hosts[0]?.status, { timeout: 20000 })
         .toBe("online");
+      const admittedConnections = wire.connections();
+      expect(wire.active()).toBe(1);
       remote = await api.hosts.client(serverId);
       sibling = await api.hosts.client(serverId);
+      expect(wire.connections()).toBe(admittedConnections);
+      expect(wire.active()).toBe(1);
       expect((await remote.workspaces.list()).entries).toEqual([]);
       const observed = await remote.workspaces.list({ subscribe: {} });
       let snapshots = 0;
@@ -333,6 +339,7 @@ async function waitForCapturedLog(
         args: ["-e", "process.stdin.on('data', data => process.stdout.write(data))"],
       });
       terminalRoute = await openConnectedHostTerminal(origin, serverId, terminal.id);
+      expect(wire.connections()).toBe(admittedConnections);
       terminalRoute.write("ENCRYPTED_BINARY_BEFORE\n");
       await expect.poll(() => terminalRoute!.output()).toContain("ENCRYPTED_BINARY_BEFORE");
       terminalRoute.close();
@@ -366,6 +373,7 @@ async function waitForCapturedLog(
         )
         .toBe(1);
       await expect.poll(() => snapshots, { timeout: 15000 }).toBeGreaterThan(before);
+      expect(wire.active()).toBe(1);
       terminalRoute = await openConnectedHostTerminal(origin, serverId, terminal.id);
       terminalRoute.write("ENCRYPTED_BINARY_AFTER\n");
       await expect.poll(() => terminalRoute!.output()).toContain("ENCRYPTED_BINARY_AFTER");
@@ -398,6 +406,7 @@ async function waitForCapturedLog(
       await origin?.close();
       await a?.close();
       await b?.close();
+      await wire?.close();
       await stopRelay();
     }
   }, 120000);
@@ -1080,19 +1089,20 @@ async function openConnectedHostTerminal(origin: HostClient, serverId: string, t
   const routeId = await origin.openHostRoute(serverId, crypto.randomUUID());
   const messages: SessionOutboundMessage[] = [];
   let output = "";
+  const detachBinary = origin.subscribeHostFrames((routed) => {
+    if (routed.routeId !== routeId) return;
+    const frame = decodeTerminalStreamFrame(routed.payload);
+    if (frame?.opcode === TerminalStreamOpcode.Output)
+      output += new TextDecoder().decode(frame.payload);
+  });
   const detach = origin.subscribeRawMessages((message) => {
     if (message.type !== "hosts.route.frame" || message.payload.subscriptionId !== routeId) return;
-    if (message.payload.binary) {
-      const frame = decodeTerminalStreamFrame(Buffer.from(message.payload.data, "base64"));
-      if (frame?.opcode === TerminalStreamOpcode.Output)
-        output += new TextDecoder().decode(frame.payload);
-    } else {
-      const frame = WSOutboundMessageSchema.parse(JSON.parse(message.payload.data));
-      if (frame.type === "session") messages.push(frame.message);
-    }
+    const frame = WSOutboundMessageSchema.parse(JSON.parse(message.payload.data));
+    if (frame.type === "session") messages.push(frame.message);
   });
   const close = () => {
     detach();
+    detachBinary();
     origin.closeHostRoute(routeId);
   };
   try {
@@ -1104,7 +1114,6 @@ async function openConnectedHostTerminal(origin: HostClient, serverId: string, t
         clientType: "cli",
         protocolVersion: 1,
       }),
-      false,
     );
     await expect
       .poll(() =>
@@ -1119,7 +1128,6 @@ async function openConnectedHostTerminal(origin: HostClient, serverId: string, t
         type: "session",
         message: { type: "subscribe_terminal_request", terminalId, requestId: "binary" },
       }),
-      false,
     );
     await expect
       .poll(() => messages.some((message) => message.type === "subscribe_terminal_response"))
@@ -1134,14 +1142,54 @@ async function openConnectedHostTerminal(origin: HostClient, serverId: string, t
       write: (payload: string) =>
         origin.sendHostFrame(
           routeId,
-          Buffer.from(
-            encodeTerminalStreamFrame({ opcode: TerminalStreamOpcode.Input, slot, payload }),
-          ).toString("base64"),
-          true,
+          encodeTerminalStreamFrame({ opcode: TerminalStreamOpcode.Input, slot, payload }),
         ),
     };
   } catch (error) {
     close();
     throw error;
   }
+}
+
+async function relayWire(relayPort: number) {
+  const sockets = new Set<net.Socket>();
+  let connections = 0;
+  let active = 0;
+  const server = net.createServer((source) => {
+    const target = net.connect(relayPort, "127.0.0.1");
+    sockets.add(source);
+    sockets.add(target);
+    let counted = false;
+    target.on("connect", () => {
+      counted = true;
+      connections++;
+      active++;
+    });
+    target.on("error", () => source.destroy());
+    source.on("error", () => target.destroy());
+    target.on("close", () => {
+      if (counted) active--;
+      sockets.delete(target);
+      source.destroy();
+    });
+    source.on("close", () => {
+      sockets.delete(source);
+      target.destroy();
+    });
+    source.pipe(target);
+    target.pipe(source);
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Missing relay wire port");
+  return {
+    port: address.port,
+    connections: () => connections,
+    active: () => active,
+    close: async () => {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
 }

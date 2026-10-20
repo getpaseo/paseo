@@ -1,3 +1,4 @@
+export { createHostChannelTransport } from "../hosts/index.js";
 import { HostTransportBudget } from "./buffering.js";
 export { HostTransportBudget } from "./buffering.js";
 import { homedir } from "node:os";
@@ -32,6 +33,7 @@ export function createHostTransportFactory(
     let closeEvent: unknown;
     let transport: DaemonTransport | undefined;
     let teardown = () => {};
+    let disposeSocket = () => {};
     let sshTunnel: SshTunnel | null = null;
     const close = (code?: number, reason?: string) => {
       if (closed) return;
@@ -40,6 +42,7 @@ export function createHostTransportFactory(
         transport?.close(code, reason);
       } finally {
         try {
+          disposeSocket();
           teardown();
         } finally {
           for (const handler of closes) handler(closeEvent);
@@ -66,9 +69,10 @@ export function createHostTransportFactory(
           {
             headers: options?.headers,
             ...(socketPath ? { socketPath } : {}),
-            maxPayload: 24 * 1024 * 1024,
+            maxPayload: 100 * 1024 * 1024,
           },
         );
+        disposeSocket = () => socket.terminate();
         const pending = new Set<() => void>();
         const send = socket.send.bind(socket);
         socket.send = (data, ...args: unknown[]) => {
@@ -76,19 +80,12 @@ export function createHostTransportFactory(
             typeof data === "string"
               ? Buffer.byteLength(data)
               : Buffer.byteLength(data as Uint8Array);
-          if (socket.bufferedAmount + bytes > 24 * 1024 * 1024) {
-            socket.terminate();
+          if (socket.bufferedAmount + bytes > 128 * 1024 * 1024) {
             throw Object.assign(new Error("Host socket buffer limit reached"), {
               code: "resource_limit",
             });
           }
-          let release: () => void;
-          try {
-            release = budget.reserve(bytes);
-          } catch (error) {
-            socket.terminate();
-            throw error;
-          }
+          const release = budget.reserve(bytes);
           pending.add(release);
           const callback = args.find(
             (value): value is (error?: Error) => void => typeof value === "function",
@@ -129,6 +126,7 @@ export function createHostTransportFactory(
         close();
       });
       transport.onError((error) => {
+        if (closed) return;
         const detail = sshTunnel?.failureDetail() ?? "";
         const failure =
           /permission denied|authentication failed|host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED/i.test(
@@ -179,12 +177,13 @@ export function createHostTransportFactory(
 export function createHostClient(
   connection: string,
   config: Omit<DaemonClientConfig, "url" | "transportFactory">,
+  budget?: HostTransportBudget,
 ): DaemonClient {
   const target = parseHostTarget(connection);
   return new DaemonClient({
     ...config,
     url: "ws://host-connector/ws",
     ...(target.password ? { password: target.password } : {}),
-    transportFactory: createHostTransportFactory(connection),
+    transportFactory: createHostTransportFactory(connection, budget),
   });
 }

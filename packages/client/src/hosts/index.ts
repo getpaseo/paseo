@@ -14,23 +14,13 @@ export interface PaseoHostActions {
   client(serverId: string): Promise<PaseoApi>;
 }
 
-function encode(data: Uint8Array | ArrayBuffer): string {
-  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
-  let result = "";
-  for (let start = 0; start < bytes.length; start += 8192)
-    result += String.fromCharCode(...bytes.subarray(start, start + 8192));
-  return globalThis.btoa(result);
-}
-function decode(data: string): Uint8Array {
-  return Uint8Array.from(globalThis.atob(data), (char) => char.charCodeAt(0));
-}
-
-function routeTransport(
+export function createHostChannelTransport(
   origin: DaemonClient,
   serverId: string,
   scopeId: string,
-  initialRouteId: string,
+  initialRouteId: string | null,
   state: { failure: Error | null },
+  link = false,
 ): DaemonTransportFactory {
   let first: string | null = initialRouteId;
   return () => {
@@ -46,18 +36,19 @@ function routeTransport(
       closed = true;
       if (error instanceof Error) state.failure = Object.assign(error, { serverId });
       for (const cleanup of cleanups) cleanup();
-      if (routeId) origin.closeHostRoute(routeId);
+      try {
+        if (routeId) origin.closeHostRoute(routeId);
+        else origin.cancelHostRoute(scopeId);
+      } catch {
+        /* Transport already closed. */
+      }
       if (error) for (const handler of errors) handler(error);
       for (const handler of closes) handler(error);
     };
     cleanups.push(
       origin.subscribeRawMessages((message) => {
         if (message.type === "hosts.route.frame" && message.payload.subscriptionId === routeId) {
-          for (const handler of messages)
-            handler(
-              message.payload.binary ? decode(message.payload.data) : message.payload.data,
-              message.payload.binary,
-            );
+          for (const handler of messages) handler(message.payload.data, false);
         }
         if (message.type === "hosts.route.closed" && message.payload.subscriptionId === routeId)
           close(
@@ -69,11 +60,18 @@ function routeTransport(
       }),
     );
     cleanups.push(
+      origin.subscribeHostFrames((frame) => {
+        if (frame.routeId === routeId) for (const handler of messages) handler(frame.payload, true);
+      }),
+    );
+    cleanups.push(
       origin.subscribeConnectionStatus((connectionState) => {
         if (connectionState.status !== "connected") close();
       }),
     );
-    const opening = first ? Promise.resolve(first) : origin.openHostRoute(serverId, scopeId);
+    let opening: Promise<string>;
+    if (first) opening = Promise.resolve(first);
+    else opening = link ? origin.openHostLink(scopeId) : origin.openHostRoute(serverId, scopeId);
     first = null;
     void opening
       .then((id) => {
@@ -96,8 +94,7 @@ function routeTransport(
           });
         origin.sendHostFrame(
           routeId,
-          typeof data === "string" ? data : encode(data),
-          typeof data !== "string",
+          typeof data === "string" || data instanceof Uint8Array ? data : new Uint8Array(data),
         );
       },
       close: () => close(),
@@ -175,7 +172,7 @@ export function createHostActions(
       const client = new DaemonClient({
         url: "ws://routed-host/ws",
         clientId: scopeId,
-        transportFactory: routeTransport(origin, serverId, scopeId, routeId, state),
+        transportFactory: createHostChannelTransport(origin, serverId, scopeId, routeId, state),
         routedClient: true,
         routedServerId: serverId,
         routedFailure: () => state.failure,

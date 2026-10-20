@@ -1,3 +1,4 @@
+import { encodeHostRouteFrame, type HostRouteFrame } from "@getpaseo/protocol/binary-frames/index";
 import type {
   SessionInboundMessage,
   SessionOutboundMessage,
@@ -13,7 +14,7 @@ type HostRequest<T extends SessionInboundMessage["type"]> = Extract<
 interface SessionRoute {
   scopeId: string;
   source: object;
-  send(data: string, binary: boolean): void;
+  send(data: string | Uint8Array): void;
   release(): Promise<void>;
   fail(code: string, message: string): void;
 }
@@ -31,6 +32,15 @@ export class ConnectedHostSession {
     private readonly originSessionId: string,
     private readonly bufferedAmount: (source: object) => number | null,
   ) {}
+  binary(frame: HostRouteFrame, source: object): void {
+    const route = this.routes.get(frame.routeId);
+    if (!route || route.source !== source) return;
+    try {
+      route.send(frame.payload);
+    } catch {
+      route.fail("resource_limit", "Host input buffer limit reached");
+    }
+  }
   setSource(sourceId: string): void {
     this.actor.sourceId = sourceId;
   }
@@ -116,7 +126,7 @@ export class ConnectedHostSession {
         const route = this.routes.get(message.routeId);
         if (!route || route.source !== this.delivery.currentSource)
           throw new HostError("host_unknown", "Unknown routed session");
-        route.send(message.data, message.binary);
+        route.send(message.data);
         return;
       }
       case "hosts.route.close.request": {
@@ -196,17 +206,25 @@ export class ConnectedHostSession {
         originSessionId: this.originSessionId,
         permissions: this.permissions(),
         signal: owner.signal,
-        frame: (data, binary) => {
-          const size = Buffer.byteLength(data) + 512;
+        frame: (data) => {
+          const output: SessionOutboundMessage | null =
+            typeof data === "string"
+              ? {
+                  type: "hosts.route.frame",
+                  payload: { subscriptionId: owner.id, data, binary: false },
+                }
+              : null;
+          const binary = typeof data === "string" ? null : encodeHostRouteFrame(owner.id, data);
+          const size = output
+            ? Buffer.byteLength(JSON.stringify({ type: "session", message: output }))
+            : binary!.byteLength;
           const buffered = this.bufferedAmount(owner.source);
           if (buffered === null || buffered + size > 32 * 1024 * 1024) {
             fail("resource_limit", "The receiving client cannot keep up with host output");
             return;
           }
-          owner.emit({
-            type: "hosts.route.frame",
-            payload: { subscriptionId: owner.id, data, binary },
-          });
+          if (output) owner.emit(output);
+          else owner.emitBinary(binary!);
         },
         ended: fail,
       });

@@ -1,3 +1,5 @@
+import { HOST_ROUTE_OPCODE } from "@getpaseo/protocol/binary-frames/index";
+import { DaemonLinkEndpoint, VirtualHostSocket } from "./connected-hosts/index.js";
 import { ConnectedHosts } from "./connected-hosts/index.js";
 import { stat } from "node:fs/promises";
 import type { CreationSnapshot } from "@getpaseo/protocol/messages";
@@ -438,6 +440,7 @@ export interface WebSocketLike {
 }
 
 interface SessionConnectionBase {
+  hubExecutionAgents?: HubExecutionAgents;
   permissionCeiling?: readonly DaemonPermission[];
   session: Session;
   principalId: string;
@@ -469,7 +472,7 @@ interface SocketSessionOptions {
   permissions: readonly DaemonPermission[];
   connectionLogger: pino.Logger;
   onMessage: (message: SessionOutboundMessage) => void;
-  onMessageToSource?: (source: object, message: SessionOutboundMessage) => void;
+  onMessageToSource?: (source: object, message: SessionOutboundMessage) => void | Promise<void>;
   onBinaryMessage?: (frame: Uint8Array) => void;
   onBinaryMessageToSource?: (source: object, frame: Uint8Array) => Promise<void>;
   getTransportBufferedAmount?: (source?: object) => number | null;
@@ -530,6 +533,7 @@ function requireWebSocketServices(params: {
 export class VoiceAssistantWebSocketServer {
   private readonly logger: pino.Logger;
   private readonly wss: WebSocketServer;
+  private readonly hostLinks = new Map<WebSocketLike, DaemonLinkEndpoint>();
   private readonly pendingConnections: Map<WebSocketLike, PendingConnection> = new Map();
   private readonly sessions: Map<WebSocketLike, SessionConnection> = new Map();
   private readonly socketIdentities: Map<WebSocketLike, WebSocketConnectionIdentity> = new Map();
@@ -1052,6 +1056,12 @@ export class VoiceAssistantWebSocketServer {
     principalId: string,
     permissions: readonly DaemonPermission[],
   ): void {
+    for (const [socket, link] of this.hostLinks) {
+      if (this.sessions.get(socket)?.principalId === principalId) {
+        link.close("permission_denied");
+        this.hostLinks.delete(socket);
+      }
+    }
     for (const pending of this.pendingConnections.values()) {
       if (pending.admission?.principalId === principalId) {
         pending.admission = { ...pending.admission, permissions };
@@ -1169,6 +1179,20 @@ export class VoiceAssistantWebSocketServer {
     message: WSOutboundMessage,
     reportRejection = false,
   ): void {
+    const prepared = this.prepareJsonDelivery(sockets, message, reportRejection);
+    if (!prepared) return;
+    for (const ws of prepared.sockets) {
+      this.sendFrameToClient(ws, prepared.payload, prepared.bytes, () => {
+        this.runtimeMetrics.recordOutboundMessage(message, ws.bufferedAmount);
+      });
+    }
+  }
+
+  private prepareJsonDelivery(
+    sockets: Iterable<WebSocketLike>,
+    message: WSOutboundMessage,
+    reportRejection: boolean,
+  ): { sockets: WebSocketLike[]; payload: string; bytes: number } | null {
     const writableSockets = [...sockets].filter((ws) => {
       if (
         message.type === "session" &&
@@ -1190,7 +1214,7 @@ export class VoiceAssistantWebSocketServer {
       return this.ensureOutboundCapacity(ws, 0);
     });
     if (writableSockets.length === 0) {
-      return;
+      return null;
     }
 
     let payload: string;
@@ -1198,14 +1222,30 @@ export class VoiceAssistantWebSocketServer {
       payload = JSON.stringify(message);
     } catch (err) {
       this.logger.warn({ err }, "ws_serialize_failed");
-      return;
+      return null;
     }
 
-    const payloadBytes = outboundFrameByteLength(payload);
-    for (const ws of writableSockets) {
-      this.sendFrameToClient(ws, payload, payloadBytes, () => {
-        this.runtimeMetrics.recordOutboundMessage(message, ws.bufferedAmount);
+    return { sockets: writableSockets, payload, bytes: outboundFrameByteLength(payload) };
+  }
+
+  private async sendMessageToClientAndWait(
+    ws: WebSocketLike,
+    message: WSOutboundMessage,
+  ): Promise<void> {
+    const prepared = this.prepareJsonDelivery([ws], message, true);
+    if (!prepared) throw new Error("Source message delivery unavailable");
+    try {
+      const sent = await sendBoundedPhysicalFrameAndWait({
+        socket: ws,
+        frame: prepared.payload,
+        frameBytes: prepared.bytes,
+        onHighWater: () => this.closeAtOutboundHighWater(ws),
       });
+      if (!sent) throw new Error("Source is closed");
+      this.runtimeMetrics.recordOutboundMessage(message, ws.bufferedAmount);
+    } catch (err) {
+      this.logger.warn({ err }, "ws_send_failed");
+      throw err;
     }
   }
 
@@ -1415,11 +1455,11 @@ export class VoiceAssistantWebSocketServer {
         }
         this.sendToConnection(connection, wrapSessionMessage(msg));
       },
-      onMessageToSource: (source, msg) => {
+      onMessageToSource: async (source, msg) => {
         if (!connection || !connection.sockets.has(source as WebSocketLike)) {
           return;
         }
-        this.sendToClient(source as WebSocketLike, wrapSessionMessage(msg));
+        await this.sendMessageToClientAndWait(source as WebSocketLike, wrapSessionMessage(msg));
       },
       onBinaryMessage: (frame) => {
         if (!connection) {
@@ -1460,6 +1500,7 @@ export class VoiceAssistantWebSocketServer {
     const base: SessionConnectionBase = {
       session,
       principalId: admission.principalId,
+      hubExecutionAgents: admission.hubExecutionAgents,
       sessionKey: sessionConnectionKey(admission.principalId, clientId),
       clientId,
       appVersion,
@@ -1481,6 +1522,7 @@ export class VoiceAssistantWebSocketServer {
       getConnectedHostBufferedAmount: () => {
         let total = 0;
         for (const socket of this.sessions.keys()) {
+          if (socket instanceof VirtualHostSocket) continue;
           if (typeof socket.bufferedAmount !== "number") return null;
           total += socket.bufferedAmount;
         }
@@ -1790,6 +1832,10 @@ export class VoiceAssistantWebSocketServer {
       clearTimeout(existing.externalDisconnectCleanupTimeout);
       existing.externalDisconnectCleanupTimeout = null;
     }
+    for (const socket of existing.sockets) {
+      this.hostLinks.get(socket)?.close("permission_denied");
+      this.hostLinks.delete(socket);
+    }
     existing.permissionCeiling = message.sessionPermissions;
     existing.session.setPermissions(pending.admission!.permissions);
     existing.session.setRouted(message.routed === true);
@@ -1853,6 +1899,7 @@ export class VoiceAssistantWebSocketServer {
       ...(this.serverCapabilities ? { capabilities: this.serverCapabilities } : {}),
       features: {
         connectedHosts: true,
+        hostMultiplexing: true,
         usageSources: true,
         ownedSubscriptions: true,
         agentRequestReceipts: true,
@@ -2096,6 +2143,9 @@ export class VoiceAssistantWebSocketServer {
       error?: Error;
     },
   ): Promise<void> {
+    this.hostLinks.get(ws)?.close();
+    this.hostLinks.delete(ws);
+
     this.applicationSocketLease.release(ws);
     const identity = this.socketIdentities.get(ws);
     const identityFields = identity ? toConnectionLogFields(identity) : {};
@@ -2290,6 +2340,12 @@ export class VoiceAssistantWebSocketServer {
       return false;
     }
     const decodedFrame = decodeBinaryFrame(asBytes);
+    if (asBytes[0] === HOST_ROUTE_OPCODE && !decodedFrame) {
+      ws.close(1008, "Invalid host routing frame");
+      return true;
+    }
+    if (decodedFrame?.kind === "host_route" && this.hostLinks.get(ws)?.binary(decodedFrame.frame))
+      return true;
     if (!decodedFrame) {
       return false;
     }
@@ -2444,11 +2500,38 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
+  private hostLink(ws: WebSocketLike, connection: SessionConnection): DaemonLinkEndpoint {
+    let link = this.hostLinks.get(ws);
+    if (!link) {
+      link = new DaemonLinkEndpoint({
+        identity: JSON.stringify([connection.principalId, connection.clientId]),
+        permissions: () => connection.session.getPermissions(),
+        routed: () => connection.session.isRouted(),
+        bufferedAmount: () => ws.bufferedAmount ?? null,
+        delivery: connection.session.delivery,
+        admit: (socket, permissions) =>
+          this.attachSocket(socket, undefined, undefined, false, {
+            principalId: connection.principalId,
+            permissions,
+          }),
+      });
+      this.hostLinks.set(ws, link);
+    }
+    return link;
+  }
+
   private async dispatchSessionMessage(
     ws: WebSocketLike,
     activeConnection: SessionConnection,
     message: Extract<WSInboundMessage, { type: "session" }>,
   ): Promise<void> {
+    const link = this.hostLink(ws, activeConnection);
+    if (link.handles(message.message)) {
+      await activeConnection.session.delivery.request(ws, message.message, () =>
+        link.dispatch(message.message),
+      );
+      return;
+    }
     this.recordInboundSessionRequestType(message.message.type);
     const controlRpc = getControlRpcLogInfo(message.message);
     if (controlRpc) {

@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "vitest";
 import { createPaseoApi } from "@getpaseo/client";
-import { createHostClient } from "@getpaseo/client/node";
+import { createHostClient, createHostChannelTransport } from "@getpaseo/client/node";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import type { HostDirectory } from "@getpaseo/protocol/hosts";
 
@@ -91,18 +91,22 @@ test("SDK saves unreachable hosts, rejects syntax and preserves source identity 
 
 test("ordinary routed APIs isolate scopes and enforce one-hop, disable and origin disposal", async () => {
   const b = await daemon();
+  const wire = await hostWire(b);
   const a = await daemon();
   const { paseo } = await api(a);
   const observation = paseo.hosts.observe();
   expect((await observation.ready).hosts).toEqual([]);
-  const saved = await paseo.hosts.add({ connection: `127.0.0.1:${b.port}`, label: "B" });
+  const saved = await paseo.hosts.add({ connection: wire.connection, label: "B" });
   const directory = await online(paseo);
   const serverId = directory.hosts[0]!.serverId!;
   const first = await paseo.hosts.client(serverId);
   const second = await paseo.hosts.client(serverId);
+  expect(wire.connections()).toBe(1);
+  expect(wire.active()).toBe(1);
   const workspaces = await second.workspaces.list({ subscribe: {} });
   expect(workspaces.entries).toEqual([]);
   await first.dispose();
+  expect(wire.active()).toBe(1);
   expect((await second.workspaces.list()).entries).toEqual([]);
   await expect(second.hosts.client(directory.self.serverId)).rejects.toMatchObject({
     code: "unsupported_capability",
@@ -123,7 +127,10 @@ test("ordinary routed APIs isolate scopes and enforce one-hop, disable and origi
       { timeout: 20000 },
     )
     .toBe(0);
+  expect(wire.connections()).toBe(2);
+  expect(wire.active()).toBe(1);
   await second.dispose();
+  expect(wire.active()).toBe(1);
   await observation.release();
   await paseo.dispose();
 });
@@ -160,9 +167,10 @@ test("routed authority is bounded by the caller, with isolated simultaneous sess
 
 test("distinct origin sessions cannot collide through a caller-selected route scope, including terminal binary output", async () => {
   const b = await daemon();
+  const wire = await hostWire(b);
   const a = await daemon();
   const admin = await api(a);
-  await admin.paseo.hosts.add({ connection: `127.0.0.1:${b.port}` });
+  await admin.paseo.hosts.add({ connection: wire.connection });
   const serverId = (await online(admin.paseo)).hosts[0]!.serverId!;
   const remote = await admin.paseo.hosts.client(serverId);
   const workspace = await remote.workspaces.create({
@@ -184,12 +192,45 @@ test("distinct origin sessions cannot collide through a caller-selected route sc
   const second = await RoutePeer.open(secondOrigin.client, serverId);
   await first.subscribeTerminal(one.id);
   await second.subscribeTerminal(two.id);
+  expect(wire.connections()).toBe(1);
   first.input("FIRST_ONLY\n");
   second.input("SECOND_ONLY\n");
   await expect.poll(() => first.output()).toContain("FIRST_ONLY");
   await expect.poll(() => second.output()).toContain("SECOND_ONLY");
   expect(first.output()).not.toContain("SECOND_ONLY");
   expect(second.output()).not.toContain("FIRST_ONLY");
+  const firstBytes = new Uint8Array([0, 255, 128, 173]);
+  const secondBytes = new Uint8Array([173, 128, 255, 0]);
+  const paths = await Promise.all([
+    first.upload("first.bin", firstBytes),
+    second.upload("second.bin", secondBytes),
+  ]);
+  expect((await readFile(paths[0]!)).equals(firstBytes)).toBe(true);
+  expect((await readFile(paths[1]!)).equals(secondBytes)).toBe(true);
+
+  const binary = wire.frames.filter((frame) => frame.binary);
+  expect(binary.length).toBeGreaterThan(0);
+  expect(binary.every((frame) => decodeHostRouteFrame(frame.bytes) !== null)).toBe(true);
+  expect(
+    binary.some((frame) => {
+      const payload = decodeHostRouteFrame(frame.bytes)!.payload;
+      return Buffer.from(payload).equals(
+        encodeTerminalStreamFrame({
+          opcode: TerminalStreamOpcode.Input,
+          slot: 0,
+          payload: "FIRST_ONLY\n",
+        }),
+      );
+    }),
+  ).toBe(true);
+  const json = wire.frames
+    .filter((frame) => !frame.binary)
+    .map((frame) => JSON.parse(frame.bytes.toString()));
+  expect(json.filter((frame) => frame.type === "hello")).toHaveLength(1);
+  expect(json.some((frame) => frame.message?.type === "hosts.link.open.request")).toBe(true);
+  expect(
+    json.some((frame) => frame.message?.binary === true || frame.message?.payload?.binary === true),
+  ).toBe(false);
   await first.close();
   second.input("STILL_SECOND\n");
   await expect.poll(() => second.output()).toContain("STILL_SECOND");
@@ -200,6 +241,9 @@ test("distinct origin sessions cannot collide through a caller-selected route sc
 });
 
 import {
+  encodeFileTransferFrame,
+  FileTransferOpcode,
+  decodeHostRouteFrame,
   decodeTerminalStreamFrame,
   encodeTerminalStreamFrame,
   TerminalStreamOpcode,
@@ -209,7 +253,7 @@ import {
   type SessionOutboundMessage,
   type SessionInboundMessage,
 } from "@getpaseo/protocol/messages";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 class RoutePeer {
   readonly messages: SessionOutboundMessage[] = [];
   readonly bytes: Uint8Array[] = [];
@@ -219,15 +263,21 @@ class RoutePeer {
     private readonly origin: DaemonClient,
     private readonly routeId: string,
   ) {
-    this.detach = origin.subscribeRawMessages((message) => {
+    const binary = origin.subscribeHostFrames((frame) => {
+      if (frame.routeId === routeId) this.bytes.push(frame.payload);
+    });
+    const text = origin.subscribeRawMessages((message) => {
       if (message.type !== "hosts.route.frame" || message.payload.subscriptionId !== routeId)
         return;
-      if (message.payload.binary) this.bytes.push(Buffer.from(message.payload.data, "base64"));
-      else {
+      {
         const frame = WSOutboundMessageSchema.parse(JSON.parse(message.payload.data));
         if (frame.type === "session") this.messages.push(frame.message);
       }
     });
+    this.detach = () => {
+      binary();
+      text();
+    };
   }
   static async open(origin: DaemonClient, serverId: string) {
     const peer = new RoutePeer(
@@ -243,7 +293,6 @@ class RoutePeer {
         protocolVersion: 1,
         capabilities: { owned_subscriptions: true },
       }),
-      false,
     );
     await expect
       .poll(
@@ -264,7 +313,7 @@ class RoutePeer {
     return peer;
   }
   send(message: SessionInboundMessage) {
-    this.origin.sendHostFrame(this.routeId, JSON.stringify({ type: "session", message }), false);
+    this.origin.sendHostFrame(this.routeId, JSON.stringify({ type: "session", message }));
   }
   async subscribeTerminal(terminalId: string) {
     this.send({ type: "subscribe_terminal_request", terminalId, requestId: "same-request" });
@@ -284,15 +333,47 @@ class RoutePeer {
   input(text: string) {
     this.origin.sendHostFrame(
       this.routeId,
-      Buffer.from(
-        encodeTerminalStreamFrame({
-          opcode: TerminalStreamOpcode.Input,
-          slot: this.slot,
-          payload: text,
-        }),
-      ).toString("base64"),
-      true,
+      encodeTerminalStreamFrame({
+        opcode: TerminalStreamOpcode.Input,
+        slot: this.slot,
+        payload: text,
+      }),
     );
+  }
+  async upload(fileName: string, bytes: Uint8Array) {
+    const requestId = "same-upload-request";
+    const modifiedAt = new Date().toISOString();
+    this.send({
+      type: "file.upload.request",
+      requestId,
+      fileName,
+      mimeType: "application/octet-stream",
+      size: bytes.length,
+      modifiedAt,
+    });
+    for (const frame of [
+      encodeFileTransferFrame({
+        opcode: FileTransferOpcode.FileBegin,
+        requestId,
+        metadata: {
+          mime: "application/octet-stream",
+          size: bytes.length,
+          encoding: "binary",
+          modifiedAt,
+          fileName,
+        },
+      }),
+      encodeFileTransferFrame({ opcode: FileTransferOpcode.FileChunk, requestId, payload: bytes }),
+      encodeFileTransferFrame({ opcode: FileTransferOpcode.FileEnd, requestId }),
+    ])
+      this.origin.sendHostFrame(this.routeId, frame);
+    await expect
+      .poll(() => this.messages.some((message) => message.type === "file.upload.response"))
+      .toBe(true);
+    const response = this.messages.find((message) => message.type === "file.upload.response");
+    if (response?.type !== "file.upload.response" || !response.payload.file)
+      throw new Error("Upload failed");
+    return response.payload.file.path;
   }
   output() {
     return this.bytes
@@ -310,9 +391,9 @@ class RoutePeer {
   }
 }
 
-import { mkdir, writeFile, stat, mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile, readFile, chmod, stat, mkdtemp, rm } from "node:fs/promises";
+import { join, dirname, basename } from "node:path";
+import { tmpdir, userInfo } from "node:os";
 import { resolveDaemonVersion } from "../daemon-version.js";
 
 test("identity discovery failures remain inspectable and changing a pinned destination requires explicit replacement", async () => {
@@ -433,7 +514,7 @@ export default function contribute(server) {
   expect((await direct.paseo.workspaces.list()).entries).toHaveLength(1);
 });
 
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
@@ -543,7 +624,7 @@ test("resuming an A session with narrower grants terminates existing routes and 
   await remote.dispose();
 });
 
-import { WebSocketServer } from "ws";
+import { WebSocketServer, WebSocket } from "ws";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { hashSync } from "bcryptjs";
@@ -669,14 +750,10 @@ test("disposing an origin during routed handshake settles acquisition and closes
   let routeHello = false;
   let routeClosed = false;
   ws.on("connection", (socket) => {
-    const monitor = ++connections === 1;
-    socket.on("close", () => {
-      if (!monitor) routeClosed = true;
-    });
+    connections++;
     socket.on("message", (data) => {
       const frame = JSON.parse(data.toString());
-      if (frame.type !== "hello") return;
-      if (monitor)
+      if (frame.type === "hello")
         socket.send(
           JSON.stringify({
             type: "session",
@@ -686,13 +763,28 @@ test("disposing an origin during routed handshake settles acquisition and closes
                 status: "server_info",
                 serverId: "srv_pending",
                 hostname: "pending",
-                version: "0.11.0",
-                features: { connectedHosts: true, ownedSubscriptions: true },
+                version: "0.12.0",
+                features: {
+                  connectedHosts: true,
+                  hostMultiplexing: true,
+                  ownedSubscriptions: true,
+                },
               },
             },
           }),
         );
-      else routeHello = true;
+      if (frame.message?.type === "hosts.link.open.request")
+        socket.send(
+          JSON.stringify({
+            type: "session",
+            message: {
+              type: "hosts.link.open.response",
+              payload: { requestId: frame.message.requestId, routeId: "pending-channel" },
+            },
+          }),
+        );
+      if (frame.message?.type === "hosts.route.frame.request") routeHello = true;
+      if (frame.message?.type === "hosts.route.close.request") routeClosed = true;
     });
   });
   http.listen(0, "127.0.0.1");
@@ -715,4 +807,427 @@ test("disposing an origin during routed handshake settles acquisition and closes
   expect(await result).toBeInstanceOf(Error);
   await expect.poll(() => routeClosed).toBe(true);
   expect(ws.clients.size).toBe(1);
+  expect(connections).toBe(1);
+});
+
+test("source-key registration remains idempotent at directory capacity", async () => {
+  const { ConnectedHosts } = await import("./index.js");
+  const home = await mkdtemp(join(tmpdir(), "hosts-capacity-"));
+  cleanup.push(() => rm(home, { recursive: true, force: true }));
+  const rows = Array.from({ length: 128 }, (_, index) => ({
+    registrationId: `saved-${index}`,
+    serverId: null,
+    label: null,
+    source: { id: "plugin:capacity", key: `key-${index}` },
+    metadata: {},
+    enabled: false,
+    status: "disabled",
+    targetDescription: "127.0.0.1:1",
+    lastOnlineAt: null,
+    nextRetryAt: null,
+    error: null,
+    connection: "127.0.0.1:1",
+  }));
+  await writeFile(join(home, "hosts.json"), JSON.stringify(rows));
+  const registry = new ConnectedHosts(home, { serverId: "self", label: "self" });
+  cleanup.push(() => registry.close());
+  const actor = { sourceId: "plugin:capacity", manageSources: false };
+  await expect(
+    registry.add({ connection: "127.0.0.1:1", sourceKey: "key-0" }, actor),
+  ).resolves.toMatchObject({ registrationId: "saved-0", enabled: false });
+  await expect(
+    registry.add({ connection: "127.0.0.1:1", sourceKey: "new" }, actor),
+  ).rejects.toMatchObject({ code: "resource_limit" });
+});
+
+/** Real WebSocket proxy records the A–B physical wire without replacing either daemon. */
+async function hostWire(b: TestPaseoDaemon) {
+  const http = createServer();
+  const wss = new WebSocketServer({ server: http });
+  const frames: { binary: boolean; bytes: Buffer; direction: "toB" | "fromB" }[] = [];
+  let connections = 0;
+  wss.on("connection", (downstream) => {
+    connections++;
+    const upstream = new WebSocket(`ws://127.0.0.1:${b.port}/ws`);
+    const pending: (() => void)[] = [];
+    upstream.on("open", () => {
+      for (const send of pending.splice(0)) send();
+    });
+    downstream.on("message", (data, binary) => {
+      const bytes = Buffer.from(data as Buffer);
+      frames.push({ binary, bytes, direction: "toB" });
+      const send = () => {
+        if (upstream.readyState === 1) upstream.send(bytes, { binary });
+      };
+      if (upstream.readyState === 0) pending.push(send);
+      else send();
+    });
+    upstream.on("message", (data, binary) => {
+      const bytes = Buffer.from(data as Buffer);
+      frames.push({ binary, bytes, direction: "fromB" });
+      if (downstream.readyState === 1) downstream.send(bytes, { binary });
+    });
+    upstream.on("error", () => downstream.close());
+    upstream.on("close", () => downstream.close());
+    downstream.on("close", () => upstream.close());
+  });
+  http.listen(0, "127.0.0.1");
+  await once(http, "listening");
+  cleanup.push(async () => {
+    for (const socket of wss.clients) socket.terminate();
+    await new Promise<void>((resolve) => wss.close(() => resolve()));
+    await new Promise<void>((resolve) => http.close(() => resolve()));
+  });
+  const address = http.address();
+  if (!address || typeof address === "string") throw new Error("Missing wire port");
+  return {
+    connection: `127.0.0.1:${address.port}`,
+    frames,
+    connections: () => connections,
+    active: () => wss.clients.size,
+  };
+}
+
+test("a resumed physical link re-admits every logical session under its current grant ceiling", async () => {
+  const b = await daemon();
+  const parent = createHostClient(`127.0.0.1:${b.port}`, { clientId: "physical-grants" });
+  cleanup.push(() => parent.close());
+  await parent.connect();
+  const serverId = parent.getLastServerInfoMessage()!.serverId;
+  const logical = new DaemonClient({
+    url: "ws://logical/ws",
+    clientId: "logical",
+    transportFactory: createHostChannelTransport(
+      parent,
+      serverId,
+      "logical",
+      null,
+      { failure: null },
+      true,
+    ),
+    routedClient: true,
+    routedServerId: serverId,
+  });
+  cleanup.push(() => logical.close());
+  await logical.connect();
+  const scoped = createPaseoApi(logical);
+  cleanup.push(() => scoped.dispose());
+  const bytes = Uint8Array.from({ length: 256 * 1024 + 123 }, (_, index) => index % 251);
+  const upload = await logical.uploadFile({
+    fileName: "routed.bin",
+    mimeType: "application/octet-stream",
+    bytes,
+  });
+  expect(upload.error).toBeNull();
+  const downloaded = await logical.readFile(
+    dirname(upload.file!.path),
+    basename(upload.file!.path),
+  );
+  expect(Buffer.from(downloaded.bytes).equals(bytes)).toBe(true);
+
+  const observed = await scoped.workspaces.list({ subscribe: {} });
+  const snapshots: unknown[] = [];
+  observed.subscription.subscribe({ snapshot: (value) => snapshots.push(value), update() {} });
+  const narrowed = createHostClient(`127.0.0.1:${b.port}`, {
+    clientId: "physical-grants",
+    sessionPermissions: ["daemon.read", "workspace.read"],
+    reconnect: { enabled: false },
+  });
+  cleanup.push(() => narrowed.close());
+  await narrowed.connect();
+  await expect.poll(() => snapshots.length, { timeout: 15000 }).toBe(2);
+  expect(logical.getLastServerInfoMessage()?.permissions).toEqual([
+    "daemon.read",
+    "workspace.read",
+  ]);
+  await expect(
+    scoped.workspaces.create({ source: { kind: "directory", path: b.staticDir } }),
+  ).rejects.toMatchObject({ code: "permission_denied" });
+  const restored = createHostClient(`127.0.0.1:${b.port}`, {
+    clientId: "physical-grants",
+    reconnect: { enabled: false },
+  });
+  cleanup.push(() => restored.close());
+  await restored.connect();
+  await expect.poll(() => snapshots.length, { timeout: 15000 }).toBe(3);
+  expect(logical.getLastServerInfoMessage()?.permissions).toContain("workspace.write");
+  await scoped.workspaces.create({ source: { kind: "directory", path: b.staticDir } });
+});
+
+import { DaemonLinkEndpoint, VirtualHostSocket } from "./index.js";
+import { SessionDelivery } from "../session/owned-subscriptions/index.js";
+import { sendBoundedPhysicalFrameAndWait } from "../websocket/physical-socket.js";
+
+test("channel output accounts for escaped text, awaits physical drain, and preserves its sibling", async () => {
+  const http = createServer();
+  const wss = new WebSocketServer({ server: http });
+  http.listen(0, "127.0.0.1");
+  await once(http, "listening");
+  const address = http.address();
+  if (!address || typeof address === "string") throw new Error("Missing port");
+  const accepted = once(wss, "connection");
+  const receiver = new WebSocket(`ws://127.0.0.1:${address.port}`);
+  const received: { binary: boolean; bytes: Buffer }[] = [];
+  receiver.on("message", (bytes, binary) =>
+    received.push({ bytes: Buffer.from(bytes as Buffer), binary }),
+  );
+  const [physical] = (await accepted) as [WebSocket];
+  await once(receiver, "open");
+  cleanup.push(async () => {
+    receiver.terminate();
+    physical.terminate();
+    await new Promise<void>((resolve) => wss.close(() => resolve()));
+    await new Promise<void>((resolve) => http.close(() => resolve()));
+  });
+  const delivery = new SessionDelivery(
+    async (source, message) => {
+      expect(delivery.permits(source, message)).toBe(true);
+      await sendBoundedPhysicalFrameAndWait({
+        socket: physical,
+        frame: JSON.stringify({ type: "session", message }),
+        onHighWater: () => {
+          throw new Error("Shared link overflowed");
+        },
+      });
+    },
+    async (source, frame) => {
+      expect(delivery.permitsBinary(source, frame)).toBe(true);
+      await sendBoundedPhysicalFrameAndWait({
+        socket: physical,
+        frame,
+        onHighWater: () => {
+          throw new Error("Shared link overflowed");
+        },
+      });
+    },
+  );
+  delivery.attach(physical, true);
+  const channels: VirtualHostSocket[] = [];
+  const endpoint = new DaemonLinkEndpoint({
+    identity: "authenticated",
+    permissions: () => ["daemon.read"],
+    routed: () => false,
+    bufferedAmount: () => physical.bufferedAmount,
+    delivery,
+    admit: async (socket) => {
+      channels.push(socket);
+    },
+  });
+  cleanup.push(async () => {
+    endpoint.close();
+    await delivery.close();
+  });
+  for (const channelId of ["slow", "sibling"]) {
+    const request = { type: "hosts.link.open.request" as const, requestId: channelId, channelId };
+    await delivery.request(physical, request, () => endpoint.dispatch(request));
+  }
+  await expect(channels[0]!.send('"'.repeat(34 * 1024 * 1024))).rejects.toThrow(
+    "Host channel output limit reached",
+  );
+  expect(channels[0]!.readyState).toBe(3);
+  expect(physical.readyState).toBe(1);
+  await channels[1]!.send("sibling-before");
+  await expect
+    .poll(() => received.some((frame) => !frame.binary && frame.bytes.includes("sibling-before")))
+    .toBe(true);
+  receiver.pause();
+  let completed = false;
+  const bytes = new Uint8Array(8 * 1024 * 1024).fill(173);
+  const pending = channels[1]!.send(bytes).then(() => {
+    completed = true;
+    return undefined;
+  });
+  await expect.poll(() => physical.bufferedAmount).toBeGreaterThan(0);
+  expect(completed).toBe(false);
+  expect(physical.bufferedAmount).toBeLessThan(64 * 1024 * 1024);
+  receiver.resume();
+  await pending;
+  await channels[1]!.send("sibling-after");
+  await expect
+    .poll(() => received.some((frame) => !frame.binary && frame.bytes.includes("sibling-after")))
+    .toBe(true);
+  const binary = received.find((frame) => frame.binary)!;
+  expect(Buffer.from(decodeHostRouteFrame(binary.bytes)!.payload).equals(bytes)).toBe(true);
+  expect(wss.clients.size).toBe(1);
+});
+
+import { existsSync } from "node:fs";
+test.skipIf(process.platform !== "linux" || !existsSync("/usr/sbin/sshd"))(
+  "real SSH shares one tunnel across scopes and owns fresh attempts after recovery",
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), "hosts-ssh-"));
+    cleanup.push(() => rm(root, { recursive: true, force: true }));
+    const run = promisify(execFile);
+    for (const name of ["host", "client"])
+      await run("ssh-keygen", ["-t", "ed25519", "-N", "", "-f", join(root, name)]);
+    const authorized = await readFile(join(root, "client.pub"));
+    await writeFile(join(root, "authorized_keys"), authorized);
+    const portServer = createServer();
+    portServer.listen(0, "127.0.0.1");
+    await once(portServer, "listening");
+    const address = portServer.address();
+    if (!address || typeof address === "string") throw new Error("Missing SSH port");
+    await new Promise<void>((resolve) => portServer.close(() => resolve()));
+    await writeFile(
+      join(root, "sshd_config"),
+      `Port ${address.port}\nListenAddress 127.0.0.1\nHostKey ${root}/host\nPidFile ${root}/pid\nAuthorizedKeysFile ${root}/authorized_keys\nStrictModes no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nUsePAM no\nAllowTcpForwarding yes\n`,
+    );
+    await writeFile(
+      join(root, "ssh"),
+      `#!/bin/sh\nprintf 'attempt\\n' >> '${root}/attempts'\nexec /usr/bin/ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile='${root}/known_hosts' -i '${root}/client' "$@"\n`,
+    );
+    await chmod(join(root, "ssh"), 0o700);
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${root}:${originalPath}`;
+    cleanup.push(async () => {
+      process.env.PATH = originalPath;
+    });
+    const b = await createTestPaseoDaemon({ auth: { password: hashSync("ssh-password", 4) } });
+    cleanup.push(() => b.close());
+    const a = await daemon();
+    const { paseo, client } = await api(a);
+    const host = await paseo.hosts.add({
+      connection: `ssh://${userInfo().username}@127.0.0.1:${address.port}?daemonPort=${b.port}&password=ssh-password`,
+    });
+    await expect.poll(async () => (await paseo.hosts.list()).hosts[0]?.status).toBe("offline");
+    const sshd = spawn("/usr/sbin/sshd", [
+      "-D",
+      "-f",
+      join(root, "sshd_config"),
+      "-E",
+      join(root, "sshd.log"),
+    ]);
+    cleanup.push(async () => {
+      sshd.kill();
+    });
+    await online(paseo);
+    const attempts = async () =>
+      (await readFile(join(root, "attempts"), "utf8")).trim().split("\n").length;
+    const before = await attempts();
+    const first = await paseo.hosts.client(b.daemon.getServerId());
+    const sibling = await paseo.hosts.client(b.daemon.getServerId());
+    expect((await sibling.workspaces.list()).entries).toEqual([]);
+    expect(await attempts()).toBe(before);
+    await first.dispose();
+    expect((await sibling.workspaces.list()).entries).toEqual([]);
+    expect(await attempts()).toBe(before);
+    const workspace = await sibling.workspaces.create({
+      source: { kind: "directory", path: b.staticDir },
+    });
+    const terminal = await workspace.terminals.create({
+      command: process.execPath,
+      args: ["-e", "process.stdin.on('data', data => process.stdout.write(data))"],
+    });
+    const stream = await RoutePeer.open(client, b.daemon.getServerId());
+    await stream.subscribeTerminal(terminal.id);
+    stream.input("SSH_BINARY_BEFORE\n");
+    await expect.poll(() => stream.output()).toContain("SSH_BINARY_BEFORE");
+    await stream.close();
+    expect(await attempts()).toBe(before);
+
+    await paseo.hosts.update(host.registrationId, { enabled: false });
+    await paseo.hosts.update(host.registrationId, { enabled: true });
+    await online(paseo);
+    await expect
+      .poll(
+        async () => {
+          try {
+            return (await sibling.workspaces.list()).entries.length;
+          } catch {
+            return -1;
+          }
+        },
+        { timeout: 15000 },
+      )
+      .toBe(1);
+    expect(await attempts()).toBe(before + 1);
+    const resumed = await RoutePeer.open(client, b.daemon.getServerId());
+    await resumed.subscribeTerminal(terminal.id);
+    resumed.input("SSH_BINARY_AFTER\n");
+    await expect.poll(() => resumed.output()).toContain("SSH_BINARY_AFTER");
+    await resumed.close();
+    await terminal.kill();
+    expect(await attempts()).toBe(before + 1);
+    await sibling.dispose();
+    await paseo.hosts.update(host.registrationId, { enabled: false });
+    await writeFile(join(root, "authorized_keys"), "");
+    await paseo.hosts.update(host.registrationId, { enabled: true });
+    await expect
+      .poll(async () => (await paseo.hosts.list()).hosts[0]?.error?.code, { timeout: 15000 })
+      .toBe("authentication_failed");
+    expect((await paseo.hosts.list()).hosts[0]?.nextRetryAt).toBeNull();
+    await writeFile(join(root, "authorized_keys"), authorized);
+    await paseo.hosts.update(host.registrationId, { enabled: true });
+    await online(paseo);
+  },
+  60000,
+);
+
+test("malformed routing headers terminate their physical source and leave the daemon usable", async () => {
+  const b = await daemon();
+  const socket = new WebSocket(`ws://127.0.0.1:${b.port}/ws`);
+  cleanup.push(async () => socket.terminate());
+  await once(socket, "open");
+  const info = once(socket, "message");
+  socket.send(
+    JSON.stringify({
+      type: "hello",
+      clientId: "malformed-route",
+      clientType: "cli",
+      protocolVersion: 1,
+      capabilities: { owned_subscriptions: true },
+    }),
+  );
+  await info;
+  const opened = once(socket, "message");
+  socket.send(
+    JSON.stringify({
+      type: "session",
+      message: { type: "hosts.link.open.request", requestId: "channel", channelId: "channel" },
+    }),
+  );
+  const [response] = await opened;
+  expect(JSON.parse(String(response)).message.type).toBe("hosts.link.open.response");
+  const closed = once(socket, "close");
+  socket.send(new Uint8Array([0x30, 0, 3, 97]));
+  expect((await closed)[0]).toBe(1008);
+  expect((await (await api(b)).paseo.workspaces.list()).entries).toEqual([]);
+});
+
+test("cancelling a logical scope during admission settles it and releases its owned channel", async () => {
+  const source = {};
+  const messages: SessionOutboundMessage[] = [];
+  const delivery = new SessionDelivery((_source, message) => {
+    messages.push(message);
+  });
+  delivery.attach(source, true);
+  let pendingSocket: VirtualHostSocket | undefined;
+  const endpoint = new DaemonLinkEndpoint({
+    identity: "physical",
+    permissions: () => ["daemon.read"],
+    routed: () => false,
+    bufferedAmount: () => 0,
+    delivery,
+    admit: (socket) =>
+      new Promise<void>((resolve) => {
+        pendingSocket = socket;
+        socket.once("close", resolve);
+      }),
+  });
+  const open = {
+    type: "hosts.link.open.request" as const,
+    requestId: "pending",
+    channelId: "logical-scope",
+  };
+  const acquiring = delivery.request(source, open, () => endpoint.dispatch(open));
+  expect(pendingSocket).toBeDefined();
+  const cancel = { type: "hosts.route.close.request" as const, scopeId: "logical-scope" };
+  expect(endpoint.handles(cancel)).toBe(true);
+  await delivery.request(source, cancel, () => endpoint.dispatch(cancel));
+  await acquiring;
+  expect(pendingSocket!.readyState).toBe(3);
+  expect(messages.some((message) => message.type === "hosts.link.open.response")).toBe(false);
+  expect(messages.filter((message) => message.type === "hosts.route.closed")).toHaveLength(1);
+  endpoint.close();
+  await delivery.close();
 });

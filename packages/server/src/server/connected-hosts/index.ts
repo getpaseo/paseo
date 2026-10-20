@@ -1,3 +1,4 @@
+export { DaemonLinkEndpoint, VirtualHostSocket } from "./link.js";
 export { ConnectedHostSession } from "./session.js";
 import { randomUUID, createHash } from "node:crypto";
 import { mkdir, readFile, rename, writeFile, rm } from "node:fs/promises";
@@ -5,7 +6,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import {
   createHostClient,
-  createHostTransportFactory,
+  createHostChannelTransport,
   parseHostTarget,
   HostTransportBudget,
 } from "@getpaseo/client/node";
@@ -37,6 +38,8 @@ export interface HostActor {
   manageSources: boolean;
 }
 interface Live {
+  client: DaemonClient;
+  accepted: boolean;
   stop(): void;
 }
 interface Route {
@@ -118,8 +121,6 @@ export class ConnectedHosts {
     return this.mutate(async () => {
       input = HostAddSchema.parse(input);
       const target = parseHostTarget(input.connection);
-      if (this.rows.length >= 128)
-        throw new HostError("resource_limit", "Remove a host before adding another (limit 128)");
       const source = { id: actor.sourceId, key: input.sourceKey ?? randomUUID() };
       const existing = this.rows.find(
         (row) => row.source.id === source.id && row.source.key === source.key,
@@ -137,6 +138,8 @@ export class ConnectedHosts {
           "This source key already exists. Update its registration explicitly.",
         );
       }
+      if (this.rows.length >= 128)
+        throw new HostError("resource_limit", "Remove a host before adding another (limit 128)");
       const row: Saved = {
         registrationId: `hst_${randomUUID()}`,
         serverId: null,
@@ -233,55 +236,26 @@ export class ConnectedHosts {
   }
   private start(row: Saved): void {
     if (!row.enabled || this.closed) return;
-    let client: DaemonClient | null = null;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     let stopped = false;
-    let connecting = false;
+    const client = createHostClient(
+      row.connection,
+      {
+        clientId: `host-link-${this.self.serverId}-${row.registrationId}`,
+        connectTimeoutMs: 10000,
+      },
+      this.budget,
+    );
     const live: Live = {
+      client,
+      accepted: false,
       stop: () => {
         stopped = true;
-        clearTimeout(timer);
-        void client?.close();
+        void client.close();
       },
     };
     this.live.set(row.registrationId, live);
-    const retry = () => {
-      if (stopped || connecting || timer || row.status === "error") return;
-      row.status = "offline";
-      row.error = {
-        code: "host_offline",
-        message: "Cannot reach host. Check the connection; retrying automatically.",
-      };
-      row.nextRetryAt = new Date(Date.now() + 5000).toISOString();
-      this.changed();
-      timer = setTimeout(() => {
-        timer = undefined;
-        void attempt();
-      }, 5000);
-      timer.unref();
-    };
-    const attempt = async () => {
-      if (stopped) return;
-      await client?.close();
-      client = createHostClient(row.connection, {
-        clientId: `host-monitor-${this.self.serverId}-${row.registrationId}`,
-        reconnect: { enabled: false },
-        connectTimeoutMs: 10000,
-      });
-      client.subscribeConnectionStatus((state) => {
-        if (!stopped && state.status === "disconnected") {
-          for (const route of this.routes)
-            if (route.registrationId === row.registrationId) route.close();
-          retry();
-        }
-      });
-      connecting = true;
-      row.status = "connecting";
-      row.nextRetryAt = null;
-      this.changed();
+    const accept = async () => {
       try {
-        await client.connect();
-        if (stopped) return;
         const info = client.getLastServerInfoMessage();
         if (!info) throw new HostError("host_offline", "No daemon identity received");
         if (row.serverId && info.serverId !== row.serverId)
@@ -306,7 +280,7 @@ export class ConnectedHosts {
             "duplicate_host",
             "Another registration already owns this daemon. Remove the duplicate registration.",
           );
-        if (info.features?.connectedHosts !== true)
+        if (info.features?.connectedHosts !== true || info.features?.hostMultiplexing !== true)
           throw new HostError(
             "unsupported_capability",
             "Update the destination daemon to use connected hosts.",
@@ -325,25 +299,55 @@ export class ConnectedHosts {
             nextRetryAt: null,
           };
           await this.persist(this.rows.map((entry) => (entry === row ? next : entry)));
+          if (stopped || client.getLastServerInfoMessage() !== info || !client.isConnected) return;
           Object.assign(row, next);
+          live.accepted = true;
           this.changed();
         });
       } catch (error) {
         if (stopped) return;
-        const failure = connectionFailure(error, client.authFailureReason !== null);
-        if (failure) {
-          row.status = "error";
-          row.error = failure;
-          row.nextRetryAt = null;
-          this.changed();
-        }
+        row.status = "error";
+        row.error = connectionFailure(error, client.authFailureReason !== null) ?? {
+          code: "host_offline",
+          message: "Host connection failed",
+        };
+        row.nextRetryAt = null;
+        this.changed();
         await client.close();
-      } finally {
-        connecting = false;
-        if (!stopped && !client.isConnected) retry();
       }
     };
-    void attempt();
+    client.subscribeConnectionStatus((state) => {
+      if (stopped || row.status === "error") return;
+      live.accepted = false;
+      if (state.status === "connected") {
+        void accept();
+        return;
+      }
+      for (const route of this.routes)
+        if (route.registrationId === row.registrationId) route.close();
+      row.status = state.status === "connecting" ? "connecting" : "offline";
+      row.nextRetryAt = state.status === "disconnected" ? (state.nextRetryAt ?? null) : null;
+      row.error =
+        state.status === "disconnected"
+          ? (connectionFailure(
+              Object.assign(new Error("Check the SSH configuration and daemon credentials"), {
+                code: state.failureCode,
+              }),
+              client.authFailureReason !== null,
+            ) ?? {
+              code: "host_offline",
+              message: "Cannot reach host. Check the connection; retrying automatically.",
+            })
+          : null;
+      if (row.error?.code === "authentication_failed") {
+        row.status = "error";
+        row.nextRetryAt = null;
+        client.setReconnectEnabled(false);
+        void client.close();
+      }
+      this.changed();
+    });
+    void client.connect().catch(() => {});
   }
   async openRoute(input: {
     serverId: string;
@@ -352,9 +356,9 @@ export class ConnectedHosts {
     originSessionId: string;
     permissions: readonly DaemonPermission[];
     signal: AbortSignal;
-    frame(data: string, binary: boolean): void;
+    frame(data: string | Uint8Array): void;
     ended(code: string, message: string): void;
-  }): Promise<{ send(data: string, binary: boolean): void; close(): void }> {
+  }): Promise<{ send(data: string | Uint8Array): void; close(): void }> {
     await this.ready;
     const row = this.rows.find((entry) => entry.serverId === input.serverId);
     if (!row) throw new HostError("host_unknown", `Unknown host ${input.serverId}`, input.serverId);
@@ -371,10 +375,18 @@ export class ConnectedHosts {
         input.serverId,
       );
     if (this.routes.size >= 128) throw new HostError("resource_limit", "Too many routed sessions");
-    const transport = createHostTransportFactory(
-      row.connection,
-      this.budget,
-    )({ url: "ws://host-route/ws" });
+    const live = this.live.get(row.registrationId);
+    const client = live?.client;
+    if (!live?.accepted || !client?.isConnected)
+      throw new HostError("host_offline", "Host is offline", input.serverId);
+    const transport = createHostChannelTransport(
+      client,
+      input.serverId,
+      randomUUID(),
+      null,
+      { failure: null },
+      true,
+    )({ url: "ws://host-link/ws" });
     let closed = false;
     let verified = false;
     let helloSent = false;
@@ -460,22 +472,19 @@ export class ConnectedHosts {
           return;
         }
       }
-      input.frame(
-        binary ? Buffer.from(data as Uint8Array).toString("base64") : String(data),
-        binary,
-      );
+      input.frame(binary ? (data as Uint8Array) : String(data));
     });
     await ready;
     if (closed) throw new HostError("host_offline", "Host closed during connection");
     return {
       close: () => route.close(),
-      send: (data, binary) => {
+      send: (data) => {
+        const binary = typeof data !== "string";
         if (closed) throw new HostError("host_offline", "Host is offline");
         if (!helloSent) {
           if (binary) throw new HostError("invalid_message", "Expected hello");
-          const hello = JSON.parse(data) as WSHelloMessage;
+          const hello = JSON.parse(data as string) as WSHelloMessage;
           if (hello.type !== "hello") throw new HostError("invalid_message", "Expected hello");
-          const target = parseHostTarget(row.connection);
           const clientId = `route-${createHash("sha256")
             .update(
               JSON.stringify([
@@ -493,7 +502,7 @@ export class ConnectedHosts {
               routed: true,
               producer: { serverId: this.self.serverId, sourceId: input.sourceId },
               sessionPermissions: input.permissions,
-              auth: target.password ? { kind: "password", password: target.password } : undefined,
+              auth: undefined,
             }),
           );
           helloSent = true;
@@ -501,7 +510,7 @@ export class ConnectedHosts {
         }
         if (!verified) throw new HostError("host_offline", "Host identity has not been verified");
         try {
-          transport.send(binary ? Buffer.from(data, "base64") : data);
+          transport.send(data);
         } catch {
           route.close("resource_limit", "Host buffer limit reached or transport unavailable");
         }
