@@ -654,9 +654,11 @@ export default function contribute(server: PluginServerContext) {
       return;
     }
 
-    const text = latestOutputText(event.timeline);
+    const agent = context.paseo.agents.ref(event.agent.id);
+    const page = await agent.timeline.refetch({ direction: "tail", limit: 20 });
+    const text = latestOutputText(page.entries.map(({ item }) => item));
     if (/out of credits/i.test(text)) {
-      await context.paseo.agents.ref(event.agent.id).send("Try again.");
+      await agent.send("Try again.");
     }
   });
 
@@ -669,6 +671,9 @@ Turn ends: "out of credits"
   → plugin sends "Try again."
   → a new turn starts
 ```
+
+The handler fetches only the last 20 timeline items. Output before that page is not inspected.
+Use `cursor` and `direction` to page further when your plugin needs more history.
 
 This sends a new message with the existing SDK. Persistent matches keep sending follow-ups;
 add limits or delays in your plugin when needed. Attachments and tool effects are not replayed.
@@ -721,21 +726,25 @@ plans, and mode changes; requesting permission does not end the turn.
 
 ### Events
 
-| Name                         | Event fields                             | Trigger                                            |
-| ---------------------------- | ---------------------------------------- | -------------------------------------------------- |
-| `agent.created`              | `agent`                                  | Ordinary creation finishes; excludes import/resume |
-| `agent.closed`               | `agent`                                  | A live agent runtime closes                        |
-| `agent.turn_started`         | `agent`, `turnId`                        | Live turn starts                                   |
-| `agent.turn_ended`           | `agent`, `turnId`, `outcome`, `timeline` | Live turn completes, fails, or is canceled         |
-| `agent.permission_requested` | `agent`, `request`                       | Permission or question becomes pending             |
-| `agent.permission_resolved`  | `agent`, `requestId`, `resolution`       | Pending request is answered or cleared             |
-| `agent.archived`             | `agent`, `archivedAt`                    | Archive state is saved                             |
-| `workspace.created`          | `workspace`                              | Record created; directory available                |
-| `workspace.archived`         | `workspace`                              | Archive state is saved                             |
+| Name                         | Event fields                                            | Trigger                                            |
+| ---------------------------- | ------------------------------------------------------- | -------------------------------------------------- |
+| `agent.created`              | `agent`                                                 | Ordinary creation finishes; excludes import/resume |
+| `agent.closed`               | `agent`                                                 | A live agent runtime closes                        |
+| `agent.turn_started`         | `agent`, `turnId`                                       | Live turn starts                                   |
+| `agent.turn_ended`           | `agent`, `turnId`, `outcome`, deprecated `timeline: []` | Live turn completes, fails, or is canceled         |
+| `agent.permission_requested` | `agent`, `request`                                      | Permission or question becomes pending             |
+| `agent.permission_resolved`  | `agent`, `requestId`, `resolution`                      | Pending request is answered or cleared             |
+| `agent.archived`             | `agent`, `archivedAt`                                   | Archive state is saved                             |
+| `workspace.created`          | `workspace`                                             | Record created; directory available                |
+| `workspace.archived`         | `workspace`                                             | Archive state is saved                             |
 
 Agent events exclude the daemon's private disposable helpers. Public background workspaces and
 their ordinary agents run the same lifecycle hooks as other workspaces. Archive events can precede
 runtime/worktree cleanup; observe lifecycle completion separately when cleanup matters.
+
+`agent.turn_ended.timeline` is deprecated and always empty. Fetch history on demand with
+`context.paseo.agents.ref(event.agent.id).timeline.refetch({ direction: "tail", limit: 20 })`.
+The hook payload size does not grow with conversation history.
 
 **Shared payload shapes** (`@getpaseo/plugin/server`):
 
