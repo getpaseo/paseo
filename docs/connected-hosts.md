@@ -1,8 +1,7 @@
 # Connected hosts
 
 A saved host belongs to the daemon that stores it. The app's saved connections remain a separate list.
-Connect A to B in A's settings under **Hosts connected to this daemon**, through `paseo --host A host`,
-or through `paseo.hosts`. Consumers select B by its learned `serverId`; management uses the stable
+Connect A to B through `paseo --host A host` or `paseo.hosts`. Consumers select B by its learned `serverId`; management uses the stable
 `registrationId` created before B is reachable.
 
 ## Ownership and authority
@@ -27,7 +26,7 @@ current authority. A routed API cannot select a second hop, and saving a host gr
 A producer that registers a host through a routed API is qualified on B as
 `route:<B principal>:<A serverId>:<A producer>`, with each component percent-encoded. This namespace belongs to the authenticated link
 principal. An ordinary direct B consumer does not become that producer by supplying a source key.
-The optional `server_info.sourceId` reports this producer identity for source-owner controls; it does not describe the authenticated admission principal.
+The optional `server_info.sourceId` reports this producer identity separately from the authenticated admission principal.
 Trusted server plugins retain the authority of their runtime; they are not sandboxed by this feature.
 
 ## Connections and recovery

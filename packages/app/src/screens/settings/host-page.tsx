@@ -1,4 +1,3 @@
-import { ConnectedHostsSection } from "@/connected-hosts";
 import {
   ArrowDown,
   ArrowUp,
@@ -375,7 +374,6 @@ export function HostSettingsPage({
       <HostConnectionError serverId={serverId} />
 
       <HostAppearanceSection host={host} />
-      <ConnectedHostsSection serverId={serverId} />
 
       {isLocalDaemon ? <LocalDaemonSection /> : null}
 
