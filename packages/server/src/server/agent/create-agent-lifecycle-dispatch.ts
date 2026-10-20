@@ -85,7 +85,6 @@ export class CreateAgentLifecycleDispatch {
     const base = target.mode === "branch-off" ? target.base : undefined;
     return this.dependencies.createPaseoWorktreeWorkflow(
       {
-        cwd: input.cwd,
         ...placement,
         background: input.background,
         callerWorkspaceId: input.callerWorkspaceId,
