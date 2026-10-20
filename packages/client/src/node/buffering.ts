@@ -5,11 +5,14 @@ export class HostTransportBudget {
   get bufferedBytes(): number {
     return this.used;
   }
-  reserve(bytes: number): () => void {
+  assertCapacity(bytes: number): void {
     if (bytes > this.limit - this.used)
       throw Object.assign(new Error("Connected host buffer limit reached"), {
         code: "resource_limit",
       });
+  }
+  reserve(bytes: number): () => void {
+    this.assertCapacity(bytes);
     this.used += bytes;
     let released = false;
     return () => {

@@ -753,6 +753,7 @@ test("disposing an origin during routed handshake settles acquisition and closes
     connections++;
     socket.on("message", (data) => {
       const frame = JSON.parse(data.toString());
+      if (frame.type === "ping") socket.send(JSON.stringify({ type: "pong" }));
       if (frame.type === "hello")
         socket.send(
           JSON.stringify({
@@ -808,6 +809,17 @@ test("disposing an origin during routed handshake settles acquisition and closes
   await expect.poll(() => routeClosed).toBe(true);
   expect(ws.clients.size).toBe(1);
   expect(connections).toBe(1);
+  routeClosed = false;
+  const next = await api(a);
+  await expect(next.paseo.hosts.client("srv_pending")).rejects.toMatchObject({
+    code: "host_offline",
+    serverId: "srv_pending",
+  });
+  await expect.poll(() => routeClosed).toBe(true);
+  expect(ws.clients.size).toBe(1);
+  expect(connections).toBe(1);
+  expect((await next.paseo.workspaces.list()).entries).toEqual([]);
+  expect((await next.paseo.hosts.list()).hosts[0]?.status).toBe("online");
 });
 
 test("source-key registration remains idempotent at directory capacity", async () => {

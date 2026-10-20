@@ -34,6 +34,7 @@ export function createHostTransportFactory(
     let transport: DaemonTransport | undefined;
     let teardown = () => {};
     let disposeSocket = () => {};
+    let assertOutboundCapacity = (bytes: number) => budget.assertCapacity(bytes);
     let sshTunnel: SshTunnel | null = null;
     const close = (code?: number, reason?: string) => {
       if (closed) return;
@@ -73,6 +74,14 @@ export function createHostTransportFactory(
           },
         );
         disposeSocket = () => socket.terminate();
+        assertOutboundCapacity = (bytes) => {
+          if (socket.bufferedAmount + bytes > 128 * 1024 * 1024) {
+            throw Object.assign(new Error("Host socket buffer limit reached"), {
+              code: "resource_limit",
+            });
+          }
+          budget.assertCapacity(bytes);
+        };
         const pending = new Set<() => void>();
         const send = socket.send.bind(socket);
         socket.send = (data, ...args: unknown[]) => {
@@ -80,11 +89,7 @@ export function createHostTransportFactory(
             typeof data === "string"
               ? Buffer.byteLength(data)
               : Buffer.byteLength(data as Uint8Array);
-          if (socket.bufferedAmount + bytes > 128 * 1024 * 1024) {
-            throw Object.assign(new Error("Host socket buffer limit reached"), {
-              code: "resource_limit",
-            });
-          }
+          assertOutboundCapacity(bytes);
           const release = budget.reserve(bytes);
           pending.add(release);
           const callback = args.find(
@@ -116,6 +121,7 @@ export function createHostTransportFactory(
           baseFactory: factory,
           daemonPublicKeyB64: socketTarget.offer.daemonPublicKeyB64,
           logger: { warn() {} },
+          assertOutboundCapacity: (bytes) => assertOutboundCapacity(bytes),
         });
       transport = factory({ ...attemptOptions, url: socketTarget.url });
       transport.onOpen(() => {

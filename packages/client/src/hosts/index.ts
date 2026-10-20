@@ -173,6 +173,8 @@ export function createHostActions(
         url: "ws://routed-host/ws",
         clientId: scopeId,
         transportFactory: createHostChannelTransport(origin, serverId, scopeId, routeId, state),
+        // Initial acquisition has a deadline; established scopes restore demand on loss.
+        reconnect: { enabled: false },
         routedClient: true,
         routedServerId: serverId,
         routedFailure: () => state.failure,
@@ -189,10 +191,16 @@ export function createHostActions(
       }));
       try {
         await client.connect();
+        client.setReconnectEnabled(true);
         assertActive();
         return { ...api, dispose: () => scope.release() };
       } catch (error) {
-        const failure = state.failure ?? error;
+        const failure =
+          state.failure ??
+          Object.assign(error instanceof Error ? error : new Error("Host handshake failed"), {
+            code: error instanceof Error && "code" in error ? error.code : "host_offline",
+            serverId,
+          });
         await scope.release();
         throw failure;
       }

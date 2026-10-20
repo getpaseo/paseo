@@ -72,3 +72,82 @@ test("direct connector preserves 25 MiB binary frames in both directions", async
   socket.send(bytes);
   expect(Buffer.from(await received).equals(bytes)).toBe(true);
 });
+
+import {
+  createDaemonChannel,
+  generateKeyPair,
+  exportPublicKey,
+  type Transport,
+} from "@getpaseo/relay/e2ee";
+test("encrypted connector rejects overload synchronously and preserves the physical link for sibling traffic", async () => {
+  const server = await endpoint();
+  const keys = generateKeyPair();
+  const received: (string | ArrayBuffer)[] = [];
+  let peer!: WebSocket;
+  let ready!: Promise<unknown>;
+  server.wss.on("connection", (socket) => {
+    peer = socket;
+    const wire: Transport = {
+      send: (data) => socket.send(data),
+      close: () => socket.close(),
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+    };
+    socket.on("message", (data, isBinary) => {
+      const bytes = Buffer.from(data as Buffer);
+      wire.onmessage?.({
+        data: isBinary
+          ? bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+          : bytes.toString(),
+        isBinary,
+      });
+    });
+    ready = createDaemonChannel(wire, keys, {
+      onmessage: (data) => {
+        received.push(data);
+      },
+    });
+  });
+  const port = new URL(server.url).port;
+  const budget = new HostTransportBudget(4 * 1024 * 1024);
+  const transport = createHostTransportFactory(
+    `relay://127.0.0.1:${port}/srv_slow?key=${encodeURIComponent(exportPublicKey(keys.publicKey))}`,
+    budget,
+  )({ url: server.url });
+  cleanup.push(async () => transport.close());
+  const errors: unknown[] = [];
+  let closed = false;
+  transport.onError((error) => errors.push(error));
+  transport.onClose(() => {
+    closed = true;
+  });
+  await new Promise<void>((resolve) => transport.onOpen(resolve));
+  await ready;
+  peer.pause();
+  const frame = new Uint8Array(1024 * 1024).fill(173);
+  let rejected: unknown;
+  for (let index = 0; index < 8; index++) {
+    try {
+      transport.send(frame);
+    } catch (error) {
+      rejected = error;
+      break;
+    }
+  }
+  expect(rejected).toMatchObject({ code: "resource_limit" });
+  expect(budget.bufferedBytes).toBeLessThanOrEqual(budget.limit);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(errors).toEqual([]);
+  expect(closed).toBe(false);
+  transport.send("sibling control");
+  peer.resume();
+  await expect.poll(() => received.includes("sibling control")).toBe(true);
+  expect(received.filter((data) => data instanceof ArrayBuffer).length).toBeGreaterThan(0);
+  expect(
+    received
+      .filter((data) => data instanceof ArrayBuffer)
+      .every((data) => Buffer.from(data).equals(frame)),
+  ).toBe(true);
+  expect(server.wss.clients.size).toBe(1);
+});
