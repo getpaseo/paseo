@@ -11892,3 +11892,442 @@ test.each([false, true])(
     }
   },
 );
+
+test("switching providers keeps the chat identity, timeline, and workspace", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-switch-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { claude: new TestAgentClient("claude"), codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  try {
+    const agent = await manager.createAgent(
+      { provider: "claude", cwd: workdir, model: "source", thinkingOptionId: "high" },
+      undefined,
+      { workspaceId: "workspace-provider-switch" },
+    );
+    await manager.appendTimelineItem(agent.id, {
+      type: "user_message",
+      text: "Remember the migration constraint.",
+    });
+    await manager.appendTimelineItem(agent.id, {
+      type: "assistant_message",
+      text: "Keep the database schema compatible.",
+    });
+    await manager.setAgentModel(agent.id, "gpt-5.4", "codex");
+    const switched = manager.getAgent(agent.id)!;
+    expect(switched.provider).toBe("codex");
+    expect(switched.workspaceId).toBe("workspace-provider-switch");
+    expect(switched.config.thinkingOptionId).toBeUndefined();
+    expect(manager.getTimeline(agent.id).slice(0, 2)).toEqual([
+      { type: "user_message", text: "Remember the migration constraint." },
+      { type: "assistant_message", text: "Keep the database schema compatible." },
+    ]);
+    const persisted = await storage.get(agent.id);
+    expect(persisted?.provider).toBe("codex");
+    expect(persisted?.config?.providerHandoff?.text).toContain(
+      "Remember the migration constraint.",
+    );
+    expect(persisted?.config?.providerHandoff?.pending).toBe(true);
+  } finally {
+    await manager.closeAgent(manager.listAgents()[0]!.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+class HandoffTestSession extends TestAgentSession {
+  readonly prompts: AgentPromptInput[] = [];
+  failStart = false;
+  failClose = false;
+  closed = false;
+  constructor(config: AgentSessionConfig) {
+    super(config);
+    Object.defineProperty(this, "provider", { value: config.provider });
+  }
+  override async startTurn(prompt?: AgentPromptInput) {
+    if (this.failStart) throw new Error("Target rejected the turn");
+    this.prompts.push(prompt ?? "");
+    const result = await super.startTurn();
+    this.pushEvent({
+      type: "timeline",
+      provider: this.provider,
+      turnId: result.turnId,
+      item: { type: "user_message", text: typeof prompt === "string" ? prompt : "structured" },
+    });
+    return result;
+  }
+  override async close() {
+    if (this.failClose) throw new Error("Runtime is still in use");
+    this.closed = true;
+  }
+}
+class HandoffTestClient extends TestAgentClient {
+  readonly sessions: HandoffTestSession[] = [];
+  failCreate = false;
+  noPersistence = false;
+  override async createSession(config: AgentSessionConfig) {
+    if (this.failCreate) throw new Error("Target could not start");
+    const session = new HandoffTestSession(config);
+    if (this.noPersistence) session.describePersistence = () => null;
+    this.sessions.push(session);
+    return session;
+  }
+  override async resumeSession(
+    _handle: AgentPersistenceHandle,
+    config?: Partial<AgentSessionConfig>,
+  ) {
+    return this.createSession({
+      ...config,
+      provider: this.provider,
+      cwd: config?.cwd ?? process.cwd(),
+    });
+  }
+}
+
+test.each([false, true])(
+  "provider handoff survives restart and rejected input without native handle=%s",
+  async (noPersistence) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-provider-restart-"));
+    const registry = new AgentStorage(join(workdir, "agents"), logger);
+    // The production daemon has no durable timeline store configured.
+    const durableTimelineStore = undefined;
+    const source = new HandoffTestClient("claude");
+    const target = new HandoffTestClient();
+    target.noPersistence = noPersistence;
+    const clients = { claude: source, codex: target };
+    const manager = new AgentManager({ clients, registry, durableTimelineStore, logger });
+    const restartedRegistry = new AgentStorage(join(workdir, "agents"), logger);
+    const restarted = new AgentManager({
+      clients,
+      registry: restartedRegistry,
+      durableTimelineStore,
+      logger,
+    });
+    let id = "";
+    try {
+      const created = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+        workspaceId: "same-workspace",
+      });
+      id = created.id;
+      await manager.appendTimelineItem(id, {
+        type: "user_message",
+        text: "Keep the public API compatible.",
+      });
+      await manager.setAgentModel(id, "gpt-5.4", "codex");
+      await manager.closeAgent(id);
+      await manager.flush();
+      const loaded = await ensureAgentLoaded(id, {
+        agentManager: restarted,
+        agentStorage: restartedRegistry,
+        logger,
+      });
+      expect(loaded.provider).toBe("codex");
+      expect(loaded.workspaceId).toBe("same-workspace");
+      const session = target.sessions.at(-1)!;
+      session.failStart = true;
+      await expect(restarted.runAgent(id, "Continue the migration.")).rejects.toThrow(
+        "Target rejected",
+      );
+      expect((await restartedRegistry.get(id))?.config?.providerHandoff?.pending).toBe(true);
+      session.failStart = false;
+      await restarted.runAgent(id, "Continue the migration.");
+      await restarted.flush();
+      expect(session.prompts[0]).toContain("Keep the public API compatible.");
+      expect(session.prompts[0]).toContain("Continue the migration.");
+      expect((await restartedRegistry.get(id))?.config?.providerHandoff?.pending).toBe(false);
+      const visible = (await restarted.getTimelineRows(id)).map((row) => row.item);
+      expect(visible).toContainEqual(
+        expect.objectContaining({ type: "user_message", text: "Continue the migration." }),
+      );
+      expect(
+        visible
+          .filter((item) => item.type === "user_message")
+          .map((item) => item.text)
+          .join("\n"),
+      ).not.toContain("Paseo conversation history");
+      await restarted.runAgent(id, "Next step.");
+      expect(session.prompts[1]).toBe("Next step.");
+      expect((await restarted.getTimelineRows(id))[0]?.item).toMatchObject({
+        text: "Keep the public API compatible.",
+      });
+    } finally {
+      if (id) {
+        await manager.closeAgent(id);
+        await restarted.closeAgent(id);
+      }
+      await manager.flush();
+      await restarted.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test("switching to a disabled provider leaves the source chat usable", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-disabled-"));
+  const target = new HandoffTestClient();
+  const manager = new AgentManager({
+    clients: { claude: new HandoffTestClient("claude"), codex: target },
+    providerDefinitions: { codex: { enabled: false } },
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    await expect(manager.setAgentModel(agent.id, "gpt-5.4", "codex")).rejects.toThrow("disabled");
+    expect(target.sessions).toHaveLength(0);
+    expect(manager.getAgent(agent.id)?.provider).toBe("claude");
+    await manager.runAgent(agent.id, "Continue on the source agent");
+  } finally {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a failed provider switch leaves the original runtime and configuration usable", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-failure-"));
+  const source = new HandoffTestClient("claude");
+  const target = new HandoffTestClient();
+  const registry = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { claude: source, codex: target },
+    registry,
+    logger,
+  });
+  const agent = await manager.createAgent(
+    { provider: "claude", cwd: workdir, model: "old-model" },
+    undefined,
+    { workspaceId: undefined },
+  );
+  try {
+    target.failCreate = true;
+    await expect(manager.setAgentModel(agent.id, "gpt-5.4", "codex")).rejects.toThrow(
+      "Target could not start",
+    );
+    expect(source.sessions[0]?.closed).toBe(false);
+    expect(manager.getAgent(agent.id)?.config).toMatchObject({
+      provider: "claude",
+      model: "old-model",
+    });
+    target.failCreate = false;
+    source.sessions[0]!.failClose = true;
+    await expect(manager.setAgentModel(agent.id, "gpt-5.4", "codex")).rejects.toThrow(
+      "Runtime is still in use",
+    );
+    expect(target.sessions[0]?.closed).toBe(true);
+    expect((await registry.get(agent.id))?.provider).toBe("claude");
+    source.sessions[0]!.failClose = false;
+    await manager.runAgent(agent.id, "Continue on the original agent.");
+    expect(source.sessions[0]?.prompts).toEqual(["Continue on the original agent."]);
+  } finally {
+    source.sessions[0]!.failClose = false;
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a provider switch rejects active turns and outstanding approvals", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-busy-"));
+  const source = new HandoffTestClient("claude");
+  const target = new HandoffTestClient();
+  const manager = new AgentManager({ clients: { claude: source, codex: target }, logger });
+  const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const session = source.sessions[0]!;
+  try {
+    session.pushEvent({ type: "turn_started", provider: "claude", turnId: "busy-turn" });
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)?.lifecycle).toBe("running"));
+    await expect(manager.setAgentModel(agent.id, "gpt-5.4", "codex")).rejects.toThrow(
+      "Wait for the current response",
+    );
+    session.pushEvent({ type: "turn_completed", provider: "claude", turnId: "busy-turn" });
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle"));
+    session.pushEvent({
+      type: "permission_requested",
+      provider: "claude",
+      request: { id: "approval", provider: "claude", kind: "tool", name: "Write file" },
+    });
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)?.pendingPermissions.size).toBe(1));
+    await expect(manager.setAgentModel(agent.id, "gpt-5.4", "codex")).rejects.toThrow("approvals");
+    expect(target.sessions).toHaveLength(0);
+  } finally {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("provider history refresh preserves earlier segments and blocks cross-provider rewind", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-segments-"));
+  const target = new HandoffTestClient();
+  const store = new RecordingTimelineStore();
+  const manager = new AgentManager({
+    clients: { claude: new HandoffTestClient("claude"), codex: target },
+    durableTimelineStore: store,
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    await manager.appendTimelineItem(agent.id, {
+      type: "user_message",
+      text: "Original requirements",
+      messageId: "old-message",
+    });
+    await manager.setAgentModel(agent.id, "gpt-5.4", "codex");
+    await manager.runAgent(agent.id, "Continue here");
+    const session = target.sessions[0]!;
+    session.streamHistory = async function* () {
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: String(session.prompts[0]), messageId: "new-message" },
+      };
+    };
+    await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+    await manager.flush();
+    const rows = await manager.getTimelineRows(agent.id);
+    expect(rows[0]?.item).toMatchObject({ type: "user_message", text: "Original requirements" });
+    expect(rows.at(-1)?.item).toMatchObject({ type: "user_message", text: "Continue here" });
+    expect(rows.map((row) => row.item.type)).toEqual([
+      "user_message",
+      "notification",
+      "user_message",
+    ]);
+    await expect(manager.rewind(agent.id, "old-message", "conversation")).rejects.toThrow(
+      "previous agent",
+    );
+    expect(manager.getAgent(agent.id)?.provider).toBe("codex");
+  } finally {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("switching an empty chat preserves switch notices through native history refresh", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-empty-"));
+  const target = new HandoffTestClient();
+  const manager = new AgentManager({
+    clients: { claude: new HandoffTestClient("claude"), codex: target },
+    durableTimelineStore: new RecordingTimelineStore(),
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    await manager.setAgentModel(agent.id, "gpt-5.4", "codex");
+    expect(manager.getAgent(agent.id)?.config.providerHandoff?.pending).toBe(false);
+    await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+    await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+    expect((await manager.getTimelineRows(agent.id)).map((row) => row.item)).toEqual([
+      expect.objectContaining({
+        type: "notification",
+        message: expect.stringContaining("Switched from claude to codex"),
+      }),
+    ]);
+    await manager.runAgent(agent.id, "First message");
+    expect(target.sessions[0]?.prompts).toEqual(["First message"]);
+  } finally {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("an in-progress provider switch blocks overlapping prompts and duplicate switches", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-race-"));
+  const started = deferred<void>();
+  const release = deferred<void>();
+  class SlowTarget extends HandoffTestClient {
+    override async createSession(config: AgentSessionConfig) {
+      started.resolve();
+      await release.promise;
+      return super.createSession(config);
+    }
+  }
+  const source = new HandoffTestClient("claude");
+  const manager = new AgentManager({
+    clients: { claude: source, codex: new SlowTarget() },
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const switching = manager.setAgentModel(agent.id, "gpt-5.4", "codex");
+  try {
+    await started.promise;
+    await expect(manager.runAgent(agent.id, "Do not send to the old runtime")).rejects.toThrow(
+      "switch",
+    );
+    await expect(manager.setAgentModel(agent.id, "gpt-5.4", "codex")).rejects.toThrow(
+      "already in progress",
+    );
+    expect(source.sessions[0]?.closed).toBe(false);
+    release.resolve();
+    await switching;
+    expect(source.sessions[0]?.closed).toBe(true);
+    expect(manager.getAgent(agent.id)?.provider).toBe("codex");
+  } finally {
+    release.resolve();
+    await switching;
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("failed replacement registration restores the previous durable session for recovery", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-rollback-"));
+  class FailingTargetStorage extends AgentStorage {
+    override async applySnapshot(
+      agent: ManagedAgent,
+      options?: { title?: string | null; internal?: boolean },
+    ) {
+      if (agent.provider === "codex") throw new Error("Target persistence unavailable");
+      return super.applySnapshot(agent, options);
+    }
+  }
+  const registry = new FailingTargetStorage(join(workdir, "agents"), logger);
+  const source = new HandoffTestClient("claude");
+  const target = new HandoffTestClient();
+  const manager = new AgentManager({
+    clients: { claude: source, codex: target },
+    registry,
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+    workspaceId: "workspace",
+  });
+  try {
+    await manager.appendTimelineItem(agent.id, { type: "user_message", text: "Keep this history" });
+    await expect(manager.setAgentModel(agent.id, "gpt-5.4", "codex")).rejects.toThrow(
+      "Target persistence unavailable",
+    );
+    expect((await registry.get(agent.id))?.provider).toBe("claude");
+    expect(manager.getAgent(agent.id)).toBeNull();
+    expect(target.sessions[0]?.closed).toBe(true);
+    const restored = await ensureAgentLoaded(agent.id, {
+      agentManager: manager,
+      agentStorage: registry,
+      logger,
+    });
+    expect(restored.provider).toBe("claude");
+    expect(manager.getTimeline(agent.id)).toContainEqual(
+      expect.objectContaining({ text: "Keep this history" }),
+    );
+    await manager.runAgent(agent.id, "Resume original work");
+    expect(source.sessions.at(-1)?.prompts).toEqual(["Resume original work"]);
+  } finally {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});

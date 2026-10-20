@@ -11,7 +11,7 @@ import type { SessionOutboundMessage } from "../../messages.js";
 class FakeAgentConfigOperations implements AgentConfigOperations {
   readonly loadedAgentIds: string[] = [];
   readonly modeCalls: Array<{ agentId: string; modeId: string }> = [];
-  readonly modelCalls: Array<{ agentId: string; modelId: string | null }> = [];
+  readonly modelCalls: Array<{ agentId: string; modelId: string | null; provider?: string }> = [];
   readonly featureCalls: Array<{ agentId: string; featureId: string; value: unknown }> = [];
   readonly thinkingCalls: Array<{ agentId: string; thinkingOptionId: string | null }> = [];
   /** Cross-operation ordering, which the per-operation arrays above cannot show. */
@@ -33,8 +33,8 @@ class FakeAgentConfigOperations implements AgentConfigOperations {
     return this.modeNotice;
   }
 
-  async setModel(agentId: string, modelId: string | null): Promise<void> {
-    this.modelCalls.push({ agentId, modelId });
+  async setModel(agentId: string, modelId: string | null, provider?: string): Promise<void> {
+    this.modelCalls.push({ agentId, modelId, ...(provider ? { provider } : {}) });
     this.callLog.push("model");
     if (this.failWith) throw this.failWith;
   }
@@ -426,5 +426,29 @@ describe("AgentConfigSession", () => {
       type: "agent.config.apply.response",
       payload: { requestId: "req-1", agentId: "agent-1", accepted: false, error: "apply boom" },
     });
+  });
+});
+
+test("model selection forwards an explicit provider through the normal config request", async () => {
+  const { subsystem, operations, emitted } = makeSubsystem();
+  await subsystem.handleSetAgentModelRequest({
+    type: "set_agent_model_request",
+    agentId: "same-chat",
+    modelId: "target-model",
+    provider: "codex",
+    requestId: "switch-request",
+  });
+  expect(operations.modelCalls).toEqual([
+    { agentId: "same-chat", modelId: "target-model", provider: "codex" },
+  ]);
+  expect(emitted).toContainEqual({
+    type: "set_agent_model_response",
+    payload: {
+      requestId: "switch-request",
+      agentId: "same-chat",
+      accepted: true,
+      error: null,
+      notice: undefined,
+    },
   });
 });

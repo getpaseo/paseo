@@ -56,6 +56,11 @@ import {
 } from "./agent-sdk-types.js";
 import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agent-archive.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
+import {
+  buildProviderSwitchConfig,
+  stripHandoffEcho,
+  withProviderHandoff,
+} from "./provider-handoff.js";
 import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
 import type { AgentOwner } from "./agent-owner.js";
 import {
@@ -212,6 +217,9 @@ function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
   if (record.config.systemPrompt != null) {
     config.systemPrompt = record.config.systemPrompt;
   }
+  if (record.config.providerHandoff != null) {
+    config.providerHandoff = { ...record.config.providerHandoff };
+  }
   if (record.config.mcpServers != null) config.mcpServers = record.config.mcpServers;
   return stripInternalPaseoMcpServer(config);
 }
@@ -315,6 +323,13 @@ export interface CreateAgentOptions {
   // undefined is an explicit decision: the agent never appears in the sidebar.
   workspaceId: string | undefined;
   owner?: AgentOwner;
+  /** Restore a switched chat whose target has not produced a native session handle yet. */
+  restoreState?: {
+    createdAt: Date;
+    updatedAt: Date;
+    lastUserMessageAt: Date | null;
+    attention: AttentionState;
+  };
 }
 
 export interface AgentManagerOptions {
@@ -742,6 +757,7 @@ export class AgentManager {
   private readonly providerDefinitions = new Map<AgentProvider, ProviderEnabledFlag>();
   private readonly agents = new Map<string, LiveManagedAgent>();
   private readonly timelineStore = new InMemoryAgentTimelineStore();
+  private readonly providerSwitches = new Set<string>();
   private readonly providerSubagents = new ProviderSubagentStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
@@ -1281,7 +1297,8 @@ export class AgentManager {
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
-    if (this.pluginLifecycle && !config.internal) {
+    const restoring = options.restoreState !== undefined;
+    if (this.pluginLifecycle && !config.internal && !restoring) {
       const request = await this.pluginLifecycle.before("agent.create", {
         config,
         env: options.env,
@@ -1289,7 +1306,7 @@ export class AgentManager {
       config = { ...request.config, internal: config.internal };
       options = { ...options, env: request.env };
     }
-    await this.deleteAgentState(resolvedAgentId);
+    if (!restoring) await this.deleteAgentState(resolvedAgentId);
     const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
       config,
       resolvedAgentId,
@@ -1318,8 +1335,10 @@ export class AgentManager {
       workspaceId: options.workspaceId,
       owner: options.owner,
       historyPrimed: true,
+      ...options.restoreState,
+      restoring,
     });
-    if (!agent.internal) {
+    if (!agent.internal && !restoring) {
       this.pluginLifecycle?.emit("agent.created", {
         agent: describeHookAgent({ ...agent, title: agent.config.title }),
       });
@@ -2020,6 +2039,7 @@ export class AgentManager {
   }
 
   async setAgentMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null> {
+    if (this.providerSwitches.has(agentId)) throw new Error("Wait for the agent switch to finish");
     const agent = this.requireSessionAgent(agentId);
     const notice = (await agent.session.setMode(modeId)) ?? null;
     await this.drainSessionEvents(agentId);
@@ -2035,7 +2055,26 @@ export class AgentManager {
     return notice;
   }
 
-  async setAgentModel(agentId: string, modelId: string | null): Promise<void> {
+  async setAgentModel(
+    agentId: string,
+    modelId: string | null,
+    provider?: AgentProvider,
+  ): Promise<void> {
+    if (this.providerSwitches.has(agentId))
+      throw new Error("An agent switch is already in progress");
+    if (provider && provider !== this.requireSessionAgent(agentId).provider) {
+      this.providerSwitches.add(agentId);
+      try {
+        await this.trackAgentRegistrationOperation(
+          this.runLifecycleMutation(agentId, () =>
+            this.switchAgentProvider(agentId, provider, modelId),
+          ),
+        );
+      } finally {
+        this.providerSwitches.delete(agentId);
+      }
+      return;
+    }
     const agent = this.requireSessionAgent(agentId);
     const normalizedModelId =
       typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
@@ -2054,10 +2093,137 @@ export class AgentManager {
     this.emitState(agent);
   }
 
+  private assertProviderSwitchIdle(agentId: string): void {
+    const existing = this.requireSessionAgent(agentId);
+    if (
+      this.hasInFlightRun(agentId) ||
+      existing.lifecycle === "initializing" ||
+      existing.pendingPermissions.size ||
+      existing.inFlightPermissionResponses.size
+    ) {
+      throw new Error(
+        "Wait for the current response and approvals to finish before switching agents",
+      );
+    }
+  }
+
+  private async switchAgentProvider(
+    agentId: string,
+    provider: AgentProvider,
+    modelId: string | null,
+  ): Promise<void> {
+    this.assertAcceptingAgentRegistrations();
+    const existing = this.requireSessionAgent(agentId);
+    this.assertProviderSwitchIdle(agentId);
+    this.requireEnabledProvider(provider);
+    const client = await this.requireAvailableClient({ provider });
+    const catalog = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: existing.cwd,
+      force: false,
+    });
+    const selected = catalog.models.find(
+      (model) => model.id === modelId || model.aliases?.includes(modelId ?? ""),
+    );
+    if (modelId && catalog.models.length && (!selected || selected.isSelectable === false)) {
+      throw new Error(`Model '${modelId}' is not available on '${provider}'`);
+    }
+    await this.hydrateTimelineFromProvider(agentId);
+    await this.flush();
+    const history = await this.getTimelineRows(agentId);
+    // Only shared configuration follows the chat; provider-specific controls reset.
+    const { config: switchConfig, omittedItems } = buildProviderSwitchConfig({
+      previous: existing.config,
+      provider,
+      modelId,
+      model: selected,
+      history,
+    });
+    const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
+      switchConfig,
+      agentId,
+    );
+    const launchContext = await this.buildLaunchContext(
+      agentId,
+      client,
+      storedConfig.cwd,
+      paseoToolPolicy,
+      undefined,
+      { reason: "create", purpose: "interactive", workspaceId: existing.workspaceId },
+    );
+    // Prepare the replacement before releasing the old runtime. Availability and
+    // initialization failures leave the original chat usable.
+    const session = await client.createSession(
+      this.resolveProviderLaunchConfig(launchConfig, launchContext),
+      launchContext,
+    );
+    const oldPolicy = this.paseoToolPolicies.get(agentId);
+    let closed: ManagedAgentClosed | undefined;
+    let installed = false;
+    try {
+      await this.requireExternalMcpSupport(session, storedConfig);
+      this.assertAcceptingAgentRegistrations();
+      this.assertProviderSwitchIdle(agentId);
+      await this.registry?.saveProviderHistory(agentId, history);
+      await this.closeReloadedSession(existing.session, agentId);
+      await this.drainSessionEvents(agentId);
+      this.cancelRunningProviderSubagents(agentId);
+      closed = this.prepareAgentForClosure(existing, "agent switched");
+      await this.persistSnapshot(closed);
+      this.paseoToolPolicies.set(agentId, paseoToolPolicy);
+      await this.registerSession(session, storedConfig, agentId, {
+        labels: existing.labels,
+        workspaceId: existing.workspaceId,
+        owner: existing.owner,
+        createdAt: existing.createdAt,
+        updatedAt: existing.updatedAt,
+        lastUserMessageAt: existing.lastUserMessageAt,
+        historyPrimed: true,
+        attention: existing.attention,
+        restoring: true,
+        publishWhenReady: true,
+      });
+      installed = true;
+      const notice = await this.appendTimelineItem(agentId, {
+        type: "notification",
+        level: omittedItems ? "warning" : "info",
+        message:
+          `Switched from ${existing.provider} to ${provider} (${storedConfig.model ?? "default"}).` +
+          (omittedItems
+            ? " Older context was shortened; the full chat history is still available here."
+            : ""),
+      });
+      const switched = this.requireSessionAgent(agentId);
+      if (switched.config.providerHandoff) {
+        await this.flush();
+        await this.registry?.saveProviderHistory(agentId, await this.getTimelineRows(agentId));
+        switched.config.providerHandoff.historyBoundary = notice.seq;
+        await this.persistSnapshot(switched);
+      }
+    } catch (error) {
+      if (!installed && closed) {
+        const failed = this.agents.get(agentId);
+        failed?.unsubscribeSession?.();
+        this.agents.delete(agentId);
+        this.previousStatuses.delete(agentId);
+        await this.persistSnapshot(closed);
+        this.emitClosedAgent(closed, { persist: false });
+      }
+      throw error;
+    } finally {
+      if (!installed) {
+        if (oldPolicy) this.paseoToolPolicies.set(agentId, oldPolicy);
+        else this.paseoToolPolicies.delete(agentId);
+        await this.closeUnregisteredSession(session);
+      }
+    }
+  }
+
   async setAgentThinkingOption(
     agentId: string,
     thinkingOptionId: string | null,
   ): Promise<AgentProviderNotice | null> {
+    if (this.providerSwitches.has(agentId)) throw new Error("Wait for the agent switch to finish");
     const agent = this.requireSessionAgent(agentId);
     const normalizedThinkingOptionId =
       typeof thinkingOptionId === "string" && thinkingOptionId.trim().length > 0
@@ -2089,6 +2255,7 @@ export class AgentManager {
   }
 
   async setAgentFeature(agentId: string, featureId: string, value: unknown): Promise<void> {
+    if (this.providerSwitches.has(agentId)) throw new Error("Wait for the agent switch to finish");
     const agent = this.requireAgent(agentId);
 
     if (!agent.session.setFeature) {
@@ -2458,6 +2625,7 @@ export class AgentManager {
    * broadcast like normal timeline events.
    */
   tryRunOutOfBand(agentId: string, prompt: AgentPromptInput, options?: AgentRunOptions): boolean {
+    if (this.providerSwitches.has(agentId)) throw new Error("Wait for the agent switch to finish");
     const agent = this.requireSessionAgent(agentId);
     // Providers parse slash commands from the raw text, so a command another agent sent
     // must reach them without its sender envelope.
@@ -2546,7 +2714,13 @@ export class AgentManager {
   }): Promise<string> {
     const { agent, agentId, pendingRun, prompt, options } = params;
     try {
-      const result = await agent.session.startTurn(prompt, options);
+      const handoff = agent.config.providerHandoff;
+      const providerPrompt = handoff?.pending ? withProviderHandoff(prompt, handoff.text) : prompt;
+      const result = await agent.session.startTurn(providerPrompt, options);
+      if (handoff?.pending) {
+        agent.config.providerHandoff = { ...handoff, pending: false };
+        this.enqueueBackgroundPersist(agent);
+      }
       if (pendingRun.settled) {
         throw new Error(`Agent ${agentId} run was canceled before its turn started`);
       }
@@ -2587,7 +2761,14 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): AsyncGenerator<AgentStreamEvent> {
+    if (this.providerSwitches.has(agentId))
+      throw new Error("Wait for the agent switch to finish before sending a message");
     const existingAgent = this.requireSessionAgent(agentId);
+    if (this.reloadedSessionCloses.has(existingAgent.session)) {
+      throw new Error(
+        "The previous runtime is closing. Reload the agent before sending another message",
+      );
+    }
     this.logger.trace(
       {
         agentId,
@@ -3253,7 +3434,17 @@ export class AgentManager {
   }
 
   async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
+    if (this.providerSwitches.has(agentId)) throw new Error("Wait for the agent switch to finish");
     const agent = this.requireSessionAgent(agentId);
+    const boundary = agent.config.providerHandoff?.historyBoundary;
+    if (boundary !== undefined) {
+      const row = (await this.getTimelineRows(agentId)).find(
+        (entry) => entry.item.type === "user_message" && entry.item.messageId === messageId,
+      );
+      if (!row || row.seq <= boundary) {
+        throw new Error("Messages from a previous agent cannot be rewound by the current agent");
+      }
+    }
     const submittedRow = this.timelineStore
       .getRows(agentId)
       .find(
@@ -3595,6 +3786,7 @@ export class AgentManager {
         agentId: resolvedAgentId,
         now,
         options,
+        providerHistoryBoundary: config.providerHandoff?.historyBoundary,
       });
 
       const managed = this.buildManagedAgentForRegister({
@@ -3702,6 +3894,7 @@ export class AgentManager {
   private async initializeAgentTimelineForRegister(params: {
     agentId: string;
     now: Date;
+    providerHistoryBoundary?: number;
     options:
       | {
           timeline?: AgentTimelineItem[];
@@ -3724,7 +3917,12 @@ export class AgentManager {
     const durableTimelineHasRows =
       timelineAlreadyPrimed ||
       (durableTimelineSeed != null && (durableTimelineSeed.nextSeq ?? 1) > 1);
-    const timelineSeed = explicitTimelineSeed ?? durableTimelineSeed;
+    const timelineSeed =
+      explicitTimelineSeed ??
+      durableTimelineSeed ??
+      (timelineAlreadyPrimed
+        ? undefined
+        : await this.loadProviderHistorySeed(agentId, params.providerHistoryBoundary, now));
     if (timelineSeed || !this.timelineStore.has(agentId)) {
       this.timelineStore.initialize(agentId, timelineSeed ?? { timestamp: now.toISOString() });
     }
@@ -3732,6 +3930,16 @@ export class AgentManager {
       this.enqueueDurableTimelineBulkInsert(agentId, options.timelineRows);
     }
     return { durableTimelineHasRows };
+  }
+
+  private async loadProviderHistorySeed(
+    agentId: string,
+    boundary: number | undefined,
+    now: Date,
+  ): Promise<SeedAgentTimelineOptions | undefined> {
+    if (boundary === undefined) return undefined;
+    const rows = await this.registry?.loadProviderHistory(agentId, boundary);
+    return rows?.length ? { rows, nextSeq: boundary + 1, timestamp: now.toISOString() } : undefined;
   }
 
   private buildManagedAgentForRegister(params: {
@@ -4112,7 +4320,7 @@ export class AgentManager {
     const broadcast = options?.broadcast ?? false;
     const broadcastTimeline = options?.broadcastTimeline ?? broadcast;
 
-    if (options?.force) {
+    if (options?.force || agent.config.providerHandoff?.historyBoundary !== undefined) {
       await this.forceHydrateTimelineFromLegacyProviderHistory(
         agent,
         typeof broadcast === "function" ? broadcast() : broadcast,
@@ -4132,7 +4340,14 @@ export class AgentManager {
     const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
     const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
     for await (const rawEvent of agent.session.streamHistory()) {
-      const event = limitAgentStreamEventContent(rawEvent);
+      const event = limitAgentStreamEventContent(
+        rawEvent.type === "timeline" && agent.config.providerHandoff
+          ? {
+              ...rawEvent,
+              item: stripHandoffEcho(rawEvent.item, agent.config.providerHandoff.text),
+            }
+          : rawEvent,
+      );
       if (event.type === "timeline") {
         const item = projectAgentMessage(event.item);
         if (!item) continue;
@@ -4143,9 +4358,20 @@ export class AgentManager {
     }
 
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
+    await this.flush();
+    const boundary = agent.config.providerHandoff?.historyBoundary;
+    const preservedRows =
+      boundary === undefined
+        ? []
+        : (await this.getTimelineRows(agent.id)).filter((row) => row.seq <= boundary);
     await this.deleteCommittedTimeline(agent.id);
     this.timelineStore.delete(agent.id);
-    this.timelineStore.initialize(agent.id, { timestamp: new Date().toISOString() });
+    this.timelineStore.initialize(agent.id, {
+      rows: preservedRows,
+      nextSeq: boundary === undefined ? 1 : boundary + 1,
+      timestamp: new Date().toISOString(),
+    });
+    this.enqueueDurableTimelineBulkInsert(agent.id, preservedRows);
     agent.historyPrimed = true;
 
     for (const event of this.providerSubagents.deleteParent(agent.id)) {
@@ -4193,7 +4419,14 @@ export class AgentManager {
       // halfway then leaves the committed timeline as it was, instead of a partial
       // copy the next attempt would append to.
       for await (const rawEvent of history) {
-        const event = limitAgentStreamEventContent(rawEvent);
+        const event = limitAgentStreamEventContent(
+          rawEvent.type === "timeline" && agent.config.providerHandoff
+            ? {
+                ...rawEvent,
+                item: stripHandoffEcho(rawEvent.item, agent.config.providerHandoff.text),
+              }
+            : rawEvent,
+        );
         if (event.type === "provider_subagent") {
           historySubagentEvents.push(event);
           continue;
@@ -4290,6 +4523,9 @@ export class AgentManager {
     event: AgentStreamEvent,
     options?: HandleStreamEventOptions,
   ): Promise<boolean> {
+    if (event.type === "timeline" && agent.config.providerHandoff) {
+      event = { ...event, item: stripHandoffEcho(event.item, agent.config.providerHandoff.text) };
+    }
     event = limitAgentStreamEventContent(event);
     const identified = attachManagedTurnIdentity(agent, event, options?.fromHistory === true);
     event = identified.event;

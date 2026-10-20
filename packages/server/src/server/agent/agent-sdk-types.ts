@@ -595,6 +595,8 @@ export interface AgentSessionConfig {
    * Mapped by each provider to its native instruction field.
    */
   systemPrompt?: string;
+  /** Manager-owned context for the first accepted turn after changing providers. */
+  providerHandoff?: { text: string; pending: boolean; historyBoundary?: number };
   /**
    * Daemon-level instructions appended at runtime. This is deliberately not
    * persisted into agent config so daemon setting changes apply cleanly.

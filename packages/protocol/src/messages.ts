@@ -1947,6 +1947,8 @@ export const SetAgentModeResponseMessageSchema = z.object({
 
 export const SetAgentModelRequestMessageSchema = z.object({
   type: z.literal("set_agent_model_request"),
+  // Only send to daemons advertising features.agentProviderSwitching.
+  provider: z.string().trim().min(1).optional(),
   agentId: z.string(),
   modelId: z.string().nullable(),
   requestId: z.string(),
@@ -3590,6 +3592,8 @@ export const ServerInfoStatusPayloadSchema = z
         internalAgents: z.boolean().optional(),
         // COMPAT(internalWorkspaces): added in v0.9.0; remove gate after 2027-03-17.
         internalWorkspaces: z.boolean().optional(),
+        // COMPAT(agentProviderSwitching): added in v0.12.0; remove gate once daemon floor >= v0.12.0.
+        agentProviderSwitching: z.boolean().optional(),
         backgroundWorkspaces: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
         usageSources: z.boolean().optional(),

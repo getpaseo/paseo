@@ -148,6 +148,29 @@ describe("AgentStorage", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  test("provider history reloads from disk, respects rollback boundaries, and is deleted with the agent", async () => {
+    const id = "history-sidecar-test";
+    const rows = [
+      {
+        seq: 1,
+        timestamp: new Date().toISOString(),
+        item: { type: "user_message" as const, text: "Original requirement" },
+      },
+      {
+        seq: 2,
+        timestamp: new Date().toISOString(),
+        item: { type: "notification" as const, level: "info" as const, message: "Switched" },
+      },
+    ];
+    await storage.saveProviderHistory(id, rows);
+    const reloaded = new AgentStorage(storagePath, logger);
+    expect(await reloaded.loadProviderHistory(id, 2)).toEqual(rows);
+    expect(await reloaded.loadProviderHistory(id, 1)).toEqual(rows.slice(0, 1));
+    expect(await reloaded.list()).toEqual([]);
+    await reloaded.remove(id);
+    expect(await storage.loadProviderHistory(id, 2)).toEqual([]);
+  });
+
   test("applySnapshot persists configs and snapshot metadata", async () => {
     await storage.applySnapshot(
       createManagedAgent({

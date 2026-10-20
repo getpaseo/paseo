@@ -7844,3 +7844,9 @@ test("measures an outbound message in UTF-8 bytes against the daemon's message l
   expect(mock.sent).toHaveLength(1);
   expect(client.getConnectionState().status).toBe("connected");
 });
+
+test("provider switching refuses an older host before sending an ambiguous model request", async () => {
+  const client = new DaemonClient({ url: "ws://127.0.0.1:1/ws", clientId: "switch-compat-test" });
+  await expect(client.setAgentModel("chat", "target", "codex")).rejects.toThrow("Update this host");
+  await client.close();
+});

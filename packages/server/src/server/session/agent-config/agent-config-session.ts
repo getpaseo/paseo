@@ -27,7 +27,7 @@ export interface AgentConfigSessionHost {
 export interface AgentConfigOperations {
   ensureLoaded(agentId: string): Promise<void>;
   setMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null>;
-  setModel(agentId: string, modelId: string | null): Promise<void>;
+  setModel(agentId: string, modelId: string | null, provider?: string): Promise<void>;
   setFeature(agentId: string, featureId: string, value: unknown): Promise<void>;
   setThinking(
     agentId: string,
@@ -87,7 +87,7 @@ export class AgentConfigSession {
   handleSetAgentModelRequest(
     msg: Extract<SessionInboundMessage, { type: "set_agent_model_request" }>,
   ): Promise<void> {
-    const { agentId, modelId, requestId } = msg;
+    const { agentId, modelId, provider, requestId } = msg;
     return this.applyConfigChange({
       agentId,
       requestId,
@@ -95,7 +95,8 @@ export class AgentConfigSession {
       logFields: { agentId, modelId, requestId },
       failureText: "Failed to set agent model",
       run: async () => {
-        await this.operations.setModel(agentId, modelId);
+        if (provider) await this.operations.setModel(agentId, modelId, provider);
+        else await this.operations.setModel(agentId, modelId);
         return undefined;
       },
       emitResponse: (payload) => this.host.emit({ type: "set_agent_model_response", payload }),

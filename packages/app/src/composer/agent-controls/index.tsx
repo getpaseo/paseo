@@ -28,6 +28,8 @@ import { getAgentFeatureIcon, ThinkingIcon } from "@/agent-controls/icons";
 import { formatThinkingOptionLabel } from "@/agent-controls/labels";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import {
   buildProviderSelectorProviders,
   buildSelectableProviderSelectorProviders,
@@ -389,6 +391,8 @@ function pickDesktopModel({
 }
 
 type AgentControlsSlice = {
+  status: string;
+  hasPendingPermissions: boolean;
   provider: string;
   cwd: string | null;
   runtimeModelId: string | null;
@@ -409,6 +413,8 @@ function selectAgentControlsSlice(
     return null;
   }
   return {
+    status: currentAgent.status,
+    hasPendingPermissions: currentAgent.pendingPermissions.length > 0,
     provider: currentAgent.provider,
     cwd: currentAgent.cwd,
     runtimeModelId: currentAgent.runtimeInfo?.model ?? null,
@@ -1549,6 +1555,91 @@ function ThinkingComboboxOption({
   );
 }
 
+function selectProviderSwitchSupport(
+  state: ReturnType<typeof useSessionStore.getState>,
+  serverId: string,
+): boolean {
+  return state.sessions[serverId]?.serverInfo?.features?.agentProviderSwitching === true;
+}
+
+function canSwitchChatProvider(supported: boolean, agent: AgentControlsSlice): boolean {
+  return (
+    supported &&
+    agent !== null &&
+    agent.status !== "running" &&
+    agent.status !== "initializing" &&
+    !agent.hasPendingPermissions
+  );
+}
+
+function useChatModelMutation(
+  serverId: string,
+  agentId: string,
+  agentProvider: string | undefined,
+  canSwitchProvider: boolean,
+  catalogLoading: boolean,
+  providerLoading: boolean,
+) {
+  const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
+  const { updatePreferences } = useFormPreferences();
+  const [isChangingModel, setIsChangingModel] = useState(false);
+  const modelMutationPending = useRef(false);
+  const [modelChangeError, setModelChangeError] = useState<string | null>(null);
+  const clearModelChangeError = useCallback(() => setModelChangeError(null), []);
+  useEffect(() => {
+    setModelChangeError(null);
+  }, [agentId, serverId]);
+  const handleSelectProviderAndModel = useCallback(
+    async (provider: AgentProvider, modelId: string) => {
+      if (!client || !agentProvider || modelMutationPending.current) return;
+      if (provider !== agentProvider && !canSwitchProvider) return;
+      modelMutationPending.current = true;
+      setIsChangingModel(true);
+      setModelChangeError(null);
+      try {
+        await client.setAgentModel(
+          agentId,
+          modelId,
+          provider !== agentProvider ? provider : undefined,
+        );
+        await updatePreferences((current) =>
+          mergeProviderPreferences({
+            preferences: current,
+            provider,
+            updates: { model: modelId },
+          }),
+        );
+      } catch (error) {
+        setModelChangeError(toErrorMessage(error));
+      } finally {
+        modelMutationPending.current = false;
+        setIsChangingModel(false);
+      }
+    },
+    [agentId, agentProvider, canSwitchProvider, client, updatePreferences],
+  );
+  return {
+    modelIsLoading: isChangingModel || catalogLoading || providerLoading,
+    modelChangeError,
+    clearModelChangeError,
+    handleSelectProviderAndModel,
+    providerSelectionHandler: canSwitchProvider ? handleSelectProviderAndModel : undefined,
+    controlsDisabled: !client || isChangingModel,
+  };
+}
+
+function ModelChangeError({ error, onDismiss }: { error: string | null; onDismiss: () => void }) {
+  const { t } = useTranslation();
+  if (!error) return null;
+  return (
+    <Alert variant="error" size="sm" description={error} testID="agent-model-change-error">
+      <Button variant="ghost" size="xs" onPress={onDismiss}>
+        {t("common.actions.dismiss")}
+      </Button>
+    </Alert>
+  );
+}
+
 export const AgentControls = memo(function AgentControls({
   agentId,
   serverId,
@@ -1560,6 +1651,10 @@ export const AgentControls = memo(function AgentControls({
     useShallow((state) => selectAgentControlsSlice(state, serverId, agentId)),
   );
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
+  const supportsProviderSwitching = useSessionStore((state) =>
+    selectProviderSwitchSupport(state, serverId),
+  );
+  const canSwitchProvider = canSwitchChatProvider(supportsProviderSwitching, agent);
   const toast = useToast();
   const modeControl = useLiveAgentModeControl(serverId, agentId);
   const commandCenterModes = toCommandCenterModes(modeControl);
@@ -1580,6 +1675,21 @@ export const AgentControls = memo(function AgentControls({
 
   const models = filterSelectableModels(snapshotSelectedEntry?.models ?? null);
   const selectedProviderIsLoading = snapshotSelectedEntry?.status === "loading";
+  const {
+    modelIsLoading,
+    modelChangeError,
+    clearModelChangeError,
+    handleSelectProviderAndModel,
+    providerSelectionHandler,
+    controlsDisabled,
+  } = useChatModelMutation(
+    serverId,
+    agentId,
+    agent?.provider,
+    canSwitchProvider,
+    snapshotIsLoading,
+    selectedProviderIsLoading,
+  );
 
   const agentProviderDefinitions = useMemo(
     () => buildAgentProviderDefinitions(agent?.provider, snapshotEntries),
@@ -1591,6 +1701,9 @@ export const AgentControls = memo(function AgentControls({
     [agent?.provider, models],
   );
   const agentModelSelectorProviders = useMemo(() => {
+    if (canSwitchProvider) {
+      return buildSelectableProviderSelectorProviders(snapshotEntries);
+    }
     if (snapshotSelectedEntry) {
       return buildSelectableProviderSelectorProviders([snapshotSelectedEntry]);
     }
@@ -1598,7 +1711,13 @@ export const AgentControls = memo(function AgentControls({
       providerDefinitions: agentProviderDefinitions,
       modelsByProvider: agentProviderModels,
     });
-  }, [agentProviderDefinitions, agentProviderModels, snapshotSelectedEntry]);
+  }, [
+    agentProviderDefinitions,
+    agentProviderModels,
+    snapshotSelectedEntry,
+    snapshotEntries,
+    canSwitchProvider,
+  ]);
 
   const modelSelection = resolveAgentModelSelection({
     models,
@@ -1623,29 +1742,16 @@ export const AgentControls = memo(function AgentControls({
   const activeModelId = modelSelection.activeModelId;
 
   const handleSelectModel = useCallback(
-    async (modelId: string) => {
-      if (!client || !agentProvider) {
-        return;
-      }
-      try {
-        await client.setAgentModel(agentId, modelId);
-        await updatePreferences((current) =>
-          mergeProviderPreferences({
-            preferences: current,
-            provider: agentProvider,
-            updates: { model: modelId },
-          }),
-        );
-      } catch (error) {
-        console.warn("[AgentControls] setAgentModel or persist preference failed", error);
-        toast.error(toErrorMessage(error));
-      }
+    (modelId: string) => {
+      if (agentProvider) void handleSelectProviderAndModel(agentProvider, modelId);
     },
-    [agentId, agentProvider, client, toast, updatePreferences],
+    [agentProvider, handleSelectProviderAndModel],
   );
   const handleSelectCommandCenterModel = useCallback(
-    (_provider: AgentProvider, modelId: string) => handleSelectModel(modelId),
-    [handleSelectModel],
+    (provider: AgentProvider, modelId: string) => {
+      void handleSelectProviderAndModel(provider, modelId);
+    },
+    [handleSelectProviderAndModel],
   );
 
   // A running agent is one provider's process, so only that provider's profiles
@@ -1775,8 +1881,8 @@ export const AgentControls = memo(function AgentControls({
   );
 
   const handleModelSelectorOpen = useCallback(() => {
-    refetchSnapshotIfStale(agentProvider);
-  }, [agentProvider, refetchSnapshotIfStale]);
+    refetchSnapshotIfStale(canSwitchProvider ? undefined : agentProvider);
+  }, [agentProvider, canSwitchProvider, refetchSnapshotIfStale]);
 
   const handleRetryModelProvider = useCallback(
     (provider: AgentProvider) => {
@@ -1793,12 +1899,14 @@ export const AgentControls = memo(function AgentControls({
     <>
       {commandCenterRegistration}
       {profileEditor.element}
+      <ModelChangeError error={modelChangeError} onDismiss={clearModelChangeError} />
       <ControlledAgentControls
         provider={agent.provider}
         modelSelectorProviders={agentModelSelectorProviders}
         modelOptions={modelOptions}
         selectedModelId={modelSelection.activeModelId ?? undefined}
         onSelectModel={handleSelectModel}
+        onSelectProviderAndModel={providerSelectionHandler}
         agentProfiles={agentProfiles}
         onApplyAgentProfile={agentProfiles?.applyProfile}
         onEditAgentProfiles={handleEditAgentProfiles}
@@ -1809,12 +1917,12 @@ export const AgentControls = memo(function AgentControls({
         onSelectThinkingOption={handleSelectThinkingOption}
         features={agent.features}
         onSetFeature={handleSetFeature}
-        isModelLoading={snapshotIsLoading || selectedProviderIsLoading}
+        isModelLoading={modelIsLoading}
         onModelSelectorOpen={handleModelSelectorOpen}
         onRetryModelProvider={handleRetryModelProvider}
         isRetryingModelProvider={snapshotIsRefreshing}
         onDropdownClose={onDropdownClose}
-        disabled={!client}
+        disabled={controlsDisabled}
         modeControl={modeControl}
         modelSelectorServerId={serverId}
         isCompactLayout={isCompactLayout}
