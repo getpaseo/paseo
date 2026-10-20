@@ -625,8 +625,9 @@ test("setup details follow one workspace/source and restore after reconnect with
       path.join(repoDir, "setup.cjs"),
       `
 const fs = require('node:fs');
+// Exercise a real child start beyond Vitest's default one-second polling window.
+setTimeout(() => {
 console.log('setup started');
-fs.writeFileSync('started.txt', 'ready');
 let wave = 0;
 const timer = setInterval(() => {
   if (fs.existsSync('wave-' + wave)) {
@@ -636,6 +637,7 @@ const timer = setInterval(() => {
   }
   if (fs.existsSync('finish.txt')) { clearInterval(timer); process.exit(1); }
 }, 20);
+}, 1500);
 `,
     );
     writeFileSync(path.join(repoDir, ".gitignore"), "*.txt\nwave-*\nemitted-*\n");
@@ -672,15 +674,25 @@ const timer = setInterval(() => {
     const directory = quiet.observeWorkspaces();
     observations.push(directory);
     await directory.ready;
+    const waitForSetupStarted = async (workspaceId: string) => {
+      // Process startup is asynchronous, especially under Windows PowerShell. The daemon's
+      // output snapshot is the readiness barrier; a marker file can precede PTY delivery.
+      await expect
+        .poll(async () => (await viewer.fetchWorkspaceSetupStatus(workspaceId)).snapshot, {
+          timeout: 30000,
+        })
+        .toMatchObject({
+          status: "running",
+          detail: { log: expect.stringContaining("setup started") },
+        });
+    };
     for (const worktreeSlug of ["noisy-a", "noisy-b", "noisy-c"]) {
       const result = await creator.createWorkspace({
         source: { kind: "worktree", cwd: repoDir, worktreeSlug },
       });
       if (!result.workspace || result.error) throw new Error(result.error ?? "No workspace");
       workspaces.push(result.workspace);
-      await expect
-        .poll(() => existsSync(path.join(result.workspace!.workspaceDirectory!, "started.txt")))
-        .toBe(true);
+      await waitForSetupStarted(result.workspace.id);
     }
     const external = await mcp.callTool({
       name: "create_workspace",
@@ -693,17 +705,8 @@ const timer = setInterval(() => {
     );
     if (!externalWorkspace) throw new Error("Missing MCP directory entry");
     workspaces.unshift(externalWorkspace);
-    await expect
-      .poll(() => existsSync(path.join(externalWorkspace.workspaceDirectory!, "started.txt")))
-      .toBe(true);
+    await waitForSetupStarted(externalWorkspace.id);
     const workspace = workspaces[0]!;
-    // The child writes its marker before the terminal's output is delivered.
-    // Wait for the daemon snapshot, rather than treating the file as an output barrier.
-    await expect
-      .poll(async () => (await viewer.fetchWorkspaceSetupStatus(workspace.id)).snapshot, {
-        timeout: 30000,
-      })
-      .toMatchObject({ detail: { log: expect.stringContaining("setup started") } });
     const details = viewer.observeWorkspaceSetup(workspace.id);
     observations.push(details);
     const initial = await details.ready;

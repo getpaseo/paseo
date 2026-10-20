@@ -1,22 +1,41 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useFileText } from "@getpaseo/plugin/client";
 import { Text, View } from "react-native";
-import { StyleSheet, UnistylesRuntime } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { isWeb } from "@/constants/platform";
 import { useAppSettings } from "@/hooks/use-settings";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { formatFileSize } from "@/utils/format-file-size";
+import type { Theme } from "@/styles/theme";
 import { FilePanelLoading } from "../loading";
 import type { BuiltinFilePanelProps } from "../panels";
 import { FileConflictAlert, type FileConflictAlertState } from "./conflict-alert";
-import type { EditorVisualTheme } from "./editor/extensions.web";
 import { FileEditorModel, getFileConflictCallout } from "./editor/model";
 import { FileEditorView } from "./editor/view";
 import { selectSourcePresentation } from "./readonly/presentation";
 import { FileSourceView } from "./readonly/view";
 import { SourceStatusRow } from "./status";
+
+// CodeMirror and native source rendering consume appearance as props. Subscribe at the
+// rendering leaf so theme updates reconfigure it without replacing the editor/model.
+const sourceAppearance = (theme: Theme) => ({
+  theme: {
+    colorScheme: theme.colorScheme,
+    background: theme.colors.surface0,
+    foreground: theme.colors.foreground,
+    cursor: theme.colors.terminal.cursor,
+    foregroundMuted: theme.colors.foregroundMuted,
+    border: theme.colors.border,
+    selection: theme.colors.terminal.selectionBackground,
+    monoFont: theme.fontFamily.mono,
+    codeFontSize: theme.fontSize.code,
+    syntax: theme.colors.syntax,
+  },
+});
+const ThemedFileEditorView = withUnistyles(FileEditorView, sourceAppearance);
+const ThemedFileSourceView = withUnistyles(FileSourceView, sourceAppearance);
 
 /** The daemon refuses to write larger files. */
 const MAX_EDITABLE_BYTES = 1024 * 1024;
@@ -50,7 +69,6 @@ function ReadonlySource({
   presentation,
 }: BuiltinFilePanelProps & { presentation: "highlighted" | "plain" }) {
   const text = useFileText(file);
-  const theme = useEditorVisualTheme();
   const { t } = useTranslation();
   const sourceLocation = useMemo(
     () => ({ path: target.path, lineStart: location.lineStart, lineEnd: location.lineEnd }),
@@ -66,13 +84,12 @@ function ReadonlySource({
   }
   return (
     <View style={styles.container}>
-      <FileSourceView
+      <ThemedFileSourceView
         content={text.text}
         filename={target.path}
         location={sourceLocation}
         navigationRevision={location.revision}
         presentation={presentation}
-        theme={theme}
       />
       <SourceStatusRow size={file.size} lineCount={text.text.split("\n").length} />
     </View>
@@ -87,7 +104,6 @@ function EditableSource({ file, tab, location, target }: BuiltinFilePanelProps) 
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
   const [vimMode, setVimMode] = useState<string | null>(settings.vimKeybindings ? "NORMAL" : null);
   const snapshot = useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot);
-  const theme = useEditorVisualTheme();
 
   useEffect(() => {
     model.open();
@@ -147,13 +163,12 @@ function EditableSource({ file, tab, location, target }: BuiltinFilePanelProps) 
     <View style={styles.container}>
       {conflict ? <FileConflictAlert state={conflict} /> : null}
       <View style={styles.editor}>
-        <FileEditorView
+        <ThemedFileEditorView
           model={model}
           filename={target.path}
           location={editorLocation}
           navigationRevision={location.revision}
           vimEnabled={settings.vimKeybindings}
-          theme={theme}
           onCursorChange={setCursor}
           onVimModeChange={setVimMode}
           onReady={handleReady}
@@ -168,36 +183,6 @@ function EditableSource({ file, tab, location, target }: BuiltinFilePanelProps) 
         cursor={cursor}
       />
     </View>
-  );
-}
-
-function useEditorVisualTheme(): EditorVisualTheme {
-  const theme = UnistylesRuntime.getTheme();
-  return useMemo(
-    () => ({
-      colorScheme: theme.colorScheme,
-      background: theme.colors.surface0,
-      foreground: theme.colors.foreground,
-      cursor: theme.colors.terminal.cursor,
-      foregroundMuted: theme.colors.foregroundMuted,
-      border: theme.colors.border,
-      selection: theme.colors.terminal.selectionBackground,
-      monoFont: theme.fontFamily.mono,
-      codeFontSize: theme.fontSize.code,
-      syntax: theme.colors.syntax,
-    }),
-    [
-      theme.colors.border,
-      theme.colors.foreground,
-      theme.colors.foregroundMuted,
-      theme.colors.surface0,
-      theme.colors.syntax,
-      theme.colors.terminal.cursor,
-      theme.colors.terminal.selectionBackground,
-      theme.colorScheme,
-      theme.fontFamily.mono,
-      theme.fontSize.code,
-    ],
   );
 }
 
