@@ -13,6 +13,7 @@
 #include "modules/skparagraph/include/Paragraph.h"
 #include "modules/skparagraph/include/ParagraphBuilder.h"
 #include "modules/skunicode/include/SkUnicode.h"
+#include "modules/skunicode/include/SkUnicode_icu.h"
 
 namespace paseo::diff {
 namespace {
@@ -108,6 +109,7 @@ class Measurer {
     fonts_ = sk_make_sp<para::FontCollection>();
     fonts_->setDefaultFontManager(manager);
     fonts_->enableFontFallback();
+    unicode_ = SkUnicodes::ICU::Make();
     para::StrutStyle strut;
     strut.setStrutEnabled(true);
     strut.setForceStrutHeight(true);
@@ -178,7 +180,7 @@ class Measurer {
     return it->second;
   }
   std::unique_ptr<para::Paragraph> shape(const std::u16string& text) {
-    auto builder = para::ParagraphBuilder::make(style_, fonts_);
+    auto builder = para::ParagraphBuilder::make(style_, fonts_, unicode_);
     builder->pushStyle(textStyle_);
     const auto utf8 = SkUnicode::convertUtf16ToUtf8(text);
     builder->addText(utf8.c_str(), utf8.size());
@@ -198,6 +200,7 @@ class Measurer {
   SkFont font_;
   std::vector<SkString> families_;
   sk_sp<para::FontCollection> fonts_;
+  sk_sp<SkUnicode> unicode_;
   para::ParagraphStyle style_;
   para::TextStyle textStyle_;
   std::unordered_map<char16_t, bool> glyphs_;
