@@ -69,7 +69,6 @@ Use this table as the complete registration checklist.
 
 | Old registration and location                                                                 | New registration and location                                                                                               |
 | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `agent.turn_ended` handler reads `event.timeline`                                             | Always `[]`; use a bounded [`timeline.refetch` call](reference#send-a-follow-up-when-a-turn-ends).                          |
 | `plugin.handle(contract, handler)` in the old root entry                                      | `server.handle(contract, handler)` in `index.server.ts`                                                                     |
 | `plugin.addSurface(id, Component)` in the old root entry                                      | `client.addScreen({ id, title, Component })` in `index.client.tsx`                                                          |
 | `plugin.addSidebarItem({ id, title, icon, surface })` in the old root entry                   | `client.addSidebarHeaderItem({ id, title, Component })` in `index.client.tsx`; see [sidebar items](reference#sidebar-items) |
