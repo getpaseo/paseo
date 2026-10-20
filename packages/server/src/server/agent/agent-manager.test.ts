@@ -2414,6 +2414,50 @@ test("setAgentMode persists the selected mode across session reload", async () =
   expect(reloaded.currentModeId).toBe("full-access");
 });
 
+test("default creation skips hidden models while explicit saved models reach the client unchanged", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-picker-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class CatalogClient extends TestAgentClient {
+    override async fetchCatalog() {
+      return {
+        models: [
+          {
+            provider: this.provider,
+            id: "minimax/MiniMax-M2.7",
+            label: "Legacy",
+            isDefault: true,
+            isVisibleInPicker: false,
+          },
+          { provider: this.provider, id: "minimax/MiniMax-M3.1-Flash", label: "Flash" },
+          { provider: this.provider, id: "minimax/MiniMax-M3", label: "M3" },
+        ],
+        modes: [],
+      };
+    }
+  }
+  const client = new CatalogClient("opencode");
+  const manager = new AgentManager({ clients: { opencode: client }, registry: storage, logger });
+  try {
+    for (const model of [undefined, "minimax/MiniMax-M2.7", "custom/saved"]) {
+      const created = await manager.createAgent(
+        { provider: "opencode", cwd: workdir, model },
+        undefined,
+        { workspaceId: undefined },
+      );
+      expect(created.config.model).toBe(model ?? "minimax/MiniMax-M3.1-Flash");
+      await manager.closeAgent(created.id);
+    }
+    expect(client.createdConfigs.map((config) => config.model)).toEqual([
+      "minimax/MiniMax-M3.1-Flash",
+      "minimax/MiniMax-M2.7",
+      "custom/saved",
+    ]);
+  } finally {
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("reload releases the original writer before resuming the same session", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-writer-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);

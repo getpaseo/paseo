@@ -416,6 +416,17 @@ function mergeModelAdditions(
       ...existingModel,
       ...additionalModel,
       ...(explicitlyEnablesCompatibilityModel ? { isSelectable: true } : {}),
+      // An explicit profile entry wins even when its ID matches a hidden runtime model.
+      ...(existingModel?.isVisibleInPicker === false
+        ? {
+            isVisibleInPicker: true,
+            metadata: {
+              ...existingModel.metadata,
+              ...additionalModel.metadata,
+              catalogOrigin: "custom",
+            },
+          }
+        : {}),
     };
   }
 

@@ -1,3 +1,4 @@
+import { filterPickerAgentModels } from "./agent-sdk-types.js";
 import type {
   AgentModelDefinition,
   AgentProvider,
@@ -25,6 +26,7 @@ export const DEFAULT_STRUCTURED_GENERATION_PROVIDERS: readonly StructuredGenerat
   [
     { modelSubstring: "haiku" },
     { modelSubstring: "gpt-5.4-mini", thinkingOptionId: "low" },
+    { modelSubstring: "minimax-m3.1-flash" },
     { modelSubstring: "minimax-m3" },
     { modelSubstring: "nemotron-3-super" },
   ] as const;
@@ -225,9 +227,13 @@ function resolveByModelSubstring(
   }
 
   for (const entry of entries) {
-    for (const model of entry.models ?? []) {
+    for (const model of filterPickerAgentModels(entry.models)) {
       const haystacks = [model.id, model.label].map((value) => value.toLowerCase());
-      if (!haystacks.some((value) => value.includes(needle))) {
+      const matches =
+        needle === "minimax-m3"
+          ? haystacks.some((value) => /(?:^|\/)minimax-m3(?:-free|:free)?$/.test(value))
+          : haystacks.some((value) => value.includes(needle));
+      if (!matches) {
         continue;
       }
       const thinkingOptionId = resolveThinkingOptionId(model, identifier.thinkingOptionId);
@@ -254,7 +260,8 @@ function readConfiguredProviders(
 }
 
 function selectDefaultModel(models: readonly AgentModelDefinition[]): AgentModelDefinition | null {
-  return models.find((model) => model.isDefault) ?? models[0] ?? null;
+  const visible = filterPickerAgentModels([...models]);
+  return visible.find((model) => model.isDefault) ?? visible[0] ?? null;
 }
 
 function resolveThinkingOptionId(

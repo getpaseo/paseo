@@ -274,6 +274,9 @@ describe("OpenCodeBridge", () => {
     try {
       const plugin = readPluginOptions(bridge.decorateServerEnv({}));
       expect(plugin.pluginUrl).toMatch(/^file:/);
+      expect(bridge.isPaseoPlugin(plugin.pluginUrl)).toBe(true);
+      expect(bridge.isPaseoPlugin(`${plugin.pluginUrl}.custom`)).toBe(false);
+      expect(bridge.isPaseoPlugin("file:///custom/paseo-bridge.mjs")).toBe(false);
 
       const unauthorized = await fetch(
         `${plugin.baseUrl}/_internal/opencode/sessions/ses_one/context`,

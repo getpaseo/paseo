@@ -1,4 +1,5 @@
 import { validateProviderOptions } from "../provider-options.js";
+import { applyOpenCodeMiniMaxCatalog } from "./opencode/minimax-catalog.js";
 import {
   createOpencodeClient,
   type AssistantMessage as OpenCodeAssistantMessage,
@@ -792,6 +793,7 @@ function buildOpenCodeModelDefinition(
   provider: {
     id: string;
     name: string;
+    source?: string;
   },
   modelId: string,
   model: {
@@ -828,6 +830,7 @@ function buildOpenCodeModelDefinition(
     metadata: {
       providerId: provider.id,
       providerName: provider.name,
+      ...(provider.source ? { providerSource: provider.source } : {}),
       modelId,
       family: model.family,
       releaseDate: model.release_date,
@@ -1902,7 +1905,27 @@ export class OpenCodeAgentClient implements AgentClient {
     this.modelContextWindows.clear();
     for (const [key, value] of contextWindows) this.modelContextWindows.set(key, value);
 
-    return models;
+    if (!models.some((model) => /minimax-m\d/i.test(model.id))) return models;
+    try {
+      const config = await runProviderRefreshActivity(context, "config.get", () =>
+        raceProviderRefreshAbort(
+          context?.signal,
+          openCodeMetadataLimit(() =>
+            client.config.get({ directory }, context ? { signal: context.signal } : undefined),
+          ),
+        ),
+      );
+      return applyOpenCodeMiniMaxCatalog(
+        models,
+        config.data,
+        (specifier) => this.bridge?.isPaseoPlugin(specifier) ?? false,
+      );
+    } catch {
+      context?.signal.throwIfAborted();
+      // Config is needed to distinguish native overrides, not to use the runtime catalog.
+      this.logger.warn("OpenCode config unavailable; preserving MiniMax catalog choices");
+      return models;
+    }
   }
 
   private async fetchModesFromClient(

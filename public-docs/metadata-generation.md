@@ -29,8 +29,9 @@ The candidate list is assembled in this order:
 2. **Built-in defaults**, matched against the models of the providers you have enabled:
    1. a `haiku` model
    2. `gpt-5.4-mini` (low reasoning)
-   3. `minimax-m3`
-   4. `nemotron-3-super`
+   3. `minimax-m3.1-flash`
+   4. `minimax-m3`
+   5. `nemotron-3-super`
 3. **The model currently selected** for that agent or draft, as a last resort.
 
 Each default is a match on the model id or name, so the first enabled provider that ships a matching model wins. Anything that can't be resolved against an enabled provider is skipped. Duplicates are removed, then generation tries the list top to bottom.

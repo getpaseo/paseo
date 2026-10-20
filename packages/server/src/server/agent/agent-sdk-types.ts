@@ -92,6 +92,8 @@ export interface AgentModelDefinition {
   id: string;
   aliases?: string[];
   isSelectable?: boolean;
+  // Picker visibility does not revoke an explicit saved model selection.
+  isVisibleInPicker?: boolean;
   label: string;
   description?: string;
   isDefault?: boolean;
@@ -122,6 +124,12 @@ export function filterSelectableAgentModels(
   models: AgentModelDefinition[] | undefined,
 ): AgentModelDefinition[] {
   return models?.filter((model) => model.isSelectable !== false) ?? [];
+}
+
+export function filterPickerAgentModels(
+  models: AgentModelDefinition[] | undefined,
+): AgentModelDefinition[] {
+  return filterSelectableAgentModels(models).filter((model) => model.isVisibleInPicker !== false);
 }
 
 export interface ProviderSnapshotEntry {

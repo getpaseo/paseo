@@ -12,7 +12,7 @@ import {
   type ProviderSnapshotTransition,
 } from "../../agent/provider-snapshot-manager.js";
 import {
-  filterSelectableAgentModels,
+  filterPickerAgentModels,
   type AgentFeature,
   type AgentProvider,
   type AgentSessionConfig,
@@ -137,11 +137,20 @@ export class ProviderCatalogSession {
       generatedAt: new Date().toISOString(),
     };
     const clientEntries = () =>
-      records.map(({ entry }) =>
-        entry.modes && !customModeIcons
-          ? { ...entry, modes: this.downgradeModeIconsForClient(entry.modes, customModeIcons) }
-          : entry,
-      );
+      records.map(({ entry }) => ({
+        ...entry,
+        // Keep hidden entries for saved-model labels; existing clients understand isSelectable.
+        ...(entry.models
+          ? {
+              models: entry.models.map((model) =>
+                model.isVisibleInPicker === false ? { ...model, isSelectable: false } : model,
+              ),
+            }
+          : {}),
+        ...(entry.modes && !customModeIcons
+          ? { modes: this.downgradeModeIconsForClient(entry.modes, customModeIcons) }
+          : {}),
+      }));
     if (!compact) {
       return { ...envelope, entries: clientEntries() };
     }
@@ -232,7 +241,7 @@ export class ProviderCatalogSession {
         type: "list_provider_models_response",
         payload: {
           provider: msg.provider,
-          models: filterSelectableAgentModels(entry.models),
+          models: filterPickerAgentModels(entry.models),
           error: null,
           fetchedAt: entry.fetchedAt ?? fetchedAt,
           requestId: msg.requestId,

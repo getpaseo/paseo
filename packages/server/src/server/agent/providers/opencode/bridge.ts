@@ -106,6 +106,10 @@ export class OpenCodeBridge {
     };
   }
 
+  isPaseoPlugin(specifier: string): boolean {
+    return specifier === this.pluginUrl;
+  }
+
   decorateServerEnv(env: Record<string, string>): Record<string, string> {
     const pluginUrl = this.requirePluginUrl();
     const options: OpenCodePluginOptions = {

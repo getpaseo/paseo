@@ -11,7 +11,7 @@ import pLimit, { type LimitFunction } from "p-limit";
 import { expandTilde } from "../../utils/path.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
 import {
-  filterSelectableAgentModels,
+  filterPickerAgentModels,
   type AgentClient,
   type AgentCreateConfigParent,
   type AgentMode,
@@ -523,7 +523,7 @@ export class ProviderSnapshotManager {
 
   async listModels(input: ProviderSnapshotProviderOptions): Promise<AgentModelDefinition[]> {
     const entry = await this.getReadyProvider(input);
-    return filterSelectableAgentModels(entry.models);
+    return filterPickerAgentModels(entry.models);
   }
 
   async listModes(input: ProviderSnapshotProviderOptions): Promise<AgentMode[]> {

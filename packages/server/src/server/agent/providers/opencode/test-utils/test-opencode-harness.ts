@@ -95,6 +95,7 @@ export class TestOpenCodeClient {
     appAgents: [] as unknown[],
     appAgentsOptions: [] as unknown[],
     commandList: [] as unknown[],
+    configGet: [] as unknown[],
     eventSubscribe: [] as unknown[],
     experimentalSessionList: [] as unknown[],
     globalEvent: [] as unknown[],
@@ -125,6 +126,7 @@ export class TestOpenCodeClient {
     | ((parameters: unknown, options: unknown) => Promise<OpenCodeResponse>)
     | null = null;
   commandListResponse: OpenCodeResponse = { data: [] };
+  configGetResponse: OpenCodeResponse = { data: {} };
   eventStream: AsyncIterable<unknown>;
   experimentalSessionListResponse: OpenCodeResponse = { data: [] };
   mcpAddResponse: OpenCodeResponse = {};
@@ -203,6 +205,12 @@ export class TestOpenCodeClient {
             return await this.appAgentsImplementation(parameters, options);
           }
           return this.appAgentsResponse;
+        },
+      },
+      config: {
+        get: async (parameters: unknown) => {
+          this.calls.configGet.push(parameters);
+          return this.configGetResponse;
         },
       },
       command: {
