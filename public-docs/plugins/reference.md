@@ -162,7 +162,7 @@ guarantee compatibility with another host's renderer.
 
 These exact module specifiers use the host's runtime instances. A client bundle that requests another host module fails with `Module "<name>" is not available in plugin client code`.
 
-Do not import `lucide-react-native`, `react-native-svg`, or DOM libraries. Set contribution `icon` fields to a [Lucide icon name](https://lucide.dev/icons/); Paseo validates the name and renders the icon.
+Do not import `lucide-react-native`, `react-native-svg`, or DOM libraries. Set contribution `icon` fields to a [Lucide icon name](https://lucide.dev/icons/), inline SVG, or a component; Paseo validates the icon and renders it. See [Icons](#icons).
 
 ### Cross-platform rules
 
@@ -338,11 +338,9 @@ Use `runAcpProvider()` from `@getpaseo/plugin/server/acp` to adapt a command-bac
 hooks only for a vendor's discovery, configuration, notification, or tool-call differences.
 
 `ProviderRegistration.icon` is a file path relative to the plugin directory, such as `icon.svg`.
-It must resolve inside that directory to a regular SVG file no larger than 64 KiB. The SVG must be
-self-contained: scripts, styles, `foreignObject`, event-handler attributes, JavaScript URLs, and
-external `href` or `xlink:href` references are rejected. Fragment references such as `#mark` are
-allowed. Paseo reads and sanitizes the file when the plugin starts; the string is never an inline
-SVG or URL.
+It must resolve inside that directory to a regular file that follows the
+[SVG icon rules](#svg-rules). Paseo reads and validates the file when the plugin starts; the string
+is never inline SVG or a URL.
 
 ### Usage sources
 
@@ -516,7 +514,7 @@ bypasses that cache. Entries carry `id`, `account.label`, and `fetchedAt`. Faile
 on `server_info.features.usageSources`. The older `provider.usage.list` RPC maps the same reports
 for 0.10 clients and renders problems into its `error` string.
 
-The source icon follows the provider SVG restrictions above.
+The source icon is a file path with the same rules as a provider icon.
 
 ## Entry point and cleanup
 
@@ -968,10 +966,10 @@ closes the popover.
 
 Render the item with the sidebar kit from `@getpaseo/plugin/client/ui`:
 
-| Component          | Props and behavior                                                                                                                                                                                                                                                                                                    |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SidebarRow`       | Required `onPress`; optional `icon` (Lucide name or `{ size, color }` component), `label`, `active`, `trailing`, `id`. A full-width row. `trailing` renders beside the row's pressable, so a button in it presses on its own; a press elsewhere in it presses the row. `id` tells rows of one item apart in test IDs. |
-| `SidebarSeparator` | No props. The sidebar's separator line, between groups of rows.                                                                                                                                                                                                                                                       |
+| Component          | Props and behavior                                                                                                                                                                                                                                                                                 |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SidebarRow`       | Required `onPress`; optional `icon` (any [icon](#icons) form), `label`, `active`, `trailing`, `id`. A full-width row. `trailing` renders beside the row's pressable, so a button in it presses on its own; a press elsewhere in it presses the row. `id` tells rows of one item apart in test IDs. |
+| `SidebarSeparator` | No props. The sidebar's separator line, between groups of rows.                                                                                                                                                                                                                                    |
 
 A popover anchors to the row that was pressed, whether the press landed on the row or on its
 `trailing` content, so a per-row "More" button opens its popover next to its own row.
@@ -1246,14 +1244,82 @@ Showing another toast replaces the currently visible toast. An empty message is 
 
 ### Icons
 
-`Icon` renders a [Lucide icon](https://lucide.dev/icons/) from Paseo's installed icon set. Plugin bundles do not import
-`lucide-react-native` or `react-native-svg`.
+Every contribution `icon` field takes one of three forms, typed `PluginIcon` in
+`@getpaseo/plugin/client`:
 
-| Prop    | Type     | Required | Behavior                                        |
-| ------- | -------- | -------- | ----------------------------------------------- |
-| `name`  | `string` | Yes      | Lucide icon name. Unknown names render nothing. |
-| `size`  | `number` | No       | Icon width and height.                          |
-| `color` | `string` | No       | Icon color. Use a plugin theme token.           |
+| Form        | Example                     | Use it for                                          |
+| ----------- | --------------------------- | --------------------------------------------------- |
+| Lucide name | `icon: "Scan"`              | Any [Lucide icon](https://lucide.dev/icons/).       |
+| Inline SVG  | `icon: { svg: reviewIcon }` | A brand mark or an icon Lucide does not have.       |
+| Component   | `icon: ReviewBadge`         | An icon that changes with state, such as a counter. |
+
+Attachment sources take a Lucide name or inline SVG (`PluginSerializableIcon`), because each
+attached item stores its source's icon.
+
+Paseo validates the icon when the contribution registers. An unknown Lucide name or an SVG that
+breaks a rule fails the plugin with the reason:
+
+```text
+Workspace panel review has an invalid icon: script elements are not allowed
+```
+
+Paseo draws inline SVG at the surface's icon size and passes the surface's icon color as
+`currentColor`. Paint with `currentColor` to follow the theme; fixed fills keep their colors.
+
+A component receives `PluginIconProps`, `{ size, color }`, and renders within that size. Header
+buttons and composer pills pass [`PluginButtonIconProps`](#custom-icons-and-popover-content).
+
+#### SVG rules
+
+Inline SVG, provider icons, and usage-source icons follow the same rules:
+
+- One `<svg>` document, no larger than 64 KiB.
+- No `<script>`, `<style>`, or `<foreignObject>` elements.
+- No event-handler attributes such as `onclick`, and no `javascript:` URLs.
+- `href` and `xlink:href` point only at fragments in the same document, such as `#mark`.
+
+#### Ship SVG markup
+
+Keep the markup in a client module:
+
+```ts
+// client/icons.ts
+export const reviewIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+  <path d="M4 4h16v16H4z" />
+</svg>`;
+```
+
+Or put an `.svg` file in `client/` and import it. The plugin compiler bundles the file's markup as a
+string. Declare the module once so TypeScript accepts the import:
+
+```ts
+// client/svg.d.ts
+declare module "*.svg" {
+  const markup: string;
+  export default markup;
+}
+```
+
+```ts
+// index.client.tsx
+import reviewIcon from "./client/review.svg";
+
+client.addWorkspacePanel({ id: "review", title: "Review", icon: { svg: reviewIcon } /* … */ });
+```
+
+#### Render an icon
+
+`Icon` from `@getpaseo/plugin/client/react-native` draws an icon in your own UI. Plugin bundles do
+not import `lucide-react-native` or `react-native-svg`.
+
+| Prop    | Type         | Required         | Behavior                                                     |
+| ------- | ------------ | ---------------- | ------------------------------------------------------------ |
+| `name`  | `string`     | `name` or `icon` | Lucide icon name.                                            |
+| `icon`  | `PluginIcon` | `name` or `icon` | Any icon form above.                                         |
+| `size`  | `number`     | No               | Icon width and height. Defaults to 24.                       |
+| `color` | `string`     | No               | Icon color and SVG `currentColor`. Use a plugin theme token. |
+
+An unknown name or an SVG that breaks a rule renders nothing.
 
 ## Timeline items
 
@@ -1440,7 +1506,7 @@ Themes need a host that supports them. A client released before `addTheme` canno
 
 Register a component with `client.addSettingsScreen({ id, title, icon, Component })` in
 `index.client.tsx`. It appears under **Settings → Plugins → your plugin** on that host.
-`id` is unique within the installation; `icon` is a Lucide name. Registration returns an
+`id` is unique within the installation; `icon` is any [icon](#icons) form. Registration returns an
 idempotent remover, and plugin teardown removes remaining screens.
 
 Call `client.openSettings(id)` or a Command Center callback's `openSettings(id)` to open one
@@ -1637,7 +1703,7 @@ export default function contribute(client: PluginClientContext) {
 | ----------- | -------- | ------------------------------------------------------------- |
 | `id`        | Yes      | Plugin-local panel ID.                                        |
 | `title`     | Yes      | Workspace-tab title.                                          |
-| `icon`      | Yes      | Lucide icon name.                                             |
+| `icon`      | Yes      | Lucide name, `{ svg }`, or component. See [Icons](#icons).    |
 | `context`   | Yes      | `workspace` or `agent`.                                       |
 | `locations` | No       | `workspace` and/or `explorer`. Defaults to `workspace`.       |
 | `Component` | Yes      | React Native component matching the selected context's props. |
@@ -1721,14 +1787,14 @@ client.addCommandCenterItem({
 
 `addCommandCenterItem` fields:
 
-| Field      | Required | Meaning                                        |
-| ---------- | -------- | ---------------------------------------------- |
-| `id`       | Yes      | Plugin-local item ID.                          |
-| `title`    | Yes      | Search result title.                           |
-| `icon`     | Yes      | Lucide icon name.                              |
-| `keywords` | No       | Additional Command Center search terms.        |
-| `context`  | Yes      | `global`, `workspace`, or `agent`.             |
-| `onSelect` | Yes      | Client-side callback for the matching context. |
+| Field      | Required | Meaning                                                    |
+| ---------- | -------- | ---------------------------------------------------------- |
+| `id`       | Yes      | Plugin-local item ID.                                      |
+| `title`    | Yes      | Search result title.                                       |
+| `icon`     | Yes      | Lucide name, `{ svg }`, or component. See [Icons](#icons). |
+| `keywords` | No       | Additional Command Center search terms.                    |
+| `context`  | Yes      | `global`, `workspace`, or `agent`.                         |
+| `onSelect` | Yes      | Client-side callback for the matching context.             |
 
 Global items appear on the installation's selected host. Workspace items appear only when that host has an active cached workspace. Agent items appear only when the focused workspace tab is an agent or an agent-context plugin panel whose cached record belongs to that workspace. Missing context removes the item rather than calling the plugin to discover it.
 
@@ -1854,7 +1920,7 @@ These contracts are exported from `@getpaseo/plugin/client`.
 | Field      | Required | Meaning                                                                 |
 | ---------- | -------- | ----------------------------------------------------------------------- |
 | `title`    | Yes      | Non-empty accessible label, tooltip, and sheet title.                   |
-| `icon`     | Yes      | Lucide name or `ComponentType<PluginButtonIconProps>`.                  |
+| `icon`     | Yes      | Lucide name, `{ svg }`, or `ComponentType<PluginButtonIconProps>`.      |
 | `label`    | No       | Non-empty display text. Omit to use the placement's default.            |
 | `visible`  | No       | Defaults to `true`. False removes the trigger and its layout space.     |
 | `disabled` | No       | Defaults to `false`. Keeps the button visible and prevents interaction. |
@@ -2262,7 +2328,7 @@ export default function contribute(server: PluginServerContext) {
 }
 ```
 
-Paseo owns the composer menu, search picker, selected pill, draft state, and submission. The `text` value is the complete snapshot sent to the agent.
+Paseo owns the composer menu, search picker, selected pill, draft state, and submission. The `text` value is the complete snapshot sent to the agent. `icon` is a Lucide name or `{ svg }`; see [Icons](#icons).
 
 ## Hosts and lifecycle
 

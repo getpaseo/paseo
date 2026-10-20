@@ -36,8 +36,9 @@ const patchedPackages = [
     patchPrefix: "@gorhom+bottom-sheet+",
   },
   {
-    nodeModulesPath: "node_modules/react-native-svg",
+    nodeModulesPath: "packages/app/node_modules/react-native-svg",
     patchPrefix: "react-native-svg+",
+    cwd: "packages/app",
   },
   {
     nodeModulesPath: "node_modules/@mattermost/react-native-paste-input",

@@ -679,7 +679,9 @@ function DesktopSidebar({
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
   const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
-  const { width: viewportWidth } = useWindowDimensions();
+  const { width: windowWidth } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const viewportWidth = windowWidth - insets.left - insets.right;
   const visibleSidebarWidth = resolveDesktopSidebarWidth({
     requestedWidth: sidebarWidth,
     viewportWidth,

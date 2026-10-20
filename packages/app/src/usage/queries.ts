@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { supportsUsageReports } from "@getpaseo/client/internal/daemon-client";
 import { useCallback, useMemo } from "react";
 import {
@@ -144,13 +145,17 @@ export function useHostUsage(serverId: string): { view: UsageView; refresh: () =
   const refresh = useCallback(() => {
     void refreshReports(queryClient, serverId).catch(() => undefined);
   }, [queryClient, serverId]);
+  const { t } = useTranslation();
   const hostLabel = useHosts().find((host) => host.serverId === serverId)?.label ?? serverId;
-  const view = resolveUsageView({
-    hostLabel,
-    isConnected,
-    supportsUsage: isSupported,
-    query: toQueryState(query),
-  });
+  const view = resolveUsageView(
+    {
+      hostLabel,
+      isConnected,
+      supportsUsage: isSupported,
+      query: toQueryState(query),
+    },
+    t,
+  );
   return { view, refresh };
 }
 
@@ -196,7 +201,8 @@ export function useAgentUsage(serverId: string, agentId: string): AgentUsageView
     retry: false,
     staleTimeMs: REPORTS_STALE_TIME_MS,
   });
-  return resolveAgentUsageView({ canReport, query: toQueryState(query) });
+  const { t } = useTranslation();
+  return resolveAgentUsageView({ canReport, query: toQueryState(query) }, t);
 }
 
 /** Whether a host is connected and reports usage, read without fetching anything. */

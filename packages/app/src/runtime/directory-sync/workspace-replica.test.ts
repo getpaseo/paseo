@@ -10,6 +10,7 @@ import {
   clearWorkspaceArchivePending,
   markWorkspaceArchivePending,
 } from "@/contexts/session-workspace-upserts";
+import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { WorkspaceDirectoryReplica } from "./workspace-replica";
 
 function workspace(id: string, projectId = "project"): WorkspaceDescriptorPayload {
@@ -229,4 +230,39 @@ it("does not restore a targeted cached workspace while its archive is pending", 
     clearWorkspaceArchivePending({ serverId, workspaceId });
     store.clearSession(serverId);
   }
+});
+
+it("setup metadata from directory snapshots and transitions resets failure surfacing without details", () => {
+  const serverId = "setup-metadata";
+  useSessionStore.getState().initializeSession(serverId, null as unknown as DaemonClient);
+  const replica = new WorkspaceDirectoryReplica(serverId);
+  const identity = { serverId, workspaceId: "setup" };
+  const store = useWorkspaceSetupStore.getState();
+  replica.commitSnapshot(
+    {
+      workspaces: new Map([
+        ["setup", normalizeWorkspaceDescriptor({ ...workspace("setup"), setupStatus: "blocked" })],
+      ]),
+      projects: new Map(),
+    },
+    [],
+  );
+  expect(useSessionStore.getState().sessions[serverId].workspaces.get("setup")?.setupStatus).toBe(
+    "blocked",
+  );
+  expect(store.claimFailedSetupSurface({ ...identity, status: "blocked" })).toBe(true);
+  replica.applyDelta({
+    kind: "upsert",
+    workspace: { ...workspace("setup"), setupStatus: "running" },
+  });
+  replica.applyDelta({
+    kind: "upsert",
+    workspace: { ...workspace("setup"), setupStatus: "failed" },
+  });
+  expect(useSessionStore.getState().sessions[serverId].workspaces.get("setup")?.setupStatus).toBe(
+    "failed",
+  );
+  expect(store.claimFailedSetupSurface({ ...identity, status: "failed" })).toBe(true);
+  expect(store.claimFailedSetupSurface({ ...identity, status: "failed" })).toBe(false);
+  expect(useWorkspaceSetupStore.getState().snapshots).toEqual({});
 });

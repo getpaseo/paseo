@@ -833,13 +833,15 @@ test("compact Changes keeps its actions compact and menu-only", async ({ page })
   await openWorkspaceChanges(page, workspace);
   await page.setViewportSize({ width: 480, height: 900 });
 
-  const compactChangesTab = page.getByTestId("explorer-tab-changes").filter({ visible: true });
+  const compactChangesTab = page
+    .getByTestId("workspace-tab-changes_tree")
+    .filter({ visible: true });
   if (!(await compactChangesTab.isVisible())) {
     await page.getByTestId("workspace-explorer-toggle").first().click();
   }
   await expect(compactChangesTab).toBeVisible();
   await compactChangesTab.click();
-  const compactExplorer = page.getByTestId("explorer-content-area").filter({ visible: true });
+  const compactExplorer = page.getByTestId("workspace-explorer-sidebar").filter({ visible: true });
   await expect(compactExplorer.getByTestId("changes-header")).toBeVisible();
 
   const actions = compactExplorer.getByTestId("changes-actions-menu-trigger");
@@ -874,6 +876,27 @@ test("compact Changes keeps its actions compact and menu-only", async ({ page })
   await expect(
     page.getByTestId("changes-options-menu-content").getByTestId("changes-toggle-wrap-lines"),
   ).toContainText("Scroll long lines");
+});
+
+test("compact Explorer renders inline hunks with a saved tree-only desktop preference", async ({
+  page,
+}) => {
+  const workspace = await createWorkspaceWithMountedTabDiff();
+  await page.addInitScript(
+    ({ key }) => {
+      localStorage.setItem(key, JSON.stringify({ inlineDiff: false, layout: "split" }));
+    },
+    { key: CHANGES_PREFERENCES_KEY },
+  );
+  const explorer = await openCompactChanges(page, workspace);
+  await expect(explorer.getByTestId("git-diff-canvas")).toBeVisible();
+  await expect(explorer.getByTestId("diff-file-0-toggle")).toBeVisible();
+  await explorer.getByTestId("diff-file-0-toggle").click({ button: "right" });
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByTestId("diff-file-0-revert").click();
+  await expect
+    .poll(() => readFile(path.join(workspace.repoPath, "src/use-mounted-tab-set.ts"), "utf8"))
+    .toBe(BEFORE);
 });
 
 test("compact Changes jumps to a file from the changed-files sheet", async ({ page }) => {
@@ -1674,10 +1697,10 @@ async function openCompactChanges(page: Page, workspace: DirtyWorkspace): Promis
   await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.id));
   await page.reload();
   await page.getByTestId("workspace-explorer-toggle").first().click();
-  const changesTab = page.getByTestId("explorer-tab-changes").filter({ visible: true });
+  const changesTab = page.getByTestId("workspace-tab-changes_tree").filter({ visible: true });
   await expect(changesTab).toBeVisible({ timeout: 30_000 });
   await changesTab.click();
-  const explorer = page.getByTestId("explorer-content-area").filter({ visible: true });
+  const explorer = page.getByTestId("workspace-explorer-sidebar").filter({ visible: true });
   await expect(explorer.getByTestId("changes-header")).toBeVisible({ timeout: 30_000 });
   return explorer;
 }

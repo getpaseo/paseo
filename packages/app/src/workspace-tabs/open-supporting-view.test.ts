@@ -13,6 +13,7 @@ import { usePanelStore } from "@/stores/panel-store";
 import {
   collectAllTabs,
   findPaneById,
+  selectExplorerSidebarPaneId,
   useWorkspaceLayoutStore,
 } from "@/stores/workspace-layout-store";
 import {
@@ -23,15 +24,22 @@ import {
 } from "@/workspace-tabs/open-supporting-view";
 
 const WORKSPACE_KEY = "server-1:workspace-1";
-const CHECKOUT = { serverId: "server-1", cwd: "/tmp/repo", isGit: true };
+
+function activeExplorerKind() {
+  const state = useWorkspaceLayoutStore.getState();
+  const layout = state.layoutByWorkspace[WORKSPACE_KEY];
+  const paneId = selectExplorerSidebarPaneId(state, WORKSPACE_KEY);
+  const pane = paneId ? findPaneById(layout.root, paneId) : null;
+  return collectAllTabs(layout.root).find((tab) => tab.tabId === pane?.focusedTabId)?.target.kind;
+}
 
 beforeEach(() => {
   usePanelStore.setState({
     mobilePanel: { target: "agent", revision: 0 },
-    explorerTab: "files",
-    explorerTabByCheckout: {},
   });
   useWorkspaceLayoutStore.setState({
+    layoutMode: "split-panes",
+    sheetsByWorkspace: {},
     pullRequestTabAutoOpenedByWorkspace: {},
     layoutByWorkspace: {},
     explorerSidebarPaneIdByWorkspace: {},
@@ -42,15 +50,15 @@ beforeEach(() => {
 
 describe("openWorkspaceChanges", () => {
   it("opens Changes in the compact Explorer", () => {
+    useWorkspaceLayoutStore.getState().setLayoutMode("compact");
     openWorkspaceChanges({
       isCompact: true,
       workspaceKey: WORKSPACE_KEY,
-      checkout: CHECKOUT,
       preferences: DEFAULT_APP_SETTINGS.openInSidePane,
     });
 
     expect(usePanelStore.getState().mobilePanel.target).toBe("file-explorer");
-    expect(usePanelStore.getState().explorerTab).toBe("changes");
+    expect(activeExplorerKind()).toBe("changes_tree");
   });
 });
 
@@ -59,7 +67,6 @@ describe("openComposerChanges", () => {
     isCompact: false,
     supportsPaneSplits: true,
     workspaceKey: WORKSPACE_KEY,
-    checkout: CHECKOUT,
     preferences: DEFAULT_APP_SETTINGS.openInSidePane,
   };
 
@@ -105,12 +112,12 @@ describe("openComposerChanges", () => {
   });
 
   it("keeps opening the compact Explorer on Changes", () => {
+    useWorkspaceLayoutStore.getState().setLayoutMode("compact");
     openComposerChanges({ ...input, isCompact: true });
     openComposerChanges({ ...input, isCompact: true });
 
     expect(usePanelStore.getState().mobilePanel.target).toBe("file-explorer");
-    expect(usePanelStore.getState().explorerTab).toBe("changes");
-    expect(useWorkspaceLayoutStore.getState().layoutByWorkspace[WORKSPACE_KEY]).toBeUndefined();
+    expect(activeExplorerKind()).toBe("changes_tree");
   });
 });
 
@@ -119,17 +126,16 @@ describe("openWorkspacePullRequest", () => {
     isCompact: false,
     supportsPaneSplits: true,
     workspaceKey: WORKSPACE_KEY,
-    checkout: CHECKOUT,
   };
 
   it.each(["main", "side", "explorer"] as const)(
     "opens the compact PR view in Explorer when the desktop preference is %s",
     (destination) => {
+      useWorkspaceLayoutStore.getState().setLayoutMode("compact");
       openWorkspacePullRequest({ ...input, isCompact: true, destination });
 
       expect(usePanelStore.getState().mobilePanel.target).toBe("file-explorer");
-      expect(usePanelStore.getState().explorerTab).toBe("pr");
-      expect(useWorkspaceLayoutStore.getState().layoutByWorkspace[WORKSPACE_KEY]).toBeUndefined();
+      expect(activeExplorerKind()).toBe("pull_request");
     },
   );
 
