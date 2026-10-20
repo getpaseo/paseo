@@ -5261,15 +5261,13 @@ class ClaudeAgentSession implements AgentSession {
     };
     if (observations.length === 0) return replay;
 
-    this.persistedProviderSubagentEvents.push(
-      ...foldSubagentObservations(observations).map(
-        (event): Extract<AgentStreamEvent, { type: "provider_subagent" }> => ({
-          type: "provider_subagent",
-          provider: "claude",
-          event,
-        }),
-      ),
-    );
+    for (const event of foldSubagentObservations(observations)) {
+      this.persistedProviderSubagentEvents.push({
+        type: "provider_subagent",
+        provider: "claude",
+        event,
+      });
+    }
     this.historyPending = true;
     return replay;
   }
@@ -5327,12 +5325,12 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     if (items.length > 0) {
-      timeline.push(
-        ...items.map((item) => ({
+      for (const item of items) {
+        timeline.push({
           item,
           timestamp: historyTimestamp ?? undefined,
-        })),
-      );
+        });
+      }
     }
   }
 

@@ -79,15 +79,15 @@ export function observeReplayWorkflows(input: {
       });
     }
 
-    observations.push(
-      ...observeWorkflowTimeline({
-        id,
-        result: workflow.result,
-        entries: input.entriesByRunId?.get(workflow.runId) ?? [],
-        convertEntry: input.convertEntry,
-        finishedAt,
-      }),
-    );
+    for (const observation of observeWorkflowTimeline({
+      id,
+      result: workflow.result,
+      entries: input.entriesByRunId?.get(workflow.runId) ?? [],
+      convertEntry: input.convertEntry,
+      finishedAt,
+    })) {
+      observations.push(observation);
+    }
 
     const subtitle = buildClaudeSubagentSubtitle({
       title: "Workflow",

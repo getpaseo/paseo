@@ -295,7 +295,7 @@ function observeSubagent(
     lastTimestamp,
   );
   if (subtitle) observations.push(subtitle);
-  observations.push(...timeline);
+  for (const observation of timeline) observations.push(observation);
   const terminalStatus = link.status ?? childTerminalStatus;
   if (terminalStatus) {
     observations.push({
@@ -346,9 +346,15 @@ export function observeReplaySubagents(input: {
       const { ownerId, parent, link } = resolved;
 
       // Only proven descendants may own notifications; ambient sidecars cannot claim them.
-      observations.push(
-        ...observeSubagent(subagent, parent, input.convertEntry, toolOwners, ownerId),
-      );
+      for (const observation of observeSubagent(
+        subagent,
+        parent,
+        input.convertEntry,
+        toolOwners,
+        ownerId,
+      )) {
+        observations.push(observation);
+      }
       if (subagent.parentFacts) resolvedParents.set(link.id, subagent.parentFacts);
       unresolved.splice(index, 1);
       madeProgress = true;
