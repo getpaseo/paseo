@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildWorkspaceDesktopTabActions,
   buildWorkspaceTabMenuEntries,
+  DEFAULT_WORKSPACE_TAB_MENU_LABELS,
 } from "@/screens/workspace/workspace-tab-menu";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 
@@ -263,6 +264,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
     expect(labels).not.toContain("Copy agent id");
     expect(labels).not.toContain("Rename");
     expect(labels).not.toContain("Reload agent");
+    expect(labels).not.toContain("Reveal in Finder");
 
     const copyFilePathEntry = entries.find(
       (entry) => entry.kind === "item" && entry.key === "copy-file-path",
@@ -272,6 +274,75 @@ describe("buildWorkspaceTabMenuEntries", () => {
     }
     copyFilePathEntry.onSelect();
     expect(onCopyFilePath).toHaveBeenCalledWith("/some/path.ts");
+  });
+
+  it("reveals the clicked file tab after copying its path when supported", () => {
+    const onRevealFile = vi.fn();
+    const fileTab: WorkspaceTabDescriptor = {
+      key: "file_abc",
+      tabId: "file_abc",
+      kind: "file",
+      target: { kind: "file", path: "/workspace/my file.ts", lineStart: 1, lineEnd: 10 },
+    };
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab: fileTab,
+      index: 1,
+      tabCount: 2,
+      menuTestIDBase: "workspace-tab-context-file_abc",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onRevealFile,
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+      labels: { ...DEFAULT_WORKSPACE_TAB_MENU_LABELS, revealFile: "Reveal in Finder" },
+    });
+
+    const keys = entries.filter((entry) => entry.kind === "item").map((entry) => entry.key);
+    expect(keys.slice(0, 2)).toEqual(["copy-file-path", "reveal-file"]);
+    const revealEntry = entries.find(
+      (entry) => entry.kind === "item" && entry.key === "reveal-file",
+    );
+    expect(revealEntry).toMatchObject({ label: "Reveal in Finder", icon: "folder" });
+    if (revealEntry?.kind === "item") revealEntry.onSelect();
+    expect(onRevealFile).toHaveBeenCalledWith("/workspace/my file.ts");
+  });
+
+  it("omits file reveal outside desktop or without the action", () => {
+    const fileTab: WorkspaceTabDescriptor = {
+      key: "file_abc",
+      tabId: "file_abc",
+      kind: "file",
+      target: { kind: "file", path: "/some/path.ts", lineStart: 1, lineEnd: 10 },
+    };
+    const input = {
+      tab: fileTab,
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context-file_abc",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    };
+    for (const surface of ["desktop", "mobile"] as const) {
+      const entries = buildWorkspaceTabMenuEntries({ ...input, surface });
+      expect(entries.some((entry) => entry.kind === "item" && entry.key === "reveal-file")).toBe(
+        false,
+      );
+    }
   });
 
   it("uses a Changes close id for the working diff tab", () => {

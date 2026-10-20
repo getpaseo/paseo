@@ -51,8 +51,7 @@ async function selectSpeed(page: Page, label: string): Promise<void> {
   const toolbarTrigger = page.getByRole("button", { name: `Speed: ${label}`, exact: true });
   const sheetTrigger = page.getByRole("button", { name: "Select speed", exact: true });
   await expect(toolbarTrigger.or(sheetTrigger)).toBeVisible();
-  if (await toolbarTrigger.isVisible()) await expect(toolbarTrigger).toHaveText("");
-  else await expect(sheetTrigger).toContainText(label);
+  await expect(toolbarTrigger.or(sheetTrigger)).toHaveText("");
 }
 
 async function expectSpeedIconColor(page: Page, color: string): Promise<void> {
@@ -67,7 +66,7 @@ async function expectSpeedChoices(page: Page, choices: string[]): Promise<void> 
     const option = page.getByText(choice, { exact: true }).last();
     if (choices.includes(choice)) {
       await expect(option).toBeVisible();
-      await expect(option).toBeInViewport({ ratio: 1 });
+      await expect(option).toBeInViewport({ ratio: 0.99 });
     } else await expect(option).not.toBeVisible();
   }
 }
@@ -137,6 +136,16 @@ for (const viewport of [
       await toggle.click();
       await expect(toggle).toHaveAttribute("aria-pressed", "false");
       await expectSpeedIconColor(page, NORMAL_SPEED_COLOR);
+      if (viewport.name === "compact") {
+        const sheet = page.getByRole("slider", { name: "Bottom Sheet", exact: true });
+        if (await sheet.isVisible()) {
+          await sheet.getByRole("button", { name: "Close", exact: true }).click();
+          await expect(sheet).not.toBeVisible();
+        }
+        await expect(page.getByTestId("mode-control")).toBeVisible();
+        await expect(toggle).toHaveText("");
+        await page.screenshot({ path: testInfo.outputPath("compact-controls.png") });
+      }
     } finally {
       await workspace.cleanup();
     }

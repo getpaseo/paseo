@@ -28,6 +28,7 @@ import {
   ArrowLeftToLine,
   ArrowRightToLine,
   Copy,
+  Folder,
   Pencil,
   RotateCw,
   Columns2,
@@ -41,6 +42,11 @@ import {
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import Animated from "react-native-reanimated";
 import { useTranslation } from "react-i18next";
+import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
+import { useWorkspace } from "@/stores/session-store-hooks";
+import { useDesktopOpenTargets, openDesktopTarget } from "@/workspace/desktop-open-targets";
+import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
+import { useToast } from "@/contexts/toast-context";
 import { SortableInlineList } from "@/components/sortable-inline-list";
 import type {
   DraggableListDragHandleProps,
@@ -138,6 +144,7 @@ const ThemedSyncedLoader = withUnistyles(SyncedLoader);
 const ThemedX = withUnistyles(X);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedCopy = withUnistyles(Copy);
+const ThemedFolder = withUnistyles(Folder);
 
 const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine);
@@ -467,6 +474,8 @@ function TabContextMenuItem({
     switch (entry.icon) {
       case "copy":
         return <ThemedCopy size={16} uniProps={mutedColorMapping} />;
+      case "folder":
+        return <ThemedFolder size={16} uniProps={mutedColorMapping} />;
       case "rotate-cw":
         return <ThemedRotateCw size={16} uniProps={mutedColorMapping} />;
       case "arrow-left-to-line":
@@ -611,6 +620,8 @@ export interface WorkspaceDesktopTabsRowProps {
 
 interface ResolvedWorkspaceDesktopTabsRowProps extends Omit<WorkspaceDesktopTabsRowProps, "tabs"> {
   tabs: ResolvedWorkspaceDesktopTabRowItem[];
+  onRevealFile?: (path: string) => Promise<void> | void;
+  revealFileLabel?: string;
 }
 
 interface WorkspaceDesktopTabPresentationSlotProps {
@@ -1062,6 +1073,33 @@ function TabChip({
 }
 
 export function WorkspaceDesktopTabsRow(props: WorkspaceDesktopTabsRowProps) {
+  const isLocalDaemon = useIsLocalDaemon(props.normalizedServerId);
+  const { targets } = useDesktopOpenTargets({ isLocalExecution: isLocalDaemon });
+  const fileManagerTarget = targets.find((target) => target.kind === "file-manager");
+  const workspace = useWorkspace(props.normalizedServerId, props.normalizedWorkspaceId);
+  const canRevealFile = Boolean(fileManagerTarget && workspace?.workspaceDirectory);
+  const toast = useToast();
+  const { t } = useTranslation();
+  const onRevealFile = useCallback(
+    async (path: string) => {
+      if (!fileManagerTarget || !workspace?.workspaceDirectory) return;
+      try {
+        await openDesktopTarget({
+          editorId: fileManagerTarget.id,
+          workspacePath: workspace.workspaceDirectory,
+          filePath: buildAbsoluteExplorerPath({
+            workspaceRoot: workspace.workspaceDirectory,
+            entryPath: path,
+          }),
+        });
+      } catch (cause) {
+        toast.error(
+          cause instanceof Error ? cause.message : t("workspace.fileExplorer.errors.revealFailed"),
+        );
+      }
+    },
+    [fileManagerTarget, t, toast, workspace?.workspaceDirectory],
+  );
   const [presentations, setPresentations] = useState(
     () => new Map<string, WorkspaceTabPresentation>(),
   );
@@ -1106,7 +1144,16 @@ export function WorkspaceDesktopTabsRow(props: WorkspaceDesktopTabsRowProps) {
 
   return (
     <>
-      <ResolvedWorkspaceDesktopTabsRow {...props} tabs={resolvedTabs} />
+      <ResolvedWorkspaceDesktopTabsRow
+        {...props}
+        onRevealFile={canRevealFile ? onRevealFile : undefined}
+        revealFileLabel={
+          canRevealFile && fileManagerTarget
+            ? t("workspace.fileActions.revealIn", { target: fileManagerTarget.label })
+            : undefined
+        }
+        tabs={resolvedTabs}
+      />
       {props.tabs.map(({ tab }) => (
         <WorkspaceDesktopTabPresentationSlot
           key={`${tab.key}:${tab.kind}`}
@@ -1250,6 +1297,8 @@ function ResolvedWorkspaceDesktopTabsRow({
   onCopyAgentId,
   onCopyTerminalId,
   onCopyFilePath,
+  onRevealFile,
+  revealFileLabel,
   onReloadAgent,
   onRenameTab,
   onCloseTabsToLeft,
@@ -1357,6 +1406,7 @@ function ResolvedWorkspaceDesktopTabsRow({
       copyAgentId: t("workspace.tabs.menu.copyAgentId"),
       copyTerminalId: t("workspace.tabs.menu.copyTerminalId"),
       copyFilePath: t("workspace.tabs.menu.copyFilePath"),
+      revealFile: revealFileLabel ?? t("workspace.fileActions.revealIn", { target: "" }),
       rename: t("workspace.tabs.menu.rename"),
       closeAbove: t("workspace.tabs.menu.closeAbove"),
       closeBelow: t("workspace.tabs.menu.closeBelow"),
@@ -1367,7 +1417,7 @@ function ResolvedWorkspaceDesktopTabsRow({
       reloadAgentTooltip: t("workspace.tabs.menu.reloadAgentTooltip"),
       close: t("workspace.tabs.menu.close"),
     }),
-    [t],
+    [revealFileLabel, t],
   );
   const tabLabels = useMemo(
     () =>
@@ -1552,6 +1602,7 @@ function ResolvedWorkspaceDesktopTabsRow({
           onCopyAgentId={onCopyAgentId}
           onCopyTerminalId={onCopyTerminalId}
           onCopyFilePath={onCopyFilePath}
+          onRevealFile={onRevealFile}
           onReloadAgent={onReloadAgent}
           onRenameTab={onRenameTab}
           onCloseTabsToLeft={onCloseTabsToLeft}
@@ -1584,6 +1635,7 @@ function ResolvedWorkspaceDesktopTabsRow({
       onCopyAgentId,
       onCopyTerminalId,
       onCopyFilePath,
+      onRevealFile,
       onCopyResumeCommand,
       onNavigateTab,
       onReloadAgent,
@@ -1788,6 +1840,7 @@ function ResolvedDesktopTabChip({
   onCopyAgentId,
   onCopyTerminalId,
   onCopyFilePath,
+  onRevealFile,
   onReloadAgent,
   onRenameTab,
   onCloseTabsToLeft,
@@ -1815,6 +1868,7 @@ function ResolvedDesktopTabChip({
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
+  onRevealFile?: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
@@ -1843,6 +1897,7 @@ function ResolvedDesktopTabChip({
         onCopyAgentId,
         onCopyTerminalId,
         onCopyFilePath,
+        onRevealFile,
         onReloadAgent,
         onRenameTab,
         onCloseTab,
@@ -1861,6 +1916,7 @@ function ResolvedDesktopTabChip({
       onCopyAgentId,
       onCopyTerminalId,
       onCopyFilePath,
+      onRevealFile,
       onCopyResumeCommand,
       labels,
       onReloadAgent,
