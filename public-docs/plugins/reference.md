@@ -499,20 +499,20 @@ has a 20-second deadline.
 
 Built-in session routes:
 
-| Source                 | Session                                       | Login store                                                                                    |
-| ---------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Claude                 | `claude`                                      | `CLAUDE_CONFIG_DIR`, or the default; on macOS, the directory's Keychain entry takes precedence |
-| Claude                 | `pi`, `omp` with `anthropic/…` model          | That harness's Anthropic login store                                                           |
-| Codex                  | `codex`                                       | `CODEX_HOME/auth.json`, or the default                                                         |
-| Codex                  | `pi`, `opencode`, `omp` with `openai/…` model | That harness's OpenAI login store                                                              |
-| Cursor                 | `cursor`                                      | cursor-agent's `auth.json` for that session's `XDG_CONFIG_HOME`, `APPDATA`, or home directory  |
-| Muse                   | `muse`                                        | That session's own Muse launch/config                                                          |
-| Other built-in sources | Any                                           | No session discovery                                                                           |
+| Source                 | Session                                       | Login store                                                                                                                                                    |
+| ---------------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude                 | `claude`                                      | `CLAUDE_CONFIG_DIR`, or the default; on macOS, the directory's Keychain entry takes precedence                                                                 |
+| Claude                 | `pi`, `omp` with `anthropic/…` model          | That harness's Anthropic login store                                                                                                                           |
+| Codex                  | `codex`                                       | `CODEX_HOME/auth.json`, or the default                                                                                                                         |
+| Codex                  | `pi`, `opencode`, `omp` with `openai/…` model | That harness's OpenAI login store                                                                                                                              |
+| Cursor                 | `cursor`                                      | cursor-agent's `auth.json` for that session's `XDG_CONFIG_HOME`, `APPDATA`, or home directory; on macOS, the Keychain unless `AGENT_CLI_CREDENTIAL_STORE=file` |
+| Muse                   | `muse`                                        | That session's own Muse launch/config                                                                                                                          |
+| Other built-in sources | Any                                           | No session discovery                                                                                                                                           |
 
 Claude excludes Bedrock, Vertex, and foreign `ANTHROPIC_BASE_URL` sessions. Codex excludes sessions
 with `OPENAI_BASE_URL` set. Cursor excludes sessions that authenticate with `CURSOR_API_KEY` or
-`CURSOR_AUTH_TOKEN`, and macOS sessions that keep the login in the Keychain, the default unless
-`AGENT_CLI_CREDENTIAL_STORE=file`.
+`CURSOR_AUTH_TOKEN`. Reading cursor-agent's Keychain entry can raise a macOS access prompt the
+first time; the host-wide lookup tries it only after every file store.
 
 Use a stable account key: 1–128 characters from `[A-Za-z0-9._-]`. It identifies the account or
 organization whose quota is metered and survives token rotation. Never use a credential or raw
