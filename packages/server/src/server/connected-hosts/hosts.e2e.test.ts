@@ -157,12 +157,48 @@ test("routed authority is bounded by the caller, with isolated simultaneous sess
   expect((await remote.workspaces.list()).entries).toEqual([]);
   await expect(
     remote.workspaces.create({ source: { kind: "directory", path: b.paseoHome } }),
-  ).rejects.toMatchObject({ code: "permission_denied" });
+  ).rejects.toMatchObject({ code: "access_denied" });
   await expect(viewer.hosts.add({ connection: "127.0.0.1:1" })).rejects.toMatchObject({
     code: "permission_denied",
   });
   expect((await owner.paseo.hosts.list()).hosts).toHaveLength(1);
   await remote.dispose();
+});
+
+test("SDK host clients preserve ordinary permission RPC errors", async () => {
+  const b = await daemon();
+  const a = await daemon();
+  const owner = await api(a);
+  await owner.paseo.hosts.add({ connection: `127.0.0.1:${b.port}` });
+  const serverId = (await online(owner.paseo)).hosts[0]!.serverId!;
+  const clients = [a, b].map((host) =>
+    createHostClient(`127.0.0.1:${host.port}`, {
+      clientId: crypto.randomUUID(),
+      sessionPermissions: ["daemon.read", "workspace.read"],
+      reconnect: { enabled: false },
+    }),
+  );
+  for (const client of clients) {
+    cleanup.push(() => client.close());
+    await client.connect();
+  }
+  const origin = createPaseoApi(clients[0]!);
+  const direct = createPaseoApi(clients[1]!);
+  const remote = await origin.hosts.client(serverId);
+  cleanup.push(async () => {
+    await remote.dispose();
+    await direct.dispose();
+    await origin.dispose();
+  });
+  const input = { source: { kind: "directory" as const, path: b.staticDir } };
+  const directError = (await direct.workspaces.create(input).catch((error: unknown) => error)) as {
+    code: string;
+  };
+  const remoteError = (await remote.workspaces.create(input).catch((error: unknown) => error)) as {
+    code: string;
+  };
+  expect(directError.code).toBe("access_denied");
+  expect(remoteError.code).toBe(directError.code);
 });
 
 test("distinct origin sessions cannot collide through a caller-selected route scope, including terminal binary output", async () => {
@@ -619,7 +655,7 @@ test("resuming an A session with narrower grants terminates existing routes and 
   await expect.poll(() => snapshots.length, { timeout: 15000 }).toBe(2);
   await expect(
     remote.workspaces.create({ source: { kind: "directory", path: b.staticDir } }),
-  ).rejects.toMatchObject({ code: "permission_denied" });
+  ).rejects.toMatchObject({ code: "access_denied" });
   expect((await remote.workspaces.list()).entries).toEqual([]);
   await remote.dispose();
 });
@@ -722,7 +758,7 @@ test("an unreachable saved target becomes online after its daemon starts without
   });
 });
 
-test("losing a sent mutation result identifies the destination and never queues unavailable operations", async () => {
+test("losing a sent mutation result retains ordinary errors, identifies the destination and never replays it", async () => {
   const b = await daemon();
   const a = await daemon();
   const { paseo, client } = await api(a);
@@ -732,15 +768,29 @@ test("losing a sent mutation result identifies the destination and never queues 
   const pending = remote.config.patch({ pluginsEnabled: false });
   const result = pending.catch((error: unknown) => error);
   await client.close();
-  expect(await result).toMatchObject({ code: "outcome_unknown", serverId });
-  await expect(remote.workspaces.list()).rejects.toMatchObject({ code: "host_offline", serverId });
-  await expect(remote.terminals.list()).rejects.toMatchObject({ code: "host_offline", serverId });
-  await expect(
-    remote.workspaces.create({
-      source: { kind: "directory", path: "/tmp" },
-      workspaceId: "offline-never-created",
-    }),
-  ).rejects.toMatchObject({ code: "host_offline", serverId });
+  expect(await result).toMatchObject({
+    code: "DAEMON_CONNECTION_LOST",
+    outcome: "unknown",
+    serverId,
+  });
+  await expect(remote.workspaces.list()).rejects.toMatchObject({
+    code: "DAEMON_CONNECTION_LOST",
+    serverId,
+  });
+  const direct = await api(b);
+  await direct.client.close();
+  const terminalFailure = (await direct.paseo.terminals
+    .list()
+    .catch((error: unknown) => error)) as Error;
+  await expect(remote.terminals.list()).rejects.toThrow(terminalFailure.message);
+  const creation = {
+    source: { kind: "directory" as const, path: "/tmp" },
+    workspaceId: "offline-never-created",
+  };
+  const creationFailure = (await direct.paseo.workspaces
+    .create(creation)
+    .catch((error: unknown) => error)) as Error;
+  await expect(remote.workspaces.create(creation)).rejects.toThrow(creationFailure.message);
   await remote.dispose();
 });
 
@@ -910,21 +960,22 @@ test("a resumed physical link re-admits every logical session under its current 
   const logical = new DaemonClient({
     url: "ws://logical/ws",
     clientId: "logical",
-    transportFactory: createHostChannelTransport(
-      parent,
-      serverId,
-      "logical",
-      null,
-      { failure: null },
-      true,
-    ),
-    routedClient: true,
-    routedServerId: serverId,
+    transportFactory: createHostChannelTransport(parent, serverId, "logical", null, true),
   });
   cleanup.push(() => logical.close());
-  await logical.connect();
+  const connecting = logical.connect();
+  expect(() => logical.ensureConnected()).not.toThrow();
   const scoped = createPaseoApi(logical);
   cleanup.push(() => scoped.dispose());
+  const initialCall = scoped.workspaces.list();
+  await connecting;
+  expect((await initialCall).entries).toEqual([]);
+  const recoveryCalls: Promise<unknown>[] = [];
+  const stopRecovery = logical.subscribeConnectionStatus((state) => {
+    if (state.status === "connecting")
+      recoveryCalls.push(scoped.workspaces.list().catch((error: unknown) => error));
+  });
+  cleanup.push(async () => stopRecovery());
   const bytes = Uint8Array.from({ length: 256 * 1024 + 123 }, (_, index) => index % 251);
   const upload = await logical.uploadFile({
     fileName: "routed.bin",
@@ -955,7 +1006,7 @@ test("a resumed physical link re-admits every logical session under its current 
   ]);
   await expect(
     scoped.workspaces.create({ source: { kind: "directory", path: b.staticDir } }),
-  ).rejects.toMatchObject({ code: "permission_denied" });
+  ).rejects.toMatchObject({ code: "access_denied" });
   const restored = createHostClient(`127.0.0.1:${b.port}`, {
     clientId: "physical-grants",
     reconnect: { enabled: false },
@@ -964,6 +1015,8 @@ test("a resumed physical link re-admits every logical session under its current 
   await restored.connect();
   await expect.poll(() => snapshots.length, { timeout: 15000 }).toBe(3);
   expect(logical.getLastServerInfoMessage()?.permissions).toContain("workspace.write");
+  expect(recoveryCalls.length).toBeGreaterThanOrEqual(2);
+  for (const call of recoveryCalls) expect(await call).toMatchObject({ entries: [] });
   await scoped.workspaces.create({ source: { kind: "directory", path: b.staticDir } });
 });
 

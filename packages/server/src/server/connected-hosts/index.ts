@@ -384,7 +384,6 @@ export class ConnectedHosts {
       input.serverId,
       randomUUID(),
       null,
-      { failure: null },
       true,
     )({ url: "ws://host-link/ws" });
     let closed = false;

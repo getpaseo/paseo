@@ -43,9 +43,14 @@ operations; requesting this feature gives update guidance.
 
 Disposing a routed API releases its observations and session. It does not remove the saved host or
 affect sibling API scopes. Disposing the origin cascades to its derived scopes. Observations restore
-through the usual owned-subscription contract; requests made while offline fail. Losing a response
-returns `outcome_unknown` with the destination ID. Inspect the destination before retrying a mutation.
-No mutation is automatically replayed.
+through the usual owned-subscription contract. The ordinary client queues new requests while connecting
+within its existing deadline and rejects requests while disconnected. Connection loss clears old
+waiters and queued sends. Submitted requests with no response fail with `DaemonConnectionError`
+(`DAEMON_CONNECTION_LOST`), optional `outcome: "unknown"` and known `serverId`. Inspect the destination
+before retrying a mutation.
+Ordinary non-recoverable mutations are not automatically replayed. Existing acknowledged/idempotent
+creation recovery retains its request identity and resumes through the ordinary creation lifecycle. Multiplexing changes only the transport: ordinary permission
+RPC codes pass through unchanged, and connection/recovery behavior matches direct clients.
 
 Text session envelopes carry a channel identifier. Binary routing adds an opcode, a bounded UTF-8
 channel identifier, and the original terminal or file-transfer bytes. It never converts those bytes to

@@ -19,7 +19,6 @@ export function createHostChannelTransport(
   serverId: string,
   scopeId: string,
   initialRouteId: string | null,
-  state: { failure: Error | null },
   link = false,
 ): DaemonTransportFactory {
   let first: string | null = initialRouteId;
@@ -34,7 +33,7 @@ export function createHostChannelTransport(
     const close = (error?: unknown) => {
       if (closed) return;
       closed = true;
-      if (error instanceof Error) state.failure = Object.assign(error, { serverId });
+      if (error instanceof Error) Object.assign(error, { serverId });
       for (const cleanup of cleanups) cleanup();
       try {
         if (routeId) origin.closeHostRoute(routeId);
@@ -80,7 +79,6 @@ export function createHostChannelTransport(
           return;
         }
         routeId = id;
-        state.failure = null;
         for (const handler of opens) handler();
         return undefined;
       })
@@ -161,6 +159,10 @@ export function createHostActions(
       let routeId: string;
       try {
         routeId = await origin.openHostRoute(serverId, scopeId);
+      } catch (error) {
+        throw Object.assign(error instanceof Error ? error : new Error(String(error)), {
+          serverId,
+        });
       } finally {
         owner.signal.removeEventListener("abort", cancel);
       }
@@ -168,16 +170,12 @@ export function createHostActions(
         origin.closeHostRoute(routeId);
         assertActive();
       }
-      const state: { failure: Error | null } = { failure: null };
       const client = new DaemonClient({
         url: "ws://routed-host/ws",
         clientId: scopeId,
-        transportFactory: createHostChannelTransport(origin, serverId, scopeId, routeId, state),
+        transportFactory: createHostChannelTransport(origin, serverId, scopeId, routeId),
         // Initial acquisition has a deadline; established scopes restore demand on loss.
         reconnect: { enabled: false },
-        routedClient: true,
-        routedServerId: serverId,
-        routedFailure: () => state.failure,
       });
       const api = owner.api(client, { signal: owner.signal });
       const scope = owner.own(() => ({
@@ -195,12 +193,13 @@ export function createHostActions(
         assertActive();
         return { ...api, dispose: () => scope.release() };
       } catch (error) {
-        const failure =
-          state.failure ??
-          Object.assign(error instanceof Error ? error : new Error("Host handshake failed"), {
+        const failure = Object.assign(
+          error instanceof Error ? error : new Error("Host handshake failed"),
+          {
             code: error instanceof Error && "code" in error ? error.code : "host_offline",
             serverId,
-          });
+          },
+        );
         await scope.release();
         throw failure;
       }

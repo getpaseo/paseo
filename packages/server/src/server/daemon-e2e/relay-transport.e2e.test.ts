@@ -329,6 +329,7 @@ async function waitForCapturedLog(
         snapshot: () => {
           snapshots++;
         },
+        update() {},
       });
       const workspace = await remote.workspaces.create({
         source: { kind: "directory", path: b.staticDir },
@@ -358,7 +359,7 @@ async function waitForCapturedLog(
           },
           { timeout: 15000 },
         )
-        .toBe("host_offline");
+        .toBe("DAEMON_CONNECTION_LOST");
       await startRelay({ useLocalRelay: true, port });
       await expect
         .poll(

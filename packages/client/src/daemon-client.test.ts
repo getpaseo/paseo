@@ -3,6 +3,7 @@ import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
 import { z } from "zod";
 import {
   DaemonClient,
+  DaemonConnectionError,
   supportsUsageReports,
   type DaemonClientTrace,
   type CreateAgentRequestOptions,
@@ -7769,4 +7770,131 @@ test("sends worktree target and autoArchive in create_agent_request", async () =
   );
 
   await expect(createPromise).rejects.toThrow("worktree auto archive sentinel");
+});
+
+test("ordinary lifecycle queues new calls, distinguishes submitted outcomes, and never resends lost requests", async () => {
+  const transports = [createMockTransport(), createMockTransport(), createMockTransport()];
+  let attempt = 0;
+  const client = new DaemonClient({
+    url: "ws://transport",
+    clientId: "ordinary-lifecycle",
+    reconnect: { enabled: false },
+    transportFactory: () => transports[attempt++]!.transport,
+  });
+  clients.push(client);
+  const first = transports[0]!;
+  const connecting = client.connect();
+  const initial = client.getDaemonConfig("initial").catch((error: unknown) => error);
+  expect(first.sent).toEqual([]);
+  first.triggerOpen();
+  await connecting;
+  expect(parseSentFrame(first.sent[0]).requestId).toBe("initial");
+  first.triggerMessage(
+    wrapSessionMessage({
+      type: "rpc_error",
+      payload: { requestId: "initial", error: "Denied", code: "access_denied" },
+    }),
+  );
+  expect(await initial).toMatchObject({ code: "access_denied", serverId: "srv_test_1" });
+  const submitted = client
+    .patchDaemonConfig({ pluginsEnabled: false }, "submitted")
+    .catch((error: unknown) => error);
+  first.triggerClose({ code: 1001, reason: "physical loss" });
+  const unknown = await submitted;
+  expect(unknown).toBeInstanceOf(DaemonConnectionError);
+  expect(unknown).toMatchObject({
+    code: "DAEMON_CONNECTION_LOST",
+    outcome: "unknown",
+    serverId: "srv_test_1",
+  });
+
+  expect(() => client.ensureConnected()).not.toThrow();
+  const second = transports[1]!;
+  const neverSent = client
+    .patchDaemonConfig({ pluginsEnabled: true }, "never-sent")
+    .catch((error: unknown) => error);
+  expect(second.sent).toEqual([]);
+  second.triggerClose({ code: 1001, reason: "handshake lost" });
+  const unavailable = await neverSent;
+  expect(unavailable).toBeInstanceOf(DaemonConnectionError);
+  expect(unavailable).toMatchObject({ code: "DAEMON_CONNECTION_LOST", serverId: "srv_test_1" });
+  expect((unavailable as DaemonConnectionError).outcome).toBeUndefined();
+
+  client.ensureConnected();
+  const third = transports[2]!;
+  const recovery = client.getDaemonConfig("recovery").catch((error: unknown) => error);
+  expect(third.sent).toEqual([]);
+  third.triggerOpen();
+  expect(third.sent.map(parseSentFrame).map((frame) => frame.requestId)).toEqual(["recovery"]);
+  third.triggerMessage(
+    wrapSessionMessage({
+      type: "rpc_error",
+      payload: { requestId: "recovery", error: "Denied", code: "access_denied" },
+    }),
+  );
+  expect(await recovery).toMatchObject({ code: "access_denied" });
+});
+
+test.each([false, true])(
+  "synchronous send rejection leaves no unknown outcome after close (close during handoff: %s)",
+  async (closeDuringSend) => {
+    const first = createMockTransport();
+    const second = createMockTransport();
+    const rejected = Object.assign(new Error("Transport rejected this send"), {
+      code: "resource_limit",
+    });
+    const originalSend = first.transport.send;
+    first.transport.send = (data) => {
+      if (typeof data === "string" && data.includes("set_daemon_config_request")) {
+        if (closeDuringSend) first.triggerClose({ code: 1001, reason: "closed during send" });
+        throw rejected;
+      }
+      originalSend(data);
+    };
+    let attempt = 0;
+    const client = new DaemonClient({
+      url: "ws://transport",
+      clientId: "rejected-send",
+      reconnect: { enabled: false },
+      transportFactory: () => [first, second][attempt++]!.transport,
+    });
+    clients.push(client);
+    const connected = client.connect();
+    first.triggerOpen();
+    await connected;
+    await expect(client.patchDaemonConfig({ pluginsEnabled: false }, "rejected")).rejects.toBe(
+      rejected,
+    );
+    first.triggerClose({ code: 1001, reason: "lost connection" });
+    client.ensureConnected();
+    const queued = client.getDaemonConfig("not-submitted").catch((error: unknown) => error);
+    second.triggerClose({ code: 1001, reason: "lost handshake" });
+    const failure = (await queued) as DaemonConnectionError;
+    expect(failure).toBeInstanceOf(DaemonConnectionError);
+    expect(failure.outcome).toBeUndefined();
+    expect((rejected as Error & { outcome?: string }).outcome).toBeUndefined();
+  },
+);
+
+test("initial acquisition preserves structured transport failures and ordinary offline errors retain their cause", async () => {
+  const transport = createMockTransport();
+  const failure = Object.assign(new Error("Destination identity changed"), {
+    code: "server_id_mismatch",
+    serverId: "srv_expected",
+  });
+  const client = new DaemonClient({
+    url: "ws://transport",
+    clientId: "structured-acquisition",
+    reconnect: { enabled: false },
+    transportFactory: () => transport.transport,
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  const rejected = expect(connecting).rejects.toBe(failure);
+  transport.triggerError(failure);
+  await rejected;
+  await expect(client.getDaemonConfig()).rejects.toMatchObject({
+    code: "DAEMON_CONNECTION_LOST",
+    cause: failure,
+  });
 });

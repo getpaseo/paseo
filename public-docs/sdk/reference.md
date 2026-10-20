@@ -247,12 +247,18 @@ daemon. The ordinary APIs keep their signatures. Paths and IDs belong to the des
 the local server ID returns a local scope. Routing supports one hop.
 
 Disposing one scope releases its observations without closing siblings or deleting the saved host.
-Origin disposal cascades. Offline operations fail; observations recover. A lost result reports
-`outcome_unknown` and the destination server ID. Inspect before retrying a mutation.
+Origin disposal cascades. Observations recover through the ordinary client lifecycle. While connecting,
+new requests use the existing bounded send queue; disconnected requests fail. Connection loss clears
+old waiters and queued sends. Ordinary non-recoverable requests are not replayed; existing
+acknowledged/idempotent creation recovery retains its request identity. A submitted request whose response
+is lost rejects with `DaemonConnectionError` (`code: "DAEMON_CONNECTION_LOST"`), optional
+`outcome: "unknown"` and known `serverId`. Inspect before retrying a mutation.
 
-Host failures expose a stable `code`: `host_unknown`, `host_disabled`, `host_offline`,
+Registration and host acquisition failures expose a stable `code`: `host_unknown`, `host_disabled`, `host_offline`,
 `permission_denied`, `unsupported_capability`, `authentication_failed`, `server_id_mismatch`,
-`self_host`, or `duplicate_host`. Discovery does not grant execution authority.
+`self_host`, or `duplicate_host`. Ordinary RPC permission codes, including `access_denied`, pass through
+unchanged. Multiplexing is a transport; consumers use the same client/API operations and lifecycle.
+Discovery does not grant execution authority.
 
 ## Errors and cleanup
 
