@@ -149,7 +149,7 @@ for (const layout of [
           await expect(details.getByText(/tokens$/)).toHaveCount(0);
           const account = usageCard(details, "login-journey:account");
           await expect(account.getByText("Session", { exact: true })).toBeVisible();
-          await expect(account.getByText("31%", { exact: true })).toBeVisible();
+          await expect(account.getByText("31% used", { exact: true })).toBeVisible();
           await qaScreenshot(page, `context-without-data-${layout.name}`);
           await layout.close(page);
         });
@@ -161,7 +161,7 @@ for (const layout of [
           await expect(details.getByText("32k / 128k tokens", { exact: true })).toBeVisible();
           await expect(details.getByText("No context data", { exact: true })).toHaveCount(0);
           await expect(
-            usageCard(details, "login-journey:account").getByText("31%", { exact: true }),
+            usageCard(details, "login-journey:account").getByText("31% used", { exact: true }),
           ).toBeVisible();
         });
       } finally {

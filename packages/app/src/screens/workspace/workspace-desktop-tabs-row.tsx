@@ -858,7 +858,6 @@ function TabChip({
               testID={`workspace-tab-${testIdentity}`}
               triggerRef={dragHandleProps?.setActivatorNodeRef as unknown as undefined}
               style={tabChipStyle}
-              onPressIn={isWeb ? handleNavigateTab : undefined}
               onPress={handleNavigateTab}
               accessibilityRole="button"
               accessibilityLabel={accessibilityLabel}

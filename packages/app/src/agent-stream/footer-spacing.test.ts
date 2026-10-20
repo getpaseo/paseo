@@ -49,17 +49,6 @@ function assistantMessage(id: string): Extract<StreamItem, { kind: "assistant_me
   };
 }
 
-function assistantBlock(
-  id: string,
-  blockIndex: number,
-): Extract<StreamItem, { kind: "assistant_message" }> {
-  return {
-    ...assistantMessage(id),
-    blockGroupId: "response",
-    blockIndex,
-  };
-}
-
 function timingFor(assistantId: string): Map<string, TurnTiming> {
   return new Map([
     [
@@ -107,32 +96,6 @@ describe("turn footer spacing", () => {
 
       expect(layout.auxiliaryTurnFooter).toBeNull();
       expect(assistantLayout?.assistantSpacing).toBe("compactBottom");
-    },
-  );
-
-  it.each([
-    ["web", false],
-    ["web", true],
-    ["native", false],
-    ["native", true],
-  ] as const)(
-    "compacts both edges of the final split paragraph on %s when active=%s",
-    (platform, isTurnActive) => {
-      const strategy = strategyFor(platform);
-      const first = assistantBlock("first", 0);
-      const last = assistantBlock("last", 1);
-      const layout = layoutStream({
-        strategy,
-        isTurnActive,
-        history: strategy.orderTail([userMessage("user"), first]),
-        liveHead: strategy.orderHead([last]),
-        timingByAssistantId: timingFor(last.id),
-      });
-      const firstLayout = layout.history.find((item) => item.item.id === first.id);
-      const lastLayout = layout.liveHead.find((item) => item.item.id === last.id);
-
-      expect(firstLayout?.assistantSpacing).toBe("compactBottom");
-      expect(lastLayout?.assistantSpacing).toBe("compactBoth");
     },
   );
 });

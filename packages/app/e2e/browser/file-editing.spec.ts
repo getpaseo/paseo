@@ -72,10 +72,10 @@ async function selectFileView(page: Page, view: "Preview" | "Source"): Promise<v
 }
 
 async function expectMarkdownImageLoaded(page: Page, name: string): Promise<void> {
-  const image = page.getByRole("img", { name, exact: true });
+  const image = page.getByRole("button", { name, exact: true });
   await expect(image).toBeVisible();
   await expect
-    .poll(() => image.locator("img").evaluate((element: HTMLImageElement) => element.naturalWidth))
+    .poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth))
     .toBeGreaterThan(0);
 }
 
@@ -105,6 +105,37 @@ async function seedAgentWithFileLink(input: LinkedFile) {
 }
 
 test.describe("CodeMirror workspace file editing", () => {
+  test("opens explicit screenshot links and explains missing files", async ({ page }) => {
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "screenshot-markdown-link-",
+      title: "Screenshot file links",
+      initialPrompt: "Show screenshots",
+      featureValues: {
+        mockAssistantResponse:
+          "[Capture](.dev/tablet-review/capture.png) [Missing capture](.dev/tablet-review/missing.png)",
+      },
+    });
+    try {
+      await mkdir(path.join(session.cwd, ".dev/tablet-review"), { recursive: true });
+      await writeFile(path.join(session.cwd, ".dev/tablet-review/capture.png"), RED_PIXEL);
+      await openAgentRoute(page, session);
+      await test.step("Open the linked screenshot", async () => {
+        await openAssistantMarkdownLink(page, "Capture");
+        await expectFileTabOpen(page, ".dev/tablet-review/capture.png");
+        await expect(page.getByTestId("image-file-preview-canvas")).toBeVisible();
+      });
+      await test.step("Explain why the missing screenshot cannot open", async () => {
+        await returnToAssistant(page, session.agentId);
+        await openAssistantMarkdownLink(page, "Missing capture");
+        await expectFileTabOpen(page, ".dev/tablet-review/missing.png");
+        await expect(page.getByText(/ENOENT/)).toBeVisible();
+        await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+      });
+    } finally {
+      await session.cleanup();
+    }
+  });
+
   test("opens the non-ASCII file named by an assistant markdown link", async ({ page }) => {
     const session = await seedMockAgentWorkspace({
       repoPrefix: "encoded-markdown-link-",
@@ -221,7 +252,7 @@ test.describe("CodeMirror workspace file editing", () => {
       const fileLink = page.getByRole("link", { name: "Open target" }).first();
       await expect(fileLink).toBeVisible({ timeout: 15_000 });
       await fileLink.hover();
-      await expect(page.getByText("src/target.ts:42-45", { exact: true })).toBeVisible();
+      await expect(fileLink).toHaveAttribute("title", "src/target.ts:42-45");
     } finally {
       await workspace.cleanup();
     }

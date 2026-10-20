@@ -5,10 +5,6 @@ import path from "node:path";
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
-import {
-  expectMobileAgentSidebarVisible,
-  openMobileAgentSidebar,
-} from "../support/helpers/sidebar";
 
 const PLUGIN_ID = "plugin-host-ui-e2e";
 
@@ -91,12 +87,6 @@ async function useCompactLayout(page: Page): Promise<void> {
   await page.setViewportSize({ width: 390, height: 844 });
 }
 
-async function reopenHostUiPluginFromCompactSidebar(page: Page): Promise<void> {
-  await openMobileAgentSidebar(page);
-  await expectMobileAgentSidebarVisible(page);
-  await page.getByRole("button", { name: "Host UI", exact: true }).click();
-}
-
 async function openPluginModal(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Open plugin modal", exact: true }).click();
 }
@@ -158,7 +148,6 @@ test("plugin modal adapts its presentation and preserves host contexts", async (
 
     await test.step("compact layouts preserve host contexts inside a sheet", async () => {
       await useCompactLayout(page);
-      await reopenHostUiPluginFromCompactSidebar(page);
       await openPluginModal(page);
       await expectCompactPluginSheet(page);
       await savePluginIssue(page);

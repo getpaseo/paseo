@@ -5096,6 +5096,21 @@ describe("compact workspace sheet", () => {
     expect(tabKinds(store)).toEqual(["terminal", "terminal"]);
   });
 
+  it("honors an explicit Explorer pane destination on compact layouts", () => {
+    const store = createCompactStore();
+    const paneId = store.getState().showExplorerSidebar(workspaceKey)!;
+    const tabId = store.getState().openTab({
+      workspaceKey,
+      target: fileTarget,
+      intent: "new",
+      placement: { mode: "pane", paneId },
+    });
+    expect(topSheet(store)).toBeUndefined();
+    expect(
+      findPaneById(store.getState().layoutByWorkspace[workspaceKey].root, paneId)?.focusedTabId,
+    ).toBe(tabId);
+  });
+
   it("keeps a chat shown in the sheet open for timeline sync until the sheet closes", () => {
     const store = createCompactStore();
     seedAgents([

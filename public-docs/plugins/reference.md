@@ -162,7 +162,7 @@ guarantee compatibility with another host's renderer.
 
 These exact module specifiers use the host's runtime instances. A client bundle that requests another host module fails with `Module "<name>" is not available in plugin client code`.
 
-Do not import `lucide-react-native`, `react-native-svg`, or DOM libraries. Set contribution `icon` fields to a [Lucide icon name](https://lucide.dev/icons/); Paseo validates the name and renders the icon.
+Do not import `lucide-react-native`, `react-native-svg`, or DOM libraries. Set contribution `icon` fields to a [Lucide icon name](https://lucide.dev/icons/), inline SVG, or a component; Paseo validates the icon and renders it. See [Icons](#icons).
 
 ### Cross-platform rules
 
@@ -338,11 +338,9 @@ Use `runAcpProvider()` from `@getpaseo/plugin/server/acp` to adapt a command-bac
 hooks only for a vendor's discovery, configuration, notification, or tool-call differences.
 
 `ProviderRegistration.icon` is a file path relative to the plugin directory, such as `icon.svg`.
-It must resolve inside that directory to a regular SVG file no larger than 64 KiB. The SVG must be
-self-contained: scripts, styles, `foreignObject`, event-handler attributes, JavaScript URLs, and
-external `href` or `xlink:href` references are rejected. Fragment references such as `#mark` are
-allowed. Paseo reads and sanitizes the file when the plugin starts; the string is never an inline
-SVG or URL.
+It must resolve inside that directory to a regular file that follows the
+[SVG icon rules](#svg-rules). Paseo reads and validates the file when the plugin starts; the string
+is never inline SVG or a URL.
 
 ### Usage sources
 
@@ -411,11 +409,14 @@ Built-in session routes:
 | Claude                 | `pi`, `omp` with `anthropic/…` model          | That harness's Anthropic login store                                                           |
 | Codex                  | `codex`                                       | `CODEX_HOME/auth.json`, or the default                                                         |
 | Codex                  | `pi`, `opencode`, `omp` with `openai/…` model | That harness's OpenAI login store                                                              |
+| Cursor                 | `cursor`                                      | cursor-agent's `auth.json` for that session's `XDG_CONFIG_HOME`, `APPDATA`, or home directory  |
 | Muse                   | `muse`                                        | That session's own Muse launch/config                                                          |
 | Other built-in sources | Any                                           | No session discovery                                                                           |
 
 Claude excludes Bedrock, Vertex, and foreign `ANTHROPIC_BASE_URL` sessions. Codex excludes sessions
-with `OPENAI_BASE_URL` set.
+with `OPENAI_BASE_URL` set. Cursor excludes sessions that authenticate with `CURSOR_API_KEY` or
+`CURSOR_AUTH_TOKEN`, and macOS sessions that keep the login in the Keychain, the default unless
+`AGENT_CLI_CREDENTIAL_STORE=file`.
 
 Use a stable account key: 1–128 characters from `[A-Za-z0-9._-]`. It identifies the account or
 organization whose quota is metered and survives token rotation. Never use a credential or raw
@@ -513,7 +514,7 @@ bypasses that cache. Entries carry `id`, `account.label`, and `fetchedAt`. Faile
 on `server_info.features.usageSources`. The older `provider.usage.list` RPC maps the same reports
 for 0.10 clients and renders problems into its `error` string.
 
-The source icon follows the provider SVG restrictions above.
+The source icon is a file path with the same rules as a provider icon.
 
 ## Entry point and cleanup
 
@@ -653,9 +654,11 @@ export default function contribute(server: PluginServerContext) {
       return;
     }
 
-    const text = latestOutputText(event.timeline);
+    const agent = context.paseo.agents.ref(event.agent.id);
+    const page = await agent.timeline.refetch({ direction: "tail", limit: 20 });
+    const text = latestOutputText(page.entries.map(({ item }) => item));
     if (/out of credits/i.test(text)) {
-      await context.paseo.agents.ref(event.agent.id).send("Try again.");
+      await agent.send("Try again.");
     }
   });
 
@@ -668,6 +671,9 @@ Turn ends: "out of credits"
   → plugin sends "Try again."
   → a new turn starts
 ```
+
+The handler fetches only the last 20 timeline items. Output before that page is not inspected.
+Use `cursor` and `direction` to page further when your plugin needs more history.
 
 This sends a new message with the existing SDK. Persistent matches keep sending follow-ups;
 add limits or delays in your plugin when needed. Attachments and tool effects are not replayed.
@@ -720,21 +726,25 @@ plans, and mode changes; requesting permission does not end the turn.
 
 ### Events
 
-| Name                         | Event fields                             | Trigger                                            |
-| ---------------------------- | ---------------------------------------- | -------------------------------------------------- |
-| `agent.created`              | `agent`                                  | Ordinary creation finishes; excludes import/resume |
-| `agent.closed`               | `agent`                                  | A live agent runtime closes                        |
-| `agent.turn_started`         | `agent`, `turnId`                        | Live turn starts                                   |
-| `agent.turn_ended`           | `agent`, `turnId`, `outcome`, `timeline` | Live turn completes, fails, or is canceled         |
-| `agent.permission_requested` | `agent`, `request`                       | Permission or question becomes pending             |
-| `agent.permission_resolved`  | `agent`, `requestId`, `resolution`       | Pending request is answered or cleared             |
-| `agent.archived`             | `agent`, `archivedAt`                    | Archive state is saved                             |
-| `workspace.created`          | `workspace`                              | Record created; directory available                |
-| `workspace.archived`         | `workspace`                              | Archive state is saved                             |
+| Name                         | Event fields                                            | Trigger                                            |
+| ---------------------------- | ------------------------------------------------------- | -------------------------------------------------- |
+| `agent.created`              | `agent`                                                 | Ordinary creation finishes; excludes import/resume |
+| `agent.closed`               | `agent`                                                 | A live agent runtime closes                        |
+| `agent.turn_started`         | `agent`, `turnId`                                       | Live turn starts                                   |
+| `agent.turn_ended`           | `agent`, `turnId`, `outcome`, deprecated `timeline: []` | Live turn completes, fails, or is canceled         |
+| `agent.permission_requested` | `agent`, `request`                                      | Permission or question becomes pending             |
+| `agent.permission_resolved`  | `agent`, `requestId`, `resolution`                      | Pending request is answered or cleared             |
+| `agent.archived`             | `agent`, `archivedAt`                                   | Archive state is saved                             |
+| `workspace.created`          | `workspace`                                             | Record created; directory available                |
+| `workspace.archived`         | `workspace`                                             | Archive state is saved                             |
 
 Agent events exclude the daemon's private disposable helpers. Public background workspaces and
 their ordinary agents run the same lifecycle hooks as other workspaces. Archive events can precede
 runtime/worktree cleanup; observe lifecycle completion separately when cleanup matters.
+
+`agent.turn_ended.timeline` is deprecated and always empty. Fetch history on demand with
+`context.paseo.agents.ref(event.agent.id).timeline.refetch({ direction: "tail", limit: 20 })`.
+The hook payload size does not grow with conversation history.
 
 **Shared payload shapes** (`@getpaseo/plugin/server`):
 
@@ -965,10 +975,10 @@ closes the popover.
 
 Render the item with the sidebar kit from `@getpaseo/plugin/client/ui`:
 
-| Component          | Props and behavior                                                                                                                                                                                                                                                                                                    |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SidebarRow`       | Required `onPress`; optional `icon` (Lucide name or `{ size, color }` component), `label`, `active`, `trailing`, `id`. A full-width row. `trailing` renders beside the row's pressable, so a button in it presses on its own; a press elsewhere in it presses the row. `id` tells rows of one item apart in test IDs. |
-| `SidebarSeparator` | No props. The sidebar's separator line, between groups of rows.                                                                                                                                                                                                                                                       |
+| Component          | Props and behavior                                                                                                                                                                                                                                                                                 |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SidebarRow`       | Required `onPress`; optional `icon` (any [icon](#icons) form), `label`, `active`, `trailing`, `id`. A full-width row. `trailing` renders beside the row's pressable, so a button in it presses on its own; a press elsewhere in it presses the row. `id` tells rows of one item apart in test IDs. |
+| `SidebarSeparator` | No props. The sidebar's separator line, between groups of rows.                                                                                                                                                                                                                                    |
 
 A popover anchors to the row that was pressed, whether the press landed on the row or on its
 `trailing` content, so a per-row "More" button opens its popover next to its own row.
@@ -1243,14 +1253,82 @@ Showing another toast replaces the currently visible toast. An empty message is 
 
 ### Icons
 
-`Icon` renders a [Lucide icon](https://lucide.dev/icons/) from Paseo's installed icon set. Plugin bundles do not import
-`lucide-react-native` or `react-native-svg`.
+Every contribution `icon` field takes one of three forms, typed `PluginIcon` in
+`@getpaseo/plugin/client`:
 
-| Prop    | Type     | Required | Behavior                                        |
-| ------- | -------- | -------- | ----------------------------------------------- |
-| `name`  | `string` | Yes      | Lucide icon name. Unknown names render nothing. |
-| `size`  | `number` | No       | Icon width and height.                          |
-| `color` | `string` | No       | Icon color. Use a plugin theme token.           |
+| Form        | Example                     | Use it for                                          |
+| ----------- | --------------------------- | --------------------------------------------------- |
+| Lucide name | `icon: "Scan"`              | Any [Lucide icon](https://lucide.dev/icons/).       |
+| Inline SVG  | `icon: { svg: reviewIcon }` | A brand mark or an icon Lucide does not have.       |
+| Component   | `icon: ReviewBadge`         | An icon that changes with state, such as a counter. |
+
+Attachment sources take a Lucide name or inline SVG (`PluginSerializableIcon`), because each
+attached item stores its source's icon.
+
+Paseo validates the icon when the contribution registers. An unknown Lucide name or an SVG that
+breaks a rule fails the plugin with the reason:
+
+```text
+Workspace panel review has an invalid icon: script elements are not allowed
+```
+
+Paseo draws inline SVG at the surface's icon size and passes the surface's icon color as
+`currentColor`. Paint with `currentColor` to follow the theme; fixed fills keep their colors.
+
+A component receives `PluginIconProps`, `{ size, color }`, and renders within that size. Header
+buttons and composer pills pass [`PluginButtonIconProps`](#custom-icons-and-popover-content).
+
+#### SVG rules
+
+Inline SVG, provider icons, and usage-source icons follow the same rules:
+
+- One `<svg>` document, no larger than 64 KiB.
+- No `<script>`, `<style>`, or `<foreignObject>` elements.
+- No event-handler attributes such as `onclick`, and no `javascript:` URLs.
+- `href` and `xlink:href` point only at fragments in the same document, such as `#mark`.
+
+#### Ship SVG markup
+
+Keep the markup in a client module:
+
+```ts
+// client/icons.ts
+export const reviewIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+  <path d="M4 4h16v16H4z" />
+</svg>`;
+```
+
+Or put an `.svg` file in `client/` and import it. The plugin compiler bundles the file's markup as a
+string. Declare the module once so TypeScript accepts the import:
+
+```ts
+// client/svg.d.ts
+declare module "*.svg" {
+  const markup: string;
+  export default markup;
+}
+```
+
+```ts
+// index.client.tsx
+import reviewIcon from "./client/review.svg";
+
+client.addWorkspacePanel({ id: "review", title: "Review", icon: { svg: reviewIcon } /* … */ });
+```
+
+#### Render an icon
+
+`Icon` from `@getpaseo/plugin/client/react-native` draws an icon in your own UI. Plugin bundles do
+not import `lucide-react-native` or `react-native-svg`.
+
+| Prop    | Type         | Required         | Behavior                                                     |
+| ------- | ------------ | ---------------- | ------------------------------------------------------------ |
+| `name`  | `string`     | `name` or `icon` | Lucide icon name.                                            |
+| `icon`  | `PluginIcon` | `name` or `icon` | Any icon form above.                                         |
+| `size`  | `number`     | No               | Icon width and height. Defaults to 24.                       |
+| `color` | `string`     | No               | Icon color and SVG `currentColor`. Use a plugin theme token. |
+
+An unknown name or an SVG that breaks a rule renders nothing.
 
 ## Timeline items
 
@@ -1314,6 +1392,13 @@ deterministic. Paseo memoizes results by source-item reference and derives repla
 the source row, so updates to one streaming item do not remount its renderer. Use the exported
 `useRevealedText(text, phase)` hook when a renderer should pace streaming text like Paseo's built-in
 assistant rows.
+
+Chat find (Ctrl or Cmd+F) finds and highlights text in replacement rows when the query also
+matches the original message. The host searches the original prompt text or the assistant reply
+with Markdown syntax removed, then the app counts matches in the text your renderer draws.
+Text added only by your renderer is not independently indexed. Matches stay within a rendered
+block, and find skips buttons, icons, and anything with `aria-hidden="true"`. Find only runs on
+the web and desktop apps.
 
 ### Append a timeline row from the daemon
 
@@ -1430,7 +1515,7 @@ Themes need a host that supports them. A client released before `addTheme` canno
 
 Register a component with `client.addSettingsScreen({ id, title, icon, Component })` in
 `index.client.tsx`. It appears under **Settings → Plugins → your plugin** on that host.
-`id` is unique within the installation; `icon` is a Lucide name. Registration returns an
+`id` is unique within the installation; `icon` is any [icon](#icons) form. Registration returns an
 idempotent remover, and plugin teardown removes remaining screens.
 
 Call `client.openSettings(id)` or a Command Center callback's `openSettings(id)` to open one
@@ -1627,7 +1712,7 @@ export default function contribute(client: PluginClientContext) {
 | ----------- | -------- | ------------------------------------------------------------- |
 | `id`        | Yes      | Plugin-local panel ID.                                        |
 | `title`     | Yes      | Workspace-tab title.                                          |
-| `icon`      | Yes      | Lucide icon name.                                             |
+| `icon`      | Yes      | Lucide name, `{ svg }`, or component. See [Icons](#icons).    |
 | `context`   | Yes      | `workspace` or `agent`.                                       |
 | `locations` | No       | `workspace` and/or `explorer`. Defaults to `workspace`.       |
 | `Component` | Yes      | React Native component matching the selected context's props. |
@@ -1711,14 +1796,14 @@ client.addCommandCenterItem({
 
 `addCommandCenterItem` fields:
 
-| Field      | Required | Meaning                                        |
-| ---------- | -------- | ---------------------------------------------- |
-| `id`       | Yes      | Plugin-local item ID.                          |
-| `title`    | Yes      | Search result title.                           |
-| `icon`     | Yes      | Lucide icon name.                              |
-| `keywords` | No       | Additional Command Center search terms.        |
-| `context`  | Yes      | `global`, `workspace`, or `agent`.             |
-| `onSelect` | Yes      | Client-side callback for the matching context. |
+| Field      | Required | Meaning                                                    |
+| ---------- | -------- | ---------------------------------------------------------- |
+| `id`       | Yes      | Plugin-local item ID.                                      |
+| `title`    | Yes      | Search result title.                                       |
+| `icon`     | Yes      | Lucide name, `{ svg }`, or component. See [Icons](#icons). |
+| `keywords` | No       | Additional Command Center search terms.                    |
+| `context`  | Yes      | `global`, `workspace`, or `agent`.                         |
+| `onSelect` | Yes      | Client-side callback for the matching context.             |
 
 Global items appear on the installation's selected host. Workspace items appear only when that host has an active cached workspace. Agent items appear only when the focused workspace tab is an agent or an agent-context plugin panel whose cached record belongs to that workspace. Missing context removes the item rather than calling the plugin to discover it.
 
@@ -1844,7 +1929,7 @@ These contracts are exported from `@getpaseo/plugin/client`.
 | Field      | Required | Meaning                                                                 |
 | ---------- | -------- | ----------------------------------------------------------------------- |
 | `title`    | Yes      | Non-empty accessible label, tooltip, and sheet title.                   |
-| `icon`     | Yes      | Lucide name or `ComponentType<PluginButtonIconProps>`.                  |
+| `icon`     | Yes      | Lucide name, `{ svg }`, or `ComponentType<PluginButtonIconProps>`.      |
 | `label`    | No       | Non-empty display text. Omit to use the placement's default.            |
 | `visible`  | No       | Defaults to `true`. False removes the trigger and its layout space.     |
 | `disabled` | No       | Defaults to `false`. Keeps the button visible and prevents interaction. |
@@ -2254,7 +2339,7 @@ export default function contribute(server: PluginServerContext) {
 }
 ```
 
-Paseo owns the composer menu, search picker, selected pill, draft state, and submission. The `text` value is the complete snapshot sent to the agent. Set `contextKind` to `"chat_history"` for an earlier conversation that must appear before the new user instruction; omit it for an ordinary resource appended afterward. Set `newAgentShortcut` to `true` to show the source beside Import Session on New Agent drafts as well as in the attachment menu.
+Paseo owns the composer menu, search picker, selected pill, draft state, and submission. The `text` value is the complete snapshot sent to the agent. `icon` is a Lucide name or `{ svg }`; see [Icons](#icons). Set `contextKind` to `"chat_history"` for an earlier conversation that must appear before the new user instruction; omit it for an ordinary resource appended afterward. Set `newAgentShortcut` to `true` to show the source beside Import Session on New Agent drafts as well as in the attachment menu.
 
 The [Linear example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/linear) shows a complete attachment source for a vendor resource.
 
@@ -2269,6 +2354,12 @@ Reload replaces their registrations. Disable, removal, host disconnect, and eval
 remove Command Center items and clear the installation's query state. An already-restored panel tab
 remains as unavailable until its matching contribution returns or the user closes it. Panel render
 failures stay inside the plugin error boundary.
+
+Reload queues behind the daemon's other plugin work, such as a running installation or preparation
+command, and the daemon answers when the plugin is running again or has failed. Nothing reads the
+plugin's status as the reload's outcome: while the reload is queued, `plugin ls`, Settings, and the
+logs show the plugin's previous state, and while the daemon stops and starts it, a status read
+reports `failed` because the plugin is absent from the runtime catalog until its start completes.
 
 ## Plugin sources
 

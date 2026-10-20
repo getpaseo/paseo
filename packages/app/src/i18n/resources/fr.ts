@@ -365,6 +365,7 @@ export const fr: TranslationResources = {
       details: "Détails",
     },
     dictation: {
+      paused: "Microphone interrompu. En attente de reprise…",
       start: "Démarrer la dictée vocale",
       cancel: "Annuler la dictée",
       retry: "Relancer la dictée",
@@ -374,6 +375,7 @@ export const fr: TranslationResources = {
       failedRetry: "La dictée a échoué. Appuyez sur Réessayer.",
     },
     question: {
+      responseFailed: "Impossible d’envoyer votre réponse. Réessayez.",
       submit: "Envoyer",
       next: "Suivant",
       answerPlaceholder: "Saisissez votre réponse…",
@@ -541,6 +543,8 @@ export const fr: TranslationResources = {
       },
     },
     setup: {
+      updateHost:
+        "Mettez à jour l’hôte pour afficher les détails de configuration de l’espace de travail",
       descriptor: {
         label: "Configuration",
         completed: "Configuration terminée",
@@ -735,6 +739,8 @@ export const fr: TranslationResources = {
     header: {
       actions: {
         workspaceActions: "Actions de l’espace de travail",
+        workspaceActionsUnhealthy:
+          "Actions de l’espace de travail, un service est en mauvaise santé",
         newAgent: "Nouvel agent",
         newTerminal: "Nouveau terminal",
         newBrowser: "Nouvel onglet de navigateur",
@@ -783,6 +789,8 @@ export const fr: TranslationResources = {
         exitCode: "sortie {{code}}",
         startFailed: "Impossible de démarrer {{scriptName}}",
         stopFailed: "Impossible d’arrêter {{scriptName}}",
+        running: "En cours",
+        runningCount: "{{count}} en cours",
       },
     },
     tree: {
@@ -1357,8 +1365,9 @@ export const fr: TranslationResources = {
     },
     fields: {
       project: "Projet",
-      base: "Base",
+      branch: "Branche",
       baseNotApplicable: "Non applicable",
+      host: "Hôte",
     },
     titlePlaceholder: "Titre (facultatif)",
     errors: {
@@ -2085,6 +2094,70 @@ export const fr: TranslationResources = {
       saveAccessibility: "Enregistrer le commentaire de revue",
     },
   },
+  providerUsage: {
+    options: "Paramètres",
+    refreshFailed: "Impossible d’actualiser l’utilisation",
+    noHosts: "Aucun hôte connecté",
+    agentError: "Impossible de charger l’utilisation : {{reason}}",
+    pin: "Épingler",
+    unpin: "Désépingler",
+    displayAs: "Pourcentages",
+    displayUsed: "Utilisé",
+    displayRemaining: "Restant",
+    showInSidebar: "Résumé dans la barre latérale",
+    showInSidebarHint: "Les périodes épinglées apparaissent en bas de la barre latérale",
+    runToRefresh: "Exécutez {{command}} pour actualiser.",
+    signInAgain: "Reconnectez-vous.",
+    loginRejected: "Connexion refusée (HTTP {{status}}). {{remedy}}",
+    loginExpired: "Connexion expirée {{relativeTime}}. {{remedy}}",
+    title: "Utilisation du forfait",
+    refresh: "Actualiser",
+    refreshAll: "Tout actualiser",
+    refreshing: "Actualisation...",
+    loading: "Chargement de l’utilisation...",
+    empty: "Aucune donnée d’utilisation",
+    errorTitle: "Impossible de charger l’utilisation",
+    hostUnavailable: "Connectez-vous à {{host}} pour voir l’utilisation du fournisseur",
+    hostUpgradeRequired: "Mettez à jour {{host}} pour voir l’utilisation du fournisseur",
+    clientUnavailable: "La connexion à l’hôte n’est pas prête",
+    retry: "Réessayer",
+    tooltipLoading: "Chargement de l’utilisation du forfait...",
+    status: {
+      error: "Erreur",
+      unavailable: "Indisponible",
+    },
+    values: {
+      used: "Utilisé : {{percentage}}",
+      remaining: "Il reste {{amount}}",
+    },
+    labels: {
+      session: "Session",
+      weekly: "Hebdomadaire",
+      monthly: "Mensuel",
+      codeReview: "Révision de code",
+      credits: "Crédits",
+      monthlyCredits: "Crédits mensuels",
+    },
+    duration: {
+      days: "{{value}} j",
+      hours: "{{value}} h",
+      minutes: "{{value}} min",
+    },
+    timing: {
+      lastUpdated: "Dernière mise à jour {{relativeTime}}",
+      noSuccessfulUpdate: "Aucune mise à jour réussie",
+      resetTimePassed: "Heure de réinitialisation dépassée",
+      resettingNow: "réinitialisation en cours",
+      resetsIn: "se réinitialise dans {{duration}}",
+      runsOutNow: "s’épuise maintenant",
+      runsOutIn: "s’épuise dans {{duration}}",
+      justNow: "à l’instant",
+      daysAgo: "il y a {{value}} j",
+      hoursAgo: "il y a {{value}} h",
+      minutesAgo: "il y a {{value}} min",
+      updated: "Mis à jour {{relativeTime}}",
+    },
+  },
   settings: {
     title: "Paramètres",
     loading: "Chargement des paramètres…",
@@ -2380,6 +2453,7 @@ export const fr: TranslationResources = {
       searchPlaceholder: "Rechercher des raccourcis",
       unavailableOnMobile: "Les raccourcis clavier ne sont disponibles que sur l’app de bureau",
       capturePrompt: "Appuyez sur le raccourci…",
+      captureIndexPrompt: "Terminez par un chiffre de 1 à 9.",
       unassigned: "Non attribué",
       actions: {
         menu: "Actions pour {{name}}",

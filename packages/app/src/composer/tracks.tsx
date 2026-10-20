@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState, type ReactElement, type ReactNode } fro
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import {
+  MENU_ITEM_HEIGHT,
   MenuRoot,
   MenuSeparator,
   MenuSurface,
@@ -312,6 +313,22 @@ const styles = StyleSheet.create((theme) => {
     backgroundColor: getStatusDotColor({ theme, bucket, showDoneAsInactive: true }) ?? undefined,
   });
 
+  // The rail every panel row sits on: inset from the panel edge so the fill is a rounded block
+  // inside it, and tall enough that revealing an action button cannot resize the row.
+  //
+  // Compact and desktop differ here and only here. A finger needs the taller row a menu row gets
+  // on compact; a pointer does not, and the popover keeps its density.
+  const trackRow = {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    minHeight: { xs: MENU_ITEM_HEIGHT.xs, md: 32 },
+    marginHorizontal: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: { xs: theme.spacing[2], md: theme.spacing[1] },
+    borderRadius: theme.borderRadius.md,
+  } as const;
+
   return {
     bar: {
       position: "absolute",
@@ -332,29 +349,8 @@ const styles = StyleSheet.create((theme) => {
       alignItems: "center",
       gap: theme.spacing[1],
     },
-    // The rail every panel row sits on: inset from the panel edge so the fill is a rounded block
-    // inside it, and tall enough that revealing an action button cannot resize the row.
-    row: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: theme.spacing[2],
-      minHeight: 32,
-      marginHorizontal: theme.spacing[1],
-      paddingHorizontal: theme.spacing[2],
-      paddingVertical: theme.spacing[1],
-      borderRadius: theme.borderRadius.md,
-    },
-    rowActive: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: theme.spacing[2],
-      minHeight: 32,
-      marginHorizontal: theme.spacing[1],
-      paddingHorizontal: theme.spacing[2],
-      paddingVertical: theme.spacing[1],
-      borderRadius: theme.borderRadius.md,
-      backgroundColor: theme.colors.surface2,
-    },
+    row: trackRow,
+    rowActive: { ...trackRow, backgroundColor: theme.colors.surface2 },
     // Segments sit twice as far apart as a mark sits from its own text, so a count reads as
     // belonging to the mark on its left rather than to the words on its right.
     segments: {

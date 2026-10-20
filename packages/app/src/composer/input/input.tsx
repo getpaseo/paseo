@@ -28,6 +28,7 @@ import { useTranslation } from "react-i18next";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { ArrowUp, Mic, MicOff, CornerDownLeft, Plus, Square } from "lucide-react-native";
 import { useDictation } from "@/hooks/use-dictation";
+import { hasFinePointer } from "@/hooks/use-fine-pointer";
 import { DictationOverlay } from "@/components/dictation-controls";
 import { RealtimeVoiceOverlay } from "@/components/realtime-voice-overlay";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -1289,12 +1290,19 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       webTextareaRef.current = element;
       setWebTextArea(element);
     }, []);
-    // Focus intent outlives a blur only while the pane is not the user's pane (a retained
-    // tab hidden, a sheet over it); the pane coming back restores focus. A blur while the
-    // pane is theirs drops it, whatever the layout mode: the user dismissed the keyboard,
-    // or a compact overlay panel did on their behalf, and nothing later refocuses.
+    // Only mouse-driven UIs restore editing focus on navigation. Touch users return
+    // to the conversation; replaying old focus would reopen their software keyboard.
+    // Read pointer capability when restoring, without making a pointer change itself
+    // a focus trigger.
     useLayoutEffect(() => {
-      if (isPaneFocused && focusIntentRef.current) textInputRef.current?.focus();
+      const finePointer = hasFinePointer();
+      if (!isPaneFocused && isWeb && !finePointer) {
+        // Hiding a retained tab only blurs its editor after the browser renders.
+        // A quick return before that frame would otherwise keep touch focus.
+        textInputRef.current?.blur();
+      } else if (isPaneFocused && focusIntentRef.current && finePointer) {
+        textInputRef.current?.focus();
+      }
     }, [isPaneFocused]);
     // The compact and desktop screens mount the editor in different trees, so a
     // viewport that crosses the breakpoint remounts it. The draft owner brings the
@@ -1311,7 +1319,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         retainedSelectionRef.current = retained.selection;
         selectionRef.current = selection;
         textInputRef.current?.setSelection(selection);
-        if (retained.focused) {
+        if (retained.focused && hasFinePointer()) {
           focusIntentRef.current = true;
           if (paneFocusedRef.current) textInputRef.current?.focus();
         }
@@ -1818,6 +1826,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     }, [onFocusChange]);
 
     const handleInputBlur = useCallback(() => {
+      // A blur in the active pane is a dismissal; only hiding the pane preserves intent.
       if (paneFocusedRef.current) focusIntentRef.current = false;
       isInputFocusedRef.current = false;
       setIsInputFocused(false);
@@ -1858,11 +1867,12 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const inputWrapperCombinedStyle = useMemo(
       () => [
         styles.inputWrapper,
+        isCompact && !isFullscreen && styles.inputWrapperCompact,
         readOnly && styles.inputWrapperReadOnly,
         inputWrapperStyle,
         { opacity: surfacePresentation.input.opacity },
       ],
-      [inputWrapperStyle, readOnly, surfacePresentation.input.opacity],
+      [inputWrapperStyle, isCompact, isFullscreen, readOnly, surfacePresentation.input.opacity],
     );
     // `withUnistyles` maps this component's `style` into a `.hash > *` child
     // rule, which ties on specificity with react-native-web's own
@@ -2218,6 +2228,10 @@ const styles = StyleSheet.create((theme: Theme) => ({
           transitionTimingFunction: "ease-in-out",
         }
       : {}),
+  },
+  // Lifts the composer off the chat it sits under on phones.
+  inputWrapperCompact: {
+    ...theme.shadow.sm,
   },
   // Dotted says "this surface is the same box, but there is nothing to type
   // into it" without swapping the border colour, which reads as an error state.

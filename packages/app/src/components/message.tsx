@@ -1,53 +1,74 @@
-import type { AgentMessage } from "@getpaseo/protocol/agent-message";
-import { ASSISTANT_IMAGE_DEFAULT_ASPECT_RATIO } from "@/utils/assistant-image-metadata";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { useStableEvent } from "@/hooks/use-stable-event";
+import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
+import { AssistantForkMenu, type AssistantForkTarget } from "@/components/assistant-fork-menu";
+import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
+import {
+  AttachmentFrame,
+  AttachmentLabel,
+  AttachmentThumbnail,
+} from "@/components/attachment-pill";
+import { MarkdownRenderer } from "@/components/markdown/renderer";
+import { useRetainedPanelActive } from "@/components/retained-panel";
+import { RewindMenu, type RewindMode } from "@/components/rewind/rewind-menu";
+import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mutation";
 import { TaskListRow } from "@/components/task-list-row";
-import {
-  View,
-  Text,
-  Image,
-  Pressable,
-  type GestureResponderEvent,
-  type LayoutChangeEvent,
-  StyleProp,
-  ViewStyle,
-  type TextStyle,
-} from "react-native";
-import { useTranslation } from "react-i18next";
-import { MarkdownParagraphView, MarkdownTextSpan } from "@/components/markdown-text";
-import { MarkdownTableCellText } from "@/components/markdown-text-selection";
-import * as React from "react";
-import {
-  useState,
-  useEffect,
-  useRef,
-  memo,
-  useMemo,
-  useCallback,
-  createContext,
-  useContext,
-} from "react";
-import type { ComponentType, ReactNode } from "react";
-import type MarkdownIt from "markdown-it";
-import { type ASTNode, type RenderRules } from "react-native-markdown-display";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { isNative, isWeb } from "@/constants/platform";
+import { useRevealedText, type MarkdownPhase } from "@/hooks/use-revealed-text";
+import { ICON_SIZE, type Theme } from "@/styles/theme";
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
+import { buildToolCallPresentation } from "@/tool-calls/presentation";
+import type { TaskActivity, TodoEntry, UserMessageImageAttachment } from "@/types/stream";
+import { setAssistantMessageHeight } from "@/utils/assistant-message-height-estimate";
+import { isRenderProfileEnabled } from "@/utils/render-profiler";
+import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
+import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-default-environment";
+import { formatDuration, formatMessageTimestamp } from "@/utils/time";
+import { resolveToolCallIcon } from "@/utils/tool-call-icon";
+import { useTargetAgentTitle } from "@/tool-calls/use-target-agent-title";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { AgentMessage } from "@getpaseo/protocol/agent-message";
+import type { AgentCapabilityFlags, ToolCallDetail } from "@getpaseo/protocol/agent-types";
+import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import MaskedView from "@react-native-masked-view/masked-view";
 import {
-  Info,
-  XCircle,
-  ChevronRight,
   Check,
   CheckSquare,
+  ChevronRight,
   CircleDot,
   Copy,
-  Plus,
-  TriangleAlertIcon,
-  Scissors,
-  MicVocal,
   FileSymlink,
+  Info,
+  MicVocal,
+  Plus,
+  Scissors,
+  TriangleAlertIcon,
+  XCircle,
 } from "lucide-react-native";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { ICON_SIZE, type Theme } from "@/styles/theme";
-import { useIsCompactFormFactor } from "@/constants/layout";
+import type { ComponentType, ReactNode } from "react";
+import * as React from "react";
+import {
+  createContext,
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { useTranslation } from "react-i18next";
+import {
+  Pressable,
+  StyleProp,
+  Text,
+  View,
+  ViewStyle,
+  type GestureResponderEvent,
+  type LayoutChangeEvent,
+  type TextStyle,
+} from "react-native";
 import Animated, {
   Easing,
   cancelAnimation,
@@ -56,67 +77,14 @@ import Animated, {
   withRepeat,
   withTiming,
 } from "react-native-reanimated";
-import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "react-native-svg";
-import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
-import { MarkdownRenderer, type MarkdownStyles } from "@/components/markdown/renderer";
-import type { TaskActivity, TodoEntry, UserMessageImageAttachment } from "@/types/stream";
-import type { AgentAttachment } from "@getpaseo/protocol/messages";
-import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
-import { buildToolCallPresentation } from "@/tool-calls/presentation";
-import { resolveToolCallIcon } from "@/utils/tool-call-icon";
-import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-list";
-import { markdownNodeContainsType } from "@/utils/markdown-ast";
-import { useStableEvent } from "@/hooks/use-stable-event";
-import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
-import { MarkdownFenceBlock } from "@/components/markdown/fence";
-import type { MarkdownPhase } from "@/components/markdown/fence/types";
-import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
-import { useRevealedText } from "@/hooks/use-revealed-text";
-import { colorMarkdownLinkChildren } from "@/components/markdown/link-children";
-import { createAssistantMarkdownParser } from "@/utils/assistant-markdown-parser";
-import { formatDuration, formatMessageTimestamp } from "@/utils/time";
-import { getTurnDurationLabel } from "./assistant-turn-footer-label";
-import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
-import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-default-environment";
-import { setAssistantMarkdownBlockHeight } from "@/utils/assistant-message-height-estimate";
-import { isRenderProfileEnabled } from "@/utils/render-profiler";
-import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
-import { PlanCard } from "./plan-card";
-import { useToolCallSheet } from "./tool-call-sheet";
-import { ToolCallDetailsContent } from "./tool-call-details";
-import {
-  AssistantInlineCodePathLink,
-  type AssistantFileLinkSource,
-  AssistantMarkdownCodeLink,
-  AssistantMarkdownLink,
-  type InlinePathTarget,
-  useAssistantFileLinkActions,
-  useAssistantLinkPress,
-} from "@/assistant-file-links";
-import { getCompactionMarkerLabel } from "./message-compaction-label";
-import { useAssistantImage } from "@/assistant-image/use-assistant-image";
-import { localFileSourceToPath } from "@/attachments/utils";
-import {
-  AttachmentFrame,
-  AttachmentLabel,
-  AttachmentThumbnail,
-} from "@/components/attachment-pill";
-import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { isWeb, isNative } from "@/constants/platform";
-import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
-import { RewindMenu, type RewindMode } from "@/components/rewind/rewind-menu";
-import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mutation";
-import { AssistantForkMenu, type AssistantForkTarget } from "@/components/assistant-fork-menu";
-import { useRetainedPanelActive } from "@/components/retained-panel";
-import {
-  markdownCopyDataSet,
-  markdownCopyImageDataSet,
-  markdownCopyOrderedListDataSet,
-  markdownCopyTableCellDataSet,
-  type MarkdownCopyInlineTag,
-} from "@/assistant-selection-copy/markup";
+import Svg, { Defs, Rect, Stop, LinearGradient as SvgLinearGradient } from "react-native-svg";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { capAssistantMessageForRender, getUtf8ByteLength } from "./assistant-message-render-limit";
+import { getTurnDurationLabel } from "./assistant-turn-footer-label";
+import { getCompactionMarkerLabel } from "./message-compaction-label";
+import { PlanCard } from "./plan-card";
+import { ToolCallDetailsContent } from "./tool-call-details";
+import { useToolCallSheet } from "./tool-call-sheet";
 export type { InlinePathTarget } from "@/assistant-file-links";
 export type { AssistantForkTarget };
 
@@ -159,20 +127,10 @@ function useDisableOuterSpacing(disableOuterSpacing: boolean | undefined) {
 
 const WEB_TOOLCALL_SHIMMER_KEYFRAME_ID = "paseo-toolcall-shimmer-keyframes";
 const WEB_TOOLCALL_SHIMMER_ANIMATION_NAME = "paseo-toolcall-shimmer";
-const MARKDOWN_ALLOWED_IMAGE_HANDLERS = [
-  "data:image/png;base64",
-  "data:image/gif;base64",
-  "data:image/jpeg;base64",
-  "https://",
-  "http://",
-] as const;
-const MARKDOWN_TOP_LEVEL_MAX_EXCEEDED_ITEM = <Text key="dotdotdot">...</Text>;
-
 const ThemedMicVocal = withUnistyles(MicVocal);
 const ThemedFileSymlinkIcon = withUnistyles(FileSymlink);
 const ThemedTriangleAlertIcon = withUnistyles(TriangleAlertIcon);
 const ThemedChevronRightIcon = withUnistyles(ChevronRight);
-const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedNotificationInfo = withUnistyles(Info);
 const ThemedNotificationWarning = withUnistyles(TriangleAlertIcon);
 const ThemedNotificationError = withUnistyles(XCircle);
@@ -818,200 +776,6 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   },
 }));
 
-function AssistantMarkdownImage({
-  source,
-  occurrenceKey,
-  alt,
-  hasLeadingContent,
-  client,
-  workspaceRoot,
-  serverId,
-}: {
-  source: string;
-  occurrenceKey: string;
-  alt?: string;
-  hasLeadingContent: boolean;
-  client?: DaemonClient | null;
-  workspaceRoot?: string;
-  serverId?: string;
-}) {
-  const { t } = useTranslation();
-  const [viewerOpen, setViewerOpen] = useState(false);
-  const openViewer = useCallback(() => setViewerOpen(true), []);
-  const closeViewer = useCallback(() => setViewerOpen(false), []);
-  const containerStyle = useMemo<StyleProp<ViewStyle>>(
-    () => ({
-      marginTop: hasLeadingContent ? 16 : 0,
-      marginBottom: 0,
-    }),
-    [hasLeadingContent],
-  );
-  const image = useAssistantImage({
-    source,
-    occurrenceKey,
-    client,
-    workspaceRoot,
-    serverId,
-  });
-  const binding = image.status === "failed" ? null : image.binding;
-  const aspectRatio = image.status === "failed" ? null : image.aspectRatio;
-  const imageUri = binding?.uri ?? "";
-  const imageSource = useMemo(() => ({ uri: imageUri }), [imageUri]);
-  const frameStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [assistantMessageStylesheet.imageFrame, containerStyle],
-    [containerStyle],
-  );
-  const imageSizeStyle = useMemo<ViewStyle>(() => {
-    if (image.status === "failed") return { height: 160 };
-    return { aspectRatio: aspectRatio ?? ASSISTANT_IMAGE_DEFAULT_ASPECT_RATIO };
-  }, [aspectRatio, image.status]);
-  const surfaceStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [assistantMessageStylesheet.imageSurface, imageSizeStyle],
-    [imageSizeStyle],
-  );
-  const lightboxSource = useMemo<ImageLightboxSource | null>(() => {
-    if (!viewerOpen || !imageUri) return null;
-    return {
-      type: "uri",
-      uri: imageUri,
-      contentSize: aspectRatio ? { width: aspectRatio, height: 1 } : undefined,
-    };
-  }, [aspectRatio, imageUri, viewerOpen]);
-
-  const stateFrameStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [
-      assistantMessageStylesheet.imageFrame,
-      containerStyle,
-      imageSizeStyle,
-      assistantMessageStylesheet.imageState,
-    ],
-    [containerStyle, imageSizeStyle],
-  );
-  const copyDataSet = useMemo(() => markdownCopyImageDataSet(source, alt), [source, alt]);
-
-  if (image.status === "failed") {
-    return (
-      <View style={stateFrameStyle} dataSet={copyDataSet}>
-        <Text style={assistantMessageStylesheet.imageErrorText}>{image.message}</Text>
-      </View>
-    );
-  }
-
-  if (!binding) {
-    return (
-      <View style={stateFrameStyle} dataSet={copyDataSet}>
-        <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
-      </View>
-    );
-  }
-
-  return (
-    <View style={frameStyle} dataSet={copyDataSet}>
-      <Pressable
-        accessibilityLabel={t("composer.attachments.openImage")}
-        accessibilityRole="button"
-        disabled={image.status !== "loaded"}
-        onPress={openViewer}
-        style={surfaceStyle}
-      >
-        <View
-          style={assistantMessageStylesheet.image}
-          accessibilityRole="image"
-          accessibilityLabel={alt}
-        >
-          <Image
-            ref={binding.onRef}
-            source={imageSource}
-            style={assistantMessageStylesheet.image}
-            resizeMode="contain"
-            onLoad={binding.onLoad}
-            onError={binding.onError}
-          />
-          {image.status === "loading" ? (
-            <View pointerEvents="none" style={assistantMessageStylesheet.imageLoadingOverlay}>
-              <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
-            </View>
-          ) : null}
-        </View>
-      </Pressable>
-      <AttachmentLightbox source={lightboxSource} onClose={closeViewer} />
-    </View>
-  );
-}
-
-function getInlineCodeAutoLinkUrl(markdownParser: MarkdownIt, content: string): string | null {
-  const trimmed = content.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const matches:
-    | {
-        index: number;
-        lastIndex: number;
-        url: string;
-      }[]
-    | null = markdownParser.linkify.match(trimmed);
-  if (!matches || matches.length !== 1) {
-    return null;
-  }
-
-  const [match] = matches;
-  if (!match || match.index !== 0 || match.lastIndex !== trimmed.length) {
-    return null;
-  }
-
-  return match.url;
-}
-
-function getInlineCodeAutoLinkSource(input: {
-  href: string;
-  content: string;
-}): AssistantFileLinkSource {
-  return {
-    href: input.href,
-    text: input.content,
-    markup: "linkify",
-    sourceInfo: "auto",
-  };
-}
-
-interface AssistantMarkdownAstNode extends ASTNode {
-  sourceInfo?: string;
-}
-
-function getMarkdownLinkSource(node: AssistantMarkdownAstNode): AssistantFileLinkSource {
-  return {
-    href: typeof node.attributes?.href === "string" ? node.attributes.href : "",
-    text: getMarkdownNodeText(node),
-    title: typeof node.attributes?.title === "string" ? node.attributes.title : undefined,
-    markup: node.markup,
-    sourceInfo: node.sourceInfo,
-    sourceType: node.sourceType === "inline-code" ? "inline-code" : undefined,
-  };
-}
-
-function getMarkdownNodeText(node: ASTNode): string {
-  if (!node.children.length) {
-    return node.content ?? "";
-  }
-
-  return node.children.map(getMarkdownNodeText).join("");
-}
-
-function nodeHasParentType(parent: unknown, type: string): boolean {
-  if (Array.isArray(parent)) {
-    return parent.some((entry) => entry?.type === type);
-  }
-
-  return (
-    typeof parent === "object" &&
-    parent !== null &&
-    "type" in parent &&
-    (parent as Record<"type", unknown>)["type"] === type
-  );
-}
-
 const turnCopyButtonStylesheet = StyleSheet.create((theme) => ({
   container: {
     alignSelf: "flex-start",
@@ -1364,135 +1128,6 @@ function NativeShimmerPeakSvg({ gradientId }: { gradientId: string }) {
   );
 }
 
-interface AssistantMessageBlockContainerProps {
-  block: string;
-  marginBottom: number;
-  children: ReactNode;
-}
-
-function AssistantMessageBlockContainer({
-  block,
-  marginBottom,
-  children,
-}: AssistantMessageBlockContainerProps) {
-  const style = useMemo(() => (marginBottom > 0 ? { marginBottom } : undefined), [marginBottom]);
-  const handleLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      const { width, height } = event.nativeEvent.layout;
-      setAssistantMarkdownBlockHeight({ block, width, height });
-    },
-    [block],
-  );
-  return (
-    <View style={style} onLayout={isWeb ? handleLayout : undefined}>
-      {children}
-    </View>
-  );
-}
-
-interface MemoizedMarkdownBlockProps {
-  text: string;
-  rules: RenderRules;
-  parser: MarkdownIt;
-  onLinkPress: (url: string) => boolean;
-}
-
-const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
-  text,
-  rules,
-  parser,
-  onLinkPress,
-}: MemoizedMarkdownBlockProps) {
-  return (
-    <MarkdownRenderer
-      text={text}
-      enableHtmlish={false}
-      rules={rules}
-      markdownit={parser}
-      onLinkPress={onLinkPress}
-      allowedImageHandlers={MARKDOWN_ALLOWED_IMAGE_HANDLERS}
-      topLevelMaxExceededItem={MARKDOWN_TOP_LEVEL_MAX_EXCEEDED_ITEM}
-    />
-  );
-});
-
-interface MarkdownInheritedTextProps {
-  inheritedStyles: TextStyle;
-  textStyle: TextStyle;
-  style?: StyleProp<TextStyle>;
-  monoSurface?: boolean;
-  copyTag?: MarkdownCopyInlineTag;
-  children: ReactNode;
-}
-
-function MarkdownInheritedText({
-  inheritedStyles,
-  textStyle,
-  style: overrideStyle,
-  monoSurface,
-  copyTag,
-  children,
-}: MarkdownInheritedTextProps) {
-  const style = useMemo(
-    () => [inheritedStyles, textStyle, overrideStyle],
-    [inheritedStyles, textStyle, overrideStyle],
-  );
-  // When this span renders link label text on iOS, pick up the link's press
-  // handler from context and hand it to MarkdownTextSpan, which forwards it to
-  // the leaf string children react-native-uitextview makes tappable. Null
-  // outside a link (and on every other platform, where no provider mounts), so
-  // ordinary text is unaffected. See assistant-file-links/link-press-context.
-  const linkPress = useAssistantLinkPress();
-  return (
-    <MarkdownTextSpan
-      monoSurface={monoSurface}
-      copyTag={copyTag}
-      style={style}
-      onPress={linkPress?.onPress}
-      accessibilityRole={linkPress?.accessibilityRole}
-    >
-      {children}
-    </MarkdownTextSpan>
-  );
-}
-
-interface MarkdownListItemContentProps {
-  contentStyle: ViewStyle;
-  children: ReactNode;
-}
-
-const MARKDOWN_LIST_ITEM_CONTENT_FLEX: ViewStyle = { flex: 1, flexShrink: 1, minWidth: 0 };
-
-function MarkdownListItemContent({ contentStyle, children }: MarkdownListItemContentProps) {
-  const style = useMemo(() => [contentStyle, MARKDOWN_LIST_ITEM_CONTENT_FLEX], [contentStyle]);
-  return <View style={style}>{children}</View>;
-}
-
-interface MarkdownListViewProps {
-  baseStyle: ViewStyle;
-  copyTag: "ol" | "ul";
-  orderedStart?: unknown;
-  spacing: { marginTop: number; marginBottom: number };
-  children: ReactNode;
-}
-
-function MarkdownListView({
-  baseStyle,
-  copyTag,
-  orderedStart,
-  spacing,
-  children,
-}: MarkdownListViewProps) {
-  const style = useMemo(() => [baseStyle, spacing], [baseStyle, spacing]);
-  const copyDataSet =
-    copyTag === "ol" ? markdownCopyOrderedListDataSet(orderedStart) : markdownCopyDataSet.ul;
-  return (
-    <View style={style} dataSet={copyDataSet}>
-      {children}
-    </View>
-  );
-}
-
 export const AssistantMessage = memo(function AssistantMessage({
   renderFullContent = false,
   occurrenceKey,
@@ -1505,11 +1140,6 @@ export const AssistantMessage = memo(function AssistantMessage({
   phase,
 }: AssistantMessageProps) {
   const { t } = useTranslation();
-  const markdownParser = useMemo(createAssistantMarkdownParser, []);
-  const streamingMarkdownParser = useMemo(
-    () => createAssistantMarkdownParser({ streaming: true }),
-    [],
-  );
   const renderedMessage = useMemo(
     () =>
       renderFullContent ? { text: message, capped: false } : capAssistantMessageForRender(message),
@@ -1520,449 +1150,6 @@ export const AssistantMessage = memo(function AssistantMessage({
   const fullMessageByteLength = useMemo(
     () => (renderedMessage.capped && phase === "complete" ? getUtf8ByteLength(message) : null),
     [message, phase, renderedMessage.capped],
-  );
-
-  const fileLinkActions = useAssistantFileLinkActions();
-  const handleMarkdownLinkPress = useStableEvent((url: string) => {
-    fileLinkActions.open({ href: url }, "preferred");
-    // react-native-markdown-display opens the link itself when this returns true.
-    // We already handled it above, so return false to avoid duplicate opens.
-    return false;
-  });
-
-  const markdownRules = useMemo<RenderRules>(() => {
-    return {
-      heading1: (
-        node: ASTNode,
-        children: ReactNode[],
-        _parent: ASTNode[],
-        styles: MarkdownStyles,
-      ) => (
-        <View key={node.key} style={styles._VIEW_SAFE_heading1} dataSet={markdownCopyDataSet.h1}>
-          {children}
-        </View>
-      ),
-      heading2: (
-        node: ASTNode,
-        children: ReactNode[],
-        _parent: ASTNode[],
-        styles: MarkdownStyles,
-      ) => (
-        <View key={node.key} style={styles._VIEW_SAFE_heading2} dataSet={markdownCopyDataSet.h2}>
-          {children}
-        </View>
-      ),
-      heading3: (
-        node: ASTNode,
-        children: ReactNode[],
-        _parent: ASTNode[],
-        styles: MarkdownStyles,
-      ) => (
-        <View key={node.key} style={styles._VIEW_SAFE_heading3} dataSet={markdownCopyDataSet.h3}>
-          {children}
-        </View>
-      ),
-      heading4: (
-        node: ASTNode,
-        children: ReactNode[],
-        _parent: ASTNode[],
-        styles: MarkdownStyles,
-      ) => (
-        <View key={node.key} style={styles._VIEW_SAFE_heading4} dataSet={markdownCopyDataSet.h4}>
-          {children}
-        </View>
-      ),
-      heading5: (
-        node: ASTNode,
-        children: ReactNode[],
-        _parent: ASTNode[],
-        styles: MarkdownStyles,
-      ) => (
-        <View key={node.key} style={styles._VIEW_SAFE_heading5} dataSet={markdownCopyDataSet.h5}>
-          {children}
-        </View>
-      ),
-      heading6: (
-        node: ASTNode,
-        children: ReactNode[],
-        _parent: ASTNode[],
-        styles: MarkdownStyles,
-      ) => (
-        <View key={node.key} style={styles._VIEW_SAFE_heading6} dataSet={markdownCopyDataSet.h6}>
-          {children}
-        </View>
-      ),
-      blockquote: (
-        node: ASTNode,
-        children: ReactNode[],
-        _parent: ASTNode[],
-        styles: MarkdownStyles,
-      ) => (
-        <View
-          key={node.key}
-          style={styles._VIEW_SAFE_blockquote}
-          dataSet={markdownCopyDataSet.blockquote}
-        >
-          {children}
-        </View>
-      ),
-      hr: (node: ASTNode, _children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
-        <View key={node.key} style={styles._VIEW_SAFE_hr} dataSet={markdownCopyDataSet.hr} />
-      ),
-      table: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
-        <View key={node.key} style={styles._VIEW_SAFE_table} dataSet={markdownCopyDataSet.table}>
-          {children}
-        </View>
-      ),
-      thead: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
-        <View key={node.key} style={styles._VIEW_SAFE_thead} dataSet={markdownCopyDataSet.thead}>
-          {children}
-        </View>
-      ),
-      tbody: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
-        <View key={node.key} style={styles._VIEW_SAFE_tbody} dataSet={markdownCopyDataSet.tbody}>
-          {children}
-        </View>
-      ),
-      tr: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
-        <View key={node.key} style={styles._VIEW_SAFE_tr} dataSet={markdownCopyDataSet.tr}>
-          {children}
-        </View>
-      ),
-      text: (
-        node: ASTNode,
-        _children: ReactNode[],
-        _parent: ASTNode[],
-        styles: MarkdownStyles,
-        inheritedStyles: TextStyle = {},
-      ) => (
-        <MarkdownInheritedText
-          key={node.key}
-          inheritedStyles={inheritedStyles}
-          textStyle={styles.text}
-        >
-          {node.content}
-        </MarkdownInheritedText>
-      ),
-      textgroup: (
-        node: ASTNode,
-        children: ReactNode[],
-        _parent: ASTNode[],
-        styles: MarkdownStyles,
-        inheritedStyles: TextStyle = {},
-      ) => (
-        <MarkdownInheritedText
-          key={node.key}
-          inheritedStyles={inheritedStyles}
-          textStyle={styles.textgroup}
-        >
-          {children}
-        </MarkdownInheritedText>
-      ),
-      // strong/em/s have no custom rule in react-native-markdown-display's
-      // defaults beyond wrapping children in a plain RN <Text>. On iOS the
-      // paragraph/textgroup are native UITextViews (see markdown-text.ios.tsx),
-      // and a plain <Text> nested inside one is not hoisted into a
-      // UITextViewChild, so its content renders invisibly. Route these inline
-      // marks through MarkdownTextSpan (same path as text/textgroup) so the
-      // styled content composes and stays visible + selectable on iOS.
-      strong: (
-        node: ASTNode,
-        children: ReactNode[],
-        _parent: ASTNode[],
-        styles: MarkdownStyles,
-        inheritedStyles: TextStyle = {},
-      ) => (
-        <MarkdownInheritedText
-          key={node.key}
-          copyTag="strong"
-          inheritedStyles={inheritedStyles}
-          textStyle={styles.strong}
-        >
-          {children}
-        </MarkdownInheritedText>
-      ),
-      em: (
-        node: ASTNode,
-        children: ReactNode[],
-        _parent: ASTNode[],
-        styles: MarkdownStyles,
-        inheritedStyles: TextStyle = {},
-      ) => (
-        <MarkdownInheritedText
-          key={node.key}
-          copyTag="em"
-          inheritedStyles={inheritedStyles}
-          textStyle={styles.em}
-        >
-          {children}
-        </MarkdownInheritedText>
-      ),
-      s: (
-        node: ASTNode,
-        children: ReactNode[],
-        _parent: ASTNode[],
-        styles: MarkdownStyles,
-        inheritedStyles: TextStyle = {},
-      ) => (
-        <MarkdownInheritedText
-          key={node.key}
-          copyTag="s"
-          inheritedStyles={inheritedStyles}
-          textStyle={styles.s}
-        >
-          {children}
-        </MarkdownInheritedText>
-      ),
-      // hardbreak/softbreak fall back to react-native-markdown-display's
-      // default, a plain RN <Text>{"\n"}. Inside the paragraph UITextView that
-      // plain <Text> is not hoisted into a UITextViewChild and is dropped (same
-      // root cause as strong/em/s) — so on iOS a hard line break vanished, and
-      // a softbreak between words jammed them together ("one\ntwo" -> "onetwo").
-      // Emit the break through MarkdownTextSpan so it composes on iOS. Keep
-      // the resolved break styles: hardbreak is a full-width flex-row child on
-      // Android, and dropping that width joins the surrounding text spans.
-      hardbreak: (
-        node: ASTNode,
-        _children: ReactNode[],
-        _parent: ASTNode[],
-        styles: MarkdownStyles,
-      ) => (
-        <MarkdownTextSpan key={node.key} style={styles.hardbreak} copyTag="br">
-          {"\n"}
-        </MarkdownTextSpan>
-      ),
-      softbreak: (
-        node: ASTNode,
-        _children: ReactNode[],
-        _parent: ASTNode[],
-        styles: MarkdownStyles,
-      ) => (
-        <MarkdownTextSpan key={node.key} style={styles.softbreak}>
-          {"\n"}
-        </MarkdownTextSpan>
-      ),
-      code_block: (
-        node: ASTNode,
-        _children: ReactNode[],
-        _parent: ASTNode[],
-        styles: MarkdownStyles,
-        inheritedStyles: TextStyle = {},
-      ) => (
-        <HighlightedCodeBlock
-          key={node.key}
-          code={node.content}
-          language={null}
-          inheritedStyles={inheritedStyles}
-          textStyle={styles.code_block}
-        />
-      ),
-      fence: (
-        node: ASTNode,
-        _children: ReactNode[],
-        _parent: ASTNode[],
-        styles: MarkdownStyles,
-        inheritedStyles: TextStyle = {},
-      ) => (
-        <MarkdownFenceBlock
-          key={node.key}
-          code={node.content}
-          info={node.sourceInfo}
-          phase={phase}
-          inheritedStyles={inheritedStyles}
-          textStyle={styles.fence}
-        />
-      ),
-      code_inline: (
-        node: ASTNode,
-        _children: ReactNode[],
-        parent: ASTNode[],
-        styles: MarkdownStyles,
-        inheritedStyles: TextStyle = {},
-      ) => {
-        const content = node.content ?? "";
-        const isLinkedInlineCode = nodeHasParentType(parent, "link");
-        const inlineCodeSource: AssistantFileLinkSource = {
-          href: content,
-          text: content,
-          sourceType: "inline-code",
-        };
-        const shouldResolveInlinePath =
-          !isLinkedInlineCode && fileLinkActions.canResolveFile(inlineCodeSource);
-
-        if (shouldResolveInlinePath) {
-          return (
-            <AssistantInlineCodePathLink
-              key={node.key}
-              content={content}
-              inheritedStyles={inheritedStyles}
-              codeInlineStyle={styles.code_inline}
-              linkStyle={styles.link}
-            />
-          );
-        }
-
-        const inlineCodeLinkUrl = getInlineCodeAutoLinkUrl(markdownParser, content);
-        if (inlineCodeLinkUrl) {
-          const source = getInlineCodeAutoLinkSource({
-            href: inlineCodeLinkUrl,
-            content,
-          });
-          return (
-            <AssistantMarkdownCodeLink
-              key={node.key}
-              source={source}
-              inheritedStyles={inheritedStyles}
-              codeInlineStyle={styles.code_inline}
-              linkStyle={styles.link}
-            >
-              {content}
-            </AssistantMarkdownCodeLink>
-          );
-        }
-
-        return (
-          <MarkdownInheritedText
-            key={node.key}
-            copyTag="code"
-            inheritedStyles={inheritedStyles}
-            textStyle={styles.code_inline}
-            monoSurface
-          >
-            {content}
-          </MarkdownInheritedText>
-        );
-      },
-      bullet_list: (
-        node: ASTNode,
-        children: ReactNode[],
-        parent: ASTNode[],
-        styles: MarkdownStyles,
-      ) => (
-        <MarkdownListView
-          key={node.key}
-          baseStyle={styles.bullet_list}
-          copyTag="ul"
-          spacing={getMarkdownListSpacing(node, parent)}
-        >
-          {children}
-        </MarkdownListView>
-      ),
-      ordered_list: (
-        node: ASTNode,
-        children: ReactNode[],
-        parent: ASTNode[],
-        styles: MarkdownStyles,
-      ) => (
-        <MarkdownListView
-          key={node.key}
-          baseStyle={styles.ordered_list}
-          copyTag="ol"
-          orderedStart={node.attributes?.start}
-          spacing={getMarkdownListSpacing(node, parent)}
-        >
-          {children}
-        </MarkdownListView>
-      ),
-      list_item: (
-        node: ASTNode,
-        children: ReactNode[],
-        parent: ASTNode[],
-        styles: MarkdownStyles,
-      ) => {
-        const { isOrdered, marker } = getMarkdownListMarker(node, parent);
-        const iconStyle = isOrdered ? styles.ordered_list_icon : styles.bullet_list_icon;
-        const contentStyle = isOrdered ? styles.ordered_list_content : styles.bullet_list_content;
-
-        return (
-          <View key={node.key} style={styles.list_item} dataSet={markdownCopyDataSet.li}>
-            <Text style={iconStyle} dataSet={markdownCopyDataSet.listMarker}>
-              {marker}
-            </Text>
-            <MarkdownListItemContent contentStyle={contentStyle}>
-              {children}
-            </MarkdownListItemContent>
-          </View>
-        );
-      },
-      th: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
-        <MarkdownTableCellText key={node.key}>
-          <View
-            style={styles._VIEW_SAFE_th}
-            dataSet={markdownCopyTableCellDataSet("th", node.attributes?.style)}
-          >
-            {children}
-          </View>
-        </MarkdownTableCellText>
-      ),
-      td: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
-        <MarkdownTableCellText key={node.key}>
-          <View
-            style={styles._VIEW_SAFE_td}
-            dataSet={markdownCopyTableCellDataSet("td", node.attributes?.style)}
-          >
-            {children}
-          </View>
-        </MarkdownTableCellText>
-      ),
-      paragraph: (
-        node: ASTNode,
-        children: ReactNode[],
-        _parent: ASTNode[],
-        styles: MarkdownStyles,
-      ) => (
-        <MarkdownParagraphView
-          key={node.key}
-          paragraphStyle={styles.paragraph}
-          containsImage={markdownNodeContainsType(node, "image")}
-        >
-          {children}
-        </MarkdownParagraphView>
-      ),
-      link: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
-        <AssistantMarkdownLink
-          key={node.key}
-          source={getMarkdownLinkSource(node)}
-          style={styles.link}
-        >
-          {colorMarkdownLinkChildren(children, styles.link.color)}
-        </AssistantMarkdownLink>
-      ),
-      image: (
-        node: ASTNode,
-        _children: ReactNode[],
-        parent: ASTNode[],
-        _styles: MarkdownStyles,
-      ) => {
-        const paragraphNode = Array.isArray(parent)
-          ? parent.find((ancestor) => ancestor?.type === "paragraph")
-          : null;
-        const paragraphChildren = Array.isArray(paragraphNode?.children)
-          ? paragraphNode.children
-          : [];
-        const imageIndex = paragraphChildren.findIndex((child: ASTNode) => child?.key === node.key);
-        const hasLeadingContent = imageIndex > 0;
-
-        return (
-          <AssistantMarkdownImage
-            key={node.key}
-            source={localFileSourceToPath(String(node.attributes?.src ?? ""), { decodeHref: true })}
-            occurrenceKey={`${occurrenceKey}:${node.key}`}
-            alt={typeof node.attributes?.alt === "string" ? node.attributes.alt : undefined}
-            hasLeadingContent={hasLeadingContent}
-            client={client}
-            workspaceRoot={workspaceRoot}
-            serverId={serverId}
-          />
-        );
-      },
-    };
-  }, [client, fileLinkActions, markdownParser, occurrenceKey, phase, serverId, workspaceRoot]);
-
-  const blocks = useMemo(() => splitMarkdownBlocks(revealedMessage), [revealedMessage]);
-  const keyedBlocks = useMemo(
-    () => blocks.map((block, index) => ({ key: `block:${index}`, block })),
-    [blocks],
   );
 
   const assistantContainerStyle = useMemo(
@@ -1987,26 +1174,23 @@ export const AssistantMessage = memo(function AssistantMessage({
     [occurrenceKey, revealedMessage.length],
   );
 
+  const measureMessage = useStableEvent((event: import("react-native").LayoutChangeEvent) => {
+    setAssistantMessageHeight({ markdown: revealedMessage, ...event.nativeEvent.layout });
+  });
   return (
-    <View testID="assistant-message" dataSet={revealDataSet} style={assistantContainerStyle}>
-      {keyedBlocks.map(({ key, block }, index) => (
-        <AssistantMessageBlockContainer
-          key={key}
-          block={block}
-          marginBottom={index < keyedBlocks.length - 1 ? 12 : 0}
-        >
-          <MemoizedMarkdownBlock
-            text={block}
-            rules={markdownRules}
-            parser={
-              phase === "streaming" && index === keyedBlocks.length - 1
-                ? streamingMarkdownParser
-                : markdownParser
-            }
-            onLinkPress={handleMarkdownLinkPress}
-          />
-        </AssistantMessageBlockContainer>
-      ))}
+    <View
+      testID="assistant-message"
+      dataSet={revealDataSet}
+      style={assistantContainerStyle}
+      onLayout={measureMessage}
+    >
+      <MarkdownRenderer
+        text={revealedMessage}
+        streaming={phase !== "complete" || revealedMessage.length < renderedMessage.text.length}
+        client={client}
+        workspaceRoot={workspaceRoot}
+        serverId={serverId}
+      />
       {fullMessageByteLength !== null ? (
         <Text
           testID="assistant-message-capped-notice"
@@ -3025,6 +2209,7 @@ function areExpandableBadgePropsEqual(previous: ExpandableBadgeProps, next: Expa
 
 interface ToolCallProps {
   agentMessage?: AgentMessage;
+  serverId?: string;
   toolName: string;
   args?: unknown;
   result?: unknown;
@@ -3045,6 +2230,7 @@ interface ToolCallProps {
 
 export const ToolCall = memo(function ToolCall({
   agentMessage,
+  serverId,
   toolName,
   args,
   result,
@@ -3082,6 +2268,7 @@ export const ToolCall = memo(function ToolCall({
     return undefined;
   }, [detail, args, result]);
 
+  const targetAgentTitle = useTargetAgentTitle({ serverId, toolName, detail: effectiveDetail });
   const presentation = useMemo(
     () =>
       buildToolCallPresentation({
@@ -3092,9 +2279,10 @@ export const ToolCall = memo(function ToolCall({
         detail: effectiveDetail,
         metadata,
         cwd,
+        targetAgentTitle,
         resolveIcon: resolveToolCallIcon,
       }),
-    [toolName, status, error, effectiveDetail, metadata, cwd, agentMessage],
+    [toolName, status, error, effectiveDetail, metadata, cwd, agentMessage, targetAgentTitle],
   );
   const handleOpenFile = useMemo(() => {
     const openFilePath = presentation.openFilePath;
@@ -3210,6 +2398,8 @@ export const ToolCall = memo(function ToolCall({
 
 function areToolCallPropsEqual(previous: ToolCallProps, next: ToolCallProps) {
   if (previous.toolName !== next.toolName) return false;
+  if (previous.serverId !== next.serverId) return false;
+  if (previous.agentMessage !== next.agentMessage) return false;
   if (previous.args !== next.args) return false;
   if (previous.result !== next.result) return false;
   if (previous.error !== next.error) return false;

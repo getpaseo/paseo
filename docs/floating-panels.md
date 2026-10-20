@@ -204,10 +204,11 @@ still-mounted content, paints its own surface under the safe areas, and turns
 the surface translation off. The composer's single tree keeps the editing
 surface at the same position in both modes, so the mounted editor, its native
 buffer, selection, and focus survive the toggle and Send's clear always reaches
-the live input. The one remount left is a viewport crossing the compact
-breakpoint: the app shell swaps its gesture wrapper and the workspace screen
+the live input. A viewport crossing the compact breakpoint still remounts it:
+the app shell swaps its gesture wrapper and the workspace screen
 mounts tabs in different trees, so every screen below remounts. The draft owner
-restores the text and the editing session restores the caret and focus intent.
+restores the text and the editing session restores the caret. Focus restoration
+is limited to mouse-driven UIs, using the same fine-pointer policy as autofocus.
 New workspace keys its sessions by draft in the app-level store for the same
 reason. The centered form honors fullscreen by style alone: no centering, no
 translation, setup fields hidden, slot filling the stationary viewport. The
@@ -217,14 +218,12 @@ sheet suspends pane focus, and the composer gives up input from the moment the
 user asks for the compact agent list or explorer, before the panel's motion
 settles. Pane focus itself stays put under those panels: the agent panel reads
 it as "the user is in this chat" for attention clearing, and opening the agent
-list must not clear the attention it shows. Focus restoration follows pane
-focus, not the active composer. The editor keeps its focus intent only across
-a blur that lands while its pane is not the user's (a retained tab hidden, a
-sheet over it) and refocuses when the pane comes back. A blur while the pane is
-theirs drops the intent in every layout mode, and the keyboard the compact
-panels dismiss when they settle is such a blur, so closing the agent list or
-explorer never reopens the keyboard. Keying restoration on the active composer
-made that dismiss look like a hidden-tab blur and refocused on close.
+list must not clear the attention it shows. On mouse-driven UIs, focus restoration
+follows pane focus, not the active composer. Keying it on the active composer
+made sidebar dismissal look like a hidden-tab blur and refocused on close.
+Native and touch-web navigation must not replay old editor focus, including
+when blur arrives after pane deactivation or the editor unmounts before blur.
+Fullscreen toggles keep the editor mounted and need no focus restoration.
 The band beside the inline editor where the fullscreen glyph sits is the input's
 own right padding, so a tap anywhere in it focuses the editor whether or not the
 glyph shows. On web the slot is a fixed box over the visible viewport, which is

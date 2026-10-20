@@ -26,7 +26,7 @@ test("agent list age advances and command center says just now for a fresh agent
     const agentResult = commandCenter.getByTestId(
       `command-center-agent-${getServerId()}:${session.agentId}`,
     );
-    await expect(agentResult.getByTestId("command-center-agent-subtitle")).toContainText(
+    await expect(agentResult.getByTestId("command-center-result-timestamp")).toContainText(
       "just now",
     );
     await page.keyboard.press("Escape");

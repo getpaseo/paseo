@@ -244,6 +244,13 @@ paseo plugin enable my-plugin
 paseo plugin remove my-plugin
 ```
 
+`paseo plugin reload <id>` reports the result of the reload itself: it waits while the daemon stops
+and starts the plugin, however long that takes, and it queues behind the daemon's other plugin work.
+Cancelling the command or losing the connection does not stop the daemon's work, and no listing or
+log entry settles what a cancelled reload did — the [Plugin reference](/docs/plugins/reference)
+covers those interim states. Running the reload again is what reports the result: it waits behind the
+outstanding one, then stops and starts the plugin once more.
+
 Bare `owner/slug` installs a reviewed registry listing. Use `git:owner/repository` for GitHub
 source, or `./plugin` for a local directory. Append `:<directory>` for a plugin in a monorepo.
 
@@ -282,8 +289,11 @@ Use the recipient's agent ID from `paseo ls`, or [copy it from the agent's tab](
 ```bash
 paseo send <id> "now run the tests"
 paseo send <id> --image screenshot.png "what's wrong here?"
-paseo send <id> --no-wait "queue this task"
+paseo send <id> --no-wait "run this task"
+paseo send <id> --behavior interrupt "stop and do this instead"
 ```
+
+Agent-originated sends (`PASEO_AGENT_ID` set) default to steering the running turn. Other sends default to interrupting it. Use `--behavior steer` or `--behavior interrupt` to override the default. Steering uses the same fallback as the client: if steering is unavailable, the running turn is interrupted and replaced.
 
 ## Viewing logs
 
