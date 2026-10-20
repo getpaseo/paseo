@@ -34,7 +34,6 @@ import {
 import type { EvaluatedPlugin, PluginSidebarSection } from "./types";
 import type { ComponentType } from "react";
 import { parsePluginIcon, parseSerializablePluginIcon } from "./icons";
-import { pluginReactNativeRuntime } from "./react-native/runtime";
 import { parsePluginThemeContribution } from "./themes";
 
 const CONTRIBUTION_ID = /^[a-z][a-z0-9-]*$/;
@@ -478,6 +477,8 @@ export function runPluginClientBundle(
     },
   };
   const runtimeRequire = (name: string): unknown => {
+    // COMPAT(pluginReactNativeEntrypoint): added in v0.13.0, remove after 2027-04-20
+    if (name === "@getpaseo/plugin/client/react-native") return pluginUiRuntime;
     if (name === "@getpaseo/plugin/client/ui") return pluginUiRuntime;
     if (name === "react") return React;
     if (name === "react/jsx-runtime") return ReactJsxRuntime;
@@ -496,9 +497,6 @@ export function runPluginClientBundle(
             runtime.hosts.getSnapshot,
           ),
       };
-    if (name === "@getpaseo/plugin/client/react-native") {
-      return pluginReactNativeRuntime;
-    }
     if (name === "@tanstack/react-query") return ReactQuery;
     if (name === "zod") return Zod;
     throw new Error(`Module "${name}" is not available in plugin client code`);
