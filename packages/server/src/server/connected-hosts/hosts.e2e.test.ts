@@ -626,6 +626,7 @@ test("resuming an A session with narrower grants terminates existing routes and 
 
 import { WebSocketServer, WebSocket } from "ws";
 import { createServer } from "node:http";
+import type { Socket } from "node:net";
 import { once } from "node:events";
 import { hashSync } from "bcryptjs";
 
@@ -978,12 +979,14 @@ test("channel output accounts for escaped text, awaits physical drain, and prese
   const address = http.address();
   if (!address || typeof address === "string") throw new Error("Missing port");
   const accepted = once(wss, "connection");
+  const tcpAccepted = once(http, "connection");
   const receiver = new WebSocket(`ws://127.0.0.1:${address.port}`);
   const received: { binary: boolean; bytes: Buffer }[] = [];
   receiver.on("message", (bytes, binary) =>
     received.push({ bytes: Buffer.from(bytes as Buffer), binary }),
   );
   const [physical] = (await accepted) as [WebSocket];
+  const [tcp] = (await tcpAccepted) as [Socket];
   await once(receiver, "open");
   cleanup.push(async () => {
     receiver.terminate();
@@ -1043,6 +1046,9 @@ test("channel output accounts for escaped text, awaits physical drain, and prese
     .poll(() => received.some((frame) => !frame.binary && frame.bytes.includes("sibling-before")))
     .toBe(true);
   receiver.pause();
+  // Hold real physical writes independently of the OS receive-buffer size.
+  // A paused receiver alone can still accept the entire frame on Windows.
+  tcp.cork();
   let completed = false;
   const bytes = new Uint8Array(8 * 1024 * 1024).fill(173);
   const pending = channels[1]!.send(bytes).then(() => {
@@ -1053,6 +1059,7 @@ test("channel output accounts for escaped text, awaits physical drain, and prese
   expect(completed).toBe(false);
   expect(physical.bufferedAmount).toBeLessThan(64 * 1024 * 1024);
   receiver.resume();
+  tcp.uncork();
   await pending;
   await channels[1]!.send("sibling-after");
   await expect
