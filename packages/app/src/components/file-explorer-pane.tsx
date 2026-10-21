@@ -68,6 +68,7 @@ import { isHiddenExplorerPath } from "@/file-explorer/visibility";
 import {
   flattenExplorerTree,
   reconcileRestoredExpandedPaths,
+  refreshExplorerDirectories,
   restoreExpandedDirectories,
   setExpandedDirectoryPath,
   showHiddenFilesAndRestoreExpandedDirectories,
@@ -434,6 +435,7 @@ export function FileExplorerPane({
 
   const {
     requestDirectoryListing,
+    discardDirectoryListings,
     createEntry,
     renameEntry,
     duplicateEntry,
@@ -879,9 +881,18 @@ export function FileExplorerPane({
       refreshExplorerDirectories({
         hasWorkspaceScope,
         expandedPaths,
+        cachedDirectoryPaths: directories.keys(),
+        showHiddenFiles: usePanelStore.getState().explorerShowHiddenFiles,
         requestDirectoryListing,
+        discardDirectoryListings,
       }),
-    [expandedPaths, hasWorkspaceScope, requestDirectoryListing],
+    [
+      directories,
+      discardDirectoryListings,
+      expandedPaths,
+      hasWorkspaceScope,
+      requestDirectoryListing,
+    ],
   );
   const { refetch: refetchExplorer, isFetching: isRefreshFetching } = useQuery({
     queryKey: ["fileExplorerRefresh", serverId, workspaceStateKey],
@@ -1594,39 +1605,6 @@ async function initializeExplorer({
       restoredExpandedPaths: restoredPathsWithHidden,
     }),
   );
-}
-
-async function refreshExplorerDirectories({
-  hasWorkspaceScope,
-  expandedPaths,
-  requestDirectoryListing,
-}: {
-  hasWorkspaceScope: boolean;
-  expandedPaths: Set<string>;
-  requestDirectoryListing: (
-    path: string,
-    opts?: { recordHistory?: boolean; setCurrentPath?: boolean },
-  ) => Promise<ExplorerDirectory | null>;
-}): Promise<null> {
-  if (!hasWorkspaceScope) {
-    return null;
-  }
-  const showHiddenFiles = usePanelStore.getState().explorerShowHiddenFiles;
-  const directoryPaths = Array.from(expandedPaths).filter(
-    (path) => showHiddenFiles || !isHiddenExplorerPath(path),
-  );
-  if (!directoryPaths.includes(".")) {
-    directoryPaths.unshift(".");
-  }
-  await Promise.all(
-    directoryPaths.map((path) =>
-      requestDirectoryListing(path, {
-        recordHistory: false,
-        setCurrentPath: false,
-      }),
-    ),
-  );
-  return null;
 }
 
 function getErrorRecoveryPath(state: AgentFileExplorerState | undefined): string {

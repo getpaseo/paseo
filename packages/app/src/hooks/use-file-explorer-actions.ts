@@ -375,10 +375,27 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
     [updateExplorerState],
   );
 
+  const discardDirectoryListings = useCallback(
+    (paths: readonly string[]) => {
+      if (paths.length === 0) {
+        return;
+      }
+      updateExplorerState((state) => {
+        const directories = new Map(state.directories);
+        for (const path of paths) {
+          directories.delete(path);
+        }
+        return { ...state, directories };
+      });
+    },
+    [updateExplorerState],
+  );
+
   return {
     workspaceStateKey,
     revealDirectory,
     requestDirectoryListing,
+    discardDirectoryListings,
     requestFilePreview,
     requestFileDownloadToken,
     requestFileBytes,
