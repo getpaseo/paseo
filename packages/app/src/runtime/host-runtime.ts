@@ -2078,6 +2078,8 @@ export class HostRuntimeStore {
       serverId,
       label: input.hostname ?? undefined,
       connection,
+      // A reused port does not authorize replacing another daemon's saved identity.
+      matchBy: "serverId",
     });
   }
 
@@ -2184,6 +2186,7 @@ export class HostRuntimeStore {
     password?: string;
     connection: HostConnection;
     existingClient?: DaemonClient;
+    matchBy?: "serverId" | "serverIdOrConnection";
   }): Promise<HostProfile> {
     const now = new Date().toISOString();
     const next = upsertHostConnectionInProfiles({
@@ -2193,6 +2196,7 @@ export class HostRuntimeStore {
       connection: input.connection,
       password: input.password,
       now,
+      matchBy: input.matchBy,
     });
     this.setHostsAndSync(next, {
       initialConnectionByServerId: input.existingClient

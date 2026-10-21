@@ -1562,6 +1562,10 @@ export const ru: TranslationResources = {
     details: "Подробности",
   },
   startup: {
+    continueWithoutServer: "Продолжить без локального сервера",
+    continueWithoutServerDescription:
+      "Отключите автоматический запуск локального сервера и подключитесь к существующему хосту. Встроенный daemon можно снова включить в настройках.",
+    continueWithoutServerFailed: "Не удалось сохранить настройку локального сервера: {{message}}",
     errorTitle: "Что-то пошло не так",
     errorDescription:
       "Не удалось запустить локальный сервер. Если ошибка повторится, сообщите о ней на GitHub и приложите приведённые ниже журналы.",
@@ -1727,6 +1731,14 @@ export const ru: TranslationResources = {
     },
   },
   pairing: {
+    localDiscovery: {
+      title: "Локальные демоны",
+      searching: "Поиск на этом компьютере…",
+      empty: "Локальный демон не найден. Вы можете ввести адрес ниже.",
+      failed: "Не удалось найти локальные демоны. Введите адрес или повторите попытку.",
+      refresh: "Обновить",
+      passwordRequired: "Требуется пароль",
+    },
     hostPassword: {
       title: "Пароль для {{host}}",
       label: "Пароль хоста",

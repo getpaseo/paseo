@@ -15,6 +15,9 @@ import { buildConnectionFailureCopy } from "./connection-failure-copy";
 import { AdaptiveModalSheet, AdaptiveTextInput, type SheetHeader } from "./adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { PairingTargetTracker } from "./pair-link-credentials";
+import { isElectronRuntime } from "@/desktop/host";
+import { LocalDaemonDiscovery } from "@/desktop/components/local-daemon-discovery";
+import type { DiscoveredLocalDaemon } from "@/desktop/daemon/discover-local-daemons";
 
 const FLEX_ONE_STYLE = { flex: 1 } as const;
 
@@ -194,6 +197,7 @@ function draftFromConnectionUri(uri: string): DirectConnectionDraft {
 
 export interface AddHostModalProps {
   visible: boolean;
+  initialTarget?: { host: string; port: number };
   onClose: () => void;
   onCancel?: () => void;
   onSaved?: (result: {
@@ -204,11 +208,18 @@ export interface AddHostModalProps {
   }) => void;
 }
 
-export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostModalProps) {
+export function AddHostModal({
+  visible,
+  onClose,
+  onCancel,
+  onSaved,
+  initialTarget,
+}: AddHostModalProps) {
   return (
     <AddHostModalContent
       key={String(visible)}
       visible={visible}
+      initialTarget={initialTarget}
       onClose={onClose}
       onCancel={onCancel}
       onSaved={onSaved}
@@ -216,7 +227,13 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
   );
 }
 
-function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostModalProps) {
+function AddHostModalContent({
+  visible,
+  onClose,
+  onCancel,
+  onSaved,
+  initialTarget,
+}: AddHostModalProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const daemons = useHosts();
@@ -226,8 +243,8 @@ function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostMod
 
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  const [host, setHost] = useState("");
-  const [port, setPort] = useState("6767");
+  const [host, setHost] = useState(initialTarget?.host ?? "");
+  const [port, setPort] = useState(String(initialTarget?.port ?? 6767));
   const [useTls, setUseTls] = useState(false);
   const [password, setPassword] = useState("");
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
@@ -235,6 +252,17 @@ function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostMod
   const [advancedUri, setAdvancedUri] = useState("");
   const [inputResetKey, bumpInputResetKey] = useReducer((key: number) => key + 1, 0);
   const advancedTarget = useRef(new PairingTargetTracker("", true));
+
+  const handleSelectLocalDaemon = useCallback((daemon: DiscoveredLocalDaemon) => {
+    setHost(daemon.host);
+    setPort(String(daemon.port));
+    setUseTls(false);
+    setPassword("");
+    setErrorMessage("");
+    setIsAdvancedOpen(false);
+    setAdvancedUri("");
+    bumpInputResetKey();
+  }, []);
 
   const connectIcon = useMemo(
     () => <Link2 size={16} color={theme.colors.accentForeground} />,
@@ -455,6 +483,10 @@ function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostMod
       testID="add-host-modal"
     >
       <Text style={styles.helper}>{t("pairing.direct.helper")}</Text>
+
+      {isElectronRuntime() ? (
+        <LocalDaemonDiscovery onSelect={handleSelectLocalDaemon} disabled={isSaving} />
+      ) : null}
 
       <View style={styles.portRow}>
         <View style={hostFieldStyle}>

@@ -56,6 +56,41 @@ function makeDeps(overrides?: {
 
 describe("executeDaemonManagementToggle", () => {
   describe("enable path (currentlyManaging: false)", () => {
+    it("preserves the startup error when disabling automatic startup also fails", async () => {
+      const startupError = new Error("listen EADDRINUSE: 127.0.0.1:6767");
+      const settingsError = new Error("settings disk is read-only");
+      let manageBuiltInDaemon = false;
+      const { deps } = makeDeps({
+        persistSettings: async (next) => {
+          if (!next.manageBuiltInDaemon) throw settingsError;
+          manageBuiltInDaemon = next.manageBuiltInDaemon;
+        },
+        startDaemon: async () => {
+          throw startupError;
+        },
+      });
+
+      await expect(executeDaemonManagementToggle(false, null, deps)).rejects.toMatchObject({
+        errors: [startupError, settingsError],
+        message:
+          "listen EADDRINUSE: 127.0.0.1:6767\nAutomatic startup could not be disabled: settings disk is read-only. It remains enabled and may fail again on the next launch.",
+      });
+      expect(manageBuiltInDaemon).toBe(true);
+    });
+
+    it("restores client-only startup when enabling fails", async () => {
+      const saved: boolean[] = [];
+      const { deps } = makeDeps({
+        persistSettings: async (next) => {
+          saved.push(next.manageBuiltInDaemon);
+        },
+        startDaemon: async () => {
+          throw new Error("EADDRINUSE");
+        },
+      });
+      await expect(executeDaemonManagementToggle(false, null, deps)).rejects.toThrow("EADDRINUSE");
+      expect(saved).toEqual([true, false]);
+    });
     it("persists the new setting then starts the daemon", async () => {
       const { deps, calls } = makeDeps();
 

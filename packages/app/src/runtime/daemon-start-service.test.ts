@@ -64,6 +64,28 @@ function makeRelayOnlyHost(serverId: string): HostProfile {
 }
 
 describe("DaemonStartService", () => {
+  it("reuses a discovered local daemon without starting the bundled daemon", async () => {
+    const fake = createFakeStore();
+    const start = vi.fn(async () => makeStatus());
+    const service = new DaemonStartService({
+      store: fake.store,
+      startDesktopDaemon: start,
+      discoverLocalDaemons: async () => [
+        {
+          host: "127.0.0.1",
+          port: 6767,
+          hostname: "standalone",
+          serverId: "srv_existing",
+          passwordRequired: false,
+        },
+      ],
+    });
+    expect(await service.start()).toEqual({ ok: true });
+    expect(start).not.toHaveBeenCalled();
+    expect(fake.upserts).toEqual([
+      { listenAddress: "127.0.0.1:6767", serverId: "srv_existing", hostname: "standalone" },
+    ]);
+  });
   it("upserts the connection on a successful daemon start", async () => {
     const fake = createFakeStore();
     const service = new DaemonStartService({
@@ -79,6 +101,82 @@ describe("DaemonStartService", () => {
     ]);
     expect(service.getLastError()).toBeNull();
     expect(service.isRunning()).toBe(false);
+  });
+
+  it("starts the bundled daemon when no local service is available", async () => {
+    const fake = createFakeStore();
+    const start = vi.fn(async () => makeStatus());
+    const service = new DaemonStartService({
+      store: fake.store,
+      startDesktopDaemon: start,
+      discoverLocalDaemons: async () => [],
+    });
+    expect(await service.start()).toEqual({ ok: true });
+    expect(start).toHaveBeenCalledOnce();
+  });
+
+  it("asks for an existing daemon's password without starting another process", async () => {
+    const fake = createFakeStore();
+    const start = vi.fn(async () => makeStatus());
+    const daemon = {
+      host: "127.0.0.1",
+      port: 7777,
+      hostname: null,
+      serverId: null,
+      passwordRequired: true,
+    };
+    const service = new DaemonStartService({
+      store: fake.store,
+      startDesktopDaemon: start,
+      discoverLocalDaemons: async () => [daemon],
+    });
+    expect(await service.start()).toEqual({ ok: true });
+    expect(service.getPendingLocalConnection()).toEqual(daemon);
+    expect(start).not.toHaveBeenCalled();
+    expect(fake.upserts).toEqual([]);
+    expect(service.getLastError()).toBeNull();
+    const pendingSnapshots: unknown[] = [];
+    service.subscribe(() => pendingSnapshots.push(service.getPendingLocalConnection()));
+    service.clearPendingLocalConnection();
+    expect(service.getPendingLocalConnection()).toBeNull();
+    expect(pendingSnapshots).toEqual([null]);
+  });
+
+  it("does not probe or start when management was explicitly disabled", async () => {
+    const fake = createFakeStore();
+    const start = vi.fn(async () => makeStatus());
+    const discover = vi.fn(async () => []);
+    const service = new DaemonStartService({
+      store: fake.store,
+      startDesktopDaemon: start,
+      discoverLocalDaemons: discover,
+    });
+    expect(await service.startIfEnabled({ shouldStart: false })).toEqual({ ok: true });
+    expect(start).not.toHaveBeenCalled();
+    expect(discover).not.toHaveBeenCalled();
+  });
+
+  it("adds a local connection even when the discovered host was saved through a relay", async () => {
+    const fake = createFakeStore([makeRelayOnlyHost("srv_existing")]);
+    const start = vi.fn(async () => makeStatus());
+    const service = new DaemonStartService({
+      store: fake.store,
+      startDesktopDaemon: start,
+      discoverLocalDaemons: async () => [
+        {
+          host: "127.0.0.1",
+          port: 7777,
+          hostname: "existing",
+          serverId: "srv_existing",
+          passwordRequired: false,
+        },
+      ],
+    });
+    expect(await service.start()).toEqual({ ok: true });
+    expect(fake.upserts).toEqual([
+      { listenAddress: "127.0.0.1:7777", serverId: "srv_existing", hostname: "existing" },
+    ]);
+    expect(start).not.toHaveBeenCalled();
   });
 
   it("reports lastError after a missing listen address and clears running state when done", async () => {
