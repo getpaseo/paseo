@@ -1,5 +1,7 @@
 export type {
   PluginHostProps,
+  PluginFilePanelContribution,
+  PluginFilePanelProps,
   PluginSurfaceProps,
   PluginScreenProps,
   PluginPopoverProps,
@@ -8,7 +10,7 @@ export type {
   PluginScreenLocation,
   PluginSidebarItemProps,
   PluginSidebarItemContribution,
-  PluginIconProps,
+  PluginIcon,
   PluginPanelLocation,
   PluginOpenPanelOptions,
   PluginWorkspacePanelProps,
@@ -45,6 +47,24 @@ export type {
   PluginComposerPillContribution,
   PluginHeaderButtonContribution,
 } from "./buttons.js";
+export type { PluginIconProps, PluginSerializableIcon, PluginSvgIcon } from "../icons.js";
+export type {
+  PluginFile,
+  PluginFileBytesState,
+  PluginFileEvent,
+  PluginFileLocation,
+  PluginFileTab,
+  PluginFileTextState,
+  PluginFileUrlState,
+  PluginFileWriteOptions,
+} from "./file.js";
+export {
+  PluginFileConflictError,
+  PluginFileDeletedError,
+  useFileBytes,
+  useFileText,
+  useFileUrl,
+} from "./file.js";
 export { usePaseo } from "./paseo-context.js";
 export { useAgent, useWorkspace } from "./client-state.js";
 export { useRpc } from "./rpc-context.js";
@@ -67,3 +87,7 @@ export declare function useHosts(): readonly PluginHostSummary[];
 export declare function getPaseoClient(serverId: string): import("@getpaseo/client").PaseoApi;
 /** Open an absolute HTTP(S) URL using the client platform’s external opener. */
 export declare function openExternalUrl(url: string): Promise<void>;
+
+export { defineTranslations, useTranslation } from "./translations.js";
+export type { PluginI18n } from "./translations.js";
+export type { PluginText, PluginMessage, PluginTranslations } from "../text.js";

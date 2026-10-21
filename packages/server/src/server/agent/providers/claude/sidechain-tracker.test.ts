@@ -4,6 +4,40 @@ import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
 
 describe("ClaudeSidechainTracker", () => {
+  it("retains a background child's actions across the parent finishing", () => {
+    const tracker = new ClaudeSidechainTracker({
+      getToolInput: () => ({ subagent_type: "general-purpose", description: "List files" }),
+      isDescriptorOwnedElsewhere: () => true,
+    });
+    const action = (id: string, command: string) =>
+      ({
+        type: "assistant",
+        parent_tool_use_id: "task-1",
+        message: { content: [{ type: "tool_use", id, name: "Bash", input: { command } }] },
+      }) as unknown as SDKMessage;
+    tracker.handleMessage(action("ls", "ls -1"), "task-1");
+    expect(tracker.finishAll("completed")).toEqual([]);
+    const events = tracker.handleMessage(action("pwd", "pwd"), "task-1");
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        item: expect.objectContaining({
+          detail: expect.objectContaining({ log: "[Bash] ls -1\n[Bash] pwd" }),
+        }),
+      }),
+    );
+    tracker.delete("task-1");
+    const next = tracker.handleMessage(action("next", "ls"), "task-1");
+    expect(next).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        item: expect.objectContaining({
+          detail: expect.objectContaining({ log: "[Bash] ls" }),
+        }),
+      }),
+    );
+  });
+
   it("uses Claude's native agent name for the provider subagent title", () => {
     const tracker = new ClaudeSidechainTracker({
       getToolInput: () => ({

@@ -1,3 +1,4 @@
+import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import type { ToolCallDetail, ToolCallIconName } from "@getpaseo/protocol/agent-types";
 import { isPaseoToolName } from "@getpaseo/protocol/tool-name-normalization";
 
@@ -17,7 +18,15 @@ const TOOL_DETAIL_ICON_NAMES: Record<ToolCallDetail["type"], ToolCallIcon> = {
   unknown: "wrench",
 };
 
-export function resolveToolCallIconName(toolName: string, detail?: ToolCallDetail): ToolCallIcon {
+export function resolveToolCallIconName(
+  toolName: string,
+  detail?: ToolCallDetail,
+  agentMessage?: AgentMessage,
+): ToolCallIcon {
+  // Agent messages are Paseo deliveries; the wire detail's legacy "bot" icon is for old clients.
+  if (agentMessage) {
+    return "paseo";
+  }
   const lowerName = toolName.trim().toLowerCase();
 
   if (detail?.type === "plain_text" && detail.icon) {

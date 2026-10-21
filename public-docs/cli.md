@@ -64,6 +64,31 @@ Entries may also include `loginErrors`. Structured output preserves numeric valu
 
 A completed query exits with status `0`, including when individual reports are unavailable or failed. Connection or request failures, unsupported hosts, unknown report IDs, and conflicting selectors exit with status `1` and write the error to stderr. Human output says **No usage reports returned** for an empty result; this does not establish whether account discovery succeeded for every source.
 
+## Connected hosts
+
+`--host` selects the daemon whose saved connections you manage. Registrations use their
+`registrationId`, not their label.
+
+```sh
+paseo --host localhost:6767 host add 'ssh://deploy@build-box' --label build-box --meta team=infra
+paseo --host localhost:6767 host ls --json
+paseo --host localhost:6767 host inspect hst_123
+paseo --host localhost:6767 host update hst_123 --meta team=tools --remove-meta obsolete
+paseo --host localhost:6767 host update hst_123 --connection 'ssh://deploy@new-address'
+paseo --host localhost:6767 host disable hst_123
+paseo --host localhost:6767 host enable hst_123
+paseo --host localhost:6767 host rm hst_123
+```
+
+Add accepts TCP/host-and-port, `ws://`/`wss://`, local socket/pipe, SSH, and relay/pairing URLs.
+SSH connects to an already running daemon. Add `?password=...` to an SSH URI when that daemon requires a password (`&password=...` after `daemonPort`). Unreachable targets remain saved and retry automatically.
+`ls` includes disabled and failed hosts. `inspect` includes safe connection details and recovery guidance.
+JSON output never includes connection credentials.
+
+`update --meta` replaces supplied keys; `--remove-meta` removes keys. Replacing a connection retains
+the pinned daemon identity. Add `--replace-identity` with `--connection` only after verifying a changed
+destination. `rm` removes the saved connection; agents and workspaces on that host keep running.
+
 ## Provider diagnostics
 
 Ask the daemon to inspect the provider environment it actually uses:
@@ -228,11 +253,12 @@ The output includes each script's lifecycle and supervised terminal ID. Services
 Create and manage trusted plugins on a daemon:
 
 ```bash
-paseo plugin init /absolute/path/to/plugin
-paseo plugin install /absolute/path/to/plugin
-paseo plugin add owner/repository
+paseo plugin init ./plugin
+paseo plugin install ./plugin
+paseo plugin add owner/slug
+paseo plugin add git:owner/repository
 paseo plugin add https://gitlab.com/group/repository.git --ref main
-paseo plugin add owner/monorepo:plugins/review
+paseo plugin add git:owner/monorepo:plugins/review
 paseo plugin ls [id]
 paseo plugin update my-plugin
 paseo plugin update --all
@@ -243,8 +269,17 @@ paseo plugin enable my-plugin
 paseo plugin remove my-plugin
 ```
 
-GitHub shorthand checks an existing host directory first. Append `:<directory>` for a plugin in a
-monorepo. `paseo plugin ls [id]` does not contact the remote. `paseo plugin logs <id>` returns the
+`paseo plugin reload <id>` reports the result of the reload itself: it waits while the daemon stops
+and starts the plugin, however long that takes, and it queues behind the daemon's other plugin work.
+Cancelling the command or losing the connection does not stop the daemon's work, and no listing or
+log entry settles what a cancelled reload did — the [Plugin reference](/docs/plugins/reference)
+covers those interim states. Running the reload again is what reports the result: it waits behind the
+outstanding one, then stops and starts the plugin once more.
+
+Bare `owner/slug` installs a reviewed registry listing. Use `git:owner/repository` for GitHub
+source, or `./plugin` for a local directory. Append `:<directory>` for a plugin in a monorepo.
+
+`paseo plugin ls [id]` does not contact the remote. `paseo plugin logs <id>` returns the
 plugin's recent daemon-side stdout and stderr. Add `--json` for structured entries, or run
 `paseo --host <target> plugin logs <id>` for another daemon. See the
 [Plugin reference](/docs/plugins/reference) for installation, trust, lifecycle, and log-retention
@@ -279,8 +314,11 @@ Use the recipient's agent ID from `paseo ls`, or [copy it from the agent's tab](
 ```bash
 paseo send <id> "now run the tests"
 paseo send <id> --image screenshot.png "what's wrong here?"
-paseo send <id> --no-wait "queue this task"
+paseo send <id> --no-wait "run this task"
+paseo send <id> --behavior interrupt "stop and do this instead"
 ```
+
+Agent-originated sends (`PASEO_AGENT_ID` set) default to steering the running turn. Other sends default to interrupting it. Use `--behavior steer` or `--behavior interrupt` to override the default. Steering uses the same fallback as the client: if steering is unavailable, the running turn is interrupted and replaced.
 
 ## Viewing logs
 

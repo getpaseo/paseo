@@ -44,6 +44,8 @@ export type AcpConnector = () => AcpStream | Promise<AcpStream>;
 export interface AcpOptions {
   protocol?: "auto" | "v1";
   startupTimeoutMs?: number;
+  /** Global discovery initializes ACP but returns an empty catalog without opening a session. */
+  workspaceOnlyCatalog?: boolean;
   waitForInitialCommands?: boolean;
   initialCommandsTimeoutMs?: number;
 }

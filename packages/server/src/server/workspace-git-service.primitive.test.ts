@@ -1819,6 +1819,46 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     service.dispose();
   });
 
+  test("invalidating worktrees discards warm listings across checkout roots and in-flight reads", async () => {
+    const worktrees = [
+      {
+        path: "/tmp/paseo-home/worktrees/repo/feature",
+        createdAt: "2026-04-12T00:00:00.000Z",
+        branchName: "feature",
+      },
+    ];
+    const readStarted = createDeferred<void>();
+    const oldRead = createDeferred<typeof worktrees>();
+    const alternateCheckout = resolvePath("/tmp/alternate-checkout");
+    let reads = 0;
+    const service = createService({
+      listPaseoWorktrees: async () => {
+        reads += 1;
+        if (reads <= 2) return worktrees;
+        if (reads === 3) {
+          readStarted.resolve();
+          return oldRead.promise;
+        }
+        return [];
+      },
+    });
+    try {
+      await expect(service.listWorktrees(REPO_CWD)).resolves.toEqual(worktrees);
+      await expect(service.listWorktrees(alternateCheckout)).resolves.toEqual(worktrees);
+      const pending = service.listWorktrees(REPO_CWD, { force: true, reason: "test" });
+      await readStarted.promise;
+      service.invalidateWorktrees();
+      await expect(service.listWorktrees(REPO_CWD)).resolves.toEqual([]);
+      await expect(service.listWorktrees(alternateCheckout)).resolves.toEqual([]);
+      oldRead.resolve(worktrees);
+      await expect(pending).resolves.toEqual(worktrees);
+      await expect(service.listWorktrees(REPO_CWD)).resolves.toEqual([]);
+    } finally {
+      oldRead.resolve(worktrees);
+      await service.dispose();
+    }
+  });
+
   test("listWorktrees shares one repo-root scoped read across sibling workspace cwds", async () => {
     const tempDir = realpathSync(mkdtempSync(join(tmpdir(), "workspace-git-service-")));
     const repoDir = join(tempDir, "repo");

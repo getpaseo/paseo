@@ -60,6 +60,8 @@ export class AgentDirectory {
     const active = await Promise.all(
       live.filter(matches).map((agent) => this.deps.projectLive(agent)),
     );
-    return [...active, ...stored].filter((agent) => this.deps.isProviderVisible(agent.provider));
+    return [...active, ...stored]
+      .filter(matches)
+      .filter((agent) => this.deps.isProviderVisible(agent.provider));
   }
 }

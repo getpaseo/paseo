@@ -1,3 +1,4 @@
+import { verifyPluginToolTranslations } from "../support/helpers/plugin-translations";
 import { test } from "../support/fixtures";
 import { withButtonShowcase } from "../support/helpers/plugin-buttons";
 
@@ -12,4 +13,11 @@ test("plugin header and composer buttons share actions, menus, content, and upda
     await buttons.openCompactSheets();
     await buttons.hideAndUnloadOpenButtons();
   });
+});
+
+test("plugin tooltips and menu labels follow app language with a panel draft open", async ({
+  page,
+}, info) => {
+  test.setTimeout(180_000);
+  await verifyPluginToolTranslations(page, info);
 });

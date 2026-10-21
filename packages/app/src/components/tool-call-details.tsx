@@ -1,4 +1,4 @@
-import React, { useMemo, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import {
   View,
   Text,
@@ -14,7 +14,7 @@ import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import {
   buildPaseoToolDetailSections,
   type PaseoToolDetailSection,
-} from "@getpaseo/protocol/paseo-tool-call-detail";
+} from "@getpaseo/protocol/paseo-tool-presentation/index";
 import { buildLineDiff, parseUnifiedDiff, type DiffLine } from "@/utils/tool-call-parsers";
 import { highlightDiffLines } from "@/utils/diff-highlight";
 import { hasMeaningfulToolCallDetail } from "@/utils/tool-call-detail-state";
@@ -177,48 +177,6 @@ function ShellDetailSection({ command, output, ds }: ShellDetailProps) {
                 <Text style={styles.shellPrompt}>$ </Text>
                 {normalizedCommand}
                 {hasOutput ? `\n\n${commandOutput}` : ""}
-              </Text>
-            </View>
-          </ScrollView>
-        </ScrollView>
-      </View>
-    </View>
-  );
-}
-
-interface WorktreeSetupDetailProps {
-  log: string;
-  branchName: string;
-  worktreePath: string;
-  ds: DetailStyles;
-}
-
-function WorktreeSetupDetailSection({
-  log,
-  branchName,
-  worktreePath,
-  ds,
-}: WorktreeSetupDetailProps) {
-  const setupLog = log.replace(/^\n+/, "");
-  const hasLog = setupLog.length > 0;
-  return (
-    <View style={ds.sectionFillStyle}>
-      <View style={ds.codeBlockFillStyle}>
-        <ScrollView
-          style={ds.codeVerticalScrollStyle}
-          contentContainerStyle={styles.codeVerticalContent}
-          nestedScrollEnabled
-          showsVerticalScrollIndicator
-        >
-          <ScrollView
-            horizontal
-            nestedScrollEnabled
-            showsHorizontalScrollIndicator
-            contentContainerStyle={styles.codeHorizontalContent}
-          >
-            <View style={styles.codeLine} dataSet={CODE_SURFACE_DATASET}>
-              <Text selectable style={styles.scrollText}>
-                {hasLog ? setupLog : `Preparing worktree ${branchName} at ${worktreePath}`}
               </Text>
             </View>
           </ScrollView>
@@ -678,17 +636,7 @@ function buildDetailSections(
       <ShellDetailSection key="shell" command={detail.command} output={detail.output} ds={ds} />,
     ];
   }
-  if (detail.type === "worktree_setup") {
-    return [
-      <WorktreeSetupDetailSection
-        key="worktree-setup"
-        log={detail.log}
-        branchName={detail.branchName}
-        worktreePath={detail.worktreePath}
-        ds={ds}
-      />,
-    ];
-  }
+  if (detail.type === "worktree_setup") return [];
   if (detail.type === "sub_agent") {
     return [
       <SubAgentDetailSection

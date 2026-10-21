@@ -51,7 +51,7 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
   emit: <K extends RouterMessageType>(message: Extract<RouterMessage, { type: K }>) => void;
   subscribeCheckoutDiffCalls: Array<{
     cwd: string;
-    compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean };
+    compare: { mode: "uncommitted" | "base" | "all"; baseRef?: string; ignoreWhitespace?: boolean };
     subscriptionId: string;
   }>;
   unsubscribeCheckoutDiffCalls: string[];
@@ -67,7 +67,7 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
   };
   const subscribeCheckoutDiffCalls: Array<{
     cwd: string;
-    compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean };
+    compare: { mode: "uncommitted" | "base" | "all"; baseRef?: string; ignoreWhitespace?: boolean };
     subscriptionId: string;
   }> = [];
   const unsubscribeCheckoutDiffCalls: string[] = [];
@@ -199,6 +199,71 @@ function providerUpdate(generatedAt: string): ProvidersSnapshotUpdateMessage {
 }
 
 describe("server data push router", () => {
+  it("keeps a visible diff subscribed when a hidden panel switches to the same comparison", () => {
+    const queryClient = new QueryClient();
+    const fake = createFakeClient();
+    const serverId = "server-1";
+    const cwd = "/repo";
+    const options = (mode: "base" | "uncommitted", enabled: boolean) => {
+      const queryKey = checkoutDiffQueryKey(
+        serverId,
+        cwd,
+        mode,
+        mode === "base" ? "main" : undefined,
+      );
+      return {
+        queryKey,
+        queryFn: skipToken as typeof skipToken,
+        gcTime: Infinity,
+        meta: checkoutDiffPushRoute({
+          enabled,
+          serverId,
+          cwd,
+          subscriptionId: `checkoutDiff:${JSON.stringify(queryKey)}`,
+          compare: { mode, ...(mode === "base" ? { baseRef: "main" } : {}) },
+        }),
+      };
+    };
+    const visible = new QueryObserver(queryClient, options("base", true));
+    const hidden = new QueryObserver(queryClient, options("base", false));
+    const unsubscribeVisible = visible.subscribe(() => {});
+    const unsubscribeHidden = hidden.subscribe(() => {});
+    const unmount = mountServerDataPushRouter({ queryClient, client: fake.client, serverId });
+    try {
+      visible.setOptions(options("uncommitted", true));
+      hidden.setOptions(options("uncommitted", false));
+      const subscription = fake.subscribeCheckoutDiffCalls.findLast(
+        (call) => call.compare.mode === "uncommitted",
+      )!;
+      const files = [
+        {
+          path: "README.md",
+          isNew: false,
+          isDeleted: false,
+          additions: 1,
+          deletions: 0,
+          hunks: [],
+        },
+      ];
+      fake.emit({
+        type: "checkout_diff_update",
+        payload: { subscriptionId: subscription.subscriptionId, cwd, files, error: null },
+      });
+      expect(queryClient.getQueryData(options("uncommitted", true).queryKey)).toMatchObject({
+        files,
+      });
+      expect(fake.unsubscribeCheckoutDiffCalls).not.toContain(subscription.subscriptionId);
+
+      unsubscribeVisible();
+      expect(fake.unsubscribeCheckoutDiffCalls).toContain(subscription.subscriptionId);
+    } finally {
+      unsubscribeVisible();
+      unsubscribeHidden();
+      unmount();
+      queryClient.clear();
+    }
+  });
+
   it("retains equal diff files without reconstructing changed file bodies", () => {
     const queryClient = new QueryClient();
     const fake = createFakeClient();
@@ -314,12 +379,12 @@ describe("server data push router", () => {
       });
   });
 
-  it("subscribes active checkout diff queries and writes matching diff events", () => {
+  it.each(["base", "all"] as const)("routes %s diff snapshots and updates", (mode) => {
     const queryClient = new QueryClient();
     const fake = createFakeClient();
     const serverId = "server-1";
     const cwd = "/repo";
-    const queryKey = checkoutDiffQueryKey(serverId, cwd, "base", "main", true);
+    const queryKey = checkoutDiffQueryKey(serverId, cwd, mode, "main", true);
     const subscriptionId = `checkoutDiff:${JSON.stringify(queryKey)}`;
     const observer = new QueryObserver(queryClient, {
       queryKey,
@@ -332,17 +397,18 @@ describe("server data push router", () => {
         serverId,
         subscriptionId,
         cwd,
-        compare: { mode: "base", baseRef: "main", ignoreWhitespace: true },
+        compare: { mode, baseRef: "main", ignoreWhitespace: true },
       }),
     });
     const unsubscribeObserver = observer.subscribe(() => undefined);
     const unmount = mountServerDataPushRouter({ client: fake.client, queryClient, serverId });
 
+    expect(fake.subscribeCheckoutDiffCalls).toHaveLength(1);
     const serverSubscriptionId = fake.subscribeCheckoutDiffCalls[0]!.subscriptionId;
     expect(fake.subscribeCheckoutDiffCalls).toEqual([
       {
         cwd,
-        compare: { mode: "base", baseRef: "main", ignoreWhitespace: true },
+        compare: { mode, baseRef: "main", ignoreWhitespace: true },
         subscriptionId: serverSubscriptionId,
       },
     ]);

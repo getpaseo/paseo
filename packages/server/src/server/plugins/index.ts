@@ -629,6 +629,7 @@ export class PluginService {
           label: provider.label,
           description: provider.description,
           command: provider.command,
+          requiresConfiguration: provider.requiresConfiguration,
           status: provider.hasStatus
             ? (request) => {
                 if (!this.runtime.getProviderStatus)

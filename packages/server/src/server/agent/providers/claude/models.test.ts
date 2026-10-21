@@ -15,7 +15,27 @@ import {
 } from "./model-manifest.js";
 import { discoverClaudeModels } from "./model-discovery.js";
 import type { ModelInfo } from "@anthropic-ai/claude-agent-sdk";
-import { findClaudeModel, getClaudeModels, normalizeClaudeRuntimeModelId } from "./models.js";
+import {
+  findClaudeModel,
+  getClaudeContextWindowMaxTokens,
+  getClaudeModels,
+  normalizeClaudeRuntimeModelId,
+} from "./models.js";
+
+describe("getClaudeContextWindowMaxTokens", () => {
+  it.each([
+    ["glm-5.2[1m]", 1_000_000],
+    [" glm-5.2[1M] ", 1_000_000],
+    ["claude-sonnet-4-6", 200_000],
+    ["claude-sonnet-4-6[1m]", 1_000_000],
+    ["glm-5.2", undefined],
+    ["glm-5.2[1m]-other", undefined],
+    [undefined, undefined],
+    [null, undefined],
+  ])("resolves %s to %s without guessing unknown models", (model, expected) => {
+    expect(getClaudeContextWindowMaxTokens(model)).toBe(expected);
+  });
+});
 
 const createdClaudeConfigDirs: string[] = [];
 
@@ -538,6 +558,33 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
 
     expect(models.map((model) => model.id)).not.toContain("claude-opus-5[1m]");
     expect(models.map((model) => model.id)).not.toContain("claude-opus-5");
+  });
+
+  it("keeps version-gated models when the probe command cannot identify Claude Code", async () => {
+    const configDir = await createClaudeConfigDir({});
+    const wrapperDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-wrapper-"));
+    const wrapperPath = path.join(wrapperDir, "wrapper");
+    await fs.writeFile(wrapperPath, 'console.log("cux 0.4.1");\n');
+    try {
+      const client = new ClaudeAgentClient({
+        logger: createTestLogger(),
+        runtimeSettings: {
+          command: { mode: "replace", argv: [process.execPath, wrapperPath] },
+          env: { CLAUDE_CONFIG_DIR: configDir },
+        },
+        discoverModels: async () => [],
+      });
+
+      const { models } = await client.fetchCatalog({
+        scope: "workspace",
+        cwd: configDir,
+        force: false,
+      });
+
+      expect(models.map((model) => model.id)).toContain("claude-opus-5-5");
+    } finally {
+      await fs.rm(wrapperDir, { recursive: true, force: true });
+    }
   });
 });
 

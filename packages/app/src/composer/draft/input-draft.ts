@@ -17,6 +17,7 @@ import {
 } from "@/composer/draft/input-draft-core";
 import {
   buildDraftCommandTarget,
+  resolveEffectiveComposerModeId,
   resolveEffectiveComposerModelId,
   resolveEffectiveComposerThinkingOptionId,
   type ProviderSelectionState,
@@ -46,6 +47,7 @@ interface UseAgentInputDraftInput {
 
 type DraftComposerState = UseAgentFormStateResult & {
   workingDir: string;
+  effectiveModeId: string;
   effectiveModelId: string;
   effectiveThinkingOptionId: string;
   featureValues: Record<string, unknown> | undefined;
@@ -115,14 +117,16 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
   const isHydrated = hydratedDraftKey === draftKey;
   const textReplacementRevisionRef = useRef(0);
   const [textReplacement, setTextReplacement] = useState<TextReplacement>(() => ({
+    kind: "initial",
     key: `${draftKey}:0`,
     text: textSource.getSnapshot(),
   }));
 
   const publishTextReplacement = useCallback(
-    (nextText: string) => {
+    (kind: "hydrated" | "replace", nextText: string) => {
       textReplacementRevisionRef.current += 1;
       setTextReplacement({
+        kind,
         key: `${draftKey}:${textReplacementRevisionRef.current}`,
         text: nextText,
       });
@@ -172,7 +176,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     (nextText: string) => {
       textPublication.cancel();
       useDraftStore.getState().editDraftText({ draftKey, text: nextText });
-      publishTextReplacement(nextText);
+      publishTextReplacement("replace", nextText);
     },
     [draftKey, publishTextReplacement, textPublication],
   );
@@ -225,7 +229,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       await useDraftStore.getState().hydrateDraftInput({ draftKey });
       if (!cancelled) {
         const hydratedText = useDraftStore.getState().getDraftInput(draftKey)?.text ?? "";
-        publishTextReplacement(hydratedText);
+        publishTextReplacement("hydrated", hydratedText);
         setHydratedDraftKey(draftKey);
       }
     })();
@@ -252,6 +256,11 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       formState.selectedProvider,
       formState.selectedThinkingOptionId,
     ],
+  );
+
+  const effectiveModeId = useMemo(
+    () => resolveEffectiveComposerModeId(providerSelection, formState.isModelLoading),
+    [formState.isModelLoading, providerSelection],
   );
 
   const effectiveModelId = useMemo(
@@ -313,6 +322,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     return {
       ...formState,
       workingDir,
+      effectiveModeId,
       effectiveModelId,
       effectiveThinkingOptionId,
       featureValues: draftFeatureValues,
@@ -327,6 +337,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
   }, [
     commandDraft,
     composerOptions,
+    effectiveModeId,
     effectiveModelId,
     effectiveThinkingOptionId,
     draftFeatures,
@@ -353,6 +364,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
 
 export const __private__ = {
   resolveDraftKey,
+  resolveEffectiveComposerModeId,
   resolveEffectiveComposerModelId,
   resolveEffectiveComposerThinkingOptionId,
   buildDraftCommandTarget,

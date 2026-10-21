@@ -1,790 +1,121 @@
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type ComponentType,
-  type ReactNode,
-} from "react";
+import { memo, useMemo, useState } from "react";
+import { EnrichedMarkdownText, type LinkPressEvent } from "react-native-enriched-markdown";
+import { withUnistyles } from "react-native-unistyles";
 import {
-  Image,
-  Pressable,
-  Text,
-  View,
-  type TextProps,
-  type TextStyle,
-  type ViewStyle,
-} from "react-native";
-import { ChevronDown, ChevronRight } from "lucide-react-native";
-import Markdown, {
-  MarkdownIt,
-  type ASTNode,
-  type RenderRules,
-} from "react-native-markdown-display";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
-import { MarkdownFenceBlock } from "@/components/markdown/fence";
-import { MarkdownParagraphView, MarkdownTextSpan } from "@/components/markdown-text";
-import { MarkdownTableCellText } from "@/components/markdown-text-selection";
-import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-list";
-import { markdownNodeContainsType } from "@/utils/markdown-ast";
-import { createMarkdownParser } from "@/utils/markdown-parser";
-import { createCompactMarkdownStyles, createMarkdownStyles } from "@/styles/markdown-styles";
+  useAssistantFileLinkActions,
+  useAssistantFileLinkEnvironment,
+} from "@/assistant-file-links";
+import { useStableEvent } from "@/hooks/use-stable-event";
+import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
 import type { Theme } from "@/styles/theme";
-import { openExternalUrl } from "@/utils/open-external-url";
-import { isNative } from "@/constants/platform";
-import {
-  splitHtmlishMarkdown,
-  type MarkdownDisplayPart,
-  type MarkdownInlineImagePart,
-} from "./html-ish";
-import { resolveInlineImageSize, type InlineImageDimensions } from "./inline-image-size";
-import {
-  getAssistantImageMetadata,
-  setAssistantImageMetadata,
-} from "@/utils/assistant-image-metadata";
-import { groupMarkdownParts, type MarkdownPartGroup } from "./part-groups";
-import { colorMarkdownLinkChildren } from "./link-children";
-import { MarkdownLinkText } from "./link-text";
+import { isWeb } from "@/constants/platform";
+import { density, resolveDensity } from "@/styles/density";
+import { MarkdownBlockStack } from "./block-stack";
+import { WEB_RENDERERS } from "./renderers";
+import { createMarkdownStyles } from "./styles";
+import { PENDING_MARKDOWN_IMAGE } from "./source";
+import { splitStreamingMarkdown } from "./streaming";
+import { useMarkdownSource, type MarkdownImageContext } from "./images";
 
-export type MarkdownStyles = Record<string, TextStyle & ViewStyle & { [key: string]: unknown }>;
+import { MermaidFence, MermaidStreamingContext, splitMermaidFences } from "./fence/mermaid";
 
-interface MarkdownWithStableRendererProps {
-  children: ReactNode;
-  style: ReturnType<typeof createMarkdownStyles> | ReturnType<typeof createCompactMarkdownStyles>;
-  rules?: RenderRules;
-  markdownit?: ReturnType<typeof MarkdownIt>;
-  onLinkPress?: (url: string) => boolean;
-  allowedImageHandlers?: readonly string[];
-  topLevelMaxExceededItem?: ReactNode;
-}
+const ThemedMarkdown = withUnistyles(EnrichedMarkdownText);
+const MD4C_FLAGS = { latexMath: false, hardSoftBreaks: true, admonitions: true };
 
-const MarkdownWithStableRenderer = Markdown as ComponentType<MarkdownWithStableRendererProps>;
-const ThemedMarkdown = withUnistyles(MarkdownWithStableRenderer);
+// Reading the breakpoint here makes Unistyles restyle the text when the layout crosses it.
+const markdownStyle = (compact: boolean) => (theme: Theme, rt: { breakpoint?: string }) =>
+  createMarkdownStyles(theme, { compact, blockGap: resolveDensity(rt, density.blockGap) });
+const regularStyle = markdownStyle(false);
+const compactStyle = markdownStyle(true);
 
-function markdownStyleMapping(theme: Theme): Partial<MarkdownWithStableRendererProps> {
-  return { style: createMarkdownStyles(theme) };
-}
-
-function compactMarkdownStyleMapping(theme: Theme): Partial<MarkdownWithStableRendererProps> {
-  return { style: createCompactMarkdownStyles(theme) };
-}
-
-// Serves PR comment bodies and the markdown file preview; agent chat passes its
-// own parser. The preview has to show the bytes on disk, so no typographer.
-const defaultMarkdownParser = createMarkdownParser({ linkify: true });
-const EMPTY_TEXT_STYLE: TextStyle = {};
-const MARKDOWN_LIST_ITEM_CONTENT_FLEX: ViewStyle = { flex: 1, flexShrink: 1, minWidth: 0 };
-export interface MarkdownRendererProps {
+export interface MarkdownRendererProps extends MarkdownImageContext {
   text: string;
   compact?: boolean;
-  rules?: RenderRules;
-  markdownit?: ReturnType<typeof MarkdownIt>;
-  onLinkPress?: (url: string) => boolean;
-  allowedImageHandlers?: readonly string[];
-  topLevelMaxExceededItem?: ReactNode;
-  enableHtmlish?: boolean;
+  streaming?: boolean;
+  onLinkPress?: (url: string) => unknown;
 }
 
-export function MarkdownRenderer({
+/** All Markdown surfaces share the same engine and source adaptation. */
+export const MarkdownRenderer = memo(function MarkdownRenderer(props: MarkdownRendererProps) {
+  const streaming = !isWeb && !!props.streaming;
+  // Only completed lines affect block closure. Do not run mdast on every reveal frame.
+  const completeLines = streaming ? props.text.slice(0, props.text.lastIndexOf("\n") + 1) : "";
+  const boundary = useMemo(
+    () => splitStreamingMarkdown(completeLines, true).head.length,
+    [completeLines],
+  );
+  if (!streaming || boundary === 0) return <MarkdownPart {...props} />;
+  return (
+    <MarkdownBlockStack>
+      <MarkdownPart {...props} text={props.text.slice(0, boundary)} />
+      <MarkdownPart {...props} text={props.text.slice(boundary)} />
+    </MarkdownBlockStack>
+  );
+});
+
+const MarkdownPart = memo(function MarkdownPart({
   text,
   compact = false,
-  rules,
-  markdownit = defaultMarkdownParser,
+  streaming = false,
   onLinkPress,
-  allowedImageHandlers,
-  topLevelMaxExceededItem,
-  enableHtmlish = true,
+  ...imageContext
 }: MarkdownRendererProps) {
-  const markdownRules = useMemo(() => rules ?? createSharedMarkdownRules(), [rules]);
-  const parts = useMemo(
-    () => (enableHtmlish ? splitHtmlishMarkdown(text) : [{ kind: "markdown" as const, text }]),
-    [enableHtmlish, text],
-  );
-  const rendererProps = useMemo(
-    () => ({
-      compact,
-      rules: markdownRules,
-      markdownit,
-      onLinkPress,
-      allowedImageHandlers,
-      topLevelMaxExceededItem,
-    }),
-    [
-      allowedImageHandlers,
-      compact,
-      markdownRules,
-      markdownit,
-      onLinkPress,
-      topLevelMaxExceededItem,
-    ],
-  );
-
-  return <MarkdownPartList parts={parts} rendererProps={rendererProps} />;
-}
-
-type MarkdownPartRendererProps = Omit<MarkdownRendererProps, "text" | "enableHtmlish"> & {
-  rules: RenderRules;
-};
-
-function MarkdownPartList({
-  parts,
-  rendererProps,
-}: {
-  parts: MarkdownDisplayPart[];
-  rendererProps: MarkdownPartRendererProps;
-}) {
-  const keyedGroups = useMemo(() => keyMarkdownGroups(groupMarkdownParts(parts)), [parts]);
-  return (
-    <>
-      {keyedGroups.map(({ key, group }) =>
-        group.kind === "part" ? (
-          <MarkdownPart key={key} part={group.part} rendererProps={rendererProps} />
-        ) : (
-          <MarkdownImageTextGroup key={key} group={group} rendererProps={rendererProps} />
-        ),
-      )}
-    </>
-  );
-}
-
-function keyMarkdownGroups(
-  groups: MarkdownPartGroup[],
-): { key: string; group: MarkdownPartGroup }[] {
-  return groups.map((group, index) => ({ key: `${group.kind}:${index}`, group }));
-}
-
-function MarkdownPart({
-  part,
-  rendererProps,
-}: {
-  part: MarkdownDisplayPart;
-  rendererProps: MarkdownPartRendererProps;
-}) {
-  if (part.kind === "details") {
-    return <MarkdownDetails part={part} rendererProps={rendererProps} />;
-  }
-
-  if (part.kind === "inlineImage") {
-    return <MarkdownInlineImage part={part} onLinkPress={rendererProps.onLinkPress} />;
-  }
-
-  if (part.text.length === 0) {
-    return null;
-  }
-
-  return <MarkdownFragment text={part.text} {...rendererProps} />;
-}
-
-function MarkdownFragment({
-  text,
-  compact,
-  rules,
-  markdownit,
-  onLinkPress,
-  allowedImageHandlers,
-  topLevelMaxExceededItem,
-}: MarkdownRendererProps & { rules: RenderRules }) {
-  const uniProps = compact ? compactMarkdownStyleMapping : markdownStyleMapping;
-  return (
-    <ThemedMarkdown
-      uniProps={uniProps}
-      rules={rules}
-      markdownit={markdownit}
-      onLinkPress={onLinkPress}
-      allowedImageHandlers={allowedImageHandlers}
-      topLevelMaxExceededItem={topLevelMaxExceededItem}
-    >
-      {text}
-    </ThemedMarkdown>
-  );
-}
-
-function useNaturalImageDimensions(part: MarkdownInlineImagePart): {
-  natural: InlineImageDimensions | null;
-  failed: boolean;
-  setFailed: (failed: boolean) => void;
-} {
-  const cached = useMemo(() => getAssistantImageMetadata({ source: part.src }), [part.src]);
-  const [resolved, setResolved] = useState<{
-    source: string;
-    dimensions: InlineImageDimensions;
-  } | null>(null);
-  const natural = resolved?.source === part.src ? resolved.dimensions : cached;
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    if ((part.width && part.height) || cached) {
-      return;
-    }
-
-    let cancelled = false;
-    Image.getSize(
-      part.src,
-      (width, height) => {
-        setAssistantImageMetadata({ source: part.src }, { width, height });
-        if (!cancelled) {
-          setResolved({ source: part.src, dimensions: { width, height } });
-        }
-      },
-      () => {
-        if (!cancelled) {
-          setFailed(true);
-        }
-      },
-    );
-
-    return () => {
-      cancelled = true;
-    };
-  }, [cached, part.height, part.src, part.width]);
-
-  return { natural, failed, setFailed };
-}
-
-function MarkdownInlineImage({
-  part,
-  onLinkPress,
-}: {
-  part: Extract<MarkdownDisplayPart, { kind: "inlineImage" }>;
-  onLinkPress?: (url: string) => boolean;
-}) {
-  const { natural: naturalDimensions } = useNaturalImageDimensions(part);
-  const explicitDimensions = useMemo(
-    () => ({ width: part.width, height: part.height }),
-    [part.height, part.width],
-  );
-  const handlePress = useCallback(() => {
-    if (!part.href) return;
-    if (onLinkPress?.(part.href) === false) return;
-    void openExternalUrl(part.href);
-  }, [onLinkPress, part.href]);
-  const source = useMemo(() => ({ uri: part.src }), [part.src]);
-  const imageSize = useMemo(
-    () => resolveInlineImageSize({ explicit: explicitDimensions, natural: naturalDimensions }),
-    [explicitDimensions, naturalDimensions],
-  );
-  const imageStyle = useMemo(() => [detailsStyles.inlineImage, imageSize], [imageSize]);
-
-  const image = (
-    <Image
-      source={source}
-      style={imageStyle}
-      resizeMode="contain"
-      accessibilityLabel={part.alt || undefined}
-    />
-  );
-
-  if (!part.href) {
-    return <View style={detailsStyles.inlineImageWrap}>{image}</View>;
-  }
-
-  return (
-    <Pressable style={detailsStyles.inlineImageWrap} onPress={handlePress} accessibilityRole="link">
-      {image}
-    </Pressable>
-  );
-}
-
-const FLOW_IMAGE_MAX_HEIGHT = 18;
-
-function MarkdownFlowImage({
-  part,
-  onLinkPress,
-}: {
-  part: MarkdownInlineImagePart;
-  onLinkPress?: (url: string) => boolean;
-}) {
-  const { natural, failed, setFailed } = useNaturalImageDimensions(part);
-  const handlePress = useCallback(() => {
-    if (!part.href) return;
-    if (onLinkPress?.(part.href) === false) return;
-    void openExternalUrl(part.href);
-  }, [onLinkPress, part.href]);
-  const handleError = useCallback(() => setFailed(true), [setFailed]);
-  const source = useMemo(() => ({ uri: part.src }), [part.src]);
-  const imageSize = useMemo(() => {
-    const size = resolveInlineImageSize({
-      explicit: { width: part.width, height: part.height },
-      natural,
-    });
-    const scale = Math.min(1, FLOW_IMAGE_MAX_HEIGHT / size.height);
-    return { width: Math.round(size.width * scale), height: Math.round(size.height * scale) };
-  }, [natural, part.height, part.width]);
-  const imageStyle = useMemo(() => [detailsStyles.flowImage, imageSize], [imageSize]);
-
-  if (failed) {
-    if (!part.alt) {
-      return null;
-    }
-    return (
-      <View style={detailsStyles.flowImageFallback}>
-        <Text style={detailsStyles.flowImageFallbackText}>{part.alt}</Text>
-      </View>
-    );
-  }
-
-  const image = (
-    <Image
-      source={source}
-      style={imageStyle}
-      resizeMode="contain"
-      accessibilityLabel={part.alt || undefined}
-      onError={handleError}
-    />
-  );
-
-  if (!part.href) {
-    return image;
-  }
-
-  return (
-    <Pressable onPress={handlePress} accessibilityRole="link">
-      {image}
-    </Pressable>
-  );
-}
-
-function MarkdownImageTextGroup({
-  group,
-  rendererProps,
-}: {
-  group: Extract<MarkdownPartGroup, { kind: "imageText" }>;
-  rendererProps: MarkdownPartRendererProps;
-}) {
-  return (
-    <>
-      <View style={detailsStyles.imageTextRow}>
-        {group.images.map((image) => (
-          <MarkdownFlowImage key={image.src} part={image} onLinkPress={rendererProps.onLinkPress} />
-        ))}
-        <View style={detailsStyles.imageTextRowContent}>
-          <MarkdownFragment text={group.lead} {...rendererProps} />
-        </View>
-      </View>
-      {group.rest ? <MarkdownFragment text={group.rest} {...rendererProps} /> : null}
-    </>
-  );
-}
-
-function MarkdownDetails({
-  part,
-  rendererProps,
-}: {
-  part: Extract<MarkdownDisplayPart, { kind: "details" }>;
-  rendererProps: MarkdownPartRendererProps;
-}) {
-  const [open, setOpen] = useState(false);
-  const toggle = useCallback(() => setOpen((current) => !current), []);
-  const bodyParts = useMemo(
-    () => part.bodyParts ?? [{ kind: "markdown" as const, text: part.body }],
-    [part.body, part.bodyParts],
+  const environment = useAssistantFileLinkEnvironment();
+  const actions = useAssistantFileLinkActions();
+  const client =
+    imageContext.client ??
+    (environment.client?.readFile
+      ? { readFile: environment.client.readFile.bind(environment.client) }
+      : undefined);
+  const { markdown, imageSources, linkRecognition, linkSource } = useMarkdownSource(text, {
+    workspaceRoot: environment.workspaceRoot,
+    serverId: environment.serverId,
+    ...imageContext,
+    client,
+  });
+  const [image, setImage] = useState<ImageLightboxSource | null>(null);
+  const pressLink = useStableEvent(({ url, sourceType }: LinkPressEvent) => {
+    const source = linkSource(url, sourceType);
+    if (onLinkPress && !actions.canResolveFile(source)) onLinkPress(url);
+    else actions.open(source, "preferred");
+  });
+  const pressImage = useStableEvent(({ url }: { url: string }) => {
+    if (url !== PENDING_MARKDOWN_IMAGE) setImage({ type: "uri", uri: url });
+  });
+  const closeImage = useStableEvent(() => setImage(null));
+  const segments = useMemo(
+    () =>
+      isWeb ? [{ kind: "markdown", id: "0", source: markdown }] : splitMermaidFences(markdown),
+    [markdown],
   );
   return (
-    <View style={detailsStyles.container}>
-      <Pressable style={detailsStyles.summaryRow} onPress={toggle} accessibilityRole="button">
-        {open ? (
-          <ChevronDown size={14} color={detailsStyles.summaryIcon.color} />
-        ) : (
-          <ChevronRight size={14} color={detailsStyles.summaryIcon.color} />
+    <MermaidStreamingContext.Provider value={streaming}>
+      <MarkdownBlockStack imageSources={imageSources}>
+        {segments.map((segment) =>
+          segment.kind === "mermaid" ? (
+            <MermaidFence key={`${segment.kind}:${segment.id}`} code={segment.source} />
+          ) : (
+            <ThemedMarkdown
+              key={`${segment.kind}:${segment.id}`}
+              markdown={segment.source}
+              uniProps={compact ? compactStyle : regularStyle}
+              flavor="github"
+              selectable
+              md4cFlags={MD4C_FLAGS}
+              linkRecognition={linkRecognition}
+              enableTaskListItemToggle={false}
+              enableLinkPreview={false}
+              enableBlockContextMenu={false}
+              // JS reveal owns pacing; native fade animation is a separate experiment.
+              streamingAnimation={false}
+              onLinkPress={pressLink}
+              onImagePress={pressImage}
+              renderers={isWeb ? WEB_RENDERERS : undefined}
+            />
+          ),
         )}
-        <Text style={detailsStyles.summaryText}>{part.summary}</Text>
-      </Pressable>
-      {open ? (
-        <View style={detailsStyles.body}>
-          <MarkdownPartList parts={bodyParts} rendererProps={rendererProps} />
-        </View>
-      ) : null}
-    </View>
+      </MarkdownBlockStack>
+      {image ? <AttachmentLightbox source={image} onClose={closeImage} /> : null}
+    </MermaidStreamingContext.Provider>
   );
-}
-
-interface MarkdownInheritedTextProps {
-  inheritedStyles: TextStyle;
-  textStyle: TextStyle;
-  style?: TextStyle;
-  monoSurface?: boolean;
-  onPress?: TextProps["onPress"];
-  accessibilityRole?: TextProps["accessibilityRole"];
-  children: ReactNode;
-}
-
-export function MarkdownInheritedText({
-  inheritedStyles,
-  textStyle,
-  style: overrideStyle,
-  monoSurface,
-  onPress,
-  accessibilityRole,
-  children,
-}: MarkdownInheritedTextProps) {
-  const style = useMemo(
-    () => [inheritedStyles, textStyle, overrideStyle],
-    [inheritedStyles, textStyle, overrideStyle],
-  );
-  return (
-    <MarkdownTextSpan
-      monoSurface={monoSurface}
-      onPress={onPress}
-      accessibilityRole={accessibilityRole}
-      style={style}
-    >
-      {children}
-    </MarkdownTextSpan>
-  );
-}
-
-interface MarkdownListItemContentProps {
-  contentStyle: ViewStyle;
-  children: ReactNode;
-}
-
-function MarkdownListItemContent({ contentStyle, children }: MarkdownListItemContentProps) {
-  const style = useMemo(() => [contentStyle, MARKDOWN_LIST_ITEM_CONTENT_FLEX], [contentStyle]);
-  return <View style={style}>{children}</View>;
-}
-
-interface MarkdownListViewProps {
-  baseStyle: ViewStyle;
-  spacing: { marginTop: number; marginBottom: number };
-  children: ReactNode;
-}
-
-function MarkdownListView({ baseStyle, spacing, children }: MarkdownListViewProps) {
-  const style = useMemo(() => [baseStyle, spacing], [baseStyle, spacing]);
-  return <View style={style}>{children}</View>;
-}
-
-interface SharedMarkdownLinkProps {
-  href: string;
-  inheritedStyles: TextStyle;
-  linkStyle: TextStyle;
-  onLinkPress?: (url: string) => boolean;
-  children: ReactNode;
-}
-
-function SharedMarkdownLink({
-  href,
-  inheritedStyles,
-  linkStyle,
-  onLinkPress,
-  children,
-}: SharedMarkdownLinkProps) {
-  const handlePress = useCallback(() => {
-    if (!href) return;
-    if (onLinkPress?.(href) === false) return;
-    void openExternalUrl(href);
-  }, [href, onLinkPress]);
-  const style = useMemo(() => [inheritedStyles, linkStyle], [inheritedStyles, linkStyle]);
-
-  if (!isNative) {
-    return (
-      <MarkdownLinkText style={style} onPress={handlePress}>
-        {children}
-      </MarkdownLinkText>
-    );
-  }
-
-  return (
-    <MarkdownInheritedText
-      inheritedStyles={inheritedStyles}
-      textStyle={linkStyle}
-      accessibilityRole="link"
-      onPress={handlePress}
-    >
-      {children}
-    </MarkdownInheritedText>
-  );
-}
-
-function getMarkdownLinkHref(node: ASTNode): string {
-  const href = node.attributes?.href;
-  return typeof href === "string" ? href : "";
-}
-
-export function createSharedMarkdownRules(): RenderRules {
-  return {
-    text: (
-      node: ASTNode,
-      _children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownStyles,
-      inheritedStyles: TextStyle = {},
-    ) => (
-      <MarkdownInheritedText
-        key={node.key}
-        inheritedStyles={inheritedStyles}
-        textStyle={styles.text}
-      >
-        {node.content}
-      </MarkdownInheritedText>
-    ),
-    textgroup: (
-      node: ASTNode,
-      children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownStyles,
-      inheritedStyles: TextStyle = {},
-    ) => (
-      <MarkdownInheritedText
-        key={node.key}
-        inheritedStyles={inheritedStyles}
-        textStyle={styles.textgroup}
-      >
-        {children}
-      </MarkdownInheritedText>
-    ),
-    strong: (
-      node: ASTNode,
-      children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownStyles,
-      inheritedStyles: TextStyle = {},
-    ) => (
-      <MarkdownInheritedText
-        key={node.key}
-        inheritedStyles={inheritedStyles}
-        textStyle={styles.strong}
-      >
-        {children}
-      </MarkdownInheritedText>
-    ),
-    em: (
-      node: ASTNode,
-      children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownStyles,
-      inheritedStyles: TextStyle = {},
-    ) => (
-      <MarkdownInheritedText key={node.key} inheritedStyles={inheritedStyles} textStyle={styles.em}>
-        {children}
-      </MarkdownInheritedText>
-    ),
-    s: (
-      node: ASTNode,
-      children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownStyles,
-      inheritedStyles: TextStyle = {},
-    ) => (
-      <MarkdownInheritedText key={node.key} inheritedStyles={inheritedStyles} textStyle={styles.s}>
-        {children}
-      </MarkdownInheritedText>
-    ),
-    hardbreak: (
-      node: ASTNode,
-      _children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownStyles,
-    ) => (
-      <MarkdownTextSpan key={node.key} style={styles.hardbreak}>
-        {"\n"}
-      </MarkdownTextSpan>
-    ),
-    softbreak: (
-      node: ASTNode,
-      _children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownStyles,
-    ) => (
-      <MarkdownTextSpan key={node.key} style={styles.softbreak}>
-        {"\n"}
-      </MarkdownTextSpan>
-    ),
-    code_block: (
-      node: ASTNode,
-      _children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownStyles,
-      inheritedStyles: TextStyle = {},
-    ) => (
-      <HighlightedCodeBlock
-        key={node.key}
-        code={node.content}
-        language={null}
-        inheritedStyles={inheritedStyles}
-        textStyle={styles.code_block}
-      />
-    ),
-    fence: (
-      node: ASTNode,
-      _children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownStyles,
-      inheritedStyles: TextStyle = {},
-    ) => (
-      <MarkdownFenceBlock
-        key={node.key}
-        code={node.content}
-        info={node.sourceInfo}
-        phase="complete"
-        inheritedStyles={inheritedStyles}
-        textStyle={styles.fence}
-      />
-    ),
-    code_inline: (
-      node: ASTNode,
-      _children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownStyles,
-      inheritedStyles: TextStyle = {},
-    ) => (
-      <MarkdownInheritedText
-        key={node.key}
-        inheritedStyles={inheritedStyles}
-        textStyle={styles.code_inline}
-        monoSurface
-      >
-        {node.content ?? ""}
-      </MarkdownInheritedText>
-    ),
-    bullet_list: (
-      node: ASTNode,
-      children: ReactNode[],
-      parent: ASTNode[],
-      styles: MarkdownStyles,
-    ) => (
-      <MarkdownListView
-        key={node.key}
-        baseStyle={styles.bullet_list}
-        spacing={getMarkdownListSpacing(node, parent)}
-      >
-        {children}
-      </MarkdownListView>
-    ),
-    ordered_list: (
-      node: ASTNode,
-      children: ReactNode[],
-      parent: ASTNode[],
-      styles: MarkdownStyles,
-    ) => (
-      <MarkdownListView
-        key={node.key}
-        baseStyle={styles.ordered_list}
-        spacing={getMarkdownListSpacing(node, parent)}
-      >
-        {children}
-      </MarkdownListView>
-    ),
-    list_item: (
-      node: ASTNode,
-      children: ReactNode[],
-      parent: ASTNode[],
-      styles: MarkdownStyles,
-    ) => {
-      const { isOrdered, marker } = getMarkdownListMarker(node, parent);
-      const iconStyle = isOrdered ? styles.ordered_list_icon : styles.bullet_list_icon;
-      const contentStyle = isOrdered ? styles.ordered_list_content : styles.bullet_list_content;
-
-      return (
-        <View key={node.key} style={styles.list_item}>
-          <Text style={iconStyle}>{marker}</Text>
-          <MarkdownListItemContent contentStyle={contentStyle}>{children}</MarkdownListItemContent>
-        </View>
-      );
-    },
-    th: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
-      <MarkdownTableCellText key={node.key}>
-        <View style={styles._VIEW_SAFE_th}>{children}</View>
-      </MarkdownTableCellText>
-    ),
-    td: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
-      <MarkdownTableCellText key={node.key}>
-        <View style={styles._VIEW_SAFE_td}>{children}</View>
-      </MarkdownTableCellText>
-    ),
-    paragraph: (
-      node: ASTNode,
-      children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownStyles,
-    ) => (
-      <MarkdownParagraphView
-        key={node.key}
-        paragraphStyle={styles.paragraph}
-        containsImage={markdownNodeContainsType(node, "image")}
-      >
-        {children}
-      </MarkdownParagraphView>
-    ),
-    link: (
-      node: ASTNode,
-      children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownStyles,
-      onLinkPress?: (url: string) => boolean,
-    ) => (
-      <SharedMarkdownLink
-        key={node.key}
-        href={getMarkdownLinkHref(node)}
-        inheritedStyles={EMPTY_TEXT_STYLE}
-        linkStyle={styles.link}
-        onLinkPress={onLinkPress}
-      >
-        {colorMarkdownLinkChildren(children, styles.link.color)}
-      </SharedMarkdownLink>
-    ),
-  };
-}
-
-const detailsStyles = StyleSheet.create((theme) => ({
-  container: {
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: theme.borderRadius.md,
-    marginBottom: theme.spacing[2],
-    overflow: "hidden",
-  },
-  summaryRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: theme.spacing[2],
-    backgroundColor: theme.colors.surface2,
-  },
-  summaryIcon: {
-    color: theme.colors.foregroundMuted,
-  },
-  summaryText: {
-    flex: 1,
-    minWidth: 0,
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.normal,
-    lineHeight: 18,
-  },
-  body: {
-    paddingHorizontal: theme.spacing[2],
-    paddingTop: theme.spacing[2],
-  },
-  inlineImageWrap: {
-    alignSelf: "flex-start",
-    marginBottom: theme.spacing[1],
-  },
-  inlineImage: {},
-  imageTextRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: theme.spacing[2],
-    marginBottom: theme.spacing[3],
-  },
-  imageTextRowContent: {
-    flex: 1,
-    minWidth: 0,
-  },
-  flowImage: {
-    marginTop: 2,
-  },
-  flowImageFallback: {
-    marginTop: 2,
-    paddingHorizontal: theme.spacing[1],
-    borderRadius: theme.borderRadius.sm,
-    backgroundColor: theme.colors.surface2,
-  },
-  flowImageFallbackText: {
-    fontSize: 10,
-    lineHeight: 14,
-    color: theme.colors.foregroundMuted,
-  },
-}));
+});
