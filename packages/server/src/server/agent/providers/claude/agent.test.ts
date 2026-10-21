@@ -141,6 +141,39 @@ describe("convertClaudeHistoryEntry", () => {
     ]);
   });
 
+  test("ignores Claude Code request-journal records that carry a message", () => {
+    // Claude Code 2.1.x journals each API request into the transcript. These records carry a
+    // message with a role and content, but they are copies of the request, not conversation turns.
+    const entries = [
+      {
+        type: "api-request-blob",
+        message: {
+          role: "system",
+          content: [
+            { type: "text", text: "SessionStart:startup hook success: hook output" },
+            { type: "tool_addition", name: "Read" },
+          ],
+        },
+      },
+      {
+        type: "api-request-blob",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "<system-reminder>skills list</system-reminder>" }],
+        },
+      },
+    ];
+    const leakedTimeline: AgentTimelineItem[] = [
+      { type: "assistant_message", text: "SessionStart:startup hook success: hook output" },
+    ];
+    const mapBlocks = vi.fn().mockReturnValue(leakedTimeline);
+
+    for (const entry of entries) {
+      expect(convertClaudeHistoryEntry(entry, mapBlocks)).toEqual([]);
+    }
+    expect(mapBlocks).not.toHaveBeenCalled();
+  });
+
   test("converts compact boundary metadata variants", () => {
     const fixtures = [
       {
