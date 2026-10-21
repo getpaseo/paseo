@@ -1398,6 +1398,92 @@ const x = 1;
     expect(diff.structured).toEqual([]);
   });
 
+  it.each([
+    { contents: "hello\n", expectedFiles: [], patch: "" },
+    {
+      contents: "restored\n",
+      expectedFiles: [
+        { path: "file.txt", isNew: false, isDeleted: false, additions: 1, deletions: 1 },
+      ],
+      patch: "-hello\n+restored\n",
+    },
+  ])(
+    "compares restored untracked base files against disk: $contents",
+    async ({ contents, expectedFiles, patch }) => {
+      execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+      execFileSync("git", ["rm", "file.txt"], { cwd: repoDir });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "delete"], {
+        cwd: repoDir,
+      });
+      writeFileSync(join(repoDir, "file.txt"), contents);
+      const indexPath = execFileSync("git", ["rev-parse", "--git-path", "index"], {
+        cwd: repoDir,
+        encoding: "utf8",
+      }).trim();
+      const beforeIndex = readFileSync(join(repoDir, indexPath));
+      const beforeStatus = execFileSync("git", ["status", "--porcelain=v1", "-z"], {
+        cwd: repoDir,
+      });
+      const result = await getCheckoutDiff(repoDir, {
+        mode: "all",
+        baseRef: "main",
+        includeStructured: true,
+      });
+      expect(
+        result.structured?.map(({ path, isNew, isDeleted, additions, deletions }) => ({
+          path,
+          isNew,
+          isDeleted,
+          additions,
+          deletions,
+        })),
+      ).toEqual(expectedFiles);
+      expect(result.diff).toContain(patch);
+      expect(result.diff.length === 0).toBe(expectedFiles.length === 0);
+      expect(readFileSync(join(repoDir, indexPath))).toEqual(beforeIndex);
+      expect(execFileSync("git", ["status", "--porcelain=v1", "-z"], { cwd: repoDir })).toEqual(
+        beforeStatus,
+      );
+      expect(readFileSync(join(repoDir, "file.txt"), "utf8")).toBe(contents);
+      expect((await getCheckoutDiff(repoDir, { mode: "base", baseRef: "main" })).diff).toContain(
+        "deleted file mode",
+      );
+      expect((await getCheckoutDiff(repoDir, { mode: "uncommitted" })).diff).toContain(
+        "new file mode",
+      );
+    },
+  );
+
+  it("compares all changes as one net patch including untracked files", async () => {
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    writeFileSync(join(repoDir, "file.txt"), "committed\n");
+    execFileSync("git", ["add", "."], { cwd: repoDir });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "feature"], {
+      cwd: repoDir,
+    });
+    writeFileSync(join(repoDir, "file.txt"), "working\n");
+    writeFileSync(join(repoDir, "new.txt"), "untracked\n");
+    const compare = { mode: "all", baseRef: "main", includeStructured: true } as const;
+    const before = await getCheckoutDiff(repoDir, compare);
+    expect(before.structured?.map((file) => file.path)).toEqual(["file.txt", "new.txt"]);
+    expect(before.diff).toContain("-hello\n+working\n");
+    expect(before.diff).not.toContain("committed");
+    expect(before.diff).toContain("+untracked");
+    const committed = await getCheckoutDiff(repoDir, { ...compare, mode: "base" });
+    expect(committed.diff).toContain("-hello\n+committed\n");
+    const uncommitted = await getCheckoutDiff(repoDir, { ...compare, mode: "uncommitted" });
+    expect(uncommitted.diff).toContain("-committed\n+working\n");
+    execFileSync("git", ["add", "."], { cwd: repoDir });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "working"], {
+      cwd: repoDir,
+    });
+    expect((await getCheckoutDiff(repoDir, compare)).diff).toBe(before.diff);
+    writeFileSync(join(repoDir, "file.txt"), "hello\n");
+    expect((await getCheckoutDiff(repoDir, compare)).structured?.map((file) => file.path)).toEqual([
+      "new.txt",
+    ]);
+  });
+
   it("falls back to the local base branch when origin is absent", async () => {
     execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
     writeFileSync(join(repoDir, "local-feature.txt"), "feature\n");

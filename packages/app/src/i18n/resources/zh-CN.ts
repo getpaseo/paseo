@@ -948,6 +948,7 @@ export const zhCN: TranslationResources = {
         checkingRepository: "正在检查 repository...",
         notRepository: "不是 git repository",
         diffMode: "Diff 模式",
+        all: "全部更改",
         uncommitted: "未 commit",
         committed: "已 commit",
         branchUnknown: "未知",

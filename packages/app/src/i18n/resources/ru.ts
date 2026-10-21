@@ -973,6 +973,7 @@ export const ru: TranslationResources = {
         checkingRepository: "Проверяем репозиторий...",
         notRepository: "Это не репозиторий Git",
         diffMode: "Режим диффа",
+        all: "Все изменения",
         uncommitted: "Незафиксированные изменения",
         committed: "Зафиксированные изменения",
         branchUnknown: "Неизвестная ветка",

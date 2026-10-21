@@ -1168,7 +1168,7 @@ export const ReviewAttachmentSchema = z.object({
   type: z.literal("review"),
   mimeType: z.literal("application/paseo-review"),
   cwd: z.string(),
-  mode: z.enum(["uncommitted", "base"]),
+  mode: z.enum(["uncommitted", "base", "all"]),
   baseRef: z.string().nullable().optional(),
   comments: z.array(ReviewAttachmentCommentSchema),
 });
@@ -2199,7 +2199,7 @@ const CheckoutErrorSchema = z.object({
 });
 
 const CheckoutDiffCompareSchema = z.object({
-  mode: z.enum(["uncommitted", "base"]),
+  mode: z.enum(["uncommitted", "base", "all"]),
   baseRef: z.string().optional(),
   ignoreWhitespace: z.boolean().optional(),
 });
@@ -3790,6 +3790,7 @@ export const ServerInfoStatusPayloadSchema = z
         fsEntryDuplicate: z.boolean().optional(),
         // COMPAT(checkoutDiscardChanges): added in v0.3.0, remove gate after 2027-02-08.
         checkoutDiscardChanges: z.boolean().optional(),
+        checkoutDiffAll: z.boolean().optional(),
         // COMPAT(agentProfiles): added in v0.3.2, remove gate after 2027-02-11.
         // An older daemon parses its persisted config strictly, so writing
         // agentProfiles to one is silently dropped. The client hides the feature
