@@ -113,20 +113,27 @@ pill.remove();
 
 ## 4. 拆分导入 {#4-separate-imports}
 
-把 hook（`usePaseo`、`useRpc`、`useSettings`、`useAgent`、`useWorkspace`）和客户端贡献类型从 `@getpaseo/plugin` 移到 `@getpaseo/plugin/client`。把 `Icon` 移到 `@getpaseo/plugin/client/react-native`。从 `@getpaseo/plugin/server` 导入服务端 context 和生命周期契约。共享的辅助函数（`defineRpc`、`defineSettings`、`defineAttachmentSource`）、schema 和普通数据类型保留在根入口。这些规则同样适用于类型导入。完整的契约见[运行时模块](reference#runtime-modules)。
+把 hook（`usePaseo`、`useRpc`、`useSettings`、`useAgent`、`useWorkspace`）和客户端贡献类型从 `@getpaseo/plugin` 移到 `@getpaseo/plugin/client`。把 `Icon` 移到 `@getpaseo/plugin/client/ui`。从 `@getpaseo/plugin/server` 导入服务端 context 和生命周期契约。共享的辅助函数（`defineRpc`、`defineSettings`、`defineAttachmentSource`）、schema 和普通数据类型保留在根入口。这些规则同样适用于类型导入。完整的契约见[运行时模块](reference#runtime-modules)。
 
 把其余的 SDK 子路径移到它们所属的运行时下：
 
-| 旧入口                          | 0.8 入口                               |
-| ------------------------------- | -------------------------------------- |
-| `@getpaseo/plugin/react-native` | `@getpaseo/plugin/client/react-native` |
-| `@getpaseo/plugin/ui`           | `@getpaseo/plugin/client/ui`           |
-| `@getpaseo/plugin/provider`     | `@getpaseo/plugin/server/provider`     |
-| `@getpaseo/plugin/acp`          | `@getpaseo/plugin/server/acp`          |
+| 旧入口                                 | 当前入口                           |
+| -------------------------------------- | ---------------------------------- |
+| `@getpaseo/plugin/react-native`        | `@getpaseo/plugin/client/ui`       |
+| `@getpaseo/plugin/client/react-native` | `@getpaseo/plugin/client/ui`       |
+| `@getpaseo/plugin/ui`                  | `@getpaseo/plugin/client/ui`       |
+| `@getpaseo/plugin/provider`            | `@getpaseo/plugin/server/provider` |
+| `@getpaseo/plugin/acp`                 | `@getpaseo/plugin/server/acp`      |
 
-旧入口和 0.8 之前的 `@paseo/plugin` scope 已被移除。`/client/host` 是 Paseo 应用集成的私有模块，插件作者从不导入它。
+0.8 之前的入口和旧的 `@paseo/plugin` scope 已被移除。`/client/host` 是 Paseo 应用集成的私有模块，插件作者从不导入它。
 
 客户端入口只导入 `client/`、`shared/` 和可在客户端安全使用的包。服务端入口只导入 `server/`、`shared/` 和可在服务端安全使用的包。在客户端入口或从它可达的任何代码中导入 `node:` 模块都会导致编译错误。不要仅仅为了接线注册而把组件导入服务端入口；那项注册属于客户端入口。
+
+### v0.13 中的 UI 导入 {#ui-imports-in-v013}
+
+所有 Paseo UI 组件和 UI hook 都从 `/client/ui` 导入。之前的入口作为未写入文档的兼容别名保留到 2027-04-20。
+
+对于逐步显示的时间线文本，把 `useRevealedText(text, phase)` 及其外层的 `Text` 换成 `/client/ui` 中的 `<StreamedText text={text} phase={phase} style={style} />`。插件设置的标题使用 `SettingsSection`；`SettingsGroup` 已弃用。
 
 ## 5. 识别只迁移了一半的错误 {#5-recognize-half-migration-errors}
 

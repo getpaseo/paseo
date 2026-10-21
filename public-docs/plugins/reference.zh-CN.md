@@ -109,23 +109,22 @@ daemon 会在安装、运行准备命令或加载插件之前检查自己的版�
 
 Paseo 从对应的入口构建每个包。把 `client/` 导入 daemon 的包、把 `server/` 导入应用的包，或在应用的包中任何位置导入 Node 模块，都会导致编译错误。服务端导入 React、React Native 或客户端 SDK 入口也会失败。共享代码只能导入共享代码：不能导入 Node、React、特定运行时的 SDK 入口或特定运行时的类型。
 
-SDK 根入口（`@getpaseo/plugin`）只包含共享数据、schema 和与运行时无关的辅助函数。从 `/client` 导入客户端 context 和 hook，从 `/server` 导入服务端 context 和生命周期契约，从 `/client/react-native` 或 `/client/ui` 导入 UI。这些规则同样适用于类型导入和传递依赖。`/client/host` 是应用宿主的私有模块；插件不能导入它。
+SDK 根入口（`@getpaseo/plugin`）只包含共享数据、schema 和与运行时无关的辅助函数。从 `/client` 导入客户端 context 和 hook，从 `/server` 导入服务端 context 和生命周期契约，从 `/client/ui` 导入 UI。这些规则同样适用于类型导入和传递依赖。`/client/host` 是应用宿主的私有模块；插件不能导入它。
 
 ### 客户端运行时 {#client-runtime}
 
 Paseo 为客户端代码提供以下模块：
 
-| 模块                                   | 用于                                                                                         |
-| -------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `@getpaseo/plugin`                     | 共享数据、`defineRpc`、`defineSettings`、`defineAttachmentSource`、`RpcInput` 和 `RpcOutput` |
-| `@getpaseo/plugin/client/ui`           | 具名的、可组合的设置组件                                                                     |
-| `@getpaseo/plugin/client/react-native` | Paseo UI 组件和 UI hook                                                                      |
-| `@getpaseo/plugin/client`              | 客户端贡献 context、`usePaseo`、`useRpc`、`useSettings` 和数据 hook                          |
-| `@tanstack/react-query`                | 请求状态和缓存                                                                               |
-| `react`                                | 组件和 hook                                                                                  |
-| `react/jsx-runtime`                    | 编译后的 JSX                                                                                 |
-| `react-native`                         | 跨平台 UI                                                                                    |
-| `zod`                                  | 共享 schema                                                                                  |
+| 模块                         | 用于                                                                                         |
+| ---------------------------- | -------------------------------------------------------------------------------------------- |
+| `@getpaseo/plugin`           | 共享数据、`defineRpc`、`defineSettings`、`defineAttachmentSource`、`RpcInput` 和 `RpcOutput` |
+| `@getpaseo/plugin/client/ui` | Paseo UI 组件和 UI hook                                                                      |
+| `@getpaseo/plugin/client`    | 客户端贡献 context、`usePaseo`、`useRpc`、`useSettings` 和数据 hook                          |
+| `@tanstack/react-query`      | 请求状态和缓存                                                                               |
+| `react`                      | 组件和 hook                                                                                  |
+| `react/jsx-runtime`          | 编译后的 JSX                                                                                 |
+| `react-native`               | 跨平台 UI                                                                                    |
+| `zod`                        | 共享 schema                                                                                  |
 
 宿主拥有与之配套的 React 和渲染器版本。SDK 的 React peer 范围允许补丁版本差异，以便工具链和 Node 使用者使用；它不会改变应用固定的 React 版本，也不保证与其他宿主的渲染器兼容。
 
@@ -925,11 +924,11 @@ function hideAlerts() {
 
 ## 宿主 UI {#host-ui}
 
-在客户端代码中从 `@getpaseo/plugin/client/react-native` 导入由 Paseo 提供的 UI。下面的示例会打开一个受控的弹窗、渲染一个宿主图标，并用 toast 确认操作：
+在客户端代码中从 `@getpaseo/plugin/client/ui` 导入由 Paseo 提供的 UI。下面的示例会打开一个受控的弹窗、渲染一个宿主图标，并用 toast 确认操作：
 
 ```tsx
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
-import { Icon, Modal, useToast } from "@getpaseo/plugin/client/react-native";
+import { Icon, Modal, useToast } from "@getpaseo/plugin/client/ui";
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 
@@ -999,14 +998,14 @@ export function IssueActions({ theme }: PluginSurfaceProps) {
 
 ### 滚动 {#scrolling}
 
-当内容可能出现在 Paseo 弹窗中时，请从 `@getpaseo/plugin/client/react-native` 导入 `ScrollView` 和 `FlatList`。它们接受 React Native 的属性和 ref，并与底部面板的手势集成。在底部面板之外，它们使用普通的 React Native 滚动。不要直接导入底部面板库。
+当内容可能出现在 Paseo 弹窗中时，请从 `@getpaseo/plugin/client/ui` 导入 `ScrollView` 和 `FlatList`。它们接受 React Native 的属性和 ref，并与底部面板的手势集成。在底部面板之外，它们使用普通的 React Native 滚动。不要直接导入底部面板库。
 
 只使用一个垂直滚动的所有者：要么是默认的弹窗主体，要么是你自己的、配合 `scrollable={false}` 使用的列表。在默认可滚动主体中嵌套一个固定高度的垂直列表，可能会在 Android 上与底部面板争夺手势。水平滚动可以与宿主的垂直主体共存。
 
 默认主体和 SDK 列表都共享原生底部面板的手势：先向上拖动展开，再开始滚动；在列表顶部向下拖动会收起或关闭面板。`scrollable={false}` 会移除宿主的滚动容器，但不会改变这些手势。在使用 `scrollToEnd` 等列表方法之前，请先展开底部面板；在面板达到最大高度之前，它会锁定列表的偏移量。
 
 ```tsx
-import { FlatList, Modal } from "@getpaseo/plugin/client/react-native";
+import { FlatList, Modal } from "@getpaseo/plugin/client/ui";
 import { Text } from "react-native";
 
 // Inside your controlled Modal:
@@ -1033,7 +1032,7 @@ import { Text } from "react-native";
 `copyText(text): Promise<void>` 写入运行应用的设备的剪贴板。请在用户操作中调用它，并在报告成功之前 await 它。如果平台拒绝复制或剪贴板不可用，它会 reject；浏览器权限和安全上下文要求仍然适用。
 
 ```tsx
-import { copyText, useToast } from "@getpaseo/plugin/client/react-native";
+import { copyText, useToast } from "@getpaseo/plugin/client/ui";
 
 // Inside your component:
 const toast = useToast();
@@ -1047,7 +1046,7 @@ async function copyResult() {
 }
 ```
 
-以编程方式复制和原生文本选择是两种不同的交互。使用 `<Text selectable>` 支持长按选择和系统的复制。弹窗表单请从 `@getpaseo/plugin/client/react-native` 导入 `TextInput`。它接受 React Native 的输入属性和 ref，支持系统粘贴，并向原生底部面板注册焦点，以便键盘能把表单顶上来。在底部面板之外，它使用普通的输入框。普通的 React Native 输入框也支持粘贴，但不会向底部面板注册焦点；键盘可能会遮住它。系统粘贴不需要任何读取剪贴板的 API。不要在原生插件中使用 DOM 剪贴板代码，也不要使用 `react-native` 中已弃用的 `Clipboard` 导出。
+以编程方式复制和原生文本选择是两种不同的交互。使用 `<Text selectable>` 支持长按选择和系统的复制。弹窗表单请从 `@getpaseo/plugin/client/ui` 导入 `TextInput`。它接受 React Native 的输入属性和 ref，支持系统粘贴，并向原生底部面板注册焦点，以便键盘能把表单顶上来。在底部面板之外，它使用普通的输入框。普通的 React Native 输入框也支持粘贴，但不会向底部面板注册焦点；键盘可能会遮住它。系统粘贴不需要任何读取剪贴板的 API。不要在原生插件中使用 DOM 剪贴板代码，也不要使用 `react-native` 中已弃用的 `Clipboard` 导出。
 
 可运行的[弹窗 UI 示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/modal-ui)包含一个带内边距的表单、全宽的行、一个虚拟化列表、水平标签页和一个支持复制/粘贴的输入框。
 
@@ -1130,7 +1129,7 @@ client.addWorkspacePanel({ id: "review", title: "Review", icon: { svg: reviewIco
 
 #### 渲染图标 {#render-an-icon}
 
-`@getpaseo/plugin/client/react-native` 中的 `Icon` 用于在你自己的 UI 中绘制图标。插件包不导入 `lucide-react-native` 或 `react-native-svg`。
+`@getpaseo/plugin/client/ui` 中的 `Icon` 用于在你自己的 UI 中绘制图标。插件包不导入 `lucide-react-native` 或 `react-native-svg`。
 
 | 属性    | 类型         | 是否必填                | 行为                                                       |
 | ------- | ------------ | ----------------------- | ---------------------------------------------------------- |
@@ -1185,7 +1184,7 @@ export default function contribute(client: PluginClientContext) {
 
 `query.itemType` 是稳定的、粗粒度的选择器。请在 `transform` 中检查所选的条目，以识别特定的 Provider 或工具。返回 `undefined` 会保留原条目。返回 `items` 会替换它；空数组会移除它。条目的 `data` 必须兼容 JSON。对于实时的助手消息、运行中的工具调用和加载中的推理，`phase` 输入为 `"streaming"`；对于已提交或已获取的消息以及已完成的工具或推理，它为 `"complete"`。助手和推理回调在每次更新时都会收到完整的累计文本，包括段落分隔符。Paseo 会在拆分原生 Markdown 或在 Overview 中对工具分组之前调用转换器。被认领的助手消息在整个流式过程中始终是同一个来源条目；如果最初的文本不足以识别它，请在可以识别之前返回 `undefined`。每个替换项都可以设置一个可选的、插件内部的 `id`；否则 Paseo 使用它在该来源条目输出中的索引。
 
-渲染器接收 `agentId`、`item`、`timestamp`、`theme`、`host` 和 `layout`。Paseo 在渲染之前用注册的 schema 校验 `item.data`。请让转换器保持同步且确定。Paseo 按来源条目的引用缓存结果，并从来源行推导替换项的标识，因此对某个流式条目的更新不会重新挂载它的渲染器。当渲染器需要像 Paseo 内置的助手行那样逐步显示流式文本时，请使用导出的 `useRevealedText(text, phase)` hook。
+渲染器接收 `agentId`、`item`、`timestamp`、`theme`、`host` 和 `layout`。Paseo 在渲染之前用注册的 schema 校验 `item.data`。请让转换器保持同步且确定。Paseo 按来源条目的引用缓存结果，并从来源行推导替换项的标识，因此对某个流式条目的更新不会重新挂载它的渲染器。要让纯文本像 Paseo 的助手行那样逐步显示，请渲染 `@getpaseo/plugin/client/ui` 中的 `<StreamedText text={item.data.text} phase={item.data.phase} />`。它接受 React Native `Text` 的属性（包括 `style`），默认使用助手消息的字体排版和前景色。完成后会立即显示全文；流式输出期间由宿主控制显示节奏。需要 Paseo 0.13 或更高版本。
 
 当查询同时匹配原始消息时，聊天查找（Ctrl 或 Cmd+F）会在替换行中查找并高亮文本。宿主会在原始提示词文本或去掉 Markdown 语法的助手回复中搜索，然后由应用在你的渲染器绘制的文本中统计匹配。只由你的渲染器添加的文本不会被单独索引。匹配不会跨越渲染出的块，查找会跳过按钮、图标以及任何带有 `aria-hidden="true"` 的内容。查找只在 Web 和桌面应用中可用。
 
@@ -1317,15 +1316,15 @@ export function DisplaySettings() {
 }
 ```
 
-| 组件                               | 属性与行为                                                                                                                   |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `SettingsGroup`, `SettingsSection` | 必填 `title`、`children`；可选 `info` 提示、`trailing` 内容、`testID`。负责分区的间距和标题。                                |
-| `SettingsCard`                     | `children`，可选 `testID`。负责卡片表面以及直接子元素之间的分隔线。请为映射生成的行提供稳定的 React key。                    |
-| `SettingsRow`                      | 必填 `label`；可选 `hint`、`error`、`children`、`testID`。用于包裹任何自定义控件或内容。                                     |
-| `SettingsSwitch`                   | 行属性，外加必填的 `value: boolean`、`onValueChange`；可选 `disabled`。                                                      |
-| `SettingsSelect`                   | 行属性，外加必填的字符串 `value`、`options: { label, value }[]`、`onValueChange`；可选 `disabled`。使用 Paseo 的自适应菜单。 |
-| `SettingsInput`                    | 行属性，外加必填的 `onChangeText`；可选 `initialValue`、`placeholder`、`disabled`、`secureTextEntry`、`ref`。                |
-| `SettingsAction`                   | 行属性，外加必填的 `actionLabel`、`onPress`；可选 `disabled`。                                                               |
+| 组件              | 属性与行为                                                                                                                   |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `SettingsSection` | 必填 `title`、`children`；可选 `info` 提示、`trailing` 内容、`testID`。负责分区的间距和标题。                                |
+| `SettingsCard`    | `children`，可选 `testID`。负责卡片表面以及直接子元素之间的分隔线。请为映射生成的行提供稳定的 React key。                    |
+| `SettingsRow`     | 必填 `label`；可选 `hint`、`error`、`children`、`testID`。用于包裹任何自定义控件或内容。                                     |
+| `SettingsSwitch`  | 行属性，外加必填的 `value: boolean`、`onValueChange`；可选 `disabled`。                                                      |
+| `SettingsSelect`  | 行属性，外加必填的字符串 `value`、`options: { label, value }[]`、`onValueChange`；可选 `disabled`。使用 Paseo 的自适应菜单。 |
+| `SettingsInput`   | 行属性，外加必填的 `onChangeText`；可选 `initialValue`、`placeholder`、`disabled`、`secureTextEntry`、`ref`。                |
+| `SettingsAction`  | 行属性，外加必填的 `actionLabel`、`onPress`；可选 `disabled`。                                                               |
 
 `SettingsInput` 负责正在编辑中的文本。`initialValue` 在挂载时为它提供初始值。它的 ref 提供 `focus()`、`blur()`、`getText()` 和 `replaceText(text)`，用于显式的编程式修改。在用户保存之前，请把草稿文本保留在持久化值之外。自定义的预览和控件可以放在这些组件旁边或内部。
 
