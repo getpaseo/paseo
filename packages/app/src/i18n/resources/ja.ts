@@ -1904,6 +1904,10 @@ export const ja: TranslationResources = {
     dontAskAgain: "次回から確認しない",
   },
   downloads: {
+    saveFailed: "ファイルを保存できませんでした。保存先を確認して、もう一度お試しください。",
+    saveToDevice: "デバイスに保存",
+    finishing: "ダウンロードを完了しています…",
+    sharingUnavailable: "このデバイスではファイルを共有できません。",
     requestTokenFailed: "ダウンロードトークンのリクエストに失敗しました。",
     hostUnavailable: "ダウンロードホストが利用できません。",
     cancelled: "ダウンロードがキャンセルされました。",

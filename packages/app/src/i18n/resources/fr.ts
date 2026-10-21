@@ -1930,6 +1930,10 @@ export const fr: TranslationResources = {
     dontAskAgain: "Ne plus demander",
   },
   downloads: {
+    saveFailed: "Impossible d’enregistrer le fichier. Vérifiez la destination et réessayez.",
+    saveToDevice: "Enregistrer sur l’appareil",
+    finishing: "Finalisation du téléchargement…",
+    sharingUnavailable: "Le partage de fichiers n’est pas disponible sur cet appareil.",
     requestTokenFailed: "Impossible d’obtenir le token de téléchargement.",
     hostUnavailable: "L’hôte de téléchargement est indisponible.",
     cancelled: "Téléchargement annulé.",

@@ -1910,6 +1910,10 @@ export const en = {
     dontAskAgain: "Don't ask again",
   },
   downloads: {
+    saveFailed: "Could not save the file. Check the destination and try again.",
+    saveToDevice: "Save to device",
+    finishing: "Finishing download…",
+    sharingUnavailable: "File sharing is unavailable on this device.",
     requestTokenFailed: "Failed to request download token.",
     hostUnavailable: "Download host is unavailable.",
     cancelled: "Download was cancelled.",
