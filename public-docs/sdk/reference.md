@@ -59,6 +59,8 @@ Create a new client after `close()`.
 
 Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `outputSchema`, `images`, `attachments`, `git`, `worktree`, `autoArchive`, `background`, and `labels`.
 
+`parent` accepts a host-local agent ID, an `AgentAddress` (`{ serverId, agentId }`), or an agent handle. A handle’s `address` keeps its host identity after disconnect. When creating through `hosts.client(serverId)`, pass the parent handle or complete address; the SDK carries parent metadata to the destination.
+
 `background` is workspace creation intent. It cannot accompany an existing `workspaceId`.
 See [background workspaces](./workspaces.md) for caller inheritance and inclusive discovery.
 
@@ -80,6 +82,7 @@ See [background workspaces](./workspaces.md) for caller inheritance and inclusiv
 | Member                         | Result                            | Behavior                                                                                                |
 | ------------------------------ | --------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | `id`                           | `string`                          | Stable daemon agent ID.                                                                                 |
+| `address`                      | `AgentAddress`                    | Complete `{ serverId, agentId }` identity; requires a connected host to establish it.                   |
 | `workspaceId`                  | `string \| null`                  | Current workspace placement.                                                                            |
 | `cwd`                          | `string \| null`                  | Current working directory.                                                                              |
 | `status`                       | Agent status or `null`            | Current lifecycle status.                                                                               |

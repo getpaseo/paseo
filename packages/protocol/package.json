@@ -12,6 +12,10 @@
     "./*": {
       "types": "./dist/*.d.ts",
       "default": "./dist/*.js"
+    },
+    "./addresses": {
+      "types": "./dist/addresses.d.ts",
+      "default": "./dist/addresses.js"
     }
   },
   "publishConfig": {

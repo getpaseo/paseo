@@ -1,3 +1,7 @@
+import { z } from "zod";
+import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { afterEach, expect, test } from "vitest";
 import { createPaseoApi } from "@getpaseo/client";
 import { createHostClient, createHostChannelTransport } from "@getpaseo/client/node";
@@ -8,8 +12,10 @@ const cleanup: (() => Promise<unknown>)[] = [];
 afterEach(async () => {
   for (const close of cleanup.splice(0).toReversed()) await close();
 });
-async function daemon(): Promise<TestPaseoDaemon> {
-  const instance = await createTestPaseoDaemon();
+async function daemon(
+  options: Parameters<typeof createTestPaseoDaemon>[0] = {},
+): Promise<TestPaseoDaemon> {
+  const instance = await createTestPaseoDaemon(options);
   cleanup.push(() => instance.close());
   return instance;
 }
@@ -1302,4 +1308,175 @@ test("cancelling a logical scope during admission settles it and releases its ow
   expect(messages.filter((message) => message.type === "hosts.route.closed")).toHaveLength(1);
   endpoint.close();
   await delivery.close();
+});
+
+test("agent MCP discovers hosts, creates children on self and B, and notifies their parent", async () => {
+  const parentPrompts: string[] = [];
+  const a = await daemon({
+    agentClients: createTestAgentClients({
+      onStartTurn: (prompt, config) => {
+        if (config.title === "Fleet parent") parentPrompts.push(JSON.stringify(prompt));
+      },
+    }),
+  });
+  const b = await daemon();
+  const { paseo, client: aClient } = await api(a);
+  await paseo.hosts.add({ connection: `127.0.0.1:${b.port}`, label: "Fleet B" });
+  const directory = await online(paseo);
+  const workspace = await paseo.workspaces.create({
+    source: { kind: "directory", path: a.staticDir },
+  });
+  const parent = await workspace.agents.create({
+    config: { provider: "claude/claude-test" },
+    title: "Fleet parent",
+  });
+  const mcp = new Client({ name: "fleet-delegation", version: "1" });
+  cleanup.push(() => mcp.close());
+  await mcp.connect(
+    new StreamableHTTPClientTransport(
+      new URL(`http://127.0.0.1:${a.port}/mcp/agents?callerAgentId=${parent.id}`),
+    ),
+  );
+  const result = await mcp.callTool({ name: "list_hosts", arguments: {} });
+  expect(result.isError).not.toBe(true);
+  expect(result.structuredContent).toMatchObject({
+    self: { serverId: directory.self.serverId },
+    hosts: [expect.objectContaining({ serverId: directory.hosts[0]!.serverId, label: "Fleet B" })],
+  });
+  const call = async (name: string, args: Record<string, unknown>) => {
+    const response = await mcp.callTool({ name, arguments: args });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    return z.record(z.string(), z.unknown()).parse(response.structuredContent);
+  };
+  const serverId = directory.hosts[0]!.serverId!;
+  const destination = await call("create_workspace", {
+    serverId,
+    isolation: "local",
+    path: b.staticDir,
+    title: "Destination workspace",
+  });
+  expect(await call("list_workspaces", { serverId })).toMatchObject({
+    serverId,
+    workspaces: [expect.objectContaining({ workspaceId: destination.workspaceId })],
+  });
+  const self = await call("create_agent", {
+    title: "Self child",
+    provider: "claude/claude-test",
+    initialPrompt: "Finish local delegation",
+  });
+  const remote = await call("create_agent", {
+    serverId,
+    workspaceId: destination.workspaceId,
+    title: "B child",
+    provider: "claude/claude-test",
+    initialPrompt: "Finish destination delegation",
+  });
+  expect(self.serverId).toBe(directory.self.serverId);
+  expect(remote.serverId).toBe(serverId);
+  const bApi = await api(b);
+  expect(
+    (await bApi.paseo.agents.ref(String(remote.agentId)).refresh())?.agent.labels,
+  ).toMatchObject({
+    "paseo.parent-agent-id": parent.id,
+    "paseo.parent-server-id": directory.self.serverId,
+  });
+  await expect.poll(() => parentPrompts.join("\n")).toContain(`Agent ${self.agentId}`);
+  await expect.poll(() => parentPrompts.join("\n")).toContain(`Agent ${remote.agentId}`);
+  expect(parentPrompts.join("\n")).toContain(`Server: ${serverId}`);
+  expect(parentPrompts.join("\n")).toContain(`Server: ${directory.self.serverId}`);
+
+  await aClient.createAgent({
+    agentId: String(remote.agentId),
+    provider: "claude",
+    model: "claude-test",
+    cwd: a.staticDir,
+    workspaceId: workspace.id,
+    title: "Unrelated equal ID on A",
+  });
+  expect(await call("get_agent_status", { serverId, agentId: remote.agentId })).toMatchObject({
+    serverId,
+    snapshot: { id: remote.agentId, title: "B child", cwd: b.staticDir },
+  });
+  expect(await call("get_agent_status", { agentId: remote.agentId })).toMatchObject({
+    serverId: directory.self.serverId,
+    snapshot: { title: "Unrelated equal ID on A" },
+  });
+  const beforeFollowup = parentPrompts.filter((prompt) =>
+    prompt.includes(`Agent ${remote.agentId}`),
+  ).length;
+  expect(beforeFollowup).toBe(1);
+  expect(
+    await call("send_agent_prompt", {
+      serverId,
+      agentId: remote.agentId,
+      prompt: "REMOTE_FOLLOWUP_MARKER",
+      sessionMode: "full-access",
+    }),
+  ).toMatchObject({ success: true, serverId, guidance: expect.stringContaining("notified") });
+  expect(await call("get_agent_activity", { serverId, agentId: remote.agentId })).toMatchObject({
+    serverId,
+    agentId: remote.agentId,
+    currentModeId: "full-access",
+    content: expect.stringContaining("REMOTE_FOLLOWUP_MARKER"),
+  });
+  expect(await call("list_agents", { serverId })).toMatchObject({
+    serverId,
+    agents: expect.arrayContaining([
+      expect.objectContaining({ id: remote.agentId, title: "B child", cwd: b.staticDir }),
+    ]),
+  });
+  expect(await call("list_agents", {})).toMatchObject({
+    serverId: directory.self.serverId,
+    agents: expect.arrayContaining([
+      expect.objectContaining({
+        id: remote.agentId,
+        title: "Unrelated equal ID on A",
+        cwd: a.staticDir,
+      }),
+    ]),
+  });
+  await expect
+    .poll(() => parentPrompts.filter((prompt) => prompt.includes(`Agent ${remote.agentId}`)).length)
+    .toBe(2);
+  expect(parentPrompts.findLast((prompt) => prompt.includes(`Agent ${remote.agentId}`))).toContain(
+    `Server: ${serverId}`,
+  );
+  expect((await aClient.fetchAgent(String(remote.agentId)))?.agent.lastUserMessageAt).toBeNull();
+  expect(JSON.stringify(await aClient.fetchAgentTimeline(String(remote.agentId)))).not.toContain(
+    "REMOTE_FOLLOWUP_MARKER",
+  );
+
+  for (const selector of [{}, { serverId: directory.self.serverId }]) {
+    expect(await call("get_agent_status", { ...selector, agentId: self.agentId })).toMatchObject({
+      serverId: directory.self.serverId,
+      snapshot: { title: "Self child" },
+    });
+    const previous = parentPrompts.filter((prompt) =>
+      prompt.includes(`Agent ${self.agentId}`),
+    ).length;
+    expect(
+      await call("send_agent_prompt", {
+        ...selector,
+        agentId: self.agentId,
+        prompt: "SELF_FOLLOWUP_MARKER",
+      }),
+    ).toMatchObject({
+      success: true,
+      serverId: directory.self.serverId,
+      disposition: "turn_started",
+    });
+    expect(await call("get_agent_activity", { ...selector, agentId: self.agentId })).toMatchObject({
+      serverId: directory.self.serverId,
+      content: expect.stringContaining("SELF_FOLLOWUP_MARKER"),
+    });
+    expect(await call("list_agents", selector)).toMatchObject({
+      serverId: directory.self.serverId,
+      agents: expect.arrayContaining([
+        expect.objectContaining({ id: self.agentId, title: "Self child" }),
+      ]),
+    });
+    await expect
+      .poll(() => parentPrompts.filter((prompt) => prompt.includes(`Agent ${self.agentId}`)).length)
+      .toBe(previous + 1);
+  }
 });

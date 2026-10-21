@@ -11,6 +11,7 @@ import type {
   FetchAgentsOptions,
 } from "@getpaseo/client/internal/daemon-client";
 import { DaemonAuthenticationError } from "@getpaseo/client/internal/daemon-client";
+import type { HostDirectory } from "@getpaseo/protocol/hosts";
 import type { ConnectionOffer } from "@getpaseo/protocol/connection-offer";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
@@ -157,8 +158,22 @@ class FakeDaemonClient {
     }
   }
 
+  get isConnected(): boolean {
+    return this.state.status === "connected";
+  }
+
   getConnectionState(): ConnectionState {
     return this.state;
+  }
+
+  public connectedHosts = false;
+  public hostDirectory: Promise<HostDirectory> = Promise.resolve({
+    self: { serverId: "srv_test", label: "test" },
+    hosts: [],
+  });
+
+  observeHosts() {
+    return subscriptionFixture(this.hostDirectory, () => () => {});
   }
 
   public ownedSubscriptions = true;
@@ -171,7 +186,10 @@ class FakeDaemonClient {
       serverId: "srv_test",
       hostname: "test",
       version: this.daemonVersion,
-      features: { ownedSubscriptions: this.ownedSubscriptions },
+      features: {
+        ownedSubscriptions: this.ownedSubscriptions,
+        connectedHosts: this.connectedHosts,
+      },
     };
   }
 
@@ -1658,6 +1676,103 @@ describe("HostRuntimeController", () => {
 });
 
 describe("HostRuntimeStore", () => {
+  it.each([false, true])(
+    "keeps B and C distinct with routed and direct candidates (B direct first: %s)",
+    async (directFirst) => {
+      const directory = new Deferred<HostDirectory>();
+      const origin = new FakeDaemonClient();
+      origin.setConnectionState({ status: "connected" });
+      origin.connectedHosts = true;
+      origin.hostDirectory = directory.promise;
+      const store = new HostRuntimeStore({
+        storage: createMemoryHostRuntimeStorage(),
+        deps: {
+          createClient: ({ host }) =>
+            (host.serverId === "srv_a"
+              ? origin
+              : new FakeDaemonClient()) as unknown as DaemonClient,
+          connectToDaemon: async ({ host }) => ({
+            client: (host.serverId === "srv_a"
+              ? origin
+              : makeConnectedProbeClient(5)) as unknown as DaemonClient,
+            serverId: host.serverId,
+            hostname: host.label,
+          }),
+          getClientId: async () => "cid_fleet_candidates",
+        },
+      });
+      const addDirectB = () =>
+        store.upsertDirectConnection({
+          serverId: "srv_b",
+          endpoint: "b:6767",
+          label: "My B",
+        });
+      try {
+        if (directFirst) await addDirectB();
+        await store.upsertDirectConnection({
+          serverId: "srv_c",
+          endpoint: "c:6767",
+          label: "My C",
+        });
+        await store.upsertDirectConnection({ serverId: "srv_a", endpoint: "a:6767" });
+        await waitForHostOnline(store, "srv_a");
+        directory.resolve({
+          self: { serverId: "srv_a", label: "A" },
+          hosts: ["b", "c"].map((target) => ({
+            registrationId: `reg_${target}`,
+            serverId: `srv_${target}`,
+            label: `Fleet ${target.toUpperCase()}`,
+            source: { id: "user", key: target },
+            metadata: {},
+            enabled: true,
+            status: "online" as const,
+            targetDescription: `${target}:6767`,
+            lastOnlineAt: null,
+            nextRetryAt: null,
+            error: null,
+          })),
+        });
+        await vi.waitFor(() =>
+          expect(store.getHosts()).toContainEqual(
+            expect.objectContaining({
+              serverId: "srv_b",
+              connections: expect.arrayContaining([
+                { id: "via:srv_a", type: "routed", originServerId: "srv_a" },
+              ]),
+            }),
+          ),
+        );
+        await waitForHostOnline(store, "srv_b");
+        if (!directFirst) await addDirectB();
+        const targets = store.getHosts().filter((host) => host.serverId === "srv_b");
+        expect(targets).toHaveLength(1);
+        expect(targets[0]?.connections).toEqual(
+          expect.arrayContaining([
+            { id: "via:srv_a", type: "routed", originServerId: "srv_a" },
+            { id: "direct:b:6767", type: "directTcp", endpoint: "b:6767", useTls: false },
+          ]),
+        );
+        expect(targets[0]?.connections).toHaveLength(2);
+        expect(targets[0]?.label).toBe(directFirst ? "My B" : "Fleet B");
+        expect(store.getSnapshot("srv_b")?.connectionStatus).toBe("online");
+        expect(store.getHosts()).toHaveLength(3);
+        const targetC = store.getHosts().find((host) => host.serverId === "srv_c");
+        expect(targetC).toMatchObject({
+          serverId: "srv_c",
+          label: "My C",
+          connections: [
+            { id: "direct:c:6767", type: "directTcp", endpoint: "c:6767", useTls: false },
+            { id: "via:srv_a", type: "routed", originServerId: "srv_a" },
+          ],
+        });
+        await waitForHostOnline(store, "srv_c");
+        expect(store.getSnapshot("srv_c")?.connectionStatus).toBe("online");
+      } finally {
+        store.syncHosts([]);
+      }
+    },
+  );
+
   it.each(["active", "inactive", "background"] as const)(
     "keeps reconnect enabled through inactive/background and resumes immediately (mounted %s)",
     async (currentState) => {
