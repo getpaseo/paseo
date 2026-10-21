@@ -29,7 +29,7 @@ export function FileHtmlPreview({ html, testID }: { html: string; testID?: strin
   return (
     <iframe
       data-testid={testID}
-      title={t("panels.file.editor.preview")}
+      title={t("panels.file.filePanels.builtin.html")}
       srcDoc={document}
       sandbox={SANDBOX}
       referrerPolicy="no-referrer"

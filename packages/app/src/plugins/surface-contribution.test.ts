@@ -32,6 +32,7 @@ function installation(
       title: item.id,
       icon: "Blocks",
     })),
+    filePanels: [],
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],

@@ -17,6 +17,7 @@ export interface AssistantFileLinkSource {
 
 export interface AssistantFileLinkContext {
   workspaceRoot?: string;
+  relativePathBase?: string;
 }
 
 export interface DirectorySuggestionEntry {
@@ -118,6 +119,7 @@ export function classifyForResolution(
     workspaceRoot: context.workspaceRoot,
     decodeHref: tokenInfo.fromHref,
     explicitLink: source.sourceType !== "inline-code" && !isLinkifiedSource(source),
+    relativePathBase: context.relativePathBase,
   });
   if (!classification) {
     return { kind: "resolved", value: { kind: "ignored" } };
