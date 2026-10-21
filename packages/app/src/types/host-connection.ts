@@ -185,6 +185,7 @@ function upsertHostConnectionById(
   connections: HostConnection[],
   connection: HostConnection,
 ): HostConnection[] {
+  const incoming = keepRelaySecurityPin(connections, connection);
   const next: HostConnection[] = [];
   let replaced = false;
   for (const existing of connections) {
@@ -194,34 +195,39 @@ function upsertHostConnectionById(
     }
 
     if (replaced) continue;
-    next.push(keepRelaySecurityPin(existing, connection));
+    next.push(incoming);
     replaced = true;
   }
-  if (!replaced) next.push(connection);
+  if (!replaced) next.push(incoming);
   return next;
 }
 
-/** A re-import of the same daemon identity never loses an earlier security pin. */
-function keepRelaySecurityPin(existing: HostConnection, incoming: HostConnection): HostConnection {
-  if (
-    existing.type !== "relay" ||
-    incoming.type !== "relay" ||
-    existing.minimumSecurityMode !== "protected" ||
-    existing.daemonPublicKeyB64 !== incoming.daemonPublicKeyB64
-  ) {
-    return incoming;
-  }
-  return { ...incoming, minimumSecurityMode: "protected" };
+/**
+ * The security pin belongs to the daemon identity, not to one relay address:
+ * a re-import of a pinned key keeps the pin, through any relay.
+ */
+function keepRelaySecurityPin(
+  connections: HostConnection[],
+  incoming: HostConnection,
+): HostConnection {
+  if (incoming.type !== "relay" || incoming.minimumSecurityMode === "protected") return incoming;
+  const pinned = connections.some(
+    (connection) =>
+      connection.type === "relay" &&
+      connection.minimumSecurityMode === "protected" &&
+      connection.daemonPublicKeyB64 === incoming.daemonPublicKeyB64,
+  );
+  return pinned ? { ...incoming, minimumSecurityMode: "protected" } : incoming;
 }
 
 /**
- * Records that the relay daemon identity behind `connectionId` negotiated
- * protected endpoint security. Returns the same array when nothing changes.
+ * Records that the relay daemon identity `daemonPublicKeyB64` negotiated
+ * protected endpoint security. Every relay route to that identity is pinned.
+ * Returns the same array when nothing changes.
  */
 export function pinRelayProtectedSecurityInProfiles(input: {
   profiles: HostProfile[];
   serverId: string;
-  connectionId: string;
   daemonPublicKeyB64: string;
   now?: string;
 }): HostProfile[] {
@@ -232,7 +238,6 @@ export function pinRelayProtectedSecurityInProfiles(input: {
     const connections = host.connections.map((connection) => {
       if (
         connection.type !== "relay" ||
-        connection.id !== input.connectionId ||
         connection.daemonPublicKeyB64 !== input.daemonPublicKeyB64 ||
         connection.minimumSecurityMode === "protected"
       ) {

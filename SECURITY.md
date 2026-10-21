@@ -34,9 +34,9 @@ The daemon requires a valid cryptographic handshake before processing any comman
 
 - **Impersonate the daemon to your phone** — Without the daemon's secret key, it cannot derive the shared key, so any traffic it injects fails authenticated decryption on the phone
 - **Send commands as you** — The daemon only accepts traffic that decrypts and authenticates under a shared key derived with its own secret key. The phone's keypair is ephemeral per connection, so there is no persistent phone-side secret to steal; protection comes from the daemon's secret key never leaving the daemon.
-- **Read your traffic** — All messages are encrypted with XSalsa20-Poly1305 (NaCl box) after the handshake
-- **Forge messages** — NaCl box provides authenticated encryption; tampered messages are rejected
-- **Replay old messages** — Each session derives fresh encryption keys, so ciphertext from one session cannot be replayed into another session. In protected mode every record carries a strictly increasing counter, so a duplicated, reordered, or reflected record closes the session. Legacy mode uses random nonces and has no in-session replay protection; a daemon that still admits legacy clients can also be replayed a recorded legacy transcript. Set `daemon.relay.requireProtectedSecurity: true` to refuse legacy clients once every client you use has updated.
+- **Read your traffic** — After the handshake every message is encrypted: ChaCha20-Poly1305 in protected mode, XSalsa20-Poly1305 (NaCl box) in legacy mode
+- **Forge messages** — Both constructions are authenticated encryption; a tampered message is rejected in either mode
+- **Replay old messages** — In protected mode the daemon contributes a fresh ephemeral key to every session and every record carries a strictly increasing counter, so a recorded session cannot be replayed into a new one and a duplicated, reordered, or reflected record closes the session. Legacy mode has neither property: it uses random nonces, and a daemon that still admits legacy clients accepts a recorded legacy transcript (hello, credentials, commands) as a new session. Set `daemon.relay.requireProtectedSecurity: true` to refuse legacy clients once every client you use has updated.
 
 ### Trust model
 

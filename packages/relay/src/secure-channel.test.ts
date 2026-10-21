@@ -5,7 +5,12 @@ import {
   SecureChannelRejectedError,
   type SecureChannel,
 } from "./secure-channel.js";
-import { createClientChannel, createDaemonChannel, type Transport } from "./encrypted-channel.js";
+import {
+  createClientChannel,
+  createDaemonChannel,
+  type Transport,
+  type TransportMessage,
+} from "./encrypted-channel.js";
 import { exportPublicKey, generateKeyPair } from "./crypto.js";
 import { MAX_CHUNK_DATA_BYTES } from "./protected-records.js";
 
@@ -20,6 +25,11 @@ type Interceptor = (frame: Frame) => Frame | null;
  * direction, standing in for a relay that may record, drop, reorder, or
  * rewrite frames.
  */
+/** Delivers a frame to a transport a few milliseconds later, like a relay retry. */
+function deliverLater(transport: Transport, frame: TransportMessage, ms = 5): void {
+  setTimeout(() => transport.onmessage?.(frame), ms);
+}
+
 function createLink() {
   const toDaemon: Frame[] = [];
   const toClient: Frame[] = [];
@@ -45,7 +55,17 @@ function createLink() {
       const frame = interceptToDaemon(recorded);
       if (frame) setTimeout(() => daemon.onmessage?.(frame), 0);
     }),
-    close: vi.fn(),
+    // The client may run in a browser: WebSocket.close throws on any code other
+    // than 1000 or 3000-4999 and leaves the socket open, so mirror that here.
+    close: vi.fn((code?: number, reason?: string) => {
+      if (code !== undefined && code !== 1000 && (code < 3000 || code > 4999)) {
+        throw new DOMException(
+          `The code must be either 1000, or between 3000 and 4999. ${code} is neither.`,
+          "InvalidAccessError",
+        );
+      }
+      setTimeout(() => client.onclose?.(code ?? 1005, reason ?? ""), 0);
+    }),
     onmessage: null,
     onclose: null,
     onerror: null,
@@ -207,7 +227,27 @@ describe("secure channel: protected mode", () => {
     pair.link.client.onmessage?.(captured!);
     await settle();
     expect(pair.clientReceived).toEqual([]);
-    expect(pair.link.client.close).toHaveBeenCalledWith(1011, expect.any(String));
+    expect(pair.link.client.close).toHaveBeenCalledWith(4003, expect.any(String));
+  });
+
+  it("closes the browser socket and reports the close when a record fails at the client", async () => {
+    const closes: Array<[number, string]> = [];
+    const link = createLink();
+    const daemonKeyPair = generateKeyPair();
+    const daemonPromise = openDaemonSecureChannel(link.daemon, { daemonKeyPair });
+    const client = await openClientSecureChannel(link.client, {
+      daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+      events: { onclose: (code, reason) => closes.push([code, reason]) },
+    });
+    await daemonPromise;
+    await settle();
+    link.client.onmessage?.({
+      data: Buffer.from("not a record").toString("base64"),
+      isBinary: false,
+    });
+    await settle();
+    expect(client.isOpen()).toBe(false);
+    expect(closes).toEqual([[4003, expect.any(String)]]);
   });
 
   it("rejects out-of-order records and delivers nothing from them", async () => {
@@ -288,6 +328,62 @@ describe("secure channel: protected mode", () => {
     expect(pair.link.daemon.close).toHaveBeenCalledWith(1008, expect.stringContaining("mismatch"));
   });
 
+  it("answers an identical hello that arrives while the ready send is in flight", async () => {
+    const link = createLink();
+    const daemonKeyPair = generateKeyPair();
+    const sendFromDaemon = link.daemon.send;
+    link.daemon.send = vi.fn(async (data: string | ArrayBuffer) => {
+      await settle(20);
+      sendFromDaemon(data);
+    });
+    link.setToDaemon((frame) => {
+      // The relay delivers the client's 1s retry while the daemon is still sending ready.
+      if (typeof frame.data === "string" && frame.data.includes('"e2ee_hello"')) {
+        deliverLater(link.daemon, frame);
+      }
+      return frame;
+    });
+    const daemonPromise = openDaemonSecureChannel(link.daemon, { daemonKeyPair });
+    const client = await openClientSecureChannel(link.client, {
+      daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+    });
+    const daemon = await daemonPromise;
+    await settle(80);
+    const readyFrames = link.recordedToClient.filter(
+      (frame) => typeof frame.data === "string" && frame.data.includes('"e2ee_ready"'),
+    );
+    expect(readyFrames).toHaveLength(2);
+    expect(readyFrames[0].data).toBe(readyFrames[1].data);
+    expect(link.daemon.close).not.toHaveBeenCalled();
+    expect(client.isOpen()).toBe(true);
+    expect(daemon.isOpen()).toBe(true);
+  });
+
+  it("closes when a different hello arrives while the ready send is in flight", async () => {
+    const link = createLink();
+    const daemonKeyPair = generateKeyPair();
+    const sendFromDaemon = link.daemon.send;
+    link.daemon.send = vi.fn(async (data: string | ArrayBuffer) => {
+      await settle(20);
+      sendFromDaemon(data);
+    });
+    link.setToDaemon((frame) => {
+      if (typeof frame.data === "string" && frame.data.includes('"e2ee_hello"')) {
+        const changed = frame.data.replace('"v":1', '"v":1 ');
+        deliverLater(link.daemon, { data: changed, isBinary: false });
+      }
+      return frame;
+    });
+    const daemonPromise = openDaemonSecureChannel(link.daemon, { daemonKeyPair });
+    await openClientSecureChannel(link.client, {
+      daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+    });
+    const daemon = await daemonPromise;
+    await settle(80);
+    expect(link.daemon.close).toHaveBeenCalledWith(1008, expect.stringContaining("mismatch"));
+    expect(daemon.isOpen()).toBe(false);
+  });
+
   it("does not let a recorded hello and records replay into a fresh daemon channel", async () => {
     // Session 1: a legitimate client talks to the daemon; the relay records everything.
     const first = await openProtectedPair();
@@ -333,6 +429,39 @@ describe("secure channel: negotiation and policy", () => {
       });
       await expect(daemonPromise).rejects.toThrow();
       expect((link.daemon.send as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
+    }
+  });
+
+  it("rejects a malformed protected ready instead of waiting for a legacy one", async () => {
+    for (const protectedValue of [
+      null,
+      {},
+      { v: 1, message: "" },
+      { v: "1", message: "AAAA" },
+      { v: 1, message: 7 },
+      [],
+    ]) {
+      const link = createLink();
+      const daemonKeyPair = generateKeyPair();
+      link.setToClient((frame) => {
+        if (typeof frame.data !== "string") return frame;
+        const ready = JSON.parse(frame.data);
+        // A tampered ready first, then the daemon's genuine legacy-shaped ready.
+        deliverLater(link.client, {
+          data: JSON.stringify({ type: "e2ee_ready" }),
+          isBinary: false,
+        });
+        return { data: JSON.stringify({ ...ready, protected: protectedValue }), isBinary: false };
+      });
+      const daemonPromise = openDaemonSecureChannel(link.daemon, { daemonKeyPair });
+      const client = await openClientSecureChannel(link.client, {
+        daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+      });
+      await daemonPromise;
+      await settle(40);
+      expect(link.client.close).toHaveBeenCalledWith(4002, expect.stringContaining("malformed"));
+      expect(client.isOpen()).toBe(false);
+      await expect(client.send("never")).rejects.toThrow("Channel not open");
     }
   });
 

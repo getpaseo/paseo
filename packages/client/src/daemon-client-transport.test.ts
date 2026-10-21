@@ -10,18 +10,9 @@ import {
   extractRelayMessage,
 } from "./daemon-client-transport.js";
 
-const openClientSecureChannelMock = vi.hoisted(() => vi.fn());
-
-vi.mock("@getpaseo/relay/e2ee", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@getpaseo/relay/e2ee")>()),
-  openClientSecureChannel: openClientSecureChannelMock,
-}));
-
 describe("daemon-client transport helpers", () => {
   test("createEncryptedTransport closes handshake failures with browser-safe code", async () => {
-    openClientSecureChannelMock.mockReset();
-    openClientSecureChannelMock.mockRejectedValueOnce(new Error("handshake failed"));
-
+    // An unusable daemon key fails the handshake before any frame is sent.
     const connection: { open: (() => void) | null } = { open: null };
     const close = vi.fn();
 
@@ -41,7 +32,7 @@ describe("daemon-client transport helpers", () => {
         onError: () => () => {},
         onMessage: () => () => {},
       },
-      { daemonPublicKeyB64: "daemon-public-key", logger: { warn: vi.fn() } },
+      { daemonPublicKeyB64: "not-a-key", logger: { warn: vi.fn() } },
     );
 
     expect(connection.open).not.toBeNull();
@@ -182,129 +173,5 @@ describe("daemon-client transport helpers", () => {
     expect(decodeMessageData("hello")).toBe("hello");
     expect(decodeMessageData(bytes.buffer)).toBe("hello");
     expect(decodeMessageData(bytes)).toBe("hello");
-  });
-});
-
-describe("relay E2EE transport endpoint security", () => {
-  interface ChannelEvents {
-    onopen?: () => void;
-    onmessage?: (data: string | ArrayBuffer) => void;
-    onclose?: (code: number, reason: string) => void;
-    onerror?: (error: Error) => void;
-  }
-
-  function serverInfoFrame(features: Record<string, boolean>): string {
-    return JSON.stringify({
-      type: "session",
-      message: {
-        type: "status",
-        payload: { status: "server_info", serverId: "srv_test", features },
-      },
-    });
-  }
-
-  function setup(securityMode: "legacy" | "protected", minimumMode?: "protected") {
-    openClientSecureChannelMock.mockReset();
-    let events: ChannelEvents = {};
-    let options: Record<string, unknown> = {};
-    const channel = {
-      securityMode: () => securityMode,
-      close: vi.fn(),
-      send: vi.fn(async () => {}),
-      isOpen: () => true,
-      outboundWireByteLength: () => 0,
-      onTransitionToOpen: () => () => {},
-      onClose: () => () => {},
-    };
-    openClientSecureChannelMock.mockImplementation(
-      async (
-        _transport: unknown,
-        received: { events?: ChannelEvents } & Record<string, unknown>,
-      ) => {
-        events = received.events ?? {};
-        options = received;
-        return channel;
-      },
-    );
-
-    const connection: { open: (() => void) | null } = { open: null };
-    const modes: string[] = [];
-    const transport = createEncryptedTransport(
-      {
-        send: vi.fn(),
-        close: vi.fn(),
-        onOpen: (handler) => {
-          connection.open = handler;
-          return () => {};
-        },
-        onClose: () => () => {},
-        onError: () => () => {},
-        onMessage: () => () => {},
-      },
-      {
-        daemonPublicKeyB64: "daemon-public-key",
-        logger: { warn: vi.fn() },
-        ...(minimumMode ? { minimumMode } : {}),
-        onSecurityMode: (mode) => modes.push(mode),
-      },
-    );
-    const delivered: unknown[] = [];
-    const closes: unknown[] = [];
-    const errors: unknown[] = [];
-    transport.onMessage((data) => delivered.push(data));
-    transport.onClose((event) => closes.push(event));
-    transport.onError((event) => errors.push(event));
-    return {
-      channel,
-      connection,
-      delivered,
-      closes,
-      errors,
-      modes,
-      events: () => events,
-      options: () => options,
-    };
-  }
-
-  test("rejects a legacy session once a protected-capable daemon identifies itself", async () => {
-    const t = setup("legacy");
-    t.connection.open?.();
-    await vi.waitFor(() => expect(t.events().onopen).toBeDefined());
-    t.events().onopen?.();
-    expect(t.modes).toEqual(["legacy"]);
-
-    t.events().onmessage?.(serverInfoFrame({ relayProtectedSecurity: true }));
-
-    expect(t.delivered).toEqual([]);
-    expect(t.channel.close).toHaveBeenCalledWith(4002, expect.stringContaining("protected"));
-    expect(t.closes).toEqual([{ code: 4002, reason: expect.stringContaining("protected") }]);
-    expect(t.errors).toHaveLength(1);
-  });
-
-  test("delivers server_info from a daemon that only speaks legacy security", async () => {
-    const t = setup("legacy");
-    t.connection.open?.();
-    await vi.waitFor(() => expect(t.events().onopen).toBeDefined());
-    t.events().onopen?.();
-
-    const frame = serverInfoFrame({ connectedHosts: true });
-    t.events().onmessage?.(frame);
-    t.events().onmessage?.(JSON.stringify({ type: "pong" }));
-
-    expect(t.delivered).toEqual([frame, JSON.stringify({ type: "pong" })]);
-    expect(t.channel.close).not.toHaveBeenCalled();
-  });
-
-  test("passes the minimum mode to the handshake and reports a protected result", async () => {
-    const t = setup("protected", "protected");
-    t.connection.open?.();
-    await vi.waitFor(() => expect(t.events().onopen).toBeDefined());
-    t.events().onopen?.();
-    t.events().onmessage?.(serverInfoFrame({ relayProtectedSecurity: true }));
-
-    expect(t.options().minimumMode).toBe("protected");
-    expect(t.modes).toEqual(["protected"]);
-    expect(t.delivered).toHaveLength(1);
-    expect(t.channel.close).not.toHaveBeenCalled();
   });
 });

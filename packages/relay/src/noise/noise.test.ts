@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  CipherState,
   createNoiseInitiator,
   createNoiseResponder,
   generateNoiseKeyPair,
@@ -124,6 +125,28 @@ describe(NOISE_NK_PROTOCOL_NAME, () => {
     const initiator = createNoiseInitiator({ remoteStatic: other.publicKey, prologue });
     const victim = createNoiseResponder({ localStatic: daemon, prologue });
     expect(() => victim.readMessage(initiator.writeMessage(empty))).toThrow(NoiseProtocolError);
+  });
+
+  test("stops at the last nonce in both directions and keeps state on a failed tag", () => {
+    const MAX = (1n << 64n) - 1n;
+    const key = new Uint8Array(32).map((_, i) => i + 1);
+    const ad = new Uint8Array(0);
+    const sender = new CipherState();
+    const receiver = new CipherState();
+    sender.initializeKey(key.slice(), MAX - 1n);
+    receiver.initializeKey(key.slice(), MAX - 1n);
+    const last = sender.encryptWithAd(ad, new Uint8Array([1, 2, 3]));
+    expect(sender.nonce()).toBe(MAX);
+    expect(() => sender.encryptWithAd(ad, new Uint8Array([4]))).toThrow("nonce exhausted");
+    expect(sender.nonce()).toBe(MAX);
+
+    const tampered = last.slice();
+    tampered[0] ^= 1;
+    expect(() => receiver.decryptWithAd(ad, tampered)).toThrow("authentication failed");
+    expect(receiver.nonce()).toBe(MAX - 1n);
+    expect(Array.from(receiver.decryptWithAd(ad, last))).toEqual([1, 2, 3]);
+    expect(receiver.nonce()).toBe(MAX);
+    expect(() => receiver.decryptWithAd(ad, last)).toThrow("nonce exhausted");
   });
 
   test("refuses to proceed out of turn or after completion", () => {

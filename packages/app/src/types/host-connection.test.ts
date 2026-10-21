@@ -361,6 +361,25 @@ describe("relay endpoint security pin", () => {
     expect(profiles[0].connections).toEqual([pinned]);
   });
 
+  it("follows the daemon identity to a relay at another address", () => {
+    const elsewhere: HostConnection = {
+      id: "relay:wss:other.example.com:443",
+      type: "relay",
+      relayEndpoint: "other.example.com:443",
+      useTls: true,
+      daemonPublicKeyB64: "pk_a",
+    };
+    const profiles = upsertHostConnectionInProfiles({
+      profiles: [{ ...makeHost("srv"), connections: [pinned], preferredConnectionId: pinned.id }],
+      serverId: "srv",
+      connection: elsewhere,
+    });
+    expect(profiles[0].connections).toEqual([
+      pinned,
+      { ...elsewhere, minimumSecurityMode: "protected" },
+    ]);
+  });
+
   it("does not carry over to a different daemon identity", () => {
     const rotated: HostConnection = { ...unpinned, daemonPublicKeyB64: "pk_b" };
     const profiles = upsertHostConnectionInProfiles({
@@ -371,23 +390,36 @@ describe("relay endpoint security pin", () => {
     expect(profiles[0].connections).toEqual([rotated]);
   });
 
-  it("is learned for the identity that negotiated protected security", () => {
-    const profiles = [{ ...makeHost("srv"), connections: [unpinned] }];
+  it("is learned for every relay route to the identity that negotiated protected security", () => {
+    const elsewhere: HostConnection = {
+      ...unpinned,
+      id: "relay:wss:other.example.com:443",
+      relayEndpoint: "other.example.com:443",
+    };
+    const rotated: HostConnection = {
+      ...unpinned,
+      id: "relay:wss:rotated.example.com:443",
+      relayEndpoint: "rotated.example.com:443",
+      daemonPublicKeyB64: "pk_b",
+    };
+    const profiles = [{ ...makeHost("srv"), connections: [unpinned, elsewhere, rotated] }];
     const next = pinRelayProtectedSecurityInProfiles({
       profiles,
       serverId: "srv",
-      connectionId: unpinned.id,
       daemonPublicKeyB64: "pk_a",
       now: "2026-02-01T00:00:00.000Z",
     });
-    expect(next[0].connections).toEqual([pinned]);
+    expect(next[0].connections).toEqual([
+      pinned,
+      { ...elsewhere, minimumSecurityMode: "protected" },
+      rotated,
+    ]);
     expect(next[0].updatedAt).toBe("2026-02-01T00:00:00.000Z");
 
     expect(
       pinRelayProtectedSecurityInProfiles({
         profiles: next,
         serverId: "srv",
-        connectionId: unpinned.id,
         daemonPublicKeyB64: "pk_a",
       }),
     ).toBe(next);
@@ -395,7 +427,6 @@ describe("relay endpoint security pin", () => {
       pinRelayProtectedSecurityInProfiles({
         profiles,
         serverId: "srv",
-        connectionId: unpinned.id,
         daemonPublicKeyB64: "pk_other",
       }),
     ).toBe(profiles);

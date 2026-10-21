@@ -87,7 +87,10 @@ export function decodeProtectedRecord(record: Uint8Array, receiver: CipherState)
     }
     const { chunk, next } = readChunk(record, offset, receiver);
     offset = next;
-    assembly = assembly === null ? startAssembly(chunk) : continueAssembly(assembly, chunk);
+    assembly =
+      assembly === null
+        ? startAssembly(chunk, record.byteLength)
+        : continueAssembly(assembly, chunk);
   }
   if (assembly === null) throw new NoiseProtocolError("empty record");
   if (assembly.index !== assembly.expectedChunks || assembly.written !== assembly.totalLength) {
@@ -152,8 +155,13 @@ function readChunk(
   };
 }
 
-function startAssembly(chunk: Chunk): RecordAssembly {
+function startAssembly(chunk: Chunk, recordByteLength: number): RecordAssembly {
   if (!chunk.isFirst) throw new NoiseProtocolError("record does not start with FIRST");
+  // The claimed frame length fixes the record's exact wire length. Check it
+  // before allocating so a tiny authenticated header cannot demand gigabytes.
+  if (protectedRecordByteLength(chunk.totalLength) !== recordByteLength) {
+    throw new NoiseProtocolError("record length mismatch");
+  }
   const assembly: RecordAssembly = {
     kind: chunk.kind,
     totalLength: chunk.totalLength,

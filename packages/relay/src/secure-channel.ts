@@ -100,7 +100,14 @@ export const PROTECTED_MODE_REQUIRED_CLOSE_CODE = 1008;
 export const PROTECTED_MODE_REQUIRED_CLOSE_REASON = "protected endpoint security required";
 /** Client-side close when a protected handshake fails. Browser-safe (4000-4999). */
 export const PROTECTED_HANDSHAKE_FAILED_CLOSE_CODE = 4002;
-const RECORD_FAILURE_CLOSE_CODE = 1011;
+/**
+ * Client-side close when an inbound record fails authentication or framing.
+ * Browser WebSocket.close accepts only 1000 or 3000-4999, so a client must
+ * never try to send a 1011.
+ */
+export const PROTECTED_RECORD_FAILED_CLOSE_CODE = 4003;
+/** Daemon-side close for the same failures; the daemon runs on Node's ws. */
+const DAEMON_RECORD_FAILURE_CLOSE_CODE = 1011;
 const REHANDSHAKE_REJECTION_CODE = 1008;
 const REHANDSHAKE_MISMATCH_CLOSE_REASON = "E2EE re-handshake transcript mismatch";
 
@@ -243,17 +250,20 @@ class ClientSecureChannel implements SecureChannel {
 
   private handleHandshakeMessage(message: TransportMessage): void {
     if (this.state !== "handshaking" || !this.handshake) return;
-    let ready: ReadyEnvelope | null;
+    let parsed: unknown;
     try {
       if (message.isBinary) return;
-      const parsed: unknown = JSON.parse(decodeTransportText(message.data));
-      ready = isReadyEnvelope(parsed) ? parsed : null;
+      parsed = JSON.parse(decodeTransportText(message.data));
     } catch {
       return; // not handshake traffic; ignore while handshaking
     }
-    if (!ready) return;
+    if (!isRecord(parsed) || parsed.type !== "e2ee_ready") return;
 
     try {
+      // A ready the daemon recognizably sent but that fails validation is a
+      // broken or tampered handshake, never unrelated traffic to wait past.
+      if (!isReadyEnvelope(parsed)) throw new NoiseProtocolError("malformed ready envelope");
+      const ready: ReadyEnvelope = parsed;
       if (ready.protected !== undefined) {
         this.openProtected(ready.protected);
       } else {
@@ -278,7 +288,10 @@ class ClientSecureChannel implements SecureChannel {
     }
     const keys = handshake.noise.split();
     this.becomeOpen(
-      new ProtectedChannel(this.transport, this.events, keys.send, keys.receive, selected, null),
+      new ProtectedChannel(this.transport, this.events, keys.send, keys.receive, selected, {
+        retry: null,
+        failureCloseCode: PROTECTED_RECORD_FAILED_CLOSE_CODE,
+      }),
     );
   }
 
@@ -310,7 +323,7 @@ class ClientSecureChannel implements SecureChannel {
       } catch (error) {
         const err = error instanceof Error ? error : new Error(String(error));
         this.events.onerror?.(err);
-        this.fail(RECORD_FAILURE_CLOSE_CODE, err.message);
+        this.fail(PROTECTED_RECORD_FAILED_CLOSE_CODE, err.message);
       }
     })();
   }
@@ -420,7 +433,8 @@ export async function openDaemonSecureChannel(
         } catch {
           throw new Error(`Invalid hello message: ${preview(helloText)}`);
         }
-        if (!isHelloEnvelope(parsed)) throw new Error(`Invalid hello message: ${preview(helloText)}`);
+        if (!isHelloEnvelope(parsed))
+          throw new Error(`Invalid hello message: ${preview(helloText)}`);
 
         // Buffer traffic that arrives while the ready is in flight so an early
         // record is not mistaken for a second hello.
@@ -428,7 +442,13 @@ export async function openDaemonSecureChannel(
 
         const channel =
           parsed.protected !== undefined
-            ? await acceptProtectedHello(transport, events, options.daemonKeyPair, parsed, helloText)
+            ? await acceptProtectedHello(
+                transport,
+                events,
+                options.daemonKeyPair,
+                parsed,
+                helloText,
+              )
             : await acceptLegacyHello(
                 transport,
                 events,
@@ -438,10 +458,9 @@ export async function openDaemonSecureChannel(
               );
 
         events.onopen?.();
-        for (const next of buffered) {
-          if (isHandshakeEnvelopeText(next)) continue;
-          transport.onmessage?.(next);
-        }
+        // The channel now owns the transport: buffered records are decoded and a
+        // buffered hello retry gets the same exact-transcript answer as a live one.
+        for (const next of buffered) transport.onmessage?.(next);
         resolve(channel);
       } catch (error) {
         reject(error);
@@ -481,8 +500,8 @@ async function acceptProtectedHello(
   await transport.send(readyText);
   const keys = noise.split();
   return new ProtectedChannel(transport, events, keys.send, keys.receive, selected, {
-    helloText,
-    readyText,
+    retry: { helloText, readyText },
+    failureCloseCode: DAEMON_RECORD_FAILURE_CLOSE_CODE,
   });
 }
 
@@ -572,8 +591,11 @@ class ProtectedChannel implements InnerChannel {
     private readonly sender: CipherState,
     private readonly receiver: CipherState,
     private readonly params: NegotiatedParams,
-    /** Daemon side only: exact transcript used to answer identical retries. */
-    private readonly retry: DaemonRetryTranscript | null,
+    private readonly role: {
+      /** Daemon side only: exact transcript used to answer identical retries. */
+      retry: DaemonRetryTranscript | null;
+      failureCloseCode: number;
+    },
   ) {
     Object.assign(transport, {
       onmessage: (message: TransportMessage) => this.handleMessage(message),
@@ -604,7 +626,7 @@ class ProtectedChannel implements InnerChannel {
       this.events.onmessage?.(plaintext);
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
-      this.fail(RECORD_FAILURE_CLOSE_CODE, err.message);
+      this.fail(this.role.failureCloseCode, err.message);
     }
   }
 
@@ -612,9 +634,9 @@ class ProtectedChannel implements InnerChannel {
     handshake: { kind: "hello"; text: string } | { kind: "ready" },
   ): Promise<void> {
     if (handshake.kind === "ready") return; // client ignores duplicate ready after open
-    if (!this.retry) return; // a client never answers hellos
-    if (handshake.text === this.retry.helloText) {
-      await this.transport.send(this.retry.readyText);
+    if (!this.role.retry) return; // a client never answers hellos
+    if (handshake.text === this.role.retry.helloText) {
+      await this.transport.send(this.role.retry.readyText);
       return;
     }
     this.fail(REHANDSHAKE_REJECTION_CODE, REHANDSHAKE_MISMATCH_CLOSE_REASON);
@@ -630,7 +652,7 @@ class ProtectedChannel implements InnerChannel {
       wire = encodeProtectedRecord(kind, frame, this.sender);
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
-      this.fail(RECORD_FAILURE_CLOSE_CODE, err.message);
+      this.fail(this.role.failureCloseCode, err.message);
       throw err;
     }
     if (this.params.binaryCiphertext && kind === "binary") {
@@ -769,16 +791,6 @@ function parseHandshakeEnvelope(
   throw new Error("Received plaintext frame on encrypted channel");
 }
 
-function isHandshakeEnvelopeText(message: TransportMessage): boolean {
-  if (message.isBinary) return false;
-  try {
-    const parsed: unknown = JSON.parse(decodeTransportText(message.data));
-    return isRecord(parsed) && (parsed.type === "e2ee_hello" || parsed.type === "e2ee_ready");
-  } catch {
-    return false;
-  }
-}
-
 function encodeParams(params: NegotiatedParams): Uint8Array {
   return new Uint8Array([
     PARAMS_VERSION,
@@ -789,7 +801,8 @@ function encodeParams(params: NegotiatedParams): Uint8Array {
 function decodeParams(payload: Uint8Array): NegotiatedParams {
   if (payload.byteLength !== 2) throw new NoiseProtocolError("invalid parameter payload");
   if (payload[0] !== PARAMS_VERSION) throw new NoiseProtocolError("unsupported parameter version");
-  if ((payload[1] & ~PARAM_FLAGS_KNOWN) !== 0) throw new NoiseProtocolError("reserved parameter flag set");
+  if ((payload[1] & ~PARAM_FLAGS_KNOWN) !== 0)
+    throw new NoiseProtocolError("reserved parameter flag set");
   return { binaryCiphertext: (payload[1] & PARAM_FLAG_BINARY_CIPHERTEXT) !== 0 };
 }
 

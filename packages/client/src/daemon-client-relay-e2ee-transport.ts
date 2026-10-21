@@ -144,10 +144,7 @@ export function createEncryptedTransport(
             { reason: DAEMON_REQUIRES_PROTECTED_REASON },
             "relay_e2ee_downgrade_rejected",
           );
-          const code = PROTECTED_HANDSHAKE_FAILED_CLOSE_CODE;
-          emitError(new Error(DAEMON_REQUIRES_PROTECTED_REASON));
-          channel.close(code, DAEMON_REQUIRES_PROTECTED_REASON);
-          emitClose({ code, reason: DAEMON_REQUIRES_PROTECTED_REASON });
+          channel.close(PROTECTED_HANDSHAKE_FAILED_CLOSE_CODE, DAEMON_REQUIRES_PROTECTED_REASON);
           return;
         }
       }
@@ -171,7 +168,13 @@ export function createEncryptedTransport(
       }
       base.send(String(data));
     },
-    close: (code?: number, reason?: string) => base.close(code, reason),
+    // The channel decides the close code. Report it now: a socket close event
+    // arrives asynchronously, and the consumer must not act on an earlier
+    // error before it has seen the code.
+    close: (code?: number, reason?: string) => {
+      base.close(code, reason);
+      emitClose({ code, reason });
+    },
     onmessage: null,
     onclose: null,
     onerror: null,
@@ -189,7 +192,12 @@ export function createEncryptedTransport(
           },
           onmessage: (data) => emitMessage(data),
           onclose: (code, reason) => emitClose({ code, reason }),
-          onerror: (error) => emitError(error),
+          // Every fatal channel error is followed by a close that carries the
+          // code and reason; forwarding the error first would make the consumer
+          // reconnect before it sees them.
+          onerror: (error) => {
+            logger.warn({ err: normalizeTransportError(error) }, "relay_e2ee_channel_error");
+          },
         },
       });
     } catch (error) {

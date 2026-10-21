@@ -547,7 +547,6 @@ function createDefaultDeps(
   resolveOrigin: (serverId: string) => DaemonClient | null = () => null,
   pinRelayProtectedSecurity: (input: {
     serverId: string;
-    connectionId: string;
     daemonPublicKeyB64: string;
   }) => void = () => undefined,
 ): HostRuntimeControllerDeps {
@@ -642,7 +641,6 @@ function createDefaultDeps(
             if (mode !== "protected" || connection.minimumSecurityMode === "protected") return;
             pinRelayProtectedSecurity({
               serverId: host.serverId,
-              connectionId: connection.id,
               daemonPublicKeyB64: connection.daemonPublicKeyB64,
             });
           },
@@ -2176,7 +2174,6 @@ export class HostRuntimeStore {
 
   private async pinRelayProtectedSecurity(input: {
     serverId: string;
-    connectionId: string;
     daemonPublicKeyB64: string;
   }): Promise<void> {
     const next = pinRelayProtectedSecurityInProfiles({ profiles: this.hosts, ...input });

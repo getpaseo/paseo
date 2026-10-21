@@ -151,6 +151,21 @@ describe("protected records", () => {
     expect(receiver.nonce()).toBe(0n);
   });
 
+  test("rejects a record whose header claims more bytes than it carries before allocating", () => {
+    const { sender, receiver } = pair();
+    const claimed = 64 * 1024 * 1024;
+    const forged = reencrypt(sender, chunkPlaintext(0x01, 0x01, claimed, new Uint8Array([1])));
+    const before = process.memoryUsage().arrayBuffers;
+    expect(() => decodeProtectedRecord(forged, receiver)).toThrow("record length mismatch");
+    expect(process.memoryUsage().arrayBuffers - before).toBeLessThan(1024 * 1024);
+    // A relay that truncates a genuine large record gets the same answer.
+    const { sender: s2, receiver: r2 } = pair();
+    const genuine = encodeProtectedRecord("binary", frameOf(MAX_CHUNK_DATA_BYTES * 2 + 1), s2);
+    const firstChunkOnly = genuine.subarray(0, 2 + 6 + MAX_CHUNK_DATA_BYTES + 16);
+    expect(() => decodeProtectedRecord(firstChunkOnly, r2)).toThrow("record length mismatch");
+    expect(r2.nonce()).toBe(1n);
+  });
+
   test("a record delivered twice fails the second time", () => {
     const { sender, receiver } = pair();
     const record = encodeProtectedRecord("text", frameOf(20), sender);

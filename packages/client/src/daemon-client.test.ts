@@ -7955,3 +7955,264 @@ test("initial acquisition preserves structured transport failures and ordinary o
     cause: failure,
   });
 });
+
+// ---------------------------------------------------------------------------
+// Relay endpoint security through the real secure channel
+// ---------------------------------------------------------------------------
+
+import {
+  createDaemonChannel,
+  exportPublicKey,
+  generateKeyPair,
+  openDaemonSecureChannel,
+  type SecureChannel,
+  type Transport as RelayWire,
+} from "@getpaseo/relay/e2ee";
+
+/**
+ * An in-memory socket pair: the client side is a DaemonTransport, the daemon
+ * side is the relay Transport the daemon's secure channel runs over. Frames
+ * are delivered asynchronously like a real socket, and a close from either
+ * side reaches the other with its code, as the browser WebSocket does.
+ */
+function createRelayLink(options?: { toDaemon?: (text: string) => string }) {
+  const clientOpen = new Set<() => void>();
+  const clientClose = new Set<(event?: unknown) => void>();
+  const clientError = new Set<(event?: unknown) => void>();
+  const clientMessage = new Set<(data: unknown, isBinary: boolean) => void>();
+  let closed = false;
+  const wire: RelayWire = {
+    send: (data) => {
+      if (closed) throw new Error("socket closed");
+      const isBinary = typeof data !== "string";
+      setTimeout(() => {
+        for (const handler of clientMessage) handler(data, isBinary);
+      }, 0);
+    },
+    close: (code = 1005, reason = "") => shutdown(code, reason),
+    onmessage: null,
+    onclose: null,
+    onerror: null,
+  };
+  const shutdown = (code: number, reason: string) => {
+    if (closed) return;
+    closed = true;
+    setTimeout(() => {
+      wire.onclose?.(code, reason);
+      for (const handler of clientClose) handler({ code, reason });
+    }, 0);
+  };
+  const transport: DaemonTransport = {
+    send: (data) => {
+      if (closed) throw new Error("socket closed");
+      if (typeof data === "string") {
+        const text = options?.toDaemon ? options.toDaemon(data) : data;
+        setTimeout(() => wire.onmessage?.({ data: text, isBinary: false }), 0);
+        return;
+      }
+      const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
+      const copy = bytes.slice().buffer as ArrayBuffer;
+      setTimeout(() => wire.onmessage?.({ data: copy, isBinary: true }), 0);
+    },
+    close: (code = 1005, reason = "") => shutdown(code, reason),
+    onOpen: (handler) => {
+      clientOpen.add(handler);
+      return () => clientOpen.delete(handler);
+    },
+    onClose: (handler) => {
+      clientClose.add(handler);
+      return () => clientClose.delete(handler);
+    },
+    onError: (handler) => {
+      clientError.add(handler);
+      return () => clientError.delete(handler);
+    },
+    onMessage: (handler) => {
+      clientMessage.add(handler);
+      return () => clientMessage.delete(handler);
+    },
+  };
+  return {
+    transport,
+    wire,
+    open: () => {
+      for (const handler of clientOpen) handler();
+    },
+    isClosed: () => closed,
+  };
+}
+
+function serverInfoFrame(features: Record<string, boolean>): string {
+  return wrapSessionMessage({
+    type: "status",
+    payload: {
+      status: "server_info",
+      serverId: "srv_test",
+      hostname: null,
+      version: null,
+      features,
+    },
+  });
+}
+
+/** Opens the daemon side of a link and answers the application hello with the daemon's feature flags. */
+function serveProtectedDaemon(
+  link: ReturnType<typeof createRelayLink>,
+  keys: ReturnType<typeof generateKeyPair>,
+  features: Record<string, boolean>,
+  received: unknown[] = [],
+): void {
+  let channel: SecureChannel | null = null;
+  const pendingAnswers: string[] = [];
+  const opened = openDaemonSecureChannel(link.wire, {
+    daemonKeyPair: keys,
+    events: {
+      onmessage: (data) => {
+        received.push(data);
+        if (typeof data !== "string") return;
+        const frame = JSON.parse(data) as { type?: string };
+        if (frame.type !== "hello") return;
+        const answer = serverInfoFrame(features);
+        if (channel) void channel.send(answer);
+        else pendingAnswers.push(answer);
+      },
+    },
+  });
+  void (async () => {
+    try {
+      channel = await opened;
+      for (const answer of pendingAnswers.splice(0)) void channel.send(answer);
+    } catch {
+      // the test asserts on the client side
+    }
+  })();
+}
+
+test("connects in legacy mode to a daemon that only speaks the legacy construction", async () => {
+  const keys = generateKeyPair();
+  const modes: string[] = [];
+  const client = new DaemonClient({
+    url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2",
+    clientId: "clsk_security_legacy_daemon",
+    e2ee: {
+      enabled: true,
+      daemonPublicKeyB64: exportPublicKey(keys.publicKey),
+      onSecurityMode: (mode) => modes.push(mode),
+    },
+    reconnect: { enabled: false },
+    transportFactory: () => {
+      const link = createRelayLink();
+      const opened = createDaemonChannel(link.wire, keys, {
+        onmessage: (data) => {
+          if (typeof data !== "string") return;
+          if ((JSON.parse(data) as { type?: string }).type !== "hello") return;
+          void opened.then((ch) => ch.send(serverInfoFrame({ ownedSubscriptions: true })));
+        },
+      });
+      void opened.catch(() => {});
+      setTimeout(() => link.open(), 0);
+      return link.transport;
+    },
+  });
+  clients.push(client);
+
+  await client.connect();
+  expect(client.getConnectionState().status).toBe("connected");
+  expect(modes).toEqual(["legacy"]);
+});
+
+test("refuses legacy endpoint security on reconnect once the daemon negotiated protected", async () => {
+  const keys = generateKeyPair();
+  const modes: string[] = [];
+  const links: ReturnType<typeof createRelayLink>[] = [];
+  const legacyReceived: unknown[] = [];
+  const client = new DaemonClient({
+    url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2",
+    clientId: "clsk_security_latch",
+    e2ee: {
+      enabled: true,
+      daemonPublicKeyB64: exportPublicKey(keys.publicKey),
+      onSecurityMode: (mode) => modes.push(mode),
+    },
+    reconnect: { enabled: true, baseDelayMs: 1, maxDelayMs: 1 },
+    transportFactory: () => {
+      const link = createRelayLink();
+      links.push(link);
+      if (links.length === 1) {
+        serveProtectedDaemon(link, keys, { relayProtectedSecurity: true });
+      } else {
+        // A daemon that only speaks the legacy construction (older release).
+        void createDaemonChannel(link.wire, keys, {
+          onmessage: (data) => legacyReceived.push(data),
+        }).catch(() => {});
+      }
+      setTimeout(() => link.open(), 0);
+      return link.transport;
+    },
+  });
+  clients.push(client);
+
+  await client.connect();
+  expect(client.getConnectionState().status).toBe("connected");
+  expect(modes).toEqual(["protected"]);
+
+  // The relay drops the session; the client reconnects to a legacy-only daemon.
+  links[0].wire.close(1012, "Server disconnected");
+  await vi.waitFor(() => expect(links).toHaveLength(2));
+  await vi.waitFor(() => expect(links[1].isClosed()).toBe(true));
+  await vi.waitFor(() => expect(client.getConnectionState().status).toBe("disconnected"));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  expect(links).toHaveLength(2);
+  expect(modes).toEqual(["protected"]);
+  expect(legacyReceived).toEqual([]);
+  expect(client.lastError).toContain(
+    "Endpoint security handshake failed: daemon offered only legacy endpoint security",
+  );
+});
+
+test("closes before admission when a protected-capable daemon is reached in legacy mode", async () => {
+  const keys = generateKeyPair();
+  const daemonReceived: unknown[] = [];
+  let attempts = 0;
+  const client = new DaemonClient({
+    url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2",
+    clientId: "clsk_security_downgrade",
+    e2ee: { enabled: true, daemonPublicKeyB64: exportPublicKey(keys.publicKey) },
+    reconnect: { enabled: true, baseDelayMs: 1, maxDelayMs: 1 },
+    transportFactory: () => {
+      attempts += 1;
+      // A relay in the middle strips the protected offer from the client hello.
+      const link = createRelayLink({
+        toDaemon: (text) => {
+          if (!text.startsWith("{")) return text;
+          const parsed = JSON.parse(text) as Record<string, unknown>;
+          if (parsed.type !== "e2ee_hello") return text;
+          const { protected: _dropped, ...legacyHello } = parsed;
+          return JSON.stringify(legacyHello);
+        },
+      });
+      serveProtectedDaemon(link, keys, { relayProtectedSecurity: true }, daemonReceived);
+      setTimeout(() => link.open(), 0);
+      return link.transport;
+    },
+  });
+  clients.push(client);
+
+  const connecting = client.connect();
+  void connecting.catch(() => {});
+  const queued = client.ping({ timeoutMs: 10_000 });
+  void queued.catch(() => {});
+
+  await expect(connecting).rejects.toThrow(
+    "Endpoint security handshake failed: daemon requires protected endpoint security",
+  );
+  await expect(queued).rejects.toThrow();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  expect(attempts).toBe(1);
+  expect(client.getConnectionState().status).toBe("disconnected");
+  // Only the application hello reached the daemon; the queued command never did.
+  expect(daemonReceived).toHaveLength(1);
+  expect(JSON.parse(daemonReceived[0] as string)).toMatchObject({ type: "hello" });
+});

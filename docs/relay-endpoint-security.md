@@ -47,23 +47,28 @@ Frame kind is preserved on the wire the same way as legacy: text records are bas
 - The client resends its hello every second until a ready arrives. The daemon caches the exact hello text and ready text for the channel. An identical hello gets the identical ready and counters keep running. A different hello closes the channel (`1008`, transcript mismatch). A ready after the channel is open is ignored.
 - A fresh daemon channel always generates a fresh `e`, so a recorded hello and its records fail authentication when replayed later, including after a daemon restart.
 - A present but invalid `protected` field fails the handshake. There is no fallback to legacy once protected was attempted.
-- Any record failure (bad tag, duplicate, reordered, reflected, malformed) closes the channel with `1011` and nothing from that record is delivered.
+- Any record failure (bad tag, duplicate, reordered, reflected, malformed) closes the channel and nothing from that record is delivered. The daemon closes with `1011`; the client closes with `4003`, because a browser `WebSocket.close` accepts only `1000` and `3000`-`4999`.
+- A record header is checked against the bytes actually received before any buffer is allocated for it, so a header claiming gigabytes costs nothing.
 - Keys are cleared on close as a best effort.
 
 ## Negotiation and admission
 
 The daemon advertises `server_info.features.relayProtectedSecurity: true` on every session, whatever mode that session negotiated. A relay client that ended up in `legacy` with such a daemon closes with `4002` before the client marks itself connected, restores subscriptions, or flushes queued commands. The check lives in the relay E2EE transport, so it also covers the Node connector; direct connections never see it.
 
-The app pins `minimumSecurityMode: "protected"` on the relay connection record after the first protected handshake with that daemon public key, or when the pairing offer carries `minimumSecurityMode`. A pinned client passes `minimumMode: "protected"` to the handshake and refuses a legacy ready before sending credentials. The pin is keyed to the daemon identity: re-importing the same key keeps it, a different key is a different connection, and connection failures never clear it.
+The app pins `minimumSecurityMode: "protected"` on every relay connection to a daemon public key after the first protected handshake with that key, or when the pairing offer carries `minimumSecurityMode`. A pinned client passes `minimumMode: "protected"` to the handshake and refuses a legacy ready before sending credentials. The pin belongs to the daemon identity, not to a relay address: re-importing the same key through any relay keeps it, a different key is a different connection, and connection failures never clear it.
+
+Within one client process the floor also rises on its own. `DaemonClient` and the Node host connector remember a protected result and require it on every later attempt, so a reconnect after a relay drop cannot be answered in legacy mode even before the pin is persisted.
 
 The daemon refuses a legacy client with close `1008` and reason `protected endpoint security required`, and logs `relay_e2ee_handshake_rejected`. That close code stops at the relay: both relays replace a daemon-side close with their own (the wrangler relay sends `1012 Server disconnected`), so an old client sees an ordinary disconnect and keeps retrying. The only client-detectable failure is the client's own `4002`, which stops reconnecting and tells the user to update.
+
+The client learns its own `4002` and `4003` from the relay E2EE transport, which reports the close the moment the channel decides it. A socket close event arrives later and the channel's error callback earlier; neither is what `DaemonClient` acts on, because acting on the error would start a reconnect before the code is known.
 
 ## Enforcement flag
 
 `daemon.relay.requireProtectedSecurity` in `config.json` (also `relay.requireProtectedSecurity` through the config RPC) makes the daemon refuse legacy relay clients. Default `false`. It is a local daemon setting with no relay-server counterpart.
 
-- It is read when each hello arrives, so toggling it affects the next admission without a restart. Sessions already admitted in legacy mode stay up until they disconnect; turning the flag on does not close them.
-- While it is on, pairing offers and `relay://` URIs carry `minimumSecurityMode=protected` so new clients pin before their first handshake.
+- It is read when each hello arrives, so toggling it affects the next admission without a restart. Sessions already admitted in legacy mode stay up until they disconnect; turning the flag on does not close them. To finish enforcement, restart the daemon or disconnect its relay sessions after enabling the flag: every reconnect is then a new admission and legacy clients are refused.
+- While it is on, pairing offers carry `minimumSecurityMode: "protected"` and `relay://` URIs carry `security=protected`, so new clients pin before their first handshake.
 - Direct and local connections are outside the flag.
 
 Flipping the default is a separate decision, tentatively reviewed about 30 days after the compatibility release. Nothing in the code expires on a date.
