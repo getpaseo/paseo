@@ -1220,6 +1220,26 @@ export function IssueActions({ theme }: PluginSurfaceProps) {
 }
 ```
 
+### Markdown
+
+Import `Markdown` from `@getpaseo/plugin/client/ui` to render a string with Paseo's
+Markdown presentation on web, iOS, and Android:
+
+```tsx
+import { Markdown } from "@getpaseo/plugin/client/ui";
+
+<Markdown>{"## Review\n\nThe checks **passed**."}</Markdown>;
+```
+
+`children` is the only prop and must be a string. Updating it renders the new content
+immediately; an empty string renders nothing. The host supplies theme, text selection,
+code blocks, tables, diagrams, and link handling. Workspace file links and images use
+workspace context when the containing surface supplies it.
+
+The component adds no page padding or scroll container. Use a surrounding layout or
+scroll view when needed. Fetching content and showing loading or error states belong
+to your plugin.
+
 ### Modal
 
 `Modal` uses a bottom sheet on compact layouts and a centered dialog otherwise. The plugin owns

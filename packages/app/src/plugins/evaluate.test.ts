@@ -695,7 +695,8 @@ describe("evaluatePluginClientBundle", () => {
         `(function(require) {
       const shared = require("@getpaseo/plugin");
       const client = require("@getpaseo/plugin/client");
-      const { ExternalLink, Loading } = require("@getpaseo/plugin/client/ui");
+      const { ExternalLink, Loading, Markdown } = require("@getpaseo/plugin/client/ui");
+      if (typeof Markdown !== "function") throw new Error("Markdown");
       if (typeof ExternalLink !== "function") throw new Error("ExternalLink");
       if (typeof Loading !== "function") throw new Error("Loading");
       for (const name of ["usePaseo", "useRpc", "useSettings", "useAgent", "useWorkspace", "openExternalUrl", "useFileText", "useFileBytes", "useFileUrl", "PluginFileConflictError", "PluginFileDeletedError"]) {

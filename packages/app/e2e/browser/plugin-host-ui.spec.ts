@@ -10,7 +10,7 @@ import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspac
 const PLUGIN_ID = "plugin-host-ui-e2e";
 
 const PLUGIN_SOURCE = `import { usePaseo } from "@getpaseo/plugin/client";
-import { Icon, Modal, useToast } from "@getpaseo/plugin/client/ui";
+import { Icon, Modal, useToast, Markdown } from "@getpaseo/plugin/client/ui";
 import { useQueryClient } from "@tanstack/react-query";
 import React, { useState } from "react";
 import { Pressable, Text, View } from "react-native";
@@ -27,6 +27,9 @@ function ModalBody({ onSaved }) {
 
   return <View>
     <Text>Plugin modal contexts ready</Text>
+    <Markdown>{"## Plugin report"}</Markdown>
+    <Markdown>{"Checks **passed**. [Documentation](https://paseo.sh/docs/plugins)"}</Markdown>
+    <Markdown>{""}</Markdown>
     <Pressable accessibilityRole="button" onPress={save}>
       <Text>Save issue</Text>
     </Pressable>
@@ -92,10 +95,20 @@ async function openPluginModal(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Open plugin modal", exact: true }).click();
 }
 
+async function expectPluginMarkdown(page: Page): Promise<void> {
+  await expect(page.getByRole("heading", { name: "Plugin report" })).toBeVisible();
+  await expect(page.getByText("Checks passed.", { exact: false })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Documentation", exact: true })).toHaveAttribute(
+    "href",
+    "https://paseo.sh/docs/plugins",
+  );
+}
+
 async function expectCenteredPluginDialog(page: Page): Promise<void> {
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByText("Edit plugin issue", { exact: true })).toBeVisible();
   await expect(dialog.getByText("Plugin modal contexts ready", { exact: true })).toBeVisible();
+  await expectPluginMarkdown(page);
 }
 
 async function closeCenteredPluginDialog(page: Page): Promise<void> {
@@ -107,6 +120,7 @@ async function closeCenteredPluginDialog(page: Page): Promise<void> {
 async function expectCompactPluginSheet(page: Page): Promise<void> {
   await expect(page.getByText("Edit plugin issue", { exact: true })).toBeVisible();
   await expect(page.getByText("Plugin modal contexts ready", { exact: true })).toBeVisible();
+  await expectPluginMarkdown(page);
 }
 
 async function savePluginIssue(page: Page): Promise<void> {
