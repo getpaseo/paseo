@@ -1330,6 +1330,18 @@ not import `lucide-react-native` or `react-native-svg`.
 
 An unknown name or an SVG that breaks a rule renders nothing.
 
+### SvgXml
+
+`SvgXml` renders an SVG document string on every platform. It is the only vector-drawing primitive
+plugins get; a plugin bundle cannot import `react-native-svg` directly.
+
+| Prop     | Type               | Required | Behavior                                     |
+| -------- | ------------------ | -------- | -------------------------------------------- |
+| `xml`    | `string \| null`   | Yes      | The SVG document. `null` renders nothing.    |
+| `width`  | `number \| string` | No       | Rendered width.                              |
+| `height` | `number \| string` | No       | Rendered height.                             |
+| `color`  | `string`           | No       | Value of `currentColor` inside the document. |
+
 ## Timeline items
 
 A plugin can replace an agent timeline entry with its own data and React Native renderer. Both
