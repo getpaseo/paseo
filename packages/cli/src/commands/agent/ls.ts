@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { connectToDaemon } from "../../utils/client.js";
+import { fetchAllAgents } from "../../utils/agent-directory.js";
 import type { CommandOptions, ListResult, OutputSchema, CommandError } from "../../output/index.js";
 import { collectMultiple } from "../../utils/command-options.js";
 import { isSameOrDescendantPath } from "../../utils/paths.js";
@@ -165,6 +166,14 @@ export function buildAgentLsFetchOptions(
   return fetchOptions;
 }
 
+interface AgentLsClient {
+  fetchAgents(options?: FetchAgentsOptions): Promise<{
+    entries: { agent: AgentSnapshotPayload }[];
+    pageInfo: { nextCursor: string | null };
+  }>;
+  close(): Promise<void>;
+}
+
 /**
  * Agent ls command semantics:
  * - `paseo agent ls`    → active non-archived agents
@@ -176,7 +185,16 @@ export async function runLsCommand(
   options: AgentLsOptions,
   _command: Command,
 ): Promise<AgentLsResult> {
-  const client = await connectToDaemon({ target: options.daemonTarget });
+  return listAgents(options);
+}
+
+export async function listAgents(
+  options: AgentLsOptions,
+  connect: (
+    options: Parameters<typeof connectToDaemon>[0],
+  ) => Promise<AgentLsClient> = connectToDaemon,
+): Promise<AgentLsResult> {
+  const client = await connect({ target: options.daemonTarget });
 
   try {
     const normalizedThinkingOptionId = options.thinking?.trim();
@@ -189,8 +207,8 @@ export async function runLsCommand(
     }
 
     const labelFilters = parseLabelFilters(options.label);
-    const fetchPayload = await client.fetchAgents(buildAgentLsFetchOptions(options));
-    let agents = fetchPayload.entries.map((entry) => entry.agent);
+    const fetchOptions = buildAgentLsFetchOptions(options);
+    let agents = await fetchAllAgents(client, fetchOptions);
 
     // By default, exclude archived agents. `-a` includes them.
     if (!options.all) {

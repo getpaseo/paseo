@@ -11,6 +11,13 @@ function findProvider(id: string) {
 }
 
 describe("ACP provider catalog", () => {
+  it.each(["devin", "hermes", "kiro"])(
+    "#7087: %s supplies its provider mark to the catalog picker",
+    (provider) => {
+      expect(findProvider(provider).iconSvg).toContain("<svg");
+    },
+  );
+
   it("vendors provider entries with unique ids and concrete commands", () => {
     const ids = new Set<string>();
 
@@ -44,6 +51,7 @@ describe("ACP provider catalog", () => {
     expect(findProvider("codewhale").command).toEqual(["codewhale", "serve", "--acp"]);
     expect(findProvider("devin").command).toEqual(["devin", "acp"]);
     expect(findProvider("goose").command).toEqual(["goose", "acp"]);
+    expect(findProvider("hoplite").command).toEqual(["hoplite", "acp"]);
     expect(findProvider("junie").command).toEqual(["junie", "--acp", "true"]);
     expect(findProvider("kiro").command).toEqual(["kiro-cli", "acp"]);
     expect(findProvider("poolside").command).toEqual(["pool", "acp"]);
@@ -58,6 +66,32 @@ describe("ACP provider catalog", () => {
     });
     expect(findProvider("minimax-code").iconSvg).toContain("<svg");
   });
+
+  it("offers Hoplite through its local ACP bridge with the Hoplite mark", () => {
+    expect(findProvider("hoplite")).toMatchObject({
+      title: "Hoplite",
+      command: ["hoplite", "acp"],
+      installLink: "https://hoplite.sh/docs/cli#install",
+    });
+    expect(buildAcpProviderConfigPatch(findProvider("hoplite"), true)).toEqual({
+      providers: {
+        hoplite: { enabled: true },
+      },
+    });
+    const ids = getAcpProviderCatalog().map((entry) => entry.id);
+    expect(ids.indexOf("hermes")).toBeLessThan(ids.indexOf("hoplite"));
+    expect(ids.indexOf("hoplite")).toBeLessThan(ids.indexOf("junie"));
+    expect(findProvider("hoplite").iconSvg).toContain('fill="currentColor"');
+  });
+
+  it.each([undefined, false])(
+    "rejects unsupported bundled Hoplite before producing a patch (%s)",
+    (supported) => {
+      expect(() => buildAcpProviderConfigPatch(findProvider("hoplite"), supported)).toThrow(
+        "Update the host to add Hoplite.",
+      );
+    },
+  );
 
   it("maps a catalog entry to the daemon provider config patch", () => {
     expect(buildAcpProviderConfigPatch(findProvider("amp-acp"))).toEqual({

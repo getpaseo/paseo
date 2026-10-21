@@ -172,8 +172,7 @@ describe("review feedback", () => {
       makeComment("added"),
     ]);
     expect(feedback.model.getState().phase).toEqual({
-      kind: "sent",
-      recipient: makeRecipient("one"),
+      kind: "idle",
     });
   });
   it("clears unchanged sent comments while preserving additions", async () => {

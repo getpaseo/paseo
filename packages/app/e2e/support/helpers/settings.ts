@@ -24,6 +24,7 @@ const SECTION_LABELS = {
   appearance: "Appearance",
   sidebar: "Sidebar",
   editor: "Editor",
+  files: "Files",
   terminal: "Terminal",
   browser: "Browser",
   shortcuts: "Shortcuts",
@@ -370,7 +371,7 @@ export async function findAcpCatalogProvider(page: Page, providerName: string): 
 
 export async function installAcpCatalogProvider(page: Page, providerName: string): Promise<void> {
   await findAcpCatalogProvider(page, providerName);
-  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await page.getByRole("button", { name: `Add ${providerName}`, exact: true }).click();
 }
 
 export async function expectProviderInstalledInSettings(

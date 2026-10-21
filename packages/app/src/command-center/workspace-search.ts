@@ -1,5 +1,6 @@
 import {
-  compareCommandCenterScores,
+  compareBuiltInScores,
+  compareByRecency,
   filterAndRankBuiltInResults,
   scoreSearchFields,
   type CommandCenterScore,
@@ -33,29 +34,22 @@ function searchFields(workspace: CommandCenterWorkspaceResult) {
   return { visible: [workspace.title, workspace.subtitle], hidden: [] };
 }
 
-function compareScoredWorkspaces(
-  left: ScoredWorkspace,
-  right: ScoredWorkspace,
-  tiebreak: (left: CommandCenterWorkspaceResult, right: CommandCenterWorkspaceResult) => number,
-): number {
+function compareScoredWorkspaces(left: ScoredWorkspace, right: ScoredWorkspace): number {
   if (left.changeRequestHit !== right.changeRequestHit) {
     return left.changeRequestHit ? -1 : 1;
   }
   if (left.score && right.score) {
-    const scoreDelta = compareCommandCenterScores(left.score, right.score);
+    const scoreDelta = compareBuiltInScores(left.score, right.score);
     if (scoreDelta !== 0) return scoreDelta;
   }
-  return tiebreak(left.workspace, right.workspace);
+  return compareByRecency(left.workspace, right.workspace);
 }
 
 export function filterAndRankWorkspaces(
   workspaces: readonly CommandCenterWorkspaceResult[],
   query: string,
-  tiebreak: (left: CommandCenterWorkspaceResult, right: CommandCenterWorkspaceResult) => number,
 ): CommandCenterWorkspaceResult[] {
-  if (!query.trim()) {
-    return filterAndRankBuiltInResults(workspaces, query, searchFields, tiebreak);
-  }
+  if (!query.trim()) return filterAndRankBuiltInResults(workspaces, query, searchFields);
 
   const changeRequestNumber = parseChangeRequestQuery(query);
   const matches: ScoredWorkspace[] = [];
@@ -65,6 +59,6 @@ export function filterAndRankWorkspaces(
       changeRequestNumber !== null && workspace.changeRequestNumber === changeRequestNumber;
     if (score || changeRequestHit) matches.push({ workspace, score, changeRequestHit });
   }
-  matches.sort((left, right) => compareScoredWorkspaces(left, right, tiebreak));
+  matches.sort(compareScoredWorkspaces);
   return matches.map((match) => match.workspace);
 }

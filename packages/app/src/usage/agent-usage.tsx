@@ -1,7 +1,7 @@
+import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { UsageCard } from "./card";
-import { usageCopy } from "./copy";
 import { useUsageDisplay } from "./display";
 import { useAgentUsage } from "./queries";
 import type { UsageReportEntry } from "./types";
@@ -21,6 +21,7 @@ export function AgentUsage({
   /** Whether each card has a Refresh button; a surface that cannot be pressed hides it. */
   refreshable: boolean;
 }) {
+  const { t } = useTranslation();
   const view = useAgentUsage(serverId, agentId);
   if (view.kind === "none") return null;
   return (
@@ -35,7 +36,7 @@ export function AgentUsage({
         />
       ) : (
         <Text style={styles.message}>
-          {view.kind === "loading" ? usageCopy.loading : view.message}
+          {view.kind === "loading" ? t("providerUsage.loading") : view.message}
         </Text>
       )}
     </>
