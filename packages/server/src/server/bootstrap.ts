@@ -11,6 +11,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import type { Logger } from "pino";
 import { z } from "zod";
 import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js";
+import { clipMcpProtocolVersionHeader } from "./mcp-protocol-version-clip.js";
 
 export type ListenTarget =
   | { type: "tcp"; host: string; port: number }
@@ -1551,6 +1552,8 @@ export async function createPaseoDaemon(
           });
           return;
         }
+        // COMPAT(mcpProtocolVersionClip): see mcp-protocol-version-clip.ts.
+        clipMcpProtocolVersionHeader(req);
         const callerAgentIdRaw = req.query.callerAgentId;
         let callerAgentId: string | undefined;
         if (typeof callerAgentIdRaw === "string") {

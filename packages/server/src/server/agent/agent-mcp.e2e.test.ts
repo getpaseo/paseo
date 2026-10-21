@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { describe, expect, test } from "vitest";
+import { describe, expect, onTestFinished, test } from "vitest";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import pino from "pino";
@@ -89,12 +89,32 @@ async function createMcpClient(url: string, authToken?: string): Promise<McpClie
   return { callTool: boundCallTool, close: () => rawClient.close() };
 }
 
+/**
+ * Like createMcpClient, but sends an explicit `mcp-protocol-version` header on every
+ * request. The SDK client spreads extra headers after its negotiated version
+ * (client/streamableHttp.js `_commonHeaders`), so this value wins: it is how a client
+ * that speaks a protocol newer than the daemon's bundled SDK presents itself.
+ */
+async function createMcpClientWithProtocol(options: {
+  url: string;
+  protocolVersion: string;
+}): Promise<McpClient> {
+  const transport = new StreamableHTTPClientTransport(new URL(options.url), {
+    requestInit: { headers: { "mcp-protocol-version": options.protocolVersion } },
+  });
+  const rawClient = await experimental_createMCPClient({ transport });
+  const boundCallTool: McpClient["callTool"] = Reflect.get(rawClient, "callTool").bind(rawClient);
+  return { callTool: boundCallTool, close: () => rawClient.close() };
+}
+
 interface OfflineMcpDaemon {
   client: McpClient;
   stop: () => Promise<void>;
 }
 
-async function startOfflineMcpDaemon(): Promise<OfflineMcpDaemon> {
+async function startOfflineMcpDaemon(
+  options: { protocolVersion?: string } = {},
+): Promise<OfflineMcpDaemon> {
   const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
   const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
   const removeDirectories = async () => {
@@ -121,7 +141,10 @@ async function startOfflineMcpDaemon(): Promise<OfflineMcpDaemon> {
   });
   try {
     await daemon.start();
-    const client = await createMcpClient(`http://127.0.0.1:${port}/mcp/agents`);
+    const url = `http://127.0.0.1:${port}/mcp/agents`;
+    const client = options.protocolVersion
+      ? await createMcpClientWithProtocol({ url, protocolVersion: options.protocolVersion })
+      : await createMcpClient(url);
     return {
       client,
       stop: async () => {
@@ -889,4 +912,15 @@ describe("agent MCP end-to-end (offline)", () => {
       await rm(repoRoot, { recursive: true, force: true });
     }
   }, 60_000);
+
+  test("a client that sends a newer MCP protocol version completes requests after initialize", async () => {
+    // The client sends notifications/initialized while it is constructed: the first
+    // request after initialize, which a daemon that rejects the version refuses.
+    const daemon = await startOfflineMcpDaemon({ protocolVersion: "2026-07-28" });
+    onTestFinished(daemon.stop);
+
+    const result = await daemon.client.callTool({ name: "list_agents", args: {} });
+
+    expect(getStructuredContent(result)).toMatchObject({ agents: [] });
+  }, 30_000);
 });
