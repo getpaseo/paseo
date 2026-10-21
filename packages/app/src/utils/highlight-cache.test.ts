@@ -30,6 +30,18 @@ describe("tokenizeToLines", () => {
     expect(lines?.[0].some((token) => token.style === "keyword")).toBe(true);
   });
 
+  it("highlights shell commands without changing their text or indentation", () => {
+    const command = 'if [ -f "archive.tar.gz" ]; then\n  echo "$HOME"\n\nfi';
+    const lines = tokenizeToLines(command, "sh");
+    expect(lines?.flat().some((token) => token.style === "keyword")).toBe(true);
+    expect(lines?.flat().some((token) => token.style === "string")).toBe(true);
+    const reconstructedLines = [];
+    for (const line of lines ?? []) {
+      reconstructedLines.push(line.map((token) => token.text).join(""));
+    }
+    expect(reconstructedLines.join("\n")).toBe(command);
+  });
+
   it("returns null when there is no extension", () => {
     expect(tokenizeToLines("whatever", null)).toBeNull();
   });

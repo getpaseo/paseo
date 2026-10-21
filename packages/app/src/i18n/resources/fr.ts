@@ -2020,6 +2020,7 @@ export const fr: TranslationResources = {
     },
   },
   toolCallDetails: {
+    wrapLongLines: "Renvoyer les longues lignes à la ligne",
     error: "Erreur",
     empty: "Aucun détail supplémentaire disponible",
     subAgentActivity: "Activité du sous-agent",

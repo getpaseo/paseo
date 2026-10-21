@@ -9,6 +9,9 @@ import {
 describe("isLanguageSupported", () => {
   it("returns true for supported file extensions", () => {
     expect(isLanguageSupported("test.js")).toBe(true);
+    expect(isLanguageSupported("test.sh")).toBe(true);
+    expect(isLanguageSupported("test.bash")).toBe(true);
+    expect(isLanguageSupported("test.zsh")).toBe(true);
     expect(isLanguageSupported("test.ts")).toBe(true);
     expect(isLanguageSupported("test.tsx")).toBe(true);
     expect(isLanguageSupported("test.py")).toBe(true);
