@@ -2,9 +2,17 @@ import React, { useCallback, useMemo } from "react";
 import { View } from "react-native";
 import { useRouter, type Href } from "expo-router";
 import { useTranslation } from "react-i18next";
-import { Copy, Ellipsis, Globe, Import as ImportIcon, Settings } from "lucide-react-native";
+import {
+  Copy,
+  Ellipsis,
+  Globe,
+  Import as ImportIcon,
+  LocateFixed,
+  Settings,
+} from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
+import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,6 +34,7 @@ import {
   resolveTerminalProfiles,
 } from "@getpaseo/protocol/terminal-profiles";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
+import type { ShortcutKey } from "@/utils/format-shortcut";
 import type { Theme } from "@/styles/theme";
 import {
   useWorkspaceScriptsMenuPages,
@@ -45,6 +54,41 @@ const MENU_NEW_BROWSER_ICON = <ThemedGlobe size={16} uniProps={mutedColorMapping
 const MENU_IMPORT_ICON = <ThemedImport size={16} uniProps={mutedColorMapping} />;
 const MENU_COPY_ICON = <ThemedCopy size={16} uniProps={mutedColorMapping} />;
 const MENU_SETTINGS_ICON = <ThemedSettings size={16} uniProps={mutedColorMapping} />;
+
+const ThemedLocateFixed = withUnistyles(LocateFixed);
+
+const REVEAL_BUTTON_TOOLTIP_KEYS: ShortcutKey[] = [];
+
+/**
+ * The header's crosshair: reveals the current workspace in the sidebar list — the same flow as
+ * the command-center entry and the title's right-click menu, one press away.
+ */
+export function WorkspaceHeaderRevealButton({
+  onPress,
+  label,
+}: {
+  onPress: () => void;
+  label: string;
+}) {
+  return (
+    <HeaderToggleButton
+      testID="workspace-header-reveal-in-sidebar-button"
+      onPress={onPress}
+      tooltipLabel={label}
+      tooltipKeys={REVEAL_BUTTON_TOOLTIP_KEYS}
+      tooltipSide="bottom"
+      accessible
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      <ThemedLocateFixed
+        size={iconButtonChromeGlyphSize("large")}
+        strokeWidth={1.5}
+        uniProps={extraMutedIconColorMapping}
+      />
+    </HeaderToggleButton>
+  );
+}
 function WorkspaceHeaderMenuTriggerIcon() {
   return (
     <ThemedEllipsis
