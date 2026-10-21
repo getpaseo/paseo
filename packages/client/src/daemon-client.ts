@@ -1147,17 +1147,32 @@ function assertTransportFrameFits(frame: string | Uint8Array | ArrayBuffer): voi
     throw messageTooLargeError(size, MAX_WEBSOCKET_MESSAGE_BYTES);
 }
 
-function describeInboundTransportFrame(
-  frame: unknown,
-  rawBytes: Uint8Array | null,
-): Record<string, string> {
+function describeInboundTransportFrame(frame: unknown): Record<string, string> {
   if (typeof frame === "string") {
-    return { kind: "text", size: String(frame.length) };
+    return { kind: "text", size: String(frame.length), sizeUnit: "utf16-code-units" };
   }
-  if (rawBytes) {
-    return { kind: "binary", size: String(rawBytes.byteLength) };
+  if (frame instanceof ArrayBuffer || ArrayBuffer.isView(frame)) {
+    return { kind: "binary", size: String(frame.byteLength), sizeUnit: "bytes" };
   }
   return { kind: "unknown", size: "0" };
+}
+
+function describeRequestIdentity(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object") return {};
+  const message = "message" in value ? value.message : value;
+  if (!message || typeof message !== "object") return {};
+  if ("requestId" in message && typeof message.requestId === "string")
+    return { requestId: message.requestId };
+  if (
+    "payload" in message &&
+    message.payload &&
+    typeof message.payload === "object" &&
+    "requestId" in message.payload &&
+    typeof message.payload.requestId === "string"
+  ) {
+    return { requestId: message.payload.requestId };
+  }
+  return {};
 }
 
 function hashForLog(value: string): string {
@@ -1277,6 +1292,7 @@ export class DaemonClient {
   private connectTimeout: ReturnType<typeof setTimeout> | null = null;
   private pendingGenericTransportErrorTimeout: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
+  private traceConnectionAttempt = 0;
   private shouldReconnect = true;
   private connectPromise: Promise<void> | null = null;
   private connectResolve: (() => void) | null = null;
@@ -1429,6 +1445,7 @@ export class DaemonClient {
         headers: selected.headers,
         ...(selected.protocols ? { protocols: selected.protocols } : {}),
       });
+      this.traceConnectionAttempt += 1;
       this.transport = transport;
       this.lastServerInfoMessage = null;
       this.authFailureReasonValue = null;
@@ -1457,6 +1474,7 @@ export class DaemonClient {
 
       this.transportCleanup = [
         transport.onOpen(() => {
+          this.traceInstant("paseo.connection.open");
           if (this.pendingGenericTransportErrorTimeout) {
             clearTimeout(this.pendingGenericTransportErrorTimeout);
             this.pendingGenericTransportErrorTimeout = null;
@@ -1465,6 +1483,11 @@ export class DaemonClient {
           void this.sendHelloMessage();
         }),
         transport.onClose((event) => {
+          this.traceInstant("paseo.connection.close", {
+            code: String(
+              event && typeof event === "object" && "code" in event ? event.code : "unknown",
+            ),
+          });
           this.resetConnectTimeout();
           if (this.pendingGenericTransportErrorTimeout) {
             clearTimeout(this.pendingGenericTransportErrorTimeout);
@@ -1484,6 +1507,7 @@ export class DaemonClient {
           });
         }),
         transport.onError((event) => {
+          this.traceInstant("paseo.connection.error");
           this.resetConnectTimeout();
           const reason = describeTransportError(event);
           const isGeneric = reason === "Transport error";
@@ -1755,7 +1779,7 @@ export class DaemonClient {
     if (!trace?.isEnabled()) {
       return false;
     }
-    trace.beginSection(name, args);
+    trace.beginSection(name, { ...args, connectionAttempt: String(this.traceConnectionAttempt) });
     return true;
   }
 
@@ -1770,12 +1794,26 @@ export class DaemonClient {
     this.endTraceSection(isOpen);
   }
 
+  private beginSessionDispatchTrace(message: SessionOutboundMessage): boolean {
+    if (!this.config.trace?.isEnabled()) return false;
+    const fields = { messageType: message.type, ...describeRequestIdentity(message) };
+    this.traceInstant("paseo.ws.message.inbound", { envelopeType: "session", ...fields });
+    return this.beginTraceSection("paseo.ws.dispatch", fields);
+  }
+
   private sendJsonMessage(envelopeType: string, messageType: string, message: unknown): void {
-    this.traceInstant("paseo.ws.message.outbound", {
-      envelopeType,
-      messageType,
-    });
-    this.sendTransportFrame(JSON.stringify(message));
+    const isOpen =
+      this.config.trace?.isEnabled() === true &&
+      this.beginTraceSection("paseo.ws.message.outbound", {
+        envelopeType,
+        messageType,
+        ...describeRequestIdentity(message),
+      });
+    try {
+      this.sendTransportFrame(JSON.stringify(message));
+    } finally {
+      this.endTraceSection(isOpen);
+    }
   }
 
   private sendTransportFrame(frame: string | Uint8Array | ArrayBuffer): void {
@@ -1787,6 +1825,7 @@ export class DaemonClient {
     const isOpen = this.beginTraceSection("paseo.ws.frame.outbound", {
       kind: typeof frame === "string" ? "text" : "binary",
       size: String(getTransportFrameSize(frame)),
+      sizeUnit: typeof frame === "string" ? "utf16-code-units" : "bytes",
     });
     try {
       this.transport.send(frame);
@@ -4895,6 +4934,8 @@ export class DaemonClient {
     cwd: string;
     path: string;
     content: string;
+    /** `base64` requires `server_info.features.fileByteWrites`. */
+    contentEncoding?: "utf-8" | "base64";
     expectedModifiedAt: string;
     expectedRevision?: string;
   }): Promise<FileWriteResult> {
@@ -6392,12 +6433,13 @@ export class DaemonClient {
       return;
     }
 
-    const rawBytes = asUint8Array(rawData);
     const isOpen = this.beginTraceSection(
       "paseo.ws.frame.inbound",
-      describeInboundTransportFrame(rawData, rawBytes),
+      describeInboundTransportFrame(rawData),
     );
     try {
+      // Record arrival before conversion: encoding a large text frame is JS work too.
+      const rawBytes = asUint8Array(rawData);
       if (rawBytes && this.tryHandleBinaryFrame(rawBytes)) {
         return;
       }
@@ -6417,17 +6459,26 @@ export class DaemonClient {
     let parsedJson: unknown;
     const parseTraceOpen = this.beginTraceSection("paseo.ws.json.parse", {
       size: String(bytes),
+      sizeUnit: rawBytesLength === undefined ? "utf16-code-units" : "bytes",
     });
     try {
       parsedJson = JSON.parse(payload);
     } catch {
+      this.traceInstant("paseo.ws.json.invalid");
       return;
     } finally {
       this.endTraceSection(parseTraceOpen);
     }
 
-    const parsed = validateWSOutboundMessage(parsedJson);
+    const validationTrace = this.beginTraceSection("paseo.ws.validate");
+    let parsed: ReturnType<typeof validateWSOutboundMessage>;
+    try {
+      parsed = validateWSOutboundMessage(parsedJson);
+    } finally {
+      this.endTraceSection(validationTrace);
+    }
     if (!parsed.success) {
+      this.traceInstant("paseo.ws.validation.failed");
       const responseIdentity = extractCorrelatedResponseIdentity(parsedJson);
       const envelopeType =
         parsedJson != null &&
@@ -6460,6 +6511,7 @@ export class DaemonClient {
     }
 
     if (parsed.data.type === "hello.rejected") {
+      this.traceInstant("paseo.connection.rejected", { reason: parsed.data.reason });
       const reasonMessage = {
         password_required: "Password required",
         incorrect_password: "Incorrect password",
@@ -6471,11 +6523,12 @@ export class DaemonClient {
       return;
     }
 
-    this.traceInstant("paseo.ws.message.inbound", {
-      envelopeType: "session",
-      messageType: parsed.data.message.type,
-    });
-    this.handleSessionMessage(parsed.data.message);
+    const dispatchTrace = this.beginSessionDispatchTrace(parsed.data.message);
+    try {
+      this.handleSessionMessage(parsed.data.message);
+    } finally {
+      this.endTraceSection(dispatchTrace);
+    }
     const msgType = parsed.data.message.type;
     this.runtimeMetrics?.recordMessage(msgType, bytes, perfNow() - startMs);
     if (parsed.data.message.type === "agent_stream") {
@@ -6490,6 +6543,7 @@ export class DaemonClient {
         envelopeType: "binary",
         messageType: "file",
         opcode: String(fileFrame.opcode),
+        requestId: fileFrame.requestId,
       });
       this.consecutiveLivenessFailures = 0;
       this.handleFileTransferFrame(fileFrame);
@@ -6505,6 +6559,7 @@ export class DaemonClient {
       envelopeType: "binary",
       messageType: "terminal",
       opcode: String(frame.opcode),
+      slot: String(frame.slot),
     });
     this.consecutiveLivenessFailures = 0;
     const binaryStartMs = perfNow();
@@ -6623,6 +6678,12 @@ export class DaemonClient {
       next.status === "disconnected" && typeof next.reason === "string" ? next.reason : null;
     const reason = metadata?.reason ?? reasonFromNext;
     const reasonCode = metadata?.reasonCode ?? toReasonCode(reason);
+    this.traceInstant("paseo.connection.state", {
+      from: previous.status,
+      to: next.status,
+      event: metadata?.event ?? "STATE_UPDATE",
+      reasonCode: reasonCode ?? "none",
+    });
     this.logger.debug(
       {
         serverId: this.logServerId,
@@ -6722,6 +6783,10 @@ export class DaemonClient {
     const baseDelay = this.config.reconnect?.baseDelayMs ?? DEFAULT_RECONNECT_BASE_DELAY_MS;
     const maxDelay = this.config.reconnect?.maxDelayMs ?? DEFAULT_RECONNECT_MAX_DELAY_MS;
     const delay = Math.min(baseDelay * 2 ** attempt, maxDelay);
+    this.traceInstant("paseo.connection.reconnect", {
+      attempt: String(attempt),
+      delayMs: String(delay),
+    });
     this.reconnectAttempt = attempt + 1;
     this.reconnectTimeout = setTimeout(() => {
       this.reconnectTimeout = null;

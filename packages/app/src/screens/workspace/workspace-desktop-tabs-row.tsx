@@ -1,5 +1,6 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -10,6 +11,7 @@ import React, {
   type SetStateAction,
 } from "react";
 import { Pressable, Text, View, type LayoutChangeEvent } from "react-native";
+import { useFilePanelOpenWithMenu } from "@/file-panels";
 import {
   CopyX,
   ArrowLeftToLine,
@@ -720,6 +722,7 @@ function TabHandleContent({
 
 function TabChip({
   serverId,
+  workspaceId,
   tab,
   isActive,
   isDragging,
@@ -739,6 +742,7 @@ function TabChip({
   dragHandleProps,
 }: {
   serverId: string;
+  workspaceId: string;
   tab: WorkspaceTabDescriptor;
   isActive: boolean;
   isDragging: boolean;
@@ -759,6 +763,10 @@ function TabChip({
 }) {
   const { closeButtonTestId, contextMenuTestId, menuEntries } = resolvedTab;
   const { t } = useTranslation();
+  const openWith = useFilePanelOpenWithMenu(
+    { serverId, workspaceId, tabId: tab.tabId },
+    contextMenuTestId,
+  );
   const middleClickRef = useMiddleClickClose(
     useCallback(() => void onCloseTab(tab.tabId), [onCloseTab, tab.tabId]),
   );
@@ -936,14 +944,19 @@ function TabChip({
           </View>
         ) : null}
 
-        <ContextMenuContent align="start" width={DROPDOWN_WIDTH} testID={contextMenuTestId}>
-          {menuEntries.map((entry) =>
-            entry.kind === "separator" ? (
-              <ContextMenuSeparator key={entry.key} />
-            ) : (
-              <TabContextMenuItem key={entry.key} entry={entry} />
-            ),
-          )}
+        <ContextMenuContent
+          align="start"
+          width={DROPDOWN_WIDTH}
+          pages={openWith.pages}
+          testID={contextMenuTestId}
+        >
+          {menuEntries.map((entry) => {
+            if (entry.kind === "separator") return <ContextMenuSeparator key={entry.key} />;
+            if (entry.kind === "file-panel-open-with") {
+              return <Fragment key={entry.key}>{openWith.trigger}</Fragment>;
+            }
+            return <TabContextMenuItem key={entry.key} entry={entry} />;
+          })}
         </ContextMenuContent>
       </ContextMenu>
     </View>
@@ -1275,6 +1288,7 @@ function ResolvedWorkspaceDesktopTabsRow({
         <ResolvedDesktopTabChip
           key={`${item.tab.key}:${item.tab.kind}`}
           serverId={normalizedServerId}
+          workspaceId={normalizedWorkspaceId}
           item={item}
           isFocused={isFocused}
           isDragging={isActive}
@@ -1308,6 +1322,7 @@ function ResolvedWorkspaceDesktopTabsRow({
       layout.closeButtonPolicy,
       layout.items,
       normalizedServerId,
+      normalizedWorkspaceId,
       onCloseOtherTabs,
       onCloseTab,
       onCloseTabsToLeft,
@@ -1428,6 +1443,7 @@ function ResolvedWorkspaceDesktopTabsRow({
 }
 function ResolvedDesktopTabChip({
   serverId,
+  workspaceId,
   item,
   isFocused,
   isDragging,
@@ -1454,6 +1470,7 @@ function ResolvedDesktopTabChip({
   showDropIndicatorAfter,
 }: {
   serverId: string;
+  workspaceId: string;
   item: ResolvedWorkspaceDesktopTabRowItem;
   isFocused: boolean;
   isDragging: boolean;
@@ -1535,6 +1552,7 @@ function ResolvedDesktopTabChip({
       ) : null}
       <TabChip
         serverId={serverId}
+        workspaceId={workspaceId}
         tab={item.tab}
         isActive={item.isActive}
         isDragging={isDragging}

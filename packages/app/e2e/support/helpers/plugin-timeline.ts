@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, type Page, type TestInfo } from "@playwright/test";
-import { pluginRequirements } from "./plugin-fixture";
+import { copyPluginExample, pluginRequirements } from "./plugin-fixture";
 import { connectNewWorkspaceDaemonClient } from "./new-workspace";
 import { openAgentRoute, seedMockAgentWorkspace, type MockAgentWorkspace } from "./mock-agent";
 
@@ -273,4 +273,41 @@ export async function withPopoverTimelinePlugin(run: () => Promise<void>): Promi
     source: POPOVER_CLIENT_SOURCE,
     run,
   });
+}
+
+const THOUGHT =
+  "Need to find the scroll container, the layout effect that watches for new messages, and any gesture handler that might fight with programmatic scrolling. Probably a ref on the FlatList plus a near-bottom threshold.";
+
+/** Exercises the maintained inline-thinking renderer against real streamed reasoning. */
+export async function viewInlineThinkingExample(page: Page, info: TestInfo): Promise<void> {
+  info.setTimeout(120_000);
+  const example = await copyPluginExample("inline-thinking");
+  const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+  const previous = await client.getDaemonConfig();
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "inline-thinking-",
+    title: "Inline thinking example",
+    model: "one-minute-stream",
+  });
+  try {
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(example.directory);
+    await openAgentRoute(page, agent);
+    await expect(page.getByRole("textbox", { name: "Message agent..." }).first()).toBeVisible();
+    await requestPluginTimeline(agent);
+    const thought = page.getByText(/^Need to find the scroll container/);
+    await expect(thought).toBeVisible({ timeout: 60_000 });
+    await expect(thought).not.toHaveText(THOUGHT);
+    await info.attach("inline-thinking-streaming", {
+      body: await page.screenshot({ path: info.outputPath("inline-thinking-streaming.png") }),
+      contentType: "image/png",
+    });
+    await expect(thought).toHaveText(THOUGHT, { timeout: 30_000 });
+  } finally {
+    await client.removePlugin("inline-thinking");
+    await client.patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled ?? false });
+    await client.close();
+    await agent.cleanup();
+    await example.cleanup();
+  }
 }

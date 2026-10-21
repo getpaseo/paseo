@@ -200,38 +200,75 @@ test("traces WebSocket frames, message types, and JSON parse duration", async ()
   mock.triggerOpen({ preserveSent: true });
   await connectPromise;
 
-  expect(recorder.records).toEqual([
-    {
-      phase: "begin",
-      name: "paseo.ws.message.outbound",
-      args: { envelopeType: "hello", messageType: "hello" },
-    },
-    { phase: "end" },
-    {
-      phase: "begin",
-      name: "paseo.ws.frame.outbound",
-      args: { kind: "text", size: expect.any(String) },
-    },
-    { phase: "end" },
-    {
-      phase: "begin",
-      name: "paseo.ws.frame.inbound",
-      args: { kind: "text", size: expect.any(String) },
-    },
-    {
-      phase: "begin",
-      name: "paseo.ws.json.parse",
-      args: { size: expect.any(String) },
-    },
-    { phase: "end" },
-    {
-      phase: "begin",
-      name: "paseo.ws.message.inbound",
-      args: { envelopeType: "session", messageType: "status" },
-    },
-    { phase: "end" },
-    { phase: "end" },
-  ]);
+  const response = client.fetchAgents({ requestId: "diagnostic-request", scope: "active" });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "fetch_agents_response",
+      payload: {
+        requestId: "diagnostic-request",
+        entries: [],
+        pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
+      },
+    }),
+  );
+  await response;
+  const spans = recorder.records.filter((record) => record.phase === "begin");
+  expect(spans).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        name: "paseo.ws.frame.inbound",
+        args: {
+          kind: "text",
+          size: expect.any(String),
+          sizeUnit: "utf16-code-units",
+          connectionAttempt: "1",
+        },
+      }),
+      expect.objectContaining({ name: "paseo.ws.json.parse" }),
+      expect.objectContaining({ name: "paseo.ws.validate" }),
+      expect.objectContaining({
+        name: "paseo.ws.message.outbound",
+        args: {
+          envelopeType: "session",
+          messageType: "fetch_agents_request",
+          requestId: "diagnostic-request",
+          connectionAttempt: "1",
+        },
+      }),
+      expect.objectContaining({
+        name: "paseo.ws.message.inbound",
+        args: {
+          envelopeType: "session",
+          messageType: "fetch_agents_response",
+          requestId: "diagnostic-request",
+          connectionAttempt: "1",
+        },
+      }),
+      expect.objectContaining({
+        name: "paseo.ws.dispatch",
+        args: {
+          messageType: "fetch_agents_response",
+          requestId: "diagnostic-request",
+          connectionAttempt: "1",
+        },
+      }),
+    ]),
+  );
+  const stack: string[] = [];
+  const parentage: [string, string | undefined][] = [];
+  for (const record of recorder.records) {
+    if (record.phase === "begin") {
+      parentage.push([record.name, stack.at(-1)]);
+      stack.push(record.name);
+    } else {
+      expect(stack.length).toBeGreaterThan(0);
+      stack.pop();
+    }
+  }
+  expect(stack).toEqual([]);
+  expect(parentage).toContainEqual(["paseo.ws.frame.outbound", "paseo.ws.message.outbound"]);
+  expect(parentage).toContainEqual(["paseo.ws.dispatch", "paseo.ws.frame.inbound"]);
+  expect(JSON.stringify(recorder.records)).not.toContain("trace_unit_test");
 });
 
 test("does not infer browser automation capabilities from Electron runtime", async () => {

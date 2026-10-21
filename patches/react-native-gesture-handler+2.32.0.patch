@@ -1,8 +1,8 @@
 diff --git a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/GestureHandlerOrchestrator.kt b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/GestureHandlerOrchestrator.kt
-index 8d78aea..02e3ea6 100644
+index 8d78aea..b84d19e 100644
 --- a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/GestureHandlerOrchestrator.kt
 +++ b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/GestureHandlerOrchestrator.kt
-@@ -2,6 +2,7 @@ package com.swmansion.gesturehandler.core
+@@ -2,11 +2,13 @@ package com.swmansion.gesturehandler.core
  
  import android.graphics.Matrix
  import android.graphics.PointF
@@ -10,7 +10,13 @@ index 8d78aea..02e3ea6 100644
  import android.view.MotionEvent
  import android.view.View
  import android.view.ViewGroup
-@@ -28,6 +29,10 @@ class GestureHandlerOrchestrator(
+ import android.widget.EditText
+ import com.facebook.react.uimanager.RootView
++import com.facebook.react.views.view.ReactViewGroup
+ import com.swmansion.gesturehandler.react.RNGestureHandlerRootHelper
+ import com.swmansion.gesturehandler.react.RNGestureHandlerRootView
+ import com.swmansion.gesturehandler.react.isHoverAction
+@@ -28,6 +30,10 @@ class GestureHandlerOrchestrator(
    private val awaitingHandlers = arrayListOf<GestureHandler>()
    private val preparedHandlers = arrayListOf<GestureHandler>()
  
@@ -21,7 +27,7 @@ index 8d78aea..02e3ea6 100644
    // In `onHandlerStateChange` method we iterate through `awaitingHandlers`, but calling `tryActivate` may modify this list.
    // To avoid `ConcurrentModificationException` we iterate through copy. There is one more problem though - if handler was
    // removed from `awaitingHandlers`, it was still present in copy of original list. This hashset helps us identify which handlers
-@@ -46,6 +51,7 @@ class GestureHandlerOrchestrator(
+@@ -46,6 +52,7 @@ class GestureHandlerOrchestrator(
    fun onTouchEvent(event: MotionEvent): Boolean {
      isHandlingTouch = true
      val action = event.actionMasked
@@ -29,7 +35,7 @@ index 8d78aea..02e3ea6 100644
      if (action == MotionEvent.ACTION_DOWN ||
        action == MotionEvent.ACTION_POINTER_DOWN ||
        action == MotionEvent.ACTION_HOVER_MOVE
-@@ -579,6 +585,107 @@ class GestureHandlerOrchestrator(
+@@ -579,6 +586,115 @@ class GestureHandlerOrchestrator(
    private fun shouldIgnoreSubtreeIfGestureHandlerRootView(view: View) =
      view is RNGestureHandlerRootView && view != wrapperView && view.isRootViewEnabled()
  
@@ -87,6 +93,14 @@ index 8d78aea..02e3ea6 100644
 +    handler is NativeViewGestureHandler &&
 +      (handler.isActive || activeHandlers.none { shouldHandlerBeCancelledBy(handler, it) })
 +
++  // Keep cancellation traversal in the same drawing order as Android touch dispatch.
++  private fun getChildInDrawingOrderAtIndex(parent: ViewGroup, index: Int): View =
++    if (parent is ReactViewGroup) {
++      parent.getChildAt(parent.getZIndexMappedChildIndex(index))
++    } else {
++      parent.getChildAt(index)
++    }
++
 +  // Collects the view path under the point (topmost child first, like touch dispatch), leaf to root.
 +  private fun collectViewsAtPoint(view: View, coords: FloatArray, out: MutableList<View>): Boolean {
 +    val pointerEvents = viewConfigHelper.getPointerEventsConfigForView(view)
@@ -97,7 +111,7 @@ index 8d78aea..02e3ea6 100644
 +    var found = false
 +    if (view is ViewGroup && pointerEvents != PointerEventsConfig.BOX_ONLY) {
 +      for (i in view.childCount - 1 downTo 0) {
-+        val child = viewConfigHelper.getChildInDrawingOrderAtIndex(view, i)
++        val child = getChildInDrawingOrderAtIndex(view, i)
 +        if (!canReceiveEvents(child)) {
 +          continue
 +        }
@@ -138,7 +152,7 @@ index 8d78aea..02e3ea6 100644
      viewGroup: ViewGroup,
      coords: FloatArray,
 diff --git a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt
-index 629c155..e1909ff 100644
+index 629c155..dc0790d 100644
 --- a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt
 +++ b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt
 @@ -19,6 +19,7 @@ class RNGestureHandlerRootHelper(private val context: ReactContext, wrappedView:
@@ -157,7 +171,7 @@ index 629c155..e1909ff 100644
 +    // On the transition into interception, cancel the native views the pointers landed on - the
 +    // framework's ACTION_CANCEL never reaches them since RNGH ignores `onInterceptTouchEvent`.
 +    if (shouldIntercept && !wasIntercepting) {
-+      orchestrator!!.cancelTouchesInInterceptedViews(ev)
++      orchestrator!!.cancelTouchesInInterceptedViews(event)
 +    }
 +    wasIntercepting = shouldIntercept
 +

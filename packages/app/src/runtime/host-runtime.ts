@@ -1,3 +1,4 @@
+import { watchdog } from "@/watchdog";
 import { useSyncExternalStore, useMemo } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import equal from "fast-deep-equal/es6";
@@ -83,7 +84,7 @@ import {
   type ViewedTimelineOwnerPorts,
 } from "@/timeline/viewed-timeline-sync";
 import { projectIconCache } from "@/projects/icon-cache";
-import { nativePerformanceTrace } from "@/performance/native-trace";
+import { createPerformanceTrace } from "@/performance/native-trace";
 import { revokePushNotifications } from "@/push-notifications";
 import { createAppWebSocketFactory } from "./websocket-factory";
 
@@ -544,7 +545,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
         appVersion: resolveAppVersion() ?? undefined,
         runtimeGeneration,
         capabilities: appCapabilities,
-        trace: nativePerformanceTrace,
+        trace: createPerformanceTrace({ host: host.serverId, connection: connection.id }),
         providerSnapshots: "wire",
         ...(host.password ? { password: host.password } : {}),
         localCredential: () => readDesktopManagedLocalCredential(connection),
@@ -604,7 +605,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
         localCredential: () => readDesktopManagedLocalCredential(connection),
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
         capabilities: appCapabilities,
-        trace: nativePerformanceTrace,
+        trace: createPerformanceTrace({ host: host.serverId, connection: connection.id }),
       }),
     getClientId: () => getOrCreateClientId(),
     mountClientHandlers: ({ client, host }) => {
@@ -1159,12 +1160,18 @@ export class HostRuntimeController {
     });
   }
 
-  private logConnectionTransition(_input: {
+  private logConnectionTransition(input: {
     from: HostRuntimeConnectionMachineState["tag"];
     to: HostRuntimeConnectionMachineState["tag"];
     event: HostRuntimeConnectionMachineEvent;
   }): void {
-    // Intentionally empty - logging removed.
+    watchdog?.record("host.transition", {
+      host: this.host.serverId,
+      from: input.from,
+      to: input.to,
+      event: input.event.type,
+      epoch: String(this.connectionEpoch),
+    });
   }
 
   private trackConnectionFirstSeen(): void {

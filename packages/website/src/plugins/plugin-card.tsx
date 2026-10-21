@@ -1,10 +1,12 @@
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+import { useLocale, useLocalizePath } from "~/i18n";
 import { AuthorAvatar } from "./author-link";
 import { InstallCount } from "./install-count";
 import { pluginCardScreenshot } from "./thumbnails";
 import { pluginHref } from "./links";
 import { PluginTile } from "./plugin-tile";
-import { firstMediaImage, getAuthor, getCategory, type Plugin } from "./registry";
+import { firstMediaImage, getAuthor, getCategory, type Plugin, pluginListing } from "./registry";
 
 export const PLUGIN_GRID_CLASS =
   "grid gap-x-4 gap-y-8 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
@@ -40,16 +42,18 @@ function PluginShot({ plugin }: { plugin: Plugin }) {
  */
 export function PluginCard({ plugin, children }: { plugin: Plugin; children?: ReactNode }) {
   const author = getAuthor(plugin);
+  const listing = pluginListing(plugin, useLocale());
+  const localize = useLocalizePath();
   return (
     // Grid items size to their content by default; min-w-0 keeps the card in its column.
-    <a href={pluginHref(plugin.id)} className="group block min-w-0">
+    <a href={localize(pluginHref(plugin.id))} className="group block min-w-0">
       <PluginShot plugin={plugin} />
       <div className="mt-3 flex items-center gap-2">
         <PluginTile plugin={plugin} size="xs" />
-        <p className="min-w-0 truncate text-sm font-medium text-white">{plugin.name}</p>
+        <p className="min-w-0 truncate text-sm font-medium text-white">{listing.name}</p>
       </div>
       <p className="mt-2 line-clamp-2 min-h-10 break-words text-xs leading-5 text-muted-foreground">
-        {plugin.description}
+        {listing.description}
       </p>
       <p className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-extra-muted-foreground">
         <AuthorAvatar author={author} size="xs" />
@@ -75,17 +79,21 @@ export function PluginRankRow({
   rank: number;
   installs: number;
 }) {
+  const { t } = useTranslation();
+  const listing = pluginListing(plugin, useLocale());
+  const localize = useLocalizePath();
+  const category = getCategory(plugin.categories[0]);
   return (
     <a
-      href={pluginHref(plugin.id)}
+      href={localize(pluginHref(plugin.id))}
       className="flex items-center gap-3 rounded-lg px-4 py-2.5 transition-colors hover:bg-white/[0.04]"
     >
       <span className="text-sm tabular-nums text-extra-muted-foreground">{rank}</span>
       <PluginTile plugin={plugin} size="sm" />
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm text-white">{plugin.name}</p>
+        <p className="truncate text-sm text-white">{listing.name}</p>
         <p className="truncate text-xs text-extra-muted-foreground">
-          {getCategory(plugin.categories[0])?.label}
+          {category && t(`plugins.categories.${category}.label`)}
         </p>
       </div>
       <span className="text-xs text-muted-foreground">

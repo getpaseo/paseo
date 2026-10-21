@@ -1,3 +1,4 @@
+import { RenderProfile } from "@/utils/render-profiler";
 import { useCallback, useState, type ComponentProps } from "react";
 import { ExpoRoot } from "expo-router";
 import Head from "expo-router/head";
@@ -13,7 +14,11 @@ const { ctx: context } = require("expo-router/_ctx") as {
 };
 
 export function RootApp() {
-  return <RootRouter context={context} />;
+  return (
+    <RenderProfile id="App">
+      <RootRouter context={context} />
+    </RenderProfile>
+  );
 }
 
 export function RootRouter({ context: routes }: Pick<ComponentProps<typeof ExpoRoot>, "context">) {

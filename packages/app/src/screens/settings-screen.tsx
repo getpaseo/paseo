@@ -34,6 +34,7 @@ import {
   FolderGit2,
   SquareTerminal,
   Code2,
+  Files,
   Smartphone,
   Sparkles,
   Blocks,
@@ -78,6 +79,7 @@ import { AddRemoteSshHostModal } from "@/components/add-remote-ssh-host-modal";
 import { PairLinkModal } from "@/components/pair-link-modal";
 import { KeyboardShortcutsSection } from "@/screens/settings/keyboard-shortcuts-section";
 import { EditorSection } from "@/screens/settings/editor-section";
+import { FilesSection } from "@/screens/settings/files-section";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { CommunityLinks } from "@/components/community-links";
@@ -185,6 +187,7 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
     webOnly: true,
     Content: EditorSection,
   },
+  { id: "files", labelKey: "settings.sections.files", icon: Files, Content: FilesSection },
   {
     id: "shortcuts",
     labelKey: "settings.sections.shortcuts",
@@ -1328,10 +1331,11 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
   const installedPlugins = useInstalledPlugins();
   const detailTitle = ((): string | undefined => {
     if (view.kind === "plugin") {
-      const screen = installedPlugins
-        .find((plugin) => plugin.serverId === view.serverId && plugin.id === view.pluginId)
-        ?.settingsScreens.find((candidate) => candidate.id === view.screenId);
-      return `${view.pluginId} · ${screen?.title ?? t("settings.title")}`;
+      const plugin = installedPlugins.find(
+        (candidate) => candidate.serverId === view.serverId && candidate.id === view.pluginId,
+      );
+      const screen = plugin?.settingsScreens.find((candidate) => candidate.id === view.screenId);
+      return `${view.pluginId} · ${plugin && screen ? plugin.i18n.resolve(screen.title, plugin.locale) : t("settings.title")}`;
     }
     if (view.kind === "host") {
       const item = HOST_SECTION_ITEMS.find((s) => s.id === view.section);

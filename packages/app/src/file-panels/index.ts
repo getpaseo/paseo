@@ -1,23 +1,18 @@
-import type { ExplorerFile } from "@/stores/session-store";
-import { builtinFilePanels } from "./catalog";
-import { resolveFilePanel } from "./resolve";
-
-export { resolveFilePanel, type FilePanelCandidate, type FilePanelFile } from "./resolve";
-export { builtinFilePanels, isRenderedMarkdownFile } from "./catalog";
-export { FilePanelPreview } from "./builtin";
-
-export type FilePanel = (typeof builtinFilePanels)[number];
-
-export function resolveFilePreviewPanel(input: {
-  preview: ExplorerFile | null;
-  path: string;
-  associations: Readonly<Record<string, string>>;
-}) {
-  const { preview, path, associations } = input;
-  if (!preview) return null;
-  return resolveFilePanel({
-    file: { path, kind: preview.kind, size: preview.size, hasBytes: preview.kind === "image" },
-    candidates: builtinFilePanels,
-    associations,
-  }).panel;
-}
+export { FilePanelView } from "./view";
+export type { FilePanel } from "./panels";
+export {
+  useFilePanelChoice,
+  useFilePanelChoiceSnapshot,
+  type FilePanelChoice,
+} from "./choice/hook";
+export { FilePanelPicker } from "./choice/picker";
+export { FilePanelSwitcher } from "./choice/switcher";
+export {
+  FilePanelBarMenu,
+  useFilePanelOpenWithMenu,
+  type FilePanelOpenWithMenu,
+} from "./choice/open-with";
+export { DocumentFrame } from "./document-frame";
+export { filePanelIcon, filePanelOptionLabel, filePanelSelectorLabel } from "./choice/presentation";
+export { useFilePanelSettings, type FilePanelSettings } from "./settings/hook";
+export type { FilePanelSettingsRow } from "./settings/rows";
