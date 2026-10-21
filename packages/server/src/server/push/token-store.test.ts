@@ -88,6 +88,7 @@ describe("PushTokenStore persistence", () => {
     expect(() => store.revokeToken("ExponentPushToken[test]")).toThrow("disk full");
     expect(store.getActiveTokens()).toEqual(["ExponentPushToken[test]"]);
     expect(JSON.parse(persisted)).toEqual({
+      retentionMs: 48 * 60 * 60 * 1000,
       subscriptions: [
         {
           token: "ExponentPushToken[test]",
@@ -99,6 +100,6 @@ describe("PushTokenStore persistence", () => {
     rejectWrites = false;
     store.revokeToken("ExponentPushToken[test]");
     expect(store.getActiveTokens()).toEqual([]);
-    expect(JSON.parse(persisted)).toEqual({ subscriptions: [] });
+    expect(JSON.parse(persisted)).toEqual({ retentionMs: 48 * 60 * 60 * 1000, subscriptions: [] });
   });
 });

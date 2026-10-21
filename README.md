@@ -115,6 +115,7 @@ For full setup and configuration, see:
 
 - [Docs](https://paseo.sh/docs)
 - [Connectivity guide](https://paseo.sh/docs/connectivity)
+- [Notification configuration](docs/notifications.md)
 - [Configuration reference](https://paseo.sh/docs/configuration)
 
 ### Docker

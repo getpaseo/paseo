@@ -329,6 +329,8 @@ xvfb-run -a npm run test:e2e:window-startup --workspace=@getpaseo/desktop
 
 ### Daemon logs
 
+See [notifications](notifications.md) for routing, self-hosted ntfy, token retention and notification diagnostics.
+
 Check `$PASEO_HOME/daemon.log` for daemon logs. The default level is `info`; set
 `PASEO_LOG_LEVEL=trace` before launching the daemon when you need full provider,
 session, and agent-manager traces for stuck-state debugging.

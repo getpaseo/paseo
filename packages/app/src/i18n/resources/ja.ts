@@ -1348,6 +1348,8 @@ export const ja: TranslationResources = {
       label: "分離方法",
     },
     fields: {
+      newBranchName: "新しいブランチ名",
+      automaticBranchName: "自動",
       project: "プロジェクト",
       branch: "ブランチ",
       baseNotApplicable: "該当なし",

@@ -1,4 +1,4 @@
-import type { CreatePaseoWorktreeInput } from "@getpaseo/client/internal/daemon-client";
+import type { CreateWorkspaceRequestOptions } from "@getpaseo/client/internal/daemon-client";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
 import type { ComboboxOptionModel } from "@/components/ui/combobox-options";
 import { getForgePresentation } from "@/git/forge";
@@ -27,8 +27,8 @@ export type PickerItem =
     };
 
 export type PickerCheckoutRequest = Pick<
-  CreatePaseoWorktreeInput,
-  "action" | "refName" | "checkoutSource" | "githubPrNumber"
+  Extract<CreateWorkspaceRequestOptions["source"], { kind: "worktree" }>,
+  "action" | "refName" | "checkoutSource" | "githubPrNumber" | "branchName"
 >;
 
 const BRANCH_OPTION_PREFIX = "branch:";
@@ -180,11 +180,16 @@ export function defaultBasePickerItem(status: BaseRefCheckoutStatus): PickerItem
 
 export function pickerItemToCheckoutRequest(
   item: PickerItem | null,
+  newBranchName?: string,
 ): PickerCheckoutRequest | undefined {
   if (!item) return undefined;
   switch (item.kind) {
     case "branch":
-      return { action: "branch-off", refName: item.refName };
+      return {
+        action: "branch-off",
+        refName: item.refName,
+        ...(newBranchName?.trim() ? { branchName: newBranchName.trim() } : {}),
+      };
     case "github-pr": {
       const headRefName = item.item.headRefName?.trim();
       const forge = item.item.forge ?? "github";

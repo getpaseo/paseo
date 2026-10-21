@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   computeNotificationPlan,
+  computeRemoteNotificationPlan,
   isPushEligibleAttentionReason,
   type ClientPresenceState,
   PRESENCE_THRESHOLD_MS,
@@ -230,5 +231,66 @@ describe("isPushEligibleAttentionReason", () => {
     expect(isPushEligibleAttentionReason("finished")).toBe(true);
     expect(isPushEligibleAttentionReason("permission")).toBe(true);
     expect(isPushEligibleAttentionReason("error")).toBe(false);
+  });
+});
+
+describe("remote notification destinations", () => {
+  const nowMs = 100_000;
+  const focused = state({
+    appVisible: true,
+    focusedAgentId: "a",
+    lastActivityAtMs: nowMs,
+    deviceType: "mobile",
+    pushToken: "phone-a",
+    lastHeartbeatAtMs: nowMs,
+  });
+  const input = {
+    allStates: [focused],
+    focusTarget: { kind: "agent" as const, id: "a" },
+    pushEligible: true,
+    nowMs,
+  };
+
+  it("always pushes even when a desktop and phone are watching the same agent", () => {
+    expect(computeRemoteNotificationPlan({ ...input, mode: "always_push" })).toEqual({
+      expoEligible: true,
+      excludedExpoTokens: [],
+      ntfyEligible: true,
+    });
+  });
+  it("smart suppresses only the viewing phone's token", () => {
+    expect(computeRemoteNotificationPlan({ ...input, mode: "smart" })).toEqual({
+      expoEligible: true,
+      excludedExpoTokens: ["phone-a"],
+      ntfyEligible: true,
+    });
+  });
+  it.each([
+    { deviceType: "web" as const },
+    { appVisible: false },
+    { focusedAgentId: "other" },
+    { lastHeartbeatAtMs: 0 },
+    { lastActivityAtMs: 0 },
+    { lastActivityAtMs: nowMs + 1 },
+  ])("smart does not suppress background, desktop, other-agent or stale presence: %j", (change) => {
+    expect(
+      computeRemoteNotificationPlan({
+        ...input,
+        allStates: [{ ...focused, ...change }],
+        mode: "smart",
+      }).excludedExpoTokens,
+    ).toEqual([]);
+  });
+  it("disconnected devices remain eligible", () => {
+    expect(
+      computeRemoteNotificationPlan({ ...input, allStates: [], mode: "smart" }).expoEligible,
+    ).toBe(true);
+  });
+  it("legacy expo suppression never gates ntfy", () => {
+    expect(computeRemoteNotificationPlan({ ...input, mode: "legacy" })).toEqual({
+      expoEligible: false,
+      excludedExpoTokens: [],
+      ntfyEligible: true,
+    });
   });
 });

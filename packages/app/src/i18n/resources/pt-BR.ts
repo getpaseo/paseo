@@ -1360,6 +1360,8 @@ export const ptBR: TranslationResources = {
       label: "Isolamento",
     },
     fields: {
+      newBranchName: "Nome da nova branch",
+      automaticBranchName: "Automático",
       project: "Projeto",
       branch: "Branch",
       baseNotApplicable: "Não aplicável",

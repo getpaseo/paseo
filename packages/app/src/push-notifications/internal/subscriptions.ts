@@ -4,6 +4,7 @@ import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import { z } from "zod";
 import { readValidatedString } from "@/storage/validated-storage";
+import { registerRotatedPushToken } from "./token-registration";
 import type { RevokePushNotificationsInput, StartPushNotificationsInput } from "./types";
 
 const STORAGE_PREFIX = "@paseo:expo-push-token:";
@@ -28,12 +29,14 @@ async function ensurePushPermission(): Promise<boolean> {
   return requested.status === Notifications.PermissionStatus.GRANTED;
 }
 
-async function resolveToken(serverId: string): Promise<string | null> {
+async function resolveToken(
+  serverId: string,
+): Promise<{ token: string | null; previousToken: string | null }> {
   const key = storageKey(serverId);
   const cached = await readValidatedString(AsyncStorage, key, ExpoPushTokenSchema);
   if (!(await ensurePushPermission())) {
     await AsyncStorage.removeItem(key);
-    return null;
+    return { token: null, previousToken: cached };
   }
 
   if (Platform.OS === "android") {
@@ -46,40 +49,62 @@ async function resolveToken(serverId: string): Promise<string | null> {
   const projectId = getExpoProjectId();
   if (!projectId) {
     console.warn("[PushNotifications] Missing EAS projectId; cannot fetch Expo push token");
-    return cached;
+    return { token: cached, previousToken: cached };
   }
 
-  const result = await Notifications.getExpoPushTokenAsync({ projectId });
-  const token = result.data.trim();
-  if (!token) return cached;
-  await AsyncStorage.setItem(key, token);
-  return token;
+  try {
+    const result = await Notifications.getExpoPushTokenAsync({ projectId });
+    const token = result.data.trim() || cached;
+    if (token) await AsyncStorage.setItem(key, token);
+    return { token, previousToken: cached };
+  } catch {
+    console.warn("[PushNotifications] Token refresh failed; retaining cached subscription");
+    return { token: cached, previousToken: cached };
+  }
 }
 
 export function startSubscription(input: StartPushNotificationsInput): () => void {
   let stopped = false;
   let token: string | null = null;
-  const register = () => {
-    if (!stopped && token && input.client.isConnected) {
-      input.client.registerPushToken(token);
-    }
+  let previousToken: string | null = null;
+  let refreshTask = Promise.resolve();
+  const register = async () => {
+    if (stopped || !input.client.isConnected) return;
+    await registerRotatedPushToken({
+      client: input.client,
+      token,
+      previousToken,
+      supportsRevocation:
+        input.client.getLastServerInfoMessage()?.features?.pushTokenRevocation === true,
+    });
+    previousToken = token;
   };
-
-  void resolveToken(input.serverId)
-    .then((resolved) => {
-      if (stopped) return undefined;
-      token = resolved;
-      register();
-      return undefined;
-    })
-    .catch((error) => console.warn("[PushNotifications] Failed to register push token", error));
-
+  const refresh = () => {
+    refreshTask = refreshTask
+      .then(async () => {
+        if (stopped) return undefined;
+        const resolved = await resolveToken(input.serverId);
+        if (stopped) return undefined;
+        token = resolved.token;
+        previousToken = resolved.previousToken;
+        await register();
+        return undefined;
+      })
+      .catch(() => console.warn("[PushNotifications] Failed to register push subscription"));
+  };
+  refresh();
+  const nativeTokenListener = Notifications.addPushTokenListener(refresh);
   const unsubscribe = input.client.subscribeConnectionStatus((state) => {
-    if (state.status === "connected") register();
+    if (state.status === "connected") {
+      void register().catch(() =>
+        console.warn("[PushNotifications] Failed to renew push subscription"),
+      );
+    }
   });
 
   return () => {
     stopped = true;
+    nativeTokenListener.remove();
     unsubscribe();
   };
 }
@@ -94,8 +119,8 @@ export async function revokeSubscription(input: RevokePushNotificationsInput): P
   ) {
     try {
       await input.client.unregisterPushToken(token);
-    } catch (error) {
-      console.warn("[PushNotifications] Failed to revoke push token", error);
+    } catch {
+      console.warn("[PushNotifications] Failed to revoke push token");
     }
   }
   await AsyncStorage.removeItem(key);

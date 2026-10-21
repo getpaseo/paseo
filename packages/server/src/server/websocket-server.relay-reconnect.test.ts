@@ -473,13 +473,13 @@ function holdNextSessionMessage(session: (typeof sessionMock.instances)[number])
 function holdSessionCleanup(session: (typeof sessionMock.instances)[number]): {
   finish: () => void;
 } {
-  let finish = () => {};
-  session.cleanup.mockImplementationOnce(
-    () =>
-      new Promise<void>((resolve) => {
-        finish = resolve;
-      }),
-  );
+  let finish!: () => void;
+  // Shutdown can await provider teardown before starting session cleanup.
+  // Capture the resolver now so releasing the gate is independent of that order.
+  const cleanup = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  session.cleanup.mockImplementationOnce(() => cleanup);
   return {
     finish: () => finish(),
   };

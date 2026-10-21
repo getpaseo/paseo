@@ -1,3 +1,4 @@
+import { resolveNotificationConfig } from "./notifications/notification-config.js";
 import { configurationEnvironment } from "./config-environment.js";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -618,6 +619,7 @@ export function resolveConfigFromPersisted(
     mcpInjectIntoAgents,
     browserToolsEnabled,
     git: resolveGitProcessConfig(env, persisted),
+    notifications: resolveNotificationConfig(env, persisted.daemon?.notifications),
     autoArchiveAfterMerge,
     enableTerminalAgentHooks: persisted.daemon?.enableTerminalAgentHooks ?? false,
     appendSystemPrompt,

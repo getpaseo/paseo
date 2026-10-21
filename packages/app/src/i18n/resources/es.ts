@@ -1370,6 +1370,8 @@ export const es: TranslationResources = {
       label: "Aislamiento",
     },
     fields: {
+      newBranchName: "Nombre de la nueva rama",
+      automaticBranchName: "Automático",
       project: "Proyecto",
       branch: "Rama",
       baseNotApplicable: "No aplicable",

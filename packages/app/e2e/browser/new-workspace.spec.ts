@@ -51,7 +51,7 @@ import {
   type LocalGhPrFixture,
 } from "../support/helpers/github-fixtures";
 import { getServerId } from "../support/helpers/server-id";
-import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
+import { openMobileAgentSidebar, selectSidebarStatusGrouping } from "../support/helpers/sidebar";
 import { getE2EDaemonPort } from "../support/helpers/daemon-port";
 import { chooseAddProjectMethod, expectAddProjectPage } from "../support/helpers/add-project-flow";
 import { seedSavedSettingsHosts } from "../support/helpers/settings";
@@ -690,6 +690,138 @@ test.describe("New workspace flow", () => {
         excludes: "running",
         excludesIndicator: "workspace-status-indicator-running",
       });
+    } finally {
+      await tempRepo.cleanup();
+    }
+  });
+
+  for (const viewport of [
+    { name: "desktop", width: 1440, height: 1000, branchLabelCount: 0 },
+    { name: "compact", width: 390, height: 844, branchLabelCount: 1 },
+  ]) {
+    test(`custom branch name creates the requested branch on ${viewport.name}`, async ({
+      page,
+    }, testInfo) => {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      const serverId = getServerId();
+      const tempRepo = await createTempGitRepo("new-workspace-custom-branch-", {
+        branches: ["main", "dev"],
+      });
+      try {
+        const openedProject = await openProjectViaDaemon(client, tempRepo.path);
+        localWorkspaceIds.add(openedProject.workspaceId);
+        await gotoAppShell(page);
+        if (viewport.name === "compact") await openMobileAgentSidebar(page);
+        await waitForSidebarHydration(page);
+        await openNewWorkspaceComposer(page, {
+          projectKey: openedProject.projectKey,
+          projectDisplayName: openedProject.projectDisplayName,
+        });
+        await selectWorkspaceIsolation(page, "worktree");
+        const branchTrigger = page.getByTestId("new-workspace-branch-name-trigger");
+        const branchName = page.getByTestId("new-workspace-branch-name");
+        const save = page.getByTestId("new-workspace-branch-name-save");
+        await expect(branchTrigger).toContainText("Automatic");
+        await branchTrigger.click();
+        await branchName.fill("discarded-name");
+        await page.getByRole("button", { name: "Cancel", exact: true }).click();
+        await expect(branchTrigger).toContainText("Automatic");
+        await branchTrigger.click();
+        await expect(branchName).toHaveValue("");
+        await branchName.fill("feature/my-custom-task");
+        const editorScreenshot = testInfo.outputPath(`branch-name-editor-${viewport.name}.png`);
+        await page.screenshot({ path: editorScreenshot });
+        await testInfo.attach("Branch name editor", {
+          path: editorScreenshot,
+          contentType: "image/png",
+        });
+        await save.click();
+        await expect(branchTrigger).toContainText("feature/my-custom-task");
+        await selectWorkspaceIsolation(page, "local");
+        await expect(branchTrigger).toBeHidden();
+        await selectWorkspaceIsolation(page, "worktree");
+        await expect(branchTrigger).toContainText("feature/my-custom-task");
+        await branchTrigger.click();
+        await expect(branchName).toHaveValue("feature/my-custom-task");
+        await branchName.fill("");
+        await save.click();
+        await expect(branchTrigger).toContainText("Automatic");
+        await branchTrigger.click();
+        await branchName.fill("feature/my-custom-task");
+        await branchName.press("Enter");
+        await expect(branchName).toBeHidden();
+        await openStartingRefPicker(page);
+        await selectBranchInPicker(page, "dev");
+        await expect(page.getByPlaceholder("Search branches and PRs")).toBeHidden();
+        await page.mouse.move(0, 0);
+        await branchTrigger.blur();
+        await expect(
+          page.getByText("New branch name", { exact: true }).filter({ visible: true }),
+        ).toHaveCount(viewport.branchLabelCount);
+        const screenshot = testInfo.outputPath(`custom-branch-name-${viewport.name}.png`);
+        await page.screenshot({ path: screenshot });
+        await testInfo.attach("Custom branch in workspace setup", {
+          path: screenshot,
+          contentType: "image/png",
+        });
+        await submitNewWorkspaceEmpty(page);
+        const createdWorkspace = await assertNewWorkspaceSidebarAndHeader(page, {
+          serverId,
+          client,
+          previousWorkspaceId: openedProject.workspaceId,
+          projectDisplayName: openedProject.projectDisplayName,
+          assertSidebarRow: viewport.name !== "compact",
+        });
+        createdWorktreeDirectories.add(createdWorkspace.workspaceDirectory);
+        const branchInfo = await readWorktreeBranchInfo({
+          worktreePath: createdWorkspace.workspaceDirectory,
+        });
+        expect(branchInfo.currentBranch).toBe("feature/my-custom-task");
+        expect(branchInfo.hasAncestor(tempRepo.branchHeads.dev)).toBe(true);
+      } finally {
+        await tempRepo.cleanup();
+      }
+    });
+  }
+
+  test("custom branch name errors stay visible and preserve the input", async ({ page }) => {
+    const tempRepo = await createTempGitRepo("new-workspace-invalid-branch-");
+    try {
+      const openedProject = await openProjectViaDaemon(client, tempRepo.path);
+      localWorkspaceIds.add(openedProject.workspaceId);
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openNewWorkspaceComposer(page, {
+        projectKey: openedProject.projectKey,
+        projectDisplayName: openedProject.projectDisplayName,
+      });
+      await selectWorkspaceIsolation(page, "worktree");
+      const branchTrigger = page.getByTestId("new-workspace-branch-name-trigger");
+      const branchName = page.getByTestId("new-workspace-branch-name");
+      const save = page.getByTestId("new-workspace-branch-name-save");
+      await branchTrigger.click();
+      await branchName.fill("invalid..branch");
+      await save.click();
+      await submitNewWorkspaceEmpty(page);
+      await expect(page.getByTestId("new-workspace-create-error")).toBeVisible({ timeout: 30_000 });
+      await expect(branchTrigger).toContainText("invalid..branch");
+      await branchTrigger.click();
+      await expect(branchName).toHaveValue("invalid..branch");
+      await expect(branchName).toBeEditable();
+      await branchName.fill("fix/corrected-branch");
+      await save.click();
+      await submitNewWorkspaceEmpty(page);
+      const createdWorkspace = await assertNewWorkspaceSidebarAndHeader(page, {
+        serverId: getServerId(),
+        client,
+        previousWorkspaceId: openedProject.workspaceId,
+        projectDisplayName: openedProject.projectDisplayName,
+      });
+      createdWorktreeDirectories.add(createdWorkspace.workspaceDirectory);
+      const branchInfo = await readWorktreeBranchInfo({
+        worktreePath: createdWorkspace.workspaceDirectory,
+      });
+      expect(branchInfo.currentBranch).toBe("fix/corrected-branch");
     } finally {
       await tempRepo.cleanup();
     }

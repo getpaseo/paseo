@@ -2303,7 +2303,7 @@ describe("create_agent MCP tool", () => {
       await tool.handler({
         ...detachedWorktreeWorkspace(repoDir, {
           kind: "branch-off",
-          branchName: "feat/placeholder-auto-title",
+          worktreeSlug: "placeholder-auto-title",
           baseBranch: "main",
         }),
         title: "Agent title",
@@ -2327,7 +2327,7 @@ describe("create_agent MCP tool", () => {
         version: 2,
         firstAgentBranchAutoName: {
           status: "attempted",
-          placeholderBranchName: "feat/placeholder-auto-title",
+          placeholderBranchName: "placeholder-auto-title",
         },
       });
       expect(branchName).toBe("workspace-auto-title-flow");
@@ -2404,7 +2404,7 @@ describe("create_agent MCP tool", () => {
       await createAgentTool.handler({
         ...detachedWorktreeWorkspace(repoDir, {
           kind: "branch-off",
-          branchName: "feat/manual-title-placeholder",
+          worktreeSlug: "manual-title-placeholder",
           baseBranch: "main",
         }),
         title: "Agent title",
@@ -2493,7 +2493,7 @@ describe("create_agent MCP tool", () => {
       await tool.handler({
         ...detachedWorktreeWorkspace(repoDir, {
           kind: "branch-off",
-          branchName: "feat/agent-title-placeholder",
+          worktreeSlug: "agent-title-placeholder",
           baseBranch: "main",
         }),
         title: "Explicit Agent Title",

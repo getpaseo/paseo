@@ -32,6 +32,24 @@ describe("branchPickerOptionId", () => {
 });
 
 describe("pickerItemToCheckoutRequest", () => {
+  it("preserves the selected base ref and an explicit new branch name", () => {
+    const item: PickerItem = {
+      kind: "branch",
+      name: "dev",
+      refName: "refs/heads/dev",
+      accessibilityLabel: "dev, local branch",
+    };
+    expect(pickerItemToCheckoutRequest(item, "  feature/my-task  ")).toEqual({
+      action: "branch-off",
+      refName: "refs/heads/dev",
+      branchName: "feature/my-task",
+    });
+    expect(pickerItemToCheckoutRequest(item, "   ")).toEqual({
+      action: "branch-off",
+      refName: "refs/heads/dev",
+    });
+  });
+
   it("returns undefined for no selection (null)", () => {
     expect(pickerItemToCheckoutRequest(null)).toBeUndefined();
   });
@@ -54,7 +72,7 @@ describe("pickerItemToCheckoutRequest", () => {
       kind: "github-pr",
       item: prItem,
     };
-    expect(pickerItemToCheckoutRequest(item)).toEqual({
+    expect(pickerItemToCheckoutRequest(item, "feature/ignored-for-pr")).toEqual({
       action: "checkout",
       refName: "feature/picker",
       checkoutSource: { kind: "change_request", forge: "github", number: 42 },

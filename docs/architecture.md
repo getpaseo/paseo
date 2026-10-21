@@ -48,6 +48,7 @@ The heart of Paseo. A Node.js process that:
 - Listens for WebSocket connections from clients
 - Manages agent lifecycle (create, run, stop, resume, archive)
 - Streams agent output in real time via a timeline model
+- Routes agent and terminal attention to in-app, Expo and optional ntfy destinations; see [notifications](notifications.md)
 - Provides agent-to-agent tools through a transport-neutral tool catalog, with MCP as one adapter
 - Optionally connects outbound to a relay for remote access
 - Optionally serves the browser web client from the same HTTP server (self-hosting guide: [public-docs/web-ui.md](../public-docs/web-ui.md))

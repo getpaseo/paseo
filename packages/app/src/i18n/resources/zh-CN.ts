@@ -1323,6 +1323,8 @@ export const zhCN: TranslationResources = {
       label: "隔离",
     },
     fields: {
+      newBranchName: "新分支名称",
+      automaticBranchName: "自动",
       project: "项目",
       branch: "分支",
       baseNotApplicable: "不适用",

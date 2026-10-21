@@ -1342,6 +1342,8 @@ export const en = {
       label: "Isolation",
     },
     fields: {
+      newBranchName: "New branch name",
+      automaticBranchName: "Automatic",
       project: "Project",
       branch: "Branch",
       baseNotApplicable: "Not applicable",

@@ -1341,6 +1341,8 @@ export const ko: TranslationResources = {
       label: "격리",
     },
     fields: {
+      newBranchName: "새 브랜치 이름",
+      automaticBranchName: "자동",
       project: "프로젝트",
       branch: "브랜치",
       baseNotApplicable: "해당 없음",

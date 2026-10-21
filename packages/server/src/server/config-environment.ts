@@ -1,6 +1,8 @@
+import { NOTIFICATION_ENV_KEYS } from "./notifications/notification-config.js";
 // Daemon configuration inputs. General provider credentials and executable/runtime
 // controls remain available to managed launches and their agent processes.
 export const DAEMON_SETTING_ENV_KEYS = [
+  ...NOTIFICATION_ENV_KEYS,
   "MCP_DEBUG",
   "OPENAI_STT_BASE_URL",
   "OPENAI_TTS_BASE_URL",

@@ -38,3 +38,7 @@ export function addNotificationResponseReceivedListener() {
 export async function getLastNotificationResponseAsync() {
   return null;
 }
+
+export function addPushTokenListener(_listener: unknown) {
+  return { remove() {} };
+}

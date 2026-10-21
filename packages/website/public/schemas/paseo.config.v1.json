@@ -15,6 +15,112 @@
         "listen": {
           "type": "string"
         },
+        "notifications": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "type": "boolean"
+            },
+            "mode": {
+              "default": "legacy",
+              "type": "string",
+              "enum": ["legacy", "smart", "always_push"]
+            },
+            "provider": {
+              "default": "expo",
+              "type": "string",
+              "enum": ["expo", "ntfy", "both"]
+            },
+            "onFinish": {
+              "default": true,
+              "type": "boolean"
+            },
+            "onError": {
+              "type": "boolean"
+            },
+            "onPermission": {
+              "default": true,
+              "type": "boolean"
+            },
+            "onTerminal": {
+              "default": true,
+              "type": "boolean"
+            },
+            "includePreviews": {
+              "default": false,
+              "type": "boolean"
+            },
+            "tokenRetentionDays": {
+              "default": 180,
+              "type": "integer",
+              "minimum": 7,
+              "maximum": 3650
+            },
+            "ntfy": {
+              "default": {
+                "allowHttp": false,
+                "priorities": {
+                  "finished": "default",
+                  "error": "high",
+                  "permission": "urgent",
+                  "terminal": "default"
+                }
+              },
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string"
+                },
+                "topic": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9_-]{1,64}$"
+                },
+                "token": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^[\\x21-\\x7e]+$"
+                },
+                "allowHttp": {
+                  "default": false,
+                  "type": "boolean"
+                },
+                "priorities": {
+                  "default": {
+                    "finished": "default",
+                    "error": "high",
+                    "permission": "urgent",
+                    "terminal": "default"
+                  },
+                  "type": "object",
+                  "properties": {
+                    "finished": {
+                      "default": "default",
+                      "type": "string",
+                      "enum": ["min", "low", "default", "high", "urgent"]
+                    },
+                    "error": {
+                      "default": "high",
+                      "type": "string",
+                      "enum": ["min", "low", "default", "high", "urgent"]
+                    },
+                    "permission": {
+                      "default": "urgent",
+                      "type": "string",
+                      "enum": ["min", "low", "default", "high", "urgent"]
+                    },
+                    "terminal": {
+                      "default": "default",
+                      "type": "string",
+                      "enum": ["min", "low", "default", "high", "urgent"]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
         "hostnames": {
           "anyOf": [
             {

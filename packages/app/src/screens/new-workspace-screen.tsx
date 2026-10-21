@@ -885,6 +885,13 @@ export function NewWorkspaceScreen({
   // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
   const supportsWorkspaceMultiplicity = useHostFeature(selectedServerId, "workspaceMultiplicity");
   const supportsForgeSearch = useHostFeature(selectedServerId, "forgeSearch");
+  const [newBranch, setNewBranch] = useState(() => ({ name: "", requestId: generateDraftId() }));
+  const handleNewBranchNameChange = useCallback((name: string) => {
+    // Editing after a rejected name is a new request; retries of the same edit keep their key.
+    setNewBranch((current) =>
+      current.name === name ? current : { name, requestId: generateDraftId() },
+    );
+  }, []);
   const [creationIdentity] = useState(() => ({
     draftId: draftId ?? generateDraftId(),
     worktreeSlug: createNameId(),
@@ -1248,10 +1255,11 @@ export function NewWorkspaceScreen({
       const checkoutRequest = checkoutStatusForCreate
         ? pickerItemToCheckoutRequest(
             selectedItem ?? defaultBasePickerItem(checkoutStatusForCreate),
+            newBranch.name,
           )
         : undefined;
       const normalizedWorkspace = await createMultiplicityWorkspace({
-        idempotencyKey: creationIdentity.draftId,
+        idempotencyKey: `${creationIdentity.draftId}:${newBranch.requestId}`,
         worktreeSlug: creationIdentity.worktreeSlug,
         client: connectedClient,
         isolation: createsWorktree ? "worktree" : "local",
@@ -1273,6 +1281,7 @@ export function NewWorkspaceScreen({
     [
       creationIdentity,
       creationResult,
+      newBranch,
       effectiveIsolation,
       mergeWorkspaces,
       queryClient,
@@ -1460,6 +1469,10 @@ export function NewWorkspaceScreen({
   const formStack = useNewWorkspaceForm({
     isCompact,
     isPending,
+    newBranch: {
+      name: newBranch.name,
+      onChange: handleNewBranchNameChange,
+    },
     project: {
       anchorRef: projectPickerAnchorRef,
       open: openProjectPicker,
@@ -1593,7 +1606,11 @@ export function NewWorkspaceScreen({
         onImportSession={importSession.open}
       >
         {composer}
-        {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+        {errorMessage ? (
+          <Text testID="new-workspace-create-error" style={styles.errorText}>
+            {errorMessage}
+          </Text>
+        ) : null}
       </NewWorkspaceLayout>
       {importSession.sheet}
     </FileDropZone>

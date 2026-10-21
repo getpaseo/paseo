@@ -44,6 +44,8 @@ Scheduled runs archive their workspaces when they finish by default. Turn off **
 
 ## Create a worktree-backed workspace
 
+In **New workspace**, select **New worktree** and choose the starting branch. Open **New branch name** beside it to enter a custom name, then save. Clear the name to restore **Automatic**. The control is hidden for local workspaces and PR checkouts.
+
 The examples below use the current directory as the source checkout. Pass `--path ~/dev/my-app` to create the workspace from another checkout.
 
 Branch off from a base branch:

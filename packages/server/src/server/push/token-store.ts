@@ -34,10 +34,19 @@ export class PushTokenStore {
   renewToken(token: string): void {
     const normalized = token.trim();
     if (!normalized) return;
+    if (normalized.length > 512) throw new Error("Push token exceeds the supported length");
     const now = this.now();
     const currentExpiry = this.subscriptions.get(normalized);
-    if (currentExpiry !== undefined && currentExpiry - now > this.leaseMs / 2) return;
+    if (
+      currentExpiry !== undefined &&
+      currentExpiry - now > this.leaseMs - Math.min(24 * 60 * 60 * 1000, this.leaseMs / 2)
+    )
+      return;
     const next = new Map(this.subscriptions);
+    for (const [registered, expiresAt] of next) {
+      if (expiresAt <= now) next.delete(registered);
+    }
+    if (!next.has(normalized) && next.size >= 1000) throw new Error("Push device limit reached");
     next.set(normalized, now + this.leaseMs);
     this.persist(next);
     this.subscriptions = next;
@@ -82,7 +91,11 @@ export class PushTokenStore {
       }
       ensurePrivateFile(this.filePath);
       const raw = readFileSync(this.filePath, "utf-8");
-      const parsed = JSON.parse(raw) as { subscriptions?: unknown; tokens?: unknown };
+      const parsed = JSON.parse(raw) as {
+        subscriptions?: unknown;
+        tokens?: unknown;
+        retentionMs?: unknown;
+      };
       const loaded = new Map<string, number>();
       const subscriptions = Array.isArray(parsed.subscriptions) ? parsed.subscriptions : [];
       for (const value of subscriptions) {
@@ -92,29 +105,40 @@ export class PushTokenStore {
           continue;
         const token = candidate.token.trim();
         const expiresAt = Date.parse(candidate.expiresAt);
-        if (token && Number.isFinite(expiresAt)) {
-          loaded.set(token, expiresAt);
+        if (token && token.length <= 512 && loaded.size < 1000 && Number.isFinite(expiresAt)) {
+          // v0.11.2 stored a 48-hour lease. Preserve the original registration age
+          // when migrating to the longer inactivity policy, including expired leases.
+          const previousRetention =
+            typeof parsed.retentionMs === "number" && Number.isFinite(parsed.retentionMs)
+              ? parsed.retentionMs
+              : 48 * 60 * 60 * 1000;
+          loaded.set(token, expiresAt - previousRetention + this.leaseMs);
         }
       }
       this.subscriptions = loaded;
+      if (parsed.retentionMs !== this.leaseMs && loaded.size > 0) this.persist(loaded);
 
-      const legacyTokens = Array.isArray(parsed.tokens)
-        ? parsed.tokens.filter((token): token is string => typeof token === "string")
-        : [];
-      if (legacyTokens.length > 0) {
-        const migrated = new Map(loaded);
-        const expiresAt = this.now() + this.leaseMs;
-        for (const token of legacyTokens) {
-          const normalized = token.trim();
-          if (normalized) migrated.set(normalized, expiresAt);
-        }
-        this.persist(migrated);
-        this.subscriptions = migrated;
-      }
+      this.loadLegacyTokens(parsed.tokens, loaded);
       this.logger.info({ total: this.subscriptions.size }, "Loaded push tokens");
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      this.logger.warn({ err }, "Failed to load push tokens");
+    } catch {
+      this.logger.warn({ category: "read_or_parse" }, "Failed to load push tokens");
+    }
+  }
+
+  private loadLegacyTokens(tokens: unknown, loaded: Map<string, number>): void {
+    const legacyTokens = Array.isArray(tokens)
+      ? tokens.filter((token): token is string => typeof token === "string")
+      : [];
+    if (legacyTokens.length > 0) {
+      const migrated = new Map(loaded);
+      const expiresAt = this.now() + this.leaseMs;
+      for (const token of legacyTokens) {
+        const normalized = token.trim();
+        if (normalized && normalized.length <= 512 && migrated.size < 1000)
+          migrated.set(normalized, expiresAt);
+      }
+      this.persist(migrated);
+      this.subscriptions = migrated;
     }
   }
 
@@ -123,6 +147,7 @@ export class PushTokenStore {
       const payload =
         JSON.stringify(
           {
+            retentionMs: this.leaseMs,
             subscriptions: Array.from(subscriptions, ([token, expiresAt]) => ({
               token,
               expiresAt: new Date(expiresAt).toISOString(),

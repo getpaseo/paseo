@@ -45,6 +45,7 @@ interface TestPaseoDaemonOptions {
   dictationFinalTimeoutMs?: number;
   auth?: PaseoDaemonConfig["auth"];
   pushNotificationSender?: PushNotificationSender;
+  notifications?: PaseoDaemonConfig["notifications"];
   serviceProxy?: PaseoDaemonConfig["serviceProxy"];
   webUi?: PaseoDaemonConfig["webUi"];
   trustedProxies?: PaseoDaemonConfig["trustedProxies"];
@@ -203,6 +204,7 @@ async function prepareTestDaemonConfig(
     appBaseUrl: "https://app.paseo.sh",
     auth: options.auth,
     pushNotificationSender: options.pushNotificationSender,
+    notifications: options.notifications,
     serviceProxy: options.serviceProxy,
     webUi: options.webUi,
     trustedProxies: options.trustedProxies,

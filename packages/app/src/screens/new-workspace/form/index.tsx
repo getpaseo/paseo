@@ -10,13 +10,14 @@ import type { LaunchTarget } from "@/new-workspace-launch/target";
 import type { HostProjectListItem } from "@/projects/host-projects";
 import type { HostProfile } from "@/types/host-connection";
 import type { PickerItem } from "../../new-workspace-picker-item";
+import { NewBranchField } from "../new-branch-field";
 import {
   FIELD_BADGE_HEIGHT,
   FIELD_HEIGHT,
   FieldTrigger,
   type FieldTriggerVariant,
 } from "./field-trigger";
-import { branchIcon, folderIcon, ProjectIcon, pullRequestIcon } from "./icons";
+import { branchArrowIcon, branchIcon, folderIcon, ProjectIcon, pullRequestIcon } from "./icons";
 import { LaunchControl } from "./launch-control";
 import { AddProjectOption, IsolationOption, ProjectOption, RefOption } from "./options";
 
@@ -75,6 +76,10 @@ export interface NewWorkspaceFormProps {
     onChange: (target: LaunchTarget) => void;
     profiles: readonly TerminalProfile[];
     disabled: boolean;
+  };
+  newBranch: {
+    name: string;
+    onChange: (name: string) => void;
   };
 }
 
@@ -157,14 +162,74 @@ function useRefRenderOption(itemById: Map<string, PickerItem>, isPending: boolea
   );
 }
 
+interface BranchFieldsProps {
+  isCompact: boolean;
+  isPending: boolean;
+  canCreateWorktree: boolean;
+  base: NewWorkspaceFormProps["base"];
+  newBranch: NewWorkspaceFormProps["newBranch"];
+}
+
+function BranchFields({
+  isCompact,
+  isPending,
+  canCreateWorktree,
+  base,
+  newBranch,
+}: BranchFieldsProps) {
+  const { t } = useTranslation();
+  const variant = isCompact ? "field" : "badge";
+  const refIcon = base.selectedItem?.kind === "github-pr" ? pullRequestIcon : branchIcon;
+  const baseField = base.showRefPicker ? (
+    <FieldTrigger
+      ref={base.anchorRef}
+      variant={variant}
+      label={t("newWorkspace.fields.branch")}
+      accessibilityLabel={t("newWorkspace.refPicker.startingRef")}
+      tooltip={t("newWorkspace.tooltips.startingRef")}
+      icon={refIcon}
+      value={base.triggerLabel}
+      onPress={base.open}
+      disabled={isPending || !base.selectedSourceDirectory}
+      testID="new-workspace-ref-picker-trigger"
+    />
+  ) : null;
+  const showNewBranch =
+    base.showRefPicker && canCreateWorktree && base.selectedItem?.kind !== "github-pr";
+  const nameField = showNewBranch ? (
+    <NewBranchField
+      variant={variant}
+      pending={isPending}
+      value={newBranch.name}
+      onChange={newBranch.onChange}
+    />
+  ) : null;
+  if (isCompact) {
+    return (
+      <>
+        {baseField ?? <View style={styles.reservedField} pointerEvents="none" />}
+        {nameField ?? <View style={styles.reservedField} pointerEvents="none" />}
+      </>
+    );
+  }
+  if (!baseField) return null;
+  return (
+    <View style={styles.branchRow}>
+      <View style={styles.desktopControl}>{baseField}</View>
+      {nameField ? branchArrowIcon : null}
+      {nameField ? <View style={styles.desktopControl}>{nameField}</View> : null}
+    </View>
+  );
+}
+
 /**
  * The New workspace setup fields, one trigger per field, each opening its picker. Compact: a stack
- * of full-width fields with the label inside. Desktop: one meta row of badges. Either way, a field
+ * of full-width fields with the label inside. Desktop: metadata above a source-to-branch row. A field
  * that does not apply to the selected project is left out, and Host only shows with a second host.
  */
 export function useNewWorkspaceForm(props: NewWorkspaceFormProps): ReactElement {
   const { t } = useTranslation();
-  const { isCompact, isPending, project, host, isolation, base, launch } = props;
+  const { isCompact, isPending, project, host, isolation, base, launch, newBranch } = props;
   const variant: FieldTriggerVariant = isCompact ? "field" : "badge";
   const projectPicker = useProjectPicker(project, isPending);
   const isolationPicker = useIsolationPicker(isolation, isPending);
@@ -198,7 +263,6 @@ export function useNewWorkspaceForm(props: NewWorkspaceFormProps): ReactElement 
   const isolationValue = isWorktree
     ? t("newWorkspace.isolation.worktree")
     : t("newWorkspace.isolation.local");
-  const refIcon = base.selectedItem?.kind === "github-pr" ? pullRequestIcon : branchIcon;
 
   const projectField = (
     <FieldTrigger
@@ -257,20 +321,15 @@ export function useNewWorkspaceForm(props: NewWorkspaceFormProps): ReactElement 
       testID="workspace-create-isolation-trigger"
     />
   ) : null;
-  const baseField = base.showRefPicker ? (
-    <FieldTrigger
-      ref={base.anchorRef}
-      variant={variant}
-      label={t("newWorkspace.fields.branch")}
-      accessibilityLabel={t("newWorkspace.refPicker.startingRef")}
-      tooltip={t("newWorkspace.tooltips.startingRef")}
-      icon={refIcon}
-      value={base.triggerLabel}
-      onPress={base.open}
-      disabled={isPending || !base.selectedSourceDirectory}
-      testID="new-workspace-ref-picker-trigger"
+  const branchFields = (
+    <BranchFields
+      isCompact={isCompact}
+      isPending={isPending}
+      canCreateWorktree={isolation.canCreateWorktree}
+      base={base}
+      newBranch={newBranch}
     />
-  ) : null;
+  );
   const launchField = (
     <LaunchControl
       variant={variant}
@@ -335,25 +394,30 @@ export function useNewWorkspaceForm(props: NewWorkspaceFormProps): ReactElement 
         {projectField}
         {hostField}
         {isolationField}
-        {baseField}
+        {branchFields}
         {launchField}
-        {/* Isolation and Base come and go with the project; their rows stay reserved so the
+        {/* Isolation and branch fields come and go with the project; their rows stay reserved so the
             stack keeps one height and nothing above the composer jumps. */}
         {isolationField ? null : <View style={styles.reservedField} pointerEvents="none" />}
-        {baseField ? null : <View style={styles.reservedField} pointerEvents="none" />}
         {pickers}
       </View>
     );
   }
 
   return (
-    <View testID="new-workspace-ref-picker-row" style={styles.desktopRow} pointerEvents="box-none">
-      <View style={styles.desktopControl}>{projectField}</View>
-      {hostField ? <View style={styles.desktopControl}>{hostField}</View> : null}
-      {isolationField ? <View style={styles.desktopControl}>{isolationField}</View> : null}
-      {baseField ? <View style={styles.desktopControl}>{baseField}</View> : null}
-      <View style={styles.launchSpacer} pointerEvents="none" />
-      {launchField}
+    <View
+      testID="new-workspace-ref-picker-row"
+      style={styles.desktopStack}
+      pointerEvents="box-none"
+    >
+      <View style={styles.desktopRow}>
+        <View style={styles.desktopControl}>{projectField}</View>
+        {hostField ? <View style={styles.desktopControl}>{hostField}</View> : null}
+        {isolationField ? <View style={styles.desktopControl}>{isolationField}</View> : null}
+        <View style={styles.launchSpacer} pointerEvents="none" />
+        {launchField}
+      </View>
+      {branchFields}
       {pickers}
     </View>
   );
@@ -368,12 +432,20 @@ const styles = StyleSheet.create((theme) => ({
   reservedField: {
     height: FIELD_HEIGHT,
   },
+  desktopStack: {
+    gap: theme.spacing[2],
+    marginBottom: theme.spacing[4],
+  },
+  branchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: theme.spacing[4],
+    gap: theme.spacing[2],
+  },
   desktopRow: {
     flexDirection: "row",
     alignItems: "center",
     minHeight: FIELD_BADGE_HEIGHT,
-    // Matches the gap between the composer and the Import session pill below it.
-    marginBottom: theme.spacing[4],
     // The badge adds its own left padding; offset it so the project icon's left
     // edge lands exactly on the "New workspace" title's left edge. The trailing
     // inset mirrors it so the launch chip stops on the composer's inner content

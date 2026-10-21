@@ -1,3 +1,4 @@
+import { NotificationConfigSchema } from "./notifications/notification-config.js";
 import { PluginRegistriesSchema } from "@getpaseo/protocol/plugin-registry";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -236,6 +237,7 @@ export const PersistedConfigSchema = z
     daemon: z
       .object({
         listen: z.string().optional(),
+        notifications: NotificationConfigSchema.optional(),
         hostnames: z.union([z.literal(true), z.array(z.string())]).optional(),
         allowedHosts: z.union([z.literal(true), z.array(z.string())]).optional(),
         trustedProxies: z

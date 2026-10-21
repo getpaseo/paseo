@@ -1,3 +1,12 @@
+import {
+  NotificationDispatcher,
+  type NotificationEvent,
+} from "./notifications/notification-dispatcher.js";
+import {
+  expoNotificationsEnabled,
+  pushTokenRetentionMs,
+  type NotificationConfig,
+} from "./notifications/notification-config.js";
 import { stat } from "node:fs/promises";
 import type { CreationSnapshot } from "@getpaseo/protocol/messages";
 import { CreationService } from "./creation/index.js";
@@ -68,11 +77,7 @@ import type { ServiceProxySubsystem } from "./service-proxy.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import type { SpeechReadinessSnapshot, SpeechService } from "./speech/speech-runtime.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
-import {
-  computeNotificationPlan,
-  isPushEligibleAttentionReason,
-  type ClientPresenceState,
-} from "./agent-attention-policy.js";
+import { computeNotificationPlan, type ClientPresenceState } from "./agent-attention-policy.js";
 import {
   buildAgentAttentionNotificationPayload,
   findLatestPermissionRequest,
@@ -154,6 +159,7 @@ interface WebSocketConnectionIdentity {
 }
 
 interface WebSocketServerConfig {
+  notifications?: NotificationConfig;
   allowedOrigins?: Set<string>;
   hostnames?: HostnamesConfig;
   getAllowedOrigins?: () => Set<string>;
@@ -555,6 +561,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly worktreesRoot: string | undefined;
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly pushNotifications: PushNotifications;
+  private readonly notificationDispatcher: NotificationDispatcher;
   private readonly pushNotificationSender: PushNotificationSender;
   private readonly mcpBaseUrl: string | null;
   private speech!: SpeechService | null;
@@ -746,11 +753,22 @@ export class VoiceAssistantWebSocketServer {
     this.pushNotifications = createPushNotifications({
       logger: pushLogger,
       filePath: join(paseoHome, "push-tokens.json"),
+      retentionMs: pushTokenRetentionMs(wsConfig.notifications),
+      enabled: expoNotificationsEnabled(wsConfig.notifications),
     });
     this.pushNotificationSender = pushNotificationSender ?? this.pushNotifications;
+    this.notificationDispatcher = new NotificationDispatcher({
+      config: wsConfig.notifications,
+      logger: this.logger,
+      expo: this.pushNotificationSender,
+      filePath: join(paseoHome, "ntfy-deliveries.json"),
+    });
 
     this.agentManager.setAgentAttentionCallback((params) => {
-      void this.broadcastAgentAttention(params).catch((err) => {
+      void this.broadcastAgentAttention({
+        ...params,
+        eventId: `${this.serverId}:${randomUUID()}`,
+      }).catch((err) => {
         this.logger.warn({ err, agentId: params.agentId }, "Failed to broadcast agent attention");
       });
     });
@@ -1071,6 +1089,8 @@ export class VoiceAssistantWebSocketServer {
 
   public async close(): Promise<void> {
     this.prepareForShutdown();
+    await this.notificationDispatcher.close();
+    await this.pushNotifications.close?.();
     this.unsubscribeSpeechReadiness?.();
     this.unsubscribeSpeechReadiness = null;
     this.unsubscribeDaemonConfigChange?.();
@@ -2577,6 +2597,9 @@ export class VoiceAssistantWebSocketServer {
     }
 
     return {
+      deviceType: activity.deviceType,
+      pushToken: session.getClientPushToken(source),
+      lastHeartbeatAtMs: activity.receivedAtMs,
       appVisible: activity.appVisible,
       focusedAgentId: activity.focusedAgentId,
       focusedTerminalId: activity.focusedTerminalId,
@@ -2584,15 +2607,73 @@ export class VoiceAssistantWebSocketServer {
     };
   }
 
+  private async buildAgentAttentionEvent(
+    params: {
+      agentId: string;
+      provider: AgentProvider;
+      reason: "finished" | "error" | "permission";
+      eventId: string;
+    },
+    agent: NonNullable<ReturnType<AgentManager["getAgent"]>>,
+  ) {
+    const timestamp = new Date().toISOString();
+    const request = findLatestPermissionRequest(agent.pendingPermissions);
+    const assistantMessage = this.notificationDispatcher.config.includePreviews
+      ? await this.agentManager.getLastAssistantMessage(params.agentId).catch(() => {
+          this.logger.warn(
+            { eventId: params.eventId, agentId: params.agentId },
+            "Notification preview unavailable",
+          );
+          return null;
+        })
+      : null;
+    const notification = buildAgentAttentionNotificationPayload({
+      reason: params.reason,
+      serverId: this.serverId,
+      workspaceId: agent.workspaceId!,
+      agentId: params.agentId,
+      assistantMessage,
+      // Tool arguments and provider metadata may contain credentials or source code.
+      permissionRequest: request
+        ? { id: request.id, provider: request.provider, name: request.name, kind: request.kind }
+        : null,
+    });
+
+    const workspace = await this.workspaceRegistry.get(agent.workspaceId!);
+    const project = workspace ? await this.projectRegistry.get(workspace.projectId) : null;
+    return {
+      notification,
+      event: {
+        id: params.eventId,
+        type: (
+          {
+            finished: "agent_finished",
+            error: "agent_error",
+            permission: "permission_required",
+          } as const
+        )[params.reason],
+        timestamp,
+        payload: notification,
+        agentName: agent.config.title ?? params.provider,
+        provider: params.provider,
+        workspaceName: workspace?.title ?? workspace?.displayName,
+        projectName: project?.customName ?? project?.displayName,
+      } satisfies NotificationEvent,
+    };
+  }
+
   private async broadcastAgentAttention(params: {
     agentId: string;
     provider: AgentProvider;
     reason: "finished" | "error" | "permission";
+    eventId: string;
   }): Promise<void> {
     const agent = this.agentManager.getAgent(params.agentId);
     if (!agent?.workspaceId) {
       return;
     }
+    const { notification, event } = await this.buildAgentAttentionEvent(params, agent);
+    const timestamp = event.timestamp;
     const clientEntries: Array<{
       ws: WebSocketLike;
       state: ClientPresenceState;
@@ -2616,34 +2697,19 @@ export class VoiceAssistantWebSocketServer {
     );
     const allStates = notificationEntries.map((e) => e.state);
     const nowMs = Date.now();
-    const assistantMessage = await this.agentManager.getLastAssistantMessage(params.agentId);
-    const notification = buildAgentAttentionNotificationPayload({
-      reason: params.reason,
-      serverId: this.serverId,
-      workspaceId: agent.workspaceId,
-      agentId: params.agentId,
-      assistantMessage,
-      permissionRequest: findLatestPermissionRequest(agent.pendingPermissions),
-    });
-
     const plan = computeNotificationPlan({
       allStates,
       focusTarget: { kind: "agent", id: params.agentId },
-      pushEligible: isPushEligibleAttentionReason(params.reason),
+      pushEligible: params.reason !== "error",
       nowMs,
     });
 
-    if (plan.shouldPush) {
-      void this.pushNotificationSender.send(notification).catch((err) => {
-        this.logger.warn({ err, agentId: params.agentId }, "Failed to send push notification");
-      });
-    }
+    this.notificationDispatcher.dispatch(event, allStates, { kind: "agent", id: params.agentId });
 
     for (const { ws } of clientEntries) {
       const shouldNotify =
         plan.inAppRecipientIndex !== null &&
         notificationEntries[plan.inAppRecipientIndex]?.ws === ws;
-      const timestamp = new Date().toISOString();
       const connection = this.sessions.get(ws);
       const attentionPayload = {
         agentId: params.agentId,
@@ -2731,9 +2797,12 @@ export class VoiceAssistantWebSocketServer {
     const title = terminalAttentionTitle(params.reason);
     const body = params.terminalName;
 
-    if (plan.shouldPush) {
-      void this.pushNotificationSender
-        .send({
+    this.notificationDispatcher.dispatch(
+      {
+        id: `${this.serverId}:terminal:${params.terminalId}:${randomUUID()}`,
+        type: params.reason === "finished" ? "terminal_finished" : "terminal_attention",
+        timestamp: new Date().toISOString(),
+        payload: {
           title,
           body,
           data: {
@@ -2742,14 +2811,11 @@ export class VoiceAssistantWebSocketServer {
             cwd: params.cwd,
             ...(workspaceId ? { workspaceId } : {}),
           },
-        })
-        .catch((err) => {
-          this.logger.warn(
-            { err, terminalId: params.terminalId },
-            "Failed to send push notification",
-          );
-        });
-    }
+        },
+      },
+      allStates,
+      { kind: "terminal", id: params.terminalId },
+    );
 
     for (const { ws } of clientEntries) {
       const shouldNotify =

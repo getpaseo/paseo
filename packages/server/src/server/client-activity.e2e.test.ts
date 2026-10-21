@@ -1,3 +1,6 @@
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
+import { resolveNotificationConfig } from "./notifications/notification-config.js";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 import { DaemonClient } from "./test-utils/daemon-client.js";
@@ -34,7 +37,6 @@ class RecordingPushNotificationSender implements PushNotificationSender {
 describe("client activity tracking", () => {
   const TEST_PROVIDER = "claude";
   const TEST_MODEL = "haiku";
-  const TEST_CWD = "/tmp";
   let daemon: TestPaseoDaemon;
   let client1: DaemonClient;
   let client2: DaemonClient;
@@ -57,17 +59,26 @@ describe("client activity tracking", () => {
       messageQueueLimit: null,
     });
     await client.connect();
+    const events = client.observeEvents(["agent_attention_required"], { notifications: true });
+    await events.ready;
     return client;
   }
 
   async function createAgent(params: {
     client: DaemonClient;
     title: string;
+    provider?: "claude" | "codex";
+    cwd?: string;
   }): Promise<AgentSnapshotPayload> {
+    const { workspace } = await params.client.createWorkspace({
+      source: { kind: "directory", path: params.cwd ?? daemon.staticDir },
+    });
+    if (!workspace) throw new Error("Workspace creation failed");
     return params.client.createAgent({
-      provider: TEST_PROVIDER,
-      model: TEST_MODEL,
-      cwd: TEST_CWD,
+      provider: params.provider ?? TEST_PROVIDER,
+      model: params.provider === "codex" ? undefined : TEST_MODEL,
+      cwd: params.cwd ?? daemon.staticDir,
+      workspaceId: workspace.id,
       title: params.title,
       labels: { surface: "activity-test" },
     });
@@ -117,6 +128,127 @@ describe("client activity tracking", () => {
       });
     });
   }
+
+  test("ntfy credentials are absent from the public daemon configuration API", async () => {
+    await daemon.close();
+    daemon = await createTestPaseoDaemon({
+      notifications: resolveNotificationConfig({
+        PASEO_NOTIFICATION_PROVIDER: "ntfy",
+        PASEO_NTFY_URL: "https://ntfy.example.com",
+        PASEO_NTFY_TOPIC: "agents",
+        PASEO_NTFY_TOKEN: "private-publish-token",
+      }),
+    });
+    client1 = await createClient();
+    const config = await client1.getDaemonConfig();
+    expect(JSON.stringify(config)).not.toContain("private-publish-token");
+    expect(JSON.stringify(config)).not.toContain("ntfy.example.com");
+  }, 30000);
+
+  test("always_push delivers completion while the Mac is focused on the same agent and Android is backgrounded", async () => {
+    await daemon.close();
+    daemon = await createTestPaseoDaemon({
+      pushNotificationSender: pushNotifications,
+      notifications: resolveNotificationConfig({ PASEO_NOTIFICATION_MODE: "always_push" }),
+    });
+    client1 = await createClient();
+    client2 = await createClient();
+    const agent = await createAgent({
+      client: client1,
+      title: "Always push test",
+      provider: "codex",
+    });
+    client1.sendHeartbeat({
+      deviceType: "web",
+      focusedAgentId: agent.id,
+      appVisible: true,
+      lastActivityAt: new Date().toISOString(),
+    });
+    client2.sendHeartbeat({
+      deviceType: "mobile",
+      focusedAgentId: agent.id,
+      appVisible: false,
+      lastActivityAt: new Date().toISOString(),
+    });
+    // Ping establishes that both preceding heartbeat frames reached the daemon.
+    await Promise.all([client1.ping(), client2.ping()]);
+    const attentionPromise = waitForAttentionRequired(client1, agent.id);
+    await client1.sendMessage(agent.id, "Say 'hello' and nothing else");
+    const attention = await attentionPromise;
+    expect(attention.reason).toBe("finished");
+    expect(attention.shouldNotify).toBe(false);
+    expect(pushNotifications.sent).toHaveLength(1);
+    expect(pushNotifications.sent[0].data).toMatchObject({
+      agentId: agent.id,
+      workspaceId: agent.workspaceId,
+      reason: "finished",
+    });
+  }, 120000);
+
+  test.each([
+    { reason: "error" as const, prompt: "Emit a turn failure" },
+    { reason: "permission" as const, prompt: "Run sleep 30" },
+  ])(
+    "always_push sends Codex $reason attention while the desktop is focused",
+    async ({ reason, prompt }) => {
+      await daemon.close();
+      daemon = await createTestPaseoDaemon({
+        pushNotificationSender: pushNotifications,
+        notifications: resolveNotificationConfig({ PASEO_NOTIFICATION_MODE: "always_push" }),
+      });
+      client1 = await createClient();
+      const agent = await createAgent({
+        client: client1,
+        title: `Codex ${reason}`,
+        provider: "codex",
+      });
+      client1.sendHeartbeat({
+        deviceType: "web",
+        focusedAgentId: agent.id,
+        appVisible: true,
+        lastActivityAt: new Date().toISOString(),
+      });
+      await client1.ping();
+      const attentionPromise = waitForAttentionRequired(client1, agent.id, 10_000);
+      await client1.sendMessage(agent.id, prompt);
+      expect((await attentionPromise).reason).toBe(reason);
+      expect(pushNotifications.sent).toHaveLength(1);
+      expect(pushNotifications.sent[0].data).toMatchObject({ agentId: agent.id, reason });
+      expect(pushNotifications.sent[0].body).not.toContain("sleep");
+    },
+    30000,
+  );
+
+  test("always_push preserves distinct parallel agents and workspace mapping", async () => {
+    await daemon.close();
+    daemon = await createTestPaseoDaemon({
+      pushNotificationSender: pushNotifications,
+      notifications: resolveNotificationConfig({ PASEO_NOTIFICATION_MODE: "always_push" }),
+    });
+    client1 = await createClient();
+    const agents = await Promise.all(
+      ["A", "B", "C"].map(async (title) => {
+        const cwd = join(daemon.staticDir, title);
+        await mkdir(cwd);
+        return createAgent({ client: client1, title, provider: "codex", cwd });
+      }),
+    );
+    expect(new Set(agents.map((agent) => agent.workspaceId)).size).toBe(3);
+    const attention = agents.map((agent) => waitForAttentionRequired(client1, agent.id, 10_000));
+    await Promise.all(agents.map((agent) => client1.sendMessage(agent.id, "Complete the task")));
+    await Promise.all(attention);
+    expect(new Set(pushNotifications.sent.map((payload) => payload.data?.agentId))).toEqual(
+      new Set(agents.map((agent) => agent.id)),
+    );
+    expect(
+      new Set(pushNotifications.sent.map((payload) => payload.data?.notificationId)).size,
+    ).toBe(3);
+    for (const agent of agents)
+      expect(
+        pushNotifications.sent.find((payload) => payload.data?.agentId === agent.id)?.data
+          ?.workspaceId,
+      ).toBe(agent.workspaceId);
+  }, 30000);
 
   // ===========================================================================
   // SINGLE CLIENT SCENARIOS

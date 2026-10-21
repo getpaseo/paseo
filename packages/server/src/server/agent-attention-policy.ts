@@ -3,6 +3,9 @@ import type { AgentAttentionReason } from "@getpaseo/protocol/agent-attention-no
 export const PRESENCE_THRESHOLD_MS = 180_000;
 
 export interface ClientPresenceState {
+  deviceType?: "web" | "mobile";
+  pushToken?: string | null;
+  lastHeartbeatAtMs?: number;
   appVisible: boolean;
   lastActivityAtMs: number | null;
   focusedAgentId: string | null;
@@ -77,4 +80,38 @@ export function computeNotificationPlan({
 
 export function isPushEligibleAttentionReason(reason: AgentAttentionReason): boolean {
   return reason !== "error";
+}
+
+export function computeRemoteNotificationPlan(
+  input: ComputeNotificationPlanInput & {
+    mode: "always_push" | "smart" | "legacy";
+  },
+): { expoEligible: boolean; excludedExpoTokens: string[]; ntfyEligible: boolean } {
+  const excludedExpoTokens: string[] = [];
+  if (input.mode === "smart") {
+    for (const state of input.allStates) {
+      const activity = state.lastActivityAtMs;
+      const heartbeat = state.lastHeartbeatAtMs;
+      if (
+        state.deviceType === "mobile" &&
+        state.pushToken &&
+        state.appVisible &&
+        isFocusedOnTarget(state, input.focusTarget) &&
+        activity !== null &&
+        heartbeat !== undefined &&
+        activity <= input.nowMs &&
+        heartbeat <= input.nowMs &&
+        input.nowMs - activity < 30_000 &&
+        input.nowMs - heartbeat < 30_000
+      ) {
+        excludedExpoTokens.push(state.pushToken);
+      }
+    }
+  }
+  return {
+    expoEligible:
+      input.pushEligible && (input.mode !== "legacy" || computeNotificationPlan(input).shouldPush),
+    excludedExpoTokens,
+    ntfyEligible: input.pushEligible,
+  };
 }

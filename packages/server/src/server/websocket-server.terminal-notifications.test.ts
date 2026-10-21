@@ -1,3 +1,4 @@
+import { resolveNotificationConfig } from "./notifications/notification-config.js";
 import { SessionDelivery } from "./session/owned-subscriptions/index.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Server as HTTPServer } from "http";
@@ -114,7 +115,11 @@ function createWorkspaceRegistry(records: PersistedWorkspaceRecord[]): Workspace
   });
 }
 
-function createServer(terminalManager: TerminalManager, workspaceRegistry?: WorkspaceRegistry) {
+function createServer(
+  terminalManager: TerminalManager,
+  workspaceRegistry?: WorkspaceRegistry,
+  mode: "legacy" | "always_push" = "legacy",
+) {
   const pushNotifications = new RecordingPushNotificationSender();
   const agentManager = {
     setAgentAttentionCallback: vi.fn(),
@@ -146,7 +151,10 @@ function createServer(terminalManager: TerminalManager, workspaceRegistry?: Work
     "/tmp/paseo-test",
     createStub<DaemonConfigStore>(daemonConfigStore),
     null,
-    { allowedOrigins: new Set() },
+    {
+      allowedOrigins: new Set(),
+      notifications: resolveNotificationConfig({ PASEO_NOTIFICATION_MODE: mode }),
+    },
     createWorkspaceAutoNameStub(),
     undefined,
     undefined,
@@ -193,7 +201,11 @@ function createOpenSocket() {
   };
 }
 
-function connectClient(server: VoiceAssistantWebSocketServer, subscribed = true) {
+function connectClient(
+  server: VoiceAssistantWebSocketServer,
+  subscribed = true,
+  focusedTerminalId: string | null = null,
+) {
   const ws = createOpenSocket();
   const delivery = new SessionDelivery(() => {});
   delivery.attach(ws, false);
@@ -202,7 +214,19 @@ function connectClient(server: VoiceAssistantWebSocketServer, subscribed = true)
     session: {
       delivery,
       wantsSourceNotification: () => true,
-      getClientActivity: vi.fn(() => null),
+      getClientActivity: vi.fn(() =>
+        focusedTerminalId
+          ? {
+              deviceType: "web",
+              focusedAgentId: null,
+              focusedTerminalId,
+              lastActivityAt: new Date(),
+              appVisible: true,
+              receivedAtMs: Date.now(),
+            }
+          : null,
+      ),
+      getClientPushToken: () => null,
       subscribesToTerminalDirectory: vi.fn(async () => subscribed),
     },
     clientId: "client-test",
@@ -278,6 +302,28 @@ function transition(input: {
 describe("VoiceAssistantWebSocketServer terminal attention notifications", () => {
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("always_push sends terminal completion while a desktop views that terminal", async () => {
+    const { manager, emit } = createTerminalManager();
+    const { server, pushNotifications } = createServer(manager, undefined, "always_push");
+    const ws = connectClient(server, true, "term-1");
+    emit(
+      transition({
+        previousState: "working",
+        previousChangedAt: 0,
+        state: "idle",
+        changedAt: 15000,
+      }),
+    );
+    await flushAsync();
+    expect(pushNotifications.sent).toHaveLength(1);
+    expect(pushNotifications.sent[0].data).toMatchObject({
+      terminalId: "term-1",
+      workspaceId: "ws-1",
+      serverId: "srv-test",
+    });
+    expect(readTerminalAttentionMessage(ws).shouldNotify).toBe(false);
   });
 
   it("does not emit attention without a matching terminal-directory subscription", async () => {

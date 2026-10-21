@@ -1352,6 +1352,8 @@ export const ru: TranslationResources = {
       label: "Изоляция",
     },
     fields: {
+      newBranchName: "Имя новой ветки",
+      automaticBranchName: "Автоматически",
       project: "Проект",
       branch: "Ветка",
       baseNotApplicable: "Неприменимо",

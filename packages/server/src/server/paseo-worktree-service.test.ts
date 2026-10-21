@@ -532,6 +532,37 @@ test.skipIf(isPlatform("win32"))(
   },
 );
 
+test("preserves an explicitly named branch when the first agent starts", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const created = await createPaseoWorktree(
+    {
+      cwd: repoDir,
+      action: "branch-off",
+      branchName: "feature/user-selected",
+      worktreeSlug: "random-directory",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    createDeps(),
+  );
+  const generateBranchNameFromContext = vi.fn(async () => "must-not-rename");
+  await expect(
+    attemptFirstAgentBranchAutoName({
+      cwd: created.worktree.worktreePath,
+      firstAgentContext: { prompt: "Start the task" },
+      generateBranchNameFromContext,
+    }),
+  ).resolves.toEqual({ attempted: false, renamed: false, branchName: null });
+  expect(generateBranchNameFromContext).not.toHaveBeenCalled();
+  expect(
+    execFileSync("git", ["branch", "--show-current"], {
+      cwd: created.worktree.worktreePath,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe("feature/user-selected");
+});
+
 test("renames an eligible unnamed branch-off worktree once on first agent context", async () => {
   const { repoDir, tempDir } = createGitRepo();
   cleanupPaths.push(tempDir);
