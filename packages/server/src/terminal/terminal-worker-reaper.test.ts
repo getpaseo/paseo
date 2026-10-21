@@ -79,6 +79,28 @@ async function waitUntilGone(pid: number): Promise<void> {
   }
 }
 
+// The real process table as a Linux `ps` would print it for one session: `memberPid` belongs to
+// the session `sessionId` led, and every other process to none this test knows. macOS `ps` has
+// no session column, so this is the only way to run the Linux branch here; the member is a real
+// process the test started.
+function withSessionMember(input: {
+  memberPid: number;
+  sessionId: number;
+}): TerminalWorkerProcessInspector {
+  return {
+    reportsSessions: true,
+    inspect: (pid) => inspector.inspect(pid),
+    listProcesses: async () => {
+      // A fresh snapshot each call, so it is rewritten in place.
+      const snapshot = await inspector.listProcesses();
+      for (const entry of snapshot) {
+        entry.sessionId = entry.pid === input.memberPid ? input.sessionId : null;
+      }
+      return snapshot;
+    },
+  };
+}
+
 function makeHome(): string {
   const home = mkdtempSync(path.join(tmpdir(), "tw-reaper-"));
   temporaryDirs.push(home);
@@ -196,6 +218,7 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
     const uninspectable = spawnIdle();
     const killable = spawnIdle();
     const failing: TerminalWorkerProcessInspector = {
+      reportsSessions: inspector.reportsSessions,
       inspect: (pid) =>
         pid === uninspectable.pid
           ? Promise.resolve({ status: "error", error: new Error("ps unavailable") })
@@ -226,9 +249,81 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
     expect(isAlive(killable.pid!)).toBe(false);
     expect(isAlive(uninspectable.pid!)).toBe(true);
     const kept = readTerminalWorkerRecord(recordPath);
-    expect(kept.closing).toBe(true);
+    expect(kept.closing?.unresolved.length).toBeGreaterThan(0);
     expect(kept.terminals.map((entry) => entry.pid)).toEqual([uninspectable.pid]);
     expect(recordPath).toBe(terminalWorkerRecordPath(home, workerPid));
+  });
+
+  it("ends a session member its gone terminal program left behind, where sessions are reported", async () => {
+    const home = makeHome();
+    const member = spawnIdle();
+    const goneProgramPid = await goneProcessPid();
+    const recordPath = writeRecord(home, {
+      pid: await goneProcessPid(),
+      terminals: [{ id: "t1", pid: goneProgramPid, startedAt: await birthOf(process.pid) }],
+    });
+
+    const result = await reapTerminalWorkers({
+      paseoHome: home,
+      inspector: withSessionMember({ memberPid: member.pid!, sessionId: goneProgramPid }),
+    });
+
+    await waitUntilGone(member.pid!);
+    expect(isAlive(member.pid!)).toBe(false);
+    expect(result.signaled).toContain(member.pid);
+    expect(existsSync(recordPath)).toBe(false);
+  });
+
+  it("leaves alive a session member older than its gone terminal program", async () => {
+    const home = makeHome();
+    const member = spawnIdle();
+    const goneProgramPid = await goneProcessPid();
+    const recordPath = writeRecord(home, {
+      pid: await goneProcessPid(),
+      terminals: [{ id: "t1", pid: goneProgramPid, startedAt: "Fri Jan  1 00:00:00 2100" }],
+    });
+
+    const result = await reapTerminalWorkers({
+      paseoHome: home,
+      inspector: withSessionMember({ memberPid: member.pid!, sessionId: goneProgramPid }),
+    });
+
+    expect(isAlive(member.pid!)).toBe(true);
+    expect(result.signaled).toEqual([]);
+    expect(existsSync(recordPath)).toBe(false);
+  });
+
+  it("signals nothing while the process table cannot be read, so a retry still ends the children", async () => {
+    const home = makeHome();
+    const { program, childPid } = await spawnProgramWithChild();
+    const recordPath = writeRecord(home, {
+      pid: await goneProcessPid(),
+      terminals: [{ id: "t1", pid: program.pid!, startedAt: await birthOf(program.pid!) }],
+    });
+    const tableUnavailable: TerminalWorkerProcessInspector = {
+      reportsSessions: inspector.reportsSessions,
+      inspect: (pid) => inspector.inspect(pid),
+      listProcesses: () => Promise.reject(new Error("ps timed out")),
+    };
+
+    await expect(
+      reapTerminalWorkers({ paseoHome: home, inspector: tableUnavailable }),
+    ).rejects.toBeInstanceOf(TerminalCleanupNotConfirmedError);
+
+    expect(isAlive(program.pid!)).toBe(true);
+    expect(isAlive(childPid)).toBe(true);
+    const kept = readTerminalWorkerRecord(recordPath);
+    expect(kept.closing?.unresolved.length).toBeGreaterThan(0);
+    expect(kept.terminals.map((entry) => entry.pid)).toEqual([program.pid]);
+
+    const retry = await reapTerminalWorkers({ paseoHome: home, inspector, gracefulMs: 0 });
+
+    await waitUntilGone(program.pid!);
+    await waitUntilGone(childPid);
+    expect(isAlive(program.pid!)).toBe(false);
+    expect(isAlive(childPid)).toBe(false);
+    expect(retry.signaled).toEqual(expect.arrayContaining([program.pid!, childPid]));
+    expect(existsSync(recordPath)).toBe(false);
   });
 
   it("escalates to SIGKILL a program that ignores SIGHUP and SIGTERM", async () => {

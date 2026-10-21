@@ -550,6 +550,69 @@ it("adopts a detached worker's terminals with their activity tokens and keeps th
   await waitForCondition(() => messages.join("").includes("adopted-output:after-adopt"), 10000);
 });
 
+// The worker's own `ps`, delayed: a program that exits while the worker reads its birth time
+// lands its exit in the middle of creation. Only the worker launched while this PATH is set sees
+// the shim; the PATH is restored as soon as it is up.
+async function startWorkerWithSlowProcessTable(
+  delaySeconds: number,
+): Promise<DaemonTerminalManager> {
+  const realPs = (process.env.PATH ?? "")
+    .split(delimiter)
+    .map((dir) => join(dir, "ps"))
+    .find((candidate) => existsSync(candidate));
+  if (!realPs) throw new Error("ps not found on PATH");
+  const shimDir = createTemporaryHome();
+  writeFileSync(join(shimDir, "ps"), `#!/bin/sh\nsleep ${delaySeconds}\nexec ${realPs} "$@"\n`, {
+    mode: 0o755,
+  });
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${shimDir}${delimiter}${originalPath ?? ""}`;
+  try {
+    return await startRealWorkerManager();
+  } finally {
+    process.env.PATH = originalPath;
+  }
+}
+
+async function expectCompletedShortCommand(
+  terminalManager: DaemonTerminalManager,
+  script: string,
+): Promise<void> {
+  const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-short-"));
+  temporaryDirs.push(cwd);
+
+  const session = await terminalManager.createTerminal({
+    workspaceId: "ws-test",
+    cwd,
+    command: "/bin/sh",
+    args: ["-c", script],
+  });
+
+  await waitForCondition(() => session.getExitInfo() !== null, 10000);
+  expect(session.getExitInfo()?.exitCode).toBe(0);
+  expect(terminalManager.getTerminal(session.id)).toBeUndefined();
+  expect(await terminalManager.getTerminals(cwd)).toEqual([]);
+  expect(await terminalManager.getTerminalState(session.id)).toBeNull();
+}
+
+it.skipIf(isPlatform("win32"))(
+  "creates a short command that finishes before creation returns, with its exit",
+  async () => {
+    manager = await startRealWorkerManager();
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await expectCompletedShortCommand(manager, "echo short; exit 0");
+    }
+  },
+);
+
+it.skipIf(isPlatform("win32"))(
+  "publishes the creation before an exit that arrives while the program is being recorded",
+  async () => {
+    manager = await startWorkerWithSlowProcessTable(0.3);
+    await expectCompletedShortCommand(manager, "sleep 0.1; echo short; exit 0");
+  },
+);
+
 it("starts the default shell through the worker and accepts quoted commands", async () => {
   manager = await startRealWorkerManager();
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-shell-"));

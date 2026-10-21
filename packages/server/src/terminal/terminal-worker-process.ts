@@ -8,7 +8,11 @@ import { PRIVATE_FILE_MODE } from "../server/private-files.js";
 import { createTerminalManager } from "./terminal-manager.js";
 import { captureTerminalLines } from "./terminal-capture.js";
 import { TerminalOutputCoalescer } from "./terminal-output-coalescer.js";
-import type { TerminalSession, TerminalStateSnapshotOptions } from "./terminal.js";
+import type {
+  TerminalExitInfo,
+  TerminalSession,
+  TerminalStateSnapshotOptions,
+} from "./terminal.js";
 import { attachFramedSocket, type FramedSocket } from "./terminal-worker-frames.js";
 import { createTerminalWorkerProcessInspector } from "./terminal-worker-processes.js";
 import {
@@ -158,6 +162,10 @@ function runWorker(argv: string[]): void {
   const sessionsById = new Map<string, TerminalSession>();
   const unsubscribeByTerminalId = new Map<string, Array<() => void>>();
   const outputCoalescerByTerminalId = new Map<string, TerminalOutputCoalescer>();
+  // A terminal is published (terminalCreated) only once its program is recorded. An exit that
+  // arrives before then is held here and sent after the creation, so the controller never
+  // receives an exit for a terminal it does not know yet.
+  const exitsHeldDuringCreation = new Map<string, TerminalExitInfo | null>();
   const secret = randomBytes(32).toString("base64url");
   let record: TerminalWorkerRecord | null = null;
   let server: Server | null = null;
@@ -337,6 +345,10 @@ function runWorker(argv: string[]): void {
       clearTerminalSubscriptions(session.id);
       sessionsById.delete(session.id);
       persistRecord();
+      if (exitsHeldDuringCreation.has(session.id)) {
+        exitsHeldDuringCreation.set(session.id, info);
+        return;
+      }
       sendToController({
         type: "terminalExit",
         terminalId: session.id,
@@ -382,6 +394,8 @@ function runWorker(argv: string[]): void {
   // tell the program from a later process that reuses its pid. A program that already exited
   // needs no entry; one whose birth time cannot be read is killed and the create fails.
   async function recordTerminalProgram(session: TerminalSession): Promise<void> {
+    if (session.getExitInfo()) return;
+    // The manager drops a session as soon as its program exits, so only a live one has a pid.
     const pid = manager.getTerminalProcessId(session.id);
     if (pid === null) {
       throw new Error(`Terminal ${session.id} has no program pid`);
@@ -431,10 +445,12 @@ function runWorker(argv: string[]): void {
         return;
       }
       sessionsById.set(session.id, session);
+      exitsHeldDuringCreation.set(session.id, null);
       watchTerminal(session);
       try {
         await recordTerminalProgram(session);
       } catch (error) {
+        exitsHeldDuringCreation.delete(session.id);
         clearTerminalSubscriptions(session.id);
         sessionsById.delete(session.id);
         await session.killAndWait().catch(() => undefined);
@@ -455,6 +471,12 @@ function runWorker(argv: string[]): void {
           state: initialSnapshot.state,
         },
       });
+      const heldExit = exitsHeldDuringCreation.get(session.id);
+      exitsHeldDuringCreation.delete(session.id);
+      if (heldExit) {
+        sendToController({ type: "terminalExit", terminalId: session.id, info: heldExit });
+        exitIfIdle();
+      }
     } catch (error) {
       reportInFlightTerminalCreateFailure(error);
     } finally {

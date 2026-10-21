@@ -7,7 +7,8 @@
  */
 
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -138,6 +139,64 @@ async function expectClosed(pid: number, trigger: string) {
   await waitFor(() => !isAlive(pid), `${trigger}: terminal program ${pid} is still alive`, 15_000);
 }
 
+// A zombie: a real process with a birth time that SIGKILL cannot remove while its parent (an
+// exec'd `sleep` that never waits) lives. Cleanup can only report it as still alive.
+async function startZombie(): Promise<{ zombiePid: number; parentPid: number }> {
+  const parent = spawn("/bin/sh", ["-c", "sleep 0 & echo $!; exec sleep 600"], {
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  const zombiePid = await new Promise<number>((resolve) => {
+    parent.stdout!.once("data", (chunk: Buffer) => resolve(Number(chunk.toString().trim())));
+  });
+  parent.unref();
+  await waitFor(
+    async () => (await psField(zombiePid, "stat")).startsWith("Z"),
+    `process ${zombiePid} never became a zombie`,
+  );
+  return { zombiePid, parentPid: parent.pid! };
+}
+
+async function psField(pid: number, field: "stat" | "lstart"): Promise<string> {
+  const child = spawn("ps", ["-o", `${field}=`, "-p", String(pid)], {
+    env: { ...process.env, LC_ALL: "C" },
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  let out = "";
+  child.stdout.on("data", (chunk: Buffer) => (out += chunk.toString()));
+  await new Promise((resolve) => child.once("close", resolve));
+  return out.trim();
+}
+
+async function goneProcessPid(): Promise<number> {
+  const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+  await new Promise((resolve) => child.once("exit", resolve));
+  return child.pid!;
+}
+
+// A record as a dead terminal worker leaves it, naming one terminal program that is a zombie.
+async function plantRecordNaming(programPid: number): Promise<void> {
+  const workerPid = await goneProcessPid();
+  const record = {
+    recordId: "planted-record",
+    pid: workerPid,
+    bootId: null,
+    createdAt: new Date().toISOString(),
+    identity: { startedAt: "Thu Jan  1 00:00:00 1970", commandLine: "planted-worker" },
+    protocolVersion: 1,
+    paseoVersion: "0.0.0-test",
+    socketPath: join(paseoHome, "planted-worker.sock"),
+    secret: "planted-secret",
+    terminals: [
+      { id: "planted-terminal", pid: programPid, startedAt: await psField(programPid, "lstart") },
+    ],
+  };
+  writeFileSync(
+    join(paseoHome, "terminal-worker", `${workerPid}.json`),
+    `${JSON.stringify(record, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+}
+
 const trackedPids: number[] = [];
 
 try {
@@ -204,6 +263,34 @@ try {
   await expectClosed(killedByForce.pid, "stop --force");
   assert.equal(workerRecordCount(), 0, "no worker record is left");
   console.log("✓ closed\n");
+
+  const endpoint = `127.0.0.1:${port}`;
+  console.log("Test 7: restart --host --kill-terminals closes the terminal");
+  await paseo(["daemon", "start"]);
+  const killedByEndpointRestart = await openTerminal("endpoint-restart-kill");
+  trackedPids.push(killedByEndpointRestart.pid);
+  await paseo(["daemon", "restart", "--host", endpoint, "--kill-terminals"]);
+  await expectClosed(killedByEndpointRestart.pid, "restart --host --kill-terminals");
+  assert.deepEqual(await terminalIds(), [], "no terminal is listed after the kill restart");
+  console.log("✓ closed and confirmed by the replacement\n");
+
+  console.log("Test 8: restart --host --kill-terminals reports a process cleanup could not end");
+  const zombie = await startZombie();
+  trackedPids.push(zombie.parentPid);
+  await plantRecordNaming(zombie.zombiePid);
+  const unconfirmed = await paseo(
+    ["daemon", "restart", "--host", endpoint, "--kill-terminals"],
+    false,
+  );
+  assert.notEqual(unconfirmed.exitCode, 0, "the kill restart fails");
+  const output = unconfirmed.stdout + unconfirmed.stderr;
+  assert(output.includes("Terminal cleanup was not confirmed"), `names the failure:\n${output}`);
+  assert(output.includes(`pid ${zombie.zombiePid}`), `names the surviving pid:\n${output}`);
+  process.kill(zombie.parentPid, "SIGKILL");
+  await expectClosed(zombie.zombiePid, "zombie reaped once its parent exits");
+  await paseo(["daemon", "stop", "--home", paseoHome]);
+  assert.equal(workerRecordCount(), 0, "the next stop retries the cleanup and retires the record");
+  console.log("✓ reported, then retried by stop\n");
 } finally {
   await runLocalPaseo(["daemon", "stop", "--home", paseoHome, "--force"], env);
   for (const pid of trackedPids) {

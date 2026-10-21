@@ -23,6 +23,8 @@ export interface ProcessTableEntry {
 }
 
 export interface TerminalWorkerProcessInspector {
+  /** True where the process table names each process's session (Linux). */
+  readonly reportsSessions: boolean;
   inspect(pid: number): Promise<ManagedProcessInspection>;
   /** One snapshot of every process, for walking descendants. Throws when it cannot be read. */
   listProcesses(): Promise<ProcessTableEntry[]>;
@@ -55,6 +57,7 @@ export function createTerminalWorkerProcessInspector(
   const commandRunner = options.commandRunner ?? createLocaleNeutralCommandRunner();
   const table = createSystemManagedProcessTable({ platform, commandRunner });
   return {
+    reportsSessions: platform === "linux",
     inspect: (pid) => table.inspect(pid),
     listProcesses: () =>
       platform === "win32"
@@ -122,8 +125,10 @@ async function listWindowsProcesses(
 
 /**
  * Every process below `rootPid` in the snapshot, plus (where the platform reports sessions)
- * every member of the session `rootPid` leads. A PTY program is a session leader, so its
- * session still names a HUP-ignoring child after the shell exits and the child is reparented.
+ * every member of the session `rootPid` led and everything below those members. A PTY program
+ * is a session leader, and the kernel keeps its pid reserved as the session id while any member
+ * lives, so the session still names a HUP-ignoring job after the shell exits and the job is
+ * reparented.
  */
 export function collectDescendants(
   snapshot: ProcessTableEntry[],
@@ -137,17 +142,18 @@ export function collectDescendants(
   }
   const found = new Map<number, ProcessTableEntry>();
   const queue = [rootPid];
+  for (const entry of snapshot) {
+    if (entry.sessionId === rootPid && entry.pid !== rootPid) {
+      found.set(entry.pid, entry);
+      queue.push(entry.pid);
+    }
+  }
   while (queue.length > 0) {
     const parent = queue.shift()!;
     for (const child of childrenByParent.get(parent) ?? []) {
       if (child.pid === rootPid || found.has(child.pid)) continue;
       found.set(child.pid, child);
       queue.push(child.pid);
-    }
-  }
-  for (const entry of snapshot) {
-    if (entry.sessionId === rootPid && entry.pid !== rootPid && !found.has(entry.pid)) {
-      found.set(entry.pid, entry);
     }
   }
   return Array.from(found.values());

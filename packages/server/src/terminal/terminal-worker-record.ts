@@ -13,6 +13,15 @@ const TerminalWorkerTerminalEntrySchema = z.object({
   startedAt: z.string().min(1),
 });
 
+// One process a cleanup could not confirm gone, kept so a later caller (a retry, or a remote
+// client reading daemon status) can name it.
+const TerminalCleanupUnresolvedSchema = z.object({
+  pid: z.number().int().positive(),
+  role: z.enum(["worker", "terminal program"]),
+  reason: z.enum(["still alive", "inspection failed"]),
+  detail: z.string(),
+});
+
 const TerminalWorkerRecordSchema = z.object({
   recordId: z.string().min(1),
   pid: z.number().int().positive(),
@@ -27,12 +36,14 @@ const TerminalWorkerRecordSchema = z.object({
   socketPath: z.string().min(1),
   secret: z.string().min(1),
   terminals: z.array(TerminalWorkerTerminalEntrySchema),
-  // Written by cleanup that could not confirm every process gone. A record marked closing is
-  // never adopted: the next daemon or stop retries the cleanup instead.
-  closing: z.literal(true).optional(),
+  // Written by cleanup that could not confirm every process gone, with what it could not
+  // confirm. A record marked closing is never adopted: the next daemon or stop retries the
+  // cleanup instead.
+  closing: z.object({ unresolved: z.array(TerminalCleanupUnresolvedSchema).min(1) }).optional(),
 });
 
 export type TerminalWorkerTerminalEntry = z.infer<typeof TerminalWorkerTerminalEntrySchema>;
+export type TerminalCleanupUnresolved = z.infer<typeof TerminalCleanupUnresolvedSchema>;
 export type TerminalWorkerRecord = z.infer<typeof TerminalWorkerRecordSchema>;
 
 export type TerminalWorkerRecordFile =

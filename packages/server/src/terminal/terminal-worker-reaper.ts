@@ -18,6 +18,7 @@ import {
   listTerminalWorkerRecords,
   retireTerminalWorkerRecord,
   writeTerminalWorkerRecord,
+  type TerminalCleanupUnresolved,
   type TerminalWorkerRecord,
   type TerminalWorkerTerminalEntry,
 } from "./terminal-worker-record.js";
@@ -28,8 +29,11 @@ import {
 //
 // 1. Classify the worker and every terminal program of each record on its own, by birth time.
 //    A record from an earlier boot names only processes the reboot ended: retire it unsignaled.
-//    Descendants of owned programs (and, on Linux, members of their sessions) join the
-//    candidates from one process-table snapshot taken before anything is signaled.
+//    Descendants of owned programs (and, on Linux, members of their sessions, also once the
+//    program itself is gone) join the candidates from one process-table snapshot taken before
+//    anything is signaled. When that table cannot be read, nothing in the record is signaled:
+//    ending a program would reparent the children only the table can find, and a retry could
+//    never reach them again.
 // 2. An owned worker gets an authenticated `shutdown`: it kills each terminal and waits for it.
 // 3. After `gracefulMs`, SIGKILL whatever owned process is left, re-inspecting right before
 //    each signal.
@@ -40,21 +44,24 @@ const DEFAULT_GRACEFUL_MS = 5_000;
 const DEFAULT_CONFIRM_MS = 3_000;
 const POLL_INTERVAL_MS = 100;
 
-export type UnresolvedProcessReason = "still alive" | "inspection failed";
-
-export interface UnresolvedTerminalProcess {
-  pid: number;
-  role: "worker" | "terminal program";
-  reason: UnresolvedProcessReason;
-  detail: string;
+export interface UnresolvedTerminalProcess extends TerminalCleanupUnresolved {
   recordPath: string;
+}
+
+// What a cleanup could not confirm, as a caller reports it: read here, or from the daemon
+// status of a host the caller cannot read itself.
+export interface UnconfirmedTerminalProcess {
+  pid: number;
+  role: string;
+  reason: string;
+  detail: string;
 }
 
 export class TerminalCleanupNotConfirmedError extends Error {
   readonly code = "TERMINAL_CLEANUP_NOT_CONFIRMED";
-  readonly unresolved: UnresolvedTerminalProcess[];
+  readonly unresolved: UnconfirmedTerminalProcess[];
 
-  constructor(unresolved: UnresolvedTerminalProcess[]) {
+  constructor(unresolved: UnconfirmedTerminalProcess[]) {
     super(
       [
         "Terminal cleanup was not confirmed; these processes may still be running:",
@@ -82,6 +89,19 @@ export async function retryUnconfirmedTerminalCleanup(paseoHome: string): Promis
   await reapTerminalWorkers({ paseoHome, gracefulMs: 0, recordPaths });
 }
 
+/**
+ * What the last cleanup of this home could not confirm gone, as its closing records name it.
+ * Read without retrying, so a daemon can report it (daemon status) to clients that cannot read
+ * this home themselves.
+ */
+export function readUnconfirmedTerminalCleanup(paseoHome: string): UnresolvedTerminalProcess[] {
+  return listTerminalWorkerRecords(paseoHome).flatMap((file) =>
+    "record" in file && file.record.closing
+      ? file.record.closing.unresolved.map((entry) => ({ ...entry, recordPath: file.path }))
+      : [],
+  );
+}
+
 export interface TerminalWorkerReapResult {
   records: number;
   retired: number;
@@ -105,9 +125,15 @@ interface Candidate {
   role: UnresolvedTerminalProcess["role"];
   terminalId: string;
   state: ProcessOwnership;
-  // Set when the process table could not be read: this program's children were not found, so
-  // its cleanup is never reported confirmed, even once the program itself is gone.
-  descendantsUnavailable: string | null;
+  // Set when this program's children could not be looked up: its cleanup is never reported
+  // confirmed, even once the program itself is gone, and its entry stays for the retry.
+  descendantsUnconfirmed: string | null;
+}
+
+interface CandidateDiscovery {
+  candidates: Candidate[];
+  // The process table could not be read, so no process of the record may be signaled yet.
+  tableError: string | null;
 }
 
 export async function reapTerminalWorkers(
@@ -155,7 +181,7 @@ export async function reapTerminalWorkers(
   return result;
 }
 
-async function reapRecord(input: {
+interface ReapRecordInput {
   paseoHome: string;
   recordPath: string;
   record: TerminalWorkerRecord;
@@ -163,7 +189,11 @@ async function reapRecord(input: {
   gracefulMs: number;
   confirmMs: number;
   log: NonNullable<ReapTerminalWorkersOptions["log"]>;
-}): Promise<{ signaled: number[]; unresolved: UnresolvedTerminalProcess[] }> {
+}
+
+async function reapRecord(
+  input: ReapRecordInput,
+): Promise<{ signaled: number[]; unresolved: UnresolvedTerminalProcess[] }> {
   const { record, recordPath, inspector, log } = input;
   if (!writtenDuringThisBoot({ startedAt: record.createdAt, bootId: record.bootId })) {
     retireTerminalWorkerRecord(recordPath, record.socketPath);
@@ -171,12 +201,18 @@ async function reapRecord(input: {
     return { signaled: [], unresolved: [] };
   }
 
+  const worker = classifyTerminalWorkerProcess(record, await inspector.inspect(record.pid));
+  const discovery = await collectCandidates(record, inspector, log);
   const tracked: TrackedProcesses = {
     record,
     inspector,
-    worker: classifyTerminalWorkerProcess(record, await inspector.inspect(record.pid)),
-    candidates: await collectCandidates(record, inspector, log),
+    worker,
+    candidates: discovery.candidates,
   };
+
+  if (discovery.tableError !== null) {
+    return keepUnresolved(input, tracked, [], `not signaled: ${discovery.tableError}`);
+  }
 
   if (tracked.worker.status === "owned" && input.gracefulMs > 0) {
     await requestWorkerShutdown(record, input.gracefulMs, log);
@@ -192,7 +228,21 @@ async function reapRecord(input: {
     await waitUntilSettled(tracked, Date.now() + input.confirmMs);
   }
 
-  const { unresolved, remaining } = collectUnresolved(tracked, recordPath);
+  return keepUnresolved(input, tracked, signaled, null);
+}
+
+// Retires the record when every process it names is settled; otherwise rewrites it, marked
+// closing, with only the unresolved entries. `notSignaled` explains open processes that were
+// deliberately left alone.
+function keepUnresolved(
+  input: Pick<ReapRecordInput, "paseoHome" | "recordPath" | "log">,
+  tracked: TrackedProcesses,
+  signaled: number[],
+  notSignaled: string | null,
+): { signaled: number[]; unresolved: UnresolvedTerminalProcess[] } {
+  const { record } = tracked;
+  const { recordPath, log } = input;
+  const { unresolved, remaining } = collectUnresolved(tracked, recordPath, notSignaled);
   if (unresolved.length === 0) {
     retireTerminalWorkerRecord(recordPath, record.socketPath);
     log("Terminal worker record cleaned up", { recordPath, signaled });
@@ -201,7 +251,14 @@ async function reapRecord(input: {
   writeTerminalWorkerRecord(input.paseoHome, {
     ...record,
     terminals: remaining,
-    closing: true,
+    closing: {
+      unresolved: unresolved.map(({ pid, role, reason, detail }) => ({
+        pid,
+        role,
+        reason,
+        detail,
+      })),
+    },
   });
   log("Terminal worker cleanup not confirmed; record kept", {
     recordPath,
@@ -287,23 +344,38 @@ async function forceKillOwned(
 function collectUnresolved(
   tracked: TrackedProcesses,
   recordPath: string,
+  notSignaled: string | null,
 ): { unresolved: UnresolvedTerminalProcess[]; remaining: TerminalWorkerTerminalEntry[] } {
   const unresolved: UnresolvedTerminalProcess[] = [];
   if (isOpen(tracked.worker)) {
-    unresolved.push(describeUnresolved(tracked.record.pid, "worker", tracked.worker, recordPath));
+    unresolved.push(
+      describeUnresolved({
+        pid: tracked.record.pid,
+        role: "worker",
+        state: tracked.worker,
+        recordPath,
+        notSignaled,
+      }),
+    );
   }
   const remaining: TerminalWorkerTerminalEntry[] = [];
   for (const candidate of tracked.candidates) {
     const stillOpen = isOpen(candidate.state);
-    if (!stillOpen && candidate.descendantsUnavailable === null) continue;
+    if (!stillOpen && candidate.descendantsUnconfirmed === null) continue;
     unresolved.push(
       stillOpen
-        ? describeUnresolved(candidate.pid, candidate.role, candidate.state, recordPath)
+        ? describeUnresolved({
+            pid: candidate.pid,
+            role: candidate.role,
+            state: candidate.state,
+            recordPath,
+            notSignaled,
+          })
         : {
             pid: candidate.pid,
             role: candidate.role,
             reason: "inspection failed",
-            detail: `its child processes could not be listed: ${candidate.descendantsUnavailable}`,
+            detail: candidate.descendantsUnconfirmed!,
             recordPath,
           },
     );
@@ -320,7 +392,7 @@ async function collectCandidates(
   record: TerminalWorkerRecord,
   inspector: TerminalWorkerProcessInspector,
   log: NonNullable<ReapTerminalWorkersOptions["log"]>,
-): Promise<Candidate[]> {
+): Promise<CandidateDiscovery> {
   const candidates = new Map<number, Candidate>();
   for (const entry of record.terminals) {
     candidates.set(entry.pid, {
@@ -329,39 +401,72 @@ async function collectCandidates(
       role: "terminal program",
       terminalId: entry.id,
       state: classifyTerminalProgramProcess(entry, await inspector.inspect(entry.pid)),
-      descendantsUnavailable: null,
+      descendantsUnconfirmed: null,
     });
   }
-  const owned = Array.from(candidates.values()).filter((c) => c.state.status === "owned");
-  if (owned.length === 0) return Array.from(candidates.values());
+  // Owned programs are walked through the table. Where sessions are reported, so are programs
+  // already gone: their session id stays reserved while a member lives, so a job the shell left
+  // behind is still found. A pid reused by another process (unrelated) leads someone else's
+  // session and is never walked.
+  const roots = Array.from(candidates.values()).filter(
+    (c) => c.state.status === "owned" || (c.state.status === "gone" && inspector.reportsSessions),
+  );
+  if (roots.length === 0) return { candidates: Array.from(candidates.values()), tableError: null };
 
   let snapshot: ProcessTableEntry[];
   try {
     snapshot = await inspector.listProcesses();
   } catch (error) {
-    // Without the table the programs' children cannot be found. The programs themselves are
-    // still candidates; their descendants are not confirmed gone, so cleanup reports it.
     const message = error instanceof Error ? error.message : String(error);
     log("Cannot list processes for terminal cleanup", { error: message });
-    for (const program of owned) {
-      program.descendantsUnavailable = message;
+    for (const root of roots) {
+      root.descendantsUnconfirmed = `its child processes could not be listed: ${message}`;
     }
-    return Array.from(candidates.values());
+    return {
+      candidates: Array.from(candidates.values()),
+      tableError: `process table unavailable: ${message}`,
+    };
   }
-  for (const program of owned) {
-    for (const descendant of collectDescendants(snapshot, program.pid)) {
+  for (const root of roots) {
+    for (const descendant of collectDescendants(snapshot, root.pid)) {
       if (candidates.has(descendant.pid)) continue;
+      if (root.state.status === "gone") {
+        // A gone program's identity is gone with it; what is left is its birth time, and
+        // nothing older than the program can belong to its session.
+        const order = compareBirth(descendant.startedAt, root.startedAt);
+        if (order === null) {
+          root.descendantsUnconfirmed = `birth time of session member ${descendant.pid} cannot be compared`;
+          continue;
+        }
+        if (order < 0) {
+          log("Ignoring a session member older than its terminal program", {
+            pid: descendant.pid,
+            terminalId: root.terminalId,
+          });
+          continue;
+        }
+      }
       candidates.set(descendant.pid, {
         pid: descendant.pid,
         startedAt: descendant.startedAt,
         role: "terminal program",
-        terminalId: program.terminalId,
+        terminalId: root.terminalId,
         state: { status: "owned" },
-        descendantsUnavailable: null,
+        descendantsUnconfirmed: null,
       });
     }
   }
-  return Array.from(candidates.values());
+  return { candidates: Array.from(candidates.values()), tableError: null };
+}
+
+// Negative when `startedAt` is earlier than `reference`; null when either cannot be read as an
+// instant. Both are C-locale `ps -o lstart` stamps on Linux, the one platform that walks a gone
+// program's session.
+function compareBirth(startedAt: string, reference: string): number | null {
+  const born = Date.parse(startedAt);
+  const referenceBorn = Date.parse(reference);
+  if (!Number.isFinite(born) || !Number.isFinite(referenceBorn)) return null;
+  return born - referenceBorn;
 }
 
 async function requestWorkerShutdown(
@@ -438,17 +543,19 @@ function signalIgnoringMissing(pid: number, signal: NodeJS.Signals): void {
   }
 }
 
-function describeUnresolved(
-  pid: number,
-  role: UnresolvedTerminalProcess["role"],
-  state: ProcessOwnership,
-  recordPath: string,
-): UnresolvedTerminalProcess {
-  return {
-    pid,
-    role,
-    reason: state.status === "unknown" ? "inspection failed" : "still alive",
-    detail: state.status === "unknown" ? state.reason : "survived SIGKILL",
-    recordPath,
-  };
+function describeUnresolved(input: {
+  pid: number;
+  role: UnresolvedTerminalProcess["role"];
+  state: ProcessOwnership;
+  recordPath: string;
+  notSignaled: string | null;
+}): UnresolvedTerminalProcess {
+  const { pid, role, state, recordPath, notSignaled } = input;
+  if (state.status === "unknown") {
+    return { pid, role, reason: "inspection failed", detail: state.reason, recordPath };
+  }
+  if (notSignaled !== null) {
+    return { pid, role, reason: "inspection failed", detail: notSignaled, recordPath };
+  }
+  return { pid, role, reason: "still alive", detail: "survived SIGKILL", recordPath };
 }

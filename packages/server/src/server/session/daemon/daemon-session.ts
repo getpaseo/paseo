@@ -2,6 +2,7 @@ import type pino from "pino";
 import type { ProviderAvailability } from "../../agent/agent-manager.js";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
 import { getPidLockInfo } from "../../pid-lock.js";
+import { readUnconfirmedTerminalCleanup } from "../../../terminal/terminal-worker-reaper.js";
 import { generateLocalPairingOffer } from "../../pairing-offer.js";
 import {
   collectDaemonDiagnostics,
@@ -173,6 +174,11 @@ export class DaemonSession {
   async handleGetStatusRequest(
     msg: Extract<SessionInboundMessage, { type: "daemon.get_status.request" }>,
   ): Promise<void> {
+    // Read outside the degraded-status fallback below: a status that cannot say whether
+    // terminal cleanup finished must fail the request, not report that nothing is left.
+    const terminalCleanupUnconfirmed = readUnconfirmedTerminalCleanup(this.paseoHome).map(
+      ({ pid, role, reason, detail }) => ({ pid, role, reason, detail }),
+    );
     try {
       const pidInfo = await getPidLockInfo(this.paseoHome);
       const providers = (await this.listProviderAvailability()).map((p) => ({
@@ -192,6 +198,7 @@ export class DaemonSession {
           listen: this.daemonRuntimeConfig?.listen ?? null,
           relay: this.daemonRuntimeConfig?.getRelayConfig() ?? null,
           providers,
+          terminalCleanupUnconfirmed,
         },
       });
     } catch (error) {
@@ -208,6 +215,7 @@ export class DaemonSession {
           listen: null,
           relay: null,
           providers: [],
+          terminalCleanupUnconfirmed,
         },
       });
     }
