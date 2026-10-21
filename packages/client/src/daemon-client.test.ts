@@ -919,6 +919,29 @@ test("keeps relay upgrade credentials out of the socket request", async () => {
   await expect(connecting).rejects.toThrow("Daemon client closed");
 });
 
+test("keeps relay upgrade credentials out of the socket request without E2EE", async () => {
+  const mock = createMockTransport();
+  const requests: Array<{ url: string; headers?: Record<string, string>; protocols?: string[] }> =
+    [];
+  const client = new DaemonClient({
+    url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2",
+    clientId: "clsk_relay_header_test",
+    authHeader: "Bearer synthetic-review-token",
+    reconnect: { enabled: false },
+    transportFactory: (request) => {
+      requests.push(request);
+      return mock.transport;
+    },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  void connecting.catch(() => {});
+  await vi.waitFor(() => expect(requests).toHaveLength(1));
+  expect(requests[0]).toEqual({ url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2" });
+  await client.close();
+  await expect(connecting).rejects.toThrow("Daemon client closed");
+});
+
 test("refuses relay password auth without an encrypted hello", async () => {
   const requests: unknown[] = [];
   const client = new DaemonClient({

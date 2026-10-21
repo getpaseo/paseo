@@ -37,6 +37,16 @@ export function createRelayE2eeTransportFactory(args: {
   };
 }
 
+/**
+ * Relay upgrades carry routing only. Daemon credentials and subprotocols must
+ * never reach the relay; they travel inside the encrypted hello.
+ */
+export function createRelayUpgradeTransportFactory(
+  baseFactory: DaemonTransportFactory,
+): DaemonTransportFactory {
+  return ({ url }) => baseFactory({ url });
+}
+
 export function createEncryptedTransport(
   base: DaemonTransport,
   daemonPublicKeyB64: string,

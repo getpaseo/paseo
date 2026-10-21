@@ -162,6 +162,7 @@ import {
 } from "@getpaseo/protocol/binary-frames/index";
 import {
   createRelayE2eeTransportFactory,
+  createRelayUpgradeTransportFactory,
   createWebSocketTransportFactory,
   decodeMessageData,
   defaultWebSocketFactory,
@@ -1449,8 +1450,11 @@ export class DaemonClient {
       const isRelayTransport = isRelayClientWebSocketUrl(this.config.url);
       this.assertEncryptedRelayAuth(selected.helloAuth, isRelayTransport);
 
+      // Relay upgrades are routing only: credentials never reach the relay socket.
+      let transportFactory = isRelayTransport
+        ? createRelayUpgradeTransportFactory(baseTransportFactory)
+        : baseTransportFactory;
       // Endpoint security is selected by configuration, never inferred from the URL.
-      let transportFactory = baseTransportFactory;
       if (this.config.e2ee?.enabled === true) {
         const daemonPublicKeyB64 = this.config.e2ee.daemonPublicKeyB64;
         if (!daemonPublicKeyB64) {
