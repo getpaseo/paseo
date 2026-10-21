@@ -14,7 +14,7 @@ import { join } from "path";
 import { win32 } from "node:path";
 import { tmpdir } from "os";
 import pino from "pino";
-import { base64EncryptedWireByteLength } from "@getpaseo/relay";
+import { base64EncryptedWireByteLength, maxSecuredPlaintextByteLength } from "@getpaseo/relay";
 import {
   __resetCheckoutShortstatCacheForTests,
   __resetPullRequestStatusCacheForTests,
@@ -1572,9 +1572,14 @@ const x = 1;
       CHECKOUT_DIFF_MAX_STRUCTURED_BYTES + frameEnvelopeHeadroomBytes,
     );
 
-    expect(CHECKOUT_DIFF_MAX_STRUCTURED_BYTES).toBe(24_117_208);
+    // The cap is sized for the tighter of the legacy and protected relay framings.
+    expect(CHECKOUT_DIFF_MAX_STRUCTURED_BYTES).toBe(
+      maxSecuredPlaintextByteLength(relayFrameBytes) - frameEnvelopeHeadroomBytes,
+    );
+    expect(CHECKOUT_DIFF_MAX_STRUCTURED_BYTES).toBeLessThanOrEqual(24_117_208);
+    expect(CHECKOUT_DIFF_MAX_STRUCTURED_BYTES).toBeGreaterThan(24_000_000);
     expect(diffWireBytes).toBeLessThan(relayFrameBytes);
-    expect(maximumFrameWireBytes).toBe(relayFrameBytes);
+    expect(maximumFrameWireBytes).toBeLessThanOrEqual(relayFrameBytes);
   });
 
   it("marks tracked generated one-line diffs as too_large by content size", async () => {

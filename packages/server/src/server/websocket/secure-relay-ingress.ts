@@ -11,6 +11,7 @@ import { EventEmitter } from "node:events";
 import type pino from "pino";
 import {
   openDaemonSecureChannel,
+  SecureChannelRejectedError,
   type KeyPair,
   type SecurityMode,
   type Transport as RelayTransport,
@@ -36,6 +37,11 @@ export interface SecuredRelaySocket {
 export interface SecureRelayIngressOptions {
   daemonKeyPair: KeyPair;
   logger: pino.Logger;
+  /**
+   * Current policy, read when the peer's hello arrives so a flag flipped at
+   * runtime applies to every admission from that moment on.
+   */
+  requireProtectedMode: () => boolean;
 }
 
 /**
@@ -69,6 +75,7 @@ export async function admitSecuredRelaySocket(
     };
     const channel = await openDaemonSecureChannel(relayTransport, {
       daemonKeyPair: options.daemonKeyPair,
+      minimumMode: () => (options.requireProtectedMode() ? "protected" : "legacy"),
       events: {
         onmessage: emitMessage,
         onclose: (code, reason) => emitter.emit("close", code, reason),
@@ -92,6 +99,15 @@ export async function admitSecuredRelaySocket(
     }
     pendingMessages.length = 0;
   } catch (error) {
+    if (error instanceof SecureChannelRejectedError) {
+      logger.warn({ reason: error.message }, "relay_e2ee_handshake_rejected");
+      try {
+        socket.close(error.closeCode, error.closeReason);
+      } catch {
+        // ignore
+      }
+      return;
+    }
     logger.warn({ err: error }, "relay_e2ee_handshake_failed");
     try {
       socket.close(1011, "E2EE handshake failed");

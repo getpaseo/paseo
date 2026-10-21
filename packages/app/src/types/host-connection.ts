@@ -49,6 +49,12 @@ export interface RelayHostConnection {
   relayEndpoint: string;
   useTls?: boolean;
   daemonPublicKeyB64: string;
+  /**
+   * Pinned once this daemon identity has negotiated protected endpoint
+   * security, or when its pairing offer required it. Never cleared by a
+   * connection failure; a new daemon identity is a different connection.
+   */
+  minimumSecurityMode?: "protected";
 }
 
 export interface RoutedHostConnection {
@@ -188,11 +194,56 @@ function upsertHostConnectionById(
     }
 
     if (replaced) continue;
-    next.push(connection);
+    next.push(keepRelaySecurityPin(existing, connection));
     replaced = true;
   }
   if (!replaced) next.push(connection);
   return next;
+}
+
+/** A re-import of the same daemon identity never loses an earlier security pin. */
+function keepRelaySecurityPin(existing: HostConnection, incoming: HostConnection): HostConnection {
+  if (
+    existing.type !== "relay" ||
+    incoming.type !== "relay" ||
+    existing.minimumSecurityMode !== "protected" ||
+    existing.daemonPublicKeyB64 !== incoming.daemonPublicKeyB64
+  ) {
+    return incoming;
+  }
+  return { ...incoming, minimumSecurityMode: "protected" };
+}
+
+/**
+ * Records that the relay daemon identity behind `connectionId` negotiated
+ * protected endpoint security. Returns the same array when nothing changes.
+ */
+export function pinRelayProtectedSecurityInProfiles(input: {
+  profiles: HostProfile[];
+  serverId: string;
+  connectionId: string;
+  daemonPublicKeyB64: string;
+  now?: string;
+}): HostProfile[] {
+  const now = input.now ?? new Date().toISOString();
+  let changed = false;
+  const next = input.profiles.map((host) => {
+    if (host.serverId !== input.serverId) return host;
+    const connections = host.connections.map((connection) => {
+      if (
+        connection.type !== "relay" ||
+        connection.id !== input.connectionId ||
+        connection.daemonPublicKeyB64 !== input.daemonPublicKeyB64 ||
+        connection.minimumSecurityMode === "protected"
+      ) {
+        return connection;
+      }
+      changed = true;
+      return { ...connection, minimumSecurityMode: "protected" as const };
+    });
+    return changed ? { ...host, connections, updatedAt: now } : host;
+  });
+  return changed ? next : input.profiles;
 }
 
 function hasProfileChanged(input: {
@@ -377,6 +428,7 @@ export function relayConnectionFromOffer(offer: ConnectionOffer): RelayHostConne
     relayEndpoint,
     useTls,
     daemonPublicKeyB64: offer.daemonPublicKeyB64.trim(),
+    ...(offer.minimumSecurityMode ? { minimumSecurityMode: offer.minimumSecurityMode } : {}),
   };
 }
 
@@ -441,6 +493,7 @@ const StoredHostConnectionSchema = z.discriminatedUnion("type", [
     relayEndpoint: z.string(),
     useTls: z.boolean().optional(),
     daemonPublicKeyB64: z.string(),
+    minimumSecurityMode: z.literal("protected").optional(),
   }),
 ]);
 const StoredHostProfileSchema = z.strictObject({
@@ -504,6 +557,9 @@ function normalizeStoredConnection(connection: StoredHostConnection): HostConnec
         relayEndpoint,
         ...(useTls !== undefined ? { useTls } : {}),
         daemonPublicKeyB64,
+        ...(connection.minimumSecurityMode
+          ? { minimumSecurityMode: connection.minimumSecurityMode }
+          : {}),
       };
     } catch {
       return null;

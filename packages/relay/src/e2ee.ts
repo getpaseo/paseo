@@ -1,4 +1,11 @@
-export { openClientSecureChannel, openDaemonSecureChannel } from "./secure-channel.js";
+export {
+  openClientSecureChannel,
+  openDaemonSecureChannel,
+  PROTECTED_HANDSHAKE_FAILED_CLOSE_CODE,
+  PROTECTED_MODE_REQUIRED_CLOSE_CODE,
+  PROTECTED_MODE_REQUIRED_CLOSE_REASON,
+  SecureChannelRejectedError,
+} from "./secure-channel.js";
 export type {
   ClientSecureChannelOptions,
   DaemonSecureChannelOptions,

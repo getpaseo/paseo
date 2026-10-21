@@ -16,6 +16,7 @@ import {
   connectionFromListen,
   createRemoteSshHostConnection,
   normalizeStoredHostProfile,
+  pinRelayProtectedSecurityInProfiles,
   upsertHostConnectionInProfiles,
   registryHasConnection,
   relayConnectionFromOffer,
@@ -503,6 +504,19 @@ function buildConnectionCandidates(host: HostProfile): ConnectionCandidate[] {
   }));
 }
 
+/**
+ * A security pin is learned from the client that is already connected in
+ * protected mode, so tightening it never requires a new client.
+ */
+function connectionNeedsNewClient(previous: HostConnection, next: HostConnection): boolean {
+  if (previous.type === "relay" && next.type === "relay") {
+    const { minimumSecurityMode: _previousPin, ...previousRest } = previous;
+    const { minimumSecurityMode: _nextPin, ...nextRest } = next;
+    return !equal(previousRest, nextRest);
+  }
+  return !equal(previous, next);
+}
+
 function findConnectionById(host: HostProfile, connectionId: string | null): HostConnection | null {
   if (!connectionId) {
     return null;
@@ -531,6 +545,11 @@ function probeIntervalForConnection(
 
 function createDefaultDeps(
   resolveOrigin: (serverId: string) => DaemonClient | null = () => null,
+  pinRelayProtectedSecurity: (input: {
+    serverId: string;
+    connectionId: string;
+    daemonPublicKeyB64: string;
+  }) => void = () => undefined,
 ): HostRuntimeControllerDeps {
   const browserHostAvailable =
     typeof getDesktopHost()?.browser?.executeAutomationCommand === "function";
@@ -616,6 +635,17 @@ function createDefaultDeps(
         e2ee: {
           enabled: true,
           daemonPublicKeyB64: connection.daemonPublicKeyB64,
+          ...(connection.minimumSecurityMode
+            ? { minimumMode: connection.minimumSecurityMode }
+            : {}),
+          onSecurityMode: (mode) => {
+            if (mode !== "protected" || connection.minimumSecurityMode === "protected") return;
+            pinRelayProtectedSecurity({
+              serverId: host.serverId,
+              connectionId: connection.id,
+              daemonPublicKeyB64: connection.daemonPublicKeyB64,
+            });
+          },
         },
       });
     },
@@ -807,7 +837,7 @@ export class HostRuntimeController {
       activeConnectionId &&
       previousActiveConnection &&
       nextActiveConnection &&
-      (!equal(previousActiveConnection, nextActiveConnection) || passwordChanged)
+      (connectionNeedsNewClient(previousActiveConnection, nextActiveConnection) || passwordChanged)
     ) {
       this.connectionLastProbedAt.delete(activeConnectionId);
       await this.switchToConnection({ connectionId: activeConnectionId });
@@ -1576,7 +1606,12 @@ export class HostRuntimeStore {
     replicaRowStore?: ReplicaRowStore;
     revokePushNotifications?: typeof revokePushNotifications;
   }) {
-    this.deps = input?.deps ?? createDefaultDeps((serverId) => this.getClient(serverId));
+    this.deps =
+      input?.deps ??
+      createDefaultDeps(
+        (serverId) => this.getClient(serverId),
+        (pin) => void this.pinRelayProtectedSecurity(pin),
+      );
     this.storage = input?.storage ?? AsyncStorage;
     this.replicaCache = new ReplicaCache(input?.replicaRowStore ?? createReplicaRowStore());
     this.revokePushNotifications = input?.revokePushNotifications ?? revokePushNotifications;
@@ -2137,6 +2172,17 @@ export class HostRuntimeStore {
       label: input.hostname ?? undefined,
       connection,
     });
+  }
+
+  private async pinRelayProtectedSecurity(input: {
+    serverId: string;
+    connectionId: string;
+    daemonPublicKeyB64: string;
+  }): Promise<void> {
+    const next = pinRelayProtectedSecurityInProfiles({ profiles: this.hosts, ...input });
+    if (next === this.hosts) return;
+    this.setHostsAndSync(next);
+    await this.persistHosts();
   }
 
   private async updateHost(

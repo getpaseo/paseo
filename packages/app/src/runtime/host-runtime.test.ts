@@ -786,6 +786,45 @@ describe("HostRuntimeController", () => {
     expect(controller.getSnapshot().client).toBe(createdClients[1]?.client);
   });
 
+  it("keeps the active relay client when its security pin is learned", async () => {
+    const relay: HostConnection = {
+      id: "relay:wss:relay.paseo.sh:443",
+      type: "relay",
+      relayEndpoint: "relay.paseo.sh:443",
+      useTls: true,
+      daemonPublicKeyB64: "pk_a",
+    };
+    const createdClients: FakeDaemonClient[] = [];
+    const controller = new HostRuntimeController({
+      host: makeHost({ connections: [relay], preferredConnectionId: relay.id }),
+      deps: {
+        createClient: () => {
+          const client = new FakeDaemonClient();
+          createdClients.push(client);
+          return client as unknown as DaemonClient;
+        },
+        connectToDaemon: async ({ host, connection }) => ({
+          client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: connection.id,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    await controller.activateConnection({ connectionId: relay.id });
+    await controller.updateHost(
+      makeHost({
+        connections: [{ ...relay, minimumSecurityMode: "protected" }],
+        preferredConnectionId: relay.id,
+      }),
+    );
+
+    expect(createdClients).toHaveLength(1);
+    expect(createdClients[0]?.isDisposed()).toBe(false);
+    expect(controller.getSnapshot().client).toBe(createdClients[0]);
+  });
+
   it("keeps known hosts in connecting when a created client reports idle during connect", async () => {
     const host = makeHost({
       connections: [

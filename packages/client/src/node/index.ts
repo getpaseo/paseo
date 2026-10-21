@@ -120,6 +120,9 @@ export function createHostTransportFactory(
         factory = createRelayE2eeTransportFactory({
           baseFactory: factory,
           daemonPublicKeyB64: socketTarget.offer.daemonPublicKeyB64,
+          ...(socketTarget.offer.minimumSecurityMode
+            ? { minimumMode: socketTarget.offer.minimumSecurityMode }
+            : {}),
           logger: { warn() {} },
           assertOutboundCapacity: (bytes) => assertOutboundCapacity(bytes),
         });

@@ -1,6 +1,11 @@
 import { afterEach, expect, test, vi } from "vitest";
 import pino from "pino";
-import { exportPublicKey, generateKeyPair, openClientSecureChannel } from "@getpaseo/relay/e2ee";
+import {
+  createClientChannel,
+  exportPublicKey,
+  generateKeyPair,
+  openClientSecureChannel,
+} from "@getpaseo/relay/e2ee";
 import type { Transport } from "@getpaseo/relay/e2ee";
 import { admitSecuredRelaySocket, type SecuredRelaySocket } from "./secure-relay-ingress.js";
 
@@ -55,6 +60,7 @@ class FakeIngressSocket {
 }
 
 const logger = pino({ level: "silent" });
+const allowLegacy = { requireProtectedMode: () => false };
 
 /** Wires a client secure channel to the fake socket so both ends talk directly. */
 async function openClientAgainst(
@@ -78,6 +84,24 @@ async function openClientAgainst(
   return openClientSecureChannel(clientTransport, { daemonPublicKeyB64, events });
 }
 
+/** An older client that only speaks the legacy construction. */
+async function openLegacyClientAgainst(socket: FakeIngressSocket, daemonPublicKeyB64: string) {
+  const clientTransport: Transport = {
+    send: (data) => socket.message(data),
+    close: () => undefined,
+    onmessage: null,
+    onclose: null,
+    onerror: null,
+  };
+  socket.onSend = (data) => {
+    clientTransport.onmessage?.({
+      data: data instanceof Uint8Array ? data.slice().buffer : data,
+      isBinary: data instanceof ArrayBuffer || data instanceof Uint8Array,
+    });
+  };
+  return createClientChannel(clientTransport, daemonPublicKeyB64);
+}
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -88,7 +112,7 @@ test("terminates a relay socket whose peer never completes the handshake", async
   let attachments = 0;
   const admitted = admitSecuredRelaySocket(
     socket,
-    { daemonKeyPair: generateKeyPair(), logger },
+    { daemonKeyPair: generateKeyPair(), logger, ...allowLegacy },
     async () => {
       attachments += 1;
     },
@@ -103,14 +127,70 @@ test("admits the secured socket with its negotiated security mode", async () => 
   const socket = new FakeIngressSocket();
   const daemonKeyPair = generateKeyPair();
   let secured: SecuredRelaySocket | null = null;
-  const admitted = admitSecuredRelaySocket(socket, { daemonKeyPair, logger }, async (next) => {
-    secured = next;
-  });
+  const admitted = admitSecuredRelaySocket(
+    socket,
+    { daemonKeyPair, logger, ...allowLegacy },
+    async (next) => {
+      secured = next;
+    },
+  );
   await openClientAgainst(socket, exportPublicKey(daemonKeyPair.publicKey));
   await admitted;
   expect(secured).not.toBeNull();
-  expect(secured!.securityMode).toBe("legacy");
+  expect(secured!.securityMode).toBe("protected");
   expect(secured!.socket.readyState).toBe(1);
+});
+
+test("admits a legacy client while protected mode is not required", async () => {
+  const socket = new FakeIngressSocket();
+  const daemonKeyPair = generateKeyPair();
+  let secured: SecuredRelaySocket | null = null;
+  const admitted = admitSecuredRelaySocket(
+    socket,
+    { daemonKeyPair, logger, ...allowLegacy },
+    async (next) => {
+      secured = next;
+    },
+  );
+  await openLegacyClientAgainst(socket, exportPublicKey(daemonKeyPair.publicKey));
+  await admitted;
+  expect(secured!.securityMode).toBe("legacy");
+});
+
+test("rejects a legacy client with a policy close when protected mode is required", async () => {
+  const socket = new FakeIngressSocket();
+  const daemonKeyPair = generateKeyPair();
+  let attachments = 0;
+  const admitted = admitSecuredRelaySocket(
+    socket,
+    { daemonKeyPair, logger, requireProtectedMode: () => true },
+    async () => {
+      attachments += 1;
+    },
+  );
+  await openLegacyClientAgainst(socket, exportPublicKey(daemonKeyPair.publicKey));
+  await admitted;
+  expect(attachments).toBe(0);
+  expect(socket.closes).toEqual([{ code: 1008, reason: "protected endpoint security required" }]);
+});
+
+test("reads the policy when the hello arrives, not when the socket was accepted", async () => {
+  const socket = new FakeIngressSocket();
+  const daemonKeyPair = generateKeyPair();
+  let required = false;
+  let attachments = 0;
+  const admitted = admitSecuredRelaySocket(
+    socket,
+    { daemonKeyPair, logger, requireProtectedMode: () => required },
+    async () => {
+      attachments += 1;
+    },
+  );
+  required = true;
+  await openLegacyClientAgainst(socket, exportPublicKey(daemonKeyPair.publicKey));
+  await admitted;
+  expect(attachments).toBe(0);
+  expect(socket.closes[0]?.code).toBe(1008);
 });
 
 test("delivers records received before admission completes, in order, after attach", async () => {
@@ -122,11 +202,15 @@ test("delivers records received before admission completes, in order, after atta
   });
   const received: unknown[] = [];
   let secured: SecuredRelaySocket | null = null;
-  const admitted = admitSecuredRelaySocket(socket, { daemonKeyPair, logger }, async (next) => {
-    secured = next;
-    next.socket.on("message", (data) => received.push(data));
-    await attachGate;
-  });
+  const admitted = admitSecuredRelaySocket(
+    socket,
+    { daemonKeyPair, logger, ...allowLegacy },
+    async (next) => {
+      secured = next;
+      next.socket.on("message", (data) => received.push(data));
+      await attachGate;
+    },
+  );
   let clientOpen: () => void = () => undefined;
   const opened = new Promise<void>((resolve) => {
     clientOpen = resolve;
@@ -152,7 +236,7 @@ test("encrypted sends wait for the physical socket send callback", async () => {
   const attached = new Promise<SecuredRelaySocket>((resolve) => {
     resolveAttached = resolve;
   });
-  void admitSecuredRelaySocket(socket, { daemonKeyPair, logger }, async (next) =>
+  void admitSecuredRelaySocket(socket, { daemonKeyPair, logger, ...allowLegacy }, async (next) =>
     resolveAttached?.(next),
   );
   let resolveClientOpen: (() => void) | undefined;

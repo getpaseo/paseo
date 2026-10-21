@@ -4310,6 +4310,40 @@ test("reconnects after relay close with replaced-by-new-connection reason", asyn
   }
 });
 
+test("stops reconnecting after the transport closes for an endpoint security failure", async () => {
+  const close = { code: 4002, reason: "legacy security below required minimum" };
+  const error = "Endpoint security handshake failed: legacy security below required minimum";
+  useHeartbeatClock();
+  try {
+    let attempts = 0;
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2",
+      clientId: "clsk_security_close_test",
+      e2ee: { enabled: true, daemonPublicKeyB64: "daemon-public-key" },
+      reconnect: { enabled: true, baseDelayMs: 1, maxDelayMs: 1 },
+      transportFactory: () => {
+        attempts += 1;
+        return mock.transport;
+      },
+    });
+    clients.push(client);
+
+    const connecting = client.connect();
+    void connecting.catch(() => {});
+    await vi.waitFor(() => expect(attempts).toBe(1));
+    mock.triggerClose(close);
+
+    await expect(connecting).rejects.toThrow(error);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(attempts).toBe(1);
+    expect(client.getConnectionState().status).toBe("disconnected");
+    expect(client.lastError).toContain(error);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test("requires non-empty clientId", () => {
   expect(() => {
     const _client = new DaemonClient({
