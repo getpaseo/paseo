@@ -20,6 +20,7 @@ import type { ProviderSnapshotManager } from "../provider-snapshot-manager.js";
 import { setupFinishNotification, startCreatedAgentInitialPrompt } from "../agent-prompt.js";
 import { resolveCreateAgentTitles } from "../create-agent-title.js";
 import { buildAgentPrompt } from "../prompt-attachments.js";
+import { preprocessImages } from "../preprocess-image.js";
 import { normalizeClientMessageId, resolveClientMessageId } from "../../client-message-id.js";
 import { resolveRequiredProviderModel, type ResolvedProviderModel } from "../mcp-shared.js";
 import {
@@ -239,6 +240,9 @@ async function resolveSessionCreateAgent(
   input: CreateAgentFromSessionInput,
 ): Promise<ResolvedCreateAgent> {
   const trimmedPrompt = input.initialPrompt?.trim();
+  // Before buildSessionConfig, which may create a worktree or workspace: a
+  // refused attachment must not leave one behind.
+  const images = await preprocessImages({ images: input.images, logger: dependencies.logger });
   const {
     sessionConfig: builtSessionConfig,
     setupContinuation,
@@ -275,7 +279,7 @@ async function resolveSessionCreateAgent(
     modeId: resolvedCreateConfig.modeId,
     featureValues: resolvedCreateConfig.featureValues,
   };
-  const prompt = buildAgentPrompt(trimmedPrompt ?? "", input.images, input.attachments);
+  const prompt = buildAgentPrompt(trimmedPrompt ?? "", images, input.attachments);
   const hasPromptContent = Array.isArray(prompt) ? prompt.length > 0 : prompt.length > 0;
   const clientMessageId = normalizeClientMessageId(input.clientMessageId);
   const runOptions: AgentRunOptions | undefined =
