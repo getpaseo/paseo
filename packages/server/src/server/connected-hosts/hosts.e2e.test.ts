@@ -1595,6 +1595,7 @@ test(
     const cli = await promisify(execFile)(
       process.execPath,
       [
+        "--conditions=source",
         "--import",
         "tsx",
         fileURLToPath(new URL("../../../../cli/src/index.ts", import.meta.url)),
