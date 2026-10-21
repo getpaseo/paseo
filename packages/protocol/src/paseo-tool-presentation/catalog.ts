@@ -195,6 +195,7 @@ export const PASEO_TOOL_CATALOG = {
     context: workspaceContext(),
     detail: { inputOrder: WORKSPACE_FIELDS, outputFields: ["workspaceId", "projectId"] },
   },
+  list_hosts: { label: "List hosts" },
   list_workspaces: { label: "List workspaces" },
   rename_workspace: {
     label: "Rename workspace",

@@ -61,9 +61,9 @@ Agent-scoped creation always creates your subagent. Omit `workspaceId` to use yo
 
 Detach is an explicit user action in the subagents track, not an agent tool. A cross-workspace child remains your subagent even though it also appears as a normal tab in its workspace.
 
-Agent-scoped `create_agent` defaults `notifyOnFinish` to true. Set it to `false` only for truly fire-and-forget agents.
+Agent-scoped `create_agent` defaults `notifyOnFinish` to true. Set it to `false` when you want explicit reporting or no completion callback.
 
-**`send_agent_prompt`** — `{ agentId, prompt, activeTurnBehavior? }`. Use for follow-ups to an existing agent. Agent-scoped calls default to `steer`; top-level calls default to `interrupt`. Set `activeTurnBehavior` to `steer` or `interrupt` to override the default. Steering falls back to interruption when unavailable. CLI agent sends use the same defaults and accept `--behavior steer|interrupt`. Returns after dispatch acknowledgement. Agent-scoped calls default `notifyOnFinish` to true; top-level calls have no parent callback.
+**`send_agent_prompt`** — `{ agentId, prompt, activeTurnBehavior? }`. Use for follow-ups to an existing agent. Agent-scoped calls default to `steer`; top-level calls default to `interrupt`. Set `activeTurnBehavior` to `steer` or `interrupt` to override the default. Steering falls back to interruption when unavailable. CLI agent sends use the same defaults and accept `--behavior steer|interrupt`. Agent-scoped calls return a queued receipt immediately; messages to each recipient deliver after two quiet seconds. Top-level calls return after dispatch acknowledgement. Agent-scoped calls default `notifyOnFinish` to true; top-level calls have no parent callback.
 
 **`update_agent`** — `{ agentId, name?, labels?, settings? }`. Use `settings` for runtime changes on an existing agent: `modeId`, `model`, `thinkingOptionId`, and provider-specific `features`. For Codex fast mode, pass `settings: { features: { "fast_mode": true } }`.
 
@@ -108,9 +108,9 @@ Schedules have the full list/inspect/update/pause/resume/run-once/log/delete sur
 
 Agents take time — 10–30+ minutes is routine. Favor asynchronous workflows.
 
-`create_agent` and `send_agent_prompt` return after startup or dispatch acknowledgement in both MCP scopes. Top-level callers have no parent callback; observe completion through status/activity tools or SDK/RPC subscriptions and wait APIs.
+`create_agent` returns after startup. Agent-scoped `send_agent_prompt` returns after queue admission; provider dispatch follows after two quiet seconds. Top-level sends return after dispatch acknowledgement. Top-level callers have no parent callback; observe completion through status/activity tools or SDK/RPC subscriptions and wait APIs.
 
-For agent-scoped `create_agent` and `send_agent_prompt`, leave `notifyOnFinish` omitted or set it to `true` unless the work is truly fire-and-forget. You will get notified when the target agent finishes, errors, or needs permission. Move on to other work. The notification arrives on its own.
+For agent-scoped `create_agent` and `send_agent_prompt`, `notifyOnFinish` defaults to `true`. The caller receives the target’s completion, error, or permission report automatically, including its last response. Finish your turn with the result for automatic reporting. For a workflow that reports explicitly with `send_agent_prompt`, set `notifyOnFinish: false` when assigning the task. Paseo supplies caller identity for agent-scoped tools and CLI agent context; use that supplied identity.
 
 With finish notifications enabled, don't poll `list_agents` or `get_agent_status` to "check on" a running agent. The notification will tell you.
 

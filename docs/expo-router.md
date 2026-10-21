@@ -157,7 +157,9 @@ a small `withUnistyles` boundary without subscribing the route tree itself to
 every Unistyles runtime update.
 
 Navigators keep their identity across appearance changes. `ThemedStack` remounts
-each screen's content below the native stack when appearance tokens change; a
+each ordinary screen's content below the native stack when appearance tokens change.
+Workspace screens own retained panel lifetimes and update appearance at their
+leaves through `screenOwnedAppearance` ([Explorer](explorer-sidebar.md)). A
 keyed wrapper above a stack remounts the stack itself, and Android crashes when
 that happens while a FragmentManager transaction is running, which settings
 hydration at startup makes likely. A screen that mounts a nested navigator (the

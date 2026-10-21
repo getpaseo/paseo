@@ -48,7 +48,7 @@ async function createWorkspaceJourney() {
     cwd: repoDir,
     worktreeSlug: "workspace",
     source: { kind: "branch-off", baseBranch: "main", branchName: "workspace" },
-    runSetup: false,
+
     paseoHome,
   });
   const workspaceId = "workspace-under-test";

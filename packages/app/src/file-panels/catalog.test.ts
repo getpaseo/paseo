@@ -1,86 +1,74 @@
 import { describe, expect, it } from "vitest";
-import { builtinFilePanels, isRenderedMarkdownFile } from "./catalog";
-import { resolveFilePanel } from "./resolve";
+import { filePanelCatalog } from "./catalog";
+import { resolveFilePanel, type FilePanelCandidate, type FilePanelFile } from "./resolve";
 
-function filePreviewRenderKind(path: string) {
-  const { panel } = resolveFilePanel({
-    file: { path, kind: "text", size: 100, hasBytes: false },
-    candidates: builtinFilePanels,
-    associations: {},
-  });
-  return panel ? panel.id.slice("builtin:".length) : null;
+const builtins = filePanelCatalog([]);
+
+const richMarkdown: FilePanelCandidate = {
+  id: "plugin:notes/rich",
+  builtin: false,
+  files: { extensions: ["md"] },
+};
+
+function textFile(path: string): FilePanelFile {
+  return { path, kind: "text" };
 }
 
-describe("isRenderedMarkdownFile", () => {
-  it("detects .md files", () => {
-    expect(isRenderedMarkdownFile("README.md")).toBe(true);
-    expect(isRenderedMarkdownFile("docs/guide.MD")).toBe(true);
-  });
+function candidateIds(file: FilePanelFile, candidates: readonly FilePanelCandidate[] = builtins) {
+  return resolveFilePanel({ file, candidates, associations: {} }).candidates.map(
+    (candidate) => candidate.id,
+  );
+}
 
-  it("detects .markdown files", () => {
-    expect(isRenderedMarkdownFile("notes.markdown")).toBe(true);
-    expect(isRenderedMarkdownFile("docs/CHANGELOG.MARKDOWN")).toBe(true);
-  });
-
-  it("does not treat .mdx files as rendered markdown", () => {
-    expect(isRenderedMarkdownFile("page.mdx")).toBe(false);
-  });
-
-  it("does not treat other text files as rendered markdown", () => {
-    expect(isRenderedMarkdownFile("src/index.ts")).toBe(false);
-    expect(isRenderedMarkdownFile("README.md.txt")).toBe(false);
-    expect(isRenderedMarkdownFile("plan.html")).toBe(false);
-  });
-});
-
-describe("filePreviewRenderKind", () => {
-  it("maps each renderable extension to its kind", () => {
-    expect(filePreviewRenderKind("README.md")).toBe("markdown");
-    expect(filePreviewRenderKind("notes.markdown")).toBe("markdown");
-    expect(filePreviewRenderKind("plan.html")).toBe("html");
-    expect(filePreviewRenderKind("docs/PLAN.HTML")).toBe("html");
-    expect(filePreviewRenderKind("plan.htm")).toBe("html");
-  });
-
-  it("returns null for files without a rendered preview", () => {
-    expect(filePreviewRenderKind("src/index.ts")).toBe(null);
-    expect(filePreviewRenderKind("page.mdx")).toBe(null);
-    expect(filePreviewRenderKind("index.html.erb")).toBe(null);
-  });
-});
+function panelId(file: FilePanelFile, candidates: readonly FilePanelCandidate[] = builtins) {
+  return resolveFilePanel({ file, candidates, associations: {} }).panel?.id ?? null;
+}
 
 describe("built-in file panels", () => {
+  it("opens each rendered extension with its panel and Source after it", () => {
+    expect(candidateIds(textFile("README.md"))).toEqual(["builtin:markdown", "builtin:source"]);
+    expect(panelId(textFile("notes.markdown"))).toBe("builtin:markdown");
+    expect(panelId(textFile("plan.html"))).toBe("builtin:html");
+    expect(panelId(textFile("docs/PLAN.HTML"))).toBe("builtin:html");
+    expect(panelId(textFile("plan.htm"))).toBe("builtin:html");
+  });
+
+  it("opens every other text file with Source, whatever its name", () => {
+    for (const path of ["src/index.ts", "page.mdx", "index.html.erb", "Dockerfile", "LICENSE"]) {
+      expect(candidateIds(textFile(path))).toEqual(["builtin:source"]);
+    }
+  });
+
+  it("puts plugin panels after the rendering built-ins and before Source", () => {
+    expect(candidateIds(textFile("README.md"), filePanelCatalog([richMarkdown]))).toEqual([
+      "builtin:markdown",
+      richMarkdown.id,
+      "builtin:source",
+    ]);
+    const onlyPlugin = filePanelCatalog([{ ...richMarkdown, files: { extensions: ["txt"] } }]);
+    expect(panelId(textFile("notes.txt"), onlyPlugin)).toBe(richMarkdown.id);
+  });
+
+  it("has no Source for files that are not text", () => {
+    expect(candidateIds({ path: "archive.zip", kind: "binary" })).toEqual([]);
+  });
+
   it.each(["png", "jpg", "jpeg", "gif", "webp", "svg"])(
     "registers the image extension %s",
     (extension) => {
       const resolution = resolveFilePanel({
-        file: {
-          path: `/capture.${extension.toUpperCase()}`,
-          kind: "image",
-          size: 512,
-          hasBytes: true,
-        },
-        candidates: builtinFilePanels,
+        file: { path: `/capture.${extension.toUpperCase()}`, kind: "image" },
+        candidates: builtins,
         associations: { [`ext:${extension}`]: "builtin:markdown" },
       });
       expect(resolution.panel?.id).toBe("builtin:image");
       expect(
         resolveFilePanel({
-          file: { path: "capture.png", kind: "binary", size: 512, hasBytes: false },
-          candidates: builtinFilePanels,
+          file: { path: "capture.png", kind: "binary" },
+          candidates: builtins,
           associations: {},
         }).panel,
       ).toBeNull();
     },
   );
-
-  it("does not impose a new preview size limit on built-in text panels", () => {
-    expect(
-      resolveFilePanel({
-        file: { path: "notes.md", kind: "text", size: 11 * 1024 * 1024, hasBytes: false },
-        candidates: builtinFilePanels,
-        associations: {},
-      }).panel?.id,
-    ).toBe("builtin:markdown");
-  });
 });

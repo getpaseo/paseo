@@ -4,7 +4,6 @@ import {
   shouldReconcileHiddenKeyboardEnd,
   resolveKeyboardShift,
   reserveKeyboardLayoutShift,
-  shouldUseCompactExplorerKeyboardPadding,
 } from "./policy";
 
 describe("keyboard layout reservation", () => {
@@ -104,19 +103,5 @@ describe("shouldReconcileHiddenKeyboardEnd", () => {
         progress: 1,
       }),
     ).toBe(false);
-  });
-});
-
-describe("shouldUseCompactExplorerKeyboardPadding", () => {
-  it("keeps the changes viewport stable while preserving padding for other tabs", () => {
-    expect(shouldUseCompactExplorerKeyboardPadding({ isGit: true, explorerTab: "changes" })).toBe(
-      false,
-    );
-    expect(shouldUseCompactExplorerKeyboardPadding({ isGit: true, explorerTab: "files" })).toBe(
-      true,
-    );
-    expect(shouldUseCompactExplorerKeyboardPadding({ isGit: false, explorerTab: "changes" })).toBe(
-      true,
-    );
   });
 });

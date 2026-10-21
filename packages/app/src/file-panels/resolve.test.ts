@@ -3,12 +3,16 @@ import { resolveFilePanel, type FilePanelCandidate, type FilePanelFile } from ".
 
 const markdown: FilePanelCandidate = {
   id: "builtin:markdown",
+  builtin: true,
   files: { extensions: ["md", "markdown"] },
-  document: "text",
-  maxBytes: Infinity,
+  fileKind: "text",
 };
-const alternative: FilePanelCandidate = { ...markdown, id: "plugin:notes/markdown" };
-const file: FilePanelFile = { path: "/docs/README.MD", kind: "text", size: 100, hasBytes: true };
+const alternative: FilePanelCandidate = {
+  id: "plugin:notes/markdown",
+  builtin: false,
+  files: { extensions: ["md", "markdown"] },
+};
+const file: FilePanelFile = { path: "/docs/README.MD", kind: "text" };
 
 function resolve(
   overrides: Partial<Parameters<typeof resolveFilePanel<FilePanelCandidate>>[0]> = {},
@@ -27,6 +31,7 @@ describe("resolveFilePanel", () => {
       panel: alternative,
       candidates: [markdown, alternative],
       selectorKey: "ext:md",
+      associatedPanelId: alternative.id,
     });
   });
   it("ignores an absent association without deleting it", () => {
@@ -39,33 +44,43 @@ describe("resolveFilePanel", () => {
     expect(resolve().panel).toBe(markdown);
     expect(resolve({ candidates: [alternative, markdown] }).panel).toBe(alternative);
   });
+  it("uses a tab choice before the association and ignores a choice that is not a candidate", () => {
+    const associations = { "ext:md": alternative.id };
+    expect(resolve({ associations, choice: markdown.id })).toMatchObject({
+      panel: markdown,
+      associatedPanelId: alternative.id,
+    });
+    expect(resolve({ associations, choice: "plugin:absent/markdown" }).panel).toBe(alternative);
+  });
   it("returns the floor when no selector matches", () => {
     expect(resolve({ file: { ...file, path: "index.ts" } })).toEqual({
       panel: null,
       candidates: [],
       selectorKey: "ext:ts",
+      associatedPanelId: null,
     });
   });
-  it("filters text panels for binary files even with an association", () => {
+  it("offers a panel claiming every file of its kind for files of that kind", () => {
+    const every: FilePanelCandidate = { ...markdown, id: "builtin:source", files: "all" };
+    expect(resolve({ file: { ...file, path: "index.ts" }, candidates: [every] })).toEqual({
+      panel: every,
+      candidates: [every],
+      selectorKey: "ext:ts",
+      associatedPanelId: null,
+    });
+    expect(resolve({ file: { ...file, kind: "binary" }, candidates: [every] }).panel).toBeNull();
+  });
+  it("passes over a built-in panel for another kind of file, even with an association", () => {
     expect(
       resolve({ file: { ...file, kind: "binary" }, associations: { "ext:md": markdown.id } }).panel,
-    ).toBeNull();
+    ).toBe(alternative);
   });
-  it("requires bytes for bytes panels and accepts binary files with bytes", () => {
-    const bytes: FilePanelCandidate = { ...alternative, document: "bytes" };
-    expect(resolve({ file: { ...file, hasBytes: false }, candidates: [bytes] }).panel).toBeNull();
-    expect(resolve({ file: { ...file, kind: "binary" }, candidates: [bytes] }).panel).toBe(bytes);
-  });
-  it("includes the maxBytes boundary and skips oversized associated panels", () => {
-    const limited = { ...alternative, maxBytes: 100 };
-    expect(resolve({ candidates: [limited] }).panel).toBe(limited);
-    expect(
-      resolve({
-        file: { ...file, size: 101 },
-        candidates: [limited, markdown],
-        associations: { "ext:md": limited.id },
-      }).panel,
-    ).toBe(markdown);
+  it("offers plugin panels for every kind of file their selector matches", () => {
+    for (const kind of ["text", "image", "binary"] as const) {
+      expect(resolve({ file: { ...file, kind }, candidates: [alternative] }).panel).toBe(
+        alternative,
+      );
+    }
   });
   it("uses exact basename keys when an eligible candidate matches by filename", () => {
     const named = { ...alternative, files: { extensions: [], filenames: ["README.MD"] } };
@@ -75,16 +90,19 @@ describe("resolveFilePanel", () => {
       panel: named,
       candidates: [markdown, named],
       selectorKey: "name:README.MD",
+      associatedPanelId: named.id,
     });
     expect(resolve({ file: { ...file, path: "README.md" }, candidates: [named] }).panel).toBeNull();
   });
   it("uses extension keys when filename candidates were filtered out", () => {
     const named = {
-      ...alternative,
-      maxBytes: 1,
+      ...markdown,
+      id: "builtin:named",
       files: { extensions: [], filenames: ["README.MD"] },
     };
-    expect(resolve({ candidates: [named, markdown] }).selectorKey).toBe("ext:md");
+    expect(
+      resolve({ file: { ...file, kind: "binary" }, candidates: [named, alternative] }).selectorKey,
+    ).toBe("ext:md");
   });
   it.each(["/src/Dockerfile", "C:\\src\\Dockerfile"])(
     "matches an extensionless exact filename: %s",
@@ -94,6 +112,7 @@ describe("resolveFilePanel", () => {
         panel: named,
         candidates: [named],
         selectorKey: "name:Dockerfile",
+        associatedPanelId: null,
       });
     },
   );
@@ -102,4 +121,16 @@ describe("resolveFilePanel", () => {
     expect(resolve({ candidates: [upper] }).panel).toBe(upper);
     expect(resolve({ file: { ...file, path: "README" } }).selectorKey).toBe("ext:");
   });
+});
+
+it("opens a binary PDF with its plugin by its selector alone", () => {
+  const pdf: FilePanelCandidate = {
+    id: "plugin:pdf/viewer",
+    builtin: false,
+    files: { extensions: ["pdf"] },
+  };
+  const pdfFile: FilePanelFile = { path: "/workspace/document.pdf", kind: "binary" };
+  expect(
+    resolveFilePanel({ file: pdfFile, candidates: [markdown, pdf], associations: {} }).panel,
+  ).toBe(pdf);
 });

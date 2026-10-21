@@ -1,6 +1,6 @@
 ---
 name: paseo-plugin
-description: Build and manage trusted local Paseo plugins. Use when the user asks to create, edit, install, reload, enable, disable, remove, or troubleshoot a Paseo plugin; add lifecycle hooks; transform agent configuration, environment, MCP servers, or workspace creation; automate permissions or turn follow-ups; add a screen, sidebar header or footer item, or workspace panel; add Command Center items or slash commands; add composer pills or attachment sources; transform, render, or append agent timeline items; contribute a theme; use Paseo from plugin code; or add plugin RPCs.
+description: Build and manage trusted local Paseo plugins. Use when the user asks to create, edit, install, reload, enable, disable, remove, or troubleshoot a Paseo plugin; add lifecycle hooks; transform agent configuration, environment, MCP servers, or workspace creation; automate permissions or turn follow-ups; add a screen, sidebar header or footer item, workspace panel, or file panel; add Command Center items or slash commands; add composer pills or attachment sources; transform, render, or append agent timeline items; contribute a theme; use Paseo from plugin code; or add plugin RPCs.
 ---
 
 # Paseo plugins
@@ -31,6 +31,7 @@ Pick the contribution that matches the request. Each row names the registration,
 | ------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | Screen and sidebar item   | `addScreen` + `addSidebarHeaderItem`/`addSidebarFooterItem` | A full screen of plugin UI, or sidebar header or footer rows that open a screen or popover                    | reference.md → Screens and sidebar items                                                           |
 | Workspace panel           | `addWorkspacePanel`                                         | UI that lives as a tab beside agents, terminals, files, and diffs; `locations: ["explorer"]` for the Explorer | reference.md → Workspace panels                                                                    |
+| File panel                | `addFilePanel`                                              | View or edit a matching file inside the file tab through its file handle                                      | reference.md → File panels; `plugin-examples/pdf-panel`, `plugin-examples/markdown-panel`          |
 | Command Center item       | `addCommandCenterItem`                                      | A global, workspace, or agent action reachable from ⌘K                                                        | reference.md → Command Center items                                                                |
 | Client slash command      | `addSlashCommand`                                           | A `/command args` in the composer that runs plugin code instead of prompting the agent                        | reference.md → Slash commands                                                                      |
 | Composer pill             | `addComposerPill`                                           | A per-agent button in the composer track bar next to Tasks and Subagents                                      | reference.md → Composer pills                                                                      |
@@ -260,7 +261,7 @@ Icons are Lucide icon names, inline SVG (`{ svg }`), or components; see [Icons](
 Before writing imports, classify each module as shared, client, or server. Follow the
 [SDK import boundaries](https://paseo.sh/docs/plugins/reference.md#runtime-modules), including
 transitive and type dependencies. The root is shared-only; hooks and client contexts belong to
-`@getpaseo/plugin/client`, server contexts to `/server`, and host UI to `/client/react-native` or `/client/ui`.
+`@getpaseo/plugin/client`, server contexts to `/server`, and host UI to `/client/ui`.
 Install dependencies locally for typechecking; Paseo supplies host runtime modules. JSX uses the
 automatic runtime. Do not import `/client/host` from plugin code.
 
@@ -567,7 +568,7 @@ client.addTimelineRenderer({
 });
 ```
 
-Transformers run while the render model is built, on fetched history and on every live update, so `phase` is `"streaming"` for a loading thought or running tool call. Identity comes from the source item, so a streaming item keeps its mounted component; set an output `id` when one source explodes into several items. Transformers must be synchronous and deterministic, `data` must be JSON, and a transformer that throws is logged and skipped. Use `useRevealedText(text, phase)` from `@getpaseo/plugin/client/react-native` to pace streaming text. `plugin-examples/inline-thinking` replaces the thinking row with inline text; `plugin-examples/timeline-items` replaces a Pi todo tool call with a task card.
+Transformers run while the render model is built, on fetched history and on every live update, so `phase` is `"streaming"` for a loading thought or running tool call. Identity comes from the source item, so a streaming item keeps its mounted component; set an output `id` when one source explodes into several items. Transformers must be synchronous and deterministic, `data` must be JSON, and a transformer that throws is logged and skipped. Render `<StreamedText text={text} phase={phase} />` from `@getpaseo/plugin/client/ui` for paced assistant text; use its `style` prop to customize text appearance. `plugin-examples/inline-thinking` replaces the thinking row with inline text; `plugin-examples/timeline-items` replaces a todo tool call with a task card.
 
 ## Append a timeline row from the daemon
 
