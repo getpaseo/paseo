@@ -79,7 +79,11 @@ export default defineConfig({
         test: {
           name: "browser",
           fileParallelism: false,
-          include: ["src/**/*.browser.{test,spec}.{ts,tsx}"],
+          // Plugin examples keep their browser-level coverage next to the example.
+          include: [
+            "src/**/*.browser.{test,spec}.{ts,tsx}",
+            "../../plugin-examples/**/*.browser.{test,spec}.{ts,tsx}",
+          ],
           browser: {
             enabled: true,
             provider: playwright(),

@@ -62,7 +62,7 @@
     "build": "tsc -p tsconfig.json --incremental false",
     "build:clean": "npm run clean && npm run build",
     "prepack": "npm run build:clean",
-    "typecheck": "tsgo --noEmit && tsgo -p tsconfig.examples.json --noEmit",
+    "typecheck": "tsgo --noEmit && tsgo -p tsconfig.examples.json --noEmit && tsgo -p tsconfig.examples.browser.json --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
