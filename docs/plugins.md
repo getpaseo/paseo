@@ -681,6 +681,9 @@ drops the optional presentation fields.
 
 ## Contribute settings
 
+For browser device access, see the
+[browser USB access and serial forwarding guide](browser-usb-passthrough.md) before adding a device manager.
+
 Register ordinary components with `client.addSettingsScreen` and open them with `openSettings`.
 The host settings shell owns navigation and layout; plugin content must not add another page
 scroll view or header. See the [author contract](../public-docs/plugins/reference.md#settings-screens)

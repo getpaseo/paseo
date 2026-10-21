@@ -1,0 +1,6 @@
+{
+  "id": "browser-serial",
+  "name": "Browser serial (experimental)",
+  "description": "Forward one browser-approved USB serial byte stream to agent tools on the host.",
+  "requirements": { "paseo": ">=0.11.2 <0.13.0" }
+}
