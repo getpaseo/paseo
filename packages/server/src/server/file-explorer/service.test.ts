@@ -5,6 +5,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   stat,
   truncate,
@@ -18,6 +19,7 @@ import {
   createExplorerEntry,
   deleteExplorerEntry,
   duplicateExplorerEntry,
+  getDownloadableFileInfo,
   getExplorerFileVersion,
   readExplorerFile,
   renameExplorerEntry,
@@ -32,6 +34,26 @@ async function createHomeTempDir(prefix: string): Promise<string> {
 async function createTempDir(prefix: string): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), prefix));
 }
+
+function bytes(...parts: Array<string | number[]>): Buffer {
+  return Buffer.concat(
+    parts.map((part) =>
+      typeof part === "string" ? Buffer.from(part, "latin1") : Buffer.from(part),
+    ),
+  );
+}
+
+function tarHeader(entryName: string): Buffer {
+  const header = Buffer.alloc(512);
+  header.write(entryName, 0, "latin1");
+  header.write("0000644\0", 100, "latin1");
+  header.write("ustar\0", 257, "latin1");
+  header.write("00", 263, "latin1");
+  return header;
+}
+
+// zlib stream for empty input, as found in a PDF FlateDecode stream.
+const EMPTY_ZLIB_STREAM = [0x78, 0x9c, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01];
 
 describe("file explorer service", () => {
   it("atomically writes an existing text file at the expected revision", async () => {
@@ -208,6 +230,135 @@ describe("file explorer service", () => {
       expect(result.encoding).toBe("none");
       expect(result.content).toBeUndefined();
       expect(result.mimeType).toBe("application/octet-stream");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      name: "clip.mp4",
+      content: bytes([0, 0, 0, 0x18], "ftypmp42", [0, 0, 0, 0], "mp42isom"),
+      mimeType: "video/mp4",
+    },
+    {
+      name: "clip.MOV",
+      content: bytes([0, 0, 0, 0x14], "ftypqt  ", [0, 0, 0x02, 0], "qt  "),
+      mimeType: "video/quicktime",
+    },
+    {
+      name: "clip.webm",
+      content: bytes([0x1a, 0x45, 0xdf, 0xa3, 0x9f, 0x42, 0x86, 0x81, 0x01]),
+      mimeType: "video/webm",
+    },
+    {
+      name: "report.pdf",
+      content: bytes(
+        "%PDF-1.7\n%\xe2\xe3\xcf\xd3\n1 0 obj\n<< /Length 8 /Filter /FlateDecode >>\nstream\n",
+        EMPTY_ZLIB_STREAM,
+        "\nendstream\nendobj\n",
+      ),
+      mimeType: "application/pdf",
+    },
+    {
+      name: "bundle.zip",
+      content: bytes("PK", [0x03, 0x04, 0x14, 0, 0, 0, 0x08, 0]),
+      mimeType: "application/zip",
+    },
+    {
+      name: "logs.tar.gz",
+      content: bytes([0x1f, 0x8b, 0x08, 0, 0, 0, 0, 0, 0, 0x03]),
+      mimeType: "application/gzip",
+    },
+    {
+      name: "package.tgz",
+      content: bytes([0x1f, 0x8b, 0x08, 0, 0, 0, 0, 0, 0, 0x03]),
+      mimeType: "application/gzip",
+    },
+    { name: "sources.tar", content: tarHeader("hello.txt"), mimeType: "application/x-tar" },
+    {
+      name: "song.mp3",
+      content: bytes("ID3", [0x04, 0, 0, 0, 0, 0, 0]),
+      mimeType: "audio/mpeg",
+    },
+    {
+      name: "voice.m4a",
+      content: bytes([0, 0, 0, 0x20], "ftypM4A ", [0, 0, 0, 0], "M4A isom"),
+      mimeType: "audio/mp4",
+    },
+    {
+      name: "tone.wav",
+      content: bytes("RIFF", [0x24, 0, 0, 0], "WAVEfmt ", [0x10, 0, 0, 0, 0x01, 0]),
+      mimeType: "audio/wav",
+    },
+    {
+      name: "track.ogg",
+      content: bytes("OggS", [0, 0x02, 0, 0, 0, 0, 0, 0, 0, 0]),
+      mimeType: "audio/ogg",
+    },
+    {
+      name: "track.flac",
+      content: bytes("fLaC", [0, 0, 0, 0x22]),
+      mimeType: "audio/flac",
+    },
+  ])(
+    "reports $mimeType as the download MIME type of $name",
+    async ({ name, content, mimeType }) => {
+      const root = await createTempDir("paseo-file-download-");
+
+      try {
+        await writeFile(path.join(root, name), content);
+
+        const info = await getDownloadableFileInfo({ root, relativePath: name });
+
+        expect(info).toEqual({
+          path: name,
+          absolutePath: await realpath(path.join(root, name)),
+          fileName: name,
+          mimeType,
+          size: content.length,
+        });
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("reports a known download type even when the content looks like text", async () => {
+    const root = await createTempDir("paseo-file-download-");
+
+    try {
+      await writeFile(
+        path.join(root, "plain.pdf"),
+        "%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+      );
+
+      const info = await getDownloadableFileInfo({ root, relativePath: "plain.pdf" });
+
+      expect(info.mimeType).toBe("application/pdf");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { name: "photo.png", content: bytes([0x89], "PNG\r\n", [0x1a, 0x0a]), mimeType: "image/png" },
+    { name: "data.json", content: bytes('{"ok":true}\n'), mimeType: "application/json" },
+    { name: "notes.md", content: bytes("# Notes\n"), mimeType: "text/plain" },
+    {
+      name: "blob.bin",
+      content: bytes([0x48, 0x65, 0, 0x6c, 0x6f]),
+      mimeType: "application/octet-stream",
+    },
+  ])("keeps the download MIME type $mimeType for $name", async ({ name, content, mimeType }) => {
+    const root = await createTempDir("paseo-file-download-");
+
+    try {
+      await writeFile(path.join(root, name), content);
+
+      const info = await getDownloadableFileInfo({ root, relativePath: name });
+
+      expect(info.mimeType).toBe(mimeType);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
