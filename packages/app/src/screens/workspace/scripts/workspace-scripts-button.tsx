@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { MENU_ITEM_HEIGHT } from "@/components/ui/menu/menu-geometry";
-import { openServiceUrl } from "@/utils/open-service-url";
+import { openServiceUrl, type ServiceUrlInAppLocation } from "@/utils/open-service-url";
 import type {
   WorkspaceScriptLinkKind,
   WorkspaceScriptLinkTarget,
@@ -46,7 +46,7 @@ interface WorkspaceScriptsButtonProps {
   liveTerminalIds?: readonly string[];
   onScriptTerminalStarted?: (terminalId: string) => void;
   onViewTerminal?: (terminalId: string) => void;
-  onOpenUrlInBrowserTab?: (url: string) => void;
+  onOpenUrlInBrowserTab?: (url: string, location?: ServiceUrlInAppLocation) => void;
   hideLabels?: boolean;
 }
 
@@ -306,7 +306,7 @@ interface ScriptRowProps {
   liveTerminalIdSet: Set<string>;
   actions: WorkspaceScriptActions;
   onViewTerminal?: (terminalId: string) => void;
-  onOpenUrlInBrowserTab?: (url: string) => void;
+  onOpenUrlInBrowserTab?: (url: string, location?: ServiceUrlInAppLocation) => void;
 }
 
 function ScriptRow({

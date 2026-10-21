@@ -147,6 +147,11 @@ Desktop **Settings → Layout → Open location** has independent Main panel or 
 Explorer Files, diffs, chat files, files opened from diffs, and subagents. They default to Main
 panel. Mobile ignores them.
 
+Chat URLs independently choose Ask, Internal browser — side, Internal browser — tab, or External
+browser. Ask offers the internal tab and external browser for that click. Script service URLs keep
+their separate Ask, In Paseo, In Paseo — side, or External browser behavior. In Paseo opens the
+focused pane, matching desktop new-tab requests; In Paseo — side uses the side pane.
+
 Pull requests have a three-way open location: Main panel, On the side, or Explorer sidebar. Explorer
 sidebar is the default. Compact layouts always open pull requests in Explorer regardless of this
 desktop preference.
