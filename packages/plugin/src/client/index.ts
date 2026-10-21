@@ -58,7 +58,13 @@ export type {
   PluginFileUrlState,
   PluginFileWriteOptions,
 } from "./file.js";
-export { PluginFileConflictError, useFileBytes, useFileText, useFileUrl } from "./file.js";
+export {
+  PluginFileConflictError,
+  PluginFileDeletedError,
+  useFileBytes,
+  useFileText,
+  useFileUrl,
+} from "./file.js";
 export { usePaseo } from "./paseo-context.js";
 export { useAgent, useWorkspace } from "./client-state.js";
 export { useRpc } from "./rpc-context.js";

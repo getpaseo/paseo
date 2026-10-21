@@ -654,9 +654,11 @@ export default function contribute(server: PluginServerContext) {
       return;
     }
 
-    const text = latestOutputText(event.timeline);
+    const agent = context.paseo.agents.ref(event.agent.id);
+    const page = await agent.timeline.refetch({ direction: "tail", limit: 20 });
+    const text = latestOutputText(page.entries.map(({ item }) => item));
     if (/out of credits/i.test(text)) {
-      await context.paseo.agents.ref(event.agent.id).send("Try again.");
+      await agent.send("Try again.");
     }
   });
 
@@ -669,6 +671,9 @@ Turn ends: "out of credits"
   → plugin sends "Try again."
   → a new turn starts
 ```
+
+The handler fetches only the last 20 timeline items. Output before that page is not inspected.
+Use `cursor` and `direction` to page further when your plugin needs more history.
 
 This sends a new message with the existing SDK. Persistent matches keep sending follow-ups;
 add limits or delays in your plugin when needed. Attachments and tool effects are not replayed.
@@ -721,21 +726,25 @@ plans, and mode changes; requesting permission does not end the turn.
 
 ### Events
 
-| Name                         | Event fields                             | Trigger                                            |
-| ---------------------------- | ---------------------------------------- | -------------------------------------------------- |
-| `agent.created`              | `agent`                                  | Ordinary creation finishes; excludes import/resume |
-| `agent.closed`               | `agent`                                  | A live agent runtime closes                        |
-| `agent.turn_started`         | `agent`, `turnId`                        | Live turn starts                                   |
-| `agent.turn_ended`           | `agent`, `turnId`, `outcome`, `timeline` | Live turn completes, fails, or is canceled         |
-| `agent.permission_requested` | `agent`, `request`                       | Permission or question becomes pending             |
-| `agent.permission_resolved`  | `agent`, `requestId`, `resolution`       | Pending request is answered or cleared             |
-| `agent.archived`             | `agent`, `archivedAt`                    | Archive state is saved                             |
-| `workspace.created`          | `workspace`                              | Record created; directory available                |
-| `workspace.archived`         | `workspace`                              | Archive state is saved                             |
+| Name                         | Event fields                                            | Trigger                                            |
+| ---------------------------- | ------------------------------------------------------- | -------------------------------------------------- |
+| `agent.created`              | `agent`                                                 | Ordinary creation finishes; excludes import/resume |
+| `agent.closed`               | `agent`                                                 | A live agent runtime closes                        |
+| `agent.turn_started`         | `agent`, `turnId`                                       | Live turn starts                                   |
+| `agent.turn_ended`           | `agent`, `turnId`, `outcome`, deprecated `timeline: []` | Live turn completes, fails, or is canceled         |
+| `agent.permission_requested` | `agent`, `request`                                      | Permission or question becomes pending             |
+| `agent.permission_resolved`  | `agent`, `requestId`, `resolution`                      | Pending request is answered or cleared             |
+| `agent.archived`             | `agent`, `archivedAt`                                   | Archive state is saved                             |
+| `workspace.created`          | `workspace`                                             | Record created; directory available                |
+| `workspace.archived`         | `workspace`                                             | Archive state is saved                             |
 
 Agent events exclude the daemon's private disposable helpers. Public background workspaces and
 their ordinary agents run the same lifecycle hooks as other workspaces. Archive events can precede
 runtime/worktree cleanup; observe lifecycle completion separately when cleanup matters.
+
+`agent.turn_ended.timeline` is deprecated and always empty. Fetch history on demand with
+`context.paseo.agents.ref(event.agent.id).timeline.refetch({ direction: "tail", limit: 20 })`.
+The hook payload size does not grow with conversation history.
 
 **Shared payload shapes** (`@getpaseo/plugin/server`):
 
@@ -1819,14 +1828,17 @@ rendering; changing them does not re-render your panel. A `watch` listener, or a
 | `url()`                          | A local `blob:` (web) or `file:` (native) URL of the current bytes, for `DocumentFrame`.    |
 | `writeText(text, options?)`      | Writes UTF-8 text if the file has not changed on disk since this handle last read or wrote. |
 | `writeBytes(bytes, options?)`    | The same for bytes.                                                                         |
-| `watch(listener)`                | Calls `listener("changed")` or `listener("deleted")`; returns the unsubscribe function.     |
+| `watch(listener)`                | Calls `listener(event)` with a `PluginFileEvent`; returns the unsubscribe function.         |
 
-Your panel stays mounted when the file is deleted. `watch` reports `"deleted"` once a read confirms
-the file is gone, so a program that removes the file and writes it back reports only `"changed"`.
-A deleted file that comes back reports `"changed"`.
+A `PluginFileEvent` is `{ type: "changed" }` or `{ type: "deleted" }`. Switch on `type`; later
+versions may add fields. Your panel stays mounted when the file is deleted. `watch` reports
+`{ type: "deleted" }` once a read confirms the file is gone, so a program that removes the file and
+writes it back reports only `{ type: "changed" }`. A deleted file that comes back reports
+`{ type: "changed" }`.
 
 A write rejects with `PluginFileConflictError` when the file changed on disk after the handle's
-last read or write. Pass `{ force: true }` to write anyway. The handle's own writes do not notify
+last read or write. Pass `{ force: true }` to write anyway. A write rejects with
+`PluginFileDeletedError` when the file is gone, with or without `force`. The handle's own writes do not notify
 its watchers. Paseo owns the URL from `url()`: it stays valid until a URL for a newer version
 resolves or the tab closes. Do not build daemon URLs from `file.path`; local URLs also work when
 the daemon is remote.
@@ -1843,7 +1855,7 @@ disk, and keeps the current value during a re-read:
 | `useFileUrl(file)`   | `{ status: "ready", url: string }`       |
 
 Each also returns `{ status: "loading" }` before the first read and `{ status: "error", error }`
-when a read fails or the file is deleted. Show `Loading` from `@getpaseo/plugin/client/ui` until
+when a read fails. For a deleted file, `error` is a `PluginFileDeletedError`. Show `Loading` from `@getpaseo/plugin/client/ui` until
 your content is on screen; it fills the panel, so render it over content that is still laying out.
 
 ```tsx
@@ -1869,10 +1881,10 @@ A panel that holds unsaved edits reads with `readText()` once, then handles `wat
 1. Read with `file.readText()` and show the text.
 2. On each edit, call `tab.setModified(true)` and write with `file.writeText(text)`, debounced.
 3. When the write resolves and no newer edit is pending, call `tab.setModified(false)`.
-4. On `"changed"` with nothing unsaved, read again. With unsaved edits, show a conflict and let the
-   user reload or overwrite with `{ force: true }`.
+4. On `{ type: "changed" }` with nothing unsaved, read again. With unsaved edits, show a conflict
+   and let the user reload or overwrite with `{ force: true }`.
 5. On `PluginFileConflictError`, show the same conflict.
-6. On `"deleted"`, tell the user the file is gone.
+6. On `{ type: "deleted" }` or `PluginFileDeletedError`, tell the user the file is gone.
 
 Write pending edits before the component unmounts: switching panels or closing the tab unmounts
 it. Paseo asks before closing a tab whose panel reports unsaved changes. The
@@ -1919,8 +1931,8 @@ Import `DocumentFrame` from `@getpaseo/plugin/client/ui` to display a local file
 Web inspects the local URL’s media type before mounting the iframe. PDF uses the browser’s PDF
 viewer without a sandbox; every other type, including HTML and unknown types, keeps a full sandbox
 with no scripts or same-origin access. Native uses a WebView with JavaScript, storage, and further
-navigation disabled. iOS supports inline PDF rendering; Android's WebView does not. Provide an
-Android fallback or bundle your own renderer.
+navigation disabled. Where the platform cannot show the document inline, such as a PDF on Android,
+`DocumentFrame` shows a message naming the file type instead, so render it on every platform.
 
 Inline PDF rendering needs a daemon from Paseo 0.13.0 or later; older daemons report PDFs as
 `application/octet-stream`.
@@ -1934,7 +1946,7 @@ Writing with `writeBytes` needs a daemon from Paseo 0.13.0 or later.
 
 Complete directory examples:
 
-- [PDF panel](https://github.com/getpaseo/paseo/tree/main/plugin-examples/pdf-panel): `useFileUrl` with `DocumentFrame` and an Android fallback.
+- [PDF panel](https://github.com/getpaseo/paseo/tree/main/plugin-examples/pdf-panel): `useFileUrl` with `Loading` and `DocumentFrame`.
 - [Markdown panel](https://github.com/getpaseo/paseo/tree/main/plugin-examples/markdown-panel): a bundled CodeMirror editor that reads once, saves with `writeText`, and resolves conflicts, with read-only native text.
 
 ## Command Center items

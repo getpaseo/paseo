@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { useFileText, useFileUrl } from "@getpaseo/plugin/client";
+import { PluginFileDeletedError, useFileText, useFileUrl } from "@getpaseo/plugin/client";
 import { describe, expect, it } from "vitest";
 import { FileHandle } from "./handle";
 import { InMemoryFileSession } from "./testing";
@@ -31,7 +31,7 @@ describe("file hooks", () => {
     expect(states.lastIndexOf("loading")).toBeLessThan(states.indexOf("ready"));
   });
 
-  it("reports a deleted file as an error", async () => {
+  it("reports a deleted file as a PluginFileDeletedError", async () => {
     const { session, file } = openFile();
     const { result } = renderHook(() => useFileText(file));
     await waitFor(() => expect(result.current.status).toBe("ready"));
@@ -39,8 +39,8 @@ describe("file hooks", () => {
     act(() => session.remove("notes.md"));
 
     await waitFor(() => expect(result.current.status).toBe("error"));
-    expect(result.current.status === "error" && result.current.error.message).toBe(
-      "The file was deleted.",
+    expect(result.current.status === "error" && result.current.error).toBeInstanceOf(
+      PluginFileDeletedError,
     );
   });
 

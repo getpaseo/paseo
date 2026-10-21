@@ -128,7 +128,9 @@ test("Settings > Files explains where file panels come from when no plugin adds 
   await capture(page, testInfo, "file-panel-settings-empty-compact");
 });
 
-test("Settings > Files lets a panel no host has be forgotten but not chosen", async ({ page }) => {
+test("Settings > Files offers Source in place of a panel no host has, and forgets it", async ({
+  page,
+}) => {
   await page.addInitScript(() => {
     localStorage.setItem(
       "@paseo:app-settings",
@@ -138,7 +140,11 @@ test("Settings > Files lets a panel no host has be forgotten but not chosen", as
   await page.goto("/settings/files");
   const row = page.getByTestId("file-panel-settings-row-ext:pdf");
   const dropdown = row.getByRole("button", { name: ".pdf: Not on a connected host" });
-  await expect(dropdown).toBeDisabled({ timeout: 30_000 });
+  await expect(dropdown).toBeEnabled({ timeout: 30_000 });
+  await dropdown.click();
+  await expect(page.getByRole("menuitem", { name: SOURCE_OPTION })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menuitem", { name: SOURCE_OPTION })).toBeHidden();
   await row.getByRole("button", { name: "Ask again for .pdf", exact: true }).click();
   await expect(page.getByTestId("file-panel-settings-empty")).toBeVisible();
 });

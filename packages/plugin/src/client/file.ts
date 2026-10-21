@@ -24,7 +24,8 @@ export interface PluginFile {
   url(): Promise<string>;
   /**
    * Writes the file if it has not changed since this handle last read or wrote it. Otherwise
-   * rejects with `PluginFileConflictError`; `force: true` writes anyway.
+   * rejects with `PluginFileConflictError`; `force: true` writes anyway. Rejects with
+   * `PluginFileDeletedError` when the file is gone.
    */
   writeText(text: string, options?: PluginFileWriteOptions): Promise<void>;
   writeBytes(bytes: Uint8Array, options?: PluginFileWriteOptions): Promise<void>;
@@ -40,7 +41,8 @@ export interface PluginFileWriteOptions {
   force?: boolean;
 }
 
-export type PluginFileEvent = "changed" | "deleted";
+/** What happened to the file on disk. Switch on `type`; later versions may add fields. */
+export type PluginFileEvent = { type: "changed" } | { type: "deleted" };
 
 /** What the panel reports back to its tab. */
 export interface PluginFileTab {
@@ -63,6 +65,14 @@ export class PluginFileConflictError extends Error {
   }
 }
 
+/** The file was deleted on disk. */
+export class PluginFileDeletedError extends Error {
+  constructor(message = "The file was deleted.") {
+    super(message);
+    this.name = "PluginFileDeletedError";
+  }
+}
+
 export type PluginFileTextState =
   | { status: "loading" }
   | { status: "ready"; text: string }
@@ -78,19 +88,28 @@ export type PluginFileUrlState =
   | { status: "ready"; url: string }
   | { status: "error"; error: Error };
 
-/** The file's text, re-read when it changes on disk. Keeps the current text during a re-read. */
+/**
+ * The file's text, re-read when it changes on disk. Keeps the current text during a re-read. A
+ * deleted file is an error holding a `PluginFileDeletedError`.
+ */
 export function useFileText(file: PluginFile): PluginFileTextState {
   const state = useFileRead(file, "text");
   return state.status === "ready" ? { status: "ready", text: state.value as string } : state;
 }
 
-/** The file's bytes, re-read when it changes on disk. Keeps the current bytes during a re-read. */
+/**
+ * The file's bytes, re-read when it changes on disk. Keeps the current bytes during a re-read. A
+ * deleted file is an error holding a `PluginFileDeletedError`.
+ */
 export function useFileBytes(file: PluginFile): PluginFileBytesState {
   const state = useFileRead(file, "bytes");
   return state.status === "ready" ? { status: "ready", bytes: state.value as Uint8Array } : state;
 }
 
-/** A local URL of the file, replaced when it changes on disk. */
+/**
+ * A local URL of the file, replaced when it changes on disk. A deleted file is an error holding a
+ * `PluginFileDeletedError`.
+ */
 export function useFileUrl(file: PluginFile): PluginFileUrlState {
   const state = useFileRead(file, "url");
   return state.status === "ready" ? { status: "ready", url: state.value as string } : state;
@@ -121,7 +140,7 @@ function useFileRead(file: PluginFile, read: FileRead): FileReadState {
     };
     void load();
     const unwatch = file.watch((event) => {
-      if (event === "changed") {
+      if (event.type === "changed") {
         void load();
         return;
       }
@@ -129,7 +148,7 @@ function useFileRead(file: PluginFile, read: FileRead): FileReadState {
       setState({
         file,
         read,
-        state: { status: "error", error: new Error("The file was deleted.") },
+        state: { status: "error", error: new PluginFileDeletedError() },
       });
     });
     return () => {

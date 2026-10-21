@@ -1919,6 +1919,7 @@ export const zhCN: TranslationResources = {
       noPreview: "没有可用预览",
       binaryPreviewUnavailable: "二进制预览不可用",
       tooLargeToDisplay: "此文件过大，无法显示",
+      documentUnsupported: "无法在此设备上显示 {{type}} 文件",
       failedToLoad: "加载文件失败",
       notFound: "找不到文件",
       failedToLoadPreview: "加载文件预览失败",
