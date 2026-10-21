@@ -133,6 +133,11 @@ import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { createSpeechService } from "./speech/speech-runtime.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
+import {
+  recoverFinishNotifications,
+  registerFinishNotificationOutbox,
+} from "./agent/agent-prompt.js";
+import { FinishNotificationOutbox } from "./agent/finish-notification-outbox.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
 import {
@@ -961,6 +966,11 @@ export async function createPaseoDaemon(
       resolvePaseoToolPolicy(provider, daemonConfigStore.get().providers),
     logger,
   });
+  const finishNotificationOutbox = new FinishNotificationOutbox({
+    directory: path.join(config.paseoHome, "agent-notifications"),
+    logger,
+  });
+  registerFinishNotificationOutbox(agentManager, finishNotificationOutbox);
   const syncPluginProviders = () => {
     agentManager.updateProviderRegistry(
       providerSnapshotManager.replacePluginProviders(pluginRuntime.getProviderRegistrations()),
@@ -1756,6 +1766,15 @@ export async function createPaseoDaemon(
             await pluginRuntime.start();
             providerSnapshotManager.settlePluginProviders();
             wsServer.beginAcceptingConnections();
+            // Callers resume through their providers, so recovery waits for plugin providers.
+            void recoverFinishNotifications({
+              agentManager,
+              agentStorage,
+              outbox: finishNotificationOutbox,
+              logger,
+            }).catch((error) => {
+              logger.error({ err: error }, "Failed to recover pending finish notifications");
+            });
             relayRuntime = createRelayRuntime({
               config: {
                 enabled: relayEnabled,

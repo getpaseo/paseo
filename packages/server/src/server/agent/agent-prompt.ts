@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { prepareAgentMessage, type AgentPromptSource } from "./agent-messages/index.js";
 import type { Logger } from "pino";
 
@@ -6,10 +7,14 @@ import type {
   AgentPromptInput,
   AgentRunOptions,
 } from "./agent-sdk-types.js";
-import type { AgentManager, ManagedAgent } from "./agent-manager.js";
+import { AgentRunConflictError, type AgentManager, type ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
 import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
+import type {
+  FinishNotificationOutbox,
+  PendingFinishNotification,
+} from "./finish-notification-outbox.js";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 
@@ -21,6 +26,7 @@ export type AgentRunController = Pick<
   | "tryRunOutOfBand"
   | "hasInFlightRun"
   | "replaceAgentRun"
+  | "steerAgentRun"
   | "steerOrReplaceActiveTurn"
   | "streamAgent"
 > & {
@@ -35,6 +41,16 @@ export interface StartAgentRunOptions {
   runOptions?: AgentRunOptions;
   /** Ask the provider to deny permissions blocking this steer. */
   clearPendingPermissions?: boolean;
+  /**
+   * Steer an active run when the provider accepts it, and never cancel or replace it.
+   * A run that cannot take the prompt throws {@link AgentRunConflictError}.
+   */
+  preserveActiveTurn?: boolean;
+  /**
+   * Resolve a started turn only after the provider accepted it. A start the provider
+   * rejects, or a run canceled before its turn started, rejects this call.
+   */
+  confirmTurnStart?: boolean;
 }
 
 export type PromptDispatchDisposition = "out_of_band" | "steered" | "turn_started";
@@ -58,6 +74,12 @@ async function steerOrReplaceActiveRun(
   const steerOptions = options.clearPendingPermissions
     ? { ...options.runOptions, clearPendingPermissions: true }
     : options.runOptions;
+  if (options.preserveActiveTurn) {
+    if (!agentManager.hasInFlightRun(agentId)) return null;
+    const steer = await agentManager.steerAgentRun(agentId, prompt, steerOptions);
+    if (steer.status === "accepted") return { disposition: "steered" };
+    throw new AgentRunConflictError(`Agent ${agentId} has an active run that cannot be steered`);
+  }
   const result = await agentManager.steerOrReplaceActiveTurn(agentId, prompt, steerOptions);
   if (result.status === "steered") {
     return { disposition: "steered" };
@@ -157,6 +179,8 @@ async function startAgentRunInner(
     "agent.session.start_stream.iterator_returned",
   );
   options?.onDispatch?.("turn_started");
+  // The first event is the accepted turn start, so it settles once the provider answers.
+  if (options?.confirmTurnStart) await iterator.next();
   void (async () => {
     try {
       try {
@@ -233,6 +257,10 @@ export interface SendPromptToAgentParams {
   unarchive?: boolean;
   /** See {@link StartAgentRunOptions.clearPendingPermissions}. */
   clearPendingPermissions?: boolean;
+  /** See {@link StartAgentRunOptions.preserveActiveTurn}. */
+  preserveActiveTurn?: boolean;
+  /** See {@link StartAgentRunOptions.confirmTurnStart}. */
+  confirmTurnStart?: boolean;
   logger: Logger;
 }
 
@@ -352,10 +380,12 @@ export async function sendPromptToAgent(
     : params.runOptions;
 
   return await startAgentRun(params.agentManager, params.agentId, delivery.prompt, params.logger, {
-    replaceRunning: true,
+    replaceRunning: !params.preserveActiveTurn,
     onDispatch: params.onDispatch,
     activeTurnBehavior: params.activeTurnBehavior,
     clearPendingPermissions: params.clearPendingPermissions,
+    preserveActiveTurn: params.preserveActiveTurn,
+    confirmTurnStart: params.confirmTurnStart,
     runOptions,
   });
 }
@@ -463,6 +493,209 @@ function formatFinishNotificationBody(params: FinishNotificationBodyInput): stri
   return sections.join("\n\n");
 }
 
+interface FinishNotificationDeliveryDeps {
+  agentManager: AgentManager;
+  agentStorage: AgentStorage;
+  logger: Logger;
+}
+
+const finishNotificationOutboxes = new WeakMap<AgentManager, FinishNotificationOutbox>();
+
+/** Persist this manager's undelivered finish notifications so they survive a restart. */
+export function registerFinishNotificationOutbox(
+  agentManager: AgentManager,
+  outbox: FinishNotificationOutbox,
+): void {
+  finishNotificationOutboxes.set(agentManager, outbox);
+}
+
+const ownedFinishNotifications = new WeakMap<AgentManager, Set<string>>();
+
+/**
+ * One delivery owns a notification ID at a time. Recovery reads the outbox while live
+ * watchers may already be writing to it, so it skips IDs a live delivery holds.
+ */
+function claimFinishNotification(agentManager: AgentManager, id: string): boolean {
+  const owned = ownedFinishNotifications.get(agentManager) ?? new Set<string>();
+  ownedFinishNotifications.set(agentManager, owned);
+  if (owned.has(id)) return false;
+  owned.add(id);
+  return true;
+}
+
+function releaseFinishNotification(agentManager: AgentManager, id: string): void {
+  ownedFinishNotifications.get(agentManager)?.delete(id);
+}
+
+let lastFinishNotificationCreatedAtMs = 0;
+
+// Recovery orders a caller's notifications by createdAt, so two events in one
+// millisecond still need distinct, increasing timestamps.
+function nextFinishNotificationCreatedAt(): string {
+  const nowMs = Date.now();
+  lastFinishNotificationCreatedAtMs =
+    nowMs > lastFinishNotificationCreatedAtMs ? nowMs : lastFinishNotificationCreatedAtMs + 1;
+  return new Date(lastFinishNotificationCreatedAtMs).toISOString();
+}
+
+function agentMessageCallId(messageId: string): string {
+  return `paseo-agent-message:${messageId}`;
+}
+
+async function callerAlreadyHasNotification(
+  deps: FinishNotificationDeliveryDeps,
+  notification: PendingFinishNotification,
+): Promise<boolean> {
+  const callerRecord = await deps.agentStorage.get(notification.callerAgentId);
+  if (!callerRecord || callerRecord.archivedAt) return false;
+  // Provider history carries the envelope ID, so a delivery accepted before the
+  // restart is visible once the caller's timeline hydrates.
+  await ensureAgentLoaded(notification.callerAgentId, deps);
+  // A caller loaded by another path may not have replayed its history yet.
+  await deps.agentManager.hydrateTimelineFromProvider(notification.callerAgentId);
+  return deps.agentManager
+    .getTimeline(notification.callerAgentId)
+    .some(
+      (item) => item.type === "tool_call" && item.callId === agentMessageCallId(notification.id),
+    );
+}
+
+/**
+ * Deliver one finish notification without cancelling or replacing caller work. A busy
+ * caller that cannot be steered, or that starts its own run while this delivery is
+ * admitted, keeps that run; the notification waits until the caller settles.
+ *
+ * The outbox record is removed only once the caller accepted the prompt or was
+ * archived. Any other failure leaves it `dispatching`, because the provider may hold
+ * the prompt; the next daemon start reconciles it against the caller's history.
+ */
+async function deliverFinishNotification(
+  deps: FinishNotificationDeliveryDeps,
+  pending: PendingFinishNotification,
+): Promise<void> {
+  try {
+    await deliverOwnedFinishNotification(deps, pending);
+  } finally {
+    releaseFinishNotification(deps.agentManager, pending.id);
+  }
+}
+
+async function deliverOwnedFinishNotification(
+  deps: FinishNotificationDeliveryDeps,
+  pending: PendingFinishNotification,
+): Promise<void> {
+  const { agentManager, agentStorage, logger } = deps;
+  const outbox = finishNotificationOutboxes.get(agentManager);
+  for (;;) {
+    if ((await agentStorage.get(pending.callerAgentId))?.archivedAt) {
+      await outbox?.remove(pending.id);
+      return;
+    }
+    await outbox?.save({ ...pending, state: "dispatching" });
+    try {
+      await sendPromptToAgent({
+        agentManager,
+        agentStorage,
+        agentId: pending.callerAgentId,
+        prompt: pending.body,
+        messageId: pending.id,
+        source: {
+          kind: "agent-notification",
+          agentId: pending.childAgentId,
+          event: pending.event,
+        },
+        activeTurnBehavior: "steer",
+        preserveActiveTurn: true,
+        confirmTurnStart: true,
+        unarchive: false,
+        logger,
+      });
+    } catch (error) {
+      if (!(error instanceof AgentRunConflictError)) throw error;
+      // Nothing reached the provider, so the record is safe to resend after a restart.
+      await outbox?.save({ ...pending, state: "queued" });
+      logger.info(
+        {
+          err: error,
+          childAgentId: pending.childAgentId,
+          callerAgentId: pending.callerAgentId,
+          notificationId: pending.id,
+        },
+        "Caller agent is busy; holding notification until its run settles",
+      );
+      await agentManager.waitForInFlightRunToSettle(pending.callerAgentId);
+      continue;
+    }
+    await outbox?.remove(pending.id);
+    return;
+  }
+}
+
+/**
+ * Resume finish notifications a previous daemon process left undelivered. Each caller's
+ * leftover notifications go out in creation order, and a failure keeps that record and
+ * the caller's remaining leftovers for the next daemon start. Notifications created
+ * after this start do not wait for leftovers. Resolves once every caller's leftovers
+ * have delivered, failed, or been deleted.
+ */
+export async function recoverFinishNotifications(
+  deps: FinishNotificationDeliveryDeps & { outbox: FinishNotificationOutbox },
+): Promise<void> {
+  const { agentManager, agentStorage, outbox, logger } = deps;
+  const byCaller = new Map<string, PendingFinishNotification[]>();
+  for (const notification of await outbox.list()) {
+    const queue = byCaller.get(notification.callerAgentId) ?? [];
+    queue.push(notification);
+    byCaller.set(notification.callerAgentId, queue);
+  }
+  await Promise.all(
+    Array.from(byCaller, async ([callerAgentId, queue]) => {
+      if (!agentManager.getAgent(callerAgentId) && !(await agentStorage.get(callerAgentId))) {
+        logger.warn(
+          { callerAgentId, notificationIds: queue.map((notification) => notification.id) },
+          "Dropping finish notifications for a caller that no longer exists",
+        );
+        await Promise.all(queue.map((notification) => outbox.remove(notification.id)));
+        return;
+      }
+      for (const listed of queue) {
+        // A live watcher created this record after startup and is delivering it.
+        if (!claimFinishNotification(agentManager, listed.id)) continue;
+        try {
+          // The listing is a snapshot. A live delivery may have finished and removed the
+          // record, or moved it to dispatching, before this claim.
+          const current = await outbox.get(listed.id);
+          if (!current) {
+            releaseFinishNotification(agentManager, listed.id);
+            continue;
+          }
+          if (
+            current.state === "dispatching" &&
+            (await callerAlreadyHasNotification(deps, current))
+          ) {
+            await outbox.remove(current.id);
+            releaseFinishNotification(agentManager, current.id);
+            continue;
+          }
+          await deliverFinishNotification(deps, current);
+        } catch (error) {
+          logger.error(
+            {
+              err: error,
+              childAgentId: listed.childAgentId,
+              callerAgentId: listed.callerAgentId,
+              notificationId: listed.id,
+            },
+            "Failed to deliver recovered finish notification; keeping it for the next start",
+          );
+          releaseFinishNotification(agentManager, listed.id);
+          return;
+        }
+      }
+    }),
+  );
+}
+
 interface NotifySafelyOptions {
   terminal?: boolean;
   permissionRequest?: AgentPermissionRequest;
@@ -495,6 +728,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
   let stopped = false;
   const notifiedPermissionRequestIds = new Set<string>();
   let unsubscribe: (() => void) | null = null;
+  let preparationQueue = Promise.resolve();
   let notificationQueue = Promise.resolve();
 
   const armedByManager = armedFinishNotifications.get(agentManager) ?? new Map();
@@ -546,23 +780,24 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     }
   }
 
-  async function notify(
+  /** Fix the notification's content when its event happens and persist it. */
+  async function prepareNotification(
     reason: FinishNotificationReason,
     permissionRequest?: AgentPermissionRequest,
-  ): Promise<void> {
+  ): Promise<PendingFinishNotification | null> {
     if (params.dispatchResult) {
       const result = await params.dispatchResult;
-      if (result === false || result === "turn_started") return;
+      if (result === false || result === "turn_started") return null;
     }
-    if (await superseded) return;
+    if (await superseded) return null;
     const callerRecord = await agentStorage.get(callerAgentId);
     if (callerRecord?.archivedAt) {
-      return;
+      return null;
     }
 
     const record = await agentStorage.get(childAgentId);
     if (requireParentOwnership && getParentAgentIdFromLabels(record?.labels) !== callerAgentId) {
-      return;
+      return null;
     }
     const title = record?.title ?? childAgentId;
     const lastAssistantMessage = await agentManager.getLastAssistantMessage(childAgentId);
@@ -574,27 +809,44 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
       permissionRequest,
     });
 
-    await sendPromptToAgent({
-      agentManager,
-      agentStorage,
-      agentId: callerAgentId,
-      prompt: body,
-      source: {
-        kind: "agent-notification",
-        agentId: childAgentId,
-        event: finishNotificationEvents[reason],
-      },
-      activeTurnBehavior: "steer",
-      unarchive: false,
-      logger,
-    });
+    const pending: PendingFinishNotification = {
+      id: randomUUID(),
+      callerAgentId,
+      childAgentId,
+      event: finishNotificationEvents[reason],
+      body,
+      createdAt: nextFinishNotificationCreatedAt(),
+      state: "queued",
+    };
+    claimFinishNotification(agentManager, pending.id);
+    try {
+      await finishNotificationOutboxes.get(agentManager)?.save(pending);
+    } catch (error) {
+      releaseFinishNotification(agentManager, pending.id);
+      throw error;
+    }
+    return pending;
   }
 
   function notifySafely(reason: FinishNotificationReason, options: NotifySafelyOptions = {}): void {
     if (stopped) return;
     if (options.terminal ?? true) stop();
+    // Preparation never waits on delivery, so an event that happens while an earlier
+    // notification waits for a busy caller is still persisted at once.
+    const prepared = preparationQueue.then(() =>
+      prepareNotification(reason, options.permissionRequest),
+    );
+    preparationQueue = prepared.then(
+      () => undefined,
+      () => undefined,
+    );
     notificationQueue = notificationQueue
-      .then(() => notify(reason, options.permissionRequest))
+      .then(() => prepared)
+      .then((pending) =>
+        pending
+          ? deliverFinishNotification({ agentManager, agentStorage, logger }, pending)
+          : undefined,
+      )
       .catch((error) => {
         logger.error(
           { err: error, childAgentId, callerAgentId, reason },

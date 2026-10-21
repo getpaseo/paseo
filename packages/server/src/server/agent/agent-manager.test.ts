@@ -1,4 +1,5 @@
 import {
+  parseAgentMessage,
   prepareAgentMessage,
   formatAgentMessage,
   formatSystemNotificationPrompt,
@@ -23,7 +24,13 @@ import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { toAgentPayload } from "./agent-projections.js";
 import { projectTimelineRows } from "./timeline-projection.js";
 import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
-import { startAgentRun } from "./agent-prompt.js";
+import {
+  recoverFinishNotifications,
+  registerFinishNotificationOutbox,
+  setupFinishNotification,
+  startAgentRun,
+} from "./agent-prompt.js";
+import { FinishNotificationOutbox } from "./finish-notification-outbox.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent-loading.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
@@ -1175,6 +1182,536 @@ test("does not replace a newer foreground turn after unavailable steer fallback 
       consumeB ?? Promise.resolve(),
       new Promise((resolve) => setTimeout(resolve, 100)),
     ]);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+class NotificationCallerSession extends UnsupportedSteeringSession {
+  /** Every prompt that reached startTurn, accepted or not. */
+  startPrompts: AgentPromptInput[] = [];
+  /** Prompts whose turn start the provider accepted. */
+  acceptedPrompts: AgentPromptInput[] = [];
+  /** Rejects the next turn start, as a provider refusing the prompt would. */
+  nextStartError: Error | null = null;
+
+  override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+    this.startPrompts.push(prompt);
+    const startError = this.nextStartError;
+    if (startError) {
+      this.nextStartError = null;
+      throw startError;
+    }
+    const started = await super.startTurn();
+    this.acceptedPrompts.push(prompt);
+    return started;
+  }
+
+  completeTurn(): void {
+    this.pushEvent({
+      type: "turn_completed",
+      provider: this.provider,
+      turnId: `unsupported-turn-${this.startCount}`,
+    });
+  }
+}
+
+interface BusyCallerNotificationScenario {
+  manager: AgentManager;
+  storage: AgentStorage;
+  outbox: FinishNotificationOutbox;
+  callerSession: NotificationCallerSession;
+  callerId: string;
+  childId: string;
+  drain(run: AsyncGenerator<AgentStreamEvent>): void;
+  watchChild(): void;
+  runChild(): void;
+  cleanup(): Promise<void>;
+}
+
+/** A caller whose provider cannot steer, watching a child whose turns finish at once. */
+async function createBusyCallerNotificationScenario(): Promise<BusyCallerNotificationScenario> {
+  const callerSession = new NotificationCallerSession({ provider: "codex", cwd: process.cwd() });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-busy-caller-notification-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const outbox = new FinishNotificationOutbox({
+    directory: join(workdir, "agent-notifications"),
+    logger,
+  });
+  const sessions: AgentSession[] = [
+    callerSession,
+    new TestAgentSession({ provider: "codex", cwd: workdir }),
+  ];
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return sessions.shift()!;
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  registerFinishNotificationOutbox(manager, outbox);
+  const caller = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const drains: Promise<void>[] = [];
+  function drain(run: AsyncGenerator<AgentStreamEvent>): void {
+    drains.push(drainAsyncGenerator(run).catch(() => undefined));
+  }
+  return {
+    manager,
+    storage,
+    outbox,
+    callerSession,
+    callerId: caller.id,
+    childId: child.id,
+    drain,
+    watchChild() {
+      setupFinishNotification({
+        agentManager: manager,
+        agentStorage: storage,
+        childAgentId: child.id,
+        callerAgentId: caller.id,
+        logger,
+      });
+    },
+    runChild() {
+      drain(manager.streamAgent(child.id, "work"));
+    },
+    async cleanup() {
+      await manager.closeAgent(caller.id).catch(() => undefined);
+      await manager.closeAgent(child.id).catch(() => undefined);
+      await Promise.all(drains);
+      rmSync(workdir, { recursive: true, force: true });
+    },
+  };
+}
+
+function isFinishNotificationFrom(prompt: AgentPromptInput | undefined, childId: string): boolean {
+  const message = typeof prompt === "string" ? parseAgentMessage(prompt) : null;
+  return (
+    message?.source?.kind === "agent-notification" &&
+    message.source.agentId === childId &&
+    message.text.startsWith(`Agent ${childId} (`) &&
+    message.text.includes(" finished.")
+  );
+}
+
+test("a finish notification waits for a running caller turn instead of interrupting it", async () => {
+  const scenario = await createBusyCallerNotificationScenario();
+  const { manager, outbox, callerSession } = scenario;
+  try {
+    scenario.drain(manager.streamAgent(scenario.callerId, "A"));
+    await manager.waitForAgentRunStart(scenario.callerId);
+    scenario.watchChild();
+    scenario.runChild();
+
+    await vi.waitFor(async () => {
+      expect(await outbox.list()).toMatchObject([
+        { callerAgentId: scenario.callerId, childAgentId: scenario.childId, state: "queued" },
+      ]);
+    });
+    expect(callerSession.startPrompts).toEqual(["A"]);
+    expect(callerSession.interruptCount).toBe(0);
+
+    callerSession.completeTurn();
+    await vi.waitFor(() => expect(callerSession.startPrompts).toHaveLength(2));
+    callerSession.completeTurn();
+    await manager.waitForInFlightRunToSettle(scenario.callerId);
+    await vi.waitFor(async () => expect(await outbox.list()).toEqual([]));
+
+    expect(callerSession.startPrompts).toHaveLength(2);
+    expect(isFinishNotificationFrom(callerSession.startPrompts[1], scenario.childId)).toBe(true);
+    expect(callerSession.interruptCount).toBe(0);
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
+test("startup recovery leaves a notification that a live watcher is still delivering to that watcher", async () => {
+  const scenario = await createBusyCallerNotificationScenario();
+  const { manager, outbox, callerSession } = scenario;
+  try {
+    scenario.drain(manager.streamAgent(scenario.callerId, "A"));
+    await manager.waitForAgentRunStart(scenario.callerId);
+    scenario.watchChild();
+    scenario.runChild();
+    await vi.waitFor(async () => {
+      expect(await outbox.list()).toMatchObject([{ state: "queued" }]);
+    });
+
+    // Startup reads the outbox after connections are accepted, so it sees this record.
+    // Recovery must leave it to the live delivery and finish while the caller is busy.
+    let recovered = false;
+    void recoverFinishNotifications({
+      agentManager: manager,
+      agentStorage: scenario.storage,
+      outbox,
+      logger,
+    }).then(() => {
+      recovered = true;
+      return undefined;
+    });
+    await vi.waitFor(() => expect(recovered).toBe(true));
+    expect(callerSession.acceptedPrompts).toEqual(["A"]);
+
+    callerSession.completeTurn();
+    await vi.waitFor(() => expect(callerSession.acceptedPrompts).toHaveLength(2));
+    callerSession.completeTurn();
+    await manager.waitForInFlightRunToSettle(scenario.callerId);
+    await vi.waitFor(async () => expect(await outbox.list()).toEqual([]));
+    // A second delivery would start only after the first notification turn settles.
+    await manager.waitForInFlightRunToSettle(scenario.callerId);
+
+    expect(callerSession.acceptedPrompts).toHaveLength(2);
+    expect(isFinishNotificationFrom(callerSession.acceptedPrompts[1], scenario.childId)).toBe(true);
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
+test("startup recovery does not resend a notification from a stale outbox listing", async () => {
+  const scenario = await createBusyCallerNotificationScenario();
+  const { manager, outbox, callerSession } = scenario;
+  try {
+    scenario.drain(manager.streamAgent(scenario.callerId, "A"));
+    await manager.waitForAgentRunStart(scenario.callerId);
+    scenario.watchChild();
+    scenario.runChild();
+    await vi.waitFor(async () => {
+      expect(await outbox.list()).toMatchObject([{ state: "queued" }]);
+    });
+
+    // Recovery reads the listing, then stalls before claiming anything.
+    const listed = deferred<void>();
+    const resumeListing = deferred<void>();
+    const list = outbox.list.bind(outbox);
+    vi.spyOn(outbox, "list").mockImplementationOnce(async () => {
+      const snapshot = await list();
+      listed.resolve();
+      await resumeListing.promise;
+      return snapshot;
+    });
+    const removed = deferred<void>();
+    const remove = outbox.remove.bind(outbox);
+    vi.spyOn(outbox, "remove").mockImplementation(async (id) => {
+      await remove(id);
+      removed.resolve();
+    });
+    const recovery = recoverFinishNotifications({
+      agentManager: manager,
+      agentStorage: scenario.storage,
+      outbox,
+      logger,
+    });
+    await listed.promise;
+
+    // Meanwhile the live delivery is accepted, removes its record, and releases it.
+    callerSession.completeTurn();
+    await removed.promise;
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(callerSession.acceptedPrompts).toHaveLength(2);
+    expect(await list()).toEqual([]);
+
+    // The caller is idle again, so a resend from the stale listing would be accepted
+    // before recovery resolves.
+    callerSession.completeTurn();
+    await manager.waitForInFlightRunToSettle(scenario.callerId);
+    resumeListing.resolve();
+    await recovery;
+
+    expect(callerSession.acceptedPrompts).toHaveLength(2);
+    expect(isFinishNotificationFrom(callerSession.acceptedPrompts[1], scenario.childId)).toBe(true);
+    expect(await list()).toEqual([]);
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
+test("a caller turn that wins the notification dispatch keeps running and gets the notification once afterward", async () => {
+  const scenario = await createBusyCallerNotificationScenario();
+  const { manager, outbox, callerSession } = scenario;
+  try {
+    // The caller's own next turn lands after the notification found the caller idle
+    // and before its turn is dispatched.
+    const streamAgent = manager.streamAgent.bind(manager);
+    let raced = false;
+    vi.spyOn(manager, "streamAgent").mockImplementation((agentId, prompt, options) => {
+      if (agentId === scenario.callerId && !raced) {
+        raced = true;
+        scenario.drain(streamAgent(agentId, "B"));
+      }
+      return streamAgent(agentId, prompt, options);
+    });
+    scenario.watchChild();
+    scenario.runChild();
+
+    await vi.waitFor(async () => {
+      expect(await outbox.list()).toMatchObject([{ state: "queued" }]);
+    });
+    expect(callerSession.startPrompts).toEqual(["B"]);
+
+    callerSession.completeTurn();
+    await vi.waitFor(() => expect(callerSession.startPrompts).toHaveLength(2));
+    callerSession.completeTurn();
+    await manager.waitForInFlightRunToSettle(scenario.callerId);
+    await vi.waitFor(async () => expect(await outbox.list()).toEqual([]));
+
+    expect(callerSession.startPrompts).toHaveLength(2);
+    expect(isFinishNotificationFrom(callerSession.startPrompts[1], scenario.childId)).toBe(true);
+    expect(callerSession.interruptCount).toBe(0);
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
+test("a finish notification whose turn start the caller's provider rejects stays pending for recovery", async () => {
+  const scenario = await createBusyCallerNotificationScenario();
+  const { manager, outbox, callerSession } = scenario;
+  try {
+    callerSession.nextStartError = new Error("provider rejected the turn");
+    const remove = vi.spyOn(outbox, "remove");
+    scenario.watchChild();
+    scenario.runChild();
+
+    await vi.waitFor(() => expect(callerSession.startPrompts).toHaveLength(1));
+    await manager.waitForInFlightRunToSettle(scenario.callerId);
+    expect(callerSession.acceptedPrompts).toEqual([]);
+    expect(remove).not.toHaveBeenCalled();
+    expect(await outbox.list()).toMatchObject([
+      { callerAgentId: scenario.callerId, childAgentId: scenario.childId, state: "dispatching" },
+    ]);
+
+    await recoverFinishNotifications({
+      agentManager: manager,
+      agentStorage: scenario.storage,
+      outbox,
+      logger,
+    });
+    await vi.waitFor(() => expect(callerSession.acceptedPrompts).toHaveLength(1));
+    callerSession.completeTurn();
+    await manager.waitForInFlightRunToSettle(scenario.callerId);
+
+    expect(await outbox.list()).toEqual([]);
+    expect(isFinishNotificationFrom(callerSession.acceptedPrompts[0], scenario.childId)).toBe(true);
+    // The recovered delivery resends the same envelope, ID included.
+    expect(callerSession.acceptedPrompts).toEqual([callerSession.startPrompts[0]]);
+    expect(callerSession.startPrompts).toHaveLength(2);
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
+test.each(["unloaded", "registered-unhydrated"] as const)(
+  "finish notifications left pending by a previous daemon are delivered once after restart (%s caller)",
+  async (callerState) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-notification-recovery-"));
+    // Stands in for the provider's own transcript, which outlives the daemon.
+    const providerHistory: string[] = [];
+    const startedPrompts: string[] = [];
+    class TranscriptSession extends TestAgentSession {
+      override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+        const text = typeof prompt === "string" ? prompt : "structured";
+        providerHistory.push(text);
+        startedPrompts.push(text);
+        return super.startTurn();
+      }
+
+      override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        for (const text of providerHistory) {
+          yield { type: "timeline", provider: "codex", item: { type: "user_message", text } };
+        }
+      }
+    }
+    class TranscriptClient extends TestAgentClient {
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        return new TranscriptSession(config);
+      }
+
+      override async resumeSession(
+        _handle: AgentPersistenceHandle,
+        config?: Partial<AgentSessionConfig>,
+      ): Promise<AgentSession> {
+        return new TranscriptSession({ provider: "codex", cwd: config?.cwd ?? workdir });
+      }
+    }
+    const agentsDir = join(workdir, "agents");
+    const outbox = new FinishNotificationOutbox({
+      directory: join(workdir, "agent-notifications"),
+      logger,
+    });
+    const previousStorage = new AgentStorage(agentsDir, logger);
+    const previousManager = new AgentManager({
+      clients: { codex: new TranscriptClient() },
+      registry: previousStorage,
+      logger,
+    });
+    const storage = new AgentStorage(agentsDir, logger);
+    const manager = new AgentManager({
+      clients: { codex: new TranscriptClient() },
+      registry: storage,
+      logger,
+    });
+    let callerId: string | null = null;
+    try {
+      const caller = await previousManager.createAgent(
+        { provider: "codex", cwd: workdir },
+        undefined,
+        { workspaceId: undefined },
+      );
+      callerId = caller.id;
+      await previousManager.closeAgent(caller.id);
+      await previousStorage.flush();
+
+      const pending = (
+        id: string,
+        body: string,
+        state: "queued" | "dispatching",
+        minute: number,
+      ) => ({
+        id,
+        callerAgentId: caller.id,
+        childAgentId: "child-agent",
+        event: "finished" as const,
+        body,
+        createdAt: `2026-10-18T00:0${minute}:00.000Z`,
+        state,
+      });
+      await outbox.save(pending("waiting", "first", "queued", 1));
+      // The provider accepted this one before the previous daemon could clear its record.
+      await outbox.save(pending("accepted", "second", "dispatching", 2));
+      providerHistory.push(
+        prepareAgentMessage(
+          "second",
+          { kind: "agent-notification", agentId: "child-agent", event: "finished" },
+          "accepted",
+        ).prompt as string,
+      );
+      // This one was being dispatched when the daemon stopped, and never reached the provider.
+      await outbox.save(pending("unsent", "third", "dispatching", 3));
+
+      await storage.initialize();
+      registerFinishNotificationOutbox(manager, outbox);
+      if (callerState === "registered-unhydrated") {
+        if (!caller.persistence) throw new Error("Expected a persisted caller session");
+        await manager.resumeAgentFromPersistence(caller.persistence, { cwd: workdir }, caller.id);
+        expect(manager.getAgent(caller.id)?.historyPrimed).toBe(false);
+        expect(manager.getTimeline(caller.id)).toEqual([]);
+      }
+      await recoverFinishNotifications({
+        agentManager: manager,
+        agentStorage: storage,
+        outbox,
+        logger,
+      });
+
+      await vi.waitFor(async () => expect(await outbox.list()).toEqual([]));
+      await manager.waitForInFlightRunToSettle(caller.id);
+      expect(
+        startedPrompts.map((prompt) => {
+          const message = parseAgentMessage(prompt);
+          return { id: message?.id, text: message?.text };
+        }),
+      ).toEqual([
+        { id: "waiting", text: "first" },
+        { id: "unsent", text: "third" },
+      ]);
+    } finally {
+      if (callerId) await manager.closeAgent(callerId).catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test("a finish notification that fails to deliver stays pending until a later daemon start delivers it", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-notification-retry-"));
+  const startedPrompts: string[] = [];
+  class RecordingSession extends TestAgentSession {
+    override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+      startedPrompts.push(typeof prompt === "string" ? prompt : "structured");
+      return super.startTurn();
+    }
+  }
+  class RecordingClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new RecordingSession(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new RecordingSession({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  }
+  const agentsDir = join(workdir, "agents");
+  const outbox = new FinishNotificationOutbox({
+    directory: join(workdir, "agent-notifications"),
+    logger,
+  });
+  async function startDaemon(clients: Record<string, AgentClient>) {
+    const storage = new AgentStorage(agentsDir, logger);
+    await storage.initialize();
+    const manager = new AgentManager({ clients, registry: storage, logger });
+    registerFinishNotificationOutbox(manager, outbox);
+    return { manager, storage };
+  }
+  let callerId: string | null = null;
+  let latest: AgentManager | null = null;
+  try {
+    const first = await startDaemon({ codex: new RecordingClient() });
+    latest = first.manager;
+    const caller = await first.manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    callerId = caller.id;
+    await first.manager.closeAgent(caller.id);
+    await first.storage.flush();
+    const pending = (id: string, callerAgentId: string, minute: number) => ({
+      id,
+      callerAgentId,
+      childAgentId: "child-agent",
+      event: "finished" as const,
+      body: id,
+      createdAt: `2026-10-18T00:0${minute}:00.000Z`,
+      state: "queued" as const,
+    });
+    await outbox.save(pending("first", caller.id, 1));
+    await outbox.save(pending("second", caller.id, 2));
+    await outbox.save(pending("orphaned", "deleted-caller", 3));
+
+    // The caller's provider is not available on this start, so loading it fails.
+    const unavailable = await startDaemon({});
+    latest = unavailable.manager;
+    await recoverFinishNotifications({
+      agentManager: unavailable.manager,
+      agentStorage: unavailable.storage,
+      outbox,
+      logger,
+    });
+    expect(startedPrompts).toEqual([]);
+    expect(await outbox.list()).toMatchObject([
+      { id: "first", state: "dispatching" },
+      { id: "second", state: "queued" },
+    ]);
+
+    const restarted = await startDaemon({ codex: new RecordingClient() });
+    latest = restarted.manager;
+    await recoverFinishNotifications({
+      agentManager: restarted.manager,
+      agentStorage: restarted.storage,
+      outbox,
+      logger,
+    });
+    await restarted.manager.waitForInFlightRunToSettle(caller.id);
+
+    expect(await outbox.list()).toEqual([]);
+    expect(startedPrompts.map((prompt) => parseAgentMessage(prompt)?.id)).toEqual([
+      "first",
+      "second",
+    ]);
+  } finally {
+    if (callerId && latest) await latest.closeAgent(callerId).catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
   }
 });

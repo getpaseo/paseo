@@ -77,6 +77,7 @@ Users can also detach an existing subagent from the subagents track. Detach is d
 Permission requests are notification checkpoints, not the end of that subscription. The caller is notified again after a permission response when the child finishes, errors, or requests another permission.
 The permission notification includes the normalized request plus the child and request IDs, so the caller can inspect it and respond without fetching agent status.
 A watched child that closes before its finish event also notifies the caller so delegated work cannot disappear silently during archive or workspace teardown.
+A notification never cancels or replaces caller work. If the caller is running and its provider accepts a steer, the notification joins that turn. Otherwise, including a caller run that starts while the notification is being dispatched, the notification waits until the caller has no in-flight run and then starts one turn. Undelivered notifications are persisted and survive a daemon restart; see [pending finish notifications](data-model.md#7-pending-finish-notifications). The finish watchers themselves are not persisted, so a child that was still running when the daemon stopped does not notify its caller.
 
 ## Provider-managed child agents
 

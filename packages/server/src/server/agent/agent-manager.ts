@@ -136,6 +136,17 @@ export class AgentRunCancellationError extends Error {
   }
 }
 
+/**
+ * Another run owns the agent, so this prompt was not delivered. Nothing reached the
+ * provider, which makes it safe to retry once that run settles.
+ */
+export class AgentRunConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AgentRunConflictError";
+  }
+}
+
 export type AgentRunCancellationResult =
   | { status: "not_running" }
   | { status: "settled" }
@@ -1212,6 +1223,35 @@ export class AgentManager {
     // Loading during reload must wait for the replacement, not resume another writer.
     await this.lifecycleMutationTails.get(agentId);
     await this.inFlightAgentCloses?.get(agentId)?.catch(() => undefined);
+  }
+
+  /** Resolves once the agent has no in-flight run, including runs that start while waiting. */
+  async waitForInFlightRunToSettle(agentId: string): Promise<void> {
+    while (this.hasInFlightRun(agentId)) {
+      // Finalization publishes idle before the foreground run is released, so a
+      // tracked run is awaited directly rather than through agent_state.
+      const run = this.runs.getRun(agentId);
+      if (run) {
+        await run.settledPromise;
+        continue;
+      }
+      await new Promise<void>((settle) => {
+        const unsubscribe = this.subscribe(
+          (event) => {
+            if (event.type !== "agent_state") return;
+            unsubscribe();
+            settle();
+          },
+          { agentId, replayState: false },
+        );
+        // Re-check after subscribing so a transition that lands between the loop
+        // check and the subscription cannot leave this wait without a wake-up.
+        if (!this.hasInFlightRun(agentId)) {
+          unsubscribe();
+          settle();
+        }
+      });
+    }
   }
 
   getTimeline(id: string): AgentTimelineItem[] {
@@ -2616,7 +2656,7 @@ export class AgentManager {
         },
         "agent.manager.stream.reject",
       );
-      throw new Error(`Agent ${agentId} already has an active run`);
+      throw new AgentRunConflictError(`Agent ${agentId} already has an active run`);
     }
 
     const agent = existingAgent;
@@ -2836,7 +2876,7 @@ export class AgentManager {
     // An unavailable answer is only safe to fall back from while this admission
     // still owns the active turn. Never let an A admission replace a later B.
     if (result.status === "unavailable" && agent.activeTurnId !== expectedTurnId) {
-      throw new Error("Active turn changed before steering could be delivered");
+      throw new AgentRunConflictError("Active turn changed before steering could be delivered");
     }
     return result;
   }
@@ -2889,7 +2929,7 @@ export class AgentManager {
 
   private assertSteerAdmissionOwnsTurn(agent: ActiveManagedAgent, expectedTurnId: string): void {
     if (agent.activeTurnId !== expectedTurnId) {
-      throw new Error("Active turn changed before steering could be delivered");
+      throw new AgentRunConflictError("Active turn changed before steering could be delivered");
     }
   }
 

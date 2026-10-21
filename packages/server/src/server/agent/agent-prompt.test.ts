@@ -16,7 +16,12 @@ import { join } from "node:path";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
-import { setupFinishNotification, waitForAgentRunStartWithTimeout } from "./agent-prompt.js";
+import {
+  registerFinishNotificationOutbox,
+  setupFinishNotification,
+  waitForAgentRunStartWithTimeout,
+} from "./agent-prompt.js";
+import { FinishNotificationOutbox } from "./finish-notification-outbox.js";
 import type { AgentManagerEvent, ManagedAgent } from "./agent-manager.js";
 import type {
   AgentClient,
@@ -54,6 +59,9 @@ interface FinishNotificationScenarioOptions {
   childParentAgentId?: string | null;
   requireParentOwnership?: boolean;
   parentPromptError?: Error;
+  /** The caller is running a turn its provider cannot be steered into. */
+  callerBusy?: boolean;
+  outbox?: FinishNotificationOutbox;
   logger?: Logger;
 }
 
@@ -69,6 +77,8 @@ interface FinishNotificationScenario {
   parentPrompts(): string[];
   steerAttemptCount(): number;
   wasParentPrompted(): boolean;
+  /** Ends the busy caller's turn. */
+  releaseCaller(): void;
 }
 
 function createFinishNotificationScenario(
@@ -79,6 +89,11 @@ function createFinishNotificationScenario(
   let parentPrompted = false;
   let steerAttemptCount = 0;
   const parentPrompts: string[] = [];
+  let callerBusy = options?.callerBusy ?? false;
+  let releaseCallerRun!: () => void;
+  const callerRunSettled = new Promise<void>((resolve) => {
+    releaseCallerRun = resolve;
+  });
 
   const childAgent: ManagedAgent = Object.create(null);
   Reflect.set(childAgent, "id", "child-agent");
@@ -111,20 +126,23 @@ function createFinishNotificationScenario(
     return options?.childLastAssistantMessage ?? null;
   });
   Reflect.set(agentManager, "tryRunOutOfBand", () => false);
-  Reflect.set(agentManager, "hasInFlightRun", () => Boolean(options?.parentPromptError));
+  Reflect.set(agentManager, "hasInFlightRun", () => callerBusy);
+  Reflect.set(agentManager, "waitForInFlightRunToSettle", () => callerRunSettled);
+  if (options?.outbox) registerFinishNotificationOutbox(agentManager, options.outbox);
+  Reflect.set(agentManager, "steerAgentRun", async () => {
+    steerAttemptCount += 1;
+    return { status: "unavailable" };
+  });
   Reflect.set(agentManager, "steerOrReplaceActiveTurn", async () => {
     steerAttemptCount += 1;
     return { status: "inactive" };
   });
   Reflect.set(agentManager, "streamAgent", (_agentId: string, prompt: string) => {
+    resolveParentPrompt?.(prompt);
+    if (options?.parentPromptError) throw options.parentPromptError;
     parentPrompted = true;
     parentPrompts.push(prompt);
-    resolveParentPrompt?.(prompt);
     return (async function* noop() {})();
-  });
-  Reflect.set(agentManager, "replaceAgentRun", async (_agentId: string, prompt: string) => {
-    resolveParentPrompt?.(prompt);
-    throw options?.parentPromptError;
   });
 
   const agentStorage: AgentStorage = Object.create(AgentStorage.prototype);
@@ -264,6 +282,10 @@ function createFinishNotificationScenario(
     wasParentPrompted() {
       return parentPrompted;
     },
+    releaseCaller() {
+      callerBusy = false;
+      releaseCallerRun();
+    },
   };
 }
 
@@ -290,7 +312,8 @@ test("finish notifications tell the parent the child's last assistant message", 
     },
     text: "Agent child-agent (Child Agent) finished.\n\n<agent-response>\nImplemented the cleanup and all checks pass.\n</agent-response>",
   });
-  expect(scenario.steerAttemptCount()).toBe(1);
+  // An idle caller gets a new turn; there is no active turn to steer.
+  expect(scenario.steerAttemptCount()).toBe(0);
 });
 
 test("finish notifications truncate oversized child responses", async () => {
@@ -365,6 +388,34 @@ test("finish notifications survive permission responses", async () => {
     expect(scenario.parentPrompts()).toHaveLength(2);
   });
   expect(scenario.parentPrompts()[1]).toContain("finished.");
+});
+
+test("a child completion is persisted while its permission notification waits for a busy caller", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "finish-notification-busy-permission-"));
+  const outbox = new FinishNotificationOutbox({ directory: workdir, logger: createTestLogger() });
+  const scenario = createFinishNotificationScenario({ callerBusy: true, outbox });
+  try {
+    scenario.startWatchingChild();
+    scenario.requestChildPermission();
+    scenario.resolveChildPermission();
+    scenario.finishChild();
+
+    await vi.waitFor(async () => {
+      expect((await outbox.list()).map((notification) => notification.event)).toEqual([
+        "permission-required",
+        "finished",
+      ]);
+    });
+    expect(scenario.parentPrompts()).toEqual([]);
+
+    scenario.releaseCaller();
+    await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(2));
+    await vi.waitFor(async () => expect(await outbox.list()).toEqual([]));
+    expect(scenario.parentPrompts()[0]).toContain("needs permission.");
+    expect(scenario.parentPrompts()[1]).toContain("finished.");
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("an idle permission resolution waits for the resumed run to finish", async () => {
@@ -454,7 +505,7 @@ test("follow-up finish notifications do not require a parent relationship", asyn
 test("finish notifications log a rejected parent prompt without an unhandled rejection", async () => {
   const captured = createCapturedLogger();
   const scenario = createFinishNotificationScenario({
-    parentPromptError: new Error("parent provider rejected replacement"),
+    parentPromptError: new Error("parent provider rejected the prompt"),
     logger: captured.logger,
   });
 
@@ -468,7 +519,7 @@ test("finish notifications log a rejected parent prompt without an unhandled rej
       childAgentId: "child-agent",
       callerAgentId: "caller-agent",
       reason: "finished",
-      err: expect.objectContaining({ message: "parent provider rejected replacement" }),
+      err: expect.objectContaining({ message: "parent provider rejected the prompt" }),
     }),
   ]);
 });
