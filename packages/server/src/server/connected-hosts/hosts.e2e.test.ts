@@ -1592,13 +1592,12 @@ test(
     expect(report.structuredContent).toMatchObject({ deliveryStatus: "queued", serverId: aId });
     expect(parentPrompts).toEqual([]);
 
-    const { resolve } = await import("node:path");
     const cli = await promisify(execFile)(
       process.execPath,
       [
         "--import",
         "tsx",
-        resolve("packages/cli/src/index.ts"),
+        fileURLToPath(new URL("../../../../cli/src/index.ts", import.meta.url)),
         "--host",
         `127.0.0.1:${a.port}`,
         "send",
