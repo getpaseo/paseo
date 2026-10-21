@@ -192,6 +192,12 @@ function hashForLog(value: string): string {
   return `h_${Math.abs(hash).toString(16)}`;
 }
 
+/** A daemon identity that negotiated protected relay security. */
+export interface RelaySecurityPin {
+  serverId: string;
+  daemonPublicKeyB64: string;
+}
+
 export interface HostRuntimeControllerDeps {
   createClient: (input: {
     host: HostProfile;
@@ -555,10 +561,6 @@ function probeIntervalForConnection(
 
 function createDefaultDeps(
   resolveOrigin: (serverId: string) => DaemonClient | null = () => null,
-  pinRelayProtectedSecurity: (input: {
-    serverId: string;
-    daemonPublicKeyB64: string;
-  }) => void = () => undefined,
 ): HostRuntimeControllerDeps {
   const browserHostAvailable =
     typeof getDesktopHost()?.browser?.executeAutomationCommand === "function";
@@ -647,13 +649,6 @@ function createDefaultDeps(
           ...(connection.minimumSecurityMode
             ? { minimumMode: connection.minimumSecurityMode }
             : {}),
-          onSecurityMode: (mode) => {
-            if (mode !== "protected" || connection.minimumSecurityMode === "protected") return;
-            pinRelayProtectedSecurity({
-              serverId: host.serverId,
-              daemonPublicKeyB64: connection.daemonPublicKeyB64,
-            });
-          },
         },
       });
     },
@@ -716,6 +711,7 @@ export class HostRuntimeController {
   private host: HostProfile;
   private deps: HostRuntimeControllerDeps;
   private onReconcileServerId: ((oldId: string, newId: string) => void) | null;
+  private onRelayProtectedSecurityNegotiated: ((input: RelaySecurityPin) => void) | null;
   private connectionMachineState: HostRuntimeConnectionMachineState;
   private connectionEpoch = 0;
   private snapshot: HostRuntimeSnapshot;
@@ -740,10 +736,12 @@ export class HostRuntimeController {
     host: HostProfile;
     deps?: HostRuntimeControllerDeps;
     onReconcileServerId?: (oldId: string, newId: string) => void;
+    onRelayProtectedSecurityNegotiated?: (input: RelaySecurityPin) => void;
   }) {
     this.host = input.host;
     this.deps = input.deps ?? createDefaultDeps();
     this.onReconcileServerId = input.onReconcileServerId ?? null;
+    this.onRelayProtectedSecurityNegotiated = input.onRelayProtectedSecurityNegotiated ?? null;
     this.connectionMachineState = {
       tag: "booting",
     };
@@ -1468,6 +1466,7 @@ export class HostRuntimeController {
           void failConnection(new DaemonAuthenticationError(client.authFailureReason));
           return;
         }
+        if (state.status === "connected") this.learnRelaySecurity(client, connection.id);
         this.applyConnectionEvent({ type: "client_state", state, lastError: client.lastError });
         this.updateSnapshot({
           ...toSnapshotConnectionPatch(this.connectionMachineState, this.connectionEpoch),
@@ -1479,6 +1478,25 @@ export class HostRuntimeController {
     } catch (error) {
       await failConnection(error);
     }
+  }
+
+  // The active client is the one place every connection path meets: clients
+  // created here and probe clients adopted from `connectToDaemon` both land in
+  // `switchToConnection`. A protected handshake observed here becomes the
+  // persisted pin for that daemon identity.
+  private learnRelaySecurity(client: DaemonClient, connectionId: string): void {
+    const connection = findConnectionById(this.host, connectionId);
+    if (
+      connection?.type !== "relay" ||
+      connection.minimumSecurityMode === "protected" ||
+      client.relaySecurityFloor !== "protected"
+    ) {
+      return;
+    }
+    this.onRelayProtectedSecurityNegotiated?.({
+      serverId: this.host.serverId,
+      daemonPublicKeyB64: connection.daemonPublicKeyB64,
+    });
   }
 
   adoptReconciledServerId(newServerId: string): void {
@@ -1619,12 +1637,7 @@ export class HostRuntimeStore {
     replicaRowStore?: ReplicaRowStore;
     revokePushNotifications?: typeof revokePushNotifications;
   }) {
-    this.deps =
-      input?.deps ??
-      createDefaultDeps(
-        (serverId) => this.getClient(serverId),
-        (pin) => void this.pinRelayProtectedSecurity(pin),
-      );
+    this.deps = input?.deps ?? createDefaultDeps((serverId) => this.getClient(serverId));
     this.storage = input?.storage ?? AsyncStorage;
     this.replicaCache = new ReplicaCache(input?.replicaRowStore ?? createReplicaRowStore());
     this.revokePushNotifications = input?.revokePushNotifications ?? revokePushNotifications;
@@ -2034,39 +2047,6 @@ export class HostRuntimeStore {
     });
   }
 
-  private async upsertRelayConnection(input: {
-    serverId: string;
-    relayEndpoint: string;
-    useTls?: boolean;
-    daemonPublicKeyB64: string;
-    label?: string;
-    password?: string;
-  }): Promise<HostProfile> {
-    const relayEndpoint = normalizeHostPort(input.relayEndpoint);
-    const useTls = input.useTls ?? false;
-    const daemonPublicKeyB64 = input.daemonPublicKeyB64.trim();
-    if (!daemonPublicKeyB64) {
-      throw new Error("daemonPublicKeyB64 is required");
-    }
-    const explicitUseTls = input.useTls !== undefined;
-    const profile = await this.upsertHostConnection({
-      serverId: input.serverId,
-      label: input.label,
-      connection: {
-        id: useTls ? `relay:wss:${relayEndpoint}` : `relay:${relayEndpoint}`,
-        type: "relay",
-        relayEndpoint,
-        ...(explicitUseTls ? { useTls } : {}),
-        daemonPublicKeyB64,
-      },
-    });
-    if (input.password) {
-      await this.setHostPassword(profile.serverId, input.password);
-      return this.hosts.find((host) => host.serverId === profile.serverId) ?? profile;
-    }
-    return profile;
-  }
-
   // A pairing link (a URL, a QR code, or a pasted link) asks the user to
   // confirm when it adds a new host or changes a saved host's key, relay, or
   // TLS setting. The answer needs the saved hosts, so it waits for them to load.
@@ -2134,14 +2114,19 @@ export class HostRuntimeStore {
     password?: string,
   ): Promise<HostProfile> {
     const connection = relayConnectionFromOffer(offer);
-    return this.upsertRelayConnection({
+    if (!connection.daemonPublicKeyB64) {
+      throw new Error("daemonPublicKeyB64 is required");
+    }
+    const profile = await this.upsertHostConnection({
       serverId: offer.serverId,
-      relayEndpoint: connection.relayEndpoint,
-      useTls: connection.useTls,
-      daemonPublicKeyB64: connection.daemonPublicKeyB64,
       label,
-      password,
+      connection,
     });
+    if (password) {
+      await this.setHostPassword(profile.serverId, password);
+      return this.hosts.find((host) => host.serverId === profile.serverId) ?? profile;
+    }
+    return profile;
   }
 
   private async probeAndUpsertOffer(
@@ -2187,10 +2172,7 @@ export class HostRuntimeStore {
     });
   }
 
-  private async pinRelayProtectedSecurity(input: {
-    serverId: string;
-    daemonPublicKeyB64: string;
-  }): Promise<void> {
+  private async pinRelayProtectedSecurity(input: RelaySecurityPin): Promise<void> {
     const next = pinRelayProtectedSecurityInProfiles({ profiles: this.hosts, ...input });
     if (next === this.hosts) return;
     this.setHostsAndSync(next);
@@ -2406,6 +2388,7 @@ export class HostRuntimeStore {
         host,
         deps: this.deps,
         onReconcileServerId: (oldId, newId) => this.reconcileServerId(oldId, newId),
+        onRelayProtectedSecurityNegotiated: (pin) => void this.pinRelayProtectedSecurity(pin),
       });
       this.controllers.set(host.serverId, controller);
       useSessionStore.getState().initializeSession(host.serverId, null);

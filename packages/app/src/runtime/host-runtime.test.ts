@@ -345,6 +345,11 @@ class Deferred<T> {
   }
 }
 
+function relayPinOf(host: HostProfile | undefined): "protected" | undefined {
+  const connection = host?.connections[0];
+  return connection?.type === "relay" ? connection.minimumSecurityMode : undefined;
+}
+
 async function waitForHostOnline(store: HostRuntimeStore, serverId: string): Promise<void> {
   if (store.getSnapshot(serverId)?.connectionStatus === "online") return;
   await new Promise<void>((resolve) => {
@@ -564,6 +569,7 @@ function createPairingStore(
     connectAttempts?: string[];
     serverIdForHost?: (host: HostProfile) => string;
     storage?: HostRuntimeStorage;
+    probeSecurityFloor?: "legacy" | "protected";
   } = {},
 ): HostRuntimeStore {
   return new HostRuntimeStore({
@@ -575,8 +581,10 @@ function createPairingStore(
         if (input.password && host.password !== input.password) {
           throw new DaemonAuthenticationError("password_required");
         }
+        const client = makeConnectedProbeClient(5);
+        client.relaySecurityFloor = input.probeSecurityFloor;
         return {
-          client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+          client: client as unknown as DaemonClient,
           serverId: input.serverIdForHost?.(host) ?? host.serverId,
           hostname: input.hostname ?? "paired",
         };
@@ -3888,6 +3896,96 @@ describe("HostRuntimeStore", () => {
         daemonPublicKeyB64: "pk_test_offer",
       },
     ]);
+
+    store.syncHosts([]);
+  });
+
+  it("keeps a strict offer's security pin through both pairing paths and a reload", async () => {
+    const storage = createMemoryHostRuntimeStorage();
+    const store = createPairingStore({ storage });
+    answerHostConfirmations(store, true);
+    const strictOffer = (serverId: string): ConnectionOffer => ({
+      ...makeOffer({ serverId, daemonPublicKeyB64: `pk_${serverId}` }),
+      minimumSecurityMode: "protected",
+    });
+
+    await store.importConnectionLink(encodeOfferUrl(strictOffer("srv_import")), "openProject");
+    await store.beginLinkPairing().submit(encodeOfferUrl(strictOffer("srv_pair")));
+
+    const pinOf = (hosts: HostProfile[], serverId: string) =>
+      relayPinOf(hosts.find((host) => host.serverId === serverId));
+    expect(pinOf(store.getHosts(), "srv_import")).toBe("protected");
+    expect(pinOf(store.getHosts(), "srv_pair")).toBe("protected");
+
+    await waitForHostOnline(store, "srv_pair");
+    const persisted = JSON.parse((await storage.getItem("@paseo:daemon-registry")) ?? "[]");
+    expect(pinOf(persisted, "srv_import")).toBe("protected");
+    expect(pinOf(persisted, "srv_pair")).toBe("protected");
+    store.syncHosts([]);
+
+    const reloaded = createPairingStore({ storage });
+    const registryLoaded = onceHostListMatches(reloaded, () => reloaded.isHostRegistryLoaded());
+    reloaded.boot();
+    await registryLoaded;
+    expect(pinOf(reloaded.getHosts(), "srv_import")).toBe("protected");
+    expect(pinOf(reloaded.getHosts(), "srv_pair")).toBe("protected");
+
+    reloaded.syncHosts([]);
+  });
+
+  it("learns the security pin from an adopted probe client and keeps it across a reload", async () => {
+    const relay: HostConnection = {
+      id: "relay:relay.paseo.sh:443",
+      type: "relay",
+      relayEndpoint: "relay.paseo.sh:443",
+      daemonPublicKeyB64: "pk_saved",
+    };
+    const host = makeHost({
+      serverId: "srv_saved",
+      connections: [relay],
+      preferredConnectionId: relay.id,
+    });
+    const storage = createMemoryHostRuntimeStorage({
+      "@paseo:daemon-registry": JSON.stringify([host]),
+      "@paseo:e2e": "1",
+    });
+    const store = createPairingStore({ storage, probeSecurityFloor: "protected" });
+
+    store.boot();
+    await waitForHostOnline(store, "srv_saved");
+    const pinned = onceHostListMatches(
+      store,
+      () => relayPinOf(store.getHosts()[0]) === "protected",
+    );
+    await pinned;
+
+    const activeClient = store.getSnapshot("srv_saved")?.client as unknown as FakeDaemonClient;
+    expect(activeClient.relaySecurityFloor).toBe("protected");
+    expect(activeClient.isDisposed()).toBe(false);
+    const persisted = JSON.parse((await storage.getItem("@paseo:daemon-registry")) ?? "[]");
+    expect(persisted[0]?.connections[0]?.minimumSecurityMode).toBe("protected");
+    store.syncHosts([]);
+
+    const reloaded = createPairingStore({ storage, probeSecurityFloor: "legacy" });
+    const registryLoaded = onceHostListMatches(reloaded, () => reloaded.isHostRegistryLoaded());
+    reloaded.boot();
+    await registryLoaded;
+    expect(relayPinOf(reloaded.getHosts()[0])).toBe("protected");
+
+    reloaded.syncHosts([]);
+  });
+
+  it("learns the security pin for a host paired from an old offer once it goes online", async () => {
+    const storage = createMemoryHostRuntimeStorage();
+    const store = createPairingStore({ storage, probeSecurityFloor: "protected" });
+    answerHostConfirmations(store, true);
+
+    await store.beginLinkPairing().submit(encodeOfferUrl(makeOffer()));
+    await waitForHostOnline(store, "srv_offer");
+    await onceHostListMatches(store, () => relayPinOf(store.getHosts()[0]) === "protected");
+
+    const persisted = JSON.parse((await storage.getItem("@paseo:daemon-registry")) ?? "[]");
+    expect(persisted[0]?.connections[0]?.minimumSecurityMode).toBe("protected");
 
     store.syncHosts([]);
   });

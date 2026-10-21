@@ -57,6 +57,8 @@ The daemon advertises `server_info.features.relayProtectedSecurity: true` on eve
 
 The app pins `minimumSecurityMode: "protected"` on every relay connection to a daemon public key after the first protected handshake with that key, or when the pairing offer carries `minimumSecurityMode`. A pinned client passes `minimumMode: "protected"` to the handshake and refuses a legacy ready before sending credentials. The pin belongs to the daemon identity, not to a relay address: re-importing the same key through any relay keeps it, a different key is a different connection, and connection failures never clear it.
 
+The handshake result is read in one place, `HostRuntimeController` when the host's active client reports connected. Every client reaches that point, whether the controller created it or adopted it from a pairing or startup probe, so no client constructor carries a persistence callback. A probe that negotiated protected but was never adopted pins nothing; the pin lands when the host first goes online.
+
 Within one client process the floor also rises on its own. `DaemonClient` and the Node host connector remember a protected result and require it on every later attempt, so a reconnect after a relay drop cannot be answered in legacy mode even before the pin is persisted.
 
 The daemon refuses a legacy client with close `1008` and reason `protected endpoint security required`, and logs `relay_e2ee_handshake_rejected`. That close code stops at the relay: both relays replace a daemon-side close with their own (the wrangler relay sends `1012 Server disconnected`), so an old client sees an ordinary disconnect and keeps retrying. The only client-detectable failure is the client's own `4002`, which stops reconnecting and tells the user to update.
