@@ -2680,6 +2680,10 @@ export const ptBR: TranslationResources = {
           requestFailedTitle: "Erro",
           requestFailedMessage:
             "Falha ao enviar a solicitação de reinício. O Paseo reconecta automaticamente. Tente novamente quando o host aparecer como online.",
+          closeTerminals: "Reiniciar e fechar terminais",
+          closeTerminalsHint: "Reinicia e também fecha todos os terminais abertos neste host.",
+          closeTerminalsConfirmMessage:
+            "Isso reiniciará o daemon e fechará todos os terminais dele, encerrando os programas que rodam neles. O app vai se reconectar automaticamente.",
           dialogFailedMessage: "Não foi possível abrir o diálogo de confirmação de reinício.",
         },
         update: {

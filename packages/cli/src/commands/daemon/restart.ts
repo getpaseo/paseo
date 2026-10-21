@@ -3,6 +3,7 @@ import {
   readDaemonInstance,
   isSameDaemonInstance,
   DaemonInstanceError,
+  retryUnconfirmedTerminalCleanup,
 } from "@getpaseo/server/daemon-control";
 import { setTimeout as delay } from "node:timers/promises";
 import { connectToDaemon } from "../../utils/client.js";
@@ -20,6 +21,7 @@ export function daemonRestartCommand(): Command {
     ),
   )
     .option("--timeout <seconds>", "Replacement readiness deadline (default: 600)")
+    .option("--kill-terminals", "Close every terminal instead of keeping them across the restart")
     .action(withOutput(runRestartCommand));
 }
 
@@ -27,6 +29,14 @@ export async function runRestartCommand(options: CommandOptions, _command: Comma
   const target = options.daemonTarget;
   const deadline = Date.now() + parseTimeoutMs(options.timeout);
   const remaining = () => Math.max(1, deadline - Date.now());
+  const killTerminals = options.killTerminals === true;
+  // The supervisor reaps before the respawn and the replacement retries what that left;
+  // anything still named by a closing record survived both.
+  const confirmTerminalsClosed = async () => {
+    if (killTerminals && target.kind === "instance") {
+      await retryUnconfirmedTerminalCleanup(target.home);
+    }
+  };
   const instance = target.kind === "instance" ? await readDaemonInstance(target.home) : null;
   async function checkSupervisor() {
     if (target.kind !== "instance") return;
@@ -54,7 +64,10 @@ export async function runRestartCommand(options: CommandOptions, _command: Comma
     workerPid = (await client.getDaemonStatus({ timeout: remaining() })).pid;
     await checkSupervisor();
     try {
-      await client.restartServer("cli_restart", undefined, { timeout: remaining() });
+      await client.restartServer("cli_restart", undefined, {
+        timeout: remaining(),
+        killTerminals,
+      });
       acknowledged = true;
     } catch (error) {
       if (!isReconnectFailure(error)) throw error;
@@ -77,6 +90,7 @@ export async function runRestartCommand(options: CommandOptions, _command: Comma
         const status = await replacement.getDaemonStatus({ timeout: remaining() });
         if (status.pid !== workerPid) {
           await checkSupervisor();
+          await confirmTerminalsClosed();
           return {
             type: "single" as const,
             data: {

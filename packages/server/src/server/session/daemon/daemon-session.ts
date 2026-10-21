@@ -34,6 +34,7 @@ export interface DaemonSessionHost {
     clientId: string;
     requestId: string;
     reason: string;
+    keepTerminals: boolean;
   }): void;
 }
 

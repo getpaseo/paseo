@@ -563,6 +563,11 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
   const runtime = getHostRuntimeStore();
   const [isRestarting, setIsRestarting] = useState(false);
   const isMountedRef = useRef(true);
+  // COMPAT(terminalsSurviveRestart): added in v0.12.0, remove gate after 2027-04-21.
+  const terminalsSurviveRestart = useSessionStore(
+    (state) =>
+      state.sessions[host.serverId]?.serverInfo?.features?.terminalsSurviveRestart === true,
+  );
 
   useEffect(() => {
     return () => {
@@ -591,55 +596,67 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
     [t],
   );
 
-  const handleRestart = useCallback(() => {
-    if (!daemonClient) {
-      Alert.alert(
-        t("settings.host.daemon.restart.unavailableTitle"),
-        t("settings.host.daemon.restart.unavailableMessage"),
-      );
-      return;
-    }
-    if (!isHostConnected()) {
-      Alert.alert(
-        t("settings.host.daemon.restart.offlineTitle"),
-        t("settings.host.daemon.restart.offlineMessage"),
-      );
-      return;
-    }
-
-    void confirmDialog({
-      title: t("settings.host.daemon.restart.confirmTitle", { name: host.label }),
-      message: t("settings.host.daemon.restart.confirmMessage"),
-      confirmLabel: t("settings.host.daemon.restart.confirm"),
-      cancelLabel: t("common.actions.cancel"),
-      destructive: true,
-    })
-      .then((confirmed) => {
-        if (!confirmed) return;
-        setIsRestarting(true);
-        const restartRequest = restartDaemonFromSettings(
-          host.serverId,
-          `settings_daemon_restart_${host.serverId}`,
-          {
-            restartServer: (reason) => daemonClient.restartServer(reason),
-            getStatus: async () => ({
-              ...(await daemonClient.getDaemonStatus()),
-              serverId: daemonClient.getLastServerInfoMessage()?.serverId ?? "",
-              version: daemonClient.getLastServerInfoMessage()?.version ?? null,
-            }),
-          },
-        );
-        void waitForDaemonRestart(restartRequest);
-        return;
-      })
-      .catch((error) => {
-        console.error(`[HostPage] Failed to open restart confirmation for ${host.label}`, error);
+  const startRestart = useCallback(
+    (killTerminals: boolean) => {
+      if (!daemonClient) {
         Alert.alert(
-          t("settings.host.daemon.restart.requestFailedTitle"),
-          t("settings.host.daemon.restart.dialogFailedMessage"),
+          t("settings.host.daemon.restart.unavailableTitle"),
+          t("settings.host.daemon.restart.unavailableMessage"),
         );
-      });
-  }, [daemonClient, host.label, host.serverId, isHostConnected, t, waitForDaemonRestart]);
+        return;
+      }
+      if (!isHostConnected()) {
+        Alert.alert(
+          t("settings.host.daemon.restart.offlineTitle"),
+          t("settings.host.daemon.restart.offlineMessage"),
+        );
+        return;
+      }
+
+      void confirmDialog({
+        title: t("settings.host.daemon.restart.confirmTitle", { name: host.label }),
+        message: killTerminals
+          ? t("settings.host.daemon.restart.closeTerminalsConfirmMessage")
+          : t("settings.host.daemon.restart.confirmMessage"),
+        confirmLabel: killTerminals
+          ? t("settings.host.daemon.restart.closeTerminals")
+          : t("settings.host.daemon.restart.confirm"),
+        cancelLabel: t("common.actions.cancel"),
+        destructive: true,
+      })
+        .then((confirmed) => {
+          if (!confirmed) return;
+          setIsRestarting(true);
+          const restartRequest = restartDaemonFromSettings(
+            host.serverId,
+            `settings_daemon_restart_${host.serverId}`,
+            {
+              restartServer: (reason, options) =>
+                daemonClient.restartServer(reason, undefined, options),
+              getStatus: async () => ({
+                ...(await daemonClient.getDaemonStatus()),
+                serverId: daemonClient.getLastServerInfoMessage()?.serverId ?? "",
+                version: daemonClient.getLastServerInfoMessage()?.version ?? null,
+              }),
+            },
+            { killTerminals },
+          );
+          void waitForDaemonRestart(restartRequest);
+          return;
+        })
+        .catch((error) => {
+          console.error(`[HostPage] Failed to open restart confirmation for ${host.label}`, error);
+          Alert.alert(
+            t("settings.host.daemon.restart.requestFailedTitle"),
+            t("settings.host.daemon.restart.dialogFailedMessage"),
+          );
+        });
+    },
+    [daemonClient, host.label, host.serverId, isHostConnected, t, waitForDaemonRestart],
+  );
+
+  const handleRestart = useCallback(() => startRestart(false), [startRestart]);
+  const handleRestartAndCloseTerminals = useCallback(() => startRestart(true), [startRestart]);
 
   return (
     <View style={settingsStyles.card} testID="host-page-restart-card">
@@ -661,6 +678,24 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
             : t("settings.host.daemon.restart.confirm")}
         </Button>
       </View>
+      {terminalsSurviveRestart ? (
+        <View style={settingsStyles.row}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowHint}>
+              {t("settings.host.daemon.restart.closeTerminalsHint")}
+            </Text>
+          </View>
+          <Button
+            variant="outline"
+            size="sm"
+            onPress={handleRestartAndCloseTerminals}
+            disabled={isRestarting || !daemonClient || !isConnected}
+            testID="host-page-restart-close-terminals-button"
+          >
+            {t("settings.host.daemon.restart.closeTerminals")}
+          </Button>
+        </View>
+      ) : null}
     </View>
   );
 }

@@ -12,6 +12,21 @@ test("settings restart completes when a replacement worker is observed without a
   expect(pid).toBe(11);
 });
 
+test("settings restart keeps terminals by default and closes them only when asked", async () => {
+  let pid = 10;
+  const requests: Array<{ killTerminals: boolean }> = [];
+  const deps = {
+    getStatus: async () => ({ pid, version: "1.0.0", serverId: "daemon" }),
+    restartServer: async (_reason: string, options: { killTerminals: boolean }) => {
+      requests.push(options);
+      pid += 1;
+    },
+  };
+  await restartDaemonFromSettings("daemon", "settings", deps);
+  await restartDaemonFromSettings("daemon", "settings", deps, { killTerminals: true });
+  expect(requests).toEqual([{ killTerminals: false }, { killTerminals: true }]);
+});
+
 test("a status permission failure prevents the restart request", async () => {
   let restarted = false;
   await expect(

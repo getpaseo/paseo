@@ -1,7 +1,8 @@
-import { fileURLToPath } from "node:url";
-import { fork } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
+import type { Logger } from "pino";
+import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { assertAbsolutePath, isSameOrDescendantPath } from "../server/path-utils.js";
+import { writtenDuringThisBoot } from "../server/pid-lock.js";
 import type { TerminalState } from "@getpaseo/protocol/messages";
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
 import { deriveTerminalActivityStatusBucket } from "@getpaseo/protocol/terminal-activity";
@@ -14,7 +15,14 @@ import type {
   TerminalSession,
   TerminalStateSnapshot,
 } from "./terminal.js";
+import { resolvePaseoCliExecutablePath } from "./paseo-cli-path.js";
 import type { CaptureTerminalLinesResult } from "./terminal-capture.js";
+import { connectTerminalWorker, type TerminalWorkerConnection } from "./terminal-worker-client.js";
+import { launchTerminalWorker } from "./terminal-worker-launch.js";
+import { classifyTerminalWorkerProcess } from "./terminal-worker-ownership.js";
+import { createTerminalWorkerProcessInspector } from "./terminal-worker-processes.js";
+import { reapTerminalWorkers } from "./terminal-worker-reaper.js";
+import { listTerminalWorkerRecords, type TerminalWorkerRecord } from "./terminal-worker-record.js";
 import type {
   TerminalActivityListener,
   TerminalActivityTransitionEvent,
@@ -26,6 +34,7 @@ import type {
   TerminalsChangedListener,
 } from "./terminal-manager.js";
 import type {
+  TerminalWorkerListResult,
   TerminalWorkerRequest,
   TerminalWorkerResponse,
   TerminalWorkerToParentMessage,
@@ -79,49 +88,40 @@ interface WorkerTerminalRecord {
   session: TerminalSession;
 }
 
-interface TerminalWorkerProcess {
-  connected: boolean;
-  killed: boolean;
-  send(message: TerminalWorkerRequest, callback: (error: Error | null) => void): boolean;
-  disconnect(): void;
-  kill(): boolean;
-  on(event: "message", listener: (message: TerminalWorkerToParentMessage) => void): this;
-  on(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
+export interface TerminalCreateEnvironment {
+  baseEnv: Record<string, string>;
+  paseoCliPath: string | null;
 }
 
 interface WorkerTerminalManagerOptions {
+  worker: TerminalWorkerConnection;
   requestTimeoutMs?: number;
-  forkWorker?: () => TerminalWorkerProcess;
   getTerminalActivityUrl?: () => string | null;
+  resolveCreateEnvironment?: () => TerminalCreateEnvironment;
+  // The kill path. The daemon passes the reaper, which verifies every program is gone; the
+  // default asks the connected worker to shut down.
+  closeTerminals?: () => Promise<void>;
+}
+
+/** The daemon's terminal manager: its terminals live in a worker that can outlive it. */
+export interface DaemonTerminalManager extends TerminalManager {
+  /** Registers every terminal the connected worker already runs. Resolves with their count. */
+  adoptTerminals(): Promise<number>;
+  /** Kills every terminal and verifies their programs ended. */
+  closeTerminals(): Promise<void>;
+  /** Lets go of the worker; its terminals keep running for the next daemon. */
+  detach(): Promise<void>;
 }
 
 function createActivityToken(): string {
   return randomBytes(32).toString("base64url");
 }
 
-function resolveWorkerUrl(): URL {
-  const currentUrl = import.meta.url;
-  if (currentUrl.endsWith(".ts")) {
-    return new URL("./terminal-worker-process.ts", currentUrl);
-  }
-  return new URL("./terminal-worker-process.js", currentUrl);
-}
-
-function resolveWorkerExecArgv(): string[] {
-  if (!import.meta.url.endsWith(".ts")) {
-    return [];
-  }
-  const loaderUrl = new URL("./terminal-ts-loader.mjs", import.meta.url).href;
-  const importSource = [
-    'import { register } from "node:module";',
-    'import { pathToFileURL } from "node:url";',
-    `register(${JSON.stringify(loaderUrl)}, pathToFileURL("./"));`,
-  ].join(" ");
-  return [
-    "--experimental-strip-types",
-    "--import",
-    `data:text/javascript,${encodeURIComponent(importSource)}`,
-  ];
+function resolveDaemonTerminalCreateEnvironment(): TerminalCreateEnvironment {
+  return {
+    baseEnv: createExternalProcessEnv(process.env),
+    paseoCliPath: resolvePaseoCliExecutablePath(),
+  };
 }
 
 function isResponse(message: TerminalWorkerToParentMessage): message is TerminalWorkerResponse {
@@ -139,19 +139,13 @@ function cloneTerminalInfo(info: RequiredWorkerTerminalInfo): RequiredWorkerTerm
   };
 }
 
-function forkTerminalWorker(): TerminalWorkerProcess {
-  return fork(fileURLToPath(resolveWorkerUrl()), [], {
-    execArgv: resolveWorkerExecArgv(),
-    serialization: "advanced",
-    stdio: ["ignore", "ignore", "inherit", "ipc"],
-  }) as TerminalWorkerProcess;
-}
-
 export function createWorkerTerminalManager(
-  managerOptions: WorkerTerminalManagerOptions = {},
-): TerminalManager {
-  const worker = managerOptions.forkWorker ? managerOptions.forkWorker() : forkTerminalWorker();
+  managerOptions: WorkerTerminalManagerOptions,
+): DaemonTerminalManager {
+  const worker = managerOptions.worker;
   const requestTimeoutMs = managerOptions.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
+  const resolveCreateEnvironment =
+    managerOptions.resolveCreateEnvironment ?? resolveDaemonTerminalCreateEnvironment;
   const pendingRequests = new Map<string, PendingRequest>();
   const recordsById = new Map<string, WorkerTerminalRecord>();
   const terminalIdsByCwd = new Map<string, Set<string>>();
@@ -163,8 +157,8 @@ export function createWorkerTerminalManager(
   const terminalActivityListeners = new Set<TerminalActivityListener>();
   const terminalWorkspaceContributionChangedListeners =
     new Set<TerminalWorkspaceContributionChangedListener>();
-  let workerExited = false;
-  let workerShutdownTimer: ReturnType<typeof setTimeout> | null = null;
+  let workerDisconnected = false;
+  let closePromise: Promise<void> | null = null;
 
   function emitTerminalsChanged(event: TerminalsChangedEvent): void {
     for (const listener of Array.from(terminalsChangedListeners)) {
@@ -613,17 +607,13 @@ export function createWorkerTerminalManager(
     handleWorkerEvent(message);
   });
 
-  worker.on("exit", (code, signal) => {
-    workerExited = true;
-    if (workerShutdownTimer) {
-      clearTimeout(workerShutdownTimer);
-      workerShutdownTimer = null;
-    }
-    rejectPendingRequests(new Error(`Terminal worker exited (${signal ?? code ?? "unknown"})`));
+  worker.on("close", () => {
+    workerDisconnected = true;
+    rejectPendingRequests(new Error("Terminal worker connection closed"));
   });
 
   function sendRequest(input: TerminalWorkerRequestInput): Promise<unknown> {
-    if (workerExited || !worker.connected) {
+    if (workerDisconnected || !worker.connected) {
       return Promise.reject(new Error("Terminal worker is not running"));
     }
     const requestId = randomUUID();
@@ -651,6 +641,38 @@ export function createWorkerTerminalManager(
       // Worker failures are surfaced through awaitable manager methods and worker
       // lifecycle state; do not let fire-and-forget sends crash the daemon.
     });
+  }
+
+  function clearRecords(): void {
+    for (const terminalId of Array.from(recordsById.keys())) {
+      removeRecord(terminalId);
+    }
+  }
+
+  function disconnectWorker(): Promise<void> {
+    if (workerDisconnected || !worker.connected) {
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      worker.on("close", () => resolve());
+      worker.disconnect();
+    });
+  }
+
+  function closeTerminals(): Promise<void> {
+    closePromise ??= (async () => {
+      if (managerOptions.closeTerminals) {
+        await disconnectWorker();
+        clearRecords();
+        await managerOptions.closeTerminals();
+        return;
+      }
+      // Unverified: production passes the reaper, which confirms every program ended.
+      sendBestEffortRequest({ type: "shutdown" });
+      await disconnectWorker();
+      clearRecords();
+    })();
+    return closePromise;
   }
 
   return {
@@ -696,6 +718,7 @@ export function createWorkerTerminalManager(
       const creation = { session: null as TerminalSession | null };
       pendingCreationsById.set(terminalId, creation);
       try {
+        const environment = resolveCreateEnvironment();
         await sendRequest({
           type: "createTerminal",
           options: {
@@ -703,6 +726,8 @@ export function createWorkerTerminalManager(
             id: terminalId,
             activityToken,
             activityUrl: terminalActivityUrl,
+            baseEnv: environment.baseEnv,
+            paseoCliPath: environment.paseoCliPath,
           },
         });
         if (!creation.session) {
@@ -820,23 +845,38 @@ export function createWorkerTerminalManager(
     },
 
     killAll(): void {
-      void sendRequest({ type: "killAll" })
-        .catch(() => {
-          // no-op
-        })
-        .finally(() => {
-          if (worker.connected) {
-            worker.disconnect();
-          }
-          if (!worker.killed && !workerShutdownTimer) {
-            workerShutdownTimer = setTimeout(() => {
-              worker.kill();
-            }, 1000);
-          }
-        });
-      for (const terminalId of Array.from(recordsById.keys())) {
-        removeRecord(terminalId);
+      void closeTerminals().catch(() => {
+        // The synchronous interface cannot report it; closeTerminals() callers see the error.
+      });
+    },
+
+    closeTerminals,
+
+    async detach(): Promise<void> {
+      await disconnectWorker();
+      clearRecords();
+    },
+
+    async adoptTerminals(): Promise<number> {
+      const listed = (await sendRequest({ type: "listTerminals" })) as TerminalWorkerListResult;
+      const cwds = new Set<string>();
+      for (const item of listed) {
+        const info = asRequiredWorkerTerminalInfo(item.terminal);
+        registerRecord({ info, state: item.state });
+        const record = recordsById.get(info.id);
+        if (record) {
+          record.replayPreamble = item.replayPreamble;
+        }
+        // The agent hooks inside each shell keep the token they were started with.
+        if (item.activityToken) {
+          terminalActivityTokenById.set(info.id, item.activityToken);
+        }
+        cwds.add(info.cwd);
       }
+      for (const cwd of cwds) {
+        emitTerminalsChanged({ cwd, terminals: listTerminalItemsForCwd(cwd) });
+      }
+      return listed.length;
     },
 
     subscribeTerminalsChanged(listener: TerminalsChangedListener): () => void {
@@ -864,6 +904,115 @@ export function createWorkerTerminalManager(
   };
 }
 
-export function terminateWorkerTerminalManager(manager: TerminalManager): void {
-  manager.killAll();
+export interface StartWorkerTerminalManagerOptions {
+  paseoHome: string;
+  paseoVersion: string;
+  logger: Logger;
+  getTerminalActivityUrl?: () => string | null;
+  requestTimeoutMs?: number;
+}
+
+/**
+ * Connects the daemon to its terminal worker: adopts a running worker this home's previous
+ * daemon left (restart, crash, `stop --keep-terminals`), or launches a new one. Records that
+ * cannot be adopted (cleanup that never finished, a dead worker whose programs survived it)
+ * go through the reaper first, so a daemon never adopts terminals someone asked to close.
+ */
+export async function startWorkerTerminalManager(
+  options: StartWorkerTerminalManagerOptions,
+): Promise<DaemonTerminalManager> {
+  const logger = options.logger.child({ module: "terminal-worker" });
+  const inspector = createTerminalWorkerProcessInspector();
+  const adoptable: TerminalWorkerRecord[] = [];
+  const toReap: string[] = [];
+  for (const file of listTerminalWorkerRecords(options.paseoHome)) {
+    if ("error" in file) {
+      logger.warn({ recordPath: file.path, err: file.error }, "Unreadable terminal worker record");
+      continue;
+    }
+    const { record } = file;
+    if (
+      record.closing ||
+      !writtenDuringThisBoot({ startedAt: record.createdAt, bootId: record.bootId })
+    ) {
+      toReap.push(file.path);
+      continue;
+    }
+    const worker = classifyTerminalWorkerProcess(record, await inspector.inspect(record.pid));
+    if (worker.status === "owned") {
+      adoptable.push(record);
+    } else if (worker.status === "unknown") {
+      logger.warn(
+        { recordPath: file.path, pid: record.pid, reason: worker.reason },
+        "Cannot identify terminal worker; leaving its record",
+      );
+    } else {
+      // Its programs lost their PTY with the worker and cannot be adopted.
+      toReap.push(file.path);
+    }
+  }
+
+  const log = (message: string, fields?: Record<string, unknown>) => logger.info(fields, message);
+  if (toReap.length > 0) {
+    await reapTerminalWorkers({
+      paseoHome: options.paseoHome,
+      gracefulMs: 0,
+      recordPaths: toReap,
+      inspector,
+      log,
+    }).catch((error: unknown) => {
+      logger.warn({ err: error }, "Terminal cleanup of an unadoptable worker was not confirmed");
+    });
+  }
+
+  let connection: TerminalWorkerConnection | null = null;
+  for (const record of adoptable) {
+    if (connection) {
+      logger.warn({ pid: record.pid }, "A second live terminal worker was left running");
+      continue;
+    }
+    try {
+      connection = await connectTerminalWorker({
+        socketPath: record.socketPath,
+        secret: record.secret,
+      });
+      logger.info({ pid: record.pid }, "Adopting running terminal worker");
+    } catch (error) {
+      logger.warn(
+        { pid: record.pid, err: error },
+        "Cannot reach terminal worker; leaving it running",
+      );
+    }
+  }
+  const adopted = connection !== null;
+  if (!connection) {
+    const launched = await launchTerminalWorker({
+      paseoHome: options.paseoHome,
+      paseoVersion: options.paseoVersion,
+    });
+    connection = await connectTerminalWorker({
+      socketPath: launched.record.socketPath,
+      secret: launched.record.secret,
+    });
+    logger.info({ pid: launched.record.pid }, "Launched terminal worker");
+  }
+
+  const manager = createWorkerTerminalManager({
+    worker: connection,
+    ...(options.requestTimeoutMs === undefined
+      ? {}
+      : { requestTimeoutMs: options.requestTimeoutMs }),
+    ...(options.getTerminalActivityUrl
+      ? { getTerminalActivityUrl: options.getTerminalActivityUrl }
+      : {}),
+    closeTerminals: async () => {
+      const result = await reapTerminalWorkers({ paseoHome: options.paseoHome, inspector, log });
+      logger.info(result, "Terminals closed");
+    },
+  });
+  if (adopted) {
+    const count = await manager.adoptTerminals();
+    logger.info({ terminals: count }, "Adopted terminals from the running terminal worker");
+  }
+  return manager;
 }

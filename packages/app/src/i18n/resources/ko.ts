@@ -2652,6 +2652,10 @@ export const ko: TranslationResources = {
           requestFailedTitle: "오류",
           requestFailedMessage:
             "재시작 요청을 보내지 못했습니다. Paseo가 자동으로 다시 연결하므로 호스트가 온라인으로 표시되면 다시 시도하세요.",
+          closeTerminals: "재시작하고 터미널 닫기",
+          closeTerminalsHint: "재시작하면서 이 호스트의 모든 터미널도 닫습니다.",
+          closeTerminalsConfirmMessage:
+            "데몬을 재시작하고 모든 터미널을 닫습니다. 터미널에서 실행 중인 프로그램은 종료됩니다. 앱은 자동으로 다시 연결됩니다.",
           dialogFailedMessage: "재시작 확인 대화 상자를 열 수 없습니다.",
         },
         update: {

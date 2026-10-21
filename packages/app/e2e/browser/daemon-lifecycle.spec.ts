@@ -9,6 +9,8 @@ import {
   restartDaemonInSettings,
   expectDaemonRestartComplete,
   readWorkerPid,
+  openLongLivedTerminal,
+  listTerminalIds,
 } from "../support/helpers/daemon-lifecycle";
 
 test("settings restart waits for a replacement worker while retaining the supervisor", async ({
@@ -24,6 +26,36 @@ test("settings restart waits for a replacement worker while retaining the superv
     expect(await readWorkerPid(daemon)).not.toBe(previousWorker);
     expect(daemon.getPid()).toBe(supervisor);
     await page.screenshot({ path: testInfo.outputPath("restart-confirmed.png"), fullPage: true });
+  } finally {
+    await daemon.close();
+  }
+});
+
+test("settings restart keeps a terminal", async ({ page }) => {
+  const daemon = await startIsolatedHostDaemon(randomUUID());
+  try {
+    const terminalId = await openLongLivedTerminal(daemon);
+    const previousWorker = await readWorkerPid(daemon);
+    await openDaemonOverview(page, daemon);
+    await restartDaemonInSettings(page);
+    await expectDaemonRestartComplete(page);
+    expect(await readWorkerPid(daemon)).not.toBe(previousWorker);
+    expect(await listTerminalIds(daemon)).toContain(terminalId);
+  } finally {
+    await daemon.close();
+  }
+});
+
+test("settings restart and close terminals closes the terminal", async ({ page }) => {
+  const daemon = await startIsolatedHostDaemon(randomUUID());
+  try {
+    await openLongLivedTerminal(daemon);
+    const previousWorker = await readWorkerPid(daemon);
+    await openDaemonOverview(page, daemon);
+    await restartDaemonInSettings(page, { closeTerminals: true });
+    await expectDaemonRestartComplete(page);
+    expect(await readWorkerPid(daemon)).not.toBe(previousWorker);
+    expect(await listTerminalIds(daemon)).toEqual([]);
   } finally {
     await daemon.close();
   }

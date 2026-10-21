@@ -31,6 +31,34 @@ export interface WorkerCreateTerminalOptions {
   cols?: number;
   activityToken?: string;
   activityUrl?: string | null;
+  // The worker outlives the daemon that started it, so the controlling daemon
+  // sends its own environment and Paseo CLI path with every create instead of
+  // letting the worker reuse whatever it inherited at launch.
+  baseEnv?: Record<string, string>;
+  paseoCliPath?: string | null;
+}
+
+// Bumped when a request, response or event changes shape. Milestone 2 adds
+// the version handshake semantics; the record and hello carry it from day one.
+export const TERMINAL_WORKER_PROTOCOL_VERSION = 1;
+
+export interface TerminalWorkerHello {
+  type: "hello";
+  secret: string;
+  protocolVersion: number;
+}
+
+export interface TerminalWorkerHelloAck {
+  type: "helloAck";
+  pid: number;
+  protocolVersion: number;
+}
+
+export interface WorkerListedTerminal {
+  terminal: WorkerTerminalInfo;
+  state: TerminalState;
+  activityToken: string | null;
+  replayPreamble: string;
 }
 
 export interface WorkerKillAndWaitOptions {
@@ -87,7 +115,12 @@ export type TerminalWorkerRequest =
       stripAnsi?: boolean;
     }
   | {
-      type: "killAll";
+      type: "listTerminals";
+      requestId: string;
+    }
+  | {
+      // Kill every terminal (waiting for each program to exit) and exit.
+      type: "shutdown";
       requestId: string;
     }
   | {
@@ -147,6 +180,8 @@ export type TerminalWorkerEvent =
     };
 
 export type TerminalWorkerToParentMessage = TerminalWorkerResponse | TerminalWorkerEvent;
+
+export type TerminalWorkerListResult = WorkerListedTerminal[];
 
 export type TerminalWorkerCaptureResult = CaptureTerminalLinesResult;
 // The worker fills TerminalStateSnapshot.replayPreamble on getTerminalState so

@@ -4,10 +4,14 @@ import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { tmpdir } from "node:os";
-import { createWorkerTerminalManager } from "./worker-terminal-manager.js";
+import pino from "pino";
+import {
+  createWorkerTerminalManager,
+  startWorkerTerminalManager,
+  type DaemonTerminalManager,
+} from "./worker-terminal-manager.js";
 import type {
   TerminalActivityTransitionEvent,
-  TerminalManager,
   TerminalWorkspaceContributionChangedEvent,
 } from "./terminal-manager.js";
 import {
@@ -89,7 +93,7 @@ function createTerminalState(): TerminalState {
 
 class FakeTerminalWorker extends EventEmitter {
   connected = true;
-  killed = false;
+  readonly workerPid = 1;
   readonly sentMessages: TerminalWorkerRequest[] = [];
 
   send(message: TerminalWorkerRequest, callback: (error: Error | null) => void): boolean {
@@ -100,14 +104,7 @@ class FakeTerminalWorker extends EventEmitter {
 
   disconnect(): void {
     this.connected = false;
-    this.emit("exit", 0, null);
-  }
-
-  kill(): boolean {
-    this.killed = true;
-    this.connected = false;
-    this.emit("exit", 0, null);
-    return true;
+    this.emit("close");
   }
 
   emitWorkerMessage(message: TerminalWorkerToParentMessage): void {
@@ -115,8 +112,27 @@ class FakeTerminalWorker extends EventEmitter {
   }
 }
 
-let manager: TerminalManager | null = null;
+let manager: DaemonTerminalManager | null = null;
 const temporaryDirs: string[] = [];
+
+// A real detached worker in a throwaway home; afterEach closes its terminals and the worker.
+async function startRealWorkerManager(
+  options: { getTerminalActivityUrl?: () => string | null; paseoHome?: string } = {},
+): Promise<DaemonTerminalManager> {
+  const { paseoHome = createTemporaryHome(), ...rest } = options;
+  return startWorkerTerminalManager({
+    paseoHome,
+    paseoVersion: "0.0.0-test",
+    logger: pino({ level: "silent" }),
+    ...rest,
+  });
+}
+
+function createTemporaryHome(): string {
+  const paseoHome = mkdtempSync(join(tmpdir(), "worker-terminal-manager-home-"));
+  temporaryDirs.push(paseoHome);
+  return paseoHome;
+}
 const terminalSessions: TerminalSession[] = [];
 
 function trackTerminal(session: TerminalSession): TerminalSession {
@@ -150,7 +166,7 @@ afterEach(async () => {
         .catch(() => {}),
     ),
   );
-  manager?.killAll();
+  await manager?.closeTerminals();
   manager = null;
   while (temporaryDirs.length > 0) {
     const dir = temporaryDirs.pop();
@@ -163,7 +179,7 @@ afterEach(async () => {
 it("creates a terminal through the worker and streams output", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-output-"));
   temporaryDirs.push(cwd);
-  manager = createWorkerTerminalManager();
+  manager = await startRealWorkerManager();
   const session = trackTerminal(
     await manager.createTerminal({
       workspaceId: "ws-test",
@@ -208,7 +224,7 @@ it("delivers rapid small writes complete and in order through worker coalescing"
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-coalesce-"));
   temporaryDirs.push(cwd);
   const burstGatePath = join(cwd, "burst-ready");
-  manager = createWorkerTerminalManager();
+  manager = await startRealWorkerManager();
   // The file gate starts the burst after this test subscribes without depending
   // on platform-specific PTY input echo/canonical-mode behavior.
   const session = trackTerminal(
@@ -271,7 +287,7 @@ it("delivers rapid small writes complete and in order through worker coalescing"
 it("pulls fresh terminal state from the worker authority", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-state-"));
   temporaryDirs.push(cwd);
-  manager = createWorkerTerminalManager();
+  manager = await startRealWorkerManager();
   const session = trackTerminal(
     await manager.createTerminal({
       workspaceId: "ws-test",
@@ -302,7 +318,7 @@ it.skipIf(isPlatform("win32"))(
   async () => {
     const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-preamble-"));
     temporaryDirs.push(cwd);
-    manager = createWorkerTerminalManager();
+    manager = await startRealWorkerManager();
     // \x1b[>1u pushes kitty keyboard flag 1, which the worker's input-mode
     // tracker records and reflects in its replay preamble (\x1b[=1;1u).
     const session = trackTerminal(
@@ -328,7 +344,7 @@ it.skipIf(isPlatform("win32"))(
 it("refreshes cached terminal title after worker title changes", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-title-"));
   temporaryDirs.push(cwd);
-  manager = createWorkerTerminalManager();
+  manager = await startRealWorkerManager();
   const session = trackTerminal(
     await manager.createTerminal({
       workspaceId: "ws-test",
@@ -348,7 +364,7 @@ it("refreshes cached terminal title after worker title changes", async () => {
 it("refreshes cached terminal size after worker resize", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-resize-"));
   temporaryDirs.push(cwd);
-  manager = createWorkerTerminalManager();
+  manager = await startRealWorkerManager();
   const session = trackTerminal(await manager.createTerminal({ cwd, workspaceId: "ws-test" }));
 
   session.send({ type: "resize", rows: 10, cols: 40 });
@@ -363,7 +379,7 @@ it("refreshes cached terminal size after worker resize", async () => {
 it("captures terminal output from the worker authority", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-capture-"));
   temporaryDirs.push(cwd);
-  manager = createWorkerTerminalManager();
+  manager = await startRealWorkerManager();
   const session = trackTerminal(await manager.createTerminal({ cwd, workspaceId: "ws-test" }));
 
   session.send({ type: "input", data: "echo hello world\r" });
@@ -382,7 +398,7 @@ it("does not surface fire-and-forget send timeouts as unhandled rejections", asy
   const worker = new FakeTerminalWorker();
   manager = createWorkerTerminalManager({
     requestTimeoutMs: 5,
-    forkWorker: () => worker,
+    worker,
   });
 
   worker.emitWorkerMessage({
@@ -416,7 +432,7 @@ it("does not surface fire-and-forget send timeouts as unhandled rejections", asy
 });
 
 it("keeps registered cwd env inheritance behind the worker manager interface", async () => {
-  manager = createWorkerTerminalManager();
+  manager = await startRealWorkerManager();
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-env-"));
   temporaryDirs.push(cwd);
   const markerPath = join(cwd, "env.txt");
@@ -449,7 +465,7 @@ it("injects parent-minted terminal activity env through the worker", async () =>
   temporaryDirs.push(cwd);
   const envPath = join(cwd, "activity-env.json");
   const activityUrl = "http://127.0.0.1:12345/api/terminal-activity";
-  manager = createWorkerTerminalManager({
+  manager = await startRealWorkerManager({
     getTerminalActivityUrl: () => activityUrl,
   });
 
@@ -496,8 +512,46 @@ it("injects parent-minted terminal activity env through the worker", async () =>
   expect(env.path?.split(delimiter)[0]).toBe(paseoCliBinDir);
 });
 
+it("adopts a detached worker's terminals with their activity tokens and keeps them usable", async () => {
+  const paseoHome = createTemporaryHome();
+  const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-adopt-"));
+  temporaryDirs.push(cwd);
+  const envPath = join(cwd, "adopt-env.json");
+  const first = await startRealWorkerManager({ paseoHome });
+  const created = await first.createTerminal({
+    workspaceId: "ws-adopt",
+    cwd,
+    ...nodeTerminalCommand(`
+      require("node:fs").writeFileSync(
+        ${JSON.stringify(envPath)},
+        JSON.stringify({ token: process.env.PASEO_ACTIVITY_TOKEN }),
+      );
+      process.stdin.on("data", (chunk) => {
+        process.stdout.write("adopted-output:" + chunk.toString());
+      });
+      setInterval(() => {}, 1000);
+    `),
+  });
+  await waitForCondition(() => existsSync(envPath), 10000);
+  const { token } = JSON.parse(readFileSync(envPath, "utf8")) as { token: string };
+
+  await first.detach();
+  manager = await startRealWorkerManager({ paseoHome });
+
+  const adopted = manager.getTerminal(created.id);
+  expect(adopted?.workspaceId).toBe("ws-adopt");
+  expect(await manager.getTerminals(cwd)).toHaveLength(1);
+  expect(manager.validateTerminalActivityToken(created.id, token)).toBe("valid");
+  const messages: string[] = [];
+  adopted?.subscribe((message) => {
+    if (message.type === "output") messages.push(message.data);
+  });
+  adopted?.send({ type: "input", data: "after-adopt\r" });
+  await waitForCondition(() => messages.join("").includes("adopted-output:after-adopt"), 10000);
+});
+
 it("starts the default shell through the worker and accepts quoted commands", async () => {
-  manager = createWorkerTerminalManager();
+  manager = await startRealWorkerManager();
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-shell-"));
   temporaryDirs.push(cwd);
   const markerPath = join(cwd, "shell quoted marker.txt");
@@ -518,7 +572,7 @@ it("lists subdirectory terminals when querying the workspace root", async () => 
   const subdirCwd = join(rootCwd, "apps", "mobile");
   mkdirSync(subdirCwd, { recursive: true });
   temporaryDirs.push(rootCwd);
-  manager = createWorkerTerminalManager();
+  manager = await startRealWorkerManager();
   const created = trackTerminal(
     await manager.createTerminal({
       workspaceId: "ws-test",
@@ -536,7 +590,7 @@ it("lists terminals locally without waiting on the worker", async () => {
   const worker = new FakeTerminalWorker();
   manager = createWorkerTerminalManager({
     requestTimeoutMs: 5,
-    forkWorker: () => worker,
+    worker,
   });
 
   worker.emitWorkerMessage({
@@ -577,7 +631,7 @@ it("includes only stamped terminals in workspace-scoped local reads", async () =
   const worker = new FakeTerminalWorker();
   manager = createWorkerTerminalManager({
     requestTimeoutMs: 5,
-    forkWorker: () => worker,
+    worker,
   });
 
   worker.emitWorkerMessage({
@@ -629,7 +683,7 @@ it("rejects non-absolute cwd in getTerminals", async () => {
   const worker = new FakeTerminalWorker();
   manager = createWorkerTerminalManager({
     requestTimeoutMs: 5,
-    forkWorker: () => worker,
+    worker,
   });
 
   await expect(manager.getTerminals("relative/path")).rejects.toThrow("cwd must be absolute path");
@@ -639,7 +693,7 @@ it("surfaces worker activity changes via getActivity, onActivityChange, and term
   const worker = new FakeTerminalWorker();
   manager = createWorkerTerminalManager({
     requestTimeoutMs: 50,
-    forkWorker: () => worker,
+    worker,
   });
 
   worker.emitWorkerMessage({
@@ -702,7 +756,7 @@ it("sets terminal activity through a worker request", async () => {
   const worker = new FakeTerminalWorker();
   manager = createWorkerTerminalManager({
     requestTimeoutMs: 50,
-    forkWorker: () => worker,
+    worker,
   });
   worker.emitWorkerMessage({
     type: "terminalCreated",
@@ -735,7 +789,7 @@ it("clears terminal attention through a worker request", async () => {
   const worker = new FakeTerminalWorker();
   manager = createWorkerTerminalManager({
     requestTimeoutMs: 50,
-    forkWorker: () => worker,
+    worker,
   });
   worker.emitWorkerMessage({
     type: "terminalCreated",
@@ -766,7 +820,7 @@ it("clears terminal attention through a worker request", async () => {
 it("clears finished attention on a real terminal", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-attention-"));
   temporaryDirs.push(cwd);
-  manager = createWorkerTerminalManager();
+  manager = await startRealWorkerManager();
   const session = trackTerminal(
     await manager.createTerminal({
       workspaceId: "ws-test",
@@ -802,7 +856,7 @@ it("clears finished attention on a real terminal", async () => {
 it("removes worker terminals after killAndWait", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-kill-"));
   temporaryDirs.push(cwd);
-  manager = createWorkerTerminalManager();
+  manager = await startRealWorkerManager();
   const session = trackTerminal(
     await manager.createTerminal({
       workspaceId: "ws-test",
@@ -827,7 +881,7 @@ it("produces one terminals-changed snapshot per title change", async () => {
   const worker = new FakeTerminalWorker();
   manager = createWorkerTerminalManager({
     requestTimeoutMs: 50,
-    forkWorker: () => worker,
+    worker,
   });
 
   worker.emitWorkerMessage({
@@ -864,7 +918,7 @@ it("produces one terminals-changed snapshot and one contribution event per activ
   const worker = new FakeTerminalWorker();
   manager = createWorkerTerminalManager({
     requestTimeoutMs: 50,
-    forkWorker: () => worker,
+    worker,
   });
 
   worker.emitWorkerMessage({
@@ -914,7 +968,7 @@ it("removes a killed worker terminal from terminalExit without duplicate snapsho
   const worker = new FakeTerminalWorker();
   manager = createWorkerTerminalManager({
     requestTimeoutMs: 50,
-    forkWorker: () => worker,
+    worker,
   });
   const workingActivity = { state: "working" as const, changedAt: 1000 };
 
@@ -973,7 +1027,7 @@ it("does not resurrect a terminal that exited before its create response was han
   const worker = new FakeTerminalWorker();
   manager = createWorkerTerminalManager({
     requestTimeoutMs: 50,
-    forkWorker: () => worker,
+    worker,
   });
 
   const snapshots: Array<{ cwd: string; terminalIds: string[] }> = [];
@@ -1026,7 +1080,7 @@ it("replays the exit to a listener attached after a create that lost the race", 
   const worker = new FakeTerminalWorker();
   manager = createWorkerTerminalManager({
     requestTimeoutMs: 50,
-    forkWorker: () => worker,
+    worker,
   });
 
   const created = manager.createTerminal({
@@ -1074,7 +1128,7 @@ it("rejects createTerminal and registers nothing when the worker cannot start th
   const worker = new FakeTerminalWorker();
   manager = createWorkerTerminalManager({
     requestTimeoutMs: 50,
-    forkWorker: () => worker,
+    worker,
   });
 
   const snapshots: Array<{ cwd: string; terminalIds: string[] }> = [];

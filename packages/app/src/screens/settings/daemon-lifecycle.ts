@@ -8,19 +8,23 @@ interface StatusReader {
 }
 
 export interface SettingsDaemonRestartDeps extends StatusReader {
-  restartServer: (reason: string) => Promise<unknown>;
+  restartServer: (reason: string, options: { killTerminals: boolean }) => Promise<unknown>;
 }
 
-/** Acknowledgment starts the wait; only a different ready worker completes it. */
+/**
+ * Acknowledgment starts the wait; only a different ready worker completes it. Terminals survive
+ * the restart unless `killTerminals` is set (daemons advertising terminalsSurviveRestart).
+ */
 export async function restartDaemonFromSettings(
   hostServerId: string,
   reason: string,
   deps: SettingsDaemonRestartDeps,
+  options: { killTerminals: boolean } = { killTerminals: false },
 ): Promise<void> {
   const previous = await readSelectedWorker(hostServerId, deps);
   let acknowledged = false;
   try {
-    await deps.restartServer(reason);
+    await deps.restartServer(reason, options);
     acknowledged = true;
   } catch (error) {
     if (!isReconnectFailure(error)) throw error;
