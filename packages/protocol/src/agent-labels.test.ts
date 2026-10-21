@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
+  AGENT_NOTIFICATIONS_MUTED_LABEL,
+  areAgentNotificationsMuted,
   getParentAgentIdFromLabels,
   getOpenAgentTabLabel,
   hasOpenAgentTab,
@@ -9,6 +11,20 @@ import {
 } from "./agent-labels.js";
 
 describe("agent label policy", () => {
+  test("mutes notifications only when the agent's mute label is true", () => {
+    expect(
+      areAgentNotificationsMuted({ labels: { [AGENT_NOTIFICATIONS_MUTED_LABEL]: "true" } }),
+    ).toBe(true);
+    expect(
+      areAgentNotificationsMuted({ labels: { [AGENT_NOTIFICATIONS_MUTED_LABEL]: "false" } }),
+    ).toBe(false);
+    expect(
+      areAgentNotificationsMuted({ labels: { [AGENT_NOTIFICATIONS_MUTED_LABEL]: true } }),
+    ).toBe(false);
+    expect(areAgentNotificationsMuted({ labels: {} })).toBe(false);
+    expect(areAgentNotificationsMuted({})).toBe(false);
+  });
+
   test("treats a non-empty parent agent label as delegation", () => {
     const labels = { [PARENT_AGENT_ID_LABEL]: " parent-agent \n" };
 

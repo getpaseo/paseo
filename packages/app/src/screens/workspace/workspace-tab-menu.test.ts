@@ -3,6 +3,7 @@ import {
   buildWorkspaceDesktopTabActions,
   buildWorkspaceTabMenuEntries,
 } from "@/screens/workspace/workspace-tab-menu";
+import type { WorkspaceTabNotificationMute } from "@/screens/workspace/workspace-tab-menu";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 
 function createAgentTab(): WorkspaceTabDescriptor {
@@ -14,7 +15,112 @@ function createAgentTab(): WorkspaceTabDescriptor {
   };
 }
 
+function notificationMenu(
+  notificationMute: WorkspaceTabNotificationMute | undefined,
+  tab = createAgentTab(),
+) {
+  return buildWorkspaceTabMenuEntries({
+    surface: "desktop",
+    tab,
+    index: 0,
+    tabCount: 1,
+    menuTestIDBase: "agent-menu",
+    onCopyResumeCommand: vi.fn(),
+    onCopyAgentId: vi.fn(),
+    onCopyTerminalId: vi.fn(),
+    onCopyFilePath: vi.fn(),
+    onReloadAgent: vi.fn(),
+    onRenameTab: vi.fn(),
+    onCloseTab: vi.fn(),
+    onCloseTabsBefore: vi.fn(),
+    onCloseTabsAfter: vi.fn(),
+    onCloseOtherTabs: vi.fn(),
+    notificationMute,
+  }).find((entry) => entry.kind === "item" && entry.key === "notification-mute");
+}
+
 describe("buildWorkspaceTabMenuEntries", () => {
+  it.each(["desktop", "mobile"] as const)(
+    "toggles notification muting in the %s agent menu",
+    (surface) => {
+      const onToggle = vi.fn();
+      const entries = buildWorkspaceTabMenuEntries({
+        surface,
+        tab: createAgentTab(),
+        index: 0,
+        tabCount: 1,
+        menuTestIDBase: "agent-menu",
+        onCopyResumeCommand: vi.fn(),
+        onCopyAgentId: vi.fn(),
+        onCopyTerminalId: vi.fn(),
+        onCopyFilePath: vi.fn(),
+        onReloadAgent: vi.fn(),
+        onRenameTab: vi.fn(),
+        onCloseTab: vi.fn(),
+        onCloseTabsBefore: vi.fn(),
+        onCloseTabsAfter: vi.fn(),
+        onCloseOtherTabs: vi.fn(),
+        notificationMute: { muted: false, status: "idle", onToggle },
+      });
+      const entry = entries.find(
+        (candidate) => candidate.kind === "item" && candidate.key === "notification-mute",
+      );
+      expect(entry).toMatchObject({
+        label: "Mute completion alerts",
+        icon: "bell-off",
+        closeOnSelect: false,
+      });
+      if (entry?.kind !== "item") throw new Error("missing mute action");
+      entry.onSelect();
+      expect(onToggle).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("shows unmute for a muted agent and disables the pending action", () => {
+    expect(notificationMenu({ muted: true, status: "pending", onToggle: vi.fn() })).toMatchObject({
+      label: "Unmute completion alerts",
+      icon: "bell",
+      disabled: true,
+      status: "pending",
+    });
+  });
+
+  it("keeps a retryable failure in the mute action", () => {
+    expect(notificationMenu({ muted: false, status: "error", onToggle: vi.fn() })).toMatchObject({
+      label: "Mute completion alerts",
+      disabled: false,
+      description: "Save failed. Select to retry.",
+      closeOnSelect: false,
+    });
+  });
+
+  it("omits notification muting when the daemon does not support it", () => {
+    expect(notificationMenu(undefined)).toBeUndefined();
+  });
+
+  it.each<WorkspaceTabDescriptor>([
+    {
+      key: "terminal_123",
+      tabId: "terminal_123",
+      kind: "terminal",
+      target: { kind: "terminal", terminalId: "terminal-123" },
+    },
+    {
+      key: "subagent_123",
+      tabId: "subagent_123",
+      kind: "provider_subagent",
+      target: {
+        kind: "provider_subagent",
+        parentAgentId: "parent-123",
+        subagentId: "subagent-123",
+      },
+    },
+  ])("omits notification muting for a $kind tab", (tab) => {
+    expect(
+      notificationMenu({ muted: false, status: "idle", onToggle: vi.fn() }, tab),
+    ).toBeUndefined();
+  });
+
   it("uses desktop tab ordering labels for desktop menus", () => {
     const onCopyResumeCommand = vi.fn();
     const onCopyAgentId = vi.fn();

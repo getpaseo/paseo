@@ -15,7 +15,9 @@ import { MobileTabTrailingAccessory } from "@/screens/workspace/workspace-tab-tr
 import {
   buildWorkspaceTabMenuEntries,
   type WorkspaceTabMenuLabels,
+  type WorkspaceTabNotificationMute,
 } from "@/screens/workspace/workspace-tab-menu";
+import { useAgentNotificationMute } from "../use-agent-notification-mute";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 
 // The trigger draws at 32pt beside its island neighbours, so only vertical slop is free.
@@ -144,6 +146,7 @@ interface MobileWorkspaceTabSwitcherProps {
 
 function MobileWorkspaceTabOption({
   tab,
+  notificationMute,
   tabIndex,
   tabCount,
   normalizedServerId,
@@ -163,6 +166,7 @@ function MobileWorkspaceTabOption({
   onCloseOtherTabs,
 }: {
   tab: WorkspaceTabDescriptor;
+  notificationMute?: WorkspaceTabNotificationMute;
   tabIndex: number;
   tabCount: number;
   normalizedServerId: string;
@@ -194,6 +198,9 @@ function MobileWorkspaceTabOption({
       closeLeft: t("workspace.tabs.menu.closeLeft"),
       closeRight: t("workspace.tabs.menu.closeRight"),
       closeOthers: t("workspace.tabs.menu.closeOthers"),
+      muteNotifications: t("workspace.tabs.menu.muteNotifications"),
+      unmuteNotifications: t("workspace.tabs.menu.unmuteNotifications"),
+      notificationMuteFailed: t("workspace.tabs.menu.notificationMuteFailed"),
       reloadAgent: t("workspace.tabs.menu.reloadAgent"),
       reloadAgentTooltip: t("workspace.tabs.menu.reloadAgentTooltip"),
       close: t("workspace.tabs.menu.close"),
@@ -217,6 +224,7 @@ function MobileWorkspaceTabOption({
     onCloseTabsBefore: onCloseTabsAbove,
     onCloseTabsAfter: onCloseTabsBelow,
     onCloseOtherTabs,
+    notificationMute,
     labels: tabMenuLabels,
   });
 
@@ -291,6 +299,7 @@ export const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitch
   onCloseOtherTabs,
 }: MobileWorkspaceTabSwitcherProps) {
   const { t } = useTranslation();
+  const notificationMuteForTab = useAgentNotificationMute(normalizedServerId);
   const tabFallbackLabels = useMemo(
     () => ({
       newTab: t("workspace.tabs.actions.newTab"),
@@ -394,6 +403,7 @@ export const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitch
       return (
         <MobileWorkspaceTabOption
           tab={tab}
+          notificationMute={notificationMuteForTab(tab)}
           tabIndex={tabIndex}
           tabCount={tabs.length}
           normalizedServerId={normalizedServerId}
@@ -418,6 +428,7 @@ export const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitch
       tabByKey,
       tabIndexByKey,
       tabs.length,
+      notificationMuteForTab,
       normalizedServerId,
       normalizedWorkspaceId,
       onCopyResumeCommand,

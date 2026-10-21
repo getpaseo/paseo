@@ -162,6 +162,7 @@ export class AgentStorage {
   private queueRecordMutation(
     agentId: string,
     mutate: (existing: StoredAgentRecord | null) => StoredAgentRecord,
+    onCommitted?: () => void,
   ): Promise<void> {
     const prev = this.pendingWrites.get(agentId) ?? Promise.resolve();
     const next = prev.then(async () => {
@@ -171,6 +172,7 @@ export class AgentStorage {
 
       const record = mutate(this.cache.get(agentId) ?? null);
       await this.writeRecord(record);
+      onCommitted?.();
       return undefined;
     });
 
@@ -239,28 +241,40 @@ export class AgentStorage {
 
   async applySnapshot(
     agent: ManagedAgent,
-    options?: { title?: string | null; internal?: boolean },
+    options?: {
+      title?: string | null;
+      internal?: boolean;
+      labels?: Record<string, string>;
+      onCommitted?: () => void;
+    },
   ): Promise<void> {
     await this.load();
     const hasTitleOverride =
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "title");
     const hasInternalOverride =
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "internal");
-    await this.queueRecordMutation(agent.id, (existing) => {
-      const record = toStoredAgentRecord(agent, {
-        title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
-        createdAt: existing?.createdAt,
-        internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
-      });
+    await this.queueRecordMutation(
+      agent.id,
+      (existing) => {
+        const record = toStoredAgentRecord(agent, {
+          title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
+          createdAt: existing?.createdAt,
+          internal: hasInternalOverride
+            ? options?.internal
+            : (agent.internal ?? existing?.internal),
+        });
+        if (options?.labels) record.labels = options.labels;
 
-      // Preserve soft-delete/archive status across snapshot flushes. The
-      // projection runs inside the per-agent write queue so it cannot commit a
-      // stale pre-archive record after the archive mutation.
-      if (existing && existing.archivedAt !== undefined) {
-        record.archivedAt = existing.archivedAt;
-      }
-      return record;
-    });
+        // Preserve soft-delete/archive status across snapshot flushes. The
+        // projection runs inside the per-agent write queue so it cannot commit a
+        // stale pre-archive record after the archive mutation.
+        if (existing && existing.archivedAt !== undefined) {
+          record.archivedAt = existing.archivedAt;
+        }
+        return record;
+      },
+      options?.onCommitted,
+    );
   }
 
   async setTitle(agentId: string, title: string): Promise<void> {
