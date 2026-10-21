@@ -2,13 +2,15 @@ import { describe, expect, it } from "vitest";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { createPluginHosts, type PluginHostsSource } from "./index";
 
-function registry() {
+function registry(options?: { selfServerId?: string }) {
   const hosts = [
     { serverId: "a", label: "Alpha", password: "secret" },
     { serverId: "b", label: "Beta", password: "secret" },
   ];
   const snapshots = new Map<string, NonNullable<ReturnType<PluginHostsSource["getSnapshot"]>>>();
   const listeners = new Set<() => void>();
+  const upserts: Parameters<PluginHostsSource["probeAndUpsertRemoteSshConnection"]>[0][] = [];
+  const removals: string[] = [];
   const source: PluginHostsSource = {
     getHosts: () => hosts,
     getSnapshot: (id) => snapshots.get(id) ?? null,
@@ -24,9 +26,20 @@ function registry() {
         listeners.delete(listener);
       };
     },
+    async probeAndUpsertRemoteSshConnection(input) {
+      upserts.push(input);
+      const serverId = `new-${upserts.length}`;
+      hosts.push({ serverId, label: input.label ?? `${serverId}.local`, password: "" });
+      return { serverId };
+    },
+    async removeHost(serverId) {
+      removals.push(serverId);
+      const index = hosts.findIndex((host) => host.serverId === serverId);
+      if (index !== -1) hosts.splice(index, 1);
+    },
   };
   const lifetime = new AbortController();
-  const runtime = createPluginHosts(source, lifetime.signal);
+  const runtime = createPluginHosts(source, lifetime.signal, options);
   return {
     hosts,
     snapshots,
@@ -34,6 +47,8 @@ function registry() {
     lifetime,
     runtime,
     source,
+    upserts,
+    removals,
     publish() {
       for (const listener of listeners) listener();
     },
@@ -121,4 +136,76 @@ it("reacquires a fresh API after explicit disposal without affecting a later bor
   expect(h.runtime.getPaseoClient("b")).toBe(second);
   h.lifetime.abort();
   expect(() => second.agents.subscribe(ignoreUpdate)).toThrow("disposed");
+});
+
+describe("plugin host registration", () => {
+  it("registers a Remote SSH host from its URI and returns the saved summary", async () => {
+    const h = registry();
+    let updates = 0;
+    h.runtime.subscribe(() => updates++);
+    const summary = await h.runtime.addRemoteSshHost({
+      target: "ssh://root@vm-1.example:2222?daemonPort=7000",
+      label: "VM 1",
+    });
+    expect(h.upserts).toEqual([
+      { host: "root@vm-1.example", sshPort: 2222, daemonPort: 7000, label: "VM 1" },
+    ]);
+    expect(summary).toEqual({ serverId: "new-1", label: "VM 1", status: "offline" });
+    expect(h.runtime.getSnapshot()).toContainEqual(summary);
+    expect(updates).toBe(1);
+    await h.runtime.addRemoteSshHost({ target: "ssh://vm-2", password: "daemon-secret" });
+    expect(h.upserts[1]).toEqual({ host: "vm-2", daemonPort: 6767, password: "daemon-secret" });
+    expect(h.runtime.getSnapshot().map((host) => host.serverId)).toEqual([
+      "a",
+      "b",
+      "new-1",
+      "new-2",
+    ]);
+    await expect(h.runtime.addRemoteSshHost({ target: "vm-3.example" })).rejects.toThrow(
+      "Invalid SSH host URI",
+    );
+    expect(h.upserts).toHaveLength(2);
+    h.lifetime.abort();
+  });
+
+  it("removes configured hosts but never an unknown host or the installation's own host", async () => {
+    const h = registry({ selfServerId: "a" });
+    await expect(h.runtime.removeHost("a")).rejects.toThrow("Plugin cannot remove its own host: a");
+    await expect(h.runtime.removeHost("missing")).rejects.toThrow("Unknown Paseo host: missing");
+    expect(h.removals).toEqual([]);
+    await h.runtime.removeHost("b");
+    expect(h.removals).toEqual(["b"]);
+    h.publish();
+    expect(h.runtime.getSnapshot().map((host) => host.serverId)).toEqual(["a"]);
+    h.lifetime.abort();
+  });
+
+  it("returns a host that was saved even if the plugin stopped while it connected", async () => {
+    const h = registry();
+    let finishProbe: (value: { serverId: string }) => void = () => {};
+    h.source.probeAndUpsertRemoteSshConnection = (input) =>
+      new Promise((resolve) => {
+        h.upserts.push(input);
+        finishProbe = (value) => {
+          h.hosts.push({ serverId: value.serverId, label: "Late", password: "" });
+          resolve(value);
+        };
+      });
+    const pending = h.runtime.addRemoteSshHost({ target: "ssh://late-vm" });
+    await Promise.resolve();
+    h.lifetime.abort();
+    finishProbe({ serverId: "late" });
+    await expect(pending).resolves.toEqual({ serverId: "late", label: "Late", status: "offline" });
+  });
+
+  it("rejects host changes after the plugin stops", async () => {
+    const h = registry();
+    h.lifetime.abort();
+    await expect(h.runtime.addRemoteSshHost({ target: "ssh://vm" })).rejects.toThrow(
+      "Plugin has stopped",
+    );
+    await expect(h.runtime.removeHost("b")).rejects.toThrow("Plugin has stopped");
+    expect(h.upserts).toEqual([]);
+    expect(h.removals).toEqual([]);
+  });
 });

@@ -39,6 +39,10 @@ function registry() {
             getSnapshot: () => null,
             subscribeAll: () => () => {},
             subscribeHostList: () => () => {},
+            probeAndUpsertRemoteSshConnection: async () => {
+              throw new Error("No hosts in this test");
+            },
+            removeHost: async () => {},
           },
           installation.lifetime.signal,
         ),
