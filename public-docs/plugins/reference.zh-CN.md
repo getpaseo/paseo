@@ -1061,6 +1061,24 @@ export function IssueActions({ theme }: PluginSurfaceProps) {
 }
 ```
 
+### Markdown {#markdown}
+
+从 `@getpaseo/plugin/client/ui` 导入 `Markdown`，即可在网页、iOS 和 Android 上
+使用 Paseo 的 Markdown 样式渲染字符串：
+
+```tsx
+import { Markdown } from "@getpaseo/plugin/client/ui";
+
+<Markdown>{"## 审查\n\n检查**通过**。"}</Markdown>;
+```
+
+`children` 是唯一的属性，必须为字符串。更新它会立即渲染新内容；空字符串不渲染任何内容。
+宿主提供主题、文本选择、代码块、表格、图表和链接处理。
+当所在界面提供工作区上下文时，工作区文件链接和图片会使用该上下文。
+
+组件不添加页面内边距或滚动容器。需要时请在外层使用布局或滚动视图。
+内容获取以及加载和错误状态由插件负责。
+
 ### Modal {#modal}
 
 `Modal` 在紧凑布局中使用底部面板，否则使用居中的对话框。`open` 状态由插件负责。
