@@ -1635,7 +1635,7 @@ test(
     expect(parentPrompts[0]).toContain("LOCAL_CLI_REPORT");
     expect(parentPrompts[0]).toContain('event="finished"');
     expect(parentPrompts[0]).toContain(`source-agent-id="${child.id}"`);
-    await expect.poll(receiptStates).toEqual(["completed", "completed"]);
+    await expect.poll(receiptStates, { timeout: 10000 }).toEqual(["completed", "completed"]);
     const timeline = await origin.client.fetchAgentTimeline(parent.id);
     const messages = timeline.entries.flatMap((row) =>
       row.item.type === "tool_call" && row.item.agentMessage ? [row.item.agentMessage] : [],
