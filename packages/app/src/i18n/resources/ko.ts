@@ -1922,6 +1922,20 @@ export const ko: TranslationResources = {
     archiveFinishedAction: "완료된 하위 에이전트 보관",
     archiveFinishedRetry: "다시 시도 ({{failed}}/{{total}})",
   },
+  backgroundTasks: {
+    title: "백그라운드 작업",
+    pillShellsOne: "셸 1개",
+    pillShellsMany: "셸 {{count}}개",
+    pillTasksOne: "백그라운드 작업 1개",
+    pillTasksMany: "백그라운드 작업 {{count}}개",
+    kindShell: "셸",
+    kindMonitor: "모니터",
+    stopAction: "{{label}} 중지",
+    stopTooltip: "작업 중지",
+    stopConfirmTitle: "백그라운드 작업을 중지할까요?",
+    stopConfirmMessage: "{{label}}이(가) 중지됩니다. 이 작업은 되돌릴 수 없습니다.",
+    stopConfirmLabel: "중지",
+  },
   panels: {
     draft: {
       newAgent: "새 에이전트",

@@ -6931,6 +6931,61 @@ test("applies live autonomous events and preserves usage omitted from completion
   expect(lifecycleUpdates).toContain("idle");
 });
 
+test("tracks the background tasks an idle agent leaves running and stops one", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-background-tasks-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const stoppedTaskIds: string[] = [];
+
+  class BackgroundTaskSession extends TestAgentSession {
+    async stopBackgroundTask(taskId: string): Promise<void> {
+      stoppedTaskIds.push(taskId);
+      this.pushEvent({ type: "background_tasks_changed", provider: "codex", tasks: [] });
+    }
+  }
+
+  let capturedSession: BackgroundTaskSession | null = null;
+  class BackgroundTaskClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      capturedSession = new BackgroundTaskSession(config);
+      return capturedSession;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new BackgroundTaskClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000131",
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  capturedSession!.pushEvent({
+    type: "background_tasks_changed",
+    provider: "codex",
+    tasks: [{ id: "b1", type: "local_bash", description: "Run ctest" }],
+  });
+  await vi.waitFor(() => {
+    const agent = manager.getAgent(snapshot.id);
+    expect(agent ? toAgentPayload(agent).backgroundTasks : undefined).toEqual([
+      { id: "b1", type: "local_bash", description: "Run ctest" },
+    ]);
+  });
+  expect(manager.getAgent(snapshot.id)?.lifecycle).toBe("idle");
+
+  await expect(manager.stopAgentBackgroundTask(snapshot.id, "missing")).rejects.toThrow(
+    "Background task 'missing' is not running",
+  );
+  await manager.stopAgentBackgroundTask(snapshot.id, "b1");
+
+  expect(stoppedTaskIds).toEqual(["b1"]);
+  await vi.waitFor(() => {
+    const agent = manager.getAgent(snapshot.id);
+    expect(agent ? toAgentPayload(agent).backgroundTasks : "missing").toBeUndefined();
+  });
+});
+
 test("ignores stale autonomous terminals without lowering the active turn lifecycle", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stale-autonomous-terminal-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);

@@ -1890,6 +1890,20 @@ export const zhCN: TranslationResources = {
     archiveFinishedAction: "归档已完成的 subagent",
     archiveFinishedRetry: "重试 ({{failed}}/{{total}})",
   },
+  backgroundTasks: {
+    title: "后台任务",
+    pillShellsOne: "1 个 shell",
+    pillShellsMany: "{{count}} 个 shell",
+    pillTasksOne: "1 个后台任务",
+    pillTasksMany: "{{count}} 个后台任务",
+    kindShell: "Shell",
+    kindMonitor: "监视器",
+    stopAction: "停止 {{label}}",
+    stopTooltip: "停止任务",
+    stopConfirmTitle: "停止后台任务？",
+    stopConfirmMessage: "{{label}} 将被停止，此操作无法撤销。",
+    stopConfirmLabel: "停止",
+  },
   panels: {
     draft: {
       newAgent: "新建 Agent",

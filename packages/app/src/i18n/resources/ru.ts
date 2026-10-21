@@ -1944,6 +1944,20 @@ export const ru: TranslationResources = {
     archiveFinishedAction: "Архивировать завершенные субагенты",
     archiveFinishedRetry: "Повторить ({{failed}}/{{total}})",
   },
+  backgroundTasks: {
+    title: "Фоновые задачи",
+    pillShellsOne: "1 оболочка",
+    pillShellsMany: "Оболочек: {{count}}",
+    pillTasksOne: "1 фоновая задача",
+    pillTasksMany: "Фоновых задач: {{count}}",
+    kindShell: "Оболочка",
+    kindMonitor: "Монитор",
+    stopAction: "Остановить {{label}}",
+    stopTooltip: "Остановить задачу",
+    stopConfirmTitle: "Остановить фоновую задачу?",
+    stopConfirmMessage: "{{label}} будет остановлена. Это действие нельзя отменить.",
+    stopConfirmLabel: "Остановить",
+  },
   panels: {
     draft: {
       newAgent: "Новый агент",

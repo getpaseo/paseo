@@ -245,6 +245,7 @@ interface AgentState {
   pendingPermissionCount?: number;
   requiresAttention?: boolean;
   attentionReason?: AgentSnapshotPayload["attentionReason"];
+  backgroundTasks?: AgentSnapshotPayload["backgroundTasks"];
 }
 
 function createAgent(
@@ -290,6 +291,7 @@ function createAgent(
     attentionReason: input.attentionReason ?? null,
     attentionTimestamp: null,
     archivedAt: null,
+    ...(input.backgroundTasks ? { backgroundTasks: input.backgroundTasks } : {}),
   } satisfies AgentSnapshotPayload;
 }
 
@@ -381,6 +383,46 @@ describe("WorkspaceDirectory", () => {
       "workspace-1": "done",
       "workspace-1-sibling": "running",
     });
+  });
+
+  test("idle root agent with a background shell keeps its workspace running", async () => {
+    const workspace = new WorkspaceStatus();
+
+    workspace.hasRootAgent({
+      id: "root-agent",
+      status: "idle",
+      requiresAttention: true,
+      attentionReason: "finished",
+      backgroundTasks: [{ id: "b1", type: "local_bash", description: "Run ctest" }],
+    });
+
+    await expect(workspace.workspaceStatus()).resolves.toBe("running");
+  });
+
+  test("idle same-workspace subagent with a background shell contributes running", async () => {
+    const workspace = new WorkspaceStatus();
+
+    workspace.hasRootAgent({ id: "parent-agent", status: "idle" });
+    workspace.hasDelegatedAgent({
+      id: "child-agent",
+      status: "idle",
+      backgroundTasks: [{ id: "b1", type: "local_bash", description: null }],
+    });
+
+    await expect(workspace.workspaceStatus()).resolves.toBe("running");
+  });
+
+  test("failed same-workspace subagent with leftover shells stays out of running", async () => {
+    const workspace = new WorkspaceStatus();
+
+    workspace.hasRootAgent({ id: "parent-agent", status: "idle" });
+    workspace.hasDelegatedAgent({
+      id: "child-agent",
+      status: "error",
+      backgroundTasks: [{ id: "b1", type: "local_bash", description: null }],
+    });
+
+    await expect(workspace.workspaceStatus()).resolves.toBe("done");
   });
 
   test("running same-workspace subagent contributes running to its parent workspace", async () => {

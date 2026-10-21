@@ -9,6 +9,11 @@ export interface AgentStateBucketInput {
   pendingPermissionCount?: number;
   requiresAttention?: boolean;
   attentionReason?: AgentAttentionReason;
+  /**
+   * Background shells and monitors the provider is still running after its turn ended. The
+   * agent will wake on its own when they finish, so it is still working.
+   */
+  backgroundTaskCount?: number;
 }
 
 const WORKSPACE_STATE_BUCKET_PRIORITY = {
@@ -27,6 +32,9 @@ export function deriveAgentStateBucket(input: AgentStateBucketInput): WorkspaceS
     return "failed";
   }
   if (input.status === "running") {
+    return "running";
+  }
+  if (input.status === "idle" && (input.backgroundTaskCount ?? 0) > 0) {
     return "running";
   }
   if (input.requiresAttention) {

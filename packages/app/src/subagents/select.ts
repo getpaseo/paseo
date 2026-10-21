@@ -16,6 +16,8 @@ export interface PaseoSubagentRow {
   subtitle: null;
   status: Agent["status"];
   turn: Agent["turn"];
+  /** Shells and monitors the subagent left running; it wakes when they finish. */
+  backgroundTaskCount?: number;
   requiresAttention: Agent["requiresAttention"];
   createdAt: Agent["createdAt"];
 }
@@ -62,6 +64,7 @@ function toSubagentRow(agent: Agent): SubagentRow {
     subtitle: null,
     status: agent.status,
     turn: agent.turn,
+    backgroundTaskCount: agent.backgroundTasks?.length ?? 0,
     requiresAttention: agent.requiresAttention,
     createdAt: agent.createdAt,
   };

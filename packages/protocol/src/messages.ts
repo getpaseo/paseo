@@ -810,6 +810,19 @@ const AgentActiveTurnPayloadSchema = z.object({
   startedAt: z.string().nullable(),
 });
 
+/**
+ * Work a provider keeps running in its own process after a turn ends — a background shell, a
+ * monitor watch. `type` is the provider's own task type ("local_bash", "monitor", ...) and stays
+ * an open string so a provider that announces a new type never breaks an older client.
+ */
+export const AgentBackgroundTaskPayloadSchema = z.object({
+  id: z.string(),
+  type: z.string(),
+  description: z.string().nullable(),
+});
+
+export type AgentBackgroundTaskPayload = z.infer<typeof AgentBackgroundTaskPayloadSchema>;
+
 export const AgentSnapshotPayloadSchema = z.object({
   id: z.string(),
   provider: AgentProviderSchema,
@@ -824,6 +837,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   lastUserMessageAt: z.string().nullable(),
   status: AgentStatusSchema,
   activeTurn: AgentActiveTurnPayloadSchema.nullable().optional(),
+  backgroundTasks: z.array(AgentBackgroundTaskPayloadSchema).optional(),
   capabilities: AgentCapabilityFlagsSchema,
   currentModeId: z.string().nullable(),
   availableModes: z.array(AgentModeSchema),
@@ -2022,6 +2036,18 @@ export const AgentDetachRequestMessageSchema = z.object({
 
 export const AgentDetachResponseMessageSchema = z.object({
   type: z.literal("agent.detach.response"),
+  payload: AgentActionResponsePayloadSchema,
+});
+
+export const AgentBackgroundTaskStopRequestMessageSchema = z.object({
+  type: z.literal("agent.background_tasks.stop.request"),
+  agentId: z.string(),
+  taskId: z.string(),
+  requestId: z.string(),
+});
+
+export const AgentBackgroundTaskStopResponseMessageSchema = z.object({
+  type: z.literal("agent.background_tasks.stop.response"),
   payload: AgentActionResponsePayloadSchema,
 });
 
@@ -3304,6 +3330,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentFeatureRequestMessageSchema,
   AgentConfigApplyRequestMessageSchema,
   AgentDetachRequestMessageSchema,
+  AgentBackgroundTaskStopRequestMessageSchema,
   AgentRewindRequestMessageSchema,
   AgentPermissionResponseMessageSchema,
   CheckoutStatusRequestSchema,
@@ -3681,6 +3708,8 @@ export const ServerInfoStatusPayloadSchema = z
         providerUsageList: z.boolean().optional(),
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
         agentDetach: z.boolean().optional(),
+        // COMPAT(agentBackgroundTaskStop): added in v0.10.2, remove gate after 2027-04-13.
+        agentBackgroundTaskStop: z.boolean().optional(),
         // COMPAT(agentThinkingUpdate): added in v0.2.4, remove gate after 2027-01-28.
         agentThinkingUpdate: z.boolean().optional(),
         // COMPAT(daemonDiagnostics): added in v0.1.100, remove gate after 2026-12-25 once daemon floor >= v0.1.100.
@@ -6989,6 +7018,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentFeatureResponseMessageSchema,
   AgentConfigApplyResponseMessageSchema,
   AgentDetachResponseMessageSchema,
+  AgentBackgroundTaskStopResponseMessageSchema,
   AgentRewindResponseMessageSchema,
   UpdateAgentResponseMessageSchema,
   ProjectRenameResponseSchema,
@@ -7190,6 +7220,9 @@ export type SetAgentThinkingResponseMessage = z.infer<typeof SetAgentThinkingRes
 export type SetAgentFeatureResponseMessage = z.infer<typeof SetAgentFeatureResponseMessageSchema>;
 export type AgentConfigApplyResponseMessage = z.infer<typeof AgentConfigApplyResponseMessageSchema>;
 export type AgentDetachResponseMessage = z.infer<typeof AgentDetachResponseMessageSchema>;
+export type AgentBackgroundTaskStopResponseMessage = z.infer<
+  typeof AgentBackgroundTaskStopResponseMessageSchema
+>;
 export type AgentRewindResponseMessage = z.infer<typeof AgentRewindResponseMessageSchema>;
 export type UpdateAgentResponseMessage = z.infer<typeof UpdateAgentResponseMessageSchema>;
 export type ProjectRenameResponse = z.infer<typeof ProjectRenameResponseSchema>;
@@ -7359,6 +7392,9 @@ export type SetAgentThinkingRequestMessage = z.infer<typeof SetAgentThinkingRequ
 export type SetAgentFeatureRequestMessage = z.infer<typeof SetAgentFeatureRequestMessageSchema>;
 export type AgentConfigApplyRequestMessage = z.infer<typeof AgentConfigApplyRequestMessageSchema>;
 export type AgentDetachRequestMessage = z.infer<typeof AgentDetachRequestMessageSchema>;
+export type AgentBackgroundTaskStopRequestMessage = z.infer<
+  typeof AgentBackgroundTaskStopRequestMessageSchema
+>;
 export type AgentPermissionResponseMessage = z.infer<typeof AgentPermissionResponseMessageSchema>;
 export type CheckoutStatusRequest = z.infer<typeof CheckoutStatusRequestSchema>;
 export type CheckoutStatusResponse = z.infer<typeof CheckoutStatusResponseSchema>;

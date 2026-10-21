@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { TFunction } from "i18next";
+import type { AgentBackgroundTaskPayload } from "@getpaseo/protocol/messages";
 import { SquarePen } from "lucide-react-native";
 import React, {
   memo,
@@ -335,8 +336,7 @@ function useAgentPanelDescriptor(
   const descriptorState = useSessionStore(
     useShallow((state) => {
       const session = state.sessions[context.serverId];
-      const agent =
-        session?.agents?.get(target.agentId) ?? session?.agentDetails?.get(target.agentId) ?? null;
+      const agent = resolveChatAgentFromSession(state, context.serverId, target.agentId);
       return {
         provider: agent?.provider ?? "codex",
         title: agent?.title ?? null,
@@ -344,6 +344,7 @@ function useAgentPanelDescriptor(
         pendingPermissionCount: agent?.pendingPermissions.length ?? 0,
         requiresAttention: agent?.requiresAttention ?? false,
         attentionReason: agent?.attentionReason ?? null,
+        backgroundTaskCount: agent?.backgroundTasks?.length ?? 0,
         isTurnActive: selectAgentTurnPresentation(session, target.agentId).isActive,
       };
     }),
@@ -364,6 +365,7 @@ function useAgentPanelDescriptor(
           pendingPermissionCount: descriptorState.pendingPermissionCount,
           requiresAttention: descriptorState.requiresAttention,
           attentionReason: descriptorState.attentionReason,
+          backgroundTaskCount: descriptorState.backgroundTaskCount,
         })
       : null,
   };
@@ -471,6 +473,7 @@ const EMPTY_STREAM_ITEMS: StreamItem[] = [];
 const EMPTY_MESSAGE_SUBMISSIONS = [] as const;
 const EMPTY_PENDING_PERMISSIONS = new Map<string, PendingPermission>();
 const EMPTY_PENDING_PERMISSION_LIST: PendingPermission[] = [];
+const NO_BACKGROUND_TASKS: AgentBackgroundTaskPayload[] = [];
 
 type RouteBottomAnchorRequest = ReturnType<typeof deriveRouteBottomAnchorRequest>;
 
@@ -1169,6 +1172,10 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   const tasks = useSessionStore((state): TodoEntry[] | undefined =>
     state.sessions[serverId]?.agentTasks.get(agentId),
   );
+  const backgroundTasks = useSessionStore(
+    (state) =>
+      resolveChatAgentFromSession(state, serverId, agentId)?.backgroundTasks ?? NO_BACKGROUND_TASKS,
+  );
   const archiveFinishedSubagents = useArchiveFinishedSubagents({
     serverId,
     parentAgentId: agentId,
@@ -1179,6 +1186,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   const hasVisibleAgentTracks = hasAgentTracks({
     subagentRows,
     tasks,
+    backgroundTasks,
     archiveFinishedStatus: archiveFinishedSubagents.status,
     hasPluginComposerPills,
   });
@@ -1272,6 +1280,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
           agentId={agentId}
           subagentRows={subagentRows}
           tasks={tasks}
+          backgroundTasks={backgroundTasks}
           archiveFinishedStatus={archiveFinishedSubagents.status}
           onArchiveFinished={archiveFinishedSubagents.archiveFinished}
           hasPluginComposerPills={hasPluginComposerPills}
