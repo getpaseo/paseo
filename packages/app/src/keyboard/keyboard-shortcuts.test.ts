@@ -221,6 +221,36 @@ describe("keyboard-shortcuts", () => {
       payload: { delta: 1 },
     },
     {
+      name: "matches workspace history back on mac desktop via Ctrl+-",
+      event: { key: "-", code: "Minus", ctrlKey: true },
+      context: { isMac: true, isDesktop: true },
+      action: "workspace.history.back",
+    },
+    {
+      name: "matches workspace history forward on mac desktop via Ctrl+Shift+-",
+      event: { key: "_", code: "Minus", ctrlKey: true, shiftKey: true },
+      context: { isMac: true, isDesktop: true },
+      action: "workspace.history.forward",
+    },
+    {
+      name: "matches workspace history back on non-mac desktop via Alt+ArrowLeft",
+      event: { key: "ArrowLeft", code: "ArrowLeft", altKey: true },
+      context: { isMac: false, isDesktop: true },
+      action: "workspace.history.back",
+    },
+    {
+      name: "matches workspace history forward on non-mac desktop via Alt+ArrowRight",
+      event: { key: "ArrowRight", code: "ArrowRight", altKey: true },
+      context: { isMac: false, isDesktop: true },
+      action: "workspace.history.forward",
+    },
+    {
+      name: "matches the last workspace toggle on desktop via Ctrl+Tab",
+      event: { key: "Tab", code: "Tab", ctrlKey: true },
+      context: { isMac: true, isDesktop: true },
+      action: "workspace.history.toggle-last",
+    },
+    {
       name: "matches tab relative navigation via Alt+Shift+]",
       event: { key: "}", code: "BracketRight", altKey: true, shiftKey: true },
       action: "workspace.tab.navigate.relative",

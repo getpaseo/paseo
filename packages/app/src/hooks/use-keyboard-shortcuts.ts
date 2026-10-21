@@ -38,6 +38,8 @@ import { hasActiveWebOverlay } from "@/lib/overlay-root";
 import {
   type ActiveWorkspaceSelection,
   navigateToLastWorkspace,
+  navigateToPreviousWorkspace,
+  navigateWorkspaceHistory,
   useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 import { dispatchTopWebOverlayKeyDown, keyBelongsToDomPopover } from "@/lib/overlay-root";
@@ -157,6 +159,14 @@ export function useKeyboardShortcuts({
     "cycle-theme": cycleTheme,
   };
 
+  const rememberKeyboardWorkspaceSelection = (
+    selection: ActiveWorkspaceSelection | null,
+  ): boolean => {
+    if (!selection) return false;
+    keyboardWorkspaceSelectionRef.current = selection;
+    return true;
+  };
+
   const performShortcutAction = (
     action: ShortcutAction,
     event: KeyboardEvent | null,
@@ -174,6 +184,10 @@ export function useKeyboardShortcuts({
         };
         navigateToWorkspace({ serverId: action.serverId, workspaceId: action.workspaceId });
         return true;
+      case "navigate-workspace-history":
+        return rememberKeyboardWorkspaceSelection(navigateWorkspaceHistory(action.delta));
+      case "navigate-previous-workspace":
+        return rememberKeyboardWorkspaceSelection(navigateToPreviousWorkspace());
       case "navigate-last-workspace":
         if (navigateToLastWorkspace()) {
           return true;

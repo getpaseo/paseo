@@ -18,6 +18,8 @@ import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { stripHostWorkspaceRouteEchoSearchFromBrowserUrlAfterCommit } from "@/utils/host-route-browser";
 import { navigateToHostWorkspaceRoute } from "@/navigation/workspace-route-navigation";
+import { createWorkspaceVisitHistory } from "@/stores/workspace-visit-history";
+import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 
 export type { ActiveWorkspaceSelection } from "@/stores/last-workspace-selection";
 export type { NavigateToWorkspaceInput } from "./navigation";
@@ -31,6 +33,8 @@ const lastWorkspaceSelectionStorage: LastWorkspaceSelectionStorage = {
 const lastWorkspaceSelectionStore = createLastWorkspaceSelectionStore(
   lastWorkspaceSelectionStorage,
 );
+
+const workspaceVisitHistory = createWorkspaceVisitHistory();
 
 function navigateDeps(): NavigateToWorkspaceDeps {
   return {
@@ -70,6 +74,32 @@ export function navigateToLastWorkspace(): boolean {
   });
 }
 
+function isWorkspaceAvailable(selection: ActiveWorkspaceSelection): boolean {
+  const workspaces = useSessionStore.getState().sessions[selection.serverId]?.workspaces;
+  const workspaceKey = resolveWorkspaceMapKeyByIdentity({
+    workspaces,
+    workspaceId: selection.workspaceId,
+  });
+  const workspace = workspaceKey ? workspaces?.get(workspaceKey) : undefined;
+  return !!workspace && workspace.archivingAt === null;
+}
+
+export function navigateWorkspaceHistory(delta: 1 | -1): ActiveWorkspaceSelection | null {
+  const target = workspaceVisitHistory.step(delta, isWorkspaceAvailable);
+  if (target) {
+    navigateToWorkspace(target);
+  }
+  return target;
+}
+
+export function navigateToPreviousWorkspace(): ActiveWorkspaceSelection | null {
+  const target = workspaceVisitHistory.previous(isWorkspaceAvailable);
+  if (target) {
+    navigateToWorkspace(target);
+  }
+  return target;
+}
+
 export function useActiveWorkspaceSelection(): ActiveWorkspaceSelection | null {
   const params = useLocalSearchParams<{
     serverId?: string | string[];
@@ -83,6 +113,7 @@ export function useActiveWorkspaceSelection(): ActiveWorkspaceSelection | null {
       return;
     }
     lastWorkspaceSelectionStore.remember({ serverId, workspaceId });
+    workspaceVisitHistory.record({ serverId, workspaceId });
   }, [serverId, workspaceId]);
   return selection;
 }

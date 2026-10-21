@@ -429,6 +429,18 @@ describe("routeKeyboardShortcut — toggle dialogs", () => {
   });
 });
 
+describe("routeKeyboardShortcut — workspace history", () => {
+  it.each([
+    ["workspace.history.back", { kind: "navigate-workspace-history", delta: -1 }],
+    ["workspace.history.forward", { kind: "navigate-workspace-history", delta: 1 }],
+    ["workspace.history.toggle-last", { kind: "navigate-previous-workspace" }],
+  ] as const)("%s → %j", (action, expected) => {
+    expect(routeKeyboardShortcut({ action, payload: null }, makeCtx())).toEqual<ShortcutAction>(
+      expected,
+    );
+  });
+});
+
 describe("routeKeyboardShortcut — unknown actions", () => {
   it("returns none for unknown action ids", () => {
     expect(

@@ -2,6 +2,9 @@ import { useMemo } from "react";
 import { router, type Href } from "expo-router";
 import { useTranslation } from "react-i18next";
 import {
+  ArrowLeft,
+  ArrowLeftRight,
+  ArrowRight,
   CalendarClock,
   CircleDashed,
   Folder,
@@ -23,6 +26,10 @@ import { useKeyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatch
 import { useKeyboardShortcutsAvailable } from "@/keyboard/availability";
 import { resolveShortcutKeysForAction } from "@/keyboard/keyboard-shortcuts";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
+import {
+  navigateToPreviousWorkspace,
+  navigateWorkspaceHistory,
+} from "@/stores/navigation-active-workspace-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { clearCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
@@ -60,6 +67,15 @@ const ThemedCircleDashed = withUnistyles(CircleDashed, (theme) => ({
   color: theme.colors.foregroundMuted,
 }));
 const ThemedPanelLeft = withUnistyles(PanelLeft, (theme) => ({
+  color: theme.colors.foregroundMuted,
+}));
+const ThemedArrowLeft = withUnistyles(ArrowLeft, (theme) => ({
+  color: theme.colors.foregroundMuted,
+}));
+const ThemedArrowRight = withUnistyles(ArrowRight, (theme) => ({
+  color: theme.colors.foregroundMuted,
+}));
+const ThemedArrowLeftRight = withUnistyles(ArrowLeftRight, (theme) => ({
   color: theme.colors.foregroundMuted,
 }));
 
@@ -105,6 +121,18 @@ function CircleDashedIcon({ size }: CommandCenterIconProps) {
 
 function PanelLeftIcon({ size }: CommandCenterIconProps) {
   return <ThemedPanelLeft size={size} strokeWidth={2.2} />;
+}
+
+function ArrowLeftIcon({ size }: CommandCenterIconProps) {
+  return <ThemedArrowLeft size={size} strokeWidth={2.2} />;
+}
+
+function ArrowRightIcon({ size }: CommandCenterIconProps) {
+  return <ThemedArrowRight size={size} strokeWidth={2.2} />;
+}
+
+function ArrowLeftRightIcon({ size }: CommandCenterIconProps) {
+  return <ThemedArrowLeftRight size={size} strokeWidth={2.2} />;
 }
 
 export function CommandCenterRootActions() {
@@ -291,6 +319,75 @@ export function CommandCenterRootActions() {
           shortcutKeys:
             resolveShortcutKeysForAction("toggle-left-sidebar", overrides, shortcutPlatform) ??
             undefined,
+        },
+      },
+      {
+        id: "workspace-history-back",
+        group: "actions",
+        groupRank: 0,
+        rank: 9,
+        keywords: ["back", "history", "previous", "recent", "workspace"],
+        visibility: "query",
+        run: () => {
+          clearCommandCenterFocusRestoreElement();
+          navigateWorkspaceHistory(-1);
+        },
+        presentation: {
+          kind: "action",
+          title: t("settings.shortcuts.help.workspaceHistoryBack"),
+          sectionTitle: t("shell.commandCenter.actions"),
+          icon: ArrowLeftIcon,
+          shortcutKeys:
+            resolveShortcutKeysForAction("workspace-history-back", overrides, shortcutPlatform) ??
+            undefined,
+        },
+      },
+      {
+        id: "workspace-history-forward",
+        group: "actions",
+        groupRank: 0,
+        rank: 10,
+        keywords: ["forward", "history", "next", "recent", "workspace"],
+        visibility: "query",
+        run: () => {
+          clearCommandCenterFocusRestoreElement();
+          navigateWorkspaceHistory(1);
+        },
+        presentation: {
+          kind: "action",
+          title: t("settings.shortcuts.help.workspaceHistoryForward"),
+          sectionTitle: t("shell.commandCenter.actions"),
+          icon: ArrowRightIcon,
+          shortcutKeys:
+            resolveShortcutKeysForAction(
+              "workspace-history-forward",
+              overrides,
+              shortcutPlatform,
+            ) ?? undefined,
+        },
+      },
+      {
+        id: "workspace-history-toggle-last",
+        group: "actions",
+        groupRank: 0,
+        rank: 11,
+        keywords: ["last", "recent", "previous", "switch", "toggle", "workspace"],
+        visibility: "query",
+        run: () => {
+          clearCommandCenterFocusRestoreElement();
+          navigateToPreviousWorkspace();
+        },
+        presentation: {
+          kind: "action",
+          title: t("settings.shortcuts.help.workspaceHistoryToggleLast"),
+          sectionTitle: t("shell.commandCenter.actions"),
+          icon: ArrowLeftRightIcon,
+          shortcutKeys:
+            resolveShortcutKeysForAction(
+              "workspace-history-toggle-last",
+              overrides,
+              shortcutPlatform,
+            ) ?? undefined,
         },
       },
     ];
