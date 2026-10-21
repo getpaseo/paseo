@@ -60,10 +60,14 @@ async function captureWideAndCompact(
   ready: () => Promise<void>,
 ) {
   await capture(page, testInfo, `${name}-wide`);
+  // The shell survives the breakpoint, so the previous layout's copy can still be on screen right
+  // after a resize. Check `ready` only once the shell reports the new layout.
   await page.setViewportSize(COMPACT);
+  await expect(page.getByTestId("compact-shell")).toBeVisible();
   await ready();
   await capture(page, testInfo, `${name}-compact`);
   await page.setViewportSize(WIDE);
+  await expect(page.getByTestId("wide-shell")).toBeVisible();
   await ready();
 }
 
@@ -195,6 +199,9 @@ test("directory examples mount the PDF frame and write Markdown through the file
     ).toBeVisible();
     await expect(page.getByRole("radio", { name: "Source — Paseo", exact: true })).toBeVisible();
     await captureWideAndCompact(page, testInfo, "markdown-example-picker", async () => {
+      // The previous layout's picker animates out (the sheet slides down, the dialog fades), so
+      // both pickers are mounted for a moment after a resize.
+      await expect(page.getByRole("button", { name: "Use", exact: true })).toHaveCount(1);
       await expect(page.getByRole("button", { name: "Use", exact: true })).toBeInViewport({
         ratio: 1,
       });
