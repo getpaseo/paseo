@@ -428,6 +428,27 @@ const CLAUDE_ROOT_ONLY_COMMANDS = new Set([
 ]);
 const INTERRUPT_TOOL_USE_PLACEHOLDER = "[Request interrupted by user for tool use]";
 const INTERRUPT_PLACEHOLDER_PATTERN = /^\[Request interrupted by user(?:[^\]]*)\]$/;
+// The task type Claude announces for a Bash command, and the
+// bound on each stop of an interrupted turn's command, the same as the interrupt's own.
+const CLAUDE_SHELL_TASK_TYPE = "local_bash";
+const INTERRUPTED_TURN_TASK_STOP_TIMEOUT_MS = 3_000;
+
+/** One Claude turn's shell tasks that have not ended. */
+interface ClaudeTurnShellTasks {
+  taskIds: Set<string>;
+  /** The prompts this turn took, by their `command_lifecycle` uuid. */
+  commandUuids: Set<string>;
+  /** The query an interrupt of this turn stopped its tasks on. A later task is stopped on it. */
+  stoppedOn: Query | null;
+}
+
+/** An interrupt, and the turn it reached once that is known. */
+interface ClaudeShellTaskInterrupt {
+  turn: ClaudeTurnShellTasks | null;
+  /** The prompts Claude had not opened a turn for when the interrupt was sent. */
+  commandUuids: Set<string>;
+  settledOn: Query | null;
+}
 const NO_RESPONSE_REQUESTED_PLACEHOLDER = "No response requested.";
 const STEER_SUPERSEDED_PERMISSION_MESSAGE =
   "The user answered with a message instead of approving. Their message follows.";
@@ -2287,6 +2308,17 @@ class ClaudeAgentSession implements AgentSession {
    * cleared by the turn's result or an idle session state. See observeMainTurnBracket.
    */
   private mainTurnInFlight = false;
+  /**
+   * The shell tasks of the Claude turn now open on the stream.
+   * A fresh record opens at each turn's init and is let go at its result, so an earlier turn's
+   * background command and the next turn's commands are never in the record an interrupt stops.
+   * Null between turns. Prompts Claude started before the init that opens their turn wait in
+   * `startedCommandUuidsBeforeInit`. An interrupt sent between turns waits in
+   * `unboundShellTaskInterrupt` for the turn it reached to open.
+   */
+  private openTurnShellTasks: ClaudeTurnShellTasks | null = null;
+  private readonly startedCommandUuidsBeforeInit = new Set<string>();
+  private unboundShellTaskInterrupt: ClaudeShellTaskInterrupt | null = null;
   private foregroundHasVisibleActivity = false;
   private activeTurnHasAssistantText = false;
   private readonly contextUsage: ClaudeContextUsageState;
@@ -4148,6 +4180,9 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     this.observeMainTurnBracket(message);
+    // Before the stale-result suppression, so an interrupted
+    // turn's result still closes its task set.
+    this.recordOpenTurnShellTask(message);
     if (this.shouldSuppressStaleResult(message)) {
       return;
     }
@@ -4315,6 +4350,12 @@ class ClaudeAgentSession implements AgentSession {
       );
       return;
     }
+    // The prompts this interrupt is for, read before the
+    // withdrawal below forgets them.
+    const interruptedCommandUuids = new Set([
+      ...this.unstartedMessageUuids,
+      ...this.startedCommandUuidsBeforeInit,
+    ]);
     if (claudeStartedTurn) {
       this.pendingInterruptAbort = true;
       await this.withdrawUnstartedMessages(queryToInterrupt);
@@ -4325,6 +4366,9 @@ class ClaudeAgentSession implements AgentSession {
       if (await this.withdrawUnstartedMessages(queryToInterrupt)) return;
       this.pendingInterruptAbort = true;
     }
+    // The turn this interrupt reaches is the one open on the
+    // stream now, or, with none open, the one Claude opens next for these prompts.
+    const shellTaskInterrupt = this.beginShellTaskInterrupt(interruptedCommandUuids);
     try {
       await this.awaitWithTimeout(
         queryToInterrupt.interrupt(),
@@ -4333,6 +4377,173 @@ class ClaudeAgentSession implements AgentSession {
     } catch (error) {
       this.logger.warn({ err: error }, "Failed to interrupt active turn");
     }
+    // The stops are not awaited, so none holds up the
+    // interrupt or the next turn.
+    shellTaskInterrupt.settledOn = queryToInterrupt;
+    if (shellTaskInterrupt.turn) {
+      this.stopTurnShellTasks(shellTaskInterrupt.turn, queryToInterrupt);
+    }
+  }
+
+  private beginShellTaskInterrupt(commandUuids: Set<string>): ClaudeShellTaskInterrupt {
+    const interrupt: ClaudeShellTaskInterrupt = {
+      turn: this.openTurnShellTasks,
+      commandUuids,
+      settledOn: null,
+    };
+    // With no prompt left in play, nothing but a turn Claude starts on its own could follow, and
+    // this interrupt did not reach it.
+    if (!interrupt.turn && commandUuids.size > 0) this.unboundShellTaskInterrupt = interrupt;
+    return interrupt;
+  }
+
+  /**
+   * An interrupt sent while no turn was open reaches the turn
+   * Claude opens for a prompt it had already dequeued. Its init alone cannot tell that turn from
+   * the next one Paseo sends, so the prompt's `command_lifecycle` uuid decides: a turn that took
+   * one of the interrupted prompts is the one, and a turn that took any other prompt means the
+   * interrupted prompts opened none. A turn whose prompt is not known yet is the one only while
+   * no newer prompt is waiting.
+   */
+  private matchUnboundShellTaskInterrupt(turn: ClaudeTurnShellTasks): void {
+    const interrupt = this.unboundShellTaskInterrupt;
+    if (!interrupt) return;
+    const commandUuids = [...turn.commandUuids];
+    const tookInterruptedPrompt = commandUuids.some((uuid) => interrupt.commandUuids.has(uuid));
+    const newerPromptWaiting = [...this.unstartedMessageUuids].some(
+      (uuid) => !interrupt.commandUuids.has(uuid),
+    );
+    if (!tookInterruptedPrompt && (commandUuids.length > 0 || newerPromptWaiting)) {
+      if (commandUuids.length > 0) this.unboundShellTaskInterrupt = null;
+      return;
+    }
+    this.unboundShellTaskInterrupt = null;
+    interrupt.turn = turn;
+    this.logger.info(
+      { agentId: this.agentId, provider: "claude", sessionId: this.claudeSessionId },
+      "provider.claude.interrupt.turn_opened_after_interrupt",
+    );
+    if (interrupt.settledOn) this.stopTurnShellTasks(turn, interrupt.settledOn);
+  }
+
+  private stopTurnShellTasks(turn: ClaudeTurnShellTasks, query: Query): void {
+    turn.stoppedOn = query;
+    const taskIds = [...turn.taskIds];
+    turn.taskIds.clear();
+    if (taskIds.length > 0) void this.stopShellTasks(query, taskIds);
+  }
+
+  /**
+   * With `perTaskStopAffordance`, an interrupt ends the turn's
+   * foreground command but leaves its `run_in_background` commands running. `task_started` ties
+   * each shell command to a task id, and only while its turn is open does this record it. A turn
+   * whose tasks were already stopped has each later one stopped as it is announced. A command a
+   * subagent ran belongs to that subagent, which may outlive the turn by design.
+   */
+  private recordOpenTurnShellTask(message: SDKMessage): void {
+    if (readClaudeParentToolUseId(message)) return;
+    if (isClaudeTurnInit(message)) {
+      this.openTurnShellTaskRecord();
+      return;
+    }
+    if (message.type === "result") {
+      // A turn that closes before the interrupt found its turn means the interrupted prompts
+      // opened none.
+      this.openTurnShellTasks = null;
+      this.startedCommandUuidsBeforeInit.clear();
+      this.unboundShellTaskInterrupt = null;
+      return;
+    }
+    const lifecycle = readClaudeCommandLifecycle(message);
+    if (lifecycle) {
+      this.observeShellTaskCommandLifecycle(lifecycle);
+      return;
+    }
+    const turn = this.openTurnShellTasks;
+    if (turn && message.type === "system") this.recordShellTaskFrame(turn, message);
+  }
+
+  private openTurnShellTaskRecord(): void {
+    const turn: ClaudeTurnShellTasks = {
+      taskIds: new Set(),
+      commandUuids: new Set(this.startedCommandUuidsBeforeInit),
+      stoppedOn: null,
+    };
+    this.startedCommandUuidsBeforeInit.clear();
+    this.openTurnShellTasks = turn;
+    this.matchUnboundShellTaskInterrupt(turn);
+  }
+
+  /** Which prompt each turn took, and which prompts ended. */
+  private observeShellTaskCommandLifecycle(lifecycle: ClaudeCommandLifecycle): void {
+    const unbound = this.unboundShellTaskInterrupt;
+    if (
+      unbound &&
+      (lifecycle.state === "completed" || lifecycle.state === "cancelled") &&
+      unbound.commandUuids.delete(lifecycle.commandUuid) &&
+      unbound.commandUuids.size === 0
+    ) {
+      this.unboundShellTaskInterrupt = null;
+    }
+    if (lifecycle.state !== "started") return;
+    const turn = this.openTurnShellTasks;
+    if (!turn) {
+      this.startedCommandUuidsBeforeInit.add(lifecycle.commandUuid);
+      return;
+    }
+    turn.commandUuids.add(lifecycle.commandUuid);
+    if (!turn.stoppedOn) this.matchUnboundShellTaskInterrupt(turn);
+  }
+
+  private recordShellTaskFrame(
+    turn: ClaudeTurnShellTasks,
+    message: Extract<SDKMessage, { type: "system" }>,
+  ): void {
+    const record = toObjectRecord(message);
+    const taskId = typeof record?.task_id === "string" ? record.task_id : null;
+    if (!taskId) return;
+    if (message.subtype === "task_notification") {
+      turn.taskIds.delete(taskId);
+      return;
+    }
+    if (message.subtype !== "task_started" || record?.task_type !== CLAUDE_SHELL_TASK_TYPE) return;
+    const toolUseId = typeof record.tool_use_id === "string" ? record.tool_use_id : undefined;
+    if (this.taskProtocolSource.resolveTaskOwner(taskId, toolUseId)) return;
+    if (turn.stoppedOn) {
+      void this.stopShellTasks(turn.stoppedOn, [taskId]);
+      return;
+    }
+    turn.taskIds.add(taskId);
+  }
+
+  /**
+   * Stops each shell task by its id, on the query that was
+   * interrupted. A task the interrupt already ended answers the stop harmlessly. Each stop is
+   * bounded; a failed or unanswered one is logged. Never rejects.
+   */
+  private async stopShellTasks(query: Query, ids: string[]): Promise<void> {
+    const logContext = {
+      agentId: this.agentId,
+      provider: "claude",
+      sessionId: this.claudeSessionId,
+    };
+    await Promise.all(
+      ids.map(async (taskId) => {
+        try {
+          await withTimeout(
+            query.stopTask(taskId),
+            INTERRUPTED_TURN_TASK_STOP_TIMEOUT_MS,
+            `stopTask ${taskId} timed out`,
+          );
+          this.logger.info({ ...logContext, taskId }, "provider.claude.interrupt.task_stopped");
+        } catch (error) {
+          this.logger.warn(
+            { ...logContext, taskId, err: error },
+            "provider.claude.interrupt.task_stop_failed",
+          );
+        }
+      }),
+    );
   }
 
   /**
