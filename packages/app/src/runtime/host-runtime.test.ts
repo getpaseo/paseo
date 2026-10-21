@@ -135,6 +135,7 @@ class FakeDaemonClient {
     if (response) await response;
     const failure = this.sendAgentMessageFailures.shift();
     if (failure) throw failure;
+    return { queued: false };
   }
 
   async waitForSentMessages(count: number): Promise<void> {
@@ -3076,6 +3077,42 @@ describe("HostRuntimeStore", () => {
 
     expect(fakeClient.sentAgentMessages[0]?.[2]?.activeTurnBehavior).toBe("steer");
     sessionStore.clearSession(host.serverId);
+  });
+
+  it("does not send a queued message when the host owns the prompt queue", () => {
+    const host = makeHost({ serverId: "srv_host_owned_queue" });
+    const fakeClient = new FakeDaemonClient();
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async () => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: null,
+        }),
+        getClientId: async () => "cid_host_owned_queue",
+      },
+    });
+    const sessionStore = useSessionStore.getState();
+    sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    sessionStore.updateSessionServerInfo(host.serverId, {
+      serverId: host.serverId,
+      hostname: null,
+      version: null,
+      features: { promptQueue: true },
+    });
+    sessionStore.setQueuedMessages(
+      host.serverId,
+      new Map([["agent", [{ id: "first", text: "stay queued", attachments: [] }]]]),
+    );
+
+    store.drainQueuedAgentMessage(host.serverId, "agent");
+
+    expect(fakeClient.sentAgentMessages).toEqual([]);
+    expect(useSessionStore.getState().sessions[host.serverId]?.queuedMessages.get("agent")).toEqual(
+      [{ id: "first", text: "stay queued", attachments: [] }],
+    );
+    useSessionStore.getState().clearSession(host.serverId);
   });
 
   it("uses legacy GitHub attachments when draining a queue for an old daemon", async () => {

@@ -1,5 +1,8 @@
-import { prepareAgentMessage, type AgentPromptSource } from "./agent-messages/index.js";
+import { randomUUID } from "node:crypto";
+
 import type { Logger } from "pino";
+
+import { prepareAgentMessage, type AgentPromptSource } from "./agent-messages/index.js";
 
 import type {
   AgentPermissionRequest,
@@ -20,6 +23,7 @@ export type AgentRunController = Pick<
   | "getAgent"
   | "tryRunOutOfBand"
   | "hasInFlightRun"
+  | "enqueueHostPromptIfBusy"
   | "replaceAgentRun"
   | "steerOrReplaceActiveTurn"
   | "streamAgent"
@@ -37,7 +41,7 @@ export interface StartAgentRunOptions {
   clearPendingPermissions?: boolean;
 }
 
-export type PromptDispatchDisposition = "out_of_band" | "steered" | "turn_started";
+export type PromptDispatchDisposition = "out_of_band" | "steered" | "turn_started" | "queued";
 
 async function steerOrReplaceActiveRun(
   agentManager: AgentRunController,
@@ -233,6 +237,8 @@ export interface SendPromptToAgentParams {
   unarchive?: boolean;
   /** See {@link StartAgentRunOptions.clearPendingPermissions}. */
   clearPendingPermissions?: boolean;
+  /** Plain text shown on every client while the prompt waits on the host. */
+  queueText?: string;
   logger: Logger;
 }
 
@@ -350,6 +356,17 @@ export async function sendPromptToAgent(
   const runOptions = delivery.messageId
     ? { ...params.runOptions, clientMessageId: delivery.messageId }
     : params.runOptions;
+
+  if (params.activeTurnBehavior === "queue") {
+    const queued = params.agentManager.enqueueHostPromptIfBusy({
+      agentId: params.agentId,
+      id: delivery.messageId ?? randomUUID(),
+      text: params.queueText ?? (typeof params.prompt === "string" ? params.prompt : ""),
+      prompt: delivery.prompt,
+      messageId: delivery.messageId,
+    });
+    if (queued) return { disposition: "queued" };
+  }
 
   return await startAgentRun(params.agentManager, params.agentId, delivery.prompt, params.logger, {
     replaceRunning: true,

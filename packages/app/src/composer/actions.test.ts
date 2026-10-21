@@ -180,7 +180,7 @@ interface FakeSendCall {
   text: string;
   options: {
     messageId: string;
-    activeTurnBehavior?: "interrupt" | "steer";
+    activeTurnBehavior?: "interrupt" | "steer" | "queue";
     images: Array<{ data: string; mimeType: string }>;
     attachments: AgentAttachment[];
   };
@@ -199,6 +199,7 @@ function createFakeSendClient(
         options.beforeRejection?.(call);
         throw options.rejection;
       }
+      return { queued: false };
     },
     uploadFile: async () => ({ requestId: "test", file: null, error: null }),
   };
@@ -1056,7 +1057,7 @@ describe("file upload preparation", () => {
     const sent: string[] = [];
     const upload = uploadFileAttachments({
       client: {
-        sendAgentMessage: async () => {},
+        sendAgentMessage: async () => ({ queued: false }),
         uploadFile: async (file) => {
           sent.push(file.fileName);
           expect(file.bytes).toEqual(new Uint8Array([1, 2]));
@@ -1096,7 +1097,7 @@ describe("file upload preparation", () => {
       await expect(
         uploadFileAttachments({
           client: {
-            sendAgentMessage: async () => {},
+            sendAgentMessage: async () => ({ queued: false }),
             uploadFile: async () => {
               sends++;
               throw new Error("unexpected send");

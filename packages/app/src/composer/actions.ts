@@ -54,7 +54,7 @@ export interface ComposerSendClient {
       images: Array<{ data: string; mimeType: string }>;
       attachments: ReturnType<typeof splitComposerAttachmentsForSubmit>["attachments"];
     },
-  ) => Promise<void>;
+  ) => Promise<{ queued: boolean }>;
   uploadFile: (input: { fileName: string; mimeType: string; bytes: Uint8Array }) => Promise<{
     requestId: string;
     file: {
@@ -229,6 +229,37 @@ export async function dispatchComposerAgentMessage(
     input.submission.reject(input.agentId, clientMessageId);
     throw error;
   }
+}
+
+export async function submitHostQueuedComposerMessage(input: {
+  client: {
+    sendAgentMessage: (
+      agentId: string,
+      text: string,
+      options: {
+        messageId: string;
+        activeTurnBehavior?: ActiveTurnBehavior;
+        images: Array<{ data: string; mimeType: string }>;
+        attachments: ReturnType<typeof splitComposerAttachmentsForSubmit>["attachments"];
+      },
+    ) => Promise<{ queued: boolean } | void>;
+  };
+  agentId: string;
+  item: QueuedComposerMessage;
+  encodeImages: DispatchComposerAgentMessageInput["encodeImages"];
+  attachmentSubmitFormat?: ComposerAttachmentSubmitFormat;
+}): Promise<{ queued: boolean }> {
+  const wirePayload = splitComposerAttachmentsForSubmit(input.item.attachments, {
+    format: input.attachmentSubmitFormat,
+  });
+  const imagesData = await input.encodeImages(wirePayload.images);
+  const result = await input.client.sendAgentMessage(input.agentId, input.item.text, {
+    messageId: input.item.id,
+    activeTurnBehavior: "queue",
+    images: imagesData ?? [],
+    attachments: wirePayload.attachments,
+  });
+  return { queued: result?.queued === true };
 }
 
 export interface QueueComposerMessageInput {

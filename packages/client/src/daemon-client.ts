@@ -3519,7 +3519,7 @@ export class DaemonClient {
     agentId: string,
     text: string,
     options?: SendMessageOptions,
-  ): Promise<void> {
+  ): Promise<{ queued: boolean }> {
     if (
       options?.sourceAgentId &&
       this.lastServerInfoMessage?.features?.agentMessageProvenance !== true
@@ -3556,6 +3556,34 @@ export class DaemonClient {
     if (!payload.accepted) {
       throw new Error(payload.error ?? "sendAgentMessage rejected");
     }
+    return { queued: payload.queued === true };
+  }
+
+  async removeQueuedPrompt(
+    agentId: string,
+    messageId: string,
+  ): Promise<{ removed: boolean; text: string | null }> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.prompt_queue.remove.request",
+      requestId,
+      agentId,
+      messageId,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "agent.prompt_queue.remove.response") return null;
+        if (msg.payload.requestId !== requestId) return null;
+        return msg.payload;
+      },
+    });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    return { removed: payload.removed, text: payload.text };
   }
 
   async sendMessage(agentId: string, text: string, options?: SendMessageOptions): Promise<void> {

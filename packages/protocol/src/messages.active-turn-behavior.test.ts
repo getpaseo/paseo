@@ -26,6 +26,16 @@ describe("send_agent_message_request active-turn behavior", () => {
         text: "Keep the old behavior",
       }).activeTurnBehavior,
     ).toBeUndefined();
+
+    expect(
+      SendAgentMessageRequestSchema.parse({
+        type: "send_agent_message_request",
+        requestId: "request-3",
+        agentId: "agent-1",
+        text: "Hold this until the turn ends",
+        activeTurnBehavior: "queue",
+      }).activeTurnBehavior,
+    ).toBe("queue");
   });
 });
 

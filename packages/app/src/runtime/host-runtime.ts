@@ -2398,6 +2398,8 @@ export class HostRuntimeStore {
     if (this.queuedAgentDrainInFlight.has(drainKey)) return;
     const store = useSessionStore.getState();
     const session = store.sessions[serverId];
+    // The host owns the queue and starts the next prompt when the turn ends.
+    if (session?.serverInfo?.features?.promptQueue === true) return;
     const queue = session?.queuedMessages.get(agentId);
     const client = session?.client;
     if (!client || !queue?.length || session.initializingAgents.get(agentId) === true) {

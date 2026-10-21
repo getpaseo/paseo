@@ -11,6 +11,7 @@ import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { useDraftStore } from "@/stores/draft-store";
 import { getInitDeferred, getInitKey, rejectInitDeferred } from "@/utils/agent-initialization";
 import { reduceTurnLiveness, type TurnLivenessTransition } from "@/timeline/turn-liveness";
+import { applyHostPromptQueue } from "@/composer/host-prompt-queue";
 
 function withoutAgent(agentId: string) {
   return <T>(current: Map<string, T>): Map<string, T> => {
@@ -99,6 +100,7 @@ export class AgentStoreProjection {
     }
     this.replacePendingPermissions(accepted);
     useSessionStore.getState().setAgentLastActivity(accepted.id, accepted.lastActivityAt);
+    this.syncHostPromptQueue(delta.agent.id, delta.agent.promptQueue);
     return {
       agentId: accepted.id,
       stoppedRunning: previous?.turn.phase === "open" && accepted.turn.phase === "idle",
@@ -137,7 +139,28 @@ export class AgentStoreProjection {
     );
     store.setPendingPermissions(this.serverId, new Map(pendingPermissions));
     store.setHasHydratedAgents(this.serverId, true);
+    this.syncHostPromptQueues(entries);
     return agents;
+  }
+
+  private syncHostPromptQueue(
+    agentId: string,
+    hostItems: FetchAgentsEntry["agent"]["promptQueue"],
+  ): void {
+    useSessionStore.getState().setQueuedMessages(this.serverId, (current) => {
+      return applyHostPromptQueue(current, agentId, hostItems) ?? current;
+    });
+  }
+
+  private syncHostPromptQueues(entries: FetchAgentsEntry[]): void {
+    useSessionStore.getState().setQueuedMessages(this.serverId, (current) => {
+      let next = current;
+      for (const entry of entries) {
+        const updated = applyHostPromptQueue(next, entry.agent.id, entry.agent.promptQueue);
+        if (updated && updated !== next) next = updated;
+      }
+      return next;
+    });
   }
 
   replacePendingPermissions(agent: Agent): void {

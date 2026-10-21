@@ -81,6 +81,7 @@ import {
   queueComposerMessage,
   removeComposerAttachmentAtIndex,
   sendQueuedComposerMessageNow,
+  submitHostQueuedComposerMessage,
   toggleForgeAttachmentFromPicker,
   uploadFileAttachments,
   type AttachmentPersister,
@@ -134,6 +135,7 @@ import type {
 } from "@/attachments/types";
 import type { SelectedFile } from "@/attachments/selected-file";
 import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/submit";
+import { hostOwnsPromptQueue } from "@/composer/host-prompt-queue";
 import { composerWorkspaceAttachment } from "@/composer/attachments/workspace";
 import { useWorkspaceAttachmentsForScopes } from "@/attachments/workspace-attachments-store";
 import { droppedItemsToSelectedFiles } from "@/composer/attachments/drop";
@@ -1322,6 +1324,9 @@ function ComposerContentImpl({
   const supportsForgeSearch = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.forgeSearch === true,
   );
+  const hostOwnsQueue = useSessionStore((state) =>
+    hostOwnsPromptQueue(state.sessions[serverId]?.serverInfo?.features),
+  );
   const forgeAutoAttachRef = useRef<ReturnType<typeof useComposerForgeAutoAttach>>(null);
   const [isForgeResolving, setIsForgeResolving] = useState(false);
   const forgeConfiguration = useMemo(
@@ -1623,14 +1628,55 @@ function ComposerContentImpl({
       setSelectedAttachments([]);
       resetSuppression();
       clearSentAttachments(queuedAttachments);
+      if (!hostOwnsQueue || !client) return;
+      const queuedItem = result.queued;
+      void (async () => {
+        try {
+          const sent = await submitHostQueuedComposerMessage({
+            client,
+            agentId,
+            item: queuedItem,
+            encodeImages,
+            attachmentSubmitFormat: resolveComposerAttachmentSubmitFormat({
+              supportsForgeAttachments: supportsForgeSearch,
+            }),
+          });
+          if (sent.queued) return;
+          queueWriter.write((prev) => {
+            const next = new Map(prev);
+            const kept = [];
+            for (const item of prev.get(agentId) ?? []) {
+              if (item.id !== queuedItem.id) kept.push(item);
+            }
+            next.set(agentId, kept);
+            return next;
+          });
+        } catch (error: unknown) {
+          const restored = editQueuedComposerMessage({
+            agentId,
+            messageId: queuedItem.id,
+            queue: queueWriter,
+          });
+          replaceUserInput(restored?.text ?? queuedItem.text);
+          setSelectedAttachments(
+            restored?.attachments ??
+              composerWorkspaceAttachment.userAttachmentsOnly(queuedItem.attachments),
+          );
+          setSendError(error instanceof Error ? error.message : t("composer.errors.failedToSend"));
+        }
+      })();
     },
     [
       agentId,
       clearSentAttachments,
+      client,
+      hostOwnsQueue,
       queueWriter,
       resetSuppression,
       setSelectedAttachments,
       replaceUserInput,
+      supportsForgeSearch,
+      t,
     ],
   );
 
@@ -1915,21 +1961,47 @@ function ComposerContentImpl({
 
   const handleEditQueuedMessage = useCallback(
     (id: string) => {
-      const result = editQueuedComposerMessage({
-        agentId,
-        messageId: id,
-        queue: queueWriter,
-      });
-      if (!result) return;
-      replaceUserInput(result.text);
-      setSelectedAttachments(result.attachments);
+      const existing = queueWriter.read(agentId).find((item) => item.id === id);
+      if (!existing) return;
+      void (async () => {
+        if (hostOwnsQueue && client) {
+          try {
+            const removed = await client.removeQueuedPrompt(agentId, id);
+            if (!removed.removed) return;
+          } catch (error) {
+            setSendError(
+              error instanceof Error ? error.message : t("composer.errors.failedToSend"),
+            );
+            return;
+          }
+        }
+        const result = editQueuedComposerMessage({
+          agentId,
+          messageId: id,
+          queue: queueWriter,
+        });
+        replaceUserInput(result?.text ?? existing.text);
+        setSelectedAttachments(
+          result?.attachments ??
+            composerWorkspaceAttachment.userAttachmentsOnly(existing.attachments),
+        );
+      })();
     },
-    [agentId, queueWriter, replaceUserInput, setSelectedAttachments],
+    [agentId, client, hostOwnsQueue, queueWriter, replaceUserInput, setSelectedAttachments, t],
   );
 
   const handleSendQueuedNow = useCallback(
     async (id: string) => {
       if (!sendAgentMessageRef.current && !onSubmitMessageRef.current) return;
+      if (hostOwnsQueue && client) {
+        try {
+          const removed = await client.removeQueuedPrompt(agentId, id);
+          if (!removed.removed) return;
+        } catch (error) {
+          setSendError(error instanceof Error ? error.message : t("composer.errors.failedToSend"));
+          return;
+        }
+      }
       // Reuse the regular send path; server-side send atomically interrupts any active run.
       const result = await sendQueuedComposerMessageNow({
         agentId,
@@ -1941,9 +2013,23 @@ function ComposerContentImpl({
       });
       if (result.status === "failed") {
         setSendError(result.errorMessage);
+        if (hostOwnsQueue && client) {
+          const restored = queueWriter.read(agentId).find((item) => item.id === id);
+          if (restored) {
+            void submitHostQueuedComposerMessage({
+              client,
+              agentId,
+              item: restored,
+              encodeImages,
+              attachmentSubmitFormat: resolveComposerAttachmentSubmitFormat({
+                supportsForgeAttachments: supportsForgeSearch,
+              }),
+            }).catch(() => undefined);
+          }
+        }
       }
     },
-    [agentId, queueWriter, submitMessage, t],
+    [agentId, client, hostOwnsQueue, queueWriter, submitMessage, supportsForgeSearch, t],
   );
 
   const handleQueue = useCallback(

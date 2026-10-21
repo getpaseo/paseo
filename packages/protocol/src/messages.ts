@@ -810,6 +810,12 @@ const AgentActiveTurnPayloadSchema = z.object({
   startedAt: z.string().nullable(),
 });
 
+export const AgentPromptQueueItemSchema = z.object({
+  id: z.string(),
+  text: z.string(),
+});
+export type AgentPromptQueueItem = z.infer<typeof AgentPromptQueueItemSchema>;
+
 export const AgentSnapshotPayloadSchema = z.object({
   id: z.string(),
   provider: AgentProviderSchema,
@@ -841,6 +847,9 @@ export const AgentSnapshotPayloadSchema = z.object({
   providerUnavailable: z.boolean().optional(),
   // Private helper marker, retained for exact-ID snapshots and older wire messages.
   internal: z.boolean().optional(),
+  // COMPAT(promptQueue): added for host-owned follow-up prompts. Old clients strip it.
+  // Remove the optional mark after 2027-04-05 once daemon floor advertises promptQueue.
+  promptQueue: z.array(AgentPromptQueueItemSchema).optional(),
 });
 
 export type AgentSnapshotPayload = z.infer<typeof AgentSnapshotPayloadSchema>;
@@ -1201,7 +1210,7 @@ const ImageAttachmentSchema = z.object({
   mimeType: z.string(), // e.g., "image/jpeg", "image/png"
 });
 
-export const ActiveTurnBehaviorSchema = z.enum(["interrupt", "steer"]);
+export const ActiveTurnBehaviorSchema = z.enum(["interrupt", "steer", "queue"]);
 export type ActiveTurnBehavior = z.infer<typeof ActiveTurnBehaviorSchema>;
 
 export const SendAgentMessageSchema = z.object({
@@ -1372,6 +1381,13 @@ export const SendAgentMessageRequestSchema = z.object({
   activeTurnBehavior: ActiveTurnBehaviorSchema.optional(),
   images: z.array(ImageAttachmentSchema).optional(),
   attachments: AgentAttachmentsSchema,
+});
+
+export const AgentPromptQueueRemoveRequestSchema = z.object({
+  type: z.literal("agent.prompt_queue.remove.request"),
+  requestId: z.string(),
+  agentId: z.string(),
+  messageId: z.string(),
 });
 
 export const WaitForFinishRequestSchema = z.object({
@@ -3236,6 +3252,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceRecoveryRestoreRequestSchema,
   SetVoiceModeMessageSchema,
   SendAgentMessageRequestSchema,
+  AgentPromptQueueRemoveRequestSchema,
   WaitForFinishRequestSchema,
   DaemonGetStatusRequestSchema,
   DaemonGetPairingOfferRequestSchema,
@@ -3736,6 +3753,9 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(canonicalSubmittedPrompts): added in v0.2.6, remove gate after 2027-01-30.
         canonicalSubmittedPrompts: z.boolean().optional(),
         agentMessageProvenance: z.boolean().optional(),
+        // COMPAT(promptQueue): host stores follow-up prompts and runs them in order.
+        // Remove the gate after 2027-04-05.
+        promptQueue: z.boolean().optional(),
         // COMPAT(agentTurnIdentity): accept peers that observed pre-release v0.2.6 through 2027-01-31.
         agentTurnIdentity: z.boolean().optional(),
         // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
@@ -4986,6 +5006,19 @@ export const SendAgentMessageResponseMessageSchema = z.object({
     requestId: z.string(),
     agentId: z.string(),
     accepted: z.boolean(),
+    error: z.string().nullable(),
+    // COMPAT(promptQueue): true when the daemon held the prompt instead of starting a turn.
+    queued: z.boolean().optional(),
+  }),
+});
+
+export const AgentPromptQueueRemoveResponseSchema = z.object({
+  type: z.literal("agent.prompt_queue.remove.response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    removed: z.boolean(),
+    text: z.string().nullable(),
     error: z.string().nullable(),
   }),
 });
@@ -6970,6 +7003,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceClearAttentionResponseSchema,
   WorkspaceMarkUnreadResponseSchema,
   SendAgentMessageResponseMessageSchema,
+  AgentPromptQueueRemoveResponseSchema,
   SetVoiceModeResponseMessageSchema,
   DaemonGetStatusResponseSchema,
   DaemonGetPairingOfferResponseSchema,

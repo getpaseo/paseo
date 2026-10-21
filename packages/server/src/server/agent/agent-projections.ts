@@ -140,6 +140,7 @@ export function toAgentPayload(
     title: options?.title ?? null,
     labels: agent.labels,
     ...(agent.internal ? { internal: true } : {}),
+    ...(agent.promptQueue !== undefined ? { promptQueue: agent.promptQueue } : {}),
   };
 
   const usage = sanitizeUsage(agent.lastUsage);

@@ -78,6 +78,7 @@ import {
   type ForegroundTurnWaiter,
   type PendingForegroundRun,
 } from "./agent-run-state.js";
+import { HostPromptQueue, type HostPromptQueueItem } from "./prompt-queue.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { parseAgentMessage, projectAgentMessage } from "./agent-messages/index.js";
 import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
@@ -444,6 +445,8 @@ interface ManagedAgentBase {
    * User-defined labels for categorizing agents (e.g., { surface: "workspace" }).
    */
   labels: Record<string, string>;
+  /** Host-owned follow-up prompts. Absent until this daemon publishes a queue. */
+  promptQueue?: { id: string; text: string }[];
 }
 
 type ManagedAgentWithSession = ManagedAgentBase & {
@@ -749,6 +752,9 @@ export class AgentManager {
   private readonly steerEventBarriers = new Map<string, SteerEventBarrier>();
   private readonly foregroundMutationTails = new Map<string, Promise<void>>();
   private readonly runs = new AgentRunState();
+  private readonly hostPromptQueue = new HostPromptQueue();
+  private readonly hostPromptQueueDrain = new Set<string>();
+  private readonly hostPromptQueueDrainFollowUp = new Set<string>();
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly idFactory: () => string;
   private readonly registry?: AgentStorage;
@@ -951,6 +957,67 @@ export class AgentManager {
     const nowMs = Date.now();
     const nextMs = nowMs > previousMs ? nowMs : previousMs + 1;
     return new Date(nextMs).toISOString();
+  }
+
+  enqueueHostPromptIfBusy(item: HostPromptQueueItem & { agentId: string }): boolean {
+    if (!this.hasInFlightRun(item.agentId)) return false;
+    this.hostPromptQueue.enqueue(item.agentId, item);
+    this.publishHostPromptQueue(item.agentId);
+    return true;
+  }
+
+  removeHostPrompt(agentId: string, messageId: string): HostPromptQueueItem | null {
+    const removed = this.hostPromptQueue.remove(agentId, messageId);
+    if (removed) this.publishHostPromptQueue(agentId);
+    return removed;
+  }
+
+  private publishHostPromptQueue(agentId: string): void {
+    const agent = this.agents.get(agentId);
+    if (!agent) return;
+    agent.promptQueue = this.hostPromptQueue.list(agentId);
+    this.emitState(agent);
+  }
+
+  private scheduleHostPromptQueueDrain(agentId: string): void {
+    queueMicrotask(() => {
+      void this.drainHostPromptQueue(agentId);
+    });
+  }
+
+  private async drainHostPromptQueue(agentId: string): Promise<void> {
+    if (this.hostPromptQueueDrain.has(agentId)) {
+      this.hostPromptQueueDrainFollowUp.add(agentId);
+      return;
+    }
+    const agent = this.agents.get(agentId);
+    if (!agent || this.hostPromptQueue.list(agentId).length === 0) return;
+    if (agent.lifecycle !== "idle" || agent.activeForegroundTurnId || this.runs.hasRun(agentId)) {
+      return;
+    }
+    const item = this.hostPromptQueue.shift(agentId);
+    if (!item) return;
+    this.hostPromptQueueDrain.add(agentId);
+    this.publishHostPromptQueue(agentId);
+    try {
+      const iterator = this.streamAgent(agentId, item.prompt, {
+        clientMessageId: item.messageId,
+      });
+      for await (const event of iterator) {
+        void event;
+      }
+    } catch (error) {
+      this.logger.error({ err: error, agentId }, "Failed to start queued prompt");
+      if (!this.hasInFlightRun(agentId)) {
+        this.hostPromptQueue.unshift(agentId, item);
+        this.publishHostPromptQueue(agentId);
+      }
+    } finally {
+      this.hostPromptQueueDrain.delete(agentId);
+      if (this.hostPromptQueueDrainFollowUp.delete(agentId)) {
+        this.scheduleHostPromptQueueDrain(agentId);
+      }
+    }
   }
 
   hasInFlightRun(agentId: string): boolean {
@@ -2713,6 +2780,7 @@ export class AgentManager {
         if (!agent.activeForegroundTurnId) {
           await this.refreshRuntimeInfo(agent);
         }
+        this.scheduleHostPromptQueueDrain(agentId);
       }
     }.call(this);
 
@@ -2760,6 +2828,9 @@ export class AgentManager {
     if (!shouldHoldBusyForReplacement) {
       this.touchUpdatedAt(mutableAgent);
       this.emitState(mutableAgent);
+    }
+    if (nextLifecycle === "idle") {
+      this.scheduleHostPromptQueueDrain(agent.id);
     }
   }
 
@@ -3175,6 +3246,7 @@ export class AgentManager {
         agent.lifecycle = "idle";
         this.touchUpdatedAt(agent);
         this.emitState(agent);
+        this.scheduleHostPromptQueueDrain(agentId);
       }
     } else if (settlement === "timed_out" && run.kind === "autonomous") {
       this.logger.warn(
@@ -4602,14 +4674,14 @@ export class AgentManager {
     // data accumulated during streaming isn't lost when the provider omits
     // it from the completion event.
     agent.lastError = undefined;
-    if (
-      !isForegroundEvent &&
-      !agent.activeForegroundTurnId &&
-      agent.lifecycle !== "idle" &&
-      !agent.pendingReplacement
-    ) {
-      (agent as ActiveManagedAgent).lifecycle = "idle";
-      this.emitState(agent);
+    if (!isForegroundEvent && !agent.activeForegroundTurnId && !agent.pendingReplacement) {
+      if (agent.lifecycle !== "idle") {
+        (agent as ActiveManagedAgent).lifecycle = "idle";
+        this.emitState(agent);
+      }
+      if (this.hostPromptQueue.list(agent.id).length > 0) {
+        this.scheduleHostPromptQueueDrain(agent.id);
+      }
     }
     void this.refreshRuntimeInfo(agent);
   }
@@ -4683,6 +4755,9 @@ export class AgentManager {
     if (terminalDisposition === "stale") return;
     if (!isForegroundEvent && !agent.activeForegroundTurnId && !agent.pendingReplacement) {
       agent.lifecycle = "idle";
+      if (this.hostPromptQueue.list(agent.id).length > 0) {
+        this.scheduleHostPromptQueueDrain(agent.id);
+      }
     }
     agent.lastError = undefined;
     this.resolvePendingPermissionsForAgent(agent, event.provider, options, "Interrupted");
