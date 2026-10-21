@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import { execCommand } from "../utils/spawn.js";
 import {
@@ -28,6 +29,11 @@ export interface TerminalWorkerProcessInspector {
   inspect(pid: number): Promise<ManagedProcessInspection>;
   /** One snapshot of every process, for walking descendants. Throws when it cannot be read. */
   listProcesses(): Promise<ProcessTableEntry[]>;
+  /**
+   * The environment a process was started with, as NAME=value entries; null when the process
+   * is gone. Throws when it cannot be read. Only called where `reportsSessions` is true.
+   */
+  readEnvironment(pid: number): Promise<string[] | null>;
 }
 
 const WindowsProcessListSchema = z.array(
@@ -63,7 +69,25 @@ export function createTerminalWorkerProcessInspector(
       platform === "win32"
         ? listWindowsProcesses(commandRunner)
         : listPosixProcesses(commandRunner, platform),
+    readEnvironment: (pid) => readLinuxEnvironment(platform, pid),
   };
+}
+
+async function readLinuxEnvironment(
+  platform: NodeJS.Platform,
+  pid: number,
+): Promise<string[] | null> {
+  if (platform !== "linux") {
+    throw new Error(`reading a process environment is not supported on ${platform}`);
+  }
+  let raw: string;
+  try {
+    raw = await readFile(`/proc/${pid}/environ`, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  return raw.split("\0").filter((entry) => entry.length > 0);
 }
 
 async function listPosixProcesses(

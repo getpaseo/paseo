@@ -36,9 +36,8 @@ const TerminalWorkerRecordSchema = z.object({
   socketPath: z.string().min(1),
   secret: z.string().min(1),
   terminals: z.array(TerminalWorkerTerminalEntrySchema),
-  // Written by cleanup that could not confirm every process gone, with what it could not
-  // confirm. A record marked closing is never adopted: the next daemon or stop retries the
-  // cleanup instead.
+  // Set only in a cleanup record (below), with what a cleanup could not confirm gone. A record
+  // marked closing is never adopted: the next daemon or stop retries the cleanup instead.
   closing: z.object({ unresolved: z.array(TerminalCleanupUnresolvedSchema).min(1) }).optional(),
 });
 
@@ -46,9 +45,21 @@ export type TerminalWorkerTerminalEntry = z.infer<typeof TerminalWorkerTerminalE
 export type TerminalCleanupUnresolved = z.infer<typeof TerminalCleanupUnresolvedSchema>;
 export type TerminalWorkerRecord = z.infer<typeof TerminalWorkerRecordSchema>;
 
+// A worker record (`<pid>.json`) belongs to the worker, which rewrites it from memory whenever
+// a terminal starts or exits. A cleanup that cannot confirm every process gone therefore keeps
+// its state in a cleanup record of its own (`closing-<recordId>.json`) that no worker writes, so
+// the kill intent and what it could not confirm survive any later worker rewrite.
+export type TerminalWorkerRecordKind = "worker" | "cleanup";
+
 export type TerminalWorkerRecordFile =
-  | { path: string; record: TerminalWorkerRecord }
-  | { path: string; error: Error };
+  | {
+      // The file holding this record's state: the cleanup record when there is one.
+      path: string;
+      record: TerminalWorkerRecord;
+      // The worker's own record file, when it still exists.
+      workerRecordPath: string | null;
+    }
+  | { path: string; kind: TerminalWorkerRecordKind; error: Error };
 
 // The worker's command line carries this marker followed by its record id, so a reused pid
 // running some other process (even another worker) never matches the record.
@@ -62,6 +73,10 @@ export function terminalWorkerRecordPath(paseoHome: string, workerPid: number): 
   return path.join(terminalWorkerDirectory(paseoHome), `${workerPid}.json`);
 }
 
+export function terminalCleanupRecordPath(paseoHome: string, recordId: string): string {
+  return path.join(terminalWorkerDirectory(paseoHome), `closing-${recordId}.json`);
+}
+
 export function terminalWorkerLogPath(paseoHome: string): string {
   return path.join(paseoHome, "terminal-worker.log");
 }
@@ -72,10 +87,38 @@ export function writeTerminalWorkerRecord(paseoHome: string, record: TerminalWor
   return recordPath;
 }
 
+/** Writes the state of a cleanup that could not confirm every process gone. */
+export function writeTerminalCleanupRecord(
+  paseoHome: string,
+  record: TerminalWorkerRecord & { closing: NonNullable<TerminalWorkerRecord["closing"]> },
+): string {
+  if (!RECORD_ID_PATTERN.test(record.recordId)) {
+    throw new Error(`Terminal worker record id is not a file name: ${record.recordId}`);
+  }
+  const recordPath = terminalCleanupRecordPath(paseoHome, record.recordId);
+  writePrivateFileAtomicSync(recordPath, `${JSON.stringify(record, null, 2)}\n`);
+  return recordPath;
+}
+
 export function readTerminalWorkerRecord(recordPath: string): TerminalWorkerRecord {
   return TerminalWorkerRecordSchema.parse(JSON.parse(readFileSync(recordPath, "utf8")));
 }
 
+const RECORD_ID_PATTERN = /^[A-Za-z0-9-]+$/;
+const WORKER_RECORD_NAME = /^\d+\.json$/;
+const CLEANUP_RECORD_NAME = /^closing-[A-Za-z0-9-]+\.json$/;
+
+function recordKindOf(fileName: string): TerminalWorkerRecordKind | null {
+  if (WORKER_RECORD_NAME.test(fileName)) return "worker";
+  if (CLEANUP_RECORD_NAME.test(fileName)) return "cleanup";
+  return null;
+}
+
+/**
+ * Every record in the home. A cleanup record is merged with the worker record of the same
+ * record id: its closing state wins, and terminals the worker recorded since join it, so the
+ * retry covers everything the worker still runs.
+ */
 export function listTerminalWorkerRecords(paseoHome: string): TerminalWorkerRecordFile[] {
   const directory = terminalWorkerDirectory(paseoHome);
   let names: string[];
@@ -85,27 +128,75 @@ export function listTerminalWorkerRecords(paseoHome: string): TerminalWorkerReco
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
-  const files: TerminalWorkerRecordFile[] = [];
+  const errors: TerminalWorkerRecordFile[] = [];
+  const workers: Array<{ path: string; record: TerminalWorkerRecord }> = [];
+  const cleanups: Array<{ path: string; record: TerminalWorkerRecord }> = [];
   for (const name of names.sort()) {
-    if (!/^\d+\.json$/.test(name)) continue;
+    const kind = recordKindOf(name);
+    if (!kind) continue;
     const recordPath = path.join(directory, name);
     try {
-      files.push({ path: recordPath, record: readTerminalWorkerRecord(recordPath) });
+      const record = readTerminalWorkerRecord(recordPath);
+      (kind === "worker" ? workers : cleanups).push({ path: recordPath, record });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-      files.push({
+      errors.push({
         path: recordPath,
+        kind,
         error: error instanceof Error ? error : new Error(String(error)),
       });
     }
   }
-  return files;
+  const files: TerminalWorkerRecordFile[] = [];
+  const merged = new Set<string>();
+  for (const cleanup of cleanups) {
+    const worker = workers.find(
+      (entry) =>
+        entry.record.recordId === cleanup.record.recordId &&
+        entry.record.pid === cleanup.record.pid,
+    );
+    if (worker) merged.add(worker.path);
+    const known = new Set(cleanup.record.terminals.map((entry) => `${entry.id}:${entry.pid}`));
+    const added = (worker?.record.terminals ?? []).filter(
+      (entry) => !known.has(`${entry.id}:${entry.pid}`),
+    );
+    files.push({
+      path: cleanup.path,
+      record: { ...cleanup.record, terminals: [...cleanup.record.terminals, ...added] },
+      workerRecordPath: worker?.path ?? null,
+    });
+  }
+  for (const worker of workers) {
+    if (merged.has(worker.path)) continue;
+    files.push({ path: worker.path, record: worker.record, workerRecordPath: worker.path });
+  }
+  return [...files, ...errors];
 }
 
-/** Deletes a record and the socket it names. The pipe namespace on Windows needs no unlink. */
-export function retireTerminalWorkerRecord(recordPath: string, socketPath: string | null): void {
-  rmSync(recordPath, { force: true });
-  if (socketPath && process.platform !== "win32") {
-    rmSync(socketPath, { force: true });
+/**
+ * Deletes a record, the worker's own record file and the socket it names, unless a later worker
+ * that reused the pid wrote that file since. The pipe namespace on Windows needs no unlink.
+ */
+export function retireTerminalWorkerRecord(file: {
+  path: string;
+  record: TerminalWorkerRecord;
+  workerRecordPath: string | null;
+}): void {
+  if (file.path !== file.workerRecordPath) rmSync(file.path, { force: true });
+  if (file.workerRecordPath) {
+    if (workerRecordNamesAnother(file.workerRecordPath, file.record.recordId)) return;
+    rmSync(file.workerRecordPath, { force: true });
+  }
+  if (process.platform !== "win32") {
+    rmSync(file.record.socketPath, { force: true });
+  }
+}
+
+// True when the file now belongs to another worker, or cannot be read to tell.
+function workerRecordNamesAnother(recordPath: string, recordId: string): boolean {
+  try {
+    return readTerminalWorkerRecord(recordPath).recordId !== recordId;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ENOENT";
   }
 }

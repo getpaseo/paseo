@@ -1,7 +1,15 @@
 import { afterEach, expect, it } from "vitest";
 import { isPlatform } from "../test-utils/platform.js";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { delimiter, join } from "node:path";
 import { tmpdir } from "node:os";
 import pino from "pino";
@@ -25,6 +33,13 @@ import type {
   TerminalWorkerRequest,
   TerminalWorkerToParentMessage,
 } from "./terminal-worker-protocol.js";
+import { createTerminalWorkerProcessInspector } from "./terminal-worker-processes.js";
+import {
+  readUnconfirmedTerminalCleanup,
+  reapTerminalWorkers,
+  TerminalCleanupNotConfirmedError,
+} from "./terminal-worker-reaper.js";
+import { readTerminalWorkerRecord, terminalWorkerDirectory } from "./terminal-worker-record.js";
 
 type TerminalRow = TerminalState["grid"][number];
 
@@ -548,6 +563,71 @@ it("adopts a detached worker's terminals with their activity tokens and keeps th
   });
   adopted?.send({ type: "input", data: "after-adopt\r" });
   await waitForCondition(() => messages.join("").includes("adopted-output:after-adopt"), 10000);
+});
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// The terminals the worker itself recorded, read from its own record file.
+function recordedTerminalPids(paseoHome: string): Map<string, number> {
+  const pids = new Map<string, number>();
+  const directory = terminalWorkerDirectory(paseoHome);
+  for (const name of readdirSync(directory).filter((entry) => /^\d+\.json$/.test(entry))) {
+    for (const entry of readTerminalWorkerRecord(join(directory, name)).terminals) {
+      pids.set(entry.id, entry.pid);
+    }
+  }
+  return pids;
+}
+
+it("never adopts a live worker's terminals after a kill cleanup it could not finish, even once the worker rewrites its record", async () => {
+  const paseoHome = createTemporaryHome();
+  const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-unfinished-kill-"));
+  temporaryDirs.push(cwd);
+  const first = await startRealWorkerManager({ paseoHome });
+  manager = first;
+  const ending = await first.createTerminal({
+    workspaceId: "ws-unfinished-kill",
+    cwd,
+    ...nodeTerminalCommand("setInterval(() => {}, 1000);"),
+  });
+  const remaining = await first.createTerminal({
+    workspaceId: "ws-unfinished-kill",
+    cwd,
+    ...nodeTerminalCommand("setInterval(() => {}, 1000);"),
+  });
+  const pids = recordedTerminalPids(paseoHome);
+  const endingPid = pids.get(ending.id)!;
+  const remainingPid = pids.get(remaining.id)!;
+
+  // A kill cleanup whose process table read fails signals nothing and leaves the worker live.
+  const inspector = createTerminalWorkerProcessInspector();
+  await expect(
+    reapTerminalWorkers({
+      paseoHome,
+      inspector: { ...inspector, listProcesses: () => Promise.reject(new Error("ps timed out")) },
+    }),
+  ).rejects.toBeInstanceOf(TerminalCleanupNotConfirmedError);
+  await first.detach();
+  expect(readUnconfirmedTerminalCleanup(paseoHome).length).toBeGreaterThan(0);
+
+  // One terminal ends on its own: the live worker rewrites its record from memory.
+  process.kill(endingPid, "SIGKILL");
+  await waitForCondition(() => !recordedTerminalPids(paseoHome).has(ending.id), 10000);
+  expect(readUnconfirmedTerminalCleanup(paseoHome).length).toBeGreaterThan(0);
+
+  manager = await startRealWorkerManager({ paseoHome });
+
+  expect(manager.getTerminal(remaining.id)).toBeUndefined();
+  expect(await manager.getTerminals(cwd)).toEqual([]);
+  await waitForCondition(() => !isProcessAlive(remainingPid), 10000);
+  expect(readUnconfirmedTerminalCleanup(paseoHome)).toEqual([]);
 });
 
 // The worker's own `ps`, delayed: a program that exits while the worker reads its birth time

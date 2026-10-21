@@ -8,6 +8,8 @@ import {
   openDaemonOverview,
   restartDaemonInSettings,
   expectDaemonRestartComplete,
+  expectDaemonRestartFailed,
+  plantUnclosableTerminalProgram,
   readWorkerPid,
   openLongLivedTerminal,
   listTerminalIds,
@@ -57,6 +59,27 @@ test("settings restart and close terminals closes the terminal", async ({ page }
     expect(await readWorkerPid(daemon)).not.toBe(previousWorker);
     expect(await listTerminalIds(daemon)).toEqual([]);
   } finally {
+    await daemon.close();
+  }
+});
+
+test("settings restart and close terminals shows the processes it could not close", async ({
+  page,
+}, testInfo) => {
+  test.skip(process.platform === "win32", "The unclosable program is a POSIX zombie");
+  const daemon = await startIsolatedHostDaemon(randomUUID());
+  let program: Awaited<ReturnType<typeof plantUnclosableTerminalProgram>> | null = null;
+  try {
+    program = await plantUnclosableTerminalProgram(daemon);
+    await openDaemonOverview(page, daemon);
+    await restartDaemonInSettings(page, { closeTerminals: true });
+    await expectDaemonRestartFailed(page, `pid ${program.pid}`);
+    await page.screenshot({
+      path: testInfo.outputPath("restart-cleanup-failed.png"),
+      fullPage: true,
+    });
+  } finally {
+    program?.release();
     await daemon.close();
   }
 });

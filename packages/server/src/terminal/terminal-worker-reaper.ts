@@ -17,9 +17,11 @@ import {
 import {
   listTerminalWorkerRecords,
   retireTerminalWorkerRecord,
-  writeTerminalWorkerRecord,
+  terminalCleanupRecordPath,
+  writeTerminalCleanupRecord,
   type TerminalCleanupUnresolved,
   type TerminalWorkerRecord,
+  type TerminalWorkerRecordFile,
   type TerminalWorkerTerminalEntry,
 } from "./terminal-worker-record.js";
 
@@ -29,16 +31,18 @@ import {
 //
 // 1. Classify the worker and every terminal program of each record on its own, by birth time.
 //    A record from an earlier boot names only processes the reboot ended: retire it unsignaled.
-//    Descendants of owned programs (and, on Linux, members of their sessions, also once the
-//    program itself is gone) join the candidates from one process-table snapshot taken before
-//    anything is signaled. When that table cannot be read, nothing in the record is signaled:
-//    ending a program would reparent the children only the table can find, and a retry could
-//    never reach them again.
+//    Descendants of owned programs (and, on Linux, members of their sessions) join the
+//    candidates from one process-table snapshot taken before anything is signaled. Once a
+//    program is gone, its session id can belong to a later session, so a member of a gone
+//    program's session joins only when its environment carries that terminal's id. When the
+//    table cannot be read, nothing in the record is signaled: ending a program would reparent
+//    the children only the table can find, and a retry could never reach them again.
 // 2. An owned worker gets an authenticated `shutdown`: it kills each terminal and waits for it.
 // 3. After `gracefulMs`, SIGKILL whatever owned process is left, re-inspecting right before
 //    each signal.
 // 4. Succeed only when every candidate is gone or proven unrelated. Otherwise keep a record of
-//    the unresolved entries, marked closing, and throw TerminalCleanupNotConfirmedError.
+//    the unresolved entries, marked closing, in a cleanup record no worker rewrites, and throw
+//    TerminalCleanupNotConfirmedError. An unreadable record is never reported confirmed.
 
 const DEFAULT_GRACEFUL_MS = 5_000;
 const DEFAULT_CONFIRM_MS = 3_000;
@@ -57,22 +61,44 @@ export interface UnconfirmedTerminalProcess {
   detail: string;
 }
 
+export interface UnreadableTerminalWorkerRecord {
+  path: string;
+  error: string;
+}
+
 export class TerminalCleanupNotConfirmedError extends Error {
   readonly code = "TERMINAL_CLEANUP_NOT_CONFIRMED";
   readonly unresolved: UnconfirmedTerminalProcess[];
+  readonly unreadableRecords: UnreadableTerminalWorkerRecord[];
 
-  constructor(unresolved: UnconfirmedTerminalProcess[]) {
+  constructor(
+    unresolved: UnconfirmedTerminalProcess[],
+    unreadableRecords: UnreadableTerminalWorkerRecord[] = [],
+  ) {
     super(
       [
-        "Terminal cleanup was not confirmed; these processes may still be running:",
-        ...unresolved.map(
-          (entry) => `  pid ${entry.pid} (${entry.role}): ${entry.reason} (${entry.detail})`,
-        ),
-        "Their record is kept; the next `paseo daemon stop` retries the cleanup.",
+        "Terminal cleanup was not confirmed.",
+        ...(unresolved.length > 0
+          ? [
+              "These processes may still be running:",
+              ...unresolved.map(
+                (entry) => `  pid ${entry.pid} (${entry.role}): ${entry.reason} (${entry.detail})`,
+              ),
+              "Their record is kept; the next `paseo daemon stop` retries the cleanup.",
+            ]
+          : []),
+        ...(unreadableRecords.length > 0
+          ? [
+              "These records cannot be read, so the processes they name cannot be checked:",
+              ...unreadableRecords.map((entry) => `  ${entry.path}: ${entry.error}`),
+              "Repair or remove each once you have checked its processes are gone.",
+            ]
+          : []),
       ].join("\n"),
     );
     this.name = "TerminalCleanupNotConfirmedError";
     this.unresolved = unresolved;
+    this.unreadableRecords = unreadableRecords;
   }
 }
 
@@ -82,8 +108,11 @@ export class TerminalCleanupNotConfirmedError extends Error {
  * still survive, so a kill restart can report them.
  */
 export async function retryUnconfirmedTerminalCleanup(paseoHome: string): Promise<void> {
-  const recordPaths = listTerminalWorkerRecords(paseoHome).flatMap((file) =>
-    "record" in file && file.record.closing ? [file.path] : [],
+  const files = listTerminalWorkerRecords(paseoHome);
+  const recordPaths = files.flatMap((file) =>
+    ("record" in file && file.record.closing) || ("error" in file && file.kind === "cleanup")
+      ? [file.path]
+      : [],
   );
   if (recordPaths.length === 0) return;
   await reapTerminalWorkers({ paseoHome, gracefulMs: 0, recordPaths });
@@ -92,14 +121,25 @@ export async function retryUnconfirmedTerminalCleanup(paseoHome: string): Promis
 /**
  * What the last cleanup of this home could not confirm gone, as its closing records name it.
  * Read without retrying, so a daemon can report it (daemon status) to clients that cannot read
- * this home themselves.
+ * this home themselves. Throws TerminalCleanupNotConfirmedError when a cleanup record cannot be
+ * read: what it names is unknown, so the cleanup cannot be reported finished.
  */
 export function readUnconfirmedTerminalCleanup(paseoHome: string): UnresolvedTerminalProcess[] {
-  return listTerminalWorkerRecords(paseoHome).flatMap((file) =>
+  const files = listTerminalWorkerRecords(paseoHome);
+  const unresolved = files.flatMap((file) =>
     "record" in file && file.record.closing
       ? file.record.closing.unresolved.map((entry) => ({ ...entry, recordPath: file.path }))
       : [],
   );
+  const unreadable = files.flatMap((file) =>
+    "error" in file && file.kind === "cleanup"
+      ? [{ path: file.path, error: file.error.message }]
+      : [],
+  );
+  if (unreadable.length > 0) {
+    throw new TerminalCleanupNotConfirmedError(unresolved, unreadable);
+  }
+  return unresolved;
 }
 
 export interface TerminalWorkerReapResult {
@@ -146,22 +186,24 @@ export async function reapTerminalWorkers(
   const wanted = options.recordPaths ? new Set(options.recordPaths) : null;
   const result: TerminalWorkerReapResult = { records: 0, retired: 0, signaled: [] };
   const unresolved: UnresolvedTerminalProcess[] = [];
+  const unreadable: UnreadableTerminalWorkerRecord[] = [];
 
   for (const file of listTerminalWorkerRecords(options.paseoHome)) {
     if (wanted && !wanted.has(file.path)) continue;
     result.records += 1;
     if ("error" in file) {
-      // Nothing in an unreadable record can identify a process, so nothing may be signaled.
+      // Nothing in an unreadable record can identify a process, so nothing may be signaled,
+      // and nothing it names can be confirmed gone.
       log("Skipping unreadable terminal worker record", {
         recordPath: file.path,
         error: file.error.message,
       });
+      unreadable.push({ path: file.path, error: file.error.message });
       continue;
     }
     const outcome = await reapRecord({
       paseoHome: options.paseoHome,
-      recordPath: file.path,
-      record: file.record,
+      file,
       inspector,
       gracefulMs,
       confirmMs,
@@ -175,16 +217,17 @@ export async function reapTerminalWorkers(
     }
   }
 
-  if (unresolved.length > 0) {
-    throw new TerminalCleanupNotConfirmedError(unresolved);
+  if (unresolved.length > 0 || unreadable.length > 0) {
+    throw new TerminalCleanupNotConfirmedError(unresolved, unreadable);
   }
   return result;
 }
 
+type ReadableRecordFile = Extract<TerminalWorkerRecordFile, { record: TerminalWorkerRecord }>;
+
 interface ReapRecordInput {
   paseoHome: string;
-  recordPath: string;
-  record: TerminalWorkerRecord;
+  file: ReadableRecordFile;
   inspector: TerminalWorkerProcessInspector;
   gracefulMs: number;
   confirmMs: number;
@@ -194,9 +237,11 @@ interface ReapRecordInput {
 async function reapRecord(
   input: ReapRecordInput,
 ): Promise<{ signaled: number[]; unresolved: UnresolvedTerminalProcess[] }> {
-  const { record, recordPath, inspector, log } = input;
+  const { file, inspector, log } = input;
+  const { record } = file;
+  const recordPath = file.path;
   if (!writtenDuringThisBoot({ startedAt: record.createdAt, bootId: record.bootId })) {
-    retireTerminalWorkerRecord(recordPath, record.socketPath);
+    retireTerminalWorkerRecord(file);
     log("Retired terminal worker record from an earlier boot", { recordPath });
     return { signaled: [], unresolved: [] };
   }
@@ -231,24 +276,26 @@ async function reapRecord(
   return keepUnresolved(input, tracked, signaled, null);
 }
 
-// Retires the record when every process it names is settled; otherwise rewrites it, marked
-// closing, with only the unresolved entries. `notSignaled` explains open processes that were
-// deliberately left alone.
+// Retires the record when every process it names is settled; otherwise writes the cleanup
+// record, marked closing, with only the unresolved entries. A live worker keeps rewriting its
+// own record, so the closing state never goes there. `notSignaled` explains open processes that
+// were deliberately left alone.
 function keepUnresolved(
-  input: Pick<ReapRecordInput, "paseoHome" | "recordPath" | "log">,
+  input: Pick<ReapRecordInput, "paseoHome" | "file" | "log">,
   tracked: TrackedProcesses,
   signaled: number[],
   notSignaled: string | null,
 ): { signaled: number[]; unresolved: UnresolvedTerminalProcess[] } {
   const { record } = tracked;
-  const { recordPath, log } = input;
+  const { file, log } = input;
+  const recordPath = terminalCleanupRecordPath(input.paseoHome, record.recordId);
   const { unresolved, remaining } = collectUnresolved(tracked, recordPath, notSignaled);
   if (unresolved.length === 0) {
-    retireTerminalWorkerRecord(recordPath, record.socketPath);
-    log("Terminal worker record cleaned up", { recordPath, signaled });
+    retireTerminalWorkerRecord(file);
+    log("Terminal worker record cleaned up", { recordPath: file.path, signaled });
     return { signaled, unresolved };
   }
-  writeTerminalWorkerRecord(input.paseoHome, {
+  writeTerminalCleanupRecord(input.paseoHome, {
     ...record,
     terminals: remaining,
     closing: {
@@ -405,9 +452,9 @@ async function collectCandidates(
     });
   }
   // Owned programs are walked through the table. Where sessions are reported, so are programs
-  // already gone: their session id stays reserved while a member lives, so a job the shell left
-  // behind is still found. A pid reused by another process (unrelated) leads someone else's
-  // session and is never walked.
+  // already gone: the kernel keeps a session id reserved while a member lives, so a job the
+  // shell left behind is still found. A pid reused by another process (unrelated) leads someone
+  // else's session and is never walked.
   const roots = Array.from(candidates.values()).filter(
     (c) => c.state.status === "owned" || (c.state.status === "gone" && inspector.reportsSessions),
   );
@@ -428,18 +475,31 @@ async function collectCandidates(
     };
   }
   for (const root of roots) {
+    const inTable = snapshot.find((entry) => entry.pid === root.pid);
+    if (inTable && inTable.startedAt !== root.startedAt) {
+      // The program ended and its pid was reused before the snapshot: what is below that pid
+      // now belongs to someone else, and the old session ended with every member of it.
+      log("Not walking a terminal program pid reused before the process table was read", {
+        pid: root.pid,
+        terminalId: root.terminalId,
+      });
+      continue;
+    }
+    if (!inTable && !inspector.reportsSessions) continue;
+    // Below a live program its parent links prove ownership. Once it is gone, its session id
+    // may have been reused by a later session, so each member must carry the terminal's id.
+    const rootGone = !inTable;
     for (const descendant of collectDescendants(snapshot, root.pid)) {
       if (candidates.has(descendant.pid)) continue;
-      if (root.state.status === "gone") {
-        // A gone program's identity is gone with it; what is left is its birth time, and
-        // nothing older than the program can belong to its session.
-        const order = compareBirth(descendant.startedAt, root.startedAt);
-        if (order === null) {
-          root.descendantsUnconfirmed = `birth time of session member ${descendant.pid} cannot be compared`;
+      if (rootGone) {
+        const proof = await proveTerminalMember(inspector, descendant.pid, root.terminalId);
+        if (proof.status === "gone") continue;
+        if (proof.status === "unknown") {
+          root.descendantsUnconfirmed = `session member ${descendant.pid} cannot be identified: ${proof.reason}`;
           continue;
         }
-        if (order < 0) {
-          log("Ignoring a session member older than its terminal program", {
+        if (proof.status === "unrelated") {
+          log("Ignoring a session member that does not carry its terminal's id", {
             pid: descendant.pid,
             terminalId: root.terminalId,
           });
@@ -459,14 +519,26 @@ async function collectCandidates(
   return { candidates: Array.from(candidates.values()), tableError: null };
 }
 
-// Negative when `startedAt` is earlier than `reference`; null when either cannot be read as an
-// instant. Both are C-locale `ps -o lstart` stamps on Linux, the one platform that walks a gone
-// program's session.
-function compareBirth(startedAt: string, reference: string): number | null {
-  const born = Date.parse(startedAt);
-  const referenceBorn = Date.parse(reference);
-  if (!Number.isFinite(born) || !Number.isFinite(referenceBorn)) return null;
-  return born - referenceBorn;
+// A terminal's programs inherit PASEO_TERMINAL_ID (terminal-manager.ts) from its PTY program.
+// A process in a later session that happens to reuse the session id does not carry it.
+async function proveTerminalMember(
+  inspector: TerminalWorkerProcessInspector,
+  pid: number,
+  terminalId: string,
+): Promise<ProcessOwnership> {
+  let environment: string[] | null;
+  try {
+    environment = await inspector.readEnvironment(pid);
+  } catch (error) {
+    return {
+      status: "unknown",
+      reason: `environment unreadable: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  if (environment === null) return { status: "gone" };
+  return environment.includes(`PASEO_TERMINAL_ID=${terminalId}`)
+    ? { status: "owned" }
+    : { status: "unrelated", reason: "environment lacks the terminal id" };
 }
 
 async function requestWorkerShutdown(

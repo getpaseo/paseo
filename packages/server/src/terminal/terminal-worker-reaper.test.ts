@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { isPlatform } from "../test-utils/platform.js";
@@ -9,10 +9,16 @@ import {
   createTerminalWorkerProcessInspector,
   type TerminalWorkerProcessInspector,
 } from "./terminal-worker-processes.js";
-import { reapTerminalWorkers, TerminalCleanupNotConfirmedError } from "./terminal-worker-reaper.js";
+import {
+  readUnconfirmedTerminalCleanup,
+  reapTerminalWorkers,
+  retryUnconfirmedTerminalCleanup,
+  TerminalCleanupNotConfirmedError,
+} from "./terminal-worker-reaper.js";
 import {
   readTerminalWorkerRecord,
-  terminalWorkerRecordPath,
+  terminalCleanupRecordPath,
+  terminalWorkerDirectory,
   writeTerminalWorkerRecord,
   type TerminalWorkerRecord,
 } from "./terminal-worker-record.js";
@@ -25,10 +31,14 @@ const children: ChildProcess[] = [];
 const extraPids: number[] = [];
 const temporaryDirs: string[] = [];
 
-function spawnIdle(script = "setInterval(() => {}, 1e9)"): ChildProcess {
+function spawnIdle(
+  script = "setInterval(() => {}, 1e9)",
+  env: NodeJS.ProcessEnv = process.env,
+): ChildProcess {
   const child = spawn(process.execPath, ["-e", script], {
     detached: true,
     stdio: ["ignore", "pipe", "ignore"],
+    env,
   });
   children.push(child);
   return child;
@@ -79,13 +89,31 @@ async function waitUntilGone(pid: number): Promise<void> {
   }
 }
 
+// A member of the terminal "t1" carries its id, as every program a terminal starts does.
+function terminalEnv(terminalId: string): NodeJS.ProcessEnv {
+  return { ...process.env, PASEO_TERMINAL_ID: terminalId };
+}
+
+// A process's start environment: /proc where the real inspector reads it (Linux), `ps -E` on
+// macOS, whose real inspector has no session walk and so never reads one.
+function readEnvironment(pid: number): Promise<string[] | null> {
+  if (process.platform === "linux") return inspector.readEnvironment(pid);
+  return new Promise((resolve) => {
+    execFile("ps", ["-E", "-ww", "-o", "command=", "-p", String(pid)], (error, stdout) => {
+      resolve(error ? null : stdout.trim().split(/\s+/));
+    });
+  });
+}
+
 // The real process table as a Linux `ps` would print it for one session: `memberPid` belongs to
 // the session `sessionId` led, and every other process to none this test knows. macOS `ps` has
 // no session column, so this is the only way to run the Linux branch here; the member is a real
-// process the test started.
+// process the test started. `reusedRoot` adds a process that took the session id's pid.
 function withSessionMember(input: {
   memberPid: number;
   sessionId: number;
+  reusedRoot?: boolean;
+  environmentUnreadable?: boolean;
 }): TerminalWorkerProcessInspector {
   return {
     reportsSessions: true,
@@ -96,8 +124,20 @@ function withSessionMember(input: {
       for (const entry of snapshot) {
         entry.sessionId = entry.pid === input.memberPid ? input.sessionId : null;
       }
+      if (input.reusedRoot) {
+        snapshot.push({
+          pid: input.sessionId,
+          ppid: 1,
+          startedAt: "Fri Jan  1 00:00:00 2100",
+          sessionId: input.sessionId,
+        });
+      }
       return snapshot;
     },
+    readEnvironment: (pid) =>
+      input.environmentUnreadable
+        ? Promise.reject(new Error("permission denied"))
+        : readEnvironment(pid),
   };
 }
 
@@ -224,6 +264,7 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
           ? Promise.resolve({ status: "error", error: new Error("ps unavailable") })
           : inspector.inspect(pid),
       listProcesses: () => inspector.listProcesses(),
+      readEnvironment: (pid) => inspector.readEnvironment(pid),
     };
     const workerPid = await goneProcessPid();
     const recordPath = writeRecord(home, {
@@ -248,15 +289,17 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
     await waitUntilGone(killable.pid!);
     expect(isAlive(killable.pid!)).toBe(false);
     expect(isAlive(uninspectable.pid!)).toBe(true);
-    const kept = readTerminalWorkerRecord(recordPath);
+    // The closing state goes to the cleanup record; the worker's own record is left as it was.
+    const kept = readTerminalWorkerRecord(terminalCleanupRecordPath(home, "record-under-test"));
+    expect(kept.pid).toBe(workerPid);
     expect(kept.closing?.unresolved.length).toBeGreaterThan(0);
     expect(kept.terminals.map((entry) => entry.pid)).toEqual([uninspectable.pid]);
-    expect(recordPath).toBe(terminalWorkerRecordPath(home, workerPid));
+    expect(readTerminalWorkerRecord(recordPath).closing).toBeUndefined();
   });
 
   it("ends a session member its gone terminal program left behind, where sessions are reported", async () => {
     const home = makeHome();
-    const member = spawnIdle();
+    const member = spawnIdle(undefined, terminalEnv("t1"));
     const goneProgramPid = await goneProcessPid();
     const recordPath = writeRecord(home, {
       pid: await goneProcessPid(),
@@ -274,13 +317,15 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
     expect(existsSync(recordPath)).toBe(false);
   });
 
-  it("leaves alive a session member older than its gone terminal program", async () => {
+  it("leaves alive a later session that reuses a gone terminal program's session id", async () => {
     const home = makeHome();
-    const member = spawnIdle();
+    // Born after the recorded program, as any member of a later session is; only the missing
+    // terminal id tells it apart.
+    const member = spawnIdle(undefined, terminalEnv("another-terminal"));
     const goneProgramPid = await goneProcessPid();
     const recordPath = writeRecord(home, {
       pid: await goneProcessPid(),
-      terminals: [{ id: "t1", pid: goneProgramPid, startedAt: "Fri Jan  1 00:00:00 2100" }],
+      terminals: [{ id: "t1", pid: goneProgramPid, startedAt: "Thu Jan  1 00:00:00 1970" }],
     });
 
     const result = await reapTerminalWorkers({
@@ -291,6 +336,79 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
     expect(isAlive(member.pid!)).toBe(true);
     expect(result.signaled).toEqual([]);
     expect(existsSync(recordPath)).toBe(false);
+  });
+
+  it("signals no session member it cannot identify, and keeps the cleanup unconfirmed", async () => {
+    const home = makeHome();
+    const member = spawnIdle(undefined, terminalEnv("t1"));
+    const goneProgramPid = await goneProcessPid();
+    writeRecord(home, {
+      pid: await goneProcessPid(),
+      terminals: [{ id: "t1", pid: goneProgramPid, startedAt: "Thu Jan  1 00:00:00 1970" }],
+    });
+
+    await expect(
+      reapTerminalWorkers({
+        paseoHome: home,
+        inspector: withSessionMember({
+          memberPid: member.pid!,
+          sessionId: goneProgramPid,
+          environmentUnreadable: true,
+        }),
+      }),
+    ).rejects.toBeInstanceOf(TerminalCleanupNotConfirmedError);
+
+    expect(isAlive(member.pid!)).toBe(true);
+    expect(readUnconfirmedTerminalCleanup(home)).toEqual([
+      expect.objectContaining({ pid: goneProgramPid, reason: "inspection failed" }),
+    ]);
+  });
+
+  it("does not walk a gone terminal program's pid that another process took before the table was read", async () => {
+    const home = makeHome();
+    const member = spawnIdle(undefined, terminalEnv("t1"));
+    const goneProgramPid = await goneProcessPid();
+    writeRecord(home, {
+      pid: await goneProcessPid(),
+      terminals: [{ id: "t1", pid: goneProgramPid, startedAt: "Thu Jan  1 00:00:00 1970" }],
+    });
+
+    const result = await reapTerminalWorkers({
+      paseoHome: home,
+      inspector: withSessionMember({
+        memberPid: member.pid!,
+        sessionId: goneProgramPid,
+        reusedRoot: true,
+      }),
+    });
+
+    expect(isAlive(member.pid!)).toBe(true);
+    expect(result.signaled).toEqual([]);
+  });
+
+  it("never reports an unreadable cleanup record as finished", async () => {
+    const home = makeHome();
+    mkdirSync(terminalWorkerDirectory(home), { recursive: true });
+    const cleanupPath = terminalCleanupRecordPath(home, "record-under-test");
+    writeFileSync(cleanupPath, "{ not json");
+
+    for (const attempt of [
+      async () => readUnconfirmedTerminalCleanup(home),
+      () => retryUnconfirmedTerminalCleanup(home),
+      () => reapTerminalWorkers({ paseoHome: home, inspector }),
+    ]) {
+      let caught: unknown;
+      try {
+        await attempt();
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(TerminalCleanupNotConfirmedError);
+      expect((caught as TerminalCleanupNotConfirmedError).unreadableRecords).toEqual([
+        expect.objectContaining({ path: cleanupPath }),
+      ]);
+    }
+    expect(existsSync(cleanupPath)).toBe(true);
   });
 
   it("signals nothing while the process table cannot be read, so a retry still ends the children", async () => {
@@ -304,6 +422,7 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
       reportsSessions: inspector.reportsSessions,
       inspect: (pid) => inspector.inspect(pid),
       listProcesses: () => Promise.reject(new Error("ps timed out")),
+      readEnvironment: (pid) => inspector.readEnvironment(pid),
     };
 
     await expect(
@@ -312,7 +431,7 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
 
     expect(isAlive(program.pid!)).toBe(true);
     expect(isAlive(childPid)).toBe(true);
-    const kept = readTerminalWorkerRecord(recordPath);
+    const kept = readTerminalWorkerRecord(terminalCleanupRecordPath(home, "record-under-test"));
     expect(kept.closing?.unresolved.length).toBeGreaterThan(0);
     expect(kept.terminals.map((entry) => entry.pid)).toEqual([program.pid]);
 
@@ -324,6 +443,7 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
     expect(isAlive(childPid)).toBe(false);
     expect(retry.signaled).toEqual(expect.arrayContaining([program.pid!, childPid]));
     expect(existsSync(recordPath)).toBe(false);
+    expect(existsSync(terminalCleanupRecordPath(home, "record-under-test"))).toBe(false);
   });
 
   it("escalates to SIGKILL a program that ignores SIGHUP and SIGTERM", async () => {

@@ -3,7 +3,15 @@ import {
   createTestCreationService,
 } from "./test-utils/session-stubs.js";
 import { execSync } from "child_process";
-import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
 import { tmpdir } from "os";
 import { join, resolve as resolvePath } from "path";
 import pino from "pino";
@@ -23,7 +31,11 @@ import {
   type FileTransferFrame,
 } from "@getpaseo/protocol/binary-frames/index";
 import { Session } from "./session.js";
-import { writeTerminalWorkerRecord } from "../terminal/terminal-worker-record.js";
+import {
+  terminalCleanupRecordPath,
+  terminalWorkerDirectory,
+  writeTerminalCleanupRecord,
+} from "../terminal/terminal-worker-record.js";
 import { OWNER_PERMISSIONS, type DaemonPermission } from "./authorization/index.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
@@ -2005,7 +2017,7 @@ describe("daemon status + pairing RPC", () => {
       reason: "still alive" as const,
       detail: "survived SIGKILL",
     };
-    writeTerminalWorkerRecord(paseoHome, {
+    writeTerminalCleanupRecord(paseoHome, {
       recordId: "closing-record",
       pid: 4241,
       bootId: null,
@@ -2035,6 +2047,37 @@ describe("daemon status + pairing RPC", () => {
         payload: expect.objectContaining({ terminalCleanupUnconfirmed: [unresolved] }),
       }),
     ]);
+  });
+
+  test("daemon.get_status.request fails when a terminal cleanup record cannot be read", async () => {
+    const messages: unknown[] = [];
+    const paseoHome = makeHome();
+    mkdirSync(terminalWorkerDirectory(paseoHome), { recursive: true });
+    const cleanupPath = terminalCleanupRecordPath(paseoHome, "closing-record");
+    writeFileSync(cleanupPath, "{ not json");
+    const session = createSessionForTest({
+      messages,
+      paseoHome,
+      serverId: "srv-test",
+      daemonVersion: "9.9.9",
+      daemonRuntimeConfig: { listen: "127.0.0.1:6767", getRelayConfig: () => null },
+      agentManager: { listProviderAvailability: vi.fn().mockResolvedValue([]) },
+    });
+
+    await session.handleMessage({ type: "daemon.get_status.request", requestId: "status-3" });
+
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        type: "rpc_error",
+        payload: expect.objectContaining({
+          requestId: "status-3",
+          error: expect.stringContaining(cleanupPath),
+        }),
+      }),
+    );
+    expect(messages).not.toContainEqual(
+      expect.objectContaining({ type: "daemon.get_status.response" }),
+    );
   });
 
   test("daemon.get_status.request falls back to a null/empty status when provider listing fails", async () => {

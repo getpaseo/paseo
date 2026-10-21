@@ -91,9 +91,12 @@ async function terminalIds(): Promise<string[]> {
   return (await json<Array<{ id: string }>>(["terminal", "ls", "--all"])).map((t) => t.id);
 }
 
+// Worker records and the cleanup records a kill that could not finish leaves beside them.
 function workerRecordCount(): number {
   const dir = join(paseoHome, "terminal-worker");
-  return existsSync(dir) ? readdirSync(dir).filter((name) => /^\d+\.json$/.test(name)).length : 0;
+  return existsSync(dir)
+    ? readdirSync(dir).filter((name) => /^(\d+|closing-.+)\.json$/.test(name)).length
+    : 0;
 }
 
 // A shell terminal that reports its pid and prints a marker.

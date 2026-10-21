@@ -562,6 +562,9 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
   const isConnected = useHostRuntimeIsConnected(host.serverId);
   const runtime = getHostRuntimeStore();
   const [isRestarting, setIsRestarting] = useState(false);
+  // Rendered in the card, not an Alert.alert: react-native-web's Alert is a no-op, and a failed
+  // close-terminals restart must name the processes left running until the user retries.
+  const [restartError, setRestartError] = useState<string | null>(null);
   const isMountedRef = useRef(true);
   // COMPAT(terminalsSurviveRestart): added in v0.12.0, remove gate after 2027-04-21.
   const terminalsSurviveRestart = useSessionStore(
@@ -580,21 +583,18 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
     [host.serverId, runtime],
   );
 
-  const waitForDaemonRestart = useCallback(
-    async (request: Promise<void>) => {
-      try {
-        await request;
-      } catch (error) {
-        Alert.alert(
-          t("settings.host.daemon.restart.requestFailedTitle"),
-          error instanceof Error ? error.message : String(error),
-        );
-      } finally {
-        if (isMountedRef.current) setIsRestarting(false);
+  const waitForDaemonRestart = useCallback(async (request: Promise<void>) => {
+    try {
+      await request;
+    } catch (error) {
+      console.error("[HostPage] Daemon restart failed", error);
+      if (isMountedRef.current) {
+        setRestartError(error instanceof Error ? error.message : String(error));
       }
-    },
-    [t],
-  );
+    } finally {
+      if (isMountedRef.current) setIsRestarting(false);
+    }
+  }, []);
 
   const startRestart = useCallback(
     (killTerminals: boolean) => {
@@ -626,6 +626,7 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
       })
         .then((confirmed) => {
           if (!confirmed) return;
+          setRestartError(null);
           setIsRestarting(true);
           const restartRequest = restartDaemonFromSettings(
             host.serverId,
@@ -646,10 +647,9 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
         })
         .catch((error) => {
           console.error(`[HostPage] Failed to open restart confirmation for ${host.label}`, error);
-          Alert.alert(
-            t("settings.host.daemon.restart.requestFailedTitle"),
-            t("settings.host.daemon.restart.dialogFailedMessage"),
-          );
+          if (isMountedRef.current) {
+            setRestartError(t("settings.host.daemon.restart.dialogFailedMessage"));
+          }
         });
     },
     [daemonClient, host.label, host.serverId, isHostConnected, t, waitForDaemonRestart],
@@ -694,6 +694,17 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
           >
             {t("settings.host.daemon.restart.closeTerminals")}
           </Button>
+        </View>
+      ) : null}
+      {restartError ? (
+        <View style={styles.cardAlert}>
+          <InlineAlert
+            size="sm"
+            variant="error"
+            title={t("settings.host.daemon.restart.requestFailedTitle")}
+            description={restartError}
+            testID="host-page-restart-error"
+          />
         </View>
       ) : null}
     </View>
@@ -880,7 +891,7 @@ function UpdateDaemonCard({ host }: { host: HostProfile }) {
         />
       ) : null}
       {updateState.status === "failed" ? (
-        <View style={styles.updateFailure}>
+        <View style={styles.cardAlert}>
           <InlineAlert
             size="sm"
             variant="error"
@@ -1734,7 +1745,7 @@ const terminalProfileStyles = StyleSheet.create((theme) => ({
 }));
 
 const styles = StyleSheet.create((theme) => ({
-  updateFailure: {
+  cardAlert: {
     marginHorizontal: theme.spacing[4],
     marginBottom: theme.spacing[4],
   },
