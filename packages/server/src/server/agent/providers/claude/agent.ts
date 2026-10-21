@@ -6397,6 +6397,11 @@ function convertClaudeHistoryEntryPreamble(
     return { shortCircuit: [taskNotificationItem] };
   }
 
+  // Request-journal records carry message-shaped context, not conversation turns.
+  if (entry.type !== "user" && entry.type !== "assistant") {
+    return { shortCircuit: [] };
+  }
+
   if (entry.isCompactSummary) {
     return { shortCircuit: [] };
   }
