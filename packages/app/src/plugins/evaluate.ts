@@ -29,16 +29,24 @@ import {
   type PluginTimelineRendererContribution,
   type PluginTimelineTransformerContribution,
   type PluginWorkspacePanelContribution,
+  type PluginWorkspaceRowAccessoryContribution,
+  type PluginWorkspaceRowTakeoverOptions,
   type PluginButtonRegistration,
 } from "@getpaseo/plugin/client";
-import type { EvaluatedPlugin, PluginSidebarSection } from "./types";
+import type {
+  EvaluatedPlugin,
+  EvaluatedWorkspaceRowAccessory,
+  PluginSidebarSection,
+} from "./types";
 import type { ComponentType } from "react";
 import { parsePluginIcon, parseSerializablePluginIcon } from "./icons";
 import { pluginReactNativeRuntime } from "./react-native/runtime";
+import { endRowTakeoversOf } from "./workspace-row-takeover";
 import { parsePluginThemeContribution } from "./themes";
 
 const CONTRIBUTION_ID = /^[a-z][a-z0-9-]*$/;
 const PANEL_LOCATIONS = ["workspace", "explorer"] as const;
+let workspaceRowAccessorySequence = 0;
 const TIMELINE_ITEM_TYPES = new Set([
   "user_message",
   "assistant_message",
@@ -100,7 +108,15 @@ export type PluginClientRuntime = Pick<
   | "openPanel"
   | "addComposerPill"
   | "addHeaderButton"
-> & { hosts: ReturnType<typeof createPluginHosts> };
+> & {
+  hosts: ReturnType<typeof createPluginHosts>;
+  /** `accessories` is the plugin's live registration list, already filled during setup. */
+  requestRowTakeover?(
+    workspaceId: string,
+    options: PluginWorkspaceRowTakeoverOptions,
+    accessories: readonly EvaluatedWorkspaceRowAccessory[],
+  ): ReturnType<NonNullable<PluginClientContext["requestRowTakeover"]>>;
+};
 
 export function runPluginClientBundle(
   id: string,
@@ -120,6 +136,7 @@ export function runPluginClientBundle(
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    workspaceRowAccessories: [],
   };
   const surfaceIds = new Set<string>();
   const settingsScreenIds = new Set<string>();
@@ -134,6 +151,7 @@ export function runPluginClientBundle(
   const themeIds = new Set<string>();
   const timelineTransformerIds = new Set<string>();
   const timelineRendererIds = new Set<string>();
+  const workspaceRowAccessoryIds = new Set<string>();
   const removals = new Set<PluginCleanup>();
   let setupComplete = false;
   let stopped = false;
@@ -192,8 +210,14 @@ export function runPluginClientBundle(
       () => ids.delete(normalizedId),
     );
   }
+  const { requestRowTakeover } = runtime;
   const pluginContext: PluginClientContext = {
     ...runtime,
+    // Takeovers read the collector, not the installation, so setup can request one.
+    requestRowTakeover: requestRowTakeover
+      ? (workspaceId, options) =>
+          requestRowTakeover(workspaceId, options, collector.workspaceRowAccessories)
+      : undefined,
     addSettingsScreen(contribution) {
       const screenId = requireId(contribution.id, "settings screen id");
       if (settingsScreenIds.has(screenId))
@@ -253,6 +277,24 @@ export function runPluginClientBundle(
       if (!legacy.title) throw new Error(`Sidebar item ${normalizedId} has no title`);
       ids.add(normalizedId);
       return register(collector.legacySidebarItems, legacy, () => ids.delete(normalizedId));
+    },
+    addWorkspaceRowAccessory(contribution: PluginWorkspaceRowAccessoryContribution) {
+      const accessoryId = requireId(contribution.id, "workspace row accessory id");
+      const { Component, Overlay, size = "status" } = contribution;
+      if (workspaceRowAccessoryIds.has(accessoryId)) {
+        throw new Error(`Duplicate workspace row accessory: ${accessoryId}`);
+      }
+      const validOverlay = Overlay === undefined || isComponentType(Overlay);
+      if (!isComponentType(Component) || !validOverlay || (size !== "status" && size !== "large")) {
+        throw new Error(`Invalid workspace row accessory: ${accessoryId}`);
+      }
+      workspaceRowAccessoryIds.add(accessoryId);
+      const sequence = ++workspaceRowAccessorySequence;
+      const accessory = { id: accessoryId, Component, Overlay, size, sequence };
+      return register(collector.workspaceRowAccessories, accessory, () => {
+        workspaceRowAccessoryIds.delete(accessoryId);
+        endRowTakeoversOf(accessory);
+      });
     },
     addWorkspacePanel(contribution: PluginWorkspacePanelContribution) {
       const normalizedId = requireId(contribution.id, "workspace panel id");
@@ -517,5 +559,6 @@ export function runPluginClientBundle(
     themes: collector.themes,
     timelineTransformers: collector.timelineTransformers,
     timelineRenderers: collector.timelineRenderers,
+    workspaceRowAccessories: collector.workspaceRowAccessories,
   };
 }

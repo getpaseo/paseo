@@ -1764,6 +1764,87 @@ Agent snapshot fields:
 
 Paseo owns tab focus, splitting, closing, persistence, query state, the API/RPC providers, and the render error boundary. A restored tab whose plugin, panel, context, workspace, or agent is unavailable stays open with an unavailable message instead of crashing the workspace.
 
+## Workspace row accessories
+
+Draw a small component in the leading slot of every sidebar workspace row of the plugin's host.
+The method is optional on `PluginClientContext`, so feature-detect it:
+
+```tsx
+import type {
+  PluginClientContext,
+  PluginWorkspaceRowAccessoryProps,
+} from "@getpaseo/plugin/client";
+import { View } from "react-native";
+
+function CiGlyph({ size, theme, statusBucket }: PluginWorkspaceRowAccessoryProps) {
+  const color =
+    statusBucket === "failed" ? theme.colors.statusDanger : theme.colors.foregroundMuted;
+  return (
+    <View
+      style={{
+        width: size,
+        height: size,
+        borderRadius: size / 2,
+        borderColor: color,
+        borderWidth: 2,
+      }}
+    />
+  );
+}
+
+export default function contribute(client: PluginClientContext) {
+  return (
+    client.addWorkspaceRowAccessory?.({ id: "ci", size: "status", Component: CiGlyph }) ??
+    (() => {})
+  );
+}
+```
+
+`addWorkspaceRowAccessory` fields:
+
+| Field       | Required | Meaning                                                                                   |
+| ----------- | -------- | ----------------------------------------------------------------------------------------- |
+| `id`        | Yes      | Plugin-local accessory ID.                                                                |
+| `Component` | Yes      | React Native component drawn in the slot.                                                 |
+| `size`      | No       | `status` (default, the native 16 px status slot) or `large` (a 40 px slot).               |
+| `Overlay`   | No       | Component played over a row by `requestRowTakeover`. See [Row takeovers](#row-takeovers). |
+
+The component receives `serverId`, `workspaceId`, `workspaceKey`, `theme`, `statusBucket`,
+`isHovered`, `isSelected` and `size` (the side of its square in pixels). Draw within that square.
+
+Paseo keeps the native status as a badge in the slot's corner, so the row still reports what needs
+attention. The slot keeps its size while the plugin loads, after the component throws, and for up
+to 30 s while its host is offline; the last two show the native status instead. One accessory owns a row: the
+most recently registered one on the host. A `large` accessory on any host widens the leading slot
+of every row, so titles stay on one rail. Rows that show their project icon give it to the
+accessory; the project name stays in the meta line.
+
+The accessory renders once per visible row. Share timers and animation clocks across rows and do
+nothing per frame while idle.
+
+### Row takeovers
+
+Give the accessory an `Overlay` and ask the host to play it over one row for a few seconds, for a
+moment the user earned: checks passed, a task finished.
+
+```tsx
+client.addWorkspaceRowAccessory?.({ id: "ci", Component: CiGlyph, Overlay: ChecksPassedSweep });
+
+const handle = client.requestRowTakeover?.(workspaceId, { durationMs: 1800, data: { checks: 12 } });
+const outcome = await handle?.finished; // "completed" | "cancelled"
+```
+
+While it plays, the row's title and meta fade out, the Overlay fills the row's line without taking
+pointer events or focus (its descendants included: clicks reach the row), and the accessory receives
+`takeover: true`. The leading slot and its status badge stay above the Overlay, so a takeover never
+hides the row's status. The Overlay receives `serverId`, `workspaceId`, `workspaceKey`, `theme`,
+`reducedMotion`, `data` and `slotSize`; draw a still frame when `reducedMotion` is true. The host
+ends the takeover after `durationMs` (at most 10000), on `cancel()`, when the Overlay throws, when
+the plugin removes the accessory, or when the plugin is disposed or reloaded; `finished` settles
+then. A plugin can request a takeover during setup, once it has registered the accessory. One
+takeover plays per row: a request for a row that is already taken over returns `null`. Rate-limit
+takeovers in the plugin.
+
 ## Command Center items
 
 Open the Command Center with **⌘K** on macOS or **Ctrl+K** on Windows and Linux, then search for the item title.
