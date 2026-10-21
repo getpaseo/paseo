@@ -646,11 +646,11 @@ describe("evaluatePluginClientBundle", () => {
     ).toThrow("must return a cleanup function");
   });
 
-  it("provides the host Icon component through @getpaseo/plugin/client/react-native", () => {
+  it("provides the host Icon component through @getpaseo/plugin/client/ui", () => {
     const plugin = evaluatePluginClientBundle(
       "example",
       `(function(require) {
-        const { Icon } = require("@getpaseo/plugin/client/react-native");
+        const { Icon } = require("@getpaseo/plugin/client/ui");
         const module = { exports: {} };
         module.exports.default = function(plugin) {
           plugin.addScreen({ id: "main", title: "Main", Component: function Surface() {
@@ -668,14 +668,14 @@ describe("evaluatePluginClientBundle", () => {
     expect(element).toMatchObject({ props: { size: 18, color: "#123456" } });
   });
 
-  it("provides Paseo UI through @getpaseo/plugin/client/react-native", () => {
+  it("provides Paseo UI through @getpaseo/plugin/client/ui", () => {
     const plugin = evaluatePluginClientBundle(
       "example",
       `(function(require) {
-        const { Icon, Modal, useToast } = require("@getpaseo/plugin/client/react-native");
+        const { Icon, Modal, useToast, SettingsSection, SidebarRow, StreamedText } = require("@getpaseo/plugin/client/ui");
         const module = { exports: {} };
         module.exports.default = function(plugin) {
-          if (typeof Icon !== "function" || typeof Modal !== "function" || typeof Modal.Content !== "function" || typeof useToast !== "function") {
+          if (typeof Icon !== "function" || typeof Modal !== "function" || typeof Modal.Content !== "function" || typeof useToast !== "function" || typeof SettingsSection !== "function" || typeof SidebarRow !== "function" || typeof StreamedText !== "function") {
             throw new Error("React Native plugin UI is incomplete");
           }
           plugin.addSurface("main", function Surface() { return null; });
