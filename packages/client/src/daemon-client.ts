@@ -1345,7 +1345,7 @@ export class DaemonClient {
    * Starts at the configured minimum and rises to "protected" once a daemon
    * negotiates it, so a later reconnect cannot be downgraded to legacy.
    */
-  private relaySecurityFloor: RelaySecurityMode | undefined;
+  private relaySecurityFloorValue: RelaySecurityMode | undefined;
   private readonly logConnectionPath: "direct" | "relay";
   private readonly logServerId: string | null;
   private readonly logClientIdHash: string;
@@ -1361,7 +1361,7 @@ export class DaemonClient {
 
   constructor(private config: DaemonClientConfig) {
     this.logger = config.logger ?? consoleLogger;
-    this.relaySecurityFloor = config.e2ee?.minimumMode;
+    this.relaySecurityFloorValue = config.e2ee?.minimumMode;
     this.logConnectionPath = isRelayClientWebSocketUrl(this.config.url) ? "relay" : "direct";
     let parsedUrlForLog: URL | null = null;
     try {
@@ -1479,9 +1479,9 @@ export class DaemonClient {
           baseFactory: transportFactory,
           daemonPublicKeyB64,
           logger: this.logger,
-          ...(this.relaySecurityFloor ? { minimumMode: this.relaySecurityFloor } : {}),
+          ...(this.relaySecurityFloorValue ? { minimumMode: this.relaySecurityFloorValue } : {}),
           onSecurityMode: (mode) => {
-            if (mode === "protected") this.relaySecurityFloor = "protected";
+            if (mode === "protected") this.relaySecurityFloorValue = "protected";
             this.config.e2ee?.onSecurityMode?.(mode);
           },
         });
@@ -1846,6 +1846,11 @@ export class DaemonClient {
 
   get isConnecting(): boolean {
     return this.connectionState.status === "connecting";
+  }
+
+  /** The relay endpoint security this client requires on its next attempt. */
+  get relaySecurityFloor(): RelaySecurityMode | undefined {
+    return this.relaySecurityFloorValue;
   }
 
   get lastError(): string | null {

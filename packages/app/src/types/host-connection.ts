@@ -185,7 +185,6 @@ function upsertHostConnectionById(
   connections: HostConnection[],
   connection: HostConnection,
 ): HostConnection[] {
-  const incoming = keepRelaySecurityPin(connections, connection);
   const next: HostConnection[] = [];
   let replaced = false;
   for (const existing of connections) {
@@ -195,29 +194,42 @@ function upsertHostConnectionById(
     }
 
     if (replaced) continue;
-    next.push(incoming);
+    next.push(connection);
     replaced = true;
   }
-  if (!replaced) next.push(incoming);
-  return next;
+  if (!replaced) next.push(connection);
+  // A pin is never lost: the replaced record counts as much as the incoming one.
+  return shareRelaySecurityPin(next, [...connections, connection]);
 }
 
 /**
- * The security pin belongs to the daemon identity, not to one relay address:
- * a re-import of a pinned key keeps the pin, through any relay.
+ * The security pin belongs to the daemon identity, not to one relay address.
+ * Once any relay route to a key is pinned, by a strict offer or a learned
+ * handshake, every route to that key is pinned.
  */
-function keepRelaySecurityPin(
+function shareRelaySecurityPin(
   connections: HostConnection[],
-  incoming: HostConnection,
-): HostConnection {
-  if (incoming.type !== "relay" || incoming.minimumSecurityMode === "protected") return incoming;
-  const pinned = connections.some(
-    (connection) =>
-      connection.type === "relay" &&
-      connection.minimumSecurityMode === "protected" &&
-      connection.daemonPublicKeyB64 === incoming.daemonPublicKeyB64,
+  pinSources: HostConnection[],
+): HostConnection[] {
+  const pinnedKeys = new Set<string>();
+  for (const connection of pinSources) {
+    if (connection.type === "relay" && connection.minimumSecurityMode === "protected") {
+      pinnedKeys.add(connection.daemonPublicKeyB64);
+    }
+  }
+  return connections.map((connection) =>
+    connection.type === "relay" &&
+    connection.minimumSecurityMode !== "protected" &&
+    pinnedKeys.has(connection.daemonPublicKeyB64)
+      ? { ...connection, minimumSecurityMode: "protected" as const }
+      : connection,
   );
-  return pinned ? { ...incoming, minimumSecurityMode: "protected" } : incoming;
+}
+
+function relaySecurityPinEquals(left: HostConnection, right: HostConnection): boolean {
+  const pinOf = (connection: HostConnection) =>
+    connection.type === "relay" ? connection.minimumSecurityMode : undefined;
+  return pinOf(left) === pinOf(right);
 }
 
 /**
@@ -274,7 +286,10 @@ function hasProfileChanged(input: {
     connections.length !== previous.connections.length ||
     connections.some((candidate, index) => {
       const old = previous.connections[index];
-      return !old || !hostConnectionEquals(candidate, old);
+      // Identity equality decides profile matching; the pin is policy on top of it.
+      return (
+        !old || !hostConnectionEquals(candidate, old) || !relaySecurityPinEquals(candidate, old)
+      );
     })
   );
 }

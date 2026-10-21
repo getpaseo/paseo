@@ -361,6 +361,38 @@ describe("relay endpoint security pin", () => {
     expect(profiles[0].connections).toEqual([pinned]);
   });
 
+  it("is persisted when a strict offer re-imports an unpinned route", () => {
+    const profiles = [
+      { ...makeHost("srv"), connections: [unpinned], preferredConnectionId: unpinned.id },
+    ];
+    const next = upsertHostConnectionInProfiles({
+      profiles,
+      serverId: "srv",
+      connection: pinned,
+    });
+    expect(next).not.toBe(profiles);
+    expect(next[0].connections).toEqual([pinned]);
+  });
+
+  it("tightens every route to the same daemon identity when a strict offer arrives through another relay", () => {
+    const strictElsewhere: HostConnection = {
+      id: "relay:wss:other.example.com:443",
+      type: "relay",
+      relayEndpoint: "other.example.com:443",
+      useTls: true,
+      daemonPublicKeyB64: "pk_a",
+      minimumSecurityMode: "protected",
+    };
+    const profiles = upsertHostConnectionInProfiles({
+      profiles: [
+        { ...makeHost("srv"), connections: [unpinned], preferredConnectionId: unpinned.id },
+      ],
+      serverId: "srv",
+      connection: strictElsewhere,
+    });
+    expect(profiles[0].connections).toEqual([pinned, strictElsewhere]);
+  });
+
   it("follows the daemon identity to a relay at another address", () => {
     const elsewhere: HostConnection = {
       id: "relay:wss:other.example.com:443",

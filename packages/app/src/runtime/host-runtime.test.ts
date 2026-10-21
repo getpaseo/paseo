@@ -56,6 +56,7 @@ class FakeDaemonClient {
   supportsBackgroundWorkspaces(): boolean {
     return false;
   }
+  relaySecurityFloor: "legacy" | "protected" | undefined = undefined;
   private state: ConnectionState = { status: "idle" };
   private listeners = new Set<(status: ConnectionState) => void>();
   private error: string | null = null;
@@ -813,6 +814,8 @@ describe("HostRuntimeController", () => {
     });
 
     await controller.activateConnection({ connectionId: relay.id });
+    // The client negotiated protected itself; the pin it reported is already enforced.
+    createdClients[0]!.relaySecurityFloor = "protected";
     await controller.updateHost(
       makeHost({
         connections: [{ ...relay, minimumSecurityMode: "protected" }],
@@ -823,6 +826,44 @@ describe("HostRuntimeController", () => {
     expect(createdClients).toHaveLength(1);
     expect(createdClients[0]?.isDisposed()).toBe(false);
     expect(controller.getSnapshot().client).toBe(createdClients[0]);
+  });
+
+  it("replaces the active legacy relay client when a strict offer pins its connection", async () => {
+    const relay: HostConnection = {
+      id: "relay:wss:relay.paseo.sh:443",
+      type: "relay",
+      relayEndpoint: "relay.paseo.sh:443",
+      useTls: true,
+      daemonPublicKeyB64: "pk_a",
+    };
+    const createdClients: Array<{ client: FakeDaemonClient; connection: HostConnection }> = [];
+    const controller = new HostRuntimeController({
+      host: makeHost({ connections: [relay], preferredConnectionId: relay.id }),
+      deps: {
+        createClient: ({ connection }) => {
+          const client = new FakeDaemonClient();
+          createdClients.push({ client, connection });
+          return client as unknown as DaemonClient;
+        },
+        connectToDaemon: async ({ host, connection }) => ({
+          client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: connection.id,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    await controller.activateConnection({ connectionId: relay.id });
+    expect(createdClients[0]?.client.relaySecurityFloor).toBeUndefined();
+    const pinned: HostConnection = { ...relay, minimumSecurityMode: "protected" };
+    await controller.updateHost(
+      makeHost({ connections: [pinned], preferredConnectionId: relay.id }),
+    );
+
+    expect(createdClients.map((entry) => entry.connection)).toEqual([relay, pinned]);
+    expect(createdClients[0]?.client.isDisposed()).toBe(true);
+    expect(controller.getSnapshot().client).toBe(createdClients[1]?.client);
   });
 
   it("keeps known hosts in connecting when a created client reports idle during connect", async () => {

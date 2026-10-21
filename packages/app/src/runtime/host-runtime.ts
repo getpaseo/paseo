@@ -505,14 +505,24 @@ function buildConnectionCandidates(host: HostProfile): ConnectionCandidate[] {
 }
 
 /**
- * A security pin is learned from the client that is already connected in
- * protected mode, so tightening it never requires a new client.
+ * A pin learned from the active client is already enforced by that client, so
+ * it keeps running. A pin that arrived from elsewhere (a strict offer) while
+ * the active client is still legacy needs a client that enforces it.
  */
-function connectionNeedsNewClient(previous: HostConnection, next: HostConnection): boolean {
+function connectionNeedsNewClient(
+  previous: HostConnection,
+  next: HostConnection,
+  activeClient: DaemonClient | null,
+): boolean {
   if (previous.type === "relay" && next.type === "relay") {
-    const { minimumSecurityMode: _previousPin, ...previousRest } = previous;
-    const { minimumSecurityMode: _nextPin, ...nextRest } = next;
-    return !equal(previousRest, nextRest);
+    const { minimumSecurityMode: previousPin, ...previousRest } = previous;
+    const { minimumSecurityMode: nextPin, ...nextRest } = next;
+    if (!equal(previousRest, nextRest)) return true;
+    return (
+      nextPin === "protected" &&
+      previousPin !== "protected" &&
+      activeClient?.relaySecurityFloor !== "protected"
+    );
   }
   return !equal(previous, next);
 }
@@ -835,7 +845,12 @@ export class HostRuntimeController {
       activeConnectionId &&
       previousActiveConnection &&
       nextActiveConnection &&
-      (connectionNeedsNewClient(previousActiveConnection, nextActiveConnection) || passwordChanged)
+      (connectionNeedsNewClient(
+        previousActiveConnection,
+        nextActiveConnection,
+        this.activeClient,
+      ) ||
+        passwordChanged)
     ) {
       this.connectionLastProbedAt.delete(activeConnectionId);
       await this.switchToConnection({ connectionId: activeConnectionId });
