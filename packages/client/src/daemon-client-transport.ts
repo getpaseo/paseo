@@ -17,7 +17,6 @@ export {
 export {
   createEncryptedTransport,
   createRelayE2eeTransportFactory,
-  createRelayTransportFactory,
 } from "./daemon-client-relay-e2ee-transport.js";
 export {
   bindWsHandler,

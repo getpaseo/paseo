@@ -10,16 +10,16 @@ import {
   extractRelayMessage,
 } from "./daemon-client-transport.js";
 
-const createClientChannelMock = vi.hoisted(() => vi.fn());
+const openClientSecureChannelMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@getpaseo/relay/e2ee", () => ({
-  createClientChannel: createClientChannelMock,
+  openClientSecureChannel: openClientSecureChannelMock,
 }));
 
 describe("daemon-client transport helpers", () => {
   test("createEncryptedTransport closes handshake failures with browser-safe code", async () => {
-    createClientChannelMock.mockReset();
-    createClientChannelMock.mockRejectedValueOnce(new Error("handshake failed"));
+    openClientSecureChannelMock.mockReset();
+    openClientSecureChannelMock.mockRejectedValueOnce(new Error("handshake failed"));
 
     const connection: { open: (() => void) | null } = { open: null };
     const close = vi.fn();

@@ -1,7 +1,7 @@
 import { MAX_RELAY_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/websocket-message-limit";
 import {
-  createClientChannel,
-  type EncryptedChannel,
+  openClientSecureChannel,
+  type SecureChannel,
   type Transport as RelayTransport,
 } from "@getpaseo/relay/e2ee";
 import type {
@@ -37,20 +37,13 @@ export function createRelayE2eeTransportFactory(args: {
   };
 }
 
-export function createRelayTransportFactory(
-  baseFactory: DaemonTransportFactory,
-): DaemonTransportFactory {
-  // The relay upgrade precedes E2EE. Only the encrypted hello may carry daemon credentials.
-  return ({ url }) => baseFactory({ url });
-}
-
 export function createEncryptedTransport(
   base: DaemonTransport,
   daemonPublicKeyB64: string,
   logger: TransportLogger,
   assertOutboundCapacity: (wireBytes: number) => void = () => {},
 ): DaemonTransport {
-  let channel: EncryptedChannel | null = null;
+  let channel: SecureChannel | null = null;
   let opened = false;
   let closed = false;
 
@@ -113,11 +106,14 @@ export function createEncryptedTransport(
 
   const startHandshake = async () => {
     try {
-      channel = await createClientChannel(relayTransport, daemonPublicKeyB64, {
-        onopen: emitOpen,
-        onmessage: (data) => emitMessage(data),
-        onclose: (code, reason) => emitClose({ code, reason }),
-        onerror: (error) => emitError(error),
+      channel = await openClientSecureChannel(relayTransport, {
+        daemonPublicKeyB64,
+        events: {
+          onopen: emitOpen,
+          onmessage: (data) => emitMessage(data),
+          onclose: (code, reason) => emitClose({ code, reason }),
+          onerror: (error) => emitError(error),
+        },
       });
     } catch (error) {
       logger.warn({ err: normalizeTransportError(error) }, "relay_e2ee_handshake_failed");
