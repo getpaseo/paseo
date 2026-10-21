@@ -2179,14 +2179,8 @@ function createToolCatalog(
             new Set(providerSnapshotManager.listRegisteredProviderIds()),
           ),
       });
-      // Archive filtering also runs after projection. An archived agent that is
-      // also live -- resumed into memory to serve a history read -- reaches the
-      // directory as a ManagedAgent, which carries no archive timestamp, so the
-      // directory's own archive predicate passes it; only the projection reads
-      // the stored record's archivedAt.
       const agents = (await directory.list({ includeBackground, includeArchived }))
         .map(toAgentListItemPayload)
-        .filter((agent) => includeArchived || !agent.archivedAt)
         .filter((agent) => !requestedCwd || isSameOrDescendantPath(requestedCwd, agent.cwd))
         .filter((agent) => !statusFilter || statusFilter.has(agent.status))
         .filter((agent) => !agent.archivedAt || resolveAgentListActivityTime(agent) >= sinceMs)
