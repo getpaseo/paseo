@@ -6397,15 +6397,15 @@ function convertClaudeHistoryEntryPreamble(
     return { shortCircuit: [taskNotificationItem] };
   }
 
-  // Request-journal records carry message-shaped context, not conversation turns.
-  if (entry.type !== "user" && entry.type !== "assistant") {
-    return { shortCircuit: [] };
-  }
-
   if (entry.isCompactSummary) {
     return { shortCircuit: [] };
   }
   if (entry.type === "user" && isSyntheticHistoryUserEntry(entry)) {
+    return { shortCircuit: [] };
+  }
+  // Only user and assistant records are conversation turns. Claude Code 2.1.x also journals each
+  // API request as `api-request-blob` records whose message replays the system context.
+  if (entry.type !== "user" && entry.type !== "assistant") {
     return { shortCircuit: [] };
   }
 
