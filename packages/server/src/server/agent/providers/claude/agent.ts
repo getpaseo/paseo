@@ -2903,8 +2903,9 @@ class ClaudeAgentSession implements AgentSession {
     this.taskProtocolSource.reset();
     this.input?.end();
     this.query?.close?.();
-    await this.awaitWithTimeout(this.query?.interrupt?.(), "close query interrupt");
-    await this.awaitWithTimeout(this.query?.return?.(), "close query return");
+    // close() already terminates the SDK query. Its control plane is no longer
+    // available; waiting for interrupt/return here delays our process-tree cleanup
+    // beyond the daemon's close deadline when the provider stops answering.
     this.query = null;
     this.input = null;
     // Terminate the entire process tree (claude + MCP children) to prevent

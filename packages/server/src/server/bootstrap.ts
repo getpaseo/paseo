@@ -975,6 +975,7 @@ export async function createPaseoDaemon(
     agentStorage,
   );
   await agentStorage.initialize();
+  await closeStaleAgentRecords(agentStorage);
   logger.info({ elapsed: elapsed() }, "Agent storage initialized");
   await bootstrapWorkspaceRegistries({
     serverId,
@@ -1880,6 +1881,16 @@ export async function createPaseoDaemon(
     getListenTarget: () => boundListenTarget,
     getServerId: () => serverId,
   };
+}
+
+async function closeStaleAgentRecords(agentStorage: AgentStorage): Promise<void> {
+  // No provider runtimes are loaded at startup. Repair interrupted
+  // shutdowns before any status consumer sees the persisted active states.
+  for (const record of await agentStorage.list()) {
+    if (record.lastStatus === "running" || record.lastStatus === "initializing") {
+      await agentStorage.upsert({ ...record, lastStatus: "closed" });
+    }
+  }
 }
 
 /**
