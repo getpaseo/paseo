@@ -3171,6 +3171,22 @@ export class DaemonClient {
     return { pinnedAt: payload.pinnedAt };
   }
 
+  async setWorkspaceBaseBranch(options: {
+    workspaceId: string;
+    baseRef: string;
+    requestId?: string;
+  }): Promise<{ baseRef: string | null }> {
+    const { requestId, workspaceId, baseRef } = options;
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.base_branch.set.response">({
+        requestId,
+        message: { type: "workspace.base_branch.set.request", workspaceId, baseRef },
+      });
+    if (!payload.accepted)
+      throw new Error(payload.error ?? "Changing the workspace base branch failed");
+    return { baseRef: payload.baseRef };
+  }
+
   async inspectWorkspaceRecovery(
     workspaceId: string,
     requestId?: string,
@@ -4692,7 +4708,7 @@ export class DaemonClient {
   }
 
   async getBranchSuggestions(
-    options: { cwd: string; query?: string; limit?: number },
+    options: { cwd: string; query?: string; limit?: number; refMode?: "exact" },
     requestId?: string,
   ): Promise<BranchSuggestionsPayload> {
     return this.sendCorrelatedSessionRequest({
@@ -4702,6 +4718,7 @@ export class DaemonClient {
         cwd: options.cwd,
         query: options.query,
         limit: options.limit,
+        refMode: options.refMode,
       },
       responseType: "branch_suggestions_response",
     });

@@ -931,6 +931,12 @@ export const en = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "Base branch",
+          hint: "Used for committed changes, commits, Git updates and new pull requests. Shared by workspaces using this checkout.",
+          updateHost: "Update the host to change the base branch.",
+          saved: "Base branch updated",
+        },
         openChangesTab: "Open Changes tab",
         openDiffTab: "Open Diff tab",
         closeChangesTab: "Close Changes tab",

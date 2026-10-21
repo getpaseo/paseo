@@ -930,6 +930,12 @@ export const ko: TranslationResources = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "기준 브랜치",
+          hint: "커밋된 변경, 커밋 목록, Git 업데이트 및 새 풀 리퀘스트에 사용됩니다. 같은 체크아웃을 사용하는 워크스페이스가 공유합니다.",
+          updateHost: "기준 브랜치를 변경하려면 호스트를 업데이트하세요.",
+          saved: "기준 브랜치가 업데이트되었습니다",
+        },
         openChangesTab: "변경사항 탭 열기",
         openDiffTab: "Diff 탭 열기",
         closeChangesTab: "변경사항 탭 닫기",

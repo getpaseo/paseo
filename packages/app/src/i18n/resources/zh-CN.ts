@@ -915,6 +915,12 @@ export const zhCN: TranslationResources = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "基准分支",
+          hint: "用于已提交改动、提交列表、Git 更新和新建 PR。同一 checkout 的工作区共享此设置。",
+          updateHost: "更新 Host 后即可修改基准分支。",
+          saved: "基准分支已更新",
+        },
         openChangesTab: "打开“更改”标签页",
         openDiffTab: "打开 Diff 标签页",
         closeChangesTab: "关闭“更改”标签页",

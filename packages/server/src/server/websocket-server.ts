@@ -1,4 +1,8 @@
 import { stat } from "node:fs/promises";
+import {
+  createWorkspaceBaseBranchService,
+  type WorkspaceBaseBranchService,
+} from "./session/workspace-base-branch/service.js";
 import type { CreationSnapshot } from "@getpaseo/protocol/messages";
 import { CreationService } from "./creation/index.js";
 import { MessageReceipts } from "./message-receipts/index.js";
@@ -542,6 +546,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly creationService: CreationService;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
+  private readonly workspaceBaseBranch: WorkspaceBaseBranchService;
   private readonly workspaceLabelService: WorkspaceLabelService | null;
   private readonly scheduleService: ScheduleService;
   private readonly checkoutDiffManager: CheckoutDiffManager;
@@ -698,6 +703,10 @@ export class VoiceAssistantWebSocketServer {
     this.checkoutDiffManager = requiredServices.checkoutDiffManager;
     this.github = github ?? createGitHubService();
     this.workspaceGitService = workspaceGitService ?? createFallbackWorkspaceGitService();
+    this.workspaceBaseBranch = createWorkspaceBaseBranchService({
+      workspaceRegistry: this.workspaceRegistry,
+      workspaceGitService: this.workspaceGitService,
+    });
     this.workspaceAutoName = workspaceAutoName;
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
@@ -1493,6 +1502,7 @@ export class VoiceAssistantWebSocketServer {
       creationService: this.creationService,
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
+      workspaceBaseBranch: this.workspaceBaseBranch,
       workspaceLabelService: this.workspaceLabelService ?? undefined,
       directorySync: this.directorySync,
       scheduleService: this.scheduleService,
@@ -1804,6 +1814,7 @@ export class VoiceAssistantWebSocketServer {
         creationLifecycle: true,
         hubAgentRpc: true,
         backgroundWorkspaces: true,
+        workspaceBaseBranch: true,
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.
         directorySync: true,
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.

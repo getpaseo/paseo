@@ -949,6 +949,12 @@ export const fr: TranslationResources = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "Branche de base",
+          hint: "Utilisée pour les changements validés, les commits, les mises à jour Git et les nouvelles pull requests. Partagée par les espaces de travail de ce checkout.",
+          updateHost: "Mettez à jour l’hôte pour changer la branche de base.",
+          saved: "Branche de base mise à jour",
+        },
         openChangesTab: "Ouvrir l’onglet Modifications",
         openDiffTab: "Ouvrir l’onglet Diff",
         closeChangesTab: "Fermer l’onglet Modifications",

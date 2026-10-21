@@ -956,6 +956,12 @@ export const es: TranslationResources = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "Rama base",
+          hint: "Se usa para cambios confirmados, commits, actualizaciones de Git y nuevas solicitudes de cambios. Se comparte entre los espacios de trabajo de este checkout.",
+          updateHost: "Actualiza el host para cambiar la rama base.",
+          saved: "Rama base actualizada",
+        },
         openChangesTab: "Abrir la pestaña Cambios",
         openDiffTab: "Abrir la pestaña Diferencia",
         closeChangesTab: "Cerrar la pestaña Cambios",
