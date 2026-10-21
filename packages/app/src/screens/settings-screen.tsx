@@ -88,6 +88,7 @@ import { DesktopNotificationsSection } from "@/desktop/components/desktop-notifi
 import { BrowserDataSection } from "@/desktop/browser/settings/browser-data-section";
 import { IntegrationsSection } from "@/desktop/components/integrations-section";
 import { isElectronRuntime } from "@/desktop/host";
+import type { DesktopAppUpdateStatus } from "@/desktop/updates/desktop-app-updater";
 import { useDesktopAppUpdater } from "@/desktop/updates/use-desktop-app-updater";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
 import { resolveAppVersion } from "@/utils/app-version";
@@ -598,9 +599,17 @@ function HostVersionRow({
 
 function getUpdateButtonLabel(
   t: TFunction,
-  isInstalling: boolean,
-  latestVersion: string | null | undefined,
+  {
+    status,
+    isInstalling,
+    latestVersion,
+  }: {
+    status: DesktopAppUpdateStatus;
+    isInstalling: boolean;
+    latestVersion: string | null | undefined;
+  },
 ): string {
+  if (status === "waiting-for-idle") return t("desktop.updates.callout.waitingTitle");
   if (isInstalling) return t("settings.about.updates.installing");
   if (latestVersion) {
     return t("settings.about.updates.updateTo", {
@@ -615,6 +624,7 @@ function DesktopAppUpdateRow() {
   const { settings, updateSettings } = useSettings();
   const {
     isDesktopApp,
+    status,
     statusText,
     availableUpdate,
     errorMessage,
@@ -733,7 +743,11 @@ function DesktopAppUpdateRow() {
             onPress={handleInstallUpdate}
             disabled={isChecking || isInstalling || !isUpdateReady}
           >
-            {getUpdateButtonLabel(t, isInstalling, readyUpdateVersion)}
+            {getUpdateButtonLabel(t, {
+              status,
+              isInstalling,
+              latestVersion: readyUpdateVersion,
+            })}
           </Button>
         </View>
       </View>

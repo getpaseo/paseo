@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Logger } from "pino";
-import type { AgentManager } from "../agent/agent-manager.js";
+import { AgentManagerShuttingDownError, type AgentManager } from "../agent/agent-manager.js";
 import type { AgentSessionConfig } from "../agent/agent-sdk-types.js";
 import type { AgentStorage } from "../agent/agent-storage.js";
 import { curateAgentActivity } from "../agent/activity-curator.js";
@@ -239,6 +239,7 @@ type ScheduleAgentManager = Pick<
     | "hydrateTimelineFromProvider"
     | "resumeAgentFromPersistence"
     | "runAgent"
+    | "runAdmittedAgentWork"
     | "waitForAgentEvent"
     | "waitForAgentClose"
   >;
@@ -719,55 +720,76 @@ export class ScheduleService {
     // Reserve before store I/O; persisted history cannot prove a run is still alive.
     this.runningScheduleIds.add(schedule.id);
     try {
-      let runId: string;
-      let scheduleWithRun: StoredSchedule;
-      if (manual) {
-        runId = randomUUID();
-        const runningRun: ScheduleRun = {
-          id: runId,
-          scheduledFor: now.toISOString(),
-          startedAt: now.toISOString(),
-          endedAt: null,
-          status: "running",
-          agentId: null,
-          output: null,
-          error: null,
-        };
-        scheduleWithRun = await this.appendRunningRun(schedule.id, runningRun);
-      } else {
-        const claimed = await this.claimDueRun(schedule.id, now);
-        if (!claimed) {
-          return;
-        }
-        ({ schedule: scheduleWithRun, runId } = claimed);
-      }
-
-      try {
-        const result = await this.runner(scheduleWithRun, runId);
-        await this.finishRun({
-          scheduleId: schedule.id,
-          runId,
-          status: "succeeded",
-          agentId: result.agentId,
-          output: result.output,
-          error: null,
-          targetGone: false,
-          manual,
-        });
-      } catch (error) {
-        await this.finishRun({
-          scheduleId: schedule.id,
-          runId,
-          status: "failed",
-          agentId: null,
-          output: null,
-          error: error instanceof Error ? error.message : String(error),
-          targetGone: error instanceof ScheduleTargetGoneError,
-          manual,
-        });
-      }
+      // Admit before the run is recorded. An idle shutdown that refuses the
+      // admission records nothing, so the slot is handled like any slot due
+      // while the daemon is down and never counts as a failure toward maxRuns.
+      // A run also stays admitted while it loads its target or creates a
+      // workspace.
+      await this.agentManager.runAdmittedAgentWork(() =>
+        this.recordAndRunSchedule(schedule, now, manual),
+      );
+    } catch (error) {
+      if (manual || !(error instanceof AgentManagerShuttingDownError)) throw error;
+      this.logger.info(
+        { scheduleId: schedule.id },
+        "Scheduled run not started: the daemon is stopping for an idle update",
+      );
     } finally {
       this.runningScheduleIds.delete(schedule.id);
+    }
+  }
+
+  private async recordAndRunSchedule(
+    schedule: StoredSchedule,
+    now: Date,
+    manual: boolean,
+  ): Promise<void> {
+    let runId: string;
+    let scheduleWithRun: StoredSchedule;
+    if (manual) {
+      runId = randomUUID();
+      const runningRun: ScheduleRun = {
+        id: runId,
+        scheduledFor: now.toISOString(),
+        startedAt: now.toISOString(),
+        endedAt: null,
+        status: "running",
+        agentId: null,
+        output: null,
+        error: null,
+      };
+      scheduleWithRun = await this.appendRunningRun(schedule.id, runningRun);
+    } else {
+      const claimed = await this.claimDueRun(schedule.id, now);
+      if (!claimed) {
+        return;
+      }
+      ({ schedule: scheduleWithRun, runId } = claimed);
+    }
+
+    try {
+      const result = await this.runner(scheduleWithRun, runId);
+      await this.finishRun({
+        scheduleId: schedule.id,
+        runId,
+        status: "succeeded",
+        agentId: result.agentId,
+        output: result.output,
+        error: null,
+        targetGone: false,
+        manual,
+      });
+    } catch (error) {
+      await this.finishRun({
+        scheduleId: schedule.id,
+        runId,
+        status: "failed",
+        agentId: null,
+        output: null,
+        error: error instanceof Error ? error.message : String(error),
+        targetGone: error instanceof ScheduleTargetGoneError,
+        manual,
+      });
     }
   }
 

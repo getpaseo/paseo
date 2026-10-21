@@ -95,6 +95,53 @@ describe("daemon instance identity across a reboot", () => {
   });
 });
 
+describe("stopDaemonInstance requireLifecycleRpc", () => {
+  const children: Array<{ kill: (signal?: NodeJS.Signals) => boolean }> = [];
+
+  afterEach(() => {
+    for (const child of children.splice(0)) child.kill("SIGKILL");
+  });
+
+  test("a refused lifecycle RPC does not fall through to SIGTERM", async () => {
+    const home = await mkdtemp(join(tmpdir(), "paseo-idle-stop-"));
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      stdio: "ignore",
+    });
+    children.push(child);
+    const pid = child.pid;
+    if (!pid) throw new Error("sleep child has no pid");
+    try {
+      await writeFile(
+        join(home, "paseo.pid"),
+        JSON.stringify({
+          pid,
+          startedAt: new Date().toISOString(),
+          hostname: "test",
+          uid: process.getuid?.() ?? 0,
+          listen: "127.0.0.1:9",
+        }),
+      );
+
+      await expect(
+        stopDaemonInstance(home, {
+          requireLifecycleRpc: true,
+          timeoutMs: 1_000,
+          requestShutdown: async () => {
+            throw Object.assign(new Error("Agents are busy"), { code: "AGENTS_BUSY" });
+          },
+        }),
+      ).rejects.toThrow(/Agents are busy/);
+
+      // A fallthrough to the POSIX path would signal the child instead of rejecting.
+      expect(child.exitCode).toBeNull();
+      expect(child.signalCode).toBeNull();
+      expect(process.kill(pid, 0)).toBe(true);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+});
+
 // Linux keeps a boot's id while a VM is paused for a host sleep, though the VM's wall clock
 // runs ahead of its uptime once it resumes. A sleep longer than the time between boot and
 // the supervisor's start puts the wall-clock boot instant after the lock's startedAt.

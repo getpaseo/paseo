@@ -27,7 +27,7 @@ describe("resolveUpdateCalloutDescriptor", () => {
     }
   });
 
-  it("builds an update-available descriptor with changelog + install actions", () => {
+  it("offers idle and immediate installation", () => {
     const descriptor = resolveUpdateCalloutDescriptor(input());
 
     expect(descriptor).not.toBeNull();
@@ -39,7 +39,7 @@ describe("resolveUpdateCalloutDescriptor", () => {
     expect(descriptor?.showGiftIcon).toBe(true);
     expect(descriptor?.body).toEqual({ kind: "available", versionLabel: "v1.2.3" });
     expect(descriptor?.actions).toEqual([
-      { role: "changelog", label: "What's new" },
+      { role: "whenIdle", label: "When idle" },
       { role: "install", label: "Install & restart", variant: "primary", disabled: false },
     ]);
     expect(descriptor?.dismissalKey).toBe("desktop-update:available:1.2.3");
@@ -113,11 +113,23 @@ describe("resolveUpdateCalloutDescriptor", () => {
 
       expect(descriptor?.title).toBe("有可用更新");
       expect(descriptor?.actions).toEqual([
-        { role: "changelog", label: "更新内容" },
+        { role: "whenIdle", label: "空闲时重启" },
         { role: "install", label: "安装并重启", variant: "primary", disabled: false },
       ]);
     } finally {
       await i18n.changeLanguage("en");
     }
   });
+});
+
+it("offers cancellation while waiting for idle", () => {
+  const descriptor = resolveUpdateCalloutDescriptor(
+    input({ status: "waiting-for-idle", isInstalling: true }),
+  );
+  expect(descriptor?.title).toBe("Waiting for agents");
+  expect(descriptor?.body).toEqual({ kind: "waiting", errorMessage: null });
+  expect(descriptor?.actions).toEqual([
+    { role: "changelog", label: "What's new" },
+    { role: "cancel", label: "Cancel" },
+  ]);
 });

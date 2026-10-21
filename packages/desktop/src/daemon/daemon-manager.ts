@@ -1,3 +1,5 @@
+import { setTimeout as delay } from "node:timers/promises";
+import { z } from "zod";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { app, ipcMain, powerMonitor } from "electron";
@@ -20,6 +22,12 @@ import {
   writeAttachmentBase64,
   writeAttachmentBytes,
 } from "../features/attachments.js";
+import type {
+  AppUpdateInstallResult,
+  AppUpdateService,
+  BeforeInstall,
+  InstallAfterStop,
+} from "../features/app-update-service.js";
 import {
   checkForAppUpdate,
   downloadAndInstallUpdate,
@@ -40,6 +48,7 @@ import { createNodeEntrypointInvocation, resolveDaemonRunnerEntrypoint } from ".
 import { runExternalCliJsonCommand, runExternalCliTextCommand } from "./cli/external.js";
 import {
   createDesktopSettingsCommandHandlers,
+  type DesktopCommandContext,
   type DesktopCommandHandler,
 } from "../settings/desktop-settings-commands.js";
 import type { DesktopSettings } from "../settings/desktop-settings.js";
@@ -55,6 +64,34 @@ import {
 import { tailFile } from "../diagnostics/tail-file.js";
 
 const DAEMON_LOG_FILENAME = "daemon.log";
+let pendingUpdate: {
+  controller: AbortController;
+  installNow: AbortController;
+  senderIds: Set<number | undefined>;
+  result: Promise<AppUpdateInstallResult>;
+} | null = null;
+
+// Every window that asked for the pending install shares it, and any of them
+// can cancel it. A window that never asked cannot stop an update it did not
+// request.
+function cancelPendingUpdate(senderId: number | undefined): void {
+  if (pendingUpdate?.senderIds.has(senderId)) pendingUpdate.controller.abort();
+}
+
+// A window that reloads or closes drops its own request. The wait ends when no
+// window still wants it, so an invisible request cannot restart the app later.
+function leavePendingUpdate(senderId: number | undefined): void {
+  if (!pendingUpdate?.senderIds.delete(senderId)) return;
+  if (pendingUpdate.senderIds.size === 0) pendingUpdate.controller.abort();
+}
+
+class AgentsBusyError extends Error {
+  constructor() {
+    super("Agents are busy.");
+  }
+}
+const shutdownResultSchema = z.object({ action: z.string() });
+
 let ownedLaunch: { home: string; instance: DaemonInstance } | null = null;
 
 type DesktopDaemonState = "starting" | "running" | "stopped" | "errored";
@@ -328,6 +365,7 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
 export async function stopDesktopDaemon(
   reason: DesktopDaemonStopReason = DEFAULT_DESKTOP_DAEMON_STOP_REASON,
   confirmedInstance?: { pid: number; startedAt: string },
+  options: { onlyIfIdle?: boolean; signal?: AbortSignal } = {},
 ): Promise<DesktopDaemonStatus> {
   const home = getPaseoHome();
   const instance = await readDaemonInstance(home);
@@ -351,9 +389,14 @@ export async function stopDesktopDaemon(
   logDesktopDaemonLifecycle("stopping captured supervisor", { reason, pid: instance.pid, owned });
   await stopDaemonInstance(home, {
     instance,
+    requireLifecycleRpc: options.onlyIfIdle,
     timeoutMs: 15_000,
     requestShutdown: async (ready) => {
-      await runExternalCliJsonCommand(["daemon", "stop", "--host", ready.listen, "--json"]);
+      options.signal?.throwIfAborted();
+      const args = ["daemon", "stop", "--host", ready.listen, "--json"];
+      if (options.onlyIfIdle) args.push("--if-idle");
+      const result = shutdownResultSchema.parse(await runExternalCliJsonCommand(args));
+      if (result.action === "busy") throw new AgentsBusyError();
     },
   });
   if (owned) ownedLaunch = null;
@@ -398,7 +441,134 @@ async function resolveRequestedReleaseChannel(
 // IPC registration
 // ---------------------------------------------------------------------------
 
-export function createDaemonCommandHandlers(): Record<string, DesktopCommandHandler> {
+// `installNow` ends the wait: Install & restart from any window stops the
+// daemon without the idle check.
+async function installWhenAgentsIdle(
+  signal: AbortSignal,
+  installNow: AbortSignal,
+  installAfterStop: InstallAfterStop,
+): Promise<void> {
+  while (!signal.aborted) {
+    const onlyIfIdle = !installNow.aborted;
+    try {
+      // Resolves after the install, or without stopping when the update was
+      // replaced. Once the daemon accepts the stop and exits, a late Cancel
+      // cannot bring it back, so the install proceeds and restarts both.
+      await installAfterStop(async () => {
+        await stopDesktopDaemon(
+          "app_update",
+          undefined,
+          onlyIfIdle ? { onlyIfIdle: true, signal } : {},
+        );
+      });
+      return;
+    } catch (error) {
+      if (signal.aborted) return;
+      if (!(error instanceof AgentsBusyError)) throw error;
+    }
+    try {
+      await delay(5_000, undefined, { signal: AbortSignal.any([signal, installNow]) });
+    } catch (error) {
+      if (!signal.aborted && !installNow.aborted) throw error;
+    }
+  }
+}
+
+// Stops the daemon for the update: right away, or once agents are idle.
+function stopDaemonForUpdate(
+  whenIdle: boolean,
+  signal: AbortSignal,
+  installNow: AbortSignal,
+): BeforeInstall {
+  return async (installAfterStop) => {
+    if (whenIdle) {
+      await installWhenAgentsIdle(signal, installNow, installAfterStop);
+      return;
+    }
+    await installAfterStop(stopDaemonForImmediateUpdate);
+  };
+}
+
+async function stopDaemonForImmediateUpdate(): Promise<void> {
+  await stopDesktopDaemon("app_update");
+}
+
+// A When idle request belongs to its window. Reloading or closing the window
+// drops that window's request, so an invisible request cannot restart the app.
+async function awaitForWindow(
+  result: Promise<AppUpdateInstallResult>,
+  whenIdle: boolean,
+  context: DesktopCommandContext | undefined,
+): Promise<AppUpdateInstallResult> {
+  const senderId = context?.senderId;
+  const stopWatching = whenIdle
+    ? context?.onSenderLeave?.(() => leavePendingUpdate(senderId))
+    : undefined;
+  try {
+    return await result;
+  } finally {
+    stopWatching?.();
+  }
+}
+
+type InstallAppUpdate = AppUpdateService["downloadAndInstallUpdate"];
+
+async function installAppUpdateForWindow(
+  installAppUpdate: InstallAppUpdate,
+  args: Record<string, unknown> | undefined,
+  context: DesktopCommandContext | undefined,
+): Promise<AppUpdateInstallResult> {
+  const whenIdle = args?.whenIdle === true;
+  // Another window already started this install. Join it instead of failing,
+  // and let Install & restart end a When idle wait.
+  if (pendingUpdate) {
+    pendingUpdate.senderIds.add(context?.senderId);
+    if (!whenIdle) pendingUpdate.installNow.abort();
+    return awaitForWindow(pendingUpdate.result, whenIdle, context);
+  }
+  const controller = new AbortController();
+  const installNow = new AbortController();
+  const result = resolveRequestedReleaseChannel(args).then((releaseChannel) =>
+    installAppUpdate(
+      { currentVersion: resolveDesktopAppVersion(), releaseChannel, signal: controller.signal },
+      stopDaemonForUpdate(whenIdle, controller.signal, installNow.signal),
+    ),
+  );
+  pendingUpdate = { controller, installNow, senderIds: new Set([context?.senderId]), result };
+  try {
+    return await awaitForWindow(result, whenIdle, context);
+  } finally {
+    pendingUpdate = null;
+  }
+}
+
+// Tells a command when its window reloads, navigates away, or closes.
+function createCommandContext(sender: Electron.WebContents): DesktopCommandContext {
+  return {
+    senderId: sender.id,
+    onSenderLeave(listener) {
+      const onNavigation = (
+        _event: Electron.Event,
+        _url: string,
+        inPlace: boolean,
+        mainFrame: boolean,
+      ) => {
+        if (mainFrame && !inPlace) listener();
+      };
+      sender.on("did-start-navigation", onNavigation);
+      sender.once("destroyed", listener);
+      return () => {
+        sender.removeListener("did-start-navigation", onNavigation);
+        sender.removeListener("destroyed", listener);
+      };
+    },
+  };
+}
+
+export function createDaemonCommandHandlers(deps?: {
+  installAppUpdate?: InstallAppUpdate;
+}): Record<string, DesktopCommandHandler> {
+  const installAppUpdate = deps?.installAppUpdate ?? downloadAndInstallUpdate;
   return {
     ...createDesktopSettingsCommandHandlers({ settingsStore: getDesktopSettingsStore() }),
     desktop_get_runtime_info: () => ({
@@ -457,14 +627,10 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
         intent: parseAppUpdateCheckIntent(args),
       });
     },
-    install_app_update: async (args) => {
-      const currentVersion = resolveDesktopAppVersion();
-      return downloadAndInstallUpdate(
-        { currentVersion, releaseChannel: await resolveRequestedReleaseChannel(args) },
-        async () => {
-          await stopDesktopDaemon("app_update");
-        },
-      );
+    install_app_update: (args, context) =>
+      installAppUpdateForWindow(installAppUpdate, args, context),
+    cancel_app_update: (_args, context) => {
+      cancelPendingUpdate(context?.senderId);
     },
     get_local_daemon_version: () => getLocalDaemonVersion(),
     install_cli: () => installCli(),
@@ -484,7 +650,7 @@ export function registerDaemonManager(): void {
       if (!handler) {
         throw new Error(`Unknown desktop command: ${command}`);
       }
-      return await handler(args);
+      return await handler(args, createCommandContext(_event.sender));
     },
   );
 }

@@ -13,7 +13,7 @@ import { z } from "zod";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createAgentMcpServer as createAgentMcpServerWithDependencies } from "./mcp-server.js";
-import { AgentManager, type ManagedAgent } from "./agent-manager.js";
+import { AgentManager, AgentManagerShuttingDownError, type ManagedAgent } from "./agent-manager.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import { OmpAgentClient } from "./providers/omp/agent.js";
@@ -220,8 +220,31 @@ interface TestDeps {
   };
 }
 
+// A real agent manager that has already accepted an idle stop.
+async function createIdleStoppedDeps(): Promise<{
+  agentManager: AgentManager;
+  storage: AgentStorage;
+  cleanup(): Promise<void>;
+}> {
+  const logger = createTestLogger();
+  const workdir = await mkdtemp(join(tmpdir(), "mcp-idle-stopped-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const agentManager = new AgentManager({
+    clients: createTestAgentClients(),
+    registry: storage,
+    logger,
+  });
+  if (!agentManager.tryClaimIdleShutdown()) throw new Error("Idle stop was refused");
+  return {
+    agentManager,
+    storage,
+    cleanup: () => removeAgentStateDir(agentManager, storage, workdir),
+  };
+}
+
 function buildAgentManagerSpies() {
   return {
+    runAdmittedAgentWork: <T>(work: () => Promise<T>): Promise<T> => work(),
     createAgent: vi.fn(),
     waitForAgentEvent: vi.fn().mockResolvedValue({
       status: "idle",
@@ -1592,6 +1615,33 @@ describe("create_agent MCP tool", () => {
       undefined,
       { workspaceId: "workspace-created" },
     );
+  });
+
+  it("creates no workspace when an idle shutdown refuses top-level creation", async () => {
+    const stopped = await createIdleStoppedDeps();
+    const ensureWorkspace = vi.fn(async () => "workspace-created");
+    try {
+      const server = await createAgentMcpServer({
+        agentManager: stopped.agentManager,
+        agentStorage: stopped.storage,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        ensureWorkspaceForCreate: ensureWorkspace,
+        logger,
+      });
+
+      await expect(
+        registeredTool(server, "create_agent").handler({
+          title: "Top-level agent",
+          provider: "codex/gpt-5.4",
+          initialPrompt: "Do work",
+        }),
+      ).rejects.toBeInstanceOf(AgentManagerShuttingDownError);
+
+      expect(ensureWorkspace).not.toHaveBeenCalled();
+      expect(stopped.agentManager.listAgents()).toEqual([]);
+    } finally {
+      await stopped.cleanup();
+    }
   });
 
   it("rejects public internal helpers and the old top-level execution background option", async () => {

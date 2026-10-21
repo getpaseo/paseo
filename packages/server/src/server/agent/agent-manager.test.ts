@@ -8425,6 +8425,77 @@ test("acknowledged cancellation settles a pending run before it has a turn id", 
   }
 });
 
+function reportRunningSubagent(session: TestAgentSession | null, id: string): void {
+  session?.pushEvent({
+    type: "provider_subagent",
+    provider: "codex",
+    event: { type: "upsert", id, status: "running" },
+  });
+}
+
+test("idle shutdown claim stays held across a second request and queued session work", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-shutdown-"));
+  let session: TestAgentSession | null = null;
+  class CapturingClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new TestAgentSession(config);
+      return session;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new CapturingClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000133",
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    // The claim succeeds once the new agent's registration settles.
+    await vi.waitFor(() => expect(manager.tryClaimIdleShutdown()).toBe(true));
+    await expect(manager.runAgent(agent.id, "after claim")).rejects.toBeInstanceOf(
+      AgentManagerShuttingDownError,
+    );
+
+    reportRunningSubagent(session, "late-child");
+    expect(manager.tryClaimIdleShutdown()).toBe(true);
+    await expect(manager.runAgent(agent.id, "still held")).rejects.toBeInstanceOf(
+      AgentManagerShuttingDownError,
+    );
+  } finally {
+    if (manager.getAgent("00000000-0000-4000-8000-000000000133")) {
+      await manager.closeAgent("00000000-0000-4000-8000-000000000133").catch(() => undefined);
+    }
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("admitted agent work keeps an idle claim busy, and a claim refuses new admitted work", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-admitted-work-"));
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    const pendingWork = deferred<void>();
+    const work = manager.runAdmittedAgentWork(() => pendingWork.promise);
+    expect(manager.tryClaimIdleShutdown()).toBe(false);
+
+    pendingWork.resolve();
+    await work;
+    expect(manager.tryClaimIdleShutdown()).toBe(true);
+    await expect(manager.runAdmittedAgentWork(async () => "after claim")).rejects.toBeInstanceOf(
+      AgentManagerShuttingDownError,
+    );
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("archiveAgent persists archivedAt and updatedAt before emitting closed state", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archive-"));
   const storagePath = join(workdir, "agents");
@@ -10841,6 +10912,46 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
   } finally {
     await manager.flush().catch(() => undefined);
     await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a daemon-handled command keeps an idle stop out until it finishes", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-out-of-band-idle-"));
+  const commandFinished = deferred<void>();
+
+  class SlowCommandSession extends TestAgentSession {
+    override tryHandleOutOfBand(prompt: AgentPromptInput) {
+      if (prompt !== "/compact") return null;
+      return { run: async () => commandFinished.promise };
+    }
+  }
+
+  class SlowCommandClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new SlowCommandSession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new SlowCommandClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    // Let the registration settle, so only the command can make the claim fail.
+    await manager.flushForShutdown();
+    expect(manager.tryRunOutOfBand(snapshot.id, "/compact")).toBe(true);
+
+    expect(manager.tryClaimIdleShutdown()).toBe(false);
+    commandFinished.resolve();
+
+    await vi.waitFor(() => expect(manager.tryClaimIdleShutdown()).toBe(true));
+  } finally {
     rmSync(workdir, { recursive: true, force: true });
   }
 });

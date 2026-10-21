@@ -1558,73 +1558,77 @@ function createToolCatalog(
         guidance: z.string().optional(),
       },
     },
-    async (args: unknown) => {
-      const resolvedArgs = await resolveCreateAgentToolArgs(args);
-      const { parsedArgs, worktree } = resolvedArgs;
-      let notifyOnFinish: boolean;
-      if (resolvedArgs.kind === "agent-scoped") {
-        notifyOnFinish = parsedArgs.notifyOnFinish;
-      } else {
-        notifyOnFinish = resolvedArgs.parsedArgs.notifyOnFinish ?? false;
-      }
-      const selectedProvider = resolveRequiredProviderModel(parsedArgs.provider).provider;
-      const inheritedConfig = resolveInheritedProviderConfig(selectedProvider);
-      const { snapshot, initialPromptStarted } = await createAgentCommand(
-        {
-          agentManager,
-          agentStorage,
-          logger: childLogger,
-          paseoHome: options.paseoHome,
-          worktreesRoot: options.worktreesRoot,
-          terminalManager,
-          providerSnapshotManager,
-          createPaseoWorktree: options.createPaseoWorktree,
-          ...(options.ensureWorkspaceForCreate
-            ? { ensureWorkspaceForCreate: options.ensureWorkspaceForCreate }
-            : {}),
-        },
-        {
-          kind: "mcp",
-          provider: parsedArgs.provider,
-          title: parsedArgs.title,
-          initialPrompt: parsedArgs.initialPrompt,
-          config: inheritedConfig,
-          cwd: resolvedArgs.cwd,
-          workspaceId: resolvedArgs.workspaceId,
-          thinking: parsedArgs.settings?.thinkingOptionId,
-          features: parsedArgs.settings?.features,
-          labels: parsedArgs.labels,
-          mode: parsedArgs.settings?.modeId,
-          promptFailure: "throw",
-          notifyOnFinish,
-          detached: resolvedArgs.detached,
-          callerAgentId,
-          callerContext,
-          worktree,
-        },
-      );
+    (args: unknown) =>
+      // Top-level creation can persist a workspace while it resolves its
+      // arguments. Admitting the whole call keeps an idle shutdown out of that
+      // gap, and a refused call creates nothing.
+      agentManager.runAdmittedAgentWork(async () => {
+        const resolvedArgs = await resolveCreateAgentToolArgs(args);
+        const { parsedArgs, worktree } = resolvedArgs;
+        let notifyOnFinish: boolean;
+        if (resolvedArgs.kind === "agent-scoped") {
+          notifyOnFinish = parsedArgs.notifyOnFinish;
+        } else {
+          notifyOnFinish = resolvedArgs.parsedArgs.notifyOnFinish ?? false;
+        }
+        const selectedProvider = resolveRequiredProviderModel(parsedArgs.provider).provider;
+        const inheritedConfig = resolveInheritedProviderConfig(selectedProvider);
+        const { snapshot, initialPromptStarted } = await createAgentCommand(
+          {
+            agentManager,
+            agentStorage,
+            logger: childLogger,
+            paseoHome: options.paseoHome,
+            worktreesRoot: options.worktreesRoot,
+            terminalManager,
+            providerSnapshotManager,
+            createPaseoWorktree: options.createPaseoWorktree,
+            ...(options.ensureWorkspaceForCreate
+              ? { ensureWorkspaceForCreate: options.ensureWorkspaceForCreate }
+              : {}),
+          },
+          {
+            kind: "mcp",
+            provider: parsedArgs.provider,
+            title: parsedArgs.title,
+            initialPrompt: parsedArgs.initialPrompt,
+            config: inheritedConfig,
+            cwd: resolvedArgs.cwd,
+            workspaceId: resolvedArgs.workspaceId,
+            thinking: parsedArgs.settings?.thinkingOptionId,
+            features: parsedArgs.settings?.features,
+            labels: parsedArgs.labels,
+            mode: parsedArgs.settings?.modeId,
+            promptFailure: "throw",
+            notifyOnFinish,
+            detached: resolvedArgs.detached,
+            callerAgentId,
+            callerContext,
+            worktree,
+          },
+        );
 
-      // Return immediately for async creation.
-      const currentSnapshot = agentManager.getAgent(snapshot.id) ?? snapshot;
-      const guidance =
-        callerAgentId && notifyOnFinish && initialPromptStarted
-          ? "You will get notified when the created agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives."
-          : "Creation acknowledged. Observe completion using get_agent_status/get_agent_activity or SDK/RPC subscriptions and wait APIs.";
-      const response = {
-        content: [],
-        structuredContent: ensureValidJson({
-          agentId: currentSnapshot.id,
-          type: snapshot.provider,
-          status: currentSnapshot.lifecycle,
-          cwd: currentSnapshot.cwd,
-          ...(currentSnapshot.workspaceId ? { workspaceId: currentSnapshot.workspaceId } : {}),
-          currentModeId: currentSnapshot.currentModeId,
-          availableModes: currentSnapshot.availableModes,
-          ...(guidance ? { guidance } : {}),
-        }),
-      };
-      return response;
-    },
+        // Return immediately for async creation.
+        const currentSnapshot = agentManager.getAgent(snapshot.id) ?? snapshot;
+        const guidance =
+          callerAgentId && notifyOnFinish && initialPromptStarted
+            ? "You will get notified when the created agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives."
+            : "Creation acknowledged. Observe completion using get_agent_status/get_agent_activity or SDK/RPC subscriptions and wait APIs.";
+        const response = {
+          content: [],
+          structuredContent: ensureValidJson({
+            agentId: currentSnapshot.id,
+            type: snapshot.provider,
+            status: currentSnapshot.lifecycle,
+            cwd: currentSnapshot.cwd,
+            ...(currentSnapshot.workspaceId ? { workspaceId: currentSnapshot.workspaceId } : {}),
+            currentModeId: currentSnapshot.currentModeId,
+            availableModes: currentSnapshot.availableModes,
+            ...(guidance ? { guidance } : {}),
+          }),
+        };
+        return response;
+      }),
   );
 
   type ResolvedCreateAgentToolArgs =
