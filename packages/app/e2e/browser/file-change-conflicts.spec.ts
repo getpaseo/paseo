@@ -56,43 +56,10 @@ async function replaceEditorText(page: Page, content: string): Promise<void> {
   await editor.type(content);
 }
 
-async function replaceFileAfterDeletionWasObserved(input: {
-  page: Page;
-  gate: Awaited<ReturnType<typeof installDaemonWebSocketGate>>;
-  filePath: string;
-  relativePath: string;
-  content: string;
-}): Promise<void> {
-  const { page, gate, filePath, relativePath, content } = input;
-  // Recreate the observed race without faking file state: the daemon publishes the
-  // deletion, then a real read succeeds after the replacement while its ready event waits.
-  await gate.waitForFileSubscription(relativePath);
-  gate.holdFileReads(relativePath);
-  await unlink(filePath);
-  await gate.waitForHeldFileRead();
-  await expect(fileCallout(page)).toHaveCount(0);
-  gate.releaseHeldFileRead();
-  await expectOnlyFileCallout(page, "File deleted on disk");
-  gate.holdNextReadyFileUpdate(relativePath);
-  await writeFile(filePath, content, "utf8");
-  await gate.waitForHeldReadyFileUpdate();
-  await expect.poll(() => readFile(filePath, "utf8")).toBe(content);
-}
-
 async function expectOnlyFileCallout(page: Page, title: string): Promise<void> {
   await expect(fileCallout(page)).toHaveCount(1);
   await expect(fileCallout(page)).toContainText(title);
   await expect(filePane(page).getByText(title, { exact: true })).toHaveCount(1);
-}
-
-async function expectCleanReplacementCanReload(page: Page): Promise<void> {
-  await expectOnlyFileCallout(page, "Changed on disk");
-  await expect(filePane(page).getByText("File deleted on disk", { exact: true })).toHaveCount(0);
-  await expect(fileCallout(page).getByRole("button", { name: "Overwrite" })).toHaveCount(0);
-  await expect(fileCallout(page).getByRole("button", { name: "Reload" })).toBeEnabled();
-  await fileCallout(page).getByRole("button", { name: "Reload" }).click();
-  await expect(filePane(page).getByText("After", { exact: true })).toBeVisible();
-  await expect(fileCallout(page)).toHaveCount(0);
 }
 
 async function expectDeletedFileNotice(page: Page): Promise<void> {
@@ -140,7 +107,7 @@ test.describe("Workspace file change conflicts", () => {
       relativePath,
       content: "const preserved = true;\n",
     });
-    await gate.waitForFileSubscription(relativePath);
+    await expect(visibleEditor(page)).toContainText("const preserved = true;");
     await recordFileCallouts(page);
 
     await restoreFileAfterWatcherObservedTemporaryAbsence({ gate, filePath, relativePath });
@@ -189,162 +156,79 @@ test.describe("Workspace file change conflicts", () => {
       relativePath,
       content: "const before = true;\n",
     });
-    await gate.waitForFileSubscription(relativePath);
+    await expect(visibleEditor(page)).toContainText("const before = true;");
     await recordFileCallouts(page);
-    gate.holdFileReads(relativePath);
+    gate.holdNextReadyFileUpdate(relativePath);
 
     await replaceEditorText(page, "const saved = true;\n");
     await expect.poll(() => readFile(filePath, "utf8")).toContain("const saved = true;");
-    await gate.waitForHeldFileRead();
+    await gate.waitForHeldReadyFileUpdate();
+    gate.releaseHeldReadyFileUpdate();
 
     await expect(visibleEditor(page)).toContainText("const saved = true;");
     await expect(fileCallout(page)).toHaveCount(0);
     await expectNoFileCalloutWasRendered(page);
-    gate.releaseHeldFileRead();
   });
 
-  test("a clean file replaced on disk offers one working reload action", async ({
+  test("a viewed file deleted and written back shows the new file", async ({
     page,
     withWorkspace,
   }) => {
-    const gate = await installDaemonWebSocketGate(page);
     const filePath = await openTrackedFile(page, withWorkspace, {
       prefix: "file-clean-replacement-",
       relativePath: "inventory.md",
       content: "# Before\n",
     });
     await expect(filePane(page).getByText("Before", { exact: true })).toBeVisible();
-    await replaceFileAfterDeletionWasObserved({
-      page,
-      gate,
-      filePath,
-      relativePath: "inventory.md",
-      content: "# After\n",
-    });
-    gate.releaseHeldReadyFileUpdate();
-    await expectCleanReplacementCanReload(page);
+
+    await unlink(filePath);
+    await expect(filePane(page).getByText("The file was deleted.", { exact: true })).toBeVisible();
+    await writeFile(filePath, "# After\n", "utf8");
+
+    await expect(filePane(page).getByText("After", { exact: true })).toBeVisible();
+    await expect(fileCallout(page)).toHaveCount(0);
   });
 
-  test("a deleted file shows one explanatory notice and no resolution actions", async ({
+  test("a deleted file keeps the open copy with one notice and no resolution actions", async ({
     page,
     withWorkspace,
   }) => {
     const filePath = await openTrackedFile(page, withWorkspace, {
       prefix: "file-deleted-",
-      relativePath: "deleted.md",
-      content: "# Present\n",
+      relativePath: "deleted.ts",
+      content: "const present = true;\n",
     });
-    await expect(filePane(page).getByText("Present", { exact: true })).toBeVisible();
+    await expect(visibleEditor(page)).toContainText("const present = true;");
     await recordFileCallouts(page);
     await unlink(filePath);
     await expectDeletedFileNotice(page);
     await expectFileCalloutWasRendered(page, "File deleted on disk");
+    await expect(visibleEditor(page)).toContainText("const present = true;");
   });
 
-  test("a file check error offers a working retry", async ({ page, withWorkspace }) => {
-    const gate = await installDaemonWebSocketGate(page);
-    const relativePath = "retry.md";
-    const filePath = await openTrackedFile(page, withWorkspace, {
-      prefix: "file-check-retry-",
-      relativePath,
-      content: "# Before\n",
-    });
-    await gate.waitForFileSubscription(relativePath);
-    await expect(filePane(page).getByText("Before", { exact: true })).toBeVisible();
-
-    await unlink(filePath);
-    await mkdir(filePath);
-    await expectOnlyFileCallout(page, "Couldn't check file on disk");
-    await expect(fileCallout(page).getByRole("button", { name: "Retry" })).toBeEnabled();
-    await expect(fileCallout(page).getByRole("button", { name: "Reload" })).toHaveCount(0);
-    await expect(fileCallout(page).getByRole("button", { name: "Overwrite" })).toHaveCount(0);
-
-    gate.holdNextReadyFileUpdate(relativePath);
-    await rm(filePath, { recursive: true });
-    await writeFile(filePath, "# After\n", "utf8");
-    await gate.waitForHeldReadyFileUpdate();
-    gate.holdFileReads(relativePath);
-    await fileCallout(page).getByRole("button", { name: "Retry" }).click();
-    await gate.waitForHeldFileRead();
-    await expect(fileCallout(page).getByRole("button", { name: "Retry" })).toBeDisabled();
-    gate.releaseHeldFileRead();
-    await expectCleanReplacementCanReload(page);
-    gate.releaseHeldReadyFileUpdate();
-  });
-
-  test("retry clears a transient error when the file is unchanged", async ({
+  test("a path that stops being a file keeps the open copy and follows the file back", async ({
     page,
     withWorkspace,
   }) => {
     const gate = await installDaemonWebSocketGate(page);
-    const relativePath = "unchanged.md";
+    const relativePath = "retry.ts";
     const filePath = await openTrackedFile(page, withWorkspace, {
-      prefix: "file-check-unchanged-",
+      prefix: "file-check-error-",
       relativePath,
-      content: "# Unchanged\n",
+      content: "const before = true;\n",
     });
-    const parkedPath = `${filePath}.parked`;
-    await gate.waitForFileSubscription(relativePath);
-    await expect(filePane(page).getByText("Unchanged", { exact: true })).toBeVisible();
+    await expect(visibleEditor(page)).toContainText("const before = true;");
 
-    await rename(filePath, parkedPath);
+    await unlink(filePath);
     await mkdir(filePath);
-    await expectOnlyFileCallout(page, "Couldn't check file on disk");
+    await gate.waitForFileUpdate(relativePath, "error");
+    await expect(visibleEditor(page)).toContainText("const before = true;");
 
-    gate.holdNextReadyFileUpdate(relativePath);
     await rm(filePath, { recursive: true });
-    await rename(parkedPath, filePath);
-    await gate.waitForHeldReadyFileUpdate();
-    await fileCallout(page).getByRole("button", { name: "Retry" }).click();
+    await writeFile(filePath, "const after = true;\n", "utf8");
 
+    await expect(visibleEditor(page)).toContainText("const after = true;");
     await expect(fileCallout(page)).toHaveCount(0);
-    await expect(filePane(page).getByText("Changed on disk", { exact: true })).toHaveCount(0);
-    gate.releaseHeldReadyFileUpdate();
-  });
-
-  test("a read-only file error preserves its message and offers retry", async ({
-    page,
-    withWorkspace,
-  }) => {
-    const gate = await installDaemonWebSocketGate(page);
-    const relativePath = "artifact.bin";
-    const binaryContent = new Uint8Array([0, 1, 2, 3, 255]);
-    const filePath = await openTrackedFile(page, withWorkspace, {
-      prefix: "file-read-only-retry-",
-      relativePath,
-      content: binaryContent,
-    });
-    await gate.waitForFileSubscription(relativePath);
-    await expect(
-      filePane(page).getByText("Binary preview unavailable", { exact: true }),
-    ).toBeVisible();
-
-    await unlink(filePath);
-    await mkdir(filePath);
-    await expect(
-      filePane(page).getByText("Requested path is not a file", { exact: true }),
-    ).toBeVisible();
-    await expect(filePane(page).getByRole("button", { name: "Retry" })).toBeEnabled();
-
-    gate.holdNextReadyFileUpdate(relativePath);
-    await rm(filePath, { recursive: true });
-    await writeFile(filePath, binaryContent);
-    await gate.waitForHeldReadyFileUpdate();
-    gate.holdFileReads(relativePath);
-    await filePane(page).getByRole("button", { name: "Retry" }).click();
-    await gate.waitForHeldFileRead();
-    await expect(
-      filePane(page).getByText("Requested path is not a file", { exact: true }),
-    ).toHaveCount(0);
-    gate.releaseHeldFileRead();
-
-    await expect(
-      filePane(page).getByText("Binary preview unavailable", { exact: true }),
-    ).toBeVisible();
-    await expect(
-      filePane(page).getByText("Requested path is not a file", { exact: true }),
-    ).toHaveCount(0);
-    gate.releaseHeldReadyFileUpdate();
   });
 
   test("a changed file with local edits offers overwrite and a working reload", async ({

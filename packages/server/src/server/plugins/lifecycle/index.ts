@@ -1,4 +1,4 @@
-import type { AgentStreamEvent, AgentTimelineItem } from "../../agent/agent-sdk-types.js";
+import type { AgentStreamEvent } from "../../agent/agent-sdk-types.js";
 import { z } from "zod";
 import { CreateAgentRequestMessageSchema } from "@getpaseo/protocol/messages";
 import type {
@@ -94,7 +94,6 @@ export function publishAgentStream(
   lifecycle: PluginLifecycle,
   agent: PluginHookAgent,
   event: AgentStreamEvent,
-  timeline: readonly AgentTimelineItem[],
 ): void {
   if (event.type === "turn_started") {
     lifecycle.emit("agent.turn_started", { agent, turnId: event.turnId ?? null });
@@ -102,21 +101,21 @@ export function publishAgentStream(
     lifecycle.emit("agent.turn_ended", {
       agent,
       turnId: event.turnId ?? null,
-      timeline,
+      timeline: [],
       outcome: { kind: "completed" },
     });
   } else if (event.type === "turn_failed") {
     lifecycle.emit("agent.turn_ended", {
       agent,
       turnId: event.turnId ?? null,
-      timeline,
+      timeline: [],
       outcome: { kind: "failed", error: { message: event.error, code: event.code } },
     });
   } else if (event.type === "turn_canceled") {
     lifecycle.emit("agent.turn_ended", {
       agent,
       turnId: event.turnId ?? null,
-      timeline,
+      timeline: [],
       outcome: { kind: "canceled", reason: event.reason },
     });
   } else if (event.type === "permission_requested") {

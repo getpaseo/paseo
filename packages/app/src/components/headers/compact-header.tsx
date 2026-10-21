@@ -52,8 +52,15 @@ export function CompactHeader({
 }: CompactHeaderProps) {
   const insets = useSafeAreaInsets();
   const rootStyle = useMemo(
-    () => [styles.root, { paddingTop: insets.top + HEADER_TOP_PADDING_MOBILE }],
-    [insets.top],
+    () => [
+      styles.root,
+      {
+        paddingTop: insets.top + HEADER_TOP_PADDING_MOBILE,
+        marginLeft: insets.left,
+        marginRight: insets.right,
+      },
+    ],
+    [insets.top, insets.left, insets.right],
   );
 
   return (

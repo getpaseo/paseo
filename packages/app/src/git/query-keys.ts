@@ -24,7 +24,7 @@ export function checkoutStatusQueryKey(serverId: string, cwd: string) {
 export function checkoutDiffQueryKey(
   serverId: string,
   cwd: string,
-  mode: "uncommitted" | "base",
+  mode: "uncommitted" | "base" | "all",
   baseRef?: string,
   ignoreWhitespace?: boolean,
 ) {

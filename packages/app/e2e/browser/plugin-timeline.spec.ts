@@ -1,6 +1,7 @@
 import { test } from "../support/fixtures";
 import {
   withTimelinePlugin,
+  viewInlineThinkingExample,
   requestPluginTimeline,
   interactWithStreamingCard,
   expectWholeCompletedCard,
@@ -32,4 +33,10 @@ test("Overview preserves both consecutive tool plugin cards", async ({ page }, i
     await page.reload({ waitUntil: "domcontentloaded" });
     await expectBothConsecutiveTools(page);
   });
+});
+
+test("inline-thinking example renders a streamed thought through host UI", async ({
+  page,
+}, info) => {
+  await viewInlineThinkingExample(page, info);
 });

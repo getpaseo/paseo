@@ -15,6 +15,7 @@ async function closeMenuSheet(page: Page): Promise<void> {
 
 test("project and workspace kebabs open action sheets on compact layouts", async ({ page }) => {
   const seeded = await seedWorkspace({ repoPrefix: "sidebar-mobile-menu-sheet-" });
+  const secondProject = await seedWorkspace({ repoPrefix: "sidebar-mobile-menu-filter-" });
 
   try {
     await gotoAppShell(page);
@@ -26,6 +27,7 @@ test("project and workspace kebabs open action sheets on compact layouts", async
       /^Grouping/,
       /^Title/,
       "Show",
+      "Project",
       "Show background",
     ]);
     await closeMenuSheet(page);
@@ -53,6 +55,7 @@ test("project and workspace kebabs open action sheets on compact layouts", async
     });
     await expect(page.getByText("Workspace actions", { exact: true })).toBeVisible();
   } finally {
+    await secondProject.cleanup();
     await seeded.cleanup();
   }
 });

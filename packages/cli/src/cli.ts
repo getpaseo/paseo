@@ -1,3 +1,4 @@
+import { createHostCommand } from "./commands/host/index.js";
 import { pairCommand } from "./commands/daemon/pair.js";
 import { Command, Option } from "commander";
 import { createAgentCommand } from "./commands/agent/index.js";
@@ -57,6 +58,8 @@ export function createCli(): Command {
     .option("--no-headers", "omit table headers")
     .option("--no-color", "disable colored output");
   addDaemonHostOption(program);
+
+  program.addCommand(createHostCommand());
 
   // Primary agent commands (top-level)
   addJsonAndDaemonHostOptions(addLsOptions(program.command("ls"))).action(withOutput(runLsCommand));

@@ -1,10 +1,12 @@
+import { createTestAgentMessages } from "../test-utils/agent-messages.js";
 import {
   formatSystemNotificationPrompt,
   isSystemInjectedEnvelope,
   parseAgentMessage,
+  parseAgentMessages,
   formatAgentMessage,
   prepareAgentMessage,
-  projectAgentMessage,
+  projectAgentMessages,
 } from "./agent-messages/index.js";
 import { expect, it, test, vi } from "vitest";
 import pino, { type Logger } from "pino";
@@ -143,6 +145,11 @@ function createFinishNotificationScenario(
   return {
     startWatchingChild() {
       setupFinishNotification({
+        agentMessages: createTestAgentMessages({
+          agentManager,
+          agentStorage,
+          logger: options?.logger ?? createTestLogger(),
+        }),
         agentManager,
         agentStorage,
         childAgentId: "child-agent",
@@ -394,22 +401,25 @@ test("finish notifications report every concurrently pending permission", async 
   scenario.requestChildPermission("permission-1");
   scenario.requestChildPermission("permission-2");
 
-  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(2));
+  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(1));
   expect(
-    scenario.parentPrompts().map((prompt) => {
-      const payload = parseAgentMessage(prompt)!.text.match(
-        /<permission-request>\n([\s\S]+?)\n<\/permission-request>/,
-      )?.[1];
-      return JSON.parse(payload!).requestId;
-    }),
+    scenario
+      .parentPrompts()
+      .flatMap((prompt) => parseAgentMessages(prompt)!)
+      .map((message) => {
+        const payload = message.text.match(
+          /<permission-request>\n([\s\S]+?)\n<\/permission-request>/,
+        )?.[1];
+        return JSON.parse(payload!).requestId;
+      }),
   ).toEqual(["permission-1", "permission-2"]);
 
   scenario.resolveChildPermission("permission-1");
   scenario.resolveChildPermission("permission-2");
   scenario.finishChild();
 
-  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(3));
-  expect(scenario.parentPrompts()[2]).toContain("finished.");
+  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(2));
+  expect(scenario.parentPrompts()[1]).toContain("finished.");
 });
 
 test("finish notifications survive repeated permission cycles", async () => {
@@ -464,10 +474,9 @@ test("finish notifications log a rejected parent prompt without an unhandled rej
 
   expect(captured.records).toEqual([
     expect.objectContaining({
-      msg: "Failed to notify caller agent",
-      childAgentId: "child-agent",
-      callerAgentId: "caller-agent",
-      reason: "finished",
+      msg: "Agent message batch dispatch failed",
+      agentId: "caller-agent",
+      messageIds: [expect.any(String)],
       err: expect.objectContaining({ message: "parent provider rejected replacement" }),
     }),
   ]);
@@ -525,6 +534,11 @@ it("does not notify archived callers", async () => {
   Reflect.set(agentStorage, "get", agentStorageGetSpy);
 
   setupFinishNotification({
+    agentMessages: createTestAgentMessages({
+      agentManager,
+      agentStorage,
+      logger: createTestLogger(),
+    }),
     agentManager,
     agentStorage,
     childAgentId: "child-agent",
@@ -808,6 +822,36 @@ test("agent envelopes round-trip opaque sender IDs and XML-sensitive messages", 
   expect(parseAgentMessage(encoded.replace('version="1"', 'version="1" version="1"'))).toBeNull();
 });
 
+test("a delivered batch projects each message and completion separately in order", () => {
+  const entries = [
+    {
+      id: "report",
+      source: { kind: "agent-message" as const, agentId: "remote::worker", title: "Worker" },
+      text: "Result <ready>",
+    },
+    {
+      id: "finished",
+      source: {
+        kind: "agent-notification" as const,
+        agentId: "remote::worker",
+        event: "finished" as const,
+      },
+      text: "Finished & ready",
+    },
+  ];
+  const text = entries.map(formatAgentMessage).join("\n\n");
+  expect(projectAgentMessages({ type: "user_message", text })).toEqual(
+    entries.flatMap((entry) =>
+      projectAgentMessages({ type: "user_message", text: formatAgentMessage(entry) }),
+    ),
+  );
+  // Human submissions containing the same envelopes must survive replay as human text.
+  const pasted = prepareAgentMessage(text, undefined, "human-batch");
+  expect(projectAgentMessages({ type: "user_message", text: String(pasted.prompt) })).toEqual([
+    { type: "user_message", text, clientMessageId: "human-batch" },
+  ]);
+});
+
 test("agent envelope includes rendered attachment context and preserves images", () => {
   const image = { type: "image" as const, data: "aW1hZ2U=", mimeType: "image/png" };
   const attachment = {
@@ -849,11 +893,11 @@ test("a human pasting an agent envelope stays a human message through provider r
   });
   const delivery = prepareAgentMessage(pasted, undefined, "human-submission");
   expect(
-    projectAgentMessage({
+    projectAgentMessages({
       type: "user_message",
       text: String(delivery.prompt),
       messageId: "provider-echo",
-    }),
+    })[0],
   ).toEqual({
     type: "user_message",
     text: pasted,

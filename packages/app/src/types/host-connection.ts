@@ -51,7 +51,14 @@ export interface RelayHostConnection {
   daemonPublicKeyB64: string;
 }
 
+export interface RoutedHostConnection {
+  id: string;
+  type: "routed";
+  originServerId: string;
+}
+
 export type HostConnection =
+  | RoutedHostConnection
   | DirectTcpHostConnection
   | DirectSocketHostConnection
   | DirectPipeHostConnection
@@ -128,6 +135,8 @@ function hostConnectionEquals(left: HostConnection, right: HostConnection): bool
     return false;
   }
 
+  if (left.type === "routed" && right.type === "routed")
+    return left.originServerId === right.originServerId;
   if (left.type === "directTcp" && right.type === "directTcp") {
     return left.endpoint === right.endpoint && (left.useTls ?? false) === (right.useTls ?? false);
   }
@@ -236,9 +245,11 @@ export function upsertHostConnectionInProfiles(input: {
   const matchingIndexes = existing.reduce<number[]>((matches, daemon, index) => {
     if (
       daemon.serverId === serverId ||
-      daemon.connections.some((existingConnection) =>
-        hostConnectionEquals(existingConnection, normalizedConnection),
-      )
+      // A routed candidate names its origin; its destination belongs to the host profile.
+      (normalizedConnection.type !== "routed" &&
+        daemon.connections.some((existingConnection) =>
+          hostConnectionEquals(existingConnection, normalizedConnection),
+        ))
     ) {
       matches.push(index);
     }
@@ -399,6 +410,7 @@ export function createRemoteSshHostConnection(input: {
 }
 
 const StoredHostConnectionSchema = z.discriminatedUnion("type", [
+  z.strictObject({ id: z.string(), type: z.literal("routed"), originServerId: z.string().min(1) }),
   z.strictObject({
     id: z.string().optional(),
     type: z.literal("directTcp"),
@@ -446,6 +458,7 @@ export const StoredHostRegistrySchema = z.array(StoredHostProfileSchema);
 type StoredHostConnection = z.infer<typeof StoredHostConnectionSchema>;
 
 function normalizeStoredConnection(connection: StoredHostConnection): HostConnection | null {
+  if (connection.type === "routed") return connection;
   if (connection.type === "directTcp") {
     try {
       const endpoint = normalizeLoopbackToLocalhost(normalizeHostPort(connection.endpoint));

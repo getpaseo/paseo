@@ -11,6 +11,13 @@ function findProvider(id: string) {
 }
 
 describe("ACP provider catalog", () => {
+  it.each(["devin", "hermes", "kiro"])(
+    "#7087: %s supplies its provider mark to the catalog picker",
+    (provider) => {
+      expect(findProvider(provider).iconSvg).toContain("<svg");
+    },
+  );
+
   it("vendors provider entries with unique ids and concrete commands", () => {
     const ids = new Set<string>();
 
