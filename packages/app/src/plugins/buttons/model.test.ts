@@ -94,6 +94,20 @@ describe("plugin buttons", () => {
     expect(buttons.getSnapshot()[0].button.title).toBe("Review");
   });
 
+  it("carries the danger tone and rejects any other", () => {
+    const buttons = store();
+    const pill = buttons.addComposerPill(installation(), {
+      id: "review",
+      workspaceId: "workspace",
+      agentId: "agent",
+      button: button(),
+    });
+    pill.update({ tone: "danger" });
+    expect(buttons.getSnapshot()[0].button.tone).toBe("danger");
+    expect(() => pill.update({ tone: "calm" as never })).toThrow('tone must be "danger"');
+    expect(buttons.getSnapshot()[0].button.tone).toBe("danger");
+  });
+
   it("prevents repeated presses and cannot resurrect a removed pending button", async () => {
     const buttons = store();
     let finish = () => {};

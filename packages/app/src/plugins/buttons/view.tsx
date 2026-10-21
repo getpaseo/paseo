@@ -252,11 +252,12 @@ function ButtonControl({ view }: { view: ButtonView }) {
         ? [
             composerPillStyles.body,
             styles.button,
+            button.tone === "danger" && styles.danger,
             (hovered || pressed || entry.open) && styles.active,
             disabled && styles.disabled,
           ]
         : headerButtonStyle(props.layout.compact, { hovered, pressed, open: entry.open }, disabled),
-    [composer, disabled, entry.open, props.layout.compact],
+    [composer, disabled, button.tone, entry.open, props.layout.compact],
   );
   const contents = (
     <>
@@ -622,6 +623,7 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.borderAccent,
   },
   button: { flexShrink: 1, minWidth: 0, maxWidth: 160 },
+  danger: { borderColor: theme.colors.destructive },
   active: { backgroundColor: theme.colors.surface2 },
   disabled: { opacity: theme.opacity[50] },
   tooltipLabel: { fontSize: theme.fontSize.sm, color: theme.colors.foreground },

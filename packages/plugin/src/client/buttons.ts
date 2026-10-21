@@ -36,6 +36,8 @@ export interface PluginButton {
   label?: string;
   visible?: boolean;
   disabled?: boolean;
+  /** "danger" paints the pill's border in the theme's destructive color: the plugin signals an expired or exhausted state. */
+  tone?: "danger";
   behavior: PluginButtonBehavior;
 }
 
