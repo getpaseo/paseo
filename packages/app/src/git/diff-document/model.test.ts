@@ -11,6 +11,7 @@ import {
   shouldApplyRelayoutScroll,
 } from "./model";
 import type { BuildDiffDocumentModelInput, TextMeasurer } from "./types";
+import { diffMatchRectangles, locateDiffMatch, planDiffMatchReveal } from "./find/geometry";
 
 const measurer: TextMeasurer = { measure: (text) => Array.from(text).length * 10 };
 
@@ -69,6 +70,76 @@ function input(overrides: Partial<BuildDiffDocumentModelInput> = {}): BuildDiffD
     ...overrides,
   };
 }
+
+describe("diff Find geometry", () => {
+  it("locates deleted and added text on the correct split side", () => {
+    const source = file();
+    const model = buildDiffDocumentModel(
+      input({ files: [source], layout: "split", viewportWidth: 800 }),
+    );
+    const oldMatch = { file: source, hunkIndex: 0, lineIndex: 1, start: 6, end: 14 };
+    const newMatch = { ...oldMatch, lineIndex: 2 };
+    expect(locateDiffMatch(model, oldMatch)?.cellIndex).toBe(0);
+    expect(locateDiffMatch(model, newMatch)?.cellIndex).toBe(1);
+    const oldRect = diffMatchRectangles(model, oldMatch)[0];
+    const newRect = diffMatchRectangles(model, newMatch)[0];
+    expect(oldRect.x).toBeLessThan(400);
+    expect(newRect.x).toBeGreaterThan(400);
+    expect(newRect.y).toBe(oldRect.y);
+  });
+
+  it("resolves source matches again after wrapping or changing layout", () => {
+    const source = file();
+    const match = { file: source, hunkIndex: 0, lineIndex: 2, start: 0, end: 14 };
+    const wide = buildDiffDocumentModel(input({ files: [source], viewportWidth: 800 }));
+    const narrow = buildDiffDocumentModel(input({ files: [source], viewportWidth: 100 }));
+    expect(diffMatchRectangles(wide, match)).toHaveLength(1);
+    expect(diffMatchRectangles(narrow, match).length).toBeGreaterThan(1);
+    expect(locateDiffMatch(narrow, match)?.row.cells[0]?.content).toBe(
+      source.hunks[0].lines[2].content,
+    );
+  });
+
+  it("highlights the visible grapheme when a literal matches only its base character", () => {
+    const source = file();
+    const start = source.hunks[0].lines[2].content.indexOf("é");
+    const match = { file: source, hunkIndex: 0, lineIndex: 2, start, end: start + 1 };
+    const model = buildDiffDocumentModel(input({ files: [source], viewportWidth: 800 }));
+    expect(diffMatchRectangles(model, match)[0].width).toBeGreaterThan(0);
+  });
+
+  it("does not reveal a stale source object or a collapsed file", () => {
+    const source = file();
+    const match = { file: source, hunkIndex: 0, lineIndex: 2, start: 0, end: 5 };
+    const collapsed = buildDiffDocumentModel(
+      input({ files: [source], collapsedFilePaths: new Set([source.path]) }),
+    );
+    expect(locateDiffMatch(collapsed, match)).toBeNull();
+    const updated = buildDiffDocumentModel(input({ files: [file()] }));
+    expect(locateDiffMatch(updated, match)).toBeNull();
+  });
+
+  it("moves the widget away from first-line matches and centers distant matches", () => {
+    expect(
+      planDiffMatchReveal({
+        top: 50,
+        height: 18,
+        lineHeight: 18,
+        viewportHeight: 600,
+        widgetHeight: 80,
+      }),
+    ).toEqual({ placement: "bottom", scrollTop: 0 });
+    expect(
+      planDiffMatchReveal({
+        top: 1000,
+        height: 18,
+        lineHeight: 18,
+        viewportHeight: 600,
+        widgetHeight: 80,
+      }),
+    ).toEqual({ placement: "top", scrollTop: 646 });
+  });
+});
 
 describe("diff document model", () => {
   it("preserves shaped wrap breaks when joining makes a longer prefix narrower", () => {

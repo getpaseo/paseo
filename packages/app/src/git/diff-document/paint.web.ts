@@ -1,4 +1,6 @@
-import { selectionRectangles } from "./hit-testing";
+import { cellRangeRectangles, selectionRectangles } from "./hit-testing";
+import type { DiffFindSnapshot } from "./find/model";
+import type { RangeMeasurements } from "./range-geometry";
 import {
   DIFF_BODY_BORDER_HEIGHT,
   expandedBodyBorderTop,
@@ -46,6 +48,7 @@ export interface PaintWebViewportInput {
   viewportHeight: number;
   horizontalOffsets: ReadonlyMap<string, number>;
   selection: DiffSelection | null;
+  find?: Pick<DiffFindSnapshot, "byLine" | "matches" | "current">;
   activeHeaderPath: string | null;
   devicePixelRatio: number;
   paintTop?: number;
@@ -68,6 +71,7 @@ export function paintWebViewport(input: PaintWebViewportInput): void {
   context.font = `${input.typography.size}px ${input.typography.family}`;
   context.textBaseline = "alphabetic";
 
+  const rangeMeasurements: RangeMeasurements | undefined = input.find ? new WeakMap() : undefined;
   const range = visibleRowRange(input.model.rows, input.scrollTop + paintTop, paintHeight);
   for (let index = range.start; index < range.end; index += 1) {
     const row = input.model.rows[index];
@@ -82,6 +86,7 @@ export function paintWebViewport(input: PaintWebViewportInput): void {
       ...input,
       row,
       y,
+      rangeMeasurements,
       horizontalOffset: input.horizontalOffsets.get(row.path) ?? 0,
     });
   }
@@ -264,6 +269,7 @@ function paintLine(
   input: PaintWebViewportInput & {
     row: DiffLineRow;
     y: number;
+    rangeMeasurements?: RangeMeasurements;
     horizontalOffset: number;
   },
 ): void {
@@ -304,6 +310,36 @@ function paintLine(
       input.row.height - input.row.reviewHeight,
     );
     input.context.clip();
+    if (input.find) {
+      const identity = cell.sourceIdentity;
+      const matches = input.find.byLine
+        .get(file.file)
+        ?.get(`${identity.hunkIndex}:${identity.lineIndex}`);
+      for (const match of matches ?? []) {
+        const active = match === input.find.matches[input.find.current];
+        const rectangles = cellRangeRectangles({
+          model: input.model,
+          rowIndex: input.row.index,
+          cellIndex,
+          start: match.start,
+          end: match.end,
+          measurements: input.rangeMeasurements,
+        });
+        input.context.save();
+        input.context.fillStyle = input.palette.statusWarning;
+        input.context.globalAlpha = active ? 0.5 : 0.25;
+        for (const rect of rectangles) {
+          const left = rect.x - (input.model.wrapLines ? 0 : input.horizontalOffset);
+          const top = rect.y - input.scrollTop;
+          input.context.fillRect(left, top, rect.width, rect.height);
+          if (active) {
+            input.context.strokeStyle = input.palette.statusWarning;
+            input.context.strokeRect(left, top, rect.width, rect.height);
+          }
+        }
+        input.context.restore();
+      }
+    }
     paintCellText({ ...input, cell, x: x + file.gutterWidth + CODE_LEFT_PADDING });
     input.context.restore();
   });
