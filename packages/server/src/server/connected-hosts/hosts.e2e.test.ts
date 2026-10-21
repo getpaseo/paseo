@@ -433,7 +433,7 @@ class RoutePeer {
   }
 }
 
-import { mkdir, writeFile, readFile, chmod, stat, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, writeFile, readFile, chmod, stat, mkdtemp, rm, readdir } from "node:fs/promises";
 import { join, dirname, basename } from "node:path";
 import { tmpdir, userInfo } from "node:os";
 import { resolveDaemonVersion } from "../daemon-version.js";
@@ -1310,173 +1310,408 @@ test("cancelling a logical scope during admission settles it and releases its ow
   await delivery.close();
 });
 
-test("agent MCP discovers hosts, creates children on self and B, and notifies their parent", async () => {
-  const parentPrompts: string[] = [];
-  const a = await daemon({
-    agentClients: createTestAgentClients({
-      onStartTurn: (prompt, config) => {
-        if (config.title === "Fleet parent") parentPrompts.push(JSON.stringify(prompt));
-      },
-    }),
-  });
-  const b = await daemon();
-  const { paseo, client: aClient } = await api(a);
-  await paseo.hosts.add({ connection: `127.0.0.1:${b.port}`, label: "Fleet B" });
-  const directory = await online(paseo);
-  const workspace = await paseo.workspaces.create({
-    source: { kind: "directory", path: a.staticDir },
-  });
-  const parent = await workspace.agents.create({
-    config: { provider: "claude/claude-test" },
-    title: "Fleet parent",
-  });
-  const mcp = new Client({ name: "fleet-delegation", version: "1" });
-  cleanup.push(() => mcp.close());
-  await mcp.connect(
-    new StreamableHTTPClientTransport(
-      new URL(`http://127.0.0.1:${a.port}/mcp/agents?callerAgentId=${parent.id}`),
-    ),
-  );
-  const result = await mcp.callTool({ name: "list_hosts", arguments: {} });
-  expect(result.isError).not.toBe(true);
-  expect(result.structuredContent).toMatchObject({
-    self: { serverId: directory.self.serverId },
-    hosts: [expect.objectContaining({ serverId: directory.hosts[0]!.serverId, label: "Fleet B" })],
-  });
-  const call = async (name: string, args: Record<string, unknown>) => {
-    const response = await mcp.callTool({ name, arguments: args });
-    expect(response.isError, JSON.stringify(response)).not.toBe(true);
-    return z.record(z.string(), z.unknown()).parse(response.structuredContent);
-  };
-  const serverId = directory.hosts[0]!.serverId!;
-  const destination = await call("create_workspace", {
-    serverId,
-    isolation: "local",
-    path: b.staticDir,
-    title: "Destination workspace",
-  });
-  expect(await call("list_workspaces", { serverId })).toMatchObject({
-    serverId,
-    workspaces: [expect.objectContaining({ workspaceId: destination.workspaceId })],
-  });
-  const self = await call("create_agent", {
-    title: "Self child",
-    provider: "claude/claude-test",
-    initialPrompt: "Finish local delegation",
-  });
-  const remote = await call("create_agent", {
-    serverId,
-    workspaceId: destination.workspaceId,
-    title: "B child",
-    provider: "claude/claude-test",
-    initialPrompt: "Finish destination delegation",
-  });
-  expect(self.serverId).toBe(directory.self.serverId);
-  expect(remote.serverId).toBe(serverId);
-  const bApi = await api(b);
-  expect(
-    (await bApi.paseo.agents.ref(String(remote.agentId)).refresh())?.agent.labels,
-  ).toMatchObject({
-    "paseo.parent-agent-id": parent.id,
-    "paseo.parent-server-id": directory.self.serverId,
-  });
-  await expect.poll(() => parentPrompts.join("\n")).toContain(`Agent ${self.agentId}`);
-  await expect.poll(() => parentPrompts.join("\n")).toContain(`Agent ${remote.agentId}`);
-  expect(parentPrompts.join("\n")).toContain(`Server: ${serverId}`);
-  expect(parentPrompts.join("\n")).toContain(`Server: ${directory.self.serverId}`);
-
-  await aClient.createAgent({
-    agentId: String(remote.agentId),
-    provider: "claude",
-    model: "claude-test",
-    cwd: a.staticDir,
-    workspaceId: workspace.id,
-    title: "Unrelated equal ID on A",
-  });
-  expect(await call("get_agent_status", { serverId, agentId: remote.agentId })).toMatchObject({
-    serverId,
-    snapshot: { id: remote.agentId, title: "B child", cwd: b.staticDir },
-  });
-  expect(await call("get_agent_status", { agentId: remote.agentId })).toMatchObject({
-    serverId: directory.self.serverId,
-    snapshot: { title: "Unrelated equal ID on A" },
-  });
-  const beforeFollowup = parentPrompts.filter((prompt) =>
-    prompt.includes(`Agent ${remote.agentId}`),
-  ).length;
-  expect(beforeFollowup).toBe(1);
-  expect(
-    await call("send_agent_prompt", {
-      serverId,
-      agentId: remote.agentId,
-      prompt: "REMOTE_FOLLOWUP_MARKER",
-      sessionMode: "full-access",
-    }),
-  ).toMatchObject({ success: true, serverId, guidance: expect.stringContaining("notified") });
-  expect(await call("get_agent_activity", { serverId, agentId: remote.agentId })).toMatchObject({
-    serverId,
-    agentId: remote.agentId,
-    currentModeId: "full-access",
-    content: expect.stringContaining("REMOTE_FOLLOWUP_MARKER"),
-  });
-  expect(await call("list_agents", { serverId })).toMatchObject({
-    serverId,
-    agents: expect.arrayContaining([
-      expect.objectContaining({ id: remote.agentId, title: "B child", cwd: b.staticDir }),
-    ]),
-  });
-  expect(await call("list_agents", {})).toMatchObject({
-    serverId: directory.self.serverId,
-    agents: expect.arrayContaining([
-      expect.objectContaining({
-        id: remote.agentId,
-        title: "Unrelated equal ID on A",
-        cwd: a.staticDir,
+test(
+  "agent MCP discovers hosts, creates children on self and B, and notifies their parent",
+  { timeout: 30000 },
+  async () => {
+    const parentPrompts: string[] = [];
+    const a = await daemon({
+      agentClients: createTestAgentClients({
+        onStartTurn: (prompt, config) => {
+          if (config.title === "Fleet parent") parentPrompts.push(JSON.stringify(prompt));
+        },
       }),
-    ]),
-  });
-  await expect
-    .poll(() => parentPrompts.filter((prompt) => prompt.includes(`Agent ${remote.agentId}`)).length)
-    .toBe(2);
-  expect(parentPrompts.findLast((prompt) => prompt.includes(`Agent ${remote.agentId}`))).toContain(
-    `Server: ${serverId}`,
-  );
-  expect((await aClient.fetchAgent(String(remote.agentId)))?.agent.lastUserMessageAt).toBeNull();
-  expect(JSON.stringify(await aClient.fetchAgentTimeline(String(remote.agentId)))).not.toContain(
-    "REMOTE_FOLLOWUP_MARKER",
-  );
-
-  for (const selector of [{}, { serverId: directory.self.serverId }]) {
-    expect(await call("get_agent_status", { ...selector, agentId: self.agentId })).toMatchObject({
-      serverId: directory.self.serverId,
-      snapshot: { title: "Self child" },
     });
-    const previous = parentPrompts.filter((prompt) =>
-      prompt.includes(`Agent ${self.agentId}`),
+    const b = await daemon();
+    const { paseo, client: aClient } = await api(a);
+    await paseo.hosts.add({ connection: `127.0.0.1:${b.port}`, label: "Fleet B" });
+    const directory = await online(paseo);
+    const workspace = await paseo.workspaces.create({
+      source: { kind: "directory", path: a.staticDir },
+    });
+    const parent = await workspace.agents.create({
+      config: { provider: "claude/claude-test" },
+      title: "Fleet parent",
+    });
+    const mcp = new Client({ name: "fleet-delegation", version: "1" });
+    cleanup.push(() => mcp.close());
+    await mcp.connect(
+      new StreamableHTTPClientTransport(
+        new URL(`http://127.0.0.1:${a.port}/mcp/agents?callerAgentId=${parent.id}`),
+      ),
+    );
+    const result = await mcp.callTool({ name: "list_hosts", arguments: {} });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      self: { serverId: directory.self.serverId },
+      hosts: [
+        expect.objectContaining({ serverId: directory.hosts[0]!.serverId, label: "Fleet B" }),
+      ],
+    });
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const response = await mcp.callTool({ name, arguments: args });
+      expect(response.isError, JSON.stringify(response)).not.toBe(true);
+      return z.record(z.string(), z.unknown()).parse(response.structuredContent);
+    };
+    const serverId = directory.hosts[0]!.serverId!;
+    const destination = await call("create_workspace", {
+      serverId,
+      isolation: "local",
+      path: b.staticDir,
+      title: "Destination workspace",
+    });
+    expect(await call("list_workspaces", { serverId })).toMatchObject({
+      serverId,
+      workspaces: [expect.objectContaining({ workspaceId: destination.workspaceId })],
+    });
+    const self = await call("create_agent", {
+      title: "Self child",
+      provider: "claude/claude-test",
+      initialPrompt: "Finish local delegation",
+    });
+    const remote = await call("create_agent", {
+      serverId,
+      workspaceId: destination.workspaceId,
+      title: "B child",
+      provider: "claude/claude-test",
+      initialPrompt: "Finish destination delegation",
+    });
+    expect(self.serverId).toBe(directory.self.serverId);
+    expect(remote.serverId).toBe(serverId);
+    const bApi = await api(b);
+    expect(
+      (await bApi.paseo.agents.ref(String(remote.agentId)).refresh())?.agent.labels,
+    ).toMatchObject({
+      "paseo.parent-agent-id": parent.id,
+      "paseo.parent-server-id": directory.self.serverId,
+    });
+    await expect
+      .poll(() => parentPrompts.join("\n"), { timeout: 10000 })
+      .toContain(`Agent ${self.agentId}`);
+    await expect
+      .poll(() => parentPrompts.join("\n"), { timeout: 10000 })
+      .toContain(`Agent ${remote.agentId}`);
+    expect(parentPrompts.join("\n")).toContain(`Server: ${serverId}`);
+    expect(parentPrompts.join("\n")).toContain(`Server: ${directory.self.serverId}`);
+
+    await aClient.createAgent({
+      agentId: String(remote.agentId),
+      provider: "claude",
+      model: "claude-test",
+      cwd: a.staticDir,
+      workspaceId: workspace.id,
+      title: "Unrelated equal ID on A",
+    });
+    expect(await call("get_agent_status", { serverId, agentId: remote.agentId })).toMatchObject({
+      serverId,
+      snapshot: { id: remote.agentId, title: "B child", cwd: b.staticDir },
+    });
+    expect(await call("get_agent_status", { agentId: remote.agentId })).toMatchObject({
+      serverId: directory.self.serverId,
+      snapshot: { title: "Unrelated equal ID on A" },
+    });
+    const beforeFollowup = parentPrompts.filter((prompt) =>
+      prompt.includes(`Agent ${remote.agentId}`),
     ).length;
+    expect(beforeFollowup).toBe(1);
     expect(
       await call("send_agent_prompt", {
-        ...selector,
-        agentId: self.agentId,
-        prompt: "SELF_FOLLOWUP_MARKER",
+        serverId,
+        agentId: remote.agentId,
+        prompt: "REMOTE_FOLLOWUP_MARKER",
+        sessionMode: "full-access",
       }),
-    ).toMatchObject({
-      success: true,
-      serverId: directory.self.serverId,
-      disposition: "turn_started",
+    ).toMatchObject({ success: true, serverId, guidance: expect.stringContaining("notified") });
+    await bApi.client.waitForFinish(String(remote.agentId), 10000);
+    expect(await call("get_agent_activity", { serverId, agentId: remote.agentId })).toMatchObject({
+      serverId,
+      agentId: remote.agentId,
+      currentModeId: "full-access",
+      content: expect.stringContaining("REMOTE_FOLLOWUP_MARKER"),
     });
-    expect(await call("get_agent_activity", { ...selector, agentId: self.agentId })).toMatchObject({
-      serverId: directory.self.serverId,
-      content: expect.stringContaining("SELF_FOLLOWUP_MARKER"),
+    expect(await call("list_agents", { serverId })).toMatchObject({
+      serverId,
+      agents: expect.arrayContaining([
+        expect.objectContaining({ id: remote.agentId, title: "B child", cwd: b.staticDir }),
+      ]),
     });
-    expect(await call("list_agents", selector)).toMatchObject({
+    expect(await call("list_agents", {})).toMatchObject({
       serverId: directory.self.serverId,
       agents: expect.arrayContaining([
-        expect.objectContaining({ id: self.agentId, title: "Self child" }),
+        expect.objectContaining({
+          id: remote.agentId,
+          title: "Unrelated equal ID on A",
+          cwd: a.staticDir,
+        }),
       ]),
     });
     await expect
-      .poll(() => parentPrompts.filter((prompt) => prompt.includes(`Agent ${self.agentId}`)).length)
-      .toBe(previous + 1);
-  }
-});
+      .poll(
+        () => parentPrompts.filter((prompt) => prompt.includes(`Agent ${remote.agentId}`)).length,
+        { timeout: 10000 },
+      )
+      .toBe(2);
+    expect(
+      parentPrompts.findLast((prompt) => prompt.includes(`Agent ${remote.agentId}`)),
+    ).toContain(`Server: ${serverId}`);
+    expect((await aClient.fetchAgent(String(remote.agentId)))?.agent.lastUserMessageAt).toBeNull();
+    expect(JSON.stringify(await aClient.fetchAgentTimeline(String(remote.agentId)))).not.toContain(
+      "REMOTE_FOLLOWUP_MARKER",
+    );
+
+    for (const selector of [{}, { serverId: directory.self.serverId }]) {
+      expect(await call("get_agent_status", { ...selector, agentId: self.agentId })).toMatchObject({
+        serverId: directory.self.serverId,
+        snapshot: { title: "Self child" },
+      });
+      const previous = parentPrompts.filter((prompt) =>
+        prompt.includes(`Agent ${self.agentId}`),
+      ).length;
+      expect(
+        await call("send_agent_prompt", {
+          ...selector,
+          agentId: self.agentId,
+          prompt: "SELF_FOLLOWUP_MARKER",
+        }),
+      ).toMatchObject({
+        success: true,
+        serverId: directory.self.serverId,
+        deliveryStatus: "queued",
+      });
+      await aClient.waitForFinish(String(self.agentId), 10000);
+      expect(
+        await call("get_agent_activity", { ...selector, agentId: self.agentId }),
+      ).toMatchObject({
+        serverId: directory.self.serverId,
+        content: expect.stringContaining("SELF_FOLLOWUP_MARKER"),
+      });
+      expect(await call("list_agents", selector)).toMatchObject({
+        serverId: directory.self.serverId,
+        agents: expect.arrayContaining([
+          expect.objectContaining({ id: self.agentId, title: "Self child" }),
+        ]),
+      });
+      await expect
+        .poll(
+          () => parentPrompts.filter((prompt) => prompt.includes(`Agent ${self.agentId}`)).length,
+          { timeout: 10000 },
+        )
+        .toBe(previous + 1);
+    }
+  },
+);
+
+test(
+  "remote agent reports, local CLI sends and automatic completion share the recipient batch",
+  { timeout: 30000 },
+  async () => {
+    const parentPrompts: string[] = [];
+    const childStarted = Promise.withResolvers<void>();
+    const finishChild = Promise.withResolvers<void>();
+    cleanup.push(async () => {
+      finishChild.resolve();
+    });
+    const a = await daemon({
+      agentClients: createTestAgentClients({
+        onStartTurn: (prompt, config) => {
+          if (config.title === "Batch parent")
+            parentPrompts.push(typeof prompt === "string" ? prompt : JSON.stringify(prompt));
+        },
+      }),
+    });
+    const b = await daemon({
+      agentClients: createTestAgentClients({
+        onStartTurn: () => childStarted.resolve(),
+        beforeTurnComplete: () => finishChild.promise,
+      }),
+    });
+    const origin = await api(a);
+    const destination = await api(b);
+    await origin.paseo.hosts.add({ connection: `127.0.0.1:${b.port}` });
+    await destination.paseo.hosts.add({ connection: `127.0.0.1:${a.port}` });
+    const aDirectory = await online(origin.paseo);
+    const bDirectory = await online(destination.paseo);
+    const aId = aDirectory.self.serverId;
+    const bId = bDirectory.self.serverId;
+    const aWorkspace = await origin.paseo.workspaces.create({
+      source: { kind: "directory", path: a.staticDir },
+    });
+    const bWorkspace = await destination.paseo.workspaces.create({
+      source: { kind: "directory", path: b.staticDir },
+    });
+    const parent = await aWorkspace.agents.create({
+      config: { provider: "claude/claude-test", modeId: "full-access" },
+      title: "Batch parent",
+    });
+    const child = await bWorkspace.agents.create({
+      config: { provider: "claude/claude-test", modeId: "full-access" },
+      title: "Batch child",
+      labels: { "paseo.parent-agent-id": parent.id, "paseo.parent-server-id": aId },
+    });
+    const caller = async (host: TestPaseoDaemon, agentId: string) => {
+      const mcp = new Client({ name: "batching-agent", version: "1" });
+      await mcp.connect(
+        new StreamableHTTPClientTransport(
+          new URL(`http://127.0.0.1:${host.port}/mcp/agents?callerAgentId=${agentId}`),
+        ),
+      );
+      cleanup.push(() => mcp.close());
+      return mcp;
+    };
+    const parentMcp = await caller(a, parent.id);
+    const childMcp = await caller(b, child.id);
+    const task = await parentMcp.callTool({
+      name: "send_agent_prompt",
+      arguments: { serverId: bId, agentId: child.id, prompt: "Do the delegated task" },
+    });
+    expect(task.isError).not.toBe(true);
+    expect(task.content).toEqual([
+      expect.objectContaining({
+        type: "text",
+        text: expect.stringContaining('"deliveryStatus": "queued"'),
+      }),
+    ]);
+    expect(task.structuredContent).toMatchObject({
+      success: true,
+      deliveryStatus: "queued",
+      serverId: bId,
+    });
+    // An idle recipient must not report old idle as completion of its queued task.
+    expect((await destination.client.waitForFinish(child.id, 50)).status).toBe("timeout");
+    await childStarted.promise;
+    const report = await childMcp.callTool({
+      name: "send_agent_prompt",
+      arguments: {
+        serverId: aId,
+        agentId: parent.id,
+        prompt: "REMOTE_REPORT <ready>",
+        notifyOnFinish: false,
+      },
+    });
+    expect(report.isError).not.toBe(true);
+    expect(report.structuredContent).toMatchObject({ deliveryStatus: "queued", serverId: aId });
+    expect(parentPrompts).toEqual([]);
+
+    const { resolve } = await import("node:path");
+    const cli = await promisify(execFile)(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        resolve("packages/cli/src/index.ts"),
+        "--host",
+        `127.0.0.1:${a.port}`,
+        "send",
+        parent.id,
+        "LOCAL_CLI_REPORT",
+        "--no-wait",
+        "--json",
+      ],
+      {
+        env: { ...process.env, PASEO_AGENT_ID: parent.id },
+        timeout: 15000,
+      },
+    );
+    expect(JSON.parse(cli.stdout)).toMatchObject({ status: "queued" });
+    expect(parentPrompts).toEqual([]);
+    const receiptStates = async () => {
+      const directory = join(a.paseoHome, "agent-requests");
+      const receipts = await Promise.all(
+        (await readdir(directory))
+          .filter((file) => file.endsWith(".json"))
+          .map(async (file) => JSON.parse(await readFile(join(directory, file), "utf8"))),
+      );
+      return receipts
+        .filter(
+          (receipt) => receipt.agentId === parent.id && typeof receipt.fingerprint === "string",
+        )
+        .map((receipt) => receipt.state)
+        .sort();
+    };
+    expect(await receiptStates()).toEqual(["pending", "pending"]);
+    finishChild.resolve();
+    await expect.poll(() => parentPrompts, { timeout: 10000 }).toHaveLength(1);
+    expect(parentPrompts[0]).toContain("REMOTE_REPORT &lt;ready&gt;");
+    expect(parentPrompts[0]).toContain("LOCAL_CLI_REPORT");
+    expect(parentPrompts[0]).toContain('event="finished"');
+    expect(parentPrompts[0]).toContain(`source-agent-id="${child.id}"`);
+    await expect.poll(receiptStates).toEqual(["completed", "completed"]);
+    const timeline = await origin.client.fetchAgentTimeline(parent.id);
+    const messages = timeline.entries.flatMap((row) =>
+      row.item.type === "tool_call" && row.item.agentMessage ? [row.item.agentMessage] : [],
+    );
+    expect(
+      messages.map((message) => [message.event, message.sender.id, message.sender.serverId]),
+    ).toEqual([
+      ["message", child.id, bId],
+      ["message", parent.id, undefined],
+      ["finished", child.id, bId],
+    ]);
+    expect(messages[0]!.text).toBe("REMOTE_REPORT <ready>");
+    expect(timeline.entries.filter((row) => row.item.type === "user_message")).toEqual([]);
+
+    const human = await aWorkspace.agents.create({
+      config: { provider: "claude/claude-test", modeId: "full-access" },
+      title: "Human recipient",
+    });
+    expect(await origin.client.sendAgentMessage(human.id, "HUMAN_PROMPT")).toEqual({});
+    expect(
+      (await origin.client.fetchAgentTimeline(human.id)).entries.some(
+        (row) => row.item.type === "user_message" && row.item.text === "HUMAN_PROMPT",
+      ),
+    ).toBe(true);
+  },
+);
+
+test(
+  "remote top-level sends set the mode through the existing RPC before sending",
+  { timeout: 15000 },
+  async () => {
+    const a = await daemon();
+    const b = await daemon();
+    const wire = await hostWire(b);
+    const origin = await api(a);
+    const destination = await api(b);
+    await origin.paseo.hosts.add({ connection: wire.connection });
+    const serverId = (await online(origin.paseo)).hosts[0]!.serverId!;
+    const workspace = await destination.paseo.workspaces.create({
+      source: { kind: "directory", path: b.staticDir },
+    });
+    const agent = await workspace.agents.create({
+      config: { provider: "claude/claude-test", modeId: "default" },
+      title: "Human mode recipient",
+    });
+    const mcp = new Client({ name: "human-mode-send", version: "1" });
+    cleanup.push(() => mcp.close());
+    await mcp.connect(
+      new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${a.port}/mcp/agents`)),
+    );
+    const response = await mcp.callTool({
+      name: "send_agent_prompt",
+      arguments: { serverId, agentId: agent.id, prompt: "Human task", sessionMode: "full-access" },
+    });
+    expect(response.isError).not.toBe(true);
+    expect((await destination.client.fetchAgent(agent.id))?.agent.currentModeId).toBe(
+      "full-access",
+    );
+    const requests = wire.frames
+      .filter((frame) => frame.direction === "toB" && !frame.binary)
+      .flatMap((frame) => {
+        const outer = JSON.parse(frame.bytes.toString());
+        if (outer.type !== "session" || outer.message.type !== "hosts.route.frame.request")
+          return [];
+        const inner = JSON.parse(outer.message.data);
+        return inner.type === "session" ? [inner.message] : [];
+      })
+      .filter(
+        (message) =>
+          message.type === "set_agent_mode_request" ||
+          message.type === "send_agent_message_request",
+      );
+    expect(requests.map((message) => message.type)).toEqual([
+      "set_agent_mode_request",
+      "send_agent_message_request",
+    ]);
+    expect(requests[1]).not.toHaveProperty("sessionMode");
+  },
+);

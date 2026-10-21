@@ -11991,3 +11991,81 @@ test.each([
     expect(timelineStore.itemReads).toBe(readsBeforeDispatch);
   },
 );
+
+test.each(["live", "history", "accepted"] as const)(
+  "batched agent entries retain their identities through %s ingestion",
+  async (ingestion) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-batch-provenance-"));
+    const entries = [
+      {
+        id: "report",
+        source: { kind: "agent-message" as const, agentId: "worker", serverId: "remote-host" },
+        text: "Result <ready>",
+      },
+      {
+        id: "finish",
+        source: {
+          kind: "agent-notification" as const,
+          agentId: "worker",
+          serverId: "remote-host",
+          event: "finished" as const,
+        },
+        text: "Worker finished",
+      },
+    ];
+    const prompt = entries.map(formatAgentMessage).join("\n\n");
+    const item: AgentTimelineItem = {
+      type: "user_message",
+      text: prompt,
+      clientMessageId: "report",
+      messageId: "provider-batch",
+    };
+    const codex = fakeCodexEmitting(
+      ingestion === "history" ? { historyItems: [item] } : { turnItems: [item] },
+    );
+    const manager = new AgentManager({ clients: { codex }, logger });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      if (ingestion === "history")
+        await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+      else if (ingestion === "accepted") {
+        for await (const _event of manager.streamAgent(agent.id, prompt, {
+          clientMessageId: "report",
+        })) {
+        }
+      } else await manager.runAgent(agent.id, { text: "start" });
+      expect(
+        manager
+          .getTimeline(agent.id)
+          .filter((row) => row.type === "tool_call")
+          .map((row) => ({ callId: row.callId, agentMessage: row.agentMessage })),
+      ).toEqual([
+        {
+          callId: "paseo-agent-message:report",
+          agentMessage: {
+            event: "message",
+            sender: { id: "worker", serverId: "remote-host" },
+            text: "Result <ready>",
+          },
+        },
+        {
+          callId: "paseo-agent-message:finish",
+          agentMessage: {
+            event: "finished",
+            sender: { id: "worker", serverId: "remote-host" },
+            text: "Worker finished",
+          },
+        },
+      ]);
+      expect(manager.getTimeline(agent.id).filter((row) => row.type === "user_message")).toEqual(
+        [],
+      );
+      expect(manager.getAgent(agent.id)?.lastUserMessageAt).toBeNull();
+    } finally {
+      await manager.closeAgent(agent.id);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);

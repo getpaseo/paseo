@@ -1,3 +1,4 @@
+import { createAgentMessageDeliveryStub } from "./test-utils/session-stubs.js";
 import {
   createMessageReceiptsStub,
   createTestCreationService,
@@ -214,6 +215,7 @@ function createSessionForWireCompatTest(options?: {
 
   const session = new Session({
     messageReceipts: createMessageReceiptsStub(),
+    agentMessages: createAgentMessageDeliveryStub(),
     creationService: createTestCreationService(),
     clientId: "wire-compat-client",
     permissions: OWNER_PERMISSIONS,

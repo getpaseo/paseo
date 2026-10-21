@@ -1,3 +1,4 @@
+import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
 import { AgentDirectory } from "./agent/directory.js";
 import { ConnectedHostSession } from "./connected-hosts/index.js";
 import type { ConnectedHosts } from "./connected-hosts/index.js";
@@ -461,6 +462,7 @@ export interface SessionOptions {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   messageReceipts: Pick<MessageReceipts, "send">;
+  agentMessages: AgentMessageDelivery;
   creationService: Pick<CreationService, "create" | "subscribe">;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
@@ -813,6 +815,7 @@ export class Session {
   private readonly hubExecutionController: HubExecutionController | null;
   private readonly workspaceScripts: WorkspaceScriptsService;
   private readonly messageReceipts: Pick<MessageReceipts, "send">;
+  private readonly agentMessages: AgentMessageDelivery;
   private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
   private readonly creationService: Pick<CreationService, "create" | "subscribe">;
 
@@ -896,6 +899,7 @@ export class Session {
     this.pushNotifications = pushNotifications;
     this.paseoHome = paseoHome;
     this.messageReceipts = options.messageReceipts;
+    this.agentMessages = options.agentMessages;
     this.creationService = options.creationService;
     this.projectIcons = new ProjectIconReader(paseoHome);
     this.worktreesRoot = worktreesRoot;
@@ -8221,17 +8225,42 @@ export class Session {
         },
         "agent.session.send_agent_message",
       );
+      let queued!: () => void;
+      const admitted = new Promise<void>((acceptAdmission) => {
+        queued = acceptAdmission;
+      });
+      let deliveryStatus: "queued" | undefined;
       const send = async () => {
+        if (msg.sourceAgentId) {
+          const receipt = this.agentMessages.enqueue({
+            recipientId: agentId,
+            messageId: msg.messageId,
+            prompt,
+            source: {
+              kind: "agent-message",
+              agentId: msg.sourceAgentId,
+              serverId: msg.sourceAgentServerId,
+              title: !msg.sourceAgentServerId
+                ? (this.agentManager.getAgent(msg.sourceAgentId)?.config.title ?? undefined)
+                : undefined,
+            },
+            activeTurnBehavior: msg.activeTurnBehavior ?? "steer",
+            sessionMode: msg.sessionMode,
+            clearPendingPermissions: true,
+          });
+          deliveryStatus = "queued";
+          queued();
+          await receipt.dispatched;
+          return;
+        }
         const result = await sendPromptToAgent({
           agentManager: this.agentManager,
           agentStorage: this.agentStorage,
           agentId,
           prompt,
-          source: msg.sourceAgentId
-            ? { kind: "agent-message", agentId: msg.sourceAgentId }
-            : undefined,
           messageId: msg.messageId,
           activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt",
+          sessionMode: msg.sessionMode,
           clearPendingPermissions: true,
           logger: this.sessionLogger,
         });
@@ -8243,23 +8272,30 @@ export class Session {
           );
         }
       };
-      if (msg.messageId) {
-        await this.messageReceipts.send({
-          agentId,
-          messageId: msg.messageId,
-          request: {
-            prompt,
-            sourceAgentId: msg.sourceAgentId,
-            activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt",
-          },
-          prepare: async () => {
-            if (!msg.sourceAgentId) await this.prepareAgentMessage(agentId, msg.text);
-          },
-          send,
-        });
-      } else {
-        await send();
-      }
+      const sent = msg.messageId
+        ? this.messageReceipts.send({
+            agentId,
+            messageId: msg.messageId,
+            request: {
+              prompt,
+              sourceAgentId: msg.sourceAgentId,
+              sourceAgentServerId: msg.sourceAgentServerId,
+              sessionMode: msg.sessionMode,
+              activeTurnBehavior:
+                msg.activeTurnBehavior ?? (msg.sourceAgentId ? "steer" : "interrupt"),
+            },
+            prepare: async () => {
+              if (!msg.sourceAgentId) await this.prepareAgentMessage(agentId, msg.text);
+            },
+            send,
+          })
+        : send();
+      void sent.catch((error) => {
+        if (deliveryStatus === "queued") {
+          this.handleAgentRunError(agentId, error, "Failed to dispatch queued agent message");
+        }
+      });
+      await Promise.race([sent, admitted]);
 
       this.emit({
         type: "send_agent_message_response",
@@ -8267,6 +8303,7 @@ export class Session {
           requestId: msg.requestId,
           agentId,
           accepted: true,
+          ...(deliveryStatus ? { deliveryStatus } : {}),
           error: null,
         },
       });
@@ -8308,40 +8345,6 @@ export class Session {
     }
 
     const agentId = resolved.agentId;
-    const live = this.agentManager.getAgent(agentId);
-    if (!live) {
-      const settled = await this.readSettledAgent(agentId);
-      if (!settled) {
-        this.emit({
-          type: "wait_for_finish_response",
-          payload: {
-            requestId,
-            status: "error",
-            final: null,
-            error: `Agent not found: ${agentId}`,
-            lastMessage: null,
-          },
-        });
-        return;
-      }
-      const { record, lastMessage } = settled;
-      const final = this.buildStoredAgentPayload(record);
-      let status: "permission" | "error" | "idle";
-      if (record.attentionReason === "permission") {
-        status = "permission";
-      } else if (record.lastStatus === "error") {
-        status = "error";
-      } else {
-        status = "idle";
-      }
-      const error = resolveWaitForFinishError({ status, final });
-      this.emit({
-        type: "wait_for_finish_response",
-        payload: { requestId, status, final, error, lastMessage },
-      });
-      return;
-    }
-
     const abortController = new AbortController();
     const hasTimeout = typeof timeoutMs === "number" && timeoutMs > 0;
     const timeoutHandle = hasTimeout
@@ -8351,6 +8354,45 @@ export class Session {
       : null;
 
     try {
+      await this.agentMessages.waitForDispatch(
+        agentId,
+        AbortSignal.any([abortController.signal, sourceSignal]),
+      );
+
+      const live = this.agentManager.getAgent(agentId);
+      if (!live) {
+        const settled = await this.readSettledAgent(agentId);
+        if (!settled) {
+          this.emit({
+            type: "wait_for_finish_response",
+            payload: {
+              requestId,
+              status: "error",
+              final: null,
+              error: `Agent not found: ${agentId}`,
+              lastMessage: null,
+            },
+          });
+          return;
+        }
+        const { record, lastMessage } = settled;
+        const final = this.buildStoredAgentPayload(record);
+        let status: "permission" | "error" | "idle";
+        if (record.attentionReason === "permission") {
+          status = "permission";
+        } else if (record.lastStatus === "error") {
+          status = "error";
+        } else {
+          status = "idle";
+        }
+        const error = resolveWaitForFinishError({ status, final });
+        this.emit({
+          type: "wait_for_finish_response",
+          payload: { requestId, status, final, error, lastMessage },
+        });
+        return;
+      }
+
       let result = await this.agentManager.waitForAgentEvent(agentId, {
         signal: AbortSignal.any([abortController.signal, sourceSignal]),
         waitForActive: true,

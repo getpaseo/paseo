@@ -1,3 +1,5 @@
+import type { AgentMessageDelivery } from "./agent-messages/index.js";
+import { createTestAgentMessages } from "../test-utils/agent-messages.js";
 import { setupFinishNotification, type PromptDispatchDisposition } from "./agent-prompt.js";
 import { parseAgentMessage } from "./agent-messages/index.js";
 import { execFileSync } from "node:child_process";
@@ -123,6 +125,9 @@ interface RegisteredMcpToolWithHandler extends RegisteredMcpTool {
   }>;
 }
 
+const serverDeliveries = new WeakMap<object, AgentMessageDelivery>();
+const toolDeliveries = new WeakMap<object, AgentMessageDelivery>();
+
 function lookupTool(
   server: Awaited<ReturnType<typeof createAgentMcpServer>>,
   name: string,
@@ -143,7 +148,10 @@ function registeredTool(
   if (!handler) {
     throw new Error(`MCP tool has no callable handler: ${name}`);
   }
-  return { ...tool, handler };
+  const registered = { ...tool, handler };
+  const delivery = serverDeliveries.get(server);
+  if (delivery) toolDeliveries.set(registered, delivery);
+  return registered;
 }
 
 async function invokeToolWithParsedInput(
@@ -152,7 +160,25 @@ async function invokeToolWithParsedInput(
 ) {
   const parsed = await tool.inputSchema.safeParseAsync(input);
   expect(parsed.success).toBe(true);
-  return tool.handler(parsed.data);
+  const response = await tool.handler(parsed.data);
+  if (response.structuredContent.deliveryStatus === "queued") {
+    await toolDeliveries
+      .get(tool)!
+      .waitForDispatch(input.agentId as string, new AbortController().signal);
+  }
+  return response;
+}
+
+async function sendMcpAndAwaitDispatch(
+  client: Client,
+  server: object,
+  input: Record<string, unknown>,
+) {
+  const response = await client.callTool({ name: "send_agent_prompt", arguments: input });
+  await serverDeliveries
+    .get(server)!
+    .waitForDispatch(input.agentId as string, new AbortController().signal);
+  return response;
 }
 
 function agentsOf(response: {
@@ -812,11 +838,17 @@ function createPaseoWorktreeForMcpTest(options: {
 }
 
 // Typed in-memory workspace port for catalogue tests without workspace setup.
-function createAgentMcpServer(options: Parameters<typeof createAgentMcpServerWithDependencies>[0]) {
-  return createAgentMcpServerWithDependencies({
+async function createAgentMcpServer(
+  options: Parameters<typeof createAgentMcpServerWithDependencies>[0],
+) {
+  const messages = createTestAgentMessages(options);
+  const server = await createAgentMcpServerWithDependencies({
+    agentMessages: () => messages,
     workspaceRegistry: { get: async () => null, list: async () => [], upsert: async () => {} },
     ...options,
   });
+  serverDeliveries.set(server, messages);
+  return server;
 }
 
 describe("bundled Paseo skill", () => {
@@ -3601,7 +3633,9 @@ describe("send_agent_prompt MCP tool", () => {
         });
         expect(response.structuredContent).toMatchObject({
           success: true,
-          disposition: steered ? "steered" : "turn_started",
+          ...(agentScoped
+            ? { deliveryStatus: "queued" }
+            : { disposition: steered ? "steered" : "turn_started" }),
         });
         expect(client.sessions[1]!.prompts).toHaveLength(steered ? 1 : 2);
         expect(client.sessions[1]!.steeredPrompts).toHaveLength(steered ? 1 : 0);
@@ -3648,7 +3682,7 @@ describe("send_agent_prompt MCP tool", () => {
         });
         mcpClient = await connectInMemoryMcpClient(server);
         const send = (input: Record<string, unknown>) =>
-          mcpClient!.callTool({ name: "send_agent_prompt", arguments: input });
+          sendMcpAndAwaitDispatch(mcpClient!, server, input);
         await send({
           agentId: child.id,
           prompt: "Original work",
@@ -3660,10 +3694,7 @@ describe("send_agent_prompt MCP tool", () => {
           notifyOnFinish: true,
         });
         if (rejected) {
-          expect(await sending).toMatchObject({
-            isError: true,
-            content: [{ type: "text", text: expect.stringContaining("Steer rejected") }],
-          });
+          await expect(sending).rejects.toThrow("Steer rejected");
           // Flush asynchronous notification work before checking that a rejected
           // dispatch did not notify. Then prove a later successful send still can.
           await new Promise((resolve) => setTimeout(resolve, 50));
@@ -3677,7 +3708,7 @@ describe("send_agent_prompt MCP tool", () => {
           const response = await sending;
           expect(response.structuredContent).toMatchObject({
             success: true,
-            disposition: "steered",
+            deliveryStatus: "queued",
           });
         }
         await vi.waitFor(() => expect(client.sessions[0]!.prompts).toHaveLength(1));
@@ -3727,7 +3758,7 @@ describe("send_agent_prompt MCP tool", () => {
         });
         mcpClient = await connectInMemoryMcpClient(server);
         const send = (input: Record<string, unknown>) =>
-          mcpClient!.callTool({ name: "send_agent_prompt", arguments: input });
+          sendMcpAndAwaitDispatch(mcpClient!, server, input);
         await send({
           agentId: child.id,
           prompt: "Original work",
@@ -3738,10 +3769,7 @@ describe("send_agent_prompt MCP tool", () => {
           prompt: "New message",
           notifyOnFinish: true,
         });
-        expect(await sending).toMatchObject({
-          isError: true,
-          content: [{ type: "text", text: expect.stringContaining("Steer rejected") }],
-        });
+        await expect(sending).rejects.toThrow("Steer rejected");
         if (!finishDuringSteer) {
           await new Promise((resolve) => setTimeout(resolve, 50));
           expect(client.sessions[0]!.prompts).toHaveLength(0);
@@ -3799,7 +3827,7 @@ describe("send_agent_prompt MCP tool", () => {
         });
         mcpClient = await connectInMemoryMcpClient(server);
         const send = (input: Record<string, unknown>) =>
-          mcpClient!.callTool({ name: "send_agent_prompt", arguments: input });
+          sendMcpAndAwaitDispatch(mcpClient!, server, input);
         await send({
           agentId: child.id,
           prompt: "Original work",
@@ -3815,6 +3843,7 @@ describe("send_agent_prompt MCP tool", () => {
         });
         for (const dispatchResult of [first, second]) {
           setupFinishNotification({
+            agentMessages: serverDeliveries.get(server)!,
             agentManager: manager,
             agentStorage: storage,
             childAgentId: child.id,
@@ -3891,11 +3920,14 @@ describe("send_agent_prompt MCP tool", () => {
 
     const response = await tool.handler(parsed.data as Record<string, unknown>);
 
+    expect(response.structuredContent).toMatchObject({ deliveryStatus: "queued" });
+    expect(spies.agentManager.subscribe).not.toHaveBeenCalled();
+    await serverDeliveries
+      .get(server)!
+      .waitForDispatch("child-agent", new AbortController().signal);
     expect(spies.agentManager.subscribe).toHaveBeenCalled();
     expect(spies.agentManager.waitForAgentEvent).not.toHaveBeenCalled();
-    expect(response.structuredContent.guidance).toBe(
-      "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.",
-    );
+    expect(response.structuredContent.guidance).toContain("You will get notified");
   });
 
   it("acknowledges top-level prompts without a completion wait", async () => {
@@ -4039,10 +4071,10 @@ describe("send_agent_prompt MCP tool", () => {
         unsubscribe();
         expect(response.structuredContent).toMatchObject({
           success: true,
-          disposition: "turn_started",
+          deliveryStatus: "queued",
         });
         if (!immediateFinish) {
-          expect(response.structuredContent.status).toBe("running");
+          expect(response.structuredContent.deliveryStatus).toBe("queued");
           if (failure) childClient.sessions[0]!.failTurn("Retry failed");
           else childClient.sessions[0]!.finishTurn("Retry done");
         }
@@ -4105,8 +4137,7 @@ describe("send_agent_prompt MCP tool", () => {
           });
           expect(response.structuredContent).toMatchObject({
             success: true,
-            disposition: "out_of_band",
-            status: "running",
+            deliveryStatus: "queued",
           });
           expect(childClient.sessions[0]!.prompts).toHaveLength(1);
           expect(parseAgentMessage(childClient.sessions[0]!.prompts[0])).toMatchObject({
@@ -4177,9 +4208,8 @@ describe("send_agent_prompt MCP tool", () => {
       });
       const response = await pending;
       expect(response.structuredContent).toMatchObject({
-        status: "running",
-        guidance:
-          "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.",
+        deliveryStatus: "queued",
+        guidance: expect.stringContaining("You will get notified"),
       });
       expect(response.structuredContent).not.toHaveProperty("lastMessage");
 
@@ -4237,7 +4267,7 @@ describe("send_agent_prompt MCP tool", () => {
       });
       expect(sent.structuredContent).toMatchObject({
         success: true,
-        status: "running",
+        deliveryStatus: "queued",
       });
       const childSession = childClient.sessions[0]!;
       await vi.waitFor(() => expect(childSession.prompts).toHaveLength(2));
@@ -4262,7 +4292,7 @@ describe("send_agent_prompt MCP tool", () => {
     }
   });
 
-  it("reports a background prompt's accepted turn as running", async () => {
+  it("reports queue admission before the background prompt starts", async () => {
     const workdir = await mkdtemp(join(tmpdir(), "mcp-background-send-status-"));
     const storage = new AgentStorage(join(workdir, "agents"), logger);
     const parentClient = new HeldTurnAgentClient("claude", false);
@@ -4308,7 +4338,7 @@ describe("send_agent_prompt MCP tool", () => {
       acknowledgeTurnStart();
       const response = await pending;
 
-      expect(response.structuredContent).toMatchObject({ success: true, status: "running" });
+      expect(response.structuredContent).toMatchObject({ success: true, deliveryStatus: "queued" });
       expect(agentManager.getAgent(child.id)?.lifecycle).toBe("running");
 
       childSession.finishTurn();
@@ -4378,7 +4408,7 @@ describe("send_agent_prompt MCP tool", () => {
       unsubscribe();
       expect(response.structuredContent).toMatchObject({
         success: true,
-        disposition: "turn_started",
+        deliveryStatus: "queued",
       });
       await vi.waitFor(() => expect(agentManager.getAgent(child.id)?.lifecycle).toBe("idle"));
       await vi.waitFor(() => {
@@ -4479,7 +4509,7 @@ describe("send_agent_prompt MCP tool to an OMP child", () => {
 
         expect(response.structuredContent).toMatchObject({
           success: true,
-          disposition: "out_of_band",
+          deliveryStatus: "queued",
           status: "running",
         });
         await vi.waitFor(() => {
@@ -4547,8 +4577,8 @@ describe("send_agent_prompt MCP tool to an OMP child", () => {
 
       expect(response.structuredContent).toMatchObject({
         success: true,
-        disposition: "out_of_band",
-        status: "running",
+        deliveryStatus: "queued",
+        status: "idle",
       });
       await vi.waitFor(() => {
         expect(ompSession.prompts).toEqual([

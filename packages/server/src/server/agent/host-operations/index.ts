@@ -207,10 +207,17 @@ export function createHostResolver(input: {
           },
           async sendPrompt(args) {
             const agentId = args.agentId as string;
-            if (args.sessionMode !== undefined)
+            // Human sends retain the established mode RPC on older connected hosts.
+            // Agent sends apply their requested mode when the recipient dispatches the batch.
+            if (!input.callerAgentId && args.sessionMode !== undefined) {
               await client.setAgentMode(agentId, args.sessionMode as string);
-            await client.sendMessage(agentId, args.prompt as string, {
+            }
+            const receipt = await client.sendMessage(agentId, args.prompt as string, {
+              sessionMode: input.callerAgentId
+                ? (args.sessionMode as string | undefined)
+                : undefined,
               sourceAgentId: input.callerAgentId,
+              sourceAgentServerId: input.callerAgentId ? input.serverId : undefined,
               activeTurnBehavior:
                 (args.activeTurnBehavior as ActiveTurnBehavior | undefined) ??
                 (input.callerAgentId ? "steer" : "interrupt"),
@@ -219,10 +226,11 @@ export function createHostResolver(input: {
             if (!agent) throw new Error(`Agent ${agentId} not found`);
             return result({
               success: true,
+              ...receipt,
               status: agent.status,
               guidance:
-                input.callerAgentId && args.notifyOnFinish !== false
-                  ? "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives."
+                receipt.deliveryStatus === "queued"
+                  ? "Queued for delivery after two quiet seconds. You will get notified when the prompted agent finishes, errors, or needs permission unless notifyOnFinish is false."
                   : "Dispatch acknowledged. Observe completion using get_agent_status/get_agent_activity or SDK/RPC subscriptions and wait APIs.",
             });
           },

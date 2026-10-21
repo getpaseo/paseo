@@ -1,3 +1,11 @@
+import {
+  createAgentMessageDelivery,
+  type AgentMessageDelivery,
+} from "./agent/agent-messages/index.js";
+import {
+  sendPreparedPromptToAgent,
+  waitForAgentRunStartWithTimeout,
+} from "./agent/agent-prompt.js";
 import { createToolHosts } from "./agent/host-operations/index.js";
 import { HOST_ROUTE_OPCODE } from "@getpaseo/protocol/binary-frames/index";
 import { DaemonLinkEndpoint, VirtualHostSocket } from "./connected-hosts/index.js";
@@ -547,6 +555,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly agentManager: AgentManager;
   private readonly agentStorage: AgentStorage;
   private readonly messageReceipts: MessageReceipts;
+  readonly agentMessages: AgentMessageDelivery;
   private readonly creationService: CreationService;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
@@ -693,6 +702,31 @@ export class VoiceAssistantWebSocketServer {
     this.orchestrationSkills = orchestrationSkills;
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
+    this.agentMessages = createAgentMessageDelivery({
+      dispatch: async (batch) => {
+        const { disposition } = await sendPreparedPromptToAgent({
+          agentManager,
+          agentStorage,
+          agentId: batch.recipientId,
+          prompt: batch.prompt,
+          activeTurnBehavior: batch.activeTurnBehavior,
+          sessionMode: batch.sessionMode,
+          clearPendingPermissions: batch.clearPendingPermissions,
+          unarchive: batch.unarchive,
+          runOptions: { clientMessageId: batch.messageIds[0] },
+          onDispatch: batch.onDispatch,
+          logger: this.logger,
+        });
+        if (disposition === "turn_started")
+          await waitForAgentRunStartWithTimeout(agentManager, batch.recipientId);
+        return disposition;
+      },
+      onError: (err, batch) =>
+        this.logger.error(
+          { err, agentId: batch.recipientId, messageIds: batch.messageIds },
+          "Agent message batch dispatch failed",
+        ),
+    });
     this.messageReceipts = new MessageReceipts(join(paseoHome, "agent-requests"));
     this.creationService = new CreationService(
       join(paseoHome, "creations"),
@@ -1095,6 +1129,7 @@ export class VoiceAssistantWebSocketServer {
 
   public async close(): Promise<void> {
     this.prepareForShutdown();
+    await this.agentMessages.close();
     await this.connectedHosts.close();
     this.unsubscribeSpeechReadiness?.();
     this.unsubscribeSpeechReadiness = null;
@@ -1561,6 +1596,7 @@ export class VoiceAssistantWebSocketServer {
       agentManager: this.agentManager,
       agentStorage: this.agentStorage,
       messageReceipts: this.messageReceipts,
+      agentMessages: this.agentMessages,
       creationService: this.creationService,
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
@@ -2047,6 +2083,7 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(canonicalSubmittedPrompts): added in v0.2.6, remove gate after 2027-01-30.
         canonicalSubmittedPrompts: true,
         agentMessageProvenance: true,
+        agentMessageBatching: true,
         // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
         stableProjectIdentity: true,
         // COMPAT(workspaceScriptManagement): added in v0.1.105, remove gate after 2027-01-10.

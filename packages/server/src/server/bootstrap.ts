@@ -1393,6 +1393,10 @@ export async function createPaseoDaemon(
   const createAgentToolHostDependencies = (
     runtime: PaseoToolRuntimeContext,
   ): PaseoToolHostDependencies => ({
+    agentMessages: () => {
+      if (!wsServer) throw new Error("Daemon is not accepting agent messages");
+      return wsServer.agentMessages;
+    },
     serverId,
     hosts: () => {
       if (!wsServer) throw new Error("Daemon is not accepting host operations");
@@ -1830,6 +1834,7 @@ export async function createPaseoDaemon(
     scriptHealthMonitor.stop();
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();
+    await wsServer?.agentMessages.close();
     agentManager.prepareForShutdown();
     await closeAllAgents(logger, agentManager);
     await withTimeout({

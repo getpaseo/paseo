@@ -1,4 +1,4 @@
-import type { AgentPromptSource } from "../agent-messages/index.js";
+import type { AgentPromptSource, AgentMessageDelivery } from "../agent-messages/index.js";
 import type { Logger } from "pino";
 
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
@@ -23,6 +23,7 @@ import { resolveRequiredProviderModel, type ResolvedProviderModel } from "../mcp
 import { resolveCreateAgentIntent } from "./intent.js";
 
 export interface CreateAgentCommandDependencies {
+  agentMessages?: AgentMessageDelivery;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   logger: Logger;
@@ -180,6 +181,7 @@ export async function createAgentCommand(
     input.callerAgentId &&
     resolved.prompt !== undefined
       ? setupFinishNotification({
+          agentMessages: requireAgentMessages(dependencies),
           agentManager: dependencies.agentManager,
           agentStorage: dependencies.agentStorage,
           childAgentId: snapshot.id,
@@ -557,4 +559,9 @@ async function resolveMcpCwd(params: {
     createdWorkspaceId: createdWorktree.workspace.workspaceId,
     createdWorktree,
   };
+}
+
+function requireAgentMessages(dependencies: CreateAgentCommandDependencies): AgentMessageDelivery {
+  if (!dependencies.agentMessages) throw new Error("Agent message delivery is not configured");
+  return dependencies.agentMessages;
 }

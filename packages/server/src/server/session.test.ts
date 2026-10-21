@@ -1,3 +1,4 @@
+import { createAgentMessageDeliveryStub } from "./test-utils/session-stubs.js";
 import {
   createMessageReceiptsStub,
   createTestCreationService,
@@ -369,6 +370,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
 
   const sessionOptions: SessionOptions = {
     messageReceipts: createMessageReceiptsStub(),
+    agentMessages: createAgentMessageDeliveryStub(),
     creationService: createTestCreationService(),
     clientId: options.clientId ?? "test-client",
     onMessage: (message) => messages.push(message),
