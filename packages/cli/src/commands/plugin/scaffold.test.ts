@@ -196,7 +196,7 @@ export async function inspectConfig(
         path.join(directory, "client", "main.tsx"),
         `import React from "react";
 import { Text } from "react-native";
-import { Icon, Modal, useToast } from "@getpaseo/plugin/client/react-native";
+import { Icon, Modal, useToast } from "@getpaseo/plugin/client/ui";
 import { type PluginAgentPanelProps, type PluginClientContext, type PluginSurfaceProps, useAgent, usePaseo, useWorkspace } from "@getpaseo/plugin/client";
 import { inspect } from "../shared/inspect";
 

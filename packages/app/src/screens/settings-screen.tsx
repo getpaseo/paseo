@@ -34,6 +34,7 @@ import {
   FolderGit2,
   SquareTerminal,
   Code2,
+  Files,
   Smartphone,
   Sparkles,
   Blocks,
@@ -78,6 +79,7 @@ import { AddRemoteSshHostModal } from "@/components/add-remote-ssh-host-modal";
 import { PairLinkModal } from "@/components/pair-link-modal";
 import { KeyboardShortcutsSection } from "@/screens/settings/keyboard-shortcuts-section";
 import { EditorSection } from "@/screens/settings/editor-section";
+import { FilesSection } from "@/screens/settings/files-section";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { CommunityLinks } from "@/components/community-links";
@@ -185,6 +187,7 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
     webOnly: true,
     Content: EditorSection,
   },
+  { id: "files", labelKey: "settings.sections.files", icon: Files, Content: FilesSection },
   {
     id: "shortcuts",
     labelKey: "settings.sections.shortcuts",

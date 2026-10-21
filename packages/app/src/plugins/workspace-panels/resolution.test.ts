@@ -17,6 +17,7 @@ function installed(): InstalledPlugin {
     surfaces: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
+    filePanels: [],
     workspacePanels: [
       {
         id: "details",

@@ -206,7 +206,8 @@ export async function createAgentCommand(
           agentStorage: dependencies.agentStorage,
           childAgentId: snapshot.id,
           callerAgentId: input.callerAgentId,
-          requireParentOwnership: true,
+          // Detached agents have no parent label, but still notify their creator.
+          requireParentOwnership: !(input.detached ?? false),
           logger: dependencies.logger,
         })
       : undefined;
