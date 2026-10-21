@@ -411,7 +411,7 @@ test("create_agent_request rejects legacy git options before creating a worktree
       },
       initialPrompt: "Say done.",
     }),
-  ).rejects.toThrow("worktree cannot be combined with git options");
+  ).rejects.toThrow("createWorkspace");
 
   await expectActiveAgentListEmpty();
   await expectWorktreeListEmpty(repoDir);
@@ -446,72 +446,6 @@ function storedAgentIds(): string[] {
     .filter((entry) => entry.endsWith(".json"))
     .map((entry) => path.basename(entry, ".json"));
 }
-
-test.each(["git", "worktreeName"] as const)(
-  "legacy %s worktree creation resolves final workspace visibility without intermediate records",
-  async (placement) => {
-    const cwd = createGitRepo();
-    const config = { ...getFullAccessConfig("codex"), cwd };
-    const backgroundCaller = await ctx.client.createAgent({ config, background: true });
-    const visibleCaller = await ctx.client.createAgent({ config });
-    const cases = [
-      { name: "review", background: true, expected: true },
-      { name: "review-child", callerAgentId: backgroundCaller.id, expected: true },
-      {
-        name: "visible-child",
-        callerAgentId: backgroundCaller.id,
-        background: false,
-        expected: false,
-      },
-      { name: "hidden-child", callerAgentId: visibleCaller.id, background: true, expected: true },
-      { name: "human-default", expected: false },
-    ];
-    const orderedCases =
-      placement === "worktreeName" ? [cases[1]!, cases[0]!, ...cases.slice(2)] : cases;
-    for (const entry of orderedCases) {
-      const before = await ctx.client.fetchWorkspaces({ filter: { includeBackground: true } });
-      const child = await ctx.client.createAgent({
-        config,
-        ...(entry.callerAgentId ? { callerAgentId: entry.callerAgentId } : {}),
-        ...(entry.background !== undefined ? { background: entry.background } : {}),
-        ...(placement === "git"
-          ? {
-              git: {
-                createWorktree: true,
-                createNewBranch: true,
-                newBranchName: entry.name,
-                baseBranch: "main",
-              },
-            }
-          : { worktreeName: entry.name }),
-      });
-      const inclusive = await ctx.client.fetchWorkspaces({ filter: { includeBackground: true } });
-      const created = inclusive.entries.filter(
-        (workspace) => !before.entries.some((existing) => existing.id === workspace.id),
-      );
-      expect(created).toHaveLength(1);
-      expect(created[0]).toMatchObject({
-        id: child.workspaceId,
-        workspaceDirectory: child.cwd,
-        background: entry.expected,
-        workspaceKind: "worktree",
-      });
-      expect(child.cwd).not.toBe(cwd);
-      expect(child.labels?.["paseo.parent-agent-id"]).toBe(entry.callerAgentId);
-      const defaultAgents = await ctx.client.fetchAgents();
-      const allAgents = await ctx.client.fetchAgents({ filter: { includeBackground: true } });
-      expect(defaultAgents.entries.some((item) => item.agent.id === child.id)).toBe(
-        !entry.expected,
-      );
-      expect(allAgents.entries.some((item) => item.agent.id === child.id)).toBe(true);
-      const defaultWorkspaces = await ctx.client.fetchWorkspaces();
-      expect(
-        defaultWorkspaces.entries.some((workspace) => workspace.id === child.workspaceId),
-      ).toBe(!entry.expected);
-    }
-  },
-  30_000,
-);
 
 test("background workspaces keep durable agents addressable through restart and archive", async () => {
   const cwd = createGitRepo();

@@ -1,5 +1,90 @@
-import type { ComponentType, ReactNode, Ref } from "react";
+import type {
+  ComponentType,
+  FunctionComponent,
+  ReactNode,
+  ForwardRefExoticComponent,
+  RefAttributes,
+  ReactElement,
+  Ref,
+} from "react";
+import type {
+  StyleProp,
+  ViewStyle,
+  ScrollView as NativeScrollView,
+  ScrollViewProps,
+  FlatList as NativeFlatList,
+  FlatListProps,
+  TextInput as NativeTextInput,
+  TextInputProps,
+  TextProps,
+} from "react-native";
+import type { PluginIconProps } from "../icons.js";
 import type { PluginIcon } from "./contracts.js";
+
+export interface ModalProps {
+  title: string;
+  icon?: ReactNode;
+  open: boolean;
+  onOpenChange(open: boolean): void;
+  children: ReactNode;
+}
+
+export interface ModalContentProps {
+  children: ReactNode;
+  /** Paint the full body below the header. */
+  style?: StyleProp<ViewStyle>;
+  /** Overrides the default 24px padding and 16px gap. Safe-area clearance stays host-owned. */
+  contentContainerStyle?: StyleProp<ViewStyle>;
+  /** Default true. Set false for a bounded body with your own ScrollView or FlatList. */
+  scrollable?: boolean;
+}
+
+export interface ModalComponent extends FunctionComponent<ModalProps> {
+  Content: ComponentType<ModalContentProps>;
+}
+
+export type ToastVariant = "default" | "info" | "success" | "warning" | "error";
+
+export interface ToastOptions {
+  variant?: ToastVariant;
+  durationMs?: number;
+}
+
+export interface ToastApi {
+  show(message: string, options?: ToastOptions): void;
+  error(message: string): void;
+}
+
+/** Renders a Lucide icon by `name`, or any plugin icon by `icon`. An unusable icon renders nothing. */
+export type IconProps = Partial<PluginIconProps> &
+  ({ name: string; icon?: never } | { icon: PluginIcon; name?: never });
+
+export declare const Icon: ComponentType<IconProps>;
+export declare const Modal: ModalComponent;
+export declare function useToast(): ToastApi;
+export interface StreamedTextProps extends Omit<TextProps, "children"> {
+  text: string;
+  phase: "streaming" | "complete";
+}
+/** Plain assistant text with host-owned streaming pacing and typography. */
+export declare const StreamedText: ComponentType<StreamedTextProps>;
+
+export type { PluginIconProps } from "../icons.js";
+
+/** React Native scrolling with the host's sheet gestures when rendered inside a sheet. */
+export declare const ScrollView: ForwardRefExoticComponent<
+  ScrollViewProps & RefAttributes<NativeScrollView>
+>;
+export declare function FlatList<Item>(
+  props: FlatListProps<Item> & { ref?: Ref<NativeFlatList<Item>> },
+): ReactElement;
+/** Copies text to this client's clipboard. Rejects when copying is unavailable or denied. */
+export declare function copyText(text: string): Promise<void>;
+
+/** Native input focus integrated with modal keyboard positioning. */
+export declare const TextInput: ForwardRefExoticComponent<
+  TextInputProps & RefAttributes<NativeTextInput>
+>;
 
 export interface SettingsSectionProps {
   title: string;
@@ -45,6 +130,8 @@ export interface SettingsActionProps extends SettingsRowProps {
   onPress(): void;
   disabled?: boolean;
 }
+// COMPAT(pluginSettingsGroup): added in v0.13.0, remove after 2027-04-20
+/** @deprecated Use SettingsSection for plugin settings headings. */
 export declare const SettingsGroup: ComponentType<SettingsSectionProps>;
 export declare const SettingsSection: ComponentType<SettingsSectionProps>;
 export declare const SettingsCard: ComponentType<{ children: ReactNode; testID?: string }>;
@@ -85,3 +172,16 @@ export interface SidebarRowProps {
 export declare const SidebarRow: ComponentType<SidebarRowProps>;
 /** A line between groups of rows. Render it from a sidebar item's `Component`. */
 export declare const SidebarSeparator: ComponentType;
+
+/** Paseo's loading state. Fills the panel; the panel decides when to show it. */
+export declare const Loading: ComponentType;
+
+/** Render a local document URL in an isolated frame. */
+export declare const DocumentFrame: ComponentType<{ url: string; testID?: string }>;
+
+export interface MarkdownProps {
+  children: string;
+}
+
+/** Renders Markdown using Paseo’s theme, selection, and link behavior. */
+export declare const Markdown: ComponentType<MarkdownProps>;

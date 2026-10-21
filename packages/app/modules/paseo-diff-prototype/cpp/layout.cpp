@@ -13,6 +13,7 @@
 #include "modules/skparagraph/include/Paragraph.h"
 #include "modules/skparagraph/include/ParagraphBuilder.h"
 #include "modules/skunicode/include/SkUnicode.h"
+#include "modules/skunicode/include/SkUnicode_icu.h"
 
 namespace paseo::diff {
 namespace {
@@ -178,7 +179,7 @@ class Measurer {
     return it->second;
   }
   std::unique_ptr<para::Paragraph> shape(const std::u16string& text) {
-    auto builder = para::ParagraphBuilder::make(style_, fonts_);
+    auto builder = para::ParagraphBuilder::make(style_, fonts_, SkUnicodes::ICU::Make());
     builder->pushStyle(textStyle_);
     const auto utf8 = SkUnicode::convertUtf16ToUtf8(text);
     builder->addText(utf8.c_str(), utf8.size());

@@ -1,5 +1,7 @@
 import type {
+  PluginText,
   PluginButtonBehavior,
+  PluginButton,
   PluginButtonContext,
   PluginButtonRegistration,
   PluginHeaderButtonContribution,
@@ -27,7 +29,7 @@ export interface RegisteredPluginButton {
 }
 
 function resolveAction(
-  behavior: PluginButtonBehavior,
+  behavior: PluginButtonBehavior<PluginText>,
   path: readonly string[],
 ): (() => void | Promise<void>) | null {
   if (path.length === 0) return behavior.kind === "action" ? behavior.onPress : null;
@@ -55,8 +57,8 @@ export class PluginButtonStore {
 
   addHeaderButton(
     installation: InstalledPlugin,
-    input: PluginHeaderButtonContribution,
-  ): PluginButtonRegistration {
+    input: PluginHeaderButtonContribution<PluginText>,
+  ): PluginButtonRegistration<PluginText> {
     return this.add(installation, input, "header", {
       context: "workspace",
       workspaceId: input.workspaceId.trim(),
@@ -65,8 +67,8 @@ export class PluginButtonStore {
 
   addComposerPill(
     installation: InstalledPlugin,
-    input: PluginComposerPillContribution,
-  ): PluginButtonRegistration {
+    input: PluginComposerPillContribution<PluginText>,
+  ): PluginButtonRegistration<PluginText> {
     if (!input.agentId.trim()) throw new Error("Plugin composer pill needs an agent");
     return this.add(installation, input, "composer", {
       context: "agent",
@@ -77,10 +79,10 @@ export class PluginButtonStore {
 
   private add(
     installation: InstalledPlugin,
-    input: PluginHeaderButtonContribution,
+    input: PluginHeaderButtonContribution<PluginText>,
     placement: ButtonPlacement,
     context: PluginButtonContext,
-  ): PluginButtonRegistration {
+  ): PluginButtonRegistration<PluginText> {
     const id = requireButtonId(input.id);
     if (!context.workspaceId.trim()) throw new Error("Plugin button needs a workspace");
     const duplicate = this.entries.some(
@@ -94,7 +96,8 @@ export class PluginButtonStore {
     );
     if (duplicate) throw new Error(`Duplicate plugin button: ${id}`);
     const key = this.nextKey++;
-    const initialButton = validateButton(input.button, this.validation);
+    let sourceButton: PluginButton<PluginText> = input.button;
+    const initialButton = validateButton(sourceButton, this.validation, installation.i18n.resolve);
     this.publish([
       ...this.entries,
       {
@@ -108,15 +111,23 @@ export class PluginButtonStore {
         open: false,
       },
     ]);
+    const unsubscribe = installation.i18n.subscribe(() => {
+      this.replace(key, {
+        button: validateButton(sourceButton, this.validation, installation.i18n.resolve),
+      });
+    });
     return {
       update: (patch) => {
         const entry = this.entries.find((candidate) => candidate.key === key);
         if (!entry) return;
-        const button = validateButton({ ...entry.button, ...patch }, this.validation);
+        const nextSource = { ...sourceButton, ...patch };
+        const button = validateButton(nextSource, this.validation, installation.i18n.resolve);
+        sourceButton = nextSource;
         const close = !button.visible || button.disabled || patch.behavior !== undefined;
         this.replace(key, { button, open: close ? false : entry.open });
       },
       remove: () => {
+        unsubscribe();
         const next = this.entries.filter((entry) => entry.key !== key);
         if (next.length !== this.entries.length) this.publish(next);
       },
