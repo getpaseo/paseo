@@ -25,6 +25,25 @@ nav: 参考
 
 插件代码是受信任的，没有沙盒。客户端界面在 Paseo 应用中运行。后端贡献在一个子进程中运行，可以访问 daemon 所在的机器，包括它的文件、进程、凭据和网络。
 
+## 已连接的主机 {#connected-hosts}
+
+客户端界面中的 `usePaseo().hosts` 与服务端处理函数或生命周期钩子中的 `context.paseo.hosts`
+使用相同的 [SDK 主机 API](/sdk/reference#clienthosts)。它们描述所选 daemon 保存的连接。
+现有的 `useHosts()` 和 `getPaseoClient(serverId)` 仍描述应用已知的主机。
+
+```ts
+const remote = await context.paseo.hosts.client("srv_build_box");
+try {
+  return await remote.workspaces.list();
+} finally {
+  await remote.dispose();
+}
+```
+
+返回的 API 拥有自己的观察。销毁插件 API 时也会释放由它派生的作用域。
+远程调用应留在拥有它的处理函数或生命周期作用域内。调用 B 不会把 B 的插件生命周期钩子转发到 A。
+通过路由插件创建的注册项保留其来源身份，其中包含经过认证的链路和发起调用的插件。
+
 ## 项目文件 {#project-files}
 
 `paseo plugin init /absolute/path/to/my-plugin` 会创建：
