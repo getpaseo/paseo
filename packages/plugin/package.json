@@ -62,11 +62,13 @@
     "build": "tsc -p tsconfig.json --incremental false",
     "build:clean": "npm run clean && npm run build",
     "prepack": "npm run build:clean",
-    "typecheck": "tsgo --noEmit && tsgo -p tsconfig.examples.json --noEmit",
-    "test": "vitest run"
+    "typecheck": "tsgo --noEmit && npm run typecheck:examples",
+    "test": "vitest run",
+    "typecheck:examples": "npm --prefix ../../plugin-examples/markdown-panel install --ignore-scripts --no-audit --no-fund && tsgo -p tsconfig.examples.json --noEmit"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.4.0",
+    "i18next": "^26.3.0",
     "use-sync-external-store": "^1.6.0"
   },
   "devDependencies": {

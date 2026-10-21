@@ -1,4 +1,5 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { parentAddressLabels } from "@getpaseo/protocol/agent-labels";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildWorkspaceTabSnapshot,
@@ -10,6 +11,7 @@ import { selectSubagentsForParent } from "@/subagents/select";
 import { findPaneById, findPaneContainingTab } from "./workspace-layout-actions";
 import { useWorkspaceLayoutStore } from "./workspace-layout-store";
 import { useSessionStore, type Agent } from "./session-store";
+import { normalizeAgentSnapshot, projectAgentSnapshot } from "@/utils/agent-snapshots";
 
 vi.mock("@react-native-async-storage/async-storage", () => {
   const storage = new Map<string, string>();
@@ -73,7 +75,11 @@ const AGENT_DEFAULTS: Agent = {
 };
 
 function makeAgent(input: Partial<Agent> & Pick<Agent, "id">): Agent {
-  return { ...AGENT_DEFAULTS, ...input };
+  const agent = { ...AGENT_DEFAULTS, ...input };
+  return {
+    ...normalizeAgentSnapshot(projectAgentSnapshot(agent), SERVER_ID),
+    projectPlacement: agent.projectPlacement,
+  };
 }
 
 function initializeAgents(agents: Agent[]): void {
@@ -142,7 +148,7 @@ describe("workspace subagents integration", () => {
 
     const child = makeAgent({
       id: "child-agent",
-      parentAgentId: "parent-agent",
+      labels: parentAddressLabels({ serverId: SERVER_ID, agentId: "parent-agent" }),
       title: "Child agent",
     });
     const parent = makeAgent({
@@ -186,7 +192,7 @@ describe("workspace subagents integration", () => {
     });
     const child = makeAgent({
       id: "child-agent",
-      parentAgentId: "parent-agent",
+      labels: parentAddressLabels({ serverId: SERVER_ID, agentId: "parent-agent" }),
       title: "Child agent",
     });
 
@@ -205,7 +211,7 @@ describe("workspace subagents integration", () => {
       ).map((row) => row.id),
     ).toEqual(["child-agent"]);
 
-    appendAgent({ ...child, parentAgentId: null, labels: {} });
+    appendAgent(makeAgent({ ...child, labels: {} }));
     reconcileWorkspaceTabs(workspaceKey!, deriveVisibilityFromSession());
 
     expect(getWorkspaceAgentTabIds(workspaceKey!)).toEqual([
@@ -238,7 +244,7 @@ describe("workspace subagents integration", () => {
     });
     const child = makeAgent({
       id: "child-agent",
-      parentAgentId: parent.id,
+      labels: parentAddressLabels({ serverId: SERVER_ID, agentId: parent.id }),
       title: "Cross-workspace child",
     });
 
@@ -271,7 +277,7 @@ describe("workspace subagents integration", () => {
     });
     const child = makeAgent({
       id: "child-agent",
-      parentAgentId: parent.id,
+      labels: parentAddressLabels({ serverId: SERVER_ID, agentId: parent.id }),
       title: "Child agent",
     });
 

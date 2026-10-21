@@ -1,3 +1,5 @@
+import { filePanelTitle } from "@/file-panels/choice/presentation";
+import { i18n } from "@/i18n/i18next";
 import { createPluginHosts } from "./hosts";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { PaseoApi } from "@getpaseo/client";
@@ -26,9 +28,15 @@ function observingClient() {
   return { client, open };
 }
 
-function registry() {
+function registry(
+  localeSource: import("@getpaseo/plugin/client/host").PluginLocaleSource = {
+    getLocale: () => "en",
+    subscribe: () => () => {},
+  },
+) {
   const setupClients = new Map<string, PaseoApi>();
   const plugins = new PluginRegistry({
+    localeSource,
     version: "0.8.0",
     createRuntime: (installation) => {
       setupClients.set(installation.id, installation.paseo);
@@ -43,6 +51,7 @@ function registry() {
           installation.lifetime.signal,
         ),
         paseo: installation.paseo,
+        i18n: installation.i18n,
         rpc: async () => {
           throw new Error("Unexpected plugin RPC");
         },
@@ -144,4 +153,75 @@ test("an invalid async client entry is disposed and its rejected continuation is
   await expect.poll(() => h.open.size).toBe(0);
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(h.plugins.getSnapshot()).toEqual([]);
+});
+
+test("locale snapshots preserve installation state and observations, then release locale subscriptions", async () => {
+  let locale = "en";
+  const listeners = new Set<() => void>();
+  const h = registry({
+    getLocale: () => locale,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  });
+  const translated = {
+    ...catalog("notes"),
+    clientBundle: `(function(require) {
+    const {defineTranslations} = require("@getpaseo/plugin/client");
+    const messages = defineTranslations({resources:{en:{title:"Notes"},"zh-CN":{title:"笔记"}}});
+    return {default(plugin) {
+      plugin.paseo.observeEvents(["notes"]);
+      plugin.addScreen({id:"notes",title:messages.message("title"),Component:function Notes(){return null;}});
+      plugin.addFilePanel({id:"notes",title:messages.message("title"),icon:"FileText",files:{extensions:["notes"]},Component:function NotesFile(){return null;}});
+      return function(){};
+    }};
+  })`,
+  };
+  h.plugins.installCatalog("host", [translated], { client: h.client, audio });
+  expect(h.plugins.getEvaluationError("host", "notes")).toBeUndefined();
+  const [before] = h.plugins.getSnapshot();
+  function fileTitle(plugin: typeof before) {
+    const contribution = plugin.filePanels[0];
+    return filePanelTitle(i18n.t, {
+      id: "plugin:notes/notes",
+      builtin: false,
+      files: contribution.files,
+      plugin,
+      contribution,
+    });
+  }
+  expect(fileTitle(before)).toBe("Notes");
+  expect(before.locale).toBe("en");
+  expect(
+    before.i18n.resolve(
+      before.surfaces[0].title as import("@getpaseo/plugin/client").PluginText,
+      before.locale,
+    ),
+  ).toBe("Notes");
+  locale = "zh-CN";
+  for (const listener of listeners) listener();
+  const [after] = h.plugins.getSnapshot();
+  expect(after.locale).toBe("zh-CN");
+  expect(fileTitle(after)).toBe("笔记");
+  expect(fileTitle(before)).toBe("Notes");
+  expect(after.filePanels[0].Component).toBe(before.filePanels[0].Component);
+  expect(
+    after.i18n.resolve(
+      after.surfaces[0].title as import("@getpaseo/plugin/client").PluginText,
+      after.locale,
+    ),
+  ).toBe("笔记");
+  expect(after.lifetime).toBe(before.lifetime);
+  expect(after.queryClient).toBe(before.queryClient);
+  expect(after.paseo).toBe(before.paseo);
+  expect(after.surfaces[0].Component).toBe(before.surfaces[0].Component);
+  expect(h.open).toEqual(new Set(["notes"]));
+  h.plugins.installCatalog("host", [translated], { client: h.client, audio });
+  expect(h.plugins.getSnapshot()[0].i18n).toBe(before.i18n);
+  h.plugins.removeHost("host");
+  expect(listeners.size).toBe(0);
+  await expect.poll(() => h.open.size).toBe(0);
 });

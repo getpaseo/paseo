@@ -24,6 +24,14 @@
     "./internal/daemon-client-websocket-transport": {
       "types": "./dist/daemon-client-websocket-transport.d.ts",
       "default": "./dist/daemon-client-websocket-transport.js"
+    },
+    "./node": {
+      "types": "./dist/node/index.d.ts",
+      "default": "./dist/node/index.js"
+    },
+    "./internal/hosts": {
+      "types": "./dist/hosts/index.d.ts",
+      "default": "./dist/hosts/index.js"
     }
   },
   "publishConfig": {
@@ -41,6 +49,7 @@
   "dependencies": {
     "@getpaseo/protocol": "0.12.0",
     "@getpaseo/relay": "0.12.0",
+    "ws": "^8.20.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

@@ -140,9 +140,9 @@ function usePluginPanelDescriptor(
     };
   }
   return {
-    label: panel.title,
+    label: plugin!.i18n.resolve(panel.title, plugin!.locale),
     subtitle: target.pluginId,
-    tooltip: panel.title,
+    tooltip: plugin!.i18n.resolve(panel.title, plugin!.locale),
     titleState: "ready",
     icon: pluginIconComponent(panel.icon),
     statusBucket: null,

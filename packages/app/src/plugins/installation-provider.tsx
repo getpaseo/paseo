@@ -1,5 +1,9 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { PaseoApiProvider, PluginRpcProvider } from "@getpaseo/plugin/client/host";
+import {
+  PaseoApiProvider,
+  PluginRpcProvider,
+  PluginTranslationProvider,
+} from "@getpaseo/plugin/client/host";
 import React, { type ReactNode } from "react";
 import type { InstalledPlugin } from "./types";
 
@@ -14,7 +18,9 @@ export function PluginInstallationProvider({
   return (
     <QueryClientProvider client={plugin.queryClient}>
       <PaseoApiProvider paseo={plugin.paseo}>
-        <PluginRpcProvider invoke={plugin.invoke}>{children}</PluginRpcProvider>
+        <PluginRpcProvider invoke={plugin.invoke}>
+          <PluginTranslationProvider runtime={plugin.i18n}>{children}</PluginTranslationProvider>
+        </PluginRpcProvider>
       </PaseoApiProvider>
     </QueryClientProvider>
   );

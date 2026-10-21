@@ -205,6 +205,57 @@ describe("upsertHostConnectionInProfiles", () => {
     path: "/tmp/paseo.sock",
   };
 
+  it.each([false, true])(
+    "keeps destinations distinct when a persisted route shares an origin (C already saved: %s)",
+    (savedC) => {
+      const route: HostConnection = { id: "via:srv_a", type: "routed", originServerId: "srv_a" };
+      const directB: HostConnection = {
+        id: "direct:b:6767",
+        type: "directTcp",
+        endpoint: "b:6767",
+      };
+      const directC: HostConnection = {
+        id: "direct:c:6767",
+        type: "directTcp",
+        endpoint: "c:6767",
+      };
+      const b: HostProfile = {
+        ...makeHost("srv_b"),
+        label: "My B",
+        connections: [route, directB],
+        preferredConnectionId: route.id,
+      };
+      const c: HostProfile = {
+        ...makeHost("srv_c"),
+        label: "My C",
+        connections: [directC],
+        preferredConnectionId: directC.id,
+      };
+      const profiles = upsertHostConnectionInProfiles({
+        profiles: savedC ? [b, c] : [b],
+        serverId: "srv_c",
+        label: "Fleet C",
+        connection: route,
+      });
+      expect(profiles).toHaveLength(2);
+      expect(profiles[0]).toEqual(b);
+      expect(profiles[1]).toMatchObject({
+        serverId: "srv_c",
+        label: savedC ? "My C" : "Fleet C",
+        connections: savedC ? [directC, route] : [route],
+        preferredConnectionId: savedC ? directC.id : route.id,
+      });
+      expect(
+        upsertHostConnectionInProfiles({
+          profiles,
+          serverId: "srv_b",
+          label: "Fleet B",
+          connection: route,
+        }),
+      ).toBe(profiles);
+    },
+  );
+
   it("gives a newly discovered host the default appearance", () => {
     const [profile] = upsertHostConnectionInProfiles({
       profiles: [],

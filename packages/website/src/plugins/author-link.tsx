@@ -1,5 +1,7 @@
 import { Link } from "@tanstack/react-router";
-import { type ReactNode, useMemo } from "react";
+import type { ReactNode } from "react";
+import { useLocalizePath } from "~/i18n";
+import { pluginOwnerHref } from "./links";
 import { type Author, authorAvatarUrl } from "./registry";
 
 const SIZE_CLASS = {
@@ -38,9 +40,9 @@ export function AuthorLink({
   className?: string;
   children?: ReactNode;
 }) {
-  const params = useMemo(() => ({ owner: author.username }), [author.username]);
+  const localize = useLocalizePath();
   return (
-    <Link to="/plugins/$owner" params={params} className={className}>
+    <Link to={localize(pluginOwnerHref(author.username))} className={className}>
       {children ?? (
         <>
           <AuthorAvatar author={author} size="sm" />

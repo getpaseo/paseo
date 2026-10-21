@@ -184,7 +184,7 @@ export function createWorkspaceRecoveryService(deps: {
         cwd: sourceRepoRoot,
         worktreeSlug: basename(previousWorktreePath),
         source,
-        runSetup: false,
+
         paseoHome: deps.paseoHome,
         worktreesRoot: deps.worktreesRoot,
       });

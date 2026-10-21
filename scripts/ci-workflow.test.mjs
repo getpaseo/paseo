@@ -105,6 +105,18 @@ test("gated checks are statically named jobs with real job-level gating", () => 
   }
 });
 
+test("pull-request checks run for every base branch, including stacked PRs", () => {
+  for (const workflowPath of [
+    ciWorkflowPath,
+    new URL(".github/workflows/desktop-packages.yml", repoRoot),
+  ]) {
+    const trigger = readFileSync(workflowPath, "utf8").split("jobs:", 1)[0];
+    const pullRequest = trigger.match(/^  pull_request:\n((?:    .*\n)*)/m);
+    assert.ok(pullRequest, `${workflowPath.pathname} runs on pull requests`);
+    assert.doesNotMatch(pullRequest[1], /branches/);
+  }
+});
+
 test("change gating allows superseded workflow runs to cancel", () => {
   const ci = readFileSync(ciWorkflowPath, "utf8");
   assert.match(
@@ -308,7 +320,7 @@ test("desktop packaging smokes main pushes and only the pull requests that touch
   const source = readFileSync(new URL(".github/workflows/desktop-packages.yml", repoRoot), "utf8");
   const trigger = source.split("jobs:", 1)[0];
   assert.match(trigger, /push:\s*\n\s+branches: \[main\]/);
-  assert.match(trigger, /pull_request:\s*\n\s+branches: \[main\]\s*\n\s+paths:/);
+  assert.match(trigger, /pull_request:\s*\n\s+paths:/);
   assert.match(trigger, /- "packages\/desktop\/\*\*"/);
   assert.doesNotMatch(source, /dorny\/paths-filter/);
   for (const action of ["actions/checkout", "actions/setup-node", "actions/upload-artifact"]) {
@@ -475,7 +487,7 @@ test("Windows units and integration run independently with complete routed cover
   assert.doesNotMatch(invocations[0], / -t /);
   assert.equal(
     invocations[1],
-    'vitest run --maxWorkers=1 src/server/daemon-e2e/git-operations.e2e.test.ts src/server/session.create-agent-worktree-autoarchive.e2e.test.ts src/server/agent/providers/opencode-bridge.local.e2e.test.ts src/server/daemon-e2e/relay-transport.e2e.test.ts -t "merges into|creates a worktree and auto-archives both|versioned runtime|oversized attachments"',
+    'vitest run --maxWorkers=1 src/server/daemon-e2e/git-operations.e2e.test.ts src/server/session.create-agent-worktree-autoarchive.e2e.test.ts src/server/agent/providers/opencode-bridge.local.e2e.test.ts src/server/daemon-e2e/relay-transport.e2e.test.ts -t "merges into|creates a worktree and auto-archives both|versioned runtime|oversized attachments|connected hosts"',
   );
   const serverConfig = readFileSync(new URL("packages/server/vitest.config.ts", repoRoot), "utf8");
   assert.doesNotMatch(serverConfig, /maxWorkers/);

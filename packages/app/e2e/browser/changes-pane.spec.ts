@@ -262,24 +262,74 @@ test.afterEach(async () => {
   }
 });
 
-test("Changes opens the populated committed comparison for a clean checkout", async ({ page }) => {
+test("Changes opens All changes for a clean checkout", async ({ page }) => {
   const workspace = await createWorkspaceWithCommittedDiff();
 
   await openWorkspaceChangesSurface(page, workspace, 90_000);
 
   const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
   const tree = page.getByTestId("changes-tree-panel").filter({ visible: true });
-  await expect(tree.getByTestId("changes-diff-status-trigger")).toContainText("Committed");
+  await expect(tree.getByTestId("changes-diff-status-trigger")).toContainText("All changes");
   await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("committed-only.ts, +1, -0");
 });
 
-test("Changes expires a manual comparison when checkout dirtiness changes", async ({ page }) => {
+test("All changes combines committed and pending edits and preserves an unfinished review", async ({
+  page,
+  context,
+}) => {
+  const workspace = await createWorkspaceWithNetDiff();
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await configureDiffPresentation(page, { layout: "unified", wrapLines: false });
+  await openWorkspaceChangesSurface(page, workspace);
+  const tree = page.getByTestId("changes-tree-panel").filter({ visible: true });
+  const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
+  const mode = tree.getByRole("button", { name: "Diff mode", exact: true });
+  await expect(mode).toContainText("All changes");
+  await expectNetComparisonFiles(page, ["a-tracked.ts", "b-committed.ts"]);
+  await expectRenderedAddedLine(page, "committed");
+
+  await test.step("an unfinished review survives the first dirty edit", async () => {
+    await startReviewOnFirstChangedLine(page);
+    await page
+      .getByRole("textbox", { name: "Review comment" })
+      .fill("Unfinished review stays here");
+    await writeFile(path.join(workspace.repoPath, "c-untracked.txt"), "untracked\n");
+    await expectNetComparisonFiles(page, ["a-tracked.ts", "b-committed.ts", "c-untracked.txt"]);
+    await expect(mode).toContainText("All changes");
+    await expect(page.getByRole("textbox", { name: "Review comment" })).toHaveValue(
+      "Unfinished review stays here",
+    );
+    await cancelInlineReview(page);
+  });
+  await test.step("pending edits form a live net patch over the committed edit", async () => {
+    await writeFile(path.join(workspace.repoPath, "a-tracked.ts"), "working\n");
+    await expectRenderedAddedLine(page, "working");
+    await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("a-tracked.ts, +1, -1");
+  });
+  await test.step("committing the same contents preserves the rendered comparison", async () => {
+    execFileSync("git", ["add", "--all"], { cwd: workspace.repoPath });
+    execFileSync("git", ["commit", "-m", "Commit pending changes"], { cwd: workspace.repoPath });
+    await expect(page.getByTestId("changes-primary-cta")).toContainText("Merge", {
+      timeout: 30_000,
+    });
+    await expect(mode).toContainText("All changes");
+    await expectNetComparisonFiles(page, ["a-tracked.ts", "b-committed.ts", "c-untracked.txt"]);
+    await expectRenderedAddedLine(page, "working");
+  });
+  await test.step("undoing to the comparison base removes the net change", async () => {
+    await writeFile(path.join(workspace.repoPath, "a-tracked.ts"), "base\n");
+    await expectNetComparisonFiles(page, ["b-committed.ts", "c-untracked.txt"]);
+    await expect(mode).toContainText("All changes");
+  });
+});
+
+test("Changes keeps a manual comparison when checkout dirtiness changes", async ({ page }) => {
   const workspace = await createWorkspaceWithMountedTabDiff();
   await openWorkspaceChanges(page, workspace);
 
   const tree = page.getByTestId("changes-tree-panel").filter({ visible: true });
   const mode = tree.getByTestId("changes-diff-status-trigger");
-  await expect(mode).toContainText("Uncommitted");
+  await expect(mode).toContainText("All changes");
 
   await mode.click();
   await page.getByTestId("changes-diff-mode-committed").click();
@@ -294,7 +344,23 @@ test("Changes expires a manual comparison when checkout dirtiness changes", asyn
   });
 
   await writeFile(path.join(workspace.repoPath, "new-working-change.txt"), "uncommitted\n");
-  await expect(mode).toContainText("Uncommitted", { timeout: 30_000 });
+  await expect(tree.getByRole("button", { name: "See uncommitted changes" })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(mode).toContainText("Committed");
+
+  await selectChangesComparison(page, "Uncommitted");
+  execFileSync("git", ["add", "--all"], { cwd: workspace.repoPath });
+  execFileSync("git", ["commit", "-m", "Commit new working change"], { cwd: workspace.repoPath });
+  await expect(tree.getByText("No changes to display", { exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(mode).toContainText("Uncommitted");
+  await writeFile(path.join(workspace.repoPath, "another-working-change.txt"), "pending\n");
+  await expect(tree.getByText("another-working-change.txt", { exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(mode).toContainText("Uncommitted");
 });
 
 test("an empty Changes comparison links to the populated comparison", async ({ page }) => {
@@ -633,6 +699,7 @@ test("changes context menus expose folder revert and restore a file after confir
   const workspace = await createWorkspaceWithMountedTabDiff();
   await useUnwrappedDiffLines(page);
   await openWorkspaceChanges(page, workspace);
+  await selectChangesComparison(page, "Uncommitted");
 
   const tree = changesTree(page);
   await tree.getByTestId("diff-folder-src-toggle").click({ button: "right" });
@@ -680,6 +747,7 @@ test("discarding a staged rename restores its source path", async ({ page }) => 
   const workspace = await createWorkspaceWithMountedTabDiff({ includeRenamedFile: true });
   await useUnwrappedDiffLines(page);
   await openWorkspaceChanges(page, workspace);
+  await selectChangesComparison(page, "Uncommitted");
 
   const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
   const renamedHeader = diffHeaderForPath(panel, "src/zz-renamed.ts");
@@ -710,6 +778,7 @@ test("discarding an untracked file removes it from the working tree", async ({ p
   const workspace = await createWorkspaceWithMountedTabDiff({ includeUntrackedFile: true });
   await useUnwrappedDiffLines(page);
   await openWorkspaceChanges(page, workspace);
+  await selectChangesComparison(page, "Uncommitted");
 
   const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
   const untrackedHeader = diffHeaderForPath(panel, "zz-untracked.txt");
@@ -741,6 +810,7 @@ test("shows a revert error returned by the daemon", async ({ page }) => {
   await failNextDiscardRequest(page);
   await useUnwrappedDiffLines(page);
   await openWorkspaceChanges(page, workspace);
+  await selectChangesComparison(page, "Uncommitted");
 
   await page.getByTestId("diff-file-0-toggle").click({ button: "right" });
   const confirmation = new Promise<void>((resolve) => {
@@ -832,6 +902,9 @@ test("compact Changes keeps its actions compact and menu-only", async ({ page })
   await useUnwrappedDiffLines(page);
   await openWorkspaceChanges(page, workspace);
   await page.setViewportSize({ width: 480, height: 900 });
+  // The shell survives the breakpoint, so the wide Explorer can still be on screen right after the
+  // resize. Check for the compact tab only once the shell reports the compact layout.
+  await expect(page.getByTestId("compact-shell")).toBeVisible();
 
   const compactChangesTab = page
     .getByTestId("workspace-tab-changes_tree")
@@ -889,6 +962,8 @@ test("compact Explorer renders inline hunks with a saved tree-only desktop prefe
     { key: CHANGES_PREFERENCES_KEY },
   );
   const explorer = await openCompactChanges(page, workspace);
+  await explorer.getByRole("button", { name: "Diff mode", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Uncommitted", exact: true }).click();
   await expect(explorer.getByTestId("git-diff-canvas")).toBeVisible();
   await expect(explorer.getByTestId("diff-file-0-toggle")).toBeVisible();
   await explorer.getByTestId("diff-file-0-toggle").click({ button: "right" });
@@ -1522,6 +1597,64 @@ async function createWorkspaceWithMountedTabDiff(
   return { id: createdWorkspace.workspace.id, repoPath: repo.path };
 }
 
+async function createWorkspaceWithNetDiff(): Promise<DirtyWorkspace> {
+  const repo = await createTempGitRepo("changes-net-", {
+    files: [{ path: "a-tracked.ts", content: "base\n" }],
+  });
+  const client = await connectSeedClient();
+  cleanupTasks.push({
+    run: async () => {
+      await client.close();
+      await repo.cleanup();
+    },
+  });
+  execFileSync("git", ["checkout", "-b", "feature"], { cwd: repo.path });
+  await writeFile(path.join(repo.path, "a-tracked.ts"), "committed\n");
+  await writeFile(path.join(repo.path, "b-committed.ts"), "committed only\n");
+  execFileSync("git", ["add", "--all"], { cwd: repo.path });
+  execFileSync("git", ["commit", "-m", "Committed changes"], { cwd: repo.path });
+  const created = await client.createWorkspace({ source: { kind: "directory", path: repo.path } });
+  if (!created.workspace) throw new Error(created.error ?? "Failed to create net diff workspace");
+  return { id: created.workspace.id, repoPath: repo.path };
+}
+
+async function expectNetComparisonFiles(page: Page, files: string[]): Promise<void> {
+  const tree = page.getByTestId("changes-tree-panel").filter({ visible: true });
+  const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
+  await expect(tree.locator('[data-testid^="diff-tree-file-"][data-testid$="-name"]')).toHaveText(
+    files,
+  );
+  await expect(panel.getByTestId(/^diff-file-\d+$/)).toHaveCount(files.length);
+  for (const file of files) {
+    await expect(diffHeaderForPath(panel, file)).toBeVisible();
+  }
+}
+
+async function expectRenderedAddedLine(page: Page, contents: string): Promise<void> {
+  await changesTree(page).getByText("a-tracked.ts", { exact: true }).click();
+  await expect(async () => {
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => navigator.clipboard.writeText(""));
+    const body = page.getByTestId("diff-file-0-body");
+    const canvas = page.getByTestId("git-diff-canvas");
+    const bounds = await body.boundingBox();
+    if (!bounds) throw new Error("Expanded diff body has no bounds");
+    const fontSize = await canvas.evaluate((element) =>
+      Number.parseFloat(getComputedStyle(element).fontSize),
+    );
+    // Replacement: hunk header, removed line, added line.
+    await page.mouse.click(bounds.x + 120, bounds.y + Math.round(fontSize * 1.5) * 2.5, {
+      button: "right",
+    });
+    const copyLine = page.getByRole("menuitem", { name: "Copy line", exact: true });
+    await expect(copyLine).toBeEnabled({ timeout: 1000 });
+    await copyLine.click();
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()), { timeout: 1000 })
+      .toBe(contents);
+  }).toPass({ timeout: 15_000 });
+}
+
 async function createWorkspaceWithCommittedDiff(): Promise<DirtyWorkspace> {
   const repo = await createTempGitRepo("changes-committed-", {
     files: [{ path: "tracked.ts", content: "export const tracked = 1;\n" }],
@@ -1844,9 +1977,14 @@ async function changeCodeTypographyFromSettings(
   await page.getByTestId("sidebar-settings").click();
   await expect(page).toHaveURL(new RegExp(`${buildSettingsSectionRoute("general")}|/settings$`));
   await page.getByRole("button", { name: "Appearance" }).click();
+  // A committed font change remounts the screen (AppearanceStyleBoundary), and the new form starts
+  // from the stored size. Edit the size only in the remounted form, or the remount drops it.
+  const sizeField = page.getByLabel("Code font size");
+  await sizeField.evaluate((field) => field.setAttribute("data-e2e-before-font-family", ""));
   await page.getByLabel("Code font family").fill(typography.fontFamily);
   await page.getByLabel("Code font family").press("Enter");
-  await page.getByLabel("Code font size").fill(String(typography.fontSize));
+  await expect(page.locator("[data-e2e-before-font-family]")).toHaveCount(0);
+  await sizeField.fill(String(typography.fontSize));
   await page.getByLabel("Code font size").press("Enter");
   await expect(page.getByLabel("Code font family")).toHaveValue(typography.fontFamily);
   await expect(page.getByLabel("Code font size")).toHaveValue(String(typography.fontSize));

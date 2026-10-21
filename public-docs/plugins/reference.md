@@ -16,6 +16,7 @@ Local plugins are directory sources installed into one Paseo daemon. A plugin ca
 
 - React Native screens and sidebar header and footer items to Paseo clients;
 - workspace and agent panels opened as workspace tabs;
+- [file panels](#file-panels) for viewing or editing matching files;
 - global, workspace, and agent actions in the Command Center;
 - slash commands in the message composer;
 - transformed and daemon-pushed agent timeline rows;
@@ -25,6 +26,26 @@ Local plugins are directory sources installed into one Paseo daemon. A plugin ca
 - searchable external resources in the message composer.
 
 Plugin code is trusted and unsandboxed. Client surfaces run in the Paseo app. Backend contributions run in a subprocess with access to the daemon machine, including its files, processes, credentials, and network.
+
+## Connected hosts
+
+`usePaseo().hosts` in a client surface and `context.paseo.hosts` in a server handler or lifecycle hook
+use the same [SDK host API](/sdk/reference#clienthosts). They describe the selected daemon's saved
+connections. Existing `useHosts()` and `getPaseoClient(serverId)` keep describing app-known hosts.
+
+```ts
+const remote = await context.paseo.hosts.client("srv_build_box");
+try {
+  return await remote.workspaces.list();
+} finally {
+  await remote.dispose();
+}
+```
+
+A returned API owns its observations. Teardown of the plugin API also disposes derived scopes.
+Keep remote calls inside the handler or lifecycle scope that owns them. Calling B does not forward
+B's plugin lifecycle hooks to A. Registrations created by a routed plugin retain a source qualified
+by the authenticated link and originating plugin.
 
 ## Project files
 
@@ -52,15 +73,16 @@ The required root manifest is `paseo-plugin.json`:
 }
 ```
 
-| Field          | Required | Behavior                                                                                  |
-| -------------- | -------- | ----------------------------------------------------------------------------------------- |
-| `id`           | Yes      | Default installation ID.                                                                  |
-| `name`         | No       | Non-empty display name for the registry and website; independent of the installation ID.  |
-| `icon`         | No       | Relative path to a PNG inside the plugin package.                                         |
-| `media`        | No       | Array of image or video paths inside the package, or HTTPS URLs. An empty array is valid. |
-| `description`  | No       | Non-empty summary shown below the plugin ID in **Settings → Plugins**.                    |
-| `requirements` | No       | Supported Paseo versions, described below.                                                |
-| `build`        | No       | Preparation commands, described in the CLI reference.                                     |
+| Field          | Required | Behavior                                                                                                                                     |
+| -------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`           | Yes      | Default installation ID.                                                                                                                     |
+| `name`         | No       | Non-empty display name for the registry and website; independent of the installation ID.                                                     |
+| `icon`         | No       | Relative path to a PNG inside the plugin package.                                                                                            |
+| `media`        | No       | Array of image or video paths inside the package, or HTTPS URLs. An empty array is valid.                                                    |
+| `description`  | No       | Non-empty summary shown below the plugin ID in **Settings → Plugins**.                                                                       |
+| `translations` | No       | Listing text in other languages, read by the registry and ignored by Paseo. See [other languages](/docs/plugins/publishing#other-languages). |
+| `requirements` | No       | Supported Paseo versions, described below.                                                                                                   |
+| `build`        | No       | Preparation commands, described in the CLI reference.                                                                                        |
 
 Paths are relative to `paseo-plugin.json`, use forward slashes, and cannot contain `..`
 segments. Registry listings for visual plugins require an interface image even though `media` is
@@ -87,6 +109,8 @@ Empty strings, invalid ranges, and unknown manifest requirement keys are rejecte
 | `>=0.8.3 <0.9.0` | 0.8.3 through the last 0.8 patch, including prereleases                      |
 
 Prerelease Paseo versions also satisfy a range their stable core (`major.minor.patch`) satisfies, so `0.8.0-beta.1` satisfies `>=0.8.0` but not `<0.8.0`.
+
+A prerelease minimum such as `>=0.12.0-beta.4` therefore also admits `0.12.0-beta.3` through its stable core `0.12.0`. Use a different stable core when you need to exclude earlier builds of that core.
 
 `paseo plugin init` writes `>=` followed by the current CLI version and pins the matching SDK
 for typechecking. Raise the minimum when adopting a newer API. Add an upper bound when a later
@@ -128,6 +152,79 @@ plugin root is a compile error.
 | `server/` | Daemon bundle only | Node APIs, local resources, credentials, and RPC handlers.           |
 | `shared/` | Both               | Zod RPC contracts and plain values imported by both runtimes.        |
 
+## Runtime translations {#runtime-translations}
+
+**Unreleased API.** Set `requirements.paseo` to the release that introduces these APIs before publishing your plugin. The [translation example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/translations) uses `>=0.12.1` provisionally; the introducing release has not been assigned.
+
+Ship JSON resources with your client bundle. English (`en`) is required; other keys use canonical language tags such as `zh-CN`. Resources contain nested objects with string leaves. Other languages may omit keys, which fall back to English. Unknown keys, malformed resources, noncanonical locale tags, and mismatched interpolation placeholders are rejected when defining translations.
+
+```ts
+// client/messages.ts
+import { defineTranslations } from "@getpaseo/plugin/client";
+import en from "./locales/en.json";
+import zhCN from "./locales/zh-CN.json";
+
+export const messages = defineTranslations({ resources: { en, "zh-CN": zhCN } });
+```
+
+Enable `resolveJsonModule` in your plugin's `tsconfig.json`. Paseo bundles these imports locally; no network loader runs. For example, the resource pair can contain:
+
+`client/locales/en.json`:
+
+```json
+{
+  "title": "Workspace notes",
+  "add": "Add note",
+  "notes_one": "{{count}} note",
+  "notes_other": "{{count}} notes"
+}
+```
+
+`client/locales/zh-CN.json`:
+
+```json
+{
+  "title": "工作区笔记",
+  "add": "添加笔记",
+  "notes_other": "{{count}} 条笔记"
+}
+```
+
+Call the plugin hook in React UI:
+
+```tsx
+import { useTranslation } from "@getpaseo/plugin/client";
+import { Text } from "react-native";
+import { messages } from "./messages";
+
+function NoteCount({ count }: { count: number }) {
+  const { t, locale } = useTranslation(messages);
+  return <Text accessibilityLanguage={locale}>{t("notes", { count })}</Text>;
+}
+```
+
+Use `messages.message(key, options?)` for persistent host-rendered labels:
+
+```tsx
+client.addScreen({
+  id: "notes",
+  title: messages.message("title"),
+  Component: Notes,
+});
+```
+
+`PluginText` is `string | PluginMessage`. Message references work in screen titles (including title functions), settings and sidebar titles, workspace and file panel titles, Command Center titles, slash-command descriptions and argument hints, button titles and labels, nested menu titles, attachment-source titles/picker titles/search placeholders, and theme names. Existing literal strings remain valid. Keep IDs, slash-command names, icons, URLs, and command search keywords stable.
+
+Descriptor types keep their existing string defaults. When explicitly annotating translated descriptors, use the text parameter, for example `PluginScreenContribution<PluginText>`. Inline registrations infer this automatically.
+
+For transient text in callbacks, call `client.i18n.t(messages, "add")`; it reads the app's current language at invocation. `client.i18n.locale` and the hook's `locale` report the resolved app language even when a message falls back to English. Do not store the result of `t` as a persistent registration label.
+
+Keys come from English. Plural base keys such as `notes` require a numeric `count`; i18next selects the locale's `_zero`, `_one`, `_two`, `_few`, `_many`, or `_other` form. Use `{{name}}` for named interpolation and pass `{ name: value }`. JSON string values are widened by TypeScript, so interpolation names from imported JSON are checked at runtime; inline literal resources also infer required interpolation names. i18next formatting syntax such as `{{amount, number}}` uses the resolved language's `Intl` formatter.
+
+An explicit app language wins over the device language; System follows the app's supported-locale resolution. Separate connected apps have independent languages. Changing language updates mounted UI and host labels without reloading the plugin, resetting component state, or replacing its RPC/query cache. Modal and popover content receives the same installation context on web and native.
+
+Return language-neutral structured RPC data and translate its presentation in the client. Keep user drafts, agent output, raw daemon errors, logs, and terminal text unchanged. Manifest listing translations and `OVERVIEW.<locale>.md` are separate publication metadata; see [your listing page](publishing#your-listing-page).
+
 ## Runtime modules
 
 Paseo builds each bundle from its matching entry. An import from `client/` into the daemon bundle,
@@ -137,24 +234,23 @@ only shared code: no Node, React, runtime-specific SDK entries, or runtime-speci
 
 The SDK root (`@getpaseo/plugin`) contains shared data, schemas, and runtime-neutral helpers only.
 Import client contexts and hooks from `/client`, server contexts and lifecycle contracts from
-`/server`, and UI from `/client/react-native` or `/client/ui`. These rules include type imports and transitive
+`/server`, and UI from `/client/ui`. These rules include type imports and transitive
 dependencies. `/client/host` is private to the app host; plugins cannot import it.
 
 ### Client runtime
 
 Paseo provides these modules to client code:
 
-| Module                                 | Use it for                                                                                        |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `@getpaseo/plugin`                     | Shared data, `defineRpc`, `defineSettings`, `defineAttachmentSource`, `RpcInput`, and `RpcOutput` |
-| `@getpaseo/plugin/client/ui`           | Named, composable settings components                                                             |
-| `@getpaseo/plugin/client/react-native` | Paseo UI components and UI hooks                                                                  |
-| `@getpaseo/plugin/client`              | Client contribution contexts, `usePaseo`, `useRpc`, `useSettings`, and data hooks                 |
-| `@tanstack/react-query`                | Request state and caching                                                                         |
-| `react`                                | Components and hooks                                                                              |
-| `react/jsx-runtime`                    | Compiled JSX                                                                                      |
-| `react-native`                         | Cross-platform UI                                                                                 |
-| `zod`                                  | Shared schemas                                                                                    |
+| Module                       | Use it for                                                                                        |
+| ---------------------------- | ------------------------------------------------------------------------------------------------- |
+| `@getpaseo/plugin`           | Shared data, `defineRpc`, `defineSettings`, `defineAttachmentSource`, `RpcInput`, and `RpcOutput` |
+| `@getpaseo/plugin/client/ui` | Paseo UI components and UI hooks                                                                  |
+| `@getpaseo/plugin/client`    | Client contribution contexts, `usePaseo`, `useRpc`, `useSettings`, and data hooks                 |
+| `@tanstack/react-query`      | Request state and caching                                                                         |
+| `react`                      | Components and hooks                                                                              |
+| `react/jsx-runtime`          | Compiled JSX                                                                                      |
+| `react-native`               | Cross-platform UI                                                                                 |
+| `zod`                        | Shared schemas                                                                                    |
 
 The host owns its paired React and renderer versions. The SDK's React peer range permits patch
 versions for tooling and Node consumers; it does not change the app's pinned React version or
@@ -938,10 +1034,10 @@ export default function contribute(client: PluginClientContext) {
 Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the screen body.
 
 `addScreen({ id, title, Component })` registers a screen. `title` is the screen header's title: a
-string, or a function that takes the screen's params and returns one, so a bot screen can show the
-bot's name. The function runs again when the params change. Registration throws on an empty title
-or one that is neither a string nor a function. A title function that throws or returns an empty
-string shows the screen ID instead; the screen still renders.
+[display text](#runtime-translations), or a function that takes the screen's params and returns
+display text. The function runs again when params or language change. Invalid or empty literal
+titles are rejected. A title function that throws or resolves to an empty string shows the screen
+ID instead; the screen still renders.
 
 `openScreen({ screenId, params })` opens a screen with params, such as the bot a bot screen shows.
 Params live in the screen's URL query, so a reload, back and forward, and a link to the screen keep
@@ -1080,12 +1176,12 @@ function hideAlerts() {
 
 ## Host UI
 
-Import Paseo-owned UI from `@getpaseo/plugin/client/react-native` in client code. This example
+Import Paseo-owned UI from `@getpaseo/plugin/client/ui` in client code. This example
 opens a controlled modal, renders a host icon, and confirms the action with a toast:
 
 ```tsx
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
-import { Icon, Modal, useToast } from "@getpaseo/plugin/client/react-native";
+import { Icon, Modal, useToast } from "@getpaseo/plugin/client/ui";
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 
@@ -1123,6 +1219,26 @@ export function IssueActions({ theme }: PluginSurfaceProps) {
   );
 }
 ```
+
+### Markdown
+
+Import `Markdown` from `@getpaseo/plugin/client/ui` to render a string with Paseo's
+Markdown presentation on web, iOS, and Android:
+
+```tsx
+import { Markdown } from "@getpaseo/plugin/client/ui";
+
+<Markdown>{"## Review\n\nThe checks **passed**."}</Markdown>;
+```
+
+`children` is the only prop and must be a string. Updating it renders the new content
+immediately; an empty string renders nothing. The host supplies theme, text selection,
+code blocks, tables, diagrams, and link handling. Workspace file links and images use
+workspace context when the containing surface supplies it.
+
+The component adds no page padding or scroll container. Use a surrounding layout or
+scroll view when needed. Fetching content and showing loading or error states belong
+to your plugin.
 
 ### Modal
 
@@ -1164,7 +1280,7 @@ Modal children keep the plugin runtime context. `usePaseo`, `useRpc`, `useWorksp
 
 ### Scrolling
 
-Import `ScrollView` and `FlatList` from `@getpaseo/plugin/client/react-native` when content can appear in a
+Import `ScrollView` and `FlatList` from `@getpaseo/plugin/client/ui` when content can appear in a
 Paseo modal. They accept React Native props and refs and integrate with the sheet's gestures. Outside
 a sheet they use ordinary React Native scrolling. Do not import bottom-sheet libraries directly.
 
@@ -1178,7 +1294,7 @@ container without changing these gestures. Expand the sheet before using list me
 `scrollToEnd`; the sheet locks list offsets below its largest height.
 
 ```tsx
-import { FlatList, Modal } from "@getpaseo/plugin/client/react-native";
+import { FlatList, Modal } from "@getpaseo/plugin/client/ui";
 import { Text } from "react-native";
 
 // Inside your controlled Modal:
@@ -1208,7 +1324,7 @@ user action and await it before reporting success. It rejects if the platform de
 clipboard is unavailable; browser permissions and secure-context requirements still apply.
 
 ```tsx
-import { copyText, useToast } from "@getpaseo/plugin/client/react-native";
+import { copyText, useToast } from "@getpaseo/plugin/client/ui";
 
 // Inside your component:
 const toast = useToast();
@@ -1223,7 +1339,7 @@ async function copyResult() {
 ```
 
 Programmatic copying and native text selection are separate interactions. Use `<Text selectable>`
-for long-press selection and OS Copy. Import `TextInput` from `@getpaseo/plugin/client/react-native` for modal forms. It accepts React Native
+for long-press selection and OS Copy. Import `TextInput` from `@getpaseo/plugin/client/ui` for modal forms. It accepts React Native
 input props and refs, supports OS Paste, and registers focus with the native sheet so the keyboard
 can raise the form. Outside a sheet it uses the ordinary input. A plain React Native input supports
 Paste too, but does not register focus with the sheet; the keyboard can cover it. No clipboard read
@@ -1318,7 +1434,7 @@ client.addWorkspacePanel({ id: "review", title: "Review", icon: { svg: reviewIco
 
 #### Render an icon
 
-`Icon` from `@getpaseo/plugin/client/react-native` draws an icon in your own UI. Plugin bundles do
+`Icon` from `@getpaseo/plugin/client/ui` draws an icon in your own UI. Plugin bundles do
 not import `lucide-react-native` or `react-native-svg`.
 
 | Prop    | Type         | Required         | Behavior                                                     |
@@ -1389,9 +1505,10 @@ source item's output.
 Renderers receive `agentId`, `item`, `timestamp`, `theme`, `host`, and `layout`. Paseo validates
 `item.data` with the registered schema before rendering. Keep transformers synchronous and
 deterministic. Paseo memoizes results by source-item reference and derives replacement identity from
-the source row, so updates to one streaming item do not remount its renderer. Use the exported
-`useRevealedText(text, phase)` hook when a renderer should pace streaming text like Paseo's built-in
-assistant rows.
+the source row, so updates to one streaming item do not remount its renderer. Render `<StreamedText text={item.data.text} phase={item.data.phase} />` from
+`@getpaseo/plugin/client/ui` for plain text paced like Paseo's assistant rows. It accepts React Native
+`Text` props (including `style`) and supplies assistant typography and foreground color by default.
+Completion displays the full text immediately; the host owns pacing while streaming. Requires Paseo 0.13 or later.
 
 Chat find (Ctrl or Cmd+F) finds and highlights text in replacement rows when the query also
 matches the original message. The host searches the original prompt text or the assistant reply
@@ -1548,15 +1665,15 @@ export function DisplaySettings() {
 }
 ```
 
-| Component                          | Props and behavior                                                                                                                       |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `SettingsGroup`, `SettingsSection` | Required `title`, `children`; optional `info` tooltip, `trailing` content, `testID`. Own section spacing and headings.                   |
-| `SettingsCard`                     | `children`, optional `testID`. Owns the card surface and dividers between direct children. Give mapped rows stable React keys.           |
-| `SettingsRow`                      | Required `label`; optional `hint`, `error`, `children`, `testID`. Wrap any custom control or content.                                    |
-| `SettingsSwitch`                   | Row props plus required `value: boolean`, `onValueChange`; optional `disabled`.                                                          |
-| `SettingsSelect`                   | Row props plus required string `value`, `options: { label, value }[]`, `onValueChange`; optional `disabled`. Uses Paseo's adaptive menu. |
-| `SettingsInput`                    | Row props plus required `onChangeText`; optional `initialValue`, `placeholder`, `disabled`, `secureTextEntry`, `ref`.                    |
-| `SettingsAction`                   | Row props plus required `actionLabel`, `onPress`; optional `disabled`.                                                                   |
+| Component         | Props and behavior                                                                                                                       |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `SettingsSection` | Required `title`, `children`; optional `info` tooltip, `trailing` content, `testID`. Own section spacing and headings.                   |
+| `SettingsCard`    | `children`, optional `testID`. Owns the card surface and dividers between direct children. Give mapped rows stable React keys.           |
+| `SettingsRow`     | Required `label`; optional `hint`, `error`, `children`, `testID`. Wrap any custom control or content.                                    |
+| `SettingsSwitch`  | Row props plus required `value: boolean`, `onValueChange`; optional `disabled`.                                                          |
+| `SettingsSelect`  | Row props plus required string `value`, `options: { label, value }[]`, `onValueChange`; optional `disabled`. Uses Paseo's adaptive menu. |
+| `SettingsInput`   | Row props plus required `onChangeText`; optional `initialValue`, `placeholder`, `disabled`, `secureTextEntry`, `ref`.                    |
+| `SettingsAction`  | Row props plus required `actionLabel`, `onPress`; optional `disabled`.                                                                   |
 
 `SettingsInput` owns in-progress text. `initialValue` seeds it when mounted. Its ref exposes
 `focus()`, `blur()`, `getText()`, and `replaceText(text)` for explicit programmatic changes.
@@ -1763,6 +1880,190 @@ Agent snapshot fields:
 | `labels`            | `Record<string, string>`                                       |
 
 Paseo owns tab focus, splitting, closing, persistence, query state, the API/RPC providers, and the render error boundary. A restored tab whose plugin, panel, context, workspace, or agent is unavailable stays open with an unavailable message instead of crashing the workspace.
+
+## File panels
+
+Register a component that renders a file as the body of its file tab. Your component receives a
+handle to the file on the selected host, including remote hosts. It reads the file, shows its own
+loading state, and writes the file when the user edits it. The tab's bar shows the panel
+switcher, the overflow menu, and a dot while your panel reports unsaved changes.
+
+```tsx
+import type { PluginClientContext } from "@getpaseo/plugin/client";
+import { PdfPanel } from "./client/pdf-panel";
+
+export default function contribute(client: PluginClientContext) {
+  return client.addFilePanel({
+    id: "pdf",
+    title: "PDF",
+    icon: "FileText",
+    files: { extensions: ["pdf"] },
+    Component: PdfPanel,
+  });
+}
+```
+
+`addFilePanel` takes a `PluginFilePanelContribution` and returns an idempotent cleanup function.
+Paseo also removes the registration when the client entry is unloaded.
+
+| Field       | Required | Meaning                                                                    |
+| ----------- | -------- | -------------------------------------------------------------------------- |
+| `id`        | Yes      | Plugin-local ID matching `^[a-z][a-z0-9-]*$`.                              |
+| `title`     | Yes      | Non-empty label in the panel switcher, the picker, and the Open with menu. |
+| `icon`      | Yes      | Lucide name, `{ svg }`, or component. See [Icons](#icons).                 |
+| `files`     | Yes      | `{ extensions: readonly string[]; filenames?: readonly string[] }`.        |
+| `Component` | Yes      | Component receiving `PluginFilePanelProps`.                                |
+
+Extensions have no leading dot and match without case sensitivity. Filenames match the exact
+basename, including case. Selectors contain no paths, globs, or wildcards. Use `extensions: []`
+for a filename-only selector. At least one extension or filename is required.
+
+### File panel props
+
+`PluginFilePanelProps` includes the common `theme`, `host`, `layout`, and optional `navigation`
+props described under [Theme and layout](#theme-and-layout), plus:
+
+| Prop          | Type                 | Meaning                                                                         |
+| ------------- | -------------------- | ------------------------------------------------------------------------------- |
+| `workspaceId` | `string`             | Workspace containing the file tab.                                              |
+| `file`        | `PluginFile`         | Handle to the file. Stable while the tab shows this file.                       |
+| `tab`         | `PluginFileTab`      | `setModified(modified)` shows the tab's unsaved dot and confirms before close.  |
+| `location`    | `PluginFileLocation` | `lineStart?`, `lineEnd?`, and `revision`, which increments on every navigation. |
+
+Paseo mounts your panel once it knows the file exists and its size, without reading it. The
+`file` object is stable, and its stat fields hold the latest version Paseo knows. Read them while
+rendering; changing them does not re-render your panel. A `watch` listener, or a re-render from
+`useFileText`, `useFileBytes`, or `useFileUrl`, is how your panel learns they changed:
+
+| Member                           | Meaning                                                                                     |
+| -------------------------------- | ------------------------------------------------------------------------------------------- |
+| `path`, `name`, `extension`      | Absolute path on the host, basename, and lowercase extension without the dot (or `""`).     |
+| `size`, `modifiedAt`, `mimeType` | Size in bytes, modification timestamp, and host-reported MIME type.                         |
+| `readText()`                     | Reads the file as UTF-8. A byte order mark is dropped and written back by `writeText`.      |
+| `readBytes()`                    | Reads the file's bytes.                                                                     |
+| `url()`                          | A local `blob:` (web) or `file:` (native) URL of the current bytes, for `DocumentFrame`.    |
+| `writeText(text, options?)`      | Writes UTF-8 text if the file has not changed on disk since this handle last read or wrote. |
+| `writeBytes(bytes, options?)`    | The same for bytes.                                                                         |
+| `watch(listener)`                | Calls `listener(event)` with a `PluginFileEvent`; returns the unsubscribe function.         |
+
+A `PluginFileEvent` is `{ type: "changed" }` or `{ type: "deleted" }`. Switch on `type`; later
+versions may add fields. Your panel stays mounted when the file is deleted. `watch` reports
+`{ type: "deleted" }` once a read confirms the file is gone, so a program that removes the file and
+writes it back reports only `{ type: "changed" }`. A deleted file that comes back reports
+`{ type: "changed" }`.
+
+A write rejects with `PluginFileConflictError` when the file changed on disk after the handle's
+last read or write. Pass `{ force: true }` to write anyway. A write rejects with
+`PluginFileDeletedError` when the file is gone, with or without `force`. The handle's own writes do not notify
+its watchers. Paseo owns the URL from `url()`: it stays valid until a URL for a newer version
+resolves or the tab closes. Do not build daemon URLs from `file.path`; local URLs also work when
+the daemon is remote.
+
+### Read the file
+
+Most panels read through a hook. Each hook reads when mounted, re-reads when the file changes on
+disk, and keeps the current value during a re-read:
+
+| Hook                 | Ready state                              |
+| -------------------- | ---------------------------------------- |
+| `useFileText(file)`  | `{ status: "ready", text: string }`      |
+| `useFileBytes(file)` | `{ status: "ready", bytes: Uint8Array }` |
+| `useFileUrl(file)`   | `{ status: "ready", url: string }`       |
+
+Each also returns `{ status: "loading" }` before the first read and `{ status: "error", error }`
+when a read fails. For a deleted file, `error` is a `PluginFileDeletedError`. Show `Loading` from `@getpaseo/plugin/client/ui` until
+your content is on screen; it fills the panel, so render it over content that is still laying out.
+
+```tsx
+import { type PluginFilePanelProps, useFileUrl } from "@getpaseo/plugin/client";
+import { DocumentFrame, Loading } from "@getpaseo/plugin/client/ui";
+import { Text } from "react-native";
+
+export function PdfPanel({ file, theme }: PluginFilePanelProps) {
+  const url = useFileUrl(file);
+  if (url.status === "loading") return <Loading />;
+  if (url.status === "error") {
+    return <Text style={{ color: theme.colors.statusDanger }}>{url.error.message}</Text>;
+  }
+  return <DocumentFrame url={url.url} testID="pdf-panel" />;
+}
+```
+
+### Edit the file
+
+A hook's re-read adopts the version on disk, so the next write overwrites whatever changed there.
+A panel that holds unsaved edits reads with `readText()` once, then handles `watch` itself:
+
+1. Read with `file.readText()` and show the text.
+2. On each edit, call `tab.setModified(true)` and write with `file.writeText(text)`, debounced.
+3. When the write resolves and no newer edit is pending, call `tab.setModified(false)`.
+4. On `{ type: "changed" }` with nothing unsaved, read again. With unsaved edits, show a conflict
+   and let the user reload or overwrite with `{ force: true }`.
+5. On `PluginFileConflictError`, show the same conflict.
+6. On `{ type: "deleted" }` or `PluginFileDeletedError`, tell the user the file is gone.
+
+Write pending edits before the component unmounts: switching panels or closing the tab unmounts
+it. Paseo asks before closing a tab whose panel reports unsaved changes. The
+[Markdown panel](https://github.com/getpaseo/paseo/tree/main/plugin-examples/markdown-panel)
+example implements these steps.
+
+### Selection and Open with
+
+A plugin panel is a candidate for every file its selector matches, text or binary. The built-in
+panels require the host's file kind: Markdown, HTML, and **Source** open text files; Image opens
+images. Candidates are ordered: the built-in Markdown, HTML, and Image panels, then plugin panels
+in host catalog order, then **Source**, which every text file has. Source opens a file by default
+only when nothing else claims it.
+
+A remembered association selects its panel when that panel is available on the current host.
+Otherwise Paseo opens the first candidate. When a plugin panel is among several candidates and no
+association applies, Paseo asks once per tab open, over the panel it already opened. Built-in
+panels alone never ask: a Markdown file opens with Markdown and offers Source in the switcher. With
+a Markdown plugin installed, the picker offers **Markdown — Paseo**, **Rich Markdown —
+markdown-panel**, and **Source — Paseo**. A plugin that claims a text extension competes with
+Source, so its first open asks; a plugin that alone claims a binary file opens without asking.
+
+**Don't ask me again** remembers the choice on this device for the extension. When a candidate
+matches an exact filename, the choice applies to that basename instead. An unavailable association
+is ignored on that host and retained for hosts where its panel is installed.
+
+Users switch the current tab with the bar's panel switcher, which shows up to three panels side by
+side (two on a phone) and a menu beyond that, or with **Open with…** in the tab menu. That choice
+wins over the remembered association for this tab until it is retargeted. **Always use**, in the
+bar's overflow menu and in Open with, remembers the shown panel. Opening a file at a line, from a
+link or a search result, switches the tab to Source. Files with no candidate show **Binary preview
+unavailable**; binary files have no Source panel.
+
+### DocumentFrame
+
+Import `DocumentFrame` from `@getpaseo/plugin/client/ui` to display a local file URL from
+`file.url()` or `useFileUrl`:
+
+| Prop     | Required | Meaning                                                                          |
+| -------- | -------- | -------------------------------------------------------------------------------- |
+| `url`    | Yes      | Local file URL; `blob:` on web or `file:` on native. Other schemes are rejected. |
+| `testID` | No       | Test identifier for the frame.                                                   |
+
+Web inspects the local URL’s media type before mounting the iframe. PDF uses the browser’s PDF
+viewer without a sandbox; every other type, including HTML and unknown types, keeps a full sandbox
+with no scripts or same-origin access. Native uses a WebView with JavaScript, storage, and further
+navigation disabled. Where the platform cannot show the document inline, such as a PDF on Android,
+`DocumentFrame` shows a message naming the file type instead, so render it on every platform.
+
+Inline PDF rendering needs a daemon from Paseo 0.13.0 or later; older daemons report PDFs as
+`application/octet-stream`.
+
+### Version requirement and examples
+
+File panels, `DocumentFrame`, and `Loading` require Paseo 0.13.0 or later. Declare
+`"requirements": { "paseo": ">=0.13.0" }` in `paseo-plugin.json`. Both daemon and app check the
+[version requirement](#requirements); older apps skip the client bundle before evaluation.
+Writing with `writeBytes` needs a daemon from Paseo 0.13.0 or later.
+
+Complete directory examples:
+
+- [PDF panel](https://github.com/getpaseo/paseo/tree/main/plugin-examples/pdf-panel): `useFileUrl` with `Loading` and `DocumentFrame`.
+- [Markdown panel](https://github.com/getpaseo/paseo/tree/main/plugin-examples/markdown-panel): a bundled CodeMirror editor that reads once, saves with `writeText`, and resolves conflicts, with read-only native text.
 
 ## Command Center items
 
