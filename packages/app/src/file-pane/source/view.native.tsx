@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { FlatList, Text, View, type ListRenderItem } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
+import { buildNativeSourceLines, type SourceLine } from "./native-lines";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import type { EditorVisualTheme } from "../editor/extensions.web";
@@ -15,11 +15,6 @@ interface FileSourceViewProps {
   size: number;
   theme: EditorVisualTheme;
   tooLargeMessage: string;
-}
-
-interface SourceLine {
-  number: number;
-  tokens: HighlightToken[];
 }
 
 export function FileSourceView({
@@ -59,16 +54,10 @@ function VirtualizedSource({
   presentation: "highlighted" | "plain";
 }) {
   const listRef = useRef<FlatList<SourceLine>>(null);
-  const lines = useMemo(() => {
-    if (presentation === "highlighted")
-      return highlightCode(content, filename).map((tokens, index) => ({
-        number: index + 1,
-        tokens,
-      }));
-    return content
-      .split("\n")
-      .map((text, index) => ({ number: index + 1, tokens: [{ text, style: null }] }));
-  }, [content, filename, presentation]);
+  const lines = useMemo(
+    () => buildNativeSourceLines({ content, filename, presentation }),
+    [content, filename, presentation],
+  );
   useEffect(() => {
     if (!location.lineStart) return;
     listRef.current?.scrollToIndex({
