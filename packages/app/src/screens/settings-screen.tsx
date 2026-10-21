@@ -310,6 +310,7 @@ function getActiveLocale(language: string | undefined): SupportedLocale {
 interface GeneralSectionProps {
   settings: AppSettings;
   handleLanguageChange: (language: AppLanguage) => void;
+  handleLinkPromptSendChange: (enabled: boolean) => void;
 }
 
 interface LanguageMenuItemProps {
@@ -336,7 +337,11 @@ function LanguageMenuItem({ value, activeLocale, selected, onChange }: LanguageM
   );
 }
 
-function GeneralSection({ settings, handleLanguageChange }: GeneralSectionProps) {
+function GeneralSection({
+  settings,
+  handleLanguageChange,
+  handleLinkPromptSendChange,
+}: GeneralSectionProps) {
   const { t, i18n } = useTranslation();
   const activeLocale = getActiveLocale(i18n.language);
   const selectedLanguageOption = LANGUAGE_OPTIONS.find(
@@ -373,6 +378,22 @@ function GeneralSection({ settings, handleLanguageChange }: GeneralSectionProps)
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
+        </View>
+        <View style={[settingsStyles.row, settingsStyles.rowBorder]} testID="link-prompt-send-row">
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>
+              {t("settings.general.linkPromptSend.label")}
+            </Text>
+            <Text style={settingsStyles.rowHint}>
+              {t("settings.general.linkPromptSend.description")}
+            </Text>
+          </View>
+          <Switch
+            value={settings.linkPromptSend}
+            onValueChange={handleLinkPromptSendChange}
+            accessibilityLabel={t("settings.general.linkPromptSend.label")}
+            testID="link-prompt-send-switch"
+          />
         </View>
       </View>
     </SettingsSection>
@@ -1156,6 +1177,13 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     [updateSettings],
   );
 
+  const handleLinkPromptSendChange = useCallback(
+    (linkPromptSend: boolean) => {
+      void updateSettings({ linkPromptSend });
+    },
+    [updateSettings],
+  );
+
   const handleUseLegacyTerminalRendererChange = useCallback(
     (useLegacyTerminalRenderer: boolean) => {
       void updateSettings({ useLegacyTerminalRenderer });
@@ -1378,7 +1406,11 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
         case "general":
           return (
             <>
-              <GeneralSection settings={settings} handleLanguageChange={handleLanguageChange} />
+              <GeneralSection
+                settings={settings}
+                handleLanguageChange={handleLanguageChange}
+                handleLinkPromptSendChange={handleLinkPromptSendChange}
+              />
               <SendingSection />
               {isDesktopApp ? <OpenLocationSection /> : null}
             </>
