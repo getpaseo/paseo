@@ -1,5 +1,7 @@
 export type {
   PluginHostProps,
+  PluginFilePanelContribution,
+  PluginFilePanelProps,
   PluginSurfaceProps,
   PluginScreenProps,
   PluginPopoverProps,
@@ -46,6 +48,23 @@ export type {
   PluginHeaderButtonContribution,
 } from "./buttons.js";
 export type { PluginIconProps, PluginSerializableIcon, PluginSvgIcon } from "../icons.js";
+export type {
+  PluginFile,
+  PluginFileBytesState,
+  PluginFileEvent,
+  PluginFileLocation,
+  PluginFileTab,
+  PluginFileTextState,
+  PluginFileUrlState,
+  PluginFileWriteOptions,
+} from "./file.js";
+export {
+  PluginFileConflictError,
+  PluginFileDeletedError,
+  useFileBytes,
+  useFileText,
+  useFileUrl,
+} from "./file.js";
 export { usePaseo } from "./paseo-context.js";
 export { useAgent, useWorkspace } from "./client-state.js";
 export { useRpc } from "./rpc-context.js";

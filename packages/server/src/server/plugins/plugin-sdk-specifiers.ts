@@ -2,6 +2,7 @@
 export const PLUGIN_CLIENT_ONLY_SDK_SPECIFIERS = [
   "@getpaseo/plugin/client",
   "@getpaseo/plugin/client/ui",
+  // COMPAT(pluginReactNativeEntrypoint): added in v0.13.0, remove after 2027-04-20
   "@getpaseo/plugin/client/react-native",
 ] as const;
 

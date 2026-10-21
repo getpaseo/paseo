@@ -2,6 +2,7 @@ import type { ComponentType } from "react";
 import type { PaseoApi } from "@getpaseo/client";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
+import type { PluginFile, PluginFileLocation, PluginFileTab } from "./file.js";
 import type { PluginRpcContract } from "../rpc.js";
 import type {
   PluginButtonRegistration,
@@ -120,6 +121,23 @@ export interface PluginAgentPanelProps extends PluginNavigableHostProps {
   agentId: string;
 }
 
+export interface PluginFilePanelProps extends PluginNavigableHostProps {
+  workspaceId: string;
+  /** The file itself. The panel decides how to read it, show it, and save it. */
+  file: PluginFile;
+  tab: PluginFileTab;
+  location: PluginFileLocation;
+}
+
+export interface PluginFilePanelContribution {
+  id: string;
+  title: string;
+  icon: PluginIcon;
+  /** Extensions without the dot, case-insensitive, and exact filenames. */
+  files: { extensions: readonly string[]; filenames?: readonly string[] };
+  Component: ComponentType<PluginFilePanelProps>;
+}
+
 export interface PluginClientOpenPanelOptions extends PluginOpenPanelOptions {
   workspaceId: string;
   agentId?: string;
@@ -140,6 +158,7 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   addScreen(contribution: PluginScreenContribution): PluginCleanup;
   addSidebarHeaderItem(contribution: PluginSidebarItemContribution): PluginCleanup;
   addSidebarFooterItem(contribution: PluginSidebarItemContribution): PluginCleanup;
+  addFilePanel(contribution: PluginFilePanelContribution): PluginCleanup;
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution): PluginCleanup;
   addCommandCenterItem(contribution: PluginCommandCenterItemContribution): PluginCleanup;
   addSlashCommand(contribution: PluginClientSlashCommandContribution): PluginCleanup;

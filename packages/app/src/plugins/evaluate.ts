@@ -34,7 +34,6 @@ import {
 import type { EvaluatedPlugin, PluginSidebarSection } from "./types";
 import type { ComponentType } from "react";
 import { parsePluginIcon, parseSerializablePluginIcon } from "./icons";
-import { pluginReactNativeRuntime } from "./react-native/runtime";
 import { parsePluginThemeContribution } from "./themes";
 
 const CONTRIBUTION_ID = /^[a-z][a-z0-9-]*$/;
@@ -113,6 +112,7 @@ export function runPluginClientBundle(
     settingsScreens: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
+    filePanels: [],
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],
@@ -127,6 +127,7 @@ export function runPluginClientBundle(
     header: new Set(),
     footer: new Set(),
   };
+  const filePanelIds = new Set<string>();
   const workspacePanelIds = new Set<string>();
   const commandCenterItemIds = new Set<string>();
   const clientSlashCommandNames = new Set<string>();
@@ -253,6 +254,50 @@ export function runPluginClientBundle(
       if (!legacy.title) throw new Error(`Sidebar item ${normalizedId} has no title`);
       ids.add(normalizedId);
       return register(collector.legacySidebarItems, legacy, () => ids.delete(normalizedId));
+    },
+    addFilePanel(contribution) {
+      const panelId = requireId(contribution.id, "file panel id");
+      if (filePanelIds.has(panelId)) throw new Error(`Duplicate file panel: ${panelId}`);
+      const title = contribution.title.trim();
+      if (!title) throw new Error(`File panel ${panelId} has no title`);
+      const icon = parsePluginIcon(`File panel ${panelId}`, contribution.icon);
+      const files = contribution.files;
+      const validEntries = (entries: unknown, extension: boolean): entries is string[] =>
+        Array.isArray(entries) &&
+        entries.every(
+          (entry) =>
+            typeof entry === "string" &&
+            entry.trim() === entry &&
+            entry.length > 0 &&
+            !/[\\/*?]/.test(entry) &&
+            (!extension || !entry.includes(".")),
+        );
+      if (
+        !files ||
+        Object.keys(files).some((key) => key !== "extensions" && key !== "filenames") ||
+        !validEntries(files.extensions, true) ||
+        (files.filenames !== undefined && !validEntries(files.filenames, false)) ||
+        (files.extensions.length === 0 && !files.filenames?.length)
+      ) {
+        throw new Error(`File panel ${panelId} has invalid selector`);
+      }
+      if (typeof contribution.Component !== "function")
+        throw new Error(`File panel ${panelId} is not a component`);
+      filePanelIds.add(panelId);
+      return register(
+        collector.filePanels,
+        {
+          ...contribution,
+          id: panelId,
+          title,
+          icon,
+          files: {
+            extensions: [...files.extensions],
+            ...(files.filenames ? { filenames: [...files.filenames] } : {}),
+          },
+        },
+        () => filePanelIds.delete(panelId),
+      );
     },
     addWorkspacePanel(contribution: PluginWorkspacePanelContribution) {
       const normalizedId = requireId(contribution.id, "workspace panel id");
@@ -432,6 +477,8 @@ export function runPluginClientBundle(
     },
   };
   const runtimeRequire = (name: string): unknown => {
+    // COMPAT(pluginReactNativeEntrypoint): added in v0.13.0, remove after 2027-04-20
+    if (name === "@getpaseo/plugin/client/react-native") return pluginUiRuntime;
     if (name === "@getpaseo/plugin/client/ui") return pluginUiRuntime;
     if (name === "react") return React;
     if (name === "react/jsx-runtime") return ReactJsxRuntime;
@@ -450,9 +497,6 @@ export function runPluginClientBundle(
             runtime.hosts.getSnapshot,
           ),
       };
-    if (name === "@getpaseo/plugin/client/react-native") {
-      return pluginReactNativeRuntime;
-    }
     if (name === "@tanstack/react-query") return ReactQuery;
     if (name === "zod") return Zod;
     throw new Error(`Module "${name}" is not available in plugin client code`);
@@ -510,6 +554,7 @@ export function runPluginClientBundle(
     settingsScreens: collector.settingsScreens,
     sidebarItems: collector.sidebarItems,
     legacySidebarItems: collector.legacySidebarItems,
+    filePanels: collector.filePanels,
     workspacePanels: collector.workspacePanels as EvaluatedPlugin["workspacePanels"],
     commandCenterItems: collector.commandCenterItems,
     clientSlashCommands: collector.clientSlashCommands,
