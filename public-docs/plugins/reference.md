@@ -2297,9 +2297,24 @@ export const issues = defineAttachmentSource({
   icon: "CircleDot",
   pickerTitle: "Attach Acme issue",
   searchPlaceholder: "Search by identifier or title",
+  mentionPrefix: "acme",
   search: searchIssues,
 });
 ```
+
+`mentionPrefix` is optional. Paseo trims it and validates the plugin ID format: lowercase letters
+and digits, starting with a lowercase letter, with hyphens allowed. Without it, the source keeps
+its existing attachment behavior. A normal `@` autocomplete shows a source entry such as `@acme:`;
+selecting it changes the input to `@acme:`. Only an explicit `@acme:` prefix searches this source
+through its existing search RPC, with results displayed in the same autocomplete. Selecting a
+result uses the existing `plugin_resource` attachment flow and submits the returned `text` snapshot.
+
+Prefixes must be unique within one plugin. Removing a registration releases its prefix. If
+separate plugins claim the same prefix, the app uses the first source in stable plugin catalog
+order. The source search and selected attachment stay scoped to the composer's host; a mention
+does not search other sources or hosts. Plugin authors who depend on this behavior should set
+`requirements.paseo` to the minimum client version that supports attachment mentions when
+publishing; the publisher must determine that version from the host release.
 
 `server/issues.ts`:
 

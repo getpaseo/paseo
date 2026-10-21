@@ -15,6 +15,7 @@ interface UseAutocompleteInput<
   TKeyPressEvent extends AutocompleteKeyPressEvent = AutocompleteKeyPressEvent,
 > {
   isVisible: boolean;
+  isLoading?: boolean;
   options: readonly TOption[];
   query: string;
   onSelectOption: (option: TOption, event?: TKeyPressEvent) => void;
@@ -66,7 +67,14 @@ export function useAutocomplete<
 
   const onKeyPress = useCallback(
     (event: TKeyPressEvent) => {
-      if (!input.isVisible || input.options.length === 0) {
+      if (!input.isVisible) {
+        return false;
+      }
+      if (input.isLoading && (event.key === "Enter" || event.key === "Tab")) {
+        event.preventDefault();
+        return true;
+      }
+      if (input.options.length === 0) {
         return false;
       }
 

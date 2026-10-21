@@ -157,6 +157,10 @@ import { useComposerForgeAutoAttach } from "./forge-auto-attach";
 import { readClipboardImage } from "./clipboard-image";
 import { normalizeNativePastedImages, type NativePastedFile } from "./native-pasted-image";
 import { PluginResourceAttachmentPill, usePluginAttachmentPicker } from "@/plugins";
+import {
+  addPluginResourceAttachment,
+  type PluginResourceComposerAttachment,
+} from "@/plugins/attachments/model";
 import { resolveClientSlashCommand, type ClientSlashCommand } from "@/client-slash-commands";
 import {
   appendWorkspaceFileAttachment,
@@ -1379,6 +1383,12 @@ function ComposerContentImpl({
     onChangeAttachments: setSelectedAttachments,
     anchorRef: attachButtonRef,
   });
+  const addPluginMention = useCallback(
+    (attachment: PluginResourceComposerAttachment) => {
+      setSelectedAttachments((current) => addPluginResourceAttachment(current, attachment));
+    },
+    [setSelectedAttachments],
+  );
   const pluginClientSlashCommands = usePluginClientSlashCommands({
     serverId,
     workspaceId,
@@ -2341,6 +2351,7 @@ function ComposerContentImpl({
       canExecuteClientSlashCommand: buildOutgoingAttachments(attachments).length === 0,
       onClientSlashCommand: runClientSlashCommand,
       pluginClientSlashCommands,
+      onPluginAttachment: addPluginMention,
     }),
     [
       replaceUserInput,
@@ -2351,6 +2362,7 @@ function ComposerContentImpl({
       attachments,
       runClientSlashCommand,
       pluginClientSlashCommands,
+      addPluginMention,
     ],
   );
   const messageInputContainerRef = useRef<View>(null);

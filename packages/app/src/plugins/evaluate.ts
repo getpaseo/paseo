@@ -131,6 +131,7 @@ export function runPluginClientBundle(
   const commandCenterItemIds = new Set<string>();
   const clientSlashCommandNames = new Set<string>();
   const attachmentSourceIds = new Set<string>();
+  const attachmentMentionPrefixes = new Set<string>();
   const themeIds = new Set<string>();
   const timelineTransformerIds = new Set<string>();
   const timelineRendererIds = new Set<string>();
@@ -343,6 +344,13 @@ export function runPluginClientBundle(
       if (attachmentSourceIds.has(normalizedId)) {
         throw new Error(`Duplicate attachment source: ${normalizedId}`);
       }
+      const mentionPrefix =
+        contribution.mentionPrefix === undefined
+          ? undefined
+          : requireId(contribution.mentionPrefix, "attachment mention prefix");
+      if (mentionPrefix && attachmentMentionPrefixes.has(mentionPrefix)) {
+        throw new Error(`Duplicate attachment mention prefix: ${mentionPrefix}`);
+      }
       const title = contribution.title.trim();
       const pickerTitle = contribution.pickerTitle.trim();
       const searchPlaceholder = contribution.searchPlaceholder.trim();
@@ -358,6 +366,7 @@ export function runPluginClientBundle(
       }
       if (!method) throw new Error(`Attachment source ${normalizedId} has no search RPC`);
       attachmentSourceIds.add(normalizedId);
+      if (mentionPrefix) attachmentMentionPrefixes.add(mentionPrefix);
       return register(
         collector.attachmentSources,
         {
@@ -366,9 +375,13 @@ export function runPluginClientBundle(
           icon,
           pickerTitle,
           searchPlaceholder,
+          ...(mentionPrefix === undefined ? {} : { mentionPrefix }),
           search: { ...contribution.search, name: method },
         },
-        () => attachmentSourceIds.delete(normalizedId),
+        () => {
+          attachmentSourceIds.delete(normalizedId);
+          if (mentionPrefix) attachmentMentionPrefixes.delete(mentionPrefix);
+        },
       );
     },
     addTheme(contribution: PluginThemeContribution) {

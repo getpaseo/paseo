@@ -332,6 +332,98 @@ describe("evaluatePluginClientBundle", () => {
     ]);
   });
 
+  it("trims and collects an opted-in attachment mention prefix", () => {
+    const plugin = evaluatePluginClientBundle(
+      "linear",
+      bundle(`
+        plugin.addAttachmentSource({
+          id: "issues",
+          title: "Linear issue",
+          icon: "CircleDot",
+          pickerTitle: "Attach Linear issue",
+          searchPlaceholder: "Search by identifier or title",
+          mentionPrefix: " linear ",
+          search: { name: "issues.search", input: {}, output: {} },
+        });
+      `),
+    );
+
+    expect(plugin.attachmentSources).toEqual([
+      {
+        id: "issues",
+        title: "Linear issue",
+        icon: "CircleDot",
+        pickerTitle: "Attach Linear issue",
+        searchPlaceholder: "Search by identifier or title",
+        mentionPrefix: "linear",
+        search: { name: "issues.search", input: {}, output: {} },
+      },
+    ]);
+  });
+
+  it.each(["Linear", "9linear", "-linear", "linear_issue", "linear:issues", ""])(
+    "rejects invalid attachment mention prefix %j",
+    (mentionPrefix) => {
+      expect(() =>
+        evaluatePluginClientBundle(
+          "linear",
+          bundle(`
+            plugin.addAttachmentSource({
+              id: "issues",
+              title: "Linear issue",
+              icon: "CircleDot",
+              pickerTitle: "Attach Linear issue",
+              searchPlaceholder: "Search",
+              mentionPrefix: ${JSON.stringify(mentionPrefix)},
+              search: { name: "issues.search", input: {}, output: {} },
+            });
+          `),
+        ),
+      ).toThrow("Invalid attachment mention prefix");
+    },
+  );
+
+  it("rejects duplicate attachment mention prefixes within a plugin", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "linear",
+        bundle(`
+          const source = {
+            title: "Linear issue",
+            icon: "CircleDot",
+            pickerTitle: "Attach Linear issue",
+            searchPlaceholder: "Search",
+            mentionPrefix: "linear",
+            search: { name: "issues.search", input: {}, output: {} },
+          };
+          plugin.addAttachmentSource({ ...source, id: "issues" });
+          plugin.addAttachmentSource({ ...source, id: "projects", mentionPrefix: " linear " });
+        `),
+      ),
+    ).toThrow("Duplicate attachment mention prefix: linear");
+  });
+
+  it("releases an attachment mention prefix when its registration is removed", () => {
+    const plugin = evaluatePluginClientBundle(
+      "linear",
+      bundle(`
+        const source = {
+          title: "Linear issue",
+          icon: "CircleDot",
+          pickerTitle: "Attach Linear issue",
+          searchPlaceholder: "Search",
+          mentionPrefix: "linear",
+          search: { name: "issues.search", input: {}, output: {} },
+        };
+        plugin.addAttachmentSource({ ...source, id: "issues" })();
+        plugin.addAttachmentSource({ ...source, id: "projects" });
+      `),
+    );
+
+    expect(plugin.attachmentSources.map((source) => source.id)).toEqual(["projects"]);
+    expect(plugin.attachmentSources[0]?.mentionPrefix).toBe("linear");
+  });
+
   it("collects contextual workspace panels and Command Center items", () => {
     const plugin = evaluatePluginClientBundle(
       "review",

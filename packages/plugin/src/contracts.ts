@@ -77,6 +77,7 @@ export interface PluginAttachmentSourceContribution {
   icon: PluginSerializableIcon;
   pickerTitle: string;
   searchPlaceholder: string;
+  mentionPrefix?: string;
   search: PluginRpcContract;
 }
 
