@@ -34,6 +34,38 @@ class MemoryFileAcquisitionPort implements AssistantImageFileAcquisitionPort {
 }
 
 describe("assistant image file acquisition", () => {
+  it.each(["clip.mp4", "clip.MOV", "archive.zip", "report.pdf", "README.md", "no-extension"])(
+    "rejects %s before requesting file bytes",
+    async (path) => {
+      const port = new MemoryFileAcquisitionPort();
+      const acquisition = createAssistantImageFileAcquisition({
+        port,
+        resolution: { kind: "file_rpc", cwd: "/workspace", path },
+        occurrenceKey: "message:image",
+        unavailableMessage: "Image unavailable",
+      });
+
+      await expect(acquisition!.locate()).rejects.toThrow("Image unavailable");
+      expect(port.reads).toEqual([]);
+    },
+  );
+
+  it.each(["image.png", "image.JPG", "image.gif", "image.webp", "image.SVG"])(
+    "acquires supported image %s",
+    async (path) => {
+      const port = new MemoryFileAcquisitionPort();
+      const acquisition = createAssistantImageFileAcquisition({
+        port,
+        resolution: { kind: "file_rpc", cwd: "/workspace", path },
+        occurrenceKey: "message:image",
+        unavailableMessage: "Image unavailable",
+      });
+
+      await expect(acquisition!.locate()).resolves.toMatchObject({ fileName: path });
+      expect(port.reads).toEqual([{ cwd: "/workspace", path }]);
+    },
+  );
+
   it("recreates the same acquisition with a live port after reconnect", async () => {
     const common = {
       resolution: { kind: "file_rpc" as const, cwd: "/workspace", path: "reconnect.png" },
