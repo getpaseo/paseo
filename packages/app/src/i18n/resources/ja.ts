@@ -2056,6 +2056,8 @@ export const ja: TranslationResources = {
     versions: "{{host}}のデーモンは{{daemonVersion}}です。このアプリは{{appVersion}}です。",
     terminalsStayOpen: "更新するとデーモンが再起動します。ターミナルは開いたままです。",
     terminalsClose: "更新するとデーモンが再起動し、開いているターミナルは閉じられます。",
+    desktopUpdateTerminals:
+      "Paseo Desktop を更新すると、macOS と Linux ではターミナルは開いたままですが、Windows では閉じられます。",
     desktopManaged:
       "このデーモンはPaseo Desktopによって管理されています。そのコンピューターでPaseoを更新してください。",
     selfUpdateUnsupported:

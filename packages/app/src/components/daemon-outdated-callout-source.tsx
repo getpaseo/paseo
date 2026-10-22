@@ -173,6 +173,7 @@ export function DaemonOutdatedCalloutSource() {
       variant: descriptor.variant,
       actions,
       testID: descriptor.testID,
+      native: true,
     });
     // t: the resolver reads the active language through i18n, so a language change rebuilds the copy.
   }, [callouts, hostLabel, isConnected, runUpdate, serverId, serverInfo, t, update]);

@@ -22,7 +22,10 @@ import type { CaptureTerminalLinesResult } from "./terminal-capture.js";
 import { connectTerminalWorker, type TerminalWorkerConnection } from "./terminal-worker-client.js";
 import { launchTerminalWorker } from "./terminal-worker-launch.js";
 import { classifyTerminalWorkerProcess } from "./terminal-worker-ownership.js";
-import { createTerminalWorkerProcessInspector } from "./terminal-worker-processes.js";
+import {
+  createTerminalWorkerProcessInspector,
+  type TerminalWorkerProcessInspector,
+} from "./terminal-worker-processes.js";
 import { reapTerminalWorkers } from "./terminal-worker-reaper.js";
 import {
   listTerminalWorkerRecords,
@@ -31,6 +34,7 @@ import {
 } from "./terminal-worker-record.js";
 import {
   createTerminalWorkerPool,
+  NoTerminalWorkerAvailableError,
   TerminalWorkerIncompatibleError,
   type TerminalWorkerPoolMember,
 } from "./terminal-worker-pool.js";
@@ -936,7 +940,8 @@ export interface StartWorkerTerminalManagerOptions {
 }
 
 // The current worker plus one draining a previous protocol. Every live worker counts,
-// incompatible, unreachable and unidentified ones included: the daemon never starts a third.
+// incompatible, unreachable, unidentified and closing ones included: the daemon never starts a
+// third.
 const MAX_TERMINAL_WORKERS = 2;
 const DRAINED_WORKER_EXIT_TIMEOUT_MS = 10_000;
 
@@ -951,7 +956,8 @@ interface LiveWorkerRecord {
  * (restart, crash, `stop --keep-terminals`); one a protocol older is adopted to drain; anything
  * older is shut down, its terminals closed; one from a newer Paseo is left running and the
  * terminal service reports it as incompatible. A worker is launched only when none is current,
- * none is incompatible and fewer than two run. Records that cannot be adopted (a cleanup that
+ * none is incompatible and fewer than two run; when two run, the first terminal created after one
+ * of them exits launches it. Records that cannot be adopted (a cleanup that
  * never finished, a dead worker whose programs survived it) go through the reaper first, so a
  * daemon never adopts terminals someone asked to close.
  */
@@ -963,12 +969,9 @@ export async function startWorkerTerminalManager(
   const log = (message: string, fields?: Record<string, unknown>) => logger.info(fields, message);
   const live: LiveWorkerRecord[] = [];
   const toReap: string[] = [];
-  // Workers that may be alive but cannot be driven or identified; they still count.
-  let uncountedLive = 0;
   for (const file of listTerminalWorkerRecords(options.paseoHome)) {
     if ("error" in file) {
       logger.warn({ recordPath: file.path, err: file.error }, "Unreadable terminal worker record");
-      uncountedLive += 1;
       continue;
     }
     const { record } = file;
@@ -991,7 +994,6 @@ export async function startWorkerTerminalManager(
         { recordPath: file.path, pid: record.pid, reason: worker.reason },
         "Cannot identify terminal worker; leaving its record",
       );
-      uncountedLive += 1;
     } else {
       // Its programs lost their PTY with the worker and cannot be adopted.
       toReap.push(file.path);
@@ -1030,7 +1032,6 @@ export async function startWorkerTerminalManager(
       log,
     }).catch((error: unknown) => {
       logger.warn({ err: error }, "Closing an obsolete terminal worker was not confirmed");
-      uncountedLive += obsolete.length;
     });
   }
 
@@ -1110,7 +1111,6 @@ export async function startWorkerTerminalManager(
         { pid: entry.record.pid, err: error },
         "Cannot reach terminal worker; leaving it running",
       );
-      uncountedLive += 1;
       continue;
     }
     const member = await createMember(entry.record, connection);
@@ -1128,27 +1128,37 @@ export async function startWorkerTerminalManager(
     }
   }
 
-  prune();
-  let noCurrentReason: string | undefined;
-  if (!current) {
-    const running = draining.length + uncountedLive;
+  // Counted from the records rather than from what startup drove: a worker a cleanup could not
+  // confirm gone keeps running, and a draining one exits on its own.
+  const startCurrent = async (): Promise<TerminalWorkerPoolMember> => {
+    const running = await countRunningTerminalWorkers(options.paseoHome, inspector);
     if (running >= MAX_TERMINAL_WORKERS) {
-      noCurrentReason = `${running} terminal workers are already running in ${options.paseoHome}; new terminals can open once one of them closes its last terminal`;
-      logger.warn(noCurrentReason);
-    } else {
-      const launched = await launchTerminalWorker({
-        paseoHome: options.paseoHome,
-        paseoVersion: options.paseoVersion,
-      });
-      const connection = await connectTerminalWorker({
-        socketPath: launched.record.socketPath,
-        secret: launched.record.secret,
-      });
-      logger.info(
-        { pid: launched.record.pid, runtime: launched.record.runtime ?? null },
-        "Launched terminal worker",
+      throw new NoTerminalWorkerAvailableError(
+        `${running} terminal workers are already running in ${options.paseoHome}; new terminals can open once one of them exits`,
       );
-      current = await createMember(launched.record, connection);
+    }
+    const launched = await launchTerminalWorker({
+      paseoHome: options.paseoHome,
+      paseoVersion: options.paseoVersion,
+    });
+    const connection = await connectTerminalWorker({
+      socketPath: launched.record.socketPath,
+      secret: launched.record.secret,
+    });
+    logger.info(
+      { pid: launched.record.pid, runtime: launched.record.runtime ?? null },
+      "Launched terminal worker",
+    );
+    return createMember(launched.record, connection);
+  };
+
+  prune();
+  if (!current) {
+    try {
+      current = await startCurrent();
+    } catch (error) {
+      if (!(error instanceof NoTerminalWorkerAvailableError)) throw error;
+      logger.warn(error.message);
     }
   }
 
@@ -1156,13 +1166,34 @@ export async function startWorkerTerminalManager(
     current,
     draining,
     incompatible: null,
-    ...(noCurrentReason ? { noCurrentReason } : {}),
+    startCurrent,
     closeAll,
     onDrained: (member) => {
       log("Released drained terminal worker", { pid: member.workerPid });
       void pruneAfterExit(member.workerPid);
     },
   });
+}
+
+// Every worker that may still run in this home, one per record: a worker and its cleanup record
+// are listed as one. Unreadable records and workers that cannot be identified count; a worker
+// confirmed gone, or a pid reused by another process, does not.
+async function countRunningTerminalWorkers(
+  paseoHome: string,
+  inspector: TerminalWorkerProcessInspector,
+): Promise<number> {
+  let running = 0;
+  for (const file of listTerminalWorkerRecords(paseoHome)) {
+    if ("error" in file) {
+      running += 1;
+      continue;
+    }
+    const { record } = file;
+    if (!writtenDuringThisBoot({ startedAt: record.createdAt, bootId: record.bootId })) continue;
+    const worker = classifyTerminalWorkerProcess(record, await inspector.inspect(record.pid));
+    if (worker.status === "owned" || worker.status === "unknown") running += 1;
+  }
+  return running;
 }
 
 // A worker deletes its own record as it exits.

@@ -37,7 +37,7 @@ The worker writes `$PASEO_HOME/terminal-worker/<pid>.json` (owner-only) with its
 | two or more older                  | shuts it down; its terminals close (logged)                                                                                                                 |
 | newer, or a version it cannot read | leaves it running, undriven; `list_terminals` and `create_terminal` answer `rpc_error` `terminal_worker_incompatible`, and `paseo daemon status` prints why |
 
-Never more than two workers run. A new worker launches only when none is current, none is incompatible and fewer than two run; an unreachable or unidentified worker counts.
+Never more than two workers run. A new worker launches only when none is current, none is incompatible and fewer than two run. The count comes from the records, so an unreachable or unidentified worker counts, and so does one a cleanup could not confirm gone. When two run, the daemon starts with no current worker, and the first terminal created after one of them exits launches it.
 
 **The frozen envelope never changes across versions:** the frame format (4-byte length + `v8.serialize`), `hello`/`helloAck`, the `listTerminals` info fields and `shutdown`. That is what lets any daemon close any worker: a kill stop sends `shutdown` to a newer worker it cannot otherwise drive. When you bump the version, keep a previous-version adapter so the draining worker can still be driven, and drop the adapter for the version before that.
 

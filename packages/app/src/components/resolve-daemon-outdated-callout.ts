@@ -91,6 +91,15 @@ function formatVersion(version: ParsedVersion): string {
   return version.prerelease.length > 0 ? `${core}-${version.prerelease.join(".")}` : core;
 }
 
+// A daemon that keeps terminals across restarts does not keep them across a Paseo Desktop update
+// on Windows, which closes them. server_info does not name the host's platform, so the line says
+// both.
+function resolveTerminalsLine(input: ResolveDaemonOutdatedCalloutInput): string {
+  if (!input.terminalsSurviveRestart) return i18n.t("daemonOutdated.terminalsClose");
+  if (input.desktopManaged) return i18n.t("daemonOutdated.desktopUpdateTerminals");
+  return i18n.t("daemonOutdated.terminalsStayOpen");
+}
+
 function resolveDescription(
   input: ResolveDaemonOutdatedCalloutInput,
   versions: { daemon: ParsedVersion; app: ParsedVersion },
@@ -109,11 +118,7 @@ function resolveDescription(
   } else if (!input.supportsSelfUpdate) {
     lines.push(i18n.t("daemonOutdated.selfUpdateUnsupported"));
   }
-  lines.push(
-    input.terminalsSurviveRestart
-      ? i18n.t("daemonOutdated.terminalsStayOpen")
-      : i18n.t("daemonOutdated.terminalsClose"),
-  );
+  lines.push(resolveTerminalsLine(input));
   return lines;
 }
 

@@ -46,7 +46,12 @@ import {
   type TerminalWorkerRecord,
 } from "./terminal-worker-record.js";
 import { TERMINAL_WORKER_PROTOCOL_OVERRIDE_ENV } from "./terminal-worker-protocol.js";
-import { TerminalWorkerIncompatibleError } from "./terminal-worker-pool.js";
+import {
+  NoTerminalWorkerAvailableError,
+  TerminalWorkerIncompatibleError,
+} from "./terminal-worker-pool.js";
+import { connectTerminalWorker } from "./terminal-worker-client.js";
+import { launchTerminalWorker } from "./terminal-worker-launch.js";
 
 type TerminalRow = TerminalState["grid"][number];
 
@@ -1427,4 +1432,133 @@ it("leaves a worker from a newer Paseo running, reports it incompatible, and clo
   expect(isProcessAlive(newer.workerPid)).toBe(false);
   expect(isProcessAlive(newer.programPid)).toBe(false);
   expect(workerRecords(paseoHome)).toEqual([]);
+});
+
+// A worker launched on its own, as two daemons that each started one would leave it: running an
+// idle program in a terminal, with no daemon attached.
+async function launchDetachedWorkerWithTerminal(
+  paseoHome: string,
+  protocolVersion?: number,
+): Promise<{ terminalId: string; workerPid: number; cwd: string }> {
+  const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-detached-"));
+  temporaryDirs.push(cwd);
+  const previous = process.env[TERMINAL_WORKER_PROTOCOL_OVERRIDE_ENV];
+  if (protocolVersion !== undefined) {
+    process.env[TERMINAL_WORKER_PROTOCOL_OVERRIDE_ENV] = String(protocolVersion);
+  }
+  let launched: Awaited<ReturnType<typeof launchTerminalWorker>>;
+  try {
+    launched = await launchTerminalWorker({ paseoHome, paseoVersion: "0.0.0-test" });
+  } finally {
+    if (previous === undefined) delete process.env[TERMINAL_WORKER_PROTOCOL_OVERRIDE_ENV];
+    else process.env[TERMINAL_WORKER_PROTOCOL_OVERRIDE_ENV] = previous;
+  }
+  const worker = createWorkerTerminalManager({
+    worker: await connectTerminalWorker({
+      socketPath: launched.record.socketPath,
+      secret: launched.record.secret,
+    }),
+  });
+  const session = await worker.createTerminal({
+    workspaceId: "ws-detached",
+    cwd,
+    ...nodeTerminalCommand("setInterval(() => {}, 1000);"),
+  });
+  await worker.detach();
+  return { terminalId: session.id, workerPid: launched.record.pid, cwd };
+}
+
+// Worker pids alive in a home, from every record, closing ones included.
+function liveWorkerPids(paseoHome: string): number[] {
+  return listTerminalWorkerRecords(paseoHome)
+    .flatMap((file) => ("record" in file ? [file.record.pid] : []))
+    .filter(isProcessAlive)
+    .sort();
+}
+
+it.skipIf(isPlatform("win32"))(
+  "counts live workers whose cleanup could not be confirmed and never starts a third",
+  async () => {
+    const paseoHome = createTemporaryHome();
+    const first = await launchDetachedWorkerWithTerminal(paseoHome);
+    const second = await launchDetachedWorkerWithTerminal(paseoHome);
+    // A kill cleanup that cannot read the process table signals nothing: both workers keep
+    // running with their records marked closing.
+    const inspector = createTerminalWorkerProcessInspector();
+    await expect(
+      reapTerminalWorkers({
+        paseoHome,
+        gracefulMs: 0,
+        inspector: { ...inspector, listProcesses: () => Promise.reject(new Error("ps timed out")) },
+      }),
+    ).rejects.toBeInstanceOf(TerminalCleanupNotConfirmedError);
+    expect(readUnconfirmedTerminalCleanup(paseoHome).map((entry) => entry.role)).toContain(
+      "worker",
+    );
+
+    // The daemon's own retry fails the same way: only the full process table is unreadable.
+    const realPs = (process.env.PATH ?? "")
+      .split(delimiter)
+      .map((dir) => join(dir, "ps"))
+      .find((candidate) => existsSync(candidate));
+    if (!realPs) throw new Error("ps not found on PATH");
+    const shimDir = createTemporaryHome();
+    writeFileSync(
+      join(shimDir, "ps"),
+      `#!/bin/sh\nif [ "$1" = "-A" ]; then echo "process table unavailable" >&2; exit 1; fi\nexec ${realPs} "$@"\n`,
+      { mode: 0o755 },
+    );
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${shimDir}${delimiter}${originalPath ?? ""}`;
+    try {
+      manager = await startRealWorkerManager({ paseoHome });
+    } finally {
+      process.env.PATH = originalPath;
+    }
+
+    expect(liveWorkerPids(paseoHome)).toEqual([first.workerPid, second.workerPid].sort());
+    await expect(
+      manager.createTerminal({ workspaceId: "ws-detached", cwd: first.cwd }),
+    ).rejects.toThrow("2 terminal workers are already running");
+    expect(liveWorkerPids(paseoHome)).toEqual([first.workerPid, second.workerPid].sort());
+  },
+);
+
+it("opens new terminals in a new worker once one of two draining workers exits", async () => {
+  const paseoHome = createTemporaryHome();
+  const first = await launchDetachedWorkerWithTerminal(paseoHome, 0);
+  const second = await launchDetachedWorkerWithTerminal(paseoHome, 0);
+
+  manager = await startRealWorkerManager({ paseoHome });
+
+  expect(liveWorkerPids(paseoHome)).toEqual([first.workerPid, second.workerPid].sort());
+  await expect(
+    manager.createTerminal({ workspaceId: "ws-detached", cwd: first.cwd }),
+  ).rejects.toBeInstanceOf(NoTerminalWorkerAvailableError);
+
+  await manager.killTerminalAndWait(first.terminalId);
+  await waitForCondition(() => !isProcessAlive(first.workerPid), 10000);
+
+  // Concurrent creates start one worker between them.
+  const created = await Promise.all(
+    [0, 1].map(() =>
+      manager!.createTerminal({
+        workspaceId: "ws-detached",
+        cwd: first.cwd,
+        ...nodeTerminalCommand("setInterval(() => {}, 1000);"),
+      }),
+    ),
+  );
+  created.forEach(trackTerminal);
+  const workers = workerRecords(paseoHome);
+  expect(workers.map((record) => record.pid).sort()).toEqual(liveWorkerPids(paseoHome));
+  expect(workers).toHaveLength(2);
+  const started = workers.find((record) => record.pid !== second.workerPid)!;
+  expect(started.protocolVersion).toBe(1);
+  expect(
+    readTerminalWorkerRecord(join(terminalWorkerDirectory(paseoHome), `${started.pid}.json`))
+      .terminals.map((entry) => entry.id)
+      .sort(),
+  ).toEqual(created.map((session) => session.id).sort());
+  expect(manager.getTerminal(second.terminalId)).toBeDefined();
 });

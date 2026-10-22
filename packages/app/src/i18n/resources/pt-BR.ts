@@ -2069,6 +2069,8 @@ export const ptBR: TranslationResources = {
     versions: "{{host}} executa o daemon {{daemonVersion}}. Este app é {{appVersion}}.",
     terminalsStayOpen: "Atualizar reinicia o daemon. Os terminais continuam abertos.",
     terminalsClose: "Atualizar reinicia o daemon e fecha os terminais abertos.",
+    desktopUpdateTerminals:
+      "Atualizar o Paseo Desktop mantém os terminais abertos no macOS e no Linux, e os fecha no Windows.",
     desktopManaged: "O Paseo Desktop gerencia este daemon. Atualize o Paseo nesse computador.",
     selfUpdateUnsupported:
       "Este daemon não consegue se atualizar sozinho. Atualize o Paseo nesse computador.",

@@ -2083,6 +2083,8 @@ export const fr: TranslationResources = {
     versions: "{{host}} exécute le daemon {{daemonVersion}}. Cette app est en {{appVersion}}.",
     terminalsStayOpen: "La mise à jour redémarre le daemon. Les terminaux restent ouverts.",
     terminalsClose: "La mise à jour redémarre le daemon et ferme les terminaux ouverts.",
+    desktopUpdateTerminals:
+      "La mise à jour de Paseo Desktop garde les terminaux ouverts sur macOS et Linux, et les ferme sur Windows.",
     desktopManaged: "Paseo Desktop gère ce daemon. Mettez à jour Paseo sur cet ordinateur.",
     selfUpdateUnsupported:
       "Ce daemon ne peut pas se mettre à jour lui-même. Mettez à jour Paseo sur cet ordinateur.",

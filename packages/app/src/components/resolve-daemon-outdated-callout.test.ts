@@ -92,8 +92,29 @@ describe("resolveDaemonOutdatedCallout", () => {
     expect(descriptor?.description).toEqual([
       "Workstation runs daemon v0.11.4. This app is v0.12.0.",
       "Paseo Desktop manages this daemon. Update Paseo on that computer.",
-      "Updating restarts the daemon. Terminals stay open.",
+      "Updating Paseo Desktop keeps terminals open on macOS and Linux, and closes them on Windows.",
     ]);
+  });
+
+  it("never promises terminals survive a desktop update, which closes them on Windows", () => {
+    const descriptor = resolveDaemonOutdatedCallout(
+      input({ desktopManaged: true, terminalsSurviveRestart: true }),
+    );
+
+    expect(descriptor?.description).not.toContain(
+      "Updating restarts the daemon. Terminals stay open.",
+    );
+    expect(descriptor?.description.at(-1)).toContain("closes them on Windows");
+  });
+
+  it("says a desktop update closes terminals when the daemon does not keep them", () => {
+    const descriptor = resolveDaemonOutdatedCallout(
+      input({ desktopManaged: true, terminalsSurviveRestart: false }),
+    );
+
+    expect(descriptor?.description.at(-1)).toBe(
+      "Updating restarts the daemon and closes open terminals.",
+    );
   });
 
   it("offers no button when the daemon does not support self-update", () => {

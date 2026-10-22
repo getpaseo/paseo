@@ -11,7 +11,9 @@ import type { DaemonTerminalManager } from "./worker-terminal-manager.js";
 
 // The daemon's terminal service over up to two terminal workers: the current one, which takes
 // every new terminal, and one draining a previous worker protocol, which keeps serving the
-// terminals it already runs and is let go once its last one exits. A worker from a newer Paseo
+// terminals it already runs and is let go once its last one exits. With no current worker (two
+// were already running), the first terminal created after one exits starts one. A worker from a
+// newer Paseo
 // is not driven at all: the service then refuses terminal requests with
 // TerminalWorkerIncompatibleError instead of serving a partial view.
 
@@ -47,8 +49,11 @@ export interface TerminalWorkerPoolOptions {
   draining: TerminalWorkerPoolMember[];
   /** Set when a worker from a newer Paseo holds this home's terminals. */
   incompatible: TerminalWorkerIncompatibleError | null;
-  /** Why there is no current worker, when there is none and nothing is incompatible. */
-  noCurrentReason?: string;
+  /**
+   * Starts a current worker when there is none. Throws NoTerminalWorkerAvailableError, saying
+   * why, while no worker may start.
+   */
+  startCurrent?: () => Promise<TerminalWorkerPoolMember>;
   /** Closes every terminal of every worker in the home and verifies they ended. */
   closeAll: () => Promise<void>;
   /** A draining worker's last terminal exited and the pool let it go. */
@@ -58,12 +63,17 @@ export interface TerminalWorkerPoolOptions {
 export function createTerminalWorkerPool(
   options: TerminalWorkerPoolOptions,
 ): DaemonTerminalManager {
-  const current = options.current;
+  let current = options.current;
   const draining = new Set(options.draining);
   const terminalsChangedListeners = new Set<TerminalsChangedListener>();
   const terminalActivityListeners = new Set<TerminalActivityListener>();
   const contributionListeners = new Set<TerminalWorkspaceContributionChangedListener>();
   let closePromise: Promise<void> | null = null;
+  let detached = false;
+  // One start at a time, so concurrent creates never launch two workers.
+  let starting: Promise<TerminalWorkerPoolMember> | null = null;
+  // Registered while no worker takes new terminals; handed to the one that starts.
+  const pendingCwdEnv = new Map<string, Record<string, string>>();
 
   function members(): TerminalWorkerPoolMember[] {
     return [...(current ? [current] : []), ...draining];
@@ -99,7 +109,7 @@ export function createTerminalWorkerPool(
       .then(() => options.onDrained?.(member));
   }
 
-  for (const member of members()) {
+  function forwardEvents(member: TerminalWorkerPoolMember): void {
     member.manager.subscribeTerminalsChanged((event) => {
       for (const listener of Array.from(terminalsChangedListeners)) listener(event);
       releaseIfDrained(member);
@@ -111,10 +121,40 @@ export function createTerminalWorkerPool(
       for (const listener of Array.from(contributionListeners)) listener(event);
     });
   }
+
+  for (const member of members()) forwardEvents(member);
   for (const member of Array.from(draining)) releaseIfDrained(member);
+
+  function currentManager(): Promise<DaemonTerminalManager> {
+    if (current) return Promise.resolve(current.manager);
+    const startCurrent = options.startCurrent;
+    if (!startCurrent || closePromise || detached) {
+      return Promise.reject(
+        new NoTerminalWorkerAvailableError("No terminal worker can take new terminals"),
+      );
+    }
+    starting ??= startCurrent()
+      .then(async (member) => {
+        if (closePromise || detached) {
+          // The service closed or let go while the worker started: it takes no terminals.
+          await member.manager.detach();
+          throw new NoTerminalWorkerAvailableError("No terminal worker can take new terminals");
+        }
+        forwardEvents(member);
+        for (const [cwd, env] of pendingCwdEnv) member.manager.registerCwdEnv({ cwd, env });
+        pendingCwdEnv.clear();
+        current = member;
+        return member;
+      })
+      .finally(() => {
+        starting = null;
+      });
+    return starting.then((member) => member.manager);
+  }
 
   function closeTerminals(): Promise<void> {
     closePromise ??= (async () => {
+      await starting?.catch(() => {});
       await Promise.all(members().map((member) => member.manager.detach()));
       draining.clear();
       await options.closeAll();
@@ -139,16 +179,13 @@ export function createTerminalWorkerPool(
       createOptions: WorkerCreateTerminalOptions & { workspaceId: string },
     ): Promise<TerminalSession> {
       assertAvailable();
-      if (!current) {
-        throw new NoTerminalWorkerAvailableError(
-          options.noCurrentReason ?? "No terminal worker can take new terminals",
-        );
-      }
-      return current.manager.createTerminal(createOptions);
+      const manager = await currentManager();
+      return manager.createTerminal(createOptions);
     },
 
     registerCwdEnv(registration) {
-      current?.manager.registerCwdEnv(registration);
+      if (current) current.manager.registerCwdEnv(registration);
+      else pendingCwdEnv.set(registration.cwd, registration.env);
     },
 
     validateTerminalActivityToken(terminalId, token) {
@@ -208,6 +245,8 @@ export function createTerminalWorkerPool(
     closeTerminals,
 
     async detach() {
+      detached = true;
+      await starting?.catch(() => {});
       await Promise.all(members().map((member) => member.manager.detach()));
     },
 
