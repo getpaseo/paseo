@@ -1,5 +1,4 @@
 import { getDesktopHost } from "@/desktop/host";
-import { ensureOsNotificationPermission } from "@/utils/os-notifications";
 import { createNotificationOpenSource as createWebSource } from "./source.web";
 import type { NotificationOpenSource } from "./source";
 
@@ -10,7 +9,6 @@ export function createNotificationOpenSource(): NotificationOpenSource {
     ...web,
     subscribe(onTap) {
       const stopWeb = web.subscribe(onTap);
-      void ensureOsNotificationPermission();
       let disposed = false;
       let stopDesktop: (() => void) | undefined;
       const subscription = getDesktopHost()?.events?.on?.(

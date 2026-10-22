@@ -126,7 +126,8 @@ import {
   parseServerIdFromPathname,
 } from "@/utils/host-routes";
 import { PluginCatalogSync } from "@/plugins";
-import { NotificationOpenRouter } from "@/notification-open";
+import { NotificationOpenRouter } from "@/notification-open/react";
+import { ensureOsNotificationPermission } from "@/utils/os-notifications";
 
 polyfillCrypto();
 
@@ -824,6 +825,9 @@ function WorkspaceRouteNavigationBridge() {
 }
 
 function AppShell() {
+  useEffect(() => {
+    if (getDesktopHost()) void ensureOsNotificationPermission();
+  }, []);
   return (
     <MobilePanelsProvider>
       <HorizontalScrollProvider>

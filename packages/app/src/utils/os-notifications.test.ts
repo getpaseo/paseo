@@ -1,4 +1,4 @@
-import { WEB_NOTIFICATION_CLICK_EVENT } from "@/notification-open/model";
+import { WEB_NOTIFICATION_CLICK_EVENT } from "@/notification-open";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 interface MockNotificationOptions {

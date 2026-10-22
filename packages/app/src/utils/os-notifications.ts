@@ -1,9 +1,6 @@
 import { Asset } from "expo-asset";
 import { getDesktopHost } from "@/desktop/host";
-import {
-  parseNotificationOpenTarget,
-  WEB_NOTIFICATION_CLICK_EVENT,
-} from "@/notification-open/model";
+import { parseNotificationOpenTarget, WEB_NOTIFICATION_CLICK_EVENT } from "@/notification-open";
 import { isNative } from "@/constants/platform";
 
 interface OsNotificationPayload {

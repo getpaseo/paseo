@@ -6,8 +6,8 @@ import {
   useIsLastWorkspaceSelectionHydrated,
 } from "@/stores/navigation-active-workspace-store";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
-import { createNotificationOpenRouter } from "./model";
-import { createNotificationOpenSource } from "./source";
+import { createNotificationOpenRouter } from "../model";
+import { createNotificationOpenSource } from "../source";
 
 let ready = false;
 const waiters = new Set<() => void>();

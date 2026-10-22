@@ -3,6 +3,8 @@
 Use `notification-open` for OS notification taps. It owns delivery, parsing,
 process-local deduplication, startup readiness, and native acknowledgement.
 Keep agent and workspace navigation in their existing navigation modules.
+Import the pure API from `@/notification-open` and the app-shell component from
+`@/notification-open/react`; senders must not load the React routing runtime.
 
 Agent payloads name a host and agent. Ignore their workspace hint when opening:
 the agent can move after a notification is sent. Use `navigateToAgent`, which
@@ -58,7 +60,7 @@ redirects before handing off a tap. A compact agent route must demand the host's
 directory itself; its sidebar can be closed for the entire cold launch.
 
 Verify warm and cold taps, stale and missing workspace hints, two distinct taps,
-and Android Back followed by launcher reopen. Check the focused tab and every
+and Android Back followed by launcher reopen or a different notification tap. Check the focused tab and every
 workspace's saved layout, since a foreign pinned tab survives navigation.
 Use the daemon's payload shape on both iOS and Android; a browser event alone
 does not test native replay or acknowledgement.

@@ -56,15 +56,11 @@ describe("notification open", () => {
     expect(parseNotificationOpenTarget(data)).toEqual(expected);
   });
 
-  it("consumes launch once across remounts, dedupes listener replay, acknowledges after dispatch", async () => {
+  function setup(whenReadyToNavigate = () => Promise.resolve()) {
     const source = new FakeSource(launch);
     const agents: unknown[] = [];
     const routes: string[] = [];
     const terminals: unknown[] = [];
-    let ready = () => {};
-    const readiness = new Promise<void>((resolve) => {
-      ready = resolve;
-    });
     const router = createNotificationOpenRouter({
       source,
       openAgent: (target) => {
@@ -76,38 +72,79 @@ describe("notification open", () => {
       openRoute: (route) => {
         routes.push(route);
       },
-      whenReadyToNavigate: () => readiness,
+      whenReadyToNavigate,
     });
+    return { source, agents, routes, terminals, router };
+  }
+
+  it("takes the launch tap once across remounts", async () => {
+    const { source, agents, router } = setup();
+    router.start()();
     const stop = router.start();
+    await flush();
+    expect(source.launchReads).toBe(1);
+    expect(agents).toEqual([{ serverId: "host", agentId: "agent" }]);
+    stop();
+  });
+
+  it("ignores listener replay of the launch tap after remount", async () => {
+    const { source, agents, router } = setup();
+    const stop = router.start();
+    await flush();
+    stop();
+    const stopAgain = router.start();
     source.tap(launch);
+    await flush();
+    expect(agents).toEqual([{ serverId: "host", agentId: "agent" }]);
+    expect(source.acknowledged).toEqual(["one"]);
+    stopAgain();
+  });
+
+  it("waits for readiness before dispatch and acknowledgement", async () => {
+    let ready = () => {};
+    const readiness = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+    const { source, agents, router } = setup(() => readiness);
+    const stop = router.start();
     await flush();
     expect(agents).toEqual([]);
     expect(source.acknowledged).toEqual([]);
-    stop();
-    const stopAgain = router.start();
     ready();
     await flush();
     expect(agents).toEqual([{ serverId: "host", agentId: "agent" }]);
-    expect(source.launchReads).toBe(1);
     expect(source.acknowledged).toEqual(["one"]);
-    source.tap(launch);
+    stop();
+  });
+
+  it("acknowledges each distinct tap including invalid targets", async () => {
+    const { source, agents, router } = setup();
+    const stop = router.start();
+    await flush();
     source.tap({ id: "two", data: { serverId: "host", agentId: "second" } });
     source.tap({ id: "invalid", data: undefined });
+    await flush();
+    expect(agents).toEqual([
+      { serverId: "host", agentId: "agent" },
+      { serverId: "host", agentId: "second" },
+    ]);
+    expect(source.acknowledged).toEqual(["one", "two", "invalid"]);
+    stop();
+  });
+
+  it("dispatches terminals and hosts through their navigation capabilities", async () => {
+    const { source, routes, terminals, router } = setup();
+    const stop = router.start();
     source.tap({
       id: "terminal",
       data: { serverId: "host", workspaceId: "ws", terminalId: "term" },
     });
     source.tap({ id: "host", data: { serverId: "host" } });
     await flush();
-    expect(agents).toEqual([
-      { serverId: "host", agentId: "agent" },
-      { serverId: "host", agentId: "second" },
-    ]);
     expect(routes).toEqual(["/h/host"]);
     expect(terminals).toEqual([
       { kind: "terminal", serverId: "host", workspaceId: "ws", terminalId: "term" },
     ]);
-    expect(source.acknowledged).toEqual(["one", "two", "invalid", "terminal", "host"]);
-    stopAgain();
+    stop();
   });
 });
