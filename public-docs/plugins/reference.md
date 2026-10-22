@@ -2192,8 +2192,10 @@ review.remove();
 ```
 
 Omit `label` for an icon-only header button. Menus and popovers show a chevron on wide layouts.
-Compact header buttons use icons without labels or chevrons. Paseo moves excess contributions
-into a shared overflow menu. Placement and overflow are host decisions.
+Paseo moves excess contributions into a shared overflow menu. On phones and narrow windows the
+header has no room for plugin buttons, so each one is a row of the workspace menu (`···`), with its
+icon and title; its menus and popovers open as pages of that sheet. Placement and overflow are host
+decisions.
 
 ## Composer pills
 

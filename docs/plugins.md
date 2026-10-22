@@ -587,11 +587,14 @@ the author API, selection, `DocumentFrame`, and the version requirement. The exa
 Header buttons and composer pills share the client-only descriptor and registration lifecycle in
 `packages/app/src/plugins/buttons/`. The [public button reference](../public-docs/plugins/reference.md#header-buttons)
 owns the author API and placement rules. Keep presentation policy in this module so another
-placement can reuse behavior without copying registration or action state.
+placement can reuse behavior without copying registration or action state. The header overflow
+and the compact workspace menu share one builder that turns buttons into menu rows and pages; the
+workspace menu reaches it through `usePluginWorkspaceMenu`.
 
 Native sheets teleport their children. Button surfaces rebuild the installation's SDK, state,
-query, and toast providers inside the surface content, including overflow pages from different
-plugins. Providers only around the trigger do not reach those bodies.
+query, and toast providers inside the surface content. A host menu can hold buttons from several
+installations, so each of its rows and pages resolves its own installation's runtime. Providers
+only around the trigger do not reach those bodies.
 
 Request observation with `client.paseo.agents.list({ subscribe: {} })` and consume the returned
 `subscription` handle. Plain `list()` and agent/workspace directory `.subscribe(handler)` listeners create no daemon
