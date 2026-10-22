@@ -1,5 +1,8 @@
 import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   Options,
   Query,
@@ -10,6 +13,9 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import * as spawnUtils from "../../../../utils/spawn.js";
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
+import { AgentManager } from "../../agent-manager.js";
+import { AgentStorage } from "../../agent-storage.js";
+import { ensureAgentLoaded } from "../../agent-loading.js";
 import { ClaudeAgentClient } from "./agent.js";
 import type { ClaudeQueryInput } from "./query.js";
 
@@ -44,6 +50,7 @@ function createQueryMock(events: unknown[], options: QueryMockOptions = {}): Que
     close: vi.fn(() => undefined),
     setPermissionMode: vi.fn(async () => undefined),
     setModel: vi.fn(async () => undefined),
+    applyFlagSettings: vi.fn(async () => undefined),
     supportedModels: vi.fn(async () => [{ value: "opus", displayName: "Opus" }]),
     supportedCommands: vi.fn(async () => []),
     rewindFiles: vi.fn(async () => ({ canRewind: true })),
@@ -362,6 +369,77 @@ describe("Claude runtime exit", () => {
       await session.close();
     }
   });
+
+  test.each(["reload", "restart"])(
+    "starts fresh after a missing conversation and manager %s before retry",
+    async (recovery) => {
+      const workdir = mkdtempSync(join(tmpdir(), "claude-missing-resume-"));
+      const logger = createTestLogger();
+      const storagePath = join(workdir, "agents");
+      const bindings: Pick<Options, "resume" | "sessionId">[] = [];
+      const client = new ClaudeAgentClient({
+        logger,
+        runtimeSettings: {
+          command: { mode: "replace", argv: [process.execPath] },
+          env: { CLAUDE_CONFIG_DIR: join(workdir, "claude") },
+        },
+        resolveBinary: async () => "/test/claude/bin",
+        queryFactory: ({ options }) => {
+          bindings.push({ resume: options.resume, sessionId: options.sessionId });
+          if (options.resume === "claude-runtime-exit-session") {
+            return createQueryMock([MISSING_RESUMED_CONVERSATION_RESULT]);
+          }
+          return createQueryMock([
+            { ...COMPLETED_TURN_EVENTS[0], session_id: "claude-recovered-session" },
+            ...COMPLETED_TURN_EVENTS.slice(1),
+          ]);
+        },
+      });
+      let manager = new AgentManager({
+        clients: { claude: client },
+        registry: new AgentStorage(storagePath, logger),
+        logger,
+      });
+      const agent = await manager.resumeAgentFromPersistence({
+        provider: "claude",
+        sessionId: "claude-runtime-exit-session",
+        metadata: { cwd: workdir },
+      });
+
+      try {
+        await expect(manager.runAgent(agent.id, "resume the first turn")).rejects.toThrow(
+          "No conversation found with session ID: claude-runtime-exit-session",
+        );
+        if (recovery === "reload") {
+          await manager.reloadAgentSession(agent.id);
+        } else {
+          await manager.closeAgent(agent.id);
+          await manager.flush();
+          const storage = new AgentStorage(storagePath, logger);
+          manager = new AgentManager({ clients: { claude: client }, registry: storage, logger });
+          await ensureAgentLoaded(agent.id, {
+            agentManager: manager,
+            agentStorage: storage,
+            logger,
+          });
+        }
+
+        const { sessionId, finalText } = await manager.runAgent(agent.id, "try again");
+        expect({ sessionId, finalText }).toEqual({
+          sessionId: "claude-recovered-session",
+          finalText: "SPAWNED",
+        });
+        expect(bindings).toEqual([
+          { resume: "claude-runtime-exit-session", sessionId: undefined },
+          { resume: undefined, sessionId: undefined },
+        ]);
+      } finally {
+        await manager.closeAgent(agent.id);
+        await manager.flush();
+        rmSync(workdir, { recursive: true, force: true });
+      }
+    },
+  );
 
   test("leaves a mid-turn crash to the query pump", async () => {
     let rejectStream: ((error: Error) => void) | undefined;

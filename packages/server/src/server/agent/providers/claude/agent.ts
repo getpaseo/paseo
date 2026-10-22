@@ -4468,6 +4468,12 @@ class ClaudeAgentSession implements AgentSession {
     this.historyPending = false;
     this.cachedRuntimeInfo = null;
     this.queryRestartNeeded = false;
+    // Invalidate the manager's durable handle before reporting the failed turn.
+    this.pushEvent({
+      type: "model_changed",
+      provider: "claude",
+      runtimeInfo: await this.getRuntimeInfo(),
+    });
     this.failActiveTurns(staleResumeError);
     this.autonomousTurn = null;
     this.activeForegroundTurnId = null;
