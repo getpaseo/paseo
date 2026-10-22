@@ -1,3 +1,5 @@
+import type { AgentAddress } from "@getpaseo/protocol/addresses";
+import { useHosts } from "@/runtime/host-runtime";
 import { useCallback, useMemo, type ReactElement, type ReactNode } from "react";
 import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
@@ -35,17 +37,17 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
 export interface SubagentsTrackProps {
   serverId: string;
   rows: SubagentRow[];
-  onOpenSubagent: (id: string) => void;
+  onOpenSubagent: (address: AgentAddress) => void;
   onOpenProviderSubagent: (parentAgentId: string, subagentId: string) => void;
   /**
    * Whether opening this row shows it in a sheet. A sheet stacks over the list and uncovers it on
    * close, so the list stays open; a tab replaces the list's pane, so choosing it ends the list.
    */
   opensInSheet: (row: SubagentRow) => boolean;
-  onArchiveSubagent: (id: string) => void;
+  onArchiveSubagent: (address: AgentAddress) => void;
   onArchiveFinished?: () => void;
   archiveFinishedStatus?: ArchiveFinishedStatus;
-  onDetachSubagent?: (id: string) => void;
+  onDetachSubagent?: (address: AgentAddress) => void;
 }
 
 const IDLE_ARCHIVE_FINISHED_STATUS: ArchiveFinishedStatus = { kind: "idle" };
@@ -105,7 +107,7 @@ export function SubagentsTrack({
       ) : null}
       {rows.map((row) => (
         <SubagentsTrackRow
-          key={row.id}
+          key={row.kind === "paseo" ? `${row.address.serverId}:${row.id}` : row.id}
           row={row}
           serverId={serverId}
           onOpenSubagent={onOpenSubagent}
@@ -180,11 +182,11 @@ function ArchiveFinishedRow({
 interface SubagentsTrackRowProps {
   serverId: string;
   row: SubagentRow;
-  onOpenSubagent: (id: string) => void;
+  onOpenSubagent: (address: AgentAddress) => void;
   onOpenProviderSubagent: (parentAgentId: string, subagentId: string) => void;
   opensInSheet: boolean;
-  onArchiveSubagent: (id: string) => void;
-  onDetachSubagent?: (id: string) => void;
+  onArchiveSubagent: (address: AgentAddress) => void;
+  onDetachSubagent?: (address: AgentAddress) => void;
 }
 
 function SubagentsTrackRow({
@@ -198,22 +200,24 @@ function SubagentsTrackRow({
 }: SubagentsTrackRowProps): ReactElement {
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
-  const presentation = useRowPresentation(row, serverId);
+  const rowServerId = row.kind === "paseo" ? row.address.serverId : serverId;
+  const hostLabel = useHosts().find((host) => host.serverId === rowServerId)?.label ?? rowServerId;
+  const presentation = useRowPresentation(row, rowServerId);
   const displayLabel =
     presentation.titleState === "loading" ? t("common.states.loading") : presentation.label;
   const handlePress = useCallback(() => {
     if (row.kind === "provider") {
       onOpenProviderSubagent(row.parentAgentId, row.id);
     } else {
-      onOpenSubagent(row.id);
+      onOpenSubagent(row.address);
     }
   }, [onOpenProviderSubagent, onOpenSubagent, row]);
   const handleArchivePress = useCallback(() => {
-    onArchiveSubagent(row.id);
-  }, [onArchiveSubagent, row.id]);
+    if (row.kind === "paseo") onArchiveSubagent(row.address);
+  }, [onArchiveSubagent, row]);
   const handleDetachPress = useCallback(() => {
-    onDetachSubagent?.(row.id);
-  }, [onDetachSubagent, row.id]);
+    if (row.kind === "paseo") onDetachSubagent?.(row.address);
+  }, [onDetachSubagent, row]);
   const actionsAlwaysVisible = isNative || isCompact;
 
   const renderRow = useCallback(
@@ -225,7 +229,10 @@ function SubagentsTrackRow({
             {displayLabel}
           </Text>
           {row.kind === "paseo" ? (
-            <PaseoSubagentFacts serverId={serverId} agentId={row.id} />
+            <>
+              <SubagentFacts rowId={row.id} text={rowServerId !== serverId ? hostLabel : ""} />
+              <PaseoSubagentFacts serverId={rowServerId} agentId={row.id} />
+            </>
           ) : (
             <SubagentFacts rowId={row.id} text={presentation.subtitle} />
           )}
@@ -253,6 +260,8 @@ function SubagentsTrackRow({
       row.kind,
       row.id,
       serverId,
+      rowServerId,
+      hostLabel,
     ],
   );
 

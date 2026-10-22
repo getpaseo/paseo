@@ -187,7 +187,13 @@
       "publishedAt": "2026-09-19T00:00:00.000Z",
       "updatedAt": "2026-09-19T00:00:00.000Z",
       "installs": 0,
-      "readme": "# Herald\n\n## Behavior\n\nPaseo plugin: speaks one sentence when an agent needs you, and lists everything waiting in a sidebar panel"
+      "readme": "# Herald\n\n## Behavior\n\nPaseo plugin: speaks one sentence when an agent needs you, and lists everything waiting in a sidebar panel",
+      "translations": {
+        "zh-CN": {
+          "name": "传令官",
+          "description": "Paseo 插件：当 Agent 需要你时朗读一句话，并在侧边栏列出所有等待中的事项"
+        }
+      }
     },
     {
       "id": "gpambrozio/launchd-jobs",
@@ -413,7 +419,15 @@
       "publishedAt": "2026-09-17T00:00:00.000Z",
       "updatedAt": "2026-09-17T00:00:00.000Z",
       "installs": 0,
-      "readme": "# Dracula\n\n## Behavior\n\nDracula Classic and Alucard Classic themes for Paseo."
+      "readme": "# Dracula\n\n## Behavior\n\nDracula Classic and Alucard Classic themes for Paseo.",
+      "translations": {
+        "zh-CN": {
+          "description": "适用于 Paseo 的 Dracula Classic 和 Alucard Classic 深色主题。"
+        }
+      },
+      "overviewTranslations": {
+        "zh-CN": "# Dracula\n\n## 行为\n\n适用于 Paseo 的 Dracula Classic 和 Alucard Classic 主题。"
+      }
     },
     {
       "id": "omercnet/fresh-worktrees",

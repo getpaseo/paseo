@@ -415,11 +415,10 @@ export function WorkspaceDraftAgentTab({
       openWorkspaceChanges({
         isCompact: isCompactFormFactor,
         workspaceKey: buildWorkspaceTabPersistenceKey({ serverId, workspaceId: workspaceId ?? "" }),
-        checkout: { serverId, cwd: composerState.workingDir, isGit: true },
         preferences: openInSidePane,
       });
     },
-    [composerState.workingDir, isCompactFormFactor, openInSidePane, serverId, workspaceId],
+    [isCompactFormFactor, openInSidePane, serverId, workspaceId],
   );
 
   const {

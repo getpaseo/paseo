@@ -1,3 +1,4 @@
+import { useWorkspaceTabDrag } from "./workspace-tab-drag-context";
 import {
   Fragment,
   memo,
@@ -11,35 +12,14 @@ import {
   type SetStateAction,
 } from "react";
 import { useStableEvent } from "@/hooks/use-stable-event";
-import {
-  DndContext,
-  DragOverlay,
-  KeyboardSensor,
-  PointerSensor,
-  closestCenter,
-  pointerWithin,
-  useSensor,
-  useSensors,
-  type CollisionDetection,
-  type DragEndEvent,
-  type DragMoveEvent,
-  type DragOverEvent,
-  type DragStartEvent,
-} from "@dnd-kit/core";
-import { arrayMove, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
-import { View, Text, type LayoutChangeEvent } from "react-native";
+import { View, type LayoutChangeEvent } from "react-native";
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
   type SharedValue,
 } from "react-native-reanimated";
-import { useTranslation } from "react-i18next";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet } from "react-native-unistyles";
 import { ResizeHandle } from "@/components/resize-handle";
-import {
-  resolveExplorerSidebarDockSizes,
-  resolveExplorerSidebarWidth,
-} from "@/components/explorer-sidebar-layout";
 import { RetainedPanel } from "@/components/retained-panel";
 import {
   hasMultipleVisiblePanes,
@@ -48,41 +28,26 @@ import {
 } from "@/components/split-container-focus";
 import { shouldFocusPaneFromEventTarget } from "@/components/split-container-pane-focus";
 import {
-  removeWindowChromeCorner,
   WindowChromeRegion,
   WindowChromeSafeArea,
   useWindowChromeCorners,
+  removeWindowChromeCorner,
   type WindowChromeCorners,
 } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
-import {
-  computeTabDropPreview,
-  type TabDropPreview,
-} from "@/components/split-container-tab-drop-preview";
-import {
-  SplitDropZone,
-  resolveSplitDropPosition,
-  type SplitDropZoneHover,
-} from "@/components/split-drop-zone";
-import {
-  deriveWorkspacePaneState,
-  getWorkspacePaneDescriptors,
-} from "@/screens/workspace/workspace-pane-state";
+import { type TabDropPreview } from "@/components/split-container-tab-drop-preview";
+import { SplitDropZone, type SplitDropZoneHover } from "@/components/split-drop-zone";
+import { deriveWorkspacePaneState } from "@/screens/workspace/workspace-pane-state";
 import type { WorkspacePaneContentModel } from "@/screens/workspace/workspace-pane-content";
 import { WorkspacePanelHost } from "@/screens/workspace/workspace-panel-host";
 import {
   WorkspaceDesktopTabsRow,
   type WorkspaceDesktopTabRowItem,
 } from "@/screens/workspace/workspace-desktop-tabs-row";
-import { ExplorerSidebarDock } from "@/screens/workspace/explorer-sidebar";
-import {
-  WorkspaceTabPresentationResolver,
-  WorkspaceTabIcon,
-} from "@/screens/workspace/workspace-tab-presentation";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import {
+  collectAllPanes,
   createDefaultLayout,
-  findPaneById,
   useWorkspaceLayoutStore,
   type SplitNode,
   type SplitPane,
@@ -90,14 +55,11 @@ import {
 } from "@/stores/workspace-layout-store";
 import type { WorkspaceTab } from "@/workspace-tabs/model";
 import { recordRenderProfileReasons, RenderProfile } from "@/utils/render-profiler";
-import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { isNative } from "@/constants/platform";
-import { panelTargetSupportsHost } from "@/plugins/workspace-panels/locations";
 
 interface SplitContainerProps {
   layout: WorkspaceLayout;
   renderMainHeader?: () => ReactNode;
-  renderExplorerSidebarHeaderAction?: () => ReactNode;
   workspaceKey: string;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
@@ -140,41 +102,6 @@ interface SplitContainerProps {
   onExitFocusMode: () => void;
 }
 
-interface WorkspaceTabDragData {
-  kind: "workspace-tab";
-  paneId: string;
-  tabId: string;
-}
-
-interface SplitPaneDropData {
-  kind: "split-pane-drop";
-  paneId: string;
-}
-
-const EMPTY_SPLIT_NODES: SplitNode[] = [];
-const EMPTY_SPLIT_SIZES: number[] = [];
-const EXPLORER_SIDEBAR_RESIZE_GROUP_ID = "explorer-sidebar";
-
-function isWorkspaceTabDragData(data: unknown): data is WorkspaceTabDragData {
-  return typeof data === "object" && data !== null && Reflect.get(data, "kind") === "workspace-tab";
-}
-
-function isSplitPaneDropData(data: unknown): data is SplitPaneDropData {
-  return (
-    typeof data === "object" && data !== null && Reflect.get(data, "kind") === "split-pane-drop"
-  );
-}
-
-function asWorkspaceTabDragData(data: unknown): WorkspaceTabDragData | undefined {
-  return isWorkspaceTabDragData(data) ? data : undefined;
-}
-
-function asDragOverData(data: unknown): WorkspaceTabDragData | SplitPaneDropData | undefined {
-  if (isWorkspaceTabDragData(data)) return data;
-  if (isSplitPaneDropData(data)) return data;
-  return undefined;
-}
-
 interface SplitNodeViewProps extends Omit<
   SplitContainerProps,
   "layout" | "onMoveTabToPane" | "onSelectTabInPane"
@@ -212,105 +139,12 @@ interface SplitPaneViewProps extends Omit<
   tabDropPreview: TabDropPreview | null;
 }
 
-interface DragMoveRects {
-  translatedRect: { left: number; top: number; width: number; height: number };
-  overRect: { left: number; top: number; width: number; height: number };
-}
-
-function resolveDragMoveRects(
-  event: Pick<DragMoveEvent, "active" | "over"> | Pick<DragOverEvent, "active" | "over">,
-): DragMoveRects | null {
-  const translatedRect = event.active.rect.current.translated;
-  const overRect = event.over?.rect;
-  if (!translatedRect || !overRect || overRect.width <= 0 || overRect.height <= 0) {
-    return null;
-  }
-  return { translatedRect, overRect };
-}
-
-function computeTabOverDropPreview(input: {
-  activeData: WorkspaceTabDragData;
-  overData: WorkspaceTabDragData;
-  rects: DragMoveRects;
-  panesById: Map<string, SplitPane>;
-  uiTabs: WorkspaceTab[];
-}): TabDropPreview | null {
-  const { activeData, overData, rects, panesById, uiTabs } = input;
-  const targetPane = panesById.get(overData.paneId) ?? null;
-  if (!targetPane) {
-    return null;
-  }
-  const targetTabs = getWorkspacePaneDescriptors({ pane: targetPane, tabs: uiTabs });
-  return computeTabDropPreview({
-    activePaneId: activeData.paneId,
-    activeTabId: activeData.tabId,
-    overPaneId: overData.paneId,
-    overTabId: overData.tabId,
-    targetTabs,
-    activeRect: {
-      left: rects.translatedRect.left,
-      width: rects.translatedRect.width,
-    },
-    overRect: {
-      left: rects.overRect.left,
-      width: rects.overRect.width,
-    },
-  });
-}
-
-function computePaneOverDropPreview(input: {
-  overData: SplitPaneDropData;
-  rects: DragMoveRects;
-}): SplitDropZoneHover | null {
-  const { overData, rects } = input;
-  const centerX = rects.translatedRect.left + rects.translatedRect.width / 2;
-  const centerY = rects.translatedRect.top + rects.translatedRect.height / 2;
-  const relativeX = centerX - rects.overRect.left;
-  const relativeY = centerY - rects.overRect.top;
-  if (
-    Number.isNaN(relativeX) ||
-    Number.isNaN(relativeY) ||
-    relativeX < 0 ||
-    relativeX > rects.overRect.width ||
-    relativeY < 0 ||
-    relativeY > rects.overRect.height
-  ) {
-    return null;
-  }
-  return {
-    paneId: overData.paneId,
-    position: resolveSplitDropPosition({
-      width: rects.overRect.width,
-      height: rects.overRect.height,
-      x: relativeX,
-      y: relativeY,
-    }),
-  };
-}
-
-const dropCollisionDetection: CollisionDetection = (args) => {
-  const pointerHits = pointerWithin(args);
-  const tabHits = pointerHits.filter(
-    (entry) => entry.data?.droppableContainer.data.current?.kind === "workspace-tab",
-  );
-  if (tabHits.length > 0) {
-    return tabHits;
-  }
-
-  const paneHits = pointerHits.filter(
-    (entry) => entry.data?.droppableContainer.data.current?.kind === "split-pane-drop",
-  );
-  if (paneHits.length > 0) {
-    return paneHits;
-  }
-
-  return closestCenter(args);
-};
+const EMPTY_SPLIT_NODES: SplitNode[] = [];
+const EMPTY_SPLIT_SIZES: number[] = [];
 
 export function SplitContainer({
   layout,
   renderMainHeader,
-  renderExplorerSidebarHeaderAction,
   workspaceKey,
   normalizedServerId,
   normalizedWorkspaceId,
@@ -335,8 +169,6 @@ export function SplitContainer({
   onFocusPane,
   onSplitPane,
   onSplitPaneEmpty,
-  onMoveTabToPane,
-  onSelectTabInPane,
   onResizeSplit,
   onReorderTabsInPane,
   focusModeEnabled,
@@ -344,9 +176,7 @@ export function SplitContainer({
 }: SplitContainerProps) {
   const inheritedWindowChromeCorners = useWindowChromeCorners();
   const windowChromeCorners = focusModeEnabled ? inheritedWindowChromeCorners : "none";
-  const [activeDragTabId, setActiveDragTabId] = useState<string | null>(null);
-  const [dropPreview, setDropPreview] = useState<SplitDropZoneHover | null>(null);
-  const [tabDropPreview, setTabDropPreview] = useState<TabDropPreview | null>(null);
+  const { activeDragTabId, dropPreview, tabDropPreview } = useWorkspaceTabDrag();
   const [maximizedPane, setMaximizedPane] = useState<{
     workspaceKey: string;
     paneId: string;
@@ -357,22 +187,6 @@ export function SplitContainer({
     (state) => state.explorerSidebarPaneIdByWorkspace[workspaceKey] ?? null,
   );
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 8,
-      },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    }),
-  );
-
-  const panesById = useMemo(() => collectPanesById(layout.root), [layout.root]);
-  const explorerSidebarPane = useMemo(
-    () => findPaneById(layout.root, explorerSidebarPaneId),
-    [layout.root, explorerSidebarPaneId],
-  );
   const mainRoot = useMemo(
     () => removePaneFromSplitTree(layout.root, explorerSidebarPaneId),
     [layout.root, explorerSidebarPaneId],
@@ -408,434 +222,68 @@ export function SplitContainer({
       }),
     [focusModeEnabled, layout.focusedPaneId, mainRoot],
   );
-  const storedExplorerSidebarWidth = useWorkspaceLayoutStore(
-    (state) => state.explorerSidebarWidthByWorkspace[workspaceKey],
-  );
-  const resizeExplorerSidebar = useWorkspaceLayoutStore((state) => state.resizeExplorerSidebar);
-  const [workspaceShellWidth, setWorkspaceShellWidth] = useState(0);
-  const [previewExplorerSidebarWidth, setPreviewExplorerSidebarWidth] = useState<number | null>(
-    null,
-  );
-  const requestedExplorerSidebarWidth = previewExplorerSidebarWidth ?? storedExplorerSidebarWidth;
-  const explorerSidebarWidth = resolveExplorerSidebarWidth({
-    requestedWidth: requestedExplorerSidebarWidth,
-    containerWidth: workspaceShellWidth,
-  });
-  const explorerSidebarDockSizes = useMemo(
-    () =>
-      resolveExplorerSidebarDockSizes({
-        requestedWidth: requestedExplorerSidebarWidth,
-        containerWidth: workspaceShellWidth,
-      }),
-    [requestedExplorerSidebarWidth, workspaceShellWidth],
-  );
-  const renderExplorerSidebarDock = Boolean(
-    !focusModeEnabled && explorerSidebarPane && explorerSidebarPane.hidden !== true,
-  );
-  const mainColumnWindowChromeCorners = renderExplorerSidebarDock
-    ? removeWindowChromeCorner(inheritedWindowChromeCorners, "top-right")
-    : inheritedWindowChromeCorners;
+  const explorerPane = explorerSidebarPaneId
+    ? collectAllPanes(layout.root).find((pane) => pane.id === explorerSidebarPaneId)
+    : null;
+  const mainColumnWindowChromeCorners =
+    !focusModeEnabled && explorerPane && !explorerPane.hidden
+      ? removeWindowChromeCorner(inheritedWindowChromeCorners, "top-right")
+      : inheritedWindowChromeCorners;
   const mainColumnStyle = styles.mainColumn;
-  const explorerSidebarDockStyle = useMemo(
-    () => [styles.explorerSidebarDock, inlineUnistylesStyle({ width: explorerSidebarWidth })],
-    [explorerSidebarWidth],
-  );
-  const handleWorkspaceShellLayout = useCallback((event: LayoutChangeEvent) => {
-    const nextWidth = event.nativeEvent.layout.width;
-    setWorkspaceShellWidth((current) => (current === nextWidth ? current : nextWidth));
-  }, []);
-  const previewExplorerSidebarResize = useCallback(
-    (_groupId: string, sizes: number[]) => {
-      const nextRatio = sizes[1];
-      if (nextRatio !== undefined) {
-        setPreviewExplorerSidebarWidth(
-          resolveExplorerSidebarWidth({
-            requestedWidth: nextRatio * workspaceShellWidth,
-            containerWidth: workspaceShellWidth,
-          }),
-        );
-      }
-    },
-    [workspaceShellWidth],
-  );
-  const commitExplorerSidebarResize = useCallback(
-    (_groupId: string, sizes: number[]) => {
-      setPreviewExplorerSidebarWidth(null);
-      const nextRatio = sizes[1];
-      if (nextRatio !== undefined) {
-        resizeExplorerSidebar(
-          workspaceKey,
-          resolveExplorerSidebarWidth({
-            requestedWidth: nextRatio * workspaceShellWidth,
-            containerWidth: workspaceShellWidth,
-          }),
-        );
-      }
-    },
-    [resizeExplorerSidebar, workspaceKey, workspaceShellWidth],
-  );
   const renderRoot = useMemo(() => wrapRootPaneForStableMount(splitRoot.root), [splitRoot.root]);
-  const handleDragStart = useCallback((event: DragStartEvent) => {
-    const data = asWorkspaceTabDragData(event.active.data.current);
-    if (!data) {
-      setActiveDragTabId(null);
-      setDropPreview(null);
-      setTabDropPreview(null);
-      return;
-    }
-    setActiveDragTabId(data.tabId);
-  }, []);
-
-  const handleDragCancel = useCallback(() => {
-    setActiveDragTabId(null);
-    setDropPreview(null);
-    setTabDropPreview(null);
-  }, []);
-
-  const updateDropPreview = useCallback(
-    (event: Pick<DragMoveEvent, "active" | "over"> | Pick<DragOverEvent, "active" | "over">) => {
-      const activeData = asWorkspaceTabDragData(event.active.data.current);
-      const overData = asDragOverData(event.over?.data.current);
-
-      if (activeData?.kind !== "workspace-tab") {
-        setDropPreview(null);
-        setTabDropPreview(null);
-        return;
-      }
-
-      const rects = resolveDragMoveRects(event);
-      if (!rects) {
-        setDropPreview(null);
-        setTabDropPreview(null);
-        return;
-      }
-
-      const activeTab = uiTabs.find((tab) => tab.tabId === activeData.tabId) ?? null;
-      const destinationPaneId =
-        overData?.kind === "workspace-tab" || overData?.kind === "split-pane-drop"
-          ? overData.paneId
-          : null;
-      const destinationHost = destinationPaneId === explorerSidebarPaneId ? "explorer" : "main";
-      if (
-        !activeTab ||
-        !panelTargetSupportsHost(normalizedServerId, activeTab.target, destinationHost)
-      ) {
-        setDropPreview(null);
-        setTabDropPreview(null);
-        return;
-      }
-
-      if (overData?.kind === "workspace-tab") {
-        const preview = computeTabOverDropPreview({
-          activeData,
-          overData,
-          rects,
-          panesById,
-          uiTabs,
-        });
-        setDropPreview(null);
-        setTabDropPreview(preview);
-        return;
-      }
-
-      setTabDropPreview(null);
-      if (overData?.kind !== "split-pane-drop") {
-        setDropPreview(null);
-        return;
-      }
-
-      setDropPreview(computePaneOverDropPreview({ overData, rects }));
-    },
-    [normalizedServerId, panesById, explorerSidebarPaneId, uiTabs],
-  );
-
-  const applyTabDropEnd = useCallback(
-    (input: { activeData: WorkspaceTabDragData; overData: WorkspaceTabDragData }): void => {
-      const { activeData, overData } = input;
-      const sourcePane = panesById.get(activeData.paneId) ?? null;
-      const targetPane = panesById.get(overData.paneId) ?? null;
-      if (!sourcePane || !targetPane) {
-        return;
-      }
-
-      const sourceTabs = getWorkspacePaneDescriptors({ pane: sourcePane, tabs: uiTabs });
-      const targetTabs = getWorkspacePaneDescriptors({ pane: targetPane, tabs: uiTabs });
-      const sourceIndex = sourceTabs.findIndex((tab) => tab.tabId === activeData.tabId);
-      const resolvedTabDropPreview =
-        tabDropPreview?.paneId === overData.paneId ? tabDropPreview : null;
-      if (sourceIndex < 0 || !resolvedTabDropPreview) {
-        return;
-      }
-
-      if (activeData.paneId === overData.paneId) {
-        if (sourceIndex !== resolvedTabDropPreview.insertionIndex) {
-          const nextTabs = arrayMove(
-            sourceTabs,
-            sourceIndex,
-            resolvedTabDropPreview.insertionIndex,
-          );
-          onReorderTabsInPane(
-            activeData.paneId,
-            nextTabs.map((tab) => tab.tabId),
-          );
-        }
-        return;
-      }
-
-      const nextTargetTabIds = targetTabs.map((tab) => tab.tabId);
-      nextTargetTabIds.splice(resolvedTabDropPreview.insertionIndex, 0, activeData.tabId);
-      onMoveTabToPane(activeData.tabId, overData.paneId);
-      onReorderTabsInPane(overData.paneId, nextTargetTabIds);
-    },
-    [onMoveTabToPane, onReorderTabsInPane, panesById, tabDropPreview, uiTabs],
-  );
-
-  const applyPaneDropEnd = useCallback(
-    (input: { activeData: WorkspaceTabDragData; overData: SplitPaneDropData }): void => {
-      const { activeData, overData } = input;
-      if (dropPreview?.paneId !== overData.paneId) {
-        return;
-      }
-      if (dropPreview.position === "center") {
-        if (activeData.paneId !== overData.paneId) {
-          onMoveTabToPane(activeData.tabId, overData.paneId);
-        }
-        return;
-      }
-      onSplitPane({
-        tabId: activeData.tabId,
-        targetPaneId: overData.paneId,
-        position: dropPreview.position,
-      });
-    },
-    [dropPreview, onMoveTabToPane, onSplitPane],
-  );
-
-  const handleDragEnd = useCallback(
-    (event: DragEndEvent) => {
-      const activeData = asWorkspaceTabDragData(event.active.data.current);
-      const overData = asDragOverData(event.over?.data.current);
-
-      setActiveDragTabId(null);
-
-      if (activeData?.kind === "workspace-tab" && event.over) {
-        if (overData?.kind === "workspace-tab") {
-          applyTabDropEnd({ activeData, overData });
-        } else if (overData?.kind === "split-pane-drop") {
-          applyPaneDropEnd({ activeData, overData });
-        }
-      }
-
-      setDropPreview(null);
-      setTabDropPreview(null);
-    },
-    [applyTabDropEnd, applyPaneDropEnd],
-  );
-
   return (
     <RenderProfile id="SplitContainer">
-      <DndContext
-        sensors={sensors}
-        collisionDetection={dropCollisionDetection}
-        onDragStart={handleDragStart}
-        onDragMove={updateDropPreview}
-        onDragOver={updateDropPreview}
-        onDragCancel={handleDragCancel}
-        onDragEnd={handleDragEnd}
-      >
-        <View style={styles.workspaceShell} onLayout={handleWorkspaceShellLayout}>
-          <WindowChromeRegion corners={mainColumnWindowChromeCorners}>
-            <View style={mainColumnStyle}>
-              {renderMainHeader?.()}
-              {splitRoot.usesFallbackStrip && <WindowChromeSafeArea placement="below" />}
-              {renderRoot ? (
-                <SplitNodeView
-                  node={renderRoot}
-                  workspaceKey={workspaceKey}
-                  uiTabs={uiTabs}
-                  focusedPaneId={layout.focusedPaneId}
-                  normalizedServerId={normalizedServerId}
-                  normalizedWorkspaceId={normalizedWorkspaceId}
-                  isWorkspaceFocused={isWorkspaceFocused}
-                  hoveredCloseTabKey={hoveredCloseTabKey}
-                  setHoveredCloseTabKey={setHoveredCloseTabKey}
-                  closingTabIds={closingTabIds}
-                  onNavigateTab={onNavigateTab}
-                  onCloseTab={onCloseTab}
-                  onCopyResumeCommand={onCopyResumeCommand}
-                  onCopyAgentId={onCopyAgentId}
-                  onCopyTerminalId={onCopyTerminalId}
-                  onCopyFilePath={onCopyFilePath}
-                  onReloadAgent={onReloadAgent}
-                  onRenameTab={onRenameTab}
-                  onCloseTabsToLeft={onCloseTabsToLeft}
-                  onCloseTabsToRight={onCloseTabsToRight}
-                  onCloseOtherTabs={onCloseOtherTabs}
-                  onCreateNewTab={onCreateNewTab}
-                  buildPaneContentModel={buildPaneContentModel}
-                  onFocusPane={onFocusPane}
-                  onSplitPane={onSplitPane}
-                  onSplitPaneEmpty={onSplitPaneEmpty}
-                  onResizeSplit={onResizeSplit}
-                  onReorderTabsInPane={onReorderTabsInPane}
-                  activeDragTabId={activeDragTabId}
-                  showDropZones={activeDragTabId !== null}
-                  dropPreview={dropPreview}
-                  tabDropPreview={tabDropPreview}
-                  windowChromeCorners={splitRoot.usesFallbackStrip ? "none" : windowChromeCorners}
-                  maximizedPaneId={maximizedPaneId}
-                  workspaceHasMultiplePanes={workspaceHasMultiplePanes}
-                  onTogglePaneMaximized={handleTogglePaneMaximized}
-                  focusModeEnabled={focusModeEnabled}
-                  onExitFocusMode={onExitFocusMode}
-                />
-              ) : null}
-            </View>
-          </WindowChromeRegion>
-          {renderExplorerSidebarDock && explorerSidebarPane ? (
-            <>
-              <ResizeHandle
-                testID="workspace-explorer-sidebar-resize-handle"
-                direction="horizontal"
-                hitAreaAlignment="end"
-                groupId={EXPLORER_SIDEBAR_RESIZE_GROUP_ID}
-                index={0}
-                sizes={explorerSidebarDockSizes}
-                containerSize={workspaceShellWidth}
-                onPreviewResizeSplit={previewExplorerSidebarResize}
-                onResizeSplit={commitExplorerSidebarResize}
+      <View style={styles.workspaceShell}>
+        <WindowChromeRegion corners={mainColumnWindowChromeCorners}>
+          <View style={mainColumnStyle}>
+            {renderMainHeader?.()}
+            {splitRoot.usesFallbackStrip && <WindowChromeSafeArea placement="below" />}
+            {renderRoot ? (
+              <SplitNodeView
+                node={renderRoot}
+                workspaceKey={workspaceKey}
+                uiTabs={uiTabs}
+                focusedPaneId={layout.focusedPaneId}
+                normalizedServerId={normalizedServerId}
+                normalizedWorkspaceId={normalizedWorkspaceId}
+                isWorkspaceFocused={isWorkspaceFocused}
+                hoveredCloseTabKey={hoveredCloseTabKey}
+                setHoveredCloseTabKey={setHoveredCloseTabKey}
+                closingTabIds={closingTabIds}
+                onNavigateTab={onNavigateTab}
+                onCloseTab={onCloseTab}
+                onCopyResumeCommand={onCopyResumeCommand}
+                onCopyAgentId={onCopyAgentId}
+                onCopyTerminalId={onCopyTerminalId}
+                onCopyFilePath={onCopyFilePath}
+                onReloadAgent={onReloadAgent}
+                onRenameTab={onRenameTab}
+                onCloseTabsToLeft={onCloseTabsToLeft}
+                onCloseTabsToRight={onCloseTabsToRight}
+                onCloseOtherTabs={onCloseOtherTabs}
+                onCreateNewTab={onCreateNewTab}
+                buildPaneContentModel={buildPaneContentModel}
+                onFocusPane={onFocusPane}
+                onSplitPane={onSplitPane}
+                onSplitPaneEmpty={onSplitPaneEmpty}
+                onResizeSplit={onResizeSplit}
+                onReorderTabsInPane={onReorderTabsInPane}
+                activeDragTabId={activeDragTabId}
+                showDropZones={activeDragTabId !== null}
+                dropPreview={dropPreview}
+                tabDropPreview={tabDropPreview}
+                windowChromeCorners={splitRoot.usesFallbackStrip ? "none" : windowChromeCorners}
+                maximizedPaneId={maximizedPaneId}
+                workspaceHasMultiplePanes={workspaceHasMultiplePanes}
+                onTogglePaneMaximized={handleTogglePaneMaximized}
+                focusModeEnabled={focusModeEnabled}
+                onExitFocusMode={onExitFocusMode}
               />
-              <View style={explorerSidebarDockStyle}>
-                <ExplorerSidebarDock
-                  pane={explorerSidebarPane}
-                  uiTabs={uiTabs}
-                  normalizedServerId={normalizedServerId}
-                  normalizedWorkspaceId={normalizedWorkspaceId}
-                  isWorkspaceFocused={isWorkspaceFocused}
-                  closingTabIds={closingTabIds}
-                  onSelectTab={onSelectTabInPane}
-                  onCloseTab={onCloseTab}
-                  onCreateNewTab={onCreateNewTab}
-                  hoveredCloseTabKey={hoveredCloseTabKey}
-                  setHoveredCloseTabKey={setHoveredCloseTabKey}
-                  onCopyResumeCommand={onCopyResumeCommand}
-                  onCopyAgentId={onCopyAgentId}
-                  onCopyTerminalId={onCopyTerminalId}
-                  onCopyFilePath={onCopyFilePath}
-                  onReloadAgent={onReloadAgent}
-                  onRenameTab={onRenameTab}
-                  onCloseTabsToLeft={onCloseTabsToLeft}
-                  onCloseTabsToRight={onCloseTabsToRight}
-                  onCloseOtherTabs={onCloseOtherTabs}
-                  onExitFocusMode={onExitFocusMode}
-                  buildPaneContentModel={buildPaneContentModel}
-                  onReorderTabsInPane={onReorderTabsInPane}
-                  activeDragTabId={activeDragTabId}
-                  tabDropPreview={tabDropPreview}
-                  headerAction={renderExplorerSidebarHeaderAction?.()}
-                />
-              </View>
-            </>
-          ) : null}
-        </View>
-        <DragOverlay dropAnimation={null}>
-          {activeDragTabId ? (
-            <DragOverlayTabChip
-              tabId={activeDragTabId}
-              uiTabs={uiTabs}
-              normalizedServerId={normalizedServerId}
-              normalizedWorkspaceId={normalizedWorkspaceId}
-            />
-          ) : null}
-        </DragOverlay>
-      </DndContext>
-    </RenderProfile>
-  );
-}
-
-function DragOverlayTabChip({
-  tabId,
-  uiTabs,
-  normalizedServerId,
-  normalizedWorkspaceId,
-}: {
-  tabId: string;
-  uiTabs: WorkspaceTab[];
-  normalizedServerId: string;
-  normalizedWorkspaceId: string;
-}) {
-  const tab = uiTabs.find((t) => t.tabId === tabId);
-  const descriptor = useMemo<WorkspaceTabDescriptor | null>(
-    () =>
-      tab
-        ? {
-            key: tab.tabId,
-            tabId: tab.tabId,
-            kind: tab.target.kind,
-            target: tab.target,
-          }
-        : null,
-    [tab],
-  );
-  if (!descriptor) {
-    return null;
-  }
-  return (
-    <DragOverlayTabChipInner
-      tab={descriptor}
-      normalizedServerId={normalizedServerId}
-      normalizedWorkspaceId={normalizedWorkspaceId}
-    />
-  );
-}
-
-function DragOverlayTabChipInner({
-  tab,
-  normalizedServerId,
-  normalizedWorkspaceId,
-}: {
-  tab: WorkspaceTabDescriptor;
-  normalizedServerId: string;
-  normalizedWorkspaceId: string;
-}) {
-  const { t } = useTranslation();
-  const { theme } = useUnistyles();
-
-  const chipStyle = useMemo(
-    () => [
-      styles.dragOverlayChip,
-      {
-        backgroundColor: theme.colors.surface1,
-        borderColor: theme.colors.borderAccent,
-      },
-    ],
-    [theme.colors.surface1, theme.colors.borderAccent],
-  );
-  const chipLabelStyle = useMemo(
-    () => [styles.dragOverlayLabel, { color: theme.colors.foreground }],
-    [theme.colors.foreground],
-  );
-
-  return (
-    <WorkspaceTabPresentationResolver
-      tab={tab}
-      serverId={normalizedServerId}
-      workspaceId={normalizedWorkspaceId}
-    >
-      {(presentation) => {
-        const label =
-          presentation.titleState === "loading" ? t("common.states.loading") : presentation.label;
-
-        return (
-          <View style={chipStyle}>
-            <WorkspaceTabIcon presentation={presentation} active size={14} backdrop="surface1" />
-            <Text numberOfLines={1} style={chipLabelStyle}>
-              {label}
-            </Text>
+            ) : null}
           </View>
-        );
-      }}
-    </WorkspaceTabPresentationResolver>
+        </WindowChromeRegion>
+      </View>
+    </RenderProfile>
   );
 }
 
@@ -1317,21 +765,6 @@ const SplitPaneView = memo(function SplitPaneView({
   );
 });
 
-function collectPanesById(node: SplitNode): Map<string, SplitPane> {
-  const next = new Map<string, SplitPane>();
-  function visit(current: SplitNode) {
-    if (current.kind === "pane") {
-      next.set(current.pane.id, current.pane);
-      return;
-    }
-    for (const child of current.group.children) {
-      visit(child);
-    }
-  }
-  visit(node);
-  return next;
-}
-
 function getNodeKey(node: SplitNode): string {
   if (node.kind === "pane") {
     return node.pane.id;
@@ -1396,12 +829,6 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     minHeight: 0,
   },
-  explorerSidebarDock: {
-    flexShrink: 0,
-    minWidth: 240,
-    minHeight: 0,
-    backgroundColor: theme.colors.surfaceSidebar,
-  },
   group: {
     flex: 1,
     minWidth: 0,
@@ -1435,19 +862,5 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
     minHeight: 0,
-  },
-  dragOverlayChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[1],
-    borderRadius: theme.borderRadius.md,
-    borderWidth: 1,
-    maxWidth: 200,
-  },
-  dragOverlayLabel: {
-    fontSize: theme.fontSize.base,
-    flexShrink: 1,
   },
 }));

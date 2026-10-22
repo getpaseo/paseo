@@ -15,11 +15,11 @@ class MicrophonePermissionRequester: NSObject, EXPermissionsRequester {
     var status: EXPermissionStatus
 
     guard (Bundle.main.infoDictionary?["NSMicrophoneUsageDescription"]) != nil else {
-      EXFatal(EXErrorWithMessage("""
+      log.error("""
         This app is missing NSMicrophoneUsageDescription, so audio services will fail.
         Add one of these keys to your bundle's Info.plist.
-      """))
-      return ["status": EXPermissionStatusDenied]
+      """)
+      return ["status": EXPermissionStatusDenied.rawValue]
     }
 
     switch systemStatus {

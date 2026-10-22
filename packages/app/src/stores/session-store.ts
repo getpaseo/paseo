@@ -235,8 +235,6 @@ function preserveMapIdentity<Key, Value>(
 }
 
 export type ExplorerEntryKind = "file" | "directory";
-export type ExplorerFileKind = "text" | "image" | "binary";
-export type ExplorerEncoding = "utf-8" | "base64" | "none";
 
 export interface ExplorerEntry {
   name: string;
@@ -246,19 +244,6 @@ export interface ExplorerEntry {
   modifiedAt: string;
 }
 
-export interface ExplorerFile {
-  path: string;
-  kind: ExplorerFileKind;
-  encoding: ExplorerEncoding;
-  content?: string;
-  // TextDecoder removes a leading UTF-8 BOM; retain this bit so file writes can restore it.
-  hasBom: boolean;
-  mimeType?: string;
-  size: number;
-  modifiedAt: string;
-  revision?: string;
-}
-
 export interface ExplorerDirectory {
   path: string;
   entries: ExplorerEntry[];
@@ -266,12 +251,11 @@ export interface ExplorerDirectory {
 
 interface ExplorerRequestState {
   path: string;
-  mode: "list" | "file";
+  mode: "list";
 }
 
 export interface AgentFileExplorerState {
   directories: Map<string, ExplorerDirectory>;
-  files: Map<string, ExplorerFile>;
   isLoading: boolean;
   lastError: string | null;
   pendingRequest: ExplorerRequestState | null;

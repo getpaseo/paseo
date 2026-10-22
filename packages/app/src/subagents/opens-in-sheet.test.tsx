@@ -2,9 +2,11 @@
  * @vitest-environment jsdom
  */
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { parentAddressLabels } from "@getpaseo/protocol/agent-labels";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useSessionStore, type Agent } from "@/stores/session-store";
+import { normalizeAgentSnapshot, projectAgentSnapshot } from "@/utils/agent-snapshots";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { useSubagentOpensInSheet } from "./opens-in-sheet";
@@ -77,7 +79,15 @@ if (!workspaceKey) throw new Error("workspace key");
 
 function seedParentWithChild(): SubagentRow {
   const parent: Agent = { ...AGENT_DEFAULTS, id: "parent", title: "Parent" };
-  const child: Agent = { ...AGENT_DEFAULTS, id: "child", title: "Child", parentAgentId: "parent" };
+  const child = normalizeAgentSnapshot(
+    projectAgentSnapshot({
+      ...AGENT_DEFAULTS,
+      id: "child",
+      title: "Child",
+      labels: parentAddressLabels({ serverId: SERVER_ID, agentId: parent.id }),
+    }),
+    SERVER_ID,
+  );
   useSessionStore.getState().initializeSession(SERVER_ID, null as unknown as DaemonClient);
   useSessionStore.getState().setAgents(
     SERVER_ID,

@@ -15,16 +15,22 @@ const entries = {
   "./server/acp": "server",
   "./client": "client",
   "./client/host": "client",
-  "./client/react-native": "client",
   "./client/ui": "client",
 } as const;
+const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+// Compatibility entrypoints inherit the boundary of their one re-export target.
+const compatibilityEntries = Object.keys(manifest.exports).filter((entry) => {
+  const file = path.resolve(sourceDirectory, "..", manifest.exports[entry].source);
+  return readFileSync(file, "utf8").startsWith("// COMPAT(");
+});
 const uiDependency = /^(react(?:-dom|-native)?|use-sync-external-store)(\/|$)/;
 const serverModule = /^server\//;
 const clientModule = /^client\//;
 
 function resolveLocal(importer: string, specifier: string): string {
   const base = path.resolve(path.dirname(importer), specifier.replace(/\.js$/, ""));
-  const result = [base + ".ts", base + ".tsx"].find(existsSync);
+  const candidates = specifier.endsWith(".json") ? [base] : [base + ".ts", base + ".tsx"];
+  const result = candidates.find(existsSync);
   if (!result) throw new Error(`Cannot resolve ${specifier} from ${importer}`);
   return result;
 }
@@ -70,8 +76,17 @@ describe("plugin SDK import boundaries", () => {
   });
 
   it("classifies every published entry", () => {
-    const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-    expect(Object.keys(manifest.exports).sort()).toEqual(Object.keys(entries).sort());
+    expect(Object.keys(manifest.exports).sort()).toEqual(
+      [...Object.keys(entries), ...compatibilityEntries].sort(),
+    );
+  });
+
+  it.each(compatibilityEntries)("%s only re-exports the UI entry", (entry) => {
+    const source = readFileSync(
+      path.resolve(sourceDirectory, "..", manifest.exports[entry].source),
+      "utf8",
+    );
+    expect(source.replace(/\/\/[^\n]*|\/\*[^]*?\*\//g, "").trim()).toBe('export * from "./ui.js";');
   });
 
   it.each(Object.entries(entries))(
@@ -89,8 +104,8 @@ describe("plugin SDK import boundaries", () => {
 
 describe("plugin example import boundaries", () => {
   const examples = path.resolve(sourceDirectory, "../../../plugin-examples");
-  const files = readdirSync(examples, { recursive: true }).filter((file) =>
-    /(?<!\.test)\.tsx?$/.test(file),
+  const files = readdirSync(examples, { recursive: true }).filter(
+    (file) => !file.split(path.sep).includes("node_modules") && /(?<!\.test)\.tsx?$/.test(file),
   );
   const owner = (file: string) => {
     const [, directory] = path.relative(examples, file).split(path.sep);

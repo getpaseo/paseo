@@ -56,10 +56,7 @@ export type { DraftInput } from "@/stores/draft-store";
 export type {
   Agent,
   ExplorerEntry,
-  ExplorerFile,
   ExplorerEntryKind,
-  ExplorerFileKind,
-  ExplorerEncoding,
   AgentFileExplorerState,
 } from "@/stores/session-store";
 
