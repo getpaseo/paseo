@@ -27,6 +27,7 @@ function plugin(input: {
     sidebarViews: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
+    workspaceRowItems: [],
     filePanels: [],
     composerItems: [],
     newWorkspaceItems: [],

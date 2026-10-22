@@ -11,6 +11,7 @@ export {
 export { ExternalLink } from "@/components/ui/external-link";
 
 export { SidebarRow, SidebarSeparator } from "@/plugins/sidebar-items/kit";
+export { WorkspaceRowBadge } from "@/plugins/workspace-row-items/kit";
 
 export { DocumentFrame } from "@/file-panels/document-frame";
 

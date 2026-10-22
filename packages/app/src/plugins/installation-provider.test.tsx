@@ -46,6 +46,7 @@ function installation(invoked: string[]): InstalledPlugin {
     sidebarViews: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
+    workspaceRowItems: [],
     filePanels: [],
     composerItems: [],
     newWorkspaceItems: [],

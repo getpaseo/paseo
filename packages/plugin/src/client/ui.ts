@@ -173,6 +173,19 @@ export declare const SidebarRow: ComponentType<SidebarRowProps>;
 /** A line between groups of rows. Render it from a sidebar item's `Component`. */
 export declare const SidebarSeparator: ComponentType;
 
+export type WorkspaceRowBadgeTone = "muted" | "success" | "warning" | "danger" | "info";
+export interface WorkspaceRowBadgeProps {
+  /** A Lucide icon name, inline SVG, or a component. */
+  icon?: SidebarIcon;
+  label?: string;
+  /** Default "muted". */
+  tone?: WorkspaceRowBadgeTone;
+  /** Defaults to `label`. */
+  accessibilityLabel?: string;
+}
+/** One item on a sidebar workspace row's meta line. Render it from a workspace row item's `Component`. */
+export declare const WorkspaceRowBadge: ComponentType<WorkspaceRowBadgeProps>;
+
 /** Paseo's loading state. Fills the panel; the panel decides when to show it. */
 export declare const Loading: ComponentType;
 

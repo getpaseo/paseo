@@ -121,6 +121,22 @@ export interface PluginSidebarViewContribution<Text extends PluginText = string>
   Component: ComponentType<PluginSidebarViewProps>;
 }
 
+export interface PluginWorkspaceRowItemProps extends PluginHostProps {
+  workspaceId: string;
+}
+
+/**
+ * Part of the line under a workspace's title in the sidebar, on every workspace of the plugin's host.
+ * Render `WorkspaceRowBadge`, or nothing when there is nothing to say about this workspace.
+ */
+export interface PluginWorkspaceRowItemContribution<Text extends PluginText = string> {
+  id: string;
+  /** The item's toggle in the sidebar's Show menu. */
+  title: Text;
+  icon: PluginIcon;
+  Component: ComponentType<PluginWorkspaceRowItemProps>;
+}
+
 /**
  * A Lucide icon name, inline SVG markup, or a component. Components receive the surface's size
  * and color; buttons widen the props with their host and target context.
@@ -214,6 +230,7 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   addSidebarHeaderItem(contribution: PluginSidebarItemContribution<PluginText>): PluginCleanup;
   addSidebarFooterItem(contribution: PluginSidebarItemContribution<PluginText>): PluginCleanup;
   addAgentPanel(contribution: PluginAgentPanelContribution<PluginText>): PluginCleanup;
+  addWorkspaceRowItem(contribution: PluginWorkspaceRowItemContribution<PluginText>): PluginCleanup;
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution<PluginText>): PluginCleanup;
   addCommandCenterItem(
     contribution: PluginCommandCenterItemContribution<PluginText>,

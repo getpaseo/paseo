@@ -125,6 +125,7 @@ export class PluginRegistry {
           sidebarViews: [],
           sidebarItems: { header: [], footer: [] },
           legacySidebarItems: [],
+          workspaceRowItems: [],
           filePanels: [],
           composerItems: [],
           newWorkspaceItems: [],

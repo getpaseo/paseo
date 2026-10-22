@@ -10,6 +10,12 @@ import {
   type SidebarGroupMode,
   type SidebarLabelFilter,
 } from "@/stores/sidebar-view-store";
+import { useInstalledPlugins } from "@/plugins/registry";
+import {
+  groupPluginWorkspaceRowItems,
+  isWorkspaceRowItemVisible,
+  type PluginWorkspaceRowItemGroup,
+} from "@/plugins/workspace-row-items/model";
 import { DEFAULT_SIDEBAR_CHECKS_DISPLAY, type SidebarChecksDisplay } from "./checks-display";
 import { DEFAULT_SIDEBAR_ROW_ITEMS, type SidebarRowItem, type SidebarRowItems } from "./row-items";
 
@@ -27,6 +33,10 @@ export interface SidebarDisplayPreferences {
   setTitleSource: (source: WorkspaceTitleSource) => void;
   rowItems: SidebarRowItems;
   toggleRowItem: (item: SidebarRowItem) => void;
+  /** Workspace row items contributed by installed plugins, one per plugin item across hosts. */
+  pluginRowItems: readonly PluginWorkspaceRowItemGroup[];
+  isPluginRowItemVisible: (key: string) => boolean;
+  togglePluginRowItem: (key: string) => void;
   checksDisplay: SidebarChecksDisplay;
   setChecksDisplay: (display: SidebarChecksDisplay) => void;
   trailing: SidebarWorkspaceTrailing;
@@ -75,9 +85,30 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       sidebarWorkspaceTrailing,
       sidebarRowItems,
       sidebarChecksDisplay,
+      sidebarPluginRowItems,
     },
     updateSettings,
   } = useAppSettings();
+  const installedPlugins = useInstalledPlugins();
+  const pluginRowItems = useMemo(
+    () => groupPluginWorkspaceRowItems(installedPlugins),
+    [installedPlugins],
+  );
+  const isPluginRowItemVisible = useCallback(
+    (key: string) => isWorkspaceRowItemVisible(sidebarPluginRowItems, key),
+    [sidebarPluginRowItems],
+  );
+  const togglePluginRowItem = useCallback(
+    (key: string) => {
+      void updateSettings({
+        sidebarPluginRowItems: {
+          ...sidebarPluginRowItems,
+          [key]: !isWorkspaceRowItemVisible(sidebarPluginRowItems, key),
+        },
+      });
+    },
+    [updateSettings, sidebarPluginRowItems],
+  );
 
   const setTitleSource = useCallback(
     (source: WorkspaceTitleSource) => {
@@ -123,6 +154,9 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       setTitleSource,
       rowItems: sidebarRowItems,
       toggleRowItem,
+      pluginRowItems,
+      isPluginRowItemVisible,
+      togglePluginRowItem,
       checksDisplay: sidebarChecksDisplay,
       setChecksDisplay,
       trailing: sidebarWorkspaceTrailing,
@@ -148,6 +182,9 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       setTitleSource,
       sidebarRowItems,
       toggleRowItem,
+      pluginRowItems,
+      isPluginRowItemVisible,
+      togglePluginRowItem,
       sidebarChecksDisplay,
       setChecksDisplay,
       sidebarWorkspaceTrailing,
