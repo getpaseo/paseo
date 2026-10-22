@@ -146,6 +146,8 @@ export async function buildClientConfig(
     | "buildDesktopTransportUrl"
   > = defaultDaemonConnectionDependencies,
 ): Promise<DaemonClientConfig> {
+  if (connection.type === "routed")
+    throw new Error("Routed host connections are resolved by HostRuntime");
   const clientId = await deps.getClientId();
   const desktopTransportFactory = deps.createDesktopTransportFactory();
   const base = {

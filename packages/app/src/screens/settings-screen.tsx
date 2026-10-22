@@ -1331,10 +1331,11 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
   const installedPlugins = useInstalledPlugins();
   const detailTitle = ((): string | undefined => {
     if (view.kind === "plugin") {
-      const screen = installedPlugins
-        .find((plugin) => plugin.serverId === view.serverId && plugin.id === view.pluginId)
-        ?.settingsScreens.find((candidate) => candidate.id === view.screenId);
-      return `${view.pluginId} · ${screen?.title ?? t("settings.title")}`;
+      const plugin = installedPlugins.find(
+        (candidate) => candidate.serverId === view.serverId && candidate.id === view.pluginId,
+      );
+      const screen = plugin?.settingsScreens.find((candidate) => candidate.id === view.screenId);
+      return `${view.pluginId} · ${plugin && screen ? plugin.i18n.resolve(screen.title, plugin.locale) : t("settings.title")}`;
     }
     if (view.kind === "host") {
       const item = HOST_SECTION_ITEMS.find((s) => s.id === view.section);

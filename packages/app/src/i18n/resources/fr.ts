@@ -982,6 +982,7 @@ export const fr: TranslationResources = {
         checkingRepository: "Vérification du dépôt…",
         notRepository: "Ce n’est pas un dépôt git",
         diffMode: "Mode de diff",
+        all: "Toutes les modifications",
         uncommitted: "Non commité",
         committed: "Commité",
         branchUnknown: "Inconnue",

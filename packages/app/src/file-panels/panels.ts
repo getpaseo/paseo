@@ -1,12 +1,7 @@
 import { useMemo } from "react";
-import type {
-  PluginFile,
-  PluginFileLocation,
-  PluginFilePanelContribution,
-  PluginFileTab,
-} from "@getpaseo/plugin/client";
+import type { PluginFile, PluginFileLocation, PluginFileTab } from "@getpaseo/plugin/client";
 import { useInstalledPlugins } from "@/plugins/registry";
-import type { InstalledPlugin } from "@/plugins/types";
+import type { PluginFilePanelContribution, InstalledPlugin } from "@/plugins/types";
 import { filePanelCatalog, type RenderingFilePanel, type SourceFilePanel } from "./catalog";
 
 export interface PluginFilePanel {
