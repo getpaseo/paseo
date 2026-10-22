@@ -1,3 +1,4 @@
+import { agentBrowserEnv } from "../server/agent-browser-env.js";
 import { afterEach, expect, it } from "vitest";
 import { isPlatform } from "../test-utils/platform.js";
 import { EventEmitter } from "node:events";
@@ -451,6 +452,7 @@ it("injects parent-minted terminal activity env through the worker", async () =>
   const activityUrl = "http://127.0.0.1:12345/api/terminal-activity";
   manager = createWorkerTerminalManager({
     getTerminalActivityUrl: () => activityUrl,
+    paseoHome: cwd,
   });
 
   const session = trackTerminal(
@@ -461,6 +463,7 @@ it("injects parent-minted terminal activity env through the worker", async () =>
         require("node:fs").writeFileSync(
           ${JSON.stringify(envPath)},
           JSON.stringify({
+            browserEnv: Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith("AGENT_BROWSER_"))),
             terminalId: process.env.PASEO_TERMINAL_ID,
             token: process.env.PASEO_ACTIVITY_TOKEN,
             url: process.env.PASEO_TERMINAL_ACTIVITY_URL,
@@ -476,6 +479,7 @@ it("injects parent-minted terminal activity env through the worker", async () =>
   await waitForCondition(() => existsSync(envPath), 10000);
 
   const env = JSON.parse(readFileSync(envPath, "utf8")) as {
+    browserEnv: Record<string, string>;
     terminalId?: string;
     token?: string;
     url?: string;
@@ -486,6 +490,9 @@ it("injects parent-minted terminal activity env through the worker", async () =>
   const paseoCliPath = resolvePaseoCliExecutablePath();
   expect(paseoCliBinDir).not.toBeNull();
   expect(paseoCliPath).not.toBeNull();
+  expect(env.browserEnv).toEqual(
+    agentBrowserEnv("ws-test", { kind: "terminal", id: session.id }, cwd),
+  );
   expect(env.terminalId).toBe(session.id);
   expect(env.token).toEqual(expect.any(String));
   expect(env.token).not.toBe("");

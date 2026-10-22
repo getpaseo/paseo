@@ -224,6 +224,7 @@ export async function closeWorkspaceBrowser(
           url: readResidentBrowserUrl(input.browserId) ?? record.url,
           viewport: record.viewport,
           paneId: findPaneContainingTab(layout.root, tab.tabId)?.id ?? null,
+          state: tab.state,
         },
       },
     }));
@@ -256,6 +257,7 @@ export function reopenLastWorkspaceBrowser(workspaceKey: string): OpenWorkspaceB
     url: descriptor.url,
     viewport: descriptor.viewport,
     intent: "reveal",
+    state: descriptor.state,
     ...(paneId ? { placement: { mode: "pane", paneId } } : {}),
   });
   if (result.ok)

@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { BrowserAutomationBrowserIdSchema } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
@@ -28,7 +29,7 @@ export {
 interface BrowserStoreState extends BrowserIndexState {
   lastClosedByWorkspace: Record<
     string,
-    { url: string; viewport: BrowserViewport; paneId: string | null }
+    { url: string; viewport: BrowserViewport; paneId: string | null; state?: JsonValue }
   >;
   createBrowser: (input?: { initialUrl?: string }) => string;
   updateBrowser: (browserId: string, patch: BrowserRecordPatch) => void;

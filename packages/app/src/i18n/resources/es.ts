@@ -644,6 +644,14 @@ export const es: TranslationResources = {
       },
     },
     browser: {
+      agentBrowser: {
+        label: "Agent browser",
+        localOnly: "Se necesita un host local.",
+        updateHost: "Actualiza el host.",
+        toolMissing: "Instala agent-browser en este host.",
+        updateTool: "Actualiza agent-browser (0.37.1 o posterior).",
+        startFailed: "No se pudo abrir Agent browser.",
+      },
       tabs: "Pestañas del navegador",
       newTab: "Nueva pestaña del navegador",
       allTabs: "Todas las pestañas",

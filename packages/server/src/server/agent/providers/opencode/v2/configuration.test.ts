@@ -24,7 +24,16 @@ describe("OpenCode v2 helper isolation", () => {
     expect(
       requiresDedicatedV2Server(
         { provider: "opencode", cwd: "/tmp/project" },
-        { agentId: "agent", env: { PASEO_AGENT_ID: "agent", PASEO_AGENT_CWD: "/tmp/project" } },
+        {
+          agentId: "agent",
+          env: {
+            PASEO_AGENT_ID: "agent",
+            PASEO_AGENT_CWD: "/tmp/project",
+            AGENT_BROWSER_NAMESPACE: "workspace",
+            AGENT_BROWSER_SOCKET_DIR: "/tmp/browser",
+            AGENT_BROWSER_SESSION: "agent-session",
+          },
+        },
       ),
     ).toBe(false);
   });

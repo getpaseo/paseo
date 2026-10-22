@@ -639,6 +639,14 @@ export const ko: TranslationResources = {
       },
     },
     browser: {
+      agentBrowser: {
+        label: "Agent browser",
+        localOnly: "로컬 호스트가 필요합니다.",
+        updateHost: "호스트를 업데이트하세요.",
+        toolMissing: "이 호스트에 agent-browser를 설치하세요.",
+        updateTool: "agent-browser를 업데이트하세요(0.37.1 이상).",
+        startFailed: "Agent browser를 열 수 없습니다.",
+      },
       tabs: "브라우저 탭",
       newTab: "새 브라우저 탭",
       allTabs: "모든 탭",

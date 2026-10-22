@@ -1,3 +1,4 @@
+import { agentBrowserEnv } from "../server/agent-browser-env.js";
 import {
   createTerminal,
   type TerminalActivityTransition,
@@ -336,6 +337,7 @@ export function createTerminalManager(
           ? (managerOptions.getTerminalActivityUrl?.() ?? null)
           : options.activityUrl;
       const activityEnv = {
+        ...agentBrowserEnv(options.workspaceId, { kind: "terminal", id: terminalId }),
         PASEO_TERMINAL_ID: terminalId,
         PASEO_ACTIVITY_TOKEN: activityToken,
         ...(terminalActivityUrl ? { PASEO_TERMINAL_ACTIVITY_URL: terminalActivityUrl } : {}),

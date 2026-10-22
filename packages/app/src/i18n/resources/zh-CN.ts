@@ -638,6 +638,14 @@ export const zhCN: TranslationResources = {
       },
     },
     browser: {
+      agentBrowser: {
+        label: "Agent browser",
+        localOnly: "需要本地主机。",
+        updateHost: "请更新主机。",
+        toolMissing: "请在此主机安装 agent-browser。",
+        updateTool: "请更新 agent-browser（0.37.1 或更高版本）。",
+        startFailed: "无法打开 Agent browser。",
+      },
       tabs: "浏览器标签页",
       newTab: "新建浏览器标签页",
       allTabs: "所有标签页",

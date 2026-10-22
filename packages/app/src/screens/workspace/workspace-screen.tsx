@@ -1,3 +1,5 @@
+import { useAgentBrowser } from "./use-agent-browser";
+import { isAgentBrowserTab, selectClassicBrowser } from "@/workspace-tabs/agent-browser";
 import { WorkspaceTodosHost, WorkspaceTodosButton } from "@/workspace-todos";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { WorkspaceIntentionEditor } from "./workspace-intention-editor";
@@ -22,7 +24,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useRouter, type Href } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, ChevronRight, Globe } from "lucide-react-native";
+import { ChevronDown, ChevronRight, Globe, Bot } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
@@ -269,6 +271,7 @@ function buildWorkspaceFileLocation(
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedGlobe = withUnistyles(Globe);
+const ThemedBot = withUnistyles(Bot);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -1734,6 +1737,7 @@ function WorkspaceScreenContent({
       }),
     [normalizedServerId, normalizedWorkspaceId],
   );
+  const agentBrowser = useAgentBrowser(normalizedServerId, normalizedWorkspaceId, persistenceKey);
   const openTab = useWorkspaceLayoutStore((state) => state.openTab);
   const replaceWorkspaceTabTarget = useWorkspaceLayoutStore((state) => state.replaceTab);
   const openWorkspaceTabFocused = useCallback(
@@ -1963,12 +1967,22 @@ function WorkspaceScreenContent({
     browserPaneId &&
     canDismissPaneInLayout(workspaceLayout, browserPaneId, explorerSidebarPaneId),
   );
+  const isClassicBrowserShowing = Boolean(
+    isBrowserShowing &&
+    workspaceLayout &&
+    collectAllTabs(workspaceLayout.root).some(
+      (tab) =>
+        tab.tabId === browserPane?.focusedTabId &&
+        tab.target.kind === "browser" &&
+        !isAgentBrowserTab(tab),
+    ),
+  );
   const browserToggleLabel = t(
-    isBrowserShowing ? "workspace.browser.hide" : "workspace.browser.show",
+    isClassicBrowserShowing ? "workspace.browser.hide" : "workspace.browser.show",
   );
   const browserToggleAccessibilityState = useMemo(
-    () => ({ expanded: isBrowserShowing }),
-    [isBrowserShowing],
+    () => ({ expanded: isClassicBrowserShowing }),
+    [isClassicBrowserShowing],
   );
   const lastMainPaneRef = useLastMainPane({
     workspaceKey: persistenceKey,
@@ -2567,9 +2581,7 @@ function WorkspaceScreenContent({
     }
     const layout = useWorkspaceLayoutStore.getState().layoutByWorkspace[input.workspaceKey];
     const pane = findPaneById(layout.root, paneId);
-    const existing = collectAllTabs(layout.root).find(
-      (tab) => tab.tabId === pane?.focusedTabId && tab.target.kind === "browser",
-    );
+    const existing = selectClassicBrowser(collectAllTabs(layout.root), pane?.focusedTabId);
     if (existing) {
       store.focusTab(input.workspaceKey, existing.tabId);
       setBrowserOpenError(null);
@@ -2585,7 +2597,7 @@ function WorkspaceScreenContent({
   }, []);
   const handleToggleBrowserPane = useCallback(() => {
     if (!persistenceKey || !getIsElectron()) return;
-    if (isBrowserShowing) {
+    if (isClassicBrowserShowing) {
       const store = useWorkspaceLayoutStore.getState();
       const layout = store.layoutByWorkspace[persistenceKey];
       if (
@@ -2600,7 +2612,7 @@ function WorkspaceScreenContent({
       store.ensureBrowserPane(persistenceKey, { reveal: false });
       store.hideBrowserPane(persistenceKey);
     } else showBrowserPane({ workspaceKey: persistenceKey });
-  }, [explorerSidebarPaneId, isBrowserShowing, persistenceKey, showBrowserPane]);
+  }, [explorerSidebarPaneId, isClassicBrowserShowing, persistenceKey, showBrowserPane]);
   const openManualBrowser = useCallback((input: OpenWorkspaceBrowserInput) => {
     const result = openWorkspaceBrowser(input);
     setBrowserOpenError(result.ok ? null : { kind: "browser", input });
@@ -4072,23 +4084,46 @@ function WorkspaceScreenContent({
     workspaceKey: persistenceKey,
   });
 
+  const agentBrowserAccessibilityState = useMemo(
+    () => ({ busy: agentBrowser.loading }),
+    [agentBrowser.loading],
+  );
   const headerRight = useMemo(
     () => (
       <View style={styles.headerRight}>
         {getIsElectron() ? (
-          <HeaderToggleButton
-            testID="workspace-browser-toggle"
-            onPress={handleToggleBrowserPane}
-            accessibilityRole="button"
-            accessibilityLabel={browserToggleLabel}
-            accessibilityState={browserToggleAccessibilityState}
-            tooltipLabel={browserToggleLabel}
-            tooltipKeys={[]}
-            tooltipSide="bottom"
-            disabled={isBrowserShowing && !canHideBrowser}
-          >
-            <ThemedGlobe size={18} strokeWidth={1.5} uniProps={extraMutedIconColorMapping} />
-          </HeaderToggleButton>
+          <>
+            <HeaderToggleButton
+              testID="workspace-browser-toggle"
+              onPress={handleToggleBrowserPane}
+              accessibilityRole="button"
+              accessibilityLabel={browserToggleLabel}
+              accessibilityState={browserToggleAccessibilityState}
+              tooltipLabel={browserToggleLabel}
+              tooltipKeys={[]}
+              tooltipSide="bottom"
+              disabled={isClassicBrowserShowing && !canHideBrowser}
+            >
+              <ThemedGlobe size={18} strokeWidth={1.5} uniProps={extraMutedIconColorMapping} />
+            </HeaderToggleButton>
+            <HeaderToggleButton
+              testID="workspace-agent-browser-toggle"
+              onPress={agentBrowser.open}
+              accessibilityRole="button"
+              accessibilityLabel={t("workspace.browser.agentBrowser.label")}
+              accessibilityState={agentBrowserAccessibilityState}
+              tooltipLabel={t("workspace.browser.agentBrowser.label")}
+              tooltipKeys={[]}
+              tooltipSide="bottom"
+              disabled={agentBrowser.loading}
+            >
+              {agentBrowser.loading ? (
+                <ThemedLoadingSpinner uniProps={mutedColorMapping} />
+              ) : (
+                <ThemedBot size={18} strokeWidth={1.5} uniProps={extraMutedIconColorMapping} />
+              )}
+            </HeaderToggleButton>
+          </>
         ) : null}
         <PluginHeaderButtons serverId={normalizedServerId} workspaceId={normalizedWorkspaceId} />
         {!isMobile ? <WorkspaceTodosButton hideLabels={hideHeaderActionLabels} /> : null}
@@ -4147,9 +4182,12 @@ function WorkspaceScreenContent({
     ),
     [
       handleToggleBrowserPane,
+      agentBrowser.open,
+      agentBrowser.loading,
+      agentBrowserAccessibilityState,
+      isClassicBrowserShowing,
       browserToggleLabel,
       browserToggleAccessibilityState,
-      isBrowserShowing,
       canHideBrowser,
       hideHeaderActionLabels,
       isMobile,
@@ -4399,6 +4437,20 @@ function WorkspaceScreenContent({
             cwd={workspaceDirectory}
           />
         </View>
+      ) : null}
+      {agentBrowser.error ? (
+        <Alert
+          variant="error"
+          description={agentBrowser.error}
+          testID="workspace-agent-browser-error"
+        >
+          <Button size="sm" onPress={agentBrowser.open}>
+            {t("common.actions.retry")}
+          </Button>
+          <Button size="sm" variant="ghost" onPress={agentBrowser.dismiss}>
+            {t("common.actions.dismiss")}
+          </Button>
+        </Alert>
       ) : null}
       {browserOpenError?.input.workspaceKey === persistenceKey ? (
         <Alert

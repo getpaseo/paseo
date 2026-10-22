@@ -2757,6 +2757,14 @@ export class DaemonClient {
     });
   }
 
+  async openWorkspaceAgentBrowser(workspaceId: string, requestId?: string) {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "workspace.agent_browser.open.request", workspaceId },
+      responseType: "workspace.agent_browser.open.response",
+    });
+  }
+
   async readWorkspaceScriptConfiguration(workspaceId: string, requestId?: string) {
     this.requireWorkspaceScriptConfigurationSupport();
     return this.sendCorrelatedSessionRequest({

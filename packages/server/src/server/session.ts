@@ -1,3 +1,4 @@
+import { AgentBrowserError, agentBrowserDashboardsForHome } from "./agent-browser.js";
 import type { DesktopToolsBroker } from "./desktop-tools/broker.js";
 import { selectResponseContext } from "./response-context.js";
 import {
@@ -3164,6 +3165,8 @@ export class Session {
     switch (msg.type) {
       case "start_workspace_script_request":
         return this.handleStartWorkspaceScriptRequest(msg);
+      case "workspace.agent_browser.open.request":
+        return this.handleWorkspaceAgentBrowserOpen(msg);
       case "workspace.script.list.request":
         return this.handleWorkspaceScriptListRequest(msg);
       case "workspace.script.start.request":
@@ -7415,6 +7418,29 @@ export class Session {
 
   private handleStartWorkspaceScriptRequest(request: StartWorkspaceScriptRequest): Promise<void> {
     return this.workspaceScripts.start(request);
+  }
+
+  private async handleWorkspaceAgentBrowserOpen(
+    request: Extract<SessionInboundMessage, { type: "workspace.agent_browser.open.request" }>,
+  ): Promise<void> {
+    let url: string | null = null;
+    let error:
+      | "tool_missing"
+      | "version_incompatible"
+      | "start_failed"
+      | "workspace_unavailable"
+      | null = null;
+    try {
+      const workspace = await this.workspaceRegistry.get(request.workspaceId);
+      if (!workspace || workspace.archivedAt) error = "workspace_unavailable";
+      else url = await agentBrowserDashboardsForHome(this.paseoHome).open(workspace.workspaceId);
+    } catch (cause) {
+      error = cause instanceof AgentBrowserError ? cause.code : "start_failed";
+    }
+    this.emit({
+      type: "workspace.agent_browser.open.response",
+      payload: { requestId: request.requestId, workspaceId: request.workspaceId, url, error },
+    });
   }
 
   private async handleWorkspaceScriptListRequest(

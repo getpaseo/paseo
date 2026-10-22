@@ -5469,6 +5469,20 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (this.deps.customCodexConfig) {
       Object.assign(innerConfig, this.deps.customCodexConfig);
     }
+    const browserEnv = Object.fromEntries(
+      Object.entries(this.harnessEnvironment).filter(([key]) =>
+        ["AGENT_BROWSER_NAMESPACE", "AGENT_BROWSER_SOCKET_DIR", "AGENT_BROWSER_SESSION"].includes(
+          key,
+        ),
+      ),
+    );
+    if (Object.keys(browserEnv).length > 0) {
+      const policy = toObjectRecord(innerConfig.shell_environment_policy) ?? {};
+      innerConfig.shell_environment_policy = {
+        ...policy,
+        set: { ...toObjectRecord(policy.set), ...browserEnv },
+      };
+    }
     if (this.config.mcpServers) {
       const mcpServers: Record<string, CodexMcpServerConfig> = {};
       for (const [name, serverConfig] of Object.entries(this.config.mcpServers)) {

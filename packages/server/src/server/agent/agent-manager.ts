@@ -1,3 +1,4 @@
+import { agentBrowserEnv } from "../agent-browser-env.js";
 import { interactiveResponsesEnabled } from "../interactive-responses.js";
 import { projectTimelineRows } from "./timeline-projection.js";
 import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
@@ -349,6 +350,7 @@ export interface CreateAgentOptions {
 }
 
 export interface AgentManagerOptions {
+  paseoHome?: string;
   resolveLaunchProfile?: (
     id: string,
   ) => import("@getpaseo/protocol/messages").AgentProfile | undefined;
@@ -812,7 +814,10 @@ export class AgentManager {
   private readonly generateAgentTitle?: AgentManagerOptions["generateAgentTitle"];
   private acceptingAgentRegistrations = true;
 
+  private readonly paseoHome?: string;
+
   constructor(options: AgentManagerOptions) {
+    this.paseoHome = options.paseoHome;
     this.onFirstUserPrompt = options.onFirstUserPrompt;
     this.resolveLaunchProfile = options.resolveLaunchProfile;
     this.pluginLifecycle = options.pluginLifecycle;
@@ -1515,7 +1520,7 @@ export class AgentManager {
       {
         reason: "resume",
         purpose,
-        workspaceId: options?.workspaceId ?? null,
+        workspaceId: options?.workspaceId ?? record?.workspaceId ?? null,
       },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
@@ -1528,6 +1533,7 @@ export class AgentManager {
     await this.requireExternalMcpSupport(session, storedConfig);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       ...options,
+      workspaceId: options?.workspaceId ?? record?.workspaceId,
       persistence: handle,
       restoring: true,
     });
@@ -5900,6 +5906,9 @@ export class AgentManager {
       agentId,
       env: {
         ...env,
+        ...(opening?.workspaceId
+          ? agentBrowserEnv(opening.workspaceId, { kind: "agent", id: agentId }, this.paseoHome)
+          : {}),
         PASEO_AGENT_ID: agentId,
         PASEO_AGENT_CWD: cwd,
       },

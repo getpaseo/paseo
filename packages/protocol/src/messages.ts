@@ -3139,6 +3139,24 @@ export const StartWorkspaceScriptRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const WorkspaceAgentBrowserOpenRequestSchema = z.object({
+  type: z.literal("workspace.agent_browser.open.request"),
+  workspaceId: z.string(),
+  requestId: z.string(),
+});
+
+export const WorkspaceAgentBrowserOpenResponseSchema = z.object({
+  type: z.literal("workspace.agent_browser.open.response"),
+  payload: z.object({
+    requestId: z.string(),
+    workspaceId: z.string(),
+    url: z.string().nullable(),
+    error: z
+      .enum(["tool_missing", "version_incompatible", "start_failed", "workspace_unavailable"])
+      .nullable(),
+  }),
+});
+
 export const WorkspaceScriptListRequestSchema = z.object({
   type: z.literal("workspace.script.list.request"),
   workspaceId: z.string(),
@@ -3575,6 +3593,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CreateTerminalRequestSchema,
   RenameTerminalRequestSchema,
   StartWorkspaceScriptRequestSchema,
+  WorkspaceAgentBrowserOpenRequestSchema,
   WorkspaceScriptListRequestSchema,
   WorkspaceScriptStartRequestSchema,
   WorkspaceScriptStopRequestSchema,
@@ -3776,6 +3795,7 @@ export const ServerInfoStatusPayloadSchema = z
     // COMPAT(providersSnapshot): added in v0.1.48, remove gating when all clients use snapshot
     features: z
       .object({
+        workspaceAgentBrowser: z.boolean().optional(),
         // COMPAT(agentWritePolicy): added in v0.8.0; remove gate after 2027-09-13.
         agentWritePolicy: z.boolean().optional(),
         // COMPAT(agentProfileWorkflows): added in v0.8.0; remove gate after 2027-09-13.
@@ -7151,6 +7171,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceGithubSearchRepositoriesResponseSchema,
   ProjectGithubCloneResponseSchema,
   StartWorkspaceScriptResponseMessageSchema,
+  WorkspaceAgentBrowserOpenResponseSchema,
   WorkspaceScriptListResponseMessageSchema,
   WorkspaceScriptStartResponseMessageSchema,
   WorkspaceScriptStopResponseMessageSchema,

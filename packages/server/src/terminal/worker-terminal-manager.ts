@@ -90,6 +90,7 @@ interface TerminalWorkerProcess {
 }
 
 interface WorkerTerminalManagerOptions {
+  paseoHome?: string;
   requestTimeoutMs?: number;
   forkWorker?: () => TerminalWorkerProcess;
   getTerminalActivityUrl?: () => string | null;
@@ -139,8 +140,9 @@ function cloneTerminalInfo(info: RequiredWorkerTerminalInfo): RequiredWorkerTerm
   };
 }
 
-function forkTerminalWorker(): TerminalWorkerProcess {
+function forkTerminalWorker(paseoHome?: string): TerminalWorkerProcess {
   return fork(fileURLToPath(resolveWorkerUrl()), [], {
+    ...(paseoHome ? { env: { ...process.env, PASEO_HOME: paseoHome } } : {}),
     execArgv: resolveWorkerExecArgv(),
     serialization: "advanced",
     stdio: ["ignore", "ignore", "inherit", "ipc"],
@@ -150,7 +152,9 @@ function forkTerminalWorker(): TerminalWorkerProcess {
 export function createWorkerTerminalManager(
   managerOptions: WorkerTerminalManagerOptions = {},
 ): TerminalManager {
-  const worker = managerOptions.forkWorker ? managerOptions.forkWorker() : forkTerminalWorker();
+  const worker = managerOptions.forkWorker
+    ? managerOptions.forkWorker()
+    : forkTerminalWorker(managerOptions.paseoHome);
   const requestTimeoutMs = managerOptions.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
   const pendingRequests = new Map<string, PendingRequest>();
   const recordsById = new Map<string, WorkerTerminalRecord>();
