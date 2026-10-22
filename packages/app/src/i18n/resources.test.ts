@@ -227,6 +227,19 @@ describe("translation resources", () => {
     expect(es.settings.project.scripts.title).toBe("Scripts");
   });
 
+  it("defines the macOS Option-as-Meta terminal setting in every supported language", () => {
+    expect(en.settings.general.terminalMacOptionIsMeta.label).toBe("Option key as Meta (macOS)");
+    expect(en.settings.general.terminalMacOptionIsMeta.description).toBe(
+      "On: Option+key sends terminal Meta shortcuts. Off: Option+key types the character of your keyboard layout (e.g. Option+L → @ on German).",
+    );
+    for (const resource of [ar, es, fr, ja, ko, ptBR, ru, zhCN]) {
+      const { label, description } = resource.settings.general.terminalMacOptionIsMeta;
+      expect(label).toContain("Meta");
+      expect(label).toContain("macOS");
+      expect(description).toContain("Meta");
+    }
+  });
+
   it("uses the Russian term for continuing a session in copied commands", () => {
     expect(ru.workspace.tabs.menu.copyResumeCommand).toBe("Копировать команду продолжения");
     expect(ru.workspace.tabs.toasts.resumeCommandCopiedLabel).toBe("команда продолжения");

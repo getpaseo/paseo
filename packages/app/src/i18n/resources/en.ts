@@ -2385,6 +2385,11 @@ export const en = {
         description: "Lines kept in the built-in terminal buffer",
         accessibilityLabel: "Terminal scrollback lines",
       },
+      terminalMacOptionIsMeta: {
+        label: "Option key as Meta (macOS)",
+        description:
+          "On: Option+key sends terminal Meta shortcuts. Off: Option+key types the character of your keyboard layout (e.g. Option+L → @ on German).",
+      },
       autoExpandReasoning: {
         label: "Always expand reasoning",
         description: "Show agent thinking and chain-of-thought blocks fully expanded by default",

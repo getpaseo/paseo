@@ -90,7 +90,13 @@ interface StubTerminal {
   resize?: (cols: number, rows: number) => void;
   focus: () => void;
   refresh?: (start: number, end: number) => void;
-  options?: { theme?: unknown; scrollback?: number; fontFamily?: string; fontSize?: number };
+  options?: {
+    theme?: unknown;
+    scrollback?: number;
+    fontFamily?: string;
+    fontSize?: number;
+    macOptionIsMeta?: boolean;
+  };
   rows?: number;
   cols?: number;
 }
@@ -631,6 +637,27 @@ describe("terminal-emulator-runtime", () => {
 
     expect(terminal.options?.scrollback).toBe(42_000);
     expect(refresh).toHaveBeenCalledWith(0, 11);
+  });
+
+  it("updates macOptionIsMeta without remounting or refreshing rows", () => {
+    const runtime = new TerminalEmulatorRuntime();
+    const refresh = vi.fn();
+    const terminal: StubTerminal = {
+      write: () => {},
+      reset: () => {},
+      focus: () => {},
+      refresh,
+      options: { macOptionIsMeta: true },
+      rows: 12,
+      cols: 40,
+    };
+    (runtime as unknown as { terminal: StubTerminal }).terminal = terminal;
+
+    runtime.setMacOptionIsMeta({ enabled: false });
+
+    expect(terminal.options?.macOptionIsMeta).toBe(false);
+    // The option changes key handling only, so unlike setScrollback it must not repaint.
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   it("updates terminal font without remounting", () => {

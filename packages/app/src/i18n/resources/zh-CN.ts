@@ -2236,6 +2236,11 @@ export const zhCN: TranslationResources = {
         description: "内置终端缓冲区保留的行数",
         accessibilityLabel: "终端回滚行数",
       },
+      terminalMacOptionIsMeta: {
+        label: "将 Option 键用作 Meta（macOS）",
+        description:
+          "开启：Option+按键发送终端 Meta 快捷键。关闭：Option+按键输入键盘布局对应的字符（例如德语下 Option+L → @）。",
+      },
       autoExpandReasoning: {
         label: "始终展开推理过程",
         description: "默认情况下完全展开 AI 的思考和推理过程",

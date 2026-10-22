@@ -1075,6 +1075,7 @@ export function TerminalPane({
             testId="terminal-surface"
             xtermTheme={xtermTheme}
             scrollbackLines={settings.terminalScrollbackLines}
+            macOptionIsMeta={settings.terminalMacOptionIsMeta}
             fontFamily={terminalFontFamily}
             fontSize={settings.codeFontSize}
             keyboardInset={keyboardInset}

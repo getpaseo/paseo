@@ -2296,6 +2296,11 @@ export const ru: TranslationResources = {
         description: "Количество строк, сохраняемых во встроенном буфере терминала",
         accessibilityLabel: "Количество строк в буфере прокрутки терминала",
       },
+      terminalMacOptionIsMeta: {
+        label: "Клавиша Option как Meta (macOS)",
+        description:
+          "Вкл.: Option+клавиша отправляет сочетания Meta терминала. Выкл.: Option+клавиша вводит символ вашей раскладки клавиатуры (напр. Option+L → @ в немецкой).",
+      },
       autoExpandReasoning: {
         label: "Всегда разворачивать размышления",
         description:

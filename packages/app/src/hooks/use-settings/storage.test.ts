@@ -409,6 +409,31 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.useLegacyTerminalRenderer).toBe(true);
   });
 
+  it("defaults the terminal Mac Option setting to meta when an old blob omits it", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ theme: "dark" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.terminalMacOptionIsMeta).toBe(true);
+  });
+
+  it("round-trips a disabled terminal Mac Option meta preference", async () => {
+    const deps = makeDeps();
+    const queryClient = new QueryClient();
+
+    await saveAppSettings({
+      queryClient,
+      updates: { terminalMacOptionIsMeta: false },
+      deps,
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).terminalMacOptionIsMeta).toBe(false);
+  });
+
   it("loads configured terminal scrollback lines from app settings", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
