@@ -1,5 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 import { getServerId } from "./server-id";
+import { projectEquivalenceViewKey } from "./project-view-key";
 
 interface ContextMenuAnchor {
   x: number;
@@ -294,4 +295,13 @@ export async function expectMobileExplorerHidden(page: Page): Promise<void> {
   await expect(page.getByTestId("workspace-explorer-sidebar")).not.toBeInViewport({
     timeout: 5_000,
   });
+}
+
+export async function revealSidebarProjectWorkspaces(
+  page: Page,
+  projectKey: string,
+): Promise<void> {
+  await page
+    .getByTestId(`sidebar-project-show-more-${projectEquivalenceViewKey(projectKey)}`)
+    .click();
 }
