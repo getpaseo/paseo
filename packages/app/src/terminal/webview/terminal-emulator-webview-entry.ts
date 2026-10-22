@@ -12,6 +12,7 @@ import type {
   TerminalLocalFileLinkSource,
   TerminalLocalFileLinkTarget,
 } from "../local-links/terminal-local-link-provider";
+import { terminalFileToBase64, type TerminalFile } from "../file-paste";
 
 interface MountMessage {
   type: "mount";
@@ -76,6 +77,7 @@ type OutboundMessage =
   | { type: "pendingModifiersConsumed"; streamKey: string }
   | { type: "inputModeChange"; streamKey: string; state: TerminalInputModeState }
   | { type: "openExternalUrl"; streamKey: string; url: string }
+  | { type: "filePaste"; streamKey: string; fileName: string; mimeType: string; data: string }
   | {
       type: "resolveLocalFileLink";
       streamKey: string;
@@ -182,6 +184,7 @@ class TerminalWebViewBridge {
     number,
     (target: TerminalLocalFileLinkTarget | null) => void
   >();
+  private filePastes: Promise<void> = Promise.resolve();
   private swipeGesturesEnabled = false;
   private trackingSwipe = false;
   private activePointerId: number | null = null;
@@ -353,6 +356,7 @@ class TerminalWebViewBridge {
             target,
             disposition,
           }),
+        onFilePaste: (file) => this.forwardFilePaste(message.streamKey, file),
       },
     });
     runtime.setPendingModifiers({ pendingModifiers: message.pendingModifiers });
@@ -391,6 +395,27 @@ class TerminalWebViewBridge {
     this.resolveAllLocalFileLinkRequests(null);
     if (previousStreamKey && (!streamKey || streamKey === previousStreamKey)) {
       sendToNative({ type: "rendererReady", streamKey: previousStreamKey, isReady: false });
+    }
+  }
+
+  // Forward in gesture order: an earlier file can finish reading after a later one.
+  private forwardFilePaste(streamKey: string, file: Promise<TerminalFile | null>): void {
+    this.filePastes = this.filePastes.then(() => this.sendFilePaste(streamKey, file));
+  }
+
+  private async sendFilePaste(
+    streamKey: string,
+    file: Promise<TerminalFile | null>,
+  ): Promise<void> {
+    const read = await file.catch(() => null);
+    if (read && this.matches(streamKey)) {
+      sendToNative({
+        type: "filePaste",
+        streamKey,
+        fileName: read.fileName,
+        mimeType: read.mimeType,
+        data: terminalFileToBase64(read),
+      });
     }
   }
 

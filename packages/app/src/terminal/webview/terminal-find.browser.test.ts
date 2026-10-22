@@ -7,6 +7,8 @@ interface Message {
   streamKey?: string;
   result?: { resultCount: number; resultIndex: number };
   data?: string;
+  fileName?: string;
+  mimeType?: string;
 }
 interface TerminalFrameWindow extends Window {
   __PASEO_TERMINAL_WEBVIEW_RECEIVE__(message: unknown): void;
@@ -15,7 +17,7 @@ interface TerminalFrameWindow extends Window {
 let frame: HTMLIFrameElement;
 afterEach(() => frame?.remove());
 
-test("the generated WebView searches its mounted stream and keeps Find commands off the input bridge", async () => {
+async function mountWebView() {
   const messages: Message[] = [];
   frame = document.createElement("iframe");
   frame.style.width = "500px";
@@ -42,6 +44,11 @@ test("the generated WebView searches its mounted stream and keeps Find commands 
   await expect
     .poll(() => messages.some((m) => m.type === "rendererReady" && m.streamKey === "owned"))
     .toBe(true);
+  return { win, send, messages };
+}
+
+test("the generated WebView searches its mounted stream and keeps Find commands off the input bridge", async () => {
+  const { win, send, messages } = await mountWebView();
   send({ type: "writeOutput", text: "first a.b\r\n" + "padding\r\n".repeat(30) + "last A.B" });
   await expect
     .poll(() => {
@@ -68,6 +75,30 @@ test("the generated WebView searches its mounted stream and keeps Find commands 
   await expect
     .poll(() => messages.findLast((m) => m.type === "findResult")?.result)
     .toMatchObject({ resultCount: 0 });
+  expect(messages.filter((m) => m.type === "input")).toEqual([]);
+  send({ type: "unmount" });
+});
+
+test("the generated WebView forwards file-only pastes to native as file bytes", async () => {
+  const { win, send, messages } = await mountWebView();
+  const clipboardData = new DataTransfer();
+  clipboardData.items.add(
+    new File([new Uint8Array([137, 80, 78, 71])], "image.png", { type: "image/png" }),
+  );
+
+  win.document
+    .querySelector(".xterm-helper-textarea")!
+    .dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+
+  await expect
+    .poll(() => messages.find((m) => m.type === "filePaste"))
+    .toEqual({
+      type: "filePaste",
+      streamKey: "owned",
+      fileName: "image.png",
+      mimeType: "image/png",
+      data: "iVBORw==",
+    });
   expect(messages.filter((m) => m.type === "input")).toEqual([]);
   send({ type: "unmount" });
 });

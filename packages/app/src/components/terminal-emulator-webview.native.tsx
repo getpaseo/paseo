@@ -27,6 +27,7 @@ import type {
   TerminalLocalFileLinkSource,
   TerminalLocalFileLinkTarget,
 } from "../terminal/local-links/terminal-local-link-provider";
+import { terminalFileFromBase64 } from "../terminal/file-paste";
 import { terminalEmulatorWebViewHtml } from "../terminal/webview/terminal-emulator-webview-html";
 import type { PendingTerminalModifiers } from "../utils/terminal-keys";
 import { openExternalUrl } from "../utils/open-external-url";
@@ -95,6 +96,7 @@ type BridgeOutboundMessage =
   | { type: "pendingModifiersConsumed"; streamKey: string }
   | { type: "inputModeChange"; streamKey: string; state: TerminalInputModeState }
   | { type: "openExternalUrl"; streamKey: string; url: string }
+  | { type: "filePaste"; streamKey: string; fileName: string; mimeType: string; data: string }
   | {
       type: "resolveLocalFileLink";
       streamKey: string;
@@ -181,6 +183,7 @@ export default function WebViewTerminalEmulator({
   onResolveLocalFileLink,
   onOpenLocalFileLink,
   onRendererReadyChange,
+  onFilePaste,
   pendingModifiers = { ctrl: false, shift: false, alt: false },
   focusRequestToken = 0,
   resizeRequestToken = 0,
@@ -230,6 +233,7 @@ export default function WebViewTerminalEmulator({
     onRendererReadyChange,
     onResolveLocalFileLink,
     onOpenLocalFileLink,
+    onFilePaste,
     onSwipeLeft,
     onSwipeRight,
   });
@@ -245,6 +249,7 @@ export default function WebViewTerminalEmulator({
     onRendererReadyChange,
     onResolveLocalFileLink,
     onOpenLocalFileLink,
+    onFilePaste,
     onSwipeLeft,
     onSwipeRight,
   };
@@ -588,6 +593,10 @@ export default function WebViewTerminalEmulator({
       }
       if (message.type === "findResult") {
         callbacksRef.current.onFindResult?.(message.result);
+        return;
+      }
+      if (message.type === "filePaste") {
+        callbacksRef.current.onFilePaste?.(Promise.resolve(terminalFileFromBase64(message)));
         return;
       }
       handleTerminalMessage(message);
