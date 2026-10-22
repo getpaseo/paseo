@@ -3775,6 +3775,7 @@ export const ServerInfoStatusPayloadSchema = z
         explicitEventSubscriptions: z.boolean().optional(),
         ownedSubscriptions: z.boolean().optional(),
         workspaceSetupObservation: z.boolean().optional(),
+        workspaceSortTimes: z.boolean().optional(),
         // COMPAT(canonicalSubmittedPrompts): added in v0.2.6, remove gate after 2027-01-30.
         canonicalSubmittedPrompts: z.boolean().optional(),
         agentMessageProvenance: z.boolean().optional(),
@@ -4120,6 +4121,8 @@ export const WorkspaceDescriptorPayloadSchema = z
       .nullish()
       .transform((value) => value ?? null),
     activityAt: z.string().nullable(),
+    createdAt: z.string().optional(),
+    lastUserMessageAt: z.string().nullable().optional(),
     diffStat: z
       .object({
         additions: z.number(),

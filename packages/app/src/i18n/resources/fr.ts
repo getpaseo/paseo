@@ -1192,6 +1192,12 @@ export const fr: TranslationResources = {
       showBackground: "Afficher les espaces en arrière-plan",
       trigger: "Préférences d’affichage",
       heading: "Affichage",
+      sort: {
+        label: "Tri",
+        created: "Création",
+        lastPrompt: "Dernier prompt",
+        updateHost: "Mettez les hôtes à jour pour trier les espaces de travail",
+      },
       grouping: {
         label: "Regroupement",
         project: "Projet",

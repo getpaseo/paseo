@@ -124,6 +124,8 @@ beforeEach(async () => {
           workspaceKind: "local_checkout",
           name: "main",
           status: "done",
+          createdAt: null,
+          lastUserMessageAt: null,
           statusEnteredAt: null,
           archivingAt: null,
           diffStat: null,

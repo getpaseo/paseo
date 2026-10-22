@@ -1163,6 +1163,12 @@ export const ar: TranslationResources = {
       showBackground: "إظهار مساحات العمل في الخلفية",
       trigger: "تفضيلات العرض",
       heading: "العرض",
+      sort: {
+        label: "الترتيب",
+        created: "تاريخ الإنشاء",
+        lastPrompt: "آخر طلب",
+        updateHost: "حدّث المضيفين لترتيب مساحات العمل",
+      },
       grouping: {
         label: "التجميع",
         project: "المشروع",

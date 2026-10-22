@@ -1176,6 +1176,12 @@ export const ja: TranslationResources = {
       showBackground: "バックグラウンドを表示",
       trigger: "表示設定",
       heading: "表示",
+      sort: {
+        label: "並び順",
+        created: "作成日時",
+        lastPrompt: "最後のプロンプト",
+        updateHost: "ワークスペースを並べ替えるにはホストを更新してください",
+      },
       grouping: {
         label: "グループ化",
         project: "プロジェクト",

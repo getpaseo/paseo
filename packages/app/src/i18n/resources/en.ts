@@ -1171,6 +1171,12 @@ export const en = {
       showBackground: "Show background",
       trigger: "Display preferences",
       heading: "Display",
+      sort: {
+        label: "Sort",
+        created: "Created",
+        lastPrompt: "Last prompt",
+        updateHost: "Update hosts to sort workspaces",
+      },
       grouping: {
         label: "Grouping",
         project: "Project",

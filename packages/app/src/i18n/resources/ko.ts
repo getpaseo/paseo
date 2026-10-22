@@ -1170,6 +1170,12 @@ export const ko: TranslationResources = {
       showBackground: "백그라운드 표시",
       trigger: "표시 설정",
       heading: "표시",
+      sort: {
+        label: "정렬",
+        created: "생성일",
+        lastPrompt: "마지막 프롬프트",
+        updateHost: "작업 공간을 정렬하려면 호스트를 업데이트하세요",
+      },
       grouping: {
         label: "그룹화",
         project: "프로젝트",
