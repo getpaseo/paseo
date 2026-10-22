@@ -376,6 +376,28 @@ describe("DaemonSession", () => {
     expect(message.payload.diagnostic).not.toContain("pairing-secret");
   });
 
+  test("diagnostics tails the resolved daemon log path", async () => {
+    const configuredLogPath = join(makeHome(), "custom.log");
+    const { subsystem, emitted, paseoHome } = makeSubsystem({
+      daemonRuntimeConfig: {
+        listen: "127.0.0.1:6767",
+        logPath: configuredLogPath,
+        getRelayConfig: () => null,
+      },
+    });
+    writeFileSync(configuredLogPath, "configured log line\n");
+    writeFileSync(join(paseoHome, "daemon.log"), "default log line\n");
+
+    await subsystem.handleDiagnosticsRequest({ type: "diagnostics.request", requestId: "d-log" });
+
+    const message = emitted[0];
+    if (message?.type !== "diagnostics.response") {
+      throw new Error("expected diagnostics response");
+    }
+    expect(message.payload.diagnostic).toContain("configured log line");
+    expect(message.payload.diagnostic).not.toContain("default log line");
+  });
+
   test("diagnostics includes the PATH and shell visible to the daemon", async () => {
     const originalPath = process.env.PATH;
     const originalShell = process.env.SHELL;
