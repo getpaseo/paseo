@@ -57,6 +57,8 @@ nav: API 参考
 
 创建选项包括 `config`、`cwd`、`parent`、`title`、`prompt`、`env`、`outputSchema`、`images`、`attachments`、`git`、`worktree`、`autoArchive`、`background` 和 `labels`。
 
+`parent` 接受主机本地的 Agent ID、`AgentAddress`（`{ serverId, agentId }`）或 Agent 句柄。句柄的 `address` 在断开连接后仍保留其主机身份。通过 `hosts.client(serverId)` 创建时，请传入父 Agent 句柄或完整地址；SDK 会把父级元数据带到目标主机。
+
 `background` 表示创建工作区的意图。它不能与已有的 `workspaceId` 一起使用。调用方继承规则和包含后台的发现方式见[后台工作区](./workspaces.md)。
 
 `config` 接受：
@@ -77,6 +79,7 @@ nav: API 参考
 | 成员                           | 结果                              | 行为                                                                    |
 | ------------------------------ | --------------------------------- | ----------------------------------------------------------------------- |
 | `id`                           | `string`                          | 稳定的 daemon Agent ID。                                                |
+| `address`                      | `AgentAddress`                    | 完整的 `{ serverId, agentId }` 身份；需要连接到主机才能确定。           |
 | `workspaceId`                  | `string \| null`                  | 当前所在的工作区。                                                      |
 | `cwd`                          | `string \| null`                  | 当前工作目录。                                                          |
 | `status`                       | Agent 状态或 `null`               | 当前的生命周期状态。                                                    |
@@ -196,6 +199,57 @@ capture 接受可选的 `start`、`end`、`stripAnsi` 和 `requestId`。行范�
 `config.get(requestId?)` 返回 daemon 的可变配置。
 
 `config.patch(patch, requestId?)` 会校验、持久化并返回更新后的配置。这个管理接口用于主机配置，而不是针对单个 Agent 的选择。一次 patch 会影响使用该 daemon 的每个客户端和之后的每个 Agent。
+
+## `client.hosts` {#clienthosts}
+
+管理连接到所选 daemon 的主机。管理连接的 daemon 和目标主机都必须支持已连接主机功能。
+
+```ts
+const directory = await client.hosts.list();
+const registration = await client.hosts.add({
+  connection: "ssh://deploy@build-box",
+  label: "Build box",
+  metadata: { team: "infra" },
+  sourceKey: "build-box",
+});
+await client.hosts.update(registration.registrationId, { enabled: false });
+await client.hosts.remove(registration.registrationId);
+```
+
+`list()` 返回 `{ self: { serverId, label }, hosts }`。每个主机包括注册 ID 和服务器 ID、标签、经过认证的来源、字符串元数据、启用状态、连接状态、不含凭据的目标描述、上次在线和重试时间戳，以及带恢复说明的错误。它不会返回凭据。
+语法有效但无法访问的连接会被保存并重试。无效语法会直接报错，不会保存。
+
+`update(registrationId, patch)` 接受 `label`、`metadata`、`enabled`、`connection` 和 `replaceIdentity`。
+元数据会替换整个映射。替换连接会保留预期的服务器 ID，除非通过 `replaceIdentity: true` 显式接受新目标。
+
+`observe()` 返回一个由调用方持有的订阅。等待 `ready`，订阅快照和 `hosts.changed` 更新，然后调用 `release()`。
+重新连接后，观察会恢复并提供当前快照。
+
+```ts
+const remote = await client.hosts.client("srv_build_box");
+try {
+  const workspaces = await remote.workspaces.list();
+  const providers = await remote.providers.listAvailable();
+  await remote.agents.ref("agent_on_build_box").send("Continue the investigation");
+} finally {
+  await remote.dispose();
+}
+```
+
+`client(serverId)` 返回一个由调用方持有的 `PaseoApi`，通过所选 daemon 绑定到该目标。
+普通 API 的签名不变。路径和 ID 属于目标主机。选择本地服务器 ID 会返回本地作用域。路由支持一跳。
+
+释放一个作用域会释放它的观察，不会关闭同级作用域或删除已保存的主机。
+释放源作用域会同时释放派生作用域。观察通过普通客户端生命周期恢复。
+连接过程中，新请求使用现有的有界发送队列；断开连接时请求会失败。连接丢失会清除旧的等待项和排队发送项。
+普通的不可恢复请求不会重放；现有的已确认或幂等创建恢复会保留其请求身份。
+已提交但响应丢失的请求会以 `DaemonConnectionError` 拒绝（`code: "DAEMON_CONNECTION_LOST"`），
+并附带可选的 `outcome: "unknown"` 和已知的 `serverId`。重试修改操作前，请先检查目标状态。
+
+注册和获取主机失败时会提供稳定的 `code`：`host_unknown`、`host_disabled`、`host_offline`、
+`permission_denied`、`unsupported_capability`、`authentication_failed`、`server_id_mismatch`、
+`self_host` 或 `duplicate_host`。普通 RPC 权限代码（包括 `access_denied`）保持不变。
+多路复用属于传输层；调用方使用相同的客户端/API 操作和生命周期。发现主机不会授予执行权限。
 
 ## 错误与清理 {#errors-and-cleanup}
 

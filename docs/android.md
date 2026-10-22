@@ -61,39 +61,81 @@ Gradle auto-fetches the platform/build-tools it needs once licenses are accepted
 
 ## Local build + install
 
+The locked `expo-modules-core@57.0.23` needs the patch installed by `npm install`.
+It backports
+[Expo's Activity-result launcher fix](https://github.com/expo/expo/pull/49634): changing
+font size or another unhandled configuration can otherwise disable image selection
+until the app process restarts. Rebuild the native app after changing this patch;
+a Metro reload cannot update it. Remove the patch when the installed
+`expo-modules-core` includes the fix.
+
+Run its native regression tests from `packages/app/android` after prebuild:
+
+```bash
+./gradlew :expo-modules-core:testDebugUnitTest \
+  --tests expo.modules.kotlin.activityresult.AppContextActivityResultRegistryRecreationTest \
+  --no-daemon --max-workers=1 -Dorg.gradle.parallel=false
+```
+
 From repo root:
 
 ```bash
-npm run android:development    # Debug build
-npm run android:production     # Release build
-npm run android:clear          # Remove generated Android project
+npm run build:apk       # Universal dogfood APK: 32/64-bit ARM and x86
+npm run build:apk:arm64 # Smaller dogfood APK for ARM64 phones
+npm run dev:android     # Build/install the debug app and start development
+npm run dev:ios         # Build/install the iOS development app
 ```
 
-For a production-ID release APK that local Android profiling tools can attach to:
+`build:apk` writes `artifacts/paseo-dogfood-universal.apk`; `build:apk:arm64` writes
+`artifacts/paseo-dogfood-arm64.apk`. Neither command launches or installs on a device. Both enable
+`PASEO_WATCHDOG_BUILD=1`, the production React profiling renderer, and Android's shell-profileable
+flag. These builds keep the production package ID (`sh.paseo`) and release optimizations. Use this APK for
+personal dogfooding. Android system-trace spans require the separate `PASEO_PROFILE_BUILD=1` flag;
+watchdog recording does not send duplicate spans to that sink by default. Normal store/release
+workflows leave diagnostics disabled.
+
+The older `android`, `android:development`, and `ios` commands remain aliases for development.
+`android:production` still builds and installs a release through Expo; use `build:apk` when you
+need an artifact. `android:clear` removes the generated Android project.
+
+Run `npm run test:android --workspace=@getpaseo/app` to prebuild Android and run native module unit tests. The app CI job runs this command with the Android toolchain.
+
+### Diagnostic logs without ADB
+
+In a dogfood build, open Android's Files app → Downloads → **Paseo diagnostics** and share all
+retained `.jsonl` files. No app screen, storage permission, or attached debugger is required.
+The recorder retains eight files of about 5 MiB each across reconnects and app restarts. Rotation
+replaces the oldest files, so collect them soon after reproducing a freeze. Uninstall/reinstall
+can leave older Downloads files that the new installation cannot manage.
+
+Each file identifies its build and session. Events include application-transport frame sizes and
+message/request IDs, connection transitions, parse/validation/dispatch spans, named React subtree
+render timings, and foreground JS heartbeat gaps. Payloads, passwords, and message contents
+are excluded; connection identifiers include host addresses. Each size has a unit: **bytes** when
+already available, otherwise **UTF-16 code units** for text. These are
+client transport observations, after relay decryption where applicable, not packet arrival times.
+
+The native recorder flags a heartbeat overdue by more than 500 ms (250 ms expected interval).
+A heartbeat gap bounds the unresponsive interval; it is not an exact blocked-stack duration.
+Backgrounding suspends detection. `js.stall.started` can be written while JS remains blocked;
+`js.stall.recovered` records the gap when JS resumes. Recovery can appear without a start event
+when JS resumes before the next native sampling tick. Process death leaves earlier files intact,
+but queued/unflushed records can be lost. A missing recovery event alone does not prove a crash.
+
+`react.render.slow` records subtree rendering taking at least 16 ms; one-second summaries include
+faster renders. Nested profiler timings overlap: don't add parent and child times. React's render
+measurements do not measure native layout/paint or the complete commit phase. `recorder.dropped`
+means the bounded queue overflowed; missing events in that interval must not be treated as absence
+of activity. Storage failure stops recording rather than blocking the app.
+
+For an ordinary release APK with system trace markers only:
 
 ```bash
 PASEO_PROFILE_BUILD=1 npm run android:production
 ```
 
-This keeps the `sh.paseo` package id, release Hermes bundle, and release optimizations. It adds
-`<profileable android:shell="true" />` and enables local Android trace markers for workspace mounts
-and daemon WebSocket traffic. The markers contain message types and sizes, never payload contents,
-and emit only while a system trace records the `sh.paseo` app (`perfetto -a sh.paseo ...`).
-
-Or from `packages/app`:
-
-```bash
-# Debug
-npx cross-env APP_VARIANT=development expo prebuild --platform android --clean --non-interactive
-npx cross-env APP_VARIANT=development expo run:android --variant=debug
-
-# Release
-npx cross-env APP_VARIANT=production expo prebuild --platform android --clean --non-interactive
-npx cross-env APP_VARIANT=production expo run:android --variant=release
-
-# Clear generated Android project
-rm -rf android
-```
+Those markers emit only while a system trace records `sh.paseo` (`perfetto -a sh.paseo ...`);
+they do not produce Downloads files.
 
 ## Running on an emulator against a worktree daemon
 

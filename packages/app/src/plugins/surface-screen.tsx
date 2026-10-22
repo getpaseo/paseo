@@ -149,13 +149,14 @@ export function PluginSurfaceScreen() {
     const serverIds = getPluginSurfaceContributionServerIds(installations, pluginId, identity);
     return hosts.filter((candidate) => serverIds.includes(candidate.serverId));
   }, [hosts, identity, installations, pluginId]);
-  const title = useMemo(
-    () =>
-      surface
-        ? resolvePluginScreenTitle(surface, sidebarItem, params)
-        : (sidebarItem?.title ?? (pluginId || "Plugin")),
-    [params, pluginId, sidebarItem, surface],
-  );
+  const title = useMemo(() => {
+    if (surface && plugin)
+      return resolvePluginScreenTitle(surface, sidebarItem, params, (text) =>
+        plugin.i18n.resolve(text, plugin.locale),
+      );
+    if (sidebarItem && plugin) return plugin.i18n.resolve(sidebarItem.title, plugin.locale);
+    return pluginId || "Plugin";
+  }, [params, plugin, pluginId, sidebarItem, surface]);
   const icon = sidebarItem?.icon ?? null;
   const close = useCallback(() => {
     if (router.canGoBack()) router.back();

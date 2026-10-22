@@ -989,6 +989,7 @@ export const ptBR: TranslationResources = {
         checkingRepository: "Verificando repositório...",
         notRepository: "Não é um repositório git",
         diffMode: "Modo de diff",
+        all: "Todas as alterações",
         uncommitted: "Sem commit",
         committed: "Com commit",
         branchUnknown: "Desconhecido",

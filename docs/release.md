@@ -62,9 +62,10 @@ release. This applies to both beta and stable releases.
   the changelog. Retarget remaining PRs based on `next` to `main` and delete the integrated
   `next`. Create it fresh when needed again.
 
-**Setup still needed:** CI, Docker, and Nix PR checks currently target only `main`,
-and GitHub permits only squash merges. Enable checks and required-check protection
-for `next`, CI on its pushes, and merge commits for the integration PR. Handle PR
+**Setup still needed:** PR checks run for every base branch, but CI, Docker, and Nix
+push runs target only `main`, and GitHub permits only squash merges. Enable
+required-check protection for `next`, CI on its pushes, and merge commits for the
+integration PR. Handle PR
 base changes (`edited` events) so retargeting runs checks against the new base;
 GitHub's default PR events do not cover this. Deployment triggers stay unchanged.
 

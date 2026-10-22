@@ -27,6 +27,26 @@ Local plugins are directory sources installed into one Paseo daemon. A plugin ca
 
 Plugin code is trusted and unsandboxed. Client surfaces run in the Paseo app. Backend contributions run in a subprocess with access to the daemon machine, including its files, processes, credentials, and network.
 
+## Connected hosts
+
+`usePaseo().hosts` in a client surface and `context.paseo.hosts` in a server handler or lifecycle hook
+use the same [SDK host API](/sdk/reference#clienthosts). They describe the selected daemon's saved
+connections. Existing `useHosts()` and `getPaseoClient(serverId)` keep describing app-known hosts.
+
+```ts
+const remote = await context.paseo.hosts.client("srv_build_box");
+try {
+  return await remote.workspaces.list();
+} finally {
+  await remote.dispose();
+}
+```
+
+A returned API owns its observations. Teardown of the plugin API also disposes derived scopes.
+Keep remote calls inside the handler or lifecycle scope that owns them. Calling B does not forward
+B's plugin lifecycle hooks to A. Registrations created by a routed plugin retain a source qualified
+by the authenticated link and originating plugin.
+
 ## Project files
 
 `paseo plugin init /absolute/path/to/my-plugin` creates:
@@ -90,6 +110,8 @@ Empty strings, invalid ranges, and unknown manifest requirement keys are rejecte
 
 Prerelease Paseo versions also satisfy a range their stable core (`major.minor.patch`) satisfies, so `0.8.0-beta.1` satisfies `>=0.8.0` but not `<0.8.0`.
 
+A prerelease minimum such as `>=0.12.0-beta.4` therefore also admits `0.12.0-beta.3` through its stable core `0.12.0`. Use a different stable core when you need to exclude earlier builds of that core.
+
 `paseo plugin init` writes `>=` followed by the current CLI version and pins the matching SDK
 for typechecking. Raise the minimum when adopting a newer API. Add an upper bound when a later
 release is incompatible; a minimum alone does not promise protection from future breaking changes.
@@ -129,6 +151,79 @@ plugin root is a compile error.
 | `client/` | App bundle only    | React, React Native, hooks, styles, surfaces, panels, and callbacks. |
 | `server/` | Daemon bundle only | Node APIs, local resources, credentials, and RPC handlers.           |
 | `shared/` | Both               | Zod RPC contracts and plain values imported by both runtimes.        |
+
+## Runtime translations {#runtime-translations}
+
+**Unreleased API.** Set `requirements.paseo` to the release that introduces these APIs before publishing your plugin. The [translation example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/translations) uses `>=0.12.1` provisionally; the introducing release has not been assigned.
+
+Ship JSON resources with your client bundle. English (`en`) is required; other keys use canonical language tags such as `zh-CN`. Resources contain nested objects with string leaves. Other languages may omit keys, which fall back to English. Unknown keys, malformed resources, noncanonical locale tags, and mismatched interpolation placeholders are rejected when defining translations.
+
+```ts
+// client/messages.ts
+import { defineTranslations } from "@getpaseo/plugin/client";
+import en from "./locales/en.json";
+import zhCN from "./locales/zh-CN.json";
+
+export const messages = defineTranslations({ resources: { en, "zh-CN": zhCN } });
+```
+
+Enable `resolveJsonModule` in your plugin's `tsconfig.json`. Paseo bundles these imports locally; no network loader runs. For example, the resource pair can contain:
+
+`client/locales/en.json`:
+
+```json
+{
+  "title": "Workspace notes",
+  "add": "Add note",
+  "notes_one": "{{count}} note",
+  "notes_other": "{{count}} notes"
+}
+```
+
+`client/locales/zh-CN.json`:
+
+```json
+{
+  "title": "工作区笔记",
+  "add": "添加笔记",
+  "notes_other": "{{count}} 条笔记"
+}
+```
+
+Call the plugin hook in React UI:
+
+```tsx
+import { useTranslation } from "@getpaseo/plugin/client";
+import { Text } from "react-native";
+import { messages } from "./messages";
+
+function NoteCount({ count }: { count: number }) {
+  const { t, locale } = useTranslation(messages);
+  return <Text accessibilityLanguage={locale}>{t("notes", { count })}</Text>;
+}
+```
+
+Use `messages.message(key, options?)` for persistent host-rendered labels:
+
+```tsx
+client.addScreen({
+  id: "notes",
+  title: messages.message("title"),
+  Component: Notes,
+});
+```
+
+`PluginText` is `string | PluginMessage`. Message references work in screen titles (including title functions), settings and sidebar titles, workspace and file panel titles, Command Center titles, slash-command descriptions and argument hints, button titles and labels, nested menu titles, attachment-source titles/picker titles/search placeholders, and theme names. Existing literal strings remain valid. Keep IDs, slash-command names, icons, URLs, and command search keywords stable.
+
+Descriptor types keep their existing string defaults. When explicitly annotating translated descriptors, use the text parameter, for example `PluginScreenContribution<PluginText>`. Inline registrations infer this automatically.
+
+For transient text in callbacks, call `client.i18n.t(messages, "add")`; it reads the app's current language at invocation. `client.i18n.locale` and the hook's `locale` report the resolved app language even when a message falls back to English. Do not store the result of `t` as a persistent registration label.
+
+Keys come from English. Plural base keys such as `notes` require a numeric `count`; i18next selects the locale's `_zero`, `_one`, `_two`, `_few`, `_many`, or `_other` form. Use `{{name}}` for named interpolation and pass `{ name: value }`. JSON string values are widened by TypeScript, so interpolation names from imported JSON are checked at runtime; inline literal resources also infer required interpolation names. i18next formatting syntax such as `{{amount, number}}` uses the resolved language's `Intl` formatter.
+
+An explicit app language wins over the device language; System follows the app's supported-locale resolution. Separate connected apps have independent languages. Changing language updates mounted UI and host labels without reloading the plugin, resetting component state, or replacing its RPC/query cache. Modal and popover content receives the same installation context on web and native.
+
+Return language-neutral structured RPC data and translate its presentation in the client. Keep user drafts, agent output, raw daemon errors, logs, and terminal text unchanged. Manifest listing translations and `OVERVIEW.<locale>.md` are separate publication metadata; see [your listing page](publishing#your-listing-page).
 
 ## Runtime modules
 
@@ -939,10 +1034,10 @@ export default function contribute(client: PluginClientContext) {
 Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the screen body.
 
 `addScreen({ id, title, Component })` registers a screen. `title` is the screen header's title: a
-string, or a function that takes the screen's params and returns one, so a bot screen can show the
-bot's name. The function runs again when the params change. Registration throws on an empty title
-or one that is neither a string nor a function. A title function that throws or returns an empty
-string shows the screen ID instead; the screen still renders.
+[display text](#runtime-translations), or a function that takes the screen's params and returns
+display text. The function runs again when params or language change. Invalid or empty literal
+titles are rejected. A title function that throws or resolves to an empty string shows the screen
+ID instead; the screen still renders.
 
 `openScreen({ screenId, params })` opens a screen with params, such as the bot a bot screen shows.
 Params live in the screen's URL query, so a reload, back and forward, and a link to the screen keep
@@ -1124,6 +1219,26 @@ export function IssueActions({ theme }: PluginSurfaceProps) {
   );
 }
 ```
+
+### Markdown
+
+Import `Markdown` from `@getpaseo/plugin/client/ui` to render a string with Paseo's
+Markdown presentation on web, iOS, and Android:
+
+```tsx
+import { Markdown } from "@getpaseo/plugin/client/ui";
+
+<Markdown>{"## Review\n\nThe checks **passed**."}</Markdown>;
+```
+
+`children` is the only prop and must be a string. Updating it renders the new content
+immediately; an empty string renders nothing. The host supplies theme, text selection,
+code blocks, tables, diagrams, and link handling. Workspace file links and images use
+workspace context when the containing surface supplies it.
+
+The component adds no page padding or scroll container. Use a surrounding layout or
+scroll view when needed. Fetching content and showing loading or error states belong
+to your plugin.
 
 ### Modal
 

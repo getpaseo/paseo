@@ -52,3 +52,39 @@ it("skips unchanged reconciliations and immediately saves real layout changes", 
     store.getState().layoutByWorkspace[workspaceKey],
   );
 });
+
+it("keeps the saved layout when the shell publishes its layout mode before hydration", async () => {
+  const values = new Map<string, string>();
+  const storage: StateStorage = {
+    getItem: (name) => values.get(name) ?? null,
+    setItem: (name, value) => {
+      values.set(name, value);
+    },
+    removeItem: (name) => {
+      values.delete(name);
+    },
+  };
+  const workspaceKey = "server:workspace";
+  const saved = createWorkspaceLayoutStore(undefined, storage);
+  await saved.persist.rehydrate();
+  saved.getState().openTab({
+    workspaceKey,
+    target: { kind: "file", path: "notes.md" },
+    intent: "reveal",
+  });
+
+  // A page load: the shell publishes its mode from the first commit, before the read settles.
+  const loaded = createWorkspaceLayoutStore(undefined, storage);
+  loaded.getState().setLayoutMode("single-pane");
+  await new Promise<void>((resolve) => loaded.persist.onFinishHydration(() => resolve()));
+  expect(loaded.getState().layoutByWorkspace[workspaceKey]).toEqual(
+    saved.getState().layoutByWorkspace[workspaceKey],
+  );
+
+  // Leaving the page before any other layout change must not lose the tabs.
+  const reloaded = createWorkspaceLayoutStore(undefined, storage);
+  await reloaded.persist.rehydrate();
+  expect(reloaded.getState().layoutByWorkspace[workspaceKey]).toEqual(
+    saved.getState().layoutByWorkspace[workspaceKey],
+  );
+});

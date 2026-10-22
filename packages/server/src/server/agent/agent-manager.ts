@@ -79,7 +79,7 @@ import {
   type PendingForegroundRun,
 } from "./agent-run-state.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
-import { parseAgentMessage, projectAgentMessage } from "./agent-messages/index.js";
+import { parseAgentMessage, projectAgentMessages } from "./agent-messages/index.js";
 import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
@@ -658,13 +658,13 @@ function buildExplicitTimelineSeedForRegister(
 function buildImportedTimelineRows(entries: readonly ImportedTimelineEntry[]): AgentTimelineRow[] {
   const rows: AgentTimelineRow[] = [];
   for (const entry of entries) {
-    const item = projectAgentMessage(entry.item);
-    if (!item) continue;
-    rows.push({
-      seq: rows.length + 1,
-      timestamp: entry.timestamp ?? new Date().toISOString(),
-      item: limitAgentTimelineItemContent(item),
-    });
+    for (const item of projectAgentMessages(entry.item)) {
+      rows.push({
+        seq: rows.length + 1,
+        timestamp: entry.timestamp ?? new Date().toISOString(),
+        item: limitAgentTimelineItemContent(item),
+      });
+    }
   }
   return rows;
 }
@@ -4136,9 +4136,9 @@ export class AgentManager {
     for await (const rawEvent of agent.session.streamHistory()) {
       const event = limitAgentStreamEventContent(rawEvent);
       if (event.type === "timeline") {
-        const item = projectAgentMessage(event.item);
-        if (!item) continue;
-        historyEvents.push({ ...event, item });
+        for (const item of projectAgentMessages(event.item)) {
+          historyEvents.push({ ...event, item });
+        }
       } else if (event.type === "provider_subagent") {
         providerSubagentEvents.push(event);
       }
@@ -4203,9 +4203,9 @@ export class AgentManager {
         if (event.type !== "timeline") {
           continue;
         }
-        const item = projectAgentMessage(event.item);
-        if (!item) continue;
-        historyEvents.push({ ...event, item });
+        for (const item of projectAgentMessages(event.item)) {
+          historyEvents.push({ ...event, item });
+        }
       }
     } catch (error) {
       this.logger.warn({ err: error, agentId: agent.id }, "Failed to hydrate provider history");
@@ -4537,42 +4537,32 @@ export class AgentManager {
   }): Promise<void> {
     const { agent, event, options, flags } = params;
 
-    const item = projectAgentMessage(event.item);
-    if (!item) {
-      flags.shouldDispatchEvent = false;
-      flags.shouldNotifyWaiters = false;
-      return;
-    }
-
-    event.item = item;
-    if (
-      event.item.type === "user_message" &&
-      event.item.clientMessageId &&
-      this.reconcileSubmittedPromptEcho(agent, event.item, event.turnId)
-    ) {
-      flags.shouldDispatchEvent = false;
-      flags.shouldNotifyWaiters = false;
-      return;
-    }
-
-    if (options?.fromHistory) {
-      this.recordTimeline(
-        agent.id,
-        event.item,
-        event.timestamp ? { timestamp: event.timestamp } : undefined,
-      );
-      flags.shouldDispatchEvent = false;
-      flags.shouldNotifyWaiters = false;
-      return;
-    }
-
-    this.recordAndDispatchTimelineItem(agent.id, event.item, event.provider, event.turnId);
-    if (event.item.type === "user_message") {
-      agent.lastUserMessageAt = new Date();
-      this.emitState(agent);
-    }
     flags.shouldDispatchEvent = false;
-    flags.shouldNotifyWaiters = true;
+    flags.shouldNotifyWaiters = false;
+    for (const item of projectAgentMessages(event.item)) {
+      if (
+        item.type === "user_message" &&
+        item.clientMessageId &&
+        this.reconcileSubmittedPromptEcho(agent, item, event.turnId)
+      )
+        continue;
+
+      if (options?.fromHistory) {
+        this.recordTimeline(
+          agent.id,
+          item,
+          event.timestamp ? { timestamp: event.timestamp } : undefined,
+        );
+        continue;
+      }
+
+      this.recordAndDispatchTimelineItem(agent.id, item, event.provider, event.turnId);
+      if (item.type === "user_message") {
+        agent.lastUserMessageAt = new Date();
+        this.emitState(agent);
+      }
+      flags.shouldNotifyWaiters = true;
+    }
   }
 
   private onStreamTurnCompleted(params: {
@@ -4818,16 +4808,17 @@ export class AgentManager {
     outcome: "accepted" | "rejected",
     options?: { messageId?: string; providerMessageId?: string; turnId?: string },
   ): void {
-    const item = projectAgentMessage({
+    const items = projectAgentMessages({
       type: "user_message",
       text: submittedPromptText(prompt),
       clientMessageId,
       ...(options?.messageId ? { messageId: options.messageId } : {}),
     });
-    if (!item) return;
-    // Human attempts stay in history on rejection; delivery notifications require acceptance.
-    if (outcome === "rejected" && item.type !== "user_message") return;
-    this.recordSubmittedPromptItem(agent, item, options);
+    for (const item of items) {
+      // Human attempts stay in history on rejection; delivery notifications require acceptance.
+      if (outcome === "rejected" && item.type !== "user_message") continue;
+      this.recordSubmittedPromptItem(agent, item, options);
+    }
   }
 
   private recordSubmittedPromptItem(

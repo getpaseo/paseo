@@ -979,6 +979,7 @@ export const ja: TranslationResources = {
         checkingRepository: "リポジトリを確認中...",
         notRepository: "gitリポジトリではありません",
         diffMode: "差分モード",
+        all: "すべての変更",
         uncommitted: "未コミット",
         committed: "コミット済み",
         branchUnknown: "不明",

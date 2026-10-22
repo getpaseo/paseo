@@ -29,7 +29,8 @@ const clientModule = /^client\//;
 
 function resolveLocal(importer: string, specifier: string): string {
   const base = path.resolve(path.dirname(importer), specifier.replace(/\.js$/, ""));
-  const result = [base + ".ts", base + ".tsx"].find(existsSync);
+  const candidates = specifier.endsWith(".json") ? [base] : [base + ".ts", base + ".tsx"];
+  const result = candidates.find(existsSync);
   if (!result) throw new Error(`Cannot resolve ${specifier} from ${importer}`);
   return result;
 }

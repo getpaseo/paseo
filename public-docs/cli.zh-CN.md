@@ -62,6 +62,30 @@ paseo usage ls --quiet
 
 查询完成时以状态 `0` 退出，即使个别报告不可用或失败也是如此。连接或请求失败、不支持的主机、未知的报告 ID 以及相互冲突的选择器会以状态 `1` 退出，并把错误写到 stderr。结果为空时，人类可读的输出会显示 **No usage reports returned**；这并不能说明每个来源的账号发现是否都成功了。
 
+## 已连接的主机 {#connected-hosts}
+
+`--host` 选择要管理其已保存连接的 daemon。请用注册项的 `registrationId`，不要用标签。
+
+```sh
+paseo --host localhost:6767 host add 'ssh://deploy@build-box' --label build-box --meta team=infra
+paseo --host localhost:6767 host ls --json
+paseo --host localhost:6767 host inspect hst_123
+paseo --host localhost:6767 host update hst_123 --meta team=tools --remove-meta obsolete
+paseo --host localhost:6767 host update hst_123 --connection 'ssh://deploy@new-address'
+paseo --host localhost:6767 host disable hst_123
+paseo --host localhost:6767 host enable hst_123
+paseo --host localhost:6767 host rm hst_123
+```
+
+`add` 接受 TCP/主机和端口、`ws://`/`wss://`、本地 socket/管道、SSH，以及 relay/配对 URL。
+SSH 连接到已经运行的 daemon。如果该 daemon 需要密码，在 SSH URI 中添加 `?password=...`（已有 `daemonPort` 时使用 `&password=...`）。无法访问的目标仍会保存，并自动重试。
+`ls` 包括已禁用和连接失败的主机。`inspect` 包括不含凭据的连接详情和恢复说明。
+JSON 输出不会包含连接凭据。
+
+`update --meta` 替换指定的键；`--remove-meta` 删除键。替换连接会保留已固定的 daemon 身份。
+只有确认目标已改变后，才应同时使用 `--replace-identity` 和 `--connection`。
+`rm` 删除已保存的连接；该主机上的 Agent 和工作区会继续运行。
+
 ## Provider 诊断 {#provider-diagnostics}
 
 让 daemon 检查它实际使用的 Provider 环境：

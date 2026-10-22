@@ -11,6 +11,7 @@ function registry(version: string) {
   let starts = 0;
   let cleanups = 0;
   const result = new PluginRegistry({
+    localeSource: { getLocale: () => "en", subscribe: () => () => {} },
     version,
     createRuntime(installation) {
       starts++;
@@ -25,6 +26,7 @@ function registry(version: string) {
           installation.lifetime.signal,
         ),
         paseo: installation.paseo,
+        i18n: installation.i18n,
         rpc: async () => {
           throw new Error("No RPC in this plugin");
         },
@@ -98,6 +100,26 @@ it("unloads on a requirement-only edit and recovers after correction", () => {
   expect(starts()).toBe(2);
   expect(result.getSnapshot().map(({ id }) => id)).toEqual(["example"]);
   expect(result.getEvaluationError("host", "example")).toBeUndefined();
+});
+
+it("rejects the unreleased translation API on 0.12.0 before evaluating its imports", () => {
+  const { result, starts } = registry("0.12.0");
+  result.installCatalog(
+    "host",
+    [
+      {
+        id: "translated",
+        requirements: { paseo: ">=0.12.1" },
+        clientBundle: `(function(require) { require("@getpaseo/plugin/client").defineTranslations({ resources: { en: { title: "Notes" } } }); throw new Error("unsupported API evaluated"); })`,
+      },
+    ],
+    { client, audio },
+  );
+  expect(starts()).toBe(0);
+  expect(result.getSnapshot()).toEqual([]);
+  expect(result.getEvaluationError("host", "translated")).toBe(
+    'Plugin "translated" requires Paseo >=0.12.1. Your app is 0.12.0. Use a compatible plugin version or update the app.',
+  );
 });
 
 it("skips file-panel bundles on older apps and installs them on the required app", () => {

@@ -282,10 +282,12 @@ left = anchorRect.x - hostRect.x;
 bottom = hostRect.height - (anchorRect.y - hostRect.y) + offset;
 ```
 
-Do this before adding any platform offset. If anchor and host are both measured
-with `measureInWindow`, Android's status-bar coordinate behavior cancels out.
-Only add a status-bar offset when the render surface is not measured in the same
-coordinate system. See `tooltip.tsx` for that separate case.
+Do this before adding any platform offset. The app draws edge-to-edge on Android, so
+`measureInWindow`, touch `pageY`, and a full-screen `Modal` all share one coordinate
+space that starts at the screen top. Do not add `StatusBar.currentHeight` to an anchor:
+React Native 0.86 stopped subtracting the status bar from window coordinates under
+edge-to-edge, and the old compensation now lands every menu, tooltip, and context menu
+one status bar below its trigger.
 
 ## Gotcha 5 — The two-measurement flash
 

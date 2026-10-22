@@ -1,9 +1,8 @@
 import type {
-  PluginButtonBehavior,
-  PluginButtonIcon,
-  PluginButtonMenuEntry,
-  PluginHostProps,
-} from "@getpaseo/plugin/client";
+  ResolvedPluginButtonBehavior as PluginButtonBehavior,
+  ResolvedPluginButtonMenuEntry as PluginButtonMenuEntry,
+} from "./validation";
+import type { PluginButtonIcon, PluginHostProps } from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
 import { useCallback, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { Pressable, Text, View, useWindowDimensions } from "react-native";

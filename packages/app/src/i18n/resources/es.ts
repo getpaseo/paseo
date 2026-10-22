@@ -999,6 +999,7 @@ export const es: TranslationResources = {
         checkingRepository: "Comprobando repositorio...",
         notRepository: "No es un repositorio de git",
         diffMode: "modo diferencial",
+        all: "Todos los cambios",
         uncommitted: "No comprometido",
         committed: "Comprometido",
         branchUnknown: "Desconocido",

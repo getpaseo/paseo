@@ -14,7 +14,6 @@ import {
   Modal,
   Platform,
   Pressable,
-  StatusBar,
   View,
   type StyleProp,
   type ViewStyle,
@@ -162,16 +161,13 @@ export function useAnchoredPosition({
       return undefined;
     }
 
-    // Capture status bar height synchronously before async measurement, so it cannot change
-    // or read back null between the measure call and its resolution.
-    const statusBarHeight = Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) : 0;
     let cancelled = false;
 
+    // The app draws edge-to-edge, so measureInWindow and the full-screen Modal share one
+    // coordinate space that starts at the screen top; no status bar offset applies.
     void measureElement(anchorRef.current).then((rect) => {
       if (cancelled) return undefined;
-      // On Android with statusBarTranslucent, measureInWindow returns coordinates relative to
-      // below the status bar while Modal content starts at the screen top.
-      setTriggerRect({ ...rect, y: rect.y + statusBarHeight });
+      setTriggerRect(rect);
       return undefined;
     });
 

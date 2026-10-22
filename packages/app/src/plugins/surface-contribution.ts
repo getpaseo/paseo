@@ -42,11 +42,12 @@ export function resolvePluginScreenTitle(
   screen: InstalledPlugin["surfaces"][number],
   legacySidebarItem: InstalledPlugin["legacySidebarItems"][number] | null,
   params: PluginScreenParams,
+  resolve: (text: import("@getpaseo/plugin/client").PluginText) => string,
 ): string {
-  if (legacySidebarItem) return legacySidebarItem.title;
-  if (typeof screen.title === "string") return screen.title;
+  if (legacySidebarItem) return resolve(legacySidebarItem.title);
+  if (typeof screen.title !== "function") return resolve(screen.title);
   try {
-    const title = screen.title(params);
+    const title = resolve(screen.title(params));
     if (typeof title === "string" && title.trim()) return title.trim();
   } catch (error) {
     console.warn(`[Plugins] Screen ${screen.id} title failed`, error);

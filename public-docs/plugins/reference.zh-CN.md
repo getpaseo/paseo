@@ -25,6 +25,25 @@ nav: 参考
 
 插件代码是受信任的，没有沙盒。客户端界面在 Paseo 应用中运行。后端贡献在一个子进程中运行，可以访问 daemon 所在的机器，包括它的文件、进程、凭据和网络。
 
+## 已连接的主机 {#connected-hosts}
+
+客户端界面中的 `usePaseo().hosts` 与服务端处理函数或生命周期钩子中的 `context.paseo.hosts`
+使用相同的 [SDK 主机 API](/sdk/reference#clienthosts)。它们描述所选 daemon 保存的连接。
+现有的 `useHosts()` 和 `getPaseoClient(serverId)` 仍描述应用已知的主机。
+
+```ts
+const remote = await context.paseo.hosts.client("srv_build_box");
+try {
+  return await remote.workspaces.list();
+} finally {
+  await remote.dispose();
+}
+```
+
+返回的 API 拥有自己的观察。销毁插件 API 时也会释放由它派生的作用域。
+远程调用应留在拥有它的处理函数或生命周期作用域内。调用 B 不会把 B 的插件生命周期钩子转发到 A。
+通过路由插件创建的注册项保留其来源身份，其中包含经过认证的链路和发起调用的插件。
+
 ## 项目文件 {#project-files}
 
 `paseo plugin init /absolute/path/to/my-plugin` 会创建：
@@ -78,6 +97,8 @@ my-plugin/
 
 预发布的 Paseo 版本也满足其稳定核心版本（`major.minor.patch`）所满足的范围，因此 `0.8.0-beta.1` 满足 `>=0.8.0`，但不满足 `<0.8.0`。
 
+`>=0.12.0-beta.4` 这样的预发布最低版本也会通过稳定核心 `0.12.0` 接受 `0.12.0-beta.3`。若要排除同一核心的较早构建，请使用不同的稳定核心版本。
+
 `paseo plugin init` 会写入 `>=` 加当前 CLI 版本，并为类型检查固定匹配的 SDK。采用更新的 API 时，请提高最低版本。当某个之后的版本不兼容时，请添加上限；只有下限并不能保证免受将来破坏性变更的影响。
 
 daemon 会在安装、运行准备命令或加载插件之前检查自己的版本，并在启动、启用和重新加载时再次检查。被拒绝的更新会保留已安装的修订。每个已连接的应用在执行客户端代码之前会检查自己的版本，并在 **设置 → 插件** 中显示不兼容。兼容的 daemon 并不能让较旧的应用变得兼容。没有客户端入口的插件不要求已连接的应用匹配。
@@ -104,6 +125,79 @@ daemon 会在安装、运行准备命令或加载插件之前检查自己的版�
 | `client/` | 仅应用的包     | React、React Native、hook、样式、界面、面板和回调。 |
 | `server/` | 仅 daemon 的包 | Node API、本地资源、凭据和 RPC 处理函数。           |
 | `shared/` | 两者           | Zod RPC 契约以及两个运行时都会导入的普通值。        |
+
+## 运行时翻译 {#runtime-translations}
+
+**尚未发布的 API。** 发布插件前，请将 `requirements.paseo` 设置为首次包含这些 API 的版本。[翻译示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/translations) 暂用 `>=0.12.1`，实际引入版本尚未确定。
+
+将 JSON 资源随客户端代码一起打包。必须提供英语（`en`）；其他语言使用规范语言标签，例如 `zh-CN`。资源由嵌套对象和字符串叶节点组成。其他语言可省略键，缺失时回退到英语。定义翻译时会拒绝未知键、无效资源、非规范语言标签，以及与英语不一致的插值占位符。
+
+```ts
+// client/messages.ts
+import { defineTranslations } from "@getpaseo/plugin/client";
+import en from "./locales/en.json";
+import zhCN from "./locales/zh-CN.json";
+
+export const messages = defineTranslations({ resources: { en, "zh-CN": zhCN } });
+```
+
+在插件的 `tsconfig.json` 中启用 `resolveJsonModule`。Paseo 在本地打包这些导入，不通过网络加载。资源对示例：
+
+`client/locales/en.json`:
+
+```json
+{
+  "title": "Workspace notes",
+  "add": "Add note",
+  "notes_one": "{{count}} note",
+  "notes_other": "{{count}} notes"
+}
+```
+
+`client/locales/zh-CN.json`:
+
+```json
+{
+  "title": "工作区笔记",
+  "add": "添加笔记",
+  "notes_other": "{{count}} 条笔记"
+}
+```
+
+在 React UI 中使用插件的 hook：
+
+```tsx
+import { useTranslation } from "@getpaseo/plugin/client";
+import { Text } from "react-native";
+import { messages } from "./messages";
+
+function NoteCount({ count }: { count: number }) {
+  const { t, locale } = useTranslation(messages);
+  return <Text accessibilityLanguage={locale}>{t("notes", { count })}</Text>;
+}
+```
+
+对于由宿主持续渲染的标签，使用 `messages.message(key, options?)`：
+
+```tsx
+client.addScreen({
+  id: "notes",
+  title: messages.message("title"),
+  Component: Notes,
+});
+```
+
+`PluginText` 为 `string | PluginMessage`。消息引用支持界面标题（包括标题函数）、设置与侧边栏标题、工作区与文件面板标题、Command Center 标题、斜杠命令描述与参数提示、按钮标题与标签、嵌套菜单标题、附件来源标题/选择器标题/搜索占位文本，以及主题名称。现有的字符串仍然有效。保持 ID、斜杠命令名称、图标、URL 和命令搜索关键词不变。
+
+描述符类型保留现有的字符串默认值。为翻译描述符显式标注类型时，传入文本类型参数，例如 `PluginScreenContribution<PluginText>`。内联注册会自动推导类型。
+
+回调中的临时文本使用 `client.i18n.t(messages, "add")`，它读取调用时的应用语言。`client.i18n.locale` 和 hook 的 `locale` 返回解析后的应用语言，即使某条消息回退到英语。不要将 `t` 的返回值用作持续注册的标签。
+
+键由英语资源推导。`notes` 等复数基础键要求数字类型的 `count`；i18next 根据语言选择 `_zero`、`_one`、`_two`、`_few`、`_many` 或 `_other` 形式。命名插值使用 `{{name}}`，调用时传入 `{ name: value }`。TypeScript 将导入 JSON 的字符串值拓宽为 `string`，因此 JSON 插值名称在运行时检查；内联字面量资源还能推导必需的插值名称。`{{amount, number}}` 等 i18next 格式化语法使用解析后语言的 `Intl` 格式化器。
+
+显式选择的应用语言优先于设备语言；“跟随系统”使用应用支持的语言解析规则。连接到同一 daemon 的不同应用各自保留语言设置。切换语言会更新已挂载的 UI 和宿主标签，不重新加载插件、不重置组件状态，也不替换 RPC/查询缓存。网页和原生的模态框与弹出层均收到相同的安装上下文。
+
+RPC 返回与语言无关的结构化数据，在客户端翻译呈现内容。保持用户草稿、agent 输出、原始 daemon 错误、日志与终端文本不变。manifest 列表翻译和 `OVERVIEW.<locale>.md` 是独立的发布元数据，参见[你的列表页面](publishing#your-listing-page)。
 
 ## 运行时模块 {#runtime-modules}
 
@@ -800,7 +894,7 @@ export default function contribute(client: PluginClientContext) {
 
 路由、标题栏、关闭操作、主机选择器、错误边界和 query client 由 Paseo 负责。界面主体由插件负责。
 
-`addScreen({ id, title, Component })` 注册一个界面。`title` 是界面标题栏的标题：可以是字符串，也可以是一个接收界面参数并返回字符串的函数，这样机器人界面就可以显示机器人的名称。参数变化时，该函数会再次运行。标题为空，或既不是字符串也不是函数时，注册会抛出错误。如果标题函数抛出错误或返回空字符串，会改为显示界面 ID；界面仍然会渲染。
+`addScreen({ id, title, Component })` 注册一个界面。`title` 是界面标题栏的[显示文本](#runtime-translations)，也可以是接收界面参数并返回显示文本的函数。参数或语言变化时，该函数会再次运行。无效标题和空字符串标题会被拒绝。如果标题函数抛出错误或解析为空字符串，会改为显示界面 ID；界面仍然会渲染。
 
 `openScreen({ screenId, params })` 以参数打开一个界面，例如机器人界面要显示的那个机器人。参数保存在界面 URL 的查询字符串中，因此重新加载、前进后退以及指向该界面的链接都会保留它们。任何字符串键都可以；值必须是字符串，其他类型会抛出错误。用其他参数打开同一个界面会显示新的参数。
 
@@ -966,6 +1060,24 @@ export function IssueActions({ theme }: PluginSurfaceProps) {
   );
 }
 ```
+
+### Markdown {#markdown}
+
+从 `@getpaseo/plugin/client/ui` 导入 `Markdown`，即可在网页、iOS 和 Android 上
+使用 Paseo 的 Markdown 样式渲染字符串：
+
+```tsx
+import { Markdown } from "@getpaseo/plugin/client/ui";
+
+<Markdown>{"## 审查\n\n检查**通过**。"}</Markdown>;
+```
+
+`children` 是唯一的属性，必须为字符串。更新它会立即渲染新内容；空字符串不渲染任何内容。
+宿主提供主题、文本选择、代码块、表格、图表和链接处理。
+当所在界面提供工作区上下文时，工作区文件链接和图片会使用该上下文。
+
+组件不添加页面内边距或滚动容器。需要时请在外层使用布局或滚动视图。
+内容获取以及加载和错误状态由插件负责。
 
 ### Modal {#modal}
 

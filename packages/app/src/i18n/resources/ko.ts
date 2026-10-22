@@ -971,6 +971,7 @@ export const ko: TranslationResources = {
         checkingRepository: "저장소 확인 중...",
         notRepository: "Git 저장소가 아닙니다",
         diffMode: "Diff 모드",
+        all: "모든 변경 사항",
         uncommitted: "커밋되지 않음",
         committed: "커밋됨",
         branchUnknown: "알 수 없음",
