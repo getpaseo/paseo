@@ -325,6 +325,40 @@ it.skipIf(isPlatform("win32"))(
   },
 );
 
+it.skipIf(isPlatform("win32"))(
+  "marks snapshots taken while the program holds the alternate screen",
+  async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-altscreen-"));
+    temporaryDirs.push(cwd);
+    manager = createWorkerTerminalManager();
+    // A restore repaints this snapshot after resetting the client terminal, which
+    // is also where the alternate screen is lost, so the state has to record it —
+    // and stop recording it once the program leaves the alternate screen, or the
+    // client would be put back into a buffer the program already exited.
+    const session = trackTerminal(
+      await manager.createTerminal({
+        workspaceId: "ws-test",
+        cwd,
+        ...nodeTerminalCommand(`
+      process.stdout.write("\\u001b[?1049hTUI");
+      setTimeout(() => process.stdout.write("\\u001b[?1049l"), 500);
+      setInterval(() => {}, 1000);
+    `),
+      }),
+    );
+
+    await waitForCondition(async () => {
+      const snapshot = await manager!.getTerminalState(session.id);
+      return snapshot?.state.alternateScreen === true;
+    }, 10000);
+
+    await waitForCondition(async () => {
+      const snapshot = await manager!.getTerminalState(session.id);
+      return snapshot?.state.alternateScreen === undefined;
+    }, 10000);
+  },
+);
+
 it("refreshes cached terminal title after worker title changes", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-title-"));
   temporaryDirs.push(cwd);
