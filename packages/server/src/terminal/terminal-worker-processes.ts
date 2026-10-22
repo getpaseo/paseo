@@ -5,6 +5,7 @@ import {
   createSystemManagedProcessTable,
   type ManagedProcessCommandRunner,
   type ManagedProcessInspection,
+  windowsPowerShellPath,
 } from "../server/managed-processes/managed-processes.js";
 
 // Process inspection for terminal worker ownership. Birth times are compared as the strings
@@ -125,7 +126,7 @@ async function listWindowsProcesses(
 ): Promise<ProcessTableEntry[]> {
   const command =
     "@(Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,CreationDate) | ConvertTo-Json -Compress";
-  const { stdout } = await commandRunner.exec("powershell.exe", [
+  const { stdout } = await commandRunner.exec(windowsPowerShellPath(), [
     "-NoProfile",
     "-NonInteractive",
     "-Command",
