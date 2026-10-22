@@ -1928,7 +1928,6 @@ export const ar: TranslationResources = {
         alwaysUseExtension: "استخدام دائمًا لـ .{{extension}}",
         alwaysUseFilename: "استخدام دائمًا لـ {{filename}}",
         option: "{{title}} — {{owner}}",
-        actions: "إجراءات الملف",
         builtin: {
           owner: "Paseo",
           markdown: "Markdown",
@@ -1947,6 +1946,8 @@ export const ar: TranslationResources = {
       notFound: "الملف غير موجود",
       failedToLoadPreview: "فشل تحميل معاينة الملف",
       editor: {
+        preview: "معاينة",
+        source: "المصدر",
         fileSize: "حجم الملف {{size}}",
         lines: "{{count}} سطر",
         editorStatus: "حالة المحرر {{status}}",

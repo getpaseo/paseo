@@ -1974,7 +1974,6 @@ export const fr: TranslationResources = {
         alwaysUseExtension: "Toujours utiliser pour .{{extension}}",
         alwaysUseFilename: "Toujours utiliser pour {{filename}}",
         option: "{{title}} — {{owner}}",
-        actions: "Actions du fichier",
         builtin: {
           owner: "Paseo",
           markdown: "Markdown",
@@ -1993,6 +1992,8 @@ export const fr: TranslationResources = {
       notFound: "Fichier introuvable",
       failedToLoadPreview: "Impossible de charger l’aperçu du fichier",
       editor: {
+        preview: "Aperçu",
+        source: "Source",
         fileSize: "Taille du fichier : {{size}}",
         lines: "{{count}} lignes",
         editorStatus: "État de l’éditeur : {{status}}",

@@ -566,9 +566,11 @@ one section's order from built-ins, plugin groups, and the section's preference
 
 Client `addFilePanel` registrations become the body of a file tab. The tab stats the file, picks a
 panel, and mounts it with a `PluginFile` handle; the panel reads, shows its own `Loading`, writes,
-and resolves conflicts. The bar only switches panels and shows the dot the panel sets through
-`tab.setModified`. Built-in panels (Markdown, HTML, Image, and Source, Paseo's editor) take the
-same handle as plugin panels, so a fix to reading, watching, or writing lands in one place:
+and resolves conflicts. The host has no bar and no notion of a panel's views: the Markdown and HTML
+panels own their Preview and Source views, toolbar and editor buffer, and the tab only shows the
+dot a panel sets through `tab.setModified`. Source is the floor for text files no other built-in
+claims, never a candidate beside one. Built-in panels (Markdown, HTML, Image, and Source, Paseo's
+editor) take the same handle as plugin panels, so a fix to reading, watching, or writing lands in one place:
 `packages/app/src/file-panels/file/`. Do not add a host-side read or loading gate for one panel;
 make that panel faster instead. Source highlights a large file on native in idle-time slices,
 the lines around the opening line first.

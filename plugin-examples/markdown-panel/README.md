@@ -15,8 +15,9 @@ The panel is a CodeMirror editor with Markdown highlighting, line numbers, undo,
 wrapping. It reads the file once with `readText`, saves 500 ms after the last edit with
 `writeText`, and reports unsaved edits with `tab.setModified`. When the file changes on disk with
 nothing unsaved, it reads again; with unsaved edits, or when a write rejects with
-`PluginFileConflictError`, it offers **Reload** and **Overwrite**. The bar's switcher still offers
-Paseo's Markdown and Source panels. Native shows selectable, read-only text through `useFileText`.
+`PluginFileConflictError`, it offers **Reload** and **Overwrite**. **Open with…** in the tab menu
+switches the tab back to Paseo's Markdown panel. Native shows selectable, read-only text through
+`useFileText`.
 
 Paseo bundles the editor dependencies into this plugin. They are loaded only on web; the native
 path uses React Native primitives. DOM integration lives in `client/web.ts`.

@@ -21,7 +21,10 @@ const renderingPanels = [
   },
 ] as const satisfies readonly FilePanelCandidate[];
 
-/** Paseo's editor. Every text file has it, so a text file always opens with some panel. */
+/**
+ * Paseo's editor, the floor for text files: every text file no other built-in claims has it, so a
+ * text file always opens with some panel. A built-in that claims a file owns its source view.
+ */
 export const sourceFilePanel = {
   id: "builtin:source",
   builtin: true,
@@ -34,7 +37,7 @@ export type SourceFilePanel = typeof sourceFilePanel;
 
 /**
  * Every panel a host offers, in resolver order: the built-ins that render a file, then plugin
- * panels, then Source. Source is last so it is the default only when nothing else claims the file.
+ * panels, then Source. Source is last so a plugin panel is the default over it.
  */
 export function filePanelCatalog<Plugin extends FilePanelCandidate>(
   pluginPanels: readonly Plugin[],

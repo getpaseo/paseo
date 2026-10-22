@@ -1906,7 +1906,6 @@ export const zhCN: TranslationResources = {
         alwaysUseExtension: "始终用于 .{{extension}}",
         alwaysUseFilename: "始终用于 {{filename}}",
         option: "{{title}} — {{owner}}",
-        actions: "文件操作",
         builtin: {
           owner: "Paseo",
           markdown: "Markdown",
@@ -1925,6 +1924,8 @@ export const zhCN: TranslationResources = {
       notFound: "找不到文件",
       failedToLoadPreview: "加载文件预览失败",
       editor: {
+        preview: "预览",
+        source: "源代码",
         fileSize: "文件大小 {{size}}",
         lines: "{{count}} 行",
         editorStatus: "编辑器状态 {{status}}",

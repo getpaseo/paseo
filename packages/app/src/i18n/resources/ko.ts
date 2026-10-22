@@ -1938,7 +1938,6 @@ export const ko: TranslationResources = {
         alwaysUseExtension: ".{{extension}}에 항상 사용",
         alwaysUseFilename: "{{filename}}에 항상 사용",
         option: "{{title}} — {{owner}}",
-        actions: "파일 작업",
         builtin: {
           owner: "Paseo",
           markdown: "Markdown",
@@ -1957,6 +1956,8 @@ export const ko: TranslationResources = {
       notFound: "파일을 찾을 수 없습니다",
       failedToLoadPreview: "파일 미리보기를 불러오지 못했습니다",
       editor: {
+        preview: "미리보기",
+        source: "소스",
         fileSize: "파일 크기 {{size}}",
         lines: "{{count}} 라인",
         editorStatus: "편집기 상태 {{status}}",

@@ -1947,7 +1947,6 @@ export const ja: TranslationResources = {
         alwaysUseExtension: ".{{extension}} に常に使用",
         alwaysUseFilename: "{{filename}} に常に使用",
         option: "{{title}} — {{owner}}",
-        actions: "ファイルの操作",
         builtin: {
           owner: "Paseo",
           markdown: "Markdown",
@@ -1966,6 +1965,8 @@ export const ja: TranslationResources = {
       notFound: "ファイルが見つかりません",
       failedToLoadPreview: "ファイルプレビューの読み込みに失敗しました",
       editor: {
+        preview: "プレビュー",
+        source: "ソース",
         fileSize: "ファイルサイズ {{size}}",
         lines: "{{count}} 行",
         editorStatus: "エディターの状態 {{status}}",
