@@ -493,6 +493,7 @@ export const SETTINGS_SECTION_SLUGS = [
   "general",
   "appearance",
   "sidebar",
+  "workspaces",
   "chat",
   "terminal",
   "browser",

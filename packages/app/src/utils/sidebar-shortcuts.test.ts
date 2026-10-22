@@ -249,14 +249,14 @@ describe("buildStatusSidebarShortcutModel", () => {
     ];
 
     const model = buildStatusSidebarShortcutModel({
-      groups: buildStatusGroups(
+      groups: buildStatusGroups({
         workspaces,
-        new Map([
+        projectNamesByViewKey: new Map([
           ["p1", "Project 1"],
           ["p2", "Project 2"],
         ]),
-        i18n.t,
-      ),
+        t: i18n.t,
+      }),
     });
 
     expect(model.shortcutTargets).toEqual([
@@ -292,7 +292,11 @@ describe("buildStatusSidebarShortcutModel", () => {
     ];
 
     const model = buildStatusSidebarShortcutModel({
-      groups: buildStatusGroups(workspaces, new Map([["p1", "Project 1"]]), i18n.t),
+      groups: buildStatusGroups({
+        workspaces,
+        projectNamesByViewKey: new Map([["p1", "Project 1"]]),
+        t: i18n.t,
+      }),
       collapsedStatusGroupKeys: new Set(["needs_input"]),
     });
 

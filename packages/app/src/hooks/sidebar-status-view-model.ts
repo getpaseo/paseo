@@ -1,6 +1,12 @@
 import type { TFunction } from "i18next";
 import { STATUS_BUCKET_ORDER } from "@/utils/sidebar-agent-state";
-import type { SidebarWorkspaceEntry } from "@/hooks/sidebar-workspaces-view-model";
+import {
+  applyStoredOrdering,
+  compareSidebarActivity,
+  compareSidebarNames,
+  type SidebarWorkspaceEntry,
+} from "@/hooks/sidebar-workspaces-view-model";
+import type { SidebarSortMode } from "@/stores/sidebar-view-store";
 
 export type StatusBucket = SidebarWorkspaceEntry["statusBucket"];
 
@@ -24,11 +30,15 @@ export interface StatusGroup {
   rows: SidebarWorkspaceEntry[];
 }
 
-export function buildStatusGroups(
-  workspaces: SidebarWorkspaceEntry[],
-  projectNamesByViewKey: Map<string, string>,
-  t: TFunction,
-): StatusGroup[] {
+export function buildStatusGroups(input: {
+  workspaces: SidebarWorkspaceEntry[];
+  projectNamesByViewKey: Map<string, string>;
+  t: TFunction;
+  sortMode?: SidebarSortMode;
+  runningFirst?: boolean;
+  workspaceOrderByStatus?: Readonly<Record<string, string[]>>;
+}): StatusGroup[] {
+  const { workspaces, projectNamesByViewKey, t, sortMode = "manual", runningFirst = false } = input;
   const bucketRows = new Map<StatusBucket, SidebarWorkspaceEntry[]>();
 
   for (const ws of workspaces) {
@@ -47,8 +57,20 @@ export function buildStatusGroups(
     const rows = bucketRows.get(bucket);
     if (!rows || rows.length === 0) continue;
 
-    rows.sort((a, b) => compareStatusRows(a, b, projectNamesByViewKey));
-    groups.push({ bucket, label: getStatusBucketLabel(bucket, t), rows });
+    rows.sort((a, b) => {
+      if (sortMode === "name") return compareSidebarNames(a.name, b.name);
+      if (sortMode === "recent") return compareSidebarActivity(a, b, runningFirst);
+      return compareStatusRows(a, b, projectNamesByViewKey);
+    });
+    const orderedRows =
+      sortMode === "manual"
+        ? applyStoredOrdering({
+            items: rows,
+            storedOrder: input.workspaceOrderByStatus?.[bucket] ?? [],
+            getKey: (row) => row.workspaceKey,
+          })
+        : rows;
+    groups.push({ bucket, label: getStatusBucketLabel(bucket, t), rows: orderedRows });
   }
 
   return groups;
@@ -59,8 +81,10 @@ function compareStatusRows(
   b: SidebarWorkspaceEntry,
   projectNamesByViewKey: Map<string, string>,
 ): number {
-  const aTime = a.statusEnteredAt?.getTime() ?? null;
-  const bTime = b.statusEnteredAt?.getTime() ?? null;
+  const aTimestamp = a.statusEnteredAt;
+  const bTimestamp = b.statusEnteredAt;
+  const aTime = aTimestamp?.getTime() ?? null;
+  const bTime = bTimestamp?.getTime() ?? null;
 
   if (aTime !== null && bTime !== null) {
     if (aTime !== bTime) return bTime - aTime;

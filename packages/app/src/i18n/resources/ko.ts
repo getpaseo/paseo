@@ -100,6 +100,7 @@ export const ko: TranslationResources = {
       home: "홈",
       groupByProject: "프로젝트별 그룹화",
       groupByStatus: "상태별 그룹화",
+      groupByDay: "활동 일자별로 그룹화",
       modelGroupLabel: "모델",
       modelSearchKeywords: "모델 전환 모델 변경 모델 설정 모델 선택",
       thinkingGroupLabel: "추론",
@@ -1166,7 +1167,21 @@ export const ko: TranslationResources = {
       working: "실행 중",
       done: "완료",
     },
+    dayBucket: {
+      today: "오늘",
+      yesterday: "어제",
+      older: "이전",
+    },
     display: {
+      sorting: {
+        projectGroupingOnly: "프로젝트 그룹에서만",
+        name: "이름",
+        workspaces: "워크스페이스 정렬 기준",
+        projects: "프로젝트 정렬 기준",
+        label: "정렬 기준",
+        recent: "최근 활동",
+        manual: "수동 순서",
+      },
       showBackground: "백그라운드 표시",
       trigger: "표시 설정",
       heading: "표시",
@@ -1174,6 +1189,7 @@ export const ko: TranslationResources = {
         label: "그룹화",
         project: "프로젝트",
         status: "상태",
+        day: "활동 일자",
         labels: "레이블",
       },
       titleSource: {
@@ -2139,6 +2155,17 @@ export const ko: TranslationResources = {
     },
   },
   settings: {
+    workspaces: {
+      projectGroupingHint:
+        "프로젝트 활동 정렬을 사용하려면 프로젝트별로 그룹화하세요. 저장된 설정은 유지됩니다.",
+      sorting: "활동 정렬",
+      workspaceRunningFirst: "워크스페이스의 실행 중 에이전트 우선",
+      projectRunningFirst: "프로젝트의 실행 중 에이전트 우선",
+      runningFirstHint:
+        "켜짐: 실행 중 에이전트가 있는 항목이 먼저 표시되고 종료 후 내려갑니다. 꺼짐: 에이전트 시작 시에만 항목이 올라갑니다.",
+      disabledHint:
+        "활성화하려면 “{{sortLabel}}”에서 최근 활동을 선택하세요. 현재 정렬: {{sortMode}}.",
+    },
     title: "설정",
     loading: "설정 불러오는 중...",
     groups: {
@@ -2159,6 +2186,7 @@ export const ko: TranslationResources = {
     },
     groupInfo: "{{title}} 정보",
     sections: {
+      workspaces: "워크스페이스",
       general: "일반",
       chat: "채팅",
       appearance: "모양",

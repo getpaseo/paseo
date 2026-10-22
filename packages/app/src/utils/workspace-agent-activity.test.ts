@@ -6,6 +6,7 @@ function agent(input: {
   id: string;
   workspaceId?: string;
   status?: Agent["status"];
+  lastUserMessageAt?: string | null;
   turn?: Agent["turn"];
   updatedAt: string;
   attentionTimestamp?: string | null;
@@ -32,7 +33,7 @@ function agent(input: {
         : { phase: "idle", cancellationRequestId: null }),
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     updatedAt: new Date(input.updatedAt),
-    lastUserMessageAt: null,
+    lastUserMessageAt: input.lastUserMessageAt ? new Date(input.lastUserMessageAt) : null,
     lastActivityAt: new Date(input.updatedAt),
     capabilities: {
       supportsStreaming: true,
@@ -66,6 +67,42 @@ function agent(input: {
 }
 
 describe("workspace agent activity index", () => {
+  it("tracks starts and active runs independently from assistant output and completion", () => {
+    const root = agent({
+      id: "root",
+      workspaceId: "workspace-a",
+      status: "running",
+      lastUserMessageAt: "2026-06-01T10:00:00Z",
+      updatedAt: "2026-06-01T10:01:00Z",
+    });
+    const started = buildWorkspaceAgentActivityIndex(new Map([[root.id, root]]));
+    expect(started.get("workspace-a")).toMatchObject({
+      lastStartedAt: new Date("2026-06-01T10:00:00Z"),
+      hasRunningAgent: true,
+    });
+    const finished = {
+      ...root,
+      status: "idle" as const,
+      turn: { phase: "idle" as const, cancellationRequestId: null },
+      lastActivityAt: new Date("2026-06-01T10:20:00Z"),
+    };
+    const ended = buildWorkspaceAgentActivityIndex(new Map([[root.id, finished]]), started);
+    const reloaded = buildWorkspaceAgentActivityIndex(new Map([[root.id, finished]]));
+    for (const result of [ended, reloaded])
+      expect(result.get("workspace-a")).toMatchObject({
+        lastStartedAt: new Date("2026-06-01T10:00:00Z"),
+        hasRunningAgent: false,
+      });
+    const unused = agent({
+      id: "unused",
+      workspaceId: "unused",
+      updatedAt: "2026-06-01T12:00:00Z",
+    });
+    expect(
+      buildWorkspaceAgentActivityIndex(new Map([[unused.id, unused]])).get("unused")?.lastStartedAt,
+    ).toBeNull();
+  });
+
   it("uses turn liveness for running while preserving protocol lifecycle states", () => {
     const result = buildWorkspaceAgentActivityIndex(
       new Map([
@@ -144,6 +181,8 @@ describe("workspace agent activity index", () => {
             agentId: "permission",
             status: "needs_input",
             enteredAt: new Date("2026-06-01T10:01:00.000Z"),
+            lastStartedAt: null,
+            hasRunningAgent: true,
           },
         ],
         [
@@ -152,6 +191,8 @@ describe("workspace agent activity index", () => {
             agentId: "attention",
             status: "attention",
             enteredAt: new Date("2026-06-01T10:02:00.000Z"),
+            lastStartedAt: null,
+            hasRunningAgent: false,
           },
         ],
       ]),
@@ -198,6 +239,8 @@ describe("workspace agent activity index", () => {
       agentId: "root",
       status: "running",
       enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+      lastStartedAt: null,
+      hasRunningAgent: true,
     });
   });
 
@@ -233,6 +276,8 @@ describe("workspace agent activity index", () => {
             agentId: "parent",
             status: "done",
             enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+            lastStartedAt: null,
+            hasRunningAgent: false,
           },
         ],
         [
@@ -241,13 +286,15 @@ describe("workspace agent activity index", () => {
             agentId: "child",
             status: "running",
             enteredAt: new Date("2026-06-01T10:03:00.000Z"),
+            lastStartedAt: null,
+            hasRunningAgent: true,
           },
         ],
       ]),
     );
   });
 
-  it("preserves the activity index while the same agent remains in the same status", () => {
+  it("ignores assistant output while preserving the status entry time and index identity", () => {
     const previous = buildWorkspaceAgentActivityIndex(
       new Map([
         [
@@ -317,6 +364,8 @@ describe("workspace agent activity index", () => {
       agentId: "root",
       status: "needs_input",
       enteredAt: new Date("2026-06-01T10:05:00.000Z"),
+      lastStartedAt: null,
+      hasRunningAgent: false,
     });
   });
 });

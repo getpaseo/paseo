@@ -6,6 +6,8 @@ export interface WorkspaceAgentActivity {
   agentId: string;
   status: WorkspaceDescriptor["status"];
   enteredAt: Date | null;
+  lastStartedAt?: Date | null;
+  hasRunningAgent?: boolean;
 }
 
 function workspaceAgentStatus(agent: Agent): Agent["status"] {
@@ -19,12 +21,19 @@ export function buildWorkspaceAgentActivityIndex(
 ): Map<string, WorkspaceAgentActivity> {
   const activityByWorkspaceId = new Map<string, WorkspaceAgentActivity>();
   const latestActivityAtByWorkspaceId = new Map<string, Date>();
+  const latestStartByWorkspaceId = new Map<string, Date>();
+  const runningWorkspaces = new Set<string>();
 
   for (const agent of agents.values()) {
     const parentAgent = agent.parentAgentId ? agents.get(agent.parentAgentId) : undefined;
     if (agent.archivedAt || !agent.workspaceId || !isWorkspaceRootAgent(agent, parentAgent)) {
       continue;
     }
+
+    // User submissions survive turn completion and cold hydration. Assistant output
+    // must not advance start-based sorting.
+    recordLatestTimestamp(latestStartByWorkspaceId, agent.workspaceId, agent.lastUserMessageAt);
+    if (workspaceAgentStatus(agent) === "running") runningWorkspaces.add(agent.workspaceId);
 
     const enteredAt = agent.attentionTimestamp ?? agent.updatedAt;
     const latestActivityAt = latestActivityAtByWorkspaceId.get(agent.workspaceId);
@@ -47,19 +56,43 @@ export function buildWorkspaceAgentActivityIndex(
   }
 
   for (const [workspaceId, activity] of activityByWorkspaceId) {
-    const previousActivity = previous?.get(workspaceId);
-    if (
-      previousActivity?.agentId === activity.agentId &&
-      previousActivity.status === activity.status
-    ) {
-      activityByWorkspaceId.set(workspaceId, previousActivity);
-    }
+    activity.lastStartedAt = latestStartByWorkspaceId.get(workspaceId) ?? null;
+    activity.hasRunningAgent = runningWorkspaces.has(workspaceId);
+    activityByWorkspaceId.set(
+      workspaceId,
+      preserveWorkspaceStatusEntry(activity, previous?.get(workspaceId)),
+    );
   }
 
   if (previous && areWorkspaceAgentActivityIndexesIdentical(previous, activityByWorkspaceId)) {
     return previous instanceof Map ? previous : new Map(previous);
   }
   return activityByWorkspaceId;
+}
+
+function recordLatestTimestamp(
+  index: Map<string, Date>,
+  workspaceId: string,
+  value: Date | null,
+): void {
+  const previous = index.get(workspaceId);
+  if (value && (!previous || value > previous)) index.set(workspaceId, value);
+}
+
+function preserveWorkspaceStatusEntry(
+  activity: WorkspaceAgentActivity,
+  previous: WorkspaceAgentActivity | undefined,
+): WorkspaceAgentActivity {
+  if (previous?.agentId !== activity.agentId || previous.status !== activity.status)
+    return activity;
+  if (previous.lastStartedAt?.getTime() === activity.lastStartedAt?.getTime())
+    activity.lastStartedAt = previous.lastStartedAt;
+  if (
+    previous.lastStartedAt === activity.lastStartedAt &&
+    previous.hasRunningAgent === activity.hasRunningAgent
+  )
+    return previous;
+  return { ...activity, enteredAt: previous.enteredAt };
 }
 
 function areWorkspaceAgentActivityIndexesIdentical(

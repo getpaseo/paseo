@@ -1,3 +1,4 @@
+import { compareSidebarNames } from "@/hooks/sidebar-workspaces-view-model";
 import type { TFunction } from "i18next";
 import { buildStatusGroups } from "@/hooks/sidebar-status-view-model";
 import {
@@ -9,7 +10,7 @@ import type {
   SidebarProjectEntry,
   SidebarWorkspaceEntry,
 } from "@/hooks/use-sidebar-workspaces-list";
-import type { SidebarGroupMode } from "@/stores/sidebar-view-store";
+import type { SidebarGroupMode, SidebarSortMode } from "@/stores/sidebar-view-store";
 import {
   resolveSidebarProjectIconTargets,
   type SidebarProjectIconTarget,
@@ -19,7 +20,12 @@ import {
   type SidebarShortcutModel,
   type SidebarShortcutSection,
 } from "@/utils/sidebar-shortcuts";
-import { statusWorkspaceGroups, type SidebarWorkspaceGroup } from "./sidebar-labels";
+import {
+  statusWorkspaceGroups,
+  dayWorkspaceGroups,
+  type SidebarWorkspaceGroup,
+} from "./sidebar-labels";
+import { buildDayGroups } from "@/hooks/sidebar-day-view-model";
 
 export interface SidebarProjection {
   pinnedGroups: PinnedSidebarGroups;
@@ -40,9 +46,13 @@ export interface SidebarProjectionInput {
   projects: SidebarProjectEntry[];
   pinnedKeys: PinnedSidebarKeys;
   pinnedWorkspaceOrder: string[];
+  workspaceOrderByStatus?: Readonly<Record<string, string[]>>;
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
   projectNamesByViewKey: Map<string, string>;
   groupMode: SidebarGroupMode;
+  now?: Date;
+  sortMode?: SidebarSortMode;
+  workspaceActivityRunningFirst?: boolean;
   pinnedCollapsed: boolean;
   collapsedProjectKeys: ReadonlySet<string>;
   collapsedWorkspaceGroupKeys: ReadonlySet<string>;
@@ -55,6 +65,13 @@ export function buildSidebarProjection(input: SidebarProjectionInput): SidebarPr
     keys: input.pinnedKeys,
     pinnedWorkspaceOrder: input.pinnedWorkspaceOrder,
   });
+  if (input.sortMode === "name")
+    pinnedGroups.pinnedChats.sort((left, right) =>
+      compareSidebarNames(
+        input.workspaceEntriesByKey.get(left.workspaceKey)?.name ?? left.name,
+        input.workspaceEntriesByKey.get(right.workspaceKey)?.name ?? right.name,
+      ),
+    );
   const pinnedWorkspaceKeys = new Set(input.pinnedKeys.pinnedWorkspaceKeys);
   const unpinnedWorkspaces = Array.from(input.workspaceEntriesByKey.values()).filter(
     (workspace) => !pinnedWorkspaceKeys.has(workspace.workspaceKey),
@@ -92,7 +109,7 @@ export function buildSidebarProjection(input: SidebarProjectionInput): SidebarPr
   };
 }
 
-/** Project mode keeps its project headers and groups nothing; status mode groups the rows. */
+/** Project mode retains project headers; other modes group the unpinned rows. */
 function buildWorkspaceGroups(
   input: SidebarProjectionInput,
   unpinnedWorkspaces: SidebarWorkspaceEntry[],
@@ -102,7 +119,23 @@ function buildWorkspaceGroups(
       return [];
     case "status":
       return statusWorkspaceGroups(
-        buildStatusGroups(unpinnedWorkspaces, input.projectNamesByViewKey, input.t),
+        buildStatusGroups({
+          workspaces: unpinnedWorkspaces,
+          projectNamesByViewKey: input.projectNamesByViewKey,
+          t: input.t,
+          sortMode: input.sortMode,
+          runningFirst: input.workspaceActivityRunningFirst,
+          workspaceOrderByStatus: input.workspaceOrderByStatus,
+        }),
+      );
+    case "day":
+      return dayWorkspaceGroups(
+        buildDayGroups({
+          workspaces: unpinnedWorkspaces,
+          runningFirst: input.workspaceActivityRunningFirst,
+          t: input.t,
+          now: input.now,
+        }),
       );
   }
 }

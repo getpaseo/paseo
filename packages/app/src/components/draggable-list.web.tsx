@@ -96,6 +96,7 @@ interface SortableItemProps<T> {
   renderItem: (info: DraggableRenderItemInfo<T>) => ReactElement;
   activeId: string | null;
   useDragHandle: boolean;
+  dragEnabled: boolean;
 }
 
 function SortableItemInner<T>({
@@ -105,6 +106,7 @@ function SortableItemInner<T>({
   renderItem,
   activeId,
   useDragHandle,
+  dragEnabled,
 }: SortableItemProps<T>) {
   const {
     attributes,
@@ -114,7 +116,7 @@ function SortableItemInner<T>({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id });
+  } = useSortable({ id, disabled: !dragEnabled });
 
   const dragRef = useRef<(() => void) | null>(null);
 
@@ -153,14 +155,14 @@ function SortableItemInner<T>({
   );
   const dragHandleProps = useMemo(
     () =>
-      useDragHandle
+      useDragHandle && dragEnabled
         ? {
             attributes: stableAttributes,
             listeners: stableListeners,
             setActivatorNodeRef: setActivatorNodeRef as unknown as (node: unknown) => void,
           }
         : undefined,
-    [setActivatorNodeRef, stableAttributes, stableListeners, useDragHandle],
+    [setActivatorNodeRef, stableAttributes, stableListeners, useDragHandle, dragEnabled],
   );
 
   const info: DraggableRenderItemInfo<T> = {
@@ -200,6 +202,7 @@ export function DraggableList<T>({
   scrollEnabled = true,
   extraData: _extraData,
   useDragHandle = false,
+  dragEnabled = true,
   // simultaneousGestureRef is native-only, ignored on web
   onDragBegin,
   nestable: _nestable = false,
@@ -268,6 +271,7 @@ export function DraggableList<T>({
                     renderItem={renderItem}
                     activeId={activeId}
                     useDragHandle={useDragHandle}
+                    dragEnabled={dragEnabled}
                   />
                 );
               })}
@@ -299,6 +303,7 @@ export function DraggableList<T>({
                     renderItem={renderItem}
                     activeId={activeId}
                     useDragHandle={useDragHandle}
+                    dragEnabled={dragEnabled}
                   />
                 );
               })}

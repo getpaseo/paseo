@@ -17,6 +17,7 @@ import {
   View,
   type StyleProp,
   type ViewStyle,
+  type PointerEvent as NativePointerEvent,
 } from "react-native";
 import { Keyframe, runOnJS } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
@@ -299,10 +300,12 @@ export function AnchoredSurface({
   useEffect(() => {
     if (!isWeb || !open || !placed || typeof document === "undefined") return undefined;
     const frame = requestAnimationFrame(() => {
-      document
-        .getElementById(surfaceNativeID)
-        ?.querySelector<HTMLElement>('[data-menu-item="true"]:not([data-menu-disabled="true"])')
-        ?.focus();
+      const surface = document.getElementById(surfaceNativeID);
+      // Pointer movement can focus a row before this placement frame runs.
+      if (!surface || surface.contains(document.activeElement)) return;
+      surface
+        .querySelector<HTMLElement>('[data-menu-item="true"]:not([data-menu-disabled="true"])')
+        ?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(frame);
   }, [open, placed, surfaceNativeID]);
@@ -473,6 +476,29 @@ export function MenuOverlay({
     },
     [onClose],
   );
+  const handlePointerMove = useCallback((event: NativePointerEvent) => {
+    if (!isWeb || event.nativeEvent.pointerType !== "mouse" || event.nativeEvent.buttons !== 0)
+      return;
+    const target: unknown = event.target;
+    if (!(target instanceof Element)) return;
+    const item = target.closest<HTMLElement>('[data-menu-item="true"]');
+    if (!item || item.dataset.menuDisabled === "true" || document.activeElement === item) return;
+    // Hover-following focus must not steal the caret from a text field inside the menu, such as
+    // the label-creation page's name input — once focus moves to a row, typing stops reaching
+    // the field. Only follow the pointer when focus is not in an editable element.
+    const active = document.activeElement;
+    if (
+      active instanceof HTMLElement &&
+      (active.tagName === "INPUT" ||
+        active.tagName === "TEXTAREA" ||
+        active.isContentEditable === true)
+    ) {
+      return;
+    }
+    // Keep arrow-key navigation aligned with the hovered row without scrolling the surface.
+    item.focus({ preventScroll: true });
+  }, []);
+
   const setWebOverlayScope = useWebOverlayRegistration({
     active: isWeb && visible,
     layer: floatingLayer,
@@ -488,6 +514,7 @@ export function MenuOverlay({
         {...{
           onContextMenu: (event: { preventDefault?: () => void }) => event.preventDefault?.(),
         }}
+        onPointerMove={isWeb ? handlePointerMove : undefined}
         ref={setWebOverlayScope}
         collapsable={false}
         style={[

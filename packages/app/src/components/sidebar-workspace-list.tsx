@@ -1594,6 +1594,7 @@ function ProjectBlock({
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
 }) {
+  const workspaceDragEnabled = useSidebarViewStore((state) => state.sortMode !== "name");
   const {
     visibleItems: visibleWorkspaces,
     expanded: workspacesExpanded,
@@ -1761,6 +1762,7 @@ function ProjectBlock({
         <>
           <DraggableList
             testID={`sidebar-workspace-list-${project.viewKey}`}
+            dragEnabled={workspaceDragEnabled}
             data={visibleWorkspaces}
             keyExtractor={workspaceKeyExtractor}
             renderItem={renderWorkspace}
@@ -1929,6 +1931,7 @@ export function SidebarWorkspaceList({
   const setPinnedWorkspaceOrder = useSidebarOrderStore((state) => state.setPinnedWorkspaceOrder);
   const handlePinnedWorkspaceReorder = useCallback(
     (reorderedWorkspaces: SidebarWorkspacePlacement[]) => {
+      if (useSidebarViewStore.getState().sortMode === "name") return;
       const reorderedWorkspaceKeys = reorderedWorkspaces.map((workspace) => workspace.workspaceKey);
       const currentOrder = getPinnedWorkspaceOrder();
       if (
@@ -1946,6 +1949,7 @@ export function SidebarWorkspaceList({
           reorderedVisibleKeys: reorderedWorkspaceKeys,
         }),
       );
+      useSidebarViewStore.getState().setSortMode("manual");
     },
     [getPinnedWorkspaceOrder, setPinnedWorkspaceOrder],
   );
@@ -2135,6 +2139,8 @@ function ProjectModeList({
     (state) => state.togglePinnedCollapsed,
   );
 
+  const projectDragEnabled = useSidebarViewStore((state) => state.projectSortMode !== "name");
+  const workspaceDragEnabled = useSidebarViewStore((state) => state.sortMode !== "name");
   const getProjectOrder = useSidebarOrderStore((state) => state.getProjectOrder);
   const setProjectOrder = useSidebarOrderStore((state) => state.setProjectOrder);
   const getWorkspaceOrder = useSidebarOrderStore((state) => state.getWorkspaceOrder);
@@ -2215,9 +2221,12 @@ function ProjectModeList({
 
   const handleProjectDragEnd = useCallback(
     (reorderedProjects: SidebarProjectEntry[]) => {
+      if (useSidebarViewStore.getState().projectSortMode === "name") return;
       const reorderedProjectKeys = reorderedProjects.map((project) => project.viewKey);
       const currentProjectOrder = getProjectOrder();
+      const sortByRecentActivity = useSidebarViewStore.getState().projectSortMode === "recent";
       if (
+        !sortByRecentActivity &&
         !hasVisibleOrderChanged({
           currentOrder: currentProjectOrder,
           reorderedVisibleKeys: reorderedProjectKeys,
@@ -2232,15 +2241,19 @@ function ProjectModeList({
           reorderedVisibleKeys: reorderedProjectKeys,
         }),
       );
+      useSidebarViewStore.getState().setProjectSortMode("manual");
     },
     [getProjectOrder, setProjectOrder],
   );
 
   const handleWorkspaceReorder = useCallback(
     (projectViewKey: string, reorderedWorkspaces: SidebarWorkspacePlacement[]) => {
+      if (useSidebarViewStore.getState().sortMode === "name") return;
       const reorderedWorkspaceKeys = reorderedWorkspaces.map((workspace) => workspace.workspaceKey);
       const currentWorkspaceOrder = getWorkspaceOrder(projectViewKey);
+      const sortByRecentActivity = useSidebarViewStore.getState().sortMode === "recent";
       if (
+        !sortByRecentActivity &&
         !hasVisibleOrderChanged({
           currentOrder: currentWorkspaceOrder,
           reorderedVisibleKeys: reorderedWorkspaceKeys,
@@ -2256,6 +2269,7 @@ function ProjectModeList({
           reorderedVisibleKeys: reorderedWorkspaceKeys,
         }),
       );
+      useSidebarViewStore.getState().setSortMode("manual");
     },
     [getWorkspaceOrder, setWorkspaceOrder],
   );
@@ -2405,6 +2419,7 @@ function ProjectModeList({
     ) : (
       <DraggableList
         testID="sidebar-project-list"
+        dragEnabled={projectDragEnabled}
         data={unpinnedProjects}
         keyExtractor={projectViewKeyExtractor}
         renderItem={renderProject}
@@ -2433,6 +2448,7 @@ function ProjectModeList({
             <>
               <DraggableList
                 testID="sidebar-pinned-list"
+                dragEnabled={workspaceDragEnabled}
                 data={visiblePinnedChats}
                 keyExtractor={workspaceKeyExtractor}
                 renderItem={renderPinnedChat}
