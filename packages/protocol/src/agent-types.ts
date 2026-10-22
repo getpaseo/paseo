@@ -1,3 +1,4 @@
+import type { AgentUsageLimit } from "./agent-usage-limit.js";
 import type { AgentMessage } from "./agent-message.js";
 import type { AgentAttachment } from "./messages.js";
 
@@ -410,6 +411,7 @@ export type AgentStreamEvent =
       error: string;
       code?: string;
       diagnostic?: string;
+      usageLimit?: AgentUsageLimit;
       turnId?: string;
     }
   | { type: "turn_canceled"; provider: AgentProvider; reason: string; turnId?: string }

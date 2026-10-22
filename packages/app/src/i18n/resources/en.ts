@@ -246,6 +246,15 @@ export const en = {
     },
   },
   agentPanel: {
+    usageLimit: {
+      saveFailed: "Could not save this setting. Try again.",
+      label: "Resume after usage limit",
+      enabled: "Enabled for this chat. Keep the host running.",
+      available: "Usage limit reached. Retry available at {{at}}.",
+      scheduled: "Will continue at {{at}} while the host is running.",
+      unknownReset: "The provider did not report a reset time. Continue manually.",
+      saving: "Saving…",
+    },
     states: {
       notFound: "Agent not found",
       failedToLoad: "Failed to load agent",

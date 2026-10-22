@@ -1,3 +1,4 @@
+import type { AgentUsageLimit } from "@getpaseo/protocol/agent-usage-limit";
 import { randomUUID } from "node:crypto";
 import type { Logger } from "pino";
 import type {
@@ -192,6 +193,11 @@ function nextBurstSize(profile: BurstProfile, sequence: number): number {
   return profile.minTokens + ((hash >>> 0) % span);
 }
 
+interface FailedTurnInput {
+  turn: ActiveTurn;
+  usageLimit?: AgentUsageLimit;
+}
+
 interface ActiveTurn {
   turnId: string;
   assistantMessageId: string;
@@ -252,6 +258,14 @@ interface MockQuestionPromptRequest {
 
 function shouldEmitPlanApprovalPrompt(prompt: AgentPromptInput): boolean {
   return /emit\s+(?:a\s+)?synthetic\s+plan\s+approval/i.test(promptToText(prompt));
+}
+
+function parseUsageLimitPrompt(prompt: AgentPromptInput): AgentUsageLimit | undefined {
+  const match = /^emit synthetic usage limit: (unknown|[\dT:.Z+-]+)$/i.exec(
+    promptToText(prompt).trim(),
+  );
+  if (!match) return undefined;
+  return { resetsAt: match[1] === "unknown" ? null : match[1] };
 }
 
 function shouldEmitTurnFailure(prompt: AgentPromptInput): boolean {
@@ -869,9 +883,10 @@ export class MockLoadTestAgentSession implements AgentSession {
     const structuredBranchName = parseStructuredBranchNamePrompt(prompt);
     const settledAssistantImageMarkdown = parseSettledAssistantImageMarkdown(prompt);
     const steeringReplayShape = parseSteeringReplayShape(prompt);
+    const usageLimit = parseUsageLimitPrompt(prompt);
     const scheduleTurn = () => {
-      if (shouldEmitTurnFailure(prompt)) {
-        this.scheduleFailedTurn(turn);
+      if (shouldEmitTurnFailure(prompt) || usageLimit) {
+        this.scheduleFailedTurn({ turn, usageLimit });
       } else if (steeringReplayShape) {
         this.scheduleSteeringReplayTurn(turn, steeringReplayShape);
       } else if (this.streamingAssistantResponse !== null) {
@@ -1157,7 +1172,7 @@ export class MockLoadTestAgentSession implements AgentSession {
     turn.timer.unref?.();
   }
 
-  private scheduleFailedTurn(turn: ActiveTurn): void {
+  private scheduleFailedTurn({ turn, usageLimit }: FailedTurnInput): void {
     turn.timer = setTimeout(() => {
       if (this.activeTurn !== turn) {
         return;
@@ -1169,7 +1184,8 @@ export class MockLoadTestAgentSession implements AgentSession {
         type: "turn_failed",
         provider: this.provider,
         turnId: turn.turnId,
-        error: "Requested mock provider failure",
+        error: usageLimit ? "Usage limit reached" : "Requested mock provider failure",
+        ...(usageLimit ? { usageLimit } : {}),
       });
       turn.resolve({
         sessionId: this.id,

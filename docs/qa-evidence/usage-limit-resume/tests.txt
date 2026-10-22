@@ -1,0 +1,11 @@
+npm notice run paseo@0.12.0-beta.1 npx
+npm notice run 'vitest' run packages/server/src/server/agent/usage-limit-resume.test.ts packages/server/src/server/agent/agent-manager.test.ts packages/server/src/server/agent/agent-archive.test.ts packages/server/src/server/agent/providers/claude/agent.redesign.test.ts packages/protocol/src/messages.test.ts packages/app/src/i18n/resources.test.ts
+
+ RUN  v4.1.7 /home/bobik/src/paseo-worktrees/resume-after-usage-limit
+
+
+ Test Files  6 passed (6)
+      Tests  338 passed (338)
+   Start at  06:18:49
+   Duration  5.62s (transform 1.61s, setup 0ms, import 2.54s, tests 5.65s, environment 0ms)
+

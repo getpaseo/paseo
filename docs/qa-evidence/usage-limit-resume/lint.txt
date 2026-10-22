@@ -1,0 +1,4 @@
+npm notice run paseo@0.13.0-beta.1 lint
+npm notice run oxlint
+Found 0 warnings and 0 errors.
+Finished in 5.7s on 4874 files with 177 rules using 32 threads.

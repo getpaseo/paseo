@@ -1,3 +1,4 @@
+import type { AgentUsageLimit } from "@getpaseo/protocol/agent-usage-limit";
 import equal from "fast-deep-equal";
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
@@ -87,6 +88,7 @@ export interface Agent {
   runtimeInfo?: AgentRuntimeInfo;
   lastUsage?: AgentUsage;
   lastError?: string | null;
+  usageLimit?: AgentUsageLimit;
   title: string | null;
   cwd: string;
   workspaceId?: string;

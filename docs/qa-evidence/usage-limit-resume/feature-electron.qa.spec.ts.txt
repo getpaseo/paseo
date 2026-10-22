@@ -1,0 +1,36 @@
+import { _electron as electron } from "@playwright/test";
+import { test as appTest, expect } from "../packages/app/e2e/support/fixtures";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+const test = appTest.extend({
+  page: async ({ e2eWorker }, use) => {
+    void e2eWorker;
+    const userData = await mkdtemp(path.join(tmpdir(), "paseo-feature-electron-"));
+    const env = { ...process.env, DISPLAY: ":193", EXPO_DEV_URL: `http://localhost:${process.env.E2E_METRO_PORT}`, PASEO_ELECTRON_USER_DATA_DIR: userData, PASEO_HOME: process.env.E2E_PASEO_HOME, PASEO_LISTEN: `127.0.0.1:${process.env.E2E_DAEMON_PORT}`, PASEO_NODE_ENV: "development", NODE_ENV: "development", PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: "0", PASEO_DICTATION_ENABLED: "0", PASEO_VOICE_MODE_ENABLED: "0" };
+    delete env.ELECTRON_RUN_AS_NODE;
+    const desktop = await electron.launch({ executablePath: "/home/bobik/src/paseo-worktrees/workflow-swarm-dots/node_modules/electron/dist/electron", args: ["--no-sandbox", "--ozone-platform=x11", "--disable-gpu", path.resolve("packages/desktop")], env });
+    try {
+      const page = await desktop.firstWindow();
+      await page.waitForURL(`http://localhost:${process.env.E2E_METRO_PORT}/**`, { waitUntil: "domcontentloaded" });
+      await use(page);
+    } finally { await desktop.close(); await rm(userData, { recursive: true, force: true }); }
+  }
+});
+import { seedMockAgentWorkspace, openAgentRoute } from "../packages/app/e2e/support/helpers/mock-agent";
+import { emitSyntheticUsageLimit, usageLimitResumeSwitch, setUsageLimitResume, reloadUsageLimitChat, captureUsageLimit } from "../packages/app/e2e/support/helpers/usage-limit-resume";
+test("usage limit opt-in and continuation in real Linux Electron", async ({ page }, testInfo) => {
+  const agent = await seedMockAgentWorkspace({ repoPrefix: "electron-limit-", title: "Resume task" });
+  try {
+    await openAgentRoute(page, agent);
+    await expect.poll(() => page.evaluate(() => Boolean(window.paseoDesktop))).toBe(true);
+    await emitSyntheticUsageLimit({ page, resetsAt: new Date(Date.now()+300000).toISOString() });
+    await setUsageLimitResume({ page, enabled: true });
+    await reloadUsageLimitChat(page);
+    await expect(usageLimitResumeSwitch(page)).toHaveAttribute("aria-checked", "true");
+    await captureUsageLimit({ page, testInfo, name: "electron-light.png", colorScheme: "light" });
+    await captureUsageLimit({ page, testInfo, name: "electron-dark.png", colorScheme: "dark" });
+    await emitSyntheticUsageLimit({ page, resetsAt: new Date(Date.now()-120000).toISOString() });
+    await expect(page.getByText("The usage limit reset.", { exact: false })).toHaveCount(1, { timeout: 15000 });
+  } finally { await agent.cleanup(); }
+});

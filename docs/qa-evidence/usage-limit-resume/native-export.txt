@@ -1,0 +1,45 @@
+npm notice run paseo@0.13.0-beta.1 npx
+npm notice run 'expo' export --platform ios --platform android --output-dir /tmp/paseo-resume-native-export --max-workers 2
+Using src/app as the root directory for Expo Router.
+React Compiler enabled
+Expo Autolinking module resolution enabled
+Starting Metro Bundler
+
+| (node:2059920) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+| (Use `node --trace-warnings ...` to show where the warning was created)
+| (node:2059920) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+| (Use `node --trace-warnings ...` to show where the warning was created)
+iOS Bundled 135565ms packages/app/index.ts (6540 modules)
+Android Bundled 183572ms packages/app/index.ts (6650 modules)
+
+› Assets (38):
+../../node_modules/@expo-google-fonts/material-symbols/400Regular/MaterialSymbols_400Regular.ttf (971KB)
+../../node_modules/expo-router/assets/arrow_down.png (9.5KB)
+../../node_modules/expo-router/assets/arrow_right.xml (307B)
+../../node_modules/expo-router/assets/checkmark.xml (312B)
+../../node_modules/expo-router/assets/error.png (469B)
+../../node_modules/expo-router/assets/file.png (138B)
+../../node_modules/expo-router/assets/forward.png (188B)
+../../node_modules/expo-router/assets/pkg.png (364B)
+../../node_modules/expo-router/assets/react-navigation/elements/back-icon-mask.png (653B)
+../../node_modules/expo-router/assets/react-navigation/elements/back-icon.png (8 variations | 359B)
+../../node_modules/expo-router/assets/react-navigation/elements/clear-icon.png (4 variations | 425B)
+../../node_modules/expo-router/assets/react-navigation/elements/close-icon.png (4 variations | 235B)
+../../node_modules/expo-router/assets/react-navigation/elements/search-icon.png (7 variations | 592B)
+../../node_modules/expo-router/assets/sitemap.png (465B)
+../../node_modules/expo-router/assets/unmatched.png (4.8KB)
+assets/images/favicon-dark-attention.png (2.2KB)
+assets/images/favicon-dark-running.png (2.2KB)
+assets/images/favicon-dark.png (1.7KB)
+assets/images/notification-icon.png (2.3KB)
+
+› ios bundles (1):
+_expo/static/js/ios/index-eae2b0d73471aed85d3baa54ef297184.hbc (32MB)
+
+› android bundles (1):
+_expo/static/js/android/index-8850c57bbc482bb2051781f955b436a5.hbc (32MB)
+
+› Files (1):
+metadata.json (3.9KB)
+
+Exported: /tmp/paseo-resume-native-export

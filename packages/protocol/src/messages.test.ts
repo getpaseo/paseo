@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   AgentTimelineItemPayloadSchema,
+  AgentStreamEventPayloadSchema,
   SendAgentMessageRequestSchema,
   FileExplorerRequestSchema,
   PaseoWorktreeArchiveRequestSchema,
@@ -550,6 +551,32 @@ test("agent messages are an optional semantic payload on existing tool rows", ()
   ).toBe(false);
 });
 
+describe("usage limit resume compatibility", () => {
+  const failed = { type: "turn_failed", provider: "claude", error: "Usage limit reached" };
+
+  test("accepts failures from older daemons without usage limit metadata", () => {
+    expect(AgentStreamEventPayloadSchema.parse(failed)).toEqual(failed);
+  });
+
+  test.each([null, "2026-10-17T06:40:00.000Z"])(
+    "preserves structured usage limit metadata: %s",
+    (resetsAt) => {
+      const event = { ...failed, usageLimit: { resetsAt } };
+      expect(AgentStreamEventPayloadSchema.parse(event)).toEqual(event);
+    },
+  );
+
+  test("accepts old server info and advertises new support explicitly", () => {
+    const oldInfo = { status: "server_info", serverId: "srv-test" };
+    expect(parseServerInfoStatusPayload(oldInfo)?.features?.usageLimitResume).toBeUndefined();
+    expect(
+      parseServerInfoStatusPayload({
+        ...oldInfo,
+        features: { usageLimitResume: true },
+      })?.features?.usageLimitResume,
+    ).toBe(true);
+  });
+});
 test.each(["all", "base", "uncommitted"] as const)(
   "preserves %s review attachments while ignoring unknown attachments",
   (mode) => {

@@ -253,6 +253,16 @@ export const fr: TranslationResources = {
     },
   },
   agentPanel: {
+    usageLimit: {
+      saveFailed: "Impossible d’enregistrer ce réglage. Réessayez.",
+      label: "Reprendre après la limite d’utilisation",
+      enabled: "Activé pour cette conversation. Gardez l’hôte en marche.",
+      available: "Limite atteinte. Nouvelle tentative possible à {{at}}.",
+      scheduled: "Reprendra à {{at}} si l’hôte est en marche.",
+      unknownReset:
+        "Le fournisseur n’a pas indiqué l’heure de réinitialisation. Reprenez manuellement.",
+      saving: "Enregistrement…",
+    },
     states: {
       notFound: "Agent introuvable",
       failedToLoad: "Impossible de charger l’agent",

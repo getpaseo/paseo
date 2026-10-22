@@ -68,3 +68,11 @@ test("can stamp updatedAt to the archive timestamp", () => {
 
   expect(archived.updatedAt).toBe("2025-01-03T00:00:00.000Z");
 });
+
+test("archiving cancels a pending usage-limit continuation", () => {
+  const archived = buildArchivedAgentRecord({
+    ...BASE_RECORD,
+    usageLimit: { resetsAt: "2026-10-17T06:40:00.000Z" },
+  });
+  expect(archived.usageLimit).toBeUndefined();
+});

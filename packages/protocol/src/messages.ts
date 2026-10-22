@@ -1,3 +1,4 @@
+import { AgentUsageLimitSchema } from "./agent-usage-limit.js";
 import { AgentMessageSchema } from "./agent-message.js";
 import {
   HostsListRequestSchema,
@@ -761,6 +762,7 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
     error: z.string(),
     code: z.string().optional(),
     diagnostic: z.string().optional(),
+    usageLimit: AgentUsageLimitSchema.optional(),
   }),
   z.object({
     type: z.literal("turn_canceled"),
@@ -851,6 +853,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   runtimeInfo: AgentRuntimeInfoSchema.optional(),
   lastUsage: AgentUsageSchema.optional(),
   lastError: z.string().optional(),
+  usageLimit: AgentUsageLimitSchema.optional(),
   title: z.string().nullable(),
   labels: z.record(z.string(), z.string()).default({}),
   requiresAttention: z.boolean().optional(),
@@ -3633,6 +3636,7 @@ export const ServerInfoStatusPayloadSchema = z
         connectedHosts: z.boolean().optional(),
         hostMultiplexing: z.boolean().optional(),
         usageSources: z.boolean().optional(),
+        usageLimitResume: z.boolean().optional(),
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: z.boolean().optional(),
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.

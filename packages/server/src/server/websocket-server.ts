@@ -1942,6 +1942,7 @@ export class VoiceAssistantWebSocketServer {
         connectedHosts: true,
         hostMultiplexing: true,
         usageSources: true,
+        usageLimitResume: true,
         ownedSubscriptions: true,
         agentRequestReceipts: true,
         workspaceRequestReceipts: true,

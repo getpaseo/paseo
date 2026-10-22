@@ -1,0 +1,9 @@
+{
+  "observedAt": "2026-10-17T03:06:41.440Z",
+  "provider": "claude",
+  "type": "turn_failed",
+  "error": "You've hit your session limit · resets 9:40am (Europe/Moscow)",
+  "usageLimit": {
+    "resetsAt": "2026-10-17T06:40:00.000Z"
+  }
+}

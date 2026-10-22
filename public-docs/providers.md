@@ -23,6 +23,14 @@ A provider is the contract between Paseo and one external agent CLI: how to laun
 
 Either way, **you install the underlying CLI**. Paseo runs it.
 
+## Resume after a usage limit
+
+When Claude Code stops at a subscription limit, turn on **Resume after usage limit** above the composer. The host continues the same chat one minute after the reset time reported by Claude. The switch is off by default and stays enabled for that chat until you turn it off.
+
+You can close the app while waiting. Keep the host running; if it restarts, it recovers the pending wait. Sending a message manually or archiving the agent cancels that wait. Turning off the switch cancels it too.
+
+If Claude does not report a reset time, continue manually. Paseo does not guess a five-hour delay or retry other failures. Automatic continuation currently supports Claude Code; other providers need to report a structured usage-limit failure and reset time before they can use it.
+
 ## Where to go next
 
 - [Supported providers](/docs/supported-providers), the full list with install links.
