@@ -40,6 +40,7 @@ interface UseAgentAutocompleteInput {
   onClientSlashCommand?: (command: ClientSlashCommand) => void;
   canExecuteClientSlashCommand?: boolean;
   pluginClientSlashCommands?: readonly PluginClientSlashCommand[];
+  compactCommandSuggestions?: boolean;
 }
 
 interface AgentAutocompleteKeyPressEvent {
@@ -200,10 +201,14 @@ interface BuildAutocompleteOptionsInput {
   activeSlashCommand: SlashCommandRange | null;
   activeFileMention: FileMentionRange | null;
   fileSuggestions: DirectorySuggestionEntry[];
+  compactCommandSuggestions: boolean;
   t: TFunction;
 }
 
-function buildCommandAutocompleteOptions(input: BuildAutocompleteOptionsInput) {
+// why: iOS keeps the command picker to the two best matches so it stays small above the composer.
+const COMPACT_COMMAND_SUGGESTION_LIMIT = 2;
+
+export function buildCommandAutocompleteOptions(input: BuildAutocompleteOptionsInput) {
   if (!input.isVisible) {
     return [];
   }
@@ -236,7 +241,10 @@ function buildCommandAutocompleteOptions(input: BuildAutocompleteOptionsInput) {
       availableCommands,
       input.commandFilterQuery,
     );
-    const orderedMatches = orderAutocompleteOptions(matches);
+    const limitedMatches = input.compactCommandSuggestions
+      ? matches.slice(0, COMPACT_COMMAND_SUGGESTION_LIMIT)
+      : matches;
+    const orderedMatches = orderAutocompleteOptions(limitedMatches);
     return orderedMatches.map((entry) => mapCommandToOption(entry, input.t));
   }
 
@@ -269,14 +277,35 @@ function resolveAutocompleteMode(args: {
   return null;
 }
 
+export function resolveCompactCommandVisibility(args: {
+  compactCommandSuggestions: boolean;
+  mode: AutocompleteMode;
+  commandFilterQuery: string;
+}): boolean {
+  return !(
+    args.compactCommandSuggestions &&
+    args.mode === "command" &&
+    args.commandFilterQuery.length === 0
+  );
+}
+
 function resolveAutocompleteIsVisible(args: {
   mode: AutocompleteMode;
   canLoadCommands: boolean;
   serverId: string;
   autocompleteCwd: string;
+  compactCommandSuggestions: boolean;
+  commandFilterQuery: string;
 }): boolean {
   if (args.mode === "command") {
-    return args.canLoadCommands;
+    return (
+      args.canLoadCommands &&
+      resolveCompactCommandVisibility({
+        compactCommandSuggestions: args.compactCommandSuggestions,
+        mode: args.mode,
+        commandFilterQuery: args.commandFilterQuery,
+      })
+    );
   }
   if (args.mode === "file") {
     return Boolean(args.serverId) && args.autocompleteCwd.length > 0;
@@ -376,6 +405,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     canExecuteClientSlashCommand,
     pluginClientSlashCommands = [],
   } = input;
+  const compactCommandSuggestions = Boolean(input.compactCommandSuggestions);
 
   const activeSlashCommand = useMemo(
     () =>
@@ -430,6 +460,8 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     canLoadCommands,
     serverId,
     autocompleteCwd,
+    compactCommandSuggestions,
+    commandFilterQuery,
   });
 
   const commandsQuery = useAgentCommandsQuery({
@@ -487,6 +519,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
         commands,
         pluginCommands: pluginClientSlashCommands,
         activeSlashCommand,
+        compactCommandSuggestions,
         fileSuggestions: fileSuggestionsQuery.data ?? [],
         isDraftContext,
         isVisible,
@@ -498,6 +531,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
       activeSlashCommand,
       commandFilterQuery,
       commands,
+      compactCommandSuggestions,
       pluginClientSlashCommands,
       fileSuggestionsQuery.data,
       isDraftContext,
