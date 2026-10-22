@@ -1,3 +1,7 @@
+import type { Page } from "@playwright/test";
+import { mkdtemp, open, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { expect, test } from "../support/fixtures";
 import { clickNewChat } from "../support/helpers/launcher";
 import { expectComposerVisible } from "../support/helpers/composer";
@@ -310,3 +314,87 @@ test.describe("Composer attachments", () => {
     }
   });
 });
+
+function observeFileUploads(page: Page) {
+  const uploaded: { file?: { fileName: string; size: number; path: string }; requests: number } = {
+    requests: 0,
+  };
+  page.on("websocket", (socket) => {
+    socket.on("framesent", (event) => {
+      if (typeof event.payload !== "string") return;
+      try {
+        const envelope = JSON.parse(event.payload);
+        if ((envelope.message ?? envelope).type === "file.upload.request") uploaded.requests++;
+      } catch {}
+    });
+    socket.on("framereceived", (event) => {
+      if (typeof event.payload !== "string") return;
+      try {
+        const envelope = JSON.parse(event.payload);
+        const message = envelope.message ?? envelope;
+        if (
+          message.type === "file.upload.response" &&
+          message.payload.file?.fileName === "above-old-limit.apk"
+        )
+          uploaded.file = message.payload.file;
+      } catch {}
+    });
+  });
+  return uploaded;
+}
+
+const configuredUploadTest = test.extend({
+  e2eDaemonConfig: [
+    { version: 1, daemon: { uploads: { maxFileBytes: 64 * 1024 * 1024 } } },
+    { scope: "worker" },
+  ],
+});
+
+configuredUploadTest(
+  "configured upload limit accepts files above 50 MiB and reports the configured cap",
+  async ({ page, withWorkspace }) => {
+    test.setTimeout(90_000);
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-large-upload-"));
+    const acceptedPath = path.join(directory, "above-old-limit.apk");
+    const rejectedPath = path.join(directory, "above-configured-limit.apk");
+    const acceptedBytes = 51 * 1024 * 1024;
+    const uploaded = observeFileUploads(page);
+    try {
+      for (const [filePath, size] of [
+        [acceptedPath, acceptedBytes],
+        [rejectedPath, 65 * 1024 * 1024],
+      ] as const) {
+        const file = await open(filePath, "w");
+        try {
+          await file.truncate(size);
+        } finally {
+          await file.close();
+        }
+      }
+      const workspace = await withWorkspace({ prefix: "configured-upload-" });
+      await workspace.navigateTo();
+      await clickNewChat(page);
+      await expectComposerVisible(page);
+      await openAttachmentMenu(page);
+      const chooser = page.waitForEvent("filechooser");
+      await page.getByRole("menuitem", { name: "Upload file", exact: true }).click();
+      await (await chooser).setFiles(acceptedPath);
+      await expect(page.getByTestId("composer-file-attachment-pill")).toContainText(
+        "above-old-limit.apk",
+        { timeout: 45000 },
+      );
+      await expect.poll(() => uploaded.file?.size).toBe(acceptedBytes);
+      expect((await stat(uploaded.file!.path)).size).toBe(acceptedBytes);
+      await openAttachmentMenu(page);
+      const nextChooser = page.waitForEvent("filechooser");
+      await page.getByRole("menuitem", { name: "Upload file", exact: true }).click();
+      await (await nextChooser).setFiles(rejectedPath);
+      await expect(
+        page.getByText("above-configured-limit.apk is too large (max 64MB)", { exact: true }),
+      ).toBeVisible();
+      expect(uploaded.requests).toBe(1);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);

@@ -44,6 +44,21 @@ Minimal example that configures listening address, hostnames, and MCP:
 
 `daemon.hostnames` is the primary field. The old `daemon.allowedHosts` name still works as a deprecated alias for backward compatibility.
 
+## Upload limits
+
+Set `daemon.uploads.maxFileBytes` to a positive integer to limit each uploaded file.
+For example, allow files up to 256 MiB:
+
+```bash
+paseo daemon config set daemon.uploads.maxFileBytes 268435456
+```
+
+Unset the field or set it to `null` to allow uploads of any size, the default.
+Changes apply to new uploads after reload; transfers already accepted continue.
+Oversized files return an upload error before writing to disk. The limit applies
+to the whole file; the existing WebSocket message and relay frame limits remain
+separate because files are transferred in chunks.
+
 ## Apply changes
 
 Edit the selected file through the CLI:

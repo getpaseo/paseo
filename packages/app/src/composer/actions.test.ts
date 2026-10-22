@@ -1089,6 +1089,84 @@ describe("file upload preparation", () => {
     await expect(upload).resolves.toEqual([{ kind: "file", attachment: file }]);
   });
 
+  it.each([64 * 1024 * 1024, null])(
+    "accepts files above 50 MiB when the daemon limit is %s",
+    async (maxFileBytes) => {
+      const bytes = new Uint8Array(51 * 1024 * 1024);
+      const attachment = {
+        type: "uploaded_file" as const,
+        id: "large",
+        fileName: "large.apk",
+        mimeType: "application/vnd.android.package-archive",
+        size: bytes.byteLength,
+        path: "/uploads/large.apk",
+      };
+      const uploadFile = vi.fn(async (file: { bytes: Uint8Array }) => {
+        expect(file.bytes).toBe(bytes);
+        return { requestId: "large", file: attachment, error: null };
+      });
+      await expect(
+        uploadFileAttachments({
+          client: { sendAgentMessage: async () => {}, uploadFile },
+          files: [
+            {
+              fileName: attachment.fileName,
+              mimeType: attachment.mimeType,
+              readBytes: async () => bytes,
+            },
+          ],
+          maxFileBytes,
+        }),
+      ).resolves.toEqual([{ kind: "file", attachment }]);
+      expect(uploadFile).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("rejects above a configured limit before uploading any file", async () => {
+    const uploadFile = vi.fn();
+    await expect(
+      uploadFileAttachments({
+        client: { sendAgentMessage: async () => {}, uploadFile },
+        maxFileBytes: 1024,
+        files: [
+          {
+            fileName: "valid.bin",
+            mimeType: "application/octet-stream",
+            readBytes: async () => new Uint8Array(1),
+          },
+          {
+            fileName: "too-large.bin",
+            mimeType: "application/octet-stream",
+            readBytes: async () => new Uint8Array(1025),
+          },
+        ],
+      }),
+    ).rejects.toThrow("too-large.bin is too large (max 1KB)");
+    expect(uploadFile).not.toHaveBeenCalled();
+  });
+
+  it("accepts the exact configured limit and propagates a daemon rejection", async () => {
+    const uploadFile = vi.fn(async () => ({
+      requestId: "limit",
+      file: null,
+      error: "configured upload limit changed",
+    }));
+    await expect(
+      uploadFileAttachments({
+        client: { sendAgentMessage: async () => {}, uploadFile },
+        maxFileBytes: 1024,
+        files: [
+          {
+            fileName: "exact.bin",
+            mimeType: "application/octet-stream",
+            readBytes: async () => new Uint8Array(1024),
+          },
+        ],
+      }),
+    ).rejects.toThrow("configured upload limit changed");
+    expect(uploadFile).toHaveBeenCalledOnce();
+  });
+
   it.each(["unreadable", "oversized"])(
     "does not upload a batch containing a later %s file",
     async (failure) => {

@@ -402,6 +402,7 @@ export interface PaseoDaemonConfig {
   mcpEnabled?: boolean;
   mcpInjectIntoAgents?: boolean;
   browserToolsEnabled?: boolean;
+  uploads?: { maxFileBytes?: number | null };
   git?: {
     maxProcessesPerSecond: number;
     maxProcessConcurrency: number;
@@ -556,6 +557,7 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
       ? { catalogRefreshTimeoutMs: config.providerCatalogRefreshTimeoutMs }
       : {}),
     browserTools: { enabled: config.browserToolsEnabled ?? false },
+    uploads: config.uploads,
     providers,
     metadataGeneration: {
       providers: config.metadataGeneration?.providers ?? [],

@@ -9,6 +9,7 @@ import type { FileUploadRequest, FileUploadResponse } from "../messages.js";
 interface FileUploadStoreOptions {
   paseoHome: string;
   staleUploadTimeoutMs?: number;
+  getMaxFileBytes?: () => number | null;
 }
 
 interface PendingUpload {
@@ -34,10 +35,12 @@ export class FileUploadStore {
   private readonly paseoHome: string;
   private readonly staleUploadTimeoutMs: number;
   private readonly defaultSource = {};
+  private readonly getMaxFileBytes: () => number | null;
   private readonly pending = new Map<object, Map<string, PendingUpload>>();
 
   constructor(options: FileUploadStoreOptions) {
     this.paseoHome = options.paseoHome;
+    this.getMaxFileBytes = options.getMaxFileBytes ?? (() => null);
     this.staleUploadTimeoutMs =
       options.staleUploadTimeoutMs ?? FileUploadStore.defaultStaleUploadTimeoutMs;
   }
@@ -49,6 +52,20 @@ export class FileUploadStore {
   ): () => Promise<void> {
     const existingUpload = this.pending.get(source)?.get(request.requestId);
     if (existingUpload) void this.cancel(existingUpload).catch(() => {});
+    // Pin acceptance at the start: reloading a lower limit must not interrupt an
+    // upload already in progress. Chunks still cannot exceed the declared size.
+    const maxFileBytes = this.getMaxFileBytes();
+    if (maxFileBytes !== null && request.size > maxFileBytes) {
+      finished({
+        type: "file.upload.response",
+        payload: {
+          requestId: request.requestId,
+          file: null,
+          error: `File is ${request.size} bytes; configured upload limit is ${maxFileBytes} bytes.`,
+        },
+      });
+      return async () => {};
+    }
     const fileName = sanitizeFileName(request.fileName);
     const id = `upload_${randomUUID()}`;
     const uploadDir = join(this.paseoHome, "uploads", id);

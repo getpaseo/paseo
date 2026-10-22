@@ -79,6 +79,25 @@
           },
           "additionalProperties": {}
         },
+        "uploads": {
+          "type": "object",
+          "properties": {
+            "maxFileBytes": {
+              "description": "Maximum bytes per uploaded file. Unset or null preserves unlimited file uploads.",
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
         "git": {
           "type": "object",
           "properties": {

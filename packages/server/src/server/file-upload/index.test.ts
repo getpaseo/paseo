@@ -14,6 +14,75 @@ import { FileUploadStore } from "./index.js";
 const tempDirs: string[] = [];
 
 describe("file uploads", () => {
+  it("rejects files over the upload limit before writing and ignores their frames", async () => {
+    const paseoHome = makePaseoHome();
+    const uploads = new FileUploadStore({ paseoHome, getMaxFileBytes: () => 10 });
+    const responses: unknown[] = [];
+    uploads.beginUpload(
+      {
+        type: "file.upload.request",
+        fileName: "large.txt",
+        mimeType: "text/plain",
+        size: 11,
+        modifiedAt: "2026-05-02T00:00:00.000Z",
+        requestId: "over-limit",
+      },
+      {},
+      (response) => responses.push(response),
+    );
+    expect(responses).toEqual([
+      {
+        type: "file.upload.response",
+        payload: {
+          requestId: "over-limit",
+          file: null,
+          error: "File is 11 bytes; configured upload limit is 10 bytes.",
+        },
+      },
+    ]);
+    expect(existsSync(join(paseoHome, "uploads"))).toBe(false);
+    await expect(uploads.receiveFrame(uploadBegins("over-limit"))).resolves.toBeNull();
+    expect(existsSync(join(paseoHome, "uploads"))).toBe(false);
+  });
+
+  it("accepts the exact upload limit and preserves accepted transfers after a limit reload", async () => {
+    const paseoHome = makePaseoHome();
+    let limit: number | null = 11;
+    const uploads = new FileUploadStore({ paseoHome, getMaxFileBytes: () => limit });
+    uploads.beginUpload({
+      type: "file.upload.request",
+      fileName: "notes.txt",
+      mimeType: "text/plain",
+      size: 11,
+      modifiedAt: "2026-05-02T00:00:00.000Z",
+      requestId: "at-limit",
+    });
+    limit = 1;
+    await uploads.receiveFrame(uploadBegins("at-limit"));
+    await uploads.receiveFrame(uploadChunk("at-limit", "hello world"));
+    await expect(uploads.receiveFrame(uploadEnds("at-limit"))).resolves.toMatchObject({
+      payload: { error: null, file: { size: 11 } },
+    });
+    expect(readFileSync(uploadedPath(paseoHome, "notes.txt"), "utf8")).toBe("hello world");
+    const rejected: unknown[] = [];
+    uploads.beginUpload(
+      {
+        type: "file.upload.request",
+        fileName: "next.txt",
+        mimeType: "text/plain",
+        size: 2,
+        modifiedAt: "2026-05-02T00:00:00.000Z",
+        requestId: "new-limit",
+      },
+      {},
+      (response) => rejected.push(response),
+    );
+    expect(rejected).toMatchObject([
+      { payload: { file: null, error: expect.stringContaining("limit is 1 bytes") } },
+    ]);
+    limit = null;
+    expect(await uploadNamed(uploads, "unlimited.txt")).toMatchObject({ size: 11 });
+  });
   afterEach(() => {
     vi.useRealTimers();
     for (const dir of tempDirs.splice(0)) {

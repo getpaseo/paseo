@@ -1,10 +1,11 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { WebSocket, type RawData } from "ws";
 import {
   decodeFileTransferFrame,
+  encodeFileTransferFrame,
   FileTransferOpcode,
 } from "@getpaseo/protocol/binary-frames/index";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "./test-utils/index.js";
@@ -16,6 +17,98 @@ const FILE_SIZE = 8 * 1024 * 1024 + 123;
 let daemon: TestPaseoDaemon | undefined;
 const temporaryDirectories: string[] = [];
 const sockets: WebSocket[] = [];
+
+test(
+  "a live upload limit rejects oversized files without closing the socket",
+  async () => {
+    daemon = await createTestPaseoDaemon();
+    const source = await connectSocket(daemon.port, "upload-limit-client");
+    sockets.push(source);
+    await sendAndWait(
+      source,
+      {
+        type: "session",
+        message: {
+          type: "set_daemon_config_request",
+          requestId: "limit",
+          config: { uploads: { maxFileBytes: 5 } },
+        },
+      },
+      (message) =>
+        message.type === "session" && message.message.type === "set_daemon_config_response",
+    );
+    const rejected = await sendAndWait(
+      source,
+      {
+        type: "session",
+        message: {
+          type: "file.upload.request",
+          requestId: "oversized",
+          fileName: "large.txt",
+          mimeType: "text/plain",
+          size: 6,
+          modifiedAt: new Date().toISOString(),
+        },
+      },
+      (message) =>
+        message.type === "session" &&
+        message.message.type === "file.upload.response" &&
+        message.message.payload.requestId === "oversized",
+    );
+    expect(rejected).toMatchObject({
+      message: {
+        payload: { file: null, error: "File is 6 bytes; configured upload limit is 5 bytes." },
+      },
+    });
+    expect(existsSync(join(daemon.paseoHome, "uploads"))).toBe(false);
+    const accepted = sendAndWait(
+      source,
+      {
+        type: "session",
+        message: {
+          type: "file.upload.request",
+          requestId: "accepted",
+          fileName: "small.txt",
+          mimeType: "text/plain",
+          size: 5,
+          modifiedAt: new Date().toISOString(),
+        },
+      },
+      (message) =>
+        message.type === "session" &&
+        message.message.type === "file.upload.response" &&
+        message.message.payload.requestId === "accepted",
+    );
+    source.send(
+      encodeFileTransferFrame({
+        opcode: FileTransferOpcode.FileBegin,
+        requestId: "accepted",
+        metadata: {
+          mime: "text/plain",
+          size: 5,
+          encoding: "binary",
+          modifiedAt: new Date().toISOString(),
+          fileName: "small.txt",
+        },
+      }),
+    );
+    source.send(
+      encodeFileTransferFrame({
+        opcode: FileTransferOpcode.FileChunk,
+        requestId: "accepted",
+        payload: new TextEncoder().encode("hello"),
+      }),
+    );
+    source.send(
+      encodeFileTransferFrame({ opcode: FileTransferOpcode.FileEnd, requestId: "accepted" }),
+    );
+    expect(await accepted).toMatchObject({
+      message: { payload: { error: null, file: { size: 5 } } },
+    });
+    expect(source.readyState).toBe(WebSocket.OPEN);
+  },
+  TEST_TIMEOUT_MS,
+);
 
 afterEach(async () => {
   for (const socket of sockets.splice(0)) socket.terminate();

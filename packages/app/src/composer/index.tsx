@@ -1,3 +1,4 @@
+import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import {
   useComposerEditingSession,
   useComposerFullscreen,
@@ -1270,6 +1271,7 @@ function ComposerContentImpl({
   const { t } = useTranslation();
   const buttonIconSize = resolveComposerButtonIconSize();
   const client = useHostRuntimeClient(serverId);
+  const { config: daemonConfig, isLoading: daemonConfigLoading } = useDaemonConfig(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const agentDirectoryStatus = useHostRuntimeAgentDirectoryStatus(serverId);
   const toast = useToast();
@@ -1795,7 +1797,12 @@ function ComposerContentImpl({
       const placeholders = files.map((file) => ({ id: nextPendingFileId.current++, file }));
       setPendingFiles((pending) => [...pending, ...placeholders]);
       try {
-        const uploaded = await uploadFileAttachments({ client, files });
+        const config = daemonConfigLoading ? (await client.getDaemonConfig()).config : daemonConfig;
+        const uploaded = await uploadFileAttachments({
+          client,
+          files,
+          maxFileBytes: config?.uploads?.maxFileBytes,
+        });
         addFiles(uploaded);
       } catch (error) {
         console.error("[Composer] Failed to upload file:", error);
@@ -1806,7 +1813,7 @@ function ComposerContentImpl({
         setPendingFiles((pending) => pending.filter((entry) => !placeholders.includes(entry)));
       }
     },
-    [addFiles, client, t],
+    [addFiles, client, daemonConfig, daemonConfigLoading, t],
   );
 
   const handlePickFile = useCallback(async () => {

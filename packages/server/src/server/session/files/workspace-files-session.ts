@@ -55,6 +55,7 @@ export interface WorkspaceFilesSessionOptions {
   paseoHome: string;
   logger: pino.Logger;
   fileObserver?: FileObserver;
+  getMaxUploadFileBytes?: () => number | null;
 }
 
 /**
@@ -75,7 +76,10 @@ export class WorkspaceFilesSession {
     this.host = options.host;
     this.downloadTokenStore = options.downloadTokenStore;
     this.logger = options.logger;
-    this.fileUploads = new FileUploadStore({ paseoHome: options.paseoHome });
+    this.fileUploads = new FileUploadStore({
+      paseoHome: options.paseoHome,
+      getMaxFileBytes: options.getMaxUploadFileBytes,
+    });
     this.fileObserver = options.fileObserver ?? workspaceFileObserver;
   }
 
