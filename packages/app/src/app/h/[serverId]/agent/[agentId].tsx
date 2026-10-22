@@ -87,6 +87,11 @@ function HostAgentReadyRouteContent() {
   ]);
   const hasHydratedWorkspaces = useHasHydratedWorkspaces(serverId);
   const hasHydratedLayout = useWorkspaceLayoutStoreHydrated();
+  useEffect(() => {
+    if (!serverId) return;
+    // A compact app can open this route before its sidebar has demanded the directory.
+    return getHostRuntimeStore().acquireDirectoryDemand(serverId);
+  }, [serverId]);
   const resolution = resolveAgentRoute({
     hasHydratedWorkspaces,
     hasHydratedLayout,
