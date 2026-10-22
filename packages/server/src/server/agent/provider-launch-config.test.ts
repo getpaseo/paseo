@@ -2,10 +2,12 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
+import { execCommand } from "../../utils/spawn.js";
 
 import {
   checkProviderLaunchAvailable,
   createProviderEnv,
+  createProviderEnvSpec,
   migrateProviderSettings,
   ProviderOverrideSchema,
   resolveProviderLaunch,
@@ -217,6 +219,63 @@ describe("checkProviderLaunchAvailable", () => {
 });
 
 describe("createProviderEnv", () => {
+  test("passes configured runtime controls through command execution", async () => {
+    const result = await execCommand(
+      process.execPath,
+      [
+        "-e",
+        "console.log(JSON.stringify({ ELECTRON_RUN_AS_NODE: process.env.ELECTRON_RUN_AS_NODE ?? null, PASEO_NODE_ENV: process.env.PASEO_NODE_ENV ?? null }))",
+      ],
+      createProviderEnvSpec({
+        baseEnv: { ELECTRON_RUN_AS_NODE: "inherited", PASEO_NODE_ENV: "production" },
+        runtimeSettings: { env: { ELECTRON_RUN_AS_NODE: "1" } },
+        overlays: [{ PASEO_NODE_ENV: "development" }],
+      }),
+    );
+
+    expect(result).toEqual({
+      stdout: '{"ELECTRON_RUN_AS_NODE":"1","PASEO_NODE_ENV":null}\n',
+      stderr: "",
+    });
+  });
+
+  test.each([
+    "ELECTRON_RUN_AS_NODE",
+    "ELECTRON_NO_ATTACH_CONSOLE",
+    "PASEO_NODE_ENV",
+    "PASEO_DESKTOP_MANAGED",
+    "PASEO_SUPERVISED",
+    "ESBUILD_BINARY_PATH",
+  ])("preserves explicitly configured %s while scrubbing inherited and session controls", (key) => {
+    const baseEnv = {
+      PATH: "/usr/bin",
+      ELECTRON_RUN_AS_NODE: "inherited",
+      PASEO_NODE_ENV: "inherited",
+      ESBUILD_BINARY_PATH: "/inherited/esbuild",
+    };
+    const overlays = [
+      {
+        [key]: "session",
+        PASEO_SUPERVISED: "session",
+        CUSTOM: "session",
+        REMOVED: undefined,
+      },
+    ];
+    const runtimeSettings = {
+      env: { [key]: "configured", CUSTOM: "configured", REMOVED: "configured", CLAUDECODE: "1" },
+    };
+
+    expect(createProviderEnv({ baseEnv, runtimeSettings, overlays })).toEqual({
+      PATH: "/usr/bin",
+      CUSTOM: "session",
+      [key]: "configured",
+    });
+    expect(createProviderEnv({ baseEnv, overlays })).toEqual({
+      PATH: "/usr/bin",
+      CUSTOM: "session",
+    });
+  });
+
   test("merges provider env overrides", () => {
     const base = {
       PATH: "/usr/bin",

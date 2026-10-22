@@ -1,7 +1,7 @@
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Logger } from "pino";
 
-import { spawnProcess } from "../../../utils/spawn.js";
+import { spawnProcess, type SpawnProcessOptions } from "../../../utils/spawn.js";
 import { terminateWithTreeKill } from "../../../utils/tree-kill.js";
 import { JsonlFrameDecoder } from "./jsonl-frame-decoder.js";
 export { supportsJsonlRpcProtocolV2 } from "./jsonl-frame-decoder.js";
@@ -23,6 +23,7 @@ export interface JsonlRpcLaunch {
   args: string[];
   cwd: string;
   env?: Record<string, string>;
+  envMode?: SpawnProcessOptions["envMode"];
 }
 
 interface JsonlRpcResponse {
@@ -65,7 +66,9 @@ function assertChildWithPipes(
 function spawnJsonlRpcProcess(launch: JsonlRpcLaunch): ChildProcessWithoutNullStreams {
   const child = spawnProcess(launch.command, launch.args, {
     cwd: launch.cwd,
-    envOverlay: launch.env,
+    ...(launch.envMode === "internal"
+      ? { env: launch.env, envMode: launch.envMode }
+      : { envOverlay: launch.env }),
     stdio: ["pipe", "pipe", "pipe"],
   });
   assertChildWithPipes(child);

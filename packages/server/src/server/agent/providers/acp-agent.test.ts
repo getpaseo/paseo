@@ -594,9 +594,11 @@ describe("createLoggedNdJsonStream", () => {
 describe("ACPAgentSession terminal tools", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   test("runs single-string terminal commands through the platform shell", async () => {
+    vi.stubEnv("BASH_ENV", "/unexpected/bash-env");
     const child = createTerminalChildStub();
     const spawn = vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
     const session = createSession();
@@ -616,13 +618,15 @@ describe("ACPAgentSession terminal tools", () => {
       shell.args,
       expect.objectContaining({
         cwd: "/repo",
-        envOverlay: expect.objectContaining({ BASH_ENV: undefined }),
+        envMode: "internal",
         shell: false,
       }),
     );
+    expect(spawn.mock.calls[0]?.[2]?.env).not.toHaveProperty("BASH_ENV");
   });
 
   test("preserves cmd semantics for single-string terminal commands on Windows", async () => {
+    vi.stubEnv("BASH_ENV", "/unexpected/bash-env");
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", {
       value: "win32",
@@ -644,10 +648,11 @@ describe("ACPAgentSession terminal tools", () => {
         ["/c", "echo %TEMP% && echo ok"],
         expect.objectContaining({
           cwd: "C:\\repo",
-          envOverlay: expect.objectContaining({ BASH_ENV: undefined }),
+          envMode: "internal",
           shell: false,
         }),
       );
+      expect(spawn.mock.calls[0]?.[2]?.env).not.toHaveProperty("BASH_ENV");
     } finally {
       Object.defineProperty(process, "platform", {
         value: originalPlatform,
@@ -760,6 +765,7 @@ describe("ACPAgentSession terminal tools", () => {
     });
 
     test("carries the agent's identity into single-string shell commands", async () => {
+      vi.stubEnv("BASH_ENV", "/unexpected/bash-env");
       const child = createTerminalChildStub();
       const spawn = vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
       const session = createSession({ launchEnv: { PASEO_AGENT_ID: "agent-1" } });
@@ -774,12 +780,13 @@ describe("ACPAgentSession terminal tools", () => {
         expect.any(String),
         expect.any(Array),
         expect.objectContaining({
-          envOverlay: expect.objectContaining({
+          env: expect.objectContaining({
             PASEO_AGENT_ID: "agent-1",
-            BASH_ENV: undefined,
           }),
+          envMode: "internal",
         }),
       );
+      expect(spawn.mock.calls[0]?.[2]?.env).not.toHaveProperty("BASH_ENV");
     });
   });
 
