@@ -638,6 +638,14 @@ export const ar: TranslationResources = {
       },
     },
     browser: {
+      agentBrowser: {
+        label: "Agent browser",
+        localOnly: "يتطلب مضيفًا محليًا.",
+        updateHost: "حدّث المضيف.",
+        toolMissing: "ثبّت agent-browser على هذا المضيف.",
+        updateTool: "حدّث agent-browser (0.37.1 أو أحدث).",
+        startFailed: "تعذّر فتح Agent browser.",
+      },
       tabs: "علامات تبويب المتصفح",
       newTab: "علامة تبويب متصفح جديدة",
       allTabs: "كل علامات التبويب",

@@ -3070,6 +3070,42 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("sets browser association in the Codex shell policy without replacing existing settings", async () => {
+    const appServer = createFakeCodexAppServer();
+    const browserEnv = {
+      AGENT_BROWSER_NAMESPACE: "workspace-one",
+      AGENT_BROWSER_SESSION: "agent-one",
+      AGENT_BROWSER_SOCKET_DIR: "/tmp/browser",
+    };
+    const session = new CodexAppServerAgentSession(
+      createConfig(),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+      {
+        environment: { ...browserEnv, AGENT_BROWSER_ENCRYPTION_KEY: "private" },
+        customCodexConfig: {
+          shell_environment_policy: { inherit: "core", set: { CUSTOM_FLAG: "kept" } },
+        },
+      },
+    );
+    try {
+      await session.startTurn("hello");
+      const start = appServer.requests().find((request) => request.method === "thread/start");
+      expect(start?.params).toMatchObject({
+        config: {
+          shell_environment_policy: {
+            inherit: "core",
+            set: { CUSTOM_FLAG: "kept", ...browserEnv },
+          },
+        },
+      });
+      expect(JSON.stringify(start?.params)).not.toContain("AGENT_BROWSER_ENCRYPTION_KEY");
+    } finally {
+      await session.close();
+    }
+  });
+
   test("builds app-server env from launch-context env overrides", () => {
     const launchContext: AgentLaunchContext = {
       env: {

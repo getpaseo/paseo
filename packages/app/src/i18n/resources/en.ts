@@ -635,6 +635,14 @@ export const en = {
       },
     },
     browser: {
+      agentBrowser: {
+        label: "Agent browser",
+        localOnly: "Requires a local host.",
+        updateHost: "Update the host to use Agent browser.",
+        toolMissing: "Install agent-browser on this host.",
+        updateTool: "Update agent-browser (0.37.1 or later).",
+        startFailed: "Couldn’t open Agent browser.",
+      },
       tabs: "Browser tabs",
       newTab: "New browser tab",
       allTabs: "All tabs",

@@ -1823,6 +1823,7 @@ export class VoiceAssistantWebSocketServer {
         agentRequestReceipts: true,
         // COMPAT(initialModelRouting): added in v0.8.0; remove gate after 2027-09-22.
         initialModelRouting: true,
+        workspaceAgentBrowser: true,
         workspaceRequestReceipts: true,
         creationLifecycle: true,
         hubAgentRpc: true,

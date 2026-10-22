@@ -1,3 +1,14 @@
+import {
+  closeWorkspaceBrowser,
+  openWorkspaceBrowser,
+  reopenLastWorkspaceBrowser,
+} from "@/workspace-tabs/browser";
+import {
+  isAgentBrowserTab,
+  rememberWorkspaceClassicBrowser,
+  openWorkspaceAgentBrowser,
+  selectClassicBrowser,
+} from "@/workspace-tabs/agent-browser";
 import { indexedDB as fakeIndexedDb } from "fake-indexeddb";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -363,5 +374,128 @@ describe("workspace dev preview", () => {
     });
     expect(collectAllPanes(revealed.root)).toHaveLength(paneCount);
     expect(getBrowserRecord(opened.browserId)?.url).toBe("http://localhost:3000");
+  });
+});
+
+describe("workspace agent browser", () => {
+  beforeEach(resetStores);
+  it("returns to the last classic page after selecting the dashboard directly", () => {
+    seedConversationTab();
+    const first = openWorkspaceBrowser({
+      workspaceKey,
+      url: "https://first.test",
+      intent: "reveal",
+    });
+    const second = openWorkspaceBrowser({
+      workspaceKey,
+      url: "https://second.test",
+      intent: "reveal",
+    });
+    const dashboard = openWorkspaceAgentBrowser(workspaceKey, "http://127.0.0.1:4848");
+    if (!first.ok || !second.ok || !dashboard.ok) throw new Error("Expected browser pages");
+    const unsubscribe = useWorkspaceLayoutStore.subscribe(() =>
+      rememberWorkspaceClassicBrowser(workspaceKey),
+    );
+    try {
+      const store = useWorkspaceLayoutStore.getState();
+      store.focusTab(workspaceKey, first.tabId);
+      store.focusTab(workspaceKey, dashboard.tabId);
+      expect(selectClassicBrowser(contentTabs(), dashboard.tabId)?.tabId).toBe(first.tabId);
+    } finally {
+      unsubscribe();
+    }
+  });
+  it("preserves the dashboard role and classic page when reopening a closed tab", async () => {
+    seedConversationTab();
+    const classic = openWorkspaceBrowser({
+      workspaceKey,
+      url: "https://classic.test",
+      intent: "reveal",
+    });
+    const dashboard = openWorkspaceAgentBrowser(workspaceKey, "http://127.0.0.1:4848");
+    if (!classic.ok || !dashboard.ok) throw new Error("Expected browser pages");
+    await closeWorkspaceBrowser(
+      { workspaceKey, browserId: dashboard.browserId, remember: true },
+      undefined,
+    );
+    const reopened = reopenLastWorkspaceBrowser(workspaceKey);
+    if (!reopened.ok) throw new Error("Expected reopened dashboard");
+    expect(
+      contentTabs()
+        .filter(isAgentBrowserTab)
+        .map((tab) => tab.tabId),
+    ).toEqual([reopened.tabId]);
+    expect(selectClassicBrowser(contentTabs(), reopened.tabId)?.tabId).toBe(classic.tabId);
+    expect(openWorkspaceAgentBrowser(workspaceKey, "http://127.0.0.1:4848")).toMatchObject({
+      ok: true,
+      browserId: reopened.browserId,
+      tabId: reopened.tabId,
+      created: false,
+    });
+  });
+  it("remembers classic selections while the dashboard is closed", async () => {
+    seedConversationTab();
+    const first = openWorkspaceBrowser({
+      workspaceKey,
+      url: "https://first.test",
+      intent: "reveal",
+    });
+    const second = openWorkspaceBrowser({
+      workspaceKey,
+      url: "https://second.test",
+      intent: "reveal",
+    });
+    if (!first.ok || !second.ok) throw new Error("Expected classic pages");
+    useWorkspaceLayoutStore.getState().focusTab(workspaceKey, first.tabId);
+    const dashboard = openWorkspaceAgentBrowser(workspaceKey, "http://127.0.0.1:4848");
+    if (!dashboard.ok) throw new Error("Expected dashboard");
+    const unsubscribe = useWorkspaceLayoutStore.subscribe(() =>
+      rememberWorkspaceClassicBrowser(workspaceKey),
+    );
+    try {
+      await closeWorkspaceBrowser(
+        { workspaceKey, browserId: dashboard.browserId, remember: true },
+        undefined,
+      );
+      useWorkspaceLayoutStore.getState().focusTab(workspaceKey, second.tabId);
+      const reopened = reopenLastWorkspaceBrowser(workspaceKey);
+      if (!reopened.ok) throw new Error("Expected reopened dashboard");
+      expect(selectClassicBrowser(contentTabs(), reopened.tabId)?.tabId).toBe(second.tabId);
+    } finally {
+      unsubscribe();
+    }
+  });
+  it("reuses its dashboard tab and preserves the last classic page", () => {
+    seedConversationTab();
+    const first = openWorkspaceBrowser({
+      workspaceKey,
+      url: "https://first.test",
+      intent: "reveal",
+    });
+    const second = openWorkspaceBrowser({
+      workspaceKey,
+      url: "https://second.test",
+      intent: "reveal",
+    });
+    if (!first.ok || !second.ok) throw new Error("Expected classic pages");
+    const dashboard = openWorkspaceAgentBrowser(workspaceKey, "http://127.0.0.1:4848");
+    if (!dashboard.ok) throw new Error("Expected dashboard");
+    expect(openWorkspaceAgentBrowser(workspaceKey, "http://127.0.0.1:4848")).toMatchObject({
+      ok: true,
+      tabId: dashboard.tabId,
+      browserId: dashboard.browserId,
+      created: false,
+    });
+    const tabs = contentTabs();
+    expect(tabs.filter(isAgentBrowserTab)).toHaveLength(1);
+    expect(selectClassicBrowser(tabs, dashboard.tabId)?.tabId).toBe(second.tabId);
+    expect(getBrowserRecord(first.browserId)?.url).toBe("https://first.test");
+    expect(getBrowserRecord(second.browserId)?.url).toBe("https://second.test");
+    useWorkspaceLayoutStore.getState().hideBrowserPane(workspaceKey);
+    expect(openWorkspaceAgentBrowser(workspaceKey, "http://127.0.0.1:4848")).toMatchObject({
+      ok: true,
+      created: false,
+    });
+    expect(contentTabs().filter(isAgentBrowserTab)).toHaveLength(1);
   });
 });

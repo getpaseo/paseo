@@ -1,3 +1,4 @@
+import { agentBrowserEnv } from "../agent-browser-env.js";
 import { expect, test, vi } from "vitest";
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -4344,6 +4345,37 @@ test("importProviderSession imports the selected session without listing and pub
   expect((await storage.get(imported.id))?.title).toBe("Trace provider imports");
 });
 
+test("agent-browser associates sibling and child agents with their owning workspace", async () => {
+  const contexts: AgentLaunchContext[] = [];
+  class BrowserCaptureClient extends TestAgentClient {
+    override async createSession(
+      config: AgentSessionConfig,
+      context?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      if (!context) throw new Error("Expected launch context");
+      contexts.push(context);
+      return new TestAgentSession(config);
+    }
+  }
+  const manager = new AgentManager({ clients: { codex: new BrowserCaptureClient() }, logger });
+  const parentId = randomUUID();
+  await manager.createAgent({ provider: "codex", cwd: process.cwd() }, parentId, {
+    workspaceId: "one",
+  });
+  await manager.createAgent({ provider: "codex", cwd: process.cwd() }, randomUUID(), {
+    workspaceId: "one",
+    labels: { [PARENT_AGENT_ID_LABEL]: parentId },
+  });
+  await manager.createAgent({ provider: "codex", cwd: process.cwd() }, randomUUID(), {
+    workspaceId: "two",
+  });
+  expect(contexts[0]!.env?.AGENT_BROWSER_NAMESPACE).toBe(contexts[1]!.env?.AGENT_BROWSER_NAMESPACE);
+  expect(contexts[0]!.env?.AGENT_BROWSER_SESSION).not.toBe(contexts[1]!.env?.AGENT_BROWSER_SESSION);
+  expect(contexts[0]!.env?.AGENT_BROWSER_NAMESPACE).not.toBe(
+    contexts[2]!.env?.AGENT_BROWSER_NAMESPACE,
+  );
+});
+
 test("reloadAgentSession passes daemon launch env through the provider launch context", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-context-"));
   const storagePath = join(workdir, "agents");
@@ -4400,12 +4432,13 @@ test("reloadAgentSession passes daemon launch env through the provider launch co
       cwd: workdir,
     },
     undefined,
-    { workspaceId: undefined },
+    { workspaceId: "browser-workspace" },
   );
 
   expect(client.lastCreateLaunchContext).toEqual({
     agentId: snapshot.id,
     env: {
+      ...agentBrowserEnv("browser-workspace", { kind: "agent", id: snapshot.id }),
       PASEO_AGENT_ID: snapshot.id,
       PASEO_AGENT_CWD: workdir,
     },
@@ -4418,10 +4451,23 @@ test("reloadAgentSession passes daemon launch env through the provider launch co
   expect(client.lastResumeLaunchContext).toEqual({
     agentId: snapshot.id,
     env: {
+      ...agentBrowserEnv("browser-workspace", { kind: "agent", id: snapshot.id }),
       PASEO_AGENT_ID: snapshot.id,
       PASEO_AGENT_CWD: workdir,
     },
   });
+  const restored = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const persisted = await storage.get(snapshot.id);
+  if (!persisted?.persistence) throw new Error("Expected persistence");
+  const resumed = await restored.resumeAgentFromPersistence(
+    persisted.persistence,
+    undefined,
+    snapshot.id,
+  );
+  expect(resumed.workspaceId).toBe("browser-workspace");
+  expect(client.lastResumeLaunchContext?.env).toMatchObject(
+    agentBrowserEnv("browser-workspace", { kind: "agent", id: snapshot.id }),
+  );
 });
 
 test("reloadAgentSession preserves timeline and does not force history replay", async () => {

@@ -1,3 +1,5 @@
+import { collectAllTabs, useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { isAgentBrowserTab } from "@/workspace-tabs/agent-browser";
 import { useTranslation } from "react-i18next";
 import { useCallback, useMemo } from "react";
 import { Image } from "react-native";
@@ -42,12 +44,23 @@ function useBrowserPanelDescriptor(target: {
 }): PanelDescriptor {
   const { t } = useTranslation();
   const browser = useBrowserStore((state) => state.browsersById[target.browserId] ?? null);
+  const agentBrowser = useWorkspaceLayoutStore((store) =>
+    Object.values(store.layoutByWorkspace).some((layout) =>
+      collectAllTabs(layout.root).some(
+        (tab) =>
+          tab.target.kind === "browser" &&
+          tab.target.browserId === target.browserId &&
+          isAgentBrowserTab(tab),
+      ),
+    ),
+  );
   const url = browser?.url ?? "https://example.com";
   const icon = createBrowserTabIcon(browser?.faviconUrl ?? null);
-  const label =
+  let label =
     url === "about:blank"
       ? t("workspace.browser.newTab")
       : getBrowserLabel({ title: browser?.title ?? "", url });
+  if (agentBrowser) label = t("workspace.browser.agentBrowser.label");
 
   return {
     label,

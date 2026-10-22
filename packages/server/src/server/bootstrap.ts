@@ -692,6 +692,7 @@ export async function createPaseoDaemon(
   let boundListenTarget: ListenTarget | null = null;
   let workspaceRegistry: FileBackedWorkspaceRegistry | null = null;
   const terminalManager = createConfiguredTerminalManager({
+    paseoHome: config.paseoHome,
     getTerminalActivityUrl: () => createTerminalActivityUrl(boundListenTarget),
   });
   applyTerminalAgentHookSetting({ store: daemonConfigStore, logger });
@@ -966,6 +967,7 @@ export async function createPaseoDaemon(
   });
   const initialAgentManagerState = providerSnapshotManager.getAgentManagerProviderState();
   const agentManager = new AgentManager({
+    paseoHome: config.paseoHome,
     resolveLaunchProfile: (id) =>
       daemonConfigStore.get().agentProfiles?.find((profile) => profile.id === id),
     pluginLifecycle: pluginRuntime,

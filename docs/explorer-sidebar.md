@@ -111,7 +111,7 @@ work. See [link routing](../public-docs/plugins/reference.md#external-links-and-
 the platform click policy. Browser pages keep ordinary navigation and authentication
 popups; the guest preload forwards Command-click on HTTP(S) anchors to the system browser.
 
-Manual close remembers one URL, viewport and former pane for Reopen last closed tab in the All tabs
+Manual close remembers one URL, viewport, tab role and former pane for Reopen last closed tab in the All tabs
 menu. The descriptor lasts only for this app session and is consumed on a successful reopen. Reopen
 creates a fresh page; it does not restore history, form state or DOM. Agent closes and workspace purge
 do not replace this descriptor. Purging a workspace releases all its browser guests without touching
@@ -119,7 +119,21 @@ another workspace. Closing the final visible ordinary tab retains the New launch
 
 Resident guests retain their DOM across selection, hide and maximize transitions. Their native
 presentation and automation capture constraints belong to [Browser Capture Harness](browser-capture-harness.md).
-Browser chrome uses existing workspace and browser tools and requires no new daemon capability.
+The globe selects the last classic page or opens a blank one; clicking it again hides the pane.
+The neighboring robot opens the official agent-browser dashboard in one reusable tab per workspace.
+This access requires Electron, the local host, `workspaceAgentBrowser` and agent-browser 0.37.1 or later.
+Closing or hiding the tab leaves the dashboard and its sessions running.
+
+Paseo injects `AGENT_BROWSER_NAMESPACE` into newly launched/resumed agents and workspace terminals.
+It hashes the absolute Paseo home and workspace id, so two installations or workspaces can use the
+same explicit session name independently. `AGENT_BROWSER_SESSION` defaults to a stable agent or
+terminal identity; `--session` still overrides it. OpenCode binds these variables per session;
+Codex also sets them in its shell environment policy. Native provider subagents inherit their
+parent's environment. Existing processes and unassociated sessions are left alone.
+
+The daemon starts the installed dashboard on demand with that same namespace and an available
+loopback port. Concurrent requests share the launch; later requests reuse the namespaced process.
+No tool installation or browser session creation happens when opening the dashboard.
 
 ## Routing preferences
 

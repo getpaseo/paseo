@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { runAgentBrowserJourney } from "./agent-browser.electron.mjs";
+
 import { execFileSync, spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import fs from "node:fs";
@@ -3771,7 +3773,22 @@ async function verifyFocusedDesktopJourney({
   workspaceRoot,
   artifactDir,
   inspectorPort,
+  paseoHome,
 }) {
+  if (process.env.PASEO_DESKTOP_AGENT_BROWSER_ONLY === "1") {
+    await runAgentBrowserJourney({
+      page,
+      daemonPort,
+      serverId: status.serverId,
+      workspaceIds,
+      workspaceRoot,
+      artifactDir,
+      target,
+      paseoHome,
+    });
+    console.log("Agent browser isolation and classic navigation passed.");
+    return true;
+  }
   if (process.env.PASEO_DESKTOP_WORKSPACE_NAVIGATION_ONLY === "1") {
     await verifyWorkspaceNavigation({
       page,
@@ -3957,6 +3974,7 @@ async function main() {
 
     if (
       await verifyFocusedDesktopJourney({
+        paseoHome,
         page,
         browser,
         daemonPort,

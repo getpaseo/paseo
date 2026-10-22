@@ -643,6 +643,14 @@ export const ptBR: TranslationResources = {
       },
     },
     browser: {
+      agentBrowser: {
+        label: "Agent browser",
+        localOnly: "É necessário um host local.",
+        updateHost: "Atualize o host.",
+        toolMissing: "Instale agent-browser neste host.",
+        updateTool: "Atualize agent-browser (0.37.1 ou superior).",
+        startFailed: "Não foi possível abrir Agent browser.",
+      },
       tabs: "Abas do navegador",
       newTab: "Nova aba do navegador",
       allTabs: "Todas as abas",

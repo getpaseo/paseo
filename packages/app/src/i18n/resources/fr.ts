@@ -644,6 +644,14 @@ export const fr: TranslationResources = {
       },
     },
     browser: {
+      agentBrowser: {
+        label: "Agent browser",
+        localOnly: "Un hôte local est nécessaire.",
+        updateHost: "Mettez l’hôte à jour.",
+        toolMissing: "Installez agent-browser sur cet hôte.",
+        updateTool: "Mettez agent-browser à jour (0.37.1 minimum).",
+        startFailed: "Impossible d’ouvrir Agent browser.",
+      },
       tabs: "Onglets du navigateur",
       newTab: "Nouvel onglet navigateur",
       allTabs: "Tous les onglets",

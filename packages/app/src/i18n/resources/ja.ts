@@ -644,6 +644,14 @@ export const ja: TranslationResources = {
       },
     },
     browser: {
+      agentBrowser: {
+        label: "Agent browser",
+        localOnly: "ローカルホストが必要です。",
+        updateHost: "ホストを更新してください。",
+        toolMissing: "このホストに agent-browser をインストールしてください。",
+        updateTool: "agent-browser を更新してください（0.37.1 以降）。",
+        startFailed: "Agent browser を開けませんでした。",
+      },
       tabs: "ブラウザーのタブ",
       newTab: "新しいブラウザータブ",
       allTabs: "すべてのタブ",

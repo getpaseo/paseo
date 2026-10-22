@@ -643,6 +643,14 @@ export const ru: TranslationResources = {
       },
     },
     browser: {
+      agentBrowser: {
+        label: "Agent browser",
+        localOnly: "Нужен локальный хост.",
+        updateHost: "Обновите хост.",
+        toolMissing: "Установите agent-browser на этом хосте.",
+        updateTool: "Обновите agent-browser (0.37.1 или новее).",
+        startFailed: "Не удалось открыть Agent browser.",
+      },
       tabs: "Вкладки браузера",
       newTab: "Новая вкладка браузера",
       allTabs: "Все вкладки",
