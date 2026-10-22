@@ -38,6 +38,7 @@ export const ptBR: TranslationResources = {
       copy: "Copiar",
       copyLine: "Copiar linha",
       dismiss: "Dispensar",
+      done: "Concluído",
       reload: "Recarregar",
       retry: "Tentar novamente",
       search: "Buscar",

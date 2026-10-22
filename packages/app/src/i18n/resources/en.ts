@@ -33,6 +33,7 @@ export const en = {
       copy: "Copy",
       copyLine: "Copy line",
       dismiss: "Dismiss",
+      done: "Done",
       reload: "Reload",
       retry: "Retry",
       search: "Search",

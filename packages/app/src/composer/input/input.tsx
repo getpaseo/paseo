@@ -7,6 +7,9 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   View,
   Text,
+  Platform,
+  Keyboard,
+  InputAccessoryView,
   useWindowDimensions,
   NativeSyntheticEvent,
   TextInputKeyPressEventData,
@@ -18,11 +21,17 @@ import {
   useRef,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useImperativeHandle,
   useMemo,
+  useSyncExternalStore,
   forwardRef,
 } from "react";
+import {
+  getHardwareKeyboardConnected,
+  subscribeHardwareKeyboardConnection,
+} from "@/native/ios-hardware-keyboard-connection";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -45,6 +54,7 @@ import type { ImageAttachment, MessagePayload, TextReplacement } from "@/compose
 import { focusWithRetries } from "@/utils/web-focus";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -618,6 +628,36 @@ function FocusHint({
   );
 }
 
+// why: iOS cannot detach an accessory once attached, so it stays mounted and only its content is hidden.
+function ComposerInputAccessory({
+  nativeID,
+  hidden,
+}: {
+  nativeID: string;
+  hidden: boolean;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  const label = t("common.actions.done");
+  return (
+    // why: InputAccessoryView renders nothing with zero children, so the View stays and collapses instead.
+    <InputAccessoryView nativeID={nativeID}>
+      <View style={hidden ? styles.inputAccessoryHidden : styles.inputAccessory}>
+        {hidden ? null : (
+          <Button
+            variant="ghost"
+            size="sm"
+            accessibilityLabel={label}
+            onPress={Keyboard.dismiss}
+            textStyle={styles.inputAccessoryText}
+          >
+            {label}
+          </Button>
+        )}
+      </View>
+    </InputAccessoryView>
+  );
+}
+
 interface ComposerTextSurfaceProps {
   readOnly: boolean;
   value: string;
@@ -652,6 +692,15 @@ interface ComposerTextSurfaceProps {
  */
 function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElement {
   const { onChangeText, onRenderedLinesChange } = props;
+  // useId contains colons, which the native accessory ID does not accept.
+  const reactId = useId();
+  const hardwareKeyboardConnected = useSyncExternalStore(
+    subscribeHardwareKeyboardConnection,
+    getHardwareKeyboardConnected,
+    getHardwareKeyboardConnected,
+  );
+  const inputAccessoryId =
+    Platform.OS === "ios" ? reactId.replace(/[^A-Za-z0-9_-]/g, "") : undefined;
   const [measurementText, setMeasurementText] = useState(props.value);
   useEffect(() => {
     if (!isWeb) setMeasurementText(props.value);
@@ -707,7 +756,11 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
         onPasteImages={props.onPasteImages}
         onPasteError={props.onPasteError}
         autoFocus={props.autoFocus}
+        inputAccessoryViewID={inputAccessoryId}
       />
+      {inputAccessoryId ? (
+        <ComposerInputAccessory nativeID={inputAccessoryId} hidden={hardwareKeyboardConnected} />
+      ) : null}
       <FocusHint
         visible={props.focusHintVisible}
         focusInputKeys={props.focusInputKeys}
@@ -2192,6 +2245,24 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 );
 
 const styles = StyleSheet.create((theme: Theme) => ({
+  inputAccessory: {
+    // why: 44 is the standard iOS toolbar height, so the bar matches the system keyboard accessory.
+    height: 44,
+    alignItems: "flex-end",
+    justifyContent: "center",
+    paddingHorizontal: theme.spacing[4],
+    backgroundColor: theme.colors.surface2,
+    borderTopWidth: theme.borderWidth[1],
+    borderTopColor: theme.colors.border,
+  },
+  inputAccessoryHidden: {
+    height: 0,
+  },
+  inputAccessoryText: {
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.accent,
+  },
   container: {
     flexShrink: 1,
     position: "relative",

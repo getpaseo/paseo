@@ -37,6 +37,7 @@ export const zhCN: TranslationResources = {
       copy: "复制",
       copyLine: "复制行",
       dismiss: "关闭",
+      done: "完成",
       reload: "重新加载",
       retry: "重试",
       search: "搜索",

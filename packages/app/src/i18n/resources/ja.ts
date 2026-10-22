@@ -38,6 +38,7 @@ export const ja: TranslationResources = {
       copy: "コピー",
       copyLine: "行をコピー",
       dismiss: "閉じる",
+      done: "完了",
       reload: "再読み込み",
       retry: "再試行",
       search: "検索",
