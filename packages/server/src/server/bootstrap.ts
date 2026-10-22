@@ -1,3 +1,4 @@
+import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import type { PluginRegistries } from "@getpaseo/protocol/plugin-registry";
 import { describeHookWorkspace } from "./plugins/lifecycle/index.js";
 import express from "express";
@@ -905,7 +906,17 @@ export async function createPaseoDaemon(
       forgeOverrides: { github },
     },
   });
-  workspaceRegistry.subscribeToMutations((mutation) => {
+  const workspaceRuntimeStore = createWorkspaceRuntimeStore();
+  workspaceGitService.onSnapshotUpdated((snapshot) => workspaceRuntimeStore.set(snapshot));
+  workspaceRegistry.subscribeToMutations(async (mutation) => {
+    if (mutation.kind === "remove" && mutation.workspace) {
+      const cwd = path.resolve(mutation.workspace.cwd);
+      const workspaces = await workspaceRegistry.list();
+      const hasActiveWorkspace = workspaces.some(
+        (workspace) => !workspace.archivedAt && path.resolve(workspace.cwd) === cwd,
+      );
+      if (!hasActiveWorkspace) workspaceRuntimeStore.remove(cwd);
+    }
     if (mutation.kind === "archive" && mutation.workspace) {
       pluginRuntime.emit("workspace.archived", {
         workspace: describeHookWorkspace(mutation.workspace),
@@ -1016,6 +1027,7 @@ export async function createPaseoDaemon(
     logger,
     paseoHome: config.paseoHome,
     workspaceGitService,
+    workspaceRuntimeStore,
   });
   const archiveWorkspaceRecordExternal = async (
     workspaceId: string,
@@ -1434,7 +1446,7 @@ export async function createPaseoDaemon(
       terminalManager,
       workspaceRegistry,
       projectRegistry,
-      workspaceGitService,
+      workspaceRuntimeStore,
       getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
       getDaemonTcpHost: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.host : null),
       serviceProxyPublicBaseUrl,
@@ -1710,6 +1722,7 @@ export async function createPaseoDaemon(
                 startPaused: true,
               },
               workspaceAutoName,
+              workspaceRuntimeStore,
               daemonAuth,
               speechService,
               terminalManager,

@@ -74,6 +74,13 @@ server to capability-aware sessions. It deliberately does not use the broad recu
 watcher or the per-session Git observer: those are checkout/status mechanisms and intentionally do
 not retain non-Git directories.
 
+Workspace git and forge runtime data belongs to one daemon-level, directory-keyed store.
+Workspace descriptors, checkout diff subscriptions, and script metadata read the last known
+snapshot from that store, so reconnecting clients receive it before refresh completes.
+Refcounted git watches feed the store through snapshot-updated events; their lifetime controls
+refresh only. Session cleanup and workspace archive retain the data. Removing the final active
+workspace for a directory clears it. The store lives in memory and resets on daemon restart.
+
 **Key modules:**
 
 | Module                          | Responsibility                                                                 |

@@ -1,3 +1,4 @@
+import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { SessionDelivery } from "./session/owned-subscriptions/index.js";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Server as HTTPServer } from "http";
@@ -285,6 +286,7 @@ function createServer(options?: {
     null,
     { allowedOrigins: new Set(), startPaused: options?.startPaused },
     createWorkspaceAutoNameStub(),
+    createWorkspaceRuntimeStore(),
     options?.auth,
     speechReadiness
       ? {
