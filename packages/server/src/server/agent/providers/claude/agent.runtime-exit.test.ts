@@ -309,6 +309,60 @@ describe("Claude runtime exit", () => {
     }
   });
 
+  test("starts a fresh conversation after a resumed conversation is missing", async () => {
+    const bindings: Pick<Options, "resume" | "sessionId">[] = [];
+    const missingQuery = createQueryMock([MISSING_RESUMED_CONVERSATION_RESULT]);
+    const recoveredQuery = createQueryMock([
+      { ...COMPLETED_TURN_EVENTS[0], session_id: "claude-recovered-session" },
+      ...COMPLETED_TURN_EVENTS.slice(1),
+    ]);
+    const queryFactory = vi
+      .fn(({ options }: ClaudeQueryInput) => {
+        bindings.push({ resume: options.resume, sessionId: options.sessionId });
+        return recoveredQuery;
+      })
+      .mockImplementationOnce(({ options }: ClaudeQueryInput) => {
+        bindings.push({ resume: options.resume, sessionId: options.sessionId });
+        return missingQuery;
+      });
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.resumeSession({
+      provider: "claude",
+      sessionId: "claude-runtime-exit-session",
+      metadata: { cwd: process.cwd() },
+    });
+
+    try {
+      await expect(session.run("resume the first turn")).rejects.toThrow(
+        "No conversation found with session ID: claude-runtime-exit-session",
+      );
+      expect(session.describePersistence()).toEqual(null);
+      const { sessionId, finalText } = await session.run("try again");
+
+      expect({ sessionId, finalText }).toEqual({
+        sessionId: "claude-recovered-session",
+        finalText: "SPAWNED",
+      });
+
+      expect(bindings).toEqual([
+        { resume: "claude-runtime-exit-session", sessionId: undefined },
+        { resume: undefined, sessionId: undefined },
+      ]);
+      expect(session.describePersistence()).toEqual({
+        provider: "claude",
+        sessionId: "claude-recovered-session",
+        nativeHandle: "claude-recovered-session",
+        metadata: { provider: "claude", cwd: process.cwd() },
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
   test("leaves a mid-turn crash to the query pump", async () => {
     let rejectStream: ((error: Error) => void) | undefined;
     const tail = new Promise<never>((_resolve, reject) => {

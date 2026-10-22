@@ -4320,7 +4320,6 @@ class ClaudeAgentSession implements AgentSession {
       "Claude resumed session no longer exists; invalidating persisted session",
     );
 
-    this.failActiveTurns(staleResumeError);
     // Ending the input retires the process on purpose. Detach first so its exit
     // is not reported as a crash.
     const retiredChild = this.childProcess;
@@ -4344,12 +4343,14 @@ class ClaudeAgentSession implements AgentSession {
       this.query = null;
       this.input = null;
     }
+    this.claudeSessionId = null;
     this.persistence = null;
     this.persistedHistory = [];
     this.persistedProviderSubagentEvents = [];
     this.historyPending = false;
     this.cachedRuntimeInfo = null;
     this.queryRestartNeeded = false;
+    this.failActiveTurns(staleResumeError);
     this.autonomousTurn = null;
     this.activeForegroundTurnId = null;
     this.activeForegroundQuery = null;
