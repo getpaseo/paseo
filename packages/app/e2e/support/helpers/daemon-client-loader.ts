@@ -24,6 +24,7 @@ interface E2EDaemonClientConfig {
   clientType: "cli";
   appVersion?: string;
   webSocketFactory?: NodeWebSocketFactory;
+  capabilities?: Record<string, unknown>;
 }
 
 function resolveDaemonWsUrl(port?: number): string {
@@ -34,6 +35,7 @@ export interface ConnectDaemonClientOptions {
   clientIdPrefix: string;
   appVersion?: string;
   port?: number;
+  capabilities?: Record<string, unknown>;
 }
 
 /**
@@ -51,6 +53,7 @@ export async function connectDaemonClient<ClientInstance extends { connect(): Pr
     clientType: "cli",
     appVersion: options.appVersion ?? loadAppVersion(),
     webSocketFactory: createNodeWebSocketFactory(),
+    capabilities: options.capabilities,
   });
   await client.connect();
   return client;

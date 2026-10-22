@@ -1,10 +1,3 @@
-import {
-  buildExplorerCheckoutKey,
-  isExplorerTab,
-  resolveExplorerTabForCheckout,
-  type ExplorerTab,
-} from "../explorer-tab-memory";
-import { type ExplorerCheckoutContext } from "../explorer-checkout-context";
 import { z } from "zod";
 
 export type MobilePanelView = "agent" | "agent-list" | "file-explorer";
@@ -36,8 +29,6 @@ export interface PanelLayoutInput {
 export interface PanelCoreState {
   mobilePanel: MobilePanelSelection;
   desktop: DesktopSidebarState;
-  explorerTab: ExplorerTab;
-  explorerTabByCheckout: Record<string, ExplorerTab>;
 }
 
 function clampNumber(value: number, min: number, max: number): number {
@@ -75,45 +66,6 @@ export function setMobilePanelTarget(
     return selection;
   }
   return { target, revision: selection.revision + 1 };
-}
-
-function resolveExplorerTabFromCheckout(
-  state: PanelCoreState,
-  checkout: ExplorerCheckoutContext,
-): ExplorerTab {
-  return resolveExplorerTabForCheckout({
-    serverId: checkout.serverId,
-    cwd: checkout.cwd,
-    isGit: checkout.isGit,
-    explorerTabByCheckout: state.explorerTabByCheckout,
-  });
-}
-
-export interface OpenFileExplorerPatch {
-  mobilePanel: MobilePanelSelection;
-  explorerTab: ExplorerTab;
-}
-
-export function buildOpenFileExplorerPatch(
-  state: PanelCoreState,
-  checkout: ExplorerCheckoutContext,
-): OpenFileExplorerPatch {
-  return {
-    mobilePanel: setMobilePanelTarget(state.mobilePanel, "file-explorer"),
-    explorerTab: resolveExplorerTabFromCheckout(state, checkout),
-  };
-}
-
-export type ToggleFileExplorerPatch = OpenFileExplorerPatch | { mobilePanel: MobilePanelSelection };
-
-export function buildToggleFileExplorerPatch(
-  state: PanelCoreState,
-  checkout: ExplorerCheckoutContext,
-): ToggleFileExplorerPatch {
-  if (!selectIsCompactFileExplorerOpen(state)) {
-    return buildOpenFileExplorerPatch(state, checkout);
-  }
-  return { mobilePanel: setMobilePanelTarget(state.mobilePanel, "agent") };
 }
 
 const ExplorerTabSchema = z.enum(["changes", "files", "pr"]);
@@ -156,26 +108,6 @@ export const PanelPersistedStateSchema = z.strictObject({
 
 type MigratablePanelState = z.infer<typeof PanelPersistedStateSchema>;
 
-function migratePanelExplorerTabByCheckout(state: MigratablePanelState, version: number): void {
-  if (
-    version < 4 ||
-    typeof state.explorerTabByCheckout !== "object" ||
-    !state.explorerTabByCheckout
-  ) {
-    state.explorerTabByCheckout = {};
-    return;
-  }
-  const entries = Object.entries(state.explorerTabByCheckout);
-  const next: Record<string, ExplorerTab> = {};
-  for (const [key, value] of entries) {
-    if (!isExplorerTab(value)) {
-      continue;
-    }
-    next[key] = value;
-  }
-  state.explorerTabByCheckout = next;
-}
-
 function migratePanelDesktopFocusMode(state: MigratablePanelState): void {
   const desktop = state.desktop;
   if (!desktop) {
@@ -216,10 +148,8 @@ export function migratePanelState(persistedState: unknown, version: number): Mig
   if (state.desktop) {
     delete state.desktop.fileExplorerOpen;
   }
-  if (!isExplorerTab(state.explorerTab)) {
-    state.explorerTab = "changes";
-  }
-  migratePanelExplorerTabByCheckout(state, version);
+  delete state.explorerTab;
+  delete state.explorerTabByCheckout;
   if (version < 8) {
     migratePanelDesktopFocusMode(state);
   }
@@ -263,6 +193,3 @@ export function migratePanelState(persistedState: unknown, version: number): Mig
 
   return state;
 }
-
-export { buildExplorerCheckoutKey, resolveExplorerTabForCheckout };
-export type { ExplorerTab, ExplorerCheckoutContext };

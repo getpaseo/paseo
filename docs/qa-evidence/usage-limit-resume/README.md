@@ -1,6 +1,6 @@
 # Usage limit resume QA
 
-Tested on 2026-10-17 against main `88a7aec1b`, in an ordinary isolated worktree. The installed Paseo daemon and user sessions were not restarted or modified. Node 26.11.1, npm 12.2.0, Claude Code 2.1.286, Linux, Playwright Chromium.
+Updated on 2026-10-22 after merging main `bdae614e95d7501f685cef2e65d1da864978d363`. The real Claude detection evidence below was captured on 2026-10-17 against main `88a7aec1b`. All follow-up runs use isolated worktrees. The installed Paseo daemon and user sessions were not restarted or modified. Node 26.11.1, npm 12.2.0, Claude Code 2.1.286, Linux, Playwright Chromium.
 
 ## Real Claude detection
 
@@ -24,13 +24,14 @@ The real multi-hour reset has **not** been waited out. Detection above used real
 E2E_RECORD_VIDEO=1 npm exec --workspace=@getpaseo/app -- playwright test e2e/browser/usage-limit-resume.spec.ts --project=browser --workers=1
 ```
 
-[Raw output: 4 passed](browser-tests.txt). Real app, isolated real daemon, real WebSocket messages and file persistence; synthetic provider limit.
+[Raw output: 5 passed](browser-tests.txt). Real app, isolated real daemon, real WebSocket messages and file persistence; synthetic provider limit.
 
 - At 1280×900 and 390×844: send a synthetic future limit; switch initially off; enable; reload; verify it remains on; disable; send a manual continuation; verify the callout disappears. Capture both themes.
 - Send an overdue synthetic limit; enable; wait for the daemon scan; verify exactly one continuation prompt in the same chat and that the preference remains enabled. Disable to hide the inactive callout.
 - Send a synthetic limit with no reset time; verify the explanation and disabled opt-in; continue manually.
+- At 320 px, hold a real preference RPC at the WebSocket boundary: verify pending feedback and disabled switch, reject the save, verify the off state and localized error, then retry successfully. The UI displays translated guidance instead of raw RPC metadata.
 
-Recordings: [wide interaction](wide.webm), [compact interaction](compact.webm), [automatic continuation](automatic-continuation.webm).
+Recordings: [wide interaction](wide.webm), [compact interaction](compact.webm), [automatic continuation](automatic-continuation.webm), [save failure and retry](save-error-retry.webm).
 
 | Light                                       | Dark                                            |
 | ------------------------------------------- | ----------------------------------------------- |
@@ -47,7 +48,7 @@ Cancellation now marks the active attempt immediately before entering the serial
 npm exec -- vitest run packages/server/src/server/agent/usage-limit-resume.test.ts packages/server/src/server/agent/agent-manager.test.ts packages/server/src/server/agent/providers/mock-load-test-agent.test.ts
 ```
 
-[239 tests passed across these three files](review-regression.txt), including 17 usage-limit service/lifecycle tests. The four browser flows above were rerun after these fixes; their raw output, screenshots, and recordings are from that run. Typecheck, lint, and format logs were also refreshed.
+[239 tests passed across these three files](review-regression.txt), including 17 usage-limit service/lifecycle tests. The five browser cases above were rerun on 2026-10-22; their current output, screenshots and recordings are from that follow-up. [97 targeted tests](targeted-tests.txt) cover usage-limit recovery, Claude adapter behavior and protocol compatibility; [55 i18n tests](i18n-tests.txt) cover resources/locales. Typecheck, lint, format and build logs were refreshed.
 
 ## Initial automated checks
 
@@ -66,14 +67,20 @@ Coverage includes same provider session, durable restart recovery, concurrent sc
 
 ## Platform coverage
 
-| Platform        | Tested | Notes                                                                                |
-| --------------- | ------ | ------------------------------------------------------------------------------------ |
-| Web             | Yes    | Chromium, wide and compact, light and dark; videos above                             |
-| Linux daemon    | Yes    | Real Claude detection; synthetic deadline and restart tests                          |
-| iOS             | No     | No simulator/device available                                                        |
-| Android         | No     | No emulator/device available                                                         |
-| Desktop macOS   | No     | No host available                                                                    |
-| Desktop Windows | No     | No host available                                                                    |
-| Desktop Linux   | No     | Electron binary/display unavailable; browser coverage does not prove native behavior |
+| Target                   | Evidence and limits                                                                                                                                                                                             |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Web                      | Chromium, 1280 px, 390 px and saving/error/retry at 320 px; light/dark screenshots and recordings above.                                                                                                        |
+| Linux daemon             | Real Claude limit detection from October 17; synthetic deadline, cancellation, durable recovery and exactly-once browser checks.                                                                                |
+| Linux Electron           | [Real desktop application passes](electron-tests.txt): opt-in, reload persistence, light/dark presentation and automatic continuation once. Compiled main/preload, asserted preload bridge and isolated daemon. |
+| iOS / Android            | [Both Expo/Hermes exports pass](native-export.txt). Shared native callout and switch inspected; no native app/device, simulator, touch or screen-reader runtime test.                                           |
+| macOS / Windows Electron | Shared renderer inspected; no host runtime available.                                                                                                                                                           |
 
-Only Claude currently supplies usage-limit metadata to this feature. Other provider adapters were not verified against live caps. No provider quota API is polled and no reset time is inferred from localized prose.
+The callout uses shared theme/font tokens, wrapping text, the existing accessible switch, localized reset time and all nine translation resources. Saving preserves layout, disables repeated changes, and failures allow retry.
+
+![Save pending at 320 px](pending-compact.png)
+![Save error at 320 px](error-compact.png)
+![Real Linux Electron](electron-dark.png)
+
+The temporary Electron launch source is retained as [spec](feature-electron.qa.spec.ts.txt) and [config](feature-electron.config.ts.txt). It reuses the regular app fixtures, launches the actual desktop package with a temporary profile/daemon home on Xvfb `:193`, and closes them afterward. The executable path records this Linux host. Command: `E2E_DESKTOP_RUNTIME=1 npm exec -- playwright test --config=.dev/feature-electron.config.ts`. [Desktop main build output](desktop-build.txt).
+
+Only Claude currently supplies usage-limit metadata to this feature. Other provider adapters were not verified against live caps. No provider quota API is polled and no reset time is inferred from localized prose. The real multi-hour reset was not waited out; automatic continuation tests use explicit synthetic limits.

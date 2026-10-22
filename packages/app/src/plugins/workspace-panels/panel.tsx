@@ -17,7 +17,7 @@ import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 import { usePluginHostNavigation } from "../host-navigation";
 import { createPluginClientStateSource } from "../client-state/source";
 import { toPluginTheme } from "../theme";
-import { resolvePluginIcon } from "../icons";
+import { pluginIconComponent } from "../icons";
 import { useInstalledPlugin } from "../registry";
 import { PluginInstallationProvider } from "../installation-provider";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
@@ -140,11 +140,11 @@ function usePluginPanelDescriptor(
     };
   }
   return {
-    label: panel.title,
+    label: plugin!.i18n.resolve(panel.title, plugin!.locale),
     subtitle: target.pluginId,
-    tooltip: panel.title,
+    tooltip: plugin!.i18n.resolve(panel.title, plugin!.locale),
     titleState: "ready",
-    icon: resolvePluginIcon(panel.icon),
+    icon: pluginIconComponent(panel.icon),
     statusBucket: null,
   };
 }

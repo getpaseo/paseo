@@ -1173,7 +1173,7 @@ function buildClaudePlanPermissionActions(
     },
   ];
 
-  if (resumeMode === "bypassPermissions") {
+  if (resumeMode === "bypassPermissions" || resumeMode === "auto") {
     actions.push({
       id: "implement_resume",
       label: `Implement with ${getClaudeModeLabel(resumeMode)}`,
@@ -1840,7 +1840,13 @@ export async function resolveClaudeCodeVersion(
     timeout: 5_000,
     signal,
   });
-  const version = parseClaudeCodeVersion(`${stdout}\n${stderr}`);
+  // A wrapper command (the `command` provider setting) prints its own version here
+  // instead of Claude Code's. Only trust output that identifies itself as Claude Code,
+  // so a wrapper's version can't mis-gate models behind a minimumClaudeCodeVersion.
+  const rawVersionOutput = `${stdout}\n${stderr}`;
+  const version = /\d+\.\d+\.\d+\s+\(Claude Code\)/i.test(rawVersionOutput)
+    ? parseClaudeCodeVersion(rawVersionOutput)
+    : null;
   if (!version) {
     throw new Error("Unable to parse Claude Code version from --version output");
   }
@@ -2245,7 +2251,7 @@ class ClaudeAgentSession implements AgentSession {
   private readonly sidechainTracker = new ClaudeSidechainTracker({
     getToolInput: (toolUseId) =>
       this.toolUseCache.get(toolUseId)?.input ??
-      this.settledSubagentToolCallInCurrentTurn(toolUseId)?.input ??
+      this.settledSubagentToolCalls.get(toolUseId)?.input ??
       null,
     // Releases that predate the task protocol announce nothing, so the tracker keeps deriving
     // identity and status from frames for them. Detecting the capability beats comparing version
@@ -2253,13 +2259,11 @@ class ClaudeAgentSession implements AgentSession {
     isDescriptorOwnedElsewhere: () => this.taskProtocolSource.isActive,
     // A background child streams its frames after Claude has already answered the call, so its
     // card is rebuilt from the settled call: a running one would replace the settled, labeled card.
-    // A card belongs to the turn that answered the call, so frames from a later turn leave it be.
+    // Late card updates retain the turn that answered the call.
     needsSyntheticParentToolCard: (toolUseId) =>
-      (this.toolUseCache.has(toolUseId) ||
-        this.settledSubagentToolCallInCurrentTurn(toolUseId) !== undefined) &&
+      (this.toolUseCache.has(toolUseId) || this.settledSubagentToolCalls.has(toolUseId)) &&
       this.taskProtocolSource.needsSyntheticParentToolCard(toolUseId),
-    getSettledParentToolCall: (toolUseId) =>
-      this.settledSubagentToolCallInCurrentTurn(toolUseId)?.item,
+    getSettledParentToolCall: (toolUseId) => this.settledSubagentToolCalls.get(toolUseId)?.item,
   });
   private persistedHistory: PersistedTimelineEntry[] = [];
   private persistedProviderSubagentEvents: Extract<
@@ -2812,11 +2816,11 @@ class ClaudeAgentSession implements AgentSession {
     if (response.behavior === "allow") {
       if (pending.request.kind === "plan") {
         const selectedActionId = response.selectedActionId;
+        const resumeMode = this.planResumeMode;
         const shouldResumePriorMode =
-          selectedActionId === "implement_resume" && this.planResumeMode === "bypassPermissions";
-        const targetMode: PermissionMode = shouldResumePriorMode
-          ? "bypassPermissions"
-          : "acceptEdits";
+          selectedActionId === "implement_resume" &&
+          (resumeMode === "bypassPermissions" || resumeMode === "auto");
+        const targetMode: PermissionMode = shouldResumePriorMode ? resumeMode : "acceptEdits";
         await this.setMode(targetMode);
         this.pushToolCall(
           mapClaudeCompletedToolCall({
@@ -2902,8 +2906,9 @@ class ClaudeAgentSession implements AgentSession {
     this.taskProtocolSource.reset();
     this.input?.end();
     this.query?.close?.();
-    await this.awaitWithTimeout(this.query?.interrupt?.(), "close query interrupt");
-    await this.awaitWithTimeout(this.query?.return?.(), "close query return");
+    // close() already terminates the SDK query. Its control plane is no longer
+    // available; waiting for interrupt/return here delays our process-tree cleanup
+    // beyond the daemon's close deadline when the provider stops answering.
     this.query = null;
     this.input = null;
     // Terminate the entire process tree (claude + MCP children) to prevent
@@ -4510,7 +4515,12 @@ class ClaudeAgentSession implements AgentSession {
       ),
     ).map((event): AgentStreamEvent => ({ type: "provider_subagent", provider: "claude", event }));
     const routedId = canonicalSubagentId ?? parentToolUseId;
-    return [...runtimeEvents, ...this.sidechainTracker.handleMessage(message, routedId)];
+    const settled = this.settledSubagentToolCalls.get(routedId);
+    const sidechainEvents = this.sidechainTracker.handleMessage(message, routedId).map((event) => {
+      if (event.type === "timeline" && settled?.turnId) event.turnId = settled.turnId;
+      return event;
+    });
+    return [...runtimeEvents, ...sidechainEvents];
   }
 
   /**
@@ -5171,7 +5181,8 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private notifySubscribers(event: AgentStreamEvent): void {
-    const turnId = this.activeForegroundTurnId ?? this.autonomousTurn?.id;
+    const turnId =
+      getAgentStreamEventTurnId(event) ?? this.activeForegroundTurnId ?? this.autonomousTurn?.id;
     const tagged = turnId ? { ...event, turnId } : event;
     this.logger.trace(
       {
@@ -5647,17 +5658,12 @@ class ClaudeAgentSession implements AgentSession {
     });
   }
 
-  private settledSubagentToolCallInCurrentTurn(subagentId: string) {
-    const settled = this.settledSubagentToolCalls.get(subagentId);
-    const currentTurnId = this.activeForegroundTurnId ?? this.autonomousTurn?.id ?? null;
-    return settled && settled.turnId === currentTurnId ? settled : undefined;
-  }
-
   /** A finished child streams no more frames, so its settled call has nothing left to update. */
   private releaseFinishedSubagentToolCalls(observations: SubagentObservation[]): void {
     for (const observation of observations) {
       if (observation.kind === "status" && observation.status !== "running") {
         this.settledSubagentToolCalls.delete(observation.id);
+        this.sidechainTracker.delete(observation.id);
       }
     }
   }
@@ -6427,6 +6433,11 @@ function convertClaudeHistoryEntryPreamble(
     return { shortCircuit: [] };
   }
   if (entry.type === "user" && isSyntheticHistoryUserEntry(entry)) {
+    return { shortCircuit: [] };
+  }
+  // Only user and assistant records are conversation turns. Claude Code 2.1.x also journals each
+  // API request as `api-request-blob` records whose message replays the system context.
+  if (entry.type !== "user" && entry.type !== "assistant") {
     return { shortCircuit: [] };
   }
 

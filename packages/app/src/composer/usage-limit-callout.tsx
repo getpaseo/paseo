@@ -9,7 +9,6 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
-import { toErrorMessage } from "@/utils/error-messages";
 
 interface UsageLimitCalloutProps {
   serverId: string;
@@ -89,7 +88,9 @@ export function UsageLimitCallout({ serverId, agentId }: UsageLimitCalloutProps)
           onValueChange={mutation.mutate}
         />
       </View>
-      {mutation.isError ? <Text style={styles.error}>{toErrorMessage(mutation.error)}</Text> : null}
+      {mutation.isError ? (
+        <Text style={styles.error}>{t("agentPanel.usageLimit.saveFailed")}</Text>
+      ) : null}
     </View>
   );
 }

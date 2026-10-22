@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useTranslation } from "react-i18next";
 
 interface CodeBlockProps {
   children: string;
@@ -11,6 +12,7 @@ const SIZE_PADDING: Record<NonNullable<CodeBlockProps["size"]>, string> = {
 };
 
 export function CodeBlock({ children, size = "md" }: CodeBlockProps) {
+  const { t } = useTranslation();
   const [copied, setCopied] = React.useState(false);
 
   const handleCopy = React.useCallback(() => {
@@ -31,7 +33,7 @@ export function CodeBlock({ children, size = "md" }: CodeBlockProps) {
         type="button"
         onClick={handleCopy}
         className="text-muted-foreground hover:text-foreground transition-colors p-1"
-        title="Copy to clipboard"
+        title={t("common.copyToClipboard")}
       >
         {copied ? (
           <svg

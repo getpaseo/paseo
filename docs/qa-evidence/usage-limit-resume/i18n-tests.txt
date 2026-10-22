@@ -1,0 +1,11 @@
+npm notice run paseo@0.13.0-beta.1 npx
+npm notice run 'vitest' run src/i18n/resources.test.ts src/i18n/locales.test.ts --bail=1
+
+ RUN  v4.1.7 /home/bobik/src/paseo-worktrees/resume-after-usage-limit/packages/app
+
+
+ Test Files  2 passed (2)
+      Tests  55 passed (55)
+   Start at  08:07:32
+   Duration  1.90s (transform 1.49s, setup 51ms, import 1.51s, tests 510ms, environment 0ms)
+

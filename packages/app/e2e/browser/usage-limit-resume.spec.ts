@@ -3,6 +3,7 @@ import { seedMockAgentWorkspace, openAgentRoute } from "../support/helpers/mock-
 import { submitMessageWithButton } from "../support/helpers/composer";
 import {
   captureUsageLimit,
+  holdUsageLimitSave,
   emitSyntheticUsageLimit,
   openUsageLimitChat,
   reloadUsageLimitChat,
@@ -102,6 +103,38 @@ test("missing reset time leaves manual continuation available", async ({ page })
     await expect(usageLimitResumeSwitch(page)).toBeDisabled();
     await submitMessageWithButton(page, "Continue manually");
     await expect(usageLimitResumeSwitch(page)).toHaveCount(0);
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+test("failed opt-in keeps an error visible and permits retry on a narrow screen", async ({
+  page,
+}, testInfo) => {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "usage-limit-save-",
+    title: "Retry preference",
+  });
+  try {
+    const save = await holdUsageLimitSave({ page, agentId: agent.agentId });
+    await openUsageLimitChat({ page, agent, viewport: { width: 320, height: 844 } });
+    await emitSyntheticUsageLimit({ page, resetsAt: new Date(Date.now() + 300000).toISOString() });
+    await setUsageLimitResume({ page, enabled: true });
+    await save.waitForRequest();
+    await expect(usageLimitResumeSwitch(page)).toBeDisabled();
+    await expect(page.getByText("Saving…", { exact: true })).toBeVisible();
+    await captureUsageLimit({ page, testInfo, name: "pending-compact.png", colorScheme: "light" });
+    save.reject();
+    await expect(
+      page.getByText("Could not save this setting. Try again.", { exact: false }),
+    ).toBeVisible();
+    await expect(usageLimitResumeSwitch(page)).toHaveAttribute("aria-checked", "false");
+    await captureUsageLimit({ page, testInfo, name: "error-compact.png", colorScheme: "dark" });
+    await setUsageLimitResume({ page, enabled: true });
+    await expect(page.getByText("Will continue at", { exact: false })).toBeVisible();
+    await expect(
+      page.getByText("Could not save this setting. Try again.", { exact: false }),
+    ).toHaveCount(0);
   } finally {
     await agent.cleanup();
   }

@@ -1,3 +1,4 @@
+import { createAgentMessageDeliveryStub } from "./test-utils/session-stubs.js";
 import {
   createMessageReceiptsStub,
   createTestCreationService,
@@ -15,6 +16,7 @@ import {
   type SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
 import { Session, type SessionOptions } from "./session.js";
+import { WorkspaceSetupObservation } from "./workspace-setup-observation.js";
 import { OWNER_PERMISSIONS } from "./authorization/index.js";
 import { DirectorySyncService } from "./directory-sync/index.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
@@ -190,6 +192,7 @@ function createSessionForWireCompatTest(options?: {
   messages?: SessionOutboundMessage[];
   onMessageToSource?: SessionOptions["onMessageToSource"];
   rows?: AgentTimelineRow[];
+  workspaceRegistry?: SessionOptions["workspaceRegistry"];
 }): Session {
   const messages = options?.messages ?? [];
   const rows: AgentTimelineRow[] = [
@@ -212,6 +215,7 @@ function createSessionForWireCompatTest(options?: {
 
   const session = new Session({
     messageReceipts: createMessageReceiptsStub(),
+    agentMessages: createAgentMessageDeliveryStub(),
     creationService: createTestCreationService(),
     clientId: "wire-compat-client",
     permissions: OWNER_PERMISSIONS,
@@ -228,7 +232,8 @@ function createSessionForWireCompatTest(options?: {
     agentStorage: new EmptyAgentStorage() as unknown as SessionOptions["agentStorage"],
     projectRegistry: new EmptyProjectRegistry() as unknown as SessionOptions["projectRegistry"],
     workspaceRegistry:
-      new EmptyWorkspaceRegistry() as unknown as SessionOptions["workspaceRegistry"],
+      options?.workspaceRegistry ??
+      (new EmptyWorkspaceRegistry() as unknown as SessionOptions["workspaceRegistry"]),
     directorySync: options?.directorySync,
     scheduleService: {} as SessionOptions["scheduleService"],
     checkoutDiffManager: {
@@ -547,7 +552,7 @@ describe("wire compatibility", () => {
       refName: undefined,
       action: undefined,
       githubPrNumber: undefined,
-      runSetup: false,
+
       paseoHome: "/tmp/paseo-home",
     });
   });
@@ -640,4 +645,166 @@ test("setup progress is adapted per socket without changing the canonical snapsh
   ]);
   expect(message.payload.status).toBe("blocked");
   await session.cleanup();
+});
+
+test("scoped setup clients never receive session-wide setup output", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForWireCompatTest({
+    messages,
+    clientCapabilities: { owned_subscriptions: true, workspace_setup_observation: true },
+  });
+  const source = {};
+  session.updateClientCapabilities(
+    { owned_subscriptions: true, workspace_setup_observation: true },
+    source,
+  );
+  await session.handleMessage(
+    {
+      type: "session.events.set_subscription.request",
+      requestId: "events",
+      events: ["workspace_setup_progress"],
+    },
+    source,
+  );
+  messages.length = 0;
+  for (const workspaceId of ["setup-a", "setup-b", "setup-c"]) {
+    for (let chunk = 0; chunk < 10; chunk++) {
+      session.publish({
+        type: "workspace_setup_progress",
+        payload: {
+          workspaceId,
+          status: "running",
+          error: null,
+          detail: {
+            type: "worktree_setup",
+            worktreePath: "/workspace",
+            branchName: "setup",
+            log: "output".repeat(chunk * 1000),
+            commands: [],
+          },
+        },
+      });
+    }
+  }
+  expect(messages).toEqual([]);
+  await session.cleanup();
+});
+
+test("setup output invalidates directory metadata only when visible setup status changes", () => {
+  const setup = new WorkspaceSetupObservation();
+  const earlier = {
+    status: "failed" as const,
+    error: "failed before any connection",
+    detail: {
+      type: "worktree_setup" as const,
+      worktreePath: "/workspace",
+      branchName: "test",
+      log: "earlier output",
+      commands: [],
+    },
+  };
+  setup.publish("earlier", earlier);
+  expect(setup.get("earlier")).toEqual(earlier);
+  expect(setup.status({ workspaceId: "earlier", untrustedSource: null })).toBe("failed");
+  const changes: boolean[] = [];
+  setup.subscribe((_workspaceId, _snapshot, changed) => changes.push(changed));
+  const detail = {
+    type: "worktree_setup" as const,
+    worktreePath: "/workspace",
+    branchName: "test",
+    log: "",
+    commands: [
+      {
+        index: 0,
+        command: "setup",
+        cwd: "/workspace",
+        log: "",
+        status: "running" as const,
+        exitCode: null,
+      },
+    ],
+  };
+  for (const log of ["", "one", "one two", "one two three"])
+    setup.publish("workspace", { status: "running", error: null, detail: { ...detail, log } });
+  setup.publish("workspace", { status: "failed", error: "failed", detail });
+  expect(changes).toEqual([true, false, false, false, true]);
+  expect(setup.status({ workspaceId: "workspace", untrustedSource: null })).toBe("failed");
+  expect(setup.status({ workspaceId: "empty", untrustedSource: null })).toBeNull();
+  setup.publish("empty", { status: "completed", error: null, detail: { ...detail, commands: [] } });
+  expect(setup.status({ workspaceId: "empty", untrustedSource: null })).toBeNull();
+});
+
+test("setup observation includes a transition that happens during its initial registry read", async () => {
+  let completeRead!: (value: null) => void;
+  let readStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    readStarted = resolve;
+  });
+  const pendingRead = new Promise<null>((resolve) => {
+    completeRead = resolve;
+  });
+  const messages: SessionOutboundMessage[] = [];
+  const source = {};
+  const session = createSessionForWireCompatTest({
+    messages,
+    clientCapabilities: { owned_subscriptions: true, workspace_setup_observation: true },
+    workspaceRegistry: {
+      get: () => {
+        readStarted();
+        return pendingRead;
+      },
+      list: () => [],
+    } as unknown as SessionOptions["workspaceRegistry"],
+  });
+  session.updateClientCapabilities(
+    { owned_subscriptions: true, workspace_setup_observation: true },
+    source,
+  );
+  try {
+    const request = session.handleMessage(
+      { type: "workspace.setup.subscribe.request", workspaceId: "setup", requestId: "observe" },
+      source,
+    );
+    await started;
+    session.publish({
+      type: "workspace_setup_progress",
+      payload: {
+        workspaceId: "setup",
+        status: "failed",
+        error: "bootstrap failure",
+        detail: {
+          type: "worktree_setup",
+          worktreePath: "/workspace",
+          branchName: "test",
+          log: "failure output",
+          commands: [],
+        },
+      },
+    });
+    completeRead(null);
+    await request;
+    expect(messages).toEqual([
+      {
+        type: "workspace.setup.subscribe.response",
+        payload: {
+          requestId: "observe",
+          workspaceId: "setup",
+          subscriptionId: expect.any(String),
+          snapshot: {
+            status: "failed",
+            error: "bootstrap failure",
+            detail: {
+              type: "worktree_setup",
+              worktreePath: "/workspace",
+              branchName: "test",
+              log: "failure output",
+              commands: [],
+            },
+          },
+        },
+      },
+    ]);
+  } finally {
+    await session.cleanup();
+  }
 });
