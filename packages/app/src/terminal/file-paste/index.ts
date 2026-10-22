@@ -1,4 +1,3 @@
-// Bundled into the terminal WebView as well as the app: keep i18n and React out.
 import { FILE_UPLOAD_MAX_BYTES } from "@/attachments/upload-limit";
 import { prepareTerminalPath } from "../drop/terminal-path";
 
@@ -124,16 +123,6 @@ export function terminalFileFromBase64(input: {
     bytes[index] = binary.charCodeAt(index);
   }
   return { fileName: input.fileName, mimeType: input.mimeType, bytes };
-}
-
-const BASE64_CHUNK_SIZE = 0x8000;
-
-export function terminalFileToBase64(file: TerminalFile): string {
-  let binary = "";
-  for (let offset = 0; offset < file.bytes.length; offset += BASE64_CHUNK_SIZE) {
-    binary += String.fromCharCode(...file.bytes.subarray(offset, offset + BASE64_CHUNK_SIZE));
-  }
-  return btoa(binary);
 }
 
 /** File extension for a clipboard image, which arrives as bytes with only a MIME type. */

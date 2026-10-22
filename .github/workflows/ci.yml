@@ -415,9 +415,7 @@ jobs:
         run: npm run build:app-deps
 
       - name: Run app unit tests
-        run: |
-          npm run check:terminal-webview --workspace=@getpaseo/app
-          npm run test --workspace=@getpaseo/app
+        run: npm run test --workspace=@getpaseo/app
 
       - uses: actions/setup-java@v4
         with:
