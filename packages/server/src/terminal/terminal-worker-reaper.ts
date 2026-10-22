@@ -3,6 +3,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import treeKill from "tree-kill";
 import { writtenDuringThisBoot } from "../server/pid-lock.js";
 import { connectTerminalWorker } from "./terminal-worker-client.js";
+import { pruneTerminalWorkerRuntimes } from "./terminal-worker-runtime.js";
 import {
   classifyTerminalProgramProcess,
   classifyTerminalWorkerProcess,
@@ -105,14 +106,12 @@ export class TerminalCleanupNotConfirmedError extends Error {
 /**
  * Retries the cleanup an earlier kill could not confirm (records marked closing), leaving any
  * live worker a daemon controls alone. Throws TerminalCleanupNotConfirmedError when processes
- * still survive, so a kill restart can report them.
+ * still survive, or when a record cannot be read, so a kill restart can report them.
  */
 export async function retryUnconfirmedTerminalCleanup(paseoHome: string): Promise<void> {
   const files = listTerminalWorkerRecords(paseoHome);
   const recordPaths = files.flatMap((file) =>
-    ("record" in file && file.record.closing) || ("error" in file && file.kind === "cleanup")
-      ? [file.path]
-      : [],
+    ("record" in file && file.record.closing) || "error" in file ? [file.path] : [],
   );
   if (recordPaths.length === 0) return;
   await reapTerminalWorkers({ paseoHome, gracefulMs: 0, recordPaths });
@@ -121,8 +120,9 @@ export async function retryUnconfirmedTerminalCleanup(paseoHome: string): Promis
 /**
  * What the last cleanup of this home could not confirm gone, as its closing records name it.
  * Read without retrying, so a daemon can report it (daemon status) to clients that cannot read
- * this home themselves. Throws TerminalCleanupNotConfirmedError when a cleanup record cannot be
- * read: what it names is unknown, so the cleanup cannot be reported finished.
+ * this home themselves. Throws TerminalCleanupNotConfirmedError when any record cannot be read,
+ * worker records included: a kill cleanup that met it could not check what it names, and a
+ * failed cleanup leaves nothing else behind, so the cleanup cannot be reported finished.
  */
 export function readUnconfirmedTerminalCleanup(paseoHome: string): UnresolvedTerminalProcess[] {
   const files = listTerminalWorkerRecords(paseoHome);
@@ -132,9 +132,7 @@ export function readUnconfirmedTerminalCleanup(paseoHome: string): UnresolvedTer
       : [],
   );
   const unreadable = files.flatMap((file) =>
-    "error" in file && file.kind === "cleanup"
-      ? [{ path: file.path, error: file.error.message }]
-      : [],
+    "error" in file ? [{ path: file.path, error: file.error.message }] : [],
   );
   if (unreadable.length > 0) {
     throw new TerminalCleanupNotConfirmedError(unresolved, unreadable);
@@ -215,6 +213,12 @@ export async function reapTerminalWorkers(
     } else {
       unresolved.push(...outcome.unresolved);
     }
+  }
+
+  // Copies of worker files no remaining record names belong to no worker now.
+  const pruned = pruneTerminalWorkerRuntimes(options.paseoHome);
+  for (const failure of pruned.failed) {
+    log("Cannot remove a terminal worker copy; the next cleanup retries", failure);
   }
 
   if (unresolved.length > 0 || unreadable.length > 0) {
@@ -536,9 +540,12 @@ async function proveTerminalMember(
     };
   }
   if (environment === null) return { status: "gone" };
-  return environment.includes(`PASEO_TERMINAL_ID=${terminalId}`)
-    ? { status: "owned" }
-    : { status: "unrelated", reason: "environment lacks the terminal id" };
+  if (environment.includes(`PASEO_TERMINAL_ID=${terminalId}`)) return { status: "owned" };
+  // Another terminal's id proves the process belongs elsewhere. No id at all proves nothing: a
+  // job started with a scrubbed environment (`env -i`) can still be this terminal's.
+  return environment.some((entry) => entry.startsWith("PASEO_TERMINAL_ID="))
+    ? { status: "unrelated", reason: "environment carries another terminal's id" }
+    : { status: "unknown", reason: "its environment carries no terminal id" };
 }
 
 async function requestWorkerShutdown(

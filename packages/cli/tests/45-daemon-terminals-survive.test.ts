@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -294,6 +294,25 @@ try {
   await paseo(["daemon", "stop", "--home", paseoHome]);
   assert.equal(workerRecordCount(), 0, "the next stop retries the cleanup and retires the record");
   console.log("✓ reported, then retried by stop\n");
+
+  console.log("Test 9: restart --host --kill-terminals reports a worker record it cannot read");
+  await paseo(["daemon", "start"]);
+  // A kill cleanup cannot check what an unreadable record names, and leaves nothing else
+  // behind, so the replacement daemon must still report it.
+  const unreadablePath = join(paseoHome, "terminal-worker", `${await goneProcessPid()}.json`);
+  writeFileSync(unreadablePath, "{ not json", { mode: 0o600 });
+  const unreadable = await paseo(
+    ["daemon", "restart", "--host", endpoint, "--kill-terminals"],
+    false,
+  );
+  assert.notEqual(unreadable.exitCode, 0, "the kill restart fails");
+  const unreadableOutput = unreadable.stdout + unreadable.stderr;
+  assert(unreadableOutput.includes(unreadablePath), `names the record:\n${unreadableOutput}`);
+  assert(existsSync(unreadablePath), "the unreadable record is kept");
+  rmSync(unreadablePath);
+  await paseo(["daemon", "stop", "--home", paseoHome]);
+  assert.equal(workerRecordCount(), 0, "no worker record is left");
+  console.log("✓ reported with the record's path\n");
 } finally {
   await runLocalPaseo(["daemon", "stop", "--home", paseoHome, "--force"], env);
   for (const pid of trackedPids) {

@@ -1220,12 +1220,15 @@ export function supportsUsageReports(features: ServerInfoStatusPayload["features
 
 export class TerminalKeepUnsupportedError extends Error {
   readonly code = "TERMINALS_KEEP_UNSUPPORTED";
+  // Own fields reach the CLI's JSON error output, which desktop reads.
+  readonly version: string | null;
 
   constructor(target: string, version: string | null) {
     super(
       `The daemon at ${target}${version ? ` (v${version})` : ""} closes terminals when it stops. Update it first, or run \`paseo daemon stop\` to stop it and close them.`,
     );
     this.name = "TerminalKeepUnsupportedError";
+    this.version = version;
   }
 }
 

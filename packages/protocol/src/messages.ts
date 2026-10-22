@@ -5040,6 +5040,9 @@ export const DaemonGetStatusResponseSchema = z.object({
           }),
         )
         .optional(),
+      // Set when this host's terminals are held by a terminal worker from a newer Paseo, which
+      // this daemon leaves running but cannot drive: why, and what the user can do.
+      terminalsUnavailable: z.string().optional(),
     })
     .passthrough(),
 });

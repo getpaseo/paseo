@@ -38,9 +38,30 @@ export interface WorkerCreateTerminalOptions {
   paseoCliPath?: string | null;
 }
 
-// Bumped when a request, response or event changes shape. Milestone 2 adds
-// the version handshake semantics; the record and hello carry it from day one.
+// Bumped when a request, response or event changes shape. The frozen envelope never changes
+// across versions: the frame format, `hello`/`helloAck`, the `listTerminals` info fields, and
+// `shutdown`. A daemon drives a worker of its own version, drains one a version older (no new
+// terminals; it exits after its last terminal), shuts down anything older, and leaves a newer
+// worker running untouched. See docs/terminal-worker.md.
 export const TERMINAL_WORKER_PROTOCOL_VERSION = 1;
+
+// Test-only: the protocol version a worker reports, so tests can stand up older and newer
+// workers from one build.
+export const TERMINAL_WORKER_PROTOCOL_OVERRIDE_ENV = "PASEO_TERMINAL_WORKER_PROTOCOL_OVERRIDE";
+
+/** How a daemon at `current` treats a worker reporting `reported`. */
+export type TerminalWorkerProtocolFit = "current" | "previous" | "obsolete" | "newer";
+
+export function classifyTerminalWorkerProtocol(
+  reported: unknown,
+  current: number = TERMINAL_WORKER_PROTOCOL_VERSION,
+): TerminalWorkerProtocolFit {
+  // A version this daemon cannot read comes from a Paseo it does not know: treat it as newer.
+  if (typeof reported !== "number" || !Number.isSafeInteger(reported)) return "newer";
+  if (reported === current) return "current";
+  if (reported === current - 1) return "previous";
+  return reported < current ? "obsolete" : "newer";
+}
 
 export interface TerminalWorkerHello {
   type: "hello";

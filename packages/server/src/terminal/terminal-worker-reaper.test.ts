@@ -364,6 +364,34 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
     ]);
   });
 
+  it("signals no session member whose environment carries no terminal id, and keeps the cleanup unconfirmed", async () => {
+    const home = makeHome();
+    // A job started with a scrubbed environment (`env -i`) carries no terminal id at all: it
+    // may still be this terminal's, so it is neither signaled nor dismissed as unrelated.
+    const member = spawnIdle(undefined, {});
+    const goneProgramPid = await goneProcessPid();
+    writeRecord(home, {
+      pid: await goneProcessPid(),
+      terminals: [{ id: "t1", pid: goneProgramPid, startedAt: "Thu Jan  1 00:00:00 1970" }],
+    });
+    const scrubbedMember = withSessionMember({ memberPid: member.pid!, sessionId: goneProgramPid });
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await expect(
+        reapTerminalWorkers({ paseoHome: home, inspector: scrubbedMember }),
+      ).rejects.toBeInstanceOf(TerminalCleanupNotConfirmedError);
+      expect(isAlive(member.pid!)).toBe(true);
+      expect(readUnconfirmedTerminalCleanup(home)).toEqual([
+        expect.objectContaining({
+          pid: goneProgramPid,
+          reason: "inspection failed",
+          detail: expect.stringContaining(`session member ${member.pid}`),
+        }),
+      ]);
+    }
+    expect(existsSync(terminalCleanupRecordPath(home, "record-under-test"))).toBe(true);
+  });
+
   it("does not walk a gone terminal program's pid that another process took before the table was read", async () => {
     const home = makeHome();
     const member = spawnIdle(undefined, terminalEnv("t1"));
@@ -386,11 +414,16 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
     expect(result.signaled).toEqual([]);
   });
 
-  it("never reports an unreadable cleanup record as finished", async () => {
+  // A kill cleanup that meets an unreadable worker record cannot check what it names and
+  // leaves nothing else behind, so status and retry must keep reporting it after a respawn.
+  it.each([
+    ["cleanup", (home: string) => terminalCleanupRecordPath(home, "record-under-test")],
+    ["worker", (home: string) => path.join(terminalWorkerDirectory(home), "4242.json")],
+  ])("never reports an unreadable %s record as finished", async (_kind, recordPathIn) => {
     const home = makeHome();
     mkdirSync(terminalWorkerDirectory(home), { recursive: true });
-    const cleanupPath = terminalCleanupRecordPath(home, "record-under-test");
-    writeFileSync(cleanupPath, "{ not json");
+    const unreadablePath = recordPathIn(home);
+    writeFileSync(unreadablePath, "{ not json");
 
     for (const attempt of [
       async () => readUnconfirmedTerminalCleanup(home),
@@ -405,10 +438,10 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
       }
       expect(caught).toBeInstanceOf(TerminalCleanupNotConfirmedError);
       expect((caught as TerminalCleanupNotConfirmedError).unreadableRecords).toEqual([
-        expect.objectContaining({ path: cleanupPath }),
+        expect.objectContaining({ path: unreadablePath }),
       ]);
     }
-    expect(existsSync(cleanupPath)).toBe(true);
+    expect(existsSync(unreadablePath)).toBe(true);
   });
 
   it("signals nothing while the process table cannot be read, so a retry still ends the children", async () => {

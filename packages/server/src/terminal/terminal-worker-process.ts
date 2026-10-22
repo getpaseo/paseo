@@ -24,6 +24,7 @@ import {
 } from "./terminal-worker-record.js";
 import { resolveTerminalWorkerSocketPath } from "./terminal-worker-socket-path.js";
 import {
+  TERMINAL_WORKER_PROTOCOL_OVERRIDE_ENV,
   TERMINAL_WORKER_PROTOCOL_VERSION,
   type TerminalWorkerHello,
   type TerminalWorkerHelloAck,
@@ -56,6 +57,8 @@ interface WorkerArgs {
   recordId: string;
   paseoHome: string;
   paseoVersion: string;
+  // The copy under terminal-worker/ this worker runs from; absent when it runs from source.
+  runtime: string | null;
 }
 
 function readArg(argv: string[], name: string): string {
@@ -72,7 +75,20 @@ function parseWorkerArgs(argv: string[], recordIdArg: string): WorkerArgs {
     recordId: readArg(argv, recordIdArg),
     paseoHome: readArg(argv, "--paseo-home"),
     paseoVersion: readArg(argv, "--paseo-version"),
+    runtime: argv.includes("--runtime") ? readArg(argv, "--runtime") : null,
   };
+}
+
+// The protocol version this worker reports in its record and hello. Tests override it to stand
+// up older and newer workers from one build.
+function reportedProtocolVersion(): number {
+  const override = process.env[TERMINAL_WORKER_PROTOCOL_OVERRIDE_ENV];
+  if (override === undefined || override === "") return TERMINAL_WORKER_PROTOCOL_VERSION;
+  const parsed = Number(override);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new Error(`${TERMINAL_WORKER_PROTOCOL_OVERRIDE_ENV} is not an integer: ${override}`);
+  }
+  return parsed;
 }
 
 function errorMessage(error: unknown): string {
@@ -97,6 +113,7 @@ function runLauncher(argv: string[]): void {
       args.paseoHome,
       "--paseo-version",
       args.paseoVersion,
+      ...(args.runtime ? ["--runtime", args.runtime] : []),
     ],
     {
       detached: true,
@@ -157,6 +174,7 @@ type TerminalCreateRequest = Extract<TerminalWorkerRequest, { type: "createTermi
 
 function runWorker(argv: string[]): void {
   const args = parseWorkerArgs(argv, TERMINAL_WORKER_MARKER_ARG);
+  const protocolVersion = reportedProtocolVersion();
   const manager = createTerminalManager();
   const inspector = createTerminalWorkerProcessInspector();
   const sessionsById = new Map<string, TerminalSession>();
@@ -646,7 +664,7 @@ function runWorker(argv: string[]): void {
         const ack: TerminalWorkerHelloAck = {
           type: "helloAck",
           pid: process.pid,
-          protocolVersion: TERMINAL_WORKER_PROTOCOL_VERSION,
+          protocolVersion,
         };
         framed.send(ack);
         return;
@@ -718,10 +736,11 @@ function runWorker(argv: string[]): void {
       bootId: currentBootId(),
       createdAt: new Date().toISOString(),
       identity: { startedAt: self.snapshot.startedAt, commandLine: self.snapshot.commandLine },
-      protocolVersion: TERMINAL_WORKER_PROTOCOL_VERSION,
+      protocolVersion,
       paseoVersion: args.paseoVersion,
       socketPath,
       secret,
+      runtime: args.runtime,
       terminals: [],
     };
     writeTerminalWorkerRecord(args.paseoHome, record);

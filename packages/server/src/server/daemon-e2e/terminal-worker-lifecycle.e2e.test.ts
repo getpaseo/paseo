@@ -10,6 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -20,6 +21,9 @@ import { currentBootId } from "../pid-lock.js";
 import { connectTerminalWorker } from "../../terminal/terminal-worker-client.js";
 import { createTerminalWorkerProcessInspector } from "../../terminal/terminal-worker-processes.js";
 import { reapTerminalWorkers } from "../../terminal/terminal-worker-reaper.js";
+import { launchTerminalWorker } from "../../terminal/terminal-worker-launch.js";
+import { prepareTerminalWorkerRuntime } from "../../terminal/terminal-worker-runtime.js";
+import { createWorkerTerminalManager } from "../../terminal/worker-terminal-manager.js";
 import {
   listTerminalWorkerRecords,
   writeTerminalWorkerRecord,
@@ -592,5 +596,67 @@ describe("terminals when the daemon stops", { timeout: 240_000 }, () => {
     await stopDaemonInstance(harness.home, { force: true });
     expect(isAlive(reused.pid!)).toBe(true);
     expect(liveRecords(harness.home)).toEqual([]);
+  });
+});
+
+describe("a worker launched from its own copy", { timeout: 240_000 }, () => {
+  // What a built daemon does: bundle the worker, copy bundle + shell integration + node-pty into
+  // the home, launch from the copy. Here the copy's node-pty (ConPTY on Windows) opens a real
+  // terminal; nothing is loaded from this checkout once the worker runs.
+  test("opens a terminal and runs a command from the copied bundle and node-pty", async () => {
+    const home = mkdtempSync(path.join(tmpdir(), "tw-copy-home-"));
+    const bundleDirectory = mkdtempSync(path.join(tmpdir(), "tw-copy-bundle-"));
+    extraDirs.push(home, bundleDirectory);
+    const buildScript = path.join(SERVER_ROOT, "scripts/build-terminal-worker.mjs");
+    const { buildTerminalWorkerBundle } = (await import(buildScript)) as {
+      buildTerminalWorkerBundle(input: { outDir: string }): Promise<void>;
+    };
+    await buildTerminalWorkerBundle({ outDir: bundleDirectory });
+    const nodePtyDirectory = path.dirname(
+      createRequire(import.meta.url).resolve("node-pty/package.json"),
+    );
+    const entry = prepareTerminalWorkerRuntime({
+      paseoHome: home,
+      paseoVersion: "0.0.0-copy",
+      bundleDirectory,
+      nodePtyDirectory,
+    });
+
+    const launched = await launchTerminalWorker({
+      paseoHome: home,
+      paseoVersion: "0.0.0-copy",
+      entry,
+    });
+    extraPids.add(launched.record.pid);
+    expect(launched.record.runtime).toBe(entry.runtime);
+    const manager = createWorkerTerminalManager({
+      worker: await connectTerminalWorker({
+        socketPath: launched.record.socketPath,
+        secret: launched.record.secret,
+      }),
+      closeTerminals: async () => {
+        await reapTerminalWorkers({ paseoHome: home });
+      },
+    });
+    try {
+      const session = await manager.createTerminal({
+        workspaceId: "ws-copy",
+        cwd: home,
+        command: process.execPath,
+        args: ["-e", "console.log('COPY-' + 'OK'); setInterval(() => {}, 1000);"],
+      });
+      await waitFor(
+        async () =>
+          (await manager.captureTerminal(session.id, { stripAnsi: true })).lines
+            .join("\n")
+            .includes("COPY-OK"),
+        "the terminal in the copied worker never printed its marker",
+        30_000,
+      );
+    } finally {
+      await manager.closeTerminals();
+    }
+    expect(isAlive(launched.record.pid)).toBe(false);
+    expect(existsSync(path.dirname(entry.scriptPath))).toBe(false);
   });
 });

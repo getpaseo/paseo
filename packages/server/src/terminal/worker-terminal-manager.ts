@@ -1,4 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { setTimeout as delay } from "node:timers/promises";
 import type { Logger } from "pino";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { assertAbsolutePath, isSameOrDescendantPath } from "../server/path-utils.js";
@@ -22,7 +24,17 @@ import { launchTerminalWorker } from "./terminal-worker-launch.js";
 import { classifyTerminalWorkerProcess } from "./terminal-worker-ownership.js";
 import { createTerminalWorkerProcessInspector } from "./terminal-worker-processes.js";
 import { reapTerminalWorkers } from "./terminal-worker-reaper.js";
-import { listTerminalWorkerRecords, type TerminalWorkerRecord } from "./terminal-worker-record.js";
+import {
+  listTerminalWorkerRecords,
+  terminalWorkerRecordPath,
+  type TerminalWorkerRecord,
+} from "./terminal-worker-record.js";
+import {
+  createTerminalWorkerPool,
+  TerminalWorkerIncompatibleError,
+  type TerminalWorkerPoolMember,
+} from "./terminal-worker-pool.js";
+import { pruneTerminalWorkerRuntimes } from "./terminal-worker-runtime.js";
 import type {
   TerminalActivityListener,
   TerminalActivityTransitionEvent,
@@ -33,6 +45,10 @@ import type {
   TerminalsChangedEvent,
   TerminalsChangedListener,
 } from "./terminal-manager.js";
+import {
+  classifyTerminalWorkerProtocol,
+  type TerminalWorkerProtocolFit,
+} from "./terminal-worker-protocol.js";
 import type {
   TerminalWorkerListResult,
   TerminalWorkerRequest,
@@ -109,8 +125,11 @@ export interface DaemonTerminalManager extends TerminalManager {
   adoptTerminals(): Promise<number>;
   /** Kills every terminal and verifies their programs ended. */
   closeTerminals(): Promise<void>;
-  /** Lets go of the worker; its terminals keep running for the next daemon. */
-  detach(): Promise<void>;
+  /**
+   * Lets go of the worker; its terminals keep running for the next daemon. With
+   * `afterPendingRequests`, requests already sent get their answers first.
+   */
+  detach(options?: { afterPendingRequests?: boolean }): Promise<void>;
 }
 
 function createActivityToken(): string {
@@ -147,6 +166,7 @@ export function createWorkerTerminalManager(
   const resolveCreateEnvironment =
     managerOptions.resolveCreateEnvironment ?? resolveDaemonTerminalCreateEnvironment;
   const pendingRequests = new Map<string, PendingRequest>();
+  const inFlight = new Set<Promise<unknown>>();
   const recordsById = new Map<string, WorkerTerminalRecord>();
   const terminalIdsByCwd = new Map<string, Set<string>>();
   const terminalActivityTokenById = new Map<string, string>();
@@ -618,7 +638,7 @@ export function createWorkerTerminalManager(
     }
     const requestId = randomUUID();
     const message = { ...input, requestId } as TerminalWorkerRequest;
-    return new Promise((resolve, reject) => {
+    const request = new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         pendingRequests.delete(requestId);
         reject(new Error(`Terminal worker request timed out: ${input.type}`));
@@ -633,6 +653,9 @@ export function createWorkerTerminalManager(
         reject(error);
       });
     });
+    const tracked = request.finally(() => inFlight.delete(tracked));
+    inFlight.add(tracked);
+    return request;
   }
 
   function sendBestEffortRequest(input: TerminalWorkerRequestInput): void {
@@ -852,7 +875,10 @@ export function createWorkerTerminalManager(
 
     closeTerminals,
 
-    async detach(): Promise<void> {
+    async detach(options?: { afterPendingRequests?: boolean }): Promise<void> {
+      if (options?.afterPendingRequests) {
+        await Promise.allSettled(Array.from(inFlight));
+      }
       await disconnectWorker();
       clearRecords();
     },
@@ -912,22 +938,40 @@ export interface StartWorkerTerminalManagerOptions {
   requestTimeoutMs?: number;
 }
 
+// The current worker plus one draining a previous protocol. Every live worker counts,
+// incompatible, unreachable and unidentified ones included: the daemon never starts a third.
+const MAX_TERMINAL_WORKERS = 2;
+const DRAINED_WORKER_EXIT_TIMEOUT_MS = 10_000;
+
+interface LiveWorkerRecord {
+  path: string;
+  record: TerminalWorkerRecord;
+  fit: TerminalWorkerProtocolFit;
+}
+
 /**
- * Connects the daemon to its terminal worker: adopts a running worker this home's previous
- * daemon left (restart, crash, `stop --keep-terminals`), or launches a new one. Records that
- * cannot be adopted (cleanup that never finished, a dead worker whose programs survived it)
- * go through the reaper first, so a daemon never adopts terminals someone asked to close.
+ * Connects the daemon to its terminal workers. A worker of this daemon's protocol is adopted
+ * (restart, crash, `stop --keep-terminals`); one a protocol older is adopted to drain; anything
+ * older is shut down, its terminals closed; one from a newer Paseo is left running and the
+ * terminal service reports it as incompatible. A worker is launched only when none is current,
+ * none is incompatible and fewer than two run. Records that cannot be adopted (a cleanup that
+ * never finished, a dead worker whose programs survived it) go through the reaper first, so a
+ * daemon never adopts terminals someone asked to close.
  */
 export async function startWorkerTerminalManager(
   options: StartWorkerTerminalManagerOptions,
 ): Promise<DaemonTerminalManager> {
   const logger = options.logger.child({ module: "terminal-worker" });
   const inspector = createTerminalWorkerProcessInspector();
-  const adoptable: TerminalWorkerRecord[] = [];
+  const log = (message: string, fields?: Record<string, unknown>) => logger.info(fields, message);
+  const live: LiveWorkerRecord[] = [];
   const toReap: string[] = [];
+  // Workers that may be alive but cannot be driven or identified; they still count.
+  let uncountedLive = 0;
   for (const file of listTerminalWorkerRecords(options.paseoHome)) {
     if ("error" in file) {
       logger.warn({ recordPath: file.path, err: file.error }, "Unreadable terminal worker record");
+      uncountedLive += 1;
       continue;
     }
     const { record } = file;
@@ -940,19 +984,23 @@ export async function startWorkerTerminalManager(
     }
     const worker = classifyTerminalWorkerProcess(record, await inspector.inspect(record.pid));
     if (worker.status === "owned") {
-      adoptable.push(record);
+      live.push({
+        path: file.path,
+        record,
+        fit: classifyTerminalWorkerProtocol(record.protocolVersion),
+      });
     } else if (worker.status === "unknown") {
       logger.warn(
         { recordPath: file.path, pid: record.pid, reason: worker.reason },
         "Cannot identify terminal worker; leaving its record",
       );
+      uncountedLive += 1;
     } else {
       // Its programs lost their PTY with the worker and cannot be adopted.
       toReap.push(file.path);
     }
   }
 
-  const log = (message: string, fields?: Record<string, unknown>) => logger.info(fields, message);
   if (toReap.length > 0) {
     await reapTerminalWorkers({
       paseoHome: options.paseoHome,
@@ -965,54 +1013,168 @@ export async function startWorkerTerminalManager(
     });
   }
 
-  let connection: TerminalWorkerConnection | null = null;
-  for (const record of adoptable) {
-    if (connection) {
-      logger.warn({ pid: record.pid }, "A second live terminal worker was left running");
-      continue;
-    }
-    try {
-      connection = await connectTerminalWorker({
-        socketPath: record.socketPath,
-        secret: record.secret,
-      });
-      logger.info({ pid: record.pid }, "Adopting running terminal worker");
-    } catch (error) {
+  const obsolete = live.filter((entry) => entry.fit === "obsolete");
+  if (obsolete.length > 0) {
+    for (const entry of obsolete) {
       logger.warn(
-        { pid: record.pid, err: error },
-        "Cannot reach terminal worker; leaving it running",
+        {
+          pid: entry.record.pid,
+          protocolVersion: entry.record.protocolVersion,
+          paseoVersion: entry.record.paseoVersion,
+          terminals: entry.record.terminals.length,
+        },
+        "Closing a terminal worker two or more protocol versions old; its terminals close",
       );
     }
-  }
-  const adopted = connection !== null;
-  if (!connection) {
-    const launched = await launchTerminalWorker({
+    await reapTerminalWorkers({
       paseoHome: options.paseoHome,
-      paseoVersion: options.paseoVersion,
+      recordPaths: obsolete.map((entry) => entry.path),
+      inspector,
+      log,
+    }).catch((error: unknown) => {
+      logger.warn({ err: error }, "Closing an obsolete terminal worker was not confirmed");
+      uncountedLive += obsolete.length;
     });
-    connection = await connectTerminalWorker({
-      socketPath: launched.record.socketPath,
-      secret: launched.record.secret,
-    });
-    logger.info({ pid: launched.record.pid }, "Launched terminal worker");
   }
 
-  const manager = createWorkerTerminalManager({
-    worker: connection,
-    ...(options.requestTimeoutMs === undefined
-      ? {}
-      : { requestTimeoutMs: options.requestTimeoutMs }),
-    ...(options.getTerminalActivityUrl
-      ? { getTerminalActivityUrl: options.getTerminalActivityUrl }
-      : {}),
-    closeTerminals: async () => {
-      const result = await reapTerminalWorkers({ paseoHome: options.paseoHome, inspector, log });
-      logger.info(result, "Terminals closed");
+  const closeAll = async () => {
+    const result = await reapTerminalWorkers({ paseoHome: options.paseoHome, inspector, log });
+    logger.info(result, "Terminals closed");
+  };
+  const prune = () => {
+    const result = pruneTerminalWorkerRuntimes(options.paseoHome);
+    if (result.removed.length > 0)
+      log("Removed terminal worker copies", { removed: result.removed });
+    for (const failure of result.failed) {
+      logger.warn(failure, "Cannot remove a terminal worker copy; the next start retries");
+    }
+  };
+
+  const pruneAfterExit = async (workerPid: number) => {
+    if (await waitForWorkerRecordRemoval(options.paseoHome, workerPid)) {
+      prune();
+      return;
+    }
+    logger.warn({ pid: workerPid }, "Drained terminal worker has not exited yet");
+  };
+
+  const newer = live.find((entry) => entry.fit === "newer");
+  if (newer) {
+    const incompatible = new TerminalWorkerIncompatibleError({
+      paseoVersion: newer.record.paseoVersion,
+      protocolVersion: newer.record.protocolVersion,
+    });
+    logger.error({ pid: newer.record.pid }, incompatible.message);
+    prune();
+    return createTerminalWorkerPool({
+      current: null,
+      draining: [],
+      incompatible,
+      closeAll,
+    });
+  }
+
+  const createMember = async (
+    record: TerminalWorkerRecord,
+    connection: TerminalWorkerConnection,
+  ): Promise<TerminalWorkerPoolMember> => {
+    const manager = createWorkerTerminalManager({
+      worker: connection,
+      ...(options.requestTimeoutMs === undefined
+        ? {}
+        : { requestTimeoutMs: options.requestTimeoutMs }),
+      ...(options.getTerminalActivityUrl
+        ? { getTerminalActivityUrl: options.getTerminalActivityUrl }
+        : {}),
+      closeTerminals: closeAll,
+    });
+    const count = await manager.adoptTerminals();
+    if (count > 0) {
+      logger.info({ pid: record.pid, terminals: count }, "Adopted terminals from a running worker");
+    }
+    return { manager, workerPid: record.pid };
+  };
+
+  let current: TerminalWorkerPoolMember | null = null;
+  const draining: TerminalWorkerPoolMember[] = [];
+  const adoptable = [
+    ...live.filter((entry) => entry.fit === "current"),
+    ...live.filter((entry) => entry.fit === "previous"),
+  ];
+  for (const entry of adoptable) {
+    let connection: TerminalWorkerConnection;
+    try {
+      connection = await connectTerminalWorker({
+        socketPath: entry.record.socketPath,
+        secret: entry.record.secret,
+      });
+    } catch (error) {
+      logger.warn(
+        { pid: entry.record.pid, err: error },
+        "Cannot reach terminal worker; leaving it running",
+      );
+      uncountedLive += 1;
+      continue;
+    }
+    const member = await createMember(entry.record, connection);
+    if (entry.fit === "current" && !current) {
+      logger.info({ pid: entry.record.pid }, "Adopting running terminal worker");
+      current = member;
+    } else {
+      // A previous protocol, or a second worker of this one: it keeps its terminals and takes
+      // no new ones.
+      logger.info(
+        { pid: entry.record.pid, protocolVersion: entry.record.protocolVersion },
+        "Draining terminal worker; it exits after its last terminal",
+      );
+      draining.push(member);
+    }
+  }
+
+  prune();
+  let noCurrentReason: string | undefined;
+  if (!current) {
+    const running = draining.length + uncountedLive;
+    if (running >= MAX_TERMINAL_WORKERS) {
+      noCurrentReason = `${running} terminal workers are already running in ${options.paseoHome}; new terminals can open once one of them closes its last terminal`;
+      logger.warn(noCurrentReason);
+    } else {
+      const launched = await launchTerminalWorker({
+        paseoHome: options.paseoHome,
+        paseoVersion: options.paseoVersion,
+      });
+      const connection = await connectTerminalWorker({
+        socketPath: launched.record.socketPath,
+        secret: launched.record.secret,
+      });
+      logger.info(
+        { pid: launched.record.pid, runtime: launched.record.runtime ?? null },
+        "Launched terminal worker",
+      );
+      current = await createMember(launched.record, connection);
+    }
+  }
+
+  return createTerminalWorkerPool({
+    current,
+    draining,
+    incompatible: null,
+    ...(noCurrentReason ? { noCurrentReason } : {}),
+    closeAll,
+    onDrained: (member) => {
+      log("Released drained terminal worker", { pid: member.workerPid });
+      void pruneAfterExit(member.workerPid);
     },
   });
-  if (adopted) {
-    const count = await manager.adoptTerminals();
-    logger.info({ terminals: count }, "Adopted terminals from the running terminal worker");
+}
+
+// A worker deletes its own record as it exits.
+async function waitForWorkerRecordRemoval(paseoHome: string, workerPid: number): Promise<boolean> {
+  const recordPath = terminalWorkerRecordPath(paseoHome, workerPid);
+  const deadline = Date.now() + DRAINED_WORKER_EXIT_TIMEOUT_MS;
+  while (existsSync(recordPath)) {
+    if (Date.now() >= deadline) return false;
+    await delay(100);
   }
-  return manager;
+  return true;
 }

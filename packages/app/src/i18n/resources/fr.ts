@@ -2058,6 +2058,17 @@ export const fr: TranslationResources = {
   sidebarCallout: {
     dismiss: "Ignorer",
   },
+  daemonOutdated: {
+    title: "Daemon obsolète",
+    versions: "{{host}} exécute le daemon {{daemonVersion}}. Cette app est en {{appVersion}}.",
+    terminalsStayOpen: "La mise à jour redémarre le daemon. Les terminaux restent ouverts.",
+    terminalsClose: "La mise à jour redémarre le daemon et ferme les terminaux ouverts.",
+    desktopManaged: "Paseo Desktop gère ce daemon. Mettez à jour Paseo sur cet ordinateur.",
+    selfUpdateUnsupported:
+      "Ce daemon ne peut pas se mettre à jour lui-même. Mettez à jour Paseo sur cet ordinateur.",
+    update: "Mettre à jour",
+    updateFailedTitle: "Échec de la mise à jour du daemon",
+  },
   contextWindow: {
     noData: "Aucune donnée de contexte",
     accessibilityNoData: "Fenêtre de contexte : aucune donnée de contexte",

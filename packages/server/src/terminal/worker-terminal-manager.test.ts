@@ -39,7 +39,14 @@ import {
   reapTerminalWorkers,
   TerminalCleanupNotConfirmedError,
 } from "./terminal-worker-reaper.js";
-import { readTerminalWorkerRecord, terminalWorkerDirectory } from "./terminal-worker-record.js";
+import {
+  listTerminalWorkerRecords,
+  readTerminalWorkerRecord,
+  terminalWorkerDirectory,
+  type TerminalWorkerRecord,
+} from "./terminal-worker-record.js";
+import { TERMINAL_WORKER_PROTOCOL_OVERRIDE_ENV } from "./terminal-worker-protocol.js";
+import { TerminalWorkerIncompatibleError } from "./terminal-worker-pool.js";
 
 type TerminalRow = TerminalState["grid"][number];
 
@@ -1300,4 +1307,124 @@ it("rejects createTerminal and registers nothing when the worker cannot start th
   expect(manager.getTerminal("terminal-a")).toBeUndefined();
   expect(await manager.getTerminals("/workspace")).toEqual([]);
   expect(snapshots).toEqual([]);
+});
+
+// The live worker records in a home, by worker pid.
+function workerRecords(paseoHome: string): TerminalWorkerRecord[] {
+  return listTerminalWorkerRecords(paseoHome).flatMap((file) =>
+    "record" in file && !file.record.closing ? [file.record] : [],
+  );
+}
+
+// A worker launched while the override is set reports that protocol version; the variable is
+// restored as soon as it is up, so later workers report the build's own.
+async function startManagerWithWorkerProtocol(
+  paseoHome: string,
+  protocolVersion: number,
+): Promise<DaemonTerminalManager> {
+  const previous = process.env[TERMINAL_WORKER_PROTOCOL_OVERRIDE_ENV];
+  process.env[TERMINAL_WORKER_PROTOCOL_OVERRIDE_ENV] = String(protocolVersion);
+  try {
+    return await startRealWorkerManager({ paseoHome });
+  } finally {
+    if (previous === undefined) delete process.env[TERMINAL_WORKER_PROTOCOL_OVERRIDE_ENV];
+    else process.env[TERMINAL_WORKER_PROTOCOL_OVERRIDE_ENV] = previous;
+  }
+}
+
+// A terminal running an idle program in a worker that reports `protocolVersion`, left running
+// after its daemon lets go (stop --keep-terminals).
+async function leaveWorkerWithTerminal(
+  paseoHome: string,
+  protocolVersion: number,
+): Promise<{ terminalId: string; programPid: number; workerPid: number; cwd: string }> {
+  const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-protocol-"));
+  temporaryDirs.push(cwd);
+  const previous = await startManagerWithWorkerProtocol(paseoHome, protocolVersion);
+  const session = await previous.createTerminal({
+    workspaceId: "ws-protocol",
+    cwd,
+    ...nodeTerminalCommand("setInterval(() => {}, 1000);"),
+  });
+  const [record] = workerRecords(paseoHome);
+  await previous.detach();
+  return {
+    terminalId: session.id,
+    programPid: recordedTerminalPids(paseoHome).get(session.id)!,
+    workerPid: record!.pid,
+    cwd,
+  };
+}
+
+it("drains a worker one protocol older: it keeps its terminal, new ones open in a second worker, and it exits after its last", async () => {
+  const paseoHome = createTemporaryHome();
+  const old = await leaveWorkerWithTerminal(paseoHome, 0);
+
+  manager = await startRealWorkerManager({ paseoHome });
+
+  expect(manager.getTerminal(old.terminalId)).toBeDefined();
+  const workers = workerRecords(paseoHome);
+  expect(workers).toHaveLength(2);
+  const current = workers.find((record) => record.pid !== old.workerPid)!;
+  expect(current.protocolVersion).toBe(1);
+  const added = await manager.createTerminal({
+    workspaceId: "ws-protocol",
+    cwd: old.cwd,
+    ...nodeTerminalCommand("setInterval(() => {}, 1000);"),
+  });
+  trackTerminal(added);
+  const currentTerminals = readTerminalWorkerRecord(
+    join(terminalWorkerDirectory(paseoHome), `${current.pid}.json`),
+  ).terminals.map((entry) => entry.id);
+  expect(currentTerminals).toEqual([added.id]);
+  expect((await manager.getTerminals(old.cwd)).map((session) => session.id).sort()).toEqual(
+    [old.terminalId, added.id].sort(),
+  );
+
+  await manager.killTerminalAndWait(old.terminalId);
+
+  await waitForCondition(() => !isProcessAlive(old.workerPid), 10000);
+  expect(workerRecords(paseoHome).map((record) => record.pid)).toEqual([current.pid]);
+  expect(manager.getTerminal(added.id)).toBeDefined();
+});
+
+it("shuts down a worker two protocol versions old, closing its terminals", async () => {
+  const paseoHome = createTemporaryHome();
+  const old = await leaveWorkerWithTerminal(paseoHome, -1);
+
+  manager = await startRealWorkerManager({ paseoHome });
+
+  await waitForCondition(
+    () => !isProcessAlive(old.workerPid) && !isProcessAlive(old.programPid),
+    10000,
+  );
+  expect(manager.getTerminal(old.terminalId)).toBeUndefined();
+  const workers = workerRecords(paseoHome);
+  expect(workers).toHaveLength(1);
+  expect(workers[0]!.protocolVersion).toBe(1);
+});
+
+it("leaves a worker from a newer Paseo running, reports it incompatible, and closes it on a kill stop", async () => {
+  const paseoHome = createTemporaryHome();
+  const newer = await leaveWorkerWithTerminal(paseoHome, 2);
+
+  manager = await startRealWorkerManager({ paseoHome });
+
+  const unavailable = manager.getUnavailableError?.();
+  expect(unavailable).toBeInstanceOf(TerminalWorkerIncompatibleError);
+  expect(unavailable?.message).toContain("worker protocol 2");
+  await expect(manager.getTerminals(newer.cwd)).rejects.toBeInstanceOf(
+    TerminalWorkerIncompatibleError,
+  );
+  await expect(
+    manager.createTerminal({ workspaceId: "ws-protocol", cwd: newer.cwd }),
+  ).rejects.toBeInstanceOf(TerminalWorkerIncompatibleError);
+  expect(isProcessAlive(newer.programPid)).toBe(true);
+  expect(workerRecords(paseoHome).map((record) => record.pid)).toEqual([newer.workerPid]);
+
+  await manager.closeTerminals();
+
+  expect(isProcessAlive(newer.workerPid)).toBe(false);
+  expect(isProcessAlive(newer.programPid)).toBe(false);
+  expect(workerRecords(paseoHome)).toEqual([]);
 });

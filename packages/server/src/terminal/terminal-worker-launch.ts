@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { fileURLToPath } from "node:url";
 import { buildSelfNodeCommand } from "../server/paseo-env.js";
 import { ensurePrivateDirectory } from "../server/private-files.js";
 import {
@@ -9,6 +8,7 @@ import {
   terminalWorkerRecordPath,
   type TerminalWorkerRecord,
 } from "./terminal-worker-record.js";
+import { resolveTerminalWorkerEntry, type TerminalWorkerEntry } from "./terminal-worker-runtime.js";
 
 const LAUNCH_TIMEOUT_MS = 20_000;
 
@@ -17,31 +17,6 @@ export class TerminalWorkerLaunchError extends Error {
     super(message, options);
     this.name = "TerminalWorkerLaunchError";
   }
-}
-
-function resolveWorkerUrl(): URL {
-  const currentUrl = import.meta.url;
-  if (currentUrl.endsWith(".ts")) {
-    return new URL("./terminal-worker-process.ts", currentUrl);
-  }
-  return new URL("./terminal-worker-process.js", currentUrl);
-}
-
-function resolveWorkerExecArgv(): string[] {
-  if (!import.meta.url.endsWith(".ts")) {
-    return [];
-  }
-  const loaderUrl = new URL("./terminal-ts-loader.mjs", import.meta.url).href;
-  const importSource = [
-    'import { register } from "node:module";',
-    'import { pathToFileURL } from "node:url";',
-    `register(${JSON.stringify(loaderUrl)}, pathToFileURL("./"));`,
-  ].join(" ");
-  return [
-    "--experimental-strip-types",
-    "--import",
-    `data:text/javascript,${encodeURIComponent(importSource)}`,
-  ];
 }
 
 /**
@@ -53,12 +28,15 @@ export async function launchTerminalWorker(input: {
   paseoHome: string;
   paseoVersion: string;
   timeoutMs?: number;
+  /** Defaults to the copy of this installation's bundle (source in dev). */
+  entry?: TerminalWorkerEntry;
 }): Promise<{ record: TerminalWorkerRecord; recordPath: string }> {
   const recordId = randomUUID();
   ensurePrivateDirectory(terminalWorkerDirectory(input.paseoHome));
+  const entry = input.entry ?? resolveTerminalWorkerEntry(input);
   const launch = buildSelfNodeCommand([
-    ...resolveWorkerExecArgv(),
-    fileURLToPath(resolveWorkerUrl()),
+    ...entry.execArgv,
+    entry.scriptPath,
     "--launch",
     "--record-id",
     recordId,
@@ -66,6 +44,7 @@ export async function launchTerminalWorker(input: {
     input.paseoHome,
     "--paseo-version",
     input.paseoVersion,
+    ...(entry.runtime ? ["--runtime", entry.runtime] : []),
   ]);
   const stdout = await new Promise<string>((resolve, reject) => {
     execFile(

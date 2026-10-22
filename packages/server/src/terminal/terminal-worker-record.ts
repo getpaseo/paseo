@@ -31,10 +31,15 @@ const TerminalWorkerRecordSchema = z.object({
     startedAt: z.string().min(1),
     commandLine: z.string().min(1),
   }),
-  protocolVersion: z.number().int(),
+  // Read loosely: a version this daemon cannot interpret marks a worker from a newer Paseo
+  // (classifyTerminalWorkerProtocol), not an unreadable record.
+  protocolVersion: z.union([z.number(), z.string()]),
   paseoVersion: z.string(),
   socketPath: z.string().min(1),
   secret: z.string().min(1),
+  // The copy of the worker's files it runs from (a directory name under terminal-worker/), or
+  // null when it runs from source. A copy named by any record is never deleted.
+  runtime: z.string().nullable().optional(),
   terminals: z.array(TerminalWorkerTerminalEntrySchema),
   // Set only in a cleanup record (below), with what a cleanup could not confirm gone. A record
   // marked closing is never adopted: the next daemon or stop retries the cleanup instead.
@@ -49,7 +54,7 @@ export type TerminalWorkerRecord = z.infer<typeof TerminalWorkerRecordSchema>;
 // a terminal starts or exits. A cleanup that cannot confirm every process gone therefore keeps
 // its state in a cleanup record of its own (`closing-<recordId>.json`) that no worker writes, so
 // the kill intent and what it could not confirm survive any later worker rewrite.
-export type TerminalWorkerRecordKind = "worker" | "cleanup";
+type TerminalWorkerRecordKind = "worker" | "cleanup";
 
 export type TerminalWorkerRecordFile =
   | {
@@ -59,7 +64,7 @@ export type TerminalWorkerRecordFile =
       // The worker's own record file, when it still exists.
       workerRecordPath: string | null;
     }
-  | { path: string; kind: TerminalWorkerRecordKind; error: Error };
+  | { path: string; error: Error };
 
 // The worker's command line carries this marker followed by its record id, so a reused pid
 // running some other process (even another worker) never matches the record.
@@ -142,7 +147,6 @@ export function listTerminalWorkerRecords(paseoHome: string): TerminalWorkerReco
       if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
       errors.push({
         path: recordPath,
-        kind,
         error: error instanceof Error ? error : new Error(String(error)),
       });
     }

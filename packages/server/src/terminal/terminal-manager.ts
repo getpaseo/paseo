@@ -51,6 +51,11 @@ export type TerminalWorkspaceContributionChangedListener = (
 ) => void;
 
 export interface TerminalManager {
+  /**
+   * Set when this host's terminals cannot be served at all (a worker from a newer Paseo holds
+   * them). Callers that answer terminal requests report it instead of an empty list.
+   */
+  getUnavailableError?(): Error | null;
   getTerminals(cwd: string, options?: { workspaceId?: string }): Promise<TerminalSession[]>;
   createTerminal(options: {
     id?: string;
