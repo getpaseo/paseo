@@ -400,7 +400,7 @@ function contentToDeletionDiff(filePath: string, content: string): string {
   output.push(`diff --git a/${filePath} b/${filePath}`);
   output.push(`--- a/${filePath}`);
   output.push(`+++ /dev/null`);
-  const nonEmpty = lines.filter((l) => l.length > 0 || lines.indexOf(l) < lines.length - 1);
+  const nonEmpty = lines.slice(0, lines.at(-1) === "" ? -1 : undefined);
   if (nonEmpty.length > 0) {
     output.push(`@@ -1,${nonEmpty.length} +0,0 @@`);
     for (const line of nonEmpty) {
@@ -740,6 +740,9 @@ function parseFileChangePath(
 }
 
 function parseFileChangeKind(entry: Record<string, unknown>): string | undefined {
+  if (isRecord(entry.kind) && typeof entry.kind.type === "string") {
+    return entry.kind.type;
+  }
   return (
     (typeof entry.kind === "string" && entry.kind) ||
     (typeof entry.type === "string" && entry.type) ||
@@ -839,6 +842,28 @@ function resolveFileChangeTextFields(file: CodexFileChangeEntry | undefined): {
   return asEditTextFields(file.diff);
 }
 
+export function fileChangeToUnifiedDiff(file: CodexFileChangeEntry): string {
+  const { unifiedDiff, newString } = resolveFileChangeTextFields(file);
+  if (unifiedDiff?.startsWith("diff --git")) {
+    return unifiedDiff.replace(/\r?\n$/, "");
+  }
+  const header = `diff --git a/${file.path} b/${file.path}`;
+  if (unifiedDiff?.startsWith("--- ")) {
+    return `${header}\n${unifiedDiff.replace(/\r?\n$/, "")}`;
+  }
+  const left = file.kind === "add" ? "/dev/null" : `a/${file.path}`;
+  const right = file.kind === "delete" ? "/dev/null" : `b/${file.path}`;
+  const lines = [header, `--- ${left}`, `+++ ${right}`];
+  if (unifiedDiff) {
+    lines.push(unifiedDiff.replace(/\r?\n$/, ""));
+  } else if (newString) {
+    const contentLines = newString.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
+    lines.push(`@@ -0,0 +1,${contentLines.length} @@`);
+    lines.push(...contentLines.map((line) => `+${line}`));
+  }
+  return lines.join("\n");
+}
+
 function mapFileChangeItem(
   item: z.infer<typeof CodexFileChangeItemSchema>,
   options?: CodexMapperOptions,
@@ -873,17 +898,16 @@ function mapFileChangeItem(
   const error = item.error ?? null;
   const status = normalizeToolCallStatus(item.status, error, output);
   const firstFile = files[0];
-  const firstTextFields = resolveFileChangeTextFields(firstFile);
-  const hasFirstTextFields = Object.keys(firstTextFields).length > 0;
+  const textFields =
+    files.length > 1
+      ? { unifiedDiff: files.map(fileChangeToUnifiedDiff).join("\n\n") }
+      : resolveFileChangeTextFields(firstFile);
+  const hasTextFields = Object.keys(textFields).length > 0;
   const input = toNullableObject({
     ...inputBase,
-    ...(firstFile?.path && hasFirstTextFields ? { path: firstFile.path } : {}),
-    ...(hasFirstTextFields && firstTextFields.unifiedDiff
-      ? { patch: firstTextFields.unifiedDiff }
-      : {}),
-    ...(hasFirstTextFields && firstTextFields.newString
-      ? { content: firstTextFields.newString }
-      : {}),
+    ...(firstFile?.path && hasTextFields ? { path: firstFile.path } : {}),
+    ...(hasTextFields && textFields.unifiedDiff ? { patch: textFields.unifiedDiff } : {}),
+    ...(hasTextFields && textFields.newString ? { content: textFields.newString } : {}),
   });
 
   return {
