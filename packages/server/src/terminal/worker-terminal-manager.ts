@@ -166,7 +166,7 @@ export function createWorkerTerminalManager(
   const resolveCreateEnvironment =
     managerOptions.resolveCreateEnvironment ?? resolveDaemonTerminalCreateEnvironment;
   const pendingRequests = new Map<string, PendingRequest>();
-  const inFlight = new Set<Promise<unknown>>();
+  const inFlight = new Set<Promise<void>>();
   const recordsById = new Map<string, WorkerTerminalRecord>();
   const terminalIdsByCwd = new Map<string, Set<string>>();
   const terminalActivityTokenById = new Map<string, string>();
@@ -653,8 +653,13 @@ export function createWorkerTerminalManager(
         reject(error);
       });
     });
-    const tracked = request.finally(() => inFlight.delete(tracked));
-    inFlight.add(tracked);
+    // Tracks settlement only; the caller handles the rejection.
+    const settled = request.then(
+      () => undefined,
+      () => undefined,
+    );
+    inFlight.add(settled);
+    void settled.finally(() => inFlight.delete(settled));
     return request;
   }
 
