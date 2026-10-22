@@ -10,6 +10,7 @@ export const ptBR: TranslationResources = {
       close: "Fechar",
       copy: "Copiar",
       dismiss: "Dispensar",
+      done: "Concluído",
       retry: "Tentar novamente",
       search: "Buscar",
       select: "Selecionar",

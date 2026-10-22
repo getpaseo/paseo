@@ -10,6 +10,7 @@ export const zhCN: TranslationResources = {
       close: "关闭",
       copy: "复制",
       dismiss: "关闭",
+      done: "完成",
       retry: "重试",
       search: "搜索",
       select: "选择",

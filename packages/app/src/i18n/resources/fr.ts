@@ -10,6 +10,7 @@ export const fr: TranslationResources = {
       close: "Fermer",
       copy: "Copie",
       dismiss: "Rejeter",
+      done: "Terminé",
       retry: "Réessayer",
       search: "Recherche",
       select: "Sélectionner",

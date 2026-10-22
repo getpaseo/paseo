@@ -10,6 +10,7 @@ export const ja: TranslationResources = {
       close: "閉じる",
       copy: "コピー",
       dismiss: "閉じる",
+      done: "完了",
       retry: "再試行",
       search: "検索",
       select: "選択",

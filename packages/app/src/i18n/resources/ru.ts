@@ -10,6 +10,7 @@ export const ru: TranslationResources = {
       close: "Закрывать",
       copy: "Копировать",
       dismiss: "Увольнять",
+      done: "Готово",
       retry: "Повторить попытку",
       search: "Поиск",
       select: "Выбирать",

@@ -3,6 +3,10 @@ import {
   View,
   Text,
   TextInput,
+  Pressable,
+  Keyboard,
+  Platform,
+  InputAccessoryView,
   useWindowDimensions,
   NativeSyntheticEvent,
   TextInputContentSizeChangeEventData,
@@ -17,6 +21,7 @@ import {
   useLayoutEffect,
   useImperativeHandle,
   useMemo,
+  useId,
   forwardRef,
 } from "react";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -585,6 +590,42 @@ function FocusHint({
   );
 }
 
+/**
+ * iOS phones get a native accessory bar above the keyboard; every other form
+ * factor keeps the platform default.
+ */
+function useKeyboardAccessoryViewID(isCompact: boolean): string | undefined {
+  const id = useId().replace(/[^a-zA-Z0-9_-]/g, "");
+  // shortcut: with a hardware keyboard the 44pt bar alone is below the 120pt shift floor (keyboard-shift-policy.ts) and can overlap the composer; hide the bar or lower the floor if users report it.
+  return Platform.OS === "ios" && !Platform.isPad && isCompact
+    ? `composer-keyboard-accessory-${id}`
+    : undefined;
+}
+
+function KeyboardAccessory({
+  viewID,
+  doneLabel,
+}: {
+  viewID: string | undefined;
+  doneLabel: string;
+}) {
+  if (!viewID) return null;
+  return (
+    <InputAccessoryView nativeID={viewID}>
+      <View style={styles.keyboardAccessoryBar}>
+        <Pressable
+          style={styles.keyboardAccessoryDoneButton}
+          onPress={Keyboard.dismiss}
+          accessibilityRole="button"
+          accessibilityLabel={doneLabel}
+        >
+          <Text style={styles.keyboardAccessoryDoneText}>{doneLabel}</Text>
+        </Pressable>
+      </View>
+    </InputAccessoryView>
+  );
+}
+
 interface ComposerTextSurfaceProps {
   readOnly: boolean;
   value: string;
@@ -605,6 +646,7 @@ interface ComposerTextSurfaceProps {
   focusHintVisible: boolean;
   focusInputKeys: ShortcutChord | null | undefined;
   focusHintLabel: string;
+  inputAccessoryViewID: string | undefined;
 }
 
 /**
@@ -642,6 +684,7 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
         onKeyPress={props.onKeyPress}
         onSelectionChange={props.onSelectionChange}
         autoFocus={props.autoFocus}
+        inputAccessoryViewID={props.inputAccessoryViewID}
       />
       <FocusHint
         visible={props.focusHintVisible}
@@ -1149,6 +1192,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const mode = resolveComposerInputMode(inputMode);
     const { t } = useTranslation();
     const isCompact = useIsCompactFormFactor();
+    const keyboardAccessoryViewID = useKeyboardAccessoryViewID(isCompact);
     const { height: windowHeight } = useWindowDimensions();
     const maxInputHeight = resolveMaxInputHeight(windowHeight);
     const buttonIconSize = isWeb ? ICON_SIZE.md : ICON_SIZE.lg;
@@ -1737,6 +1781,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
             focusHintLabel={t("composer.input.focusHint", {
               shortcut: focusInputKeys ? formatShortcut(focusInputKeys[0], getShortcutOs()) : "",
             })}
+            inputAccessoryViewID={keyboardAccessoryViewID}
           />
 
           {/* Button row */}
@@ -1792,6 +1837,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
             </View>
           </View>
         </View>
+
+        <KeyboardAccessory viewID={keyboardAccessoryViewID} doneLabel={t("common.actions.done")} />
 
         <View
           style={overlayContainerStyle}
@@ -1883,6 +1930,25 @@ const styles = StyleSheet.create((theme: Theme) => ({
   readOnlyText: {
     minHeight: MIN_INPUT_HEIGHT,
     color: theme.colors.foregroundMuted,
+  },
+  keyboardAccessoryBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    // why: 44pt is the standard iOS keyboard accessory/toolbar height.
+    height: 44,
+    paddingHorizontal: theme.spacing[4],
+    backgroundColor: theme.colors.surface2,
+    borderTopWidth: theme.borderWidth[1],
+    borderTopColor: theme.colors.border,
+  },
+  keyboardAccessoryDoneButton: {
+    paddingVertical: theme.spacing[1],
+  },
+  keyboardAccessoryDoneText: {
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.accent,
   },
   buttonRow: {
     flexDirection: "row",

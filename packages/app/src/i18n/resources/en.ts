@@ -8,6 +8,7 @@ export const en = {
       close: "Close",
       copy: "Copy",
       dismiss: "Dismiss",
+      done: "Done",
       retry: "Retry",
       search: "Search",
       select: "Select",

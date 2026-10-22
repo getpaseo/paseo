@@ -10,6 +10,7 @@ export const ar: TranslationResources = {
       close: "يغلق",
       copy: "ينسخ",
       dismiss: "رفض",
+      done: "تم",
       retry: "أعد المحاولة",
       search: "يبحث",
       select: "يختار",

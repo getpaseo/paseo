@@ -10,6 +10,7 @@ export const ko: TranslationResources = {
       close: "닫기",
       copy: "복사",
       dismiss: "닫기",
+      done: "완료",
       retry: "다시 시도",
       search: "검색",
       select: "선택",

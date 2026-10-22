@@ -10,6 +10,7 @@ export const es: TranslationResources = {
       close: "Cerca",
       copy: "Copiar",
       dismiss: "Despedir",
+      done: "Listo",
       retry: "Rever",
       search: "Buscar",
       select: "Seleccionar",
