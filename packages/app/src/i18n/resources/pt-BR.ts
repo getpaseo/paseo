@@ -2249,7 +2249,7 @@ export const ptBR: TranslationResources = {
       automaticHint: "O Paseo escolhe um modelo rápido disponível",
       preferredHint: "Escolha o modelo que o Paseo usa",
       model: "Modelo",
-      fallbackHint: "Se ele não estiver disponível, o Paseo usa outro modelo disponível",
+      modelHint: "Somente este modelo é usado. Se ele falhar, o Paseo não tenta outro modelo",
       docs: "Documentação",
       saveError: "Não foi possível atualizar a geração de metadados",
     },

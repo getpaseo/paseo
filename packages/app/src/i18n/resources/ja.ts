@@ -2237,7 +2237,7 @@ export const ja: TranslationResources = {
       automaticHint: "Paseo が利用可能な高速モデルを選択します",
       preferredHint: "Paseo が使用するモデルを選択します",
       model: "モデル",
-      fallbackHint: "利用できない場合、Paseo は別の利用可能なモデルを使用します",
+      modelHint: "このモデルのみを使用します。失敗しても、Paseo は別のモデルを試しません",
       docs: "ドキュメント",
       saveError: "メタデータ生成を更新できません",
     },

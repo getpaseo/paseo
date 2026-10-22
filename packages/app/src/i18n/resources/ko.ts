@@ -2226,7 +2226,7 @@ export const ko: TranslationResources = {
       automaticHint: "Paseo가 사용 가능한 빠른 모델을 선택합니다",
       preferredHint: "Paseo에서 사용할 모델을 선택하세요",
       model: "모델",
-      fallbackHint: "사용할 수 없으면 Paseo가 다른 사용 가능한 모델을 사용합니다",
+      modelHint: "이 모델만 사용합니다. 실패해도 Paseo는 다른 모델을 시도하지 않습니다",
       docs: "문서",
       saveError: "메타데이터 생성을 업데이트할 수 없습니다",
     },

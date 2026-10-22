@@ -2193,7 +2193,7 @@ export const zhCN: TranslationResources = {
       automaticHint: "Paseo 会选择一个可用的快速模型",
       preferredHint: "选择 Paseo 使用的模型",
       model: "模型",
-      fallbackHint: "如果不可用，Paseo 会改用其他可用模型",
+      modelHint: "只使用此模型。如果失败，Paseo 不会尝试其他模型",
       docs: "文档",
       saveError: "无法更新元数据生成设置",
     },

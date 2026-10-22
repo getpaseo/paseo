@@ -2264,7 +2264,7 @@ export const es: TranslationResources = {
       automaticHint: "Paseo elige un modelo rápido disponible",
       preferredHint: "Elige el modelo que usa Paseo",
       model: "Modelo",
-      fallbackHint: "Si no está disponible, Paseo usa otro modelo disponible",
+      modelHint: "Solo se usa este modelo. Si falla, Paseo no prueba otro modelo",
       docs: "Documentación",
       saveError: "No se pudo actualizar la generación de metadatos",
     },
