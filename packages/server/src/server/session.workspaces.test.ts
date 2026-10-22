@@ -6403,7 +6403,9 @@ test("listWorkspaceDescriptorsSnapshot keeps git workspaces on the baseline desc
 
   expect(describeWorkspaceRecord).toHaveBeenCalledWith(workspace, project);
   expect(describeWorkspaceRecordWithGitData).not.toHaveBeenCalled();
-  expect(descriptors).toEqual([baselineDescriptor]);
+  expect(descriptors).toEqual([
+    { ...baselineDescriptor, createdAt: workspace.createdAt, lastUserMessageAt: null },
+  ]);
 });
 
 test("lists Git runtime for a checkout explicitly owned by a non-Git project", async () => {
