@@ -145,6 +145,21 @@ async function connect(harness: Harness): Promise<DaemonClient> {
   }, "cannot connect to the daemon");
 }
 
+// A plain `paseo daemon stop`: SIGTERM on POSIX, the shutdown RPC where there is no signal
+// for it (Windows refuses a graceful stop without one).
+async function stopDaemon(harness: Harness): Promise<void> {
+  await stopDaemonInstance(harness.home, {
+    requestShutdown: async () => {
+      const client = await connect(harness);
+      try {
+        await client.shutdownServer();
+      } finally {
+        await client.close();
+      }
+    },
+  });
+}
+
 async function daemonWorkerPid(client: DaemonClient): Promise<number> {
   return (await client.getDaemonStatus()).pid;
 }
@@ -490,7 +505,7 @@ describe("terminals when the daemon stops", { timeout: 240_000 }, () => {
       );
       const workerPid = currentWorkerRecord(harness.home).pid;
       await client.close();
-      await stopDaemonInstance(harness.home);
+      await stopDaemon(harness);
       await expectAllClosed(harness.home, [terminal.shellPid, terminal.sleepPid, workerPid]);
     },
   );
@@ -580,7 +595,7 @@ describe("terminals when the daemon stops", { timeout: 240_000 }, () => {
       ],
     });
 
-    await stopDaemonInstance(harness.home);
+    await stopDaemon(harness);
     expect(isAlive(reused.pid!)).toBe(true);
     expect(isAlive(earlierBoot.pid!)).toBe(true);
     expect(liveRecords(harness.home)).toEqual([]);
