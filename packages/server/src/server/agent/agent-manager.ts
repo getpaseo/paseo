@@ -1429,7 +1429,7 @@ export class AgentManager {
       {
         reason: "resume",
         purpose,
-        workspaceId: options?.workspaceId ?? null,
+        workspaceId: options?.workspaceId ?? record?.workspaceId ?? null,
       },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
@@ -5350,12 +5350,16 @@ export class AgentManager {
       const transformed = await this.pluginLifecycle.before("agent.session_open", request);
       env = transformed.env;
     }
+    // PASEO_WORKSPACE_ID lets an agent rename or archive its own workspace; several workspaces can
+    // share one cwd, so the agent can't work it out from PASEO_AGENT_CWD.
+    const workspaceId = opening?.workspaceId;
     const context: AgentLaunchContext = {
       agentId,
       env: {
         ...env,
         PASEO_AGENT_ID: agentId,
         PASEO_AGENT_CWD: cwd,
+        ...(workspaceId ? { PASEO_WORKSPACE_ID: workspaceId } : {}),
       },
     };
     if (
