@@ -2,7 +2,7 @@ import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import type { HubExecutionAgentValidationIssue } from "@getpaseo/protocol/messages";
 
 import type { ProviderSnapshotEntry } from "./agent-sdk-types.js";
-import { filterSelectableAgentModels } from "./agent-sdk-types.js";
+import { filterPickerAgentModels, filterSelectableAgentModels } from "./agent-sdk-types.js";
 
 export interface AgentConfigurationValidationInput {
   provider: string;
@@ -22,8 +22,10 @@ export function validateAgentConfigurationAgainstProvider({
   provider,
 }: AgentConfigurationValidationContext): HubExecutionAgentValidationIssue[] {
   const issues: HubExecutionAgentValidationIssue[] = [];
-  const models = filterSelectableAgentModels(provider.models);
   const requestedModel = input.model;
+  const models = requestedModel
+    ? filterSelectableAgentModels(provider.models)
+    : filterPickerAgentModels(provider.models);
   const selectedModel = requestedModel
     ? models.find((model) => model.id === requestedModel || model.aliases?.includes(requestedModel))
     : (models.find((model) => model.isDefault) ?? models[0]);

@@ -84,6 +84,50 @@ function makeSubsystem(options: MakeOptions = {}) {
 }
 
 describe("ProviderCatalogSession", () => {
+  it.each([false, true])(
+    "projects picker visibility for compact=%s without revoking saved selections",
+    async (compact) => {
+      const legacy = {
+        provider: "opencode" as const,
+        id: "minimax/MiniMax-M2.7",
+        label: "M2.7",
+        isVisibleInPicker: false,
+      };
+      const flash = {
+        provider: "opencode" as const,
+        id: "minimax/MiniMax-M3.1-Flash",
+        label: "Flash",
+      };
+      const entries: ProviderSnapshotEntry[] = [
+        { provider: "opencode", status: "ready", enabled: true, models: [flash, legacy] },
+      ];
+      const { subsystem, emitted } = makeSubsystem({
+        visibleProviders: new Set(["opencode"]),
+        supportsCompactProviderSnapshots: compact,
+        snapshot: { getSnapshot: () => createProviderSnapshot(entries) },
+      });
+      await subsystem.handleGetProvidersSnapshotRequest({
+        type: "get_providers_snapshot_request",
+        requestId: "snapshot",
+      });
+      const payload = findByType(emitted, "get_providers_snapshot_response")!.payload;
+      const projected = compact
+        ? expandProviderSnapshot(payload.compactSnapshot!)
+        : payload.entries;
+      expect(projected[0]!.models![1]).toMatchObject({
+        id: legacy.id,
+        label: legacy.label,
+        isSelectable: false,
+      });
+      await subsystem.handleListProviderModelsRequest({
+        type: "list_provider_models_request",
+        requestId: "models",
+        provider: "opencode",
+      });
+      expect(findByType(emitted, "list_provider_models_response")?.payload.models).toEqual([flash]);
+      expect(legacy).not.toHaveProperty("isSelectable");
+    },
+  );
   it("PUSH gates invisible providers and downgrades unknown mode icons for legacy clients", () => {
     const { subsystem, emitted, pushSnapshotChange } = makeSubsystem({
       visibleProviders: new Set(["codex"]),

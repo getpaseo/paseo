@@ -106,6 +106,17 @@ export class OpenCodeBridge {
     };
   }
 
+  isPaseoPlugin(specifier: string): boolean {
+    return specifier === this.pluginUrl;
+  }
+
+  isPaseoV2Plugin(specifier: string): boolean {
+    return (
+      this.v2PluginUrl !== null &&
+      (specifier === this.v2PluginUrl || specifier === fileURLToPath(this.v2PluginUrl))
+    );
+  }
+
   decorateServerEnv(env: Record<string, string>): Record<string, string> {
     const pluginUrl = this.requirePluginUrl();
     const options: OpenCodePluginOptions = {

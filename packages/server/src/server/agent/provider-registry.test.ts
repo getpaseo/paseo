@@ -1593,6 +1593,38 @@ describe("model merging", () => {
     expect(defaultModel?.id).toBe("profile-default");
   });
 
+  test("an explicit profile model restores a hidden ordinary choice without changing its ID", async () => {
+    mockState.runtimeModels.set("codex", [
+      {
+        provider: "codex",
+        id: "minimax/MiniMax-M2.7",
+        label: "M2.7",
+        isVisibleInPicker: false,
+        metadata: { catalogOrigin: "builtin", contextWindowMaxTokens: 123456 },
+      },
+    ]);
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        codex: {
+          additionalModels: [{ id: "minimax/MiniMax-M2.7", label: "My native override" }],
+        },
+      },
+    });
+    const { models } = await registry.codex.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/registry-models",
+      force: false,
+    });
+    expect(models).toEqual([
+      expect.objectContaining({
+        id: "minimax/MiniMax-M2.7",
+        label: "My native override",
+        isVisibleInPicker: true,
+        metadata: { catalogOrigin: "custom", contextWindowMaxTokens: 123456 },
+      }),
+    ]);
+  });
+
   test("explicit additional models override hidden compatibility entries", async () => {
     mockState.runtimeModels.set("claude", [
       {

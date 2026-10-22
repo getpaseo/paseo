@@ -5,7 +5,9 @@ import path from "node:path";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { Event as OpenCodeEvent } from "@opencode-ai/sdk/v2/client";
-import type { OpencodeClient } from "@opencode-ai/sdk/v2/client";
+import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2/client";
+import { resolveStructuredGenerationProviders } from "../structured-generation-providers.js";
+import { filterPickerAgentModels } from "../agent-sdk-types.js";
 import type { OpenCodeEventSource } from "./opencode/event-consumer.js";
 import {
   __openCodeInternals,
@@ -681,6 +683,166 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     await session.close();
     rmSync(cwd, { recursive: true, force: true });
   }, 120_000);
+
+  test.each([
+    {
+      config: {
+        provider: {
+          minimax: {
+            models: { "MiniMax-M2.7": {} },
+            options: { baseURL: "https://api.minimax.io/anthropic" },
+          },
+        },
+      },
+    },
+    { config: { plugin: ["file:///workspace/.opencode/plugins/custom-model.ts"] } },
+    { config: undefined },
+  ])(
+    "preserves native MiniMax overrides or unknown provenance at catalog discovery",
+    async ({ config }) => {
+      const runtime = new TestOpenCodeHarness();
+      const native = new TestOpenCodeClient();
+      native.providerListResponse = {
+        data: {
+          connected: ["minimax"],
+          all: [
+            {
+              id: "minimax",
+              name: "MiniMax",
+              source: "api",
+              models: { "MiniMax-M2.7": { name: "My model" } },
+            },
+          ],
+        },
+      };
+      native.configGetResponse = config ? { data: config } : { error: "configuration unavailable" };
+      runtime.enqueueClient(native);
+      const cwd = tmpCwd();
+      try {
+        const client = new OpenCodeAgentClient(logger, undefined, {
+          serverManager: runtime,
+          createClient: runtime.createClient,
+          resolveHomeDir: () => cwd,
+        });
+        const catalog = await client.fetchCatalog({ scope: "global", force: false });
+        expect(filterPickerAgentModels(catalog.models).map((model) => model.id)).toEqual([
+          "minimax/MiniMax-M2.7",
+        ]);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test("MiniMax catalog choices and saved selections reach the SDK HTTP body unchanged", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const catalogClient = new TestOpenCodeClient();
+    catalogClient.providerListResponse = {
+      data: {
+        connected: ["opencode"],
+        all: [
+          {
+            id: "opencode",
+            name: "OpenCode",
+            source: "api",
+            models: {
+              "minimax-m2.5-free": { name: "Legacy" },
+              "minimax-m3": { name: "M3", limit: { context: 123456, output: 6543 } },
+              "minimax-m3.1-flash-free": { name: "Flash" },
+            },
+          },
+        ],
+      },
+    };
+    runtime.enqueueClient(catalogClient);
+    const cwd = tmpCwd();
+    try {
+      const client = new OpenCodeAgentClient(logger, undefined, {
+        serverManager: runtime,
+        createClient: runtime.createClient,
+        resolveHomeDir: () => cwd,
+      });
+      const catalog = await client.fetchCatalog({ scope: "global", force: false });
+      expect(catalogClient.calls.configGet).toHaveLength(1);
+      expect(filterPickerAgentModels(catalog.models).map((model) => model.id)).toEqual([
+        "opencode/minimax-m3.1-flash-free",
+        "opencode/minimax-m3",
+      ]);
+      const candidates = await resolveStructuredGenerationProviders({
+        cwd,
+        providerSnapshotManager: {
+          listProviders: async () => [
+            { provider: "opencode", status: "ready", enabled: true, models: catalog.models },
+          ],
+        },
+      });
+      expect(candidates.map((candidate) => candidate.model)).toEqual([
+        "opencode/minimax-m3.1-flash-free",
+        "opencode/minimax-m3",
+      ]);
+      const sent: Array<{ path: string; body: unknown }> = [];
+      const sdk = createOpencodeClient({
+        baseUrl: "http://runtime.invalid",
+        fetch: async (request) => {
+          const outgoing = request instanceof Request ? request : new Request(request);
+          sent.push({ path: new URL(outgoing.url).pathname, body: await outgoing.json() });
+          return new Response(null, { status: 204 });
+        },
+      });
+      for (const model of [
+        ...candidates.map((candidate) => candidate.model!),
+        "minimax/MiniMax-M3.1-Flash",
+        "minimax-cn/MiniMax-M3.1-Flash",
+        "openrouter/minimax/minimax-m3.1-flash:free",
+        "opencode/minimax-m2.5-free",
+        "minimax/MiniMax-M2.7",
+        "custom/my-saved-model",
+      ]) {
+        const execution = new TestOpenCodeClient();
+        execution.sessionCreateResponse = { data: { id: "ses_minimax" } };
+        execution.sessionPromptAsyncImplementation = async (parameters) => {
+          const response = await sdk.session.promptAsync(
+            parameters as Parameters<typeof sdk.session.promptAsync>[0],
+          );
+          execution.emitEvent({ type: "session.idle", properties: { sessionID: "ses_minimax" } });
+          return response;
+        };
+        runtime.enqueueClient(execution);
+        const session = await client.createSession({
+          provider: "opencode",
+          cwd,
+          model,
+          thinkingOptionId: "high",
+        });
+        try {
+          await collectTurnEvents(streamSession(session, "Keep the chosen model"));
+        } finally {
+          await session.close();
+        }
+      }
+      expect(sent).toEqual(
+        [
+          ["opencode", "minimax-m3.1-flash-free"],
+          ["opencode", "minimax-m3"],
+          ["minimax", "MiniMax-M3.1-Flash"],
+          ["minimax-cn", "MiniMax-M3.1-Flash"],
+          ["openrouter", "minimax/minimax-m3.1-flash:free"],
+          ["opencode", "minimax-m2.5-free"],
+          ["minimax", "MiniMax-M2.7"],
+          ["custom", "my-saved-model"],
+        ].map(([providerID, modelID]) => ({
+          path: "/session/ses_minimax/prompt_async",
+          body: expect.objectContaining({
+            model: { providerID, modelID },
+            variant: "high",
+            parts: [{ type: "text", text: "Keep the chosen model" }],
+          }),
+        })),
+      );
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 
   test.each([
     { name: "absent", variants: {} },

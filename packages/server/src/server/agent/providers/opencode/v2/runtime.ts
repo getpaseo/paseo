@@ -1,6 +1,7 @@
 import { decorateOpenCodeV2Env, materializeOpenCodeV2Plugin } from "../bridge.js";
 import { resolvePaseoHome } from "../../../../paseo-home.js";
 import { OpenCode } from "@opencode/client";
+import { fileURLToPath } from "node:url";
 import type { V2Api } from "./api.js";
 import { randomBytes } from "node:crypto";
 import { mkdir } from "node:fs/promises";
@@ -45,6 +46,15 @@ export interface V2RuntimeAcquireOptions {
 
 // The runtime owns a credential for each subprocess; sessions only receive its authenticated client.
 export class V2Runtime {
+  private pluginUrl?: string;
+
+  isPaseoPlugin(specifier: string): boolean {
+    return (
+      this.pluginUrl !== undefined &&
+      (specifier === this.pluginUrl || specifier === fileURLToPath(this.pluginUrl))
+    );
+  }
+
   private current: Promise<Generation> | null = null;
   private generations = new Set<Generation>();
   private starts = new Set<Promise<Generation>>();
@@ -160,9 +170,12 @@ export class V2Runtime {
       ...settings?.env,
       ...env,
     };
+    if (!this.options.decorateEnv) {
+      this.pluginUrl ??= await materializeOpenCodeV2Plugin(resolvePaseoHome());
+    }
     const decorated = this.options.decorateEnv
       ? await this.options.decorateEnv(configured)
-      : decorateOpenCodeV2Env(configured, await materializeOpenCodeV2Plugin(resolvePaseoHome()));
+      : decorateOpenCodeV2Env(configured, this.pluginUrl!);
     const args = [...launch.args, "serve", "--hostname", "127.0.0.1", "--port", "0"];
     const process = spawnProcess(launch.command, args, {
       cwd,

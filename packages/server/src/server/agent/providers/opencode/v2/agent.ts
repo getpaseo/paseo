@@ -41,19 +41,22 @@ import type { OpenCodeBridge } from "../bridge.js";
 import { resolveOpenCodeHomeDir } from "../paths.js";
 import { V2Runtime, type V2Connection } from "./runtime.js";
 import { modelRef, modesFromV2, modelsFromV2 } from "./mapping.js";
+import { applyV2MiniMaxCatalog } from "./minimax-catalog.js";
+import { raceProviderRefreshAbort } from "../../../provider-refresh-deadline.js";
 
 interface V2AgentOptions {
   logger: Logger;
   settings?: ProviderRuntimeSettings;
   managedProcesses?: ManagedProcessRegistry;
   bridge?: OpenCodeBridge;
-  runtime?: Pick<V2Runtime, "acquire" | "shutdown">;
+  runtime?: Pick<V2Runtime, "acquire" | "shutdown"> & Partial<Pick<V2Runtime, "isPaseoPlugin">>;
 }
 
 export class OpenCodeV2AgentClient implements AgentClient {
   readonly provider = "opencode";
   readonly capabilities: AgentCapabilityFlags;
-  private readonly runtime: Pick<V2Runtime, "acquire" | "shutdown">;
+  private readonly runtime: Pick<V2Runtime, "acquire" | "shutdown"> &
+    Partial<Pick<V2Runtime, "isPaseoPlugin">>;
   private readonly connections = new Map<string, V2Connection>();
   constructor(private readonly options: V2AgentOptions) {
     this.capabilities = { ...V2_CAPABILITIES, supportsNativePaseoTools: Boolean(options.bridge) };
@@ -94,7 +97,32 @@ export class OpenCodeV2AgentClient implements AgentClient {
         throw new Error(
           "OpenCode has no connected providers. Authenticate using opencode auth login.",
         );
-      return { models: modelsFromV2(models.data), modes: modesFromV2(agents.data) };
+      let catalog = modelsFromV2(models.data);
+      if (catalog.some((model) => /minimax-m\d/i.test(model.id))) {
+        try {
+          const [config, plugins] = await raceProviderRefreshAbort(
+            request.signal,
+            Promise.all([
+              activity("config.get", () => connection.client.config.get({ location }, request)),
+              activity("plugin.list", () => connection.client.plugin.list({ location }, request)),
+            ]),
+          );
+          catalog = applyV2MiniMaxCatalog(
+            catalog,
+            config,
+            plugins.data,
+            (specifier) =>
+              (this.options.bridge?.isPaseoV2Plugin(specifier) ?? false) ||
+              (this.runtime.isPaseoPlugin?.(specifier) ?? false),
+          );
+        } catch {
+          request.signal?.throwIfAborted();
+          this.options.logger.warn(
+            "OpenCode v2 provenance unavailable; preserving MiniMax catalog choices",
+          );
+        }
+      }
+      return { models: catalog, modes: modesFromV2(agents.data) };
     } finally {
       await connection.release();
     }

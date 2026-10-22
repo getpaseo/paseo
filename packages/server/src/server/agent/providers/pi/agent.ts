@@ -67,6 +67,11 @@ import {
 import { materializeProviderImage } from "../provider-image-output.js";
 import { PiCliRuntime } from "./cli-runtime.js";
 import {
+  applyPiMiniMaxCatalog,
+  createPiCatalogBridge,
+  readPiCatalogProvenance,
+} from "./minimax-catalog.js";
+import {
   createPiExtensionHost,
   piExtensionRuntimeBridge,
   type PiExtensionEventOutput,
@@ -271,6 +276,7 @@ type PiMcpInjection =
 interface PiPaseoExtensionOptions {
   systemPrompt?: string;
   mcpServers?: Record<string, PiMcpServerConfig>;
+  catalogSource?: string;
 }
 
 interface PiTempFile {
@@ -616,12 +622,14 @@ function createPiMcpConfigFile(
 function createPiPaseoExtensionFile({
   systemPrompt,
   mcpServers = {},
+  catalogSource,
 }: PiPaseoExtensionOptions): PiTempFile {
   const dir = mkdtempSync(join(tmpdir(), "paseo-pi-extension-"));
   const filePath = join(dir, "paseo-integration.mjs");
   writeFileSync(
     filePath,
-    `
+    catalogSource ??
+      `
 	function decodePayload(encoded) {
 	  return JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
 	}
@@ -2662,6 +2670,8 @@ export class PiRpcAgentClient implements AgentClient {
   ): Promise<ProviderCatalog> {
     const providerOptions = PiProviderOptionsSchema.parse(options.providerOptions ?? {});
     const runtime = this.resolveRuntime(providerOptions.rpcTimeoutMs);
+    const catalogBridge = createPiCatalogBridge();
+    const catalogExtension = createPiPaseoExtensionFile({ catalogSource: catalogBridge.source });
     let runtimeSession: PiRuntimeSession | undefined;
     let closePromise: Promise<void> | undefined;
     const closeSession = () => {
@@ -2676,6 +2686,8 @@ export class PiRpcAgentClient implements AgentClient {
         runtimeSession = await runtime.startSession({
           cwd: options.scope === "global" ? homedir() : options.cwd,
           signal: context?.signal,
+          noSession: true,
+          extensionPaths: [catalogExtension.path],
         });
         if (context?.signal.aborted) await closeSession();
       });
@@ -2699,10 +2711,25 @@ export class PiRpcAgentClient implements AgentClient {
           return mapped;
         }),
       );
-      return { models, modes: [] };
+      let provenance;
+      if (piModels.some((model) => /minimax-m\d/i.test(model.id))) {
+        try {
+          provenance = await runProviderRefreshActivity(context, "catalog_provenance", () =>
+            readPiCatalogProvenance(catalogSession, catalogBridge, context?.signal),
+          );
+        } catch {
+          context?.signal.throwIfAborted();
+          this.logger.warn("Pi provenance unavailable; preserving MiniMax catalog choices");
+        }
+      }
+      return { models: applyPiMiniMaxCatalog(models, provenance, piModels), modes: [] };
     } finally {
       context?.signal.removeEventListener("abort", handleAbort);
-      await closeSession();
+      try {
+        await closeSession();
+      } finally {
+        catalogExtension.cleanup();
+      }
     }
   }
 

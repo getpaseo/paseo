@@ -24,6 +24,7 @@ import type { TerminalManager } from "../../terminal/terminal-manager.js";
 
 import {
   getAgentStreamEventTurnId,
+  filterPickerAgentModels,
   type AgentCapabilityFlags,
   type AgentClient,
   type AgentCreateSessionOptions,
@@ -5279,7 +5280,8 @@ export class AgentManager {
         cwd: config.cwd,
         force: false,
       });
-      return (catalog.models.find((model) => model.isDefault) ?? catalog.models[0])?.id;
+      const models = filterPickerAgentModels(catalog.models);
+      return (models.find((model) => model.isDefault) ?? models[0])?.id;
     } catch {
       // Provider may not support model listing — leave model undefined.
       return undefined;

@@ -18,6 +18,65 @@ class ProviderSnapshots {
 }
 
 describe("resolveStructuredGenerationProviders", () => {
+  test("tries Flash before M3 regardless of catalog order and preserves explicit legacy choices", async () => {
+    const snapshots = new ProviderSnapshots([
+      {
+        provider: "opencode",
+        status: READY,
+        enabled: true,
+        models: [
+          { provider: "opencode", id: "opencode/minimax-m3", label: "M3" },
+          { provider: "opencode", id: "opencode/minimax-m3.1-flash-free", label: "Flash" },
+        ],
+      },
+    ]);
+    const providers = await resolveStructuredGenerationProviders({
+      cwd: "/workspace/repo",
+      providerSnapshotManager: snapshots,
+      daemonConfig: {
+        metadataGeneration: {
+          providers: [{ provider: "opencode", model: "minimax/MiniMax-M2.7" }],
+        },
+      },
+      currentSelection: { provider: "opencode", model: "custom/saved-model" },
+    });
+    expect(providers.map((provider) => provider.model)).toEqual([
+      "minimax/MiniMax-M2.7",
+      "opencode/minimax-m3.1-flash-free",
+      "opencode/minimax-m3",
+      "custom/saved-model",
+    ]);
+  });
+
+  test("does not use hidden or disabled models as automatic fallbacks", async () => {
+    const snapshots = new ProviderSnapshots([
+      {
+        provider: "opencode",
+        status: READY,
+        enabled: true,
+        models: [
+          {
+            provider: "opencode",
+            id: "opencode/minimax-m3",
+            label: "M3",
+            isVisibleInPicker: false,
+          },
+          {
+            provider: "opencode",
+            id: "opencode/minimax-m3.1-flash-free",
+            label: "Flash",
+            isSelectable: false,
+          },
+        ],
+      },
+    ]);
+    expect(
+      await resolveStructuredGenerationProviders({
+        cwd: "/workspace/repo",
+        providerSnapshotManager: snapshots,
+      }),
+    ).toEqual([]);
+  });
   test("tries the configured model before dynamically discovered fallbacks", async () => {
     const snapshots = new ProviderSnapshots([
       {

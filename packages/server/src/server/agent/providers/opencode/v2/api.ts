@@ -23,6 +23,7 @@ export interface V2Api {
     form: Pick<OpenCodeClient["session"]["form"], "list" | "reply" | "cancel">;
   };
   plugin: Pick<OpenCodeClient["plugin"], "list">;
+  config: Pick<OpenCodeClient["config"], "get">;
   model: OpenCodeClient["model"];
   provider: Pick<OpenCodeClient["provider"], "list">;
   agent: Pick<OpenCodeClient["agent"], "list">;

@@ -1,4 +1,12 @@
-import type { FormInfo, ModelInfo, SessionMessageInfo } from "@opencode/client";
+import {
+  OpenCode,
+  type ConfigEntry,
+  type FormInfo,
+  type ModelInfo,
+  type SessionMessageInfo,
+} from "@opencode/client";
+import { filterPickerAgentModels } from "../../../agent-sdk-types.js";
+import { validateAgentConfigurationAgainstProvider } from "../../../agent-configuration-validator.js";
 import { describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../../../test-utils/test-logger.js";
@@ -15,6 +23,212 @@ function terminalEvents(events: AgentStreamEvent[]) {
       event.type === "turn_canceled",
   );
 }
+
+describe("OpenCode v2 MiniMax SDK boundaries", () => {
+  test.each([
+    ["minimax", "MiniMax-M2.7", "MiniMax-M3", "MiniMax-M3.1-Flash"],
+    ["minimax-cn", "MiniMax-M2.7", "MiniMax-M3", "MiniMax-M3.1-Flash"],
+    ["opencode", "minimax-m2.5-free", "minimax-m3", "minimax-m3.1-flash-free"],
+    ["openrouter", "minimax/minimax-m2.7", "minimax/minimax-m3", "minimax/minimax-m3.1-flash:free"],
+  ])(
+    "projects %s choices without changing saved or custom SDK requests",
+    async (providerID, legacy, m3, flash) => {
+      const harness = new V2Harness();
+      const nativeModels: ModelInfo[] = [legacy, m3, flash].map((id) => ({
+        id,
+        modelID: id,
+        providerID,
+        name: id,
+        capabilities: { tools: true, input: ["text", "image"], output: ["text"] },
+        variants: [{ id: "high" }],
+        time: { released: 1 },
+        cost: [],
+        status: "active",
+        enabled: true,
+        limit: { context: 123456, output: 6543 },
+      }));
+      const ownedPlugin = "/paseo/runtime/opencode/paseo-v2-exact";
+      harness.api.plugin.list = async () => ({
+        location: harness.info.location,
+        data: [
+          {
+            id: "paseo",
+            source: { type: "local", path: ownedPlugin },
+            features: {},
+            state: { status: "active" },
+          },
+        ],
+      });
+      let config: ConfigEntry[] = [
+        { type: "document", info: { plugins: [{ package: `file://${ownedPlugin}` }] } },
+      ];
+      let configFails = false;
+      const requests: Array<{ path: string; method: string; body: Record<string, unknown> }> = [];
+      const sdk = OpenCode.make({
+        baseUrl: "http://opencode.invalid",
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          const path = new URL(request.url).pathname;
+          const body = request.method === "POST" ? await request.json() : {};
+          requests.push({ path, method: request.method, body });
+          const location = harness.info.location;
+          switch (path) {
+            case "/api/config":
+              if (configFails) return new Response("unavailable", { status: 500 });
+              return Response.json(config);
+            case "/api/plugin":
+              return Response.json(await harnessPluginList());
+            case "/api/model":
+              return Response.json({ location, data: nativeModels });
+            case "/api/agent":
+              return Response.json({ location, data: [] });
+            case "/api/provider":
+              return Response.json({ location, data: [{ id: providerID }] });
+            case "/api/session":
+              harness.info.model = body.model;
+              return Response.json({ data: harness.info });
+            case "/api/session/session":
+              return Response.json({ data: harness.info });
+            case "/api/session/session/model":
+              harness.info.model = body.model;
+              return new Response(null, { status: 204 });
+            case "/api/session/session/message":
+              return Response.json({ data: harness.history, cursor: {} });
+            case "/api/session/session/prompt":
+              harness.finishExecution();
+              return Response.json({ data: {} });
+            default:
+              throw new Error(`Unexpected SDK request: ${path}`);
+          }
+        },
+      });
+      const harnessPluginList = harness.api.plugin.list;
+      harness.api.config = sdk.config;
+      harness.api.plugin = sdk.plugin;
+      harness.api.model = sdk.model;
+      harness.api.agent = sdk.agent;
+      harness.api.provider = sdk.provider;
+      harness.api.message = sdk.message;
+      harness.api.session.create = sdk.session.create;
+      harness.api.session.get = sdk.session.get;
+      harness.api.session.switchModel = sdk.session.switchModel;
+      harness.api.session.prompt = sdk.session.prompt;
+      const client = new OpenCodeV2AgentClient({
+        logger: createTestLogger(),
+        runtime: {
+          ...harness.runtime,
+          isPaseoPlugin: (specifier) =>
+            specifier === ownedPlugin || specifier === `file://${ownedPlugin}`,
+        },
+      });
+      const scope = { scope: "workspace", cwd: "/tmp/project" } as const;
+      const catalog = await client.fetchCatalog(scope);
+      const choices = filterPickerAgentModels(catalog.models);
+      expect(choices.map((entry) => entry.id)).toEqual([
+        `${providerID}/${flash}`,
+        `${providerID}/${m3}`,
+      ]);
+      expect(choices[0]).toMatchObject({
+        contextWindowMaxTokens: 123456,
+        thinkingOptions: [{ id: "high", label: "high" }],
+      });
+      expect(
+        validateAgentConfigurationAgainstProvider({
+          input: { provider: "opencode", model: `${providerID}/${legacy}` },
+          provider: {
+            provider: "opencode",
+            enabled: true,
+            status: "ready",
+            models: catalog.models,
+          },
+        }),
+      ).toEqual([]);
+      for (const id of [
+        choices[0]!.id,
+        `${providerID}/${m3}`,
+        `${providerID}/${legacy}`,
+        "custom/MiniMax-M2.7",
+      ]) {
+        const session = await client.createSession({
+          provider: "opencode",
+          cwd: scope.cwd,
+          model: id,
+          thinkingOptionId: "high",
+        });
+        try {
+          expect(requests.findLast((entry) => entry.path === "/api/session")?.body.model).toEqual({
+            providerID: id.slice(0, id.indexOf("/")),
+            id: id.slice(id.indexOf("/") + 1),
+            variant: "high",
+          });
+          await session.run([
+            { type: "text", text: "inspect" },
+            { type: "image", mimeType: "image/png", data: "aGVsbG8=" },
+          ]);
+          expect(requests.findLast((entry) => entry.path.endsWith("/prompt"))?.body).toEqual({
+            text: "inspect",
+            files: [{ uri: "data:image/png;base64,aGVsbG8=" }],
+            metadata: {},
+          });
+        } finally {
+          await session.close();
+        }
+      }
+      harness.info.model = { providerID, id: legacy, variant: "high" };
+      harness.history.push({
+        id: "old-answer",
+        type: "assistant",
+        agent: "build",
+        model: harness.info.model,
+        time: { created: 2 },
+        content: [{ type: "text", text: "saved answer" }],
+      });
+      const handle = {
+        provider: "opencode",
+        sessionId: "session",
+        metadata: { cwd: scope.cwd, model: `${providerID}/${legacy}` },
+      } as const;
+      const resumed = await client.resumeSession(handle);
+      try {
+        const history: AgentStreamEvent[] = [];
+        for await (const event of resumed.streamHistory!()) history.push(event);
+        expect(history).toContainEqual(
+          expect.objectContaining({
+            type: "timeline",
+            item: expect.objectContaining({ text: "saved answer" }),
+          }),
+        );
+        expect(
+          requests.filter((entry) => entry.path.endsWith("/model") && entry.method === "POST"),
+        ).toEqual([]);
+        expect(await resumed.getRuntimeInfo()).toMatchObject({ model: `${providerID}/${legacy}` });
+      } finally {
+        await resumed.close();
+      }
+      const overridden = await client.resumeSession(handle, {
+        model: `custom/${legacy}`,
+        thinkingOptionId: "high",
+      });
+      await overridden.close();
+      expect(
+        requests.findLast((entry) => entry.path.endsWith("/model") && entry.method === "POST")
+          ?.body,
+      ).toEqual({ model: { providerID: "custom", id: legacy, variant: "high" } });
+      config = [{ type: "document", info: { providers: { [providerID]: {} } } }];
+      expect(
+        filterPickerAgentModels((await client.fetchCatalog(scope)).models).map((entry) => entry.id),
+      ).toEqual(nativeModels.map((entry) => `${providerID}/${entry.id}`));
+      configFails = true;
+      expect(filterPickerAgentModels((await client.fetchCatalog(scope)).models)).toHaveLength(3);
+      nativeModels[2]!.enabled = false;
+      configFails = false;
+      config = [];
+      expect(
+        filterPickerAgentModels((await client.fetchCatalog(scope)).models).map((entry) => entry.id),
+      ).toEqual([`${providerID}/${m3}`]);
+    },
+  );
+});
 
 describe("OpenCode v2 session lifecycle", () => {
   test("completes from execution events without a long-lived HTTP wait", async () => {
