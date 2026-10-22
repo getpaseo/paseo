@@ -3,7 +3,10 @@ import {
   View,
   Pressable,
   Text,
+  Keyboard,
+  Platform,
   StyleSheet as RNStyleSheet,
+  useWindowDimensions,
   type PressableStateCallbackType,
 } from "react-native";
 import type { TFunction } from "i18next";
@@ -16,8 +19,10 @@ import {
   memo,
   type ReactElement,
   type ReactNode,
+  type RefObject,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useShallow } from "zustand/shallow";
@@ -49,7 +54,7 @@ import { useFileDrop } from "@/components/file-drop/use-file-drop";
 import type { DroppedItem } from "@/components/file-drop/types";
 import { MessageInput, type MessageInputRef, type AttachmentMenuItem } from "./input/input";
 import type { ImageAttachment, MessagePayload } from "./types";
-import { ICON_SIZE, type Theme } from "@/styles/theme";
+import { ICON_SIZE, SPACING, type Theme } from "@/styles/theme";
 import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
 import { encodeImages } from "@/utils/encode-images";
 import { focusWithRetries } from "@/utils/web-focus";
@@ -76,6 +81,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { AutocompletePopover } from "@/components/ui/autocomplete-popover";
+import { AUTOCOMPLETE_ROW_MIN_HEIGHT, Autocomplete } from "@/components/ui/autocomplete";
+import {
+  measureFloatingPanelPortalHost,
+  useFloatingPanelPortalHostName,
+} from "@/components/ui/floating-panel-portal";
 import { useAgentAutocomplete } from "@/hooks/use-agent-autocomplete";
 import {
   useHostRuntimeAgentDirectoryStatus,
@@ -1035,6 +1045,82 @@ function ComposerVoiceModeButton({
   );
 }
 
+const INLINE_AUTOCOMPLETE_GAP = SPACING[3];
+/** The autocomplete list's own default cap; the inline picker never lets it exceed its budget. */
+const INLINE_AUTOCOMPLETE_LIST_MAX_HEIGHT = 220;
+
+interface InlineAutocompleteMaxHeight {
+  /** Space between the top of the visible content area and the top of the input container. */
+  maxHeight: number | undefined;
+  /** Re-measure the anchor, e.g. after the input grew to another line. */
+  remeasure: () => void;
+}
+
+/**
+ * Height budget for the inline command picker on compact phones: the room between
+ * the top of the visible content area and the top of the input container.
+ */
+function useInlineAutocompleteMaxHeight(args: {
+  enabled: boolean;
+  anchorRef: RefObject<View | null>;
+}): InlineAutocompleteMaxHeight {
+  // shortcut: maxHeight is a JS value re-measured on keyboard/layout events, so it is stale during
+  // the keyboard animation; upgrade to a UI-thread derived value if the picker visibly jumps on device.
+  const insets = useSafeAreaInsets();
+  const portalHostName = useFloatingPanelPortalHostName();
+  const windowDimensions = useWindowDimensions();
+  const [maxHeight, setMaxHeight] = useState<number | undefined>(undefined);
+  const measureRef = useRef<() => void>(() => undefined);
+
+  useEffect(() => {
+    if (!args.enabled) {
+      // Keep the last measured budget: dropping it would hide the picker on every reopen
+      // until the async re-measure returns.
+      return;
+    }
+
+    let cancelled = false;
+    const measure = () => {
+      const anchor = args.anchorRef.current;
+      if (!anchor) return;
+      anchor.measureInWindow((_x, y) => {
+        void measureFloatingPanelPortalHost(portalHostName).then((hostRect) => {
+          if (cancelled) return undefined;
+          const topBound = Math.max(insets.top, hostRect?.y ?? 0);
+          setMaxHeight(Math.max(0, y - topBound - INLINE_AUTOCOMPLETE_GAP));
+          return undefined;
+        });
+      });
+    };
+
+    measureRef.current = measure;
+    measure();
+    const raf = requestAnimationFrame(measure);
+    const subscriptions = (["keyboardDidShow", "keyboardDidHide"] as const).map((event) =>
+      Keyboard.addListener(event, () => requestAnimationFrame(measure)),
+    );
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      for (const subscription of subscriptions) subscription.remove();
+    };
+  }, [
+    args.enabled,
+    args.anchorRef,
+    insets.top,
+    portalHostName,
+    windowDimensions.height,
+    windowDimensions.width,
+  ]);
+
+  const remeasure = useCallback(() => {
+    measureRef.current();
+  }, []);
+
+  return { maxHeight, remeasure };
+}
+
 // oxlint-disable-next-line complexity
 export function Composer({
   agentId,
@@ -1109,6 +1195,13 @@ export function Composer({
   const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
 
   const isCompactFormFactor = useIsCompactFormFactor();
+  // why: iPad in Slide Over or a narrow Split View also reports the compact breakpoint,
+  // but the user scoped this picker to iPhones.
+  const isIosPhone = Platform.OS === "ios" && !Platform.isPad && isCompactFormFactor;
+  // why: the inline picker needs an unclipped full-height pane above the composer; sheets and
+  // dialogs clip it away, so only panes that own the keyboard shift get the inline picker.
+  const showInlineAutocompletePicker = isIosPhone && externalKeyboardShift === true;
+  const messageInputContainerRef = useRef<View>(null);
   const isCompactLayout = resolveCompactLayout(isCompactLayoutOverride, isCompactFormFactor);
   const isDesktopWebBreakpoint = resolveIsDesktopWebBreakpoint(isCompactFormFactor);
   const isDesktopLayout = resolveIsDesktopWebBreakpoint(isCompactLayout);
@@ -1207,6 +1300,7 @@ export function Composer({
     draftConfig: commandDraftConfig,
     canExecuteClientSlashCommand: buildOutgoingAttachments(attachments).length === 0,
     onClientSlashCommand: runClientSlashCommand,
+    compactCommandSuggestions: isIosPhone,
     onAutocompleteApplied: () => {
       messageInputRef.current?.focus();
     },
@@ -2071,8 +2165,6 @@ export function Composer({
     [handleEditQueuedMessage, handleSendQueuedNow, queuedMessages, t],
   );
 
-  const messageInputContainerRef = useRef<View>(null);
-
   const isSubmitLoadingVisible = isProcessing || isSubmitLoading || isUploadingFile;
   const isSubmitDisabled =
     isSubmitLoadingVisible || (waitForGithubAutoAttachOnSubmit && githubAutoAttach.isResolving);
@@ -2099,6 +2191,53 @@ export function Composer({
     ? t("composer.github.searching")
     : t("composer.github.noResults");
   const autocompleteVisible = autocomplete.isVisible && isPaneFocused && mode.showAutocomplete;
+  // Measure only while the inline picker is on screen: the measurement is two native
+  // measure calls plus a state update on a component that is mounted in every pane.
+  const { maxHeight: inlineAutocompleteMaxHeight, remeasure: remeasureInlineAutocomplete } =
+    useInlineAutocompleteMaxHeight({
+      enabled: showInlineAutocompletePicker && autocompleteVisible,
+      anchorRef: messageInputContainerRef,
+    });
+  const inlineAutocompleteHasRoom =
+    !showInlineAutocompletePicker ||
+    (inlineAutocompleteMaxHeight !== undefined &&
+      inlineAutocompleteMaxHeight >= AUTOCOMPLETE_ROW_MIN_HEIGHT);
+  const inlineAutocompleteVisible =
+    showInlineAutocompletePicker &&
+    autocompleteVisible &&
+    inlineAutocompleteHasRoom &&
+    !(autocomplete.options.length > 0 && autocomplete.selectedIndex < 0);
+
+  const inlineAutocompleteNode = inlineAutocompleteVisible ? (
+    <View
+      style={[styles.inlineAutocomplete, { maxHeight: inlineAutocompleteMaxHeight }]}
+      pointerEvents="box-none"
+    >
+      <Autocomplete
+        options={autocomplete.options}
+        selectedIndex={autocomplete.selectedIndex}
+        onSelect={autocomplete.onSelectOption}
+        isLoading={autocomplete.isLoading}
+        errorMessage={autocomplete.errorMessage}
+        loadingText={autocomplete.loadingText}
+        emptyText={autocomplete.emptyText}
+        maxHeight={Math.min(INLINE_AUTOCOMPLETE_LIST_MAX_HEIGHT, inlineAutocompleteMaxHeight ?? 0)}
+      />
+    </View>
+  ) : null;
+  const popoverAutocompleteNode = (
+    <AutocompletePopover
+      visible={autocompleteVisible}
+      anchorRef={messageInputContainerRef}
+      options={autocomplete.options}
+      selectedIndex={autocomplete.selectedIndex}
+      onSelect={autocomplete.onSelectOption}
+      isLoading={autocomplete.isLoading}
+      errorMessage={autocomplete.errorMessage}
+      loadingText={autocomplete.loadingText}
+      emptyText={autocomplete.emptyText}
+    />
+  );
 
   return (
     <ComposerKeyboardScopeProvider isActiveComposer={isPaneFocused}>
@@ -2110,18 +2249,16 @@ export function Composer({
             {queueList}
             {sendErrorNode}
 
-            <View ref={messageInputContainerRef} style={styles.messageInputContainer}>
-              <AutocompletePopover
-                visible={autocompleteVisible}
-                anchorRef={messageInputContainerRef}
-                options={autocomplete.options}
-                selectedIndex={autocomplete.selectedIndex}
-                onSelect={autocomplete.onSelectOption}
-                isLoading={autocomplete.isLoading}
-                errorMessage={autocomplete.errorMessage}
-                loadingText={autocomplete.loadingText}
-                emptyText={autocomplete.emptyText}
-              />
+            <View
+              ref={messageInputContainerRef}
+              style={styles.messageInputContainer}
+              onLayout={
+                showInlineAutocompletePicker && autocompleteVisible
+                  ? remeasureInlineAutocomplete
+                  : undefined
+              }
+            >
+              {showInlineAutocompletePicker ? inlineAutocompleteNode : popoverAutocompleteNode}
 
               {/* MessageInput handles everything: text, dictation, attachments, all buttons */}
               <StableMessageInput
@@ -2231,6 +2368,18 @@ const styles = StyleSheet.create((theme: Theme) => ({
     position: "relative",
     width: "100%",
     gap: theme.spacing[3],
+  },
+  inlineAutocomplete: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: "100%",
+    marginBottom: INLINE_AUTOCOMPLETE_GAP,
+    // The card and rows keep their natural height, so a tight budget overflows the wrapper.
+    // Clipping at the top drops the detail card first and keeps the bottom row (the best
+    // match) on screen.
+    overflow: "hidden",
+    justifyContent: "flex-end",
   },
   cancelButton: {
     width: 28,

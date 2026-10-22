@@ -20,6 +20,26 @@ describe("filterAndRankCommandAutocompleteEntries", () => {
     expect(result.map((entry) => entry.command.name)).toEqual(["commit", "paseo-committee"]);
   });
 
+  it("ranks the closest matches first so a compact picker can keep the top two", () => {
+    const compactEntries = [
+      { source: "provider" as const, command: { name: "claude-md-improver" } },
+      { source: "provider" as const, command: { name: "codex/review" } },
+      { source: "provider" as const, command: { name: "dev" } },
+      { source: "provider" as const, command: { name: "devtools" } },
+    ];
+
+    const result = filterAndRankCommandAutocompleteEntries(compactEntries, "dev");
+
+    expect(result).toHaveLength(4);
+    expect(result.slice(0, 2).map((entry) => entry.command.name)).toEqual(["dev", "devtools"]);
+    expect(result.map((entry) => entry.command.name)).toEqual([
+      "dev",
+      "devtools",
+      "codex/review",
+      "claude-md-improver",
+    ]);
+  });
+
   it("matches client command aliases", () => {
     const result = filterAndRankCommandAutocompleteEntries(
       [

@@ -36,6 +36,9 @@ interface AutocompleteProps {
 
 const BOLT_GLYPH_PATTERN = /\u26A1|\uFE0F/gu;
 
+/** Minimum height of one suggestion row. Used to decide whether the list can show a row at all. */
+export const AUTOCOMPLETE_ROW_MIN_HEIGHT = 36;
+
 function removeBoltGlyphs(value?: string): string | undefined {
   if (!value) {
     return value;
@@ -332,7 +335,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
   item: {
     flexDirection: "row",
     alignItems: "center",
-    minHeight: 36,
+    minHeight: AUTOCOMPLETE_ROW_MIN_HEIGHT,
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
   },

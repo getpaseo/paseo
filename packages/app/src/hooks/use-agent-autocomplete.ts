@@ -36,6 +36,7 @@ interface UseAgentAutocompleteInput {
   onAutocompleteApplied?: () => void;
   onClientSlashCommand?: (command: ClientSlashCommand) => void;
   canExecuteClientSlashCommand?: boolean;
+  compactCommandSuggestions?: boolean;
 }
 
 type AgentAutocompleteOption =
@@ -152,9 +153,10 @@ interface BuildAutocompleteOptionsInput {
   activeFileMention: FileMentionRange | null;
   fileSuggestions: DirectorySuggestionEntry[];
   t: TFunction;
+  compactCommandSuggestions: boolean;
 }
 
-function buildCommandAutocompleteOptions(input: BuildAutocompleteOptionsInput) {
+export function buildCommandAutocompleteOptions(input: BuildAutocompleteOptionsInput) {
   if (!input.isVisible) {
     return [];
   }
@@ -180,7 +182,10 @@ function buildCommandAutocompleteOptions(input: BuildAutocompleteOptionsInput) {
       availableCommands,
       input.commandFilterQuery,
     );
-    const orderedMatches = orderAutocompleteOptions(matches);
+    // why: the user asked for only the two most relevant suggestions on iOS phones (2026-10-22),
+    // so trim before the reverse that puts the best match at the bottom (closest to the input).
+    const keptMatches = input.compactCommandSuggestions ? matches.slice(0, 2) : matches;
+    const orderedMatches = orderAutocompleteOptions(keptMatches);
     return orderedMatches.map((entry) => mapCommandToOption(entry, input.t));
   }
 
@@ -239,6 +244,19 @@ function resolveCanLoadCommands(args: {
   return Boolean(args.agentId) || args.isDraftContext;
 }
 
+export function resolveCompactCommandVisibility(args: {
+  compactCommandSuggestions: boolean;
+  mode: AutocompleteMode;
+  commandFilterQuery: string;
+}): boolean {
+  // Compact phones hide the picker until the user types past the bare slash.
+  return !(
+    args.compactCommandSuggestions &&
+    args.mode === "command" &&
+    args.commandFilterQuery.length === 0
+  );
+}
+
 function resolveAutocompleteIsLoading(args: {
   mode: AutocompleteMode;
   isCommandsLoading: boolean;
@@ -289,6 +307,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     onAutocompleteApplied,
     onClientSlashCommand,
     canExecuteClientSlashCommand,
+    compactCommandSuggestions = false,
   } = input;
 
   const activeSlashCommand = useMemo(
@@ -361,7 +380,14 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     draftConfig: queryDraftConfig,
   });
 
-  const isVisible = canShowAutocomplete && !(mode === "command" && isCommandsLoading);
+  const isVisible =
+    canShowAutocomplete &&
+    !(mode === "command" && isCommandsLoading) &&
+    resolveCompactCommandVisibility({
+      compactCommandSuggestions,
+      mode,
+      commandFilterQuery,
+    });
 
   const fileSuggestionsQuery = useQuery({
     queryKey: [
@@ -411,6 +437,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
         isVisible,
         mode,
         t,
+        compactCommandSuggestions,
       }),
     [
       activeFileMention,
@@ -422,6 +449,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
       isVisible,
       mode,
       t,
+      compactCommandSuggestions,
     ],
   );
 
