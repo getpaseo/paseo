@@ -190,6 +190,7 @@ export class TerminalEmulatorRuntime {
     alt: false,
   };
   private terminal: Terminal | null = null;
+  private copyOnSelect = false;
   private fitAddon: FitAddon | null = null;
   private searchAddon: SearchAddon | null = null;
   private findResult = { resultIndex: -1, resultCount: 0 };
@@ -273,6 +274,10 @@ export class TerminalEmulatorRuntime {
 
   setPendingModifiers(input: { pendingModifiers: PendingTerminalModifiers }): void {
     this.pendingModifiers = input.pendingModifiers;
+  }
+
+  setCopyOnSelect(enabled: boolean): void {
+    this.copyOnSelect = enabled;
   }
 
   private loadSearchAddon(terminal: Terminal): void {
@@ -518,6 +523,14 @@ export class TerminalEmulatorRuntime {
     });
     terminal.onScroll(() => {
       if (this.findQuery) this.emitFindResult();
+    });
+    terminal.onSelectionChange(() => {
+      // Find selects each match; copying those would overwrite the clipboard.
+      if (!this.copyOnSelect || this.findQuery || !terminal.hasSelection()) return;
+      // Runs inside the selecting mouseup, so the browser allows it, and xterm's
+      // own copy handler fills the clipboard. navigator.clipboard.writeText is
+      // denied here without a clipboard-write grant and on plain-HTTP origins.
+      document.execCommand("copy");
     });
     terminal.loadAddon(new ClipboardAddon());
     try {

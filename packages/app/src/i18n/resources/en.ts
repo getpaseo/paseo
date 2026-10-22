@@ -2385,6 +2385,10 @@ export const en = {
         description: "Lines kept in the built-in terminal buffer",
         accessibilityLabel: "Terminal scrollback lines",
       },
+      terminalCopyOnSelect: {
+        label: "Copy on select",
+        description: "Copy terminal text to the clipboard when you select it",
+      },
       autoExpandReasoning: {
         label: "Always expand reasoning",
         description: "Show agent thinking and chain-of-thought blocks fully expanded by default",

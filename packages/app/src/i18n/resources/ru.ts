@@ -2296,6 +2296,10 @@ export const ru: TranslationResources = {
         description: "Количество строк, сохраняемых во встроенном буфере терминала",
         accessibilityLabel: "Количество строк в буфере прокрутки терминала",
       },
+      terminalCopyOnSelect: {
+        label: "Копировать при выделении",
+        description: "Копировать текст терминала в буфер обмена при выделении",
+      },
       autoExpandReasoning: {
         label: "Всегда разворачивать размышления",
         description:
