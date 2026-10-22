@@ -2,6 +2,7 @@
   "name": "@getpaseo/relay",
   "version": "0.13.0",
   "description": "Paseo relay for bridging daemon and client connections",
+  "license": "Apache-2.0",
   "files": [
     "dist",
     "!dist/**/*.map"
